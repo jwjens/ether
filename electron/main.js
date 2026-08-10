@@ -623,7 +623,7 @@ if (AUDIO_DAEMON_DESIRED) {
         // Slice B: a row was skipped/dropped as unresolvable → feed the library-health skipped-at-load
         // sense (+ health-events.jsonl). Never silent.
         try { _libHealth && _libHealth.noteSkip(m.stationId, m.title, m.reason); } catch {}
-      } else if (m.event === "logreader-floor" || m.event === "logreader-missed" || m.event === "logreader-ahead" || m.event === "logreader-operator-write" || m.event === "fill-starved" || m.event === "separation-relaxed") {
+      } else if (m.event === "logreader-floor" || m.event === "logreader-missed" || m.event === "logreader-ahead" || m.event === "logreader-operator-write" || m.event === "fill-starved" || m.event === "separation-relaxed" || m.event === "position-authority") {
         // Log-Reader Flip (ACTIVATION): loud flip-time events — emergency floor (log exhausted), a
         // behind-anchor missed sweep, an ahead early-play beyond slack, or an operator deck-load written
         // to the log. Plus fill-starved: the refill ladder found NO playable song in ANY of the station's

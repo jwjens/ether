@@ -109,6 +109,12 @@ pub struct DeckTel {
     pub paused: bool,          // deck.paused
     pub volume: f32,           // linear fader (post-gain)
     pub gain_db: f32,          // per-deck trim in dB
+    /// SAMPLE CLOCK — per-deck monotonic PROGRAM_RATE frame count (DeckSlot.frames_played).
+    /// position = frames_played / 44100. The daemon derives its authoritative positionSec from
+    /// this; wall-clock extrapolation is now only the fallback.
+    /// docs/sample-accurate-position-design-2026-08-09.md
+    #[serde(default)]
+    pub frames_played: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -310,6 +316,21 @@ pub struct DeckSlot {
     /// wiped by the next cart and the channel silently re-opens. `muted` is owned by the operator
     /// and is never touched by Load, Play, Stop or a fader move — only by SetMuted.
     pub muted:    bool,
+    /// SAMPLE CLOCK — monotonic count of PROGRAM_RATE stereo frames actually pulled from THIS
+    /// deck's source. This is the single position authority: position = frames_played / 44100.
+    ///
+    /// Written ONLY by mixer_callback, under the lock it already holds — no new lock, no atomic,
+    /// no allocation on the audio thread (same discipline as bus.frames_consumed below).
+    ///
+    /// Counted from REAL loop iterations, never `prog_frames`: that value carries a +2 rounding
+    /// margin on non-44.1k devices and the pull loop breaks early on source exhaustion, so adding
+    /// it would over-count on both paths.
+    ///
+    /// PER-DECK, not stream-global, because two decks play at different positions during a
+    /// crossfade and a shared counter can express neither. Reset on Load, Stop, and device-failover
+    /// restore. NOT reset on Pause/Play — resume must continue where it stopped.
+    /// docs/sample-accurate-position-design-2026-08-09.md
+    pub frames_played: u64,
 }
 
 impl DeckSlot {
@@ -324,6 +345,7 @@ impl DeckSlot {
             artist:  String::new(),
             gain_db: 0.0,
             muted:   false,
+            frames_played: 0,
         }
     }
 }
@@ -829,6 +851,8 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     // is applied PRE-FADER as a separate multiplier at the mix, on top of
                                     // whatever level the operator set. Two different things, kept apart.
                                     slot.gain_db  = gain_db;
+                                    // SAMPLE CLOCK — a new track restarts the position.
+                                    slot.frames_played = 0;
                                 }
                                 finished_clone.clear(&deck);
                             }
@@ -884,6 +908,8 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     slot.paused = true;
                                     slot.active = false;
                                     slot.path   = String::new();
+                                    // SAMPLE CLOCK — deck emptied, position clears with it.
+                                    slot.frames_played = 0;
                                 }
                             }
                             AudioCmd::SetVolume { deck, volume } => {
@@ -926,11 +952,20 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     lvl.proc_in_peak     = bus.proc_in_peak;
                                     lvl.proc_out_peak    = bus.proc_out_peak;
                                     let mut active = 0u32;
-                                    let mut dt = Vec::with_capacity(3);
-                                    for (i, id) in [(0usize, "A"), (1, "B"), (2, "C")] {
+                                    // CART (slot 6) is reported HERE so jingles/carts carry a real
+                                    // sample position too — without it every cart reads 0:00 forever.
+                                    // It is addressed by the explicit "CART" literal: NEVER index
+                                    // DECK_LETTERS[6] (len 6, A–F) — that panicked the cpal output
+                                    // thread and caused permanent dead air.
+                                    // docs/incident-jingle-cart-panic-2026-07-15.md
+                                    let mut dt = Vec::with_capacity(4);
+                                    for (i, id) in [(0usize, "A"), (1, "B"), (2, "C"), (6, "CART")] {
                                         let d = &bus.decks[i];
                                         let present = d.source.is_some();
-                                        if d.active && !d.paused && present { active += 1; }
+                                        // active_decks stays A/B/C ONLY — electron/audio-health.js
+                                        // already consumes this number; adding CART would silently
+                                        // change an existing health signal's meaning.
+                                        if i < 3 && d.active && !d.paused && present { active += 1; }
                                         dt.push(DeckTel {
                                             id: id.to_string(),
                                             source_present: present,
@@ -938,6 +973,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                             paused: d.paused,
                                             volume: d.volume,
                                             gain_db: d.gain_db,
+                                            frames_played: d.frames_played,
                                         });
                                     }
                                     lvl.active_decks = active;
@@ -1060,6 +1096,13 @@ fn restore_decks_after_switch(bus_cmd: &SharedBusState, sr: u32) {
                 // Only replace if the source is gone (e.g. after a device failover mid-track)
                 if bus.decks[idx].source.is_none() && bus.decks[idx].active {
                     bus.decks[idx].source = Some(src);
+                    // SAMPLE CLOCK — the rebuilt decoder starts at the TOP of the file (see this
+                    // function's header: "track restarts from beginning"), so the position must
+                    // restart with it. Carrying the old count forward would report a position the
+                    // listener is not hearing, and — because the daemon fires the segue on
+                    // remaining = duration - position — would cut the restarted track off almost
+                    // immediately. The jump to 0:00 on a card switch is real; show it.
+                    bus.decks[idx].frames_played = 0;
                     // The FADER LEVEL survives a device failover untouched — same rule as Load: only the
                     // jock's hand moves it. This used to rebuild volume from gain_db, so a card switch
                     // mid-show silently reset every deck's fader to unity. gain_db still rides pre-fader
@@ -1135,6 +1178,7 @@ fn mixer_callback(
             deck.volume * trim
         };
         let mut pk = 0.0f32;
+        let mut pulled = 0u64;   // frames actually taken from THIS deck's source this buffer
         for f in 0..prog_frames {
             // Source is always stereo (UniformSourceIterator built with 2 ch)
             match src.next() {
@@ -1144,12 +1188,20 @@ fn mixer_callback(
                     let rv = r * vol;
                     mix_l[f] += lv;
                     mix_r[f] += rv;
+                    pulled += 1;
                     let a = lv.abs().max(rv.abs());
                     if a > pk { pk = a; }
                 }
                 None => { exhausted[i] = true; break; }
             }
         }
+        // SAMPLE CLOCK — committed once per buffer (the `src` borrow is dead here), not once per
+        // frame: one add instead of ~44,100/sec/deck on the audio thread, same result.
+        //
+        // A CUT channel (deck.muted) still advances. The source is advanced while cut by design
+        // (see the vol block above) so a cut track runs out on schedule — its position must run
+        // out with it, or the countdown lies about a track that is genuinely ending.
+        deck.frames_played = deck.frames_played.wrapping_add(pulled);
         frame_peaks[i] = pk;
     }
 

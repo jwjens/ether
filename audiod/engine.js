@@ -43,6 +43,22 @@ const FLIP_AHEAD_SLACK_SEC = 120;
 // truth layer (Slice 1) so both judge "stalled" by the SAME criterion — no second, divergent detector.
 const STALL_MS = 1000;
 
+// ── SAMPLE CLOCK (2026-08-09) ─────────────────────────────────────────────────────────────────────
+// Position was extrapolated from Date.now() on both sides of the process boundary, so the playhead
+// drifted from the audio it claimed to describe. Rust now counts the frames it actually pulls from
+// each deck (DeckSlot.frames_played) and publishes them per-deck on the levels payload; that count
+// is the AUTHORITY and wall-clock is the fallback. Both run side by side for one release so the
+// drift can be measured before the wall-clock path is deleted.
+// docs/sample-accurate-position-design-2026-08-09.md
+const PROGRAM_RATE = 44100;
+// Escape hatch: force the legacy wall-clock authority without a rebuild (drift is still computed
+// and logged, so this stays diagnosable while it is engaged).
+const POSITION_WALL_FORCE = process.env.ETHER_POSITION_WALL_FORCE === "1";
+// Levels older than this are not an authority — poll() falls back and SAYS so.
+const FRAMES_STALE_MS = 2000;
+// Per-deck throttle for the drift line, so a diverging deck cannot flood the log.
+const DRIFT_LOG_MS = 5000;
+
 function makeState(id, s = {}) {
   return {
     id, status: s.status || "idle", title: s.title || "", artist: s.artist || "",
@@ -162,12 +178,12 @@ class DaemonEngine {
   // peak, monotonic frames-consumed) and prints the frames DELTA since the last line — a live "is the
   // callback still pulling PCM while the VU reads silent?" signal for the Class-A wedge. Diagnostic
   // only: never gates playout, never throws, no engine-state or watchdog interaction.
-  _mixHeartbeat(now, s) {
+  _mixHeartbeat(now, s, lv) {
     try {
       const anyPlaying = ["deckA", "deckB", "deckC"].some((d) => s && s[d] && s[d].status === "playing");
       if (!anyPlaying) return;                                  // idle/stalled → stay quiet
       if (now - (this._lastMixLogAt || 0) < 5000) return;      // 5s cadence
-      let lv; try { lv = JSON.parse(A.audioGetLevels(this.stationId)); } catch { return; }
+      if (!lv) return;                                          // levels read failed this tick
       const df = Math.max(0, (lv.frames_total || 0) - (this._lastMixFrames || 0));
       this._lastMixFrames = lv.frames_total || 0;
       this._lastMixLogAt = now;
@@ -179,6 +195,84 @@ class DaemonEngine {
         `[mix s${this.stationId}] active=${lv.active_decks || 0} frames=+${df} peak=${(lv.master || 0).toFixed(3)} mon=${(lv.mon_vol || 0).toFixed(2)} | ${decks}`
       );
     } catch { /* diagnostic only — never disturb playout */ }
+  }
+
+  // ── SAMPLE CLOCK: read + stash ────────────────────────────────────────────────────────────────
+  // One levels read per poll tick. Stashes the per-deck frame counts with an arrival stamp so
+  // _derivePosition can tell "fresh" from "the addon stopped answering" and degrade OUT LOUD
+  // rather than quietly serving a stale number as if it were measured.
+  // Returns the parsed levels (also reused by the [mix] heartbeat) or null on failure.
+  _readLevels(now) {
+    let lv;
+    try { lv = JSON.parse(A.audioGetLevels(this.stationId)); } catch { return null; }
+    if (lv && Array.isArray(lv.decks)) {
+      const f = {};
+      for (const d of lv.decks) {
+        if (d && d.id && typeof d.frames_played === "number") f[d.id] = d.frames_played;
+      }
+      this._deckFrames = f;
+      this._deckFramesAt = now;
+    }
+    return lv;
+  }
+
+  // ── SAMPLE CLOCK: the position authority ──────────────────────────────────────────────────────
+  // Returns { positionSec, positionSecWall, positionDriftMs } for one deck.
+  //
+  //   positionSec      the AUTHORITY — frames Rust actually pulled / 44100, when trustworthy
+  //   positionSecWall  the legacy Date.now() estimate, kept for one release so the drift the flip
+  //                    removes can be MEASURED rather than asserted
+  //   positionDriftMs  sample − wall. Observability only; never a gate.
+  //
+  // Falls back to wall-clock when the frames are stale or absent. Every change of authority emits
+  // a health event with a reason — a silent degrade would look exactly like a working sample clock.
+  _derivePosition(id, live, durSec, elapsed, now) {
+    const st   = this._deckState(id);
+    const stat = (live && live.status) || st.status;
+    const wall = stat === "playing"
+      ? Math.min(st.positionSec + elapsed, durSec || 9999)
+      : st.positionSec;
+
+    const fresh  = this._deckFramesAt && (now - this._deckFramesAt) < FRAMES_STALE_MS;
+    const raw    = fresh && this._deckFrames ? this._deckFrames[id] : undefined;
+    const sample = typeof raw === "number" ? raw / PROGRAM_RATE : null;
+
+    // A deck that just started legitimately reads ~0 for a tick or two, so a bare 0 is only
+    // suspicious once we already believed we were more than a second into the track.
+    let useSample = sample !== null && !(sample === 0 && stat === "playing" && st.positionSec > 1);
+    if (POSITION_WALL_FORCE) useSample = false;
+
+    const driftMs = sample !== null ? (sample - wall) * 1000 : null;
+
+    if (!this._posAuth) this._posAuth = {};
+    const prev = this._posAuth[id];
+    if (!prev || prev.useSample !== useSample) {
+      const reason = POSITION_WALL_FORCE ? "forced-wall-clock"
+                   : useSample           ? "sample-clock-restored"
+                   : !fresh              ? "levels-stale"
+                                         : "counter-zero-while-playing";
+      try {
+        // Rides the established loud-event family that main.js appends to health-events.jsonl
+        // (alongside logreader-floor / fill-starved / separation-relaxed). A brand-new event name
+        // would have no consumer and the "observability" would be decorative.
+        this.emit("position-authority", {
+          deck: id, authority: useSample ? "sample" : "wall", reason,
+          sampleSec: sample, wallSec: wall, driftMs, ts: now,
+        });
+      } catch { /* observation must never break a tick */ }
+      this._log(`position authority ${id} → ${useSample ? "SAMPLE" : "WALL"} (${reason})`);
+    }
+    this._posAuth[id] = { useSample };
+
+    if (driftMs !== null && Math.abs(driftMs) > 50) {
+      if (!this._driftAt) this._driftAt = {};
+      if (now - (this._driftAt[id] || 0) > DRIFT_LOG_MS) {
+        this._driftAt[id] = now;
+        this._log(`position drift ${id}: sample=${sample.toFixed(3)}s wall=${wall.toFixed(3)}s d=${driftMs.toFixed(0)}ms`);
+      }
+    }
+
+    return { positionSec: useSample ? sample : wall, positionSecWall: wall, positionDriftMs: driftMs };
   }
 
   // Audio Processing v1 — deliver the per-station program-bus processing state to the mixer (segue
@@ -350,7 +444,12 @@ class DaemonEngine {
     const elapsed = (now - this.lastPollTime) / 1000;
     this.lastPollTime = now;
 
-    this._mixHeartbeat(now, s);   // v4.4.46: diagnostic [mix sN] line every 5s while playing (no-op otherwise)
+    // SAMPLE CLOCK — one levels read per tick, shared by the position authority below and the
+    // [mix] heartbeat. Deliberately NOT piggybacked on the heartbeat's own call: that one runs on
+    // a 5s cadence and returns early when idle, which would leave the frame counts stale on nearly
+    // every tick and pin the authority to the wall-clock fallback we are replacing.
+    const lv = this._readLevels(now);
+    this._mixHeartbeat(now, s, lv);   // v4.4.46: diagnostic [mix sN] line every 5s while playing (no-op otherwise)
     this._applyProcessingFromKv(now);   // Audio Processing v1: deliver proc_local/proc_stream/target from KV (segue pattern)
 
     const prev = { A: this.stateA.status, B: this.stateB.status, C: this.stateC.status };
@@ -371,14 +470,15 @@ class DaemonEngine {
       return nextPath && nextPath === prev.filePath ? prev.durationSec : 0;
     };
     const dur = { A: carryDur("A", s.deckA), B: carryDur("B", s.deckB), C: carryDur("C", s.deckC) };
-    const pos = {
-      A: this.stateA.status === "playing" ? Math.min(this.stateA.positionSec + elapsed, dur.A || 9999) : this.stateA.positionSec,
-      B: this.stateB.status === "playing" ? Math.min(this.stateB.positionSec + elapsed, dur.B || 9999) : this.stateB.positionSec,
-      C: this.stateC.status === "playing" ? Math.min(this.stateC.positionSec + elapsed, dur.C || 9999) : this.stateC.positionSec,
-    };
-    this.stateA = { ...makeState("A", s.deckA), durationSec: dur.A, positionSec: pos.A };
-    this.stateB = { ...makeState("B", s.deckB), durationSec: dur.B, positionSec: pos.B };
-    this.stateC = { ...makeState("C", s.deckC), durationSec: dur.C, positionSec: pos.C };
+    // SAMPLE CLOCK — position now comes from the frames Rust actually pulled, with the wall-clock
+    // estimate carried alongside as positionSecWall for the parallel-run window.
+    const dA = this._derivePosition("A", s.deckA, dur.A, elapsed, now);
+    const dB = this._derivePosition("B", s.deckB, dur.B, elapsed, now);
+    const dC = this._derivePosition("C", s.deckC, dur.C, elapsed, now);
+    const pos = { A: dA.positionSec, B: dB.positionSec, C: dC.positionSec };
+    this.stateA = { ...makeState("A", s.deckA), durationSec: dur.A, ...dA };
+    this.stateB = { ...makeState("B", s.deckB), durationSec: dur.B, ...dB };
+    this.stateC = { ...makeState("C", s.deckC), durationSec: dur.C, ...dC };
 
     // liveDeck GUARD: at most one rotation deck audible. Sits HERE, immediately after the deck states
     // are rebuilt from Rust and BEFORE any decision work, so a throw anywhere later in the tick can

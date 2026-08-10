@@ -45,6 +45,12 @@ export interface DeckState {
   error?: string;
   outroStartSec?: number;
   contentClass?: string | null;   // MUSIC/SPOT/… — lets the UI flash a SPOT-holding deck (amber)
+  /** SAMPLE CLOCK parallel-run (2026-08-09): the legacy Date.now() estimate, carried beside the
+   *  authoritative sample-derived positionSec so the drift can be measured for one release.
+   *  Present only in daemon mode. docs/sample-accurate-position-design-2026-08-09.md */
+  positionSecWall?: number;
+  /** sample − wall, in ms. Observability only — never drives a decision. */
+  positionDriftMs?: number;
 }
 
 type Listener = (id: DeckId, state: DeckState) => void;
@@ -690,12 +696,18 @@ export class AudioEngine {
       const posB = (this.stateB.status === "playing") ? Math.min(this.stateB.positionSec + elapsed, durB || 9999) : this.stateB.positionSec;
       const posC = (this.stateC.status === "playing") ? Math.min(this.stateC.positionSec + elapsed, durC || 9999) : this.stateC.positionSec;
 
-      // Stage 0: in daemon mode A/B/C status/title/duration are authoritative from onDeck events;
-      // here we only advance positionSec locally for a smooth countdown between those events. The
-      // in-process engine keeps reading the native deck state directly (unchanged).
-      this.stateA = this.daemonDriven ? { ...this.stateA, positionSec: posA } : { ...makeState("A", s.deckA), durationSec: durA, positionSec: posA, contentClass: (s?.deckA?.file_path ?? "") === this.stateA.filePath ? (this.deckContentClass["A"] ?? null) : null };
-      this.stateB = this.daemonDriven ? { ...this.stateB, positionSec: posB } : { ...makeState("B", s.deckB), durationSec: durB, positionSec: posB, contentClass: (s?.deckB?.file_path ?? "") === this.stateB.filePath ? (this.deckContentClass["B"] ?? null) : null };
-      this.stateC = this.daemonDriven ? { ...this.stateC, positionSec: posC } : { ...makeState("C", s.deckC), durationSec: durC, positionSec: posC, contentClass: (s?.deckC?.file_path ?? "") === this.stateC.filePath ? (this.deckContentClass["C"] ?? null) : null };
+      // Stage 0: in daemon mode A/B/C status/title/duration are authoritative from onDeck events.
+      //
+      // SAMPLE CLOCK (2026-08-09): position is now authoritative from those events too. This used to
+      // tick positionSec locally off Date.now() "for a smooth countdown" — a third estimate layered
+      // on top of the daemon's, which is exactly the duplication the sample clock removes. Ticking it
+      // here would overwrite a measured position with a guess between events. It costs nothing
+      // visually: stateChanged() below compares Math.floor(positionSec), so the UI only ever repainted
+      // on whole-second changes, and the daemon emits on that same boundary.
+      // The in-process engine keeps reading the native deck state directly (unchanged).
+      this.stateA = this.daemonDriven ? this.stateA : { ...makeState("A", s.deckA), durationSec: durA, positionSec: posA, contentClass: (s?.deckA?.file_path ?? "") === this.stateA.filePath ? (this.deckContentClass["A"] ?? null) : null };
+      this.stateB = this.daemonDriven ? this.stateB : { ...makeState("B", s.deckB), durationSec: durB, positionSec: posB, contentClass: (s?.deckB?.file_path ?? "") === this.stateB.filePath ? (this.deckContentClass["B"] ?? null) : null };
+      this.stateC = this.daemonDriven ? this.stateC : { ...makeState("C", s.deckC), durationSec: durC, positionSec: posC, contentClass: (s?.deckC?.file_path ?? "") === this.stateC.filePath ? (this.deckContentClass["C"] ?? null) : null };
 
       if (this.stateChanged(this.lastFiredState.A, this.stateA)) { this.listeners.forEach(l => l("A", this.stateA)); }
       this.lastFiredState.A = this.stateA;
