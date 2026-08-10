@@ -948,6 +948,42 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                       />
                     );
                   })()}
+                  {/* Advisor (Phase 1) — declared rotation goals vs what the clocks actually ask for.
+                      Reports only; changes nothing about what airs. `spins_per_hour` has never been
+                      enforced, so clocks and goals have had nothing keeping them aligned — expect real
+                      mismatches on a first look. Categories with no target are excluded upstream.
+                      docs/goal-driven-scheduler-redesign-2026-08-10.md §4 Phase 1 */}
+                  {st.goals && (() => {
+                    const g = st.goals;
+                    // No targets declared → say so, and show what the clock actually does instead.
+                    // Neutral status: an undeclared goal is not a fault, it is a decision not yet made.
+                    if (g.declared === 0) {
+                      const c = g.composition?.[0];
+                      const t = c?.top?.[0];
+                      return (
+                        <HealthRow
+                          label="Rotation goals"
+                          value={`none declared · ${g.totalCats} categor${g.totalCats === 1 ? "y" : "ies"}`}
+                          status={"ok" as any}
+                          sub={c && t ? `${c.clock} is ${t.pct}% ${t.category} (${t.slots} of ${c.musicSlots} music slots) — set spins/hr in Categories to compare` : "set spins/hr in Categories to compare clocks against a target"}
+                        />
+                      );
+                    }
+                    const pairs = g.mismatches.reduce((n: number, c: any) => n + c.rows.length, 0);
+                    if (pairs === 0) {
+                      return <HealthRow label="Rotation goals" value={`${g.declared} declared · all clocks match`} status={"ok" as any} />;
+                    }
+                    const worstClock = g.mismatches[0];
+                    const w = worstClock?.rows?.[0];
+                    return (
+                      <HealthRow
+                        label="Rotation goals"
+                        value={`${pairs} mismatch${pairs === 1 ? "" : "es"} across ${g.mismatches.length} clock${g.mismatches.length === 1 ? "" : "s"}`}
+                        status={"warn" as any}
+                        sub={w ? `${worstClock.clock} — ${w.category} target ${w.target}/hr, ${w.unused ? "not in this clock" : `${w.slots} slot${w.slots === 1 ? "" : "s"}`} (${w.delta < 0 ? "under" : "over"} by ${Math.abs(w.delta)})` : undefined}
+                      />
+                    );
+                  })()}
                   {/* Item 2 — last Generate run bent the law (separation relaxed within category / empty). */}
                   {st.lastGenerate && (st.lastGenerate.relaxed?.length > 0 || st.lastGenerate.emptyCats?.length > 0) && (
                     <HealthRow

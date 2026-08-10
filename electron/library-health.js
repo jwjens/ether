@@ -92,6 +92,111 @@ function createLibraryHealth(opts) {
     } catch { return []; }
   }
 
+  // ── (4b) ROTATION GOALS vs CLOCK COMPOSITION — the Advisor (Phase 1, 2026-08-10) ──────────────
+  // `categories.spins_per_hour` and `categories.priority` are set in the UI, carried by sync, and read
+  // by NOTHING in any scheduling path. They are a GSelector-shaped goal sitting in a clock-driven
+  // engine: today the clock alone decides the category mix, so the goal is inert.
+  //
+  // This sense does not change that, and deliberately changes nothing about what airs. It only states
+  // the fact nobody can currently see: for each clock, how its music-slot composition compares to the
+  // targets the PD has already declared. It is the first time the two are compared at all.
+  //
+  // Sibling of depthCheck above, NOT an extension of it: depthCheck aggregates slots across every
+  // active clock (`clock_id IN (…) GROUP BY category_id`) to answer supply-vs-demand. A goal is a
+  // PER-HOUR statement, and a clock is an hour, so this must count per clock or the comparison is
+  // meaningless.
+  //
+  // Design: docs/goal-driven-scheduler-redesign-2026-08-10.md §4 Phase 1.
+  function goalCheck(db, sid) {
+    try {
+      const clocks = db.prepare(
+        `SELECT DISTINCT s.clock_id AS clockId, c.name AS clockName
+           FROM shows s LEFT JOIN clocks c ON c.id = s.clock_id
+          WHERE s.station_id=? AND s.is_active=1 AND s.deleted_at IS NULL AND s.clock_id IS NOT NULL`
+      ).all(sid);
+      if (!clocks.length) return null;
+
+      // HONEST REPORT (requirement 6): a category with no target is not a mismatch, it is a category
+      // whose rotation the PD has chosen not to declare. NULL and 0 both mean "no goal" and are
+      // excluded here rather than being reported as "target 0, over by N".
+      const goals = db.prepare(
+        `SELECT id, code, name, spins_per_hour AS target, priority FROM categories
+          WHERE station_id=? AND deleted_at IS NULL AND spins_per_hour IS NOT NULL AND spins_per_hour > 0`
+      ).all(sid);
+      const totalCats = (db.prepare(
+        "SELECT COUNT(*) n FROM categories WHERE station_id=? AND deleted_at IS NULL").get(sid) || {}).n || 0;
+
+      const slotsFor = db.prepare(
+        `SELECT category_id, COUNT(*) n FROM clock_slots
+          WHERE clock_id=? AND station_id=? AND slot_type='music' AND category_id IS NOT NULL AND deleted_at IS NULL
+          GROUP BY category_id`);
+      const nameOfCat = db.prepare("SELECT code, name FROM categories WHERE id=?");
+
+      // NO TARGETS DECLARED — measured on real data 2026-08-10: every category on all four of Jeff's
+      // stations has spins_per_hour 0 or NULL. The mismatch report is therefore correctly empty, which
+      // would make this sense invisible on exactly the installs that need it most.
+      //
+      // So state the observable fact instead, and claim nothing: what the clock's music composition
+      // ACTUALLY is. That is not a goal judgement — it is the number a PD needs in order to declare a
+      // goal at all, and it is Phase 3's precondition (a goal-driven engine has nothing to aim at until
+      // targets exist). Deliberately NOT auto-filling spins_per_hour from this: inferring intent from
+      // geometry and writing it back would invent a decision nobody made.
+      if (!goals.length) {
+        const composition = [];
+        for (const ck of clocks) {
+          const counts = slotsFor.all(ck.clockId, sid);
+          let musicSlots = 0; for (const r of counts) musicSlots += r.n;
+          if (musicSlots === 0) continue;
+          const top = counts
+            .map(r => {
+              const c = nameOfCat.get(r.category_id) || {};
+              return { categoryId: r.category_id, category: c.name || c.code || ('#' + r.category_id),
+                       slots: r.n, pct: Math.round((r.n / musicSlots) * 100) };
+            })
+            .sort((a, b) => b.slots - a.slots);
+          composition.push({ clockId: ck.clockId, clock: ck.clockName || ('#' + ck.clockId), musicSlots, top });
+        }
+        if (!composition.length) return null;
+        composition.sort((a, b) => (b.top[0]?.pct || 0) - (a.top[0]?.pct || 0));   // most lopsided first
+        return { declared: 0, totalCats, mismatches: [], composition };
+      }
+
+      const out = [];
+      for (const ck of clocks) {
+        const counts = new Map(slotsFor.all(ck.clockId, sid).map(r => [r.category_id, r.n]));
+        // A clock with NO music slots at all is a talk/specialty clock. Reporting "Gold under by 4"
+        // against it would be true and useless — the noise that makes an advisory panel get ignored.
+        let musicSlots = 0; for (const n of counts.values()) musicSlots += n;
+        if (musicSlots === 0) continue;
+
+        const rows = [];
+        for (const g of goals) {
+          const slots = counts.get(g.id) || 0;
+          const delta = slots - g.target;              // negative = under, positive = over
+          if (delta === 0) continue;                    // matched — nothing to say
+          rows.push({
+            categoryId: g.id,
+            category: g.name || g.code || ('#' + g.id),
+            target: g.target, slots, delta,
+            priority: g.priority ?? 0,
+            unused: slots === 0,                        // declared a goal, absent from this clock entirely
+          });
+        }
+        if (!rows.length) continue;
+        // Biggest miss first; a higher-priority category breaks a tie, since that is the one the PD
+        // said matters more.
+        rows.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || (b.priority - a.priority));
+        out.push({ clockId: ck.clockId, clock: ck.clockName || ('#' + ck.clockId), musicSlots, rows });
+      }
+      // Worst-offending clock first.
+      out.sort((a, b) => {
+        const worst = (x) => x.rows.reduce((m, r) => Math.max(m, Math.abs(r.delta)), 0);
+        return worst(b) - worst(a);
+      });
+      return { declared: goals.length, totalCats, mismatches: out, composition: [] };
+    } catch { return null; }
+  }
+
   // ── (5) rotation eligibility for one library, returns per-song rows + a summary ──
   function eligibility(db, sid) {
     const cats = libraryCategoryIds(db, sid);
@@ -228,6 +333,7 @@ function createLibraryHealth(opts) {
       prefetchLag: { upcomingUnmaterialized: lag },
       eligibility: elig.summary,
       depth: depthCheck(db, sid),                 // per-clock-slot supply vs demand (item 3)
+      goals: goalCheck(db, sid),                  // declared spins/hr vs clock composition (Advisor, Phase 1)
       lastGenerate: lastGen.get(sid) || null,     // last Generate run's relaxed/empty summary (item 2)
     };
   }
@@ -314,6 +420,11 @@ function createLibraryHealth(opts) {
 
   // ── public ──
   return {
+    // Exposed for the bench (scripts/smoke-goal-advisor.js). Pure with respect to this closure — it
+    // reads only (db, stationId) — so it can be exercised against a synthetic DB without a station,
+    // a daemon or a sweep. The mismatch branch is otherwise untestable on real data today: no
+    // category on any live station has a target set (measured 2026-08-10).
+    goalCheck,
     // Slice B feeds this from the daemon's loud skip events.
     noteSkip(stationId, title, reason) {
       const hr = Math.floor(nowSec() / 3600);
