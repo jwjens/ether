@@ -1701,6 +1701,15 @@ function runMigrations() {
   alterSafe("ALTER TABLE stations ADD COLUMN icecast_bitrate INTEGER DEFAULT 128");
   alterSafe("ALTER TABLE stations ADD COLUMN icecast_format TEXT DEFAULT 'mp3'");
 
+  // ── PHASE 3 — per-station scheduler mode (2026-08-10) ──────────────────────────────────────────
+  // 'clock' (default, today's behaviour) | 'goal' (rotation goals choose the category).
+  // Deliberately NOT added to electron/sync/synced-tables.js: this is a per-INSTALL rollout decision,
+  // like the log-reader flip canary, and syncing it would flip another machine's scheduler as a side
+  // effect of sync. The column exists on `stations` as specified; it simply does not travel.
+  // docs/phase3-wiring-plan-2026-08-10.md · docs/goal-driven-scheduler-redesign-2026-08-10.md
+  alterSafe("ALTER TABLE stations ADD COLUMN scheduler_mode TEXT DEFAULT 'clock'");
+
+
   // Account ownership: each station records the license_key of the account that created it.
   // NOTE: this column is recorded but NOT currently enforced at the list layer — `stations:list`
   // and `:get-active` (see handlers below) return ALL local non-deleted rows regardless of
@@ -6577,6 +6586,24 @@ function _buildScheduleCtx(stationId) {
   // freeze precedent: never a per-candidate play_log query). songs.last_played_at is not used here.
   const { buildRestMaps } = require('./separation-enforce');
   const restMaps = enforceSeparation ? buildRestMaps(db, stationId) : { restByFile: new Map(), restByArtist: new Map(), restByTitle: new Map() };
+
+  // ── PHASE 3 — scheduler mode + the pure engine (2026-08-10) ────────────────────────────────────
+  // scheduler-core is now the AUTHORITY for clock-mode music selection. The legacy picker still runs
+  // beside it (_legacyPickMusic) purely to prove they agree; see the differential in the slot walk.
+  // 'goal' additionally runs the goal planner in SHADOW — logged, never aired.
+  let schedulerMode = 'clock';
+  try {
+    const r = db.prepare("SELECT scheduler_mode FROM stations WHERE id=?").get(stationId);
+    if (r && r.scheduler_mode === 'goal') schedulerMode = 'goal';
+  } catch { /* pre-migration DB → 'clock' */ }
+  const core = require('../audiod/scheduler-core.js');
+  // Rotation goals, for goal-mode shadow only. Read once per run, never per slot.
+  let goalCats = [];
+  try {
+    goalCats = db.prepare(
+      "SELECT id, code, name, spins_per_hour AS spinsPerHour, priority FROM categories WHERE station_id=? AND deleted_at IS NULL"
+    ).all(stationId);
+  } catch {}
   // Clock is the master for spots: a spot_break slot pulls from its assigned SPOT category via
   // stmtSpotsByCategory (NULL spot_category_id = any active spot). Prepared defensively so a pre-v24
   // DB (no spot_category_id column) can't break generation — spot breaks just fall back to any spot.
@@ -6590,6 +6617,10 @@ function _buildScheduleCtx(stationId) {
   return {
     activeStationId: stationId, artistSepMin, songRepeatMin, titleSepMin, stmtSpotsByCategory, stmtClockBreaks,
     enforceSeparation, restByFile: restMaps.restByFile, restByArtist: restMaps.restByArtist, restByTitle: restMaps.restByTitle,
+    // Phase 3
+    schedulerMode, core, goalCats,
+    coreDiff: { agree: 0, differ: 0, skipped: 0, errors: 0, samples: [], lastError: null },
+    goalShadow: { hours: 0, positions: 0, wouldDiffer: 0, samples: [] },
     songLastTs: new Map(), artistLastTs: new Map(), titleLastTs: new Map(),
     spotLastTs: new Map(), spotPlaysToday: new Map(), generatedRows: [], relaxed: [],
     // Anchor-fit (v4.4.84): breaks whose fitted landing still misses the target minute by > tolerance —
@@ -6614,6 +6645,35 @@ function _buildScheduleCtx(stationId) {
 // not yet used this hour; Tier 3 allows reuse. Returns null ONLY when the category has no candidate at
 // all (empty category / daypart) — which the runway + auto-extend + emergency layers cover. This is the
 // "ladder into Generate": the generated log degrades gracefully instead of leaving a random/soft pick.
+// ── PHASE 3 DIFFERENTIAL COMPARATOR (2026-08-10) ─────────────────────────────────────────────────
+// The pre-Phase-3 music selection, lifted VERBATIM out of the _generateDayRows slot walk and made
+// side-effect free. scheduler-core is the authority now; this exists solely so every pick can be
+// checked against what the old code would have chosen, on the SAME candidates array.
+//
+// Both are deterministic over a given array — the randomness lives in `ORDER BY RANDOM()` inside
+// stmtCandidates, which runs ONCE per slot and feeds both. So the expected divergence is exactly
+// zero, and any non-zero result is a real defect rather than a tie-break artifact.
+//
+// DELETE THIS, and the differential block that calls it, once a week of generation reports 0 diffs.
+// Until then it is the only thing standing between "the engine is equivalent" and "we assume so".
+function _legacyPickMusic(candidates, currentTs, win, used, maps) {
+  for (const song of candidates) {
+    if (used.usedSongIds.has(song.id)) continue;
+    const lastSongTs = maps.songLastTs.get(song.id) ?? (song.last_played_at || 0);
+    if (currentTs - lastSongTs < win.songRepeatMin * 60) continue;
+    const titleKey = (song.title || '').trim().toLowerCase();
+    if (titleKey) {
+      const lastTitleTs = maps.titleLastTs.get(titleKey) ?? 0;
+      if (used.usedTitles.has(titleKey) || (currentTs - lastTitleTs) < win.titleSepMin * 60) continue;
+    }
+    const lastArtistTs = song.artist_id ? (maps.artistLastTs.get(song.artist_id) || 0) : 0;
+    const artistBlocked = used.usedArtistIds.has(song.artist_id) || (song.artist_id && (currentTs - lastArtistTs) < win.artistSepMin * 60);
+    if (!artistBlocked) return { song, relaxed: false };            // Tier 1
+  }
+  const song = _lrpFallback(candidates, used.usedSongIds, maps.songLastTs);   // Tier 2/3
+  return { song: song || null, relaxed: !!song };
+}
+
 function _lrpFallback(candidates, usedSongIds, songLastTs) {
   const lrp = (s) => songLastTs.get(s.id) ?? (s.last_played_at || 0);
   const fresh = candidates.filter(s => !usedSongIds.has(s.id));
@@ -6775,6 +6835,15 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
     const slots = stmtSlots.all(show.clock_id);
     if (!slots.length) { ctx.diag.emptyClocks.add(show.clock_id); continue; }
     const usedSongIds = new Set(), usedArtistIds = new Set(), usedTitles = new Set();
+    // Phase 3: the shape scheduler-core expects, built as a VIEW over the generator's own maps —
+    // same object references, not copies — so the engine reads exactly the state the slot walk sees.
+    // pickForCategory does not commit (the walk below still owns every mutation), so nothing here
+    // can drift out of step with the rows actually being written.
+    const coreStateView = {
+      usedSongIds, usedArtistIds, usedTitles,
+      songLastTs, artistLastTs, titleLastTs,
+      spinsByCategory: new Map(),      // clock mode ignores it; goal-mode shadow fills it per hour
+    };
     const hourEnd = hourStartTs + 3600;
     let currentTs = hourStartTs;
 
@@ -6796,6 +6865,13 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
       const selectMusic = (categoryId, cursorTs, fitTargetTs = null, defaultDurS = 240) => {
         const candidates = stmtCandidates.all(categoryId, h);
         if (!candidates.length) ctx.diag.emptyCats.add(categoryId);
+        // PHASE 3 COVERAGE — break mode stays on this picker, deliberately. It implements ANCHOR
+        // FITTING (fitTargetTs: gather every compliant song, take the one whose end lands nearest the
+        // break anchor), which scheduler-core does not have. Routing it through the core would take
+        // the first compliant song instead and move every spot break — a change to what airs, in the
+        // one phase whose whole promise is that nothing does. Counted as skipped so the differential
+        // reports its true coverage instead of implying the whole generator was compared.
+        ctx.coreDiff.skipped++;
         // ENFORCE-SEPARATION (2026-07-27): LRP-order the eligible pool from play_log; violator only when the
         // pool is exhausted → loud separation-relaxed event. OFF path below is byte-identical to before.
         if (ctx.enforceSeparation) {
@@ -6962,22 +7038,37 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
         const { pickEnforced } = require('./separation-enforce');
         const r = pickEnforced(candidates, currentTs, ctx, { songRepeatMin, artistSepMin, titleSepMin }, { usedSongIds, usedArtistIds, usedTitles }, null, slotDurationS);
         if (r) { picked = r.picked; if (r.relaxed) ctx.relaxed.push({ hour: h, title: r.picked.title, artist: r.picked.artist_name || '', category_id: slot.category_id, overageSec: r.overageSec, rule: r.rule }); }
+        // enforce_separation uses pickEnforced, which scheduler-core does not implement. Counted as
+        // SKIPPED rather than compared — a station reporting 100% agreement it never measured would
+        // be the most dangerous number in this ledger.
+        ctx.coreDiff.skipped++;
       } else {
-        for (const song of candidates) {
-          if (usedSongIds.has(song.id)) continue;
-          const lastSongTs = songLastTs.get(song.id) ?? (song.last_played_at || 0);
-          if (currentTs - lastSongTs < songRepeatMin * 60) continue;
-          const titleKey = (song.title || '').trim().toLowerCase();
-          if (titleKey) {
-            const lastTitleTs = titleLastTs.get(titleKey) ?? 0;
-            if (usedTitles.has(titleKey) || (currentTs - lastTitleTs) < titleSepMin * 60) continue;
+        // ── PHASE 3 — scheduler-core is the AUTHORITY for clock-mode selection (2026-08-10) ───────
+        // The 25-line inline ladder that stood here moved into audiod/scheduler-core.js, unchanged in
+        // behaviour: same Tier-1 check order, same _lrpFallback with its strict-`<` tie rule, same
+        // state updates. The engine is pure and unit-tested; this call site is now just plumbing.
+        const win = { songRepeatMin, artistSepMin, titleSepMin };
+        const r = ctx.core.pickForCategory(slot.category_id, candidates, currentTs, coreStateView, win, h);
+        picked = r.song || null;
+        // The ladder bent → record it, exactly as the legacy branch did when it fell to _lrpFallback.
+        if (picked && r.relaxed.length) ctx.relaxed.push({ hour: h, title: picked.title, artist: picked.artist_name || '', category_id: slot.category_id });
+
+        // ── DIFFERENTIAL — the old picker runs on the SAME candidates array and must agree ────────
+        // Both are deterministic over one array, and stmtCandidates (with its ORDER BY RANDOM()) runs
+        // once and feeds both. Expected divergence is therefore EXACTLY ZERO; anything else is a real
+        // behaviour change, not a tie-break artifact. Read-only: _legacyPickMusic mutates nothing.
+        try {
+          const legacy = _legacyPickMusic(candidates, currentTs, win,
+            { usedSongIds, usedArtistIds, usedTitles }, { songLastTs, artistLastTs, titleLastTs });
+          const a = picked ? picked.id : null, b = legacy.song ? legacy.song.id : null;
+          if (a === b) ctx.coreDiff.agree++;
+          else {
+            ctx.coreDiff.differ++;
+            if (ctx.coreDiff.samples.length < 25) {
+              ctx.coreDiff.samples.push({ hour: h, ts: currentTs, categoryId: slot.category_id, core: a, legacy: b, poolSize: candidates.length, coreRelaxed: r.relaxed });
+            }
           }
-          const lastArtistTs = song.artist_id ? (artistLastTs.get(song.artist_id) || 0) : 0;
-          const artistBlocked = usedArtistIds.has(song.artist_id) || (song.artist_id && (currentTs - lastArtistTs) < artistSepMin * 60);
-          if (!artistBlocked) { picked = song; break; }   // Tier 1: fully compliant
-        }
-        // Tier 2/3 ladder: no compliant pick → least-recently-played candidate (never random/soft).
-        if (!picked) { picked = _lrpFallback(candidates, usedSongIds, songLastTs); if (picked) ctx.relaxed.push({ hour: h, title: picked.title, artist: picked.artist_name || '', category_id: slot.category_id }); }
+        } catch (e) { ctx.coreDiff.errors++; ctx.coreDiff.lastError = e.message; }
       }
       if (picked) {
         usedSongIds.add(picked.id);
@@ -6991,7 +7082,66 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
         currentTs += durationS;
       } else { currentTs += slotDurationS; }
     }
+
+    // ── PHASE 3 — GOAL-MODE SHADOW (2026-08-10) ─────────────────────────────────────────────────
+    // Runs only when the station is set to 'goal'. Plans the SAME hour with rotation goals driving
+    // the category choice, records what it WOULD have aired, and throws the plan away. The rows
+    // written above — by clock mode — are what actually airs. Nothing here mutates them.
+    //
+    // Whole-hour (planHour) rather than per-slot, because a goal decision only means anything in the
+    // context of the hour's running spin counts. Timing will drift from the real log wherever a spot
+    // ran long; that is expected and irrelevant — this compares WHICH CATEGORY, not when.
+    if (ctx.schedulerMode === 'goal' && !ctx.enforceSeparation) {
+      try {
+        const musicSlots = slots.filter(s => s.slot_type === 'music' && s.category_id);
+        if (musicSlots.length) {
+          const pools = new Map();
+          for (const cid of new Set(musicSlots.map(s => s.category_id))) pools.set(cid, stmtCandidates.all(cid, h));
+          const plan = ctx.core.planHour({
+            slots: musicSlots.map((s, i) => ({ index: i, type: 'music', categoryId: s.category_id, durationS: (s.duration_min || 4) * 60 })),
+            hourStartTs, hour: h,
+            categories: ctx.goalCats,
+            candidatesByCategory: pools,
+            constraints: { songRepeatMin, artistSepMin, titleSepMin },
+            state: ctx.core.createState(),     // fresh — the shadow must not read the live run's state
+            mode: 'goal',
+          });
+          ctx.goalShadow.hours++;
+          ctx.goalShadow.positions += plan.picks.length;
+          for (const p of plan.picks) {
+            if (p.categoryId !== p.slotCategoryId) {
+              ctx.goalShadow.wouldDiffer++;
+              if (ctx.goalShadow.samples.length < 25) {
+                ctx.goalShadow.samples.push({ hour: h, slot: p.slotIndex, clockCategory: p.slotCategoryId, goalCategory: p.categoryId, reason: p.reason });
+              }
+            }
+          }
+        }
+      } catch (e) { ctx.goalShadow.error = e.message; }   // a failed shadow never touches the log
+    }
   }
+}
+// ── PHASE 3 — the parity + goal-shadow ledger (2026-08-10) ───────────────────────────────────────
+
+// Parity is a FACT to be measured, never an assumption. Every Generate run appends what the engine
+// and the legacy picker each decided, on the same candidates, plus (in goal mode) what goals WOULD
+// have aired. Rides the same honest-ledger path the log-reader flip's shadow used, so a week of runs
+// is queryable afterwards instead of scrolling past in a console.
+// Exit criterion for deleting _legacyPickMusic: differ === 0 and errors === 0 across a full week.
+function _noteSchedulerCore(stationId, ctx) {
+  const d = ctx.coreDiff, g = ctx.goalShadow;
+  if (!d) return;
+  const compared = d.agree + d.differ;
+  if (!compared && !d.skipped && !d.errors && !(g && g.hours)) return;
+  const pct = compared ? Math.round((d.agree / compared) * 100) : null;
+  console.log(`[sched-core s${stationId}] mode=${ctx.schedulerMode} compared=${compared}` +
+              `${pct === null ? "" : ` agree=${pct}%`} differ=${d.differ} skipped=${d.skipped} errors=${d.errors}` +
+              `${g && g.hours ? ` | goal-shadow: ${g.wouldDiffer}/${g.positions} positions would change` : ""}`);
+  try {
+    require('fs').appendFileSync(
+      path.join(app.getPath('userData'), 'scheduler-core-shadow.jsonl'),
+      JSON.stringify({ t: new Date().toISOString(), stationId, mode: ctx.schedulerMode, diff: d, goalShadow: g }) + "\n");
+  } catch { /* a lost ledger line is cosmetic */ }
 }
 
 // Generate (or regenerate) a SINGLE day — clears just that day's rows, leaves the rest intact.
@@ -7090,6 +7240,12 @@ ipcMain.handle('schedule:generateDays', async (_, dayTsList) => {
       emptyCats: [...d.emptyCats], emptyClocks: [...d.emptyClocks],
     };
     const station = (db.prepare("SELECT name FROM stations WHERE id = ?").get(stationId) || {}).name || ("station #" + stationId);
+    // PHASE 3 DEFECT FIX (2026-08-10): the parity ledger was wired only into schedule:generateDay, so
+    // the WEEK generate — which is the Calendar's main button, and therefore the common path — ran the
+    // differential and threw the result away. The evidence mechanism for the whole phase was missing
+    // from the path most likely to be used. Found because scheduler-core-shadow.jsonl did not exist
+    // after a real regeneration.
+    try { _noteSchedulerCore(stationId, ctx); } catch { /* observation must never break Generate */ }
     console.log(`[schedule:generateDays] ${committed}/${days.length} day(s), ${total} tracks${cancelled ? " — CANCELLED" : ""}`);
     _genEmit({ phase: "end", cancelled, daysCommitted: committed, count: total, dayTotal: days.length });
     return { ok: true, cancelled, daysCommitted: committed, count: total, station, gaps, relaxed: ctx.relaxed.length };
@@ -7120,6 +7276,7 @@ ipcMain.handle('schedule:generateDay', async (_, dayTs) => {
     // Item 2 — LOUD thinness: route this run's within-category relaxation + empty categories to the
     // Health Monitor (health events + a per-station summary), not just the calendar diagnostics panel.
     try { _libHealth && _libHealth.noteGenerate(activeStationId, { relaxed: ctx.relaxed, emptyCatIds: [...ctx.diag.emptyCats], breakDrift: ctx.breakDrift }); } catch {}
+    try { _noteSchedulerCore(activeStationId, ctx); } catch { /* observation must never break Generate */ }
     // Turn the "why nothing filled" diagnostics into operator-readable reasons (names, not ids) so the
     // calendar can tell the operator exactly what's missing instead of flickering silently.
     const d = ctx.diag, reasons = [];
@@ -7784,7 +7941,19 @@ ipcMain.handle('stations:update', (_, id, data) => {
   ];
   const patch = {};
   for (const k of allowed) { if (k in data) patch[k] = data[k]; }
-  if (Object.keys(patch).length === 0) return { ok: false, error: 'no valid fields' };
+
+  // PHASE 3 — scheduler_mode is written LOCALLY, outside the sync writer, and is deliberately absent
+  // from `allowed` and from the stations PATCHABLE list. Which rotation engine an install runs is a
+  // per-machine rollout decision: routing it through sync would switch another operator's scheduler
+  // as a side effect of replication. Same reasoning as the log-reader flip canary's set-local path.
+  let localApplied = false;
+  if ('scheduler_mode' in data) {
+    const mode = data.scheduler_mode === 'goal' ? 'goal' : 'clock';
+    try { db.prepare("UPDATE stations SET scheduler_mode = ? WHERE id = ?").run(mode, id); localApplied = true; }
+    catch (e) { return { ok: false, error: 'scheduler_mode: ' + e.message }; }
+  }
+
+  if (Object.keys(patch).length === 0) return localApplied ? { ok: true } : { ok: false, error: 'no valid fields' };
   try {
     const { stationsUpdateById } = require('./sync/handlers/stations');
     stationsUpdateById(db, id, patch);

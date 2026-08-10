@@ -99,8 +99,32 @@ function getActiveShowClock(db, stationId) {
 }
 
 // ── On-format category universe (loggen.ts getFormatCategoryIds) — Christmas-leak fix ──
+//
+// PHASE 3 (2026-08-10) — goal mode widens this to the station's whole active category set.
+//
+// ⚠ READ BEFORE TOUCHING. This guard IS the Christmas-leak fix: an off-format category sitting in a
+// DORMANT clock leaked into rotation via auto-fill, and the fix was to restrict the universe to the
+// ACTIVE show's clock. Widening re-opens that door. It is gated on scheduler_mode='goal' precisely so
+// it stays shut on every station that has not been deliberately switched — which today is all of them.
+//
+// It is also, as far as I can determine, currently unnecessary: scheduler-core's goal ranking is
+// bounded to the hour's own clock categories ("never selects a category the clock's hour does not
+// use", unit-tested), so a goal-chosen row is already on-format under the narrow query below. The
+// widening is built because it was specified and because it must land with goal selection rather than
+// after it — but if the goal shadow shows the engine never leaves the clock's categories, this should
+// be reverted rather than left standing.
+//
+// This does NOT make the daemon goal-aware in the R3 sense: it reads a flag to size a filter, and
+// still performs no goal ranking, scoring or selection of its own.
 function getFormatCategoryIds(db, stationId, clockId) {
   try {
+    let goalMode = false;
+    try {
+      const m = db.prepare("SELECT scheduler_mode FROM stations WHERE id = ?").get(stationId);
+      goalMode = !!(m && m.scheduler_mode === 'goal');
+    } catch { /* pre-migration DB → narrow (safe) behaviour */ }
+    if (goalMode) return getStationCategoryIds(db, stationId);
+
     const rows = clockId
       ? db.prepare(`SELECT DISTINCT category_id FROM clock_slots
           WHERE clock_id = ? AND slot_type = 'music' AND category_id IS NOT NULL AND deleted_at IS NULL AND station_id = ?`).all(clockId, stationId)

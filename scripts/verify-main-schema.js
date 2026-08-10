@@ -573,6 +573,8 @@ alterSafe("ALTER TABLE stations ADD COLUMN icecast_mount TEXT DEFAULT '/live'");
 alterSafe("ALTER TABLE stations ADD COLUMN icecast_password TEXT DEFAULT 'hackme'");
 alterSafe("ALTER TABLE stations ADD COLUMN icecast_bitrate INTEGER DEFAULT 128");
 alterSafe("ALTER TABLE stations ADD COLUMN icecast_format TEXT DEFAULT 'mp3'");
+// Phase 3 scheduler mode: 'clock' (default) | 'goal'. Local rollout flag — intentionally not synced.
+alterSafe("ALTER TABLE stations ADD COLUMN scheduler_mode TEXT DEFAULT 'clock'");
 
 // uuid + sync columns loop
 const uuidNeededNow = [

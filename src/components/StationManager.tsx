@@ -158,6 +158,8 @@ interface Station {
   icecast_password?:   string;
   icecast_bitrate?:    number;
   icecast_format?:     string;
+  /** Phase 3 rotation engine: 'clock' (default) | 'goal'. Local rollout flag — never syncs. */
+  scheduler_mode?:     string;
   is_active:          number;
   created_at:         number;
 }
@@ -294,6 +296,7 @@ function StationEditor({
     name: "", callsign: "", frequency: "", city: "",
     icecast_server_url: "", icecast_mount: "/live",
     icecast_password: "", icecast_bitrate: 128, icecast_format: "mp3",
+    scheduler_mode: "clock",          // Phase 3: a new station is always clock-driven
   });
   const [saving, setSaving] = useState(false);
   const [error,  setError]  = useState<string | null>(null);
@@ -362,6 +365,29 @@ function StationEditor({
                 <option value="ogg">OGG</option>
               </select>
             </EF>
+          </div>
+
+          {/* ── Phase 3 — rotation engine (2026-08-10) ────────────────────────────────────────────
+              Local rollout flag; never syncs. Goal mode must not be switched on until this station's
+              goal SHADOW has run clean for a week (scheduler-core-shadow.jsonl), which is why the
+              consequence is spelled out here rather than left to the operator to remember. */}
+          <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--border-primary)" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text-tertiary)", marginBottom: 8 }}>Rotation engine</div>
+            <EF label="Mode">
+              <select
+                value={form.scheduler_mode || "clock"}
+                onChange={e => set("scheduler_mode", e.target.value)}
+                style={{ ...inp, background: "var(--bg-tertiary)", colorScheme: "dark" }}
+              >
+                <option value="clock">Clock-driven (default)</option>
+                <option value="goal">Goal-driven — spins/hr choose the category</option>
+              </select>
+            </EF>
+            <div style={{ fontSize: 11, color: form.scheduler_mode === "goal" ? "var(--accent-amber)" : "var(--text-tertiary)", marginTop: 6, lineHeight: 1.5 }}>
+              {form.scheduler_mode === "goal"
+                ? "⚠ Goal-driven changes which category fills each music position. Only switch after this station's goal shadow has run clean for a week — and only if its categories have spins/hr targets set. With no targets declared, goal mode behaves exactly like clock-driven."
+                : "The clock decides every category. Goal mode runs in shadow first — it records what it would have aired without changing anything."}
+            </div>
           </div>
         </div>
 
