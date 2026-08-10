@@ -248,6 +248,47 @@ The top-right pill shows the active station. Single-station installs hide it. Mu
 - Deleting a station removes its DB file — no undo.
 `,
   },
+    id: "traffic", category: "Compliance", tags: ["traffic", "as-run", "affidavit", "billing", "spots", "advertiser", "isci", "cart", "reconciliation", "invoice"],
+    title: "Traffic & As-Run (proving spots aired)",
+    body: `
+# What it is
+
+Traffic is the affidavit side of your log. Play Log shows everything that aired; **Traffic shows only the spots** — and answers what sales asks: did the client's spot run, and when?
+
+Menu → **Logs** (or press **G**) → **Traffic** tab.
+
+# What you get
+
+For every spot the log placed: scheduled time, actual air time, the difference between them, and the identifiers billing needs — cart number, ISCI, advertiser, agency, length.
+
+Status is one of:
+- **AIRED** — it played
+- **MISSED** — it was due and did not play
+- **PENDING** — scheduled, not yet due (not a fault)
+
+The **Δ** column is actual minus scheduled. A minute or two is normal — a spot waits for the song in front of it. A large or growing Δ means the log is drifting from the clock.
+
+# Exporting for billing
+
+Click **Export Traffic CSV** for the selected period (Today / 7 Days / 30 Days, or a custom range). One row per spot:
+
+Date, Scheduled Time, Actual Time, Delta, Status, Cart, ISCI, Advertiser, Agency, Title, Length, Spot Type
+
+Opens in Excel/Sheets/Numbers and imports into most traffic systems.
+
+# "No spots scheduled in this period"
+
+Traffic reads the **generated log**, not your spot library. If it's empty but you have spots loaded: check the clock actually has spot breaks, then open the Calendar and click **Generate**.
+
+# Blank advertiser / cart / ISCI
+
+An amber notice means spots have no identifiers on file. They still export, but with those columns blank — which most billing systems reject. Fill them in under **Spots & Promos**; Traffic picks them up immediately with no regenerate needed.
+
+# As-Run (everything, not just spots)
+
+The **As-Run** button on the Play Log tab reconciles the whole log — music included — as matched / missed / unscheduled / pending with a match percentage. **Unscheduled** means something aired the log didn't place: a hand-loaded track or a live cart. Normal in live assist, shown so it can't be mistaken for a scheduled element.
+`,
+  },
   {
     id: "gselector", category: "Migration", tags: ["gselector", "rcs", "import", "migrate"],
     title: "Importing from GSelector",
