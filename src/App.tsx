@@ -66,6 +66,7 @@ import Scheduler from "./components/Scheduler";
 import ProgramLog from "./components/ProgramLog";
 import PlayLog from "./components/PlayLog";
 import Logs from "./components/Logs";
+import RotationAnalytics from "./components/RotationAnalytics";
 import EASLogbook from "./components/EASLogbook";
 import PDPicks from "./components/PDPicks";
 import SchedulePreview from "./components/SchedulePreview";
@@ -125,7 +126,7 @@ import VUMeter from "./components/VUMeter";
 import IrisBadge from "./components/IrisBadge";
 import { SchedulerHealthHost } from "./components/SchedulerHealthPanel";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "help";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "rotation" | "help";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -2686,6 +2687,7 @@ export default function App() {
                 />
               )}
               {panel === "logs" && <Logs />}
+              {panel === "rotation" && <RotationAnalytics />}
               {panel === "eas" && <EASLogbook onClose={() => setPanel("live")} />}
               {panel === "pdpicks" && <PDPicks stationId={stationId} onClose={() => setPanel("live")} />}
               {panel === "schedpreview" && <SchedulePreview onClose={() => setPanel("live")} />}

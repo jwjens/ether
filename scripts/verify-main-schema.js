@@ -575,6 +575,8 @@ alterSafe("ALTER TABLE stations ADD COLUMN icecast_bitrate INTEGER DEFAULT 128")
 alterSafe("ALTER TABLE stations ADD COLUMN icecast_format TEXT DEFAULT 'mp3'");
 // Phase 3 scheduler mode: 'clock' (default) | 'goal'. Local rollout flag — intentionally not synced.
 alterSafe("ALTER TABLE stations ADD COLUMN scheduler_mode TEXT DEFAULT 'clock'");
+// Phase 4 explainability: compact JSON of why each music row was chosen.
+alterSafe("ALTER TABLE generated_schedule ADD COLUMN pick_reason TEXT");
 
 // uuid + sync columns loop
 const uuidNeededNow = [

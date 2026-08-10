@@ -248,6 +248,46 @@ The top-right pill shows the active station. Single-station installs hide it. Mu
 - Deleting a station removes its DB file — no undo.
 `,
   },
+  {
+    id: "rotation-analytics", category: "Scheduling", tags: ["rotation", "analytics", "burn", "turnover", "spins", "goals", "why", "explain", "coverage"],
+    title: "Rotation Analytics (spins, burn, turnover)",
+    body: `
+# What it is
+
+Menu → **Rotation Analytics**. Four questions about your rotation, answered from the log itself. Read-only — it never changes what airs.
+
+# Spins vs target
+
+Actual spins/hr against the spins/hr you declared on each category. A category with **no target shows —** and is never counted as a miss; not declaring a goal is a choice.
+
+**Share above 50%** means one category is most of your day. That's your format whether you meant it or not.
+
+# Artist burn
+
+**Tightest gap** = the closest any two airings of that artist came, compared against *your* artist-separation rule. **INSIDE RULE** means the scheduler had to break it — which happens when the fill ladder runs out of compliant songs.
+
+# Turnover
+
+**Coverage** = how much of the category's library actually aired. **Spins/song** near 1.0 is even rotation; 4+ means a few songs are carrying the category. Low coverage plus high spins/song is the classic burn signature.
+
+**OFF-CATEGORY** flags songs in the log that are no longer in that category — re-filed or deleted since it was generated.
+
+# Why was this picked?
+
+Reasons are recorded as the log is generated: pool size, how many candidates each rule vetoed, and whether any rule had to be relaxed.
+
+They **cannot be reconstructed afterwards** — the losing candidates only exist during the pick. Rows generated before this feature say "not recorded" rather than guessing. Run Generate and new rows will carry reasons.
+
+# Exports
+
+Every section exports CSV, plus an hourly grid (spins per category per hour).
+
+# Related
+
+**Station Health → Rotation goals** shows whether your *clocks* match your targets, before anything is scheduled. This panel shows what the log actually did.
+`,
+  },
+  {
     id: "traffic", category: "Compliance", tags: ["traffic", "as-run", "affidavit", "billing", "spots", "advertiser", "isci", "cart", "reconciliation", "invoice"],
     title: "Traffic & As-Run (proving spots aired)",
     body: `

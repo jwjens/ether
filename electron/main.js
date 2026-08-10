@@ -1709,6 +1709,13 @@ function runMigrations() {
   // docs/phase3-wiring-plan-2026-08-10.md · docs/goal-driven-scheduler-redesign-2026-08-10.md
   alterSafe("ALTER TABLE stations ADD COLUMN scheduler_mode TEXT DEFAULT 'clock'");
 
+  // ── PHASE 4 — why this row was chosen (2026-08-10) ────────────────────────────────────────────
+  // Compact JSON per music row: category, pool size, veto counts, rules relaxed, and (in goal mode)
+  // the target/paced/placed figures. Reasons CANNOT be reconstructed after the fact — the vetoed and
+  // losing candidates exist only during the pick — so this has to be written as the log is built.
+  // The design doc (§5.3) chose a column over a side table so the reason travels with the row through
+  // regenerate, delete and sync, and because the natural query is "why this row?", not an aggregate.
+  alterSafe("ALTER TABLE generated_schedule ADD COLUMN pick_reason TEXT");
 
   // Account ownership: each station records the license_key of the account that created it.
   // NOTE: this column is recorded but NOT currently enforced at the list layer — `stations:list`
@@ -7033,6 +7040,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
       const candidates = stmtCandidates.all(slot.category_id, h);
       if (!candidates.length) ctx.diag.emptyCats.add(slot.category_id);
       let picked = null;
+      let pickReason = null;      // Phase 4: set by the core branch below; null for enforce-separation
       if (ctx.enforceSeparation) {
         // ENFORCE-SEPARATION (2026-07-27): LRP-order eligible from play_log; relax only when exhausted (loud).
         const { pickEnforced } = require('./separation-enforce');
@@ -7050,6 +7058,14 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
         const win = { songRepeatMin, artistSepMin, titleSepMin };
         const r = ctx.core.pickForCategory(slot.category_id, candidates, currentTs, coreStateView, win, h);
         picked = r.song || null;
+        // PHASE 4 — capture WHY, while the losing candidates still exist. Bounded on purpose: counts,
+        // not a candidate dump, so a year of logs stays small.
+        if (picked) {
+          pickReason = JSON.stringify({
+            m: 'clock', cat: slot.category_id, pool: r.poolSize,
+            veto: r.vetoed, relax: r.relaxed,
+          });
+        }
         // The ladder bent → record it, exactly as the legacy branch did when it fell to _lrpFallback.
         if (picked && r.relaxed.length) ctx.relaxed.push({ hour: h, title: picked.title, artist: picked.artist_name || '', category_id: slot.category_id });
 
@@ -7078,7 +7094,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
         songLastTs.set(picked.id, currentTs);
         if (picked.artist_id) artistLastTs.set(picked.artist_id, currentTs);
         const durationS = picked.duration_ms ? Math.round(picked.duration_ms / 1000) : slotDurationS;
-        generatedRows.push({ scheduled_at: currentTs, song_id: picked.id, title: picked.title, artist: picked.artist_name || '', file_key: picked.file_path ? path.basename(picked.file_path) : '', duration_s: durationS, category_id: slot.category_id, clock_id: show.clock_id });
+        generatedRows.push({ scheduled_at: currentTs, song_id: picked.id, title: picked.title, artist: picked.artist_name || '', file_key: picked.file_path ? path.basename(picked.file_path) : '', duration_s: durationS, category_id: slot.category_id, clock_id: show.clock_id, pick_reason: pickReason });
         currentTs += durationS;
       } else { currentTs += slotDurationS; }
     }
@@ -7121,8 +7137,34 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
     }
   }
 }
-// ── PHASE 3 — the parity + goal-shadow ledger (2026-08-10) ───────────────────────────────────────
 
+// ── PHASE 4 — Rotation Analytics IPC (2026-08-10). READ-ONLY: every handler is a SELECT. ─────────
+ipcMain.handle('rotation:analytics', (_, stationId, fromTs, toTs) => {
+  try {
+    const ra = require('./rotation-analytics');
+    const sid = stationId || getActiveStationId();
+    const to = toTs || Math.floor(Date.now() / 1000);
+    const from = fromTs || (to - ra.DAY);
+    return { ok: true, data: ra.snapshot(db, sid, from, to) };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle('rotation:explain', (_, stationId, rowId) => {
+  try {
+    const ra = require('./rotation-analytics');
+    return { ok: true, data: ra.explainRow(db, stationId || getActiveStationId(), rowId) };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle('rotation:csv', (_, stationId, kind, fromTs, toTs) => {
+  try {
+    const ra = require('./rotation-analytics');
+    const sid = stationId || getActiveStationId();
+    const to = toTs || Math.floor(Date.now() / 1000);
+    const from = fromTs || (to - ra.DAY);
+    return { ok: true, csv: ra.toCsv(kind, ra.snapshot(db, sid, from, to)) };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// ── PHASE 3 — the parity + goal-shadow ledger (2026-08-10) ───────────────────────────────────────
 // Parity is a FACT to be measured, never an assumption. Every Generate run appends what the engine
 // and the legacy picker each decided, on the same candidates, plus (in goal mode) what goals WOULD
 // have aired. Rides the same honest-ledger path the log-reader flip's shadow used, so a week of runs

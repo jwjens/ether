@@ -973,15 +973,41 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                     if (pairs === 0) {
                       return <HealthRow label="Rotation goals" value={`${g.declared} declared · all clocks match`} status={"ok" as any} />;
                     }
-                    const worstClock = g.mismatches[0];
-                    const w = worstClock?.rows?.[0];
+                    // Phase 4: every mismatch, per clock — not just the worst one. A PD fixing a clock
+                    // needs the whole list, and the previous single-line summary made them guess at
+                    // the rest. Capped at 4 clocks × 5 rows so a badly-configured station cannot push
+                    // the rest of the panel off screen.
                     return (
-                      <HealthRow
-                        label="Rotation goals"
-                        value={`${pairs} mismatch${pairs === 1 ? "" : "es"} across ${g.mismatches.length} clock${g.mismatches.length === 1 ? "" : "s"}`}
-                        status={"warn" as any}
-                        sub={w ? `${worstClock.clock} — ${w.category} target ${w.target}/hr, ${w.unused ? "not in this clock" : `${w.slots} slot${w.slots === 1 ? "" : "s"}`} (${w.delta < 0 ? "under" : "over"} by ${Math.abs(w.delta)})` : undefined}
-                      />
+                      <>
+                        <HealthRow
+                          label="Rotation goals"
+                          value={`${pairs} mismatch${pairs === 1 ? "" : "es"} across ${g.mismatches.length} clock${g.mismatches.length === 1 ? "" : "s"}`}
+                          status={"warn" as any}
+                          sub={`${g.declared} categor${g.declared === 1 ? "y has" : "ies have"} a target · clocks not matching it`}
+                        />
+                        <div style={{ margin: "2px 0 6px 0", padding: "8px 12px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
+                          {g.mismatches.slice(0, 4).map((c: any) => (
+                            <div key={c.clockId} style={{ marginBottom: 6 }}>
+                              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                                {c.clock} <span style={{ color: "var(--text-tertiary)", fontWeight: 500, textTransform: "none", letterSpacing: 0 }}>· {c.musicSlots} music slots</span>
+                              </div>
+                              {c.rows.slice(0, 5).map((w: any) => (
+                                <div key={w.categoryId} style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", marginTop: 2 }}>
+                                  <span style={{ color: "var(--text-primary)" }}>{w.category}</span>
+                                  {"  target "}{w.target}/hr{"  ·  "}
+                                  {w.unused ? "not in this clock" : `${w.slots} slot${w.slots === 1 ? "" : "s"}`}
+                                  {"  ·  "}
+                                  <span style={{ color: w.delta < 0 ? "var(--accent-amber)" : "var(--accent-blue)", fontWeight: 700 }}>
+                                    {w.delta < 0 ? "under" : "over"} by {Math.abs(w.delta)}
+                                  </span>
+                                </div>
+                              ))}
+                              {c.rows.length > 5 && <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 2 }}>+{c.rows.length - 5} more in this clock</div>}
+                            </div>
+                          ))}
+                          {g.mismatches.length > 4 && <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>+{g.mismatches.length - 4} more clock(s) — full detail in Rotation Analytics</div>}
+                        </div>
+                      </>
                     );
                   })()}
                   {/* Item 2 — last Generate run bent the law (separation relaxed within category / empty). */}
