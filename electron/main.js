@@ -2406,6 +2406,11 @@ function buildMenu() {
       { type: "separator" },
       { label: "Program Log",      click: () => send("nav:programlog") },
       { label: "Play Log",         click: () => send("nav:logs") },
+      // 2026-08-10: added HERE, in the NATIVE menubar. Phase 4 first put Rotation Analytics into the
+      // React <Menu> blocks in App.tsx — which are not what this app renders. The visible menubar is
+      // this Electron template, so the item existed in the code and nowhere the operator could reach
+      // it. Exactly the "doors before rooms" failure: it's in the code is not shipped.
+      { label: "Rotation Analytics", click: () => send("nav:rotation") },
       { label: "Announcements",    click: () => send("nav:announce") },
       { label: "EAS Logbook",     click: () => send("nav:eas") },
     ]},
