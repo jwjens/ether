@@ -26,7 +26,12 @@ const os = require("os");
 // The list itself was the defect: it has to be updated by hand every time the daemon gains a require,
 // and nothing enforces that. It is now DERIVED. Every runtime .js in audiod/ is staged; only the test
 // scripts are excluded, and they are excluded by a naming rule, not by omission.
-const isTestScript = (n) => /^(smoke|accept|verify)-/.test(n);
+// Prefix rule for the hand-written benches, PLUS a suffix rule for vitest specs: audiod/ gained
+// scheduler-core.test.js (2026-08-10) and `.test.js` matched neither the prefix rule nor any
+// exclusion, so it would have been staged into the daemon — a file that imports vitest, shipped into
+// a runtime that has no vitest. Harmless only because nothing requires it. This is the third time
+// this list has been wrong about a file (see the header); closing the class, not the instance.
+const isTestScript = (n) => /^(smoke|accept|verify)-/.test(n) || /\.(test|spec)\.js$/.test(n);
 const isDaemonRuntimeFile = (n) => n.endsWith(".js") && !isTestScript(n);
 function daemonFiles(audiodDir) {
   return fs.readdirSync(audiodDir, { withFileTypes: true })
