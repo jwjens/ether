@@ -40,6 +40,19 @@ re-arrange or stack them, and drag the dividers to resize. Panes cannot be shrun
 restores that station's arrangement. It is never synced — how you arrange your screen is yours, not
 something that should rearrange a colleague's.
 
+**Layouts**, at the bottom of the Panels menu, are named arrangements for a particular job:
+
+| Layout | Opens | For |
+|---|---|---|
+| **Programming** | Shows · Clocks · Categories (+ Jingles, Spots) | Building the hour |
+| **Traffic** | Spots · Clocks · Jingles, Categories | Spot and break work |
+| **Analysis** | Rotation Analytics · Categories, Shows · Clocks | Reading what aired |
+
+Picking one **replaces your current arrangement** — same as Reset layout, and just as harmless: it
+moves panes, nothing else. From that moment it is simply your layout again. Drag it, resize it,
+close panes; it saves as normal. Nothing is locked and there is no mode to leave, which is why no
+layout is ever shown as "active" — the moment you moved a pane, the name would be a lie.
+
 **Panels** in the header lists every pane with a tick beside the open ones. Closing a pane with its
 **✕** is always reversible — tick it in this menu to bring it back. When something is closed the
 button turns amber and says how many are hidden, so a missing pane reads as recoverable.

@@ -21,6 +21,65 @@ export const LAYOUT_VERSION = 3;
 
 export interface StoredLayout { v: number; layout: unknown }
 
+// ── the pane registry ────────────────────────────────────────────────────────────────────────────
+/** Every pane the workspace can show. The Panels menu is generated from this, so a pane missing here
+ *  would be closable with no way back — the 4.4.174 defect. Pure data, kept out of the component so
+ *  the presets below can be checked against it by a test rather than by eye. */
+export const PANELS = [
+  { id: "shows", title: "Shows" },
+  { id: "clocks", title: "Clocks" },
+  { id: "categories", title: "Categories" },
+  { id: "spots", title: "Spots" },
+  { id: "jingles", title: "Jingles" },
+  { id: "rotation", title: "Rotation Analytics" },
+] as const;
+
+export type PanelId = (typeof PANELS)[number]["id"];
+
+// ── presets ──────────────────────────────────────────────────────────────────────────────────────
+//
+// A preset is an ARRANGEMENT, not a mode: it opens a set of panes in columns, and from that instant
+// it is just your layout again — drag it, resize it, close panes, and it persists as normal. There
+// is no preset "state" to get out of sync with the screen.
+//
+// Which is why THE STORED SHAPE IS UNCHANGED and LAYOUT_VERSION stays at 3. Recording "the active
+// preset" would have added a field, invalidating every saved layout for the third build running,
+// and bought only a tick in a menu — while inviting the lie where the stored name says Traffic and
+// the screen has been rearranged into something else.
+//
+// Each column is a group; ids after the first in a column open as TABS in that group.
+export interface LayoutPreset {
+  id: string;
+  title: string;
+  /** One line, shown under the name — says who it is for, not what it contains. */
+  description: string;
+  columns: PanelId[][];
+}
+
+export const PRESETS: LayoutPreset[] = [
+  {
+    id: "programming",
+    title: "Programming",
+    description: "Build the hour: shows, clocks, and the categories they draw from.",
+    columns: [["shows"], ["clocks"], ["categories", "jingles", "spots"]],
+  },
+  {
+    id: "traffic",
+    title: "Traffic",
+    description: "Spot work: categories to pull from, and the breaks that place them.",
+    columns: [["spots"], ["clocks"], ["jingles", "categories"]],
+  },
+  {
+    id: "analysis",
+    title: "Analysis",
+    description: "What actually aired, next to the targets and clocks that asked for it.",
+    columns: [["rotation"], ["categories", "shows"], ["clocks"]],
+  },
+];
+
+/** The arrangement a fresh workspace opens with — Programming, by name rather than by duplication. */
+export const DEFAULT_PRESET_ID = "programming";
+
 /** Decide whether a stored payload is usable. null means "rebuild the default layout".
  *  Every failure — absent, empty, corrupt JSON, wrong shape, old version, missing layout — returns
  *  null rather than throwing. A saved layout is ergonomics; it must never be able to block the panel. */

@@ -30,7 +30,7 @@ import type { DockviewApi, DockviewReadyEvent } from "dockview-react";
 import "dockview/dist/styles/dockview.css";
 
 import { useScheduleHub } from "../../hooks/useScheduleHub";
-import { LAYOUT_KEY, parseSavedLayout, serializeLayout } from "./layoutStore";
+import { LAYOUT_KEY, parseSavedLayout, serializeLayout, PANELS, PRESETS, DEFAULT_PRESET_ID, type LayoutPreset } from "./layoutStore";
 import { clocksUsingCategory } from "../../lib/scheduleData";
 import { ShowsTab } from "../scheduler/ShowsTab";
 import { ClocksTab } from "../scheduler/ClocksTab";
@@ -69,16 +69,8 @@ const useModel = () => {
 
 const MIN_PANE_PX = 220;
 
-/** Every pane the workspace can show. The Panels menu is generated from this — a pane that exists
- *  but is not listed here would be closable with no way back, which is the 4.4.174 defect. */
-const PANELS = [
-  { id: "shows", title: "Shows" },
-  { id: "clocks", title: "Clocks" },
-  { id: "categories", title: "Categories" },
-  { id: "spots", title: "Spots" },
-  { id: "jingles", title: "Jingles" },
-  { id: "rotation", title: "Rotation Analytics" },
-] as const;
+// PANELS and PRESETS are pure data in ./layoutStore, so a test can check every preset names a real
+// pane and that no pane is unreachable from all of them.
 
 // ── panes ────────────────────────────────────────────────────────────────────────────────────────
 function PaneFrame({ children }: { children: React.ReactNode }) {
@@ -243,24 +235,51 @@ export default function ScheduleWorkspace({ onOpenAnalytics, onUseFixedLayout }:
     api.addPanel({ id: def.id, component: def.id, title: def.title, ...(opts || {}) });
   }, []);
 
-  // Three columns, five panes: Spots and Jingles open as TABS in the Categories group ("within"),
-  // not as two more columns. Five columns at the 220px floor needs 1100px of width before any pane
-  // is usable, and both are reference surfaces consulted while editing a clock — not things to stare
-  // at continuously. Opening them (rather than leaving them shut) also keeps the Panels button from
-  // reading "2 hidden" on a fresh layout, which would announce a problem that isn't one.
-  const buildDefault = useCallback((api: DockviewApi) => {
-    addPanel(api, "shows");
-    addPanel(api, "clocks", { position: { referencePanel: "shows", direction: "right" } });
-    addPanel(api, "categories", { position: { referencePanel: "clocks", direction: "right" } });
-    addPanel(api, "spots", { position: { referencePanel: "categories", direction: "within" }, inactive: true });
-    addPanel(api, "jingles", { position: { referencePanel: "categories", direction: "within" }, inactive: true });
-    addPanel(api, "rotation", { position: { referencePanel: "categories", direction: "within" }, inactive: true });
-  }, [addPanel]);
-
+  // Declared before its callers: every useCallback below lists it as a dependency, and a dep array
+  // is evaluated during render, so a later `const` would be a temporal-dead-zone crash on mount.
   const syncOpen = useCallback((api: DockviewApi) => {
     setOpenIds(api.panels.map(p => p.id));
     for (const g of api.groups) { try { (g as any).api?.setConstraints?.({ minimumWidth: MIN_PANE_PX, minimumHeight: 120 }); } catch {} }
   }, []);
+
+  // A preset is COLUMNS of panes; anything after the first id in a column opens as a TAB in that
+  // group. Three columns rather than six: at the 220px floor, six side by side would need 1,320px
+  // before any one of them is usable, and the extras are surfaces you consult while working in the
+  // first two, not ones to stare at continuously. Opening them rather than leaving them shut also
+  // keeps the Panels button from reading "N hidden" on a fresh layout — announcing a problem that
+  // isn't one.
+  const applyPreset = useCallback((api: DockviewApi, preset: LayoutPreset) => {
+    let prevColumnAnchor: string | null = null;
+    for (const column of preset.columns) {
+      const [first, ...tabs] = column;
+      addPanel(api, first, prevColumnAnchor
+        ? { position: { referencePanel: prevColumnAnchor, direction: "right" } }
+        : undefined);
+      for (const t of tabs) {
+        // inactive: the column's first pane stays the visible tab.
+        addPanel(api, t, { position: { referencePanel: first, direction: "within" }, inactive: true });
+      }
+      prevColumnAnchor = first;
+    }
+  }, [addPanel]);
+
+  const buildDefault = useCallback((api: DockviewApi) => {
+    applyPreset(api, PRESETS.find(p => p.id === DEFAULT_PRESET_ID) ?? PRESETS[0]);
+  }, [applyPreset]);
+
+  // Switching preset REPLACES the arrangement, like Reset layout — in place, no reload, session
+  // untouched. From the moment it lands it is just your layout again: drag it, close panes, and it
+  // persists as normal. Nothing remembers which preset you picked, because nothing should claim a
+  // name for an arrangement you have since rearranged.
+  const selectPreset = useCallback((preset: LayoutPreset) => {
+    const api = apiRef.current;
+    if (!api) return;
+    try {
+      for (const p of [...api.panels]) api.removePanel(p);
+      applyPreset(api, preset);
+      syncOpen(api);
+    } catch { /* leave whatever is on screen rather than blanking it */ }
+  }, [applyPreset, syncOpen]);
 
   // Stable: onReady fires once, so reading the layout through a ref here is safe — unlike pane data,
   // which must be reactive and therefore goes through context.
@@ -369,7 +388,7 @@ export default function ScheduleWorkspace({ onOpenAnalytics, onUseFixedLayout }:
           {panelsMenu && (
             <>
               <div style={{ position: "fixed", inset: 0, zIndex: 40 }} onClick={() => setPanelsMenu(false)} />
-              <div style={{ position: "absolute", top: "calc(100% + var(--s-2))", right: 0, zIndex: 41, minWidth: 190, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", boxShadow: "var(--e-float)" }}>
+              <div style={{ position: "absolute", top: "calc(100% + var(--s-2))", right: 0, zIndex: 41, minWidth: 240, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", boxShadow: "var(--e-float)" }}>
                 {PANELS.map(p => {
                   const open = openIds.includes(p.id);
                   return (
@@ -379,6 +398,18 @@ export default function ScheduleWorkspace({ onOpenAnalytics, onUseFixedLayout }:
                     </button>
                   );
                 })}
+                {/* Layouts: named arrangements, not modes. Picking one replaces the arrangement and
+                    then gets out of the way — from that moment it is your layout again. */}
+                <div style={{ padding: "var(--s-3) var(--s-4) var(--s-2)", borderTop: "1px solid var(--border-primary)", fontSize: "var(--t-micro)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-tertiary)" }}>
+                  Layouts
+                </div>
+                {PRESETS.map(p => (
+                  <button key={p.id} onClick={() => { selectPreset(p); setPanelsMenu(false); }} title={p.description}
+                    style={{ display: "block", width: "100%", padding: "var(--s-3) var(--s-4)", background: "transparent", border: "none", borderBottom: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: "var(--t-body)", cursor: "pointer", textAlign: "left" }}>
+                    {p.title}
+                    <div style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)", marginTop: 2, whiteSpace: "normal" }}>{p.description}</div>
+                  </button>
+                ))}
                 <button onClick={() => { resetLayout(); setPanelsMenu(false); }}
                   style={{ width: "100%", padding: "var(--s-3) var(--s-4)", background: "transparent", border: "none", color: "var(--accent-blue)", fontSize: "var(--t-body)", fontWeight: 700, cursor: "pointer", textAlign: "left" }}>
                   Reset layout
