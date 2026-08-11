@@ -32,7 +32,28 @@ loop is starved in bursts rather than continuously.
 it is already being emitted. `hourMs` rides in every `schedule:generate-progress` payload. Nobody has
 read it.
 
-> **GATE 0 — MEASURE FIRST (half a day, no product code).** Capture `hourMs` across a 7-day generate
+> **GATE 0 — RESULT (2026-08-11): the worker is NOT justified on current data. See
+> `docs/generate-phase0-measurement-2026-08-11.md`.**
+>
+> Measured p95 hour slice: **5–24 ms** across all four stations; a full 7-day generate is ~1 s of
+> candidate SQL. That is an order of magnitude below this gate's own 300 ms bar. **§1 (the worker) is
+> dropped from the arc**; §2 (fuel gauge), §3 (auto-generation) and the §1.3 extraction proceed.
+>
+> Two corrections to this document, found by running it:
+> 1. **`hourMs` is not retrievable.** It is emitted and consumed by nothing — not the renderer, not
+>    the ledger, not any log. Phase 0 had to be run as a read-only proxy benchmark instead. The claim
+>    below that it merely went "unread" was too generous.
+> 2. **The 2026-07-21 17 s freeze is NOT explained by Generate's pick loop**, which cannot produce
+>    17 s at these library sizes. This document used that incident as motivation. Its real cause is
+>    still unknown, and the worker would not have fixed it.
+>
+> The worker becomes correct at scale — ~404 ms/hour at a 5,000-song category — but the cheaper and
+> better first move there is to fix `ORDER BY RANDOM()`, which sorts the whole category to pick one
+> song. Revisit at ~2,000 songs in a single category, or a measured `hourMs` p95 over 300 ms.
+>
+> ---
+>
+> **ORIGINAL GATE TEXT — MEASURE FIRST (half a day, no product code).** Capture `hourMs` across a 7-day generate
 > on OV's library. If the p95 hour slice is ~50 ms, the worker buys very little and this arc should be
 > re-scoped to auto-generation alone. If it is 300 ms+, every hour boundary is a visible stall and the
 > worker is justified on its own. **Do not build §1 before this number exists.** The 17 s freeze on
