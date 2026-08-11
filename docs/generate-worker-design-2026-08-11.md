@@ -267,6 +267,30 @@ In main, on the back of the horizon read that already happens in the `library-he
 sweep computes the runway; if it is under threshold and auto is on and no run is in flight, it posts
 a job to the worker. **No new scheduler, no new interval.**
 
+### 3.2b RULED 2026-08-11 — auto-generation DEFERS while in-process audio fallback is active
+
+The retraction (Phase 0 §0) left one honest argument standing: a generate burns ~0.96 cores on main
+for its duration. Responsiveness is fine — the 60 ms yield handles that — but when the audio daemon
+is NOT running and the app is in **in-process audio fallback**, the audio path shares that thread.
+An unattended background generate competing with playout is a risk taken on the operator's behalf,
+without them asking.
+
+**The answer is policy, not a thread:**
+
+- Before starting an auto-run, check the playout mode (`AUDIO_DAEMON` / the mode the Health Monitor
+  already reports as "in-process").
+- If in-process fallback is active, **do not start**. Emit a health event
+  `auto-generate-deferred { stationId, reason: "in-process-audio", horizonHours }` and try again on
+  the next sweep.
+- When the daemon is healthy again, the deferred run proceeds normally.
+- **Manual Generate is unaffected.** An operator pressing Generate has decided; the app does not
+  second-guess that. This rule governs only the unattended path.
+
+**The deferral must be visible, and it must not be silent forever.** If the horizon reaches the RED
+band while auto-generation is still deferred, that is no longer a deferral — it is a station heading
+for a dry log, and the Health Monitor says so in RED regardless of the reason. A quiet deferral that
+outlives the runway would be the same class of failure as a sense that stops writing.
+
 ### 3.3 Safety rails
 
 These exist because an automatic writer to the playout source is the highest-consequence thing in
