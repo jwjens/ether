@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, Fragment, Component, ReactNode } from "react";
+import { parseKvFlag } from "../lib/kvFlag";
 import { query, dbHealthCheck } from "../db/client";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStation";
@@ -343,9 +344,9 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   /** The single source of truth for this control: what station_config_kv actually holds. */
   const readFlip = useCallback(async (sid: number): Promise<boolean | null> => {
     try {
-      const r = await (window as any).ether?.invoke?.("station_config_kv:get-value", sid, "log_reader_flip");
-      if (!r || !r.ok) return null;
-      return r.value === "1" || r.value === "true";
+      // Same parser as the auto-generate switch, so the two cannot drift again. `false` is this
+      // flag's unset default: the flip is a canary you opt into, unlike auto-generation.
+      return parseKvFlag(await (window as any).ether?.invoke?.("station_config_kv:get-value", sid, "log_reader_flip"), false);
     } catch { return null; }
   }, []);
 
@@ -354,11 +355,18 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   // one station failing to read leaves the others alone instead of resetting everything.
   const readAutoGen = useCallback(async (sid: number): Promise<boolean | null> => {
     try {
-      const v = await (window as any).ether?.invoke?.("station_config_kv:get-value", sid, "auto_generate");
-      if (v === null || v === undefined || v === "") return true;      // unset = ON, matching main.js
-      return String(v) !== "0";
+      // The IPC returns an ENVELOPE { ok, value }. 4.4.183 compared that object against "0" — never
+      // equal — so a stored OFF read back as ON and the button snapped back on every click.
+      return parseKvFlag(await (window as any).ether?.invoke?.("station_config_kv:get-value", sid, "auto_generate"), true);
     } catch { return null; }
   }, []);
+
+  // Race guard. The Health Monitor re-polls, and refreshFlipFlags walks stations one at a time with
+  // an await per station — so a click landing mid-walk would be overwritten by a read that was
+  // already in flight before the write. Each click bumps this station's sequence; a refresh discards
+  // its own result if the sequence moved while it was reading.
+  const autoSeq = useRef<Record<number, number>>({});
+  const autoSeqNext = useRef(0);
 
   const refreshFlipFlags = useCallback(async () => {
     const sts = (libHealth?.stations || []) as any[];
@@ -367,22 +375,35 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
       setFlipFlags(prev => ({ ...prev, [st.stationId]: v }));
       // Same per-station, one-at-a-time read for the auto-generate switch: a station that fails to
       // read leaves the others alone rather than resetting the whole map.
+      const seqBefore = autoSeq.current[st.stationId] || 0;
       const a = await readAutoGen(st.stationId);
-      setAutoGen(prev => ({ ...prev, [st.stationId]: a }));
+      // Discard a read that a click overtook while it was in flight — that stale value landing after
+      // the click is precisely what makes a toggle flicker back.
+      if ((autoSeq.current[st.stationId] || 0) === seqBefore) setAutoGen(prev => ({ ...prev, [st.stationId]: a }));
     }
   }, [libHealth, readFlip, readAutoGen]);
   useEffect(() => { refreshFlipFlags(); }, [refreshFlipFlags]);
 
   /** Flip a station. Reads the stored value, writes its opposite, then renders the read-back. */
   const toggleAutoGen = async (sid: number) => {
+    // CONTROLLED: the button paints from `autoGen`, and that flips SYNCHRONOUSLY on click. The value
+    // written is derived from the same state the operator just saw, so there is no read-then-write
+    // window in which the button can show one thing and the store hold another.
+    const shown = autoGen[sid];
+    const target = shown === false;            // showing OFF (or unknown->ON) -> the click means the opposite
+    const seq = ++autoSeqNext.current;
+    autoSeq.current[sid] = seq;
+    setAutoGen(prev => ({ ...prev, [sid]: target }));   // optimistic: no flicker, no spinner
     setAutoBusy(sid);
     try {
-      const current = await readAutoGen(sid);
-      const target = !(current !== false);                              // unreadable/on -> off
       await (window as any).ether?.invoke?.("station_config_kv:set-local", sid, "auto_generate", target ? "1" : "0");
-      // Render what is STORED, not what was asked for — the flip canary's lesson.
+      // Then reconcile against the store, because optimistic paint must never become a lie: if the
+      // write was refused the button snaps to what is actually stored rather than to what was asked.
       const after = await readAutoGen(sid);
-      setAutoGen(prev => ({ ...prev, [sid]: after }));
+      if (autoSeq.current[sid] === seq) setAutoGen(prev => ({ ...prev, [sid]: after }));
+    } catch {
+      const after = await readAutoGen(sid);
+      if (autoSeq.current[sid] === seq) setAutoGen(prev => ({ ...prev, [sid]: after }));
     } finally { setAutoBusy(null); }
   };
 
@@ -1126,7 +1147,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                         color: autoGen[st.stationId] === false ? "var(--text-tertiary)" : "#062",
                         opacity: autoBusy === st.stationId ? 0.6 : 1,
                       }}
-                    >{autoBusy === st.stationId ? "…" : autoGen[st.stationId] === false ? "AUTO OFF" : "AUTO ON"}</button>
+                    >{autoGen[st.stationId] === false ? "AUTO OFF" : "AUTO ON"}</button>
                   </div>
                   {err && (
                     <div style={{ fontSize: 9, color: "#f87171", marginTop: 3, textAlign: "right" as const }}>{err}</div>
