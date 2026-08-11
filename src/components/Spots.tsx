@@ -36,7 +36,11 @@ const TYPE_COLORS: Record<string, string> = {
   liner: "#fb923c", sweeper: "#4f46e5", commercial: "#fbbf24", imaging: "var(--accent-cyan)",
 };
 
-export default function Spots() {
+// Hosted in the Schedule Manager's docking shell as the Spots pane (v2 Phase 2). Optional prop,
+// self-sufficient by default, so the standalone "Spots & Promos" panel is byte-for-byte unchanged.
+// onMutated tells the hub a spot category moved, which is what refreshes the Clocks pane's segment
+// picker and break rows — they read categories from the store, not from here.
+export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) => void } = {}) {
   const engine = useAudioEngine();
   const { stationId, isReady } = useActiveStation();
   const [spots, setSpots] = useState<Spot[]>([]);
@@ -155,12 +159,12 @@ export default function Spots() {
     const name = newCatName.trim(); if (!name) return;
     const res = await (window as any).ether.spotCategories.create({ station_id: stationId, name, color: newCatColor });
     if (res?.ok === false) { setStatus("Could not add category: " + (res.error || "")); setTimeout(() => setStatus(""), 4000); return; }
-    setNewCatName(""); loadCats();
+    setNewCatName(""); loadCats(); onMutated?.(["spot_categories"]);
   };
   const saveCat = async () => {
     if (!editCat || !editCat.name.trim()) return;
     await (window as any).ether.spotCategories.updateById(editCat.id, { name: editCat.name.trim(), color: editCat.color });
-    setEditCat(null); loadCats();
+    setEditCat(null); loadCats(); onMutated?.(["spot_categories"]);
   };
   const removeCat = async (c: SpotCategory) => {
     const refs = await (window as any).ether.spotCategories.refs(c.uuid);
@@ -170,7 +174,9 @@ export default function Spots() {
       : `Delete "${c.name}"?\n\nIt's used by ${breaks} timed break(s) and ${spots} spot(s). Deleting will set those breaks to "Any spot" and make those spots uncategorized. This changes what airs on the next Generate.\n\nDelete anyway?`;
     if (!confirm(msg)) return;
     await (window as any).ether.spotCategories.delete(c.uuid, stationId);
-    loadCats(); load();
+    // A delete also rewrites the breaks that pointed at it ("Any spot"), so the Clocks pane must
+    // re-read clock_breaks too — otherwise it keeps showing a category that no longer exists.
+    loadCats(); load(); onMutated?.(["spot_categories", "clock_breaks"]);
   };
 
   const handleImport = async () => {

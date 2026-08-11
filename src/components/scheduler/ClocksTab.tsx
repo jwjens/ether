@@ -170,6 +170,12 @@ function SegmentPicker({ cats, spotCats, onAdd, onClose }: {
 export interface ClocksTabProps {
   clocks?: Clock[];
   cats?: Category[];
+  /** Spot categories from the store. Self-fetches when absent, so the tabs are unchanged. */
+  spotCats?: { id: number; name: string; color: string | null; uuid: string }[];
+  /** Hide the inline Spot Categories card. Set by the DOCKING SHELL only, where a dedicated Spots
+   *  pane owns them — spots were cramping the clock grid, which is why they moved. The tabbed view
+   *  and v1's fixed workspace keep the card, because neither has a Spots pane to send you to. */
+  hideSpotCategories?: boolean;
   onMutated?: (tables?: string[]) => void;
   clockId?: number | null;
   onSelectClock?: (clockId: number | null) => void;
@@ -179,7 +185,7 @@ export interface ClocksTabProps {
   advisor?: Record<number, { rows: { category: string; target: number; slots: number; delta: number; unused: boolean }[]; musicSlots: number }>;
 }
 
-export function ClocksTab({ clocks: clocksProp, cats: catsProp, onMutated, clockId, onSelectClock, highlightClockIds, advisor }: ClocksTabProps = {}) {
+export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCatsProp, hideSpotCategories, onMutated, clockId, onSelectClock, highlightClockIds, advisor }: ClocksTabProps = {}) {
   const hosted = !!onMutated;
   const controlled = clockId !== undefined;
   const { stationId, isReady } = useActiveStation();
@@ -193,7 +199,11 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, onMutated, clock
   const cats = catsProp ?? catsLocal;
   const selected = controlled ? (clockId ?? null) : selectedLocal;
   const setSelected = (id: number | null) => { if (controlled) onSelectClock?.(id); else setSelectedLocal(id); };
-  const [spotCats, setSpotCats]   = useState<{ id: number; name: string; color: string | null; uuid: string }[]>([]);
+  const [spotCatsLocal, setSpotCats] = useState<{ id: number; name: string; color: string | null; uuid: string }[]>([]);
+  // The clock editor NEEDS spot categories even though it no longer manages them: the segment
+  // picker assigns one to a spot slot, a new break defaults to one, and the break rows list them.
+  // So this is data flow, not ownership — which is why the Spots extraction was never a line move.
+  const spotCats = spotCatsProp ?? spotCatsLocal;
   const [breaks, setBreaks]       = useState<{ id: number; uuid: string; minute: number; spot_category_id: number | null; count: number }[]>([]);
   const [breaksSaved, setBreaksSaved] = useState(false);
   const [spotCatCounts, setSpotCatCounts] = useState<Record<number, number>>({});
@@ -335,7 +345,11 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, onMutated, clock
     setBreaks(((res?.rows) || []).map((r: any) => ({ id: r.id, uuid: r.uuid, minute: r.minute, spot_category_id: r.spot_category_id, count: r.count })));
   };
 
-  useEffect(() => { if (hosted) { loadSpotCats(); } else { loadAll(); } }, [isReady, stationId, hosted]);
+  // spotCatsProp in the deps: hosted, the Spots pane owns category CRUD, and its writes reach the
+  // store — but the per-break "0 eligible spots" warning is computed HERE, from the spots table. Its
+  // whole job is to be true (v4.4.83), so it re-checks whenever the store's category list changes.
+  // Unhosted the prop is a stable undefined, so the tabbed view re-fetches exactly as before.
+  useEffect(() => { if (hosted) { loadSpotCats(); } else { loadAll(); } }, [isReady, stationId, hosted, spotCatsProp]);
   useEffect(() => { if (selected) { loadSlots(selected); loadBreaks(selected); } else { setSlots([]); setBreaks([]); } }, [selected]);
 
   // ── Timed spot breaks (per clock; the generator reads clock_breaks) ──
@@ -995,6 +1009,10 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, onMutated, clock
             {/* ── Spots row: categories + timed breaks, side by side (stack on narrow) ── */}
             <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 16, marginTop: 16, alignItems: "flex-start", order: 4 }}>
 
+              {/* Spot Categories — HIDDEN in the docking shell, where the Spots pane owns them.
+                  Kept in the tabbed view and v1's fixed workspace, neither of which has a Spots
+                  pane to send you to. Spots cramping the clock grid is why they moved. */}
+              {!hideSpotCategories && (<>
               {/* Spot Categories (per station) — managed here so categories + breaks work together */}
               <div style={{ flex: "1 1 340px", minWidth: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 16 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", marginBottom: 3, fontFamily: "'Newsreader', Georgia, serif" }}>Spot Categories</div>
@@ -1031,6 +1049,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, onMutated, clock
                   <button onClick={addSpotCat} style={{ padding: "6px 12px", fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", flexShrink: 0 }}>Add</button>
                 </div>
               </div>
+              </>)}
 
               {/* Timed Spot Breaks (per clock) — anchor spots to a minute; music fills around them */}
               <div style={{ flex: "1 1 340px", minWidth: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 16 }}>

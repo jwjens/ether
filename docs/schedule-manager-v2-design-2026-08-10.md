@@ -85,6 +85,12 @@ dockview's CSS-variable theming is the deciding factor: our design language is a
 
 Same method as Phase A, which is proven: **move by exact line range, diff for byte-identity, re-export from the original so nothing that imports it notices.** Do not retype it.
 
+> **CORRECTED BY THE BUILD (§14).** This paragraph is wrong twice. (1) It is not a line move: the
+> clock editor still *needs* the spot-category list after the card is gone, so the split is a
+> dependency untangle, not an extraction. (2) There was nothing to extract *to* — `Spots.tsx`, the
+> shipped Spots & Promos manager, already owned this exact CRUD. What shipped hides the card here
+> and hosts that panel. See §14.
+
 The split leaves a question the doc cannot answer alone: **timed breaks belong to a clock**, so a Spots pane showing another clock's breaks would be confusing. Proposal: Spots pane owns *spot categories* (station-wide) and the **Clocks pane keeps timed breaks** (per-clock). Flagged for Jeff — see §9.
 
 ---
@@ -423,3 +429,94 @@ guard, context linking and the inline advisor are all live.
 **Still open from the audit:** `App.tsx:2023` — the ≡ menu's Reset Layout is still
 `() => window.location.reload()` and signs the operator out the same way ours did. Same defect
 class, pre-existing, not touched by this work.
+
+---
+
+## 13. Design decisions — RESOLVED (Jeff, 2026-08-10)
+
+**Q1 — timed breaks: Spots pane or Clocks pane?**
+**Timed breaks STAY in the Clocks pane.** They belong to a clock, so a station-wide Spots pane
+showing one clock's breaks would be confusing. The **Spots pane owns spot categories only** —
+station-wide traffic buckets, which is genuinely station-scoped data.
+
+**Q2 — shadow sweep scope?**
+**Shell + six panes only**, as recommended. StudioPro's 35 shadows are a separate cosmetic pass with
+its own risk; bundling them would make both harder to review.
+
+Q3 (v2 replaces v1's fixed layout?), Q4 (bundle — ANSWERED, accepted §11) and Q5 (spike failure
+contingency — moot, it passed) remain as recorded.
+
+---
+
+## 14. Phase 2 — RESULT (2026-08-10, 4.4.176)
+
+Shipped: Spots pane, Jingles pane, `LAYOUT_VERSION` 1 → 2. Verified by Jeff.
+
+### 14.1 The Spots pane is the SHIPPED manager, hosted — not a new pane
+
+§2.1 and Jeff's ruling both described a Spots pane doing category CRUD against
+`ether.spotCategories.*`. That pane was started, then abandoned mid-build: `src/components/Spots.tsx`
+— the shipped **Spots & Promos** manager, on the main menu since long before this project — already
+owned `addCat` / `saveCat` / `removeCat`, including the same confirm-with-consequences delete text
+the Clocks card used.
+
+Building the specified pane would have produced a **third editor for one table** (Spots & Promos,
+the ClocksTab card, and the new pane). The deviation delivers the ruling's substance — the Clocks
+pane no longer manages categories, the Spots surface does — without the duplicate.
+
+Cost of the miss: one component written and deleted. **The search that would have prevented it is
+the one CLAUDE.md already mandates** ("search for prior implementations first"). It was run against
+`ClocksTab` and the design doc, not against the feature name.
+
+`Spots.tsx` gained exactly one optional prop, `onMutated`. Unhosted it is unchanged.
+
+### 14.2 What did NOT move
+
+| Thing | Lives | Why |
+|---|---|---|
+| Spot categories | Spots pane | Station-wide |
+| **Timed breaks** | **Clocks pane, untouched** | A break belongs to its clock (Jeff's ruling, §13) |
+
+`hideSpotCategories` is passed by the **docking shell alone** — confirmed across all four
+`<ClocksTab>` call sites. The tabbed view, both popouts and v1's Fixed layout keep the card, because
+none of them has a Spots pane to send you to.
+
+The clock editor still receives the category list: the segment picker, break defaults, break rows
+and the **⚠ 0 eligible spots** warning (v4.4.83) all name categories. That warning is computed in
+`ClocksTab` from the `spots` table, so `spotCatsProp` is in its loader's deps — a category change in
+the Spots pane re-checks it. A warning whose only job is to be true must not go stale.
+
+### 14.3 Jingles
+
+`JinglesPanel` hosted via the same optional-prop pattern. It self-fetches pools, overlay songs and
+the fallback; only its two writes to the hub-owned `categories` table (`assignCategory`, `setHours`)
+call `onMutated`. The JINGLES push-up remains the canonical imaging home per CLAUDE.md — this is the
+same panel beside the clocks it feeds, not a rival surface.
+
+### 14.4 Layout v2 — the fallback is now tested, not reasoned about
+
+Parse/serialize moved to `src/components/schedule/layoutStore.ts` (pure: no React, no window, no
+IPC) with **6 tests**, including the exact v1 payload 4.4.174 wrote, a future-version payload, and
+every corrupt shape.
+
+The reason it is tested rather than argued: **this branch had never executed.** v1 was the only
+version that had ever existed, so no operator had ever loaded a stale layout — and this release
+fires the path on every install at once. A branch whose first execution is simultaneous across the
+fleet is not one to verify by reading.
+
+Version lives **inside** the payload, not in the KV key, so an upgrade overwrites the old layout
+instead of orphaning a row per version forever.
+
+### 14.5 Default layout: three columns, five panes
+
+Spots and Jingles open as **tabs** in the Categories group (`direction: 'within'`, `inactive: true`
+— both confirmed against dockview's shipped typings, not assumed). Five columns at the 220px floor
+needs 1100px before any pane is usable, and both are surfaces consulted *while* building a clock.
+Opening them rather than leaving them shut also stops the Panels button reading "2 hidden" on a
+fresh layout — announcing a problem that isn't one.
+
+### 14.6 Carried forward
+
+- `spotCatCounts` in `ClocksTab` is now read only by the hidden card: dead in the shell, live in the
+  tabbed view. Left alone deliberately — removing it would touch both paths for no user-visible gain.
+- Rotation Analytics remains a link, not a pane (Phase 3).

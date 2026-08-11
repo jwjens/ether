@@ -1,9 +1,9 @@
 ---
 feature: schedule-manager
 title: Schedule Manager
-summary: Shows, Clocks and Categories side by side in one window, linked — pick a category and the clocks using it light up; edit anything and all three panes refresh.
+summary: Shows, Clocks, Categories, Spots and Jingles side by side in one window, linked — pick a category and the clocks using it light up; edit anything and every pane refreshes.
 where: Menu → Schedule Manager · or Schedule → Schedule Manager in the menubar
-since: 4.4.172
+since: 4.4.172 (Spots and Jingles panes added 4.4.176)
 audience: programmer
 tour: true
 ---
@@ -16,15 +16,20 @@ Shows, Clocks and Categories have always been **tabs** — you could look at one
 fine for editing one thing and useless for the question programming actually asks: *does my clock
 match what I said I wanted?*
 
-The Schedule Manager puts all three in one window and links them:
+The Schedule Manager puts the whole picture in one window and links it:
 
 ```
-┌──────────────┬────────────────────────────┬─────────────────┐
-│ SHOWS        │ CLOCK                      │ CATEGORIES      │
-│ which clock  │ the hour grid for the      │ targets and     │
-│ airs when    │ selected show's clock      │ library depth   │
-└──────────────┴────────────────────────────┴─────────────────┘
+┌──────────────┬────────────────────────────┬──────────────────────────────┐
+│ SHOWS        │ CLOCK                      │ CATEGORIES │ SPOTS │ JINGLES │
+│ which clock  │ the hour grid for the      │ ───────────┴───────┴──────── │
+│ airs when    │ selected show's clock      │ targets and library depth    │
+└──────────────┴────────────────────────────┴──────────────────────────────┘
 ```
+
+**Categories, Spots and Jingles share the right-hand column as tabs.** Click a tab to switch. Five
+columns side by side would leave every one of them too narrow to use, and Spots and Jingles are
+things you consult while building a clock rather than watch continuously. Drag any tab out if you
+want it as its own column — see *Arranging it*.
 
 ## Arranging it
 
@@ -35,8 +40,16 @@ re-arrange or stack them, and drag the dividers to resize. Panes cannot be shrun
 restores that station's arrangement. It is never synced — how you arrange your screen is yours, not
 something that should rearrange a colleague's.
 
-**Reset layout** in the header puts everything back to the default three panes. No confirmation, no
-data affected — it only moves panes.
+**Panels** in the header lists every pane with a tick beside the open ones. Closing a pane with its
+**✕** is always reversible — tick it in this menu to bring it back. When something is closed the
+button turns amber and says how many are hidden, so a missing pane reads as recoverable.
+
+**Reset layout** in the header puts everything back to the default arrangement. No confirmation, no
+data affected, and **you stay signed in** — it only moves panes.
+
+> **After updating to 4.4.176 your saved arrangement is rebuilt once.** Two new panes exist that
+> your old layout had never heard of; restoring it would have left Spots and Jingles invisible with
+> no way to reach them. Arrange it again and it will stick.
 
 **Fixed layout** switches to the older non-dockable three-pane view if you prefer it.
 
@@ -46,10 +59,37 @@ data affected — it only moves panes.
 |---|---|
 | **Click a category** | The strip at the top names its target and library depth; clocks that use it get an amber border |
 | **Click a show** | The Clock pane focuses that show's clock |
-| **Edit anything** | All three panes refresh — one store, one refresh |
+| **Edit anything** | Every pane refreshes — one store, one refresh |
+| **Add or delete a spot category** | The Clock pane's break rows and segment picker update with it |
+| **Assign a jingle to a category** | The Categories pane picks the change up |
 
 The panes are the **same editors** as the tabs and popouts. Anything you can do there you can do
 here, and vice versa; nothing was rebuilt.
+
+## Spots and Jingles
+
+**Spots** is the full *Spots & Promos* manager — the same one on the main menu, hosted here so you
+can build a break without leaving the clock you are building it for. Spot categories are created,
+renamed and deleted here.
+
+**Jingles** is the same panel as the JINGLES push-up at the bottom of the screen, which remains its
+home. Use it here to see which music categories carry imaging while you look at the clock.
+
+### Where spot categories moved, and what did not move
+
+| Thing | Where it lives | Why |
+|---|---|---|
+| **Spot categories** (the buckets) | **Spots** pane | They belong to the station, not to any one clock |
+| **Timed breaks** ("3 spots at :20") | **Clocks** pane, unchanged | A break belongs to the clock it is on |
+
+The Clocks pane used to carry a Spot Categories card beside the breaks editor, and it crowded the
+part of the pane you actually work in. In this window that card is gone and the Spots pane owns it.
+**In the tabbed view and the Fixed layout the card is still there**, because neither of those has a
+Spots pane to send you to.
+
+The Clock pane still names categories everywhere it did before — the segment picker, break defaults
+and break rows are untouched, including the **⚠ 0 eligible spots** warning on a break that would air
+nothing.
 
 ## The inline advisor
 
@@ -83,13 +123,15 @@ Schedule Manager is an additional door onto the same rooms — use whichever sui
 
 ## What it does NOT do
 
-- **It does not change what airs.** It edits the same shows, clocks and categories through the same
-  write paths. Generation and playout are untouched.
-- **It does not change what airs.** Same shows, same clocks, same write paths.
+- **It does not change what airs.** It edits the same shows, clocks, categories, spots and jingles
+  through the same write paths. Generation and playout are untouched.
 - **Rotation Analytics is a link, not a pane.** The button in the header opens it; embedding it is
   for a later version.
+- **Your layout is not your colleague's.** It is stored per station on this machine and never synced.
 
 ## Related
 
 **Station Health → Rotation goals** — the same advisor, for every clock at once.
 **Rotation Analytics** — what the log actually did, after generation.
+**Spots & Promos** — the same manager the Spots pane hosts.
+**Jingles & Sweepers** — the same panel the Jingles pane hosts; the push-up is its home.

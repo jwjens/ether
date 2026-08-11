@@ -30,10 +30,13 @@ import type { DockviewApi, DockviewReadyEvent } from "dockview-react";
 import "dockview/dist/styles/dockview.css";
 
 import { useScheduleHub } from "../../hooks/useScheduleHub";
+import { LAYOUT_KEY, parseSavedLayout, serializeLayout } from "./layoutStore";
 import { clocksUsingCategory } from "../../lib/scheduleData";
 import { ShowsTab } from "../scheduler/ShowsTab";
 import { ClocksTab } from "../scheduler/ClocksTab";
 import { CategoriesTab } from "../scheduler/CategoriesTab";
+import Spots from "../Spots";
+import JinglesPanel from "../JinglesPanel";
 import type { ClockSlot } from "../scheduler/types";
 
 // ── dev instrumentation (kept from the Phase 0 spike) ────────────────────────────────────────────
@@ -44,7 +47,7 @@ const STATS_ON = (() => {
     return window.localStorage?.getItem("ether.dockstats") === "1";
   } catch { return false; }
 })();
-const renderCounts = { shell: 0, shows: 0, clocks: 0, categories: 0 };
+const renderCounts = { shell: 0, shows: 0, clocks: 0, categories: 0, spots: 0, jingles: 0 };
 
 export type GoalRow = { categoryId: number; category: string; target: number; slots: number; delta: number; unused: boolean };
 type GoalClock = { clockId: number; clock: string; musicSlots: number; rows: GoalRow[] };
@@ -63,8 +66,6 @@ const useModel = () => {
   return m;
 };
 
-const LAYOUT_KEY = "schedule_layout_v1";
-const LAYOUT_VERSION = 1;
 const MIN_PANE_PX = 220;
 
 /** Every pane the workspace can show. The Panels menu is generated from this — a pane that exists
@@ -73,6 +74,8 @@ const PANELS = [
   { id: "shows", title: "Shows" },
   { id: "clocks", title: "Clocks" },
   { id: "categories", title: "Categories" },
+  { id: "spots", title: "Spots" },
+  { id: "jingles", title: "Jingles" },
 ] as const;
 
 // ── panes ────────────────────────────────────────────────────────────────────────────────────────
@@ -101,9 +104,13 @@ const components = {
     const { hub, advisorByClock, highlightClockIds } = useModel();
     return (
       <PaneFrame>
+        {/* hideSpotCategories: the Spots pane manages them here. Timed BREAKS stay on this pane —
+            they belong to a clock. The clock editor still receives the category list, because the
+            segment picker and the break rows name categories. */}
         <ClocksTab clocks={hub.clocks} cats={hub.categories} onMutated={hub.onMutated}
           clockId={hub.selection.clockId} onSelectClock={hub.selectClock}
-          highlightClockIds={highlightClockIds} advisor={advisorByClock} />
+          highlightClockIds={highlightClockIds} advisor={advisorByClock}
+          spotCats={hub.spotCategories} hideSpotCategories />
       </PaneFrame>
     );
   },
@@ -115,6 +122,30 @@ const components = {
         <CategoriesTab cats={hub.categories} onMutated={hub.onMutated}
           selectedCategoryId={hub.selection.categoryId} onSelectCategory={hub.selectCategory}
           depth={depth} />
+      </PaneFrame>
+    );
+  },
+  // Spots & Promos, the shipped traffic manager — hosted whole, not re-implemented. It already owned
+  // spot-category create/rename/delete; a second category editor in this shell would have been a
+  // third surface for one table.
+  spots: () => {
+    if (STATS_ON) renderCounts.spots++;
+    const { hub } = useModel();
+    return (
+      <PaneFrame>
+        <Spots onMutated={hub.onMutated} />
+      </PaneFrame>
+    );
+  },
+  // The JINGLES push-up stays the canonical imaging home (per CLAUDE.md); this is the same panel
+  // hosted beside the clocks it feeds, not a rival surface.
+  jingles: () => {
+    if (STATS_ON) renderCounts.jingles++;
+    const { hub } = useModel();
+    if (!hub.stationId) return <PaneFrame><div style={{ color: "var(--text-tertiary)", fontSize: "var(--t-body)" }}>No station selected.</div></PaneFrame>;
+    return (
+      <PaneFrame>
+        <JinglesPanel stationId={hub.stationId} onMutated={hub.onMutated} />
       </PaneFrame>
     );
   },
@@ -171,8 +202,7 @@ export default function ScheduleWorkspace({ onOpenAnalytics, onUseFixedLayout }:
       if (!hub.isReady || !hub.stationId) return;
       try {
         const raw = await (window as any).ether?.invoke?.("station_config_kv:get-value", hub.stationId, LAYOUT_KEY);
-        const parsed = raw ? JSON.parse(raw) : null;
-        if (!stop) setInitialLayout(parsed && parsed.v === LAYOUT_VERSION ? parsed.layout : null);
+        if (!stop) setInitialLayout(parseSavedLayout(raw));
       } catch { if (!stop) setInitialLayout(null); }
     })();
     return () => { stop = true; };
@@ -186,7 +216,7 @@ export default function ScheduleWorkspace({ onOpenAnalytics, onUseFixedLayout }:
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       try {
-        const payload = JSON.stringify({ v: LAYOUT_VERSION, layout: api.toJSON() });
+        const payload = serializeLayout(api.toJSON());
         // set-local: layouts are per-machine ergonomics. Syncing one would rearrange a colleague's screen.
         (window as any).ether?.invoke?.("station_config_kv:set-local", stationRef.current, LAYOUT_KEY, payload);
       } catch { /* a lost layout is cosmetic */ }
@@ -199,10 +229,17 @@ export default function ScheduleWorkspace({ onOpenAnalytics, onUseFixedLayout }:
     api.addPanel({ id: def.id, component: def.id, title: def.title, ...(opts || {}) });
   }, []);
 
+  // Three columns, five panes: Spots and Jingles open as TABS in the Categories group ("within"),
+  // not as two more columns. Five columns at the 220px floor needs 1100px of width before any pane
+  // is usable, and both are reference surfaces consulted while editing a clock — not things to stare
+  // at continuously. Opening them (rather than leaving them shut) also keeps the Panels button from
+  // reading "2 hidden" on a fresh layout, which would announce a problem that isn't one.
   const buildDefault = useCallback((api: DockviewApi) => {
     addPanel(api, "shows");
     addPanel(api, "clocks", { position: { referencePanel: "shows", direction: "right" } });
     addPanel(api, "categories", { position: { referencePanel: "clocks", direction: "right" } });
+    addPanel(api, "spots", { position: { referencePanel: "categories", direction: "within" }, inactive: true });
+    addPanel(api, "jingles", { position: { referencePanel: "categories", direction: "within" }, inactive: true });
   }, [addPanel]);
 
   const syncOpen = useCallback((api: DockviewApi) => {
@@ -217,8 +254,11 @@ export default function ScheduleWorkspace({ onOpenAnalytics, onUseFixedLayout }:
     apiRef.current = api;
     let restored = false;
     if (layoutRef.current) {
-      // A corrupt or stale layout must never block the panel. Phase 2 will make every saved v1
-      // layout stale by adding panes — bump LAYOUT_VERSION there so they are ignored by design.
+      // A corrupt or stale layout must never block the panel. Phase 2 made every saved v1 layout
+      // stale by adding panes; the version gate above already turned those into null, so this only
+      // ever sees a v2 layout. The try/catch stays for a corrupt payload: fall through to defaults.
+      // `panels.length > 0` is the second guard — a layout that parses to an EMPTY workspace is
+      // indistinguishable from a broken one to the operator, so it is rebuilt rather than shown.
       try { api.fromJSON(layoutRef.current); restored = api.panels.length > 0; } catch { restored = false; }
     }
     if (!restored) buildDefault(api);
@@ -300,7 +340,7 @@ export default function ScheduleWorkspace({ onOpenAnalytics, onUseFixedLayout }:
           {STATS_ON && (
             <span style={{ ...btn, cursor: "default", fontFamily: "'DM Mono', monospace", color: "var(--accent-amber)" }}
               onClick={() => forceStats(n => n + 1)}>
-              shell {renderCounts.shell} · s{renderCounts.shows} c{renderCounts.clocks} k{renderCounts.categories}
+              shell {renderCounts.shell} · s{renderCounts.shows} c{renderCounts.clocks} k{renderCounts.categories} p{renderCounts.spots} j{renderCounts.jingles}
             </span>
           )}
 

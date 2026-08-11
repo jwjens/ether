@@ -29,7 +29,12 @@ const rangeFromMask = (mask: number) => {
 };
 const hhLabel = (h: number) => `${((h % 12) || 12)}${h < 12 ? "a" : "p"}`;
 
-export default function JinglesPanel({ stationId }: { stationId: number }) {
+// Hosted in the Schedule Manager's docking shell as the Jingles pane (v2 Phase 2). It keeps its own
+// fetching — pools, overlay songs and the fallback are its data alone. The one overlap is the music
+// CATEGORY rows it patches (overlay_kind / overlay_song_id / overlay_category_id / overlay_active_hours),
+// which the hub also owns; onMutated is how the Categories pane learns an assignment changed.
+// Optional, so the JINGLES push-up (its canonical home) is unchanged.
+export default function JinglesPanel({ stationId, onMutated }: { stationId: number; onMutated?: (tables?: string[]) => void }) {
   const [tab, setTab] = useState<"JIN" | "SWP">("JIN");
   const [pools, setPools] = useState<Pool[]>([]);
   const [songs, setSongs] = useState<OverlaySong[]>([]);
@@ -76,10 +81,10 @@ export default function JinglesPanel({ stationId }: { stationId: number }) {
     let patch: Partial<MusicCat> = { overlay_kind: null, overlay_song_id: null, overlay_category_id: null };
     if (value.startsWith("item:")) patch = { overlay_kind: "item", overlay_song_id: Number(value.slice(5)), overlay_category_id: null };
     else if (value.startsWith("pool:")) patch = { overlay_kind: "pool", overlay_category_id: Number(value.slice(5)), overlay_song_id: null };
-    try { await ether()?.categories?.updateById(c.id, patch); await reload(); } catch {}
+    try { await ether()?.categories?.updateById(c.id, patch); await reload(); onMutated?.(["categories"]); } catch {}
   };
   const catValue = (c: MusicCat) => c.overlay_kind === "item" && c.overlay_song_id != null ? `item:${c.overlay_song_id}` : c.overlay_kind === "pool" && c.overlay_category_id != null ? `pool:${c.overlay_category_id}` : "";
-  const setHours = async (c: MusicCat, mask: number) => { try { await ether()?.categories?.updateById(c.id, { overlay_active_hours: mask }); await reload(); } catch {} };
+  const setHours = async (c: MusicCat, mask: number) => { try { await ether()?.categories?.updateById(c.id, { overlay_active_hours: mask }); await reload(); onMutated?.(["categories"]); } catch {} };
 
   const inp: React.CSSProperties = { width: 46, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", borderRadius: 3, padding: "2px 4px", fontSize: 12, fontFamily: "'DM Mono', monospace" };
   const sel: React.CSSProperties = { background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", borderRadius: 4, padding: "3px 6px", fontSize: 12 };
