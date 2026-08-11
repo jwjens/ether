@@ -55,7 +55,19 @@ function baseConditions(hour, params, stationId, opts) {
   opts = opts || {};
   // content_class gate: MUSIC only. Jingles (JIN) / spots (SPOT) NEVER fill a music slot. IS NULL covers a
   // pre-v29 / partially-migrated row (post-migration the column defaults to 'MUSIC'). (jingles design 1b)
-  let c = "s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND (s.content_class IS NULL OR s.content_class = 'MUSIC')";
+  // category gate: a MUSIC song with no category can NEVER air — every on-format read derives its
+  // universe from clock_slots.category_id, so an uncategorised song is in no category and is dropped
+  // by all of them. Placing one produces a row that sits pending forever.
+  //
+  // This belongs here rather than in each tier because pickTier applies its category filter only when
+  // formatCats is non-empty ("formatCats [] = no category restriction") — so the LAST-DITCH tier, the
+  // one that runs when the station has no usable categories, was the single path that could reach an
+  // uncategorised song. Guarding baseConditions closes every tier at once.
+  //
+  // MUSIC ONLY, and that is the whole point: jingles and spots do not have categories and must not.
+  // They are filed by jingle_category_id / spot_category_id, are selected by their own paths, and
+  // never come through here — baseConditions is already MUSIC-gated on the line below.
+  let c = "s.file_path IS NOT NULL AND s.category_id IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND (s.content_class IS NULL OR s.content_class = 'MUSIC')";
   if (opts.daypart !== false) { c += " AND ((s.daypart_mask >> ?) & 1) = 1"; params.push(hour); }
   if (opts.songSep) {
     c += ` AND NOT EXISTS (SELECT 1 FROM play_log pl
@@ -600,4 +612,7 @@ function fillQueue(db, stationId, count = 12) {
   return { source: clock ? `clock "${clock.showName}"` : "on-format", tier, formatCats, items: songs.map(toItem), starved };
 }
 
-module.exports = { fillQueue, fillQueueEnforced, enforceSeparationOn, sepWindows, fillFromHour, getActiveShowClock, getFormatCategoryIds, getStationCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, selectRowForNow, readLogAnchored, orderForNearestAnchor, eligibleForFit };
+module.exports = { fillQueue, fillQueueEnforced, enforceSeparationOn, sepWindows, fillFromHour, getActiveShowClock, getFormatCategoryIds, getStationCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, selectRowForNow, readLogAnchored, orderForNearestAnchor, eligibleForFit,
+  // Internals, exposed for tests only — not part of the daemon's API. The category gate is the kind
+  // of rule that is silently deleted by a future refactor unless something asserts it.
+  _test: { baseConditions, pickTier } };

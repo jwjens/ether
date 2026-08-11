@@ -5534,15 +5534,28 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                         </div>
                       );
                     }
-                    if (id === "category") return (
-                      <div key={id} role="gridcell" style={{ flex: `0 0 ${w}px`, padding: "8px 12px", display: "flex", alignItems: "center", borderRight: "1px solid var(--border-primary)" }}>
+                    if (id === "category") {
+                      // A MUSIC song with no category CAN NEVER AIR: every on-format read builds its
+                      // universe from clock_slots.category_id, so an uncategorised song is in no
+                      // category and is dropped by all of them. It is not broken, it is an unfinished
+                      // import — and it stayed invisible for months because nothing said so.
+                      //
+                      // Jingles and spots are NOT flagged: they do not have categories and must not.
+                      // They are filed by jingle_category_id / spot_category_id.
+                      const cls = (s as any).content_class;
+                      const needsCategory = !s.category_code && (cls == null || cls === "MUSIC");
+                      return (
+                      <div key={id} role="gridcell" title={needsCategory ? "No category — this song can never air. Pick one here and it enters rotation." : undefined}
+                        style={{ flex: `0 0 ${w}px`, padding: "8px 12px", display: "flex", alignItems: "center", gap: 6, borderRight: "1px solid var(--border-primary)" }}>
                         <select value={s.category_code || ""} onChange={async e => { const catId = catList.find(c => c.code === e.target.value)?.id || null; await (window as any).ether.songs.updateById(s.id, { category_id: catId }); load(); }}
-                          style={{ padding: "3px 6px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer", maxWidth: "100%" }}>
+                          style={{ padding: "3px 6px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: `1px solid ${needsCategory ? "var(--accent-amber)" : "var(--border-primary)"}`, color: needsCategory ? "var(--accent-amber)" : "var(--text-secondary)", outline: "none", cursor: "pointer", maxWidth: "100%" }}>
                           <option value="">—</option>
                           {catList.map(c => <option key={c.id} value={c.code}>{c.code}</option>)}
                         </select>
+                        {needsCategory && <span style={{ fontSize: 9, fontWeight: 700, color: "var(--accent-amber)", whiteSpace: "nowrap" }}>WON’T AIR</span>}
                       </div>
-                    );
+                      );
+                    }
                     return (
                       <div
                         key={id}

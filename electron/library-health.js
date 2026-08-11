@@ -317,6 +317,7 @@ function createLibraryHealth(opts) {
     const sc = skipCounts.get(sid); const skipped = (sc && sc.hour === hr) ? sc.n : 0;
 
     const elig = eligibility(db, sid);
+    const uncat = uncategorisedMusic(db);
     const name = (db.prepare("SELECT name FROM stations WHERE id=?").get(sid) || {}).name || String(sid);
     // Levels: yellow if any unresolvable / pool shrunk; red if skips climbing.
     const materialization = { resolvable, total, r2Only, dead };
@@ -324,9 +325,10 @@ function createLibraryHealth(opts) {
     const poolLevel = (total > 0 && spun.length / total < 0.7) ? 'yellow' : 'green';
     const skipLevel = skipped > 0 ? 'red' : 'green';
     const level = [materialLevel, poolLevel, skipLevel].includes('red') ? 'red'
-                : [materialLevel, poolLevel].includes('yellow') ? 'yellow' : 'green';
+                : [materialLevel, poolLevel, uncat.level].includes('yellow') ? 'yellow' : 'green';
     return {
       stationId: sid, name, level,
+      uncategorised: uncat,                       // music that can never air (2026-08-11 ruling)
       materialization: { ...materialization, level: materialLevel },
       pool: { librarySize: total, spunPool24h: spun.length, topSpins24h: topSpins, level: poolLevel },
       skipped: { thisHour: skipped, level: skipLevel },
@@ -336,6 +338,31 @@ function createLibraryHealth(opts) {
       goals: goalCheck(db, sid),                  // declared spins/hr vs clock composition (Advisor, Phase 1)
       lastGenerate: lastGen.get(sid) || null,     // last Generate run's relaxed/empty summary (item 2)
     };
+  }
+
+  // ── Uncategorised music — songs that CANNOT air ────────────────────────────────────────────────
+  //
+  // A MUSIC song with category_id NULL is in no category, and every on-format read derives its
+  // universe from clock_slots.category_id — so it is dropped by all of them. It cannot be scheduled,
+  // ever. That is not an error state, it is an UNFINISHED IMPORT, and the only reason it went
+  // unnoticed for months is that nothing said so out loud.
+  //
+  // ACCOUNT-LEVEL, and reported as such: `songs` has no station_id (the library is shared) and a
+  // song reaches a station through its CATEGORY — so an uncategorised song belongs to no station by
+  // construction. The same figure therefore appears on every station's snapshot, with scope:'account'
+  // so a reader is not misled into hunting for a per-station cause.
+  //
+  // JINGLES AND SPOTS ARE EXCLUDED, deliberately: they do not have categories and must not — they are
+  // filed by jingle_category_id / spot_category_id. On the live install 64 of the 74 uncategorised
+  // songs are JIN and 2 are SPOT; counting those would turn a correct state into a permanent fault.
+  function uncategorisedMusic(db) {
+    try {
+      const r = db.prepare(`SELECT COUNT(*) n FROM songs
+         WHERE category_id IS NULL AND deleted_at IS NULL
+           AND (content_class IS NULL OR content_class = 'MUSIC')`).get();
+      const n = (r && r.n) || 0;
+      return { songs: n, scope: 'account', level: n > 0 ? 'yellow' : 'green' };
+    } catch { return { songs: 0, scope: 'account', level: 'green' }; }
   }
 
   const _lintSeen = new Set();   // rowIds already event-logged, so a violation is reported once

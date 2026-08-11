@@ -76,6 +76,44 @@ Full design: `docs/seamless-daemon-update-design-2026-07-27.md`. **Build nothing
 - Desktop account sign-in routes through `/api/user/desktop-activate` (`src/components/OnboardingFlow.tsx:424,445`) → lk-less `typ:"user"` token → account-scoped READ endpoints (`/api/account/stations`, `/data`, `/api/me/memberships`) return empty/404 for the install. Route it (also) through `/api/auth/owner-login` (email+password → `lk`-bearing token, same path the dashboard uses) and store that as `account_jwt`. Real but SEPARATE from the categories/programming sync (which is license-keyed). Fixes RBAC/account-scoped reads only. (added 2026-07-14)
 - **`src/lib/spotProjection.ts` duplicates `loggen.orderForNearestAnchor` — one rule, two implementations.** The Health Monitor's Spot Schedule section projects when a pending spot will actually air, and for flipped stations that requires the nearest-anchor comparison (reach window, 2s tie band, `:00` exclusion). Rather than reach into the daemon, the renderer mirrors the arithmetic — so `TIE_SEC` and the reach test now exist in two files that must be kept in step, and a change to the selector silently makes the projection lie. **Permanent fix: the daemon exposes its OWN projection** (it already computes seam, queue and the promotion decision) and the renderer just displays it; delete the renderer copy. **Rides with renderer-as-pure-view §1/§2** (`docs/design-renderer-as-pure-view-2026-07-30.md`), which is already removing the renderer's parallel state — same principle, same release. Both files carry a comment pointing here. (added 2026-07-30)
 - **GENERATE writes rows for NULL-category songs that the on-format read can never select.** Song id 397 `'"The Munsters" Theme'` has `category_id = NULL`; station 4's first Generate run (2026-07-24T21:02:42, the day the station was created) scheduled it 82 times. `getFormatCategoryIds()` derives the on-format set from `clock_slots.category_id`, so a NULL-category song is in NO category and is dropped by every on-format read — the rows sit `pending` forever, never airing, inflating the log-reader's `missed` backlog and appearing to the auto-fitter as candidates that can never be picked. **Same family as the 2026-07-21 OF cat-1 finding** (`docs/generate-clock-law-deleted-slots-2026-07-21.md`): Generate walks rows the on-format read then rejects. Jeff's ruling there applies — *the clock is law; Generate is the violator*. **SCOPE, measured 2026-07-30:** 74 songs have `category_id IS NULL` (a mix — `Daydream Believer`, `Spooky Halloween Sounds`, `This Is Halloween`, `Golden`, and the `14_CHRISTMAS_Transition…` jingle files); 0 songs point at a deleted/missing category; and `generated_schedule` rows referencing a NULL-category song number **s1 1 · s2 9,613 · s3 4,684 · s4 8,341**. So this is NOT confined to station 4 — it is the biggest single source of unairable pending rows across the install. **TWO QUESTIONS TO ANSWER FIRST:** (1) how does a song get imported with no category at all — which import path leaves it NULL, and should the schema forbid it? (2) should Generate refuse to schedule a NULL-category song, or should import assign one? Debris cleanup for s4's 7/24 rows is `scripts/cleanup-stale-pending-s4.js` — that clears the symptom only. (added 2026-07-30)
+  - **RULING + FINDINGS 2026-08-11. TWO PREMISES IN THIS ENTRY ARE MEASURABLY WRONG. Read before acting on it.**
+    - **(a) Generate never wrote a NULL-category row.** Every NULL-category MUSIC row in
+      `generated_schedule` — 82 missed + 4 pending + 83 played — carries a category ON THE LOG ROW.
+      The Munsters rows were written with `category_id` 14 (Summer Christmas) and 7 (HalloVeen), and
+      **both categories still exist, undeleted**. The song was categorised when scheduled and
+      uncategorised AFTERWARDS. These rows went stale retroactively — the "OFF-CATEGORY drift"
+      Rotation Analytics already reports — so there is no Generate path to close. Also checked and
+      excluded: **no `clock_slots` pin a NULL-category song**, so the `stmtSongById` pinned-song path
+      is not it either.
+    - **(b) The "~22k rows" are almost all CORRECT.** Split by class: **JIN pending — s2 12,734 ·
+      s3 2,440 · s4 14,789; SPOT pending — s3 61 · s4 32; MUSIC pending — s2 4.** Jingles and spots
+      do not have categories and must not (filed by `jingle_category_id` / `spot_category_id`;
+      Jeff, 2026-08-11). Deleting on the NULL-category condition alone would have wiped **~30,000
+      scheduled jingles**. The real target is **4 rows**. Of the 74 uncategorised songs, 64 are JIN,
+      2 are SPOT, and only **8 are MUSIC**.
+    - **Q1 ANSWERED — which import path leaves `category_id` NULL:** `src/components/NexGenImport.tsx:121`
+      creates songs with no `category_id` (and no `file_path`). `ImportDialog`, `LibraryImport` and
+      `GSelectorImport` all set it. `src/audio/imagingCommit.ts` also omits it, correctly — that path
+      makes JIN/SWP.
+    - **Q2 ANSWERED — should Generate refuse, or should import assign?** BOTH, and they were built:
+      **guard** — `audiod/loggen.js baseConditions` now carries `s.category_id IS NOT NULL`, closing
+      every fill tier at once. The hole was real but was in the DAEMON, not Generate: `pickTier`
+      applied its category filter only when `formatCats` was non-empty ("formatCats [] = no category
+      restriction"), so the last-ditch tier — the one that runs when a station has no usable
+      categories — could reach an uncategorised song. Pinned by `audiod/loggen-category-gate.test.js`
+      (7 tests, in-memory DB), including that starvation is preferred to airing an unschedulable song.
+      **visibility** — uncategorised MUSIC now badges **WON'T AIR** in the Library grid beside the
+      category dropdown that fixes it, and `electron/library-health.js` reports
+      `uncategorised: {songs, scope:'account', level}` (account-level: `songs` has no `station_id`, so
+      an uncategorised song belongs to no station by construction).
+    - **Cleanup:** `scripts/cleanup-null-category-pending.js` — all stations, MUSIC-only, pending-only,
+      dry-run by default, per-station counts first, aired history counted before and after and rolled
+      back if it moves. Defaults to marking `missed` rather than deleting: `generated_schedule` is a
+      SYNCED table, so a hard DELETE leaves no tombstone and a peer can resurrect every row
+      (`--hard-delete` available). **NOT YET RUN against the live DB.**
+    - **STILL OPEN:** the import flow does not yet PROMPT for a category with bulk-assign — per-row
+      assignment in the Library grid is the only path today. And nothing prevents a category from
+      being removed out from under scheduled rows, which is what actually produced this entry.
 
 - **Reconcile fires a doomed fetch at Railway every ~20 s — 1,767 failures in `ether-startup.log`, first on 2026-07-09.** `[reconcile] account stations reconcile failed: Failed to fetch (ether-backend-production.up.railway.app)`. Railway is eliminated as a dependency, so this timer is calling a host that is not coming back: it burns a network round-trip and a log line three times a minute forever, and it drowns the startup log — during the 2026-08-03 freeze trace it was ~95% of the file, which actively slowed diagnosis. **Fix: kill the timer or repoint it at the surviving endpoint**, and make its failure state visible once (a health event) instead of logged endlessly. Small and self-contained. (added 2026-08-03)
   - **RESOLVED 2026-08-10 — the noise, not the timer. One premise above is measurably false.**
