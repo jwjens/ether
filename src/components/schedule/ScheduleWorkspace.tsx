@@ -37,6 +37,7 @@ import { ClocksTab } from "../scheduler/ClocksTab";
 import { CategoriesTab } from "../scheduler/CategoriesTab";
 import Spots from "../Spots";
 import JinglesPanel from "../JinglesPanel";
+import RotationAnalytics from "../RotationAnalytics";
 import type { ClockSlot } from "../scheduler/types";
 
 // ── dev instrumentation (kept from the Phase 0 spike) ────────────────────────────────────────────
@@ -47,7 +48,7 @@ const STATS_ON = (() => {
     return window.localStorage?.getItem("ether.dockstats") === "1";
   } catch { return false; }
 })();
-const renderCounts = { shell: 0, shows: 0, clocks: 0, categories: 0, spots: 0, jingles: 0 };
+const renderCounts = { shell: 0, shows: 0, clocks: 0, categories: 0, spots: 0, jingles: 0, rotation: 0 };
 
 export type GoalRow = { categoryId: number; category: string; target: number; slots: number; delta: number; unused: boolean };
 type GoalClock = { clockId: number; clock: string; musicSlots: number; rows: GoalRow[] };
@@ -76,6 +77,7 @@ const PANELS = [
   { id: "categories", title: "Categories" },
   { id: "spots", title: "Spots" },
   { id: "jingles", title: "Jingles" },
+  { id: "rotation", title: "Rotation Analytics" },
 ] as const;
 
 // ── panes ────────────────────────────────────────────────────────────────────────────────────────
@@ -146,6 +148,18 @@ const components = {
     return (
       <PaneFrame>
         <JinglesPanel stationId={hub.stationId} onMutated={hub.onMutated} />
+      </PaneFrame>
+    );
+  },
+  // Read-only, and takes no hub props on purpose: it reports on what ALREADY AIRED, from play_log
+  // and generated_schedule, not on the shows and clocks being edited beside it. Wiring it to the
+  // store would imply an edit here changes the numbers, and it does not — those rows are history.
+  // The loop is: declare targets in Categories, shape clocks against the advisor, read here.
+  rotation: () => {
+    if (STATS_ON) renderCounts.rotation++;
+    return (
+      <PaneFrame>
+        <RotationAnalytics hideHeader />
       </PaneFrame>
     );
   },
@@ -240,6 +254,7 @@ export default function ScheduleWorkspace({ onOpenAnalytics, onUseFixedLayout }:
     addPanel(api, "categories", { position: { referencePanel: "clocks", direction: "right" } });
     addPanel(api, "spots", { position: { referencePanel: "categories", direction: "within" }, inactive: true });
     addPanel(api, "jingles", { position: { referencePanel: "categories", direction: "within" }, inactive: true });
+    addPanel(api, "rotation", { position: { referencePanel: "categories", direction: "within" }, inactive: true });
   }, [addPanel]);
 
   const syncOpen = useCallback((api: DockviewApi) => {

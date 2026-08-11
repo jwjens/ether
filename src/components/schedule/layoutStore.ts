@@ -15,8 +15,9 @@ export const LAYOUT_KEY = "schedule_layout_v1";
 /** The layout schema. Bump whenever the PANE SET changes: a saved layout only names panes, so after
  *  a change it describes a workspace that no longer exists — restoring it would leave new panes
  *  permanently absent while the Panels menu insists they are open.
- *  v1 → v2: added the Spots and Jingles panes. */
-export const LAYOUT_VERSION = 2;
+ *  v1 → v2: added the Spots and Jingles panes.
+ *  v2 → v3: added the Rotation Analytics pane. */
+export const LAYOUT_VERSION = 3;
 
 export interface StoredLayout { v: number; layout: unknown }
 

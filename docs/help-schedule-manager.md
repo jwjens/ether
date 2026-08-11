@@ -26,7 +26,7 @@ The Schedule Manager puts the whole picture in one window and links it:
 └──────────────┴────────────────────────────┴──────────────────────────────┘
 ```
 
-**Categories, Spots and Jingles share the right-hand column as tabs.** Click a tab to switch. Five
+**Categories, Spots, Jingles and Rotation Analytics share the right-hand column as tabs.** Click a tab to switch. Five
 columns side by side would leave every one of them too narrow to use, and Spots and Jingles are
 things you consult while building a clock rather than watch continuously. Drag any tab out if you
 want it as its own column — see *Arranging it*.
@@ -65,6 +65,17 @@ data affected, and **you stay signed in** — it only moves panes.
 
 The panes are the **same editors** as the tabs and popouts. Anything you can do there you can do
 here, and vice versa; nothing was rebuilt.
+
+## The loop, in one window
+
+**Rotation Analytics** is a pane here too, which closes the circle:
+
+1. **Categories** — declare what you want: a target of 4 spins/hr.
+2. **Clocks** — shape the hour against the inline advisor, which tells you the clock says 11.
+3. **Rotation Analytics** — read what actually aired, and whether the log agrees with either.
+
+The numbers there are history. Editing a clock does not change them; press **Refresh** after you
+generate. Its tables sort and resize like a spreadsheet — see its own help entry.
 
 ## Spots and Jingles
 
@@ -125,8 +136,8 @@ Schedule Manager is an additional door onto the same rooms — use whichever sui
 
 - **It does not change what airs.** It edits the same shows, clocks, categories, spots and jingles
   through the same write paths. Generation and playout are untouched.
-- **Rotation Analytics is a link, not a pane.** The button in the header opens it; embedding it is
-  for a later version.
+- **It does not report on itself.** The Rotation Analytics pane reads what already aired; editing a
+  clock beside it does not change those numbers. Hit Refresh after you generate.
 - **Your layout is not your colleague's.** It is stored per station on this machine and never synced.
 
 ## Related

@@ -16,6 +16,19 @@ describe("parseSavedLayout", () => {
     expect(parseSavedLayout(v1)).toBeNull();
   });
 
+  it("REJECTS a v2 layout — the Phase 3 case, everyone who ran 4.4.176", () => {
+    // Five panes, no Rotation Analytics. Each bump strands the version before it, so every
+    // superseded version stays tested rather than only the newest one.
+    const v2 = JSON.stringify({ v: 2, layout: { panels: { shows: {}, clocks: {}, categories: {}, spots: {}, jingles: {} } } });
+    expect(parseSavedLayout(v2)).toBeNull();
+  });
+
+  it("rejects EVERY superseded version, not just the last one", () => {
+    for (let v = 1; v < LAYOUT_VERSION; v++) {
+      expect(parseSavedLayout(JSON.stringify({ v, layout: { panels: {} } }))).toBeNull();
+    }
+  });
+
   it("rejects a FUTURE version — a downgrade must not eat a newer layout", () => {
     expect(parseSavedLayout(JSON.stringify({ v: LAYOUT_VERSION + 1, layout: {} }))).toBeNull();
   });

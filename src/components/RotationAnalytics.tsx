@@ -1,23 +1,55 @@
-// ── ROTATION ANALYTICS (Phase 4, 2026-08-10) ─────────────────────────────────────────────────────
+// ── ROTATION ANALYTICS (Phase 4, 2026-08-10 · DataGrid conversion v2 Phase 3, 2026-08-10) ────────
 // Read-only rotation reporting: spins vs target, artist burn, turnover, and why each row was picked.
 // Changes nothing about what airs — every backing handler is a SELECT.
 // Engine: electron/rotation-analytics.js · docs/help-rotation-analytics.md
+//
+// PHASE 3: the three tables are now DataGrid — sortable, resizable, widths remembered per station.
+// Two things were deliberately held still while the surface changed:
+//
+//   1. NO DEFAULT SORT. The grids render in the engine's order (turnover by coverage ascending, and
+//      so on), exactly as before. Imposing a "nicer" default would have changed the first thing a
+//      PD reads, which is not what a reskin is allowed to do.
+//   2. THE CSV IS BYTE-IDENTICAL. Export now runs from the column definitions (src/components/
+//      rotation/columns.ts) instead of a second hand-maintained list in main, and
+//      src/components/grid/csv.test.ts asserts equality against the shipped exporter for all four
+//      kinds. electron/rotation-analytics.js keeps its toCsv: it is the counterparty that test
+//      compares against, so removing it would remove the gate.
+//
+// One behaviour did change, in the operator's favour: the file is now built from the snapshot ON
+// SCREEN, where it used to re-query with a fresh `to` timestamp at click time and could return a
+// slightly different window than the one being read.
 import { useEffect, useState } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { DataGrid } from "./grid/DataGrid";
+import { toCsv, downloadCsv, type GridColumn } from "./grid/csv";
+import {
+  SPINS_COLUMNS, BURN_COLUMNS, TURNOVER_COLUMNS, HOURLY_COLUMNS,
+  type SpinRow, type BurnRow, type TurnoverRow,
+} from "./rotation/columns";
 
 type Range = "24h" | "7d" | "30d";
 const RANGE_SEC: Record<Range, number> = { "24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400 };
 
+/** The burn table has always shown the top 25 while exporting all of them. */
+const BURN_VISIBLE = 25;
+
 interface Snapshot {
-  spins: any[]; hourly: any[]; burn: any[]; turnover: any[];
+  spins: SpinRow[]; hourly: any[]; burn: BurnRow[]; turnover: TurnoverRow[];
   reasonCoverage: { total: number; withReason: number; pct: number; columnPresent: boolean };
   fromTs: number; toTs: number;
 }
 
 const card: React.CSSProperties = { background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0 };
-const th: React.CSSProperties = { padding: "8px 12px", textAlign: "left", fontSize: 9, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.1em", whiteSpace: "nowrap" };
-const td: React.CSSProperties = { padding: "8px 12px", fontSize: 12, color: "var(--text-secondary)", whiteSpace: "nowrap" };
-const mono: React.CSSProperties = { ...td, fontFamily: "'DM Mono', monospace", fontSize: 11 };
+
+/** Colour lives here, not in the column definitions: those stay pure so the CSV gate can import
+ *  them without React. This overlays cell renderers onto the shared definitions by id. */
+function styled<T>(cols: GridColumn<T>[], cells: Record<string, (row: T) => React.ReactNode>): GridColumn<T>[] {
+  return cols.map(c => (cells[c.id] ? { ...c, cell: cells[c.id] } : c));
+}
+
+const badge = (text: string, colour: string, bg: string, title?: string) => (
+  <span title={title} style={{ fontSize: "var(--t-micro)", fontWeight: 700, padding: "2px 8px", background: bg, color: colour }}>{text}</span>
+);
 
 function Section({ title, sub, children }: { title: string; sub?: string; children: any }) {
   return (
@@ -26,12 +58,17 @@ function Section({ title, sub, children }: { title: string; sub?: string; childr
         <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif" }}>{title}</div>
         {sub && <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>{sub}</div>}
       </div>
-      <div style={{ overflowX: "auto" }}>{children}</div>
+      {children}
     </div>
   );
 }
 
-export default function RotationAnalytics() {
+export interface RotationAnalyticsProps {
+  /** Hosted in the docking workspace, where the pane tab already names it. */
+  hideHeader?: boolean;
+}
+
+export default function RotationAnalytics({ hideHeader }: RotationAnalyticsProps = {}) {
   const { stationId } = useActiveStation();
   const [range, setRange] = useState<Range>("24h");
   const [snap, setSnap] = useState<Snapshot | null>(null);
@@ -50,18 +87,7 @@ export default function RotationAnalytics() {
   };
   useEffect(() => { load(); }, [stationId, range]);
 
-  const exportCsv = async (kind: string) => {
-    try {
-      const to = Math.floor(Date.now() / 1000);
-      const r = await (window as any).ether?.invoke?.("rotation:csv", stationId, kind, to - RANGE_SEC[range], to);
-      if (!r?.ok) return;
-      const blob = new Blob([r.csv], { type: "text/csv" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url; a.download = `ether-rotation-${kind}-${range}-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
-      URL.revokeObjectURL(url);
-    } catch {}
-  };
+  const csvName = (kind: string) => `ether-rotation-${kind}-${range}-${new Date().toISOString().slice(0, 10)}.csv`;
 
   const rangeBtn = (id: Range, label: string) => (
     <button key={id} onClick={() => setRange(id)} style={{
@@ -71,14 +97,43 @@ export default function RotationAnalytics() {
       border: range === id ? "none" : "1px solid var(--border-primary)",
     }}>{label}</button>
   );
-  const csvBtn = (kind: string, label: string) => (
-    <button onClick={() => exportCsv(kind)} style={{ padding: "4px 10px", borderRadius: 0, fontSize: 10, fontWeight: 600, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}>{label}</button>
-  );
+
+  // ── cell rendering: the same emphasis the panel has always carried ─────────────────────────────
+  const spinsCols = styled<SpinRow>(SPINS_COLUMNS, {
+    category: r => <span style={{ color: "var(--text-primary)", fontWeight: 500 }}>{r.category}</span>,
+    target: r => (r.hasTarget ? r.target : "—"),
+    deltaPerHour: r => {
+      const off = r.hasTarget && Math.abs(r.deltaPerHour) >= 1;
+      return <span style={{ color: !r.hasTarget ? "var(--text-tertiary)" : off ? "var(--accent-amber)" : "var(--accent-green)" }}>
+        {r.hasTarget ? (r.deltaPerHour > 0 ? "+" : "") + r.deltaPerHour : "—"}
+      </span>;
+    },
+    sharePct: r => <span style={{ color: r.sharePct >= 50 ? "var(--accent-amber)" : "var(--text-tertiary)" }}>{r.sharePct}%</span>,
+  });
+
+  const burnCols = styled<BurnRow>(BURN_COLUMNS, {
+    artist: r => <span style={{ color: "var(--text-primary)" }}>{r.artist}</span>,
+    tightestGapMin: r => <span style={{ color: r.violatesRule ? "var(--accent-red)" : "var(--text-tertiary)" }}>
+      {r.tightestGapMin == null ? "—" : r.tightestGapMin + " min"}
+    </span>,
+    separationRuleMin: r => <span style={{ color: "var(--text-tertiary)" }}>{r.separationRuleMin} min</span>,
+    violatesRule: r => (r.violatesRule ? badge("INSIDE RULE", "var(--accent-red)", "rgba(248,113,113,0.12)") : null),
+  });
+
+  const turnoverCols = styled<TurnoverRow>(TURNOVER_COLUMNS, {
+    category: r => <span style={{ color: "var(--text-primary)", fontWeight: 500 }}>{r.category}</span>,
+    coveragePct: r => <span style={{ color: r.spins === 0 ? "var(--text-tertiary)" : r.coveragePct < 50 ? "var(--accent-amber)" : "var(--accent-green)" }}>{r.coveragePct}%</span>,
+    spinsPerSong: r => <span style={{ color: r.spinsPerSong >= 4 ? "var(--accent-amber)" : "var(--text-tertiary)" }}>{r.spinsPerSong}</span>,
+    driftSongs: r => (r.driftSongs > 0
+      ? badge(`${r.driftSongs} OFF-CATEGORY`, "var(--accent-amber)", "rgba(251,191,36,0.12)",
+              "Songs in the log that are no longer in this category — re-filed, deleted or rotation-disabled since it was generated")
+      : null),
+  });
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, fontFamily: "'Inter', system-ui, sans-serif" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Newsreader', Georgia, serif" }}>Rotation Analytics</h1>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: hideHeader ? "flex-end" : "space-between", flexWrap: "wrap", gap: 10 }}>
+        {!hideHeader && <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Newsreader', Georgia, serif" }}>Rotation Analytics</h1>}
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           {rangeBtn("24h", "24 Hours")}{rangeBtn("7d", "7 Days")}{rangeBtn("30d", "30 Days")}
           <button onClick={load} disabled={busy} style={{ padding: "6px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: busy ? "wait" : "pointer" }}>{busy ? "…" : "Refresh"}</button>
@@ -97,32 +152,21 @@ export default function RotationAnalytics() {
       {snap && (
         <Section title="Spins per hour — actual vs target"
           sub="A category with no spins/hr target shows “—”. Not declaring a goal is a choice, not a miss.">
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr style={{ background: "var(--bg-tertiary)" }}>
-              {["Category", "Target/hr", "Actual/hr", "Δ/hr", "Spins", "Distinct songs", "Share"].map(h => <th key={h} style={th}>{h}</th>)}
-            </tr></thead>
-            <tbody>
-              {snap.spins.map((r: any) => {
-                const off = r.hasTarget && Math.abs(r.deltaPerHour) >= 1;
-                return (
-                  <tr key={r.categoryId ?? r.category} style={{ borderTop: "1px solid var(--border-primary)" }}>
-                    <td style={{ ...td, color: "var(--text-primary)", fontWeight: 500 }}>{r.category}</td>
-                    <td style={mono}>{r.hasTarget ? r.target : "—"}</td>
-                    <td style={mono}>{r.actualPerHour}</td>
-                    <td style={{ ...mono, color: !r.hasTarget ? "var(--text-tertiary)" : off ? "var(--accent-amber)" : "var(--accent-green)" }}>
-                      {r.hasTarget ? (r.deltaPerHour > 0 ? "+" : "") + r.deltaPerHour : "—"}
-                    </td>
-                    <td style={mono}>{r.spins}</td>
-                    <td style={mono}>{r.distinctSongs}</td>
-                    <td style={{ ...mono, color: r.sharePct >= 50 ? "var(--accent-amber)" : "var(--text-tertiary)" }}>{r.sharePct}%</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          <div style={{ padding: "8px 12px", borderTop: "1px solid var(--border-primary)", display: "flex", gap: 6 }}>
-            {csvBtn("spins", "Export CSV")}{csvBtn("hourly", "Hourly grid CSV")}
-          </div>
+          <DataGrid<SpinRow>
+            columns={spinsCols} rows={snap.spins}
+            getRowId={(r, i) => String(r.categoryId ?? r.category ?? i)}
+            persistKey="rotation_spins" stationId={stationId}
+            empty="No music aired in this window."
+            csv={{ filename: csvName("spins") }}
+            footer={
+              <button
+                onClick={() => downloadCsv(csvName("hourly"), toCsv(HOURLY_COLUMNS, snap.hourly))}
+                title="Spins per category per hour. This one has no table on screen — see the help entry."
+                style={{ padding: "var(--s-2) var(--s-5)", borderRadius: "var(--r-0)", fontSize: "var(--t-small)", fontWeight: 600, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}>
+                Hourly grid CSV
+              </button>
+            }
+          />
         </Section>
       )}
 
@@ -130,24 +174,21 @@ export default function RotationAnalytics() {
       {snap && (
         <Section title="Artist burn"
           sub="Tightest gap is the closest two airings of that artist. Compared against this station’s own artist-separation rule, not an invented threshold.">
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr style={{ background: "var(--bg-tertiary)" }}>
-              {["Artist", "Spins", "Tightest gap", "Rule", ""].map(h => <th key={h} style={th}>{h}</th>)}
-            </tr></thead>
-            <tbody>
-              {snap.burn.slice(0, 25).map((r: any) => (
-                <tr key={r.artist} style={{ borderTop: "1px solid var(--border-primary)" }}>
-                  <td style={{ ...td, color: "var(--text-primary)", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis" }}>{r.artist}</td>
-                  <td style={mono}>{r.spins}</td>
-                  <td style={{ ...mono, color: r.violatesRule ? "var(--accent-red)" : "var(--text-tertiary)" }}>{r.tightestGapMin == null ? "—" : r.tightestGapMin + " min"}</td>
-                  <td style={{ ...mono, color: "var(--text-tertiary)" }}>{r.separationRuleMin} min</td>
-                  <td style={td}>{r.violatesRule && <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 8px", background: "rgba(248,113,113,0.12)", color: "var(--accent-red)" }}>INSIDE RULE</span>}</td>
-                </tr>
-              ))}
-              {snap.burn.length === 0 && <tr><td style={td} colSpan={5}>No artist aired more than once in this window.</td></tr>}
-            </tbody>
-          </table>
-          <div style={{ padding: "8px 12px", borderTop: "1px solid var(--border-primary)" }}>{csvBtn("burn", "Export CSV")}</div>
+          <DataGrid<BurnRow>
+            columns={burnCols} rows={snap.burn.slice(0, BURN_VISIBLE)}
+            getRowId={r => r.artist}
+            persistKey="rotation_burn" stationId={stationId}
+            empty="No artist aired more than once in this window."
+            rowStyle={r => (r.violatesRule ? { background: "rgba(248,113,113,0.04)" } : {})}
+            // The file gets every artist, not the 25 on screen — the pre-conversion behaviour, and
+            // the reason csv.rows exists at all.
+            csv={{ filename: csvName("burn"), rows: snap.burn }}
+            footer={snap.burn.length > BURN_VISIBLE
+              ? <span style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)" }}>
+                  Showing the {BURN_VISIBLE} most-played of {snap.burn.length} artists · the export has all {snap.burn.length}
+                </span>
+              : undefined}
+          />
         </Section>
       )}
 
@@ -155,30 +196,13 @@ export default function RotationAnalytics() {
       {snap && (
         <Section title="Turnover"
           sub="Coverage = share of the eligible library that actually aired. Spins/song near 1.0 is even rotation; high means a few songs are carrying the category.">
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr style={{ background: "var(--bg-tertiary)" }}>
-              {["Category", "Library", "Used", "Coverage", "Spins", "Spins/song", ""].map(h => <th key={h} style={th}>{h}</th>)}
-            </tr></thead>
-            <tbody>
-              {snap.turnover.map((r: any) => (
-                <tr key={r.categoryId} style={{ borderTop: "1px solid var(--border-primary)" }}>
-                  <td style={{ ...td, color: "var(--text-primary)", fontWeight: 500 }}>{r.category}</td>
-                  <td style={mono}>{r.librarySize}</td>
-                  <td style={mono}>{r.songsUsed}</td>
-                  <td style={{ ...mono, color: r.spins === 0 ? "var(--text-tertiary)" : r.coveragePct < 50 ? "var(--accent-amber)" : "var(--accent-green)" }}>{r.coveragePct}%</td>
-                  <td style={mono}>{r.spins}</td>
-                  <td style={{ ...mono, color: r.spinsPerSong >= 4 ? "var(--accent-amber)" : "var(--text-tertiary)" }}>{r.spinsPerSong}</td>
-                  <td style={td}>{r.driftSongs > 0 && (
-                    <span title="Songs in the log that are no longer in this category — re-filed, deleted or rotation-disabled since it was generated"
-                      style={{ fontSize: 9, fontWeight: 700, padding: "2px 8px", background: "rgba(251,191,36,0.12)", color: "var(--accent-amber)" }}>
-                      {r.driftSongs} OFF-CATEGORY
-                    </span>)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <div style={{ padding: "8px 12px", borderTop: "1px solid var(--border-primary)" }}>{csvBtn("turnover", "Export CSV")}</div>
+          <DataGrid<TurnoverRow>
+            columns={turnoverCols} rows={snap.turnover}
+            getRowId={r => String(r.categoryId)}
+            persistKey="rotation_turnover" stationId={stationId}
+            empty="No categories aired in this window."
+            csv={{ filename: csvName("turnover") }}
+          />
         </Section>
       )}
 

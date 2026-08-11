@@ -25,6 +25,7 @@
     "@picovoice/porcupine-react": "^4.0.0",
     "@picovoice/web-voice-processor": "^4.0.9",
     "@sentry/electron": "^7.10.0",
+    "@tanstack/react-table": "^8.21.3",
     "@xenova/transformers": "^2.17.2",
     "better-sqlite3": "^12.8.0",
     "date-fns": "^3.6.0",
@@ -69,5 +70,5 @@
     "email": "jensj@ov.org",
     "name": "Jeffrey Jens"
   },
-  "version": "4.4.176"
+  "version": "4.4.177"
 }

@@ -2,8 +2,8 @@
 feature: rotation-analytics
 title: Rotation Analytics
 summary: See how your rotation is actually behaving — spins vs target, artist burn, turnover, and why each song was picked. Read-only; it never changes what airs.
-where: Menu → Rotation Analytics
-since: 4.4.169
+where: Menu → Rotation Analytics · or as a pane in Schedule Manager
+since: 4.4.169 (sortable/resizable tables and the Schedule Manager pane, 4.4.177)
 audience: programmer
 tour: true
 ---
@@ -69,10 +69,34 @@ many were vetoed and by which rule, and whether any rule had to be relaxed.
 pick, so rows generated before this feature existed will honestly say *"not recorded"* rather than
 being given a plausible-sounding guess. Run **Generate** and new rows will carry their reasons.
 
+## Working the tables
+
+The three tables are a spreadsheet-style grid:
+
+- **Click a header to sort.** Click again to reverse it.
+- **Shift-click a second header** to sort by that as a tiebreak. The little ▲1 ▼2 marks show which
+  is first and which is second.
+- **Drag the right edge of a header to resize a column.** Your widths are remembered per station, on
+  this machine — they are never synced, because how wide your columns are is not your colleague's
+  business.
+- Tables open in the **same order they always have** — turnover by coverage, worst first, and so on.
+  Sorting is something you do, not something done to you on arrival.
+
+The **artist burn** table lists the 25 most-played artists. When there are more, it says so under the
+table — and the export still contains every one of them.
+
 ## Exports
 
 Each section has an **Export CSV** button, plus an **Hourly grid CSV** (spins per category per hour)
 under the spins table. Files open directly in Excel, Sheets or Numbers.
+
+**Sorting and resizing do not change the file.** The export is defined by the report, not by how you
+happen to be looking at it, so two people exporting the same window get the same file. The exports
+are byte-for-byte what they were before the tables became sortable — an archived file from an
+earlier version still lines up with a new one.
+
+> **The Hourly grid CSV has no table on screen.** It exports spins per category per hour, and always
+> has, but that view was never built. It is on the list.
 
 ## Time range
 
@@ -86,7 +110,18 @@ under the spins table. Files open directly in Excel, Sheets or Numbers.
 - It does not judge your format. A 70% share is reported, not condemned — whether that is right is
   your call.
 
+## In the Schedule Manager
+
+Rotation Analytics is also a **pane** in Schedule Manager, beside Categories, Spots and Jingles. That
+completes the loop in one window: declare a target on a category, shape the clock against the
+advisor, then read here what actually aired. It is the same panel — the menu entry still opens it
+full-screen, and nothing was moved.
+
+It takes no part in the editing around it. These numbers are **history**, read from the log; editing
+a clock beside it does not change them. Re-run the range with **Refresh** after you generate.
+
 ## Related
 
 **Station Health → Rotation goals** shows the other half: whether your *clocks* match your declared
 targets, before a single song is scheduled. This panel shows what the log actually did.
+**Schedule Manager** — the workspace this panel can live in.
