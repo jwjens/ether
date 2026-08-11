@@ -85,3 +85,34 @@ Full design: `docs/seamless-daemon-update-design-2026-07-27.md`. **Build nothing
 - **VERSION-MISMATCH GUARD: a renderer talking to an older daemon should SAY so, not lie.** The daemon does not reload on auto-update, so an app can run against a daemon built before a field/command existed — and today that degrades into a silently wrong UI rather than an honest one. The app already logs `stale-check: daemon vX != app vY — arming reload`; that knowledge should reach the OPERATOR (a health event + a visible banner: "audio engine is running an older build — fully close and reopen"), and any UI element whose data depends on a field the running daemon cannot supply must render UNKNOWN, never a confident default. **This was a live cost:** the stale-daemon hypothesis burned a full diagnostic round on 2026-08-03 and could neither be confirmed nor ruled out from the UI. (added 2026-08-03)
 
 - **DONE 2026-08-10 — Phase 0 dockview spike torn down.** `src/spike/` (DockSpike + standalone entry), `spike.html`, the hamburger item, the `dockspike` Panel member and its route are all removed; no references remain. The spike PASSED (render isolation 0 renders under 30 ticks with the guard, 30 without — control condition held; validated in the packaged app), so `dockview`/`dockview-react` were KEPT and are now load-bearing for the docking workspace. Result recorded in `docs/schedule-manager-v2-design-2026-08-10.md` §11. The counter instrumentation survives in `ScheduleWorkspace.tsx` behind `?dockstats=1` so the render guard stays measurable — it is one missing useCallback away from silently reverting. (closed 2026-08-10)
+
+## Test collection hygiene — `npx vitest run` still exits red (filed 2026-08-10)
+
+**FIXED this build (4.4.177):** vitest was collecting build output. `electron-builder.json` packages
+`audiod/**/*`, which sweeps `scheduler-core.test.js` into
+`dist-electron/win-unpacked/resources/app.asar.unpacked/audiod/`, so its 25 tests ran TWICE — once
+from source, once from whatever was packaged at the last build. A suite that green-lights a stale
+copy can report a pass for code you have since changed, and after `git clean` those tests silently
+disappear. `vite.config.ts` now sets `test.exclude` to `configDefaults.exclude` plus
+`**/dist-electron/**`, `**/dist/**`, `**/win-unpacked/**`. Verified: 81 unique tests, no duplicates.
+
+**STILL OPEN — the suite is red for a second, unrelated reason.** 9 files under
+`electron/sync/tests/` fail COLLECTION with `describe is not defined`:
+
+- They are CommonJS suites for the Electron-hosted runner (`npm run test:sync`, which runs
+  `scripts/run-sync-tests.js` under `electron --no-sandbox`). They need a real better-sqlite3 against
+  Electron's ABI, so they cannot simply run under vitest.
+- They match vitest's default include glob, so every `npx vitest run` reports
+  `9 failed | 7 passed` even when all 81 tests pass. **A permanently-red suite trains people to
+  ignore red**, which is the actual cost here — the sync tests themselves are fine under their own
+  runner.
+
+**Next step (one line, not yet applied — outside the task that found it):** add
+`"electron/sync/tests/**"` to `test.exclude` in `vite.config.ts`, so `vitest` covers the renderer +
+audiod and `npm run test:sync` remains the sole door to the sync suite. Then decide whether CI should
+run both gates; today it runs neither on a tag build.
+
+**Also noticed, not filed as work:** the packaged app ships `audiod/scheduler-core.test.js` to
+customers, because `files` has no `!audiod/**/*.test.js` negation. Harmless but pointless bytes.
+
+*Teardown: none — this is a config change, not diagnostic persistence.*
