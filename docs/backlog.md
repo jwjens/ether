@@ -97,6 +97,22 @@ Full design: `docs/seamless-daemon-update-design-2026-07-27.md`. **Build nothing
 
 - **AUDIT THE OTHER DAEMON→RENDERER RELAY SITES — they hand-pick fields the same way `enginestate` did.** On 2026-08-03 `main.js:633` re-built the enginestate payload as `{ stationId, state }`, silently deleting the `started` field the daemon had been sending since 4.4.124. **Both ends were benched and both passed; the WIRE between them never was** — the field vanished in transit, the pill showed MANUAL over a provably automating station, and it survived three pill redesigns, an attach investigation, a mount-storm theory and a stale-daemon theory before the trace caught it. `enginestate` now forwards `{...m}` intact. **Every other `sendToAllWindows("audio:daemon-*", {...})` site is the same shape and the same risk** — a field added at either end vanishes with no error anywhere. Sweep them; prefer passthrough over hand-listing; and where a payload must be filtered, bench the WIRE (a real daemon payload through the real transform), not just the two ends. (added 2026-08-03)
 - **VERSION-MISMATCH GUARD: a renderer talking to an older daemon should SAY so, not lie.** The daemon does not reload on auto-update, so an app can run against a daemon built before a field/command existed — and today that degrades into a silently wrong UI rather than an honest one. The app already logs `stale-check: daemon vX != app vY — arming reload`; that knowledge should reach the OPERATOR (a health event + a visible banner: "audio engine is running an older build — fully close and reopen"), and any UI element whose data depends on a field the running daemon cannot supply must render UNKNOWN, never a confident default. **This was a live cost:** the stale-daemon hypothesis burned a full diagnostic round on 2026-08-03 and could neither be confirmed nor ruled out from the UI. (added 2026-08-03)
+  - **DONE 2026-08-10 (hygiene arc item 5).** `checkStaleDaemon` now publishes its verdict instead of
+    only logging it: a `daemon-version` health event **on transition** (never repeating), a broadcast
+    on `audio:daemon-version`, and a `daemon:version-state` IPC so a window opened after the check
+    still learns the truth. `DaemonVersionBanner` renders a non-dismissible amber bar — dismissible
+    would let the operator hide a condition that is still true, which is the same mistake as logging
+    it. The rule itself moved to `electron/daemon-version.js`, unit-tested (7 tests), including the
+    two cases that matter: a daemon predating the `version` command reports **UNKNOWN rather than a
+    guessed build number**, and a plain connection error draws **no conclusion at all** (a starting
+    daemon is not a stale one). Help: `docs/help-audio-engine-version.md`.
+  - **STILL OPEN — the UNKNOWN sweep.** The banner and `useDaemonVersion()` exist; what has NOT been
+    done is auditing every UI element whose data depends on a field the running daemon may not
+    supply, so each renders UNKNOWN instead of a confident default. The known member of this class is
+    the `enginestate.started` field (see the daemon→renderer relay-site entry above) — the pill
+    showed MANUAL over a provably automating station. *Next step:* enumerate the fields the renderer
+    reads from daemon payloads, and for each decide what it shows when the value is absent. That is a
+    sweep, not a patch, and it is deliberately not bundled here.
 
 - **DONE 2026-08-10 — Phase 0 dockview spike torn down.** `src/spike/` (DockSpike + standalone entry), `spike.html`, the hamburger item, the `dockspike` Panel member and its route are all removed; no references remain. The spike PASSED (render isolation 0 renders under 30 ticks with the guard, 30 without — control condition held; validated in the packaged app), so `dockview`/`dockview-react` were KEPT and are now load-bearing for the docking workspace. Result recorded in `docs/schedule-manager-v2-design-2026-08-10.md` §11. The counter instrumentation survives in `ScheduleWorkspace.tsx` behind `?dockstats=1` so the render guard stays measurable — it is one missing useCallback away from silently reverting. (closed 2026-08-10)
 

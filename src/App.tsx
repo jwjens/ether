@@ -107,6 +107,7 @@ import { ALL_LIB_COLS, LIB_COL_LABELS, LIB_COL_DEFAULT_WIDTHS, HIDDEN_BUILTIN_CO
 import { useCanvasEngine } from "./canvas/CanvasEngine";
 import AutoCue from "./components/AutoCue";
 import { useUpdater, UpdateBanner } from "./components/Updater";
+import DaemonVersionBanner from "./components/DaemonVersionBanner";
 import { EtherErrorBoundary, SessionRestoreToast, HealthMonitor, HealthStatusDot } from "./components/HealthMonitor";
 import WidgetCanvas from "./canvas/WidgetCanvas";
 import MicDeck from "./components/MicDeck";
@@ -2871,6 +2872,10 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Renders only when the daemon is actually stale, and cannot be dismissed — it is a statement
+          about whether the readings below can be trusted, not a notification. */}
+      <DaemonVersionBanner />
 
       {!updater.dismissed && <UpdateBanner
         state={updater.state}

@@ -409,26 +409,51 @@ function armDaemonReload() {
     if (Date.now() - _armGraceAt > 4500 && _anyDaemonAudioAgeMs() > 4500) fireDaemonReload("no audio");
   }, 1500);
 }
-async function checkStaleDaemon() {
-  let dv;
+// ── Daemon version mismatch — the operator's problem, so tell the operator ───────────────────────
+//
+// The daemon does NOT reload on auto-update (CLAUDE.md), so an app can run against a daemon built
+// before a field or command existed. Until now that was known only to this log line, and it degraded
+// into a silently WRONG UI rather than an honest one: on 2026-08-03 the stale-daemon hypothesis
+// burned a full diagnostic round and could be neither confirmed nor ruled out from the screen.
+//
+// The state is published so the UI can say so, and so anything whose data the running daemon cannot
+// supply renders UNKNOWN instead of a confident default. Two genuinely different cases:
+//   · mismatch  — versions known and different
+//   · unknown   — the daemon predates the `version` command, so its build CANNOT be determined.
+//     "Unknown" is reported as unknown; guessing a number here would be the same class of lie.
+const { decideDaemonVersion } = require("./daemon-version");
+let _daemonVersionState = { stale: false, reason: null, daemonVersion: null, appVersion: null };
+function _publishDaemonVersion(next) {
+  const changed = next.stale !== _daemonVersionState.stale || next.reason !== _daemonVersionState.reason;
+  _daemonVersionState = next;
+  try { sendToAllWindows("audio:daemon-version", next); } catch {}
+  if (!changed) return;                       // transition only — never a repeating event
   try {
-    dv = await audiodClient.cmd("version", {});
-  } catch (e) {
-    // A daemon too old to even know the `version` command is, by definition, stale — reload it.
-    // (This is what lets the FIRST update after this ships self-heal: the running daemon predates
-    // the command.) A plain connection error is NOT this — only treat "unknown cmd" as stale.
-    if (e && /unknown cmd/.test(String(e.message || e))) {
-      logStartup("[AUDIO] stale-check: daemon predates the version command — arming reload");
-      armDaemonReload();
-    }
-    return;
-  }
-  const appV = (() => { try { return require("electron").app.getVersion(); } catch { return "0"; } })();
-  if (dv && dv !== "0" && dv !== appV) {
-    logStartup(`[AUDIO] stale-check: daemon v${dv} != app v${appV} — arming reload`);
-    armDaemonReload();
-  }
+    require("fs").appendFileSync(path.join(app.getPath("userData"), "health-events.jsonl"),
+      JSON.stringify({ t: new Date().toISOString(), kind: "daemon-version", ...next }) + "\n");
+  } catch {}
 }
+async function checkStaleDaemon() {
+  const appV = (() => { try { return require("electron").app.getVersion(); } catch { return "0"; } })();
+  let dv, err;
+  try { dv = await audiodClient.cmd("version", {}); } catch (e) { err = e; }
+
+  // The rule itself lives in electron/daemon-version.js and is unit-tested — including that a daemon
+  // predating the `version` command reports UNKNOWN rather than a guessed build number.
+  const verdict = decideDaemonVersion({ daemonVersion: dv, appVersion: appV, error: err });
+  if (!verdict) return;                       // plain connection error — no conclusion, say nothing
+
+  if (verdict.stale) {
+    logStartup(verdict.reason === "unknown"
+      ? "[AUDIO] stale-check: daemon predates the version command — arming reload"
+      : `[AUDIO] stale-check: daemon v${verdict.daemonVersion} != app v${appV} — arming reload`);
+  }
+  _publishDaemonVersion(verdict);
+  if (verdict.stale) armDaemonReload();
+}
+// Late-joining windows (popouts, a reopened main window) ask rather than wait for the next check —
+// otherwise the banner would be missing exactly where a mismatch is hardest to spot.
+try { ipcMain.handle("daemon:version-state", () => _daemonVersionState); } catch {}
 
 // Audio-liveness watchdog (Item 10 follow-up — the recurring SILENT-WEDGE recovery). Distinct from
 // the daemon's own stall watchdog (which only catches "no deck playing"): here the daemon's logic
