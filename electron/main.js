@@ -7024,8 +7024,22 @@ async function _generateRange(stationId, fromTs, toTs) {
 // and the emergency floor stays theoretically unreachable. Runway + extend results are published on the
 // :3400 SSE as telemetry the Phase-3 watchman consumes. Deterministic-floor-independent: this only makes
 // the log deeper; it never touches playout.
-const AUTO_EXTEND_THRESHOLD_H = Number(process.env.ETHER_RUNWAY_THRESHOLD_H || 48);   // extend when runway < this
-const AUTO_EXTEND_TARGET_DAYS = Number(process.env.ETHER_RUNWAY_TARGET_DAYS || 14);   // top runway up to this depth
+// Defaults RULED 2026-08-11 (Jeff): trigger at 4 days, target 10.
+//
+// Was 48h / 14d. The trigger moves UP because it now sits inside the gauge's green band (green >= 5,
+// yellow < 3): auto-extend tops the log up while everything still looks healthy, so a gauge that
+// goes YELLOW means auto-extend is FAILING rather than that the system is working as designed. At the
+// old 48h the first visible symptom of a broken extender was a station already in the yellow.
+//
+// The target moves DOWN because a deeper horizon is not free: existing days are never regenerated, so
+// clock edits do not reach them. 14 days meant a clock change could take a fortnight to fully appear.
+// 10 is the compromise; Jeff's own stations run 7 while clock-editing is active.
+//
+// Safe to change now: step 2 measured the corrected metric against all four live stations and the
+// firing pattern was identical, so this release moves the thresholds against a known baseline rather
+// than against a metric that was also shifting.
+const AUTO_EXTEND_THRESHOLD_H = Number(process.env.ETHER_RUNWAY_THRESHOLD_H || 4 * 24);   // extend when runway < this
+const AUTO_EXTEND_TARGET_DAYS = Number(process.env.ETHER_RUNWAY_TARGET_DAYS || 10);       // top runway up to this depth
 const AUTO_EXTEND_EVERY_MS    = 30 * 60 * 1000;                                       // re-check every 30 min
 
 // METRIC CORRECTED 2026-08-11: was MAX(scheduled_at) - now, which counts straight past a HOLE — a
