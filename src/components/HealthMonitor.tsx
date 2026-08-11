@@ -916,6 +916,24 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                     <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotCol }} />
                     <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-secondary)" }}>{st.name}</span>
                   </div>
+                  {/* SCHEDULE RUNWAY — the fuel gauge. First row on purpose: "how long until this
+                      station runs out of log" is the most urgent thing this panel can answer, and on
+                      a flipped station a dry log is dead air. Distance to the first GAP, not to the
+                      last row, and hours no show covers are not gaps (electron/runway.js). */}
+                  {st.runway && (
+                    <HealthRow
+                      label="Schedule runway"
+                      value={st.runway.days == null
+                        ? "—"
+                        : `${st.runway.days} day${st.runway.days === 1 ? "" : "s"}${st.runway.capped ? "+" : ""}`}
+                      status={(st.runway.level === "grey" ? "ok" : lvl(st.runway.level)) as any}
+                      sub={st.runway.days == null
+                        ? (st.runway.reason === "no active show" ? "no active show — nothing is scheduled to air" : "unavailable")
+                        : st.runway.gapAt
+                          ? `log runs out ${new Date(st.runway.gapAt * 1000).toLocaleString()}`
+                          : `no gap within ${30} days`}
+                    />
+                  )}
                   <HealthRow
                     label="Materialization"
                     value={`${st.materialization.resolvable}/${st.materialization.total} resolvable`}
