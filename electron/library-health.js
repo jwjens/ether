@@ -332,7 +332,7 @@ function createLibraryHealth(opts) {
     return {
       stationId: sid, name, level,
       uncategorised: uncat,                       // music that can never air (2026-08-11 ruling)
-      runway,                                     // fuel gauge — days of log left (metric: 'tail', see runwayOf)
+      runway,                                     // fuel gauge — days to the first gap (see electron/runway.js)
       materialization: { ...materialization, level: materialLevel },
       pool: { librarySize: total, spunPool24h: spun.length, topSpins24h: topSpins, level: poolLevel },
       skipped: { thisHour: skipped, level: skipLevel },
@@ -347,41 +347,16 @@ function createLibraryHealth(opts) {
   // ── Runway / fuel gauge — how far ahead the log actually reaches ───────────────────────────────
   //
   // The question that started the whole scheduler arc: "how long until this station runs out of
-  // log?" It has always been answerable and has never been on screen.
+  // log?" It has always been answerable and was never on screen.
   //
-  // METRIC: `tail` — MAX(scheduled_at) - now. **This is known to be the WRONG measure** and is used
-  // here deliberately, for one release only. It counts straight past a GAP: a station with rows
-  // through Friday but a hole tomorrow at 03:00 reads four days when its real runway is one, and a
-  // gap is dead air on a flipped station.
+  // METRIC: first-gap, show-coverage-aware. See electron/runway.js for why MAX(scheduled_at) - now
+  // was wrong and what replaced it. This calls the SAME function the auto-extend engine uses to
+  // decide when to generate, so the gauge and the engine can never disagree about a station.
   //
-  // It ships as-is first on purpose. The shipped auto-extend engine (main.js) has always used this
-  // same measure to decide when to generate, so the gauge and the engine agree TODAY. Correcting the
-  // metric changes when auto-extend fires — on stations that currently look full — and that is a
-  // behaviour change that deserves its own release with a ledger trail already running, not a
-  // silent burst of generation someone later finds in the Calendar and distrusts.
-  //
-  // `metric` is reported so the screen can say which measure produced the number, and so the two
-  // releases are distinguishable in the ledger.
-  //
-  // Levels: green >= 5 days, yellow < 3, red < 1. A station with NO active show returns level 'grey'
-  // and days null — nothing is meant to air, so nothing is starving; a red gauge there is the false
-  // alarm that teaches people to ignore the gauge.
+  // Levels: green >= 5 days, yellow < 3, red < 1, grey when no active show.
   function runwayOf(db, sid) {
-    try {
-      const hasShow = !!db.prepare(
-        "SELECT 1 FROM shows WHERE station_id = ? AND is_active = 1 AND clock_id IS NOT NULL AND deleted_at IS NULL LIMIT 1"
-      ).get(sid);
-      if (!hasShow) return { metric: 'tail', days: null, hours: null, level: 'grey', reason: 'no active show' };
-      const now = Math.floor(Date.now() / 1000);
-      const r = db.prepare(
-        "SELECT MAX(scheduled_at) m FROM generated_schedule WHERE station_id = ? AND deleted_at IS NULL"
-      ).get(sid) || {};
-      const sec = r.m ? Math.max(0, r.m - now) : 0;
-      const hours = Math.round(sec / 360) / 10;
-      const days = Math.round((sec / 86400) * 10) / 10;
-      const level = days < 1 ? 'red' : days < 3 ? 'yellow' : 'green';
-      return { metric: 'tail', days, hours, level, through: r.m || null };
-    } catch { return { metric: 'tail', days: null, hours: null, level: 'grey', reason: 'unavailable' }; }
+    try { return require('./runway').computeRunway(db, sid); }
+    catch { return { metric: 'first-gap', days: null, hours: null, level: 'grey', reason: 'unavailable' }; }
   }
 
   // ── Uncategorised music — songs that CANNOT air ────────────────────────────────────────────────

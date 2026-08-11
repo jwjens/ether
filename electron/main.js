@@ -7028,12 +7028,19 @@ const AUTO_EXTEND_THRESHOLD_H = Number(process.env.ETHER_RUNWAY_THRESHOLD_H || 4
 const AUTO_EXTEND_TARGET_DAYS = Number(process.env.ETHER_RUNWAY_TARGET_DAYS || 14);   // top runway up to this depth
 const AUTO_EXTEND_EVERY_MS    = 30 * 60 * 1000;                                       // re-check every 30 min
 
+// METRIC CORRECTED 2026-08-11: was MAX(scheduled_at) - now, which counts straight past a HOLE — a
+// station with rows through Friday but nothing tomorrow at 03:00 read four days when its real runway
+// was one. Auto-extend therefore could not see the only failure it exists to prevent, and would sit
+// idle on a station that was about to go silent.
+//
+// Now delegates to ./runway, the SINGLE implementation the Health Monitor gauge also uses, so the
+// screen and the engine cannot hold different opinions about the same station.
+//
+// EXPECT MORE FIRING. First-gap <= tail always, so stations that looked full will now trigger. That
+// is the correction working, and every run is recorded in the ledger with `metric: 'first-gap'` —
+// distinguishable from the `metric: 'first-gap'` rows written before this change.
 function _stationRunwaySec(stationId) {
-  try {
-    const nowTs = Math.floor(Date.now() / 1000);
-    const r = db.prepare("SELECT MAX(scheduled_at) m FROM generated_schedule WHERE station_id = ? AND deleted_at IS NULL").get(stationId) || {};
-    return r.m ? Math.max(0, r.m - nowTs) : 0;
-  } catch { return 0; }
+  try { return require('./runway').runwaySec(db, stationId); } catch { return 0; }
 }
 
 // Stations whose degraded (too-sparse) schedule we've already force-regenerated this session — so a
@@ -7078,13 +7085,13 @@ async function _autoExtendTick() {
         // first-gap, the ledger will show the firing pattern change with the metric that produced
         // each decision attached, rather than leaving a mystery burst of generation.
         _healthEvent('auto-extend', { stationId: st.id, station: st.name, trigger: 'sparse-schedule',
-          metric: 'tail', runwaySecBefore: runwaySec, runwaySecAfter: _stationRunwaySec(st.id),
+          metric: 'first-gap', runwaySecBefore: runwaySec, runwaySecAfter: _stationRunwaySec(st.id),
           runwayDaysAfter: r.runwayDays, rows: r.count, relaxedPicks: r.relaxedPicks,
           targetDays: AUTO_EXTEND_TARGET_DAYS, reasons: r.reasons });
         try { sseBroadcast("autoextend", { stationId: st.id, station: st.name, count: r.count, runwayDays: r.runwayDays, relaxedPicks: r.relaxedPicks, reasons: r.reasons, sparseHeal: true }); } catch {}
       } catch (e) {
         console.error(`[auto-extend] ${st.name} sparse-heal failed:`, e.message);
-        _healthEvent('auto-extend-failed', { stationId: st.id, station: st.name, trigger: 'sparse-schedule', metric: 'tail', runwaySecBefore: runwaySec, error: e.message });
+        _healthEvent('auto-extend-failed', { stationId: st.id, station: st.name, trigger: 'sparse-schedule', metric: 'first-gap', runwaySecBefore: runwaySec, error: e.message });
       }
       continue;
     }
@@ -7093,7 +7100,7 @@ async function _autoExtendTick() {
       const r = await _generateRange(st.id, nowTs, nowTs + AUTO_EXTEND_TARGET_DAYS * 86_400);
       console.log(`[auto-extend] ${st.name}: runway ${Math.round(runwaySec / 3600)}h < ${AUTO_EXTEND_THRESHOLD_H}h → +${r.count} tracks (runway now ${r.runwayDays}d, ${r.relaxedPicks} relaxed)`);
       _healthEvent('auto-extend', { stationId: st.id, station: st.name, trigger: 'runway-below-threshold',
-        metric: 'tail', thresholdSec: AUTO_EXTEND_THRESHOLD_H * 3600, runwaySecBefore: runwaySec,
+        metric: 'first-gap', thresholdSec: AUTO_EXTEND_THRESHOLD_H * 3600, runwaySecBefore: runwaySec,
         runwaySecAfter: _stationRunwaySec(st.id), runwayDaysAfter: r.runwayDays, rows: r.count,
         relaxedPicks: r.relaxedPicks, targetDays: AUTO_EXTEND_TARGET_DAYS, reasons: r.reasons });
       try { sseBroadcast("autoextend", { stationId: st.id, station: st.name, count: r.count, runwayDays: r.runwayDays, relaxedPicks: r.relaxedPicks, reasons: r.reasons }); } catch {}
