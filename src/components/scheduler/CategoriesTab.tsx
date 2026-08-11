@@ -8,9 +8,21 @@ import { queryScoped } from "../../db/stationScoped";
 import { useActiveStation } from "../../hooks/useActiveStation";
 import type { Category } from "./types";
 
-export function CategoriesTab() {
+/** All optional — with none supplied, behaves exactly as before (see ShowsTabProps). §4.3 */
+export interface CategoriesTabProps {
+  cats?: Category[];
+  onMutated?: (tables?: string[]) => void;
+  selectedCategoryId?: number | null;
+  onSelectCategory?: (categoryId: number) => void;
+  /** Library-depth facts keyed by category id, from the Station Health sense. Rendered when given. */
+  depth?: Record<number, { songs: number; needed: number; thin: boolean }>;
+}
+
+export function CategoriesTab({ cats: catsProp, onMutated, selectedCategoryId, onSelectCategory, depth }: CategoriesTabProps = {}) {
   const { stationId, isReady } = useActiveStation();
-  const [cats, setCats] = useState<Category[]>([]);
+  const hosted = !!onMutated;
+  const [catsLocal, setCats] = useState<Category[]>([]);
+  const cats = catsProp ?? catsLocal;
   const [editing, setEditing] = useState<Partial<Category> | null>(null);
   const [scanning, setScanning] = useState(false);
   const [scanStatus, setScanStatus] = useState("");
@@ -18,6 +30,7 @@ export function CategoriesTab() {
   const [catSaved, setCatSaved] = useState(false);
 
   const load = async () => {
+    if (hosted) { onMutated!(["categories"]); return; }
     if (!isReady) return;
     const rows = await queryScoped<Category & { song_count: number }>(
       "SELECT c.*, (SELECT COUNT(*) FROM songs WHERE category_id = c.id) as song_count FROM categories c WHERE c.station_id = ? ORDER BY c.code",
@@ -25,7 +38,7 @@ export function CategoriesTab() {
     );
     setCats(rows);
   };
-  useEffect(() => { load(); }, [isReady]);
+  useEffect(() => { if (!hosted) load(); }, [isReady, hosted]);
 
   const scanDurations = async () => {
     setScanning(true);
@@ -145,7 +158,11 @@ export function CategoriesTab() {
             <th className="px-3 py-2 text-right w-16"></th>
           </tr></thead>
           <tbody>{cats.map(c => (
-            <tr key={c.id} className="border-b border-zinc-800 hover:bg-zinc-800">
+            <tr key={c.id}
+              onClick={onSelectCategory ? () => onSelectCategory(c.id) : undefined}
+              className="border-b border-zinc-800 hover:bg-zinc-800"
+              style={onSelectCategory ? { cursor: "pointer", background: selectedCategoryId === c.id ? "rgba(167,139,250,0.14)" : undefined } : undefined}
+              title={depth?.[c.id] ? `${depth[c.id].songs} songs · needs ~${depth[c.id].needed}${depth[c.id].thin ? " — THIN" : ""}` : undefined}>
               <td className="px-3 py-2"><div className="w-4 h-4 rounded" style={{ backgroundColor: c.color || "#444" }}></div></td>
               <td className="px-3 py-2 font-bold text-zinc-100">{c.code}</td>
               <td className="px-3 py-2 text-zinc-300">{c.name}</td>

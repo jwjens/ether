@@ -67,6 +67,7 @@ import ProgramLog from "./components/ProgramLog";
 import PlayLog from "./components/PlayLog";
 import Logs from "./components/Logs";
 import RotationAnalytics from "./components/RotationAnalytics";
+import ScheduleManager from "./components/ScheduleManager";
 import EASLogbook from "./components/EASLogbook";
 import PDPicks from "./components/PDPicks";
 import SchedulePreview from "./components/SchedulePreview";
@@ -126,7 +127,7 @@ import VUMeter from "./components/VUMeter";
 import IrisBadge from "./components/IrisBadge";
 import { SchedulerHealthHost } from "./components/SchedulerHealthPanel";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "rotation" | "help";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "rotation" | "schedulehub" | "help";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -1022,7 +1023,7 @@ export default function App() {
   // Native menu IPC handler
   useEffect(() => {
     const handler = (window as any).ether.on("menu-action", (cmd: string) => {
-      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:programlog":"programlog","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio","nav:importlibrary":"importlibrary","nav:cloudbackup":"cloudbackup","nav:clipeditor":"clipeditor","nav:captions":"captions","nav:eas":"eas","nav:rotation":"rotation" };
+      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:programlog":"programlog","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio","nav:importlibrary":"importlibrary","nav:cloudbackup":"cloudbackup","nav:clipeditor":"clipeditor","nav:captions":"captions","nav:eas":"eas","nav:rotation":"rotation","nav:schedulehub":"schedulehub" };
       if (panels[cmd]) { setPanel(panels[cmd] as Panel); return; }
       if (cmd === "nav:scheduler-tab:clocks")     { setSchedulerTab("clocks"); return; }
       if (cmd === "nav:scheduler-tab:shows")      { setSchedulerTab("shows"); return; }
@@ -2500,6 +2501,7 @@ export default function App() {
                   { key: "schedulebuilder", emoji: "🗓", label: "Program Log",  action: () => setPanel("schedulebuilder"), active: panel === "schedulebuilder" },
                   { key: "calendar",       emoji: "📅", label: "Calendar",     action: () => setPanel("calendar"),        active: panel === "calendar"        },
                   { key: "programlog",     emoji: "📜", label: "Play History", action: () => setPanel("programlog"),      active: panel === "programlog"      },
+                  { key: "schedulehub",    emoji: "🗂", label: "Schedule Manager", action: () => setPanel("schedulehub"), active: panel === "schedulehub" },
                   { key: "rotation",       emoji: "📊", label: "Rotation Analytics", action: () => setPanel("rotation"), active: panel === "rotation"   },
                   { key: "cartwall",   emoji: "🎛️", label: "Carts",       action: () => setPanel("cartwall"),    active: panel === "cartwall"    },
                 ] as const).map(item => (
@@ -2689,6 +2691,7 @@ export default function App() {
               )}
               {panel === "logs" && <Logs />}
               {panel === "rotation" && <RotationAnalytics />}
+              {panel === "schedulehub" && <ScheduleManager onOpenAnalytics={() => setPanel("rotation")} />}
               {panel === "eas" && <EASLogbook onClose={() => setPanel("live")} />}
               {panel === "pdpicks" && <PDPicks stationId={stationId} onClose={() => setPanel("live")} />}
               {panel === "schedpreview" && <SchedulePreview onClose={() => setPanel("live")} />}

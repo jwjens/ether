@@ -9,15 +9,34 @@ import { useActiveStation } from "../../hooks/useActiveStation";
 import type { Show, Clock } from "./types";
 import { HOURS, DAYS, fmtHour } from "./shared";
 
-export function ShowsTab() {
+/** All optional. With none supplied this behaves EXACTLY as before — the tabbed panel, the popout and
+ *  the embedded programming panel pass nothing and keep self-fetching. The hub supplies data and a
+ *  refresh callback so three panes share one store instead of three fetchers.
+ *  docs/schedule-manager-design-2026-08-10.md §4.1 */
+export interface ShowsTabProps {
+  shows?: Show[];
+  clocks?: Clock[];
+  /** Hub-hosted when present: load() reports the write upward instead of re-fetching locally. */
+  onMutated?: (tables?: string[]) => void;
+  selectedShowId?: number | null;
+  onSelectShow?: (showId: number) => void;
+}
+
+export function ShowsTab({ shows: showsProp, clocks: clocksProp, onMutated, selectedShowId, onSelectShow }: ShowsTabProps = {}) {
   const { stationId, isReady } = useActiveStation();
-  const [shows, setShows] = useState<Show[]>([]);
-  const [clocks, setClocks] = useState<Clock[]>([]);
+  const hosted = !!onMutated;
+  const [showsLocal, setShows] = useState<Show[]>([]);
+  const [clocksLocal, setClocks] = useState<Clock[]>([]);
+  const shows = showsProp ?? showsLocal;
+  const clocks = clocksProp ?? clocksLocal;
   const [editing, setEditing] = useState<Partial<Show> | null>(null);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState("");
 
+  // ONE refresh path when hosted: every existing call site (mount + the three write callbacks) keeps
+  // calling load(), and load() tells the hub instead of fetching. No write path changed.
   const load = async () => {
+    if (hosted) { onMutated!(["shows", "clocks"]); return; }
     if (!isReady) return;
     // station_id scoping: manual JOIN — shows.station_id filters scope; clocks joined by FK
     setShows(await queryScoped<Show>(
@@ -26,7 +45,8 @@ export function ShowsTab() {
     ));
     setClocks(await queryScoped<Clock>("SELECT * FROM clocks WHERE deleted_at IS NULL ORDER BY name", [], stationId));
   };
-  useEffect(() => { load(); }, [isReady]);
+  // Hosted: the hub already loaded before this mounted; loading again would be a wasted round trip.
+  useEffect(() => { if (!hosted) load(); }, [isReady, hosted]);
 
   const save = async () => {
     if (!editing || !editing.name) return;
@@ -137,7 +157,10 @@ export function ShowsTab() {
       {/* Show list with clock dropdowns */}
       <div className="space-y-1.5">
         {shows.map(s => (
-          <div key={s.id} className="bg-zinc-900 rounded-none border border-zinc-800 p-3">
+          <div key={s.id}
+            onClick={onSelectShow ? () => onSelectShow(s.id) : undefined}
+            className="bg-zinc-900 rounded-none border border-zinc-800 p-3"
+            style={onSelectShow ? { cursor: "pointer", borderColor: selectedShowId === s.id ? "var(--accent-purple)" : undefined } : undefined}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="w-4 h-4 rounded-full shrink-0" style={{ backgroundColor: s.color || "#444" }}></div>

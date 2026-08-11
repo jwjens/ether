@@ -596,6 +596,17 @@ if (AUDIO_DAEMON_DESIRED) {
     ipcMain.handle("library-health:get", () => { try { return _libHealth.snapshot(); } catch { return null; } });
     ipcMain.handle("library-health:eligibility", (_e, stationId) => { try { return _libHealth.eligibilityRows(stationId); } catch { return []; } });
     ipcMain.handle("library-health:queue-lint", (_e, stationId) => { try { return _libHealth.lintRows(stationId); } catch { return []; } });
+    // ── PHASE C — the advisor, on demand (2026-08-10) ───────────────────────────────────────────
+    // SAME goalCheck the Station Health sense uses — one implementation, two cadences. The snapshot
+    // above is recomputed on a 120s tick and polled at 30s, which is right for a background sense and
+    // useless for "edit a clock, see the verdict change". This is an entry point to the same
+    // function, not a copy of its logic: a second implementation would drift and the two surfaces
+    // would quietly disagree about the same clock.
+    // Called on mount and after committed mutations only — never per keystroke.
+    // docs/schedule-manager-design-2026-08-10.md §3.3
+    ipcMain.handle("library-health:goals", (_e, stationId) => {
+      try { return _libHealth.goalCheck(db, stationId || getActiveStationId()); } catch { return null; }
+    });
   } catch (e) { console.error("[library-health] init failed:", e && e.message); }
 
   audiodClient.setEventHandler((m) => {
@@ -2411,6 +2422,7 @@ function buildMenu() {
       // this Electron template, so the item existed in the code and nowhere the operator could reach
       // it. Exactly the "doors before rooms" failure: it's in the code is not shipped.
       { label: "Rotation Analytics", click: () => send("nav:rotation") },
+      { label: "Schedule Manager",   click: () => send("nav:schedulehub") },
       { label: "Announcements",    click: () => send("nav:announce") },
       { label: "EAS Logbook",     click: () => send("nav:eas") },
     ]},

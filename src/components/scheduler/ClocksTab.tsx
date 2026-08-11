@@ -164,12 +164,35 @@ function SegmentPicker({ cats, spotCats, onAdd, onClose }: {
   );
 }
 
-export function ClocksTab() {
+/** All optional — with none supplied, behaves exactly as before (see ShowsTabProps). §4.2
+ *  `clockId`/`onSelectClock` make the clock selection CONTROLLED so the hub can focus a show's clock;
+ *  uncontrolled (today's behaviour) when omitted. */
+export interface ClocksTabProps {
+  clocks?: Clock[];
+  cats?: Category[];
+  onMutated?: (tables?: string[]) => void;
+  clockId?: number | null;
+  onSelectClock?: (clockId: number | null) => void;
+  /** Clock ids to highlight — the clocks using the selected category. */
+  highlightClockIds?: number[];
+  /** Per-clock rotation-goals verdict from library-health:goals. Rendered when given. */
+  advisor?: Record<number, { rows: { category: string; target: number; slots: number; delta: number; unused: boolean }[]; musicSlots: number }>;
+}
+
+export function ClocksTab({ clocks: clocksProp, cats: catsProp, onMutated, clockId, onSelectClock, highlightClockIds, advisor }: ClocksTabProps = {}) {
+  const hosted = !!onMutated;
+  const controlled = clockId !== undefined;
   const { stationId, isReady } = useActiveStation();
-  const [clocks, setClocks]       = useState<Clock[]>([]);
-  const [selected, setSelected]   = useState<number | null>(null);
+  const [clocksLocal, setClocks]  = useState<Clock[]>([]);
+  const [selectedLocal, setSelectedLocal] = useState<number | null>(null);
   const [slots, setSlots]         = useState<ClockSlot[]>([]);
-  const [cats, setCats]           = useState<Category[]>([]);
+  const [catsLocal, setCats]      = useState<Category[]>([]);
+  // Hub-supplied when hosted, own state otherwise. `setSelected` routes to the hub when controlled,
+  // so every existing setSelected(...) call site keeps working unchanged.
+  const clocks = clocksProp ?? clocksLocal;
+  const cats = catsProp ?? catsLocal;
+  const selected = controlled ? (clockId ?? null) : selectedLocal;
+  const setSelected = (id: number | null) => { if (controlled) onSelectClock?.(id); else setSelectedLocal(id); };
   const [spotCats, setSpotCats]   = useState<{ id: number; name: string; color: string | null; uuid: string }[]>([]);
   const [breaks, setBreaks]       = useState<{ id: number; uuid: string; minute: number; spot_category_id: number | null; count: number }[]>([]);
   const [breaksSaved, setBreaksSaved] = useState(false);
@@ -193,6 +216,9 @@ export function ClocksTab() {
 
   // ── Fix: reload cats every time the tab is active ────────────
   const loadAll = async () => {
+    // Hosted: report the write upward. The hub owns clocks/categories; spot-category counts stay
+    // local because only this pane uses them.
+    if (hosted) { onMutated!(["clocks", "categories", "clock_slots", "clock_breaks"]); loadSpotCats(); return; }
     if (!isReady) return;
     setClocks(await queryScoped<Clock>("SELECT * FROM clocks WHERE deleted_at IS NULL ORDER BY name", [], stationId));
     setCats(await queryScoped<Category>("SELECT * FROM categories ORDER BY priority, code", [], stationId));
@@ -309,7 +335,7 @@ export function ClocksTab() {
     setBreaks(((res?.rows) || []).map((r: any) => ({ id: r.id, uuid: r.uuid, minute: r.minute, spot_category_id: r.spot_category_id, count: r.count })));
   };
 
-  useEffect(() => { loadAll(); }, [isReady, stationId]);
+  useEffect(() => { if (hosted) { loadSpotCats(); } else { loadAll(); } }, [isReady, stationId, hosted]);
   useEffect(() => { if (selected) { loadSlots(selected); loadBreaks(selected); } else { setSlots([]); setBreaks([]); } }, [selected]);
 
   // ── Timed spot breaks (per clock; the generator reads clock_breaks) ──
@@ -543,9 +569,24 @@ export function ClocksTab() {
                       flex: 1, padding: "7px 10px", borderRadius: 0, fontSize: 12,
                       fontWeight: selected === c.id ? 700 : 400, textAlign: "left" as const, cursor: "pointer",
                       background: selected === c.id ? "rgb(from var(--accent-blue) r g b / 0.12)" : "var(--bg-secondary)",
-                      border: selected === c.id ? "1px solid rgb(from var(--accent-blue) r g b / 0.3)" : "1px solid var(--border-primary)",
+                      border: selected === c.id ? "1px solid rgb(from var(--accent-blue) r g b / 0.3)"
+                            // Context link: this clock uses the category selected in the Categories
+                            // pane. Amber, so it reads as "related to your selection" rather than
+                            // competing with the blue current-selection state.
+                            : highlightClockIds?.includes(c.id) ? "1px solid var(--accent-amber)"
+                            : "1px solid var(--border-primary)",
                       color: selected === c.id ? "var(--accent-blue)" : "var(--text-secondary)",
-                    }}>{c.name}</button>
+                    }}>
+                      {c.name}
+                      {advisor?.[c.id] && advisor[c.id].rows.length > 0 && (
+                        <span style={{ display: "block", marginTop: 3, fontSize: 10, fontFamily: "'DM Mono', monospace", color: "var(--accent-amber)", fontWeight: 400 }}>
+                          {advisor[c.id].rows.slice(0, 2).map(r =>
+                            `${r.category} target ${r.target}/hr, ${r.unused ? "not in clock" : r.slots + " slots"} — ${r.delta < 0 ? "under" : "over"} by ${Math.abs(r.delta)}`
+                          ).join(" · ")}
+                          {advisor[c.id].rows.length > 2 ? ` · +${advisor[c.id].rows.length - 2} more` : ""}
+                        </span>
+                      )}
+                    </button>
                     <button onClick={() => setConfirmDelete(c.id)} style={{ padding: "5px 6px", background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 12 }}
                       onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
                       onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}

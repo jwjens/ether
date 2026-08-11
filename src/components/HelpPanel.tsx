@@ -249,6 +249,43 @@ The top-right pill shows the active station. Single-station installs hide it. Mu
 `,
   },
   {
+    id: "schedule-manager", category: "Scheduling", tags: ["schedule", "manager", "hub", "shows", "clocks", "categories", "panes", "advisor", "goals", "linking"],
+    title: "Schedule Manager (Shows, Clocks, Categories together)",
+    body: `
+# What it is
+
+Menu → **Schedule Manager**. Shows, Clocks and Categories side by side in one window instead of three tabs, and linked to each other.
+
+# The linking is the point
+
+- **Click a category** — the strip at the top names its target and library depth; clocks that use it get an amber border.
+- **Click a show** — the Clock pane focuses that show's clock.
+- **Edit anything** — all three panes refresh from one store.
+
+The panes are the SAME editors as the tabs and popouts. Nothing was rebuilt, and anything you can do in one you can do in the other.
+
+# The inline advisor
+
+Each clock shows its rotation-goals verdict — "Feel Good target 4/hr, 11 slots — over by 7". These are the same numbers as Station Health → Rotation goals, from the same function; if they ever disagree that is a bug. The verdict updates when you edit the clock rather than waiting for the background sense.
+
+A category with no target declared never produces a verdict.
+
+# The category strip
+
+**target N/hr** (or "no target declared") · **N songs, needs ~M** — library depth, where THIN means the category cannot support its own demand without repeating · **used by the selected clock**.
+
+Thin plus a high target is the burn signature: the scheduler will be forced to relax separation.
+
+# The old surfaces still work
+
+Schedule → Clocks / Shows & Dayparts / Categories still opens the tabbed panel, the three popouts still work, and the embedded programming panel is unchanged. This is an additional door onto the same rooms.
+
+# What it does not do
+
+It does not change what airs — same shows, same clocks, same write paths. The three-pane layout is fixed in this version (no docking). Rotation Analytics is a link in the header, not an embedded pane.
+`,
+  },
+  {
     id: "rotation-analytics", category: "Scheduling", tags: ["rotation", "analytics", "burn", "turnover", "spins", "goals", "why", "explain", "coverage"],
     title: "Rotation Analytics (spins, burn, turnover)",
     body: `
