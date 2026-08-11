@@ -107,10 +107,11 @@ disappear. `vite.config.ts` now sets `test.exclude` to `configDefaults.exclude` 
   ignore red**, which is the actual cost here — the sync tests themselves are fine under their own
   runner.
 
-**Next step (one line, not yet applied — outside the task that found it):** add
-`"electron/sync/tests/**"` to `test.exclude` in `vite.config.ts`, so `vitest` covers the renderer +
-audiod and `npm run test:sync` remains the sole door to the sync suite. Then decide whether CI should
-run both gates; today it runs neither on a tag build.
+**RESOLVED 2026-08-10 (hygiene arc item 1):** `"electron/sync/tests/**"` added to `test.exclude`.
+`npx vitest run` now exits **0** — 7 files, 81 tests. vitest owns the renderer + audiod;
+`npm run test:sync` remains the sole door to the sync suite.
+
+**Follow-on, now closed by item 3:** CI ran neither gate on a tag build.
 
 **Also noticed, not filed as work:** the packaged app ships `audiod/scheduler-core.test.js` to
 customers, because `files` has no `!audiod/**/*.test.js` negation. Harmless but pointless bytes.

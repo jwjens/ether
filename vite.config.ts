@@ -33,6 +33,20 @@ export default defineConfig({
     //
     // configDefaults.exclude is spread rather than retyped: it carries **/node_modules/**, and a
     // hand-written list that drifts would start running the tests inside every dependency.
-    exclude: [...configDefaults.exclude, "**/dist-electron/**", "**/dist/**", "**/win-unpacked/**"],
+    exclude: [
+      ...configDefaults.exclude,
+      "**/dist-electron/**", "**/dist/**", "**/win-unpacked/**",
+      // ELECTRON-HOSTED SUITES — a different runner, not a different result.
+      //
+      // electron/sync/tests/* are CommonJS and need a better-sqlite3 built against Electron's ABI,
+      // so they run under `npm run test:sync` (scripts/run-sync-tests.js, electron --no-sandbox).
+      // They match vitest's default include, so every `npx vitest run` reported "9 failed" on
+      // collection even with all 81 tests green.
+      //
+      // A suite that is permanently red trains people to ignore red, which costs more than the
+      // noise: the one run that goes red for a REAL reason looks like the usual. Excluded here so
+      // vitest owns the renderer + audiod, and test:sync stays the one door to the sync suite.
+      "electron/sync/tests/**",
+    ],
   },
 });
