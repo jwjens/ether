@@ -2020,7 +2020,18 @@ export default function App() {
     // Global right-click context menu removed — Theme Studio and Reset Layout moved to ≡ menu
   };
 
-  const resetLayout = () => { window.location.reload(); };
+  // ≡ menu → Reset Layout. IN PLACE — no reload.
+  //
+  // This was `window.location.reload()`. A reload drops `accountSignedIn` (useState at :571, held in
+  // memory), so the account gate re-evaluates and the operator is dumped on the SIGN-IN SCREEN by a
+  // control labelled "Reset Layout". Found 2026-08-10 when the Schedule Manager's own Reset Layout
+  // did the same thing; this is the same defect, and it was here first.
+  //
+  // canvasEngine.resetLayout() is the real reset: setWidgets(DEFAULT_LAYOUT) + the default layout
+  // name, purely in React state. It is already the path "file:new-session" uses (:1035), so this is
+  // the established call rather than a new one. A layout control must touch the layout and nothing
+  // else — no reload, no navigation, session untouched.
+  const resetLayout = () => { canvasEngine.resetLayout(); };
 
   const nowPlayingDeck = [deckA, deckB, deckC].find(d => d?.status === "playing");
   // Clock accent follows the on-air deck's color (A red / B blue / C green), teal when idle.
