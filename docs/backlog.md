@@ -39,6 +39,43 @@ Full design: `docs/seamless-daemon-update-design-2026-07-27.md`. **Build nothing
   time-anchored playhead is the only clean mid-song resume primitive). Not scheduled; if ever revisited,
   strictly AFTER the flip's Phase 3 burn-in. (added 2026-07-27)
 
+## Auto-generation — SHIPPED ALL ALONG (corrected 2026-08-11)
+
+**THIS ENTRY WAS WRONG FROM THE DAY IT WAS FILED. Auto-generation was already built and running.**
+Filed 2026-07-22 as unbuilt work gated behind a Generate-worker prerequisite, it then motivated a
+whole worker design doc. Found 2026-08-11 while collapsing the Generate tail:
+
+`electron/main.js` has carried **Layer #2: runway + auto-extend** for months — `_autoExtendTick()`
+armed at startup, running every 30 minutes, iterating every station with an active show, calling
+`_generateRange()` when runway drops below a threshold, plus `_sparseHealed` force-regeneration of
+degraded (<2 rows/hr) schedules. Env-tunable via `ETHER_RUNWAY_THRESHOLD_H` /
+`ETHER_RUNWAY_TARGET_DAYS`.
+
+**Building the filed entry would have produced a SECOND unattended writer to the playout log.**
+
+What the entry asked for that genuinely did NOT exist, and what this arc did about it:
+
+| Asked for | Reality | This arc |
+|---|---|---|
+| Runs in a worker | runs on main, chunked + yielding | worker DROPPED (Phase 0) — it is not the fix |
+| Health event per run | `console.log` + an SSE frame, neither surviving a restart | **DONE** — `auto-extend` / `auto-extend-failed` with trigger, runway before/after, rows, reasons |
+| "Schedule horizon" Health Monitor row | nothing on screen | **DONE** — runway row per station, green >=5d / yellow <3d / red <1d / grey no-show |
+| Respects the clock law | it always did (`_generateRange` uses the same picker) | unchanged |
+| Per-station setting + on/off | env vars only, fleet-wide | **STILL OPEN** (step 4) |
+
+**The metric was also wrong the whole time.** `_stationRunwaySec` measured `MAX(scheduled_at) - now`,
+which counts straight past a gap — so the engine that exists to prevent a dry log could not see a
+hole in tomorrow's schedule. Corrected 2026-08-11 to first-gap, show-coverage-aware, in
+`electron/runway.js`, shared by the engine and the gauge so they cannot disagree. Measured
+behaviour-neutral on all four live stations at the time of the change (contiguous logs).
+
+**Thresholds** moved 48h/14d -> 4 days/10 days on 2026-08-11.
+
+**Prerequisite claim retired:** the entry said auto-generation REQUIRED the Generate-worker release.
+It did not, and never did — it has been running on main this whole time, chunked and yielding.
+
+### ORIGINAL ENTRY (WRONG - kept so the mistake is findable)
+
 ## Auto-generation — rolling-horizon top-up (filed 2026-07-22)
 - **PREREQUISITE — the Generate-worker release.** Generate must move OFF the main thread into the worker
   (the same class as the 4.4.77 senses-freeze fix: synchronous 24h×slots generation blocks the main

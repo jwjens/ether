@@ -249,6 +249,23 @@ existing sweeps.)
 
 ## 3. Auto-generation
 
+> **CORRECTION 2026-08-11 — THIS SECTION DESIGNED SOMETHING THAT ALREADY EXISTED.**
+>
+> `_autoExtendTick()` has shipped in `electron/main.js` for months: a 30-minute timer, per station,
+> calling `_generateRange()` when runway falls below a threshold, with sparse-schedule healing. I
+> wrote §3 without finding it — the same failure as §1's premise, in the same file.
+>
+> Everything below therefore reads as a design for a REPLACEMENT. It should be read as a
+> specification for what the existing engine was MISSING, which is what the arc actually built:
+> ledger events (done), the Health Monitor row (done), the corrected first-gap metric (done),
+> thresholds 4d/10d (done), and per-station on/off plus the deferral policy (open).
+>
+> The parts of §3 that survive unchanged are §3.2b (deferral) and §3.3's safety rails — neither
+> existed. The parts about "where it is decided" and "no new timer" were describing a timer that was
+> already there.
+
+
+
 ### 3.1 The rule
 
 > When a station's runway falls below its threshold, generate forward to its target — in the worker,
