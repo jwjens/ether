@@ -158,6 +158,27 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
   // Generate diagnostics now flow to the movable Scheduler Health panel (Tools) via the
   // "ether:gen-report" event — structured, actionable, non-blocking (no locked modal).
 
+  // ── AUTO-GENERATED DAYS (2026-08-11) ────────────────────────────────────────────────────────
+  // Days this machine's auto-extender built, so an operator can tell at a glance which schedule they
+  // authored and which appeared on its own. Reads `source`, the local-only provenance column
+  // (NULL/'machine' = manual, 'auto' = the unattended extender, 'operator' = a jock deck-load).
+  // Local-only in sync, so this says "THIS machine generated it" and never a peer's opinion.
+  const [autoDays, setAutoDays] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    let stop = false;
+    (async () => {
+      if (!stationId) return;
+      try {
+        const rows = await queryScoped<{ d: string }>(
+          "SELECT DISTINCT date(scheduled_at,'unixepoch','localtime') d FROM generated_schedule WHERE station_id = ? AND source = 'auto' AND deleted_at IS NULL",
+          [], stationId, { skipScoping: true });
+        if (!stop) setAutoDays(new Set((rows || []).map(r => r.d)));
+      } catch { /* the marker is informational — never break the calendar for it */ }
+    })();
+    return () => { stop = true; };
+  }, [stationId, weekOffset, viewMode]);
+  const dayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
   // Generate the airing log (generated_schedule) for the viewed WEEK, one day at a time (per-day
   // clear+rebuild — no full wipe). Metered: reports done/total between days so the window shows progress
   // instead of appearing frozen, and Cancel stops it cleanly. A manual run is capped at one week (a month
@@ -472,6 +493,12 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                 <div key={i} onClick={() => openDay(cell)} style={{ background: "var(--bg-secondary)", border: `1px solid ${cellToday ? "var(--accent-green)" : "var(--border-primary)"}`, padding: 5, cursor: "pointer", display: "flex", flexDirection: "column" as const, gap: 2, overflow: "hidden" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <span style={{ fontSize: 15, fontWeight: 800, color: cellToday ? "var(--accent-green)" : "var(--text-primary)" }}>{cell.getDate()}</span>
+                    {/* Built by the unattended extender, not by a person. Quiet by design: this is
+                        provenance, not a warning — an auto-generated day is the system working. */}
+                    {autoDays.has(dayKey(cell)) && (
+                      <span title="Generated automatically by this machine — the log was running low"
+                        style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.08em", padding: "1px 4px", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)" }}>AUTO</span>
+                    )}
                   </div>
                   {cellShows.map(s => (
                     <div key={s.id} onClick={(e) => { e.stopPropagation(); openDay(cell, s); }} title={s.name}
