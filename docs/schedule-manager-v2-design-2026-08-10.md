@@ -520,3 +520,75 @@ fresh layout — announcing a problem that isn't one.
 - `spotCatCounts` in `ClocksTab` is now read only by the hidden card: dead in the shell, live in the
   tabbed view. Left alone deliberately — removing it would touch both paths for no user-visible gain.
 - Rotation Analytics remains a link, not a pane (Phase 3).
+
+---
+
+## 15. Phase 4 — RESULT (2026-08-10, 4.4.179). v2 COMPLETE.
+
+Presets, Traffic on DataGrid, and two riders. Every box in §8 is now closed.
+
+### 15.1 Presets store NOTHING, deliberately
+
+Three named arrangements (Programming / Traffic / Analysis) in the Panels menu. §8 allowed a
+`LAYOUT_VERSION` bump "if the stored shape changes" — **it does not, and that was the decision, not
+an omission.** Recording an active preset would have added a field and invalidated every saved
+layout for the third build running (v1→v2 Phase 2, v2→v3 Phase 3), in exchange for a tick in a menu.
+
+Worse, it would have invited a lie: the stored name says Traffic while the operator has since dragged
+the panes into something else. A preset is an *arrangement applied in place*, not a mode. Nothing is
+stored, so nothing can disagree with the screen. `LAYOUT_VERSION` stays 3.
+
+`PANELS` and `PRESETS` moved to `layoutStore.ts` as pure data. The invariant worth having is
+**"every pane appears in at least one preset"** — a pane reachable from no preset is findable only by
+someone who already knows it exists, the same doors-before-rooms failure that hid jingles and Spots.
+
+### 15.2 Traffic forced a new idea: `csvOnly`
+
+Traffic is the first table where **screen and file have different shapes**, not just different
+wording:
+
+| | columns |
+|---|---|
+| screen | 9 — Sched · Aired · Δ · Status · Cart · ISCI · Advertiser · Title · Len |
+| file | 12 — Date · Scheduled Time · Actual Time · Delta (s) · Status · Cart · ISCI · Advertiser · **Agency** · Title · Length (s) · **Spot Type** |
+
+The file splits the screen's single `Sched` into `Date` + `Scheduled Time`, and carries Agency and
+Spot Type, which are on no screen. `GridColumn.csvOnly` lets the union be declared once in FILE
+order; the screen is what survives dropping those — exactly the nine it already had, in order.
+
+### 15.3 The traffic gate is weaker than Rotation Analytics', and says so
+
+Rotation Analytics compares against the **real shipped exporter** (`electron/rotation-analytics.js`),
+which cannot drift. Traffic's exporter was inline in a React component and could not be imported, so
+the reference is a **verbatim transcript** of the pre-conversion body with its git range cited in the
+test (`6f9ccdd:src/components/Logs.tsx:252-286`).
+
+It proves the two agree and that neither moves from here. It does **not** prove the transcript
+matches what shipped — only reading that diff does. Recorded rather than glossed, because a gate
+whose limits are unstated is trusted past them.
+
+### 15.4 Riders
+
+- **Hourly grid** got the table its export always implied. It had shipped export-only since the
+  panel existed — a door that only opens outward, where what you hand someone cannot be checked
+  against anything on screen. It was never a size problem: `GROUP BY hour, category` is at most
+  24 × categories.
+- **tsc reached ZERO** and now gates CI. The "accepted baseline of 2" is retired, and **one of the
+  two was a real bug**: `stateLabel()` covered 13 of the `OnboardingState` union's 14 members, so
+  the `placement` screen's label was `undefined` at runtime. The error had been pointing at it for
+  months while being waved through — which is the argument against tolerated baselines generally.
+  `CLAUDE.md` updated, since its standing instruction was to pass the gate on exactly those two.
+
+### 15.5 Defect found while building this
+
+`selectPreset` listed `syncOpen` in its dependency array while `syncOpen` was declared ten lines
+later. A dep array is evaluated during render, so that is a temporal-dead-zone crash on mount, not a
+lint nit. Caught by reading the declaration order before running it. `syncOpen` now precedes its
+callers with a comment saying why.
+
+### 15.6 What v2 did NOT do
+
+- **Virtualisation** — still deferred, ~2,000 rows in one grid is the revisit threshold (§4.1).
+  Traffic over a long window is the likeliest first caller to cross it.
+- **The other 14 hand-rolled `<table>`s** — converted opportunistically, per §4.2. No big-bang.
+- **The UNKNOWN sweep** for daemon-supplied fields — filed in the backlog, unbundled on purpose.
