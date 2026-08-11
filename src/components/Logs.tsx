@@ -1,6 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { DataGrid } from "./grid/DataGrid";
+import { toCsv, downloadCsv } from "./grid/csv";
+import { trafficColumns, statusOf, deltaSec, actualTs as actualTsOf, aired as airedOf, type TrafficRow } from "./traffic/columns";
 
 interface LogEntry {
   id: number;
@@ -20,22 +23,9 @@ interface LogEntry {
 // title match. The advertiser/ISCI/cart/agency fields live on `spots` and join by file_path — the
 // same key the generator wrote the row with (main.js:6950).
 // docs/help-traffic.md
-interface TrafficRow {
-  id: number;
-  scheduled_at: number;
-  played_at: number | null;
-  state: string | null;          // pending | playing | played | missed
-  title: string;
-  artist: string | null;         // generator stores advertiser here for spot rows (main.js:6950)
-  duration_s: number | null;
-  file_path: string | null;
-  advertiser: string | null;
-  isci_code: string | null;
-  cart_number: string | null;
-  agency: string | null;
-  length_sec: number | null;
-  spot_type: string | null;
-}
+// TrafficRow moved to ./traffic/columns so the shape, the screen and the affidavit CSV share one
+// declaration. Re-exported: this module was its home, and other files import it from here.
+export type { TrafficRow };
 
 function fmtTimestamp(epoch: number): string {
   return new Date(epoch * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -249,40 +239,45 @@ export default function Logs() {
   // TRAFFIC EXPORT — the affidavit a station bills against. Scheduled vs actual per spot, with the
   // advertiser identifiers a traffic system needs to reconcile. Empty cells are written empty rather
   // than filled with a guess: an unmatched spot is a real condition the traffic manager must see.
-  const exportTraffic = () => {
-    const header = "Date,Scheduled Time,Actual Time,Delta (s),Status,Cart,ISCI,Advertiser,Agency,Title,Length (s),Spot Type";
-    const rows = traffic.map(t => {
-      const sd = new Date(t.scheduled_at * 1000);
-      const aired = t.state === "played" || t.state === "playing";
-      const actualTs = aired ? (t.played_at ?? t.scheduled_at) : null;
-      const status = aired ? "AIRED"
-                   : t.state === "missed" ? "MISSED"
-                   : t.scheduled_at < Math.floor(Date.now() / 1000) ? "MISSED"
-                   : "PENDING";
-      return [
-        sd.toLocaleDateString(),
-        sd.toLocaleTimeString("en-US", { hour12: false }),
-        actualTs != null ? new Date(actualTs * 1000).toLocaleTimeString("en-US", { hour12: false }) : "",
-        actualTs != null ? String(actualTs - t.scheduled_at) : "",
-        status,
-        t.cart_number || "",
-        t.isci_code || "",
-        // The generator copies advertiser into gs.artist at placement (main.js:6950), so that value
-        // survives even if the spot row is later edited or removed. Prefer the live spots row, fall
-        // back to what was recorded at the time it aired.
-        t.advertiser || t.artist || "",
-        t.agency || "",
-        t.title || "",
-        String(t.length_sec ?? t.duration_s ?? ""),
-        t.spot_type || "",
-      ].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(",");
+  // Screen rendering for the traffic grid: the shared definitions plus this panel's colour. Colour
+  // stays here so traffic/columns.ts remains pure and importable by the CSV gate without React.
+  //
+  // nowSec is recomputed per render rather than per row, so every row in one paint is judged against
+  // the same instant — a spot cannot read PENDING above a later one reading MISSED.
+  const trafficGridColumns = useMemo(() => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const mono = { fontFamily: "'DM Mono', monospace" as const };
+    return trafficColumns(nowSec).map(c => {
+      if (c.id === "aired") return { ...c, cell: (t: TrafficRow) => {
+        const a = actualTsOf(t);
+        return <span style={{ ...mono, color: airedOf(t) ? "var(--text-primary)" : "var(--text-tertiary)" }}>
+          {a != null ? new Date(a * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—"}
+        </span>;
+      } };
+      if (c.id === "delta") return { ...c, cell: (t: TrafficRow) => {
+        const d = deltaSec(t);
+        // >120s off schedule is the threshold this panel has always flagged amber.
+        return <span style={{ ...mono, color: d != null && Math.abs(d) > 120 ? "var(--accent-amber)" : "var(--text-tertiary)" }}>
+          {d != null ? (d >= 0 ? "+" : "") + d + "s" : "—"}
+        </span>;
+      } };
+      if (c.id === "status") return { ...c, cell: (t: TrafficRow) => {
+        const s = statusOf(t, nowSec);
+        const sc = s === "AIRED" ? "var(--accent-green)" : s === "MISSED" ? "var(--accent-red)" : "var(--text-tertiary)";
+        return <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 8px", background: sc + "1f", color: sc, whiteSpace: "nowrap" }}>{s}</span>;
+      } };
+      if (c.id === "advertiser") return { ...c, cell: (t: TrafficRow) =>
+        <span style={{ color: "var(--text-primary)" }}>{t.advertiser || t.artist || "—"}</span> };
+      return c;
     });
-    const csv = header + "\n" + rows.join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = "ether-traffic-" + new Date().toISOString().split("T")[0] + ".csv"; a.click();
-    URL.revokeObjectURL(url);
+  }, [traffic]);
+
+  // Column-driven now (src/components/traffic/columns.ts) — the same definitions the grid renders,
+  // so the affidavit and the screen can no longer drift. Byte-identical to the hand-rolled version
+  // it replaces; src/components/grid/csv.test.ts pins that against a transcript of the original.
+  const exportTraffic = () => {
+    const cols = trafficColumns(Math.floor(Date.now() / 1000));
+    downloadCsv("ether-traffic-" + new Date().toISOString().split("T")[0] + ".csv", toCsv(cols, traffic));
   };
 
   const exportCSV = (format: "standard" | "bmi" | "ascap" = "standard") => {
@@ -447,42 +442,16 @@ export default function Logs() {
                 </div>
               </div>
             ) : (
-              <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflowX: "auto" as any }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 12, minWidth: 900 }}>
-                  <thead>
-                    <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
-                      {["Sched", "Aired", "Δ", "Status", "Cart", "ISCI", "Advertiser", "Title", "Len"].map(h => (
-                        <th key={h} style={{ padding: "9px 12px", textAlign: "left" as any, fontSize: 9, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em", whiteSpace: "nowrap" as any }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {traffic.map((t, i) => {
-                      const aired = t.state === "played" || t.state === "playing";
-                      const actualTs = aired ? (t.played_at ?? t.scheduled_at) : null;
-                      const delta = actualTs != null ? actualTs - t.scheduled_at : null;
-                      const status = aired ? "AIRED" : (t.state === "missed" || t.scheduled_at < nowSec) ? "MISSED" : "PENDING";
-                      const sc = status === "AIRED" ? "var(--accent-green)" : status === "MISSED" ? "var(--accent-red)" : "var(--text-tertiary)";
-                      return (
-                        <tr key={t.id} style={{ borderBottom: i < traffic.length - 1 ? "1px solid var(--border-primary)" : "none" }}>
-                          <td style={{ padding: "8px 12px", fontFamily: "'DM Mono', monospace", fontSize: 11, color: "var(--text-secondary)", whiteSpace: "nowrap" as any }}>{fmtTimestamp(t.scheduled_at)}</td>
-                          <td style={{ padding: "8px 12px", fontFamily: "'DM Mono', monospace", fontSize: 11, color: aired ? "var(--text-primary)" : "var(--text-tertiary)", whiteSpace: "nowrap" as any }}>{actualTs != null ? fmtTimestamp(actualTs) : "—"}</td>
-                          <td style={{ padding: "8px 12px", fontFamily: "'DM Mono', monospace", fontSize: 11, color: delta != null && Math.abs(delta) > 120 ? "var(--accent-amber)" : "var(--text-tertiary)", whiteSpace: "nowrap" as any }}>
-                            {delta != null ? (delta >= 0 ? "+" : "") + delta + "s" : "—"}
-                          </td>
-                          <td style={{ padding: "8px 12px" }}>
-                            <span style={{ fontSize: 9, fontWeight: 700, padding: "2px 8px", background: sc + "1f", color: sc, whiteSpace: "nowrap" as any }}>{status}</span>
-                          </td>
-                          <td style={{ padding: "8px 12px", fontFamily: "'DM Mono', monospace", fontSize: 11, color: "var(--text-tertiary)" }}>{t.cart_number || "—"}</td>
-                          <td style={{ padding: "8px 12px", fontFamily: "'DM Mono', monospace", fontSize: 11, color: "var(--text-tertiary)" }}>{t.isci_code || "—"}</td>
-                          <td style={{ padding: "8px 12px", color: "var(--text-primary)", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{t.advertiser || t.artist || "—"}</td>
-                          <td style={{ padding: "8px 12px", color: "var(--text-secondary)", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{t.title}</td>
-                          <td style={{ padding: "8px 12px", fontFamily: "'DM Mono', monospace", fontSize: 11, color: "var(--text-tertiary)", whiteSpace: "nowrap" as any }}>{(t.length_sec ?? t.duration_s ?? "—")}{(t.length_sec ?? t.duration_s) != null ? "s" : ""}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+              <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0 }}>
+                {/* DataGrid (Phase 4): sortable — by advertiser, or by Δ to find the spots that ran
+                    late — and resizable, with widths remembered per station. Row order is UNSORTED by
+                    default, so it opens in the log's own chronological order exactly as before. */}
+                <DataGrid<TrafficRow>
+                  columns={trafficGridColumns} rows={traffic}
+                  getRowId={t => String(t.id)}
+                  persistKey="traffic" stationId={stationId}
+                  empty="No spots scheduled in this period."
+                />
               </div>
             )}
           </div>

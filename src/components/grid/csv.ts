@@ -36,6 +36,13 @@ export interface GridColumn<T> {
   csv?: (row: T) => any;
   /** Screen-only (a badge with no cell of its own). Never in the file. */
   csvExclude?: boolean;
+  /** File-only. Never rendered.
+   *
+   *  Traffic forced this: its affidavit CSV carries Agency and Spot Type, which appear nowhere on
+   *  screen, and splits the screen's single "Sched" column into Date + Scheduled Time. With
+   *  csvOnly the union is declared ONCE in file order, and the screen is what is left after
+   *  dropping these — which is exactly the 9 columns it already showed. */
+  csvOnly?: boolean;
   /** This column's FINAL position (0-based) in the file, when it differs from its screen position.
    *  Unset columns keep screen order and flow around the placed ones. */
   csvOrder?: number;
@@ -68,6 +75,11 @@ const csvCell = (v: any) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
  * and off-category came out SIXTH. The gate caught it on its first run. Positioning is unambiguous
  * where a shared sort key is not.
  */
+/** What the grid renders: everything except the file-only columns, in declaration order. */
+export function screenColumns<T>(columns: GridColumn<T>[]): GridColumn<T>[] {
+  return columns.filter(c => !c.csvOnly);
+}
+
 export function csvColumns<T>(columns: GridColumn<T>[]): GridColumn<T>[] {
   const included = columns.filter(c => !c.csvExclude);
   const out = included.filter(c => c.csvOrder == null);

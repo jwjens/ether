@@ -24,7 +24,7 @@ import {
   type ColumnDef, type SortingState, type ColumnSizingState,
 } from "@tanstack/react-table";
 import type { GridColumn } from "./csv";
-import { toCsv, downloadCsv } from "./csv";
+import { toCsv, downloadCsv, screenColumns } from "./csv";
 
 export interface DataGridProps<T> {
   columns: GridColumn<T>[];
@@ -86,7 +86,11 @@ export function DataGrid<T>({
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [sizing, persistKey, stationId, sizingLoaded]);
 
-  const tanColumns = useMemo<ColumnDef<T, any>[]>(() => columns.map(c => ({
+  // File-only columns never reach the table. The full list still drives the CSV, so a column can
+  // exist in the export without being rendered — see GridColumn.csvOnly.
+  const shown = useMemo(() => screenColumns(columns), [columns]);
+
+  const tanColumns = useMemo<ColumnDef<T, any>[]>(() => shown.map(c => ({
     id: c.id,
     // null → undefined for the TABLE ONLY, so `sortUndefined: "last"` can keep "no value" at the
     // bottom in both directions. The CSV path reads GridColumn.accessor directly and still sees the
@@ -99,7 +103,7 @@ export function DataGrid<T>({
     sortingFn: c.sortType === "numeric" ? "basic" : "alphanumeric",
     size: c.width ?? 120,
     minSize: c.minWidth ?? 48,
-  })), [columns]);
+  })), [shown]);
 
   const table = useReactTable({
     data: rows,
