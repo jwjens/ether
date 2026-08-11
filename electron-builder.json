@@ -22,6 +22,9 @@
     "native/**/*.node",
     "watchdog/**/*",
     "!watchdog/test/**",
+    "!audiod/**/*.test.js",
+    "!electron/**/*.test.js",
+    "!electron/sync/tests/**",
     "node_modules/**/*",
     "package.json"
   ],
