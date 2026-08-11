@@ -23,7 +23,16 @@ const PATCHABLE          = ["value","updated_at"];
 // a mutation, so nothing ever enters the outbound stream; (IN) the mutation-logging writers below skip
 // these keys, so an inbound/legacy mutation can never apply one. (The peer sync engine is also off by
 // default, so a flag mutation cannot even exist — this is belt-and-suspenders.)
-const LOCAL_ONLY_KEYS = new Set(['log_reader_flip']);
+// Keys that are LOCAL-AUTHORITATIVE: never synced, never created through the mutation path, and
+// writable only through set-local. A key missing from this set is REFUSED by set-local — which is
+// how the auto-generate toggle shipped broken in 4.4.183/184: the UI wrote, the write was rejected
+// every time, and the button snapped back to the stored (absent) value. Verified 2026-08-11: zero
+// station_config_kv rows existed for it, against 4 for log_reader_flip.
+//
+// auto_generate_enabled is local by design — generated_schedule syncs and _autoExtendTick has no
+// leader guard, so a synced flag would make "every machine generates this station" the replicated
+// policy (backlog: multi-machine two-writer hazard).
+const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled']);
 const isLocalOnlyKey = (k) => LOCAL_ONLY_KEYS.has(k);
 
 // Direct, MUTATION-LESS upsert for a local-authoritative key. Bypasses withMutation entirely, so the
@@ -283,7 +292,13 @@ function installStationConfigKv(ipcMain, db) {
   // mutation logged → never syncs). Rejects any non-local-only key so it can't be misused to bypass sync.
   ipcMain.handle('station_config_kv:set-local', (_, stationId, key, value) => {
     try {
-      if (!isLocalOnlyKey(key)) return { ok: false, error: `set-local refuses non-local-only key "${key}"` };
+      if (!isLocalOnlyKey(key)) {
+        // Loud: a refused write is invisible to the operator unless the caller checks the verdict,
+        // and 4.4.183/184 proved a caller will forget.
+        console.warn(`[station_config_kv] set-local REFUSED station=${stationId} key="${key}" — not in LOCAL_ONLY_KEYS`);
+        return { ok: false, error: `set-local refuses non-local-only key "${key}"` };
+      }
+      console.log(`[station_config_kv] set-local station=${stationId} key="${key}" value="${value}"`);
       return stationConfigKvSetLocal(getDb(), stationId, key, value);
     } catch (e) { return { ok: false, error: e.message }; }
   });

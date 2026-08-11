@@ -1,5 +1,10 @@
 import { useState, useEffect, useCallback, useRef, Fragment, Component, ReactNode } from "react";
 import { parseKvFlag } from "../lib/kvFlag";
+
+// Must match electron/main.js _autoGenerateEnabled and the LOCAL_ONLY_KEYS allowlist in
+// electron/sync/handlers/station_config_kv.js. A key absent from that allowlist is REFUSED by
+// set-local — the 4.4.183/184 defect.
+const AUTO_KEY = "auto_generate_enabled";
 import { query, dbHealthCheck } from "../db/client";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStation";
@@ -340,6 +345,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   // with a warning rather than as OFF.
   const [autoGen, setAutoGen] = useState<Record<number, boolean | null>>({});
   const [autoBusy, setAutoBusy] = useState<number | null>(null);
+  const [autoErr, setAutoErr] = useState<Record<number, string>>({});
 
   /** The single source of truth for this control: what station_config_kv actually holds. */
   const readFlip = useCallback(async (sid: number): Promise<boolean | null> => {
@@ -353,12 +359,18 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   // Merge per station with a functional update instead of replacing the whole map. Two overlapping
   // refreshes (libHealth re-polls, so this effect can re-enter) can no longer clobber each other, and
   // one station failing to read leaves the others alone instead of resetting everything.
+  // Reads the STORED value. Default when unset is OFF (4.4.185): an unattended writer to the playout
+  // log is switched on deliberately, never inherited.
   const readAutoGen = useCallback(async (sid: number): Promise<boolean | null> => {
     try {
-      // The IPC returns an ENVELOPE { ok, value }. 4.4.183 compared that object against "0" — never
-      // equal — so a stored OFF read back as ON and the button snapped back on every click.
-      return parseKvFlag(await (window as any).ether?.invoke?.("station_config_kv:get-value", sid, "auto_generate"), true);
-    } catch { return null; }
+      const res = await (window as any).ether?.invoke?.("station_config_kv:get-value", sid, AUTO_KEY);
+      const parsed = parseKvFlag(res, false);
+      console.log(`[auto-generate] read station=${sid} raw=${JSON.stringify(res)} -> ${parsed === null ? "UNREADABLE" : parsed ? "ON" : "OFF"}`);
+      return parsed;
+    } catch (e) {
+      console.warn(`[auto-generate] read FAILED station=${sid}`, e);
+      return null;
+    }
   }, []);
 
   // Race guard. The Health Monitor re-polls, and refreshFlipFlags walks stations one at a time with
@@ -386,24 +398,39 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
 
   /** Flip a station. Reads the stored value, writes its opposite, then renders the read-back. */
   const toggleAutoGen = async (sid: number) => {
-    // CONTROLLED: the button paints from `autoGen`, and that flips SYNCHRONOUSLY on click. The value
-    // written is derived from the same state the operator just saw, so there is no read-then-write
-    // window in which the button can show one thing and the store hold another.
-    const shown = autoGen[sid];
-    const target = shown === false;            // showing OFF (or unknown->ON) -> the click means the opposite
+    // CONTROLLED: the button renders the STORED value only. No optimistic paint — 4.4.183/184
+    // painted first and then reconciled, so a refused write showed the new state for a frame and
+    // snapped back. That looked like a race and was actually the write being rejected every time
+    // (the key was missing from LOCAL_ONLY_KEYS, so set-local returned ok:false and the UI ignored
+    // the verdict). Paint only what the store confirms and a refusal can never masquerade as a flip.
+    const shown = autoGen[sid] === true;
+    const target = !shown;
     const seq = ++autoSeqNext.current;
     autoSeq.current[sid] = seq;
-    setAutoGen(prev => ({ ...prev, [sid]: target }));   // optimistic: no flicker, no spinner
     setAutoBusy(sid);
+    setAutoErr(prev => { const n = { ...prev }; delete n[sid]; return n; });
     try {
-      await (window as any).ether?.invoke?.("station_config_kv:set-local", sid, "auto_generate", target ? "1" : "0");
-      // Then reconcile against the store, because optimistic paint must never become a lie: if the
-      // write was refused the button snaps to what is actually stored rather than to what was asked.
+      console.log(`[auto-generate] write station=${sid} key="${AUTO_KEY}" value="${target ? "1" : "0"}"`);
+      const w = await (window as any).ether?.invoke?.("station_config_kv:set-local", sid, AUTO_KEY, target ? "1" : "0");
+      const refused = !w || w.ok === false;
+      if (refused) console.error(`[auto-generate] write REFUSED station=${sid}:`, (w && w.error) || "no response");
+
       const after = await readAutoGen(sid);
-      if (autoSeq.current[sid] === seq) setAutoGen(prev => ({ ...prev, [sid]: after }));
-    } catch {
+      const stuck = after === target;
+      console.log(`[auto-generate] verify station=${sid} wanted=${target ? "ON" : "OFF"} stored=${after === null ? "UNREADABLE" : after ? "ON" : "OFF"} -> ${stuck ? "OK" : "MISMATCH"}`);
+
+      if (autoSeq.current[sid] === seq) {
+        setAutoGen(prev => ({ ...prev, [sid]: after }));      // the store's word, always
+        if (refused) setAutoErr(prev => ({ ...prev, [sid]: `write refused: ${(w && w.error) || "no response"}` }));
+        else if (!stuck) setAutoErr(prev => ({ ...prev, [sid]: `write did not stick — still ${after === null ? "unreadable" : after ? "ON" : "OFF"}` }));
+      }
+    } catch (e: any) {
+      console.error(`[auto-generate] write THREW station=${sid}`, e);
       const after = await readAutoGen(sid);
-      if (autoSeq.current[sid] === seq) setAutoGen(prev => ({ ...prev, [sid]: after }));
+      if (autoSeq.current[sid] === seq) {
+        setAutoGen(prev => ({ ...prev, [sid]: after }));
+        setAutoErr(prev => ({ ...prev, [sid]: e?.message || String(e) }));
+      }
     } finally { setAutoBusy(null); }
   };
 
@@ -1133,7 +1160,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                       that is hand-programmed is a legitimate choice, not a fault to nag about. */}
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
                     <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
-                      Auto-generate {autoGen[st.stationId] === false ? "— off, this machine will not extend the log" : "— keeps the log topped up"}
+                      Auto-generate {autoGen[st.stationId] === true ? "— this machine keeps the log topped up" : "— off; this machine will not extend the log"}
                     </span>
                     <button
                       onClick={() => toggleAutoGen(st.stationId)}
@@ -1142,13 +1169,16 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                       style={{
                         fontSize: 10, fontWeight: 800, letterSpacing: "0.08em", padding: "3px 10px", borderRadius: 0,
                         cursor: autoBusy === st.stationId ? "wait" : "pointer",
-                        background: autoGen[st.stationId] === false ? "transparent" : "var(--accent-green)",
-                        border: `1px solid ${autoGen[st.stationId] === false ? "var(--border-primary)" : "var(--accent-green)"}`,
-                        color: autoGen[st.stationId] === false ? "var(--text-tertiary)" : "#062",
+                        background: autoGen[st.stationId] === true ? "var(--accent-green)" : "transparent",
+                        border: `1px solid ${autoGen[st.stationId] === true ? "var(--accent-green)" : "var(--border-primary)"}`,
+                        color: autoGen[st.stationId] === true ? "#062" : "var(--text-tertiary)",
                         opacity: autoBusy === st.stationId ? 0.6 : 1,
                       }}
-                    >{autoGen[st.stationId] === false ? "AUTO OFF" : "AUTO ON"}</button>
+                    >{autoGen[st.stationId] === true ? "AUTO ON" : "AUTO OFF"}</button>
                   </div>
+                  {autoErr[st.stationId] && (
+                    <div style={{ fontSize: 9, color: "var(--accent-red)", marginTop: 2 }}>{autoErr[st.stationId]}</div>
+                  )}
                   {err && (
                     <div style={{ fontSize: 9, color: "#f87171", marginTop: 3, textAlign: "right" as const }}>{err}</div>
                   )}

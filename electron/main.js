@@ -7091,15 +7091,22 @@ function _scheduleIsSparse(stationId, nowTs) {
 // LOCAL, via station_config_kv — the same shape as the log_reader_flip canary and scheduler_mode.
 // Deliberately not synced: generated_schedule IS synced and _autoExtendTick has no leader guard, so
 // a synced ON flag would make "every machine holding this station generates it" the replicated
-// policy. Local keeps the decision per machine, which is the only lever available until the
-// single-writer election lands (backlog 2026-08-11). Default ON: a station whose operator has never
-// heard of this setting must still not run out of log.
+// policy. Local keeps the decision per machine (backlog: multi-machine two-writer hazard).
+//
+// DEFAULT OFF (changed 4.4.185; 4.4.183-184 defaulted ON). An unattended writer to the playout log
+// must be switched on deliberately, not inherited. Default-ON meant every fresh install of a
+// multi-machine station immediately became a second generator, which is the hazard itself rather
+// than a step toward it. Unreadable also resolves to OFF: this decides whether a background process
+// writes the log, and "I could not tell" is not a reason to write it.
+//
+// The trade-off is stated rather than hidden: a station nobody switches on will eventually run out
+// of log. That is what the runway gauge is for — it goes RED at under a day, on screen, per station.
 function _autoGenerateEnabled(stationId) {
   try {
-    const r = db.prepare("SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'auto_generate' LIMIT 1").get(stationId);
-    if (!r || r.value == null || r.value === '') return true;      // unset = ON
-    return String(r.value) !== '0';
-  } catch { return true; }                                          // unreadable = ON, never silently off
+    const r = db.prepare("SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'auto_generate_enabled' LIMIT 1").get(stationId);
+    if (!r || r.value == null || r.value === '') return false;      // UNSET = OFF (see below)
+    return String(r.value) === '1';
+  } catch { return false; }                                          // unreadable = OFF, never generate blind
 }
 
 // Deferral: while the daemon is down the app plays audio IN-PROCESS, on this thread. An unattended

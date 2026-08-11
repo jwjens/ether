@@ -33,3 +33,30 @@ describe("parseKvFlag", () => {
     expect(parseKvFlag({ ok: true, value: "0.0" }, true)).toBe(false);
   });
 });
+
+describe("auto_generate_enabled defaults OFF (4.4.185)", () => {
+  // An unattended writer to the playout log is switched on deliberately, never inherited. Default-ON
+  // (4.4.183-184) meant every fresh install of a multi-machine station became a second generator
+  // immediately — the two-writer hazard itself, not a step toward it.
+  it("an UNSET key is OFF, not ON", () => {
+    expect(parseKvFlag({ ok: true, value: null }, false)).toBe(false);
+    expect(parseKvFlag({ ok: true, value: undefined }, false)).toBe(false);
+    expect(parseKvFlag({ ok: true, value: "" }, false)).toBe(false);
+  });
+
+  it("an UNREADABLE store is OFF at the call site — never generate blind", () => {
+    // parseKvFlag reports null (unknown); the caller resolves that to OFF for this flag, because
+    // "I could not tell" is not a reason to let a background process write the log.
+    expect(parseKvFlag({ ok: false, error: "boom" }, false)).toBeNull();
+    expect(parseKvFlag(null, false)).toBeNull();
+  });
+
+  it("an explicit \"1\" turns it on, and survives the round trip", () => {
+    expect(parseKvFlag({ ok: true, value: "1" }, false)).toBe(true);
+  });
+
+  it("an existing install with a stored value keeps it, whatever the default", () => {
+    expect(parseKvFlag({ ok: true, value: "1" }, false)).toBe(true);
+    expect(parseKvFlag({ ok: true, value: "0" }, true)).toBe(false);
+  });
+});
