@@ -10,7 +10,50 @@ permissions:
   contents: write
 
 jobs:
+  # ── THE TEST GATE ────────────────────────────────────────────────────────────────────────────
+  # A release cannot be built without the unit tests passing. This runs ONCE, on the cheapest
+  # runner, and all three platform builds hang off it via `needs:` — a per-job step would run the
+  # same platform-independent suite three times and still let a green Windows build publish
+  # alongside a red one.
+  #
+  # WHY THE SUITE MUST STAY GREEN LOCALLY TOO: this workflow only fires on a v* tag, so anything
+  # that breaks between tags surfaces here, at the moment of release, when it is most expensive.
+  # `npx vitest run` exits 0 as of the hygiene arc; keep it that way.
+  #
+  # `npm run test:sync` is NOT run here — see the note on that step below.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: "npm"
+
+      - name: Install Node dependencies
+        run: npm install
+
+      - name: Unit tests (renderer + audiod)
+        run: npx vitest run
+
+      # NOT GATED HERE, deliberately, and neither is a lie of omission:
+      #
+      # · `npm run test:sync` runs under `electron --no-sandbox`, needs better-sqlite3 rebuilt for
+      #   Electron's ABI, and needs xvfb on Linux. That is an Electron download plus a native
+      #   rebuild before a single assertion runs, and a headless-display flake would block a
+      #   release for a reason unrelated to the release. LOCAL-ONLY, run before a sync change.
+      #
+      # · `npx tsc --noEmit` cannot gate yet: the tree carries 2 accepted pre-existing errors
+      #   (OnboardingFlow.tsx, PhoneDesk.tsx), so a typecheck gate would fail every release today.
+      #   Fix those two and this becomes a one-line addition.
+      #
+      # Both are recorded in docs/backlog.md rather than left as folklore.
+
   build:
+    needs: test
     strategy:
       # Publish is racy: every matrix job runs `electron-builder --publish always`,
       # and each tries to POST /releases for the tag. Whoever wins creates it; the

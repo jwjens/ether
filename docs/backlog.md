@@ -117,3 +117,26 @@ disappear. `vite.config.ts` now sets `test.exclude` to `configDefaults.exclude` 
 customers, because `files` has no `!audiod/**/*.test.js` negation. Harmless but pointless bytes.
 
 *Teardown: none — this is a config change, not diagnostic persistence.*
+
+## CI gates — what runs on a tag, and what cannot (filed 2026-08-10, hygiene arc item 3)
+
+**LANDED:** `.github/workflows/build.yml` gained a `test` job (`npx vitest run`, ubuntu-latest) that
+all three platform builds `needs:`. A release can no longer be built with failing unit tests. One
+run, not three — a per-job step would repeat a platform-independent suite on every matrix leg and
+still let a green Windows build publish beside a red one.
+
+**`npm run test:sync` — LOCAL-ONLY, decided rather than forgotten.** It runs under
+`electron --no-sandbox`, needs better-sqlite3 rebuilt against Electron's ABI, and needs xvfb on
+Linux: an Electron download plus a native rebuild before the first assertion, with a headless-display
+flake able to block a release for a reason unrelated to the release. Run it locally before any sync
+change. *To revisit:* if sync regressions ever reach a release, the cost calculus changes — the step
+is `xvfb-run -a npm run test:sync` after an `electron-rebuild`.
+
+**`npx tsc --noEmit` — CANNOT gate yet.** The tree carries 2 accepted pre-existing errors
+(`OnboardingFlow.tsx:2091`, `PhoneDesk.tsx:777`), so a typecheck gate would fail every release
+today. *Next step:* fix those two, then add `- run: npx tsc --noEmit` to the `test` job. Until then
+the typecheck is a local ritual with a remembered baseline, which is exactly the kind of gate that
+decays — it holds only while someone remembers the number is 2.
+
+**Still ungated on a tag:** the leak-guard and audio-isolation guards run per-matrix-job (they
+already did); the packaged smoke test is manual.
