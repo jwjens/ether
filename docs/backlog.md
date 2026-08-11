@@ -291,3 +291,28 @@ Recorded here because the settings do not exist yet; they land with Phase 3/4 of
 - **Q4 ruled: yes** — a health event per auto-run AND an "auto" marker on the Calendar day. No new
   surface.
 - **Q5 ruled: worker dropped**; the connection-parameterised extraction stays as Phase 1.
+
+## RULE: Generate instrumentation lands in BOTH handlers, or in a shared path (2026-08-11)
+
+Three instances of one defect shape, all the same two functions:
+
+1. **Phase 3 parity ledger** (fixed 2026-08-10) — `_noteSchedulerCore` was wired into
+   `schedule:generateDay` only, so the WEEK run ran the differential and threw the result away. Found
+   because `scheduler-core-shadow.jsonl` did not exist after a real regeneration.
+2. **`_libHealth.noteGenerate`** (fixed 2026-08-11) — same omission. The Health Monitor learned
+   nothing about thinness or empty categories from the week run, which is the Calendar's main button.
+3. **`generate-timing`** (2026-08-11) — avoided only because instance 2 was found while adding it.
+
+**The shape:** `schedule:generateDay` and `schedule:generateDays` are two separate handlers running
+the same pipeline. Anything observational added to one is invisible in the other, and the WEEK run is
+the common path — so the blind spot is always on the side that matters most. Nothing errors; the
+evidence is simply absent, which is why all three survived review.
+
+**THE RULE — anything added to Generate that observes, records or reports MUST be wired into both
+handlers, or extracted into a shared post-run path they both call.** Prefer the shared path.
+
+**Next step (not yet done):** the two handlers' tails are now near-identical — `_placeJingles`,
+`_commitDayRows`, `_noteSchedulerCore`, `noteGenerate`, `_noteGenerateTiming`, diagnostics assembly.
+Collapse them into one `finishGenerateRun(stationId, ctx, days)` so instance 4 is impossible rather
+than merely forbidden. Rides naturally with the Phase 1 picker extraction
+(`docs/generate-worker-design-2026-08-11.md`).

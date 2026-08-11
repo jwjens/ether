@@ -7372,6 +7372,12 @@ ipcMain.handle('schedule:generateDays', async (_, dayTsList) => {
     // from the path most likely to be used. Found because scheduler-core-shadow.jsonl did not exist
     // after a real regeneration.
     try { _noteSchedulerCore(stationId, ctx); } catch { /* observation must never break Generate */ }
+    // THIRD instance of the same defect shape (2026-08-11): instrumentation wired into
+    // schedule:generateDay and not into schedule:generateDays. The week run is the Calendar's main
+    // button, so the common path reported no thinness and no empty categories to the Health Monitor
+    // at all — the sense existed and was blind exactly where it was most likely to be needed.
+    // ctx is run-wide here (it accumulates across the days), so this reports the whole run once.
+    try { _libHealth && _libHealth.noteGenerate(stationId, { relaxed: ctx.relaxed, emptyCatIds: [...ctx.diag.emptyCats], breakDrift: ctx.breakDrift }); } catch {}
     // Wired into BOTH handlers from the start — the parity ledger's own history above is the reason.
     // The week run is the Calendar's main button, so timing that skipped it would miss the long runs
     // that are the entire question.
