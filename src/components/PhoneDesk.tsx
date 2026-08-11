@@ -774,7 +774,11 @@ export default function PhoneDesk({ onClose }: Props) {
   const editBuffer = useMemo(() => {
     if (!recPCM) return null;
     const b = new AudioBuffer({ length: recPCM.length, numberOfChannels: 1, sampleRate: SAMPLE_RATE });
-    b.copyToChannel(recPCM, 0);
+    // Same cast as the sibling call at :702. Since TS 5.7 the typed arrays are generic over their
+    // buffer, so a plain Float32Array is Float32Array<ArrayBufferLike> while copyToChannel demands
+    // Float32Array<ArrayBuffer> — SharedArrayBuffer is not acceptable there. recPCM is always
+    // allocated from a normal ArrayBuffer, so this narrows a type without changing any behaviour.
+    b.copyToChannel(recPCM as Float32Array<ArrayBuffer>, 0);
     return b;
   }, [recPCM]);
   const sendEditedToTarget = async (buf: AudioBuffer, target: SendTarget) => {

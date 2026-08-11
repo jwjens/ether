@@ -36,6 +36,16 @@ jobs:
       - name: Install Node dependencies
         run: npm install
 
+      # vite/esbuild STRIP types and never typecheck, so this is the only gate that catches a
+      # prop-type or "not defined" crash before it ships. It ran on zero accepted errors as of
+      # 4.4.179 — the two long-standing ones (OnboardingFlow, PhoneDesk) are fixed, and one of them
+      # was a real bug: an onboarding screen whose label was undefined at runtime.
+      #
+      # Keep this at ZERO. A remembered baseline is not a gate — it holds only while someone recalls
+      # the number, and it silently absorbs the next error.
+      - name: Typecheck
+        run: npx tsc --noEmit
+
       - name: Unit tests (renderer + audiod)
         run: npx vitest run
 
@@ -46,11 +56,10 @@ jobs:
       #   rebuild before a single assertion runs, and a headless-display flake would block a
       #   release for a reason unrelated to the release. LOCAL-ONLY, run before a sync change.
       #
-      # · `npx tsc --noEmit` cannot gate yet: the tree carries 2 accepted pre-existing errors
-      #   (OnboardingFlow.tsx, PhoneDesk.tsx), so a typecheck gate would fail every release today.
-      #   Fix those two and this becomes a one-line addition.
+      # (`npx tsc --noEmit` DOES gate now — see the Typecheck step above. The 2 accepted errors that
+      # blocked it were fixed in 4.4.179.)
       #
-      # Both are recorded in docs/backlog.md rather than left as folklore.
+      # Recorded in docs/backlog.md rather than left as folklore.
 
   build:
     needs: test

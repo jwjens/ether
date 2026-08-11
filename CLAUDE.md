@@ -89,16 +89,17 @@ After the version bump + commit + push, always build the Windows installer local
 ```
 npx tsc --noEmit                           # TYPECHECK — vite/esbuild STRIPS types and never typechecks;
                                            # this is the ONLY gate that catches a "not defined"/prop-type
-                                           # crash before it ships. Known pre-existing errors live in
-                                           # App.tsx / Scheduler.tsx / OnboardingFlow.tsx / PhoneDesk.tsx;
-                                           # the bar is ZERO NEW errors in the code you changed.
+                                           # crash before it ships.
                                            #
-                                           # ACCEPTED BASELINE (standing): 2 pre-existing errors, BOTH in
-                                           # OnboardingFlow.tsx + PhoneDesk.tsx (those files are incomplete
-                                           # and NOT current work). If tsc shows exactly those two, the gate
-                                           # PASSES — just confirm "no new errors" and move on. Do NOT
-                                           # re-list or explain them unless the count changes (a higher
-                                           # count, or an error in any other file, IS new and must be fixed).
+                                           # THE BAR IS ZERO ERRORS (as of 4.4.179). The old "accepted
+                                           # baseline of 2" is RETIRED — both were fixed, and one was a
+                                           # real bug: stateLabel() covered 13 of 14 onboarding states, so
+                                           # the 'placement' screen's label was undefined at runtime. A
+                                           # remembered baseline is not a gate; it holds only while someone
+                                           # recalls the number, and it absorbs the next error silently.
+                                           #
+                                           # This now also runs in CI on every tag (build.yml `test` job),
+                                           # so a release cannot be built with a type error.
 npm run build                              # vite renderer (dist/) — prerequisite
 npm run electron:build:win -- --publish never   # electron-builder, LOCAL ONLY (never publishes)
 ```

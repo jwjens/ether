@@ -2102,7 +2102,19 @@ function stateLabel(s: OnboardingState): string {
     case 'pickAudioLocation': return 'Screen 3.5 — Audio library location (Milestone B)';
     case 'pulling':           return 'Connecting to your station…';
     case 'welcome':           return 'Welcome';
+    case 'placement':         return 'Which stations does this machine run?';
     case 'done':              return 'All set';
+    default: {
+      // Exhaustiveness guard. This function had covered 13 of the union's 14 states — 'placement'
+      // was missing, so that screen's label was `undefined` at runtime while the signature promised
+      // a string. That is what the long-accepted "lacks ending return statement" error was pointing
+      // at; it was a real gap, not a formality.
+      //
+      // With this default the compiler fails the moment a new state is added without a label, and
+      // the runtime gets the raw state name rather than undefined.
+      const _exhaustive: never = s;
+      return String(_exhaustive);
+    }
   }
 }
 
