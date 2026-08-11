@@ -7279,6 +7279,27 @@ let _genCancel = false;
 function _genEmit(payload) {
   try { BrowserWindow.getAllWindows().forEach(w => { try { w.webContents.send("schedule:generate-progress", payload); } catch {} }); } catch {}
 }
+// Persist the hour-slice distribution to the honest ledger.
+//
+// `hourMs` has been computed on every hour of every generate since chunking landed, and consumed by
+// NOTHING — not the renderer (GenerateProgressBar never referenced it), not the ledger, not any log.
+// So "does Generate block the UI?" could not be answered from history; Phase 0 had to answer it with
+// a benchmark (docs/generate-phase0-measurement-2026-08-11.md), and the answer decided whether a
+// whole worker thread got built. Next time it will be evidence.
+//
+// Failure here must never break Generate — this observes, it does not participate.
+function _noteGenerateTiming(stationId, ctx, days) {
+  try {
+    const ms = (ctx && ctx.hourSlices) || [];
+    if (!ms.length) return;
+    const s = [...ms].sort((a, b) => a - b);
+    const at = (p) => s[Math.min(s.length - 1, Math.floor(s.length * p))];
+    require('fs').appendFileSync(path.join(app.getPath('userData'), 'health-events.jsonl'),
+      JSON.stringify({ t: new Date().toISOString(), kind: 'generate-timing', stationId, days,
+                       hours: s.length, p50: at(0.50), p95: at(0.95), max: s[s.length - 1],
+                       totalMs: s.reduce((a, b) => a + b, 0) }) + "\n");
+  } catch { /* observation must never break Generate */ }
+}
 // Drive ONE day an hour at a time, yielding to the event loop between hours. The yield is the whole
 // point: main pumps its message queue there, so the window keeps painting and decks keep animating.
 async function _generateDayChunked(dayBase, ctx, effStart, meta) {
@@ -7287,8 +7308,10 @@ async function _generateDayChunked(dayBase, ctx, effStart, meta) {
     if (_genCancel) return { cancelled: true };
     const t0 = Date.now();
     await _generateDayRows(dayBase, ctx, effStart, h);   // one hour, bounded (self-skips already-aired hours)
+    const hourMs = Date.now() - t0;
+    (ctx.hourSlices || (ctx.hourSlices = [])).push(hourMs);   // kept for the timing health event
     _genEmit({ phase: "hour", hour: h, hoursDone: h + 1, hoursTotal: 24, rows: ctx.generatedRows.length,
-               hourMs: Date.now() - t0, ...meta });
+               hourMs, ...meta });
     await new Promise(r => setImmediate(r));       // ← the yield that keeps main alive
   }
   return { cancelled: false };
@@ -7349,6 +7372,10 @@ ipcMain.handle('schedule:generateDays', async (_, dayTsList) => {
     // from the path most likely to be used. Found because scheduler-core-shadow.jsonl did not exist
     // after a real regeneration.
     try { _noteSchedulerCore(stationId, ctx); } catch { /* observation must never break Generate */ }
+    // Wired into BOTH handlers from the start — the parity ledger's own history above is the reason.
+    // The week run is the Calendar's main button, so timing that skipped it would miss the long runs
+    // that are the entire question.
+    _noteGenerateTiming(stationId, ctx, committed);
     console.log(`[schedule:generateDays] ${committed}/${days.length} day(s), ${total} tracks${cancelled ? " — CANCELLED" : ""}`);
     _genEmit({ phase: "end", cancelled, daysCommitted: committed, count: total, dayTotal: days.length });
     return { ok: true, cancelled, daysCommitted: committed, count: total, station, gaps, relaxed: ctx.relaxed.length };
@@ -7379,6 +7406,7 @@ ipcMain.handle('schedule:generateDay', async (_, dayTs) => {
     // Item 2 — LOUD thinness: route this run's within-category relaxation + empty categories to the
     // Health Monitor (health events + a per-station summary), not just the calendar diagnostics panel.
     try { _libHealth && _libHealth.noteGenerate(activeStationId, { relaxed: ctx.relaxed, emptyCatIds: [...ctx.diag.emptyCats], breakDrift: ctx.breakDrift }); } catch {}
+    _noteGenerateTiming(activeStationId, ctx, 1);
     try { _noteSchedulerCore(activeStationId, ctx); } catch { /* observation must never break Generate */ }
     // Turn the "why nothing filled" diagnostics into operator-readable reasons (names, not ids) so the
     // calendar can tell the operator exactly what's missing instead of flickering silently.

@@ -208,3 +208,65 @@ decays — it holds only while someone remembers the number is 2.
 
 **Still ungated on a tag:** the leak-guard and audio-isolation guards run per-matrix-job (they
 already did); the packaged smoke test is manual.
+
+## The 2026-07-21 17s freeze — UNEXPLAINED, cause unknown (filed 2026-08-11)
+
+**The standing explanation is DISPROVEN.** The freeze was attributed to a 7-day `schedule:generate`
+run blocking the main thread — that attribution appears in the auto-generation backlog entry above
+("a `schedule:generate` 7-day run was the likely 17s freeze on 2026-07-21") and it motivated an
+entire Generate-worker design. Phase 0 measured it and the arithmetic does not work:
+
+- p95 hour slice is **5–24 ms** across all four stations; a full 7-day generate is **0.4–1.0 s** of
+  candidate SQL in total (`docs/generate-phase0-measurement-2026-08-11.md`).
+- Generate already yields to the event loop between hours (`_generateDayChunked`, `main.js`), so it
+  never holds main for more than one slice at a time.
+
+**17 s cannot come from that pick loop at these library sizes.** So the cause is something else and
+is still unidentified. **A worker thread would not have fixed it** — that is the finding worth
+keeping, because the fix that was about to be built was aimed at the wrong thing.
+
+**Candidates never ruled out** (none investigated): `_buildScheduleCtx` setup reads; the commit
+transaction (`DELETE` + bulk insert) on a large day; the sync engine; the `health-events.jsonl`
+writer (32 MB and appended synchronously — and it is separately known to have STOPPED writing at
+09:00 on 2026-08-03, seven minutes before that day's freeze, see the entry above); an R2/network call
+on main; or something outside Generate entirely that merely coincided with it.
+
+**INSTRUMENT — the live catch, no build required.** `hourMs` reaches the renderer already. In
+DevTools on the running app, before pressing Generate:
+
+```js
+const seen = [];
+window.ether.on('schedule:generate-progress', p => {
+  if (p.phase === 'hour') { seen.push(p.hourMs); console.log(p.day, p.hour, p.hourMs + 'ms'); }
+});
+// after the run:
+seen.sort((a,b)=>a-b);
+console.log('n', seen.length, 'p50', seen[Math.floor(seen.length*0.5)], 'p95', seen[Math.floor(seen.length*0.95)]);
+```
+
+If a freeze recurs and these slices stay small, **Generate is exonerated and the hunt moves
+elsewhere** — which is the point of recording the instrument rather than the theory.
+
+**From 4.4.182 this is also persisted:** a `generate-timing` health event per run
+(`{stationId, days, hours, p50, p95, max, totalMs}`) beside `noteGenerate`, so the next occurrence
+has history instead of a benchmark.
+
+**Noticed while wiring that, NOT fixed (needs a ruling):** `_libHealth.noteGenerate` is called from
+`schedule:generateDay` ONLY. The week run — the Calendar's main button — never reports its thinness
+or empty categories to the Health Monitor. Identical in shape to the Phase 3 parity-ledger defect
+fixed on 2026-08-10, in the same two handlers.
+
+---
+
+## Auto-generation defaults — RULED 2026-08-11 (Jeff)
+
+Recorded here because the settings do not exist yet; they land with Phase 3/4 of
+`docs/generate-worker-design-2026-08-11.md` and must be built to these values.
+
+- **Trigger 4 days · target 10 days, per station.** Trigger sits inside the green band so the gauge
+  going yellow means *auto-generation is failing*, not that the system is working as designed.
+- **Jeff's own stations: target 7** while clock-editing is active — a longer horizon delays clock
+  edits taking effect, since existing days are not regenerated.
+- **Q4 ruled: yes** — a health event per auto-run AND an "auto" marker on the Calendar day. No new
+  surface.
+- **Q5 ruled: worker dropped**; the connection-parameterised extraction stays as Phase 1.
