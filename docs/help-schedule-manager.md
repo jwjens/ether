@@ -26,6 +26,20 @@ The Schedule Manager puts all three in one window and links them:
 └──────────────┴────────────────────────────┴─────────────────┘
 ```
 
+## Arranging it
+
+The panes are **dockable**. Drag a tab to move a pane, drop it beside or on top of another to
+re-arrange or stack them, and drag the dividers to resize. Panes cannot be shrunk to nothing.
+
+**Your layout is saved automatically, per station, on this machine only.** Switching stations
+restores that station's arrangement. It is never synced — how you arrange your screen is yours, not
+something that should rearrange a colleague's.
+
+**Reset layout** in the header puts everything back to the default three panes. No confirmation, no
+data affected — it only moves panes.
+
+**Fixed layout** switches to the older non-dockable three-pane view if you prefer it.
+
 ## The linking is the point
 
 | You do this | This happens |
@@ -71,7 +85,7 @@ Schedule Manager is an additional door onto the same rooms — use whichever sui
 
 - **It does not change what airs.** It edits the same shows, clocks and categories through the same
   write paths. Generation and playout are untouched.
-- **No docking or resizing.** The three-pane layout is fixed in this version, deliberately.
+- **It does not change what airs.** Same shows, same clocks, same write paths.
 - **Rotation Analytics is a link, not a pane.** The button in the header opens it; embedding it is
   for a later version.
 

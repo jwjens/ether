@@ -68,6 +68,7 @@ import PlayLog from "./components/PlayLog";
 import Logs from "./components/Logs";
 import RotationAnalytics from "./components/RotationAnalytics";
 import ScheduleManager from "./components/ScheduleManager";
+import ScheduleWorkspace from "./components/schedule/ScheduleWorkspace";
 import EASLogbook from "./components/EASLogbook";
 import PDPicks from "./components/PDPicks";
 import SchedulePreview from "./components/SchedulePreview";
@@ -127,7 +128,7 @@ import VUMeter from "./components/VUMeter";
 import IrisBadge from "./components/IrisBadge";
 import { SchedulerHealthHost } from "./components/SchedulerHealthPanel";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "rotation" | "schedulehub" | "help";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "rotation" | "schedulehub" | "schedulehubfixed" | "help";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -2691,7 +2692,10 @@ export default function App() {
               )}
               {panel === "logs" && <Logs />}
               {panel === "rotation" && <RotationAnalytics />}
-              {panel === "schedulehub" && <ScheduleManager onOpenAnalytics={() => setPanel("rotation")} />}
+              {/* v2 docking workspace is the default; v1's fixed three-pane layout stays reachable
+                  from its header (the Phase 1 gate requires the fixed layout to keep working). */}
+              {panel === "schedulehub" && <ScheduleWorkspace onOpenAnalytics={() => setPanel("rotation")} onUseFixedLayout={() => setPanel("schedulehubfixed")} />}
+              {panel === "schedulehubfixed" && <ScheduleManager onOpenAnalytics={() => setPanel("rotation")} />}
               {panel === "eas" && <EASLogbook onClose={() => setPanel("live")} />}
               {panel === "pdpicks" && <PDPicks stationId={stationId} onClose={() => setPanel("live")} />}
               {panel === "schedpreview" && <SchedulePreview onClose={() => setPanel("live")} />}

@@ -126,7 +126,57 @@
   --transition-slow: 400ms ease-out;
   --glow-active: none;
   --glow-color: var(--accent-cyan);
+
+  /* ── VISUAL LANGUAGE (2026-08-10) ────────────────────────────────────────────────────────────
+     Broadcast-grade: flat, dense, muted, data-first. Colour was already tokenised and disciplined
+     (--text-tertiary alone is used 1,279 times); what had no tokens — and was therefore ad-hoc at
+     every call site — is radius, spacing, type and elevation. Those four are added here.
+     Rules, so they can be enforced rather than admired:
+       • radius is 0 unless it is an input (--r-1) or a genuine circle (--r-full)
+       • NO shadow on anything that is not floating — depth comes from borders and background steps
+       • colour is semantic: amber = attention, red = fault. A colour used decoratively is a bug
+       • five type steps, no ad-hoc font sizes
+     docs/schedule-manager-v2-design-2026-08-10.md §3 */
+
+  /* radius — flat */
+  --r-0: 0px;
+  --r-1: 2px;      /* inputs, chips — the only permitted softening */
+  --r-full: 999px; /* circles ONLY: status dots, avatars */
+
+  /* spacing — tight, 4px base; more data per screen */
+  --s-1: 2px;  --s-2: 4px;  --s-3: 6px;  --s-4: 8px;
+  --s-5: 12px; --s-6: 16px; --s-7: 24px;
+
+  /* type — smaller, five steps */
+  --t-micro: 9px;   /* column headers, badges */
+  --t-small: 10px;  /* dense cells, metadata */
+  --t-body:  12px;  /* default */
+  --t-lead:  14px;  /* pane titles */
+  --t-head:  20px;  /* panel titles only */
+
+  /* elevation — none by default */
+  --e-0: none;
+  --e-1: 0 1px 0 rgb(from var(--border-primary) r g b / 0.6);  /* a hairline, not a lift */
+  --e-float: 0 4px 16px rgba(0,0,0,0.4);                        /* dragged panes + modals ONLY */
 }
+
+/* ── Dockview shell — inherit our palette rather than ship the library's ──────────────────────── */
+.ether-dock .dv-groupview,
+.ether-dock .dv-tabs-and-actions-container { background: var(--bg-secondary); }
+.ether-dock .dv-tab {
+  background: var(--bg-tertiary);
+  color: var(--text-tertiary);
+  border-right: 1px solid var(--border-primary);
+  border-radius: var(--r-0);
+  font-size: var(--t-small);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: var(--s-3) var(--s-5);
+}
+.ether-dock .dv-tab.dv-active-tab { background: var(--bg-secondary); color: var(--text-primary); }
+.ether-dock .dv-sash { background: var(--border-primary); }
+.ether-dock { --dv-border-radius: 0px; }
 
 /* ── Dark theme class (identical to :root — kept for compatibility) ── */
 .dark-theme {
