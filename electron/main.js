@@ -578,6 +578,25 @@ if (AUDIO_DAEMON_DESIRED) {
   _health.start();
   try { ipcMain.handle("health:snapshot", () => { try { return _health.getSnapshot(); } catch { return null; } }); } catch {}
 
+  // Renderer → the honest health ledger. The daemon has had this since the log-reader work; the
+  // RENDERER has not, so anything it noticed could only ever reach a console nobody reads. Same
+  // file, same shape as the daemon's events, so one ledger holds the whole story.
+  //
+  // Callers must report STATE TRANSITIONS, not occurrences. A condition that repeats on a timer —
+  // a cloud reconcile failing every 20s while a station is offline — writes ONE event when it
+  // starts and ONE when it clears. The console spam this replaces reached 1,767 lines and ~95% of
+  // ether-startup.log, which actively slowed a freeze diagnosis (backlog 2026-08-03).
+  try {
+    ipcMain.handle("health:record", (_e, kind, data) => {
+      try {
+        if (typeof kind !== "string" || !kind) return false;
+        const row = { t: new Date().toISOString(), kind, ...(data && typeof data === "object" ? data : {}) };
+        require("fs").appendFileSync(path.join(app.getPath("userData"), "health-events.jsonl"), JSON.stringify(row) + "\n");
+        return true;
+      } catch { return false; }   // the ledger must never be able to break its caller
+    });
+  } catch {}
+
   // ── Library & rotation SENSES (Log-reader Slice A) — R2 prefetch + deterministic senses → JSONL ──
   // Background: materializes upcoming R2-only rows to their file_path (so the "half the library never
   // airs" gate can't recur), and computes materialization / pool-health / rotation-eligibility /

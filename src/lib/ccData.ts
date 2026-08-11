@@ -403,6 +403,10 @@ export async function reconcileAccountStations(licenseKey: string | null | undef
       }),
     });
     const data = await res.json().catch(() => ({}));
+    // A response ARRIVED — the backend is reachable again. Clears the down state here rather than at
+    // the end of the function, because the condition being tracked is reachability: a 401 still
+    // proves the host answered, and the stale-key heal below is a different problem with its own path.
+    noteReconcileSuccess();
 
     // Pin the ACCOUNT license at INSTALL scope so the sync transport resolves the push license
     // DETERMINISTICALLY (this anchor is branch 1 of transport._getLicenseKey), not via an arbitrary
@@ -552,9 +556,49 @@ export async function reconcileAccountStations(licenseKey: string | null | undef
     if (created > 0 || registered > 0 || adopted) window.dispatchEvent(new Event("station-switched")); // nudge switcher/badge
     return created + registered;
   } catch (e) {
-    console.warn("[reconcile] account stations reconcile failed:", (e as any)?.message ?? e);
+    noteReconcileFailure(e);
     return 0;
   }
+}
+
+// ── Reconcile health: report the TRANSITION, not every tick ──────────────────────────────────────
+//
+// This runs on a 20s poll (App.tsx). It used to console.warn on every failure, so an install that
+// could not reach the backend wrote a line three times a minute forever: 1,767 in one
+// ether-startup.log, ~95% of the file, which actively slowed the 2026-08-03 freeze diagnosis
+// (backlog). The noise WAS the defect — the fetch itself is load-bearing.
+//
+// The backlog entry proposed killing or repointing the timer, on the premise that Railway "is not
+// coming back". That premise is false: /health answers 200, this IS the surviving endpoint, and
+// /account/connect is the root of the account model — no account, no stations. Removing the timer
+// would have broken "author in the dashboard, it just shows up" to silence a log.
+//
+// So: one health event when reconcile STARTS failing, one when it RECOVERS, and a count of what
+// happened in between. An offline station is a normal state for an offline-first product, not an
+// error to repeat until someone stops reading.
+let _reconcileFailing = false;
+let _reconcileFailCount = 0;
+
+function noteReconcileFailure(e: unknown) {
+  _reconcileFailCount++;
+  if (_reconcileFailing) return;                 // already reported; stay quiet until it clears
+  _reconcileFailing = true;
+  const message = (e as any)?.message ?? String(e);
+  console.warn("[reconcile] account stations reconcile failed:", message, "— further failures are silent until it recovers");
+  try {
+    (window as any).ether?.invoke?.("health:record", "cloud-reconcile-down", {
+      message, endpoint: ETHER_BACKEND_URL,
+    });
+  } catch { /* the ledger must never break the reconcile */ }
+}
+
+function noteReconcileSuccess() {
+  if (!_reconcileFailing) return;
+  const failures = _reconcileFailCount;
+  _reconcileFailing = false;
+  _reconcileFailCount = 0;
+  console.log(`[reconcile] cloud reconcile recovered after ${failures} failed attempt(s)`);
+  try { (window as any).ether?.invoke?.("health:record", "cloud-reconcile-up", { failures }); } catch {}
 }
 
 // Apply a remote dashboard edit to the local DB via the existing typed sync handlers
