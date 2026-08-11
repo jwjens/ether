@@ -32,8 +32,19 @@ loop is starved in bursts rather than continuously.
 it is already being emitted. `hourMs` rides in every `schedule:generate-progress` payload. Nobody has
 read it.
 
-> **GATE 0 — RESULT (2026-08-11): the worker is NOT justified on current data. See
-> `docs/generate-phase0-measurement-2026-08-11.md`.**
+> **GATE 0 — RESULT (2026-08-11): worker DROPPED - but read the correction; the first reasoning was
+> wrong. See `docs/generate-phase0-measurement-2026-08-11.md` section 0.**
+>
+> **CORRECTED:** an hour of picking is **~4 s of solid CPU**, not the 2-6 ms my benchmark claimed -
+> measured in-tree on Jeff's install (TIME-SLICED YIELD comment, 2026-08-06). The benchmark timed the
+> candidate query, which turns out to be the cheap part. The 2026-07-21 freeze WAS Generate.
+>
+> The worker is still dropped, because that freeze was **already fixed in 4.4.156** (`9f8c752`) by
+> yielding every ~60 ms inside the hour: 120 ms and 500 ms slices measured 100% responsive. A worker
+> would re-solve a solved problem. What remains true is that main burns ~0.96 cores during a generate
+> - real, but not worth a thread today.
+>
+> ORIGINAL (WRONG) RESULT TEXT FOLLOWS.
 >
 > Measured p95 hour slice: **5–24 ms** across all four stations; a full 7-day generate is ~1 s of
 > candidate SQL. That is an order of magnitude below this gate's own 300 ms bar. **§1 (the worker) is

@@ -5,6 +5,52 @@
 
 ---
 
+## 0. CORRECTION (2026-08-11, same day) — THIS DOCUMENT'S NUMBERS ARE WRONG BY ~1000x
+
+Found while starting Phase 1, in a comment sitting directly above the picker
+(`electron/main.js`, TIME-SLICED YIELD, 2026-08-06):
+
+> main ran 0.96 cores for 240s with the window unresponsive in 1028 of 1039 samples and only TWO
+> moments of recovery ... **One hour of picking is ~4s of solid CPU**
+
+Measured on Jeff's install during a real week generate. My proxy said **2-6 ms** per hour. The real
+figure is **~4,000 ms**. The candidate query is NOT the dominant cost of an hour - everything else in
+the picker is, and section 2 measured the one component that happens to be cheap.
+
+**What this invalidates:**
+
+- Section 2.1's hour-slice column. Wrong by three orders of magnitude.
+- Section 2.2's scaling table. It extrapolates the same wrong component; the "revisit at ~2,000
+  songs" trigger is not trustworthy.
+- Section 3's claim that "17 s cannot come from that pick loop". It can, and it did.
+
+**What survives, and why the verdict still stands:**
+
+The freeze WAS Generate, and **it was already fixed** - in 4.4.156 (`9f8c752`, "Generate stops
+freezing"), by yielding every ~60 ms *inside* the hour rather than once per hour. A standalone
+Electron harness pinned the threshold: 120 ms and 500 ms slices stayed 100% responsive; a 9 s slice
+stalled for 6.8 s. The comment states it outright: the fix is not a different yield primitive and not
+a worker, it is yielding OFTEN ENOUGH.
+
+So **drop the worker still holds, for a different reason**: not because the work is small - it is
+~4 s of CPU per hour - but because responsiveness is already solved by fine-grained yielding, and a
+worker would re-solve a solved problem.
+
+**The one real argument for a worker that I dismissed on bad numbers:** a generate still burns ~0.96
+cores on main for its duration. Fine for UI (it yields), but it competes with everything else main
+does, and it matters most in in-process audio fallback where the audio path shares that thread. Not
+enough to build a worker today; enough that "the work is trivial" was never true.
+
+**The trigger to revisit is now real data, not my table:** the `generate-timing` health event
+(4.4.182) records p50/p95/max per run. Revisit when p95 climbs materially above the ~4 s baseline, or
+when in-process-fallback stations report audio artefacts during a generate.
+
+**Method lesson:** I benchmarked one component and reported it as the whole. An in-tree measurement
+of the real thing was twenty lines above the function I was measuring, and I did not read it before
+writing a verdict.
+
+---
+
 ## 1. The telemetry does not exist. Correcting my own doc.
 
 The design doc said `hourMs` "rides in every `schedule:generate-progress` payload and has never been

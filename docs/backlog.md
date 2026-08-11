@@ -209,7 +209,28 @@ decays — it holds only while someone remembers the number is 2.
 **Still ungated on a tag:** the leak-guard and audio-isolation guards run per-matrix-job (they
 already did); the packaged smoke test is manual.
 
-## The 2026-07-21 17s freeze — UNEXPLAINED, cause unknown (filed 2026-08-11)
+## The 2026-07-21 17s freeze — EXPLAINED AND ALREADY FIXED (corrected 2026-08-11)
+
+**RETRACTION. I filed this entry hours earlier as "UNEXPLAINED, cause unknown" on the strength of my
+own benchmark. That was wrong, and the evidence was in the tree the whole time.**
+
+The TIME-SLICED YIELD comment above the picker (`electron/main.js`, 2026-08-06) records a real
+measurement from Jeff's install: main ran 0.96 cores for 240s, the window was unresponsive in 1028 of
+1039 samples, and one hour of picking is ~4s of solid CPU. My benchmark said 2-6 ms per hour - it
+timed the candidate query, the cheap component, and I reported it as the whole.
+
+- **Cause: known.** Generate's per-hour CPU with only once-per-hour yielding.
+- **Status: FIXED in 4.4.156 (`9f8c752`, "Generate stops freezing")** - yield every ~60 ms *inside*
+  the hour (`GEN_SLICE_MS`). A standalone Electron harness pinned it: 120 ms and 500 ms slices stayed
+  100% responsive, a 9 s slice stalled 6.8 s.
+- **A worker was never the fix** - that part of the original entry survives, for the opposite reason
+  to the one I gave.
+
+The candidate list and the instrument below remain useful only if a freeze RECURS on a build after
+4.4.156, which would mean something new. The `generate-timing` health event (4.4.182) now records
+p50/p95/max per run, so a recurrence arrives with numbers attached.
+
+### ORIGINAL ENTRY (WRONG - kept so the mistake is findable)
 
 **The standing explanation is DISPROVEN.** The freeze was attributed to a 7-day `schedule:generate`
 run blocking the main thread — that attribution appears in the auto-generation backlog entry above
