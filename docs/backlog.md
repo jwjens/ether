@@ -354,3 +354,38 @@ wrong when this rule was written: **there are THREE generate callers, not two.**
 three observations — instance 4 was already live, unattended, and had been generating days for months
 with no parity record, no thinness report and no timing. All three callers now go through the one
 function.
+
+## Multi-machine two-writer hazard — single-writer election (filed 2026-08-11)
+
+**The largest open risk in the auto-generation arc. It predates the arc; nothing in it fixes this.**
+
+Receipts:
+- `_autoExtendTick()` (`electron/main.js`) has **no leader guard** — every machine that holds a
+  station runs it on its own 30-minute timer.
+- `generated_schedule` **is a synced table** (`electron/sync/synced-tables.js:25`).
+- Reconciliation is last-writer-wins.
+
+So on a station open on two machines, **both generate the same days independently and both write the
+synced log.** The two generators do not agree — separation state, LRP order and `ORDER BY RANDOM()`
+all differ per machine — so the surviving rows are an LWW interleaving of two different schedules.
+Nobody has reported it, which most likely means no station is currently live on two machines at once,
+not that it is safe.
+
+**The per-station auto-generate toggle (4.4.183) does NOT fix this.** It is deliberately LOCAL, which
+makes the hazard *addressable* — an operator can switch the second machine off — but the default is
+ON, so a fresh second machine re-creates it. A synced flag would have been worse: it would make
+"every machine generates this station" the replicated policy.
+
+**The fix is single-writer election: one machine owns generation for a station at a time.** Sketch,
+not a design — that needs its own doc:
+- A station-scoped generation lease (owner `machine_id` + heartbeat), taken before a tick generates
+  and released/expired on exit, so a dead machine cannot hold the station hostage.
+- `machine_id` already exists and is stable across wipes (`LocalAppData\EtherMachine\machine-id`).
+- The lease must be SYNCED (it is a station-wide fact), unlike the toggle.
+- Manual Generate stays exempt: an operator pressing the button on any machine has decided.
+
+**Related, and NOT to be partially implemented here:** operator-row protection. `_commitDayRows`
+deletes its window unconditionally, including `source='operator'` rows. That is already designed as
+Fix 2 in `docs/manual-log-editing-design-2026-08-10.md` and awaits its own build. Measured
+2026-08-11: 28 operator rows exist, **0 of them in the future**, so nothing is being destroyed today
+— `effStart` is never earlier than the next top of hour.

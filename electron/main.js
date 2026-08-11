@@ -6982,7 +6982,11 @@ ipcMain.handle('schedule:generateDay', async (_, dayTs) => {
 // allowed). Generates each day in [fromTs, toTs), never regenerating already-aired hours; the shared ctx
 // carries separation + the LRP ladder across days. Returns operator-readable diagnostics: count,
 // relaxedPicks (Tier 2/3 fallback fills), throughDate, runwayDays (schedule tail − now), station, reasons.
-async function _generateRange(stationId, fromTs, toTs) {
+// `opts.source` stamps provenance on the rows this run commits: 'auto' for the unattended extender,
+// omitted for an operator-initiated generate (manual runs stay unmarked, by ruling). `source` is a
+// LOCAL-ONLY sync column (synced-tables.js:327), stripped both ways, so the mark says "THIS machine
+// generated these rows automatically" and no peer can overwrite it.
+async function _generateRange(stationId, fromTs, toTs, opts) {
   const nowTs = Math.floor(Date.now() / 1000);
   const ctx = buildScheduleCtx(db, stationId);
   const start = new Date(Math.max(fromTs, nowTs) * 1000); start.setHours(0, 0, 0, 0);
@@ -7002,6 +7006,15 @@ async function _generateRange(stationId, fromTs, toTs) {
     const dayRows = ctx.generatedRows.slice(before);
     _placeJingles(db, stationId, dayRows);
     _commitDayRows(stationId, effStart, dayEnd, dayRows);
+    // Stamped AFTER the commit rather than carried through generatedScheduleBulkCreate, whose column
+    // list has no `source` and is shared with every manual generate. Scoped to the window just
+    // written and only over rows still NULL, so an 'operator' row can never be relabelled.
+    if (opts && opts.source) {
+      try {
+        db.prepare("UPDATE generated_schedule SET source = ? WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ? AND source IS NULL")
+          .run(opts.source, stationId, effStart, dayEnd);
+      } catch {}
+    }
   }
   // Instance 4: this path had NO observation at all — see finishGenerateRun. `dayIdx` is the number
   // of days it walked.
@@ -7074,6 +7087,48 @@ function _scheduleIsSparse(stationId, nowTs) {
   } catch { return false; }
 }
 
+// ── Per-station auto-generation switch (2026-08-11) ─────────────────────────────────────────────
+// LOCAL, via station_config_kv — the same shape as the log_reader_flip canary and scheduler_mode.
+// Deliberately not synced: generated_schedule IS synced and _autoExtendTick has no leader guard, so
+// a synced ON flag would make "every machine holding this station generates it" the replicated
+// policy. Local keeps the decision per machine, which is the only lever available until the
+// single-writer election lands (backlog 2026-08-11). Default ON: a station whose operator has never
+// heard of this setting must still not run out of log.
+function _autoGenerateEnabled(stationId) {
+  try {
+    const r = db.prepare("SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'auto_generate' LIMIT 1").get(stationId);
+    if (!r || r.value == null || r.value === '') return true;      // unset = ON
+    return String(r.value) !== '0';
+  } catch { return true; }                                          // unreadable = ON, never silently off
+}
+
+// Deferral: while the daemon is down the app plays audio IN-PROCESS, on this thread. An unattended
+// generate burns ~0.96 cores there (docs/generate-phase0-measurement-2026-08-11.md), competing with
+// playout. AUDIO_DAEMON is the EFFECTIVE mode — true only once the daemon is confirmed reachable —
+// not AUDIO_DAEMON_DESIRED, which is only the intent.
+//
+// Manual Generate is untouched: an operator pressing the button has decided.
+//
+// Reported ONCE per transition into deferral, not every tick — a 30-minute timer would otherwise
+// write 48 identical rows a day, which is how a ledger becomes unreadable.
+const _autoDeferred = new Set();
+function _autoDeferralCheck(st) {
+  if (AUDIO_DAEMON) {
+    if (_autoDeferred.delete(st.id)) {
+      _healthEvent('auto-extend-resumed', { stationId: st.id, station: st.name, reason: 'daemon-healthy' });
+      console.log(`[auto-extend] ${st.name}: daemon healthy again — auto-generation resumed`);
+    }
+    return false;
+  }
+  if (!_autoDeferred.has(st.id)) {
+    _autoDeferred.add(st.id);
+    _healthEvent('auto-extend-deferred', { stationId: st.id, station: st.name, reason: 'in-process-audio',
+      runwaySec: _stationRunwaySec(st.id) });
+    console.log(`[auto-extend] ${st.name}: deferred — audio is running in-process, generation would compete with playout`);
+  }
+  return true;
+}
+
 async function _autoExtendTick() {
   if (!db) return;
   let stations = [];
@@ -7084,6 +7139,8 @@ async function _autoExtendTick() {
     let hasShow = false;
     try { hasShow = !!db.prepare("SELECT 1 FROM shows WHERE station_id = ? AND is_active = 1 AND clock_id IS NOT NULL AND deleted_at IS NULL LIMIT 1").get(st.id); } catch {}
     if (!hasShow) continue;
+    if (!_autoGenerateEnabled(st.id)) continue;          // switched off for this machine — silently, by design
+    if (_autoDeferralCheck(st)) continue;                // in-process audio: defer, do not generate
     const runwaySec = _stationRunwaySec(st.id);
     try { sseBroadcast("runway", { stationId: st.id, station: st.name, runwaySec, runwayHours: Math.round(runwaySec / 360) / 10 }); } catch {}
     // Self-heal a degraded (too-sparse) schedule the runway check can't see: rebuild it once through
@@ -7092,7 +7149,7 @@ async function _autoExtendTick() {
     if (!_sparseHealed.has(st.id) && _scheduleIsSparse(st.id, nowTs)) {
       _sparseHealed.add(st.id);
       try {
-        const r = await _generateRange(st.id, nowTs, nowTs + AUTO_EXTEND_TARGET_DAYS * 86_400);
+        const r = await _generateRange(st.id, nowTs, nowTs + AUTO_EXTEND_TARGET_DAYS * 86_400, { source: 'auto' });
         console.log(`[auto-extend] ${st.name}: sparse schedule detected (<2 rows/hr) → regenerated ${r.count} tracks (${r.relaxedPicks} relaxed)`);
         // `metric` is recorded on every row: this engine currently measures runway as
         // MAX(scheduled_at) - now, which counts straight past a gap. When that is corrected to
@@ -7111,7 +7168,7 @@ async function _autoExtendTick() {
     }
     if (runwaySec >= AUTO_EXTEND_THRESHOLD_H * 3600) continue;
     try {
-      const r = await _generateRange(st.id, nowTs, nowTs + AUTO_EXTEND_TARGET_DAYS * 86_400);
+      const r = await _generateRange(st.id, nowTs, nowTs + AUTO_EXTEND_TARGET_DAYS * 86_400, { source: 'auto' });
       console.log(`[auto-extend] ${st.name}: runway ${Math.round(runwaySec / 3600)}h < ${AUTO_EXTEND_THRESHOLD_H}h → +${r.count} tracks (runway now ${r.runwayDays}d, ${r.relaxedPicks} relaxed)`);
       _healthEvent('auto-extend', { stationId: st.id, station: st.name, trigger: 'runway-below-threshold',
         metric: 'first-gap', thresholdSec: AUTO_EXTEND_THRESHOLD_H * 3600, runwaySecBefore: runwaySec,

@@ -1,3 +1,8 @@
+// CANONICAL NAME: this feature is "Calendar" everywhere a person looks — the hamburger label, the
+// popout menu, the panel key (`calendar`), the help entries and the design docs. The FILE keeps the
+// name BroadcastCalendar.tsx deliberately: renaming it would touch 14 files and leave 11 historical
+// design docs citing a path that no longer exists, for a change no user can see. Component names are
+// allowed to be more specific than menu labels. Ruled 2026-08-11; do not "fix" this.
 // BroadcastCalendar.tsx — weekly grid view of station shows & dayparts
 // Columns: Mon–Sun  |  Rows: hours (5 AM–midnight default, toggle for full 24h)
 // Shows are queried from the DB and rendered as colored blocks.

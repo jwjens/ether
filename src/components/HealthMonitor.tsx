@@ -333,6 +333,12 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   const [flipFlags, setFlipFlags] = useState<Record<number, boolean | null>>({});
   const [flipBusy, setFlipBusy] = useState<number | null>(null);
   const [flipErr, setFlipErr] = useState<Record<number, string>>({});
+  // Auto-generation switch — same local-only station_config_kv shape as the flip canary above.
+  // UNSET MEANS ON: a station whose operator has never seen this setting must still not run out of
+  // log, so the tri-state here is (true = on, false = off, null = unreadable) and null renders as ON
+  // with a warning rather than as OFF.
+  const [autoGen, setAutoGen] = useState<Record<number, boolean | null>>({});
+  const [autoBusy, setAutoBusy] = useState<number | null>(null);
 
   /** The single source of truth for this control: what station_config_kv actually holds. */
   const readFlip = useCallback(async (sid: number): Promise<boolean | null> => {
@@ -346,16 +352,40 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   // Merge per station with a functional update instead of replacing the whole map. Two overlapping
   // refreshes (libHealth re-polls, so this effect can re-enter) can no longer clobber each other, and
   // one station failing to read leaves the others alone instead of resetting everything.
+  const readAutoGen = useCallback(async (sid: number): Promise<boolean | null> => {
+    try {
+      const v = await (window as any).ether?.invoke?.("station_config_kv:get-value", sid, "auto_generate");
+      if (v === null || v === undefined || v === "") return true;      // unset = ON, matching main.js
+      return String(v) !== "0";
+    } catch { return null; }
+  }, []);
+
   const refreshFlipFlags = useCallback(async () => {
     const sts = (libHealth?.stations || []) as any[];
     for (const st of sts) {
       const v = await readFlip(st.stationId);
       setFlipFlags(prev => ({ ...prev, [st.stationId]: v }));
+      // Same per-station, one-at-a-time read for the auto-generate switch: a station that fails to
+      // read leaves the others alone rather than resetting the whole map.
+      const a = await readAutoGen(st.stationId);
+      setAutoGen(prev => ({ ...prev, [st.stationId]: a }));
     }
-  }, [libHealth, readFlip]);
+  }, [libHealth, readFlip, readAutoGen]);
   useEffect(() => { refreshFlipFlags(); }, [refreshFlipFlags]);
 
   /** Flip a station. Reads the stored value, writes its opposite, then renders the read-back. */
+  const toggleAutoGen = async (sid: number) => {
+    setAutoBusy(sid);
+    try {
+      const current = await readAutoGen(sid);
+      const target = !(current !== false);                              // unreadable/on -> off
+      await (window as any).ether?.invoke?.("station_config_kv:set-local", sid, "auto_generate", target ? "1" : "0");
+      // Render what is STORED, not what was asked for — the flip canary's lesson.
+      const after = await readAutoGen(sid);
+      setAutoGen(prev => ({ ...prev, [sid]: after }));
+    } finally { setAutoBusy(null); }
+  };
+
   const toggleFlip = async (sid: number) => {
     setFlipBusy(sid);
     setFlipErr(prev => { const n = { ...prev }; delete n[sid]; return n; });
@@ -1077,6 +1107,26 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                         opacity: busy ? 0.6 : 1,
                       }}
                     >{label}</button>
+                  </div>
+                  {/* Auto-generation, per station and per machine. Off is silent by design: a station
+                      that is hand-programmed is a legitimate choice, not a fault to nag about. */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                    <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+                      Auto-generate {autoGen[st.stationId] === false ? "— off, this machine will not extend the log" : "— keeps the log topped up"}
+                    </span>
+                    <button
+                      onClick={() => toggleAutoGen(st.stationId)}
+                      disabled={autoBusy === st.stationId}
+                      title="Local to this machine. When on, this machine extends the log automatically as the runway drops."
+                      style={{
+                        fontSize: 10, fontWeight: 800, letterSpacing: "0.08em", padding: "3px 10px", borderRadius: 0,
+                        cursor: autoBusy === st.stationId ? "wait" : "pointer",
+                        background: autoGen[st.stationId] === false ? "transparent" : "var(--accent-green)",
+                        border: `1px solid ${autoGen[st.stationId] === false ? "var(--border-primary)" : "var(--accent-green)"}`,
+                        color: autoGen[st.stationId] === false ? "var(--text-tertiary)" : "#062",
+                        opacity: autoBusy === st.stationId ? 0.6 : 1,
+                      }}
+                    >{autoBusy === st.stationId ? "…" : autoGen[st.stationId] === false ? "AUTO OFF" : "AUTO ON"}</button>
                   </div>
                   {err && (
                     <div style={{ fontSize: 9, color: "#f87171", marginTop: 3, textAlign: "right" as const }}>{err}</div>
