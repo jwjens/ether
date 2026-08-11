@@ -6797,6 +6797,14 @@ function _genEmit(payload) {
 // whole worker thread got built. Next time it will be evidence.
 //
 // Failure here must never break Generate — this observes, it does not participate.
+// One place the main process appends to the honest ledger. Guarded: a failed write must never break
+// the thing being observed.
+function _healthEvent(kind, data) {
+  try {
+    require('fs').appendFileSync(path.join(app.getPath('userData'), 'health-events.jsonl'),
+      JSON.stringify({ t: new Date().toISOString(), kind, ...(data && typeof data === 'object' ? data : {}) }) + "\n");
+  } catch {}
+}
 function _noteGenerateTiming(stationId, ctx, days) {
   try {
     const ms = (ctx && ctx.hourSlices) || [];
@@ -7065,14 +7073,29 @@ async function _autoExtendTick() {
       try {
         const r = await _generateRange(st.id, nowTs, nowTs + AUTO_EXTEND_TARGET_DAYS * 86_400);
         console.log(`[auto-extend] ${st.name}: sparse schedule detected (<2 rows/hr) → regenerated ${r.count} tracks (${r.relaxedPicks} relaxed)`);
+        // `metric` is recorded on every row: this engine currently measures runway as
+        // MAX(scheduled_at) - now, which counts straight past a gap. When that is corrected to
+        // first-gap, the ledger will show the firing pattern change with the metric that produced
+        // each decision attached, rather than leaving a mystery burst of generation.
+        _healthEvent('auto-extend', { stationId: st.id, station: st.name, trigger: 'sparse-schedule',
+          metric: 'tail', runwaySecBefore: runwaySec, runwaySecAfter: _stationRunwaySec(st.id),
+          runwayDaysAfter: r.runwayDays, rows: r.count, relaxedPicks: r.relaxedPicks,
+          targetDays: AUTO_EXTEND_TARGET_DAYS, reasons: r.reasons });
         try { sseBroadcast("autoextend", { stationId: st.id, station: st.name, count: r.count, runwayDays: r.runwayDays, relaxedPicks: r.relaxedPicks, reasons: r.reasons, sparseHeal: true }); } catch {}
-      } catch (e) { console.error(`[auto-extend] ${st.name} sparse-heal failed:`, e.message); }
+      } catch (e) {
+        console.error(`[auto-extend] ${st.name} sparse-heal failed:`, e.message);
+        _healthEvent('auto-extend-failed', { stationId: st.id, station: st.name, trigger: 'sparse-schedule', metric: 'tail', runwaySecBefore: runwaySec, error: e.message });
+      }
       continue;
     }
     if (runwaySec >= AUTO_EXTEND_THRESHOLD_H * 3600) continue;
     try {
       const r = await _generateRange(st.id, nowTs, nowTs + AUTO_EXTEND_TARGET_DAYS * 86_400);
       console.log(`[auto-extend] ${st.name}: runway ${Math.round(runwaySec / 3600)}h < ${AUTO_EXTEND_THRESHOLD_H}h → +${r.count} tracks (runway now ${r.runwayDays}d, ${r.relaxedPicks} relaxed)`);
+      _healthEvent('auto-extend', { stationId: st.id, station: st.name, trigger: 'runway-below-threshold',
+        metric: 'tail', thresholdSec: AUTO_EXTEND_THRESHOLD_H * 3600, runwaySecBefore: runwaySec,
+        runwaySecAfter: _stationRunwaySec(st.id), runwayDaysAfter: r.runwayDays, rows: r.count,
+        relaxedPicks: r.relaxedPicks, targetDays: AUTO_EXTEND_TARGET_DAYS, reasons: r.reasons });
       try { sseBroadcast("autoextend", { stationId: st.id, station: st.name, count: r.count, runwayDays: r.runwayDays, relaxedPicks: r.relaxedPicks, reasons: r.reasons }); } catch {}
     } catch (e) { console.error(`[auto-extend] ${st.name} failed:`, e.message); }
   }

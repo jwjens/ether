@@ -318,17 +318,21 @@ function createLibraryHealth(opts) {
 
     const elig = eligibility(db, sid);
     const uncat = uncategorisedMusic(db);
+    const runway = runwayOf(db, sid);
     const name = (db.prepare("SELECT name FROM stations WHERE id=?").get(sid) || {}).name || String(sid);
     // Levels: yellow if any unresolvable / pool shrunk; red if skips climbing.
     const materialization = { resolvable, total, r2Only, dead };
     const materialLevel = dead > 0 ? 'red' : (r2Only > 0 ? 'yellow' : 'green');   // dead = truly unplayable
     const poolLevel = (total > 0 && spun.length / total < 0.7) ? 'yellow' : 'green';
     const skipLevel = skipped > 0 ? 'red' : 'green';
-    const level = [materialLevel, poolLevel, skipLevel].includes('red') ? 'red'
-                : [materialLevel, poolLevel, uncat.level].includes('yellow') ? 'yellow' : 'green';
+    // A station about to run out of log is the most urgent thing this monitor can report — a dry log
+    // on a flipped station is dead air — so runway drives the row colour like any other red.
+    const level = [materialLevel, poolLevel, skipLevel, runway.level].includes('red') ? 'red'
+                : [materialLevel, poolLevel, uncat.level, runway.level].includes('yellow') ? 'yellow' : 'green';
     return {
       stationId: sid, name, level,
       uncategorised: uncat,                       // music that can never air (2026-08-11 ruling)
+      runway,                                     // fuel gauge — days of log left (metric: 'tail', see runwayOf)
       materialization: { ...materialization, level: materialLevel },
       pool: { librarySize: total, spunPool24h: spun.length, topSpins24h: topSpins, level: poolLevel },
       skipped: { thisHour: skipped, level: skipLevel },
@@ -338,6 +342,46 @@ function createLibraryHealth(opts) {
       goals: goalCheck(db, sid),                  // declared spins/hr vs clock composition (Advisor, Phase 1)
       lastGenerate: lastGen.get(sid) || null,     // last Generate run's relaxed/empty summary (item 2)
     };
+  }
+
+  // ── Runway / fuel gauge — how far ahead the log actually reaches ───────────────────────────────
+  //
+  // The question that started the whole scheduler arc: "how long until this station runs out of
+  // log?" It has always been answerable and has never been on screen.
+  //
+  // METRIC: `tail` — MAX(scheduled_at) - now. **This is known to be the WRONG measure** and is used
+  // here deliberately, for one release only. It counts straight past a GAP: a station with rows
+  // through Friday but a hole tomorrow at 03:00 reads four days when its real runway is one, and a
+  // gap is dead air on a flipped station.
+  //
+  // It ships as-is first on purpose. The shipped auto-extend engine (main.js) has always used this
+  // same measure to decide when to generate, so the gauge and the engine agree TODAY. Correcting the
+  // metric changes when auto-extend fires — on stations that currently look full — and that is a
+  // behaviour change that deserves its own release with a ledger trail already running, not a
+  // silent burst of generation someone later finds in the Calendar and distrusts.
+  //
+  // `metric` is reported so the screen can say which measure produced the number, and so the two
+  // releases are distinguishable in the ledger.
+  //
+  // Levels: green >= 5 days, yellow < 3, red < 1. A station with NO active show returns level 'grey'
+  // and days null — nothing is meant to air, so nothing is starving; a red gauge there is the false
+  // alarm that teaches people to ignore the gauge.
+  function runwayOf(db, sid) {
+    try {
+      const hasShow = !!db.prepare(
+        "SELECT 1 FROM shows WHERE station_id = ? AND is_active = 1 AND clock_id IS NOT NULL AND deleted_at IS NULL LIMIT 1"
+      ).get(sid);
+      if (!hasShow) return { metric: 'tail', days: null, hours: null, level: 'grey', reason: 'no active show' };
+      const now = Math.floor(Date.now() / 1000);
+      const r = db.prepare(
+        "SELECT MAX(scheduled_at) m FROM generated_schedule WHERE station_id = ? AND deleted_at IS NULL"
+      ).get(sid) || {};
+      const sec = r.m ? Math.max(0, r.m - now) : 0;
+      const hours = Math.round(sec / 360) / 10;
+      const days = Math.round((sec / 86400) * 10) / 10;
+      const level = days < 1 ? 'red' : days < 3 ? 'yellow' : 'green';
+      return { metric: 'tail', days, hours, level, through: r.m || null };
+    } catch { return { metric: 'tail', days: null, hours: null, level: 'grey', reason: 'unavailable' }; }
   }
 
   // ── Uncategorised music — songs that CANNOT air ────────────────────────────────────────────────
