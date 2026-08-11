@@ -4,6 +4,7 @@ import { useActiveStation } from "../hooks/useActiveStation";
 import { DataGrid } from "./grid/DataGrid";
 import { toCsv, downloadCsv } from "./grid/csv";
 import { trafficColumns, statusOf, deltaSec, actualTs as actualTsOf, aired as airedOf, type TrafficRow } from "./traffic/columns";
+import { AS_RUN_COLUMNS, type AsRunRow } from "./logs/columns";
 
 interface LogEntry {
   id: number;
@@ -280,7 +281,7 @@ export default function Logs() {
     downloadCsv("ether-traffic-" + new Date().toISOString().split("T")[0] + ".csv", toCsv(cols, traffic));
   };
 
-  const exportCSV = (format: "standard" | "bmi" | "ascap" = "standard") => {
+  const exportCSV = async (format: "standard" | "bmi" | "ascap" = "standard") => {
     let header = "";
     let rows: string[] = [];
     if (format === "bmi") {
@@ -296,11 +297,31 @@ export default function Logs() {
         return [e.title, e.artist || "Unknown", (d.getMonth()+1)+"/"+d.getDate()+"/"+d.getFullYear(), d.toLocaleTimeString("en-US", { hour12: false }), "3.5", stationName].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(",");
       });
     } else {
-      header = "Date,Time,Title,Artist,Category,Show,Clock,Deck";
-      rows = entries.map(e => {
-        const d = new Date(e.played_at * 1000);
-        return [d.toLocaleDateString(), d.toLocaleTimeString(), e.title, e.artist || "", e.category_code || "", e.show_name || "", e.clock_name || "", e.deck || ""].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(",");
-      });
+      // Standard = the as-run affidavit. Its own query, NOT `entries`:
+      //
+      //   · `entries` is capped at LIMIT 200 for the screen, so the export silently stopped at 200
+      //     rows however wide the period was. An affidavit that drops rows without saying so is the
+      //     worst failure available to this file.
+      //   · Advertiser / ISCI / Cart live on `spots` and join by file_path — the key the generator
+      //     wrote the row with. Category comes from the song, because play_log.category_code is
+      //     written null by the daemon (audiod/playlog.js:41) and can never be anything else.
+      //
+      // Order stays played_at DESC, matching both the screen and the file this replaces.
+      const [from, to] = rangeEpochs();
+      const rows2 = await queryScoped<AsRunRow>(
+        `SELECT pl.played_at, pl.title, pl.artist, pl.deck, pl.duration_ms, pl.content_class,
+                COALESCE(c.code, c.name) AS category,
+                sp.advertiser, sp.isci_code, sp.cart_number
+           FROM play_log pl
+           LEFT JOIN spots sp ON sp.file_path = pl.file_path AND sp.station_id = pl.station_id AND sp.deleted_at IS NULL
+           LEFT JOIN songs sg ON sg.file_path = pl.file_path
+           LEFT JOIN categories c ON c.id = sg.category_id
+          WHERE pl.station_id = ? AND pl.played_at >= ? AND pl.played_at <= ?
+          ORDER BY pl.played_at DESC`,
+        [stationId, from, to], stationId, { skipScoping: true });
+      downloadCsv("ether-" + format + "-" + new Date().toISOString().split("T")[0] + ".csv",
+                  toCsv(AS_RUN_COLUMNS, rows2 || []));
+      return;
     }
     const csv = header + "\n" + rows.join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
