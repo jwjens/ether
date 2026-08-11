@@ -21,10 +21,10 @@
 import { useEffect, useState } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { DataGrid } from "./grid/DataGrid";
-import { toCsv, downloadCsv, type GridColumn } from "./grid/csv";
+import { type GridColumn } from "./grid/csv";
 import {
   SPINS_COLUMNS, BURN_COLUMNS, TURNOVER_COLUMNS, HOURLY_COLUMNS,
-  type SpinRow, type BurnRow, type TurnoverRow,
+  type SpinRow, type BurnRow, type TurnoverRow, type HourlyRow,
 } from "./rotation/columns";
 
 type Range = "24h" | "7d" | "30d";
@@ -158,14 +158,24 @@ export default function RotationAnalytics({ hideHeader }: RotationAnalyticsProps
             persistKey="rotation_spins" stationId={stationId}
             empty="No music aired in this window."
             csv={{ filename: csvName("spins") }}
-            footer={
-              <button
-                onClick={() => downloadCsv(csvName("hourly"), toCsv(HOURLY_COLUMNS, snap.hourly))}
-                title="Spins per category per hour. This one has no table on screen — see the help entry."
-                style={{ padding: "var(--s-2) var(--s-5)", borderRadius: "var(--r-0)", fontSize: "var(--t-small)", fontWeight: 600, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}>
-                Hourly grid CSV
-              </button>
-            }
+          />
+        </Section>
+      )}
+
+      {/* ── HOURLY GRID ─────────────────────────────────────────────────────────────────────────── */}
+      {/* This data has ALWAYS been fetched and ALWAYS been exportable ("Hourly grid CSV"), and until
+          now was never displayed — an export with no on-screen counterpart, which is a door that only
+          opens outward. It is at most 24 hours × categories, so there was never a size reason for the
+          gap. The export moved here, onto the table it describes. */}
+      {snap && (
+        <Section title="Hourly grid"
+          sub="Spins per category per hour, summed across the window. Sort by Spins to see which hour a category owns.">
+          <DataGrid<HourlyRow>
+            columns={HOURLY_COLUMNS} rows={snap.hourly}
+            getRowId={(r, i) => `${r.hour}-${r.category}-${i}`}
+            persistKey="rotation_hourly" stationId={stationId}
+            empty="No music aired in this window."
+            csv={{ filename: csvName("hourly") }}
           />
         </Section>
       )}

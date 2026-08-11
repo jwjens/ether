@@ -15,6 +15,7 @@ tour: true
 Four questions a PD asks about rotation, answered from the log itself:
 
 - **Spins** — how often is each category airing, against the target you declared?
+- **Hourly grid** — which hours does each category own?
 - **Burn** — which artists are on too often, and how tightly spaced?
 - **Turnover** — how much of the library is actually in play, or is a handful of songs carrying it?
 - **Why** — for any scheduled row, why *that* song?
@@ -87,16 +88,17 @@ table — and the export still contains every one of them.
 
 ## Exports
 
-Each section has an **Export CSV** button, plus an **Hourly grid CSV** (spins per category per hour)
-under the spins table. Files open directly in Excel, Sheets or Numbers.
+Each section has its own **Export CSV** button, directly under the table it exports. Files open
+directly in Excel, Sheets or Numbers.
 
 **Sorting and resizing do not change the file.** The export is defined by the report, not by how you
 happen to be looking at it, so two people exporting the same window get the same file. The exports
 are byte-for-byte what they were before the tables became sortable — an archived file from an
 earlier version still lines up with a new one.
 
-> **The Hourly grid CSV has no table on screen.** It exports spins per category per hour, and always
-> has, but that view was never built. It is on the list.
+The **Hourly grid** now has a table of its own. It used to be export-only — the button existed, the
+view never did — so what you exported could not be checked against anything on screen. Every export
+in this panel now sits under the table it describes.
 
 ## Time range
 
