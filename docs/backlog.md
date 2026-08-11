@@ -311,8 +311,9 @@ evidence is simply absent, which is why all three survived review.
 **THE RULE — anything added to Generate that observes, records or reports MUST be wired into both
 handlers, or extracted into a shared post-run path they both call.** Prefer the shared path.
 
-**Next step (not yet done):** the two handlers' tails are now near-identical — `_placeJingles`,
-`_commitDayRows`, `_noteSchedulerCore`, `noteGenerate`, `_noteGenerateTiming`, diagnostics assembly.
-Collapse them into one `finishGenerateRun(stationId, ctx, days)` so instance 4 is impossible rather
-than merely forbidden. Rides naturally with the Phase 1 picker extraction
-(`docs/generate-worker-design-2026-08-11.md`).
+**DONE 2026-08-11 — `finishGenerateRun(stationId, ctx, days)` collapsed the tail.** And the count was
+wrong when this rule was written: **there are THREE generate callers, not two.** `_generateRange`
+(Iris's SCHEDULING-tier command, which also backs auto-extend) commits days and had **none** of the
+three observations — instance 4 was already live, unattended, and had been generating days for months
+with no parity record, no thinness report and no timing. All three callers now go through the one
+function.

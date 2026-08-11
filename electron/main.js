@@ -6829,6 +6829,29 @@ async function _generateDayChunked(dayBase, ctx, effStart, meta) {
 // landed minutes later, so generated_schedule — the single playout source for flipped stations
 // (docs/log-reader-single-source-playout-design-2026-07-20.md) — sat EMPTY for the whole pick. A
 // reader now sees either the old day or the new one, never a hole.
+// ── ONE post-run path for every Generate caller (2026-08-11) ────────────────────────────────────
+//
+// Three callers commit days: schedule:generateDay, schedule:generateDays, and _generateRange (Iris's
+// SCHEDULING-tier command, which also backs auto-extend). Observation was added to them one at a
+// time, and the count of instances where it landed in one and not the others reached FOUR:
+//
+//   1. parity ledger      — generateDay only, fixed 2026-08-10
+//   2. noteGenerate       — generateDay only, fixed 2026-08-11
+//   3. generate-timing    — avoided only because #2 was found while adding it
+//   4. _generateRange     — had NONE of the three. Unattended auto-extend generated days for months
+//                           with no parity record, no thinness report and no timing.
+//
+// Nothing ever errors when this goes wrong; the evidence is simply absent, on whichever path nobody
+// was looking at. So the tail is one function now, and adding an observation here reaches every
+// caller by construction rather than by remembering.
+//
+// Every call is individually guarded: observation must never break a generate that has already
+// committed its rows.
+function finishGenerateRun(stationId, ctx, days) {
+  try { _noteSchedulerCore(stationId, ctx); } catch {}
+  try { _libHealth && _libHealth.noteGenerate(stationId, { relaxed: ctx.relaxed, emptyCatIds: [...ctx.diag.emptyCats], breakDrift: ctx.breakDrift }); } catch {}
+  try { _noteGenerateTiming(stationId, ctx, days); } catch {}
+}
 function _commitDayRows(stationId, effStart, dayEnd, rows) {
   const { generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
   db.transaction(() => {
@@ -6880,17 +6903,7 @@ ipcMain.handle('schedule:generateDays', async (_, dayTsList) => {
     // differential and threw the result away. The evidence mechanism for the whole phase was missing
     // from the path most likely to be used. Found because scheduler-core-shadow.jsonl did not exist
     // after a real regeneration.
-    try { _noteSchedulerCore(stationId, ctx); } catch { /* observation must never break Generate */ }
-    // THIRD instance of the same defect shape (2026-08-11): instrumentation wired into
-    // schedule:generateDay and not into schedule:generateDays. The week run is the Calendar's main
-    // button, so the common path reported no thinness and no empty categories to the Health Monitor
-    // at all — the sense existed and was blind exactly where it was most likely to be needed.
-    // ctx is run-wide here (it accumulates across the days), so this reports the whole run once.
-    try { _libHealth && _libHealth.noteGenerate(stationId, { relaxed: ctx.relaxed, emptyCatIds: [...ctx.diag.emptyCats], breakDrift: ctx.breakDrift }); } catch {}
-    // Wired into BOTH handlers from the start — the parity ledger's own history above is the reason.
-    // The week run is the Calendar's main button, so timing that skipped it would miss the long runs
-    // that are the entire question.
-    _noteGenerateTiming(stationId, ctx, committed);
+    finishGenerateRun(stationId, ctx, committed);
     console.log(`[schedule:generateDays] ${committed}/${days.length} day(s), ${total} tracks${cancelled ? " — CANCELLED" : ""}`);
     _genEmit({ phase: "end", cancelled, daysCommitted: committed, count: total, dayTotal: days.length });
     return { ok: true, cancelled, daysCommitted: committed, count: total, station, gaps, relaxed: ctx.relaxed.length };
@@ -6920,9 +6933,7 @@ ipcMain.handle('schedule:generateDay', async (_, dayTs) => {
     _commitDayRows(activeStationId, effStart, dayEnd, ctx.generatedRows);
     // Item 2 — LOUD thinness: route this run's within-category relaxation + empty categories to the
     // Health Monitor (health events + a per-station summary), not just the calendar diagnostics panel.
-    try { _libHealth && _libHealth.noteGenerate(activeStationId, { relaxed: ctx.relaxed, emptyCatIds: [...ctx.diag.emptyCats], breakDrift: ctx.breakDrift }); } catch {}
-    _noteGenerateTiming(activeStationId, ctx, 1);
-    try { _noteSchedulerCore(activeStationId, ctx); } catch { /* observation must never break Generate */ }
+    finishGenerateRun(activeStationId, ctx, 1);
     // Turn the "why nothing filled" diagnostics into operator-readable reasons (names, not ids) so the
     // calendar can tell the operator exactly what's missing instead of flickering silently.
     const d = ctx.diag, reasons = [];
@@ -6984,6 +6995,9 @@ async function _generateRange(stationId, fromTs, toTs) {
     _placeJingles(db, stationId, dayRows);
     _commitDayRows(stationId, effStart, dayEnd, dayRows);
   }
+  // Instance 4: this path had NO observation at all — see finishGenerateRun. `dayIdx` is the number
+  // of days it walked.
+  finishGenerateRun(stationId, ctx, dayIdx);
   const dg = ctx.diag, reasons = [];
   if (dg.emptyCats.size) reasons.push("Empty/over-filtered categories: " + [...dg.emptyCats].map(id => (db.prepare("SELECT code FROM categories WHERE id = ?").get(id) || {}).code || ("#" + id)).join(", "));
   if (dg.emptyClocks.size) reasons.push(dg.emptyClocks.size + " clock(s) have no elements");
