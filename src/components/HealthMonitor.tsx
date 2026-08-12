@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef, Fragment, Component, ReactNode } from "react";
 import { parseKvFlag } from "../lib/kvFlag";
-import { designationView } from "../lib/designationRow";
+import { designationView, refreshBanner, type RefreshBanner } from "../lib/designationRow";
 
 // Must match electron/main.js _autoGenerateEnabled and the LOCAL_ONLY_KEYS allowlist in
 // electron/sync/handlers/station_config_kv.js. A key absent from that allowlist is REFUSED by
@@ -61,9 +61,30 @@ interface ErrorBoundaryProps { children: ReactNode; }
 // This renders unconditionally: `d` undefined means no tick has run yet, which is a state to state,
 // not a reason to vanish. Every field is read defensively so a malformed record can never remove
 // rows that have nothing to do with designation.
-function DesignationRows({ d, busy, onRefresh, readAgo, err, autoOn }: {
-  d: any; busy: boolean; onRefresh: () => void; readAgo: string; err?: string | null;
-  autoOn: boolean | null;
+// The "Designation read …" stamp, ticking once a second in its OWN component so the whole Health
+// Monitor does not re-render for it. Previously it only recomputed when something else caused a
+// render, so it sat frozen and then jumped — which reads as broken rather than live.
+function RefreshAgo({ at }: { at: number | null }) {
+  const [, force] = useState(0);
+  useEffect(() => { const t = setInterval(() => force(n => n + 1), 1000); return () => clearInterval(t); }, []);
+  const text = (() => {
+    if (!at) return "never";
+    const s = Math.max(0, Math.round((Date.now() - at) / 1000));
+    return s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)}h ago`;
+  })();
+  // Bigger and brighter than the 9px tertiary it was: this is the answer to "is this reading live?",
+  // which is the question the operator actually has when they look at this row.
+  return (
+    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)",
+                   fontFamily: "'DM Mono', monospace" }}>
+      Designation read <span style={{ color: "var(--text-primary)" }}>{text}</span>
+    </span>
+  );
+}
+
+function DesignationRows({ d, busy, onRefresh, readAt, err, autoOn, banner }: {
+  d: any; busy: boolean; onRefresh: () => void; readAt: number | null; err?: string | null;
+  autoOn: boolean | null; banner?: RefreshBanner | null;
 }) {
   // Every rule below lives in src/lib/designationRow.ts so it can be tested without a DOM.
   const v = designationView(d, autoOn, busy);
@@ -99,10 +120,20 @@ function DesignationRows({ d, busy, onRefresh, readAgo, err, autoOn }: {
         </button>
         {/* Said out loud next to the button, not hidden in a tooltip nobody hovers. */}
         {v.note && (
-          <span style={{ fontSize: 9, color: "var(--text-tertiary)" }}>{v.note}</span>
+          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)" }} title={v.buttonTitle}>{v.note}</span>
         )}
-        <span style={{ fontSize: 9, color: "var(--text-tertiary)" }}>Designation read {readAgo}</span>
+        <RefreshAgo at={readAt} />
       </div>
+      {/* The click's OWN evidence. The read stamp above cannot serve this purpose: it also resets on
+          the 30-second background poll, so it says nothing about whether the button did anything. */}
+      {banner && (
+        <div style={{
+          fontSize: 11, fontWeight: 700, padding: "5px 8px", marginBottom: 6,
+          border: `1px solid ${banner.tone === "success" ? "var(--accent-green, #22c55e)" : "var(--border-primary)"}`,
+          color: banner.tone === "success" ? "var(--accent-green, #22c55e)" : "var(--text-secondary)",
+          background: banner.tone === "success" ? "rgba(34,197,94,0.08)" : "transparent",
+        }}>{banner.text}</div>
+      )}
       {/* Under the row, on its own line, in red — an error squeezed onto the end of the button line
           was easy to miss and easy to mistake for part of the timestamp. */}
       {err && (
@@ -425,6 +456,13 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   // auto-generate toggle already uses (autoSeq); designation never had one.
   const desigSeqNext = useRef(0);
   const desigApplied = useRef(0);
+  // Per-station success banner, auto-dismissed. Keyed by station so refreshing one does not flash a
+  // confirmation on the other three.
+  const [desigBanner, setDesigBanner] = useState<Record<number, RefreshBanner>>({});
+  const bannerTimers = useRef<Record<number, any>>({});
+  // Recent designation history, read back from the honest ledger (health-events.jsonl).
+  const [desigEvents, setDesigEvents] = useState<any[]>([]);
+  const [desigEventsErr, setDesigEventsErr] = useState<string | null>(null);
   // Applies rows and stamps the read time. Errors are SURFACED, not swallowed: the previous version
   // caught everything silently, so an unregistered handler and a healthy empty result looked
   // identical — the button appeared to do nothing and said nothing.
@@ -449,6 +487,21 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     }
   }, [applyDesig]);
   useEffect(() => { loadDesig(); const t = setInterval(loadDesig, 30_000); return () => clearInterval(t); }, [loadDesig]);
+  // Reads the designation slice of the honest ledger. Bounded by the handler (tail bytes + limit).
+  const loadDesigEvents = useCallback(async () => {
+    try {
+      const r = await (window as any).ether?.invoke?.("health:recent-events", {
+        kinds: ["designation-refreshed", "station-designation-changed", "station-designation-write-failed"],
+        limit: 12,
+      });
+      if (r && r.ok) { setDesigEvents(r.rows || []); setDesigEventsErr(null); }
+      else setDesigEventsErr((r && r.error) || "could not read the health ledger");
+    } catch (e: any) { setDesigEventsErr(e?.message || String(e)); }
+  }, []);
+  useEffect(() => { loadDesigEvents(); }, [loadDesigEvents]);
+  // Clear pending banner timers on unmount — a timer firing into an unmounted tree is a leak.
+  useEffect(() => () => { for (const t of Object.values(bannerTimers.current)) clearTimeout(t); }, []);
+
   const refreshDesig = async (sid: number) => {
     setDesigBusy(sid);
     setDesigErr(prev => { const n = { ...prev }; delete n[sid]; return n; });
@@ -456,11 +509,18 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     try {
       // One round trip: the handler returns the rows it just computed, so there is no window in
       // which the refresh succeeded and the follow-up read failed.
-      const r = await (window as any).ether?.invoke?.("designation:refresh");
+      const r = await (window as any).ether?.invoke?.("designation:refresh", sid);
       if (r && r.ok) {
         // NO OPTIMISTIC PAINT ANYWHERE ON THIS PATH: the rows rendered are the rows the main process
         // just read back, and a stale in-flight poll can no longer overwrite them.
         if (seq >= desigApplied.current) { desigApplied.current = seq; applyDesig(r.rows || []); setDesigLoadErr(null); }
+        // Banner from the ROW THAT CAME BACK — never from what was on screen before the click.
+        const row = (r.rows || []).find((x: any) => x.stationId === sid);
+        setDesigBanner(prev => ({ ...prev, [sid]: refreshBanner(row) }));
+        clearTimeout(bannerTimers.current[sid]);
+        bannerTimers.current[sid] = setTimeout(
+          () => setDesigBanner(prev => { const n = { ...prev }; delete n[sid]; return n; }), 6000);
+        loadDesigEvents();     // the click just wrote a ledger line — show it
       } else {
         setDesigErr(prev => ({ ...prev, [sid]: (r && r.error) || "refresh returned no response" }));
         setDesigAt(Date.now());
@@ -1128,9 +1188,10 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                   </div>
                   {/* Designation (Phase A). Always rendered — see DesignationRows. */}
                   <DesignationRows d={desig[st.stationId]} busy={desigBusy === st.stationId}
-                    onRefresh={() => refreshDesig(st.stationId)} readAgo={agoText(desigAt)}
+                    onRefresh={() => refreshDesig(st.stationId)} readAt={desigAt}
                     err={desigErr[st.stationId] || desigLoadErr}
-                    autoOn={autoGen[st.stationId] === undefined ? null : autoGen[st.stationId]} />
+                    autoOn={autoGen[st.stationId] === undefined ? null : autoGen[st.stationId]}
+                    banner={desigBanner[st.stationId] || null} />
                   {/* SCHEDULE RUNWAY — the fuel gauge. First row on purpose: "how long until this
                       station runs out of log" is the most urgent thing this panel can answer, and on
                       a flipped station a dry log is dead air. Distance to the first GAP, not to the
@@ -1252,6 +1313,56 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                       sub={st.lastGenerate.emptyCats?.length ? `empty: ${st.lastGenerate.emptyCats.join(", ")}` : st.lastGenerate.relaxed.slice(0, 3).map((r: any) => `${r.category} ×${r.count}`).join(" · ")}
                     />
                   )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ── DESIGNATION ACTIVITY — the ledger, read back ──────────────────────────────────────
+            health-events.jsonl was append-only since it shipped: everything wrote, nothing read, so
+            an operator's own history lived in a file in AppData they would never open. The Live
+            Activity terminal is NOT this — it tails the daemon's log, so main-process events such as
+            a designation refresh never appeared anywhere on screen. */}
+        {libHealth?.stations?.length > 0 && (
+          <div style={{ paddingTop: 16, borderTop: "1px solid var(--border-primary)", marginTop: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const }}>Designation Activity</div>
+              <button onClick={loadDesigEvents}
+                title="Re-read the health ledger"
+                style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.08em", padding: "2px 8px",
+                         background: "transparent", border: "1px solid var(--border-primary)",
+                         color: "var(--text-tertiary)", cursor: "pointer" }}>RELOAD</button>
+            </div>
+            {desigEventsErr && (
+              <div style={{ fontSize: 10, color: "var(--accent-red)", marginBottom: 4 }}>{desigEventsErr}</div>
+            )}
+            {desigEvents.length === 0 && !desigEventsErr && (
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
+                No designation activity recorded yet. Pressing REFRESH NOW, or a station changing
+                which machine is designated, is recorded here.
+              </div>
+            )}
+            {desigEvents.map((e: any, i: number) => {
+              const when = (() => { try { return new Date(e.t).toLocaleString(); } catch { return String(e.t || ""); } })();
+              const failed = e.kind === "station-designation-write-failed";
+              const label = e.kind === "designation-refreshed" ? "Last refreshed"
+                          : e.kind === "station-designation-changed" ? "Designation changed"
+                          : "Designation NOT SAVED";
+              const detail = e.kind === "designation-refreshed"
+                ? `${e.station || "station"} — ${e.state === "mine" ? "this machine is designated"
+                    : e.state === "other" ? `${e.holderName || e.holder || "another machine"} is designated`
+                    : e.state === "bypassed" ? "designation bypassed"
+                    : "no machine is designated"}`
+                : e.kind === "station-designation-changed"
+                  ? `${e.station || "station"} — ${e.from || "none"} → ${e.to || "none"}${e.reason ? ` (${e.reason})` : ""}`
+                  : `${e.station || "station"} — ${e.error || "unknown error"}`;
+              return (
+                <div key={i} style={{ display: "flex", gap: 8, alignItems: "baseline", padding: "3px 0",
+                                      borderBottom: "1px solid var(--border-primary)" }}>
+                  <span style={{ fontSize: 10, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", whiteSpace: "nowrap" as const }}>{when}</span>
+                  <span style={{ fontSize: 10, fontWeight: 700, color: failed ? "var(--accent-red)" : "var(--text-secondary)", whiteSpace: "nowrap" as const }}>{label}</span>
+                  <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{detail}</span>
                 </div>
               );
             })}

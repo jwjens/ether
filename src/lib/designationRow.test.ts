@@ -5,7 +5,7 @@
 // because the component cannot be rendered without a DOM, and because the same class of defect has
 // now been fixed three times in this panel by reasoning about state that nothing asserted.
 import { describe, it, expect } from "vitest";
-import { designationView, effectiveAutoOn, BLOCKED_NOTE, type DesignationStatus } from "./designationRow";
+import { designationView, effectiveAutoOn, refreshBanner, BLOCKED_NOTE, type DesignationStatus } from "./designationRow";
 
 const NONE: DesignationStatus = { state: "none", level: "grey", text: "none — no machine has auto-generated this station yet" };
 const MINE: DesignationStatus = { state: "mine", level: "green", text: "This machine — checked in 2s ago", autoOn: true, lastGenerated: 1000 };
@@ -115,6 +115,43 @@ describe("designationView — other machines and the bypass", () => {
   it("maps red to error and yellow to warn", () => {
     expect(designationView({ state: "other", level: "red" }, true, false).status).toBe("error");
     expect(designationView({ state: "other", level: "yellow" }, true, false).status).toBe("warn");
+  });
+});
+
+describe("refreshBanner", () => {
+  // The read stamp resets on the 30s poll too, so it never was evidence that the CLICK did
+  // anything. These strings are that evidence.
+  it("is green and names this machine when we hold it", () => {
+    const b = refreshBanner(MINE);
+    expect(b.tone).toBe("success");
+    expect(b.text).toBe("Designation refreshed – this machine is designated");
+  });
+
+  it("is green and names the other machine when it holds it", () => {
+    const b = refreshBanner({ state: "other", holderName: "BOOTH-2" });
+    expect(b.tone).toBe("success");
+    expect(b.text).toBe("Designation refreshed – BOOTH-2 is designated");
+  });
+
+  it("falls back to the machine id when the holder has no name", () => {
+    expect(refreshBanner({ state: "other", holder: "abc-123" }).text).toContain("abc-123");
+  });
+
+  it("is NEUTRAL, not green, when nobody is designated", () => {
+    const b = refreshBanner(NONE);
+    expect(b.tone).toBe("neutral");
+    expect(b.text).toBe("Designation refreshed – no machine is designated");
+  });
+
+  it("treats a missing row as 'no machine designated' rather than throwing", () => {
+    expect(refreshBanner(undefined).tone).toBe("neutral");
+    expect(refreshBanner(null).text).toContain("no machine is designated");
+  });
+
+  it("says so when designation is bypassed", () => {
+    const b = refreshBanner({ state: "bypassed" });
+    expect(b.tone).toBe("neutral");
+    expect(b.text).toContain("bypassed");
   });
 });
 

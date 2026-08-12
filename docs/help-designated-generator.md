@@ -82,8 +82,30 @@ Use it when you have just switched auto-generation on, or when you want to confi
 is current. It refreshes **ownership state only** — it does not force a full cloud sync and it does
 not generate a log.
 
+When it succeeds you get a green confirmation under the row — **"Designation refreshed – <machine>
+is designated"** — which clears itself after a few seconds. If nobody is designated it says so in
+neutral grey rather than green, because that is not a success to celebrate; it is just the answer.
+
+The **Designation read** stamp beside the button counts up live, once a second. Note that it also
+resets on its own every 30 seconds when the panel re-reads in the background — so the stamp tells you
+the reading is fresh, while the green confirmation is what tells you *your click* did something.
+
 If the refresh fails, the reason appears in red on its own line under the row instead of nothing
 happening.
+
+## Designation Activity
+
+Further down the Health Monitor is a **Designation Activity** list — the recent history, newest
+first:
+
+- **Last refreshed** — someone pressed REFRESH NOW, and what the answer was.
+- **Designation changed** — the station moved from one computer to another, and why.
+- **Designation NOT SAVED** — a computer could not write the record, with the reason.
+
+Only deliberate actions and real changes are recorded. The half-hourly check-in is not, or this list
+would fill with dozens of identical lines a day and tell you nothing.
+
+**RELOAD** re-reads the list. It is a plain read — it changes nothing.
 
 ### "Auto-gen off – cannot designate"
 

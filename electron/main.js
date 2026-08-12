@@ -7147,10 +7147,26 @@ function _autoDeferralCheck(st) {
 // the bug being fixed.
 try {
   ipcMain.handle("designation:status", () => { try { return [..._desigStatus.values()]; } catch { return []; } });
-  ipcMain.handle("designation:refresh", () => {
+  ipcMain.handle("designation:refresh", (_evt, stationId) => {
     try {
       _designationTick(new Set(), 'refresh (operator)');
-      return { ok: true, at: Date.now(), rows: [..._desigStatus.values()] };
+      const rows = [..._desigStatus.values()];
+      // LEDGER: the operator pressed the button. Logged HERE and nowhere else — the 30-minute tick
+      // and the renderer's 30-second poll must never write this, or the ledger gains 2,880 identical
+      // rows a day and stops being readable. Same rule the transition-only holder event follows.
+      try {
+        const row = stationId != null ? rows.find(r => r.stationId === stationId) : null;
+        _healthEvent('designation-refreshed', {
+          stationId: stationId != null ? stationId : null,
+          station: row ? row.station : null,
+          holder: row ? (row.holder || null) : null,
+          holderName: row ? (row.holderName || null) : null,
+          state: row ? row.state : null,
+          autoOn: row ? !!row.autoOn : null,
+          initiatedBy: _machineIdentity().id,
+        });
+      } catch { /* a lost ledger line must never fail the refresh */ }
+      return { ok: true, at: Date.now(), rows };
     } catch (e) {
       // Reported, not swallowed: the renderer shows this under the row.
       console.error('[designation] refresh failed:', e.message);
@@ -7158,6 +7174,48 @@ try {
     }
   });
 } catch (e) { console.error('[designation] handler registration failed:', e.message); }
+
+// health:recent-events — READ BACK the honest ledger.
+//
+// health-events.jsonl has been append-only since it shipped: everything wrote to it and NOTHING ever
+// read it, so an operator could not see their own history without opening a file in AppData. The
+// Health Monitor's Live Activity terminal is not this — it tails the DAEMON's log
+// (ether-audiod.log), so main-process events never appeared there at all.
+//
+// BOUNDED BY BYTES, NOT LINES: the file has no rotation (docs/audio-health-build-2026-07-13.md §1),
+// so it grows without limit and reading it whole would eventually stall the panel. This seeks the
+// last TAIL_BYTES and discards the first (probably partial) line.
+try {
+  ipcMain.handle("health:recent-events", (_evt, opts) => {
+    const TAIL_BYTES = 256 * 1024;
+    const kinds = opts && Array.isArray(opts.kinds) ? opts.kinds : null;
+    const limit = Math.max(1, Math.min(200, (opts && opts.limit) || 25));
+    try {
+      const fs = require('fs');
+      const p = path.join(app.getPath('userData'), 'health-events.jsonl');
+      if (!fs.existsSync(p)) return { ok: true, rows: [], note: 'no ledger yet' };
+      const size = fs.statSync(p).size;
+      const start = Math.max(0, size - TAIL_BYTES);
+      const fd = fs.openSync(p, 'r');
+      const buf = Buffer.alloc(Math.min(TAIL_BYTES, size));
+      fs.readSync(fd, buf, 0, buf.length, start);
+      fs.closeSync(fd);
+      const lines = buf.toString('utf8').split('\n');
+      if (start > 0) lines.shift();                       // partial first line
+      const rows = [];
+      for (const ln of lines) {
+        if (!ln.trim()) continue;
+        let o; try { o = JSON.parse(ln); } catch { continue; }   // a corrupt line is skipped, not fatal
+        if (kinds && !kinds.includes(o.kind)) continue;
+        rows.push(o);
+      }
+      return { ok: true, rows: rows.slice(-limit).reverse(), truncated: start > 0 };
+    } catch (e) {
+      // Surfaced, never swallowed — an unreadable ledger is itself worth seeing.
+      return { ok: false, error: e.message, rows: [] };
+    }
+  });
+} catch (e) { console.error('[health] recent-events registration failed:', e.message); }
 
 // ── UPGRADE MIGRATION: preserve auto-generation for installs that already had it ────────────────
 //

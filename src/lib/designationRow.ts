@@ -47,6 +47,30 @@ export function effectiveAutoOn(live: AutoOn | undefined, d?: DesignationStatus 
   return null;
 }
 
+/**
+ * The confirmation shown after a successful REFRESH NOW.
+ *
+ * WHY THIS EXISTS: the only feedback a click produced was the "Designation read …" stamp resetting to
+ * 0 — and that stamp ALSO resets every 30 seconds on the background poll, so it carried no
+ * information about the click at all. The operator could not distinguish "my click worked" from
+ * "the poll happened to fire". A banner is the click's own evidence.
+ */
+export interface RefreshBanner {
+  tone: "success" | "neutral";
+  text: string;
+}
+
+export function refreshBanner(d: DesignationStatus | null | undefined): RefreshBanner {
+  const state = d && d.state ? d.state : "none";
+  if (state === "mine") return { tone: "success", text: "Designation refreshed – this machine is designated" };
+  if (state === "other") {
+    const who = (d && (d.holderName || d.holder)) || "another machine";
+    return { tone: "success", text: `Designation refreshed – ${who} is designated` };
+  }
+  if (state === "bypassed") return { tone: "neutral", text: "Designation refreshed – designation is bypassed on this station" };
+  return { tone: "neutral", text: "Designation refreshed – no machine is designated" };
+}
+
 export interface DesignationView {
   /** The value shown on the "Designated generator" row. */
   value: string;
