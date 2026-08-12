@@ -346,24 +346,32 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   const [autoGen, setAutoGen] = useState<Record<number, boolean | null>>({});
   const [autoBusy, setAutoBusy] = useState<number | null>(null);
   const [autoErr, setAutoErr] = useState<Record<number, string>>({});
-  // Generation lease (Phase 1: observe only — it reports, it does not yet gate generation).
-  const [lease, setLease] = useState<Record<number, any>>({});
-  useEffect(() => {
-    let stop = false;
-    const load = async () => {
-      try {
-        const rows = await (window as any).ether?.invoke?.("lease:status");
-        if (!stop && Array.isArray(rows)) {
-          const m: Record<number, any> = {};
-          for (const r of rows) m[r.stationId] = r;
-          setLease(m);
-        }
-      } catch { /* observational — never break the panel */ }
-    };
-    load();
-    const t = setInterval(load, 30_000);
-    return () => { stop = true; clearInterval(t); };
+  // Generation designation (Phase A: observe only — it reports, it does not gate generation).
+  const [desig, setDesig] = useState<Record<number, any>>({});
+  const [desigAt, setDesigAt] = useState<number | null>(null);
+  const [desigBusy, setDesigBusy] = useState(false);
+  const loadDesig = useCallback(async () => {
+    try {
+      const rows = await (window as any).ether?.invoke?.("designation:status");
+      if (Array.isArray(rows)) {
+        const m: Record<number, any> = {};
+        for (const r of rows) m[r.stationId] = r;
+        setDesig(m);
+        setDesigAt(Date.now());
+      }
+    } catch { /* observational — never break the panel */ }
   }, []);
+  useEffect(() => { loadDesig(); const t = setInterval(loadDesig, 30_000); return () => clearInterval(t); }, [loadDesig]);
+  const refreshDesig = async () => {
+    setDesigBusy(true);
+    try { await (window as any).ether?.invoke?.("designation:refresh"); await loadDesig(); }
+    finally { setDesigBusy(false); }
+  };
+  const agoText = (ms: number | null) => {
+    if (!ms) return "never";
+    const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    return s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)}h ago`;
+  };
 
   /** The single source of truth for this control: what station_config_kv actually holds. */
   const readFlip = useCallback(async (sid: number): Promise<boolean | null> => {
@@ -1012,19 +1020,41 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                     <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotCol }} />
                     <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-secondary)" }}>{st.name}</span>
                   </div>
-                  {/* GENERATION LEASE (Phase 1) — who is allowed to top this station up. It does
-                      NOT yet gate anything: every switched-on machine still generates, which is
-                      exactly why an unheld lease is reported as two writers rather than as safe. */}
-                  {lease[st.stationId] && (
-                    <HealthRow
-                      label="Generation lease"
-                      value={lease[st.stationId].state === "held-by-me" ? "This machine"
-                           : lease[st.stationId].state === "held-by-other" ? (lease[st.stationId].holderName || "Another machine")
-                           : lease[st.stationId].state === "bypassed" ? "Bypassed"
-                           : "Unheld"}
-                      status={(lease[st.stationId].level === "grey" ? "ok" : lvl(lease[st.stationId].level)) as any}
-                      sub={lease[st.stationId].text}
-                    />
+                  {/* GENERATION DESIGNATION (Phase A) — which machine owns topping this log up.
+                      It does NOT yet gate anything: every switched-on machine still generates, so an
+                      undesignated station is reported RED for ownership while logs may still appear. */}
+                  {desig[st.stationId] && (
+                    <>
+                      <HealthRow
+                        label="Designated generator"
+                        value={desig[st.stationId].state === "mine" ? "This machine"
+                             : desig[st.stationId].state === "other" ? (desig[st.stationId].holderName || "Another machine")
+                             : desig[st.stationId].state === "bypassed" ? "Bypassed"
+                             : "None"}
+                        status={lvl(desig[st.stationId].level) as any}
+                        sub={desig[st.stationId].text}
+                      />
+                      <HealthRow
+                        label="Log last extended"
+                        value={desig[st.stationId].lastGenerated
+                          ? new Date(desig[st.stationId].lastGenerated * 1000).toLocaleString()
+                          : "not since this machine started watching"}
+                        status={"ok" as any}
+                        sub="separate from the check-in above — a healthy machine generates nothing while the runway is long"
+                      />
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0 6px" }}>
+                        <button onClick={refreshDesig} disabled={desigBusy}
+                          title="Re-read the designation record and check in now. This refreshes ownership state; it does not force a full sync cycle."
+                          style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.08em", padding: "3px 10px",
+                                   background: "transparent", border: "1px solid var(--border-primary)",
+                                   color: "var(--text-secondary)", cursor: desigBusy ? "wait" : "pointer" }}>
+                          {desigBusy ? "…" : "REFRESH NOW"}
+                        </button>
+                        <span style={{ fontSize: 9, color: "var(--text-tertiary)" }}>
+                          Designation read {agoText(desigAt)}
+                        </span>
+                      </div>
+                    </>
                   )}
                   {/* SCHEDULE RUNWAY — the fuel gauge. First row on purpose: "how long until this
                       station runs out of log" is the most urgent thing this panel can answer, and on

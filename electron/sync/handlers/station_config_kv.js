@@ -34,7 +34,10 @@ const PATCHABLE          = ["value","updated_at"];
 // policy (backlog: multi-machine two-writer hazard).
 // kill_lease is LOCAL on purpose: it is an emergency bypass for a bug in this machine's lease
 // logic, and a synced kill switch would disable arbitration everywhere at once.
-const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_lease']);
+// kill_designation is LOCAL on purpose: it is an emergency bypass for a bug in THIS machine's
+// designation logic, and a synced kill switch would disable ownership everywhere at once.
+// (kill_lease retired in 4.4.188 with the lease system it belonged to; migrated on first launch.)
+const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_designation']);
 const isLocalOnlyKey = (k) => LOCAL_ONLY_KEYS.has(k);
 
 // Direct, MUTATION-LESS upsert for a local-authoritative key. Bypasses withMutation entirely, so the
