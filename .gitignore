@@ -53,3 +53,18 @@ dist-electron/
 # saved-page asset folders and browser download parts so a "Save As" can't land here again.
 *_files/
 *.download
+
+# ── Loose credential notes — NEVER commit (2026-08-09) ────────────────────────────────────────
+# "key iris.txt" and "keys  - weather.txt" were committed and reached git history; both keys are
+# being rotated. Scratch .txt notes are how keys keep landing in this repo, so the default for a
+# root .txt is now IGNORED and anything genuinely belonging in git must be named explicitly below.
+*.txt
+*.keys
+
+# Legitimate tracked .txt files, re-allowed by name. .gitignore does not affect files already
+# tracked, so these are unaffected today — the negations exist so that re-adding one, or adding a
+# sibling, does not silently fail with the blanket rule above.
+!project_map.txt
+!docs/push-state-*.txt
+!scripts/pre-migration-snapshot-kv.txt
+!scripts/post-migration-snapshot-kv.txt
