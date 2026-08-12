@@ -75,13 +75,30 @@ What to do:
 ## REFRESH NOW
 
 Re-reads the designation record and checks in immediately, rather than waiting for the next
-half-hourly round.
+half-hourly round. While it works the button reads **REFRESHING…**, and the row updates only when
+the read comes back — what you see is always what was actually read, never a guess.
 
-Use it when you have just switched auto-generation on or off, or when you want to confirm the row on
-screen is current. It refreshes **ownership state only** — it does not force a full cloud sync and it
-does not generate a log.
+Use it when you have just switched auto-generation on, or when you want to confirm the row on screen
+is current. It refreshes **ownership state only** — it does not force a full cloud sync and it does
+not generate a log.
 
-If the refresh fails, the reason appears in red next to the button instead of nothing happening.
+If the refresh fails, the reason appears in red on its own line under the row instead of nothing
+happening.
+
+### "Auto-gen off – cannot designate"
+
+If **Auto-generate is off** for this station on this computer, the REFRESH NOW button is **greyed
+out** and that note sits beside it.
+
+This is not a fault. A computer with auto-generation switched off must never take the designation —
+it would then own a station it has been told not to build. So there is genuinely nothing to check
+in, and the button says so rather than looking live and doing nothing.
+
+**To designate this computer:** turn **AUTO ON** for the station, then press REFRESH NOW. The row
+flips to **This machine** in green and stays there.
+
+The rows keep updating on their own every 30 seconds regardless, so nothing is hidden from you while
+the button is greyed out — if another computer takes the designation, you will still see it appear.
 
 ## What this does NOT do
 

@@ -7311,8 +7311,13 @@ function _designationTick(generatedFor, label) {
         key: _desig.KEY, action: d.action, error: msg });
     }
 
+    // `autoOn` and `reason` ride along so the screen can state WHY, in the decider's own words,
+    // instead of the renderer re-deriving a reason from a second read that can disagree with the one
+    // that actually made the decision. "None" with no explanation is the state Jeff saw and read as
+    // a broken button.
     _desigStatus.set(st.id, { ..._desig.status({ record: after, now, machineId: me.id, killSwitch: kill }),
                               stationId: st.id, station: st.name, machineId: me.id, at: now,
+                              autoOn, action: d.action, reason: d.reason,
                               writeError: _desigWriteErr.get(st.id) || null });
 
     // TRANSITION ONLY: a 30-minute heartbeat logging every tick would put 48 identical rows a day in

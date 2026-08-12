@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, Fragment, Component, ReactNode } from "react";
 import { parseKvFlag } from "../lib/kvFlag";
+import { designationView } from "../lib/designationRow";
 
 // Must match electron/main.js _autoGenerateEnabled and the LOCAL_ONLY_KEYS allowlist in
 // electron/sync/handlers/station_config_kv.js. A key absent from that allowlist is REFUSED by
@@ -60,16 +61,13 @@ interface ErrorBoundaryProps { children: ReactNode; }
 // This renders unconditionally: `d` undefined means no tick has run yet, which is a state to state,
 // not a reason to vanish. Every field is read defensively so a malformed record can never remove
 // rows that have nothing to do with designation.
-function DesignationRows({ d, busy, onRefresh, readAgo, err }: {
+function DesignationRows({ d, busy, onRefresh, readAgo, err, autoOn }: {
   d: any; busy: boolean; onRefresh: () => void; readAgo: string; err?: string | null;
+  autoOn: boolean | null;
 }) {
-  const state = d && d.state ? d.state : "none";
-  const level = d && d.level ? d.level : "grey";
-  const status = level === "red" ? "error" : level === "yellow" ? "warn" : "ok";
-  const value = state === "mine" ? "This machine"
-              : state === "other" ? ((d && d.holderName) || "Another machine")
-              : state === "bypassed" ? "Bypassed"
-              : "None";
+  // Every rule below lives in src/lib/designationRow.ts so it can be tested without a DOM.
+  const v = designationView(d, autoOn, busy);
+  const { value, status, blocked, sub } = v;
   let lastGen = "not since this machine started watching";
   try { if (d && d.lastGenerated) lastGen = new Date(d.lastGenerated * 1000).toLocaleString(); } catch {}
   // A failed write is reported HERE, per station, not swallowed in the main process. From 4.4.188 to
@@ -79,25 +77,37 @@ function DesignationRows({ d, busy, onRefresh, readAgo, err }: {
   const writeErr = d && d.writeError ? String(d.writeError) : null;
   return (
     <>
-      <HealthRow label="Designated generator" value={value} status={status as any}
-        sub={(d && d.text) || "none — no machine has auto-generated this station yet"} />
+      <HealthRow label="Designated generator" value={value} status={status as any} sub={sub} />
       {writeErr && (
         <HealthRow label="Designation record" value="NOT SAVED" status={"error" as any}
           sub={`this machine could not write the designation record — ${writeErr}`} />
       )}
       <HealthRow label="Log last extended" value={lastGen} status={"ok" as any}
         sub="separate from the check-in above — a healthy machine generates nothing while the runway is long" />
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0 6px" }}>
-        <button onClick={onRefresh} disabled={busy}
-          title="Re-read the designation record and check in now. Refreshes ownership state; it does not force a full sync cycle."
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0 6px", flexWrap: "wrap" as const }}>
+        {/* DISABLED, not silently inert. With auto-generate off this machine can never take the
+            designation, so a live button that reads, succeeds, and changes nothing on screen is the
+            worst of the three options — it is indistinguishable from a broken one. The 30s poll keeps
+            the rows current regardless, so disabling costs no information. */}
+        <button onClick={onRefresh} disabled={v.buttonDisabled} title={v.buttonTitle}
           style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.08em", padding: "3px 10px",
                    background: "transparent", border: "1px solid var(--border-primary)",
-                   color: "var(--text-secondary)", cursor: busy ? "wait" : "pointer" }}>
-          {busy ? "…" : "REFRESH NOW"}
+                   color: blocked ? "var(--text-tertiary)" : "var(--text-secondary)",
+                   opacity: blocked ? 0.5 : busy ? 0.7 : 1,
+                   cursor: blocked ? "not-allowed" : busy ? "wait" : "pointer" }}>
+          {v.buttonLabel}
         </button>
+        {/* Said out loud next to the button, not hidden in a tooltip nobody hovers. */}
+        {v.note && (
+          <span style={{ fontSize: 9, color: "var(--text-tertiary)" }}>{v.note}</span>
+        )}
         <span style={{ fontSize: 9, color: "var(--text-tertiary)" }}>Designation read {readAgo}</span>
-        {err && <span style={{ fontSize: 9, color: "var(--accent-red)" }}>{err}</span>}
       </div>
+      {/* Under the row, on its own line, in red — an error squeezed onto the end of the button line
+          was easy to miss and easy to mistake for part of the timestamp. */}
+      {err && (
+        <div style={{ fontSize: 9, color: "var(--accent-red)", padding: "0 0 6px" }}>{err}</div>
+      )}
     </>
   );
 }
@@ -400,8 +410,21 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   // Generation designation (Phase A: observe only — it reports, it does not gate generation).
   const [desig, setDesig] = useState<Record<number, any>>({});
   const [desigAt, setDesigAt] = useState<number | null>(null);
-  const [desigBusy, setDesigBusy] = useState(false);
-  const [desigErr, setDesigErr] = useState<string | null>(null);
+  // PER STATION, not global. One `busy` boolean drove FOUR buttons, so clicking one station's REFRESH
+  // NOW put every station's button into the busy state at once — four controls twitching for one
+  // click is a large part of what read as a flicker.
+  const [desigBusy, setDesigBusy] = useState<number | null>(null);
+  const [desigErr, setDesigErr] = useState<Record<number, string>>({});
+  // The 30s poll reads ALL stations, so its failure genuinely belongs to all of them. Kept separate
+  // from the per-station click errors above so one station's failed click cannot masquerade as an
+  // outage, and an outage cannot be cleared by clicking one station.
+  const [desigLoadErr, setDesigLoadErr] = useState<string | null>(null);
+  // Sequence guard. The 30s poll and a click both call applyDesig, and whichever RESOLVED last won —
+  // so a poll issued before the click could land after it and paint the pre-click rows back over the
+  // fresh ones. That is the state change that "immediately reverts". Same ticket pattern the
+  // auto-generate toggle already uses (autoSeq); designation never had one.
+  const desigSeqNext = useRef(0);
+  const desigApplied = useRef(0);
   // Applies rows and stamps the read time. Errors are SURFACED, not swallowed: the previous version
   // caught everything silently, so an unregistered handler and a healthy empty result looked
   // identical — the button appeared to do nothing and said nothing.
@@ -412,29 +435,43 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     setDesigAt(Date.now());
   }, []);
   const loadDesig = useCallback(async () => {
+    const seq = ++desigSeqNext.current;
     try {
       const rows = await (window as any).ether?.invoke?.("designation:status");
       if (!Array.isArray(rows)) throw new Error("no response from designation:status");
+      if (seq < desigApplied.current) return;   // overtaken by a newer read — discard, never repaint
+      desigApplied.current = seq;
       applyDesig(rows);
-      setDesigErr(null);
+      setDesigLoadErr(null);
     } catch (e: any) {
-      setDesigErr(e?.message || String(e));
+      setDesigLoadErr(e?.message || String(e));
       setDesigAt(Date.now());     // the read HAPPENED; it failed. Never leave the stamp frozen.
     }
   }, [applyDesig]);
   useEffect(() => { loadDesig(); const t = setInterval(loadDesig, 30_000); return () => clearInterval(t); }, [loadDesig]);
-  const refreshDesig = async () => {
-    setDesigBusy(true);
+  const refreshDesig = async (sid: number) => {
+    setDesigBusy(sid);
+    setDesigErr(prev => { const n = { ...prev }; delete n[sid]; return n; });
+    const seq = ++desigSeqNext.current;
     try {
       // One round trip: the handler returns the rows it just computed, so there is no window in
       // which the refresh succeeded and the follow-up read failed.
       const r = await (window as any).ether?.invoke?.("designation:refresh");
-      if (r && r.ok) { applyDesig(r.rows || []); setDesigErr(null); }
-      else { setDesigErr((r && r.error) || "refresh returned no response"); setDesigAt(Date.now()); }
+      if (r && r.ok) {
+        // NO OPTIMISTIC PAINT ANYWHERE ON THIS PATH: the rows rendered are the rows the main process
+        // just read back, and a stale in-flight poll can no longer overwrite them.
+        if (seq >= desigApplied.current) { desigApplied.current = seq; applyDesig(r.rows || []); setDesigLoadErr(null); }
+      } else {
+        setDesigErr(prev => ({ ...prev, [sid]: (r && r.error) || "refresh returned no response" }));
+        setDesigAt(Date.now());
+      }
     } catch (e: any) {
-      setDesigErr(e?.message || String(e));
+      setDesigErr(prev => ({ ...prev, [sid]: e?.message || String(e) }));
       setDesigAt(Date.now());
-    } finally { setDesigBusy(false); }
+    } finally {
+      // Only clear if it is still OUR click: two overlapping refreshes must not switch each other off.
+      setDesigBusy(cur => (cur === sid ? null : cur));
+    }
   };
   const agoText = (ms: number | null) => {
     if (!ms) return "never";
@@ -1090,8 +1127,10 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                     <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-secondary)" }}>{st.name}</span>
                   </div>
                   {/* Designation (Phase A). Always rendered — see DesignationRows. */}
-                  <DesignationRows d={desig[st.stationId]} busy={desigBusy}
-                    onRefresh={refreshDesig} readAgo={agoText(desigAt)} err={desigErr} />
+                  <DesignationRows d={desig[st.stationId]} busy={desigBusy === st.stationId}
+                    onRefresh={() => refreshDesig(st.stationId)} readAgo={agoText(desigAt)}
+                    err={desigErr[st.stationId] || desigLoadErr}
+                    autoOn={autoGen[st.stationId] === undefined ? null : autoGen[st.stationId]} />
                   {/* SCHEDULE RUNWAY — the fuel gauge. First row on purpose: "how long until this
                       station runs out of log" is the most urgent thing this panel can answer, and on
                       a flipped station a dry log is dead air. Distance to the first GAP, not to the
