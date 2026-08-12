@@ -69,9 +69,15 @@ function status({ record, now, machineId, killSwitch }) {
              text: 'Designation bypassed (kill_designation) — every switched-on machine generates' };
   }
   if (!record) {
-    // RED, and honest that it is not yet causing harm: Phase A does not gate generation.
-    return { level: 'red', state: 'none', holder: null, lastChecked: null, lastGenerated: null,
-             text: 'No designated machine — nothing owns keeping this log topped up' };
+    // NEUTRAL, not red. Phase A gates nothing, so an undesignated station is still having its log
+    // topped up by every switched-on machine — nothing is broken and nothing is at risk yet. Red
+    // here would be an alarm for a state that is normal on a station nobody has generated on, and an
+    // alarm that is usually wrong is one people learn to ignore.
+    //
+    // This becomes a real warning in Phase B, where an undesignated station genuinely stops being
+    // topped up. The colour changes when the consequence does.
+    return { level: 'grey', state: 'none', holder: null, lastChecked: null, lastGenerated: null,
+             text: 'none — no machine has auto-generated this station yet' };
   }
   const age = record.last_checked != null ? Math.max(0, now - record.last_checked) : null;
   const level = age == null ? 'yellow' : age < STALE_YELLOW_SEC ? 'green' : age < STALE_RED_SEC ? 'yellow' : 'red';

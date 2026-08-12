@@ -48,10 +48,14 @@ describe("status — what the operator reads", () => {
     expect(s.state).toBe("other");
     expect(s.text).toContain("OV");
   });
-  it("RED when no machine is designated", () => {
+  it("NEUTRAL, not red, when nothing is designated yet", () => {
+    // Phase A gates nothing, so an undesignated station is still being topped up by every
+    // switched-on machine. Red would be an alarm for a normal state, and an alarm that is usually
+    // wrong is one people stop reading. It becomes a warning in Phase B, when the consequence is real.
     const s = status({ record: null, now: NOW, machineId: ME });
-    expect(s.level).toBe("red");
-    expect(s.text).toContain("No designated machine");
+    expect(s.level).toBe("grey");
+    expect(s.state).toBe("none");
+    expect(s.text).toContain("no machine has auto-generated");
   });
   it("reports last_generated SEPARATELY from the heartbeat", () => {
     // A machine can be watching (fresh last_checked) and correctly generating nothing, because the

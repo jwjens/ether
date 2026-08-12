@@ -1021,41 +1021,50 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                     <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-secondary)" }}>{st.name}</span>
                   </div>
                   {/* GENERATION DESIGNATION (Phase A) — which machine owns topping this log up.
-                      It does NOT yet gate anything: every switched-on machine still generates, so an
-                      undesignated station is reported RED for ownership while logs may still appear. */}
-                  {desig[st.stationId] && (
-                    <>
-                      <HealthRow
-                        label="Designated generator"
-                        value={desig[st.stationId].state === "mine" ? "This machine"
-                             : desig[st.stationId].state === "other" ? (desig[st.stationId].holderName || "Another machine")
-                             : desig[st.stationId].state === "bypassed" ? "Bypassed"
-                             : "None"}
-                        status={lvl(desig[st.stationId].level) as any}
-                        sub={desig[st.stationId].text}
-                      />
-                      <HealthRow
-                        label="Log last extended"
-                        value={desig[st.stationId].lastGenerated
-                          ? new Date(desig[st.stationId].lastGenerated * 1000).toLocaleString()
-                          : "not since this machine started watching"}
-                        status={"ok" as any}
-                        sub="separate from the check-in above — a healthy machine generates nothing while the runway is long"
-                      />
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0 6px" }}>
-                        <button onClick={refreshDesig} disabled={desigBusy}
-                          title="Re-read the designation record and check in now. This refreshes ownership state; it does not force a full sync cycle."
-                          style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.08em", padding: "3px 10px",
-                                   background: "transparent", border: "1px solid var(--border-primary)",
-                                   color: "var(--text-secondary)", cursor: desigBusy ? "wait" : "pointer" }}>
-                          {desigBusy ? "…" : "REFRESH NOW"}
-                        </button>
-                        <span style={{ fontSize: 9, color: "var(--text-tertiary)" }}>
-                          Designation read {agoText(desigAt)}
-                        </span>
-                      </div>
-                    </>
-                  )}
+                      Rendered UNCONDITIONALLY. It used to render only once the 30-minute tick had
+                      populated its map, so on a fresh launch the row — and the button with it — was
+                      simply absent, which reads as "this feature does not exist" rather than "nothing
+                      is designated yet". A status row that disappears when it has nothing to report
+                      is worse than one that says so.
+                      Phase A gates nothing, so "none" is neutral here; it becomes a warning in
+                      Phase B, when an undesignated station really does stop being topped up. */}
+                  {(() => {
+                    const d = desig[st.stationId];
+                    const state = d?.state ?? "none";
+                    return (
+                      <>
+                        <HealthRow
+                          label="Designated generator"
+                          value={state === "mine" ? "This machine"
+                               : state === "other" ? (d.holderName || "Another machine")
+                               : state === "bypassed" ? "Bypassed"
+                               : "None"}
+                          status={(!d || d.level === "grey" ? "ok" : lvl(d.level)) as any}
+                          sub={d?.text ?? "none — no machine has auto-generated this station yet"}
+                        />
+                        <HealthRow
+                          label="Log last extended"
+                          value={d?.lastGenerated
+                            ? new Date(d.lastGenerated * 1000).toLocaleString()
+                            : "not since this machine started watching"}
+                          status={"ok" as any}
+                          sub="separate from the check-in above — a healthy machine generates nothing while the runway is long"
+                        />
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0 6px" }}>
+                          <button onClick={refreshDesig} disabled={desigBusy}
+                            title="Re-read the designation record and check in now. This refreshes ownership state; it does not force a full sync cycle."
+                            style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.08em", padding: "3px 10px",
+                                     background: "transparent", border: "1px solid var(--border-primary)",
+                                     color: "var(--text-secondary)", cursor: desigBusy ? "wait" : "pointer" }}>
+                            {desigBusy ? "…" : "REFRESH NOW"}
+                          </button>
+                          <span style={{ fontSize: 9, color: "var(--text-tertiary)" }}>
+                            Designation read {agoText(desigAt)}
+                          </span>
+                        </div>
+                      </>
+                    );
+                  })()}
                   {/* SCHEDULE RUNWAY — the fuel gauge. First row on purpose: "how long until this
                       station runs out of log" is the most urgent thing this panel can answer, and on
                       a flipped station a dry log is dead air. Distance to the first GAP, not to the
