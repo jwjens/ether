@@ -25,14 +25,13 @@ many times you regenerate.
 **Drag it onto another row.** The two swap times — the one you dragged goes where the other was, and
 that one comes back to where yours started.
 
-As you drag, the row under your pointer lights up purple with a ring around it and a chip reading
-**⇄ SWAP WITH 3:42 PM** — the time your dragged row is leaving. That is your drop target: release
-there and those two rows trade places.
+As you drag, a small purple chip follows your pointer with the song's name on it, and a **bright
+purple line** appears across the top of the row you are hovering. That line is where your song lands.
+Release, and it goes there.
 
-> **Why a highlight and not a line between rows?** Because a line between two rows would mean
-> "insert here and push everything down", and that is not what happens. Ether swaps the two rows and
-> leaves the rest of your day exactly where it is. The highlight shows you the row you are trading
-> with, which is what actually takes place.
+> **The song that was there does not vanish, and nothing shuffles down.** The two rows *trade places*
+> — yours takes that slot, and the one that was there moves to the slot yours came from. Everything
+> else in your day stays exactly where it is.
 
 Both rows now show a purple **YOURS** badge. Nothing else in the day moves, **and the screen stays
 exactly where you were** — you can make a run of edits in the 3 PM hour without being thrown back to

@@ -62,6 +62,38 @@ function getMondayOfWeek(offset: number): Date {
   return m;
 }
 
+/**
+ * A COMPACT drag image for the log editor, replacing the browser's default.
+ *
+ * The default drag image is a semi-transparent snapshot of the WHOLE ROW — full width, including its
+ * title, artist and duration columns. Dragged across a dense list, that translucent copy sits on top
+ * of the real rows and both sets of text render through each other. That is the "clashes with text
+ * underneath" and most of the visual chaos: it is not our styling at all, it is the snapshot.
+ *
+ * A small chip carrying just the title is legible over anything, obscures one line instead of a whole
+ * row, and makes it obvious what is in hand.
+ *
+ * Off-screen because setDragImage needs the node to be in the document AND rendered at drag start;
+ * it is removed on the next tick, after the browser has taken its picture.
+ */
+function setCompactDragImage(e: React.DragEvent, label: string) {
+  try {
+    const el = document.createElement("div");
+    el.textContent = `⇅  ${label}`;
+    el.style.cssText = [
+      "position:fixed", "top:-9999px", "left:-9999px", "z-index:-1",
+      "padding:5px 12px", "max-width:320px", "overflow:hidden",
+      "white-space:nowrap", "text-overflow:ellipsis",
+      "font:800 11px 'Inter',system-ui,sans-serif", "letter-spacing:0.01em",
+      "color:#fff", "background:#6040C0", "border:1px solid #8868D8",
+      "box-shadow:0 4px 14px rgba(0,0,0,0.5)", "pointer-events:none",
+    ].join(";");
+    document.body.appendChild(el);
+    e.dataTransfer.setDragImage(el, 16, 14);
+    setTimeout(() => { try { el.remove(); } catch {} }, 0);
+  } catch { /* setDragImage unsupported → the browser default, which still works */ }
+}
+
 function sameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear()
     && a.getMonth() === b.getMonth()
@@ -475,46 +507,57 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                     const dragging = dragUuid === it.uuid;
                     // Is this the row the dragged one will trade places with?
                     const isDropTarget = !!dragUuid && dropUuid === it.uuid && dragUuid !== it.uuid && !aired;
-                    const dragSrc = dragUuid ? dayRows.find(r => r.uuid === dragUuid) : null;
                     return (
                     <div key={it.uuid || i}
                       draggable={!aired && !busy}
-                      onDragStart={(e) => { setDragUuid(it.uuid); try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", it.uuid); } catch {} }}
+                      onDragStart={(e) => {
+                        setDragUuid(it.uuid);
+                        try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", it.uuid); } catch {}
+                        setCompactDragImage(e, it.title || "row");
+                      }}
                       onDragEnd={() => { setDragUuid(null); setDropUuid(null); }}
                       onDragOver={(e) => {
                         if (!aired && dragUuid && dragUuid !== it.uuid) {
                           e.preventDefault();
                           try { e.dataTransfer.dropEffect = "move"; } catch {}
-                          // dragOver fires continuously — only touch state when it actually changes.
+                          // dragOver fires continuously — only touch state when the target CHANGES.
                           if (dropUuid !== it.uuid) setDropUuid(it.uuid);
                         }
                       }}
-                      onDragLeave={() => { if (dropUuid === it.uuid) setDropUuid(null); }}
+                      // NO onDragLeave. THIS WAS THE FLICKER. dragleave fires every time the pointer
+                      // crosses from the row into one of its own children — the time span, the title,
+                      // the artist, each button — so the indicator was being cleared and re-set
+                      // several times per row traversed. The pointer never left the row; it just
+                      // moved over its contents. dragover on the next row supersedes the target, and
+                      // dragend/drop always clear it, so nothing is left stuck on.
                       onDrop={(e) => { e.preventDefault(); const from = dragUuid; setDragUuid(null); setDropUuid(null); if (from && !aired) moveRow(from, it.uuid); }}
                       title={aired ? "Already aired — the log is a record of what happened and cannot be edited"
                                    : "Drag onto another row to swap the two"}
                       style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 12px",
-                        background: isDropTarget ? "rgba(136,104,216,0.22)"
+                        background: dragging ? "rgba(136,104,216,0.06)"
+                                  : isDropTarget ? "rgba(136,104,216,0.10)"
                                   : isNow ? "rgb(from var(--accent-green) r g b / 0.16)" : isSpot ? "rgba(251,191,36,0.08)" : "transparent",
-                        borderLeft: `3px solid ${isDropTarget ? "#8868D8" : isNow ? "var(--accent-green)" : mine ? "#8868D8" : isSpot ? "#fbbf24" : "transparent"}`,
-                        // A ring rather than a between-rows line: the two rows SWAP, nothing shuffles.
-                        outline: isDropTarget ? "2px solid #8868D8" : "none",
-                        outlineOffset: isDropTarget ? "-2px" : 0,
-                        opacity: dragging ? 0.35 : busy ? 0.6 : aired ? 0.65 : 1,
+                        borderLeft: `3px solid ${isNow ? "var(--accent-green)" : mine ? "#8868D8" : isSpot ? "#fbbf24" : "transparent"}`,
+                        // THE DROP LINE. A 3px bar across the top edge of the row the dragged item
+                        // will land on, drawn as an INSET SHADOW so it costs no layout: a real 3px
+                        // element inserted between rows would push everything below it down by 3px
+                        // on every target change, and that judder is the "stutter".
+                        boxShadow: isDropTarget ? "inset 0 3px 0 0 #8868D8" : "none",
+                        // The GHOST: faint dashed outline, near-transparent, no fill to fight the
+                        // text. The row stays in place and legible — it marks where the song came
+                        // from while it is in hand.
+                        outline: dragging ? "1px dashed rgba(136,104,216,0.55)" : "none",
+                        outlineOffset: dragging ? "-1px" : 0,
+                        opacity: dragging ? 0.4 : busy ? 0.6 : aired ? 0.65 : 1,
                         cursor: aired ? "default" : dragUuid ? "grabbing" : "grab" }}>
                       <span style={{ width: 44, flexShrink: 0, fontFamily: "'DM Mono', monospace", fontSize: 9, color: isDropTarget ? "#8868D8" : isNow ? "var(--accent-green)" : "var(--text-tertiary)", fontWeight: isDropTarget ? 800 : 400 }}>
                         {new Date(it.scheduled_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </span>
-                      {/* Names BOTH sides of the trade while the pointer is here, so "what will this
-                          do?" is answered before the drop rather than discovered after it. */}
-                      {isDropTarget && dragSrc && (
-                        <span style={{ flexShrink: 0, padding: "1px 6px", fontSize: 9, fontWeight: 800,
-                                       fontFamily: "'DM Mono', monospace", letterSpacing: "0.04em",
-                                       color: "#8868D8", background: "rgba(136,104,216,0.18)",
-                                       border: "1px solid rgba(136,104,216,0.6)", whiteSpace: "nowrap" as const }}>
-                          ⇄ SWAP WITH {new Date(dragSrc.scheduled_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                        </span>
-                      )}
+                      {/* The "SWAP WITH <time>" chip that lived here in 4.4.198 is GONE. It was an
+                          inline flex child that appeared and disappeared as the target changed, so
+                          every row you dragged past shoved the title sideways and back — a second
+                          source of the judder, and it competed with the drop line for the eye.
+                          ONE indicator: the line. What is in hand is named on the drag chip itself. */}
                       <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: isNow ? 800 : 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: isNow ? "var(--accent-green)" : isSpot ? "#fbbf24" : "var(--text-primary)" }}>
                         {isNow ? "▶ " : ""}
                         {isSpot && <span style={{ marginRight: 6, padding: "1px 5px", fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: "#fbbf24", background: "rgba(251,191,36,0.14)", border: "1px solid rgba(251,191,36,0.45)", letterSpacing: "0.06em" }}>SPOT</span>}
