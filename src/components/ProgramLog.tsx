@@ -99,7 +99,7 @@ export default function ProgramLog({ onClose }: Props) {
     try {
       const rows = await query<Show>(
         `SELECT s.*, c.name as clock_name FROM shows s
-         LEFT JOIN clocks c ON c.id = s.clock_id ORDER BY s.start_hour`
+         LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.deleted_at IS NULL ORDER BY s.start_hour`
       );
       setShows(rows);
     } catch {}
@@ -113,7 +113,7 @@ export default function ProgramLog({ onClose }: Props) {
       // Group by hour and merge with shows
       const allShows = await query<Show>(
         `SELECT s.*, c.name as clock_name FROM shows s
-         LEFT JOIN clocks c ON c.id = s.clock_id ORDER BY s.start_hour`
+         LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.deleted_at IS NULL ORDER BY s.start_hour`
       );
       const blocks: HourBlock[] = [];
       // Only show hours that have a show OR have scheduled entries
@@ -167,7 +167,7 @@ export default function ProgramLog({ onClose }: Props) {
     try {
       // Fix: handle overnight shows (end_hour=0 means "until midnight" = 24)
       const allShowsForHour = await query<{ id: number; name: string; clock_id: number | null; start_hour: number; end_hour: number }>(
-        "SELECT id, name, clock_id, start_hour, end_hour FROM shows WHERE is_active = 1"
+        "SELECT id, name, clock_id, start_hour, end_hour FROM shows WHERE is_active = 1 AND deleted_at IS NULL"
       );
       const matchedShow = allShowsForHour.find(s => {
         if (s.end_hour === 0 || s.end_hour === s.start_hour) return hour >= s.start_hour;
@@ -1464,7 +1464,7 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
 
   const loadModal = async () => {
     setModalShows(await query<Show>(
-      "SELECT s.*, c.name as clock_name FROM shows s LEFT JOIN clocks c ON c.id = s.clock_id ORDER BY s.start_hour"
+      "SELECT s.*, c.name as clock_name FROM shows s LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.deleted_at IS NULL ORDER BY s.start_hour"
     ));
     setModalClocks(await query<{id:number;name:string}>("SELECT id, name FROM clocks ORDER BY name"));
   };

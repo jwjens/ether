@@ -505,7 +505,7 @@ export default function BroadcastMonitor() {
       try {
         const hour = new Date().getHours();
         const rows = await query<{ name: string; start_hour: number }>(
-          "SELECT name, start_hour FROM shows WHERE is_active=1 AND start_hour > ? ORDER BY start_hour LIMIT 1",
+          "SELECT name, start_hour FROM shows WHERE is_active=1 AND deleted_at IS NULL AND start_hour > ? ORDER BY start_hour LIMIT 1",
           [hour]
         );
         if (rows.length > 0) {

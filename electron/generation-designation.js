@@ -6,8 +6,10 @@
 // gauge makes a stalled generator visible for days — so automatic failover was machinery for a
 // decision nobody wanted made automatically.
 //
-// PHASE A ENFORCES NOTHING. _autoExtendTick still runs on every switched-on machine; this records
-// and reports. Phase B adds the gate.
+// PHASE B IS LIVE (4.4.201). _autoExtendTick skips a station designated to another machine, so this
+// module's `decide()` now governs whether an unattended generate happens at all. Manual Generate is
+// never gated — an operator pressing the button is an explicit instruction from a human present at
+// that machine.
 //
 // Stored in station_config_kv under `designated_generator` — a SYNCED key, which is the point: a
 // local record cannot tell two machines apart. Receipts: station_config_kv is in the synced list
@@ -55,6 +57,28 @@ function decide({ record, machineId, autoOn, killSwitch }) {
   return { ...base, action: 'observe', reason: `designated to ${record.machine_name || record.machine_id}` };
 }
 
+/**
+ * PHASE B — THE GATE. May THIS machine run an unattended generate for this station?
+ *
+ * Pure, so the rule that can stop a station being built is testable without two machines. Called by
+ * _autoExtendTick only; MANUAL Generate is never gated — an operator pressing the button is an
+ * explicit instruction from a human present at that machine.
+ *
+ * @returns {{ allow: boolean, reason: string, holder: string|null }}
+ */
+function mayAutoGenerate({ record, machineId, killSwitch }) {
+  // The emergency switch outranks the gate. If designation itself is misbehaving, the operator must
+  // still be able to get their log built — a gate with no override is a way to lose a station.
+  if (killSwitch) return { allow: true, reason: 'kill_designation set — enforcement bypassed', holder: null };
+  // NO RECORD → ALLOWED, and the caller's tick will claim it (the zero-config rule, design §1).
+  // Refusing here would mean a brand-new station never builds a log at all: the enforcement causing
+  // dead air, which is worse than the two-writer problem it exists to prevent.
+  if (!record) return { allow: true, reason: 'no designated machine — this machine claims it by generating', holder: null };
+  if (!machineId) return { allow: true, reason: 'this machine has no identity — cannot prove it is not the holder', holder: record.machine_id };
+  if (record.machine_id === machineId) return { allow: true, reason: 'this machine is designated', holder: machineId };
+  return { allow: false, reason: `designated to ${record.machine_name || record.machine_id}`, holder: record.machine_id };
+}
+
 function fmtAgo(sec) {
   if (sec < 90) return `${sec}s ago`;
   if (sec < 5400) return `${Math.round(sec / 60)} min ago`;
@@ -69,13 +93,15 @@ function status({ record, now, machineId, killSwitch }) {
              text: 'Designation bypassed (kill_designation) — every switched-on machine generates' };
   }
   if (!record) {
-    // NEUTRAL, not red. Phase A gates nothing, so an undesignated station is still having its log
-    // topped up by every switched-on machine — nothing is broken and nothing is at risk yet. Red
-    // here would be an alarm for a state that is normal on a station nobody has generated on, and an
-    // alarm that is usually wrong is one people learn to ignore.
+    // STILL NEUTRAL UNDER PHASE B, and that is a deliberate choice in the gate rather than an
+    // oversight here. An earlier note predicted this would become a warning once enforcement landed,
+    // because an undesignated station would stop being topped up. The gate was built the other way:
+    // a station with NO record is ALLOWED to generate, and the machine that does so claims it (the
+    // zero-config rule). Refusing would mean a brand-new station never builds a log at all — the
+    // enforcement causing dead air, which is worse than the two-writer problem it prevents.
     //
-    // This becomes a real warning in Phase B, where an undesignated station genuinely stops being
-    // topped up. The colour changes when the consequence does.
+    // So this state is still normal, still not at risk, and still grey. An alarm that is usually
+    // wrong is one people learn to ignore.
     return { level: 'grey', state: 'none', holder: null, lastChecked: null, lastGenerated: null,
              text: 'none — no machine has auto-generated this station yet' };
   }
@@ -87,8 +113,12 @@ function status({ record, now, machineId, killSwitch }) {
     holder: record.machine_id, holderName: record.machine_name,
     lastChecked: record.last_checked, lastGenerated: record.last_generated,
     checkedAgeSec: age,
+    // Under Phase B the 'other' case is no longer just information: it is the reason THIS machine
+    // is not building this station's log. Saying so on the row means an operator watching the runway
+    // fall never has to guess why nothing is being generated here.
     text: `${mine ? 'This machine' : (record.machine_name || record.machine_id)}` +
-          (age == null ? ' — never checked in' : ` — checked in ${fmtAgo(age)}`),
+          (age == null ? ' — never checked in' : ` — checked in ${fmtAgo(age)}`) +
+          (mine ? '' : ' · this machine will not auto-generate it'),
   };
 }
 
@@ -105,4 +135,5 @@ function nextRecord({ record, now, machineId, machineName, generated }) {
   });
 }
 
-module.exports = { KEY, decide, status, parseRecord, nextRecord, fmtAgo, STALE_YELLOW_SEC, STALE_RED_SEC };
+module.exports = { KEY, decide, status, parseRecord, nextRecord, mayAutoGenerate, fmtAgo,
+                   STALE_YELLOW_SEC, STALE_RED_SEC };

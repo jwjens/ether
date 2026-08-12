@@ -124,7 +124,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                 c.name AS clock_name
          FROM shows s
          LEFT JOIN clocks c ON c.id = s.clock_id
-         WHERE s.is_active = 1 AND s.station_id = ?
+         WHERE s.is_active = 1 AND s.station_id = ? AND s.deleted_at IS NULL
          ORDER BY s.start_hour`,
         [stationId], stationId, { skipScoping: true }
       );

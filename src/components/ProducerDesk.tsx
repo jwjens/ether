@@ -353,7 +353,7 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying, nowPla
       try {
         const hour = new Date().getHours();
         const shows = await queryScoped<{ name: string; start_hour: number; end_hour: number }>(
-          "SELECT name, start_hour, end_hour FROM shows WHERE is_active = 1 ORDER BY start_hour",
+          "SELECT name, start_hour, end_hour FROM shows WHERE is_active = 1 AND deleted_at IS NULL ORDER BY start_hour",
           [], stationId
         );
         const curr = shows.find(s => {

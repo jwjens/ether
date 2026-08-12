@@ -443,7 +443,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
     if (!isReady) return;
     const [tr, sh, cl] = await Promise.all([
       queryScoped<VoiceTrack>("SELECT * FROM voice_tracks ORDER BY recorded_at DESC LIMIT 100", [], stationId),
-      queryScoped<Show>("SELECT * FROM shows ORDER BY start_hour", [], stationId),
+      queryScoped<Show>("SELECT * FROM shows WHERE deleted_at IS NULL ORDER BY start_hour", [], stationId),
       queryScoped<Clock>("SELECT * FROM clocks ORDER BY name", [], stationId),
     ]);
     setTracks(tr || []); setShows(sh || []); setClocks(cl || []);

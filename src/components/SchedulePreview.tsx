@@ -105,7 +105,7 @@ export default function SchedulePreview({ onClose }: { onClose?: () => void }) {
                 fc.name as clock_name
          FROM shows sh
          LEFT JOIN format_clocks fc ON fc.id = sh.clock_id
-         WHERE sh.is_active = 1 AND sh.station_id = ?`,
+         WHERE sh.is_active = 1 AND sh.station_id = ? AND sh.deleted_at IS NULL`,
         [stationId], stationId, { skipScoping: true }
       ).catch(() => []);
       setShows(showRows);

@@ -179,7 +179,10 @@ export function watchShowTransitions(
       const today = String(now.getDay());
       const stationId = getActiveStationIdSync();
       const shows = await query<ShowRow>(
-        "SELECT * FROM shows WHERE is_active = 1 AND start_hour = ? AND station_id = ?",
+        // deleted_at IS NULL — line 39 in this same file always had it and this one did not, so a
+        // deleted show could still select the clock that governs an hour. That is a scheduling
+        // defect, not a cosmetic one.
+        "SELECT * FROM shows WHERE is_active = 1 AND deleted_at IS NULL AND start_hour = ? AND station_id = ?",
         [h, stationId]
       );
       const show = shows.find(s => s.days.includes(today));

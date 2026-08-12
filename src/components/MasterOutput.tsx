@@ -576,7 +576,7 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
       try {
         const h = new Date().getHours();
         const rows = await queryScoped<{ name: string; start_hour: number; end_hour: number }>(
-          "SELECT name, start_hour, end_hour FROM shows WHERE is_active=1 AND start_hour <= ? ORDER BY start_hour DESC LIMIT 1", [h], stationId
+          "SELECT name, start_hour, end_hour FROM shows WHERE is_active=1 AND deleted_at IS NULL AND start_hour <= ? ORDER BY start_hour DESC LIMIT 1", [h], stationId
         );
         if (rows.length > 0) setCurrentShow({ name: rows[0].name, startH: rows[0].start_hour, endH: rows[0].end_hour });
         else setCurrentShow(null);
@@ -687,7 +687,7 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
       try {
         const hour = new Date().getHours();
         const shows = await queryScoped<{ name: string; start_hour: number }>(
-          "SELECT name, start_hour FROM shows WHERE is_active=1 AND start_hour > ? ORDER BY start_hour LIMIT 1",
+          "SELECT name, start_hour FROM shows WHERE is_active=1 AND deleted_at IS NULL AND start_hour > ? ORDER BY start_hour LIMIT 1",
           [hour], stationId
         );
         if (shows.length > 0) {

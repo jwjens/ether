@@ -4,12 +4,63 @@ import { describe, it, expect } from "vitest";
 import { createRequire } from "node:module";
 const require_ = createRequire(import.meta.url);
 const D = require_("./generation-designation.js");
-const { decide, status, parseRecord, nextRecord, STALE_YELLOW_SEC, STALE_RED_SEC } = D;
+const { decide, status, parseRecord, nextRecord, mayAutoGenerate, STALE_YELLOW_SEC, STALE_RED_SEC } = D;
 
 const NOW = 1_800_000_000;
 const ME = "machine-A", OTHER = "machine-B";
 const rec = (o = {}) => ({ machine_id: OTHER, machine_name: "OV", designated_at: NOW - 9999,
                            last_checked: NOW - 60, last_generated: NOW - 3600, ...o });
+
+// PHASE B (4.4.201) — the gate that can STOP a station's log being built. Every one of these cases
+// is a way to take a station off the air if it is wrong, which is why the rule is a pure function
+// rather than four conditions inlined in the tick.
+describe("mayAutoGenerate — the Phase B gate", () => {
+  it("ALLOWS the designated machine", () => {
+    const g = mayAutoGenerate({ record: rec({ machine_id: ME }), machineId: ME });
+    expect(g.allow).toBe(true);
+    expect(g.holder).toBe(ME);
+  });
+
+  it("BLOCKS a machine that is not the holder — the whole point of the feature", () => {
+    const g = mayAutoGenerate({ record: rec(), machineId: ME });
+    expect(g.allow).toBe(false);
+    expect(g.holder).toBe(OTHER);
+    expect(g.reason).toContain("OV");        // names the holder, for the log line and the ledger
+  });
+
+  it("ALLOWS an UNDESIGNATED station — refusing would be the gate causing dead air", () => {
+    // A brand-new station has no record. If the gate refused here it would never build a log at
+    // all, which is worse than the two-writer problem the gate exists to prevent. The tick claims
+    // it by generating (the zero-config rule).
+    const g = mayAutoGenerate({ record: null, machineId: ME });
+    expect(g.allow).toBe(true);
+    expect(g.holder).toBe(null);
+  });
+
+  it("the kill switch OUTRANKS the gate, even when another machine holds it", () => {
+    // A bug in designation must never be able to stop a station being built with no way out.
+    const g = mayAutoGenerate({ record: rec(), machineId: ME, killSwitch: true });
+    expect(g.allow).toBe(true);
+    expect(g.reason).toContain("kill_designation");
+  });
+
+  it("ALLOWS when this machine has no identity — it cannot prove it is not the holder", () => {
+    // client_identity unreadable. Failing OPEN is right: the cost of a wrong block is a station
+    // that stops building, the cost of a wrong allow is the pre-Phase-B behaviour we had all along.
+    for (const id of [null, undefined, ""])
+      expect(mayAutoGenerate({ record: rec(), machineId: id }).allow).toBe(true);
+  });
+
+  it("BLOCKS however stale the holder is — takeover stays human-only", () => {
+    for (const age of [60, STALE_YELLOW_SEC + 1, STALE_RED_SEC + 1, 999 * 86400])
+      expect(mayAutoGenerate({ record: rec({ last_checked: NOW - age }), machineId: ME }).allow).toBe(false);
+  });
+
+  it("survives a malformed record rather than throwing inside the tick", () => {
+    expect(mayAutoGenerate({ record: parseRecord("not json"), machineId: ME }).allow).toBe(true);
+    expect(mayAutoGenerate({ record: undefined, machineId: ME }).allow).toBe(true);
+  });
+});
 
 describe("decide", () => {
   it("designates when nothing is designated — zero-config for a single machine", () => {

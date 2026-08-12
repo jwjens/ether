@@ -122,7 +122,7 @@ export default function OnShiftScreen({ onStart }: Props) {
         const now = new Date();
         const hour = now.getHours();
         const day = String(now.getDay());
-        const shows = await queryScoped<ShowInfo>("SELECT name, start_hour, end_hour FROM shows WHERE is_active = 1 ORDER BY start_hour", [], stationId);
+        const shows = await queryScoped<ShowInfo>("SELECT name, start_hour, end_hour FROM shows WHERE is_active = 1 AND deleted_at IS NULL ORDER BY start_hour", [], stationId);
         const curr = shows.find(s => {
           if (!s.name) return false;
           const dayOk = true; // simplified — all shows checked

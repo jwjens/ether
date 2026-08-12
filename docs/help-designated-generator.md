@@ -122,14 +122,36 @@ flips to **This machine** in green and stays there.
 The rows keep updating on their own every 30 seconds regardless, so nothing is hidden from you while
 the button is greyed out — if another computer takes the designation, you will still see it appear.
 
+## This is now enforced (since 4.4.201)
+
+Earlier versions only *reported* who was designated. Now the software obeys it: **a computer that is
+not the designated generator will not automatically build that station's log.** It checks in, it
+shows you the state, and it leaves the log alone.
+
+Three exceptions, all deliberate:
+
+1. **A station nobody has claimed still gets built.** If no computer is designated, the first one to
+   auto-generate claims it. A brand-new station must never sit with an empty log waiting to be
+   assigned.
+2. **Pressing Generate yourself always works.** The rule applies only to the *automatic* top-up. If
+   you are sitting at a computer and press **Generate**, it generates — you are there, and you asked.
+3. **The bypass still bypasses.** With `kill_designation` set, every switched-on computer generates,
+   as before.
+
+When a computer skips a station for this reason it says so — in the log, in the health ledger as
+`auto-extend-skipped-not-designated`, and on the row itself, which reads *"…· this machine will not
+auto-generate it"*. Recorded once when it starts, not every half hour.
+
 ## What this does NOT do
 
-- **It does not stop the other computers generating.** In this version designation *reports* who
-  should own the job; it does not yet block the others. That enforcement is a later step.
-- **It does not switch auto-generation on.** A machine with auto-generation switched off will never
+- **It does not switch auto-generation on.** A computer with auto-generation switched off will never
   take the designation — it would own a station it has been told not to build.
 - **It is not about who is on air.** Any computer can play out. This is only about who writes the
   schedule ahead of time.
+- **It does not, on its own, make two computers agree.** Designation is stored per station and
+  travels with your account — but only once the two computers are actually syncing. Until then each
+  one has its own copy, and each will name itself. See your engineer if two computers are still both
+  generating.
 
 ## Related
 
