@@ -72,10 +72,19 @@ function DesignationRows({ d, busy, onRefresh, readAgo, err }: {
               : "None";
   let lastGen = "not since this machine started watching";
   try { if (d && d.lastGenerated) lastGen = new Date(d.lastGenerated * 1000).toLocaleString(); } catch {}
+  // A failed write is reported HERE, per station, not swallowed in the main process. From 4.4.188 to
+  // 4.4.192 the designation record could not be saved on any machine and this panel showed a serene
+  // "None" — a state that looks identical to "nothing has happened yet". They are not the same and
+  // must never look the same again.
+  const writeErr = d && d.writeError ? String(d.writeError) : null;
   return (
     <>
       <HealthRow label="Designated generator" value={value} status={status as any}
         sub={(d && d.text) || "none — no machine has auto-generated this station yet"} />
+      {writeErr && (
+        <HealthRow label="Designation record" value="NOT SAVED" status={"error" as any}
+          sub={`this machine could not write the designation record — ${writeErr}`} />
+      )}
       <HealthRow label="Log last extended" value={lastGen} status={"ok" as any}
         sub="separate from the check-in above — a healthy machine generates nothing while the runway is long" />
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0 6px" }}>
