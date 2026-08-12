@@ -10,7 +10,27 @@ tour: true
 
 # Editing the log by hand
 
-Open the **Calendar** and click any day. The hour-by-hour list you get is now a list you can change.
+Open the **Calendar** and click any day. What you get is a spreadsheet of the day's log — **Time,
+Type, Title, Artist, Category, Status** — that you can sort, resize and edit.
+
+## Reading the sheet
+
+- **Hour markers** — `⏤ 3:00 PM ⏤` separates each hour.
+- **The thin coloured bar** on the left of each row is its type: Song, Spot, Jingle, Sweeper, Voice,
+  Cart. Muted on purpose — it should be readable at a glance, not shout.
+- **Dimmed rows** have already aired.
+- **Click any column header** to sort by it. Shift-click adds a second sort.
+- **Drag a column's edge** to resize it. Your widths are remembered for this station on this
+  computer.
+
+### Sorting turns dragging off, on purpose
+
+A log is time-ordered — that is what makes it a log. If you sort by Artist and then drag row 3 onto
+row 7, you would be swapping two unrelated airtimes with nothing on screen to tell you so.
+
+So when you sort by anything other than Time, the hour markers hide and drag-to-reorder switches off,
+with a note saying why. Click **TIME** to sort by time again and dragging comes straight back.
+Sorting by Artist to *see* how your day looks is exactly what it is for.
 
 ## The one rule worth knowing
 
@@ -68,6 +88,26 @@ regenerate" is how you say *"not this one, give me something else"*.
 **Keep an eye on that number.** If most of a day is yours, Generate has very little left it is allowed
 to fill, and it will look like it is doing nothing. That is not a fault — it is doing what you asked.
 Release a few rows with **📌** if you want the scheduler to help again.
+
+## Editing a cell
+
+**Double-click** a Title, Artist or Category cell to edit it. **Enter** saves, **Escape** cancels,
+clicking away saves.
+
+**Category** can be changed on any row that has not aired.
+
+**Title and Artist can only be edited on rows that are not library songs** — spots, voice tracks and
+talk breaks, where the text *is* the item. On a song row they are read-only, and hovering says why:
+
+> *This row plays a song from your Library. Rename it in the Library — editing it here would make the
+> log disagree with what actually airs.*
+
+That is not a limitation, it is the point. A song row plays a **file**; its title is a label for that
+file. If you could rename the label, your log would say one thing while your transmitter did another
+— and that log is what your as-run and your advertiser affidavits are built from. Rename it in the
+Library and every row that plays it follows.
+
+Editing a cell marks the row **YOURS**, like any other manual change.
 
 ## Rule warnings
 

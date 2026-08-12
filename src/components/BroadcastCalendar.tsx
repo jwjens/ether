@@ -10,6 +10,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { queryScoped } from "../db/stationScoped";
+import { DataGrid } from "./grid/DataGrid";
+import type { GridColumn } from "./grid/csv";
 import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -62,36 +64,21 @@ function getMondayOfWeek(offset: number): Date {
   return m;
 }
 
-/**
- * A COMPACT drag image for the log editor, replacing the browser's default.
- *
- * The default drag image is a semi-transparent snapshot of the WHOLE ROW — full width, including its
- * title, artist and duration columns. Dragged across a dense list, that translucent copy sits on top
- * of the real rows and both sets of text render through each other. That is the "clashes with text
- * underneath" and most of the visual chaos: it is not our styling at all, it is the snapshot.
- *
- * A small chip carrying just the title is legible over anything, obscures one line instead of a whole
- * row, and makes it obvious what is in hand.
- *
- * Off-screen because setDragImage needs the node to be in the document AND rendered at drag start;
- * it is removed on the next tick, after the browser has taken its picture.
- */
-function setCompactDragImage(e: React.DragEvent, label: string) {
-  try {
-    const el = document.createElement("div");
-    el.textContent = `⇅  ${label}`;
-    el.style.cssText = [
-      "position:fixed", "top:-9999px", "left:-9999px", "z-index:-1",
-      "padding:5px 12px", "max-width:320px", "overflow:hidden",
-      "white-space:nowrap", "text-overflow:ellipsis",
-      "font:800 11px 'Inter',system-ui,sans-serif", "letter-spacing:0.01em",
-      "color:#fff", "background:#6040C0", "border:1px solid #8868D8",
-      "box-shadow:0 4px 14px rgba(0,0,0,0.5)", "pointer-events:none",
-    ].join(";");
-    document.body.appendChild(el);
-    e.dataTransfer.setDragImage(el, 16, 14);
-    setTimeout(() => { try { el.remove(); } catch {} }, 0);
-  } catch { /* setDragImage unsupported → the browser default, which still works */ }
+
+// Row type → label + a MUTED bar colour. Desaturated on purpose: these sit on every row of a dense
+// table, and saturated blocks would turn the log into a colour chart rather than something to read.
+// content_class is authoritative when present (v29/v31); the song_id heuristic is the fallback for
+// rows written before it, so an old log still classifies rather than showing everything as one type.
+function typeOf(r: { content_class?: string | null; channel?: string | null; song_id: number | null }):
+  { label: string; color: string } {
+  const cc = String(r.content_class || "").toUpperCase();
+  if (cc === "JIN") return { label: "Jingle", color: "#6f8fae" };
+  if (cc === "SWP") return { label: "Sweeper", color: "#7d8fa8" };
+  if (cc === "SPOT") return { label: "Spot", color: "#b39445" };
+  if (cc === "CART") return { label: "Cart", color: "#8f7fae" };
+  if (cc === "VOICE" || cc === "VT") return { label: "Voice", color: "#a3785f" };
+  if (cc === "MUSIC") return { label: "Song", color: "#5f8f75" };
+  return r.song_id ? { label: "Song", color: "#5f8f75" } : { label: "Spot", color: "#b39445" };
 }
 
 function sameDay(a: Date, b: Date): boolean {
@@ -278,14 +265,32 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
     source: string | null; state: string | null;
   };
   const [dayRows, setDayRows]         = useState<DayRow[]>([]);
-  const [dragUuid, setDragUuid]       = useState<string | null>(null);
-  // The row currently under the pointer during a drag. Drives the drop indicator.
-  //
-  // A HIGHLIGHT, NOT A LINE BETWEEN ROWS. The operation is a SWAP (design §3 Layer 4 — ripple is
-  // deliberately not built), so an insertion line drawn between two rows would promise semantics the
-  // log does not have: nothing shuffles down to make room. Highlighting the row you will TRADE PLACES
-  // WITH is the honest picture of what is about to happen.
-  const [dropUuid, setDropUuid]       = useState<string | null>(null);
+  // Category names for the Category column + its editor. Scoped to the station, like every other
+  // per-station read in this file.
+  const [cats, setCats] = useState<{ id: number; name: string }[]>([]);
+  useEffect(() => {
+    (async () => {
+      // stationId is passed, not baked into the SQL: categories are per-station (the per-station
+      // category migration), and an unscoped read here would offer another station's categories in
+      // the editor's dropdown.
+      try { setCats(await queryScoped<{ id: number; name: string }>("SELECT id, name FROM categories WHERE deleted_at IS NULL ORDER BY name", [], stationId)); }
+      catch { setCats([]); }
+    })();
+  }, [stationId]);
+  const catName = (id: number | null) => (id == null ? "" : (cats.find(c => c.id === id)?.name || `#${id}`));
+
+  // Sorting state, reported up by DataGrid. DRAG IS ONLY LEGAL UNDER A TIME SORT: a broadcast log is
+  // time-ordered by definition, so under any other sort "swap these two rows" would swap two
+  // arbitrary airtimes with nothing on screen saying so. Hour separators are meaningless then too.
+  const [logSort, setLogSort] = useState<{ id: string; desc: boolean }[]>([{ id: "time", desc: false }]);
+  const timeOrdered = logSort.length === 1 && logSort[0].id === "time" && !logSort[0].desc;
+  // The cell being edited, and its working value.
+  const [editCell, setEditCell] = useState<{ uuid: string; field: "title" | "artist" | "category_id" } | null>(null);
+  const [editVal, setEditVal] = useState<string>("");
+
+  // Drag state moved INTO DataGrid with the grid conversion — the ghost, the drop line and the
+  // no-onDragLeave fix from 4.4.199 now live there, so every grid that opts into rowDrag inherits
+  // them instead of each re-deriving the same three lessons.
   const [rowBusy, setRowBusy]         = useState<string | null>(null);
   const [rowWarn, setRowWarn]         = useState<Record<string, string[]>>({});
   const [editErr, setEditErr]         = useState<string | null>(null);
@@ -363,6 +368,21 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
     catch (e: any) { setEditErr(e?.message || String(e)); }
     finally { setRowBusy(null); }
   };
+  const commitCell = async () => {
+    if (!editCell) return;
+    const { uuid, field } = editCell;
+    const row = dayRows.find(r => r.uuid === uuid);
+    setEditCell(null);
+    if (!row) return;
+    const next = field === "category_id" ? (editVal === "" ? null : Number(editVal)) : editVal;
+    const before = field === "category_id" ? row.category_id : (row as any)[field];
+    if (String(before ?? "") === String(next ?? "")) return;   // nothing changed — no write, no event
+    setRowBusy(uuid);
+    try { await afterEdit(await (window as any).ether.invoke("schedule:editRowFields", uuid, { [field]: next })); }
+    catch (e: any) { setEditErr(e?.message || String(e)); }
+    finally { setRowBusy(null); }
+  };
+
   const deleteRow = async (uuid: string) => {
     setRowBusy(uuid);
     try {
@@ -451,6 +471,145 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         for (const r of dayRows) { if (r.scheduled_at <= nowSec) currentAt = r.scheduled_at; else break; }
       }
     }
+    // When a show is in scope, the grid shows only that show's hours — the same scoping the
+    // hour-gutter list did, moved to the row set because a table has no per-hour container.
+    const showHours = dayShow ? new Set(hours) : null;
+    const visibleRows = showHours
+      ? dayRows.filter(r => showHours.has(Math.floor((r.scheduled_at - dayStart) / 3600)))
+      : dayRows;
+
+    const cellBtn: React.CSSProperties = {
+      background: "transparent", border: "none", padding: "0 3px",
+      color: "var(--text-tertiary)", fontSize: 13, lineHeight: 1,
+    };
+    // An inline editor shared by the three editable cells. Enter commits, Escape abandons, blur
+    // commits — the spreadsheet conventions, so nobody has to be told.
+    const editorProps = {
+      autoFocus: true,
+      onBlur: () => { commitCell(); },
+      onKeyDown: (e: React.KeyboardEvent) => {
+        if (e.key === "Enter") { e.preventDefault(); commitCell(); }
+        else if (e.key === "Escape") { e.preventDefault(); setEditCell(null); }
+      },
+      style: { width: "100%", font: "inherit", color: "var(--text-primary)", background: "var(--bg-primary)",
+               border: "1px solid var(--accent-purple, #8868D8)", padding: "2px 4px", borderRadius: 0 } as React.CSSProperties,
+    };
+    const isAired = (r: DayRow) => r.state === "played" || r.state === "playing";
+    // Double-click to edit — but ONLY where editing means something. A row with a song_id plays a
+    // FILE; its title/artist label that file. Renaming the label here would change what the log says
+    // without changing a note of what airs, leaving an as-run that disagrees with the audio. The main
+    // process refuses it too; this just declines to offer it.
+    const canEditText = (r: DayRow) => !isAired(r) && r.song_id == null;
+    const openEdit = (r: DayRow, field: "title" | "artist" | "category_id") => {
+      if (isAired(r)) return;
+      if ((field === "title" || field === "artist") && !canEditText(r)) return;
+      setEditVal(field === "category_id" ? String(r.category_id ?? "") : String((r as any)[field] ?? ""));
+      setEditCell({ uuid: r.uuid, field });
+    };
+    const editing = (r: DayRow, field: string) => editCell?.uuid === r.uuid && editCell.field === field;
+
+    const logColumns: GridColumn<DayRow>[] = [
+      {
+        id: "time", header: "Time", width: 86, minWidth: 70, mono: true, sortType: "numeric",
+        accessor: (r) => r.scheduled_at,
+        cell: (r) => {
+          const isNow = isToday && r.scheduled_at === currentAt;
+          return (
+            <span style={{ color: isNow ? "var(--accent-green)" : "var(--text-secondary)", fontWeight: isNow ? 800 : 500 }}>
+              {isNow ? "▶ " : ""}{new Date(r.scheduled_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </span>
+          );
+        },
+      },
+      {
+        id: "type", header: "Type", width: 96, minWidth: 70,
+        accessor: (r) => typeOf(r).label,
+        cell: (r) => {
+          const t = typeOf(r);
+          return <span style={{ color: t.color, fontWeight: 700, fontSize: 12 }}>{t.label}</span>;
+        },
+      },
+      {
+        id: "title", header: "Title", width: 340, minWidth: 140,
+        accessor: (r) => r.title || "",
+        cell: (r) => editing(r, "title")
+          ? <input {...editorProps} value={editVal} onChange={(e) => setEditVal(e.target.value)} />
+          : (
+            <span onDoubleClick={() => openEdit(r, "title")}
+              title={canEditText(r) ? "Double-click to edit"
+                : isAired(r) ? "Already aired — a record, not a plan"
+                : "This row plays a song from your Library. Rename it in the Library — editing it here would make the log disagree with what actually airs."}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: canEditText(r) ? "text" : "default", color: "var(--text-primary)" }}>
+              {/* Ownership is VISIBLE, not remembered — "Generate won't touch this" must be readable
+                  off the row or the operator cannot predict what Regenerate will do. */}
+              {r.source && (
+                <span title="You placed, pinned or edited this. Generate will not move, replace or remove it."
+                  style={{ padding: "1px 5px", fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace",
+                           color: "#8868D8", background: "rgba(136,104,216,0.14)",
+                           border: "1px solid rgba(136,104,216,0.5)", letterSpacing: "0.06em" }}>YOURS</span>
+              )}
+              {r.title}
+            </span>
+          ),
+      },
+      {
+        id: "artist", header: "Artist", width: 220, minWidth: 100,
+        accessor: (r) => r.artist || "",
+        cell: (r) => editing(r, "artist")
+          ? <input {...editorProps} value={editVal} onChange={(e) => setEditVal(e.target.value)} />
+          : <span onDoubleClick={() => openEdit(r, "artist")}
+              title={canEditText(r) ? "Double-click to edit" : undefined}
+              style={{ cursor: canEditText(r) ? "text" : "default" }}>{r.artist}</span>,
+      },
+      {
+        id: "category", header: "Category", width: 160, minWidth: 90,
+        accessor: (r) => catName(r.category_id),
+        cell: (r) => editing(r, "category_id")
+          ? (
+            <select {...editorProps} value={editVal} onChange={(e) => { setEditVal(e.target.value); }}>
+              <option value="">—</option>
+              {cats.map(c => <option key={c.id} value={String(c.id)}>{c.name}</option>)}
+            </select>
+          )
+          : <span onDoubleClick={() => openEdit(r, "category_id")}
+              title={isAired(r) ? "Already aired — a record, not a plan" : "Double-click to change"}
+              style={{ cursor: isAired(r) ? "default" : "pointer" }}>{catName(r.category_id)}</span>,
+      },
+      {
+        id: "status", header: "Status", width: 100, minWidth: 70,
+        accessor: (r) => r.state || "pending",
+        cell: (r) => {
+          const s = String(r.state || "pending");
+          const col = s === "played" ? "var(--text-tertiary)" : s === "playing" ? "var(--accent-green)"
+                    : s === "missed" || s === "skipped" ? "#b3564f" : "var(--text-tertiary)";
+          return <span style={{ color: col, fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" as const }}>{s}</span>;
+        },
+      },
+      {
+        id: "actions", header: "", width: 64, minWidth: 56, align: "right",
+        // A constant accessor: this column carries controls, not data, so sorting by it is a no-op
+        // rather than an arbitrary reshuffle.
+        accessor: () => "",
+        cell: (r) => {
+          if (isAired(r)) return null;   // no action is ever valid on a row that already went out
+          const busy = rowBusy === r.uuid;
+          return (
+            <span style={{ display: "inline-flex", gap: 2, justifyContent: "flex-end" }}>
+              <button onClick={() => setRowSource(r.uuid, r.source ? null : "operator")} disabled={busy}
+                title={r.source ? "Release back to the scheduler — Generate may replace it again"
+                                : "Pin here — Generate will leave this row alone"}
+                style={{ ...cellBtn, color: r.source ? "#8868D8" : "var(--text-tertiary)", cursor: busy ? "wait" : "pointer" }}>
+                {r.source ? "📌" : "📍"}
+              </button>
+              <button onClick={() => deleteRow(r.uuid)} disabled={busy}
+                title="Remove from the log — leaves a gap the next Generate refills"
+                style={{ ...cellBtn, cursor: busy ? "wait" : "pointer" }}>✕</button>
+            </span>
+          );
+        },
+      },
+    ];
+
     return (
       <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "var(--font-ui, 'Inter', sans-serif)" }}>
         {/* Day toolbar */}
@@ -481,135 +640,85 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
             {genDayBusy ? "Generating…" : "Generate"}
           </button>
         </div>
-        {/* Hours */}
+        {/* ── THE LOG, as a spreadsheet (4.4.200) ────────────────────────────────────────────────
+            Built on the SHARED DataGrid, not a 17th hand-rolled table: headers, click-to-sort,
+            operator-resizable columns persisted per station, and the required empty state all come
+            from docs/schedule-manager-v2-design-2026-08-10.md §4.1 ("one grid, sixteen
+            replacements"). zebra / groupBy / rowDrag / density are opt-in props added for this view;
+            every existing grid renders byte-identically without them. */}
         <div ref={dayScrollRef} style={{ flex: 1, overflowY: "auto" }}>
           {dayLoading ? (
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-tertiary)", fontSize: 12 }}>Loading…</div>
-          ) : hours.map((h) => {
-            const items = byHour.get(h) || [];
-            return (
-              <div key={h} style={{ display: "flex", borderBottom: "1px solid var(--border-secondary)" }}>
-                <div style={{ width: 70, flexShrink: 0, padding: "8px 10px", textAlign: "right" as const, borderRight: "1px solid var(--border-primary)", background: "var(--bg-secondary)", fontSize: 11, fontWeight: 700, color: "var(--text-tertiary)" }}>
-                  {fmtHour(h)}
-                </div>
-                <div style={{ flex: 1, minWidth: 0, padding: "4px 0" }}>
-                  {items.length === 0 ? (
-                    <div style={{ padding: "8px 12px", fontSize: 10, color: "var(--text-tertiary)", fontStyle: "italic" }}>— empty —</div>
-                  ) : items.map((it, i) => {
-                    const isNow = isToday && it.scheduled_at === currentAt;
-                    const isSpot = !it.song_id;   // a spot (commercial/promo) — no song_id. Gold/amber class color.
-                    // THE PAST IS A RECORD, NOT A PLAN. An aired row is read-only: no drag, no
-                    // controls. Editing an as-run would make the Traffic affidavit falsifiable.
-                    const aired = it.state === "played" || it.state === "playing";
-                    const mine = !!it.source;          // operator-owned → Generate will not touch it
-                    const busy = rowBusy === it.uuid;
-                    const warns = rowWarn[it.uuid] || [];
-                    const dragging = dragUuid === it.uuid;
-                    // Is this the row the dragged one will trade places with?
-                    const isDropTarget = !!dragUuid && dropUuid === it.uuid && dragUuid !== it.uuid && !aired;
-                    return (
-                    <div key={it.uuid || i}
-                      draggable={!aired && !busy}
-                      onDragStart={(e) => {
-                        setDragUuid(it.uuid);
-                        try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", it.uuid); } catch {}
-                        setCompactDragImage(e, it.title || "row");
-                      }}
-                      onDragEnd={() => { setDragUuid(null); setDropUuid(null); }}
-                      onDragOver={(e) => {
-                        if (!aired && dragUuid && dragUuid !== it.uuid) {
-                          e.preventDefault();
-                          try { e.dataTransfer.dropEffect = "move"; } catch {}
-                          // dragOver fires continuously — only touch state when the target CHANGES.
-                          if (dropUuid !== it.uuid) setDropUuid(it.uuid);
-                        }
-                      }}
-                      // NO onDragLeave. THIS WAS THE FLICKER. dragleave fires every time the pointer
-                      // crosses from the row into one of its own children — the time span, the title,
-                      // the artist, each button — so the indicator was being cleared and re-set
-                      // several times per row traversed. The pointer never left the row; it just
-                      // moved over its contents. dragover on the next row supersedes the target, and
-                      // dragend/drop always clear it, so nothing is left stuck on.
-                      onDrop={(e) => { e.preventDefault(); const from = dragUuid; setDragUuid(null); setDropUuid(null); if (from && !aired) moveRow(from, it.uuid); }}
-                      title={aired ? "Already aired — the log is a record of what happened and cannot be edited"
-                                   : "Drag onto another row to swap the two"}
-                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 12px",
-                        background: dragging ? "rgba(136,104,216,0.06)"
-                                  : isDropTarget ? "rgba(136,104,216,0.10)"
-                                  : isNow ? "rgb(from var(--accent-green) r g b / 0.16)" : isSpot ? "rgba(251,191,36,0.08)" : "transparent",
-                        borderLeft: `3px solid ${isNow ? "var(--accent-green)" : mine ? "#8868D8" : isSpot ? "#fbbf24" : "transparent"}`,
-                        // THE DROP LINE. A 3px bar across the top edge of the row the dragged item
-                        // will land on, drawn as an INSET SHADOW so it costs no layout: a real 3px
-                        // element inserted between rows would push everything below it down by 3px
-                        // on every target change, and that judder is the "stutter".
-                        boxShadow: isDropTarget ? "inset 0 3px 0 0 #8868D8" : "none",
-                        // The GHOST: faint dashed outline, near-transparent, no fill to fight the
-                        // text. The row stays in place and legible — it marks where the song came
-                        // from while it is in hand.
-                        outline: dragging ? "1px dashed rgba(136,104,216,0.55)" : "none",
-                        outlineOffset: dragging ? "-1px" : 0,
-                        opacity: dragging ? 0.4 : busy ? 0.6 : aired ? 0.65 : 1,
-                        cursor: aired ? "default" : dragUuid ? "grabbing" : "grab" }}>
-                      <span style={{ width: 44, flexShrink: 0, fontFamily: "'DM Mono', monospace", fontSize: 9, color: isDropTarget ? "#8868D8" : isNow ? "var(--accent-green)" : "var(--text-tertiary)", fontWeight: isDropTarget ? 800 : 400 }}>
-                        {new Date(it.scheduled_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      </span>
-                      {/* The "SWAP WITH <time>" chip that lived here in 4.4.198 is GONE. It was an
-                          inline flex child that appeared and disappeared as the target changed, so
-                          every row you dragged past shoved the title sideways and back — a second
-                          source of the judder, and it competed with the drop line for the eye.
-                          ONE indicator: the line. What is in hand is named on the drag chip itself. */}
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: isNow ? 800 : 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: isNow ? "var(--accent-green)" : isSpot ? "#fbbf24" : "var(--text-primary)" }}>
-                        {isNow ? "▶ " : ""}
-                        {isSpot && <span style={{ marginRight: 6, padding: "1px 5px", fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: "#fbbf24", background: "rgba(251,191,36,0.14)", border: "1px solid rgba(251,191,36,0.45)", letterSpacing: "0.06em" }}>SPOT</span>}
-                        {/* Ownership is VISIBLE, not remembered — "Generate won't touch this" has to be
-                            readable off the row or the operator cannot predict what Regenerate does. */}
-                        {mine && <span title="You placed or pinned this. Generate will not move, replace or remove it." style={{ marginRight: 6, padding: "1px 5px", fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: "#8868D8", background: "rgba(136,104,216,0.14)", border: "1px solid rgba(136,104,216,0.5)", letterSpacing: "0.06em" }}>YOURS</span>}
-                        {it.title}
-                      </span>
-                      <span style={{ flexShrink: 0, fontSize: 10, color: "var(--text-tertiary)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.artist}</span>
-                      <span style={{ flexShrink: 0, width: 40, textAlign: "right" as const, fontFamily: "'DM Mono', monospace", fontSize: 9, color: "var(--text-tertiary)" }}>
-                        {Math.floor((it.duration_s || 0) / 60)}:{String((it.duration_s || 0) % 60).padStart(2, "0")}
-                      </span>
-                      {/* Controls. Hidden entirely on aired rows rather than disabled — there is no
-                          version of this action that is ever valid on a row that already went out. */}
-                      <span style={{ flexShrink: 0, display: "flex", gap: 4, width: 52, justifyContent: "flex-end" }}>
-                        {!aired && (
-                          <>
-                            <button onClick={() => setRowSource(it.uuid, mine ? null : "operator")} disabled={busy}
-                              title={mine ? "Release back to the scheduler — Generate may replace it again"
-                                          : "Pin here — Generate will leave this row alone"}
-                              style={{ background: "transparent", border: "none", cursor: busy ? "wait" : "pointer",
-                                       color: mine ? "#8868D8" : "var(--text-tertiary)", fontSize: 11, padding: "0 2px" }}>
-                              {mine ? "📌" : "📍"}
-                            </button>
-                            <button onClick={() => deleteRow(it.uuid)} disabled={busy}
-                              title="Remove from the log — leaves a gap the next Generate refills"
-                              style={{ background: "transparent", border: "none", cursor: busy ? "wait" : "pointer",
-                                       color: "var(--text-tertiary)", fontSize: 11, padding: "0 2px" }}>✕</button>
-                          </>
-                        )}
-                      </span>
+          ) : (
+            <>
+              {/* Rule warnings, consolidated above the grid. They used to sit under the hour they
+                  belonged to; a sortable table has no stable "under that hour" to sit in, and one
+                  place the operator can always find beats several they must hunt for. Amber, never
+                  red, and never a block — the DJ made the call. */}
+              {visibleRows.some(r => (rowWarn[r.uuid] || []).length > 0) && (
+                <div style={{ margin: "8px 12px", padding: "7px 10px", border: "1px solid rgba(251,191,36,0.45)", background: "rgba(251,191,36,0.08)" }}>
+                  {visibleRows.flatMap(r => (rowWarn[r.uuid] || []).map((w, k) => (
+                    <div key={`${r.uuid}-${k}`} style={{ fontSize: 12, color: "#fbbf24", lineHeight: 1.6 }}>
+                      <strong style={{ fontWeight: 800 }}>{r.title}</strong> — {w}
                     </div>
-                    );
-                  })}
-                  {/* Rule warnings sit UNDER the hour they belong to. Amber, never red, and never a
-                      block: the DJ made this call and the software's job is to be sure they meant it. */}
-                  {items.some(it => (rowWarn[it.uuid] || []).length > 0) && (
-                    <div style={{ margin: "2px 12px 6px", padding: "5px 8px", border: "1px solid rgba(251,191,36,0.45)", background: "rgba(251,191,36,0.08)" }}>
-                      {items.flatMap(it => (rowWarn[it.uuid] || []).map((w, k) => (
-                        <div key={`${it.uuid}-${k}`} style={{ fontSize: 10, color: "#fbbf24", lineHeight: 1.5 }}>
-                          <strong style={{ fontWeight: 800 }}>{it.title}</strong> — {w}
-                        </div>
-                      )))}
-                      <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 2 }}>
-                        Your edit was applied. This is a heads-up, not a refusal.
-                      </div>
-                    </div>
-                  )}
+                  )))}
+                  <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 3 }}>
+                    Your edit was applied. This is a heads-up, not a refusal.
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              )}
+
+              {/* Sorted by something other than time: say what that costs, in place, rather than
+                  letting the operator discover that dragging silently stopped working. */}
+              {!timeOrdered && (
+                <div style={{ margin: "8px 12px", padding: "7px 10px", border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", fontSize: 12, color: "var(--text-tertiary)", lineHeight: 1.6 }}>
+                  Sorted by <strong style={{ color: "var(--text-secondary)" }}>{logSort[0]?.id || "—"}</strong> — hour markers are hidden and
+                  drag-to-reorder is off. A log is time-ordered: swapping two rows in this view would
+                  swap two unrelated airtimes. Click <strong style={{ color: "var(--text-secondary)" }}>TIME</strong> to sort by time and get dragging back.
+                </div>
+              )}
+
+              <DataGrid<DayRow>
+                columns={logColumns}
+                rows={visibleRows}
+                getRowId={(r) => r.uuid}
+                density="roomy"
+                zebra
+                persistKey="daylog"
+                stationId={stationId}
+                initialSort={[{ id: "time", desc: false }]}
+                onSortingChange={setLogSort}
+                groupBy={timeOrdered ? {
+                  key: (r) => Math.floor((r.scheduled_at - dayStart) / 3600),
+                  render: (k) => (
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                      <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.06em", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+                        ⏤ {fmtHour(Number(k))} ⏤
+                      </span>
+                      <span style={{ flex: 1, borderTop: "1px solid var(--border-primary)" }} />
+                    </div>
+                  ),
+                } : undefined}
+                rowDrag={{
+                  enabled: timeOrdered,
+                  disabledReason: "Sort by Time to reorder rows",
+                  canDrag: (r) => !isAired(r),
+                  onDrop: (from, to) => moveRow(from, to),
+                }}
+                rowStyle={(r) => {
+                  const isNow = isToday && r.scheduled_at === currentAt;
+                  return {
+                    // A THIN type bar on the left edge — 3px, muted, not a block fill.
+                    borderLeft: `3px solid ${typeOf(r).color}`,
+                    ...(isNow ? { background: "rgb(from var(--accent-green) r g b / 0.14)" } : {}),
+                    // PLAYED rows dimmed: they are a record, and the eye should go to what is next.
+                    ...(isAired(r) ? { opacity: 0.5 } : {}),
+                  };
+                }}
+                empty={<>Nothing scheduled for this {dayShow ? "show" : "day"} yet. Press <strong>Generate</strong> to build it from your clocks.</>}
+              />
+            </>
+          )}
         </div>
       </div>
     );

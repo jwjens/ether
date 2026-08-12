@@ -6979,6 +6979,38 @@ ipcMain.handle('schedule:deleteRow', (_e, uuid) => {
   } catch (e) { console.error('[log-edit] delete failed:', e.message); return { ok: false, error: e.message }; }
 });
 
+// EDIT CELL VALUES (spreadsheet log, 4.4.200). Title, artist and category only.
+//
+// TITLE AND ARTIST ARE REFUSED ON A MUSIC ROW, and that refusal is the point. A row with a song_id
+// plays a FILE; its title/artist are a label for that file. Editing the label would change what the
+// log SAYS without changing a note of what airs — a log that disagrees with its own audio, feeding
+// the as-run and the advertiser affidavit. That is the same defect class as an editable state /
+// played_at, which the manual-log-editing design refused for the same reason.
+//
+// Rows with NO song_id — spots, voice tracks, talk breaks — are different: there the text IS the
+// item, so editing it is editing the thing itself.
+const _CELL_FIELDS = new Set(['title', 'artist', 'category_id']);
+ipcMain.handle('schedule:editRowFields', (_e, uuid, patch) => {
+  try {
+    const row = _logRow(uuid);
+    const g = _guardEditable(row, 'edited'); if (g) return { ok: false, error: g };
+    const fields = Object.keys(patch || {}).filter(k => _CELL_FIELDS.has(k));
+    if (!fields.length) return { ok: false, error: 'nothing editable in that change' };
+    if (row.song_id != null && (fields.includes('title') || fields.includes('artist'))) {
+      return { ok: false, error: `"${row.title}" is a library song — its title and artist come from the Library, and renaming it here would make the log disagree with what actually airs. Rename it in the Library instead.` };
+    }
+    const now = new Date().toISOString();
+    const sets = fields.map(f => `${f} = ?`).join(', ');
+    const vals = fields.map(f => (f === 'category_id' ? (patch[f] == null ? null : Number(patch[f])) : String(patch[f] ?? '')));
+    // Stamped operator-owned: a hand-edited row is a human decision and Generate must not undo it.
+    db.prepare(`UPDATE generated_schedule SET ${sets}, source = 'operator', updated_at = ? WHERE uuid = ?`)
+      .run(...vals, now, uuid);
+    _healthEvent('log-edit', { action: 'edit-cell', stationId: row.station_id, title: row.title,
+      at: row.scheduled_at, fields });
+    return { ok: true };
+  } catch (e) { console.error('[log-edit] editRowFields failed:', e.message); return { ok: false, error: e.message }; }
+});
+
 // CHECK — warnings for a placement, never a refusal. Reads BOTH the scheduled neighbours (the future,
 // which is where a same-day edit's clash lives) and the play_log rest maps (the past), using the same
 // rule windows Generate uses so a warning means what the generator means. See separation-enforce.js
@@ -7661,7 +7693,7 @@ ipcMain.handle('schedule:get', (_, fromTs, toTs, stationId) => {
       // be addressed by for mutation, source says who owns it, state says whether it has already
       // aired (and is therefore a record, not a plan).
       `SELECT g.id, g.uuid, g.scheduled_at, g.song_id, g.title, g.artist, g.file_key, g.file_path,
-              g.duration_s, g.category_id, g.source, g.state
+              g.duration_s, g.category_id, g.source, g.state, g.content_class, g.channel
        FROM generated_schedule g
        WHERE g.station_id = ? AND g.scheduled_at >= ? AND g.scheduled_at < ? AND g.deleted_at IS NULL
          AND NOT EXISTS (

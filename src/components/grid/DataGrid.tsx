@@ -18,7 +18,7 @@
 // Traffic over a long window is the likeliest first caller to cross it.
 //
 // docs/schedule-manager-v2-design-2026-08-10.md §4.1
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   useReactTable, getCoreRowModel, getSortedRowModel, flexRender,
   type ColumnDef, type SortingState, type ColumnSizingState,
@@ -45,14 +45,95 @@ export interface DataGridProps<T> {
   csv?: { filename: string; label?: string; rows?: T[] };
   /** Extra footer controls, e.g. a second export. */
   footer?: React.ReactNode;
+
+  // ── OPT-IN EXTENSIONS (2026-08-12, the day-log conversion) ──────────────────────────────────────
+  // All three default OFF. Every existing caller — Rotation Analytics, and Traffic when it converts
+  // in Phase 4 — renders byte-identically without them. The day log needed capabilities a reporting
+  // grid never does; adding them here rather than hand-rolling a 17th table is the whole point of
+  // §4.1 ("one grid, sixteen replacements").
+
+  /** Alternating row backgrounds. Striped by DISPLAY position, so stripes stay correct after a sort
+   *  — which is why this cannot be done through rowStyle, that only sees the row. */
+  zebra?: boolean;
+
+  /** Full-width separator rows between groups (the day log's hour markers).
+   *  Emitted whenever `key` CHANGES between consecutive display rows, so it follows the current sort
+   *  rather than assuming one. Pass undefined to turn grouping off — which is what the caller should
+   *  do when the grid is sorted by anything that makes the grouping meaningless. */
+  groupBy?: {
+    key: (row: T) => string | number;
+    render: (key: string | number, firstRow: T) => React.ReactNode;
+  };
+
+  /** Row drag-and-drop. The CALLER decides when dragging is legal (see onSortingChange) — the grid
+   *  has no opinion about what a row order means. */
+  rowDrag?: {
+    /** Off entirely when false, with `disabledReason` shown as the row tooltip. */
+    enabled: boolean;
+    disabledReason?: string;
+    /** Per-row veto, e.g. a row that has already aired. */
+    canDrag?: (row: T) => boolean;
+    onDrop: (fromId: string, toId: string) => void;
+  };
+
+  /** Row size. `compact` (default) is the reporting density every existing grid uses; `roomy` is the
+   *  scannable 38px/14px the log needs. Existing callers keep compact by omission. */
+  density?: "compact" | "roomy";
+
+  /** Told the current sort so the caller can gate drag/grouping on it. */
+  onSortingChange?: (sorting: SortingState) => void;
 }
 
 const WIDTH_PREFIX = "grid_widths_";
 
+/**
+ * A COMPACT drag image, replacing the browser's default.
+ *
+ * The default is a translucent snapshot of the WHOLE ROW — every column, full width — dragged over a
+ * dense table so two sets of text render through each other. That, not any styling of ours, is the
+ * "clashes with the text underneath". A small chip obscures one line instead of a whole row and
+ * makes what is in hand obvious.
+ *
+ * Off-screen because setDragImage needs the node in the document and rendered at drag start; removed
+ * on the next tick, once the browser has taken its picture.
+ */
+function setCompactDragImage(e: React.DragEvent, label: string) {
+  try {
+    const el = document.createElement("div");
+    el.textContent = `⇅  ${label}`;
+    el.style.cssText = [
+      "position:fixed", "top:-9999px", "left:-9999px", "z-index:-1",
+      "padding:5px 12px", "max-width:320px", "overflow:hidden",
+      "white-space:nowrap", "text-overflow:ellipsis",
+      "font:800 11px 'Inter',system-ui,sans-serif",
+      "color:#fff", "background:#6040C0", "border:1px solid #8868D8",
+      "box-shadow:0 4px 14px rgba(0,0,0,0.5)", "pointer-events:none",
+    ].join(";");
+    document.body.appendChild(el);
+    e.dataTransfer.setDragImage(el, 16, 14);
+    setTimeout(() => { try { el.remove(); } catch {} }, 0);
+  } catch { /* unsupported → browser default, which still works */ }
+}
+
+/** What to write on the drag chip: the first text-bearing column's value. */
+function dragLabel<T>(row: T, columns: GridColumn<T>[]): string {
+  for (const c of columns) {
+    if (c.csvOnly || c.mono) continue;
+    const v = c.accessor(row);
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "row";
+}
+
 export function DataGrid<T>({
   columns, rows, empty, getRowId, rowStyle, initialSort, persistKey, stationId, csv, footer,
+  zebra, groupBy, rowDrag, density, onSortingChange,
 }: DataGridProps<T>) {
   const [sorting, setSorting] = useState<SortingState>(initialSort ?? []);
+  // Drag state lives here so a row can render as ghost/target without the caller re-rendering.
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropId, setDropId] = useState<string | null>(null);
+  useEffect(() => { onSortingChange?.(sorting); }, [sorting, onSortingChange]);
   const [sizing, setSizing] = useState<ColumnSizingState>({});
   const [sizingLoaded, setSizingLoaded] = useState(!persistKey);
 
@@ -126,8 +207,11 @@ export function DataGrid<T>({
     textTransform: "uppercase", letterSpacing: "0.1em", whiteSpace: "nowrap",
     userSelect: "none", cursor: "pointer",
   };
+  const roomy = density === "roomy";
   const td: React.CSSProperties = {
-    padding: "var(--s-2) var(--s-4)", fontSize: "var(--t-small)",
+    padding: roomy ? "var(--s-3) var(--s-4)" : "var(--s-2) var(--s-4)",
+    fontSize: roomy ? 14 : "var(--t-small)",
+    height: roomy ? 38 : undefined,
     color: "var(--text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
   };
 
@@ -173,23 +257,83 @@ export function DataGrid<T>({
             ))}
           </thead>
           <tbody>
-            {table.getRowModel().rows.map(r => (
-              <tr key={r.id} style={{ borderTop: "1px solid var(--border-primary)", ...(rowStyle ? rowStyle(r.original) : {}) }}>
-                {r.getVisibleCells().map(c => {
-                  const col = byId.get(c.column.id);
-                  return (
-                    <td key={c.id} style={{
-                      ...td,
-                      width: c.column.getSize(),
-                      textAlign: col?.align === "right" ? "right" : "left",
-                      ...(col?.mono ? { fontFamily: "'DM Mono', monospace" } : {}),
+            {table.getRowModel().rows.map((r, displayIndex) => {
+              const prev = displayIndex > 0 ? table.getRowModel().rows[displayIndex - 1] : null;
+              const gKey = groupBy ? groupBy.key(r.original) : null;
+              // A separator whenever the group CHANGES between consecutive displayed rows — so it
+              // tracks the current sort instead of assuming the data arrived grouped.
+              const newGroup = !!groupBy && (!prev || groupBy.key(prev.original) !== gKey);
+
+              const canDrag = !!rowDrag?.enabled && (rowDrag.canDrag ? rowDrag.canDrag(r.original) : true);
+              const dragging = dragId === r.id;
+              const isTarget = !!dragId && dropId === r.id && dragId !== r.id && canDrag;
+
+              return (
+                <Fragment key={r.id}>
+                  {newGroup && (
+                    <tr>
+                      <td colSpan={r.getVisibleCells().length}
+                        style={{ padding: roomy ? "var(--s-4) var(--s-4) var(--s-2)" : "var(--s-3) var(--s-4)",
+                                 background: "var(--bg-tertiary)", borderTop: "1px solid var(--border-primary)" }}>
+                        {groupBy!.render(gKey!, r.original)}
+                      </td>
+                    </tr>
+                  )}
+                  <tr
+                    draggable={canDrag}
+                    onDragStart={canDrag ? (e) => {
+                      setDragId(r.id);
+                      try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", r.id); } catch {}
+                      setCompactDragImage(e, dragLabel(r.original, columns));
+                    } : undefined}
+                    onDragEnd={canDrag ? () => { setDragId(null); setDropId(null); } : undefined}
+                    onDragOver={canDrag ? (e) => {
+                      if (dragId && dragId !== r.id) {
+                        e.preventDefault();
+                        try { e.dataTransfer.dropEffect = "move"; } catch {}
+                        if (dropId !== r.id) setDropId(r.id);   // only on CHANGE — no per-pixel setState
+                      }
+                    } : undefined}
+                    // NO onDragLeave, deliberately: it fires when the pointer crosses into a child
+                    // cell, so the indicator flickered several times per row traversed. dragover on
+                    // the next row supersedes the target; dragend/drop always clear it.
+                    onDrop={canDrag ? (e) => {
+                      e.preventDefault();
+                      const from = dragId; setDragId(null); setDropId(null);
+                      if (from && from !== r.id) rowDrag!.onDrop(from, r.id);
+                    } : undefined}
+                    title={rowDrag && !rowDrag.enabled ? rowDrag.disabledReason : undefined}
+                    style={{
+                      borderTop: "1px solid var(--border-primary)",
+                      // Zebra by DISPLAY position, so it stays correct after any sort.
+                      ...(zebra && displayIndex % 2 === 1 ? { background: "var(--bg-secondary)" } : {}),
+                      ...(rowStyle ? rowStyle(r.original) : {}),
+                      // The drop line: an inset shadow, not a real element, so changing target costs
+                      // no layout and the rows below never judder.
+                      ...(isTarget ? { boxShadow: "inset 0 3px 0 0 var(--accent-purple, #8868D8)" } : {}),
+                      ...(dragging ? {
+                        opacity: 0.4,
+                        outline: "1px dashed rgba(136,104,216,0.55)", outlineOffset: "-1px",
+                      } : {}),
+                      cursor: canDrag ? (dragId ? "grabbing" : "grab") : undefined,
                     }}>
-                      {flexRender(c.column.columnDef.cell, c.getContext())}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
+                    {r.getVisibleCells().map(c => {
+                      const col = byId.get(c.column.id);
+                      return (
+                        <td key={c.id} style={{
+                          ...td,
+                          width: c.column.getSize(),
+                          textAlign: col?.align === "right" ? "right" : "left",
+                          ...(col?.mono ? { fontFamily: "'DM Mono', monospace" } : {}),
+                        }}>
+                          {flexRender(c.column.columnDef.cell, c.getContext())}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
