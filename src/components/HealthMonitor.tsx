@@ -51,6 +51,47 @@ function useTwoColumn(): readonly [React.RefObject<HTMLDivElement>, boolean] {
 interface ErrorBoundaryState { hasError: boolean; error: Error | null; }
 interface ErrorBoundaryProps { children: ReactNode; }
 
+// ── Designation rows (Phase A) ──────────────────────────────────────────────────────────────────
+// A real component rather than an inline IIFE inside the station map. The IIFE version broke the
+// Health Monitor's render tree in 4.4.189 — the auto-generate toggles and the whole Library &
+// Rotation section stopped appearing. An immediately-invoked function in the middle of a map is
+// hard to reason about and, if anything inside it throws, it takes the surrounding subtree with it.
+//
+// This renders unconditionally: `d` undefined means no tick has run yet, which is a state to state,
+// not a reason to vanish. Every field is read defensively so a malformed record can never remove
+// rows that have nothing to do with designation.
+function DesignationRows({ d, busy, onRefresh, readAgo }: {
+  d: any; busy: boolean; onRefresh: () => void; readAgo: string;
+}) {
+  const state = d && d.state ? d.state : "none";
+  const level = d && d.level ? d.level : "grey";
+  const status = level === "red" ? "error" : level === "yellow" ? "warn" : "ok";
+  const value = state === "mine" ? "This machine"
+              : state === "other" ? ((d && d.holderName) || "Another machine")
+              : state === "bypassed" ? "Bypassed"
+              : "None";
+  let lastGen = "not since this machine started watching";
+  try { if (d && d.lastGenerated) lastGen = new Date(d.lastGenerated * 1000).toLocaleString(); } catch {}
+  return (
+    <>
+      <HealthRow label="Designated generator" value={value} status={status as any}
+        sub={(d && d.text) || "none — no machine has auto-generated this station yet"} />
+      <HealthRow label="Log last extended" value={lastGen} status={"ok" as any}
+        sub="separate from the check-in above — a healthy machine generates nothing while the runway is long" />
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0 6px" }}>
+        <button onClick={onRefresh} disabled={busy}
+          title="Re-read the designation record and check in now. Refreshes ownership state; it does not force a full sync cycle."
+          style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.08em", padding: "3px 10px",
+                   background: "transparent", border: "1px solid var(--border-primary)",
+                   color: "var(--text-secondary)", cursor: busy ? "wait" : "pointer" }}>
+          {busy ? "…" : "REFRESH NOW"}
+        </button>
+        <span style={{ fontSize: 9, color: "var(--text-tertiary)" }}>Designation read {readAgo}</span>
+      </div>
+    </>
+  );
+}
+
 export class EtherErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
     super(props);
@@ -1020,51 +1061,9 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                     <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotCol }} />
                     <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-secondary)" }}>{st.name}</span>
                   </div>
-                  {/* GENERATION DESIGNATION (Phase A) — which machine owns topping this log up.
-                      Rendered UNCONDITIONALLY. It used to render only once the 30-minute tick had
-                      populated its map, so on a fresh launch the row — and the button with it — was
-                      simply absent, which reads as "this feature does not exist" rather than "nothing
-                      is designated yet". A status row that disappears when it has nothing to report
-                      is worse than one that says so.
-                      Phase A gates nothing, so "none" is neutral here; it becomes a warning in
-                      Phase B, when an undesignated station really does stop being topped up. */}
-                  {(() => {
-                    const d = desig[st.stationId];
-                    const state = d?.state ?? "none";
-                    return (
-                      <>
-                        <HealthRow
-                          label="Designated generator"
-                          value={state === "mine" ? "This machine"
-                               : state === "other" ? (d.holderName || "Another machine")
-                               : state === "bypassed" ? "Bypassed"
-                               : "None"}
-                          status={(!d || d.level === "grey" ? "ok" : lvl(d.level)) as any}
-                          sub={d?.text ?? "none — no machine has auto-generated this station yet"}
-                        />
-                        <HealthRow
-                          label="Log last extended"
-                          value={d?.lastGenerated
-                            ? new Date(d.lastGenerated * 1000).toLocaleString()
-                            : "not since this machine started watching"}
-                          status={"ok" as any}
-                          sub="separate from the check-in above — a healthy machine generates nothing while the runway is long"
-                        />
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0 6px" }}>
-                          <button onClick={refreshDesig} disabled={desigBusy}
-                            title="Re-read the designation record and check in now. This refreshes ownership state; it does not force a full sync cycle."
-                            style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.08em", padding: "3px 10px",
-                                     background: "transparent", border: "1px solid var(--border-primary)",
-                                     color: "var(--text-secondary)", cursor: desigBusy ? "wait" : "pointer" }}>
-                            {desigBusy ? "…" : "REFRESH NOW"}
-                          </button>
-                          <span style={{ fontSize: 9, color: "var(--text-tertiary)" }}>
-                            Designation read {agoText(desigAt)}
-                          </span>
-                        </div>
-                      </>
-                    );
-                  })()}
+                  {/* Designation (Phase A). Always rendered — see DesignationRows. */}
+                  <DesignationRows d={desig[st.stationId]} busy={desigBusy}
+                    onRefresh={refreshDesig} readAgo={agoText(desigAt)} />
                   {/* SCHEDULE RUNWAY — the fuel gauge. First row on purpose: "how long until this
                       station runs out of log" is the most urgent thing this panel can answer, and on
                       a flipped station a dry log is dead air. Distance to the first GAP, not to the
