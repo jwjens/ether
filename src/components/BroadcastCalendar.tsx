@@ -237,7 +237,19 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
 
   // ── Day view — click a day to open its date and see the airing log hour-by-hour ──
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
-  const [dayRows, setDayRows]         = useState<{ scheduled_at: number; title: string; artist: string; duration_s: number; category_id: number | null; song_id: number | null }[]>([]);
+  // MANUAL LOG EDITING (Fix 2): id/uuid/source/state added. Without a stable handle nothing could be
+  // addressed for mutation; `source` says who owns the row (and therefore whether Generate may touch
+  // it); `state` says whether it has already aired, which makes it a record rather than a plan.
+  type DayRow = {
+    id: number; uuid: string; scheduled_at: number; title: string; artist: string;
+    duration_s: number; category_id: number | null; song_id: number | null;
+    source: string | null; state: string | null;
+  };
+  const [dayRows, setDayRows]         = useState<DayRow[]>([]);
+  const [dragUuid, setDragUuid]       = useState<string | null>(null);
+  const [rowBusy, setRowBusy]         = useState<string | null>(null);
+  const [rowWarn, setRowWarn]         = useState<Record<string, string[]>>({});
+  const [editErr, setEditErr]         = useState<string | null>(null);
   const [dayLoading, setDayLoading]   = useState(false);
   const [genDayBusy, setGenDayBusy]   = useState(false);
   const [dayShow, setDayShow]         = useState<{ name: string; startHour: number; endHour: number } | null>(null);
@@ -255,6 +267,52 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
     setDayShow(show ? { name: show.name, startHour: show.start_hour, endHour: show.end_hour } : null);
     await loadDayRows(d);
   };
+  // ── Editing operations ────────────────────────────────────────────────────────────────────────
+  // Every one of these RE-READS the day afterwards and paints what came back. No optimistic paint:
+  // a refused or failed edit must never show as applied for even one frame.
+  const afterEdit = async (r: any, warnFor?: string) => {
+    if (!r || r.ok === false) { setEditErr((r && r.error) || "the edit did not apply"); return false; }
+    setEditErr(null);
+    if (selectedDay) await loadDayRows(selectedDay);
+    window.dispatchEvent(new CustomEvent("ether:schedule-regenerated"));
+    // The warning is asked for AFTER the move has applied — it informs, it never gates (design §3
+    // Layer 5). A failed check is silent: it must not look like a rule violation.
+    if (warnFor) {
+      try {
+        const row = (await (window as any).ether.invoke("schedule:get",
+          Math.floor(new Date(selectedDay!).setHours(0, 0, 0, 0) / 1000),
+          Math.floor(new Date(selectedDay!).setHours(0, 0, 0, 0) / 1000) + 86_400, stationId))?.data
+          ?.find((x: any) => x.uuid === warnFor);
+        if (row) {
+          const c = await (window as any).ether.invoke("schedule:checkRow", stationId, warnFor, row.scheduled_at);
+          setRowWarn(prev => ({ ...prev, [warnFor]: (c && c.warnings) || [] }));
+        }
+      } catch { /* a failed check never blocks or misreports */ }
+    }
+    return true;
+  };
+  const moveRow = async (fromUuid: string, toUuid: string) => {
+    if (!fromUuid || !toUuid || fromUuid === toUuid) return;
+    setRowBusy(fromUuid);
+    try { await afterEdit(await (window as any).ether.invoke("schedule:moveRow", fromUuid, toUuid), fromUuid); }
+    catch (e: any) { setEditErr(e?.message || String(e)); }
+    finally { setRowBusy(null); }
+  };
+  const setRowSource = async (uuid: string, source: string | null) => {
+    setRowBusy(uuid);
+    try { await afterEdit(await (window as any).ether.invoke("schedule:setRowSource", uuid, source)); }
+    catch (e: any) { setEditErr(e?.message || String(e)); }
+    finally { setRowBusy(null); }
+  };
+  const deleteRow = async (uuid: string) => {
+    setRowBusy(uuid);
+    try {
+      const ok = await afterEdit(await (window as any).ether.invoke("schedule:deleteRow", uuid));
+      if (ok) setRowWarn(prev => { const n = { ...prev }; delete n[uuid]; return n; });
+    } catch (e: any) { setEditErr(e?.message || String(e)); }
+    finally { setRowBusy(null); }
+  };
+
   const generateThisDay = async () => {
     if (!selectedDay || genDayBusy) return;
     setGenDayBusy(true);
@@ -347,6 +405,17 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
             </span>
           )}
           <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{total} item{total !== 1 ? "s" : ""}{dayShow ? " in show" : " scheduled"}</span>
+          {/* The accumulation risk, made visible (design §7): pin enough rows and Generate can no
+              longer heal the day. The count says so before it becomes a mystery. */}
+          {dayRows.some(r => r.source) && (
+            <span title="Generate will not move, replace or remove these. Use 📌 on a row to release it."
+              style={{ fontSize: 10, fontWeight: 700, color: "#8868D8", padding: "1px 6px", border: "1px solid rgba(136,104,216,0.5)", background: "rgba(136,104,216,0.12)" }}>
+              {dayRows.filter(r => r.source).length} yours — Generate won’t touch
+            </span>
+          )}
+          {editErr && (
+            <span style={{ fontSize: 10, fontWeight: 700, color: "#f87171" }}>{editErr}</span>
+          )}
           <div style={{ flex: 1 }} />
           <button onClick={generateThisDay} disabled={genDayBusy}
             style={{ ...navBtn, color: "#0a160d", background: "var(--accent-green)", border: "none", fontWeight: 800, opacity: genDayBusy ? 0.5 : 1, cursor: genDayBusy ? "default" : "pointer" }}>
@@ -370,23 +439,78 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                   ) : items.map((it, i) => {
                     const isNow = isToday && it.scheduled_at === currentAt;
                     const isSpot = !it.song_id;   // a spot (commercial/promo) — no song_id. Gold/amber class color.
+                    // THE PAST IS A RECORD, NOT A PLAN. An aired row is read-only: no drag, no
+                    // controls. Editing an as-run would make the Traffic affidavit falsifiable.
+                    const aired = it.state === "played" || it.state === "playing";
+                    const mine = !!it.source;          // operator-owned → Generate will not touch it
+                    const busy = rowBusy === it.uuid;
+                    const warns = rowWarn[it.uuid] || [];
+                    const dragging = dragUuid === it.uuid;
                     return (
-                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 12px", background: isNow ? "rgb(from var(--accent-green) r g b / 0.16)" : isSpot ? "rgba(251,191,36,0.08)" : "transparent", borderLeft: `3px solid ${isNow ? "var(--accent-green)" : isSpot ? "#fbbf24" : "transparent"}` }}>
+                    <div key={it.uuid || i}
+                      draggable={!aired && !busy}
+                      onDragStart={(e) => { setDragUuid(it.uuid); try { e.dataTransfer.effectAllowed = "move"; } catch {} }}
+                      onDragEnd={() => setDragUuid(null)}
+                      onDragOver={(e) => { if (!aired && dragUuid && dragUuid !== it.uuid) { e.preventDefault(); try { e.dataTransfer.dropEffect = "move"; } catch {} } }}
+                      onDrop={(e) => { e.preventDefault(); const from = dragUuid; setDragUuid(null); if (from && !aired) moveRow(from, it.uuid); }}
+                      title={aired ? "Already aired — the log is a record of what happened and cannot be edited"
+                                   : "Drag to swap with another row"}
+                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 12px",
+                        background: isNow ? "rgb(from var(--accent-green) r g b / 0.16)" : isSpot ? "rgba(251,191,36,0.08)" : "transparent",
+                        borderLeft: `3px solid ${isNow ? "var(--accent-green)" : mine ? "#8868D8" : isSpot ? "#fbbf24" : "transparent"}`,
+                        opacity: dragging ? 0.4 : busy ? 0.6 : aired ? 0.65 : 1,
+                        cursor: aired ? "default" : "grab" }}>
                       <span style={{ width: 44, flexShrink: 0, fontFamily: "'DM Mono', monospace", fontSize: 9, color: isNow ? "var(--accent-green)" : "var(--text-tertiary)" }}>
                         {new Date(it.scheduled_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </span>
                       <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: isNow ? 800 : 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: isNow ? "var(--accent-green)" : isSpot ? "#fbbf24" : "var(--text-primary)" }}>
                         {isNow ? "▶ " : ""}
                         {isSpot && <span style={{ marginRight: 6, padding: "1px 5px", fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: "#fbbf24", background: "rgba(251,191,36,0.14)", border: "1px solid rgba(251,191,36,0.45)", letterSpacing: "0.06em" }}>SPOT</span>}
+                        {/* Ownership is VISIBLE, not remembered — "Generate won't touch this" has to be
+                            readable off the row or the operator cannot predict what Regenerate does. */}
+                        {mine && <span title="You placed or pinned this. Generate will not move, replace or remove it." style={{ marginRight: 6, padding: "1px 5px", fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: "#8868D8", background: "rgba(136,104,216,0.14)", border: "1px solid rgba(136,104,216,0.5)", letterSpacing: "0.06em" }}>YOURS</span>}
                         {it.title}
                       </span>
                       <span style={{ flexShrink: 0, fontSize: 10, color: "var(--text-tertiary)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.artist}</span>
                       <span style={{ flexShrink: 0, width: 40, textAlign: "right" as const, fontFamily: "'DM Mono', monospace", fontSize: 9, color: "var(--text-tertiary)" }}>
                         {Math.floor((it.duration_s || 0) / 60)}:{String((it.duration_s || 0) % 60).padStart(2, "0")}
                       </span>
+                      {/* Controls. Hidden entirely on aired rows rather than disabled — there is no
+                          version of this action that is ever valid on a row that already went out. */}
+                      <span style={{ flexShrink: 0, display: "flex", gap: 4, width: 52, justifyContent: "flex-end" }}>
+                        {!aired && (
+                          <>
+                            <button onClick={() => setRowSource(it.uuid, mine ? null : "operator")} disabled={busy}
+                              title={mine ? "Release back to the scheduler — Generate may replace it again"
+                                          : "Pin here — Generate will leave this row alone"}
+                              style={{ background: "transparent", border: "none", cursor: busy ? "wait" : "pointer",
+                                       color: mine ? "#8868D8" : "var(--text-tertiary)", fontSize: 11, padding: "0 2px" }}>
+                              {mine ? "📌" : "📍"}
+                            </button>
+                            <button onClick={() => deleteRow(it.uuid)} disabled={busy}
+                              title="Remove from the log — leaves a gap the next Generate refills"
+                              style={{ background: "transparent", border: "none", cursor: busy ? "wait" : "pointer",
+                                       color: "var(--text-tertiary)", fontSize: 11, padding: "0 2px" }}>✕</button>
+                          </>
+                        )}
+                      </span>
                     </div>
                     );
                   })}
+                  {/* Rule warnings sit UNDER the hour they belong to. Amber, never red, and never a
+                      block: the DJ made this call and the software's job is to be sure they meant it. */}
+                  {items.some(it => (rowWarn[it.uuid] || []).length > 0) && (
+                    <div style={{ margin: "2px 12px 6px", padding: "5px 8px", border: "1px solid rgba(251,191,36,0.45)", background: "rgba(251,191,36,0.08)" }}>
+                      {items.flatMap(it => (rowWarn[it.uuid] || []).map((w, k) => (
+                        <div key={`${it.uuid}-${k}`} style={{ fontSize: 10, color: "#fbbf24", lineHeight: 1.5 }}>
+                          <strong style={{ fontWeight: 800 }}>{it.title}</strong> — {w}
+                        </div>
+                      )))}
+                      <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 2 }}>
+                        Your edit was applied. This is a heads-up, not a refusal.
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             );

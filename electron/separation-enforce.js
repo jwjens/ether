@@ -100,4 +100,81 @@ function pickEnforced(candidates, cursorTs, maps, win, used, fitTargetTs = null,
   return { picked, relaxed: true, overageSec: Math.max(0, Math.round(picked.__songOver)), rule: picked.__rule };
 }
 
-module.exports = { buildRestMaps, pickEnforced };
+// ── CHECK, not pick (Manual Log Editing / Fix 2, design §3 Layer 5) ─────────────────────────────
+//
+// The editor needs to WARN about a manual placement without refusing it. Returns [] when clean, else
+// human-readable violations. NEVER throws, never blocks — the operator overrides and the log records
+// that they did.
+//
+// TWO CORRECTIONS to the design doc's §4.3 snippet, both of which would have shipped a checker that
+// silently never warned:
+//
+//   1. The snippet read `maps.artistLastTs` / `maps.songLastTs` / `maps.titleLastTs` and passed
+//      `buildRestMaps(db, stationId)` as `maps`. buildRestMaps returns
+//      `{restByFile, restByArtist, restByTitle}` — those three names do not exist on it, so every
+//      lookup was `undefined` and the function returned [] every time. The *LastTs maps live on the
+//      GENERATE RUN context (this-run placements), not on the rest maps.
+//
+//   2. Rest maps come from play_log — AIRED history. The case the design's own test C describes
+//      ("move a track next to another by the same artist") is two rows in a FUTURE day that have not
+//      aired, so play_log knows nothing about either. Checking only the rest maps could not warn on
+//      the exact scenario the feature exists for.
+//
+// So the check reads BOTH: `neighbours` (the scheduled rows around the target time — the future) and
+// the rest maps (what actually aired — the past). Same rule windows the generator uses, so a warning
+// means what the generator means.
+//
+// Neighbour artist matching is by NAME, because generated_schedule stores `artist` as text and has no
+// artist_id. Rest-map artist matching is by id. Both are reported; the name match is the one that
+// fires for same-day edits.
+function checkSeparation(row, atTs, ctx, win) {
+  const out = [];
+  if (!row || !ctx) return out;
+  const w = win || {};
+  const artistWin = (w.artistSepMin || 0) * 60;
+  const titleWin  = (w.titleSepMin  || 0) * 60;
+  const songWin   = (w.songRepeatMin || 0) * 60;
+  const mins = (sec) => Math.max(1, Math.round(Math.abs(sec) / 60));
+  const norm = (s) => String(s || '').trim().toLowerCase();
+
+  const myArtist = norm(row.artist);
+  const myTitle  = norm(row.title);
+
+  // ── The future: other rows already in the log around this time ────────────────────────────────
+  for (const n of (ctx.neighbours || [])) {
+    if (!n || n.scheduled_at == null) continue;
+    // Never compare a row against itself. uuid first (stable), then id.
+    if (row.uuid && n.uuid && row.uuid === n.uuid) continue;
+    if (row.id != null && n.id != null && row.id === n.id) continue;
+    const gap = Math.abs(atTs - n.scheduled_at);
+    if (songWin && row.song_id != null && n.song_id != null && row.song_id === n.song_id && gap < songWin) {
+      out.push(`Same song scheduled ${mins(gap)} min away (rule: ${w.songRepeatMin} min)`);
+      continue;                       // one violation per neighbour — the strongest one
+    }
+    if (artistWin && myArtist && norm(n.artist) === myArtist && gap < artistWin) {
+      out.push(`Same artist "${n.artist}" ${mins(gap)} min away (rule: ${w.artistSepMin} min)`);
+      continue;
+    }
+    if (titleWin && myTitle && norm(n.title) === myTitle && gap < titleWin) {
+      out.push(`Same title "${n.title}" ${mins(gap)} min away (rule: ${w.titleSepMin} min)`);
+    }
+  }
+
+  // ── The past: what actually aired (play_log), via the generator's own rest maps ────────────────
+  const last = (m, k) => (m && k != null && k !== '' ? m.get(k) : undefined);
+  const fileLast = last(ctx.restByFile, row.file_path);
+  if (songWin && fileLast && atTs - fileLast < songWin && atTs >= fileLast) {
+    out.push(`This song aired ${mins(atTs - fileLast)} min ago (rule: ${w.songRepeatMin} min)`);
+  }
+  const artLast = last(ctx.restByArtist, row.artist_id);
+  if (artistWin && artLast && atTs - artLast < artistWin && atTs >= artLast) {
+    out.push(`This artist aired ${mins(atTs - artLast)} min ago (rule: ${w.artistSepMin} min)`);
+  }
+  const titLast = last(ctx.restByTitle, myTitle);
+  if (titleWin && titLast && atTs - titLast < titleWin && atTs >= titLast) {
+    out.push(`This title aired ${mins(atTs - titLast)} min ago (rule: ${w.titleSepMin} min)`);
+  }
+  return out;
+}
+
+module.exports = { buildRestMaps, pickEnforced, checkSeparation };

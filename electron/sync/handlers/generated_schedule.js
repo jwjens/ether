@@ -14,7 +14,14 @@ const { REGISTRY } = require('../synced-tables');
 
 const TABLE              = 'generated_schedule';
 const HAS_STATION_ID_COL = true;
-const PATCHABLE          = ["scheduled_at","song_id","title","artist","file_key","file_path","duration_s","category_id","clock_id","generated_at","updated_at"];
+// `source` is patchable so the editor can stamp a row operator-owned — the marker _commitDayRows
+// preserves — and release it back to machine ownership. `seq` is patchable for future fractional
+// reordering (design §6); nothing reads it yet.
+//
+// `state` and `played_at` stay IMMUTABLE from the renderer, deliberately: they are the daemon's
+// OBSERVED record of what actually aired and they feed the Traffic affidavit. An editable as-run is a
+// falsifiable one.
+const PATCHABLE          = ["scheduled_at","song_id","title","artist","file_key","file_path","duration_s","category_id","clock_id","generated_at","updated_at","source","seq"];
 
 // ── Scope guard ───────────────────────────────────────────────────────────────
 

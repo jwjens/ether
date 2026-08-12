@@ -6863,12 +6863,152 @@ function finishGenerateRun(stationId, ctx, days) {
 }
 function _commitDayRows(stationId, effStart, dayEnd, rows) {
   const { generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
+  const { filterToGaps } = require('./log-edit-core');
+  let result = { kept: 0, skipped: 0 };
   db.transaction(() => {
-    db.prepare("DELETE FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ?").run(stationId, effStart, dayEnd);
-    generatedScheduleBulkCreate(db, stationId, rows);
+    // OPERATOR ROWS SURVIVE REGENERATE (Manual Log Editing / Fix 2, design §4.1). This used to delete
+    // the whole future window and re-insert, so every manual edit was destroyed by the next Generate —
+    // while the column that says "a human owns this row" already existed and was already being written
+    // (engine.js:1308). `source IS NULL` = machine-generated and disposable; anything else was placed
+    // or pinned by an operator and is not Generate's to remove.
+    //
+    // Aired history was already safe: effStart is the next top-of-hour, so Generate never reaches the
+    // past. This adds protection for the FUTURE rows a human has touched.
+    db.prepare(
+      "DELETE FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ? AND source IS NULL"
+    ).run(stationId, effStart, dayEnd);
+
+    // GAP-ONLY FILL. Preserving the operator's rows is not enough: the walk still produced a machine
+    // row for that minute, and inserting it would double-book the slot. Drop any generated row whose
+    // span overlaps a survivor. Deliberately a POST-FILTER, so _generateDayRows — and therefore clock
+    // law, separation and song selection — is not touched at all.
+    //
+    // `deleted_at IS NULL` is LOAD-BEARING and is missing from the design doc's snippet: deleting a row
+    // in the editor is a SOFT delete, so without this clause a row the operator just deleted would
+    // still block its own gap from refilling — the delete would appear to do nothing on the next
+    // Generate, which is the whole point of deleting it.
+    const kept = db.prepare(
+      "SELECT scheduled_at, duration_s FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ? AND deleted_at IS NULL"
+    ).all(stationId, effStart, dayEnd);
+
+    const { fill, skipped } = filterToGaps(rows, kept);
+    generatedScheduleBulkCreate(db, stationId, fill);
+    result = { kept: kept.length, skipped: skipped.length };
   })();
+
+  if (result.kept) {
+    console.log(`[generate] kept ${result.kept} operator row(s); skipped ${result.skipped} generated row(s) that would have overlapped them`);
+    // Visible, not just logged: an operator who has pinned a lot of a day should be able to see why
+    // Generate is filling less and less of it (design §7, the accumulation risk).
+    try {
+      _healthEvent('generate-operator-rows-preserved', {
+        stationId, keptRows: result.kept, skippedGeneratedRows: result.skipped,
+        windowStart: effStart, windowEnd: dayEnd,
+      });
+    } catch {}
+  }
 }
 ipcMain.handle('schedule:generateCancel', () => { _genCancel = true; return { ok: true }; });
+
+// ── MANUAL LOG EDITING (Fix 2) ──────────────────────────────────────────────────────────────────
+// The log becomes a list a DJ can rearrange. Every handler here obeys three rules:
+//   1. The PAST IS A RECORD. A row that has aired (state='played'/'playing') is never mutated.
+//   2. Every touched row is stamped source='operator', which is what makes Generate leave it alone.
+//   3. Warnings never block. The operator overrides; the ledger records that they did.
+const _EDIT_LOCKED = new Set(['played', 'playing']);
+function _logRow(uuid) {
+  return db.prepare("SELECT * FROM generated_schedule WHERE uuid = ? AND deleted_at IS NULL").get(uuid);
+}
+function _guardEditable(row, what) {
+  if (!row) return `that row no longer exists — the log may have been regenerated`;
+  if (_EDIT_LOCKED.has(String(row.state || ''))) {
+    return `"${row.title || 'that row'}" has already aired — the log is a record of what happened, not a plan, so it cannot be ${what}`;
+  }
+  return null;
+}
+
+// MOVE = swap scheduled_at with the row at the target position, in ONE transaction. Two separate
+// updates would leave a window in which both rows claim the same second, and the log-reader orders by
+// scheduled_at — so a mid-swap read could air the wrong row. Swap, never ripple: a ripple rewrites
+// every following row and fights the time-anchored auto-fitter (design §3 Layer 4 / §6).
+ipcMain.handle('schedule:moveRow', (_e, uuidA, uuidB) => {
+  try {
+    const a = _logRow(uuidA), b = _logRow(uuidB);
+    const ga = _guardEditable(a, 'moved'); if (ga) return { ok: false, error: ga };
+    const gb = _guardEditable(b, 'moved'); if (gb) return { ok: false, error: gb };
+    if (a.station_id !== b.station_id) return { ok: false, error: 'those rows belong to different stations' };
+    const now = new Date().toISOString();
+    db.transaction(() => {
+      const stmt = db.prepare("UPDATE generated_schedule SET scheduled_at = ?, source = 'operator', updated_at = ? WHERE uuid = ?");
+      stmt.run(b.scheduled_at, now, a.uuid);
+      stmt.run(a.scheduled_at, now, b.uuid);
+    })();
+    _healthEvent('log-edit', { action: 'move', stationId: a.station_id,
+      movedTitle: a.title, fromTs: a.scheduled_at, toTs: b.scheduled_at, swappedWith: b.title });
+    return { ok: true, movedTo: b.scheduled_at };
+  } catch (e) { console.error('[log-edit] move failed:', e.message); return { ok: false, error: e.message }; }
+});
+
+// PIN / RELEASE. Pin stamps ownership without moving anything ("keep this where it is"). Release hands
+// the row back to the machine — the escape hatch for design §7's accumulation risk, so a day that has
+// been pinned into a corner can always be handed back to Generate.
+ipcMain.handle('schedule:setRowSource', (_e, uuid, source) => {
+  try {
+    const row = _logRow(uuid);
+    const g = _guardEditable(row, 'changed'); if (g) return { ok: false, error: g };
+    const val = source == null ? null : String(source);
+    if (val !== null && val !== 'operator') return { ok: false, error: `unsupported source "${val}"` };
+    db.prepare("UPDATE generated_schedule SET source = ?, updated_at = ? WHERE uuid = ?")
+      .run(val, new Date().toISOString(), uuid);
+    _healthEvent('log-edit', { action: val ? 'pin' : 'release', stationId: row.station_id,
+      title: row.title, at: row.scheduled_at });
+    return { ok: true, source: val };
+  } catch (e) { console.error('[log-edit] setRowSource failed:', e.message); return { ok: false, error: e.message }; }
+});
+
+// DELETE = soft delete, leaving a GAP the next Generate refills (design §3 Layer 4). Soft so the row
+// remains a tombstone for sync rather than vanishing from under another machine.
+ipcMain.handle('schedule:deleteRow', (_e, uuid) => {
+  try {
+    const row = _logRow(uuid);
+    const g = _guardEditable(row, 'deleted'); if (g) return { ok: false, error: g };
+    const now = new Date().toISOString();
+    db.prepare("UPDATE generated_schedule SET deleted_at = ?, updated_at = ? WHERE uuid = ?").run(now, now, uuid);
+    _healthEvent('log-edit', { action: 'delete', stationId: row.station_id, title: row.title, at: row.scheduled_at });
+    return { ok: true };
+  } catch (e) { console.error('[log-edit] delete failed:', e.message); return { ok: false, error: e.message }; }
+});
+
+// CHECK — warnings for a placement, never a refusal. Reads BOTH the scheduled neighbours (the future,
+// which is where a same-day edit's clash lives) and the play_log rest maps (the past), using the same
+// rule windows Generate uses so a warning means what the generator means. See separation-enforce.js
+// for the two corrections this required to the design doc's snippet.
+ipcMain.handle('schedule:checkRow', (_e, stationId, uuid, atTs) => {
+  try {
+    const sid = stationId ?? getActiveStationId();
+    const row = _logRow(uuid);
+    if (!row) return { ok: true, warnings: [] };
+    const { buildRestMaps, checkSeparation } = require('./separation-enforce');
+    const ctx = buildScheduleCtx(db, sid);
+    const win = { artistSepMin: ctx.artistSepMin, songRepeatMin: ctx.songRepeatMin, titleSepMin: ctx.titleSepMin };
+    // Widest rule decides how far to look — no point scanning a day for a 60-minute window.
+    const span = Math.max(win.artistSepMin, win.songRepeatMin, win.titleSepMin, 0) * 60;
+    const neighbours = db.prepare(
+      `SELECT id, uuid, scheduled_at, song_id, title, artist FROM generated_schedule
+        WHERE station_id = ? AND deleted_at IS NULL AND scheduled_at >= ? AND scheduled_at <= ?`
+    ).all(sid, atTs - span, atTs + span);
+    const maps = buildRestMaps(db, sid);
+    const warnings = checkSeparation(
+      { ...row, artist_id: null }, atTs,
+      { neighbours, restByFile: maps.restByFile, restByArtist: maps.restByArtist, restByTitle: maps.restByTitle },
+      win);
+    return { ok: true, warnings, rules: win };
+  } catch (e) {
+    // A failed check NEVER blocks an edit — the edit has already happened by the time this is asked.
+    console.error('[log-edit] checkRow failed:', e.message);
+    return { ok: false, warnings: [], error: e.message };
+  }
+});
 
 // ONE call for a whole range — the week loop used to fire seven BLOCKING generateDay calls back to
 // back, so progress moved only seven times and CANCEL could only break BETWEEN days. Now: hour-level
@@ -7517,7 +7657,11 @@ ipcMain.handle('schedule:get', (_, fromTs, toTs, stationId) => {
     // Conservative by design — only drops rows we can prove are foreign: song-less rows (spots/talk),
     // songs with no category, or categories with no station_id all pass through unchanged.
     const rows = db.prepare(
-      `SELECT g.id, g.scheduled_at, g.song_id, g.title, g.artist, g.file_key, g.duration_s, g.category_id
+      // uuid/source/state added for the log editor (Fix 2): uuid is the only stable handle a row can
+      // be addressed by for mutation, source says who owns it, state says whether it has already
+      // aired (and is therefore a record, not a plan).
+      `SELECT g.id, g.uuid, g.scheduled_at, g.song_id, g.title, g.artist, g.file_key, g.file_path,
+              g.duration_s, g.category_id, g.source, g.state
        FROM generated_schedule g
        WHERE g.station_id = ? AND g.scheduled_at >= ? AND g.scheduled_at < ? AND g.deleted_at IS NULL
          AND NOT EXISTS (
