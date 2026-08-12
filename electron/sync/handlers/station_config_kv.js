@@ -32,7 +32,9 @@ const PATCHABLE          = ["value","updated_at"];
 // auto_generate_enabled is local by design — generated_schedule syncs and _autoExtendTick has no
 // leader guard, so a synced flag would make "every machine generates this station" the replicated
 // policy (backlog: multi-machine two-writer hazard).
-const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled']);
+// kill_lease is LOCAL on purpose: it is an emergency bypass for a bug in this machine's lease
+// logic, and a synced kill switch would disable arbitration everywhere at once.
+const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_lease']);
 const isLocalOnlyKey = (k) => LOCAL_ONLY_KEYS.has(k);
 
 // Direct, MUTATION-LESS upsert for a local-authoritative key. Bypasses withMutation entirely, so the

@@ -346,6 +346,24 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   const [autoGen, setAutoGen] = useState<Record<number, boolean | null>>({});
   const [autoBusy, setAutoBusy] = useState<number | null>(null);
   const [autoErr, setAutoErr] = useState<Record<number, string>>({});
+  // Generation lease (Phase 1: observe only — it reports, it does not yet gate generation).
+  const [lease, setLease] = useState<Record<number, any>>({});
+  useEffect(() => {
+    let stop = false;
+    const load = async () => {
+      try {
+        const rows = await (window as any).ether?.invoke?.("lease:status");
+        if (!stop && Array.isArray(rows)) {
+          const m: Record<number, any> = {};
+          for (const r of rows) m[r.stationId] = r;
+          setLease(m);
+        }
+      } catch { /* observational — never break the panel */ }
+    };
+    load();
+    const t = setInterval(load, 30_000);
+    return () => { stop = true; clearInterval(t); };
+  }, []);
 
   /** The single source of truth for this control: what station_config_kv actually holds. */
   const readFlip = useCallback(async (sid: number): Promise<boolean | null> => {
@@ -994,6 +1012,20 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                     <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotCol }} />
                     <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-secondary)" }}>{st.name}</span>
                   </div>
+                  {/* GENERATION LEASE (Phase 1) — who is allowed to top this station up. It does
+                      NOT yet gate anything: every switched-on machine still generates, which is
+                      exactly why an unheld lease is reported as two writers rather than as safe. */}
+                  {lease[st.stationId] && (
+                    <HealthRow
+                      label="Generation lease"
+                      value={lease[st.stationId].state === "held-by-me" ? "This machine"
+                           : lease[st.stationId].state === "held-by-other" ? (lease[st.stationId].holderName || "Another machine")
+                           : lease[st.stationId].state === "bypassed" ? "Bypassed"
+                           : "Unheld"}
+                      status={(lease[st.stationId].level === "grey" ? "ok" : lvl(lease[st.stationId].level)) as any}
+                      sub={lease[st.stationId].text}
+                    />
+                  )}
                   {/* SCHEDULE RUNWAY — the fuel gauge. First row on purpose: "how long until this
                       station runs out of log" is the most urgent thing this panel can answer, and on
                       a flipped station a dry log is dead air. Distance to the first GAP, not to the
