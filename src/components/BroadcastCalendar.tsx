@@ -247,19 +247,45 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
   };
   const [dayRows, setDayRows]         = useState<DayRow[]>([]);
   const [dragUuid, setDragUuid]       = useState<string | null>(null);
+  // The row currently under the pointer during a drag. Drives the drop indicator.
+  //
+  // A HIGHLIGHT, NOT A LINE BETWEEN ROWS. The operation is a SWAP (design §3 Layer 4 — ripple is
+  // deliberately not built), so an insertion line drawn between two rows would promise semantics the
+  // log does not have: nothing shuffles down to make room. Highlighting the row you will TRADE PLACES
+  // WITH is the honest picture of what is about to happen.
+  const [dropUuid, setDropUuid]       = useState<string | null>(null);
   const [rowBusy, setRowBusy]         = useState<string | null>(null);
   const [rowWarn, setRowWarn]         = useState<Record<string, string[]>>({});
   const [editErr, setEditErr]         = useState<string | null>(null);
   const [dayLoading, setDayLoading]   = useState(false);
   const [genDayBusy, setGenDayBusy]   = useState(false);
   const [dayShow, setDayShow]         = useState<{ name: string; startHour: number; endHour: number } | null>(null);
-  const loadDayRows = async (d: Date) => {
-    setDayLoading(true); setDayRows([]);
+  // The scrollable hour list. Held so an edit can put the operator back exactly where they were.
+  const dayScrollRef = useRef<HTMLDivElement | null>(null);
+
+  /**
+   * @param quiet  re-read WITHOUT blanking the list first.
+   *
+   * The non-quiet path sets dayRows to [] and flips dayLoading, which swaps the entire hour list for
+   * a "Loading…" line. That collapses the scroll container to a single row, the browser clamps
+   * scrollTop to 0, and the operator is thrown back to midnight — after every drag, pin and delete.
+   * Blanking is right when OPENING a day (the old day's rows are not the new day's) and wrong for a
+   * refresh after an edit, where the content is about to be almost identical.
+   */
+  const loadDayRows = async (d: Date, quiet = false) => {
+    if (!quiet) { setDayLoading(true); setDayRows([]); }
+    const keepTop = quiet ? (dayScrollRef.current?.scrollTop ?? 0) : 0;
     try {
       const start = Math.floor(new Date(d).setHours(0, 0, 0, 0) / 1000), end = start + 86_400;
       const res = await (window as any).ether.invoke("schedule:get", start, end, stationId);
       setDayRows(Array.isArray(res?.data) ? res.data : []);
-    } catch { /* ignore */ } finally { setDayLoading(false); }
+      if (quiet && dayScrollRef.current) {
+        // Belt and braces: even without the blanking, a row changing height (a warning appearing
+        // under an hour) can shift the content. Restore after paint, not during it.
+        const el = dayScrollRef.current;
+        requestAnimationFrame(() => { if (el) el.scrollTop = keepTop; });
+      }
+    } catch { /* ignore */ } finally { if (!quiet) setDayLoading(false); }
   };
   const openDay = async (date: Date, show?: Show) => {
     const d = new Date(date); d.setHours(0, 0, 0, 0);
@@ -273,7 +299,8 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
   const afterEdit = async (r: any, warnFor?: string) => {
     if (!r || r.ok === false) { setEditErr((r && r.error) || "the edit did not apply"); return false; }
     setEditErr(null);
-    if (selectedDay) await loadDayRows(selectedDay);
+    // QUIET re-read: an edit must never move the operator's view. See loadDayRows.
+    if (selectedDay) await loadDayRows(selectedDay, true);
     window.dispatchEvent(new CustomEvent("ether:schedule-regenerated"));
     // The warning is asked for AFTER the move has applied — it informs, it never gates (design §3
     // Layer 5). A failed check is silent: it must not look like a rule violation.
@@ -423,7 +450,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
           </button>
         </div>
         {/* Hours */}
-        <div style={{ flex: 1, overflowY: "auto" }}>
+        <div ref={dayScrollRef} style={{ flex: 1, overflowY: "auto" }}>
           {dayLoading ? (
             <div style={{ padding: 40, textAlign: "center", color: "var(--text-tertiary)", fontSize: 12 }}>Loading…</div>
           ) : hours.map((h) => {
@@ -446,23 +473,48 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                     const busy = rowBusy === it.uuid;
                     const warns = rowWarn[it.uuid] || [];
                     const dragging = dragUuid === it.uuid;
+                    // Is this the row the dragged one will trade places with?
+                    const isDropTarget = !!dragUuid && dropUuid === it.uuid && dragUuid !== it.uuid && !aired;
+                    const dragSrc = dragUuid ? dayRows.find(r => r.uuid === dragUuid) : null;
                     return (
                     <div key={it.uuid || i}
                       draggable={!aired && !busy}
-                      onDragStart={(e) => { setDragUuid(it.uuid); try { e.dataTransfer.effectAllowed = "move"; } catch {} }}
-                      onDragEnd={() => setDragUuid(null)}
-                      onDragOver={(e) => { if (!aired && dragUuid && dragUuid !== it.uuid) { e.preventDefault(); try { e.dataTransfer.dropEffect = "move"; } catch {} } }}
-                      onDrop={(e) => { e.preventDefault(); const from = dragUuid; setDragUuid(null); if (from && !aired) moveRow(from, it.uuid); }}
+                      onDragStart={(e) => { setDragUuid(it.uuid); try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", it.uuid); } catch {} }}
+                      onDragEnd={() => { setDragUuid(null); setDropUuid(null); }}
+                      onDragOver={(e) => {
+                        if (!aired && dragUuid && dragUuid !== it.uuid) {
+                          e.preventDefault();
+                          try { e.dataTransfer.dropEffect = "move"; } catch {}
+                          // dragOver fires continuously — only touch state when it actually changes.
+                          if (dropUuid !== it.uuid) setDropUuid(it.uuid);
+                        }
+                      }}
+                      onDragLeave={() => { if (dropUuid === it.uuid) setDropUuid(null); }}
+                      onDrop={(e) => { e.preventDefault(); const from = dragUuid; setDragUuid(null); setDropUuid(null); if (from && !aired) moveRow(from, it.uuid); }}
                       title={aired ? "Already aired — the log is a record of what happened and cannot be edited"
-                                   : "Drag to swap with another row"}
+                                   : "Drag onto another row to swap the two"}
                       style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 12px",
-                        background: isNow ? "rgb(from var(--accent-green) r g b / 0.16)" : isSpot ? "rgba(251,191,36,0.08)" : "transparent",
-                        borderLeft: `3px solid ${isNow ? "var(--accent-green)" : mine ? "#8868D8" : isSpot ? "#fbbf24" : "transparent"}`,
-                        opacity: dragging ? 0.4 : busy ? 0.6 : aired ? 0.65 : 1,
-                        cursor: aired ? "default" : "grab" }}>
-                      <span style={{ width: 44, flexShrink: 0, fontFamily: "'DM Mono', monospace", fontSize: 9, color: isNow ? "var(--accent-green)" : "var(--text-tertiary)" }}>
+                        background: isDropTarget ? "rgba(136,104,216,0.22)"
+                                  : isNow ? "rgb(from var(--accent-green) r g b / 0.16)" : isSpot ? "rgba(251,191,36,0.08)" : "transparent",
+                        borderLeft: `3px solid ${isDropTarget ? "#8868D8" : isNow ? "var(--accent-green)" : mine ? "#8868D8" : isSpot ? "#fbbf24" : "transparent"}`,
+                        // A ring rather than a between-rows line: the two rows SWAP, nothing shuffles.
+                        outline: isDropTarget ? "2px solid #8868D8" : "none",
+                        outlineOffset: isDropTarget ? "-2px" : 0,
+                        opacity: dragging ? 0.35 : busy ? 0.6 : aired ? 0.65 : 1,
+                        cursor: aired ? "default" : dragUuid ? "grabbing" : "grab" }}>
+                      <span style={{ width: 44, flexShrink: 0, fontFamily: "'DM Mono', monospace", fontSize: 9, color: isDropTarget ? "#8868D8" : isNow ? "var(--accent-green)" : "var(--text-tertiary)", fontWeight: isDropTarget ? 800 : 400 }}>
                         {new Date(it.scheduled_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                       </span>
+                      {/* Names BOTH sides of the trade while the pointer is here, so "what will this
+                          do?" is answered before the drop rather than discovered after it. */}
+                      {isDropTarget && dragSrc && (
+                        <span style={{ flexShrink: 0, padding: "1px 6px", fontSize: 9, fontWeight: 800,
+                                       fontFamily: "'DM Mono', monospace", letterSpacing: "0.04em",
+                                       color: "#8868D8", background: "rgba(136,104,216,0.18)",
+                                       border: "1px solid rgba(136,104,216,0.6)", whiteSpace: "nowrap" as const }}>
+                          ⇄ SWAP WITH {new Date(dragSrc.scheduled_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      )}
                       <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: isNow ? 800 : 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: isNow ? "var(--accent-green)" : isSpot ? "#fbbf24" : "var(--text-primary)" }}>
                         {isNow ? "▶ " : ""}
                         {isSpot && <span style={{ marginRight: 6, padding: "1px 5px", fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: "#fbbf24", background: "rgba(251,191,36,0.14)", border: "1px solid rgba(251,191,36,0.45)", letterSpacing: "0.06em" }}>SPOT</span>}
