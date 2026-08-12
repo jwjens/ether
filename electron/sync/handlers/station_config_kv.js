@@ -37,8 +37,22 @@ const PATCHABLE          = ["value","updated_at"];
 // kill_designation is LOCAL on purpose: it is an emergency bypass for a bug in THIS machine's
 // designation logic, and a synced kill switch would disable ownership everywhere at once.
 // (kill_lease retired in 4.4.188 with the lease system it belonged to; migrated on first launch.)
-const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_designation']);
-const isLocalOnlyKey = (k) => LOCAL_ONLY_KEYS.has(k);
+//
+// schedule_layout_v1 added 4.4.191. Pane arrangement is per-machine ergonomics — syncing it would
+// rearrange a colleague's screen. It had been WRITTEN and REFUSED on every save since 4.4.171, so
+// Schedule Manager layouts have never persisted.
+//
+// NEVER ADD `designated_generator`. It is the one key that MUST sync: designation exists to
+// arbitrate between machines, and a local record cannot tell two machines apart. Putting it here
+// would give each machine its own private "designation" and break Phase B enforcement against a
+// record the other machine has never seen. It is written through the ordinary (synced) path.
+const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_designation', 'schedule_layout_v1']);
+
+// Prefixes, for families of per-machine keys. `grid_widths_<pane>` is one key per grid, so it cannot
+// be enumerated — column widths had been written and refused on every resize since 4.4.177.
+const LOCAL_ONLY_PREFIXES = ['grid_widths_'];
+const isLocalOnlyKey = (k) =>
+  typeof k === 'string' && (LOCAL_ONLY_KEYS.has(k) || LOCAL_ONLY_PREFIXES.some((p) => k.startsWith(p)));
 
 // Direct, MUTATION-LESS upsert for a local-authoritative key. Bypasses withMutation entirely, so the
 // value never becomes a syncable mutation. The ONLY sanctioned writer for a LOCAL_ONLY_KEYS key.
