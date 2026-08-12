@@ -60,8 +60,8 @@ interface ErrorBoundaryProps { children: ReactNode; }
 // This renders unconditionally: `d` undefined means no tick has run yet, which is a state to state,
 // not a reason to vanish. Every field is read defensively so a malformed record can never remove
 // rows that have nothing to do with designation.
-function DesignationRows({ d, busy, onRefresh, readAgo }: {
-  d: any; busy: boolean; onRefresh: () => void; readAgo: string;
+function DesignationRows({ d, busy, onRefresh, readAgo, err }: {
+  d: any; busy: boolean; onRefresh: () => void; readAgo: string; err?: string | null;
 }) {
   const state = d && d.state ? d.state : "none";
   const level = d && d.level ? d.level : "grey";
@@ -87,6 +87,7 @@ function DesignationRows({ d, busy, onRefresh, readAgo }: {
           {busy ? "…" : "REFRESH NOW"}
         </button>
         <span style={{ fontSize: 9, color: "var(--text-tertiary)" }}>Designation read {readAgo}</span>
+        {err && <span style={{ fontSize: 9, color: "var(--accent-red)" }}>{err}</span>}
       </div>
     </>
   );
@@ -391,22 +392,40 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   const [desig, setDesig] = useState<Record<number, any>>({});
   const [desigAt, setDesigAt] = useState<number | null>(null);
   const [desigBusy, setDesigBusy] = useState(false);
+  const [desigErr, setDesigErr] = useState<string | null>(null);
+  // Applies rows and stamps the read time. Errors are SURFACED, not swallowed: the previous version
+  // caught everything silently, so an unregistered handler and a healthy empty result looked
+  // identical — the button appeared to do nothing and said nothing.
+  const applyDesig = useCallback((rows: any[]) => {
+    const m: Record<number, any> = {};
+    for (const r of rows || []) m[r.stationId] = r;
+    setDesig(m);
+    setDesigAt(Date.now());
+  }, []);
   const loadDesig = useCallback(async () => {
     try {
       const rows = await (window as any).ether?.invoke?.("designation:status");
-      if (Array.isArray(rows)) {
-        const m: Record<number, any> = {};
-        for (const r of rows) m[r.stationId] = r;
-        setDesig(m);
-        setDesigAt(Date.now());
-      }
-    } catch { /* observational — never break the panel */ }
-  }, []);
+      if (!Array.isArray(rows)) throw new Error("no response from designation:status");
+      applyDesig(rows);
+      setDesigErr(null);
+    } catch (e: any) {
+      setDesigErr(e?.message || String(e));
+      setDesigAt(Date.now());     // the read HAPPENED; it failed. Never leave the stamp frozen.
+    }
+  }, [applyDesig]);
   useEffect(() => { loadDesig(); const t = setInterval(loadDesig, 30_000); return () => clearInterval(t); }, [loadDesig]);
   const refreshDesig = async () => {
     setDesigBusy(true);
-    try { await (window as any).ether?.invoke?.("designation:refresh"); await loadDesig(); }
-    finally { setDesigBusy(false); }
+    try {
+      // One round trip: the handler returns the rows it just computed, so there is no window in
+      // which the refresh succeeded and the follow-up read failed.
+      const r = await (window as any).ether?.invoke?.("designation:refresh");
+      if (r && r.ok) { applyDesig(r.rows || []); setDesigErr(null); }
+      else { setDesigErr((r && r.error) || "refresh returned no response"); setDesigAt(Date.now()); }
+    } catch (e: any) {
+      setDesigErr(e?.message || String(e));
+      setDesigAt(Date.now());
+    } finally { setDesigBusy(false); }
   };
   const agoText = (ms: number | null) => {
     if (!ms) return "never";
@@ -1063,7 +1082,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                   </div>
                   {/* Designation (Phase A). Always rendered — see DesignationRows. */}
                   <DesignationRows d={desig[st.stationId]} busy={desigBusy}
-                    onRefresh={refreshDesig} readAgo={agoText(desigAt)} />
+                    onRefresh={refreshDesig} readAgo={agoText(desigAt)} err={desigErr} />
                   {/* SCHEDULE RUNWAY — the fuel gauge. First row on purpose: "how long until this
                       station runs out of log" is the most urgent thing this panel can answer, and on
                       a flipped station a dry log is dead air. Distance to the first GAP, not to the

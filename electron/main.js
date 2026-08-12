@@ -602,11 +602,7 @@ if (AUDIO_DAEMON_DESIRED) {
   });
   _health.start();
   try { ipcMain.handle("health:snapshot", () => { try { return _health.getSnapshot(); } catch { return null; } }); } catch {}
-  // Designation view, per station. Kept out of library-health because this is ownership state, not a
-  // library measurement — and Phase B will make it a decision input.
-  try { ipcMain.handle("designation:status", () => { try { return [..._desigStatus.values()]; } catch { return []; } }); } catch {}
-  // Operator-initiated refresh of that view. NOT a sync-engine trigger — see the Health Monitor note.
-  try { ipcMain.handle("designation:refresh", () => { try { _designationTick(new Set()); return { ok: true, at: Date.now() }; } catch (e) { return { ok: false, error: e.message }; } }); } catch {}
+  // (designation IPC is registered at top level — see _designationTick.)
 
   // Renderer → the honest health ledger. The daemon has had this since the log-reader work; the
   // RENDERER has not, so anything it noticed could only ever reach a console nobody reads. Same
@@ -7140,6 +7136,28 @@ function _autoDeferralCheck(st) {
   }
   return true;
 }
+
+// Registered at TOP LEVEL, deliberately. These lived inside the health-monitor setup block, so if
+// that block did not run the handlers never existed — `invoke` rejected, the renderer's catch
+// swallowed it, and REFRESH NOW silently did nothing. A handler whose registration depends on an
+// unrelated subsystem starting is a handler that sometimes is not there.
+//
+// refresh RETURNS THE ROWS rather than just an ok flag: a caller that has to make a second round
+// trip to find out what happened can fail between the two and show nothing, which is the shape of
+// the bug being fixed.
+try {
+  ipcMain.handle("designation:status", () => { try { return [..._desigStatus.values()]; } catch { return []; } });
+  ipcMain.handle("designation:refresh", () => {
+    try {
+      _designationTick(new Set());
+      return { ok: true, at: Date.now(), rows: [..._desigStatus.values()] };
+    } catch (e) {
+      // Reported, not swallowed: the renderer shows this under the row.
+      console.error('[designation] refresh failed:', e.message);
+      return { ok: false, error: e.message, rows: [] };
+    }
+  });
+} catch (e) { console.error('[designation] handler registration failed:', e.message); }
 
 // ── UPGRADE MIGRATION: preserve auto-generation for installs that already had it ────────────────
 //
