@@ -2787,16 +2787,39 @@ app.whenReady().then(() => {
   // ── Sync scheduler — Phase F Stage 4 ──────────────────────────
   // Off by default. Users opt in via Settings → System → Multi-Device Sync.
   try {
+    // deleted_at IS NULL — a tombstoned row would otherwise still switch sync on.
     const enabledRow = db.prepare(
-      "SELECT value FROM station_config_kv WHERE key = 'sync_enabled' LIMIT 1"
+      "SELECT value FROM station_config_kv WHERE key = 'sync_enabled' AND deleted_at IS NULL LIMIT 1"
     ).get();
     if (enabledRow?.value !== 'true') {
       console.log('[SYNC] disabled (set sync_enabled=true in station_config_kv to activate)');
     } else {
       const { HttpTransport }   = require('./sync/transport-http');
       const { SyncScheduler }   = require('./sync/sync-scheduler');
+      // THE SYNC TOGGLE ENABLED AN ENGINE THAT HAD NOWHERE TO SEND TO (fixed 2026-08-12).
+      //
+      // Settings → Multi-Device Sync writes `sync_enabled` and NOTHING ELSE
+      // (SettingsPanel.tsx:1144). `sync_backend_url` is written by no UI anywhere in the tree, so
+      // this line resolved to '' and the transport was built pointing at no host. The operator
+      // switched sync on, the engine started, and not one mutation could ever leave. Silent.
+      //
+      // docs/mirror-regression-diagnosis-2026-07-14.md §"Restore path" step 2 predicted this exact
+      // failure a month ago — "if not, set that too (else baseUrl='' and the push has no host)" —
+      // and it was never closed.
+      //
+      // The fallback is the SAME backend every other account call already uses (library sync at
+      // :2779, cloud backup, account connect). A stored value still wins, so an operator pointing at
+      // a different backend is unaffected.
       const urlRow  = db.prepare("SELECT value FROM station_config_kv WHERE key = 'sync_backend_url' LIMIT 1").get();
-      const baseUrl = urlRow?.value || process.env.ETHER_SYNC_URL || '';
+      const baseUrl = urlRow?.value || process.env.ETHER_SYNC_URL || ETHER_BACKEND_URL || '';
+      if (!baseUrl) {
+        // REFUSE rather than start a scheduler that cannot reach anything. A dead engine that
+        // reports itself as running is the defect being fixed here; do not reintroduce it.
+        console.error('[SYNC] enabled but NO backend URL could be resolved — refusing to start a sync engine with nowhere to send. Set sync_backend_url in station_config_kv.');
+        _healthEvent('sync-misconfigured', { reason: 'no backend url', syncEnabled: true });
+        throw new Error('sync enabled with no backend url');
+      }
+      console.log(`[SYNC] enabled — backend ${baseUrl}${urlRow?.value ? ' (stored)' : ' (default)'}`);
       const transport = new HttpTransport(getDb, { baseUrl });   // getDb (function) → resolves the live handle after a reopen
       // UUID-identity (Tier-2): scope/route station programming by stable station UUID instead of the
       // per-machine local integer, so edits sync both ways across machines whose local ids differ.

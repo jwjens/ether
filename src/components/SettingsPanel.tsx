@@ -1144,6 +1144,19 @@ function SyncSection() {
       await (window as any).ether.stationConfigKv.upsertByKey(
         stationId, 'sync_enabled', next ? 'true' : 'false'
       ).catch(() => {});
+      // ALSO WRITE THE DESTINATION (2026-08-12). This toggle used to write `sync_enabled` alone, and
+      // `sync_backend_url` is written by no other UI in the tree — so main.js resolved the transport
+      // host to '' and started a sync engine with nowhere to send. Switching sync on appeared to work
+      // and moved nothing. docs/mirror-regression-diagnosis-2026-07-14.md predicted exactly this.
+      //
+      // main.js now also falls back to the app's own backend, so this is belt-and-braces — but it
+      // makes the stored config self-describing, and the repair scripts
+      // (scripts/push-pending-mutations.js) read this key and refuse to run without it.
+      if (next) {
+        await (window as any).ether.stationConfigKv.upsertByKey(
+          stationId, 'sync_backend_url', 'https://ether-backend-production.up.railway.app'
+        ).catch(() => {});
+      }
     }
   };
 
