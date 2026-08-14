@@ -1,7 +1,12 @@
 // The card colours and the words on them. Pure, so the mapping that tells an operator "you are
 // fine" or "you are about to run out" is testable without rendering.
 import { describe, it, expect } from "vitest";
-import { toLevel, levelColor, runwayValue, goalsValue, queueLevel, designationValue } from "./healthUtils";
+import { toLevel, levelColor, runwayValue, goalsValue, queueLevel, designationValue,
+         barState, noGoalsDeclared, type CategoryGoal } from "./healthUtils";
+
+const cat = (o: Partial<CategoryGoal> = {}): CategoryGoal => ({
+  categoryId: 1, category: "Gold", target: 4, spins24h: 96, actualSpinsPerHour: 4, ...o,
+});
 
 describe("toLevel — unknown reads GREY, never green", () => {
   it("passes the three real levels through", () => {
@@ -85,6 +90,72 @@ describe("queueLevel", () => {
   it("unknown is grey, NOT red — 'the engine did not answer' is not 'the queue is empty'", () => {
     expect(queueLevel(null)).toBe("grey");
     expect(queueLevel(undefined)).toBe("grey");
+  });
+});
+
+describe("barState — the rotation bar", () => {
+  it("is green at target and above", () => {
+    expect(barState(cat({ actualSpinsPerHour: 4 })).level).toBe("green");
+    expect(barState(cat({ actualSpinsPerHour: 9 })).level).toBe("green");
+  });
+
+  it("is yellow within 2 below, red beyond", () => {
+    expect(barState(cat({ actualSpinsPerHour: 3 })).level).toBe("yellow");
+    expect(barState(cat({ actualSpinsPerHour: 2 })).level).toBe("yellow");   // target - 2, inclusive
+    expect(barState(cat({ actualSpinsPerHour: 1.9 })).level).toBe("red");
+    expect(barState(cat({ actualSpinsPerHour: 0 })).level).toBe("red");
+  });
+
+  it("CLAMPS the fill at 100% but still flags 'over' — 4.6x must not look like exactly on target", () => {
+    // Real reading from halloVeen on 2026-08-13: 18.4/hr against a declared target of 4.
+    const b = barState(cat({ actualSpinsPerHour: 18.4 }));
+    expect(b.pct).toBe(100);
+    expect(b.over).toBe(true);
+    expect(barState(cat({ actualSpinsPerHour: 4 })).over).toBe(false);
+    expect(b.label).toBe("18.4/4 /hr");     // both numbers, so the overage is legible
+  });
+
+  it("NO TARGET is grey and empty, never a zero-percent judgement", () => {
+    // Most categories on real stations have no target. Dividing by it would be Infinity/NaN, and
+    // colouring it red would accuse a PD of missing a goal they never set.
+    const b = barState(cat({ target: null, actualSpinsPerHour: 0.1 }));
+    expect(b.hasTarget).toBe(false);
+    expect(b.level).toBe("grey");
+    expect(b.pct).toBe(0);
+    expect(b.label).toContain("no target");
+    expect(b.label).toContain("0.1");       // the actual is still stated
+  });
+
+  it("treats a target of 0 as 'no target' — 'no goal' and 'a goal of zero' differ", () => {
+    expect(barState(cat({ target: 0 })).hasTarget).toBe(false);
+    expect(barState(cat({ target: -1 })).hasTarget).toBe(false);
+  });
+
+  it("never emits NaN or a negative width from bad input", () => {
+    for (const a of [NaN, Infinity, -5, undefined as any]) {
+      const b = barState(cat({ actualSpinsPerHour: a }));
+      expect(Number.isFinite(b.pct)).toBe(true);
+      expect(b.pct).toBeGreaterThanOrEqual(0);
+      expect(b.pct).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it("scales proportionally in between", () => {
+    expect(barState(cat({ target: 10, actualSpinsPerHour: 5 })).pct).toBe(50);
+    expect(barState(cat({ target: 8, actualSpinsPerHour: 6 })).pct).toBe(75);
+  });
+});
+
+describe("noGoalsDeclared", () => {
+  it("is true when nothing is declared — the muted state", () => {
+    expect(noGoalsDeclared([])).toBe(true);
+    expect(noGoalsDeclared(null)).toBe(true);
+    expect(noGoalsDeclared([cat({ target: null }), cat({ categoryId: 2, target: 0 })])).toBe(true);
+  });
+
+  it("is false as soon as ONE category has a target", () => {
+    // Station 1 has exactly this shape: 1 of 10 categories with a target.
+    expect(noGoalsDeclared([cat({ target: null }), cat({ categoryId: 2, target: 3 })])).toBe(false);
   });
 });
 

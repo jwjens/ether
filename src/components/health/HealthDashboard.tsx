@@ -17,12 +17,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useActiveStation } from "../../hooks/useActiveStation";
 import { useAudioEngine } from "../../audio/AudioEngineContext";
 import { HealthCard } from "./HealthCard";
+import { HealthBar } from "./HealthBar";
 import {
   fetchLibraryHealth, fetchDesignation, stationFrom, designationFor,
   POLL_SNAPSHOT_MS, POLL_QUEUE_MS,
   type LibrarySnapshot, type DesignationRow,
 } from "./healthData";
-import { runwayValue, goalsValue, queueLevel, designationValue, toLevel } from "./healthUtils";
+import { runwayValue, goalsValue, queueLevel, designationValue, toLevel,
+         noGoalsDeclared, type CategoryGoal } from "./healthUtils";
 
 /** Navigate by the app's established pattern: App.tsx listens for `ether:open-*` and calls setPanel. */
 const openPanel = (name: string) => {
@@ -88,6 +90,20 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
   const st = useMemo(() => stationFrom(snap, stationId), [snap, stationId]);
   const dg = useMemo(() => designationFor(desig, stationId), [desig, stationId]);
 
+  // Rotation-goal bars. `categories` is added by goalCheck() and is present whether or not any
+  // target is declared, so a station with no goals still sees what it actually aired.
+  const cats: CategoryGoal[] = useMemo(() => {
+    const c = (st?.goals as any)?.categories;
+    return Array.isArray(c) ? c : [];
+  }, [st]);
+  const noGoals = useMemo(() => noGoalsDeclared(cats), [cats]);
+  const hoursObserved: number | null = (st?.goals as any)?.hoursObserved ?? null;
+  // Named in the empty state so "no goals set" still tells the operator something true about their
+  // station rather than only what is missing.
+  const topSpin = useMemo(
+    () => cats.reduce<CategoryGoal | null>((m, c) => (!m || c.actualSpinsPerHour > m.actualSpinsPerHour ? c : m), null),
+    [cats]);
+
   const runway = runwayValue(st?.runway);
   const goals  = goalsValue(st?.goals);
   const design = designationValue(dg);
@@ -139,6 +155,47 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
           status={qLevel}
           hint="Items waiting behind what is on air, read live from the audio engine."
         />
+      </div>
+
+      {/* ── ROTATION GOALS (Phase 2) ────────────────────────────────────────────────────────────
+          One bar per category: declared target vs what actually aired in the last 24 hours, from
+          goalCheck().categories (electron/library-health.js). */}
+      <div style={{ marginTop: "var(--s-3, 6px)" }}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between",
+                      marginBottom: "var(--s-2, 4px)" }}>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em",
+                        color: "var(--text-tertiary)", textTransform: "uppercase" as const }}>
+            Rotation goals
+          </div>
+          {/* The window is stated, because "spins per hour" is meaningless without it — and if the
+              station was off for much of it, say so rather than letting the divisor lie. */}
+          {cats.length > 0 && (
+            <div style={{ fontSize: 9, color: "var(--text-tertiary)" }}>
+              last 24h{hoursObserved != null && hoursObserved < 20 ? ` · only ${hoursObserved}h on air` : ""}
+            </div>
+          )}
+        </div>
+
+        {cats.length === 0 ? (
+          <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontStyle: "italic" }}>
+            No categories on this station yet.
+          </div>
+        ) : noGoals ? (
+          // The spec's muted state. It says what is absent AND what to do — a bare "No rotation
+          // goals set" leaves an operator with nowhere to go.
+          <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.6 }}>
+            No rotation goals set. Set <em>spins per hour</em> on a category in Categories to see it
+            measured here.
+            {topSpin && (
+              <> Right now the busiest is <strong style={{ color: "var(--text-secondary)" }}>{topSpin.category}</strong>{" "}
+              at {topSpin.actualSpinsPerHour}/hr.</>
+            )}
+          </div>
+        ) : (
+          <div>
+            {cats.map(c => <HealthBar key={c.categoryId} goal={c} />)}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -76,6 +76,68 @@ export function queueLevel(len: number | null | undefined): HealthLevel {
   return "green";
 }
 
+export interface CategoryGoal {
+  categoryId: number;
+  category: string;
+  /** null when the PD has not declared one. NEVER 0 — see library-health.js goalCheck. */
+  target: number | null;
+  spins24h: number;
+  actualSpinsPerHour: number;
+}
+
+export interface BarState {
+  /** 0–100, clamped. */
+  pct: number;
+  level: HealthLevel;
+  /** The right-hand figure, e.g. "4.2/4 spins/hr". */
+  label: string;
+  hasTarget: boolean;
+  /** actual exceeds target — the bar is clamped, so this is how "over" stays visible. */
+  over: boolean;
+}
+
+/**
+ * One rotation bar.
+ *
+ * Thresholds are the spec's: green at or above target, yellow within 2 below, red more than 2 below.
+ * So the scale measures UNDER-rotation — a category above its target is green. That is a defensible
+ * PD reading (a goal is a floor), but it means a category running well over target also reads green,
+ * which is why `over` exists and why the label always shows BOTH numbers. The colour answers "am I
+ * short?"; the numbers let an operator see the whole truth.
+ *
+ * NO TARGET IS NOT A FAILURE, and not a zero either. Most categories on real stations have no
+ * declared target (measured 2026-08-13: 1 of 10 on station 1, 1 of 2 on station 2, none on 3 or 4).
+ * Dividing by a missing target would be an Infinity or a NaN; judging against one that does not
+ * exist would be a claim nobody made. Such a bar renders grey and empty, with the actual stated.
+ */
+export function barState(g: CategoryGoal): BarState {
+  const actual = Number.isFinite(g.actualSpinsPerHour) ? g.actualSpinsPerHour : 0;
+  const target = g.target != null && g.target > 0 ? g.target : null;
+
+  if (target == null) {
+    return {
+      pct: 0, level: "grey", hasTarget: false, over: false,
+      label: `${actual} /hr · no target`,
+    };
+  }
+  const ratio = actual / target;
+  const level: HealthLevel = actual >= target ? "green"
+                           : actual >= target - 2 ? "yellow"
+                           : "red";
+  return {
+    pct: Math.max(0, Math.min(100, Math.round(ratio * 100))),
+    level,
+    hasTarget: true,
+    over: actual > target,
+    label: `${actual}/${target} /hr`,
+  };
+}
+
+/** True when not one category has a declared target — the "No rotation goals set" state. */
+export function noGoalsDeclared(cats: CategoryGoal[] | null | undefined): boolean {
+  return !cats || cats.length === 0 || cats.every(c => c.target == null || c.target <= 0);
+}
+
 /** Designation → the card face. Mirrors generation-designation.js status(), which the row already uses. */
 export function designationValue(
   // holder/holderName are nullable on the wire — generation-designation.js sets them to null when
