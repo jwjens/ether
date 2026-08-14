@@ -8434,6 +8434,143 @@ ipcMain.handle('sync:get-state', () => {
   }
 });
 
+// ── Engineer-accessible sync commands (dev console; no UI) ────────────────────────────────────
+//
+// Added 2026-08-14. Investigating "the sync is additive only" showed the deletion path was already
+// correct end to end — 32 soft-deleted songs, 32 `delete` mutations, push filters nothing by op,
+// pull applies tombstones — and that the real state was that NOTHING had ever synced in either
+// direction: every mutation `sync_status='pending'`, every row `origin='local'`.
+//
+// Confirming that and acting on it needed four commands the app did not have. They are deliberately
+// IPC-only: this is engineering surface, not an operator feature, and a button that force-drains a
+// mutation queue does not belong in the UI.
+
+/** `sync_uuid_identity` decides whether station-scoped rows route by station UUID instead of by the
+ *  LOCAL INTEGER station id. It is read ONCE, when the sync engine is constructed at startup
+ *  (see the sync bootstrap above), so writing it cannot take effect in the running process —
+ *  `restartRequired` is a fact about the read, not caution.
+ *
+ *  Written with the SYNCABLE writer, not `stationConfigKvSetLocal`: this key is not in
+ *  LOCAL_ONLY_KEYS, and set-local REFUSES any key that is not — the same silent-refusal trap that
+ *  made the designation record unwritable (4.4.193). Whether this key SHOULD be local-only is a
+ *  real question (syncing it lets one machine change another's sync semantics) and is deliberately
+ *  left alone here rather than changed as a side effect of adding a command. */
+ipcMain.handle('sync:set-uuid-identity', (_evt, arg) => {
+  try {
+    // Accepts `true`, `{ enabled: true }`, or `'true'` — this is typed by hand in a dev console.
+    const enabled = typeof arg === 'object' && arg !== null ? !!arg.enabled : !!arg;
+    const db = getDb();
+    const stationId = getActiveStationId();
+    if (stationId == null) return { ok: false, error: 'no active station — sign in and select a station first' };
+    const { stationConfigKvUpsertByKey, stationConfigKvGetValue } =
+      require('./sync/handlers/station_config_kv');
+    stationConfigKvUpsertByKey(db, stationId, 'sync_uuid_identity', enabled ? 'true' : 'false');
+    // Read it BACK. A write that reports success without re-reading is how the designation bug hid.
+    const readBack = stationConfigKvGetValue(db, stationId, 'sync_uuid_identity');
+    const engineIsUsingIt = !!(app._syncScheduler && app._syncScheduler._engineOpts?.uuidIdentity);
+    return {
+      ok: readBack === (enabled ? 'true' : 'false'),
+      key: 'sync_uuid_identity', stationId, wrote: enabled ? 'true' : 'false', readBack,
+      engineIsUsingIt,
+      restartRequired: true,
+      note: 'Stored. The sync engine reads this only at startup — fully quit and reopen Ether (the '
+          + 'audio daemon does not reload on its own) before this affects any push or pull.',
+    };
+  } catch (e) {
+    console.error('[sync:set-uuid-identity]', e.message);
+    return { ok: false, error: e.message };
+  }
+});
+
+/** Read-only. Run this on BOTH machines and compare before pushing anything: if the station UUIDs
+ *  do not match, UUID identity cannot merge them and a push is the corruption case, not the fix. */
+ipcMain.handle('sync:preflight', () => {
+  try {
+    const db = getDb();
+    const q = (sql, ...a) => { try { return db.prepare(sql).all(...a); } catch (e) { return [{ error: e.message }]; } };
+    const kv = (key) => {
+      try { return db.prepare("SELECT value FROM station_config_kv WHERE key = ? AND deleted_at IS NULL LIMIT 1").get(key)?.value ?? null; }
+      catch { return null; }
+    };
+    const scheduler = app._syncScheduler || null;
+    const pending = q("SELECT COUNT(*) n FROM mutations WHERE sync_status = 'pending'")[0]?.n ?? null;
+    return {
+      ok: true,
+      // Names WHICH machine this dump came from — the whole point is comparing two of them.
+      machineId: (() => { try { return getStableMachineId(); } catch { return null; } })(),
+      // The comparison this exists for.
+      stations: q("SELECT id, uuid, name, is_active FROM stations WHERE deleted_at IS NULL ORDER BY id"),
+      activeStationId: getActiveStationId(),
+      flags: {
+        sync_enabled: kv('sync_enabled'),
+        sync_uuid_identity: kv('sync_uuid_identity'),
+        // What the RUNNING engine is actually using, which is not the same thing as what is stored
+        // — the flag is read at startup, so a stored value can differ from the live one.
+        engineUuidIdentity: scheduler ? !!scheduler._engineOpts?.uuidIdentity : null,
+      },
+      schedulerRunning: scheduler ? !!scheduler._running : false,
+      mutations: {
+        pending,
+        total: q("SELECT COUNT(*) n FROM mutations")[0]?.n ?? null,
+        byStatus: q("SELECT sync_status, COUNT(*) n FROM mutations GROUP BY sync_status ORDER BY n DESC"),
+        // origin all 'local' means nothing has ever been RECEIVED, which push counts alone hide.
+        byOrigin: q("SELECT origin, COUNT(*) n FROM mutations GROUP BY origin ORDER BY n DESC"),
+        songDeletes: q("SELECT COUNT(*) n FROM mutations WHERE table_name='songs' AND LOWER(op)='delete'")[0]?.n ?? null,
+      },
+    };
+  } catch (e) {
+    console.error('[sync:preflight]', e.message);
+    return { ok: false, error: e.message };
+  }
+});
+
+/** One immediate cycle in one direction. Both report the pending count before and after rather than
+ *  only what moved: on an install that has never synced, "sent 473686" and "sent 0" look equally
+ *  plausible in isolation, and the before/after pair is what makes the result readable. */
+function _syncEngineOrError() {
+  const scheduler = app._syncScheduler;
+  if (!scheduler) {
+    return { error: 'sync is not running on this install — the engine is only constructed at startup '
+                  + 'when sync_enabled=true AND an account session and license resolve. Check sync:preflight.' };
+  }
+  try { return { engine: scheduler._ensureEngine() }; }
+  catch (e) { return { error: 'could not build the sync engine: ' + e.message }; }
+}
+function _pendingCount() {
+  try { return getDb().prepare("SELECT COUNT(*) n FROM mutations WHERE sync_status = 'pending'").get()?.n ?? null; }
+  catch { return null; }
+}
+
+ipcMain.handle('sync:push-now', async () => {
+  const got = _syncEngineOrError();
+  if (got.error) return { ok: false, error: got.error };
+  const pendingBefore = _pendingCount();
+  console.log(`[sync:push-now] forcing a push — ${pendingBefore} pending`);
+  try {
+    const r = await got.engine.push();
+    const pendingAfter = _pendingCount();
+    console.log(`[sync:push-now] sent=${r?.sent} accepted=${r?.accepted} rejected=${r?.rejected} pending ${pendingBefore} -> ${pendingAfter}`);
+    return { ok: true, ...r, pendingBefore, pendingAfter };
+  } catch (e) {
+    console.error('[sync:push-now]', e.message);
+    return { ok: false, error: e.message, pendingBefore, pendingAfter: _pendingCount() };
+  }
+});
+
+ipcMain.handle('sync:pull-now', async () => {
+  const got = _syncEngineOrError();
+  if (got.error) return { ok: false, error: got.error };
+  console.log('[sync:pull-now] forcing a pull');
+  try {
+    const r = await got.engine.pull();
+    console.log(`[sync:pull-now] pulled=${r?.pulled}`);
+    return { ok: true, ...r, pendingBefore: _pendingCount(), pendingAfter: _pendingCount() };
+  } catch (e) {
+    console.error('[sync:pull-now]', e.message);
+    return { ok: false, error: e.message };
+  }
+});
+
 // ── Machine identity (for /account/* endpoints + Manage Devices) ─
 // machine_id = client_identity.client_id (seeded by migrate-mutations-phase-sync-3.js,
 // stable for the life of this install).

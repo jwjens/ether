@@ -115,6 +115,7 @@ import TrackEditor from "./components/TrackEditor";
 import AboutPanel from "./components/AboutPanel";
 import ListenerAnalytics from "./components/ListenerAnalytics";
 import CloudBackup from "./components/CloudBackup";
+import MultiMachineSync from "./components/MultiMachineSync";
 import AudioRoutingScreen from "./components/AudioRoutingPanel";
 import StationManager from "./components/StationManager";
 import ManageDevices from "./components/ManageDevices";
@@ -2745,6 +2746,9 @@ export default function App() {
               {panel === "cloudbackup" && (
                 <PlanGate requires="pro" feature="Cloud Log Backup">
                   <CloudBackup />
+                  {/* Below the cloud backup controls, on the same page: the same question one step
+                      wider — is this account's data actually on more than this machine. */}
+                  <MultiMachineSync />
                 </PlanGate>
               )}
               {panel === "multioutput" && (
