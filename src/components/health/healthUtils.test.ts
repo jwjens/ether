@@ -2,7 +2,8 @@
 // fine" or "you are about to run out" is testable without rendering.
 import { describe, it, expect } from "vitest";
 import { toLevel, levelColor, runwayValue, goalsValue, queueLevel, designationValue,
-         barState, noGoalsDeclared, type CategoryGoal } from "./healthUtils";
+         barState, noGoalsDeclared, eventLevel, eventTitle, eventSummary, eventTime,
+         type CategoryGoal } from "./healthUtils";
 
 const cat = (o: Partial<CategoryGoal> = {}): CategoryGoal => ({
   categoryId: 1, category: "Gold", target: 4, spins24h: 96, actualSpinsPerHour: 4, ...o,
@@ -156,6 +157,62 @@ describe("noGoalsDeclared", () => {
   it("is false as soon as ONE category has a target", () => {
     // Station 1 has exactly this shape: 1 of 10 categories with a target.
     expect(noGoalsDeclared([cat({ target: null }), cat({ categoryId: 2, target: 3 })])).toBe(false);
+  });
+});
+
+describe("eventLevel — severity from the KIND, not from free text", () => {
+  it("marks real failures red", () => {
+    // These are all kinds this codebase actually emits.
+    for (const k of ["auto-extend-failed", "station-designation-write-failed", "sync-misconfigured",
+                     "cloud-reconcile-down", "logreader-floor"])
+      expect(eventLevel(k), k).toBe("red");
+  });
+
+  it("marks degraded-but-running amber", () => {
+    for (const k of ["logreader-missed", "fill-starved", "separation-relaxed",
+                     "auto-extend-skipped-not-designated", "auto-extend-migrated"])
+      expect(eventLevel(k), k).toBe("yellow");
+  });
+
+  it("leaves ordinary activity green — a timeline of amber is one nobody reads", () => {
+    for (const k of ["auto-extend", "designation-refreshed", "log-edit", "generate-timing",
+                     "generate-operator-rows-preserved", "cloud-reconcile-up"])
+      expect(eventLevel(k), k).toBe("green");
+  });
+
+  it("an unknown or missing kind is grey, never green", () => {
+    expect(eventLevel(undefined)).toBe("grey");
+    expect(eventLevel("")).toBe("grey");
+  });
+});
+
+describe("eventTitle / eventTime / eventSummary", () => {
+  it("humanises a kebab kind", () => {
+    expect(eventTitle("auto-extend-skipped-not-designated")).toBe("Auto extend skipped not designated");
+    expect(eventTitle(null)).toBe("event");
+  });
+
+  it("returns empty rather than 'Invalid Date' for a bad stamp", () => {
+    expect(eventTime("nonsense")).toBe("");
+    expect(eventTime(undefined)).toBe("");
+    expect(eventTime("2026-08-13T17:31:49.000Z")).not.toBe("");
+  });
+
+  it("prefers a real message over dumping the payload", () => {
+    expect(eventSummary({ station: "halloVeen", message: "Failed to fetch" }))
+      .toBe("halloVeen · Failed to fetch");
+    expect(eventSummary({ station: "OV", error: "boom" })).toContain("boom");
+  });
+
+  it("falls back to numbers that mean something on their own", () => {
+    expect(eventSummary({ station: "OV", rows: 42 })).toBe("OV · 42 rows");
+    expect(eventSummary({ from: "A", to: "B" })).toBe("A → B");
+    expect(eventSummary({ failures: 124 })).toBe("124 failures");
+  });
+
+  it("never throws on junk", () => {
+    expect(eventSummary(null)).toBe("");
+    expect(eventSummary({} as any)).toBe("");
   });
 });
 

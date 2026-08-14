@@ -18,6 +18,7 @@ import { useActiveStation } from "../../hooks/useActiveStation";
 import { useAudioEngine } from "../../audio/AudioEngineContext";
 import { HealthCard } from "./HealthCard";
 import { HealthBar } from "./HealthBar";
+import { HealthTimeline } from "./HealthTimeline";
 import {
   fetchLibraryHealth, fetchDesignation, stationFrom, designationFor,
   POLL_SNAPSHOT_MS, POLL_QUEUE_MS,
@@ -59,10 +60,22 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
     const [s, d] = await Promise.all([fetchLibraryHealth(), fetchDesignation()]);
     setSnap(s);
     setDesig(d);
+    // Diagnostic, but SILENT WHEN HEALTHY. It logs only when the goals payload is missing the
+    // `categories` field the bars read — which happens when the main process is older than
+    // library-health.js, because renderer HMR cannot reload main. A log that fires on every poll of
+    // a working install is noise; one that fires only on the failure is a sense.
+    try {
+      const stn = (s?.stations || []).find((x: any) => x.stationId === stationId) || null;
+      if (stn && !Array.isArray((stn.goals as any)?.categories)) {
+        console.warn("[health] goals.categories is missing for station", stationId,
+          "— the main process predates library-health.js's spins computation. Restart Electron; a renderer reload will not fix it.",
+          stn.goals);
+      }
+    } catch { /* logging must never break the panel */ }
     // Only an ABSENT snapshot is an error worth showing. An empty station list is a legitimate
     // "nothing measured yet" and the cards say so themselves.
     setErr(s ? null : "health data unavailable");
-  }, []);
+  }, [stationId]);
   useEffect(() => {
     load();
     const t = setInterval(load, POLL_SNAPSHOT_MS);
@@ -197,6 +210,9 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
           </div>
         )}
       </div>
+
+      {/* ── LIVE EVENTS (Phase 3) — the honest ledger, read back ─────────────────────────────── */}
+      <HealthTimeline />
     </div>
   );
 }

@@ -138,6 +138,70 @@ export function noGoalsDeclared(cats: CategoryGoal[] | null | undefined): boolea
   return !cats || cats.length === 0 || cats.every(c => c.target == null || c.target <= 0);
 }
 
+// ── EVENT SEVERITY (Phase 3) ────────────────────────────────────────────────────────────────────
+//
+// The ledger records ~25 kinds and carries no severity of its own, so the timeline has to classify.
+// Matched on the KIND, not on free text, because the kind is a stable contract and a message is not.
+//
+// The bias is deliberate: an event is ROUTINE unless it names something that went wrong. A timeline
+// where most lines are amber is one nobody reads, which is how the wall of text got ignored in the
+// first place.
+
+/** Something failed, was lost, or fell back to an emergency path. */
+const EVENT_RED = /(-failed$|^sync-misconfigured|-down$|floor|dead-air|not-saved|write-failed|error)/i;
+/** Something is degraded or was bent to keep going — worth a look, not an alarm. */
+const EVENT_YELLOW = /(missed|starved|relaxed|behind|skipped|stale|migrated|bypass|drift)/i;
+
+export function eventLevel(kind: string | null | undefined): HealthLevel {
+  const k = String(kind || "");
+  if (!k) return "grey";
+  if (EVENT_RED.test(k)) return "red";
+  if (EVENT_YELLOW.test(k)) return "yellow";
+  return "green";
+}
+
+/** A kind like `auto-extend-skipped-not-designated` → "Auto extend skipped not designated". */
+export function eventTitle(kind: string | null | undefined): string {
+  const k = String(kind || "").trim();
+  if (!k) return "event";
+  const s = k.replace(/[-_]+/g, " ").trim();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/**
+ * The one-line summary beside the timestamp.
+ *
+ * Prefers fields that say something specific — a station name, a reason, an error — over dumping the
+ * whole payload. An event whose detail is only machine ids reads as noise on a timeline; the
+ * expanded view still has everything.
+ */
+export function eventSummary(e: Record<string, any> | null | undefined): string {
+  if (!e || typeof e !== "object") return "";
+  const bits: string[] = [];
+  if (e.station) bits.push(String(e.station));
+  const detail = e.message || e.error || e.reason || e.text;
+  if (detail) bits.push(String(detail));
+  else {
+    // Numbers that mean something on their own, in the order an operator would want them.
+    if (e.rows != null) bits.push(`${e.rows} rows`);
+    if (e.keptRows != null) bits.push(`${e.keptRows} operator rows kept`);
+    if (e.runwayDaysAfter != null) bits.push(`runway ${e.runwayDaysAfter}d`);
+    if (e.from != null || e.to != null) bits.push(`${e.from || "none"} → ${e.to || "none"}`);
+    if (e.failures != null) bits.push(`${e.failures} failures`);
+    if (e.state) bits.push(String(e.state));
+  }
+  return bits.join(" · ");
+}
+
+/** HH:MM:SS from the ledger's ISO stamp. Returns "" rather than "Invalid Date". */
+export function eventTime(t: unknown): string {
+  try {
+    const d = new Date(String(t));
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  } catch { return ""; }
+}
+
 /** Designation → the card face. Mirrors generation-designation.js status(), which the row already uses. */
 export function designationValue(
   // holder/holderName are nullable on the wire — generation-designation.js sets them to null when
