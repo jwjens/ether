@@ -98,6 +98,34 @@ export default function MultiMachineSync() {
     refresh();
   };
 
+  // "Allow this machine to sync" — moved here from Settings → System when this panel became the one
+  // home. It is NOT an auto-sync switch: it is what lets the engine be CONSTRUCTED at startup, and
+  // Push/Pull Now cannot work without it (they ask the scheduler for the engine). Nothing moves on
+  // its own; the operator moves it with the buttons above.
+  //
+  // It writes `sync_backend_url` as well as `sync_enabled`, and that second write is load-bearing:
+  // no other UI in the tree writes it, so enabling sync alone left main.js resolving the transport
+  // host to '' and starting an engine with nowhere to send. That shipped once already (fixed
+  // 2026-08-12) and looked exactly like working sync that moved nothing.
+  const toggleEnabled = async (next: boolean) => {
+    const stationId = pf?.activeStationId;
+    if (stationId == null) { setResult({ ok: false, text: "no active station" }); return; }
+    setBusy("enabled");
+    setResult(null);
+    try {
+      const kv = (window as any).ether?.stationConfigKv;
+      await kv?.upsertByKey(stationId, "sync_enabled", next ? "true" : "false");
+      if (next) await kv?.upsertByKey(stationId, "sync_backend_url", "https://ether-backend-production.up.railway.app");
+      setResult({ ok: true, text: next
+        ? "Sync allowed. Fully quit and reopen Ether — the engine is built at startup."
+        : "Sync switched off for this machine." });
+    } catch (e: any) {
+      setResult({ ok: false, text: e?.message || String(e) });
+    }
+    setBusy(null);
+    refresh();
+  };
+
   const toggleUuid = async (next: boolean) => {
     setBusy("uuid");
     setResult(null);
@@ -199,6 +227,22 @@ export default function MultiMachineSync() {
             </span>
           )}
         </div>
+
+        <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer",
+                        borderTop: "1px solid var(--border-primary)", paddingTop: 12, marginBottom: 12 }}>
+          <input type="checkbox" checked={pf?.flags?.sync_enabled === "true"} disabled={!!busy}
+                 onChange={e => toggleEnabled(e.target.checked)} style={{ marginTop: 2 }} />
+          <span style={{ minWidth: 0 }}>
+            <span style={{ fontSize: 12, color: "var(--text-primary)", fontWeight: 600 }}>
+              Allow this machine to sync
+            </span>
+            <span style={{ display: "block", fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.6, marginTop: 2 }}>
+              Lets Ether build the sync engine at startup so the buttons above can work.
+              {" "}<strong>Nothing syncs on its own from here</strong> — you decide when to push and
+              pull. Requires a restart to take effect.
+            </span>
+          </span>
+        </label>
 
         <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer",
                         borderTop: "1px solid var(--border-primary)", paddingTop: 12 }}>

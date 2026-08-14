@@ -1167,8 +1167,20 @@ function SyncSection() {
     } catch (_) { return iso; }
   };
 
-  const shouldRender = useShouldRender('Multi-Device Sync', 'Keep multiple Ether installs in sync via the cloud backend', 'system');
-  if (!shouldRender) return null;
+  // MOVED (4.4.210) to Cloud Backup → Multi-Machine Sync, and no longer rendered here.
+  //
+  // This section was a single switch in Settings → System that turned sync on and then let it run
+  // unattended. That is the wrong shape for two machines sharing one account: an edit on the second
+  // machine can reach the first before anyone notices. The replacement is manual — Preflight, Push
+  // Now, Pull Now — with the enable switch reduced to "allow this machine to sync" (it only lets the
+  // engine be built; it starts nothing).
+  //
+  // The whole component is left in place rather than deleted: it also carries the sync-progress and
+  // device-listing UI, and lifting only the parts still wanted is a separate change that deserves
+  // its own diff. Nothing below this line renders.
+  useShouldRender('Multi-Device Sync', 'Keep multiple Ether installs in sync via the cloud backend', 'system');
+  return null;
+  // eslint-disable-next-line no-unreachable
 
   return (
     <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", overflow: "hidden", marginBottom: 12 }}>
