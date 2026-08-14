@@ -1098,6 +1098,17 @@ function MultiMachineSyncSection() {
 
   useEffect(() => { refresh(); }, []);
 
+  // Live status, pushed from the scheduler every tick. The panel no longer depends on anyone
+  // pressing Preflight to be current — continuous sync means the numbers move on their own, and a
+  // display that only updated on demand would routinely be stale by minutes.
+  const [status, setStatus] = useState<any>(null);
+  useEffect(() => {
+    const ether: any = (window as any).ether;
+    if (!ether?.on) return;
+    const h = ether.on("sync:status", (s: any) => setStatus(s));
+    return () => { try { ether.off("sync:status", h); } catch {} };
+  }, []);
+
   const run = async (cmd: "sync:push-now" | "sync:pull-now", label: string) => {
     setBusy(label); setMsg("");
     try {
@@ -1143,9 +1154,11 @@ function MultiMachineSyncSection() {
       title="Multi-Machine Sync"
       description="Station UUIDs, pending mutations, and manual push/pull between installs.">
       <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 12, lineHeight: 1.5 }}>
-        Every transfer here is manual — nothing syncs on a timer. Run <b>Preflight on both machines
-        and compare the station UUIDs before pushing anything</b>: if they do not match, UUID identity
-        cannot merge the installs and a push will mix the stations up rather than reconcile them.
+        Sync runs continuously in the background once enabled — pushing about every 10 seconds and
+        pulling about every 30. Enable it once and leave it. <b>Before enabling it on a second
+        machine, compare the station UUIDs below against that machine's</b>: if they do not match,
+        UUID identity cannot merge the installs and continuous sync will mix the stations up rather
+        than reconcile them, unattended.
       </div>
 
       {pf && !pf.ok && <div style={{ fontSize: 12, color: "#f87171", marginBottom: 10 }}>{pf.error}</div>}
@@ -1169,11 +1182,25 @@ function MultiMachineSyncSection() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
             <div>
               <div style={lbl}>Pending mutations</div>
+              {/* The live number wins when the scheduler is emitting — it is the one the engine just
+                  acted on, rather than whatever Preflight last happened to read. */}
               <div style={{ fontSize: 18, fontWeight: 800, fontVariantNumeric: "tabular-nums",
-                            color: (pf.mutations?.pending ?? 0) > 0 ? "#fbbf24" : "#4ade80" }}>
-                {pf.mutations?.pending?.toLocaleString() ?? "—"}
+                            color: ((status?.pending ?? pf.mutations?.pending) ?? 0) > 0 ? "#fbbf24" : "#4ade80" }}>
+                {(status?.pending ?? pf.mutations?.pending)?.toLocaleString() ?? "—"}
               </div>
-              <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>of {pf.mutations?.total?.toLocaleString() ?? "—"} total</div>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                of {pf.mutations?.total?.toLocaleString() ?? "—"} total
+                {status?.lastSyncAt && <> · last sync {new Date(status.lastSyncAt).toLocaleTimeString()}</>}
+              </div>
+              {/* Progress against the backlog this session. Only shown while there IS a backlog —
+                  a permanently-full bar on a synced install would say nothing. */}
+              {(status?.pending ?? 0) > 0 && (pf.mutations?.total ?? 0) > 0 && (
+                <div style={{ height: 4, background: "var(--bg-primary)", border: "1px solid var(--border-primary)", marginTop: 4 }}>
+                  <div style={{ height: "100%", background: "#fbbf24",
+                                width: `${Math.max(0, Math.min(100, 100 - ((status.pending / (pf.mutations!.total || 1)) * 100)))}%`,
+                                transition: "width .4s linear" }} />
+                </div>
+              )}
             </div>
             <div>
               <div style={lbl}>Sync engine</div>
@@ -1229,9 +1256,9 @@ function MultiMachineSyncSection() {
           <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>Enable the sync engine</span>
         </label>
         <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1.5 }}>
-          Builds the sync engine so Push Now and Pull Now can run. <b>It does not sync anything on its
-          own</b> — no timer, no background transfer. Stored: <b>{pf?.flags?.sync_enabled ?? "unset"}</b> ·
-          engine right now: <b>{pf?.schedulerRunning ? "running" : "not running"}</b>. Requires a Network licence.
+          The master switch. While this is on, Ether pushes and pulls in the background with no
+          further input. Stored: <b>{pf?.flags?.sync_enabled ?? "unset"}</b> · engine right now:{" "}
+          <b>{status?.running ?? pf?.schedulerRunning ? "running" : "not running"}</b>. Requires a Network licence.
         </div>
       </div>
 
@@ -1253,6 +1280,12 @@ function MultiMachineSyncSection() {
         </div>
       </div>
 
+      {/* Kept as EMERGENCY OVERRIDES, not the normal path — the loop is. They earn their place: if
+          the timer is wedged or an operator needs a transfer to land before walking away from the
+          machine, "wait up to 30 seconds and hope" is not an answer. */}
+      <div style={{ fontSize: 11, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, margin: "4px 0 6px" }}>
+        Manual override
+      </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button style={btn} onClick={refresh} disabled={busy !== null}>{busy === "preflight" ? "CHECKING…" : "PREFLIGHT"}</button>
         <button style={btn} onClick={() => run("sync:push-now", "push")} disabled={busy !== null}>{busy === "push" ? "PUSHING…" : "PUSH NOW"}</button>

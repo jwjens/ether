@@ -15,6 +15,9 @@
 const { SyncEngine } = require('./sync-engine');
 
 const DEFAULT_INTERVAL_MS = 5_000;
+// Continuous-sync cadence (2026-08-14). Push is the fast half; pull runs every Nth tick.
+const DEFAULT_PUSH_INTERVAL_MS = 10_000;
+const DEFAULT_PULL_EVERY_N     = 3;      // ~30s at the default push interval
 const BACKOFF_MS = [10_000, 30_000, 60_000]; // indexed by (failures - 1), capped at last
 
 // Persisted in system_state. Set to '1' the first time pull() returns
@@ -73,6 +76,10 @@ class SyncScheduler {
     this._running  = false;
     this._paused   = false;
     this._failures = 0;
+    // Starts at 0 so the FIRST tick pulls as well as pushes: on a machine that has just been
+    // enabled, waiting three cycles to discover the other install's work is the one moment the
+    // delay is actually noticed.
+    this._tickCount = 0;
 
     // On-air predicate (Tier-2 re-baseline safety). Gates ONLY the heavy one-shot corrective re-pull;
     // normal incremental sync always flows. Defaults to never-on-air. _rebaselineInFlight prevents two
@@ -202,28 +209,38 @@ class SyncScheduler {
    *  runs until `sync_initial_drained` is set, and stops after.
    *
    *  Set `sync_auto = 'true'` in station_config_kv to restore continuous ticking. */
-  _autoTickAllowed() {
-    if (!this._readInitialDrainedFlag()) return true;   // first-run pull-down: still automatic
+  /** CONTINUOUS BY DEFAULT (2026-08-14, Phase 1 of the RCS-parity sync work).
+   *
+   *  The loop is the product: the operator enables sync once and never thinks about it again.
+   *  `sync_enabled` is the master switch — while it is on, this ticks; the manual IPCs remain as
+   *  emergency overrides rather than the normal path.
+   *
+   *  Cadence, both overridable in station_config_kv:
+   *    sync_push_interval_ms   default 10 000 — every tick pushes
+   *    sync_pull_every_n_ticks default 3      — every third tick also pulls (~30s)
+   *
+   *  Pull is deliberately the slower of the two. Push is this machine's own work leaving, which is
+   *  cheap and wanted promptly; pull applies OTHER machines' writes into a live playout database,
+   *  and doing that three times as often buys nothing while tripling the window in which a remote
+   *  edit lands mid-show. */
+  _cfgInt(key, dflt, min) {
     try {
       const row = this._db.prepare(
-        "SELECT value FROM station_config_kv WHERE key = 'sync_auto' AND deleted_at IS NULL LIMIT 1"
-      ).get();
-      return row?.value === 'true';
-    } catch (_) {
-      return false;   // unreadable -> manual, the safe direction
-    }
+        "SELECT value FROM station_config_kv WHERE key = ? AND deleted_at IS NULL LIMIT 1"
+      ).get(key);
+      const v = parseInt(row?.value, 10);
+      return Number.isFinite(v) && v >= min ? v : dflt;
+    } catch (_) { return dflt; }
   }
+
+  _pushIntervalMs() { return this._cfgInt('sync_push_interval_ms', DEFAULT_PUSH_INTERVAL_MS, 1_000); }
+  _pullEveryNTicks() { return this._cfgInt('sync_pull_every_n_ticks', DEFAULT_PULL_EVERY_N, 1); }
 
   _schedule() {
     if (!this._running || this._paused) return;
-    if (!this._autoTickAllowed()) {
-      // The engine stays built and reachable — sync:push-now / sync:pull-now still work on demand.
-      console.log('[SYNC] manual mode — no automatic cycle (set sync_auto=true to re-enable)');
-      return;
-    }
     const delay = this._failures > 0
       ? BACKOFF_MS[Math.min(this._failures - 1, BACKOFF_MS.length - 1)]
-      : this._getInterval();
+      : this._pushIntervalMs();
     this._timer = setTimeout(() => this._tick(), delay);
   }
 
@@ -240,7 +257,16 @@ class SyncScheduler {
     }
 
     try {
-      const { push, pull } = await this._engine.syncCycle();
+      // Push every tick; pull on every Nth. syncCycle() is kept for the pull ticks so its cursor
+      // bookkeeping is unchanged — the push-only ticks just skip the read half.
+      const doPull = (this._tickCount++ % this._pullEveryNTicks()) === 0;
+      let push, pull;
+      if (doPull) {
+        ({ push, pull } = await this._engine.syncCycle());
+      } else {
+        push = await this._engine.push();
+        pull = { pulled: 0, applied: 0 };
+      }
 
       const pushed  = push.accepted ?? 0;
       const pulled  = pull.pulled   ?? 0;
@@ -253,6 +279,25 @@ class SyncScheduler {
       if (pushed > 0 || pulled > 0) {
         console.log(`[SYNC] tick: pulled ${pulled}, applied ${applied}, pushed ${pushed}`);
       }
+
+      // Live status to the renderer, every tick. The panel used to learn the pending count only
+      // when someone pressed Preflight, which is no longer a thing anyone should have to press.
+      // Emitted from the scheduler rather than polled by the UI so the number the operator reads is
+      // the one the engine just acted on, not one a second reader fetched separately.
+      try {
+        let pending = null;
+        try { pending = this._db.prepare("SELECT COUNT(*) n FROM mutations WHERE sync_status = 'pending'").get()?.n ?? null; } catch (_) {}
+        this._broadcast('sync:status', {
+          pending,
+          lastSyncAt: this._stats.lastSyncAt,
+          pushedToday: this._stats.pushedToday,
+          pulledToday: this._stats.pulledToday,
+          pushedThisTick: pushed,
+          pulledThisTick: pulled,
+          running: this._running && !this._paused,
+          failures: this._failures,
+        });
+      } catch (_) { /* a status broadcast must never break the cycle */ }
 
       // Initial-bulk-pull-complete signal. Fires the first time a pull comes
       // back with zero mutations after the flag has never been set. The flag
