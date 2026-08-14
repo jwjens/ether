@@ -1,8 +1,10 @@
-import { useState, useEffect, useCallback, useRef, Fragment, Component, ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, Component, ReactNode } from "react";
 import { parseKvFlag } from "../lib/kvFlag";
 import { designationView, refreshBanner, type RefreshBanner } from "../lib/designationRow";
 import { HealthDashboard } from "./health/HealthDashboard";
-import { sectionCard, SectionTitle } from "./health/sectionChrome";
+import { PanelStack, HealthPanel, PanelMeter, StatTile } from "./health/sectionChrome";
+import { dbToPercent } from "./health/meterScale";
+import { SpotTimeline } from "./health/SpotTimeline";
 import { useContainerSize, WALL_W, WALL_H } from "./health/useContainerWidth";
 
 // Must match electron/main.js _autoGenerateEnabled and the LOCAL_ONLY_KEYS allowlist in
@@ -16,7 +18,8 @@ import { deriveHaRollup, type HaDashboard, type HaRollupLevel } from "../lib/haR
 import { PopoutBtn } from "./PopoutShell";
 import { LiveHealthMonitor } from "../audio/health";
 import { LiveActivityTerminal } from "./LiveActivityTerminal";
-import { projectSpots, driftLevel, fmtDrift, fmtClock, type ProjectedSpot, type SpotRow } from "../lib/spotProjection";
+// driftLevel/fmtDrift/fmtClock moved with the spot table's replacement into SpotTimeline.
+import { projectSpots, type ProjectedSpot, type SpotRow } from "../lib/spotProjection";
 
 // Two-column breakpoint for the Health Monitor. Below this the terminal drops BELOW the sections
 // (one column) rather than squeezing both. 820 = the sections' comfortable minimum (~360) plus the
@@ -114,7 +117,7 @@ function DesignationRows({ d, busy, onRefresh, readAt, err, autoOn, banner }: {
             worst of the three options — it is indistinguishable from a broken one. The 30s poll keeps
             the rows current regardless, so disabling costs no information. */}
         <button onClick={onRefresh} disabled={v.buttonDisabled} title={v.buttonTitle}
-          style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.08em", padding: "3px 10px",
+          style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", padding: "3px 10px",
                    background: "transparent", border: "1px solid var(--border-primary)",
                    color: blocked ? "var(--text-tertiary)" : "var(--text-secondary)",
                    opacity: blocked ? 0.5 : busy ? 0.7 : 1,
@@ -123,7 +126,7 @@ function DesignationRows({ d, busy, onRefresh, readAt, err, autoOn, banner }: {
         </button>
         {/* Said out loud next to the button, not hidden in a tooltip nobody hovers. */}
         {v.note && (
-          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)" }} title={v.buttonTitle}>{v.note}</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-tertiary)" }} title={v.buttonTitle}>{v.note}</span>
         )}
         <RefreshAgo at={readAt} />
       </div>
@@ -131,7 +134,7 @@ function DesignationRows({ d, busy, onRefresh, readAt, err, autoOn, banner }: {
           the 30-second background poll, so it says nothing about whether the button did anything. */}
       {banner && (
         <div style={{
-          fontSize: 11, fontWeight: 700, padding: "5px 8px", marginBottom: 6,
+          fontSize: 13, fontWeight: 700, padding: "5px 8px", marginBottom: 6,
           border: `1px solid ${banner.tone === "success" ? "var(--accent-green, #22c55e)" : "var(--border-primary)"}`,
           color: banner.tone === "success" ? "var(--accent-green, #22c55e)" : "var(--text-secondary)",
           background: banner.tone === "success" ? "rgba(34,197,94,0.08)" : "transparent",
@@ -140,7 +143,7 @@ function DesignationRows({ d, busy, onRefresh, readAt, err, autoOn, banner }: {
       {/* Under the row, on its own line, in red — an error squeezed onto the end of the button line
           was easy to miss and easy to mistake for part of the timestamp. */}
       {err && (
-        <div style={{ fontSize: 9, color: "var(--accent-red)", padding: "0 0 6px" }}>{err}</div>
+        <div style={{ fontSize: 11, color: "var(--accent-red)", padding: "0 0 6px" }}>{err}</div>
       )}
     </>
   );
@@ -197,7 +200,7 @@ export class EtherErrorBoundary extends Component<ErrorBoundaryProps, ErrorBound
 
           {/* Error detail */}
           <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 0, padding: "10px 16px", maxWidth: 480, width: "90%" }}>
-            <code style={{ fontSize: 10, color: "rgba(255,100,100,0.8)", fontFamily: "'DM Mono', monospace", display: "block", wordBreak: "break-all" as const }}>
+            <code style={{ fontSize: 12, color: "rgba(255,100,100,0.8)", fontFamily: "'DM Mono', monospace", display: "block", wordBreak: "break-all" as const }}>
               {this.state.error?.message}
             </code>
           </div>
@@ -217,7 +220,7 @@ export class EtherErrorBoundary extends Component<ErrorBoundaryProps, ErrorBound
             </button>
           </div>
 
-          <p style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", margin: 0 }}>
+          <p style={{ fontSize: 12, color: "rgba(255,255,255,0.25)", margin: 0 }}>
             Audio engine and broadcast continue unaffected
           </p>
         </div>
@@ -262,11 +265,11 @@ export function SessionRestoreToast({ info, onDismiss }: { info: RestoreInfo; on
     }}>
       <div style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--accent-green)", flexShrink: 0 }} />
       <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-primary)" }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)" }}>
           Session restored {ago > 0 ? `(${ago} min ago)` : ""}
         </div>
         {info.title && (
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 2 }}>
+          <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>
             {info.title} was at {fmtPos(info.position)} · {info.queueLen} tracks in queue
           </div>
         )}
@@ -292,26 +295,38 @@ interface HealthData {
   lastError: string | null;
 }
 
-function HealthDot({ status }: { status: "ok" | "warn" | "error" }) {
-  const color = status === "ok" ? "var(--accent-green)" : status === "warn" ? "var(--accent-amber)" : "var(--accent-red)";
+// HealthDot was removed with the HealthRow redesign: the status is now the tile's left EDGE, which
+// is legible from across a room in a way a 10px dot never was. Nothing else referenced it.
+function HealthRow({ label, value, status, sub }: { label: string; value: string; status: "ok" | "warn" | "error"; sub?: string }) {
+  // HealthRow is the workhorse of the bottom half — Core Systems, High Availability, Library &
+  // Rotation, the canary and the designation rows are ALL built from it, 31 call sites. So its
+  // design IS the bottom half's design, and changing it here changes all of them at once rather
+  // than by editing thirty-one blocks of inline style.
+  //
+  // It used to be a dot, a label and a small coloured word on an underline — a row of text. Now it
+  // is a tile: a status edge you can read at a distance, the reading set as a FIGURE on the right,
+  // and its own ground so a section of them scans as a set of readings rather than as a paragraph.
+  const color = status === "ok" ? "var(--accent-green)"
+              : status === "warn" ? "var(--accent-amber)"
+              : "var(--accent-red)";
   return (
     <div style={{
-      width: 7, height: 7, borderRadius: "50%", background: color, flexShrink: 0,
-      boxShadow: status === "ok" ? `0 0 6px ${color}` : "none",
-      animation: status === "error" ? "onair-pulse 1s ease-in-out infinite" : "none",
-    }} />
-  );
-}
-
-function HealthRow({ label, value, status, sub }: { label: string; value: string; status: "ok" | "warn" | "error"; sub?: string }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderBottom: "1px solid var(--border-primary)" }}>
-      <HealthDot status={status} />
-      <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-primary)" }}>{label}</div>
-        {sub && <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 1 }}>{sub}</div>}
+      display: "flex", alignItems: "center", gap: "var(--s-4, 8px)",
+      padding: "var(--s-4, 8px) var(--s-4, 8px) var(--s-4, 8px) var(--s-5, 12px)",
+      marginBottom: "var(--s-3, 6px)",
+      background: "var(--bg-secondary)",
+      border: "1px solid var(--border-primary)",
+      borderLeft: `3px solid ${color}`,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-primary)" }}>{label}</div>
+        {sub && <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2, lineHeight: 1.45 }}>{sub}</div>}
       </div>
-      <span style={{ fontSize: 10, fontFamily: "'DM Mono', monospace", color: status === "ok" ? "var(--accent-green)" : status === "warn" ? "var(--accent-amber)" : "var(--accent-red)" }}>
+      {/* The reading leads at 17px. A status word set in the same size as its own caption is why the
+          panel read as a wall of text — nothing on it was ever the ANSWER. */}
+      <span style={{ fontSize: 17, fontWeight: 800, fontFamily: "'DM Mono', monospace",
+                     fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap",
+                     lineHeight: 1.2, textAlign: "right" as const, color }}>
         {value}
       </span>
     </div>
@@ -357,7 +372,7 @@ function HaRollupBanner({ dash }: { dash: HaDashboard | null }) {
         <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "0.04em", color, fontFamily: "'Newsreader', Georgia, serif" }}>
           {rollup.label}
         </div>
-        <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 2, lineHeight: 1.5 }}>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2, lineHeight: 1.5 }}>
           {rollup.reasons.length ? rollup.reasons.join(" ") : "High Availability — crash & hang supervision"}
         </div>
       </div>
@@ -945,7 +960,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                 : "Switch to Wall view — fixed 1920×1080, read-only, no scrolling"}
               style={{
                 background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
-                color: "var(--text-secondary)", cursor: "pointer", fontSize: 9, fontWeight: 700,
+                color: "var(--text-secondary)", cursor: "pointer", fontSize: 11, fontWeight: 700,
                 letterSpacing: "0.1em", padding: "4px 8px", borderRadius: 0,
               }}>
               {wall ? "OPS VIEW" : "WALL VIEW"}
@@ -954,7 +969,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
             <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 18 }}>✕</button>
           </div>
         </div>
-        <p style={{ margin: "4px 0 0", fontSize: 11, color: "var(--text-tertiary)" }}>
+        <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-tertiary)" }}>
           Session uptime: {uptimeStr} · Live per-station health updates every second
         </p>
       </div>
@@ -995,7 +1010,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                             borderLeft: "1px solid var(--border-primary)" }}>
                 <button onClick={() => setTermOpen(false)} title="Minimise the live activity terminal"
                   style={{ background: "var(--bg-tertiary)", border: "none", borderBottom: "1px solid var(--border-primary)",
-                           color: "var(--text-secondary)", cursor: "pointer", fontSize: 9, fontWeight: 700,
+                           color: "var(--text-secondary)", cursor: "pointer", fontSize: 11, fontWeight: 700,
                            letterSpacing: "0.12em", padding: "6px 10px", textAlign: "left" as const }}>
                   LIVE ACTIVITY  —  MINIMISE
                 </button>
@@ -1006,7 +1021,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
             ) : (
               <button onClick={() => setTermOpen(true)} title="Expand the live activity terminal"
                 style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
-                         color: "var(--text-tertiary)", cursor: "pointer", fontSize: 9, fontWeight: 700,
+                         color: "var(--text-tertiary)", cursor: "pointer", fontSize: 11, fontWeight: 700,
                          letterSpacing: "0.14em", padding: "10px 0", writingMode: "vertical-rl" as const,
                          textOrientation: "mixed" as const }}>
                 LIVE ACTIVITY
@@ -1035,12 +1050,15 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         {/* ── LIVE Health Monitor (primary; the real telemetry, updates every second) ── */}
         {liveTelemetry}
 
+        {/* Everything below is the operator's to arrange: drag a panel by its header, collapse the
+            ones that are not today's question. Order and collapsed state persist per stack. */}
+        <PanelStack stack="health-monitor">
+
         {/* ── AUDIO PROCESSING — the loudness chain, at a glance ──────────────────────────────────
             IN → OUT LUFS and the gain-reduction bar say whether the ride is actually riding. OFF is
             stated, never blank. Fed by the same audio:proc-meters push the Settings panel uses. */}
         {procOn && (
-          <div style={sectionCard}>
-            <SectionTitle>Audio Processing</SectionTitle>
+          <HealthPanel id="audio-processing" title="Audio Processing">
             {(() => {
               const anyOn = procOn.local || procOn.stream;
               const paths = !anyOn ? "off on both paths"
@@ -1056,104 +1074,72 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
               const boosting = ride >= 0;
               return (
                 <>
-                  <HealthRow
-                    label="Loudness processing"
-                    value={!anyOn ? "Off" : m ? `${lufs(m.inLufs)} → ${lufs(m.outLufs)} LUFS` : "On — waiting for audio"}
-                    status={!anyOn ? "warn" : m ? "ok" : "warn"}
-                    sub={!anyOn
-                      ? "no loudness ride or limiter on this station — quiet tracks stay quiet"
-                      : `${paths} · riding to ${m ? m.target : -14} LUFS · limiter holds −1 dBTP`}
-                  />
+                  {/* The chain's four figures, read first. IN → OUT is the whole story of a loudness
+                      ride, and it was previously a sentence fragment inside a label row. */}
+                  <div style={{ display: "grid", gap: "var(--s-5, 12px)", marginBottom: "var(--s-5, 12px)",
+                                gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))" }}>
+                    <StatTile label="in lufs" value={!anyOn ? "off" : m ? lufs(m.inLufs) : "—"} />
+                    <StatTile label="out lufs" value={!anyOn ? "off" : m ? lufs(m.outLufs) : "—"} />
+                    <StatTile label="target" value={`${m ? m.target : -14}`} />
+                    <StatTile label="ride"
+                              value={!anyOn || !m ? "—" : `${ride >= 0 ? "+" : "−"}${Math.abs(ride).toFixed(1)}`}
+                              tone={!anyOn || !m ? undefined : Math.abs(ride) > 6 ? "yellow" : undefined} />
+                  </div>
+                  <div style={{ fontSize: 13, color: !anyOn ? "var(--accent-amber)" : "var(--text-tertiary)",
+                                marginBottom: anyOn && m ? "var(--s-4, 8px)" : 0, lineHeight: 1.45 }}>
+                    {!anyOn
+                      ? "Off on both paths — no loudness ride or limiter on this station, so quiet tracks stay quiet."
+                      : m ? `${paths} · riding to ${m.target} LUFS · limiter holds −1 dBTP`
+                          : `${paths} · on, waiting for audio`}
+                  </div>
                   {anyOn && m && (
-                    <div style={{ padding: "2px 2px 8px" }}>
-                      {/* BEFORE and AFTER level meters — the actual signal, moving. These are what say
-                          the chain is passing audio and what it is doing to the level; the ride bar
-                          below says how hard it is working. -60..0 dBFS, amber over -6, red at -1. */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: "var(--s-3, 6px)" }}>
+                      {/* BEFORE and AFTER level meters — the actual signal, moving. These say the
+                          chain is passing audio and what it is doing to the level; the ride meter
+                          says how hard it is working. Same geometry and same dB mapping as the deck
+                          meters above, so a level reads the same wherever it is shown. */}
                       {([["in", m.inPeakDb], ["out", m.outPeakDb]] as const).map(([which, pk]) => {
-                        const pct = Math.max(0, Math.min(100, ((pk + 60) / 60) * 100));
-                        const col = pk >= -1 ? "#f87171" : pk >= -6 ? "var(--accent-amber, #fbbf24)"
+                        const col = pk >= -1 ? "var(--accent-red)" : pk >= -6 ? "var(--accent-amber)"
                                   : which === "out" ? "var(--accent-blue)" : "var(--accent-green)";
                         return (
-                          <div key={which} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, color: "var(--text-tertiary)", fontFamily: "'DM Mono', ui-monospace, monospace", marginBottom: 3 }}>
-                            <span style={{ minWidth: 96 }}>{which === "in" ? "level before" : "level after"}</span>
-                            <div style={{ flex: 1, height: 6, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", position: "relative" as const }}>
-                              <div style={{ position: "absolute" as const, top: 0, bottom: 0, left: 0, width: `${pct}%`, background: col, transition: "width .08s linear" }} />
-                            </div>
-                            <span style={{ minWidth: 62, textAlign: "right" as const, color: "var(--text-tertiary)" }}>
-                              {pk <= -70 ? "—" : `${pk.toFixed(1)} dBFS`}
-                            </span>
-                          </div>
+                          <PanelMeter key={which} label={which} color={col}
+                                      pct={dbToPercent(pk)} tickPct={dbToPercent(-6)}
+                                      read={pk <= -70 ? "—" : `${pk.toFixed(1)} dBFS`} />
                         );
                       })}
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 10, color: "var(--text-tertiary)", fontFamily: "'DM Mono', ui-monospace, monospace" }}>
-                        <span style={{ minWidth: 96 }}>ride gain</span>
-                        <div style={{ flex: 1, height: 6, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", position: "relative" as const }}>
-                          {/* unity mark — the bar grows right when boosting, left when cutting */}
-                          <div style={{ position: "absolute" as const, left: "50%", top: 0, bottom: 0, width: 1, background: "var(--border-secondary)" }} />
-                          <div style={{
-                            position: "absolute" as const, top: 0, bottom: 0,
-                            left: boosting ? "50%" : `${50 - ridePct}%`, width: `${ridePct}%`,
-                            background: boosting ? "var(--accent-green)" : "var(--accent-amber, #fbbf24)",
-                            transition: "left .1s, width .1s",
-                          }} />
-                        </div>
-                        <span style={{ minWidth: 62, textAlign: "right" as const, color: Math.abs(ride) > 0.3 ? "var(--text-secondary)" : "var(--text-tertiary)" }}>
-                          {`${ride >= 0 ? "+" : "−"}${Math.abs(ride).toFixed(1)} dB`}
-                        </span>
-                      </div>
-                      <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 4, paddingLeft: 104 }}>
-                        limiter <span style={{ color: gr > 0.1 ? "var(--accent-blue)" : "var(--text-tertiary)", fontWeight: gr > 0.1 ? 700 : 400 }}>
-                          {gr > 0.1 ? `clamping −${gr.toFixed(1)} dB` : "idle"}
-                        </span>
-                      </div>
+                      {/* Ride gain is bidirectional from unity at centre — it is the one meter here
+                          that can grow leftwards, which is why PanelMeter takes a `from`. */}
+                      <PanelMeter label="ride"
+                                  from={boosting ? 50 : 50 - ridePct} pct={ridePct} tickPct={50}
+                                  tickColor="var(--border-secondary)"
+                                  color={boosting ? "var(--accent-green)" : "var(--accent-amber)"}
+                                  read={`${ride >= 0 ? "+" : "−"}${Math.abs(ride).toFixed(1)} dB`}
+                                  readTone={Math.abs(ride) > 0.3 ? "var(--text-primary)" : undefined} />
+                      {/* The limiter sits at 0 at steady state BY DESIGN, so it is stated in words
+                          rather than given a bar — a bar pinned at zero reads as broken (2026-08-01). */}
+                      <PanelMeter label="limiter" pct={Math.min(100, (gr / 6) * 100)}
+                                  color="var(--accent-blue)"
+                                  read={gr > 0.1 ? `−${gr.toFixed(1)} dB` : "idle"}
+                                  readTone={gr > 0.1 ? "var(--accent-blue)" : "var(--text-tertiary)"} />
                     </div>
                   )}
                 </>
               );
             })()}
-          </div>
+          </HealthPanel>
         )}
 
         {/* ── SPOT SCHEDULE — anchors vs what actually airs. Display-only. ────────────────────────
             The point of this table is the PROJECTED column: a spot that is going to miss its anchor
             goes amber/red before it misses, not after. */}
         {spotRows.length > 0 && (
-          <div style={sectionCard}>
-            <SectionTitle>Spot Schedule — this hour &amp; next</SectionTitle>
-            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 8, fontStyle: "italic" }}>
-              Drift is fired−anchor once aired, projected−anchor while pending. Green ≤15s · amber ≤60s · red beyond.
+          <HealthPanel id="spot-schedule" title="Spot Schedule — this hour &amp; next">
+            <SpotTimeline rows={spotRows} />
+            <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: "var(--s-4, 8px)", lineHeight: 1.45 }}>
+              Hollow markers are pending, solid have aired. The top-of-hour anchor is fired by the hard
+              cut — it lands exact by construction, not by scheduling. Hover a marker for its times.
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "auto auto auto 1fr", gap: "2px 12px", fontSize: 10, fontFamily: "'DM Mono', ui-monospace, monospace" }}>
-              {["Anchor", "Projected", "Fired", "Drift"].map(h => (
-                <div key={h} style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, paddingBottom: 4 }}>{h}</div>
-              ))}
-              {spotRows.map((s, i) => {
-                const lvl = driftLevel(s.driftSec);
-                const col = lvl === "ok" ? "var(--accent-green)" : lvl === "warn" ? "var(--accent-amber, #fbbf24)" : lvl === "error" ? "#f87171" : "var(--text-tertiary)";
-                const played = s.state === "played" || !!s.playedAt;
-                return (
-                  <Fragment key={`${s.scheduledAt}-${i}`}>
-                    <div style={{ color: "var(--text-secondary)" }}>
-                      {fmtClock(s.scheduledAt)}
-                      {s.hardCutOwned && <span style={{ color: "var(--text-tertiary)", fontSize: 9 }}> ⏻</span>}
-                    </div>
-                    <div style={{ color: played ? "var(--text-tertiary)" : col }}>
-                      {played ? "—" : (s.beyondQueue ? "≥ " : "") + fmtClock(s.projectedAt)}
-                    </div>
-                    <div style={{ color: "var(--text-tertiary)" }}>{played ? fmtClock(s.playedAt) : "pending"}</div>
-                    <div style={{ color: col, fontWeight: lvl === "error" ? 700 : 400 }}>
-                      {(!played && s.beyondQueue && s.driftSec !== null ? "≥ " : "") + fmtDrift(s.driftSec)}
-                      {s.hardCutOwned && <span style={{ color: "var(--text-tertiary)", fontWeight: 400 }}> · hard cut</span>}
-                      {!played && s.beyondQueue && <span style={{ color: "var(--text-tertiary)", fontWeight: 400 }}> · past queue</span>}
-                    </div>
-                  </Fragment>
-                );
-              })}
-            </div>
-            <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 6 }}>
-              ⏻ = top-of-hour anchor, fired by the hard cut — it lands exact by construction, not by scheduling.
-            </div>
-          </div>
+          </HealthPanel>
         )}
 
         {/* The "Legacy diagnostics — may be stale" divider was removed in v3 Phase 1. It described
@@ -1164,8 +1150,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         <HaRollupBanner dash={dash} />
 
         {/* Core systems */}
-        <div style={sectionCard}>
-          <SectionTitle>Core Systems</SectionTitle>
+        <HealthPanel id="core-systems" title="Core Systems">
           {health ? (
             <>
               <HealthRow label="Audio Engine" value={health.audioEngine === "ok" ? "Running" : "Error"} status={health.audioEngine} sub="Rodio audio backend" />
@@ -1193,11 +1178,10 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
           ) : (
             <div style={{ padding: "20px 0", fontSize: 12, color: "var(--text-tertiary)" }}>Loading...</div>
           )}
-        </div>
+        </HealthPanel>
 
         {/* ── High Availability ── */}
-        <div style={sectionCard}>
-          <SectionTitle>High Availability</SectionTitle>
+        <HealthPanel id="high-availability" title="High Availability">
           {dash ? (() => {
             const ha = dash.ha; const hh = dash.health; const wd = ha.watchdog;
             return (
@@ -1271,36 +1255,35 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
 
           {/* Recent watchdog events (on-demand tail of watchdog.log) */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 16, marginBottom: 8 }}>
-            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const }}>Recent Events</div>
-            <button onClick={loadEvents} disabled={eventsLoading} style={{ fontSize: 9, color: "var(--text-tertiary)", background: "none", border: "none", cursor: eventsLoading ? "wait" : "pointer", textDecoration: "underline", padding: 0 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const }}>Recent Events</div>
+            <button onClick={loadEvents} disabled={eventsLoading} style={{ fontSize: 12, color: "var(--text-tertiary)", background: "none", border: "none", cursor: eventsLoading ? "wait" : "pointer", textDecoration: "underline", padding: 0 }}>
               {eventsLoading ? "…" : "Refresh"}
             </button>
           </div>
-          <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "10px 12px", maxHeight: 160, overflowY: "auto" as const, fontFamily: "'DM Mono', monospace", fontSize: 9, lineHeight: 1.6, color: "var(--text-tertiary)" }}>
+          <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: "10px 12px", maxHeight: 160, overflowY: "auto" as const, fontFamily: "'DM Mono', monospace", fontSize: 11, lineHeight: 1.6, color: "var(--text-tertiary)" }}>
             {events.length ? events.map((line, i) => (
               <div key={i} style={{ whiteSpace: "pre-wrap" as const, wordBreak: "break-word" as const }}>{line}</div>
             )) : (
               <div>No watchdog log yet — HA may not be running on this machine.</div>
             )}
           </div>
-        </div>
+        </HealthPanel>
 
         {/* Last error if any */}
         {health?.lastError && (
           <div style={{ margin: "8px 0 16px", padding: "10px 12px", borderRadius: 0, background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.2)" }}>
-            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", color: "var(--accent-red)", marginBottom: 4, textTransform: "uppercase" as const }}>Last Error</div>
-            <div style={{ fontSize: 10, color: "rgba(248,113,113,0.8)", fontFamily: "'DM Mono', monospace" }}>{health.lastError}</div>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "var(--accent-red)", marginBottom: 4, textTransform: "uppercase" as const }}>Last Error</div>
+            <div style={{ fontSize: 12, color: "rgba(248,113,113,0.8)", fontFamily: "'DM Mono', monospace" }}>{health.lastError}</div>
             <button
               onClick={() => (window as any).ether.stationConfigKv.removeByKey(stationId, 'last_error').then(load)}
-              style={{ marginTop: 6, fontSize: 9, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline" }}
+              style={{ marginTop: 6, fontSize: 12, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", padding: 0, textDecoration: "underline" }}
             >Dismiss</button>
           </div>
         )}
 
         {/* ── LIBRARY & ROTATION (Slice C) — per station: materialization, pool, skips, prefetch lag ── */}
         {libHealth?.stations?.length > 0 && (
-          <div style={sectionCard}>
-            <SectionTitle>Library &amp; Rotation</SectionTitle>
+          <HealthPanel id="library-rotation" title="Library &amp; Rotation">
             {libHealth.stations.map((st: any) => {
               const dotCol = st.level === "red" ? "#f87171" : st.level === "yellow" ? "#fbbf24" : "#22c55e";
               const lvl = (l: string) => (l === "red" ? "error" : l === "yellow" ? "warn" : "ok");
@@ -1343,12 +1326,12 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                     sub={st.materialization.dead > 0 ? `${st.materialization.dead} unresolvable — needs re-import` : st.materialization.r2Only > 0 ? `${st.materialization.r2Only} cloud-only (prefetching)` : "all local"}
                   />
                   {st.materialization.dead > 0 && (
-                    <button onClick={() => showUnresolvable(st.stationId)} style={{ fontSize: 9, color: "var(--accent-red)", background: "none", border: "none", cursor: "pointer", padding: "2px 0 0 0", textDecoration: "underline" }}>
+                    <button onClick={() => showUnresolvable(st.stationId)} style={{ fontSize: 11, color: "var(--accent-red)", background: "none", border: "none", cursor: "pointer", padding: "2px 0 0 0", textDecoration: "underline" }}>
                       {unresolvableFor === st.stationId ? "hide" : "show"} unresolvable list
                     </button>
                   )}
                   {unresolvableFor === st.stationId && (
-                    <div style={{ margin: "4px 0 6px", padding: "6px 8px", background: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.2)", maxHeight: 120, overflowY: "auto" as const, fontSize: 10, color: "rgba(248,113,113,0.85)", fontFamily: "'DM Mono', monospace" }}>
+                    <div style={{ margin: "4px 0 6px", padding: "6px 8px", background: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.2)", maxHeight: 120, overflowY: "auto" as const, fontSize: 12, color: "rgba(248,113,113,0.85)", fontFamily: "'DM Mono', monospace" }}>
                       {unresolvableList.length ? unresolvableList.map(r => <div key={r.id}>{r.title}</div>) : <div>none</div>}
                     </div>
                   )}
@@ -1408,11 +1391,11 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                         <div style={{ margin: "2px 0 6px 0", padding: "8px 12px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
                           {g.mismatches.slice(0, 4).map((c: any) => (
                             <div key={c.clockId} style={{ marginBottom: 6 }}>
-                              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
                                 {c.clock} <span style={{ color: "var(--text-tertiary)", fontWeight: 500, textTransform: "none", letterSpacing: 0 }}>· {c.musicSlots} music slots</span>
                               </div>
                               {c.rows.slice(0, 5).map((w: any) => (
-                                <div key={w.categoryId} style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", marginTop: 2 }}>
+                                <div key={w.categoryId} style={{ fontSize: 13, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", marginTop: 2 }}>
                                   <span style={{ color: "var(--text-primary)" }}>{w.category}</span>
                                   {"  target "}{w.target}/hr{"  ·  "}
                                   {w.unused ? "not in this clock" : `${w.slots} slot${w.slots === 1 ? "" : "s"}`}
@@ -1422,10 +1405,10 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                                   </span>
                                 </div>
                               ))}
-                              {c.rows.length > 5 && <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 2 }}>+{c.rows.length - 5} more in this clock</div>}
+                              {c.rows.length > 5 && <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>+{c.rows.length - 5} more in this clock</div>}
                             </div>
                           ))}
-                          {g.mismatches.length > 4 && <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>+{g.mismatches.length - 4} more clock(s) — full detail in Rotation Analytics</div>}
+                          {g.mismatches.length > 4 && <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>+{g.mismatches.length - 4} more clock(s) — full detail in Rotation Analytics</div>}
                         </div>
                       </>
                     );
@@ -1442,7 +1425,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                 </div>
               );
             })}
-          </div>
+          </HealthPanel>
         )}
 
         {/* ── DESIGNATION ACTIVITY — the ledger, read back ──────────────────────────────────────
@@ -1451,20 +1434,19 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
             Activity terminal is NOT this — it tails the daemon's log, so main-process events such as
             a designation refresh never appeared anywhere on screen. */}
         {libHealth?.stations?.length > 0 && (
-          <div style={sectionCard}>
-            <SectionTitle right={
+          <HealthPanel id="designation-activity" title="Designation Activity" right={
               <button onClick={loadDesigEvents}
                 title="Re-read the health ledger. A plain read — it changes nothing."
                 style={{ fontSize: "var(--t-micro, 9px)", fontWeight: 800, letterSpacing: "0.08em",
                          padding: "2px 8px", background: "transparent",
                          border: "1px solid var(--border-primary)", borderRadius: "var(--r-0, 0px)",
                          color: "var(--text-tertiary)", cursor: "pointer" }}>RELOAD</button>
-            }>Designation Activity</SectionTitle>
+            }>
             {desigEventsErr && (
-              <div style={{ fontSize: 10, color: "var(--accent-red)", marginBottom: 4 }}>{desigEventsErr}</div>
+              <div style={{ fontSize: 12, color: "var(--accent-red)", marginBottom: 4 }}>{desigEventsErr}</div>
             )}
             {desigEvents.length === 0 && !desigEventsErr && (
-              <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
+              <div style={{ fontSize: 13, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
                 No designation activity recorded yet. Pressing REFRESH NOW, or a station changing
                 which machine is designated, is recorded here.
               </div>
@@ -1486,20 +1468,19 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
               return (
                 <div key={i} style={{ display: "flex", gap: 8, alignItems: "baseline", padding: "3px 0",
                                       borderBottom: "1px solid var(--border-primary)" }}>
-                  <span style={{ fontSize: 10, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", whiteSpace: "nowrap" as const }}>{when}</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: failed ? "var(--accent-red)" : "var(--text-secondary)", whiteSpace: "nowrap" as const }}>{label}</span>
-                  <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{detail}</span>
+                  <span style={{ fontSize: 12, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", whiteSpace: "nowrap" as const }}>{when}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: failed ? "var(--accent-red)" : "var(--text-secondary)", whiteSpace: "nowrap" as const }}>{label}</span>
+                  <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{detail}</span>
                 </div>
               );
             })}
-          </div>
+          </HealthPanel>
         )}
 
         {/* ── LOG-READER FLIP — per-station CANARY toggle (activation). Local-only; never syncs. ── */}
         {libHealth?.stations?.length > 0 && (
-          <div style={sectionCard}>
-            <SectionTitle>Log-Reader Flip — Canary</SectionTitle>
-            <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 10, lineHeight: 1.5 }}>
+          <HealthPanel id="canary" title="Log-Reader Flip — Canary">
+            <div style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 10, lineHeight: 1.5 }}>
               Switch a station to the §2.7 time-anchored log-reader (playout reads the calendar directly). Per-station and local-only — it never syncs. Flip <strong>Magical Forest</strong> first and verify on air before the next.
             </div>
             {libHealth.stations.map((st: any) => {
@@ -1521,7 +1502,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                       disabled={busy}
                       title={busy ? "Reading the stored value…" : !known ? "Stored value unreadable — click to re-read and set" : on ? "Playout: time-anchored log-reader" : "Playout: legacy queue"}
                       style={{
-                        fontSize: 10, fontWeight: 800, letterSpacing: "0.08em", padding: "4px 12px", borderRadius: 0,
+                        fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", padding: "4px 12px", borderRadius: 0,
                         cursor: busy ? "wait" : "pointer",
                         background: on ? "#8868D8" : "transparent",
                         border: `1px solid ${on ? "#8868D8" : !known ? "var(--accent-amber, #fbbf24)" : "var(--border-primary)"}`,
@@ -1533,7 +1514,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                   {/* Auto-generation, per station and per machine. Off is silent by design: a station
                       that is hand-programmed is a legitimate choice, not a fault to nag about. */}
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
-                    <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+                    <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
                       Auto-generate {autoGen[st.stationId] === true ? "— this machine keeps the log topped up" : "— off; this machine will not extend the log"}
                     </span>
                     <button
@@ -1541,7 +1522,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                       disabled={autoBusy === st.stationId}
                       title="Local to this machine. When on, this machine extends the log automatically as the runway drops."
                       style={{
-                        fontSize: 10, fontWeight: 800, letterSpacing: "0.08em", padding: "3px 10px", borderRadius: 0,
+                        fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", padding: "3px 10px", borderRadius: 0,
                         cursor: autoBusy === st.stationId ? "wait" : "pointer",
                         background: autoGen[st.stationId] === true ? "var(--accent-green)" : "transparent",
                         border: `1px solid ${autoGen[st.stationId] === true ? "var(--accent-green)" : "var(--border-primary)"}`,
@@ -1551,22 +1532,21 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                     >{autoGen[st.stationId] === true ? "AUTO ON" : "AUTO OFF"}</button>
                   </div>
                   {autoErr[st.stationId] && (
-                    <div style={{ fontSize: 9, color: "var(--accent-red)", marginTop: 2 }}>{autoErr[st.stationId]}</div>
+                    <div style={{ fontSize: 11, color: "var(--accent-red)", marginTop: 2 }}>{autoErr[st.stationId]}</div>
                   )}
                   {err && (
-                    <div style={{ fontSize: 9, color: "#f87171", marginTop: 3, textAlign: "right" as const }}>{err}</div>
+                    <div style={{ fontSize: 11, color: "#f87171", marginTop: 3, textAlign: "right" as const }}>{err}</div>
                   )}
                 </div>
               );
             })}
-          </div>
+          </HealthPanel>
         )}
 
         {/* ── LOG-READER FLIP §2.7 boundary shadow (Phase 3, burn-in) — observation only, flag OFF ── */}
         {shadowSummary.length > 0 && (
-          <div style={sectionCard}>
-            <SectionTitle>Log-Reader Flip — §2.7 Shadow (burn-in)</SectionTitle>
-            <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 12, lineHeight: 1.5 }}>
+          <HealthPanel id="shadow" title="Log-Reader Flip — §2.7 Shadow (burn-in)">
+            <div style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12, lineHeight: 1.5 }}>
               Flag OFF — measuring what the time-anchored flip <em>would</em> air at each boundary vs what legacy airs. Low agreement here is the drift the flip removes; it is not an error.
             </div>
             {shadowSummary.map((st: any) => {
@@ -1582,13 +1562,12 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                 />
               );
             })}
-          </div>
+          </HealthPanel>
         )}
 
         {/* Play log export */}
-        <div style={sectionCard}>
-          <SectionTitle>DMCA Play Log Export</SectionTitle>
-          <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 12, lineHeight: 1.6 }}>
+        <HealthPanel id="dmca" title="DMCA Play Log Export">
+          <div style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 12, lineHeight: 1.6 }}>
             Export a complete CSV of all played tracks with timestamps for DMCA/performance rights reporting. Includes title, artist, deck, and exact play time.
           </div>
           <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
@@ -1613,11 +1592,12 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
             </button>
           </div>
           {health && (
-            <div style={{ fontSize: 9, color: "var(--text-tertiary)" }}>
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
               {health.playLogCount.toLocaleString()} entries · Last played: {health.lastPlayedAt ? new Date(health.lastPlayedAt * 1000).toLocaleString() : "never"}
             </div>
           )}
-        </div>
+        </HealthPanel>
+        </PanelStack>
 
         {/* The "Ether Infrastructure" badge was removed in v3 Phase 1. Five hardcoded strings with
             green dots beside them, claiming "Crash Recovery" and "Dead Air Detection" are healthy

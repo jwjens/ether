@@ -20,6 +20,7 @@ import { HealthCard } from "./HealthCard";
 import { HealthBar } from "./HealthBar";
 import { HealthTimeline } from "./HealthTimeline";
 import { HealthSection } from "./HealthSection";
+import { PanelStack } from "./sectionChrome";
 import { HealthChart } from "./HealthChart";
 import { HealthMeters } from "./HealthMeters";
 import { useContainerWidth, WALL_MIN_PX } from "./useContainerWidth";
@@ -45,9 +46,30 @@ export interface HealthDashboardProps {
    *  still works standing alone. */
   stationId?: number | null;
   onScrollToDesignation?: () => void;
+  /** The library-health snapshot, supplied by the owner.
+   *
+   *  SINGLE OWNER (v3 Phase 1). This component and HealthMonitor were each polling
+   *  `library-health:get` and `designation:status` on their own 30s timer, so the two could land out
+   *  of phase and the panel could show two different numbers for the SAME station fact at the same
+   *  moment. On a wall display an operator reads as truth, that is an honesty defect.
+   *
+   *  `undefined` means "not supplied — poll for yourself" and keeps the component able to stand
+   *  alone; `null` means "supplied, and there is no snapshot". The two must not be conflated. */
+  snapshot?: LibrarySnapshot | null;
+  designation?: DesignationRow[];
+  /** Force the wall layout instead of measuring.
+   *
+   *  Required inside the wall canvas: that canvas is authored at 1920 and CSS-scaled to fit, and
+   *  getBoundingClientRect reports the SCALED width. At a 0.6 fit-scale a 1920px canvas measures
+   *  1152 and would silently drop below WALL_MIN_PX — the panel's own "right code, wrong thing
+   *  measured" trap, one layer down. */
+  wall?: boolean;
 }
 
-export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignation }: HealthDashboardProps) {
+export function HealthDashboard({
+  stationId: stationIdProp, onScrollToDesignation,
+  snapshot: snapshotProp, designation: designationProp, wall: wallProp,
+}: HealthDashboardProps) {
   // useActiveStation() returns an OBJECT, not the id — the spec's §0 calls it "the active station
   // ID". Destructured the way every other caller in the tree does (App.tsx:548).
   // stationUuid too: the levels channel is scoped by UUID, not by the per-machine integer id
@@ -57,23 +79,45 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
   // Measured on THE PANEL, not the window — the wall display is reached via the popout, which is its
   // own window and can be full-screened while the main window stays any size. See useContainerWidth.
   const [wallRef, panelWidth] = useContainerWidth();
-  const wall = panelWidth >= WALL_MIN_PX;
+  const wall = wallProp ?? panelWidth >= WALL_MIN_PX;
   const engine = useAudioEngine();
 
-  const [snap, setSnap] = useState<LibrarySnapshot | null>(null);
-  const [desig, setDesig] = useState<DesignationRow[]>([]);
+  // Owned only when nothing was supplied. See the `snapshot` prop for why this distinction matters.
+  const owns = snapshotProp === undefined;
+  const [ownSnap, setOwnSnap] = useState<LibrarySnapshot | null>(null);
+  const [ownDesig, setOwnDesig] = useState<DesignationRow[]>([]);
+  const [ownErr, setOwnErr] = useState<string | null>(null);
   const [queueLen, setQueueLen] = useState<number | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+
+  const snap = owns ? ownSnap : (snapshotProp ?? null);
+  const desig = designationProp ?? ownDesig;
+  // Only an ABSENT snapshot is an error worth showing. An empty station list is a legitimate
+  // "nothing measured yet" and the cards say so themselves.
+  const err = owns ? ownErr : (snapshotProp === null ? "health data unavailable" : null);
 
   // ── snapshot + designation, 30s (the cadence the existing panel already uses) ──────────────────
   const load = useCallback(async () => {
     const [s, d] = await Promise.all([fetchLibraryHealth(), fetchDesignation()]);
-    setSnap(s);
-    setDesig(d);
-    // Diagnostic, but SILENT WHEN HEALTHY. It logs only when the goals payload is missing the
-    // `categories` field the bars read — which happens when the main process is older than
-    // library-health.js, because renderer HMR cannot reload main. A log that fires on every poll of
-    // a working install is noise; one that fires only on the failure is a sense.
+    setOwnSnap(s);
+    setOwnDesig(d);
+    setOwnErr(s ? null : "health data unavailable");
+  }, []);
+  useEffect(() => {
+    if (!owns) return;              // fed by the owner — one fetch, one clock, one number
+    load();
+    const t = setInterval(load, POLL_SNAPSHOT_MS);
+    return () => clearInterval(t);
+  }, [load, owns]);
+
+  // Diagnostic, but SILENT WHEN HEALTHY. It logs only when the goals payload is missing the
+  // `categories` field the bars read — which happens when the main process is older than
+  // library-health.js, because renderer HMR cannot reload main. A log that fires on every poll of
+  // a working install is noise; one that fires only on the failure is a sense.
+  // Keyed on the snapshot rather than living inside load(), so it still fires when the data is fed
+  // from the owner instead of polled here.
+  useEffect(() => {
+    const s = snap;
+    if (!s) return;
     try {
       const list = (s?.stations || []) as any[];
       const stn = list.find((x: any) => x.stationId === stationId) || null;
@@ -91,15 +135,7 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
           stn.goals);
       }
     } catch { /* logging must never break the panel */ }
-    // Only an ABSENT snapshot is an error worth showing. An empty station list is a legitimate
-    // "nothing measured yet" and the cards say so themselves.
-    setErr(s ? null : "health data unavailable");
-  }, [stationId]);
-  useEffect(() => {
-    load();
-    const t = setInterval(load, POLL_SNAPSHOT_MS);
-    return () => clearInterval(t);
-  }, [load]);
+  }, [snap, stationId]);
 
   // ── queue depth, 5s ───────────────────────────────────────────────────────────────────────────
   // Read in-process from the engine — there is no IPC for this (healthData.ts, correction 2). Held
@@ -221,19 +257,25 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
         display: "grid", gap: "var(--s-4, 8px)", alignItems: "start",
         gridTemplateColumns: wall ? "minmax(0, 3fr) minmax(0, 2fr)" : "minmax(0, 1fr)",
       }}>
+        {/* The four are the operator's to arrange, same as the sections below the dashboard: drag a
+            header to reorder, collapse what today is not about. PanelStack renders no DOM of its
+            own, so the wall grid still lays these out — the pairing above describes the DEFAULT
+            order, which is now a starting point rather than a fixed one. */}
+        <PanelStack stack="health-dashboard">
         {/* Runway trend — paired with the Runway card above it; the number and its history read as
             one thought. Given the wider column because a trend needs horizontal room. */}
-        <HealthChart stationId={stationId} days={7} />
+        <HealthChart id="runway-trend" stationId={stationId} days={7} />
 
         {/* ── AUDIO LEVELS — decks in dBFS, program loudness in LUFS. Two measurements, two scales.
             Sits BESIDE the trend, not below it: both answer "what is happening right now", and on a
             wall display the pair is the first thing anyone looks at. */}
-        <HealthMeters stationUuid={stationUuid} />
+        <HealthMeters id="audio-levels" stationUuid={stationUuid} />
 
       {/* ── ROTATION GOALS (Phase 2) ────────────────────────────────────────────────────────────
           One bar per category: declared target vs what actually aired in the last 24 hours, from
           goalCheck().categories (electron/library-health.js). */}
       <HealthSection
+        id="rotation-goals"
         title="Rotation goals"
         right={cats.length > 0 ? (
           // The window is stated, because "spins per hour" is meaningless without it — and if the
@@ -266,7 +308,8 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
 
         {/* ── LIVE EVENTS (Phase 3) — the honest ledger, read back. Paired with the goals: both are
             "what has been decided", as against the live pair above. */}
-        <HealthTimeline maxHeight={wall ? 260 : 300} />
+        <HealthTimeline id="live-events" maxHeight={wall ? 260 : 300} />
+        </PanelStack>
       </div>
     </div>
   );

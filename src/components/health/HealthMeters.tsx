@@ -56,7 +56,7 @@ function DeckMeter({ deck, refs }: {
   );
 }
 
-function HealthMetersImpl({ stationUuid }: { stationUuid?: string | null }) {
+function HealthMetersImpl({ id, stationUuid }: { id?: string; stationUuid?: string | null }) {
   const fills = useRef<Record<string, HTMLDivElement | null>>({});
   const peaks = useRef<Record<string, HTMLDivElement | null>>({});
   const texts = useRef<Record<string, HTMLSpanElement | null>>({});
@@ -120,7 +120,7 @@ function HealthMetersImpl({ stationUuid }: { stationUuid?: string | null }) {
   const peakLvl = peakLevel(peakDb);
 
   return (
-    <HealthSection title="Audio levels">
+    <HealthSection id={id} title="Audio levels">
       {DECKS.map(d => (
         <DeckMeter key={d} deck={d}
           refs={{ fill: (el) => { fills.current[d] = el; },

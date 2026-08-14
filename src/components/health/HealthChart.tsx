@@ -18,7 +18,7 @@ const POLL_MS = 60_000;
 
 interface RunwayPoint { at: number; days: number | null; level: string | null; sampled: boolean; }
 
-function HealthChartImpl({ stationId, days = 7 }: { stationId?: number | null; days?: number }) {
+function HealthChartImpl({ id, stationId, days = 7 }: { id?: string; stationId?: number | null; days?: number }) {
   const [series, setSeries] = useState<RunwayPoint[]>([]);
   const [samples, setSamples] = useState(0);
   const [err, setErr] = useState<string | null>(null);
@@ -53,6 +53,7 @@ function HealthChartImpl({ stationId, days = 7 }: { stationId?: number | null; d
 
   return (
     <HealthSection
+      id={id}
       title={`Runway · last ${days} days`}
       right={
         <span style={{ display: "flex", alignItems: "baseline", gap: "var(--s-3, 6px)" }}>

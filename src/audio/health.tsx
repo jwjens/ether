@@ -4,7 +4,9 @@
 
 import { useEffect, useState, type CSSProperties } from "react";
 import { levelColor, type HealthLevel as CanonicalLevel } from "../components/health/healthUtils";
-import { sectionCard, SectionTitle, StatTile } from "../components/health/sectionChrome";
+import { StatTile, PanelStack, HealthPanel, PanelMeter } from "../components/health/sectionChrome";
+// Same mapping the dashboard meters use, so a peak reads the same in both places.
+import { ampToDbfs, dbToPercent } from "../components/health/meterScale";
 
 /** The WIRE format of the `audio:health` feed — the main process emits these uppercase (see the
  *  snapshot builder in electron/audio-health.js). It stays uppercase here because that is what
@@ -90,14 +92,32 @@ export function HealthDot({ level, size = 9 }: { level: HealthLevel; size?: numb
   );
 }
 
-// Thin meter bar (0..1 fraction) — used for frames/s (vs full rate) and peak.
-export function MeterBar({ frac, color, width = 60, height = 6 }: { frac: number; color: string; width?: number; height?: number }) {
+/**
+ * Station meter — the SAME row as the dashboard's deck meters: 52px label, a `flex: 1` bar at
+ * height 14 on the primary ground, and a 92px monospace readout.
+ *
+ * The width is the whole point. This was a fixed 110px chip sitting in a grid column, and before
+ * that a 60×6 rounded strip on a white wash — either way it read as a progress hairline while the
+ * meters six inches above it were full-width instruments. Same component shape, same geometry, so
+ * the two halves of the panel are one panel.
+ *
+ * `scale` matters as much as the size. This bar shows two unrelated quantities:
+ *
+ *   "linear"  frames/sec against full rate — a genuine 0..1 fraction, correctly drawn linearly.
+ *   "audio"   PEAK, which is an AMPLITUDE. Drawn linearly it disagrees with the dashboard meters,
+ *             which map amplitude through dB — the same signal would draw two different lengths in
+ *             one panel, and the quiet half of the range would be invisible here while being
+ *             perfectly legible six inches above. Same mapping, same reading.
+ */
+export function StationMeter({ label, frac, color, read, scale = "linear" }: {
+  label: string; frac: number; color: string; read: string; scale?: "linear" | "audio";
+}) {
   const f = Math.max(0, Math.min(1, frac || 0));
-  return (
-    <span style={{ display: "inline-block", width, height, background: "rgba(255,255,255,0.10)", borderRadius: 3, overflow: "hidden", verticalAlign: "middle" }}>
-      <span style={{ display: "block", width: `${f * 100}%`, height: "100%", background: color, transition: "width 0.25s linear" }} />
-    </span>
-  );
+  const pct = scale === "audio" ? dbToPercent(ampToDbfs(f)) : f * 100;
+  // The -6 dBFS mark belongs only on the dB-scaled meter — on the linear rate bar it would point at
+  // nothing.
+  return <PanelMeter label={label} pct={pct} color={color} read={read}
+                     tickPct={scale === "audio" ? dbToPercent(-6) : undefined} />;
 }
 export function framesFrac(fps: number): number { return (fps || 0) / FULL_RATE; }
 
@@ -147,7 +167,10 @@ function hhmmss(iso: string): string { try { return new Date(iso).toLocaleTimeSt
 // second off the same feed as the mini panel. Display only.
 export function LiveHealthMonitor() {
   const snap = useAudioHealth();
-  const cell: CSSProperties = { fontSize: 12, color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" };
+  // 13px, not 12: this is a reading on a panel meant to be scanned, in some cases from across a
+  // studio. The whole bottom half sat at 9–12px, which is why it read as a developer log next to the
+  // dashboard above it.
+  const cell: CSSProperties = { fontSize: 13, color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" };
   // `hdr` is gone — all three headings are SectionTitle now, so the panel has one heading style
   // rather than two that drift apart. `cell` stays: the per-station rows still use it.
   if (!snap) return <div style={{ padding: "18px 0", fontSize: 12, color: "var(--text-tertiary)" }}>Connecting to live health feed…</div>;
@@ -161,8 +184,8 @@ export function LiveHealthMonitor() {
           the row scans as four figures instead of one line of prose.
           Only restarts and ping carry a colour, and only when they mean something — colouring all
           four would make the colour mean nothing. */}
-      <div style={sectionCard}>
-        <SectionTitle>Engine</SectionTitle>
+      <PanelStack stack="audio-health">
+      <HealthPanel id="engine" title="Engine">
         <div style={{ display: "grid", gap: "var(--s-5, 12px)",
                       gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))" }}>
           <StatTile label="uptime" value={fmtUptime(snap.engine.uptimeSec)} />
@@ -173,27 +196,28 @@ export function LiveHealthMonitor() {
                     value={snap.engine.pingMs != null ? `${snap.engine.pingMs}ms` : "—"}
                     tone={(snap.engine.pingMs ?? 0) > 500 ? "yellow" : undefined} />
         </div>
-      </div>
+      </HealthPanel>
       {/* Per-station live rows */}
-      <div style={sectionCard}>
-        <SectionTitle>Stations (live)</SectionTitle>
+      <HealthPanel id="stations" title="Stations (live)">
         {snap.stations.length === 0 && <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>No stations reporting.</div>}
         {snap.stations.map(s => (
-          <div key={s.uuid} style={{ display: "grid", gridTemplateColumns: "16px 130px 1fr 1fr 70px 90px", gap: 10, alignItems: "center", padding: "7px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-            <HealthDot level={s.level} />
-            <div style={{ overflow: "hidden" }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.name || `Station ${s.stationId}`}</div>
-              {s.level !== "GREEN" && s.reason && <div style={{ fontSize: 10, color: LEVEL_COLOR[s.level] }}>{s.reason}</div>}
+          <div key={s.uuid} style={{ padding: "var(--s-5, 12px) 0", borderBottom: "1px solid var(--border-primary)" }}>
+            {/* Line 1 — who, and how they are. Queue depth and stream state ride the right edge as
+                figures rather than as two more grid columns squeezing the meters. */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: "var(--s-4, 8px)" }}>
+              <HealthDot level={s.level} size={11} />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.name || `Station ${s.stationId}`}</div>
+                {s.level !== "GREEN" && s.reason && <div style={{ fontSize: 13, color: LEVEL_COLOR[s.level] }}>{s.reason}</div>}
+              </div>
+              <span style={{ ...cell, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>q {s.queueDepth ?? "—"}</span>
+              <span style={{ ...cell, whiteSpace: "nowrap" }}>{s.streaming ? <span style={{ color: LEVEL_COLOR.GREEN }}>▲ {bpsLabel(s.drainBps) || "on"}</span> : <span style={{ color: "var(--text-tertiary)" }}>stream off</span>}</span>
             </div>
-            <div>
-              <div style={cell}>{rateLabel(s.framesPerSec)} <MeterBar frac={framesFrac(s.framesPerSec)} color={LEVEL_COLOR[s.level]} width={80} /></div>
-              <div style={{ ...cell, marginTop: 3 }}>{peakLabel(s.peak)} <MeterBar frac={s.peak} color="#38bdf8" width={80} /></div>
-            </div>
             <div style={{ overflow: "hidden" }}>
-              <div style={{ fontSize: 12, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.track || "—"}
+              <div style={{ fontSize: 13, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.track || "—"}
                 {s.jingle && (
                   <span title={s.jingle.title || "overlay"} style={{
-                    marginLeft: 6, padding: "0 5px", borderRadius: 3, fontSize: 9, fontWeight: 800, letterSpacing: "0.08em",
+                    marginLeft: 6, padding: "0 5px", borderRadius: 3, fontSize: 11, fontWeight: 800, letterSpacing: "0.08em",
                     color: s.jingle.state === "FIRING" ? "#ffe93b" : "#ffffff",
                     border: `1px solid ${s.jingle.state === "FIRING" ? "#ffe93b" : "#ffffff"}`,
                     background: s.jingle.state === "FIRING" ? "rgba(255,233,59,0.16)" : "rgba(255,255,255,0.12)",
@@ -202,25 +226,32 @@ export function LiveHealthMonitor() {
               </div>
               <div style={cell}>{s.trackLeftSec != null ? `-${fmtLeft(s.trackLeftSec)}` : ""} {s.nextDeckReady ? <span style={{ color: LEVEL_COLOR.GREEN }}>· next ✓</span> : <span style={{ color: "var(--text-tertiary)" }}>· next …</span>}</div>
             </div>
-            <div style={cell}>q {s.queueDepth ?? "—"}</div>
-            <div style={cell}>{s.streaming ? <span style={{ color: LEVEL_COLOR.GREEN }}>▲ {bpsLabel(s.drainBps) || "on"}</span> : <span style={{ color: "var(--text-tertiary)" }}>stream off</span>}</div>
+            {/* The meters get the full width of the card, like the deck meters above.
+                scale="audio" on peak: it is an AMPLITUDE, so it maps through dB exactly as the
+                dashboard meters do — drawn linearly the same signal would show two different
+                lengths in one panel, and the quiet half of the range would be invisible here while
+                being perfectly legible six inches above. */}
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--s-3, 6px)", marginTop: "var(--s-4, 8px)" }}>
+              <StationMeter label="rate" frac={framesFrac(s.framesPerSec)} color={LEVEL_COLOR[s.level]} read={rateLabel(s.framesPerSec)} />
+              <StationMeter label="peak" frac={s.peak} color="#38bdf8" read={peakLabel(s.peak)} scale="audio" />
+            </div>
           </div>
         ))}
-      </div>
+      </HealthPanel>
       {/* Rolling event feed. Distinct from the dashboard's Live Events, which reads the health
           LEDGER; this one is the in-memory feed of level TRANSITIONS from the audio health sense. */}
-      <div style={sectionCard}>
-        <SectionTitle>Level transitions — last 20, newest first</SectionTitle>
+      <HealthPanel id="transitions" title="Level transitions — last 20, newest first">
         {snap.recentEvents.length === 0 && <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>No warning/critical transitions yet — all healthy.</div>}
         {snap.recentEvents.map((e, i) => (
-          <div key={e.ts + i} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "3px 0", fontSize: 11 }}>
+          <div key={e.ts + i} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "3px 0", fontSize: 13 }}>
             <span style={{ color: "var(--text-tertiary)", fontVariantNumeric: "tabular-nums" }}>{hhmmss(e.ts)}</span>
             <span style={{ color: LEVEL_COLOR[e.level], fontWeight: 700, minWidth: 52 }}>{e.level}</span>
             <span style={{ color: "var(--text-secondary)", minWidth: 110, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.stationName || e.stationUuid?.slice(0, 8)}</span>
             <span style={{ color: "var(--text-primary)" }}>{e.reason}</span>
           </div>
         ))}
-      </div>
+      </HealthPanel>
+      </PanelStack>
     </div>
   );
 }

@@ -13,13 +13,28 @@ import { useEffect, useRef, useState } from "react";
  *  chart beside a meter column both stay legible — narrower and the chart is a smear. */
 export const WALL_MIN_PX = 1280;
 
-export function useContainerWidth(): readonly [React.RefObject<HTMLDivElement>, number] {
+/** The wall canvas is AUTHORED at exactly this size and scaled to fit whatever screen it lands on.
+ *  Authoring at a fixed size is what makes "no scrolling, at a glance" true on every display rather
+ *  than only on a 1920×1080 one: the layout never reflows, so nothing can be pushed off the bottom
+ *  by a screen that is 40px shorter than the designer's. */
+export const WALL_W = 1920;
+export const WALL_H = 1080;
+
+/** Width AND height of the element. The wall canvas needs both to compute its fit-scale — a
+ *  width-only fit overflows vertically on any screen shorter than 9:16 of its width, and on a wall
+ *  display an overflow is data silently cut off rather than a scrollbar. */
+export function useContainerSize(): readonly [React.RefObject<HTMLDivElement>, number, number] {
   const ref = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(0);
+  const [size, setSize] = useState({ w: 0, h: 0 });
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const measure = () => setWidth(el.getBoundingClientRect().width);
+    const measure = () => {
+      const r = el.getBoundingClientRect();
+      // Compared before setting: a ResizeObserver that fires with unchanged numbers would otherwise
+      // re-render the whole panel, and this one observes a container that holds live meters.
+      setSize(prev => (prev.w === r.width && prev.h === r.height ? prev : { w: r.width, h: r.height }));
+    };
     measure();
     if (typeof ResizeObserver === "undefined") {
       window.addEventListener("resize", measure);
@@ -29,5 +44,10 @@ export function useContainerWidth(): readonly [React.RefObject<HTMLDivElement>, 
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+  return [ref, size.w, size.h] as const;
+}
+
+export function useContainerWidth(): readonly [React.RefObject<HTMLDivElement>, number] {
+  const [ref, width] = useContainerSize();
   return [ref, width] as const;
 }

@@ -76,7 +76,7 @@ function EventRow({ e }: { e: LedgerEvent }) {
   );
 }
 
-function HealthTimelineImpl({ maxHeight = 300 }: { maxHeight?: number }) {
+function HealthTimelineImpl({ id, maxHeight = 300 }: { id?: string; maxHeight?: number }) {
   const [raw, setRaw] = useState<LedgerEvent[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -107,6 +107,7 @@ function HealthTimelineImpl({ maxHeight = 300 }: { maxHeight?: number }) {
 
   return (
     <HealthSection
+      id={id}
       title="Live events"
       pad={false}
       right={
