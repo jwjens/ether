@@ -1050,6 +1050,185 @@ function DiscogsCredentialForm() {
   );
 }
 
+// ── Multi-Machine Sync ────────────────────────────────────────
+//
+// Engineering surface, under Backup & Restore beside the cloud backup controls — both answer the
+// same question: is this machine's work actually somewhere else.
+//
+// MANUAL ONLY, deliberately. A previous cut of this panel carried a 5-second automatic push/pull
+// toggle. Continuous sync between two installs means a change made on a secondary machine can reach
+// the primary before anyone notices it was made — the operator has no window in which to catch it.
+// Every transfer here happens because a person pressed a button.
+//
+// It exists because investigating "the sync is additive only" found the deletion path already
+// correct end to end, and the real state was that NOTHING had ever synced in either direction.
+// See docs/song-delete-sync-diagnosis-2026-08-14.md.
+
+interface SyncPreflight {
+  ok: boolean; error?: string;
+  machineId?: string | null;
+  stations?: Array<{ id: number; uuid: string; name: string; is_active?: number }>;
+  activeStationId?: number | null;
+  flags?: { sync_enabled: string | null; sync_uuid_identity: string | null; engineUuidIdentity: boolean | null };
+  schedulerRunning?: boolean;
+  mutations?: {
+    pending: number | null; total: number | null;
+    byStatus?: Array<{ sync_status: string; n: number }>;
+    byOrigin?: Array<{ origin: string; n: number }>;
+    songDeletes?: number | null;
+  };
+}
+
+function MultiMachineSyncSection() {
+  const [pf, setPf] = useState<SyncPreflight | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string>("");
+
+  const call = <T,>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
+
+  const refresh = async () => {
+    setBusy("preflight");
+    try {
+      const r = await call<SyncPreflight>("sync:preflight");
+      setPf(r);
+      if (!r?.ok) setMsg(`✗ ${r?.error || "preflight failed"}`);
+    } catch (e: any) { setPf(null); setMsg(`✗ ${e?.message || String(e)}`); }
+    finally { setBusy(null); }
+  };
+
+  useEffect(() => { refresh(); }, []);
+
+  const run = async (cmd: "sync:push-now" | "sync:pull-now", label: string) => {
+    setBusy(label); setMsg("");
+    try {
+      const r: any = await call(cmd);
+      if (!r?.ok) setMsg(`✗ ${label}: ${r?.error || "failed"}`);
+      else if (cmd === "sync:push-now")
+        setMsg(`✓ pushed — sent ${r.sent}, accepted ${r.accepted}, rejected ${r.rejected} · pending ${r.pendingBefore} → ${r.pendingAfter}`);
+      else setMsg(`✓ pulled — ${r.pulled ?? 0} mutation(s) applied`);
+    } catch (e: any) { setMsg(`✗ ${label}: ${e?.message || String(e)}`); }
+    finally { setBusy(null); refresh(); }
+  };
+
+  const toggleUuid = async () => {
+    const next = pf?.flags?.sync_uuid_identity !== "true";
+    setBusy("uuid"); setMsg("");
+    try {
+      const r: any = await call("sync:set-uuid-identity", { enabled: next });
+      setMsg(r?.ok ? `✓ stored ${r.wrote} — RESTART REQUIRED before it affects any push or pull`
+                   : `✗ ${r?.error || "could not store"}`);
+    } catch (e: any) { setMsg(`✗ ${e?.message || String(e)}`); }
+    finally { setBusy(null); refresh(); }
+  };
+
+  const shouldRender = useShouldRender(
+    'Multi-Machine Sync',
+    'Station UUIDs, pending mutations, and manual push/pull between installs',
+    'backup');
+  if (!shouldRender) return null;
+
+  const stored = pf?.flags?.sync_uuid_identity === "true";
+  const live = pf?.flags?.engineUuidIdentity === true;
+  const everReceived = (pf?.mutations?.byOrigin || []).some(o => o.origin !== "local");
+  const lbl: React.CSSProperties = { fontSize: 11, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 };
+  const btn: React.CSSProperties = {
+    padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: busy ? "default" : "pointer",
+    background: "transparent", color: "var(--text-secondary)",
+    border: "1px solid var(--border-primary)", borderRadius: 0, opacity: busy ? 0.5 : 1,
+  };
+  const mono: React.CSSProperties = { fontSize: 12, fontFamily: "'DM Mono', monospace", color: "var(--text-secondary)", wordBreak: "break-all" };
+
+  return (
+    <Section
+      icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>}
+      title="Multi-Machine Sync"
+      description="Station UUIDs, pending mutations, and manual push/pull between installs.">
+      <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 12, lineHeight: 1.5 }}>
+        Every transfer here is manual — nothing syncs on a timer. Run <b>Preflight on both machines
+        and compare the station UUIDs before pushing anything</b>: if they do not match, UUID identity
+        cannot merge the installs and a push will mix the stations up rather than reconcile them.
+      </div>
+
+      {pf && !pf.ok && <div style={{ fontSize: 12, color: "#f87171", marginBottom: 10 }}>{pf.error}</div>}
+
+      {pf?.ok && (
+        <div style={{ display: "grid", gap: 12, marginBottom: 14 }}>
+          <div>
+            <div style={lbl}>This machine</div>
+            <div style={mono}>{pf.machineId || "—"}</div>
+          </div>
+          <div>
+            <div style={lbl}>Stations — id ↔ UUID</div>
+            {(pf.stations || []).length === 0
+              ? <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>No stations.</div>
+              : (pf.stations || []).map(s => (
+                  <div key={s.id} style={{ ...mono, padding: "2px 0" }}>
+                    <b style={{ color: "var(--text-primary)" }}>{s.id}</b>{" · "}{s.name}{" · "}{s.uuid}
+                  </div>
+                ))}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+            <div>
+              <div style={lbl}>Pending mutations</div>
+              <div style={{ fontSize: 18, fontWeight: 800, fontVariantNumeric: "tabular-nums",
+                            color: (pf.mutations?.pending ?? 0) > 0 ? "#fbbf24" : "#4ade80" }}>
+                {pf.mutations?.pending?.toLocaleString() ?? "—"}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>of {pf.mutations?.total?.toLocaleString() ?? "—"} total</div>
+            </div>
+            <div>
+              <div style={lbl}>Sync engine</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: pf.schedulerRunning ? "#4ade80" : "var(--text-tertiary)" }}>
+                {pf.schedulerRunning ? "running" : "not running"}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>sync_enabled: {pf.flags?.sync_enabled ?? "unset"}</div>
+            </div>
+            <div>
+              {/* Origin, not pending. An install can have a clean queue and still never have taken in
+                  a single row from a peer — only this says so. */}
+              <div style={lbl}>Ever received</div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: everReceived ? "#4ade80" : "#fbbf24" }}>
+                {everReceived ? "yes" : "never"}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                {(pf.mutations?.byOrigin || []).map(o => `${o.origin}: ${o.n.toLocaleString()}`).join(" · ") || "—"}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Stored and live are shown separately on purpose: the flag is read once when the sync engine
+          is built at startup, so after toggling they disagree until Ether restarts. Showing one
+          number would make a pending restart invisible. */}
+      <div style={{ padding: "10px 12px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", marginBottom: 12 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+          <input type="checkbox" checked={stored} disabled={busy !== null || !pf?.ok} onChange={toggleUuid} />
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>Enable UUID-based station identity</span>
+        </label>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1.5 }}>
+          Routes station-scoped rows by station UUID instead of by this machine's local integer id.
+          Stored: <b>{pf?.flags?.sync_uuid_identity ?? "unset"}</b> · in the running engine: <b>{String(live)}</b>.
+          {pf?.ok && stored !== live && (
+            <span style={{ color: "#fbbf24", fontWeight: 700 }}> Restart required — the stored value is
+            not the one in use. Quit Ether fully from the tray and reopen it.</span>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button style={btn} onClick={refresh} disabled={busy !== null}>{busy === "preflight" ? "CHECKING…" : "PREFLIGHT"}</button>
+        <button style={btn} onClick={() => run("sync:push-now", "push")} disabled={busy !== null}>{busy === "push" ? "PUSHING…" : "PUSH NOW"}</button>
+        <button style={btn} onClick={() => run("sync:pull-now", "pull")} disabled={busy !== null}>{busy === "pull" ? "PULLING…" : "PULL NOW"}</button>
+      </div>
+
+      {msg && (
+        <div style={{ marginTop: 10, fontSize: 12, lineHeight: 1.5, color: msg.startsWith("✓") ? "#4ade80" : "#f87171" }}>{msg}</div>
+      )}
+    </Section>
+  );
+}
+
 // ── Multi-Device Sync ─────────────────────────────────────────
 
 // RBAC foundation (read-only): the accounts + stations this person can access via their sign-in.
@@ -3273,6 +3452,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, seg
       </Section>
 
       <SyncSection />
+      <MultiMachineSyncSection />
 
       <StationManagementSection />
 
