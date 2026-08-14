@@ -3,7 +3,7 @@ feature: multi-machine-sync
 title: Multi-Machine Sync
 summary: Engineering controls for keeping two Ether installs in step — station UUIDs, the pending queue, and forced push/pull.
 where: Preferences → Backup & Restore → Multi-Machine Sync
-since: 4.4.209
+since: 4.4.210
 audience: engineer
 tour: false
 ---
@@ -23,6 +23,17 @@ is this machine's work safely somewhere else.
 
 When two machines that share an account disagree — different libraries, different calendars, or a
 song deleted on one that is still present on the other.
+
+## Nothing here happens on its own
+
+**Every transfer is manual.** There is no timer, no background push, and no automatic pull. Data
+moves between machines only when someone presses a button on this panel.
+
+That is deliberate. An earlier version of this panel had a five-second automatic push/pull toggle,
+and it was removed. Continuous sync between two installs means a change made on a secondary
+machine — a wrong delete, a bad category edit, a half-finished import — can reach the main studio
+machine before anyone notices it was made. There is no window in which to catch it. Requiring a
+button press keeps that window open, and keeps the decision with the operator.
 
 ## Read this before you push
 
@@ -76,7 +87,11 @@ daemon does not reload on its own.
   direction. Nothing about deletions or any single table explains that; the engine is not running or
   has never successfully reached the backend.
 - **A deleted song is still on the other machine** — check that the delete produced a mutation
-  before assuming deletion is broken. `scripts/diag-song-delete-sync.js` answers it read-only.
+  before assuming deletion is broken. On an installed copy of Ether, Preflight is the way to check:
+  if **Ever received** says *never* and the pending count is large, nothing has ever synced in
+  either direction and no deletion-specific problem is involved. (On a machine with the source tree,
+  `scripts/diag-song-delete-sync.js` gives the same answer in more detail. It is a local diagnostic
+  and is not shipped with the app.)
   Note that deleting a song **never removes its audio from R2**; that is deliberate.
 
 ## Related

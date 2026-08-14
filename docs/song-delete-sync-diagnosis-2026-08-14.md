@@ -1,8 +1,14 @@
 # Song deletion & sync — diagnosis (2026-08-14)
 
-**Status:** DIAGNOSIS ONLY — **no code changed.** The requested fix would have changed nothing.
-**Machine measured:** Jeff's dev box (`jensj`), `%LOCALAPPDATA%\Ether\com.ether.radio\openair.db`.
-**Tool:** `scripts/diag-song-delete-sync.js` (read-only, portable, safe while Ether is open).
+**Status:** Diagnosis stands. **The originally requested fix was NOT built** — it would have changed
+nothing (see §"Why no code was written"). What WAS built afterwards, in 4.4.209/4.4.210, is the
+tooling this diagnosis showed was missing: four sync IPCs and a manual Multi-Machine Sync panel
+under Preferences → Backup & Restore. See `docs/help-multi-machine-sync.md`.
+**Machine measured:** Jeff's dev box (`jensj`), `%LOCALAPPDATA%\Ether\com.ether.radio\openair.db` —
+believed to be the **ovevents** install (it holds both named songs, soft-deleted, with their delete
+mutations). Unconfirmed.
+**Tool:** `scripts/diag-song-delete-sync.js` (read-only, safe while Ether is open). Source-side only —
+it is gitignored and packaged installs have no source tree, which is why the panel exists.
 
 ## Jeff's report, verbatim
 
@@ -88,10 +94,26 @@ Turning sync on is the real fix, and it is blocked on two known items that need 
 
 Item 2 is the reason this should not be "just switched on" to make the two songs disappear.
 
+## What was built after this diagnosis (4.4.209 / 4.4.210)
+
+None of it changes the deletion path, which was already correct. It is the missing *instrumentation*:
+
+| Added | Why |
+|---|---|
+| `sync:preflight` | Station id↔UUID, pending count, stored **and** live `sync_uuid_identity`, scheduler state, origin spread |
+| `sync:set-uuid-identity` | Writes the flag, reads it back, reports `restartRequired` (it is read once at engine construction) |
+| `sync:push-now` / `sync:pull-now` | One cycle, on demand, with `pendingBefore`/`pendingAfter` |
+| Preferences → Backup & Restore → **Multi-Machine Sync** | The same four, reachable on a packaged install where no diagnostic script can run |
+
+**Manual only.** An interim build carried a 5-second automatic push/pull toggle; it was removed in
+4.4.210. Continuous sync means a change made on a secondary machine reaches the primary before
+anyone can notice it, which is a worse failure than the one being investigated.
+
 ## Suggested order
 
-1. Run the diagnostic **on OV and on ovevents** — confirm whether their delete mutations exist too,
-   and whether either has ever synced. That converts "still in OV" from an inference into a reading.
+1. Run **Preflight on OV and on ovevents** and compare — confirm whether their delete mutations
+   exist too, and whether either has ever synced. That converts "still in OV" from an inference
+   into a reading. (Source-side machines can use `scripts/diag-song-delete-sync.js` instead.)
 2. Settle `sync_uuid_identity` / station-UUID routing (the peer-sync identity defect).
 3. Decide what happens to the backlog — drain, or mark historical mutations as already-applied.
 4. Only then enable sync. The 32 deletes will travel with everything else, no deletion-specific
