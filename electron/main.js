@@ -6886,7 +6886,7 @@ function finishGenerateRun(stationId, ctx, days) {
 }
 function _commitDayRows(stationId, effStart, dayEnd, rows) {
   const { generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
-  const { filterToGaps } = require('./log-edit-core');
+  const { filterToGaps, NOT_OPERATOR_OWNED_SQL } = require('./log-edit-core');
   let result = { kept: 0, skipped: 0 };
   db.transaction(() => {
     // OPERATOR ROWS SURVIVE REGENERATE (Manual Log Editing / Fix 2, design §4.1). This used to delete
@@ -6897,8 +6897,12 @@ function _commitDayRows(stationId, effStart, dayEnd, rows) {
     //
     // Aired history was already safe: effStart is the next top-of-hour, so Generate never reaches the
     // past. This adds protection for the FUTURE rows a human has touched.
+    // NOT `source IS NULL` — that was the 4.4.196 regression. The unattended extender stamps
+    // source='auto' as PROVENANCE, so "NULL only" made every auto-generated row permanent and froze
+    // the future log. The predicate now comes from log-edit-core so it cannot drift from
+    // isOperatorOwned() again: only 'operator' survives.
     db.prepare(
-      "DELETE FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ? AND source IS NULL"
+      `DELETE FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ? AND ${NOT_OPERATOR_OWNED_SQL}`
     ).run(stationId, effStart, dayEnd);
 
     // GAP-ONLY FILL. Preserving the operator's rows is not enough: the walk still produced a machine

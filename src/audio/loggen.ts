@@ -177,7 +177,7 @@ async function enforcedFill(count: number, stationId: number): Promise<Song[]> {
     let picked: any = null, guard = 0;
     while (!picked && guard++ < cats.length) {
       const cat = cats[ci++ % cats.length];
-      const cands = await query<Song>("SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.file_path, s.intro_end, s.outro_start, s.no_repeat_hours FROM songs s LEFT JOIN artists a ON a.id=s.artist_id WHERE s.category_id=? AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status!='inactive') AND (s.content_class IS NULL OR s.content_class='MUSIC') AND (s.daypart_mask IS NULL OR ((s.daypart_mask>>?)&1)=1)", [cat, new Date(cursorTs * 1000).getHours()]);
+      const cands = await query<Song>("SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.file_path, s.intro_end, s.outro_start, s.no_repeat_hours FROM songs s LEFT JOIN artists a ON a.id=s.artist_id WHERE s.deleted_at IS NULL AND s.category_id=? AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status!='inactive') AND (s.content_class IS NULL OR s.content_class='MUSIC') AND (s.daypart_mask IS NULL OR ((s.daypart_mask>>?)&1)=1)", [cat, new Date(cursorTs * 1000).getHours()]);
       if (!cands.length) continue;
       const r = pickEnforced(cands as any[], cursorTs, maps, win, used, null, 240);
       if (!r) continue;
@@ -216,7 +216,11 @@ function buildBaseConditions(
   params: any[],
   stationId: number
 ): string {
-  let cond = "s.file_path IS NOT NULL";
+  // NEVER PLAY A DELETED SONG. This was missing from every candidate query in all three generators
+  // (2026-08-13): two songs deleted on 2026-07-20 still held 63 future slots, and across the library
+  // 28 deleted songs held 729 future rows with 438 plays recorded after their own delete timestamps.
+  // A soft delete the picker ignores is not a delete.
+  let cond = "s.deleted_at IS NULL AND s.file_path IS NOT NULL";
 
   // Never auto-play songs marked inactive in rotation
   cond += " AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')";

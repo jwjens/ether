@@ -160,6 +160,10 @@ function getStationCategoryIds(db, stationId) {
 
 const SELECT = `SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.file_key, s.duration_ms, s.intro_end, s.outro_start
   FROM songs s LEFT JOIN artists a ON a.id = s.artist_id`;
+// NEVER PLAY A DELETED SONG (2026-08-13). Every candidate query in all three generators was missing
+// this; 28 deleted songs held 729 future rows and 438 plays logged after their own deletes. Applied
+// at each WHERE rather than folded into SELECT, because every caller supplies its own conditions.
+const NOT_DELETED = `s.deleted_at IS NULL`;
 const toItem = (r) => ({
   filePath: r.file_path, title: r.title, artist: r.artist_name || r.artist || "",
   durationMs: r.duration_ms || 0, introEnd: r.intro_end ?? undefined, outroStart: r.outro_start ?? undefined,
@@ -185,7 +189,7 @@ function pickTier(db, count, hour, stationId, formatCats, excludeIds, opts, orde
   if (excludeIds && excludeIds.length) { cond += ` AND s.id NOT IN (${excludeIds.map(() => "?").join(",")})`; params.push(...excludeIds); }
   const orderSql = order === "lrp" ? lrpOrder(params, stationId) : "ORDER BY RANDOM()";
   params.push(count);
-  try { return db.prepare(`${SELECT} WHERE ${cond} ${orderSql} LIMIT ?`).all(...params); }
+  try { return db.prepare(`${SELECT} WHERE ${NOT_DELETED} AND (${cond}) ${orderSql} LIMIT ?`).all(...params); }
   catch (e) { console.error("[loggen] pickTier failed:", e.message); return []; }
 }
 
@@ -204,7 +208,7 @@ function pickFromClock(db, clockId, count, hour, stationId, opts) {
     params.push(slot.category_id);
     if (used.length) { cond += ` AND s.id NOT IN (${used.map(() => "?").join(",")})`; params.push(...used); }
     let row = null;
-    try { row = db.prepare(`${SELECT} WHERE ${cond} ORDER BY RANDOM() LIMIT 1`).get(...params); } catch (e) { row = null; }
+    try { row = db.prepare(`${SELECT} WHERE ${NOT_DELETED} AND (${cond}) ORDER BY RANDOM() LIMIT 1`).get(...params); } catch (e) { row = null; }
     if (row) { out.push(row); used.push(row.id); }
   }
   return out;
@@ -369,7 +373,7 @@ function eligibleForFit(db, stationId, categoryId, limit = 200) {
     const cond = baseConditions(hour, params, stationId, { daypart: true, songSep: true, artistSepSec: cfg.artistSepSec });
     const cats = (categoryId != null && fmt.includes(categoryId)) ? [categoryId] : fmt;
     const catClause = `AND s.category_id IN (${cats.map(() => "?").join(",")})`;
-    const rows = db.prepare(`${SELECT} WHERE ${cond} ${catClause} LIMIT ?`).all(...params, ...cats, limit);
+    const rows = db.prepare(`${SELECT} WHERE ${NOT_DELETED} AND (${cond}) ${catClause} LIMIT ?`).all(...params, ...cats, limit);
     return rows.filter(r => r.file_path && r.duration_ms > 0).map(toItem);
   } catch { return []; }
 }
@@ -516,7 +520,7 @@ function fillQueueEnforced(db, stationId, count, hour) {
   try {
     stmtC = db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.file_path, s.file_key, s.intro_end, s.outro_start, s.no_repeat_hours
        FROM songs s LEFT JOIN artists a ON a.id=s.artist_id
-       WHERE s.category_id=? AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status!='inactive')
+       WHERE s.deleted_at IS NULL AND s.category_id=? AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status!='inactive')
          AND (s.content_class IS NULL OR s.content_class='MUSIC') AND (s.daypart_mask IS NULL OR ((s.daypart_mask>>?)&1)=1)`);
   } catch (e) { console.error("[loggen] enforced prepare failed:", e.message); return { source: "enforced", tier: 1, formatCats: cats, items: [], starved: true, relaxedCount: 0 }; }
   const items = []; let cursorTs = Math.floor(Date.now() / 1000); let relaxedCount = 0, ci = 0;

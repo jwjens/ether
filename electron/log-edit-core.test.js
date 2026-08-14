@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import { createRequire } from "node:module";
 const require_ = createRequire(import.meta.url);
-const { overlaps, filterToGaps, isOperatorOwned } = require_("./log-edit-core.js");
+const { overlaps, filterToGaps, isOperatorOwned, NOT_OPERATOR_OWNED_SQL } = require_("./log-edit-core.js");
 
 const row = (scheduled_at, duration_s) => ({ scheduled_at, duration_s });
 
@@ -77,7 +77,7 @@ describe("filterToGaps", () => {
   });
 });
 
-describe("isOperatorOwned", () => {
+describe("isOperatorOwned — an ALLOWLIST, after the 4.4.196 regression", () => {
   it("treats NULL as machine-generated and disposable", () => {
     expect(isOperatorOwned(null)).toBe(false);
     expect(isOperatorOwned(undefined)).toBe(false);
@@ -85,11 +85,49 @@ describe("isOperatorOwned", () => {
     expect(isOperatorOwned("   ")).toBe(false);      // legacy blank, not an owner
   });
 
-  it("treats every non-empty marker as a human decision Generate must not undo", () => {
-    // v34 documents 'operator' (jock deck-load) and 'autofit'. Both are decisions Generate did not
-    // make, so both survive — being permissive here fails safe (a row is kept, never destroyed).
+  it("'auto' IS DISPOSABLE — this is the regression, pinned", () => {
+    // main.js stamps source='auto' on every row the unattended extender writes, as PROVENANCE. The
+    // previous "anything non-empty is the operator's" made every one of those permanent: Generate
+    // could not delete or replace them and the future log froze. Measured 2026-08-13: 729 future
+    // rows from 28 deleted songs that Generate was unable to clear.
+    expect(isOperatorOwned("auto")).toBe(false);
+    expect(isOperatorOwned("AUTO")).toBe(false);
+    expect(isOperatorOwned(" auto ")).toBe(false);
+  });
+
+  it("other provenance markers are machine-owned too", () => {
+    // 'autofit' is the auto-fitter adjusting timing; 'machine' is explicit. Neither is a human.
+    expect(isOperatorOwned("autofit")).toBe(false);
+    expect(isOperatorOwned("machine")).toBe(false);
+  });
+
+  it("ONLY 'operator' is preserved — the design doc's Layer 1 table", () => {
     expect(isOperatorOwned("operator")).toBe(true);
-    expect(isOperatorOwned("autofit")).toBe(true);
-    expect(isOperatorOwned("operator-edit")).toBe(true);
+    expect(isOperatorOwned("Operator")).toBe(true);
+    expect(isOperatorOwned(" operator ")).toBe(true);
+  });
+
+  it("an unknown future marker defaults to DISPOSABLE, not preserved", () => {
+    // The safe direction: the cost of a wrong "keep" is a log nobody can regenerate.
+    expect(isOperatorOwned("operator-edit")).toBe(false);
+    expect(isOperatorOwned("some-future-marker")).toBe(false);
+  });
+});
+
+describe("NOT_OPERATOR_OWNED_SQL — the same rule, for the window delete", () => {
+  // These two DID drift, and the drift WAS the bug: _commitDayRows used raw `source IS NULL` while
+  // isOperatorOwned() said something else and was called by nothing but its own test.
+  it("keeps NULL and non-operator sources deletable", () => {
+    expect(NOT_OPERATOR_OWNED_SQL).toContain("source IS NULL");
+    expect(NOT_OPERATOR_OWNED_SQL).toContain("'operator'");
+    expect(NOT_OPERATOR_OWNED_SQL).toContain("NOT IN");
+  });
+
+  it("is case- and whitespace-insensitive, like the predicate", () => {
+    expect(NOT_OPERATOR_OWNED_SQL).toContain("TRIM(LOWER(source))");
+  });
+
+  it("does NOT single out 'auto' — it allowlists, so any new marker stays deletable", () => {
+    expect(NOT_OPERATOR_OWNED_SQL).not.toContain("'auto'");
   });
 });

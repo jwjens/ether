@@ -33,7 +33,11 @@ beforeEach(() => {
     CREATE TABLE songs (
       id INTEGER PRIMARY KEY, title TEXT, artist_id INTEGER, category_id INTEGER,
       file_path TEXT, file_key TEXT, duration_ms INTEGER, intro_end REAL, outro_start REAL,
-      rotation_status TEXT, content_class TEXT, daypart_mask INTEGER, no_repeat_hours INTEGER
+      rotation_status TEXT, content_class TEXT, daypart_mask INTEGER, no_repeat_hours INTEGER,
+      -- deleted_at added 2026-08-13: the pickers now exclude soft-deleted songs, and this fixture
+      -- had drifted from the real schema (which has had the column since the sync work). A fixture
+      -- that is missing a column the product filters on cannot test the product.
+      deleted_at TEXT
     );
     INSERT INTO artists (id,name) VALUES (1,'An Artist');
     -- categorised music: pickable
@@ -48,6 +52,11 @@ beforeEach(() => {
     -- pre-v29 row: content_class NULL is treated as MUSIC, so the category gate still applies
     INSERT INTO songs (id,title,artist_id,category_id,file_path,duration_ms,content_class)
       VALUES (4,'Legacy Row',1,NULL,'C:/d.mp3',180000,NULL);
+    -- SOFT-DELETED but otherwise perfectly pickable: categorised, MUSIC, has a file. This is the
+    -- exact shape of "Perfect Revenge" (deleted 2026-07-20, still holding 63 future slots on
+    -- 2026-08-13 because every picker ignored deleted_at).
+    INSERT INTO songs (id,title,artist_id,category_id,file_path,duration_ms,content_class,deleted_at)
+      VALUES (5,'Perfect Revenge',1,7,'C:/deleted.mp3',180000,'MUSIC','2026-07-20T20:38:11.116Z');
   `);
 });
 
@@ -61,6 +70,23 @@ describe("baseConditions", () => {
   it("still gates on MUSIC, so jingles and spots are excluded by class, not by category", () => {
     const c = baseConditions(0, [], 1, OPTS);
     expect(c).toContain("s.content_class IS NULL OR s.content_class = 'MUSIC'");
+  });
+});
+
+describe("pickTier never returns a DELETED song", () => {
+  // The grep guard in electron/song-picker-guard.test.js proves the clause is present. This proves
+  // it WORKS — a deleted song that is otherwise a perfect candidate must not come back from any
+  // tier, including the last-ditch one with no category restriction.
+  it("excludes it in the LAST-DITCH tier, where nothing else would stop it", () => {
+    const paths = pickTier(db, 10, 0, 1, [], [], OPTS, "random").map(r => r.file_path ?? r.filePath);
+    expect(paths).not.toContain("C:/deleted.mp3");
+    expect(paths).toContain("C:/a.mp3");        // and the live song is still pickable
+  });
+
+  it("excludes it in the on-format tier, where it shares the category with a live song", () => {
+    const paths = pickTier(db, 10, 0, 1, [7], [], OPTS, "random").map(r => r.file_path ?? r.filePath);
+    expect(paths).not.toContain("C:/deleted.mp3");
+    expect(paths).toEqual(["C:/a.mp3"]);
   });
 });
 

@@ -38,15 +38,37 @@ function filterToGaps(rows, kept) {
   return { fill, skipped };
 }
 
-/**
- * Is this row the operator's? Anything non-NULL is owned by a human decision and is not Generate's
- * to remove. NULL (and the legacy empty string) mean machine-generated and disposable.
- *
- * Deliberately permissive about WHICH marker: v34 documents 'operator' (jock deck-load) and 'autofit'.
- * Both are decisions Generate did not make, so both survive.
- */
+// ── OWNERSHIP — an ALLOWLIST, after the 4.4.196 regression ──────────────────────────────────────
+//
+// This was "anything non-NULL is the operator's", justified as failing safe. IT DID NOT FAIL SAFE.
+//
+// `main.js:7208` stamps `source='auto'` on every row the unattended extender writes, as PROVENANCE —
+// its own comment says the mark means "THIS machine generated these rows automatically". Reading any
+// non-empty value as human-owned made every auto-extend row permanent: Generate could not delete or
+// replace it, and gap-fill skipped anything overlapping it. The future log froze.
+//
+// Measured on the dev box 2026-08-13, three weeks after two songs were deleted: 729 future rows from
+// 28 soft-deleted songs that Generate was unable to clear, and 438 plays recorded after their own
+// delete timestamps.
+//
+// The design doc's Layer 1 table lists exactly two states — NULL (machine, "delete and replace
+// freely") and 'operator' ("a human placed, moved or kept this"). So: allowlist, not denylist. A new
+// provenance marker added later is machine-owned by default, which is the safe direction — the cost
+// of a wrong "keep" is a log nobody can regenerate.
+const OPERATOR_SOURCES = new Set(['operator']);
+
 function isOperatorOwned(source) {
-  return source != null && String(source).trim() !== '';
+  return OPERATOR_SOURCES.has(String(source ?? '').trim().toLowerCase());
 }
 
-module.exports = { overlaps, filterToGaps, isOperatorOwned };
+/**
+ * The SAME rule as a SQL predicate, for the window delete in _commitDayRows.
+ *
+ * It lives here beside isOperatorOwned because the two DID drift, and the drift is the whole bug:
+ * the delete used raw `source IS NULL` while isOperatorOwned said something different and was never
+ * called by anything but its own test. One definition, both callers.
+ */
+const NOT_OPERATOR_OWNED_SQL =
+  `(source IS NULL OR TRIM(LOWER(source)) NOT IN (${[...OPERATOR_SOURCES].map(s => `'${s}'`).join(', ')}))`;
+
+module.exports = { overlaps, filterToGaps, isOperatorOwned, OPERATOR_SOURCES, NOT_OPERATOR_OWNED_SQL };
