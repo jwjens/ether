@@ -1880,6 +1880,29 @@ function runMigrations() {
   alterSafe('ALTER TABLE station_config_kv ADD COLUMN updated_at TEXT');
   alterSafe('ALTER TABLE station_config_kv ADD COLUMN deleted_at TEXT');
 
+  // ── runway_history — the runway trend series (2026-08-13) ──────────────────────────────────────
+  //
+  // Runway is computed on demand from the schedule as it stands RIGHT NOW (electron/runway.js) and
+  // was never stored, so "runway over the last 7 days" could not be asked. It cannot be
+  // reconstructed either: yesterday's runway depended on yesterday's schedule and yesterday's clock,
+  // both since overwritten. The only way to have the history is to have kept it.
+  //
+  // LOCAL-ONLY BY CONSTRUCTION. It is deliberately absent from synced-tables.js: runway is a
+  // per-machine observation of this machine's schedule, exactly like state/played_at, and syncing it
+  // would merge two machines' observations into one meaningless line. Written with raw SQL so no
+  // mutation is logged and nothing can carry it across.
+  //
+  // One row per station per hour: ~24/station/day, ~170/station for the 7-day window. Trimmed to 30
+  // days on write (see _sampleRunway) so it cannot grow without bound the way health-events.jsonl did.
+  db.exec(`CREATE TABLE IF NOT EXISTS runway_history (
+    station_id  INTEGER NOT NULL,
+    at          INTEGER NOT NULL,     -- unix seconds, aligned to the top of the hour
+    days        REAL,                 -- NULL = no active show (grey), which is NOT zero days
+    level       TEXT,                 -- green | yellow | red | grey, as runway.js reported it
+    PRIMARY KEY (station_id, at)
+  )`);
+  db.exec("CREATE INDEX IF NOT EXISTS idx_runway_history_at ON runway_history(station_id, at)");
+
   // Station-scope index for eas_tests (idempotent)
   db.exec("CREATE INDEX IF NOT EXISTS idx_eas_tests_station_id ON eas_tests(station_id)");
   // Station-scope index for midi_mappings (idempotent)
@@ -7374,6 +7397,38 @@ try {
   });
 } catch (e) { console.error('[designation] handler registration failed:', e.message); }
 
+// health:runway-history — the trend series for the dashboard chart.
+//
+// Returns one point per hour for the window, INCLUDING hours with no sample, so the chart can tell
+// "the app was not running" (a gap) from "runway was low" (a low point). Collapsing those two into
+// the same flat line is how a chart lies about an outage.
+try {
+  ipcMain.handle("health:runway-history", (_evt, stationId, days) => {
+    try {
+      const sid = stationId ?? getActiveStationId();
+      const n = Math.max(1, Math.min(30, Number(days) || 7));
+      const nowHour = Math.floor(Date.now() / 3600_000) * 3600;
+      const since = nowHour - (n * 24 - 1) * 3600;
+      const rows = db.prepare(
+        "SELECT at, days, level FROM runway_history WHERE station_id = ? AND at >= ? ORDER BY at"
+      ).all(sid, since);
+      const bySlot = new Map(rows.map(r => [r.at, r]));
+      const series = [];
+      for (let t = since; t <= nowHour; t += 3600) {
+        const r = bySlot.get(t);
+        // `days: null` means two different things and the caller must be able to tell them apart:
+        // no ROW = the app was not running; a row with null days = running, but no active show.
+        series.push(r ? { at: t, days: r.days, level: r.level, sampled: true }
+                      : { at: t, days: null, level: null, sampled: false });
+      }
+      return { ok: true, stationId: sid, days: n, samples: rows.length, series };
+    } catch (e) {
+      console.error('[runway-history] read failed:', e.message);
+      return { ok: false, error: e.message, series: [], samples: 0 };
+    }
+  });
+} catch (e) { console.error('[runway-history] registration failed:', e.message); }
+
 // health:recent-events — READ BACK the honest ledger.
 //
 // health-events.jsonl has been append-only since it shipped: everything wrote to it and NOTHING ever
@@ -7639,6 +7694,43 @@ function _designationTick(generatedFor, label) {
 }
 
 
+// ── RUNWAY HISTORY — one sample per station per hour ────────────────────────────────────────────
+//
+// INSERT OR REPLACE on (station_id, at) with `at` aligned to the top of the hour, so the 30-minute
+// tick writes twice an hour and the second write simply refreshes the same row. That makes the
+// cadence of the caller irrelevant to the shape of the series — a tick that fires late, early or
+// twice cannot produce a double point.
+//
+// NULL days is preserved as NULL, never coerced to 0: runway.js returns null for "no active show",
+// and a station with nothing scheduled is not a station with zero days of runway. The chart draws a
+// gap there rather than a crash to the floor.
+const RUNWAY_HISTORY_KEEP_DAYS = 30;
+let _runwayTrimmedAt = 0;
+function _sampleRunway() {
+  if (!db) return;
+  const now = Math.floor(Date.now() / 1000);
+  const hour = Math.floor(now / 3600) * 3600;
+  let stations = [];
+  try { stations = db.prepare("SELECT id FROM stations WHERE deleted_at IS NULL").all(); } catch { return; }
+  const ins = db.prepare("INSERT OR REPLACE INTO runway_history (station_id, at, days, level) VALUES (?,?,?,?)");
+  for (const st of stations) {
+    try {
+      const r = require('./runway').computeRunway(db, st.id) || {};
+      ins.run(st.id, hour, r.days == null ? null : Number(r.days), r.level || 'grey');
+    } catch { /* one station failing must not stop the others */ }
+  }
+  // Trim once a day, not on every tick. Unbounded growth is what health-events.jsonl is currently
+  // demonstrating at 39 MB and 1.6 MB/day.
+  if (now - _runwayTrimmedAt > 86_400) {
+    _runwayTrimmedAt = now;
+    try {
+      const cut = now - RUNWAY_HISTORY_KEEP_DAYS * 86_400;
+      const d = db.prepare("DELETE FROM runway_history WHERE at < ?").run(cut);
+      if (d.changes) console.log(`[runway-history] trimmed ${d.changes} row(s) older than ${RUNWAY_HISTORY_KEEP_DAYS} days`);
+    } catch (e) { console.error('[runway-history] trim:', e.message); }
+  }
+}
+
 async function _autoExtendTick() {
   if (!db) return;
   const _generatedThisTick = new Set();
@@ -7739,6 +7831,10 @@ async function _autoExtendTick() {
   // Designation heartbeat rides the extender's own 30-minute cadence: the same tick that decides
   // whether to generate is the one that proves this machine is alive and watching.
   try { _designationTick(_generatedThisTick); } catch (e) { console.error('[designation] tick:', e.message); }
+  // Runway sample rides it too — same reason, and it must be recorded whether or not this machine
+  // generated, because a runway that is falling because nobody is topping it up is the case the
+  // chart exists to show.
+  try { _sampleRunway(); } catch (e) { console.error('[runway-history] sample:', e.message); }
 }
 let _autoExtendTimer = null;
 function startAutoExtend() {
@@ -7746,6 +7842,9 @@ function startAutoExtend() {
   try { _migrateAutoGenerateDefault(); } catch {}   // once, before the first tick can skip a station
   try { _migrateKillLease(); } catch {}
   try { _designationTick(new Set(), 'startup tick'); } catch (e) { console.error('[designation] first tick:', e.message); }
+  // Sample immediately, not in 30 minutes: a fresh install would otherwise show an empty chart for
+  // half an hour and read as broken rather than as new.
+  try { _sampleRunway(); } catch (e) { console.error('[runway-history] first sample:', e.message); }
   setTimeout(() => { try { _autoExtendTick(); } catch (e) { console.error('[auto-extend] first tick:', e.message); } }, 60_000);
   _autoExtendTimer = setInterval(() => { try { _autoExtendTick(); } catch (e) { console.error('[auto-extend] tick:', e.message); } }, AUTO_EXTEND_EVERY_MS);
   console.log(`[auto-extend] armed — keep runway ≥ ${AUTO_EXTEND_THRESHOLD_H}h, top up to ${AUTO_EXTEND_TARGET_DAYS}d, every ${AUTO_EXTEND_EVERY_MS / 60000}min`);

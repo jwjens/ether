@@ -20,6 +20,7 @@ import { HealthCard } from "./HealthCard";
 import { HealthBar } from "./HealthBar";
 import { HealthTimeline } from "./HealthTimeline";
 import { HealthSection } from "./HealthSection";
+import { HealthChart } from "./HealthChart";
 import {
   fetchLibraryHealth, fetchDesignation, stationFrom, designationFor,
   POLL_SNAPSHOT_MS, POLL_QUEUE_MS,
@@ -185,6 +186,11 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
           hint="Items waiting behind what is on air, read live from the audio engine."
         />
       </div>
+
+      {/* ── RUNWAY TREND ────────────────────────────────────────────────────────────────────────
+          Between the cards and the bars because it is the history of the Runway card directly above
+          it — the number and its trend read as one thought. */}
+      <HealthChart stationId={stationId} days={7} />
 
       {/* ── ROTATION GOALS (Phase 2) ────────────────────────────────────────────────────────────
           One bar per category: declared target vs what actually aired in the last 24 hours, from
