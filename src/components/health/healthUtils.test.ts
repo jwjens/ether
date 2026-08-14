@@ -59,33 +59,38 @@ describe("goalsValue", () => {
     expect(goalsValue(null).level).toBe("grey");
   });
 
-  it("is green when every clock matches", () => {
+  it("is green and reads 0 when every clock matches", () => {
     const g = goalsValue({ declared: 5, mismatches: [] });
-    expect(g.value).toBe("On target");
+    expect(g.value).toBe("0");
     expect(g.level).toBe("green");
   });
 
-  it("counts CLOCKS off target, and stays amber — an off-target clock is not dead air", () => {
-    const g = goalsValue({ declared: 5, mismatches: [{}, {}] });
-    expect(g.value).toBe("2 off");
-    expect(g.level).toBe("yellow");
-    expect(g.sub).toContain("clocks");
+  it("shows the COUNT of mismatched clocks: yellow at 1–2, red beyond", () => {
+    expect(goalsValue({ declared: 5, mismatches: [{}] }).value).toBe("1");
+    expect(goalsValue({ declared: 5, mismatches: [{}] }).level).toBe("yellow");
+    expect(goalsValue({ declared: 5, mismatches: [{}, {}] }).level).toBe("yellow");
+    expect(goalsValue({ declared: 5, mismatches: [{}, {}, {}] }).level).toBe("red");
   });
 
   it("uses the singular for one", () => {
-    expect(goalsValue({ declared: 3, mismatches: [{}] }).sub).toContain("1 clock do");
+    expect(goalsValue({ declared: 3, mismatches: [{}] }).sub).toContain("clock off");
   });
 });
 
-describe("queueLevel", () => {
-  it("an EMPTY queue is red — nothing is behind what is on air", () => {
+describe("queueLevel — green >=10, yellow 5-9, red <5", () => {
+  it("under five is red — under twenty minutes of cover at ~3.5 min a track", () => {
     expect(queueLevel(0)).toBe("red");
+    expect(queueLevel(4)).toBe("red");
   });
 
-  it("shallow is amber, healthy is green", () => {
-    expect(queueLevel(1)).toBe("yellow");
-    expect(queueLevel(2)).toBe("yellow");
-    expect(queueLevel(3)).toBe("green");
+  it("five to nine is amber", () => {
+    expect(queueLevel(5)).toBe("yellow");
+    expect(queueLevel(9)).toBe("yellow");
+  });
+
+  it("ten or more is green — about half an hour of cover", () => {
+    expect(queueLevel(10)).toBe("green");
+    expect(queueLevel(40)).toBe("green");
   });
 
   it("unknown is grey, NOT red — 'the engine did not answer' is not 'the queue is empty'", () => {
@@ -208,6 +213,33 @@ describe("eventTitle / eventTime / eventSummary", () => {
     expect(eventSummary({ station: "OV", rows: 42 })).toBe("OV · 42 rows");
     expect(eventSummary({ from: "A", to: "B" })).toBe("A → B");
     expect(eventSummary({ failures: 124 })).toBe("124 failures");
+  });
+
+  it("summarises logreader-missed, which carries ONLY stationId/count/driftSec", () => {
+    // Ten of these rendered with a title and a blank line in the first cut — the exact wall of
+    // identical rows the dashboard exists to replace.
+    const s = eventSummary({ kind: "logreader-missed", stationId: 2, count: 21, driftSec: 4 });
+    expect(s).toContain("s2");
+    expect(s).toContain("21 rows");
+    expect(s).toContain("drift 4s");
+  });
+
+  it("uses the singular for one row", () => {
+    expect(eventSummary({ stationId: 3, count: 1 })).toContain("1 row");
+    expect(eventSummary({ stationId: 3, count: 1 })).not.toContain("1 rows");
+  });
+
+  it("collapses a library-health snapshot to the one fact worth a row", () => {
+    expect(eventSummary({ kind: "library-health", stations: [{ name: "A", level: "green" }] }))
+      .toBe("1 stations · all green");
+    expect(eventSummary({ kind: "library-health", stations: [{ name: "A", level: "yellow" }, { name: "B", level: "green" }] }))
+      .toContain("A yellow");
+  });
+
+  it("NEVER returns a blank line when the event has any scalar at all", () => {
+    // The guarantee: a row with a title and empty space is what made the list unreadable.
+    expect(eventSummary({ someField: 7 })).toBe("someField 7");
+    expect(eventSummary({ a: 1, b: 2, c: 3, d: 4 }).split(" · ").length).toBe(3);   // capped at 3
   });
 
   it("never throws on junk", () => {

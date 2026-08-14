@@ -153,6 +153,12 @@
   --t-body:  12px;  /* default */
   --t-lead:  14px;  /* pane titles */
   --t-head:  20px;  /* panel titles only */
+  /* --t-metric (2026-08-13): the step this scale was missing. The five sizes above top out at 20px
+     "panel titles only", so a dashboard number had nowhere to sit — which is why the Health Monitor
+     kept reading as text no matter how it was arranged. A metric is not a title; it is the thing
+     you are meant to read from across the room. Reserved for a headline figure on a card, NEVER for
+     body copy or a label. */
+  --t-metric: 30px;
 
   /* elevation — none by default */
   --e-0: none;

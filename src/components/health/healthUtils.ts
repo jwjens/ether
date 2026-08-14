@@ -53,26 +53,37 @@ export function runwayValue(runway: { days?: number | null; capped?: boolean } |
  * `goals` is electron/library-health.js goalCheck(): { declared, totalCats, mismatches[] }.
  * `mismatches` is per CLOCK, not per category, so the count is clocks-with-a-problem.
  */
+/**
+ * Rotation health → the card face. THE NUMBER OF MISMATCHES, per spec: green 0, yellow 1–2, red >2.
+ *
+ * A mismatch is one CLOCK whose music composition does not match the declared goals — not one
+ * category — because that is what goalCheck() counts (library-health.js).
+ */
 export function goalsValue(goals: { declared?: number; mismatches?: any[] } | null | undefined):
   { value: string; sub: string; level: HealthLevel } {
   if (!goals || !goals.declared) {
     return { value: "None", sub: "no rotation goals set", level: "grey" };
   }
   const bad = Array.isArray(goals.mismatches) ? goals.mismatches.length : 0;
-  if (bad === 0) return { value: "On target", sub: `${goals.declared} categories declared`, level: "green" };
+  if (bad === 0) return { value: "0", sub: `on target · ${goals.declared} categories declared`, level: "green" };
   return {
-    value: `${bad} off`,
-    sub: `${bad} clock${bad === 1 ? "" : "s"} do not match the declared goals`,
-    // Amber, not red: an off-target clock is a programming choice to review, not dead air.
-    level: "yellow",
+    value: String(bad),
+    sub: `clock${bad === 1 ? "" : "s"} off the declared goals`,
+    level: bad > 2 ? "red" : "yellow",
   };
 }
 
-/** Queue depth → level. Thresholds mirror the runway idea: it is about time to react, not tidiness. */
+/**
+ * Queue depth → level: green ≥10, yellow 5–9, red <5.
+ *
+ * Deeper thresholds than the first cut used, and the reason is time rather than tidiness: at roughly
+ * 3.5 minutes a track, ten items is about half an hour of cover and five is under twenty minutes —
+ * which is how long an operator has to notice and act before it matters.
+ */
 export function queueLevel(len: number | null | undefined): HealthLevel {
-  if (len == null) return "grey";
-  if (len === 0) return "red";      // nothing queued behind what is on air
-  if (len <= 2) return "yellow";
+  if (len == null) return "grey";   // the engine did not answer; that is not an empty queue
+  if (len < 5) return "red";
+  if (len < 10) return "yellow";
   return "green";
 }
 
@@ -152,6 +163,31 @@ const EVENT_RED = /(-failed$|^sync-misconfigured|-down$|floor|dead-air|not-saved
 /** Something is degraded or was bent to keep going — worth a look, not an alarm. */
 const EVENT_YELLOW = /(missed|starved|relaxed|behind|skipped|stale|migrated|bypass|drift)/i;
 
+/**
+ * PERIODIC SENSES — recorded for the record, not for a timeline.
+ *
+ * These fire on a timer and carry a whole nested snapshot as their payload, so there is nothing to
+ * put on a one-line row: eight consecutive "Library health" entries with blank detail is exactly the
+ * wall of text the dashboard exists to replace. Measured on the dev ledger 2026-08-13:
+ *
+ *   library-health  1,906     queue-lint  1,519     ← ~85% of every event ever written
+ *   logreader-missed  397     log-edit       15
+ *
+ * They are HIDDEN BY DEFAULT, never dropped — the timeline offers ALL, so nothing is concealed, it
+ * is just not the first thing shown. A feed where 85% of the rows are heartbeats is one nobody reads,
+ * and an unread panel is the same as no panel.
+ */
+export const ROUTINE_KINDS = new Set([
+  "library-health",
+  "queue-lint",
+  "position-authority",
+  "generate-timing",
+]);
+
+export function isRoutine(kind: string | null | undefined): boolean {
+  return ROUTINE_KINDS.has(String(kind || ""));
+}
+
 export function eventLevel(kind: string | null | undefined): HealthLevel {
   const k = String(kind || "");
   if (!k) return "grey";
@@ -178,17 +214,51 @@ export function eventTitle(kind: string | null | undefined): string {
 export function eventSummary(e: Record<string, any> | null | undefined): string {
   if (!e || typeof e !== "object") return "";
   const bits: string[] = [];
+
+  // The periodic senses carry a nested snapshot rather than a message, so pull the one fact worth a
+  // row: how many stations were measured and whether any of them is not green. Without this they
+  // render as a title and nothing else, which is what made the list unreadable.
+  if (e.kind === "library-health" && Array.isArray(e.stations)) {
+    const n = e.stations.length;
+    const bad = e.stations.filter((s: any) => s?.level === "red" || s?.level === "yellow");
+    return bad.length
+      ? `${n} stations · ${bad.map((s: any) => `${s.name || s.stationId} ${s.level}`).join(", ")}`
+      : `${n} stations · all green`;
+  }
+
+  // Which station, by name if the event carries one and by id if not. Most daemon-side events carry
+  // only stationId — logreader-missed is {stationId, count, driftSec} and nothing else, which is why
+  // ten consecutive rows rendered with a title and a blank line.
   if (e.station) bits.push(String(e.station));
+  else if (e.stationId != null) bits.push(`s${e.stationId}`);
+
   const detail = e.message || e.error || e.reason || e.text;
   if (detail) bits.push(String(detail));
   else {
     // Numbers that mean something on their own, in the order an operator would want them.
+    if (e.count != null) bits.push(`${e.count} row${e.count === 1 ? "" : "s"}`);
     if (e.rows != null) bits.push(`${e.rows} rows`);
     if (e.keptRows != null) bits.push(`${e.keptRows} operator rows kept`);
+    if (e.skippedGeneratedRows != null) bits.push(`${e.skippedGeneratedRows} skipped`);
     if (e.runwayDaysAfter != null) bits.push(`runway ${e.runwayDaysAfter}d`);
+    if (e.driftSec != null) bits.push(`drift ${e.driftSec}s`);
     if (e.from != null || e.to != null) bits.push(`${e.from || "none"} → ${e.to || "none"}`);
     if (e.failures != null) bits.push(`${e.failures} failures`);
+    if (e.action) bits.push(String(e.action));
     if (e.state) bits.push(String(e.state));
+  }
+
+  // LAST RESORT: a timeline row must never be blank. Whatever scalar fields remain get shown rather
+  // than leaving the operator with a title and empty space — which is precisely how the first cut of
+  // this list turned into a wall of identical-looking rows.
+  if (!bits.length) {
+    const skip = new Set(["t", "kind", "event", "uuid", "initiatedBy", "thisMachine",
+                          "holder", "machineId", "stationUuid"]);
+    for (const [k, v] of Object.entries(e)) {
+      if (skip.has(k) || v == null || typeof v === "object") continue;
+      bits.push(`${k} ${v}`);
+      if (bits.length >= 3) break;
+    }
   }
   return bits.join(" · ");
 }

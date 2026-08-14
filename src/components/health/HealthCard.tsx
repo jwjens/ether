@@ -1,29 +1,34 @@
 // ── HealthCard — one quick-scan tile ────────────────────────────────────────────────────────────
 //
-// Health Monitor redesign, Phase 1. A big number, a label, a colour, and optionally a click.
+// Health Monitor redesign. A big number, a label, a colour, and optionally a click.
 //
-// memo'd because the dashboard sits inside the Health Monitor, which re-renders on deck ticks. The
-// spec asks for that in Phase 4; it costs one wrapper to do it now, and a card that repaints 4× a
-// second while an operator is reading it is the thing being replaced.
+// WHY IT LOOKED LIKE TEXT (4.4.206, Jeff's report): the card was filled `--bg-secondary` — the SAME
+// colour as the panel behind it — so there was no card boundary to see. A 1px border and a 3px edge
+// on an identical fill reads as a rule between paragraphs, not as a card. Everything on it was also
+// 9–11px, the same micro-typography as the wall of text it was meant to replace.
+//
+// So: raised fill (`--bg-elevated`) against the panel's `--bg-secondary`, a 30px number, real
+// padding, and a tinted status wash. Still flat (--r-0) and still muted — the brand rule is flat and
+// dense, not small and grey.
 import { memo } from "react";
 import { levelColor, type HealthLevel } from "./healthUtils";
 
 export interface HealthCardProps {
-  /** The small label above the value. */
   title: string;
-  /** The big number or short status word. */
   value: string;
-  /** The line underneath — say what the number MEANS, not what it is called again. */
   sub?: string;
   status: HealthLevel;
   onClick?: () => void;
-  /** Shown on hover; also the accessible name of the action when clickable. */
   hint?: string;
 }
 
 function HealthCardImpl({ title, value, sub, status, onClick, hint }: HealthCardProps) {
   const color = levelColor(status);
   const clickable = typeof onClick === "function";
+  // A very low-alpha wash of the status colour, so a red card is legible as red across the room
+  // without becoming a solid alarm block. Grey gets none — "not measured" should not tint anything.
+  const wash = status === "grey" ? "transparent" : `color-mix(in srgb, ${color} 7%, transparent)`;
+
   return (
     <div
       onClick={onClick}
@@ -32,31 +37,42 @@ function HealthCardImpl({ title, value, sub, status, onClick, hint }: HealthCard
       tabIndex={clickable ? 0 : undefined}
       title={hint}
       style={{
-        // Flat, per the spec's token table — this app is already flat (1,032 borderRadius:0 uses).
-        borderRadius: 0,
-        background: "var(--bg-secondary)",
+        borderRadius: "var(--r-0, 0px)",
+        // RAISED against the dashboard's sunk --bg-primary region. --bg-secondary per spec; the
+        // container behind it is darker, so the card edge is visible without elevation tricks.
+        background: `linear-gradient(0deg, ${wash}, ${wash}), var(--bg-secondary)`,
         border: "1px solid var(--border-primary)",
-        // The status colour as a left edge rather than a full fill: four saturated blocks in a row
-        // would read as an alarm panel even when everything is green.
         borderLeft: `3px solid ${color}`,
-        padding: "10px 12px",
-        display: "flex", flexDirection: "column", gap: 2, minWidth: 0,
+        padding: "var(--s-5, 12px) var(--s-5, 12px) var(--s-4, 8px)",
+        display: "flex", flexDirection: "column", gap: "var(--s-1, 2px)", minWidth: 0,
+        minHeight: 96,
         cursor: clickable ? "pointer" : "default",
       }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <span style={{ width: 7, height: 7, borderRadius: "50%", background: color, flexShrink: 0 }} />
-        <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase",
-                       color: "var(--text-tertiary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+
+      {/* Label row */}
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--s-2, 4px)", minWidth: 0 }}>
+        <span style={{ width: 8, height: 8, borderRadius: "var(--r-full, 999px)", background: color, flexShrink: 0 }} />
+        <span style={{ fontSize: "var(--t-micro, 9px)", fontWeight: 700, letterSpacing: "0.14em",
+                       textTransform: "uppercase", color: "var(--text-tertiary)",
+                       whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {title}
         </span>
       </div>
-      <div style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.15, color,
-                    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+
+      {/* THE NUMBER, at --t-metric — the scale step added for exactly this. The five sizes that
+          existed topped out at 20px "panel titles only", so a headline figure had nowhere to sit and
+          the panel kept reading as text however it was arranged. */}
+      <div style={{ fontSize: "var(--t-metric, 30px)", fontWeight: 800, lineHeight: 1.1, letterSpacing: "-0.02em",
+                    color, marginTop: "var(--s-1, 2px)",
+                    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                    fontVariantNumeric: "tabular-nums" }}>
         {value}
       </div>
+
       {sub && (
-        <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.35,
-                      overflow: "hidden", textOverflow: "ellipsis" }}>
+        <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.4, marginTop: "auto",
+                      display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const,
+                      overflow: "hidden" }}>
           {sub}
         </div>
       )}

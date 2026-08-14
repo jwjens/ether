@@ -19,6 +19,7 @@ import { useAudioEngine } from "../../audio/AudioEngineContext";
 import { HealthCard } from "./HealthCard";
 import { HealthBar } from "./HealthBar";
 import { HealthTimeline } from "./HealthTimeline";
+import { HealthSection } from "./HealthSection";
 import {
   fetchLibraryHealth, fetchDesignation, stationFrom, designationFor,
   POLL_SNAPSHOT_MS, POLL_QUEUE_MS,
@@ -123,18 +124,31 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
   const qLevel = queueLevel(queueLen);
 
   return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)",
-                      textTransform: "uppercase" as const }}>
-          At a glance{st?.station || st?.name ? ` — ${st.station || st.name}` : ""}
+    // The dashboard is its own REGION, sunk against the panel, so it reads as a dashboard rather
+    // than as the first few paragraphs of the text below it. This is the outer half of the fix for
+    // "it still looks like text labels" — the inner half is the cards being raised (HealthCard).
+    <div style={{
+      background: "var(--bg-primary)",
+      border: "1px solid var(--border-primary)",
+      padding: "var(--s-4, 8px)",
+      marginBottom: "var(--s-6, 16px)",
+    }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between",
+                    gap: "var(--s-3, 6px)", marginBottom: "var(--s-4, 8px)",
+                    padding: "0 var(--s-1, 2px)" }}>
+        <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em",
+                      color: "var(--text-primary)" }}>
+          {st?.station || st?.name || "Station"}
+          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)",
+                         marginLeft: "var(--s-3, 6px)" }}>at a glance</span>
         </div>
-        {err && <span style={{ fontSize: 10, color: "var(--accent-red)" }}>{err}</span>}
+        {err && <span style={{ fontSize: 11, color: "var(--accent-red)" }}>{err}</span>}
       </div>
 
-      {/* Four across, wrapping to two rows under ~768px — auto-fit does it without a media query,
-          which matters because this panel also renders inside a narrow popout. */}
-      <div style={{ display: "grid", gap: 6, gridTemplateColumns: "repeat(auto-fit, minmax(168px, 1fr))" }}>
+      {/* Four across, wrapping under ~768px — auto-fit does it without a media query, which matters
+          because this panel also renders inside a narrow popout. */}
+      <div style={{ display: "grid", gap: "var(--s-3, 6px)", marginBottom: "var(--s-4, 8px)",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(184px, 1fr))" }}>
         <HealthCard
           title="Runway"
           value={runway.value}
@@ -162,9 +176,11 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
         <HealthCard
           title="Queue"
           value={queueLen == null ? "—" : String(queueLen)}
+          // Says how much TIME the depth buys, which is the thing the thresholds are really about —
+          // ~3.5 min a track, so 10 is about half an hour of cover.
           sub={queueLen == null ? "engine not reporting"
-               : queueLen === 0 ? "nothing queued behind what is on air"
-               : `item${queueLen === 1 ? "" : "s"} waiting`}
+               : queueLen === 0 ? "nothing behind what is on air"
+               : `tracks · about ${Math.max(1, Math.round(queueLen * 3.5))} min of cover`}
           status={qLevel}
           hint="Items waiting behind what is on air, read live from the audio engine."
         />
@@ -173,22 +189,15 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
       {/* ── ROTATION GOALS (Phase 2) ────────────────────────────────────────────────────────────
           One bar per category: declared target vs what actually aired in the last 24 hours, from
           goalCheck().categories (electron/library-health.js). */}
-      <div style={{ marginTop: "var(--s-3, 6px)" }}>
-        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between",
-                      marginBottom: "var(--s-2, 4px)" }}>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em",
-                        color: "var(--text-tertiary)", textTransform: "uppercase" as const }}>
-            Rotation goals
-          </div>
-          {/* The window is stated, because "spins per hour" is meaningless without it — and if the
-              station was off for much of it, say so rather than letting the divisor lie. */}
-          {cats.length > 0 && (
-            <div style={{ fontSize: 9, color: "var(--text-tertiary)" }}>
-              last 24h{hoursObserved != null && hoursObserved < 20 ? ` · only ${hoursObserved}h on air` : ""}
-            </div>
-          )}
-        </div>
-
+      <HealthSection
+        title="Rotation goals"
+        right={cats.length > 0 ? (
+          // The window is stated, because "spins per hour" is meaningless without it — and if the
+          // station was off for much of it, say so rather than letting the divisor lie.
+          <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+            last 24h{hoursObserved != null && hoursObserved < 20 ? ` · only ${hoursObserved}h on air` : ""}
+          </span>
+        ) : undefined}>
         {cats.length === 0 ? (
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontStyle: "italic" }}>
             No categories on this station yet.
@@ -209,7 +218,7 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
             {cats.map(c => <HealthBar key={c.categoryId} goal={c} />)}
           </div>
         )}
-      </div>
+      </HealthSection>
 
       {/* ── LIVE EVENTS (Phase 3) — the honest ledger, read back ─────────────────────────────── */}
       <HealthTimeline />
