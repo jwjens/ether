@@ -29,10 +29,22 @@ const openPanel = (name: string) => {
   try { window.dispatchEvent(new CustomEvent(`ether:open-${name}`)); } catch { /* non-Electron */ }
 };
 
-export function HealthDashboard({ onScrollToDesignation }: { onScrollToDesignation?: () => void }) {
+export interface HealthDashboardProps {
+  /** The station to report on. Omit to follow the active station.
+   *
+   *  Explicit beats implicit: the parent already knows which station it is rendering, and passing it
+   *  means this component can later report on a station that is NOT the active one (a multi-station
+   *  overview) without being rewritten. When omitted it falls back to the hook, so the component
+   *  still works standing alone. */
+  stationId?: number | null;
+  onScrollToDesignation?: () => void;
+}
+
+export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignation }: HealthDashboardProps) {
   // useActiveStation() returns an OBJECT, not the id — the spec's §0 calls it "the active station
   // ID". Destructured the way every other caller in the tree does (App.tsx:548).
-  const { stationId } = useActiveStation();
+  const { stationId: activeStationId } = useActiveStation();
+  const stationId = stationIdProp ?? activeStationId;
   const engine = useAudioEngine();
 
   const [snap, setSnap] = useState<LibrarySnapshot | null>(null);

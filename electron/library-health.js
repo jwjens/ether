@@ -132,6 +132,64 @@ function createLibraryHealth(opts) {
           GROUP BY category_id`);
       const nameOfCat = db.prepare("SELECT code, name FROM categories WHERE id=?");
 
+      // ── ACTUAL SPINS (Phase 2 of the Health dashboard) ─────────────────────────────────────────
+      // What each category ACTUALLY aired in the last 24h, to sit beside the declared target.
+      //
+      // NOT `play_log.category_id` — there is no such column. play_log has `category_code`, and it is
+      // hardcoded null by the daemon's writer (audiod/playlog.js:41): 0 of 42,736 rows on the dev box
+      // carry one. The usable link is file_path → songs.category_id, the same join buildRestMaps
+      // already uses for artist rest (separation-enforce.js:24).
+      //
+      // NOT `played_at >= datetime('now','-1 day')` either. played_at is INTEGER unix seconds, so
+      // comparing it to a datetime STRING is an int-vs-text comparison that is always false in
+      // SQLite — it would have reported zero spins for every category, forever, and looked like a
+      // quiet station rather than a broken query. Integer arithmetic only.
+      //
+      // Deleted songs are deliberately NOT excluded: a song that aired, aired. Its spin counts toward
+      // what the category actually did, whether or not it has since been removed from the library —
+      // the same reasoning that exempts the artist-separation subquery from the deleted-song filter.
+      const spinCounts = (() => {
+        try {
+          const since = Math.floor(Date.now() / 1000) - 86_400;
+          const rows = db.prepare(
+            `SELECT s.category_id AS categoryId, COUNT(*) AS spins
+               FROM play_log pl JOIN songs s ON s.file_path = pl.file_path
+              WHERE pl.station_id = ? AND pl.deleted_at IS NULL
+                AND pl.played_at >= ? AND s.category_id IS NOT NULL
+              GROUP BY s.category_id`).all(sid, since);
+          // How much airtime the window actually covers. A station that was off for 18 of the last 24
+          // hours has a real spins/hour far higher than spins/24 suggests, and a bar drawn from the
+          // flat divisor would under-report it as a rotation problem that does not exist.
+          const span = db.prepare(
+            `SELECT MIN(played_at) a, MAX(played_at) b, COUNT(*) n FROM play_log
+              WHERE station_id = ? AND deleted_at IS NULL AND played_at >= ?`).get(sid, since) || {};
+          const hoursObserved = span.n ? Math.max(0, Math.round(((span.b - span.a) / 3600) * 10) / 10) : 0;
+          return { map: new Map(rows.map(r => [r.categoryId, r.spins])), hoursObserved };
+        } catch { return { map: new Map(), hoursObserved: 0 }; }
+      })();
+
+      /** One row per category: the declared target (or null) beside what actually aired. This is what
+       *  the Phase 2 progress bars read, and it is returned whether or not any target exists — a
+       *  station with no goals still deserves to see its own rotation. */
+      const categoryRows = (() => {
+        try {
+          const all = db.prepare(
+            `SELECT id, code, name, spins_per_hour AS target FROM categories
+              WHERE station_id=? AND deleted_at IS NULL`).all(sid);
+          return all.map(c => {
+            const spins = spinCounts.map.get(c.id) || 0;
+            return {
+              categoryId: c.id,
+              category: c.name || c.code || ('#' + c.id),
+              // null, never 0 — "no goal declared" and "a goal of zero" are different statements.
+              target: (c.target != null && c.target > 0) ? c.target : null,
+              spins24h: spins,
+              actualSpinsPerHour: Math.round((spins / 24) * 10) / 10,
+            };
+          }).sort((a, b) => b.spins24h - a.spins24h);
+        } catch { return []; }
+      })();
+
       // NO TARGETS DECLARED — measured on real data 2026-08-10: every category on all four of Jeff's
       // stations has spins_per_hour 0 or NULL. The mismatch report is therefore correctly empty, which
       // would make this sense invisible on exactly the installs that need it most.
@@ -156,9 +214,13 @@ function createLibraryHealth(opts) {
             .sort((a, b) => b.slots - a.slots);
           composition.push({ clockId: ck.clockId, clock: ck.clockName || ('#' + ck.clockId), musicSlots, top });
         }
-        if (!composition.length) return null;
         composition.sort((a, b) => (b.top[0]?.pct || 0) - (a.top[0]?.pct || 0));   // most lopsided first
-        return { declared: 0, totalCats, mismatches: [], composition };
+        // Returns even when composition is empty, because `categories` may still carry real spin
+        // data. Bailing to null here would hide what the station actually aired just because no
+        // clock has music slots to describe.
+        if (!composition.length && !categoryRows.length) return null;
+        return { declared: 0, totalCats, mismatches: [], composition,
+                 categories: categoryRows, hoursObserved: spinCounts.hoursObserved };
       }
 
       const out = [];
@@ -193,7 +255,8 @@ function createLibraryHealth(opts) {
         const worst = (x) => x.rows.reduce((m, r) => Math.max(m, Math.abs(r.delta)), 0);
         return worst(b) - worst(a);
       });
-      return { declared: goals.length, totalCats, mismatches: out, composition: [] };
+      return { declared: goals.length, totalCats, mismatches: out, composition: [],
+               categories: categoryRows, hoursObserved: spinCounts.hoursObserved };
     } catch { return null; }
   }
 

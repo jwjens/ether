@@ -908,6 +908,17 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         flexDirection: twoCol ? ("row" as const) : ("column" as const),
       }}>
       <div style={{ flex: 1, minHeight: 0, minWidth: 0, overflowY: "auto" as const, padding: "0 32px" }}>
+        {/* ── AT A GLANCE (Health Monitor redesign, Phase 1) ────────────────────────────────────
+            FIRST in the column, deliberately. It was briefly placed further down and landed BELOW
+            the "Legacy diagnostics — may be stale" divider, which frames the newest and most
+            authoritative reading in the panel as the oldest. A quick-scan dashboard that has to be
+            scrolled to is not a quick scan.
+            ADDITIVE, not a replacement: everything below — the auto-generate toggles, the
+            designation controls, the canary flips, the shadow burn-in, the DMCA export, Designation
+            Activity — has no equivalent here yet, and swapping the component out would delete it. */}
+        <HealthDashboard stationId={stationId} onScrollToDesignation={() =>
+          document.getElementById("health-designation")?.scrollIntoView({ behavior: "smooth", block: "start" })} />
+
         {/* ── LIVE Health Monitor (primary; the real telemetry, updates every second) ── */}
         <LiveHealthMonitor />
 
@@ -1039,14 +1050,6 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         </div>
         {/* HA rollup banner */}
         <HaRollupBanner dash={dash} />
-
-        {/* ── AT A GLANCE (Health Monitor redesign, Phase 1) ────────────────────────────────────
-            ADDITIVE, not a replacement. Everything below — the auto-generate toggles, the
-            designation controls, the canary flips, the shadow burn-in, the DMCA export, Designation
-            Activity — has no equivalent in the dashboard yet, and swapping the component out would
-            delete all of it. The cards go on top; sections move in as they gain replacements. */}
-        <HealthDashboard onScrollToDesignation={() =>
-          document.getElementById("health-designation")?.scrollIntoView({ behavior: "smooth", block: "start" })} />
 
         {/* Core systems */}
         <div style={{ paddingTop: 16, marginBottom: 8 }}>
