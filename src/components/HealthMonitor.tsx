@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, Fragment, Component, ReactNode } from "react";
 import { parseKvFlag } from "../lib/kvFlag";
 import { designationView, refreshBanner, type RefreshBanner } from "../lib/designationRow";
+import { HealthDashboard } from "./health/HealthDashboard";
 
 // Must match electron/main.js _autoGenerateEnabled and the LOCAL_ONLY_KEYS allowlist in
 // electron/sync/handlers/station_config_kv.js. A key absent from that allowlist is REFUSED by
@@ -1039,6 +1040,14 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         {/* HA rollup banner */}
         <HaRollupBanner dash={dash} />
 
+        {/* ── AT A GLANCE (Health Monitor redesign, Phase 1) ────────────────────────────────────
+            ADDITIVE, not a replacement. Everything below — the auto-generate toggles, the
+            designation controls, the canary flips, the shadow burn-in, the DMCA export, Designation
+            Activity — has no equivalent in the dashboard yet, and swapping the component out would
+            delete all of it. The cards go on top; sections move in as they gain replacements. */}
+        <HealthDashboard onScrollToDesignation={() =>
+          document.getElementById("health-designation")?.scrollIntoView({ behavior: "smooth", block: "start" })} />
+
         {/* Core systems */}
         <div style={{ paddingTop: 16, marginBottom: 8 }}>
           <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 8 }}>Core Systems</div>
@@ -1186,7 +1195,9 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                     <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotCol }} />
                     <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-secondary)" }}>{st.name}</span>
                   </div>
-                  {/* Designation (Phase A). Always rendered — see DesignationRows. */}
+                  {/* Designation (Phase A). Always rendered — see DesignationRows.
+                      id anchors the dashboard's "Designated generator" card (Phase 1 §4). */}
+                  <div id={st.stationId === stationId ? "health-designation" : undefined} />
                   <DesignationRows d={desig[st.stationId]} busy={desigBusy === st.stationId}
                     onRefresh={() => refreshDesig(st.stationId)} readAt={desigAt}
                     err={desigErr[st.stationId] || desigLoadErr}

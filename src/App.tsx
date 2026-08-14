@@ -1077,7 +1077,17 @@ export default function App() {
   useEffect(() => {
     const handler = () => setPanel("managedevices");
     window.addEventListener("ether:open-managedevices", handler);
-    return () => window.removeEventListener("ether:open-managedevices", handler);
+    // Health dashboard cards route here (Health Monitor redesign, Phase 1) — same
+    // `ether:open-<panel>` pattern as the two above, so the cards do not need panel state.
+    const toCalendar = () => setPanel("calendar");
+    const toSchedule = () => setPanel("schedulehub");
+    window.addEventListener("ether:open-calendar", toCalendar);
+    window.addEventListener("ether:open-schedulehub", toSchedule);
+    return () => {
+      window.removeEventListener("ether:open-managedevices", handler);
+      window.removeEventListener("ether:open-calendar", toCalendar);
+      window.removeEventListener("ether:open-schedulehub", toSchedule);
+    };
   }, []);
 
   // Open About via custom event — symmetric with subscription/managedevices.
