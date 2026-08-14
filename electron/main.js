@@ -7731,6 +7731,83 @@ function _sampleRunway() {
   }
 }
 
+/** The R2 deletion sweep rides this tick rather than owning a timer — one scheduled thing, not two,
+ *  and no diagnostic persistence. Once per 24h, measured from a PERSISTED last-run rather than from
+ *  wall-clock time, so a machine that is off overnight still sweeps on its next tick instead of
+ *  waiting for a particular hour to come round while it was asleep.
+ *
+ *  Designation-gated with the SAME rule the generator uses (_desig.mayAutoGenerate) — one rule, two
+ *  consumers. FAIL-CLOSED: no record, another machine's record, or an unreadable record all mean
+ *  "do not sweep". A missing record is the EXPECTED path today (the 4.4.192 write fix still has no
+ *  runtime receipt), so it is logged as normal operation, not as an error. */
+/** ── SCOPING, AND WHAT MUST CHANGE BEFORE ANY DELETE IS SENT ────────────────────────────────────
+ *
+ *  THE QUEUE IS GLOBAL, THE CALLER IS PER-STATION. deletion_queue holds one row per file_key for
+ *  the whole install, and runSweep() evaluates ALL of them — it takes no station argument and does
+ *  no station filtering. But this function is called from inside _autoExtendTick's per-station
+ *  loop, and the last-run stamp is written per station. So on a four-station install the same
+ *  global queue is swept up to four times a day, once under each station's stamp.
+ *
+ *  That is HARMLESS TODAY and only today, because the sweep is report-only: four evaluations of the
+ *  same row reach the same verdict and write the same status. The cost is a few redundant reads.
+ *
+ *  IT IS NOT HARMLESS ONCE A DELETE IS WIRED. Four stations would each issue a DELETE for the same
+ *  R2 object — the first succeeds and the rest race against an object that no longer exists, which
+ *  at best is noise and at worst is retry/backoff churn against a 404 that reads like a failure.
+ *  BEFORE ANY DELETE IS SENT, this needs ONE of:
+ *    - a singleton lock so exactly one sweep runs per install per interval, or
+ *    - a single install-scoped stamp instead of a per-station one, or
+ *    - genuine station-aware scoping of the queue itself.
+ *  The first is the smallest correct change; the third is only meaningful if the library ever
+ *  becomes station-scoped.
+ *
+ *  station_id IS 0 ON BACKFILLED ROWS, deliberately. The `songs` table has no station_id column at
+ *  all — the library is ACCOUNT-scoped, shared across the stations on the account (which is also
+ *  why one file_key can be referenced by several songs, and why the sole-reference check exists).
+ *  The column is kept NOT NULL rather than nullable so that a future station-scoped library has to
+ *  confront it rather than quietly inheriting NULLs.
+ */
+const SWEEP_LAST_RUN_KEY = 'sweep_last_run';
+const SWEEP_INTERVAL_SEC = 24 * 60 * 60;
+
+function _maybeRunDeletionSweep(stationId) {
+  try {
+    const { stationConfigKvGetValue, stationConfigKvSetLocal } = require('./sync/handlers/station_config_kv');
+    const now = Math.floor(Date.now() / 1000);
+    const last = parseInt(stationConfigKvGetValue(db, stationId, SWEEP_LAST_RUN_KEY), 10);
+    if (Number.isFinite(last) && (now - last) < SWEEP_INTERVAL_SEC) return;
+
+    // Fail-closed designation gate, with WHICH of the three reasons it was.
+    let record = null, machineId = null;
+    try {
+      // Same read the generator's Phase B gate uses (main.js:7814) — one rule, one way of reading it.
+      record = _desig.parseRecord(_kvGet(stationId, _desig.KEY));
+      machineId = _machineIdentity().id;
+    } catch (e) {
+      console.log(`[deletion-sweep] designation unreadable — sweep skipped (station ${stationId}): ${e.message}`);
+      return;
+    }
+    if (!record) { console.log(`[deletion-sweep] designation missing — sweep skipped (station ${stationId})`); return; }
+    if (!_desig.mayAutoGenerate({ record, machineId, killSwitch: false })) {
+      console.log(`[deletion-sweep] designation names another machine — sweep skipped (station ${stationId})`);
+      return;
+    }
+
+    require('./deletion-sweep').runSweep(db, { machineId, logDir: app.getPath('userData'), now });
+
+    // VERIFY THE WRITE. stationConfigKvSetLocal REFUSES any key not in LOCAL_ONLY_KEYS, silently
+    // from the caller's point of view — the trap that made the designation record unwritable
+    // (4.4.193). An unverified stamp would make the sweep run on every single tick.
+    const res = stationConfigKvSetLocal(db, stationId, SWEEP_LAST_RUN_KEY, String(now));
+    const readBack = stationConfigKvGetValue(db, stationId, SWEEP_LAST_RUN_KEY);
+    if (String(readBack) !== String(now)) {
+      console.error(`[deletion-sweep] last-run stamp did NOT persist (wrote ${now}, read ${readBack}, result ${JSON.stringify(res)}) — the sweep would repeat every tick`);
+    }
+  } catch (e) {
+    console.error('[deletion-sweep] tick failed:', e.message);
+  }
+}
+
 async function _autoExtendTick() {
   if (!db) return;
   const _generatedThisTick = new Set();
@@ -7742,6 +7819,9 @@ async function _autoExtendTick() {
     let hasShow = false;
     try { hasShow = !!db.prepare("SELECT 1 FROM shows WHERE station_id = ? AND is_active = 1 AND clock_id IS NOT NULL AND deleted_at IS NULL LIMIT 1").get(st.id); } catch {}
     if (!hasShow) continue;
+    // Runs BEFORE the auto-generate switch: releasing storage is not the same decision as building
+    // a log, and a station with auto-generate off still deletes songs.
+    _maybeRunDeletionSweep(st.id);
     if (!_autoGenerateEnabled(st.id)) continue;          // switched off for this machine — silently, by design
 
     // ── PHASE B — ENFORCEMENT (4.4.201) ────────────────────────────────────────────────────────

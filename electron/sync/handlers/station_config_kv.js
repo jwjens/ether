@@ -46,7 +46,9 @@ const PATCHABLE          = ["value","updated_at"];
 // arbitrate between machines, and a local record cannot tell two machines apart. Putting it here
 // would give each machine its own private "designation" and break Phase B enforcement against a
 // record the other machine has never seen. It is written through the ordinary (synced) path.
-const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_designation', 'schedule_layout_v1']);
+// sweep_last_run: when this machine last ran the R2 deletion sweep. LOCAL because it describes THIS
+// machine's schedule — syncing it would let one install suppress another's sweep.
+const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_designation', 'schedule_layout_v1', 'sweep_last_run']);
 
 // Prefixes, for families of per-machine keys. `grid_widths_<pane>` is one key per grid, so it cannot
 // be enumerated — column widths had been written and refused on every resize since 4.4.177.

@@ -127,6 +127,13 @@ function songsDelete(db, uuid) {
     actor_id:       null,
   }, () => {
     const now = new Date().toISOString();
+    // Queue the R2 object for eventual release BEFORE anything is modified. `existing` is the whole
+    // row as it was, which is what makes the 30-day window a real restore rather than a partial one.
+    // Inside the transaction so a queue row cannot outlive a delete that rolled back. Never throws:
+    // a song must delete even if the bookkeeping fails. This one call covers all three delete
+    // entry points — songsDeleteById delegates here, and songsDeleteByStation loops through here.
+    try { require('../../deletion-sweep').enqueueForDeletion(db, existing); }
+    catch (e) { console.error('[songs] deletion queue unavailable:', e.message); }
     neuterSong(db, uuid, now);
     retracted = retractSongReferences(db, existing, now);
   });
