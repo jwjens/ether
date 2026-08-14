@@ -20,9 +20,12 @@ export interface HealthCardProps {
   status: HealthLevel;
   onClick?: () => void;
   hint?: string;
+  /** Wall-display mode: bigger number, taller card. A figure sized for a docked panel at arm's
+   *  length is not legible from across a studio, which is the whole point of a wall display. */
+  wall?: boolean;
 }
 
-function HealthCardImpl({ title, value, sub, status, onClick, hint }: HealthCardProps) {
+function HealthCardImpl({ title, value, sub, status, onClick, hint, wall }: HealthCardProps) {
   const color = levelColor(status);
   const clickable = typeof onClick === "function";
   // A very low-alpha wash of the status colour, so a red card is legible as red across the room
@@ -43,9 +46,9 @@ function HealthCardImpl({ title, value, sub, status, onClick, hint }: HealthCard
         background: `linear-gradient(0deg, ${wash}, ${wash}), var(--bg-secondary)`,
         border: "1px solid var(--border-primary)",
         borderLeft: `3px solid ${color}`,
-        padding: "var(--s-5, 12px) var(--s-5, 12px) var(--s-4, 8px)",
+        padding: wall ? "var(--s-6, 16px) var(--s-5, 12px)" : "var(--s-5, 12px) var(--s-5, 12px) var(--s-4, 8px)",
         display: "flex", flexDirection: "column", gap: "var(--s-1, 2px)", minWidth: 0,
-        minHeight: 96,
+        minHeight: wall ? 128 : 96,
         cursor: clickable ? "pointer" : "default",
       }}>
 
@@ -62,7 +65,7 @@ function HealthCardImpl({ title, value, sub, status, onClick, hint }: HealthCard
       {/* THE NUMBER, at --t-metric — the scale step added for exactly this. The five sizes that
           existed topped out at 20px "panel titles only", so a headline figure had nowhere to sit and
           the panel kept reading as text however it was arranged. */}
-      <div style={{ fontSize: "var(--t-metric, 30px)", fontWeight: 800, lineHeight: 1.1, letterSpacing: "-0.02em",
+      <div style={{ fontSize: wall ? 44 : "var(--t-metric, 30px)", fontWeight: 800, lineHeight: 1.1, letterSpacing: "-0.02em",
                     color, marginTop: "var(--s-1, 2px)",
                     whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                     fontVariantNumeric: "tabular-nums" }}>

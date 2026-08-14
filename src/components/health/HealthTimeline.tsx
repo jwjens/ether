@@ -76,7 +76,7 @@ function EventRow({ e }: { e: LedgerEvent }) {
   );
 }
 
-function HealthTimelineImpl() {
+function HealthTimelineImpl({ maxHeight = 300 }: { maxHeight?: number }) {
   const [raw, setRaw] = useState<LedgerEvent[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -148,7 +148,9 @@ function HealthTimelineImpl() {
         </div>
       ) : (
         // Bounded height with its own scroll: 20 rows should not push the rest of the panel down.
-        <div style={{ maxHeight: 300, overflowY: "auto", padding: "0 var(--s-4, 8px)" }}>
+        // On a wall display this is what keeps the dashboard to one screen — the events list is the
+        // only unbounded section, so it is the one that has to give.
+        <div style={{ maxHeight, overflowY: "auto", padding: "0 var(--s-4, 8px)" }}>
           {events.map((e, i) => <EventRow key={`${e.t}-${e.kind}-${i}`} e={e} />)}
         </div>
       )}

@@ -22,6 +22,7 @@ import { HealthTimeline } from "./HealthTimeline";
 import { HealthSection } from "./HealthSection";
 import { HealthChart } from "./HealthChart";
 import { HealthMeters } from "./HealthMeters";
+import { useContainerWidth, WALL_MIN_PX } from "./useContainerWidth";
 import {
   fetchLibraryHealth, fetchDesignation, stationFrom, designationFor,
   POLL_SNAPSHOT_MS, POLL_QUEUE_MS,
@@ -53,6 +54,10 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
   // (electron/levels-scope.js — the VU crosstalk fix, 2026-07-08).
   const { stationId: activeStationId, stationUuid } = useActiveStation();
   const stationId = stationIdProp ?? activeStationId;
+  // Measured on THE PANEL, not the window — the wall display is reached via the popout, which is its
+  // own window and can be full-screened while the main window stays any size. See useContainerWidth.
+  const [wallRef, panelWidth] = useContainerWidth();
+  const wall = panelWidth >= WALL_MIN_PX;
   const engine = useAudioEngine();
 
   const [snap, setSnap] = useState<LibrarySnapshot | null>(null);
@@ -143,7 +148,7 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
     // The dashboard is its own REGION, sunk against the panel, so it reads as a dashboard rather
     // than as the first few paragraphs of the text below it. This is the outer half of the fix for
     // "it still looks like text labels" — the inner half is the cards being raised (HealthCard).
-    <div style={{
+    <div ref={wallRef} style={{
       background: "var(--bg-primary)",
       border: "1px solid var(--border-primary)",
       padding: "var(--s-4, 8px)",
@@ -152,10 +157,10 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between",
                     gap: "var(--s-3, 6px)", marginBottom: "var(--s-4, 8px)",
                     padding: "0 var(--s-1, 2px)" }}>
-        <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em",
+        <div style={{ fontSize: wall ? 18 : 13, fontWeight: 800, letterSpacing: "-0.01em",
                       color: "var(--text-primary)" }}>
           {st?.station || st?.name || "Station"}
-          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-tertiary)",
+          <span style={{ fontSize: wall ? 13 : 11, fontWeight: 600, color: "var(--text-tertiary)",
                          marginLeft: "var(--s-3, 6px)" }}>at a glance</span>
         </div>
         {err && <span style={{ fontSize: 11, color: "var(--accent-red)" }}>{err}</span>}
@@ -171,7 +176,7 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
           sub={runway.sub}
           status={toLevel(st?.runway?.level)}
           onClick={() => openPanel("calendar")}
-          hint="How long until this station's log runs out. Click to open the Calendar."
+          wall={wall}          hint="How long until this station's log runs out. Click to open the Calendar."
         />
         <HealthCard
           title="Designated generator"
@@ -179,6 +184,7 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
           sub={design.sub}
           status={design.level}
           onClick={onScrollToDesignation}
+          wall={wall}
           hint="Which machine builds this station's log. Click to jump to the designation controls."
         />
         <HealthCard
@@ -187,6 +193,7 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
           sub={goals.sub}
           status={goals.level}
           onClick={() => openPanel("schedulehub")}
+          wall={wall}
           hint="Declared rotation goals vs what the clocks actually call. Click to open Schedule Manager."
         />
         <HealthCard
@@ -198,14 +205,30 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
                : queueLen === 0 ? "nothing behind what is on air"
                : `tracks · about ${Math.max(1, Math.round(queueLen * 3.5))} min of cover`}
           status={qLevel}
+          wall={wall}
           hint="Items waiting behind what is on air, read live from the audio engine."
         />
       </div>
 
-      {/* ── RUNWAY TREND ────────────────────────────────────────────────────────────────────────
-          Between the cards and the bars because it is the history of the Runway card directly above
-          it — the number and its trend read as one thought. */}
-      <HealthChart stationId={stationId} days={7} />
+      {/* ── THE WALL GRID ───────────────────────────────────────────────────────────────────────
+          At ≥1280px the four sections pair up two-across instead of stacking, so a 1920×1080 wall
+          display shows everything at once with no scrolling. Below that they stack, because a chart
+          squeezed beside a meter column is a smear rather than a reading.
+          The pairing is deliberate: trend beside levels (both "what is happening now"), goals beside
+          events (both "what has been decided"). `alignItems: start` so a short section does not
+          stretch to match a tall neighbour and leave a lake of empty card. */}
+      <div style={{
+        display: "grid", gap: "var(--s-4, 8px)", alignItems: "start",
+        gridTemplateColumns: wall ? "minmax(0, 3fr) minmax(0, 2fr)" : "minmax(0, 1fr)",
+      }}>
+        {/* Runway trend — paired with the Runway card above it; the number and its history read as
+            one thought. Given the wider column because a trend needs horizontal room. */}
+        <HealthChart stationId={stationId} days={7} />
+
+        {/* ── AUDIO LEVELS — decks in dBFS, program loudness in LUFS. Two measurements, two scales.
+            Sits BESIDE the trend, not below it: both answer "what is happening right now", and on a
+            wall display the pair is the first thing anyone looks at. */}
+        <HealthMeters stationUuid={stationUuid} />
 
       {/* ── ROTATION GOALS (Phase 2) ────────────────────────────────────────────────────────────
           One bar per category: declared target vs what actually aired in the last 24 hours, from
@@ -241,11 +264,10 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
         )}
       </HealthSection>
 
-      {/* ── AUDIO LEVELS — decks in dBFS, program loudness in LUFS. Two measurements, two scales. */}
-      <HealthMeters stationUuid={stationUuid} />
-
-      {/* ── LIVE EVENTS (Phase 3) — the honest ledger, read back ─────────────────────────────── */}
-      <HealthTimeline />
+        {/* ── LIVE EVENTS (Phase 3) — the honest ledger, read back. Paired with the goals: both are
+            "what has been decided", as against the live pair above. */}
+        <HealthTimeline maxHeight={wall ? 260 : 300} />
+      </div>
     </div>
   );
 }
