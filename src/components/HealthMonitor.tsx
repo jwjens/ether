@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef, Fragment, Component, ReactNod
 import { parseKvFlag } from "../lib/kvFlag";
 import { designationView, refreshBanner, type RefreshBanner } from "../lib/designationRow";
 import { HealthDashboard } from "./health/HealthDashboard";
+import { sectionCard, SectionTitle } from "./health/sectionChrome";
+import { useContainerSize, WALL_W, WALL_H } from "./health/useContainerWidth";
 
 // Must match electron/main.js _autoGenerateEnabled and the LOCAL_ONLY_KEYS allowlist in
 // electron/sync/handlers/station_config_kv.js. A key absent from that allowlist is REFUSED by
@@ -378,6 +380,30 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   const [eventsLoading, setEventsLoading] = useState(false);
   const isPopout = typeof window !== "undefined" && window.location.hash.startsWith("#popout/");
 
+  // ── WALL / OPS (v3 Phase 1) ───────────────────────────────────────────────────────────────────
+  // Two products were being asked of one screen. WALL is the broadcast display: a fixed 1920×1080
+  // canvas, no scrolling, read-only, big type — everything at a glance from across a room. OPS is
+  // this panel as it has always been: a scrolling diagnostic surface with every control on it.
+  //
+  // They cannot be the same screen. Seven sections carry controls (the canary and auto-generate
+  // toggles, designation refresh, DMCA export, dismiss, the unresolvable expander, HA refresh), and
+  // a wall display with buttons on it is neither glanceable nor safe to walk past.
+  //
+  // The popout defaults to WALL because the popout is how this reaches a wall — its own window, to
+  // be full-screened on the display — while the docked panel defaults to OPS. Either mode is
+  // reachable from either window via the header toggle, so the default is a convenience, never a
+  // cage: nothing is only visible in one mode.
+  const [mode, setMode] = useState<"wall" | "ops">(() => (isPopout ? "wall" : "ops"));
+  const wall = mode === "wall";
+  // The live activity terminal on the wall: minimised to a rail by default, expands on click.
+  const [termOpen, setTermOpen] = useState(false);
+  // Measured on the STAGE — the area the canvas has to fit into, which is not the window.
+  const [stageRef, stageW, stageH] = useContainerSize();
+  // Fit-to-screen. The canvas is authored at 1920×1080 and scaled, so the layout is identical on
+  // every display and nothing can be pushed off the bottom by a screen of a different size.
+  // Falls back to 1 for the single frame before the stage is measured.
+  const wallScale = stageW > 0 && stageH > 0 ? Math.min(stageW / WALL_W, stageH / WALL_H) : 1;
+
   // ── LIBRARY & ROTATION senses (Slice C) — poll library-health:get (hourly-refreshed in main) ──
   const [libHealth, setLibHealth] = useState<any>(null);
   const [unresolvableFor, setUnresolvableFor] = useState<number | null>(null);
@@ -441,6 +467,10 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   const [autoErr, setAutoErr] = useState<Record<number, string>>({});
   // Generation designation (Phase A: observe only — it reports, it does not gate generation).
   const [desig, setDesig] = useState<Record<number, any>>({});
+  // The same rows, unkeyed. This panel needs them by station id; the dashboard's designationFor()
+  // wants the array. Kept from the SAME read rather than fetched again — the single-owner rule
+  // (v3 Phase 1): one fetch, one clock, one number on the screen.
+  const [desigRows, setDesigRows] = useState<any[]>([]);
   const [desigAt, setDesigAt] = useState<number | null>(null);
   // PER STATION, not global. One `busy` boolean drove FOUR buttons, so clicking one station's REFRESH
   // NOW put every station's button into the busy state at once — four controls twitching for one
@@ -471,6 +501,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     const m: Record<number, any> = {};
     for (const r of rows || []) m[r.stationId] = r;
     setDesig(m);
+    setDesigRows(rows || []);
     setDesigAt(Date.now());
   }, []);
   const loadDesig = useCallback(async () => {
@@ -873,6 +904,21 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     return () => clearInterval(id);
   }, [engine]);
 
+  // ── Shared regions ────────────────────────────────────────────────────────────────────────────
+  // Built once and placed by whichever mode is rendering, so WALL and OPS cannot drift apart. Both
+  // are fed the SAME snapshot and designation rows this component already polls — see desigRows.
+  const dashboard = (
+    <HealthDashboard
+      stationId={stationId}
+      wall={wall}
+      snapshot={libHealth}
+      designation={desigRows}
+      onScrollToDesignation={() =>
+        document.getElementById("health-designation")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+    />
+  );
+  const liveTelemetry = <LiveHealthMonitor />;
+
   return (
     <div ref={panelRef} style={{
       height: "100%", display: "flex", flexDirection: "column" as const,
@@ -890,6 +936,20 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
             </h2>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {/* Names the mode you are GOING TO, and says so in the tooltip. A toggle labelled with
+                the state it is already in is the commonest way a control becomes unreadable. */}
+            <button
+              onClick={() => setMode(m => (m === "wall" ? "ops" : "wall"))}
+              title={wall
+                ? "Switch to Ops view — all diagnostics and controls, scrollable"
+                : "Switch to Wall view — fixed 1920×1080, read-only, no scrolling"}
+              style={{
+                background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
+                color: "var(--text-secondary)", cursor: "pointer", fontSize: 9, fontWeight: 700,
+                letterSpacing: "0.1em", padding: "4px 8px", borderRadius: 0,
+              }}>
+              {wall ? "OPS VIEW" : "WALL VIEW"}
+            </button>
             {!isPopout && <PopoutBtn panel="health" label="Station Health" />}
             <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 18 }}>✕</button>
           </div>
@@ -899,35 +959,88 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         </p>
       </div>
 
-      {/* ── TWO COLUMNS: sections left, live activity terminal right ─────────────────────────────
-          Each column scrolls independently (no outer scroller), so the terminal stays put while the
-          sections are scrolled and vice-versa. Below TWO_COL_MIN_PX this collapses to one column
-          with the terminal underneath. */}
+      {wall ? (
+        /* ── WALL ─────────────────────────────────────────────────────────────────────────────
+            A 1920×1080 canvas, CSS-scaled to fit whatever it is shown on, with `overflow: hidden`
+            and no scroller anywhere inside it. Authoring at a fixed size is the whole point: the
+            layout never reflows, so a section cannot be pushed off the bottom by a screen that is
+            slightly the wrong shape. It is the same layout at 1920×1080, in a 1600px window, and in
+            the popout — just smaller.
+            NOTE (v3 Phase 1): the wall currently carries the dashboard, the live telemetry and the
+            terminal rail. The remaining sections join it in Phase 2 as each is converted; they are
+            all still reachable in OPS view meanwhile, so nothing is hidden, only not yet placed. */
+        <div ref={stageRef} style={{
+          flex: 1, minHeight: 0, overflow: "hidden",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            width: WALL_W, height: WALL_H, flexShrink: 0, overflow: "hidden",
+            transform: `scale(${wallScale})`, transformOrigin: "center center",
+            display: "grid", gap: 20, padding: "16px 28px 28px",
+            gridTemplateColumns: termOpen ? "minmax(0, 1fr) 460px" : "minmax(0, 1fr) 40px",
+          }}>
+            <div style={{
+              minWidth: 0, minHeight: 0, overflow: "hidden",
+              display: "grid", gridTemplateRows: "auto minmax(0, 1fr)", gap: 16,
+            }}>
+              {dashboard}
+              <div style={{ minHeight: 0, overflow: "hidden" }}>{liveTelemetry}</div>
+            </div>
+
+            {/* Live activity: a rail by default, the full terminal on click. Minimised rather than
+                removed — on a wall the events matter, but not at the cost of a quarter of the
+                screen when nothing is happening. */}
+            {termOpen ? (
+              <div style={{ minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" as const,
+                            borderLeft: "1px solid var(--border-primary)" }}>
+                <button onClick={() => setTermOpen(false)} title="Minimise the live activity terminal"
+                  style={{ background: "var(--bg-tertiary)", border: "none", borderBottom: "1px solid var(--border-primary)",
+                           color: "var(--text-secondary)", cursor: "pointer", fontSize: 9, fontWeight: 700,
+                           letterSpacing: "0.12em", padding: "6px 10px", textAlign: "left" as const }}>
+                  LIVE ACTIVITY  —  MINIMISE
+                </button>
+                <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" as const }}>
+                  <LiveActivityTerminal />
+                </div>
+              </div>
+            ) : (
+              <button onClick={() => setTermOpen(true)} title="Expand the live activity terminal"
+                style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
+                         color: "var(--text-tertiary)", cursor: "pointer", fontSize: 9, fontWeight: 700,
+                         letterSpacing: "0.14em", padding: "10px 0", writingMode: "vertical-rl" as const,
+                         textOrientation: "mixed" as const }}>
+                LIVE ACTIVITY
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+      /* ── OPS ───────────────────────────────────────────────────────────────────────────────
+          Two columns: sections left, live activity terminal right. Each column scrolls
+          independently (no outer scroller), so the terminal stays put while the sections are
+          scrolled and vice-versa. Below TWO_COL_MIN_PX this collapses to one column with the
+          terminal underneath. Every control lives here. */
       <div style={{
         flex: 1, minHeight: 0, display: "flex",
         flexDirection: twoCol ? ("row" as const) : ("column" as const),
       }}>
       <div style={{ flex: 1, minHeight: 0, minWidth: 0, overflowY: "auto" as const, padding: "0 32px" }}>
-        {/* ── AT A GLANCE (Health Monitor redesign, Phase 1) ────────────────────────────────────
+        {/* ── AT A GLANCE ───────────────────────────────────────────────────────────────────────
             FIRST in the column, deliberately. It was briefly placed further down and landed BELOW
             the "Legacy diagnostics — may be stale" divider, which frames the newest and most
             authoritative reading in the panel as the oldest. A quick-scan dashboard that has to be
-            scrolled to is not a quick scan.
-            ADDITIVE, not a replacement: everything below — the auto-generate toggles, the
-            designation controls, the canary flips, the shadow burn-in, the DMCA export, Designation
-            Activity — has no equivalent here yet, and swapping the component out would delete it. */}
-        <HealthDashboard stationId={stationId} onScrollToDesignation={() =>
-          document.getElementById("health-designation")?.scrollIntoView({ behavior: "smooth", block: "start" })} />
+            scrolled to is not a quick scan. */}
+        {dashboard}
 
         {/* ── LIVE Health Monitor (primary; the real telemetry, updates every second) ── */}
-        <LiveHealthMonitor />
+        {liveTelemetry}
 
         {/* ── AUDIO PROCESSING — the loudness chain, at a glance ──────────────────────────────────
             IN → OUT LUFS and the gain-reduction bar say whether the ride is actually riding. OFF is
             stated, never blank. Fed by the same audio:proc-meters push the Settings panel uses. */}
         {procOn && (
-          <div style={{ paddingTop: 18, marginTop: 12, borderTop: "1px solid var(--border-primary)" }}>
-            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 6 }}>Audio Processing</div>
+          <div style={sectionCard}>
+            <SectionTitle>Audio Processing</SectionTitle>
             {(() => {
               const anyOn = procOn.local || procOn.stream;
               const paths = !anyOn ? "off on both paths"
@@ -1005,8 +1118,8 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
             The point of this table is the PROJECTED column: a spot that is going to miss its anchor
             goes amber/red before it misses, not after. */}
         {spotRows.length > 0 && (
-          <div style={{ paddingTop: 18, marginTop: 12, borderTop: "1px solid var(--border-primary)" }}>
-            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 6 }}>Spot Schedule — this hour &amp; next</div>
+          <div style={sectionCard}>
+            <SectionTitle>Spot Schedule — this hour &amp; next</SectionTitle>
             <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 8, fontStyle: "italic" }}>
               Drift is fired−anchor once aired, projected−anchor while pending. Green ≤15s · amber ≤60s · red beyond.
             </div>
@@ -1043,17 +1156,16 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        {/* ── Legacy diagnostics — slow-refresh session/HA panels; may be stale ── */}
-        <div style={{ paddingTop: 18, marginTop: 12, borderTop: "2px solid var(--border-primary)" }}>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 2 }}>Legacy diagnostics — may be stale</div>
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 8, fontStyle: "italic" }}>The live per-station signal above is authoritative. These older session/HA panels refresh slowly and can lag reality.</div>
-        </div>
+        {/* The "Legacy diagnostics — may be stale" divider was removed in v3 Phase 1. It described
+            the sections below as second-class, which is not a thing a health panel should say about
+            its own readings — either they are trustworthy or they should not be shown. The sections
+            it fenced off are being converted; the fence went first. */}
         {/* HA rollup banner */}
         <HaRollupBanner dash={dash} />
 
         {/* Core systems */}
-        <div style={{ paddingTop: 16, marginBottom: 8 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 8 }}>Core Systems</div>
+        <div style={sectionCard}>
+          <SectionTitle>Core Systems</SectionTitle>
           {health ? (
             <>
               <HealthRow label="Audio Engine" value={health.audioEngine === "ok" ? "Running" : "Error"} status={health.audioEngine} sub="Rodio audio backend" />
@@ -1084,8 +1196,8 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         </div>
 
         {/* ── High Availability ── */}
-        <div style={{ paddingTop: 16, borderTop: "1px solid var(--border-primary)", marginTop: 4, marginBottom: 8 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 8 }}>High Availability</div>
+        <div style={sectionCard}>
+          <SectionTitle>High Availability</SectionTitle>
           {dash ? (() => {
             const ha = dash.ha; const hh = dash.health; const wd = ha.watchdog;
             return (
@@ -1187,8 +1299,8 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
 
         {/* ── LIBRARY & ROTATION (Slice C) — per station: materialization, pool, skips, prefetch lag ── */}
         {libHealth?.stations?.length > 0 && (
-          <div style={{ marginTop: 8 }}>
-            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 8 }}>Library &amp; Rotation</div>
+          <div style={sectionCard}>
+            <SectionTitle>Library &amp; Rotation</SectionTitle>
             {libHealth.stations.map((st: any) => {
               const dotCol = st.level === "red" ? "#f87171" : st.level === "yellow" ? "#fbbf24" : "#22c55e";
               const lvl = (l: string) => (l === "red" ? "error" : l === "yellow" ? "warn" : "ok");
@@ -1339,15 +1451,15 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
             Activity terminal is NOT this — it tails the daemon's log, so main-process events such as
             a designation refresh never appeared anywhere on screen. */}
         {libHealth?.stations?.length > 0 && (
-          <div style={{ paddingTop: 16, borderTop: "1px solid var(--border-primary)", marginTop: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const }}>Designation Activity</div>
+          <div style={sectionCard}>
+            <SectionTitle right={
               <button onClick={loadDesigEvents}
-                title="Re-read the health ledger"
-                style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.08em", padding: "2px 8px",
-                         background: "transparent", border: "1px solid var(--border-primary)",
+                title="Re-read the health ledger. A plain read — it changes nothing."
+                style={{ fontSize: "var(--t-micro, 9px)", fontWeight: 800, letterSpacing: "0.08em",
+                         padding: "2px 8px", background: "transparent",
+                         border: "1px solid var(--border-primary)", borderRadius: "var(--r-0, 0px)",
                          color: "var(--text-tertiary)", cursor: "pointer" }}>RELOAD</button>
-            </div>
+            }>Designation Activity</SectionTitle>
             {desigEventsErr && (
               <div style={{ fontSize: 10, color: "var(--accent-red)", marginBottom: 4 }}>{desigEventsErr}</div>
             )}
@@ -1385,8 +1497,8 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
 
         {/* ── LOG-READER FLIP — per-station CANARY toggle (activation). Local-only; never syncs. ── */}
         {libHealth?.stations?.length > 0 && (
-          <div style={{ paddingTop: 16, borderTop: "1px solid var(--border-primary)", marginTop: 12 }}>
-            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 6 }}>Log-Reader Flip — Canary</div>
+          <div style={sectionCard}>
+            <SectionTitle>Log-Reader Flip — Canary</SectionTitle>
             <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 10, lineHeight: 1.5 }}>
               Switch a station to the §2.7 time-anchored log-reader (playout reads the calendar directly). Per-station and local-only — it never syncs. Flip <strong>Magical Forest</strong> first and verify on air before the next.
             </div>
@@ -1452,8 +1564,8 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
 
         {/* ── LOG-READER FLIP §2.7 boundary shadow (Phase 3, burn-in) — observation only, flag OFF ── */}
         {shadowSummary.length > 0 && (
-          <div style={{ paddingTop: 16, borderTop: "1px solid var(--border-primary)", marginTop: 12 }}>
-            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 6 }}>Log-Reader Flip — §2.7 Shadow (burn-in)</div>
+          <div style={sectionCard}>
+            <SectionTitle>Log-Reader Flip — §2.7 Shadow (burn-in)</SectionTitle>
             <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 12, lineHeight: 1.5 }}>
               Flag OFF — measuring what the time-anchored flip <em>would</em> air at each boundary vs what legacy airs. Low agreement here is the drift the flip removes; it is not an error.
             </div>
@@ -1474,8 +1586,8 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         )}
 
         {/* Play log export */}
-        <div style={{ paddingTop: 16, paddingBottom: 20, borderTop: "1px solid var(--border-primary)", marginTop: 12 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, marginBottom: 14 }}>DMCA Play Log Export</div>
+        <div style={sectionCard}>
+          <SectionTitle>DMCA Play Log Export</SectionTitle>
           <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 12, lineHeight: 1.6 }}>
             Export a complete CSV of all played tracks with timestamps for DMCA/performance rights reporting. Includes title, artist, deck, and exact play time.
           </div>
@@ -1507,27 +1619,11 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
-        {/* Infrastructure badge */}
-        <div style={{ padding: "16px 18px", borderRadius: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", marginBottom: 20 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-tertiary)", marginBottom: 12, textTransform: "uppercase" as const }}>Ether Infrastructure</div>
-          <div style={{ display: "flex", flexDirection: "column" as const, gap: 10 }}>
-            {[
-              ["SQLite Database", "Local, encrypted, zero cloud dependency"],
-              ["Rust Audio Engine", "Sub-10ms latency, hardware-level reliability"],
-              ["Crash Recovery", "Session auto-saved every 30 seconds"],
-              ["Dead Air Detection", "Auto-recovery within 10 seconds"],
-              ["Play Log", "Every track logged with UNIX timestamp"],
-            ].map(([label, desc]) => (
-              <div key={label} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                <div style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--accent-green)", flexShrink: 0, marginTop: 4 }} />
-                <div>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-primary)" }}>{label}</span>
-                  <span style={{ fontSize: 10, color: "var(--text-tertiary)", marginLeft: 6 }}>{desc}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        {/* The "Ether Infrastructure" badge was removed in v3 Phase 1. Five hardcoded strings with
+            green dots beside them, claiming "Crash Recovery" and "Dead Air Detection" are healthy
+            without measuring anything. A green dot that is green because it was typed green is the
+            exact opposite of what this panel is for. Nothing is lost: every claim it made either
+            has a real measured sense elsewhere on this page or never had one. */}
       </div>
       {/* ── RIGHT COLUMN: live activity terminal ──────────────────────────────────────────────
           Fixed width beside the sections; a fixed-height band below them when narrow. */}
@@ -1541,6 +1637,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         <LiveActivityTerminal />
       </div>
       </div>
+      )}
     </div>
   );
 }

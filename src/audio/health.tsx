@@ -3,8 +3,28 @@
 // this hook + these presentational atoms — neither recomputes health. Display only.
 
 import { useEffect, useState, type CSSProperties } from "react";
+import { levelColor, type HealthLevel as CanonicalLevel } from "../components/health/healthUtils";
+import { sectionCard, SectionTitle, StatTile } from "../components/health/sectionChrome";
 
+/** The WIRE format of the `audio:health` feed — the main process emits these uppercase (see the
+ *  snapshot builder in electron/audio-health.js). It stays uppercase here because that is what
+ *  actually arrives; renaming the type would not change the data.
+ *
+ *  The CANONICAL level used across every health surface is the lowercase `HealthLevel` in
+ *  components/health/healthUtils. `toCanonical` is the one boundary between them, and colour now
+ *  comes from that single map — see LEVEL_COLOR below. */
 export type HealthLevel = "GREEN" | "YELLOW" | "RED" | "GREY";
+
+/** Wire level → canonical level. Anything unrecognised reads grey, never green: the honesty rule
+ *  from the v2 design doc, applied at the point the two vocabularies meet. */
+export function toCanonical(l: HealthLevel | string | null | undefined): CanonicalLevel {
+  switch (l) {
+    case "GREEN": return "green";
+    case "YELLOW": return "yellow";
+    case "RED": return "red";
+    default: return "grey";
+  }
+}
 
 export interface HealthStation {
   uuid: string; stationId: number | null; name: string;
@@ -24,8 +44,15 @@ export interface HealthSnapshot {
   recentEvents: HealthEvent[];
 }
 
+/** ONE status palette for the whole Health Monitor.
+ *
+ *  This used to be four hardcoded hex values, which meant the live telemetry rows and the new
+ *  dashboard cards could show two different greens for the same meaning — and a theme change would
+ *  move one and not the other. The colours now resolve through healthUtils.LEVEL_COLOR (design
+ *  tokens with literal fallbacks), so there is a single place where "yellow" is decided.
+ *  The KEYS stay uppercase so every existing `LEVEL_COLOR.RED` call site keeps working. */
 export const LEVEL_COLOR: Record<HealthLevel, string> = {
-  GREEN: "#22c55e", YELLOW: "#f59e0b", RED: "#ef4444", GREY: "#6b7280",
+  GREEN: levelColor("green"), YELLOW: levelColor("yellow"), RED: levelColor("red"), GREY: levelColor("grey"),
 };
 const FULL_RATE = 44100;
 
@@ -121,26 +148,35 @@ function hhmmss(iso: string): string { try { return new Date(iso).toLocaleTimeSt
 export function LiveHealthMonitor() {
   const snap = useAudioHealth();
   const cell: CSSProperties = { fontSize: 12, color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" };
-  const hdr: CSSProperties = { fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 8 };
+  // `hdr` is gone — all three headings are SectionTitle now, so the panel has one heading style
+  // rather than two that drift apart. `cell` stays: the per-station rows still use it.
   if (!snap) return <div style={{ padding: "18px 0", fontSize: 12, color: "var(--text-tertiary)" }}>Connecting to live health feed…</div>;
   const engRed = snap.engine.restartCount > 0;
   return (
     <div>
       <HealthStyles />
       <HealthModeBanner mode={snap.mode} />
-      {/* Engine */}
-      <div style={{ paddingTop: 12, marginBottom: 12 }}>
-        <div style={hdr}>Engine</div>
-        <div style={{ display: "flex", gap: 24, flexWrap: "wrap" as const, alignItems: "center" }}>
-          <span style={cell}>uptime <b style={{ color: "var(--text-primary)" }}>{fmtUptime(snap.engine.uptimeSec)}</b></span>
-          <span style={cell}>pid <b style={{ color: "var(--text-primary)" }}>{snap.engine.pid ?? "—"}</b></span>
-          <span style={cell}>restarts <b style={{ color: engRed ? LEVEL_COLOR.RED : "var(--text-primary)" }}>{snap.engine.restartCount}</b>{engRed ? " ⚠ engine restarted" : ""}</span>
-          <span style={cell}>event-loop ping <b style={{ color: (snap.engine.pingMs ?? 0) > 500 ? LEVEL_COLOR.YELLOW : "var(--text-primary)" }}>{snap.engine.pingMs != null ? snap.engine.pingMs + "ms" : "—"}</b></span>
+      {/* ── Engine ── Four readings as TILES rather than a run-on sentence of "uptime 2m 17s pid
+          71184 restarts 0 event-loop ping 2ms". The number leads and its name sits underneath, so
+          the row scans as four figures instead of one line of prose.
+          Only restarts and ping carry a colour, and only when they mean something — colouring all
+          four would make the colour mean nothing. */}
+      <div style={sectionCard}>
+        <SectionTitle>Engine</SectionTitle>
+        <div style={{ display: "grid", gap: "var(--s-5, 12px)",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))" }}>
+          <StatTile label="uptime" value={fmtUptime(snap.engine.uptimeSec)} />
+          <StatTile label="pid" value={snap.engine.pid ?? "—"} />
+          <StatTile label={engRed ? "restarts ⚠" : "restarts"} value={snap.engine.restartCount}
+                    tone={engRed ? "red" : undefined} />
+          <StatTile label="event-loop ping"
+                    value={snap.engine.pingMs != null ? `${snap.engine.pingMs}ms` : "—"}
+                    tone={(snap.engine.pingMs ?? 0) > 500 ? "yellow" : undefined} />
         </div>
       </div>
       {/* Per-station live rows */}
-      <div style={{ paddingTop: 12, borderTop: "1px solid var(--border-primary)", marginBottom: 12 }}>
-        <div style={hdr}>Stations (live)</div>
+      <div style={sectionCard}>
+        <SectionTitle>Stations (live)</SectionTitle>
         {snap.stations.length === 0 && <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>No stations reporting.</div>}
         {snap.stations.map(s => (
           <div key={s.uuid} style={{ display: "grid", gridTemplateColumns: "16px 130px 1fr 1fr 70px 90px", gap: 10, alignItems: "center", padding: "7px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
@@ -171,9 +207,10 @@ export function LiveHealthMonitor() {
           </div>
         ))}
       </div>
-      {/* Rolling event feed */}
-      <div style={{ paddingTop: 12, borderTop: "1px solid var(--border-primary)" }}>
-        <div style={hdr}>Live events (last 20 YELLOW/RED transitions, newest first)</div>
+      {/* Rolling event feed. Distinct from the dashboard's Live Events, which reads the health
+          LEDGER; this one is the in-memory feed of level TRANSITIONS from the audio health sense. */}
+      <div style={sectionCard}>
+        <SectionTitle>Level transitions — last 20, newest first</SectionTitle>
         {snap.recentEvents.length === 0 && <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>No warning/critical transitions yet — all healthy.</div>}
         {snap.recentEvents.map((e, i) => (
           <div key={e.ts + i} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "3px 0", fontSize: 11 }}>
