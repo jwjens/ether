@@ -21,6 +21,7 @@ import { HealthBar } from "./HealthBar";
 import { HealthTimeline } from "./HealthTimeline";
 import { HealthSection } from "./HealthSection";
 import { HealthChart } from "./HealthChart";
+import { HealthMeters } from "./HealthMeters";
 import {
   fetchLibraryHealth, fetchDesignation, stationFrom, designationFor,
   POLL_SNAPSHOT_MS, POLL_QUEUE_MS,
@@ -48,7 +49,9 @@ export interface HealthDashboardProps {
 export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignation }: HealthDashboardProps) {
   // useActiveStation() returns an OBJECT, not the id — the spec's §0 calls it "the active station
   // ID". Destructured the way every other caller in the tree does (App.tsx:548).
-  const { stationId: activeStationId } = useActiveStation();
+  // stationUuid too: the levels channel is scoped by UUID, not by the per-machine integer id
+  // (electron/levels-scope.js — the VU crosstalk fix, 2026-07-08).
+  const { stationId: activeStationId, stationUuid } = useActiveStation();
   const stationId = stationIdProp ?? activeStationId;
   const engine = useAudioEngine();
 
@@ -237,6 +240,9 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
           </div>
         )}
       </HealthSection>
+
+      {/* ── AUDIO LEVELS — decks in dBFS, program loudness in LUFS. Two measurements, two scales. */}
+      <HealthMeters stationUuid={stationUuid} />
 
       {/* ── LIVE EVENTS (Phase 3) — the honest ledger, read back ─────────────────────────────── */}
       <HealthTimeline />
