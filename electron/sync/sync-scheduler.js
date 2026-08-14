@@ -188,8 +188,39 @@ class SyncScheduler {
     }
   }
 
+  /** MANUAL BY DEFAULT once the install is provisioned (2026-08-14).
+   *
+   *  This used to tick every 5 seconds forever. Continuous sync between two installs means a change
+   *  made on a secondary machine — a wrong delete, a bad edit, a half-finished import — reaches the
+   *  main studio machine before anyone notices it was made, and the operator gets no window in which
+   *  to catch it. Transfers now happen when a person presses Push Now or Pull Now
+   *  (Preferences → Backup & Restore → Multi-Machine Sync).
+   *
+   *  THE FIRST DRAIN STILL RUNS AUTOMATICALLY. A brand-new install pulls its whole station down from
+   *  the cloud on first run, and the onboarding screen waits on `sync:initial-complete` to say so.
+   *  Making that manual would strand a new machine on a screen with nothing to press. So the timer
+   *  runs until `sync_initial_drained` is set, and stops after.
+   *
+   *  Set `sync_auto = 'true'` in station_config_kv to restore continuous ticking. */
+  _autoTickAllowed() {
+    if (!this._readInitialDrainedFlag()) return true;   // first-run pull-down: still automatic
+    try {
+      const row = this._db.prepare(
+        "SELECT value FROM station_config_kv WHERE key = 'sync_auto' AND deleted_at IS NULL LIMIT 1"
+      ).get();
+      return row?.value === 'true';
+    } catch (_) {
+      return false;   // unreadable -> manual, the safe direction
+    }
+  }
+
   _schedule() {
     if (!this._running || this._paused) return;
+    if (!this._autoTickAllowed()) {
+      // The engine stays built and reachable — sync:push-now / sync:pull-now still work on demand.
+      console.log('[SYNC] manual mode — no automatic cycle (set sync_auto=true to re-enable)');
+      return;
+    }
     const delay = this._failures > 0
       ? BACKOFF_MS[Math.min(this._failures - 1, BACKOFF_MS.length - 1)]
       : this._getInterval();

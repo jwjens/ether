@@ -1121,12 +1121,10 @@ function MultiMachineSyncSection() {
     finally { setBusy(null); refresh(); }
   };
 
-  const shouldRender = useShouldRender(
-    'Multi-Machine Sync',
-    'Station UUIDs, pending mutations, and manual push/pull between installs',
-    'backup');
-  if (!shouldRender) return null;
-
+  // NO gate here. `Section` already calls useShouldRender itself, defaulting to "station" when no
+  // `category` is passed — so an outer gate of "backup" plus Section's default of "station" were
+  // mutually exclusive and this section could never render on ANY tab. The category is passed to
+  // Section below, which is the one place that decides.
   const stored = pf?.flags?.sync_uuid_identity === "true";
   const live = pf?.flags?.engineUuidIdentity === true;
   const everReceived = (pf?.mutations?.byOrigin || []).some(o => o.origin !== "local");
@@ -1141,6 +1139,7 @@ function MultiMachineSyncSection() {
   return (
     <Section
       icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>}
+      category="backup"
       title="Multi-Machine Sync"
       description="Station UUIDs, pending mutations, and manual push/pull between installs.">
       <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 12, lineHeight: 1.5 }}>
@@ -1197,6 +1196,44 @@ function MultiMachineSyncSection() {
           </div>
         </div>
       )}
+
+      {/* Enable the engine. Replaces the old Multi-Device Sync toggle, which lived in a second
+          section and read as a competing control beside these buttons.
+          It writes sync_backend_url too — that is NOT redundant. This toggle once wrote
+          `sync_enabled` alone while no other UI in the tree wrote the destination, so main.js
+          resolved the host to '' and started an engine with nowhere to send: switching sync on
+          appeared to work and moved nothing (4.4.202). The repair scripts also read this key and
+          refuse to run without it. */}
+      <div style={{ padding: "10px 12px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", marginBottom: 12 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={pf?.flags?.sync_enabled === "true"}
+            disabled={busy !== null || !pf?.ok}
+            onChange={async () => {
+              const next = pf?.flags?.sync_enabled !== "true";
+              const sid = pf?.activeStationId;
+              if (sid == null) { setMsg("✗ no active station"); return; }
+              setBusy("enable"); setMsg("");
+              try {
+                const kv = (window as any).ether.stationConfigKv;
+                await kv.upsertByKey(sid, 'sync_enabled', next ? 'true' : 'false');
+                if (next) await kv.upsertByKey(sid, 'sync_backend_url', 'https://ether-backend-production.up.railway.app');
+                setMsg(next
+                  ? "✓ sync enabled — RESTART Ether for the engine to start"
+                  : "✓ sync disabled — takes effect after a restart");
+              } catch (e: any) { setMsg(`✗ ${e?.message || String(e)}`); }
+              finally { setBusy(null); refresh(); }
+            }}
+          />
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>Enable the sync engine</span>
+        </label>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1.5 }}>
+          Builds the sync engine so Push Now and Pull Now can run. <b>It does not sync anything on its
+          own</b> — no timer, no background transfer. Stored: <b>{pf?.flags?.sync_enabled ?? "unset"}</b> ·
+          engine right now: <b>{pf?.schedulerRunning ? "running" : "not running"}</b>. Requires a Network licence.
+        </div>
+      </div>
 
       {/* Stored and live are shown separately on purpose: the flag is read once when the sync engine
           is built at startup, so after toggling they disagree until Ether restarts. Showing one
@@ -1377,7 +1414,7 @@ function SyncSection() {
           </div>
         ) : (
         <>
-        <SettingRow label="Enable sync" hint="Pushes and pulls mutations every 5 seconds. Requires an active Network license.">
+        <SettingRow label="Enable sync" hint="Turns the sync engine on so Push Now and Pull Now can run. Transfers are manual — nothing syncs on a timer. Requires an active Network license.">
           <Toggle value={enabled} onChange={toggle} label="" />
         </SettingRow>
 
@@ -3451,7 +3488,9 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, seg
         <DiscogsCredentialForm />
       </Section>
 
-      <SyncSection />
+      {/* SyncSection (the old "Multi-Device Sync" block) is no longer rendered: its enable toggle
+          now lives inside Multi-Machine Sync, so there is ONE sync section rather than two adjacent
+          ones that read as competing controls. */}
       <MultiMachineSyncSection />
 
       <StationManagementSection />
