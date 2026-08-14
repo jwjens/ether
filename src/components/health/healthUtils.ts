@@ -35,8 +35,14 @@ export function levelColor(v: unknown): string {
  * `days` is null only when the level is grey (runway.js:48), so null is "not applicable", not zero —
  * and 0 days is a genuine, urgent value. They must not render the same.
  */
-export function runwayValue(runway: { days?: number | null; capped?: boolean } | null | undefined):
-  { value: string; sub: string } {
+export function runwayValue(
+  runway: { days?: number | null; capped?: boolean } | null | undefined,
+  /** False when there is no health snapshot for this station YET. "Not measured" and "measured, and
+   *  there is no active show" are different statements, and printing the second for the first is a
+   *  claim the panel has not earned — it renders as a fault on a station that is perfectly fine. */
+  measured = true,
+): { value: string; sub: string } {
+  if (!measured) return { value: "—", sub: "waiting for the first health check" };
   if (!runway || runway.days == null) return { value: "—", sub: "no active show" };
   const d = runway.days;
   if (runway.capped) return { value: `${d}d+`, sub: "log runs past the horizon" };

@@ -27,6 +27,18 @@ describe("toLevel — unknown reads GREY, never green", () => {
 });
 
 describe("runwayValue", () => {
+  it("says 'not measured' rather than claiming 'no active show'", () => {
+    // A station missing from the snapshot has not been measured. Printing "no active show" for that
+    // is a claim the panel has not earned, and it renders a healthy station as a fault — which is
+    // exactly what it did: the card read "— no active show" while the chart beside it read 17.1d.
+    const r = runwayValue(null, false);
+    expect(r.value).toBe("—");
+    expect(r.sub).toContain("waiting");
+    expect(r.sub).not.toContain("no active show");
+    // measured defaults to true, so existing callers are unchanged.
+    expect(runwayValue(null).sub).toBe("no active show");
+  });
+
   it("distinguishes 'not applicable' from zero — they must never look the same", () => {
     // days is null only when level is grey (no active show). 0 days is real and urgent.
     expect(runwayValue({ days: null }).value).toBe("—");

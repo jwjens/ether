@@ -69,13 +69,19 @@ function HealthChartImpl({ stationId, days = 7 }: { stationId?: number | null; d
 
       {err && <div style={{ fontSize: 11, color: "var(--accent-red)" }}>{err}</div>}
 
-      {!err && geo.empty ? (
+      {/* ONE point draws a path with no length — an empty frame with a dashed line in it, which
+          reads as a broken chart rather than a new one. Two is the minimum that can show a trend, so
+          below that the placeholder stays up and says why. */}
+      {!err && (geo.empty || geo.points.length < 2) ? (
         // NOT an error, and it says why plus when it resolves. Runway was never stored before this
         // build, so there is genuinely nothing to show yet — the series starts now.
         <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.6 }}>
-          Runway history starts from this build — it has never been recorded before, and it cannot be
-          reconstructed, because past runway depended on schedules that have since been rewritten.
-          A sample is taken every half hour, so the trend fills in from here and is complete after {days} days.
+          {geo.points.length === 1
+            ? <>One sample so far{latest?.days != null ? <> — runway is <strong style={{ color }}>{latest.days}d</strong></> : null}. A
+              trend needs at least two, and a sample is taken every half hour, so the line starts within the hour.</>
+            : <>Runway history starts from this build — it has never been recorded before, and it cannot be
+              reconstructed, because past runway depended on schedules that have since been rewritten.
+              A sample is taken every half hour, so the trend fills in from here and is complete after {days} days.</>}
         </div>
       ) : !err && (
         <div style={{ position: "relative" }}

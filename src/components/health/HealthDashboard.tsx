@@ -67,8 +67,17 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
     // library-health.js, because renderer HMR cannot reload main. A log that fires on every poll of
     // a working install is noise; one that fires only on the failure is a sense.
     try {
-      const stn = (s?.stations || []).find((x: any) => x.stationId === stationId) || null;
-      if (stn && !Array.isArray((stn.goals as any)?.categories)) {
+      const list = (s?.stations || []) as any[];
+      const stn = list.find((x: any) => x.stationId === stationId) || null;
+      if (!stn) {
+        // The station is not in the snapshot. Names BOTH sides and their types, because the likeliest
+        // cause is an id that matches by value but not by type ("2" !== 2) and a bare "not found"
+        // would not reveal that.
+        console.warn("[health] station not found in the library-health snapshot.",
+          { lookingFor: stationId, type: typeof stationId,
+            snapshotHas: list.map(x => ({ id: x.stationId, type: typeof x.stationId, name: x.name })),
+            stations: list.length });
+      } else if (!Array.isArray((stn.goals as any)?.categories)) {
         console.warn("[health] goals.categories is missing for station", stationId,
           "— the main process predates library-health.js's spins computation. Restart Electron; a renderer reload will not fix it.",
           stn.goals);
@@ -119,7 +128,10 @@ export function HealthDashboard({ stationId: stationIdProp, onScrollToDesignatio
     () => cats.reduce<CategoryGoal | null>((m, c) => (!m || c.actualSpinsPerHour > m.actualSpinsPerHour ? c : m), null),
     [cats]);
 
-  const runway = runwayValue(st?.runway);
+  // Is there a snapshot for THIS station? Everything below depends on the distinction: a missing
+  // station means "not measured yet", not "measured and empty", and the two must not look alike.
+  const measured = !!st;
+  const runway = runwayValue(st?.runway, measured);
   const goals  = goalsValue(st?.goals);
   const design = designationValue(dg);
   const qLevel = queueLevel(queueLen);

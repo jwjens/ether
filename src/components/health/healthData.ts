@@ -67,15 +67,29 @@ export async function fetchDesignation(): Promise<DesignationRow[]> {
   } catch { return []; }
 }
 
+/**
+ * Compare two station ids that may not share a type.
+ *
+ * The snapshot is built in the main process where ids are INTEGERs from SQLite; the renderer's
+ * active-station id has travelled through IPC and app state and is not guaranteed to still be a
+ * number. `2 === "2"` is false, and the failure is silent and total: the panel finds no station and
+ * renders every card as unknown while the data sits right there. Compared by value, and null/undefined
+ * never matches anything.
+ */
+function sameStation(a: unknown, b: unknown): boolean {
+  if (a == null || b == null) return false;
+  return String(a) === String(b);
+}
+
 /** Pick one station out of the snapshot. Returns null rather than the wrong station's health. */
 export function stationFrom(snap: LibrarySnapshot | null, stationId: number | null | undefined): StationHealth | null {
   if (!snap || !Array.isArray(snap.stations) || stationId == null) return null;
-  return snap.stations.find(s => s.stationId === stationId) ?? null;
+  return snap.stations.find(s => sameStation(s.stationId, stationId)) ?? null;
 }
 
 export function designationFor(rows: DesignationRow[], stationId: number | null | undefined): DesignationRow | null {
   if (stationId == null) return null;
-  return rows.find(r => r.stationId === stationId) ?? null;
+  return rows.find(r => sameStation(r.stationId, stationId)) ?? null;
 }
 
 /** Poll cadences, from the spec §2. */
