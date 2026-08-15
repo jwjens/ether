@@ -1,16 +1,20 @@
 'use strict';
-// ── deletion-sweep — the report-only R2 release pipeline ────────────────────────────────────────
+// ── deletion-sweep — the R2 release pipeline ────────────────────────────────────────────────────
 //
-// REPORT ONLY. Nothing here sends a DELETE to R2 or to any backend. The sweep decides what WOULD be
-// eligible and records that decision; releasing the object is a separate job.
+// The sweep decides what is eligible and records that decision; RELEASE is a separate, explicit
+// step below (releaseRow / releaseMarked / releaseAfterDelete) and is the only place in the app
+// that causes an R2 object to be deleted.
 //
-// Three parts, kept in one module so the rules live in one place:
+// Five parts, kept in one module so the rules live in one place:
 //   enqueueForDeletion  — called at the soft-delete path, BEFORE the row is modified
 //   dequeueOnRestore    — the exact reverse; a restored song must not leave a row that later marks
 //                         a LIVE song's audio for release
 //   runSweep            — once daily, designation-gated, evaluates the ownership checks
+//   releaseAfterDelete  — the delete path's own release attempt, run AFTER the transaction commits
+//   releaseMarked       — the sweep's release pass over rows the checks cleared
 //
-// Pure functions over a db handle: no Electron, no IPC, no timers. That is what makes it testable
+// Pure functions over a db handle: no Electron, no IPC, no timers, and NO HTTP — the network call
+// is INJECTED (setObjectDeleter / opts.deleteObject). That is what makes it testable
 // (electron/sync/tests) and what keeps the caller in main.js down to a few lines.
 
 const fs = require('fs');
@@ -188,7 +192,10 @@ function writeReport(dir, summary) {
  * One sweep. Evaluates every queue row whose grace has expired and which is still workable.
  *
  * `permanent_shared` is terminal and is never re-examined — that is the "never re-report" rule.
- * `marked` rows are also left alone: the decision has been made and nothing here acts on it.
+ *
+ * runSweep itself still deletes NOTHING. It only records verdicts. Rows it leaves at `marked` are
+ * acted on by releaseMarked(), which the caller runs immediately afterwards — kept as two calls so
+ * the evaluation stays synchronous and transactional while the network work does not.
  */
 function runSweep(db, opts = {}) {
   const now = opts.now ?? nowSec();
@@ -228,11 +235,142 @@ function runSweep(db, opts = {}) {
     counts: { ...counts, pending: counts.pending + waiting },
     withinGrace: waiting,
     queueTotal: db.prepare('SELECT COUNT(*) n FROM deletion_queue').get()?.n ?? 0,
-    mode: 'report-only',
+    mode: 'evaluate',   // this call records verdicts only; releaseMarked() performs the deletes
   };
   if (opts.logDir) writeReport(opts.logDir, summary);
   console.log('[deletion-sweep]', JSON.stringify(summary));
   return summary;
+}
+
+// ── RELEASE — the only path in the app that deletes an R2 object ───────────────────────────────
+//
+// THE HTTP CALL IS INJECTED, never made here. main.js registers the real one at startup
+// (setObjectDeleter); tests pass one through opts.deleteObject. With NO deleter registered nothing
+// is released and rows stay exactly where the sweep left them — the pre-mirror behaviour, which is
+// also what an install with no signed-in account gets.
+//
+// Deleter contract:  async (fileKey) => { ok: boolean, detail?: string }
+// It may reject; a rejection is caught here and treated as a failure, never propagated.
+let _objectDeleter = null;
+function setObjectDeleter(fn) { _objectDeleter = typeof fn === 'function' ? fn : null; }
+
+/**
+ * 64-hex names are the content-hash objects. They are OUT OF SCOPE and are NEVER released.
+ *
+ * One hash object backs any number of library rows on any number of installs — it is addressed by
+ * its CONTENT, so "this song was the sole reference" is a statement this queue is structurally
+ * unable to make about it. The queue keys on file_key alone and cannot see the other references.
+ *
+ * Same shape library-client.js:59 matches on. Checked at the release gate rather than at enqueue
+ * because the gate is where the irreversible thing happens — and because the v37 backfill already
+ * put rows in the queue that enqueue-time filtering would never have seen.
+ */
+const HASH_NAMED_RE = /^[0-9a-f]{64}(\.[A-Za-z0-9]+)?$/;
+function isHashNamed(fileKey) { return HASH_NAMED_RE.test(String(fileKey || '').trim()); }
+
+/** Status writes are best-effort and NEVER throw at a caller: a failed bookkeeping write must not
+ *  turn into a failed delete, and must not turn a successful release into an exception either. */
+function setStatus(db, id, status, reason, now) {
+  try {
+    db.prepare('UPDATE deletion_queue SET status = ?, reason = ?, last_checked_at = ? WHERE id = ?')
+      .run(status, reason, now, id);
+  } catch (e) {
+    console.error('[deletion-sweep] status write failed:', e.message);
+  }
+}
+
+/**
+ * Release ONE queue row. Records the outcome in the row itself, which IS the retry state:
+ *   done          released (or already absent — the endpoint is idempotent and reports both)
+ *   error         the call failed; runSweep picks 'error' rows up again and re-evaluates them
+ *   out_of_scope  hash-named — terminal, and selected by neither the sweep nor the release pass
+ */
+async function releaseRow(db, row, opts = {}) {
+  const now = opts.now ?? nowSec();
+  const del = opts.deleteObject || _objectDeleter;
+
+  if (isHashNamed(row.file_key)) {
+    setStatus(db, row.id, 'out_of_scope', 'hash-named (content-addressed) object — never released', now);
+    return { status: 'out_of_scope' };
+  }
+  // No deleter means no account session / no wiring. Leave the row untouched so it is retried
+  // later, rather than writing an 'error' that reads like the backend refused.
+  if (!del) return { status: row.status, skipped: 'no object deleter registered' };
+
+  let out;
+  try { out = await del(row.file_key); }
+  catch (e) { out = { ok: false, detail: e && e.message ? e.message : String(e) }; }
+
+  if (out && out.ok) {
+    setStatus(db, row.id, 'done', `released${out.detail ? ' — ' + out.detail : ''}`, now);
+    return { status: 'done', detail: out.detail };
+  }
+  const detail = (out && out.detail) || 'unknown error';
+  console.error(`[deletion-sweep] release failed for ${row.file_key}: ${detail}`);
+  setStatus(db, row.id, 'error', `release failed: ${detail}`, now);
+  return { status: 'error', detail };
+}
+
+/**
+ * The DELETE PATH's own release attempt. Called AFTER the delete transaction commits — the song row
+ * must already carry its tombstone, or evaluateRow's first check would find the song being deleted
+ * and call it a live sharer of its own key.
+ *
+ * Runs the SAME evaluateRow the sweep runs: the local checks are one rule with one implementation.
+ * Anything other than `marked` is recorded and left alone — the sweep owns it from there.
+ *
+ * NEVER throws, and never blocks the delete: the operator's action completed before this ran.
+ */
+async function releaseAfterDelete(db, fileKey, opts = {}) {
+  try {
+    const key = fileKey && String(fileKey).trim();
+    if (!key) return { ok: true, skipped: 'no file_key' };
+    const now = opts.now ?? nowSec();
+    const row = db.prepare(
+      "SELECT id, file_key, file_path, status FROM deletion_queue WHERE file_key = ? AND status NOT IN ('done', 'out_of_scope') ORDER BY id DESC LIMIT 1"
+    ).get(key);
+    if (!row) return { ok: true, skipped: 'not queued' };
+
+    let verdict;
+    try { verdict = evaluateRow(db, row, { now }); }
+    catch (e) { verdict = { status: 'error', reason: e.message }; }
+
+    if (verdict.status !== 'marked') {
+      setStatus(db, row.id, verdict.status, verdict.reason, now);
+      return { ok: true, status: verdict.status, reason: verdict.reason };
+    }
+    const r = await releaseRow(db, row, { now, deleteObject: opts.deleteObject });
+    return { ok: r.status !== 'error', status: r.status, detail: r.detail };
+  } catch (e) {
+    // A failure here leaves the queue row where it was, which is precisely the retry state.
+    console.error('[deletion-sweep] releaseAfterDelete failed:', e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * The SWEEP's release pass: every row the checks cleared. Run immediately after runSweep, so a row
+ * marked today is released today rather than waiting a further 24h for the next tick.
+ */
+async function releaseMarked(db, opts = {}) {
+  const now = opts.now ?? nowSec();
+  const counts = { done: 0, error: 0, out_of_scope: 0, skipped: 0 };
+  let rows = [];
+  try {
+    rows = db.prepare(
+      "SELECT id, file_key, file_path, status FROM deletion_queue WHERE status = 'marked' ORDER BY id"
+    ).all();
+  } catch (e) {
+    console.error('[deletion-sweep] release query failed:', e.message);
+    return counts;
+  }
+  for (const row of rows) {
+    const r = await releaseRow(db, row, { now, deleteObject: opts.deleteObject });
+    if (counts[r.status] != null) counts[r.status]++;
+    else counts.skipped++;
+  }
+  if (rows.length) console.log('[deletion-sweep] release pass', JSON.stringify({ examined: rows.length, ...counts }));
+  return counts;
 }
 
 module.exports = {
@@ -241,6 +379,11 @@ module.exports = {
   evaluateRow,
   runSweep,
   playLogCutoff,
+  setObjectDeleter,
+  isHashNamed,
+  releaseRow,
+  releaseAfterDelete,
+  releaseMarked,
   GRACE_DAYS,
   PLAY_LOG_WINDOW_DAYS,
   REPORT_FILE,

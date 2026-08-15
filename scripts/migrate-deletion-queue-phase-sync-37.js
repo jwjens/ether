@@ -20,6 +20,11 @@
 //   marked            every local check passed — eligible for a future DELETE, still not deleted
 //   permanent_shared  another LIVE song references the same file_key — terminal, never re-reported
 //   error             transient failure; retried on the next sweep
+//   done              the R2 object has been released (or was already absent) — terminal
+//   out_of_scope      hash-named (64-hex, content-addressed) object — NEVER released, terminal.
+//                     Added with the mirror-on-delete release pass; one hash object backs any
+//                     number of rows on any number of installs, so "sole reference" is a claim
+//                     this queue is structurally unable to make about it.
 //   unverifiable      a check could not be executed at all (e.g. no file_path to match play_log on).
 //                     NOT the same as passing. Expected to be 0 today — every soft-deleted song
 //                     still has its file_path — and exists so a future change that nulls the field

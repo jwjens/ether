@@ -138,6 +138,25 @@ function songsDelete(db, uuid) {
     retracted = retractSongReferences(db, existing, now);
   });
   noteSongRetraction(existing, retracted);
+
+  // ── R2 MIRROR-ON-DELETE ────────────────────────────────────────────────────────────────────────
+  // AFTER the transaction, deliberately, and on purpose not awaited.
+  //
+  // AFTER: releaseAfterDelete re-runs evaluateRow, whose first check is "does any LIVE song hold
+  // this file_key". Inside the transaction this song's own tombstone is not visible yet, so it
+  // would find ITSELF and never release anything.
+  //
+  // NOT AWAITED: songsDelete is synchronous and the operator's delete is already complete. A slow
+  // or failing backend must never hold up — or undo — the delete. A failure leaves the queue row at
+  // 'error', which is exactly the state the daily sweep retries from.
+  try {
+    const sweep = require('../../deletion-sweep');
+    Promise.resolve(sweep.releaseAfterDelete(db, existing.file_key))
+      .catch(e => console.error('[songs] R2 release failed (queued for retry):', e.message));
+  } catch (e) {
+    console.error('[songs] R2 release unavailable:', e.message);
+  }
+
   return { ok: true, retracted };
 }
 

@@ -7740,26 +7740,28 @@ function _sampleRunway() {
  *  consumers. FAIL-CLOSED: no record, another machine's record, or an unreadable record all mean
  *  "do not sweep". A missing record is the EXPECTED path today (the 4.4.192 write fix still has no
  *  runtime receipt), so it is logged as normal operation, not as an error. */
-/** ── SCOPING, AND WHAT MUST CHANGE BEFORE ANY DELETE IS SENT ────────────────────────────────────
+/** ── SCOPING, AND THE SINGLETON LOCK ────────────────────────────────────────────────────────────
  *
  *  THE QUEUE IS GLOBAL, THE CALLER IS PER-STATION. deletion_queue holds one row per file_key for
  *  the whole install, and runSweep() evaluates ALL of them — it takes no station argument and does
  *  no station filtering. But this function is called from inside _autoExtendTick's per-station
- *  loop, and the last-run stamp is written per station. So on a four-station install the same
- *  global queue is swept up to four times a day, once under each station's stamp.
+ *  loop. The stamp USED TO BE PER STATION, so on a four-station install the same global queue was
+ *  swept up to four times a day, once under each station's stamp.
  *
- *  That is HARMLESS TODAY and only today, because the sweep is report-only: four evaluations of the
- *  same row reach the same verdict and write the same status. The cost is a few redundant reads.
+ *  That was harmless only while the sweep was report-only: four evaluations of the same row reach
+ *  the same verdict and write the same status.
  *
- *  IT IS NOT HARMLESS ONCE A DELETE IS WIRED. Four stations would each issue a DELETE for the same
- *  R2 object — the first succeeds and the rest race against an object that no longer exists, which
- *  at best is noise and at worst is retry/backoff churn against a 404 that reads like a failure.
- *  BEFORE ANY DELETE IS SENT, this needs ONE of:
- *    - a singleton lock so exactly one sweep runs per install per interval, or
- *    - a single install-scoped stamp instead of a per-station one, or
- *    - genuine station-aware scoping of the queue itself.
- *  The first is the smallest correct change; the third is only meaningful if the library ever
- *  becomes station-scoped.
+ *  IT IS NOT HARMLESS NOW THAT THE DELETE IS WIRED. Four stations would each issue a DELETE for the
+ *  same R2 object — the first succeeds and the rest race against an object that no longer exists,
+ *  which at best is noise and at worst is retry/backoff churn against a 404 that reads like a
+ *  failure. So the stamp is now INSTALL-SCOPED (install_config_kv, the same table the auto-generate
+ *  migration marker uses for the same reason: "this is a fact about the machine, not the station"),
+ *  and an in-process re-entrancy flag closes the remaining window — the release pass is async, so
+ *  two ticks could otherwise overlap even with a correct stamp.
+ *
+ *  That is the first of the three options the previous note listed, and the smallest correct one.
+ *  Genuine station-aware scoping of the queue is only meaningful if the library ever becomes
+ *  station-scoped; it is not today.
  *
  *  station_id IS 0 ON BACKFILLED ROWS, deliberately. The `songs` table has no station_id column at
  *  all — the library is ACCOUNT-scoped, shared across the stations on the account (which is also
@@ -7770,11 +7772,44 @@ function _sampleRunway() {
 const SWEEP_LAST_RUN_KEY = 'sweep_last_run';
 const SWEEP_INTERVAL_SEC = 24 * 60 * 60;
 
-function _maybeRunDeletionSweep(stationId) {
+/** The install-scoped last-run stamp. install_config_kv, NOT station_config_kv: one stamp per
+ *  machine is exactly the singleton the delete path needs. Read/write are local reads on a table
+ *  that already carries per-install facts (account_jwt, auto_generate_default_migrated). */
+function _sweepLastRun() {
   try {
-    const { stationConfigKvGetValue, stationConfigKvSetLocal } = require('./sync/handlers/station_config_kv');
+    const r = db.prepare("SELECT value FROM install_config_kv WHERE key = ? AND deleted_at IS NULL").get(SWEEP_LAST_RUN_KEY);
+    const n = parseInt(r?.value, 10);
+    return Number.isFinite(n) ? n : null;
+  } catch { return null; }
+}
+function _stampSweepLastRun(now) {
+  const nowIso = new Date().toISOString();
+  db.prepare(`INSERT INTO install_config_kv (key, value, uuid, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?)
+              ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at, deleted_at=NULL`)
+    .run(SWEEP_LAST_RUN_KEY, String(now), require('crypto').randomUUID(), nowIso, nowIso);
+  // VERIFY THE WRITE. The per-station predecessor went through stationConfigKvSetLocal, which
+  // REFUSES any key not in LOCAL_ONLY_KEYS silently from the caller's point of view (the trap that
+  // made the designation record unwritable, 4.4.193). An unverified stamp would make the sweep —
+  // and now the DELETEs — run on every single tick.
+  const readBack = _sweepLastRun();
+  if (String(readBack) !== String(now)) {
+    console.error(`[deletion-sweep] last-run stamp did NOT persist (wrote ${now}, read ${readBack}) — the sweep would repeat every tick`);
+    return false;
+  }
+  return true;
+}
+
+/** In-process re-entrancy guard. The stamp alone cannot close this: the release pass is async, so
+ *  a second station in the SAME tick — or the next tick arriving while a slow release is still in
+ *  flight — could enter before the stamp is meaningful. Exactly one sweep per install at a time. */
+let _sweepInFlight = false;
+
+function _maybeRunDeletionSweep(stationId) {
+  if (_sweepInFlight) return;
+  try {
     const now = Math.floor(Date.now() / 1000);
-    const last = parseInt(stationConfigKvGetValue(db, stationId, SWEEP_LAST_RUN_KEY), 10);
+    const last = _sweepLastRun();
     if (Number.isFinite(last) && (now - last) < SWEEP_INTERVAL_SEC) return;
 
     // Fail-closed designation gate, with WHICH of the three reasons it was.
@@ -7793,19 +7828,62 @@ function _maybeRunDeletionSweep(stationId) {
       return;
     }
 
-    require('./deletion-sweep').runSweep(db, { machineId, logDir: app.getPath('userData'), now });
+    _sweepInFlight = true;
 
-    // VERIFY THE WRITE. stationConfigKvSetLocal REFUSES any key not in LOCAL_ONLY_KEYS, silently
-    // from the caller's point of view — the trap that made the designation record unwritable
-    // (4.4.193). An unverified stamp would make the sweep run on every single tick.
-    const res = stationConfigKvSetLocal(db, stationId, SWEEP_LAST_RUN_KEY, String(now));
-    const readBack = stationConfigKvGetValue(db, stationId, SWEEP_LAST_RUN_KEY);
-    if (String(readBack) !== String(now)) {
-      console.error(`[deletion-sweep] last-run stamp did NOT persist (wrote ${now}, read ${readBack}, result ${JSON.stringify(res)}) — the sweep would repeat every tick`);
+    // STAMP FIRST, then sweep. The stamp is what makes this a singleton, so it has to be in place
+    // before anything slow or async starts — a stamp written afterwards would leave the whole
+    // duration of the sweep open to a second entrant.
+    let stamped = false;
+    try { stamped = _stampSweepLastRun(now); }
+    catch (e) { console.error('[deletion-sweep] stamp write threw:', e.message); }
+    if (!stamped) {
+      // No durable singleton → do not send DELETEs. Evaluating is still safe and still useful.
+      console.error('[deletion-sweep] no durable last-run stamp — evaluating only, NO releases this tick');
+      try { require('./deletion-sweep').runSweep(db, { machineId, logDir: app.getPath('userData'), now }); }
+      finally { _sweepInFlight = false; }
+      return;
     }
+
+    const sweep = require('./deletion-sweep');
+    sweep.runSweep(db, { machineId, logDir: app.getPath('userData'), now });
+
+    // The release pass. Async, so the flag is cleared in its own completion rather than here.
+    // Rows the checks cleared are released now instead of waiting another 24h for the next tick.
+    Promise.resolve(sweep.releaseMarked(db, { now }))
+      .catch(e => console.error('[deletion-sweep] release pass failed:', e.message))
+      .finally(() => { _sweepInFlight = false; });
   } catch (e) {
+    _sweepInFlight = false;
     console.error('[deletion-sweep] tick failed:', e.message);
   }
+}
+
+/** THE ONE PLACE THE APP ASKS R2 TO DROP AN OBJECT — and it does not talk to R2 at all. It asks the
+ *  BACKEND, which builds the key as `${license.id}/<file_key>` from the AUTHENTICATED token. The
+ *  install names a basename and nothing else; it cannot name a folder, its own or anyone else's.
+ *
+ *  Registered once at startup into deletion-sweep, which is otherwise HTTP-free. With no account
+ *  session there is no deleter result to give, and the caller leaves the queue row for a later
+ *  retry rather than marking it failed. */
+async function _releaseR2Object(fileKey) {
+  let jwt = null;
+  try { jwt = db.prepare("SELECT value FROM install_config_kv WHERE key='account_jwt' AND deleted_at IS NULL").get()?.value || null; } catch {}
+  if (!jwt) return { ok: false, detail: 'no account session (account_jwt) — nothing may be released without one' };
+
+  let res, body = {};
+  try {
+    res = await fetch(`${ETHER_BACKEND_URL}/api/account/audio/delete`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
+      body:    JSON.stringify({ file_key: fileKey }),
+    });
+    body = await res.json().catch(() => ({}));
+  } catch (e) {
+    return { ok: false, detail: `network: ${e.message}` };
+  }
+  if (!res.ok) return { ok: false, detail: `HTTP ${res.status}${body.error ? ' ' + body.error : ''}${body.detail ? ' — ' + body.detail : ''}` };
+  // deleted:false is the idempotent case — the object was already gone. That is success.
+  return { ok: true, detail: body.deleted === false ? 'already absent' : 'deleted from R2' };
 }
 
 async function _autoExtendTick() {
@@ -7921,6 +7999,11 @@ function startAutoExtend() {
   if (_autoExtendTimer) return;
   try { _migrateAutoGenerateDefault(); } catch {}   // once, before the first tick can skip a station
   try { _migrateKillLease(); } catch {}
+  // Hand deletion-sweep the ONE way it may reach the network. Registered here — before the first
+  // tick and before any delete path can run — because with no deleter registered the sweep silently
+  // releases nothing, which would look identical to "the mirror works and there was nothing to do".
+  try { require('./deletion-sweep').setObjectDeleter(_releaseR2Object); }
+  catch (e) { console.error('[deletion-sweep] could not register R2 deleter:', e.message); }
   try { _designationTick(new Set(), 'startup tick'); } catch (e) { console.error('[designation] first tick:', e.message); }
   // Sample immediately, not in 30 minutes: a fresh install would otherwise show an empty chart for
   // half an hour and read as broken rather than as new.
