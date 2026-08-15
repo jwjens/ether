@@ -7859,23 +7859,29 @@ function _maybeRunDeletionSweep(stationId) {
 }
 
 /** THE ONE PLACE THE APP ASKS R2 TO DROP AN OBJECT — and it does not talk to R2 at all. It asks the
- *  BACKEND, which builds the key as `${license.id}/<file_key>` from the AUTHENTICATED token. The
+ *  BACKEND, which builds the key as `${license.id}/<file_key>` from the license it RESOLVES. The
  *  install names a basename and nothing else; it cannot name a folder, its own or anyone else's.
  *
- *  Registered once at startup into deletion-sweep, which is otherwise HTTP-free. With no account
- *  session there is no deleter result to give, and the caller leaves the queue row for a later
- *  retry rather than marking it failed. */
+ *  AUTHENTICATED WITH THE LICENSE KEY, exactly as its sibling calls to /audio/upload-url and
+ *  /audio/download-url are. NOT with account_jwt: that token is typ:"user" (uid/email, no role and
+ *  no lk), so an admin-gated route is one this app can never call — it 403s when fresh, and would
+ *  build an `undefined/<key>` prefix even if it passed. Proven the hard way (2026-08-15): the first
+ *  cut of this used Bearer account_jwt and every release failed at the auth boundary.
+ *
+ *  Registered once at startup into deletion-sweep, which is otherwise HTTP-free. With no license
+ *  there is no deleter result to give, and the caller leaves the queue row for a later retry rather
+ *  than marking it failed. */
 async function _releaseR2Object(fileKey) {
-  let jwt = null;
-  try { jwt = db.prepare("SELECT value FROM install_config_kv WHERE key='account_jwt' AND deleted_at IS NULL").get()?.value || null; } catch {}
-  if (!jwt) return { ok: false, detail: 'no account session (account_jwt) — nothing may be released without one' };
+  let licenseKey = null;
+  try { licenseKey = accountLicenseKey(); } catch {}
+  if (!licenseKey) return { ok: false, detail: 'no license key on this install — nothing may be released without one' };
 
   let res, body = {};
   try {
-    res = await fetch(`${ETHER_BACKEND_URL}/api/account/audio/delete`, {
+    res = await fetch(`${ETHER_BACKEND_URL}/audio/delete`, {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${jwt}` },
-      body:    JSON.stringify({ file_key: fileKey }),
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ license_key: licenseKey, file_key: fileKey }),
     });
     body = await res.json().catch(() => ({}));
   } catch (e) {

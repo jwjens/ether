@@ -1,4 +1,22 @@
-# R2 mirror-on-delete — build report (2026-08-14)
+# R2 mirror-on-delete — build report (2026-08-14, corrected 2026-08-15)
+
+> **CORRECTION (2026-08-15) — the route's auth was wrong on the first cut, and §1 below describes
+> the version that did not work.** It was modelled on `/api/account/audio/upload-url`
+> (`requireAuthAdmin` + `req.auth.lk`), which is the DASHBOARD's auth. The desktop install holds a
+> `typ:"user"` token — `{uid, email, iat, exp}`, **no `role`, no `lk`** — so it could never call
+> that route: `403 admin_required` when fresh, and an `undefined/<key>` prefix even if it passed.
+> Every release attempt failed at the auth boundary (first `401 invalid_token`, because the stored
+> token had also expired 8h earlier on its 12-hour lifetime).
+>
+> **Now:** `POST /audio/delete` (ether-backend `b38ab1b`), the true sibling of `/audio/upload-url`
+> and `/audio/download-url` — `license_key` in the body, resolved by `lookupLicense`, prefix =
+> `license.id`. The security property is unchanged: the prefix comes from the RESOLVED license,
+> never from the request. The unusable `/api/account/audio/delete` was removed, not left deployed.
+>
+> **Lesson worth keeping:** the original "verified live — 401 not 404" receipt proved only that the
+> route rejected *unauthenticated* callers. It never proved the desktop could *authenticate*. A
+> receipt has to cover the path that matters, not an adjacent one.
+
 
 Branch `log-reader-flip`. Local only, no commit, no version bump, no deploy.
 
@@ -122,7 +140,29 @@ npx vitest run        → 23 files, 315 tests, all passed
 npm run verify:schema → VERDICT: PASS (8 passed, 0 failed)
 ```
 
-**UNVERIFIED at runtime.** No song has been deleted in a running build and no object has been
-released from R2. The one check that would settle it: deploy the route, delete a song whose audio is
-the sole reference, and confirm `[account/audio/delete] released <key>` in the Railway log and
-`[deletion-sweep] release pass` / a `done` queue row on the install.
+## VERIFIED at runtime — 2026-08-15
+
+End-to-end, against the live database and the deployed route (Ether fully closed for the write):
+
+```
+runSweep   examined 5 → marked 3
+release    {"examined":3,"done":3,"error":0,"out_of_scope":0,"skipped":0}
+
+id 2  done  AOK_spotdown.org.mp3                        released — deleted from R2
+id 3  done  Ain't No Mountain High Enough - Stereo…mp3  released — deleted from R2
+id 9  done  Candy - 7_ Version.mp3                      released — deleted from R2
+counts: pending=28  done=3  permanent_shared=2
+```
+
+Also verified on the delete path itself: deleting a song that aired inside the 90-day window
+correctly held at `pending` ("aired within the last 90 days") and sent no DELETE — `last_checked_at`
+landed 2s after `deleted_at`, which only `releaseAfterDelete` writes.
+
+Deployed route guards, checked without ever naming a real object:
+```
+{}                                    → 400 missing_fields  (license_key is required)
+bogus license_key                     → 401 invalid_license_key
+file_key "../19/something.mp3"        → 400 invalid_file_key (no path separators)
+```
+Traversal is rejected BEFORE the license lookup, so a probe cannot use it to learn whether a
+license exists.
