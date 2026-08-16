@@ -4403,15 +4403,31 @@ ipcMain.handle("db:restore", async (_, backupName) => {
   } catch (e) { return { data: null, error: e.message }; }
 });
 
-// Factory reset — wipe the local database (the live file AND the legacy migration source,
-// else getDbPath copies it back) so the next launch is a clean first run: re-onboarding +
-// first-user PIN setup. Closes the DB, deletes both copies + their WAL sidecars, then
-// relaunches. Destructive — the renderer gates this behind a double-email confirmation.
+// Factory reset — wipe the ACTIVE PROFILE (the live database AND the legacy migration source, else
+// getDbPath copies it back) and clear the pointer, so the next launch lands on sign-in. Destructive;
+// the renderer gates it behind a double-email confirmation.
+//
+// STOPS THE DAEMON FIRST, THEN EXITS COMPLETELY (4.4.219). It used to wipe and then app.relaunch()
+// while the audio daemon was still running — and the daemon holds openair.db open INSIDE the very
+// directory being deleted, so on Windows the delete failed and the wipe logged
+// "PROFILE DIRECTORY SURVIVED". A factory reset that silently does not reset is the worst possible
+// outcome for a control with a typed confirmation on it. The relaunch was the second half of the
+// same bug: it raced its own file handles, exactly as Sign Out did before it became a full exit.
+// Same protocol as accountSignOut now — daemon down, watchdog stood down, full exit.
 ipcMain.handle("system:factoryReset", async () => {
   try {
-    await _wipeLocalIdentityAndData();   // shared total clear (session + DB + legacy + sessionData + markers)
-    markHaExpectedRestart();
-    app.relaunch();
+    _userFullQuit = true;
+    app.isQuitting = true;
+    try { pauseKeepOnAir(); } catch {}
+    try { writeHaSentinel(".ether-clean-exit"); } catch {}
+    // The daemon must let go of the database BEFORE the directory it lives in is removed.
+    try { if (AUDIO_DAEMON) await audiodClient.cmd("shutdown").catch(() => {}); } catch {}
+    try { audiodClient.stop(); } catch {}
+    const r = await _wipeLocalIdentityAndData();   // closes the DB, removes the profile, clears the pointer
+    if (r && r.ok === false) {
+      console.error("[factoryReset] wipe FAILED — not exiting, so the operator is told rather than left guessing");
+      return { ok: false, error: "profile_in_use", detail: "Ether could not clear this account's folder because a file was still in use. Close Ether completely (including the audio engine in the system tray), reopen it, and try again." };
+    }
     app.exit(0);
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
@@ -8848,6 +8864,64 @@ ipcMain.handle('sync:set-uuid-identity', (_evt, arg) => {
 
 /** Read-only. Run this on BOTH machines and compare before pushing anything: if the station UUIDs
  *  do not match, UUID identity cannot merge them and a push is the corruption case, not the fix. */
+// ── BASELINE WATERMARK ─────────────────────────────────────────────────────────────────────────
+// "History before this moment is the baseline; never re-journal it." See electron/sync/baseline.js
+// for what it does and does not silence. These two handlers are the only writers of the watermark.
+
+/** Set the watermark alone. The declaration, without the wipe. */
+ipcMain.handle('sync:set-baseline', () => {
+  try {
+    const { setBaseline } = require('./sync/baseline');
+    const r = setBaseline(getDb());
+    if (r.ok) console.log(`[baseline] set to ${r.baseline} (source: ${r.source})`);
+    else console.error('[baseline] set FAILED:', r.error);
+    return r;
+  } catch (e) { console.error('[sync:set-baseline]', e.message); return { ok: false, error: e.message }; }
+});
+
+/**
+ * The operator button: declare the baseline AND discard the queued journal, as one act.
+ *
+ * ORDER IS LOAD-BEARING — baseline FIRST, then the wipe. The other way round leaves a window in
+ * which the journal is empty and no watermark exists, and anything that re-journals in that window
+ * refills it. Both happen in ONE transaction so the window does not exist at all.
+ *
+ * The scheduler is paused across it: deleting rows out from under an in-flight push is how you get
+ * a push that reports sending mutations the database no longer has. It is resumed in `finally`,
+ * including on failure — a sync engine left paused by a failed button is a worse outcome than the
+ * backlog it was trying to clear.
+ */
+ipcMain.handle('sync:clear-pending', () => {
+  const scheduler = app._syncScheduler || null;
+  let paused = false;
+  try {
+    const db = getDb();
+    const { setBaseline, getBaseline } = require('./sync/baseline');
+
+    try { if (scheduler && typeof scheduler.pause === 'function') { scheduler.pause(); paused = true; } } catch {}
+
+    const before = db.prepare("SELECT COUNT(*) n FROM mutations WHERE sync_status='pending'").get()?.n ?? null;
+    const beforeTotal = db.prepare("SELECT COUNT(*) n FROM mutations").get()?.n ?? null;
+
+    let baselineResult = null;
+    const run = db.transaction(() => {
+      baselineResult = setBaseline(db);           // 1. declare the baseline
+      if (!baselineResult.ok) throw new Error(`baseline not set: ${baselineResult.error}`);
+      db.prepare("DELETE FROM mutations").run();  // 2. only then discard the journal
+    });
+    run();
+
+    const after = db.prepare("SELECT COUNT(*) n FROM mutations WHERE sync_status='pending'").get()?.n ?? null;
+    console.log(`[baseline] cleared journal — pending ${before} → ${after}, total was ${beforeTotal}; baseline ${getBaseline(db)}`);
+    return { ok: true, pendingBefore: before, pendingAfter: after, totalBefore: beforeTotal, baseline: getBaseline(db), baselineSource: baselineResult?.source ?? null };
+  } catch (e) {
+    console.error('[sync:clear-pending]', e.message);
+    return { ok: false, error: e.message };
+  } finally {
+    try { if (paused && scheduler && typeof scheduler.resume === 'function') scheduler.resume(); } catch {}
+  }
+});
+
 ipcMain.handle('sync:preflight', () => {
   try {
     const db = getDb();
@@ -8865,6 +8939,9 @@ ipcMain.handle('sync:preflight', () => {
       // The comparison this exists for.
       stations: q("SELECT id, uuid, name, is_active FROM stations WHERE deleted_at IS NULL ORDER BY id"),
       activeStationId: getActiveStationId(),
+      // The watermark, so the panel can say whether one is set rather than leaving the operator to
+      // infer it from a pending count that looks the same either way.
+      baseline: (() => { try { return require('./sync/baseline').getBaseline(db); } catch { return null; } })(),
       flags: {
         sync_enabled: kv('sync_enabled'),
         sync_uuid_identity: kv('sync_uuid_identity'),

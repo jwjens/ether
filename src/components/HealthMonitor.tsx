@@ -297,7 +297,7 @@ interface HealthData {
 
 // HealthDot was removed with the HealthRow redesign: the status is now the tile's left EDGE, which
 // is legible from across a room in a way a 10px dot never was. Nothing else referenced it.
-function HealthRow({ label, value, status, sub }: { label: string; value: string; status: "ok" | "warn" | "error"; sub?: string }) {
+function HealthRow({ label, value, status, sub, actions }: { label: string; value: string; status: "ok" | "warn" | "error"; sub?: string; actions?: ReactNode }) {
   // HealthRow is the workhorse of the bottom half — Core Systems, High Availability, Library &
   // Rotation, the canary and the designation rows are ALL built from it, 31 call sites. So its
   // design IS the bottom half's design, and changing it here changes all of them at once rather
@@ -329,6 +329,10 @@ function HealthRow({ label, value, status, sub }: { label: string; value: string
                      lineHeight: 1.2, textAlign: "right" as const, color }}>
         {value}
       </span>
+      {/* Optional actions, right of the reading. A health row that reports a fault the operator can
+          DO something about should carry the doing — otherwise the panel names the problem and sends
+          you hunting for the control, which is what happened with sync. */}
+      {actions && <span style={{ display: "flex", gap: "var(--s-2, 4px)", flexShrink: 0 }}>{actions}</span>}
     </div>
   );
 }
@@ -790,6 +794,30 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     return () => clearInterval(id);
   }, [load]);
 
+  // ── Manual sync override (4.4.219) ─────────────────────────────────────────────────────────────
+  // The SAME two IPC commands the Settings > Backup & Restore > Multi-Machine Sync section calls
+  // (SettingsPanel.tsx runSync). Deliberately no logic of its own beyond the busy flag and the
+  // result line: a second implementation of "what push means" is how two surfaces start disagreeing
+  // about whether a transfer landed. The result string is the handler's own numbers, verbatim.
+  const [syncBusy, setSyncBusy] = useState<string | null>(null);
+  const [syncMsg, setSyncMsg] = useState<string>("");
+  const runSync = async (cmd: "sync:push-now" | "sync:pull-now", label: string) => {
+    setSyncBusy(label); setSyncMsg("");
+    try {
+      const r: any = await (window as any).ether?.invoke?.(cmd);
+      if (!r?.ok) setSyncMsg(`✗ ${label}: ${r?.error || "failed"}`);
+      else if (cmd === "sync:push-now")
+        setSyncMsg(`✓ pushed — sent ${r.sent}, accepted ${r.accepted}, rejected ${r.rejected} · pending ${r.pendingBefore} → ${r.pendingAfter}`);
+      else setSyncMsg(`✓ pulled — ${r.pulled ?? 0} mutation(s) applied`);
+    } catch (e: any) { setSyncMsg(`✗ ${label}: ${e?.message || String(e)}`); }
+    finally { setSyncBusy(null); load(); }
+  };
+  const syncBtn: React.CSSProperties = {
+    padding: "var(--s-2, 4px) var(--s-3, 6px)", borderRadius: "var(--r-0, 0)", fontSize: "var(--t-small, 11px)",
+    fontWeight: 700, letterSpacing: "0.06em", background: "var(--bg-tertiary)",
+    border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer",
+  };
+
   const exportPlayLog = async () => {
     setExporting(true);
     try {
@@ -1222,11 +1250,29 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                   status={hh.audio.alive ? "ok" : "warn"}
                   sub={hh.audio.staleMs == null ? "No output callback yet" : `Last callback ${hh.audio.staleMs} ms ago`}
                 />
+                {/* PUSH / PULL live HERE now (4.4.219), on the row that reports sync health.
+                    They were removed from the Cloud Log Backup panel by 38c718c and folded into
+                    Settings > Backup & Restore > Multi-Machine Sync, which is a reasonable home for
+                    a setting and the wrong one for an emergency override: when a transfer has not
+                    landed you go to the panel that reports sync, and this row said "Syncing…" with
+                    nothing to press. Same IPC as Settings — sync:push-now / sync:pull-now — not a
+                    second implementation, so the two surfaces cannot drift. Settings keeps its copy;
+                    this is a door onto the same handlers, not a rival. */}
                 <HealthRow
                   label="Sync Engine"
                   value={hh.sync ? (hh.sync.initialComplete ? "Synced" : "Syncing…") : "Off"}
                   status={hh.sync ? "ok" : "warn"}
-                  sub={hh.sync ? `${hh.sync.appliedTotal.toLocaleString()} mutations applied` : "Sync disabled (default)"}
+                  sub={syncMsg || (hh.sync ? `${hh.sync.appliedTotal.toLocaleString()} mutations applied` : "Sync disabled (default)")}
+                  actions={
+                    <>
+                      <button onClick={() => runSync("sync:push-now", "push")} disabled={syncBusy !== null}
+                        title="Send this machine's pending changes now. Manual override — transfers are not on a timer."
+                        style={syncBtn}>{syncBusy === "push" ? "PUSHING…" : "PUSH"}</button>
+                      <button onClick={() => runSync("sync:pull-now", "pull")} disabled={syncBusy !== null}
+                        title="Fetch changes from the other machines on this account now."
+                        style={syncBtn}>{syncBusy === "pull" ? "PULLING…" : "PULL"}</button>
+                    </>
+                  }
                 />
                 <HealthRow
                   label="Memory (RSS)"

@@ -1053,19 +1053,13 @@ export default function App() {
       if (cmd === "help:check-updates") updater.checkForUpdate?.();
       if (cmd === "nav:about") setShowAbout(true);
       if (cmd === "account:sign-out") setCurrentUser(null); // back to the profile / PIN screen
-      if (cmd === "account:switch") {
-        // Sign out of the cloud account and relaunch to sign in / sign up. Clears only the
-        // account/onboarding flags; local station data is left intact. Mirrors SubscriptionPanel.
-        (async () => {
-          if (!window.confirm("Switch account?\n\nThis signs out of the current account and restarts to the Sign in / Sign up screen, where you can sign in or create a new account.\n\nThis install's local station data isn't deleted — back it up to the cloud first if you need it. Continue?")) return;
-          const ether = (window as any).ether;
-          let sid = 1;
-          try { const a = await ether.stations?.getActive?.(); sid = a?.id ?? 1; } catch {}
-          const keys = ['license_key','license_email','plan_tier','account_name','first_run_complete','onboarding_account_joined','onboarding_license_entered','onboarding_library_pulled','onboarding_library_source'];
-          for (const k of keys) { try { await ether.stationConfigKv.removeByKey(sid, k); } catch {} }
-          try { await ether.invoke('app:relaunch'); } catch { window.alert("Couldn't switch accounts — please try again."); }
-        })();
-      }
+      // account:switch — REMOVED (4.4.219). Dead but wired, and dangerous if it had ever fired:
+      // it stripped license_key / license_email / plan_tier and the onboarding flags out of the
+      // CURRENT profile's database and then relaunched WITH markKeepSession(), so the next launch
+      // resumed into a profile whose identity had just been gutted. Under profile-per-account that
+      // damages the account you are leaving instead of switching away from it. The menu item that
+      // sent this was deleted in 4.4.216; the same defect in SubscriptionPanel went with it, and
+      // this copy was missed. There is ONE door out of an account: File > Sign Out.
     });
     return () => (window as any).ether.off("menu-action", handler);
   }, []);

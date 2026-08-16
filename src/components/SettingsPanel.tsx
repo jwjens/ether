@@ -1121,6 +1121,28 @@ function MultiMachineSyncSection() {
     finally { setBusy(null); refresh(); }
   };
 
+  // ── Clear pending (set baseline) ───────────────────────────────────────────────────────────────
+  // ONE act, not two: main's sync:clear-pending sets the watermark and discards the journal in a
+  // single transaction, baseline FIRST. Doing it as two clicks would leave a window with an empty
+  // journal and no watermark, which is exactly the state that refills.
+  const clearPending = async () => {
+    const pending = pf?.mutations?.pending ?? 0;
+    if (!confirm(
+      "Clear pending sync history?\n\n" +
+      "Discards all queued sync history — " + pending.toLocaleString() + " queued change(s) — and marks this moment as the baseline. " +
+      "Edits made after this moment sync normally.\n\n" +
+      "This does NOT delete songs, stations, clocks or settings. Only the sync backlog.\n\n" +
+      "This cannot be undone. Continue?"
+    )) return;
+    setBusy("baseline"); setMsg("");
+    try {
+      const r: any = await call("sync:clear-pending");
+      if (!r?.ok) setMsg(`✗ clear pending: ${r?.error || "failed"}`);
+      else setMsg(`✓ baseline set — pending ${r.pendingBefore?.toLocaleString?.() ?? r.pendingBefore} → ${r.pendingAfter}. Edits from now on sync normally.`);
+    } catch (e: any) { setMsg(`✗ clear pending: ${e?.message || String(e)}`); }
+    finally { setBusy(null); refresh(); }
+  };
+
   const toggleUuid = async () => {
     const next = pf?.flags?.sync_uuid_identity !== "true";
     setBusy("uuid"); setMsg("");
@@ -2134,7 +2156,13 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, seg
   const doFactoryReset = async () => {
     if (!frMatch) { setFrErr("Both fields must match — type it exactly, twice."); return; }
     setFrBusy(true); setFrErr("");
-    try { await (window as any).ether.system.factoryReset(); }
+    try {
+      const r = await (window as any).ether.system.factoryReset();
+      // On success main never returns — it exits. Any answer we actually RECEIVE is a refusal, so
+      // say so rather than leaving the operator watching "Resetting…" forever. Same reasoning as the
+      // clean-room fix in 5c93322: read the answer, never assume the happy path.
+      if (r && r.ok === false) { setFrBusy(false); setFrErr(r.detail || "Couldn’t reset. Please try again."); }
+    }
     catch { setFrBusy(false); setFrErr("Couldn’t reset. Please try again."); }
   };
   const frInput: React.CSSProperties = { width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", fontSize: 13, outline: "none", marginBottom: 10 };
@@ -3260,7 +3288,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, seg
       {/* ── Danger zone — factory reset ── */}
       <Section category="system" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>} title="Factory reset this computer" description="Erase this computer's Ether data and start over from first-time setup — does not touch other computers on your account">
         <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 14 }}>
-          Wipes this computer's local database — stations, library, schedule, users, and settings — and relaunches into onboarding. Other computers on your account are unaffected. Consider <strong>Back up now</strong> above first. <strong>This cannot be undone.</strong>
+          Erases this account's data on this computer — stations, library, schedule, users and settings — then <strong>closes Ether completely</strong>. Reopen it to sign in again. Other accounts on this computer, and this account on other computers, are unaffected. Consider <strong>Back up now</strong> above first. <strong>This cannot be undone.</strong>
         </div>
         <button onClick={() => { setFrOpen(true); setFrEmail1(""); setFrEmail2(""); setFrErr(""); }} style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(239,68,68,0.12)", color: "#ef4444", border: "1px solid rgba(239,68,68,0.4)", cursor: "pointer" }}>
           Factory reset…
@@ -3282,7 +3310,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, seg
             {frErr && <div style={{ fontSize: 12, color: "#ef4444", marginBottom: 12 }}>{frErr}</div>}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
               <button onClick={() => setFrOpen(false)} disabled={frBusy} style={{ padding: "9px 16px", borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", fontSize: 13 }}>Cancel</button>
-              <button onClick={doFactoryReset} disabled={!frMatch || frBusy} style={{ padding: "9px 16px", borderRadius: 0, border: "none", background: frMatch && !frBusy ? "#ef4444" : "rgba(239,68,68,0.35)", color: "#fff", fontWeight: 700, cursor: frMatch && !frBusy ? "pointer" : "not-allowed", fontSize: 13 }}>{frBusy ? "Resetting…" : "Erase & restart setup"}</button>
+              <button onClick={doFactoryReset} disabled={!frMatch || frBusy} style={{ padding: "9px 16px", borderRadius: 0, border: "none", background: frMatch && !frBusy ? "#ef4444" : "rgba(239,68,68,0.35)", color: "#fff", fontWeight: 700, cursor: frMatch && !frBusy ? "pointer" : "not-allowed", fontSize: 13 }}>{frBusy ? "Resetting…" : "Erase & close Ether"}</button>
             </div>
           </div>
         </div>

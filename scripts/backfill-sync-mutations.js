@@ -43,7 +43,18 @@ function argVal(name)  {
 
 const DRY_RUN          = !flag('--write');
 const INCLUDE_PLAY_LOG = flag('--include-play-log');
-const DB_PATH          = argVal('--db') ?? path.join(appData, 'com.ether.radio', 'openair.db');
+// PROFILE-PER-ACCOUNT (4.4.219): the default used to be the pre-profiles Roaming path
+// (appData/com.ether.radio/openair.db), which no longer exists on a migrated install — so this
+// script silently pointed at nothing, or worse, at a stale legacy file. Resolve the ACTIVE profile
+// through the same module the app and daemon use. --db still overrides for a copy.
+const DB_PATH          = argVal('--db') ?? (() => {
+  try {
+    const P = require(path.join(ROOT, 'electron', 'profile-paths'));
+    const active = P.resolveActive();
+    if (!active.pending) return P.dbPath(active.key);
+  } catch { /* fall through to the legacy default */ }
+  return path.join(appData, 'com.ether.radio', 'openair.db');
+})();
 const tablesFilter     = argVal('--tables')?.split(',').map(s => s.trim()).filter(Boolean) ?? null;
 
 // ── Table definitions — FK-dependency order ────────────────────────────────────
@@ -128,6 +139,11 @@ function main() {
   }
 
   const { logMutation, serializePayload } = require(path.join(ROOT, 'electron', 'sync', 'mutation-writer'));
+  // THE BASELINE GATE — the one choke point. Rows declared history by the watermark are never
+  // re-journaled, no matter which door asked. electron/sync/baseline.js
+  const { makeBaselineGate } = require(path.join(ROOT, 'electron', 'sync', 'baseline'));
+  const gate = makeBaselineGate(db);
+  console.log('\n  baseline      : ' + gate.describe());
 
   // Build active table list
   let tables = [...BACKFILL_TABLES];
@@ -152,6 +168,18 @@ function main() {
     } catch (e) {
       console.log(`  ⚠ ${tableDef.name.padEnd(25)} ${tableDef.scope.padEnd(10)}  ERR: ${e.message}`);
       continue;
+    }
+
+    // THE GATE, APPLIED HERE TOO — so the plan and the write agree.
+    // It was originally only in the write loop, and the dry run then reported "845 would be
+    // generated" for rows the write path would skip to a man. A dry run that disagrees with the
+    // real run is worse than no dry run: it is the exact "is this a bug or is it working?"
+    // ambiguity the watermark exists to end. Filter once, report once.
+    const rawGaps = gapRows.length;
+    gapRows = gapRows.filter((r) => !gate.shouldSkip(r));
+    const baselineSkipped = rawGaps - gapRows.length;
+    if (baselineSkipped > 0) {
+      console.log(`  · ${tableDef.name.padEnd(25)} ${tableDef.scope.padEnd(10)}${String(baselineSkipped).padStart(8)}  skipped — before baseline (declared history)`);
     }
 
     const action = gapRows.length === 0
@@ -188,10 +216,11 @@ function main() {
   let totalWritten  = 0;
   let totalSkipped  = 0;
   let totalErrored  = 0;
+  let totalBaseline = 0;   // skipped because they predate the baseline watermark
 
   for (const { tableDef, gapRows } of plan) {
     const { name: tableName, stationIdCol } = tableDef;
-    let written = 0, skipped = 0, errored = 0;
+    let written = 0, skipped = 0, errored = 0, baselined = 0;
 
     process.stdout.write(`\n  ${tableName}: writing ${gapRows.length} mutation(s)... `);
 
@@ -202,6 +231,9 @@ function main() {
     const batchWrite = db.transaction((rows) => {
       for (const row of rows) {
         if (!row.uuid) { skipped++; continue; }
+        // BASELINE: declared history. Skipped LOUDLY (counted and reported below) — a silent skip
+        // is indistinguishable from a bug, which is the exact ambiguity this watermark exists to end.
+        if (gate.shouldSkip(row)) { baselined++; continue; }
 
         const stationId = stationIdCol ? (row[stationIdCol] ?? null) : null;
 
@@ -232,6 +264,8 @@ function main() {
       }
     });
 
+    if (baselined > 0) process.stdout.write(`[${baselined} baseline] `);
+    totalBaseline += baselined;
     try {
       batchWrite(gapRows);
       console.log(`done. written=${written} skipped=${skipped} errored=${errored}`);
