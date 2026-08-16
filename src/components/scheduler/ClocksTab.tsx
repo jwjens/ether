@@ -39,7 +39,7 @@ function TalkPicker({ onAdd, onBack }: {
           { l: "2:00", m: 2 },   { l: "3:00", m: 3 },
         ].map(({ l, m }) => (
           <button key={l} onClick={() => fire(m, l + " talk")} style={{
-            flex: 1, padding: "8px 4px", borderRadius: 0, fontSize: 11, fontWeight: 700,
+            flex: 1, padding: "8px 4px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 700,
             cursor: "pointer", background: "rgba(124,58,237,0.2)",
             border: "1px solid rgba(124,58,237,0.4)", color: "#c4b5fd",
             transition: "all 0.1s",
@@ -52,30 +52,30 @@ function TalkPicker({ onAdd, onBack }: {
 
       {/* Custom duration row */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px", borderRadius: 0, background: "rgba(167,139,250,0.06)", border: "1px solid rgba(167,139,250,0.2)" }}>
-        <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(167,139,250,0.7)", letterSpacing: "0.08em", flexShrink: 0 }}>CUSTOM</span>
+        <span style={{ fontSize: "var(--t-micro)", fontWeight: 700, color: "rgba(167,139,250,0.7)", letterSpacing: "0.08em", flexShrink: 0 }}>CUSTOM</span>
         <input
           type="number" min="0" max="59" placeholder="0"
           value={customMin}
           onChange={e => setCustomMin(e.target.value)}
-          style={{ width: 44, padding: "5px 8px", borderRadius: 0, fontSize: 13, fontWeight: 700, textAlign: "center", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace" }}
+          style={{ width: 44, padding: "5px 8px", borderRadius: 0, fontSize: "var(--t-lead)", fontWeight: 700, textAlign: "center", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace" }}
         />
-        <span style={{ fontSize: 12, color: "var(--text-tertiary)", fontWeight: 700 }}>m</span>
+        <span style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", fontWeight: 700 }}>m</span>
         <input
           type="number" min="0" max="59" placeholder="0"
           value={customSec}
           onChange={e => setCustomSec(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter") fireCustom(); }}
-          style={{ width: 44, padding: "5px 8px", borderRadius: 0, fontSize: 13, fontWeight: 700, textAlign: "center", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace" }}
+          style={{ width: 44, padding: "5px 8px", borderRadius: 0, fontSize: "var(--t-lead)", fontWeight: 700, textAlign: "center", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace" }}
         />
-        <span style={{ fontSize: 12, color: "var(--text-tertiary)", fontWeight: 700 }}>s</span>
+        <span style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", fontWeight: 700 }}>s</span>
         <button
           onClick={fireCustom}
           disabled={!customMin && !customSec}
-          style={{ marginLeft: 4, padding: "5px 14px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer", background: "#a78bfa", border: "none", color: "#000", opacity: (!customMin && !customSec) ? 0.4 : 1, transition: "opacity 0.1s" }}
+          style={{ marginLeft: 4, padding: "5px 14px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 700, cursor: "pointer", background: "#a78bfa", border: "none", color: "#000", opacity: (!customMin && !customSec) ? 0.4 : 1, transition: "opacity 0.1s" }}
         >Add</button>
       </div>
 
-      <button onClick={onBack} style={{ marginTop: 8, fontSize: 10, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer" }}>← Back</button>
+      <button onClick={onBack} style={{ marginTop: 8, fontSize: "var(--t-micro)", color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer" }}>← Back</button>
     </div>
   );
 }
@@ -93,13 +93,13 @@ function SegmentPicker({ cats, spotCats, onAdd, onClose }: {
       position: "absolute" as const, bottom: "calc(100% + 8px)", left: 0, right: 0,
       zIndex: 100, background: "var(--bg-secondary)",
       border: "1px solid var(--border-primary)", borderRadius: 0,
-      padding: 14, boxShadow: "0 12px 40px rgba(0,0,0,0.5)",
+      padding: 14, boxShadow: "var(--e-float)",
     }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-        <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-tertiary)" }}>
+        <span style={{ fontSize: "var(--t-micro)", fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-tertiary)" }}>
           {step === "type" ? "ADD SEGMENT" : step === "song" ? "PICK CATEGORY" : step === "spots" ? "SPOTS — PICK CATEGORY" : "TALK BREAK"}
         </span>
-        <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14 }}>✕</button>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-lead)" }}>✕</button>
       </div>
 
       {step === "type" && (
@@ -110,7 +110,7 @@ function SegmentPicker({ cats, spotCats, onAdd, onClose }: {
             { label: "Talk break", color: "#a78bfa", next: "talk" as const },
           ].map(b => (
             <button key={b.label} onClick={() => setStep(b.next)} style={{
-              flex: 1, padding: "10px 6px", borderRadius: 0, fontSize: 12, fontWeight: 700,
+              flex: 1, padding: "10px 6px", borderRadius: 0, fontSize: "var(--t-body)", fontWeight: 700,
               cursor: "pointer", background: b.color + "18", border: "1px solid " + b.color + "40", color: b.color,
             }}>{b.label}</button>
           ))}
@@ -122,38 +122,38 @@ function SegmentPicker({ cats, spotCats, onAdd, onClose }: {
           <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 5, marginBottom: 8 }}>
             {cats.map(c => (
               <button key={c.id} onClick={() => onAdd("music", c.id, 3.5, c.name || c.code)} style={{
-                padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                padding: "5px 10px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 700, cursor: "pointer",
                 background: (c.color || "#444") + "25", border: "1px solid " + (c.color || "#444") + "55",
                 color: "#fff",
               }}>
                 <span style={{ color: c.color || "#fff", marginRight: 4 }}>{c.code}</span>{c.name}
               </button>
             ))}
-            {cats.length === 0 && <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>No categories — add them in the Categories tab.</span>}
+            {cats.length === 0 && <span style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)" }}>No categories — add them in the Categories tab.</span>}
           </div>
-          <button onClick={() => setStep("type")} style={{ fontSize: 10, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer" }}>← Back</button>
+          <button onClick={() => setStep("type")} style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer" }}>← Back</button>
         </div>
       )}
 
       {step === "spots" && (
         <div>
           {spotCats.length === 0 ? (
-            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 8 }}>Create a spot category in Spots &amp; Promos first.</div>
+            <div style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)", marginBottom: 8 }}>Create a spot category in Spots &amp; Promos first.</div>
           ) : (
             <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 5, marginBottom: 8 }}>
               {spotCats.map(sc => (
                 <button key={sc.id} onClick={() => onAdd("spot_break", null, 2, "Spots", sc.id)} style={{
-                  padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                  padding: "5px 10px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 700, cursor: "pointer",
                   background: (sc.color || "#ef4444") + "22", border: "1px solid " + (sc.color || "#ef4444") + "55", color: sc.color || "#fca5a5",
                 }}>{sc.name}</button>
               ))}
               <button onClick={() => onAdd("spot_break", null, 2, "Spots", null)} style={{
-                padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                padding: "5px 10px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 700, cursor: "pointer",
                 background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", color: "var(--text-secondary)",
               }}>Any spot</button>
             </div>
           )}
-          <button onClick={() => setStep("type")} style={{ fontSize: 10, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer" }}>← Back</button>
+          <button onClick={() => setStep("type")} style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer" }}>← Back</button>
         </div>
       )}
 
@@ -543,10 +543,10 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <div>
-          <h2 style={{ fontSize: 18, fontWeight: 800, color: "var(--text-primary)", margin: 0, fontFamily: "'Newsreader', Georgia, serif", letterSpacing: "-0.03em" }}>
+          <h2 style={{ fontSize: "var(--t-head)", fontWeight: 800, color: "var(--text-primary)", margin: 0, fontFamily: "'Newsreader', Georgia, serif", letterSpacing: "-0.03em" }}>
             Clocks
           </h2>
-          <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: "3px 0 0" }}>
+          <p style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)", margin: "3px 0 0" }}>
             Build your hour — positions update live as you add segments
           </p>
         </div>
@@ -554,9 +554,9 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
           <input placeholder="New clock name..." value={newName}
             onChange={e => setNewName(e.target.value)}
             onKeyDown={e => e.key === "Enter" && createClock()}
-            style={{ padding: "7px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", width: 160 }}
+            style={{ padding: "7px 12px", borderRadius: 0, fontSize: "var(--t-body)", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", width: 160 }}
           />
-          <button onClick={createClock} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>
+          <button onClick={createClock} style={{ padding: "7px 14px", borderRadius: 0, fontSize: "var(--t-body)", fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>
             Create
           </button>
         </div>
@@ -566,21 +566,21 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
 
         {/* Clock list sidebar */}
         <div style={{ width: 160, flexShrink: 0 }}>
-          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", marginBottom: 8 }}>SAVED CLOCKS</div>
+          <div style={{ fontSize: "var(--t-micro)", fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", marginBottom: 8 }}>SAVED CLOCKS</div>
           <div style={{ display: "flex", flexDirection: "column" as const, gap: 3 }}>
             {clocks.map(c => (
               <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 3 }}>
                 {confirmDelete === c.id ? (
                   // Inline confirm row
                   <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 4, padding: "4px 8px", borderRadius: 0, background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)" }}>
-                    <span style={{ fontSize: 10, color: "#ef4444", flex: 1 }}>Delete?</span>
-                    <button onClick={() => deleteClock(c.id)} style={{ fontSize: 10, fontWeight: 700, color: "#ef4444", background: "none", border: "none", cursor: "pointer", padding: "1px 4px" }}>Yes</button>
-                    <button onClick={() => setConfirmDelete(null)} style={{ fontSize: 10, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", padding: "1px 4px" }}>No</button>
+                    <span style={{ fontSize: "var(--t-micro)", color: "#ef4444", flex: 1 }}>Delete?</span>
+                    <button onClick={() => deleteClock(c.id)} style={{ fontSize: "var(--t-micro)", fontWeight: 700, color: "#ef4444", background: "none", border: "none", cursor: "pointer", padding: "1px 4px" }}>Yes</button>
+                    <button onClick={() => setConfirmDelete(null)} style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", padding: "1px 4px" }}>No</button>
                   </div>
                 ) : (
                   <>
                     <button onClick={() => setSelected(c.id)} style={{
-                      flex: 1, padding: "7px 10px", borderRadius: 0, fontSize: 12,
+                      flex: 1, padding: "7px 10px", borderRadius: 0, fontSize: "var(--t-body)",
                       fontWeight: selected === c.id ? 700 : 400, textAlign: "left" as const, cursor: "pointer",
                       background: selected === c.id ? "rgb(from var(--accent-blue) r g b / 0.12)" : "var(--bg-secondary)",
                       border: selected === c.id ? "1px solid rgb(from var(--accent-blue) r g b / 0.3)"
@@ -593,7 +593,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                     }}>
                       {c.name}
                       {advisor?.[c.id] && advisor[c.id].rows.length > 0 && (
-                        <span style={{ display: "block", marginTop: 3, fontSize: 10, fontFamily: "'DM Mono', monospace", color: "var(--accent-amber)", fontWeight: 400 }}>
+                        <span style={{ display: "block", marginTop: 3, fontSize: "var(--t-micro)", fontFamily: "'DM Mono', monospace", color: "var(--accent-amber)", fontWeight: 400 }}>
                           {advisor[c.id].rows.slice(0, 2).map(r =>
                             `${r.category} target ${r.target}/hr, ${r.unused ? "not in clock" : r.slots + " slots"} — ${r.delta < 0 ? "under" : "over"} by ${Math.abs(r.delta)}`
                           ).join(" · ")}
@@ -601,7 +601,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                         </span>
                       )}
                     </button>
-                    <button onClick={() => setConfirmDelete(c.id)} style={{ padding: "5px 6px", background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 12 }}
+                    <button onClick={() => setConfirmDelete(c.id)} style={{ padding: "5px 6px", background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-body)" }}
                       onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
                       onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
                     >✕</button>
@@ -609,7 +609,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                 )}
               </div>
             ))}
-            {clocks.length === 0 && <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontStyle: "italic", padding: "6px 4px" }}>No clocks yet</div>}
+            {clocks.length === 0 && <div style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)", fontStyle: "italic", padding: "6px 4px" }}>No clocks yet</div>}
           </div>
         </div>
 
@@ -622,14 +622,14 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
               <div style={{ flex: 1, height: 5, background: "var(--bg-tertiary)", borderRadius: 0, overflow: "hidden" }}>
                 <div style={{ height: "100%", width: Math.min(totalMin/60*100, 100)+"%", background: overrun ? "#ef4444" : totalMin >= 55 ? "#34d399" : "var(--accent-blue)", borderRadius: 0, transition: "width 0.2s" }} />
               </div>
-              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-primary)", fontFamily: "'DM Mono', monospace", whiteSpace: "nowrap" as const }}>
+              <span style={{ fontSize: "var(--t-small)", fontWeight: 700, color: "var(--text-primary)", fontFamily: "'DM Mono', monospace", whiteSpace: "nowrap" as const }}>
                 {totalMin.toFixed(1)} / 60 min
               </span>
-              <span style={{ fontSize: 10, color: overrun ? "#ef4444" : remaining < 1 ? "#34d399" : "var(--text-tertiary)", whiteSpace: "nowrap" as const }}>
+              <span style={{ fontSize: "var(--t-micro)", color: overrun ? "#ef4444" : remaining < 1 ? "#34d399" : "var(--text-tertiary)", whiteSpace: "nowrap" as const }}>
                 {overrun ? `+${(totalMin-60).toFixed(1)}m over` : remaining < 0.1 ? "Hour full ✓" : remaining.toFixed(1)+"m left"}
               </span>
               {copiedSlot && (
-                <span style={{ fontSize: 9, color: "#a78bfa", whiteSpace: "nowrap" as const }}>
+                <span style={{ fontSize: "var(--t-micro)", color: "#a78bfa", whiteSpace: "nowrap" as const }}>
                   ⎘ "{copiedSlot.label}" copied — Ctrl+V to paste
                 </span>
               )}
@@ -643,7 +643,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                 display: "grid", gridTemplateColumns: "24px 52px 28px 68px 88px 1fr 1fr 60px 52px 52px",
                 padding: "5px 10px", background: "var(--bg-tertiary)",
                 borderBottom: "1px solid var(--border-primary)",
-                fontSize: 9, fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-secondary)",
+                fontSize: "var(--t-micro)", fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-secondary)",
                 textTransform: "uppercase" as const,
               }}>
                 <span></span>
@@ -715,12 +715,12 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                     </svg>
 
                     {/* Clock position */}
-                    <span style={{ fontSize: 10, fontFamily: "'DM Mono', monospace", color: "var(--text-secondary)", letterSpacing: "0.03em", fontWeight: 600 }}>
+                    <span style={{ fontSize: "var(--t-micro)", fontFamily: "'DM Mono', monospace", color: "var(--text-secondary)", letterSpacing: "0.03em", fontWeight: 600 }}>
                       {fmtClockPos(positions[i])}
                     </span>
 
                     {/* Row number */}
-                    <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 600 }}>{i + 1}</span>
+                    <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", fontWeight: 600 }}>{i + 1}</span>
 
                     {/* TYPE — double-click to edit */}
                     <div data-v1cell="1" style={{ paddingRight: 6 }}>
@@ -731,7 +731,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                           onChange={e => changeSlotType(s.id, e.target.value)}
                           onBlur={() => setEditCell(null)}
                           onClick={e => e.stopPropagation()}
-                          style={{ fontSize: 11, width: "100%", background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none", padding: "2px 3px" }}
+                          style={{ fontSize: "var(--t-small)", width: "100%", background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none", padding: "2px 3px" }}
                         >
                           {CLOCK_SLOT_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                         </select>
@@ -740,7 +740,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                           onDoubleClick={e => { e.stopPropagation(); setEditCell({ slotId: s.id, field: "type" }); }}
                           title="Double-click to change type"
                           style={{
-                            display: "inline-block", fontSize: 9, fontWeight: 800, letterSpacing: "0.07em",
+                            display: "inline-block", fontSize: "var(--t-micro)", fontWeight: 800, letterSpacing: "0.07em",
                             padding: "2px 5px", borderRadius: 0, whiteSpace: "nowrap" as const,
                             background: slotColor(s) + "20", color: slotColor(s),
                             cursor: "text", userSelect: "none" as const,
@@ -759,7 +759,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                             onChange={e => changeSlotCat(s.id, e.target.value ? Number(e.target.value) : null)}
                             onBlur={() => setEditCell(null)}
                             onClick={e => e.stopPropagation()}
-                            style={{ fontSize: 11, width: "100%", background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none", padding: "2px 3px" }}
+                            style={{ fontSize: "var(--t-small)", width: "100%", background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none", padding: "2px 3px" }}
                           >
                             <option value="">— none —</option>
                             {cats.map(c => <option key={c.id} value={c.id}>{c.code}{c.name ? ` — ${c.name}` : ""}</option>)}
@@ -769,7 +769,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                             onDoubleClick={e => { e.stopPropagation(); setEditCell({ slotId: s.id, field: "cat" }); }}
                             title="Double-click to change category"
                             style={{
-                              fontSize: 11, fontWeight: 700, cursor: "text", userSelect: "none" as const,
+                              fontSize: "var(--t-small)", fontWeight: 700, cursor: "text", userSelect: "none" as const,
                               color: s.category_color || "var(--text-secondary)",
                               display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
                             }}
@@ -783,7 +783,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                           onClick={e => e.stopPropagation()}
                           title="Choose which spot category airs here"
                           style={{
-                            fontSize: 11, width: "100%", background: "var(--bg-tertiary)",
+                            fontSize: "var(--t-small)", width: "100%", background: "var(--bg-tertiary)",
                             border: "1px solid " + (s.spot_category_id ? ((s.spot_category_color || "#ef4444") + "88") : "var(--border-secondary)"),
                             color: s.spot_category_id ? (s.spot_category_color || "#ef4444") : "var(--text-tertiary)",
                             outline: "none", padding: "2px 3px", cursor: "pointer", fontWeight: 700,
@@ -793,12 +793,12 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                           {spotCats.map(sc => <option key={sc.id} value={sc.id}>{sc.name}</option>)}
                         </select>
                       ) : (
-                        <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>—</span>
+                        <span style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)" }}>—</span>
                       )}
                     </div>
 
                     {/* Title */}
-                    <span style={{ fontSize: 12, fontWeight: 600,
+                    <span style={{ fontSize: "var(--t-body)", fontWeight: 600,
                       color: s.slot_type === "music" ? "var(--text-primary)" : slotColor(s),
                       overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const,
                       paddingRight: 8,
@@ -807,7 +807,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                     </span>
 
                     {/* Artist */}
-                    <span style={{ fontSize: 11, fontWeight: 500, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, paddingRight: 8 }}>
+                    <span style={{ fontSize: "var(--t-small)", fontWeight: 500, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, paddingRight: 8 }}>
                       {s.song_artist || ""}
                     </span>
 
@@ -816,7 +816,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                       onClick={async e => { e.stopPropagation(); await toggleChain(s.id, chainType); }}
                       title={chainType === "stop" ? "Stop — click to set Segue" : "Segue — click to set Stop"}
                       style={{
-                        fontSize: 9, fontWeight: 800, letterSpacing: "0.06em", padding: "2px 5px",
+                        fontSize: "var(--t-micro)", fontWeight: 800, letterSpacing: "0.06em", padding: "2px 5px",
                         borderRadius: 0, cursor: "pointer", border: "none",
                         background: chainType === "stop" ? "rgba(239,68,68,0.15)" : "rgb(from var(--accent-blue) r g b / 0.08)",
                         color: chainType === "stop" ? "#ef4444" : "#64748b",
@@ -851,27 +851,27 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                             (e.target as HTMLInputElement).blur();
                           }
                         }}
-                        style={{ width: 48, padding: "2px 5px", borderRadius: 0, fontSize: 11, textAlign: "right" as const, background: "var(--bg-tertiary)", border: "1px solid #a78bfa", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace", fontWeight: 700 }}
+                        style={{ width: 48, padding: "2px 5px", borderRadius: 0, fontSize: "var(--t-small)", textAlign: "right" as const, background: "var(--bg-tertiary)", border: "1px solid #a78bfa", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace", fontWeight: 700 }}
                       />
                     ) : (
-                      <span style={{ fontSize: 11, fontFamily: "'DM Mono', monospace", fontWeight: 600, color: "var(--text-secondary)", textAlign: "right" as const }}>
+                      <span style={{ fontSize: "var(--t-small)", fontFamily: "'DM Mono', monospace", fontWeight: 600, color: "var(--text-secondary)", textAlign: "right" as const }}>
                         {s.duration_min < 1 ? Math.round(s.duration_min * 60) + "s" : s.duration_min.toFixed(1) + "m"}
                       </span>
                     )}
 
                     {/* Actions */}
                     <div style={{ display: "flex", justifyContent: "flex-end", gap: 2 }}>
-                      <button onClick={() => pinSlotByCart(s.id)} style={{ background: "none", border: "none", color: s.song_id ? "var(--accent-cyan)" : "var(--text-tertiary)", cursor: "pointer", fontSize: 11, padding: "2px 4px" }}
+                      <button onClick={() => pinSlotByCart(s.id)} style={{ background: "none", border: "none", color: s.song_id ? "var(--accent-cyan)" : "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-small)", padding: "2px 4px" }}
                         title={s.song_id ? `Pinned to Cart #${s.cart_id || "?"} — click to change/clear` : "Pin a specific element by Cart #"}
                         onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "var(--accent-cyan)"; }}
                         onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = s.song_id ? "var(--accent-cyan)" : "var(--text-tertiary)"; }}
                       >📌</button>
-                      <button onClick={() => duplicateSlot(s)} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 11, padding: "2px 4px" }}
+                      <button onClick={() => duplicateSlot(s)} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-small)", padding: "2px 4px" }}
                         title="Duplicate slot"
                         onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#34d399"; }}
                         onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
                       >⎘</button>
-                      <button onClick={() => removeSlot(s.id)} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 11, padding: "2px 4px" }}
+                      <button onClick={() => removeSlot(s.id)} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-small)", padding: "2px 4px" }}
                         onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
                         onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
                       >✕</button>
@@ -880,7 +880,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                 );})}
 
                 {slots.length === 0 && (
-                  <div style={{ padding: "28px 16px", textAlign: "center" as const, color: "var(--text-tertiary)", fontSize: 12, fontStyle: "italic" }}>
+                  <div style={{ padding: "28px 16px", textAlign: "center" as const, color: "var(--text-tertiary)", fontSize: "var(--t-body)", fontStyle: "italic" }}>
                     Clock is empty — click "+ Add Segment" to start building your hour
                   </div>
                 )}
@@ -892,7 +892,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                   display: "grid", gridTemplateColumns: "24px 52px 28px 68px 88px 1fr 1fr 60px 52px 52px",
                   padding: "5px 10px", background: "var(--bg-tertiary)",
                   borderTop: "1px solid var(--border-primary)",
-                  fontSize: 9, color: overrun ? "#ef4444" : "#34d399",
+                  fontSize: "var(--t-micro)", color: overrun ? "#ef4444" : "#34d399",
                   fontFamily: "'DM Mono', monospace", fontWeight: 700,
                 }}>
                   <span></span>
@@ -910,7 +910,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
 
             {/* Quick-add category bar — pinned to the top (order:1 + sticky) so it never gets pushed below a long clock */}
             <div style={{ marginBottom: 8, order: 1, position: "sticky" as const, top: 0, zIndex: 5, background: "var(--bg-primary)", paddingTop: 4 }}>
-              <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", marginBottom: 5 }}>
+              <div style={{ fontSize: "var(--t-micro)", fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", marginBottom: 5 }}>
                 QUICK ADD
               </div>
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" as const }}>
@@ -920,7 +920,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                     onClick={() => handleAdd("music", cat.id, 3.5, cat.name || cat.code)}
                     title={cat.name}
                     style={{
-                      padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 800,
+                      padding: "5px 10px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 800,
                       cursor: "pointer", letterSpacing: "0.05em",
                       background: (cat.color || "#444") + "22",
                       border: "1px solid " + (cat.color || "#444") + "55",
@@ -942,25 +942,25 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                 <div style={{ position: "relative" as const }}>
                   <button
                     onClick={() => { setShowSpotPicker(p => !p); setShowTalkPicker(false); setShowPicker(false); }}
-                    style={{ padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 800, cursor: "pointer", background: showSpotPicker ? "rgba(239,68,68,0.3)" : "rgba(239,68,68,0.12)", border: `1px solid ${showSpotPicker ? "rgba(239,68,68,0.6)" : "rgba(239,68,68,0.3)"}`, color: "#ef4444" }}
+                    style={{ padding: "5px 10px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 800, cursor: "pointer", background: showSpotPicker ? "rgba(239,68,68,0.3)" : "rgba(239,68,68,0.12)", border: `1px solid ${showSpotPicker ? "rgba(239,68,68,0.6)" : "rgba(239,68,68,0.3)"}`, color: "#ef4444" }}
                   >
                     Spots
                   </button>
                   {showSpotPicker && (
-                    <div style={{ position: "absolute" as const, top: "calc(100% + 6px)", left: 0, zIndex: 200, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 12, minWidth: 240, boxShadow: "0 12px 40px rgba(0,0,0,0.5)" }}>
-                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", marginBottom: 8 }}>SPOTS — PICK CATEGORY</div>
+                    <div style={{ position: "absolute" as const, top: "calc(100% + 6px)", left: 0, zIndex: 200, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 12, minWidth: 240, boxShadow: "var(--e-float)" }}>
+                      <div style={{ fontSize: "var(--t-micro)", fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", marginBottom: 8 }}>SPOTS — PICK CATEGORY</div>
                       {spotCats.length === 0 ? (
-                        <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Create a spot category in Spots &amp; Promos first.</span>
+                        <span style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)" }}>Create a spot category in Spots &amp; Promos first.</span>
                       ) : (
                         <div style={{ display: "flex", flexWrap: "wrap" as const, gap: 5 }}>
                           {spotCats.map(sc => (
                             <button key={sc.id} onClick={() => { handleAdd("spot_break", null, 2, "Spots", sc.id); setShowSpotPicker(false); }} style={{
-                              padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                              padding: "5px 10px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 700, cursor: "pointer",
                               background: (sc.color || "#ef4444") + "22", border: "1px solid " + (sc.color || "#ef4444") + "55", color: sc.color || "#fca5a5",
                             }}>{sc.name}</button>
                           ))}
                           <button onClick={() => { handleAdd("spot_break", null, 2, "Spots", null); setShowSpotPicker(false); }} style={{
-                            padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                            padding: "5px 10px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 700, cursor: "pointer",
                             background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", color: "var(--text-secondary)",
                           }}>Any spot</button>
                         </div>
@@ -971,13 +971,13 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                 <div style={{ position: "relative" as const }}>
                   <button
                     onClick={() => { setShowTalkPicker(p => !p); setShowSpotPicker(false); setShowPicker(false); }}
-                    style={{ padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 800, cursor: "pointer", background: showTalkPicker ? "rgba(167,139,250,0.3)" : "rgba(167,139,250,0.12)", border: `1px solid ${showTalkPicker ? "rgba(167,139,250,0.6)" : "rgba(167,139,250,0.3)"}`, color: "#a78bfa" }}
+                    style={{ padding: "5px 10px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 800, cursor: "pointer", background: showTalkPicker ? "rgba(167,139,250,0.3)" : "rgba(167,139,250,0.12)", border: `1px solid ${showTalkPicker ? "rgba(167,139,250,0.6)" : "rgba(167,139,250,0.3)"}`, color: "#a78bfa" }}
                   >
                     TALK
                   </button>
                   {showTalkPicker && (
-                    <div style={{ position: "absolute" as const, top: "calc(100% + 6px)", left: 0, zIndex: 200, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 12, minWidth: 320, boxShadow: "0 12px 40px rgba(0,0,0,0.5)" }}>
-                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", marginBottom: 8 }}>TALK BREAK DURATION</div>
+                    <div style={{ position: "absolute" as const, top: "calc(100% + 6px)", left: 0, zIndex: 200, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 12, minWidth: 320, boxShadow: "var(--e-float)" }}>
+                      <div style={{ fontSize: "var(--t-micro)", fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-tertiary)", marginBottom: 8 }}>TALK BREAK DURATION</div>
                       <TalkPicker
                         onAdd={(type, catId, dur, label) => { handleAdd(type, catId, dur, label); setShowTalkPicker(false); }}
                         onBack={() => setShowTalkPicker(false)}
@@ -996,7 +996,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
               <button
                 onClick={() => { setShowPicker(p => !p); if (!showPicker) loadAll(); }}
                 style={{
-                  width: "100%", padding: "9px", borderRadius: 0, fontSize: 12, fontWeight: 700,
+                  width: "100%", padding: "9px", borderRadius: 0, fontSize: "var(--t-body)", fontWeight: 700,
                   background: showPicker ? "rgb(from var(--accent-blue) r g b / 0.1)" : "var(--bg-secondary)",
                   border: "1px dashed " + (showPicker ? "var(--accent-blue)" : "var(--border-secondary)"),
                   color: showPicker ? "var(--accent-blue)" : "var(--text-tertiary)", cursor: "pointer",
@@ -1015,8 +1015,8 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
               {!hideSpotCategories && (<>
               {/* Spot Categories (per station) — managed here so categories + breaks work together */}
               <div style={{ flex: "1 1 340px", minWidth: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 16 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", marginBottom: 3, fontFamily: "'Newsreader', Georgia, serif" }}>Spot Categories</div>
-                <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 12 }}>Group your spots (e.g. Local Sponsors, Top-of-Hour IDs) — a timed break pulls from one. Also editable in Spots &amp; Promos.</div>
+                <div style={{ fontSize: "var(--t-lead)", fontWeight: 700, color: "var(--text-primary)", marginBottom: 3, fontFamily: "'Newsreader', Georgia, serif" }}>Spot Categories</div>
+                <div style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)", marginBottom: 12 }}>Group your spots (e.g. Local Sponsors, Top-of-Hour IDs) — a timed break pulls from one. Also editable in Spots &amp; Promos.</div>
                 {spotCats.length > 0 && (
                   <div style={{ display: "flex", flexDirection: "column" as const, marginBottom: 12 }}>
                     {spotCats.map((c, i) => (
@@ -1025,17 +1025,17 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                           <>
                             <input type="color" value={editSpotCat.color} onChange={e => setEditSpotCat({ ...editSpotCat, color: e.target.value })} style={{ width: 24, height: 24, border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", cursor: "pointer", padding: 0, flexShrink: 0 }} />
                             <input value={editSpotCat.name} autoFocus onChange={e => setEditSpotCat({ ...editSpotCat, name: e.target.value })} onKeyDown={e => { if (e.key === "Enter") saveSpotCat(); if (e.key === "Escape") setEditSpotCat(null); }}
-                              style={{ flex: 1, minWidth: 0, padding: "5px 8px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
-                            <button onClick={saveSpotCat} style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Save</button>
-                            <button onClick={() => setEditSpotCat(null)} style={{ padding: "4px 8px", fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
+                              style={{ flex: 1, minWidth: 0, padding: "5px 8px", borderRadius: 0, fontSize: "var(--t-body)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+                            <button onClick={saveSpotCat} style={{ padding: "4px 10px", fontSize: "var(--t-small)", fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Save</button>
+                            <button onClick={() => setEditSpotCat(null)} style={{ padding: "4px 8px", fontSize: "var(--t-small)", fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
                           </>
                         ) : (
                           <>
                             <span style={{ width: 12, height: 12, background: c.color || "var(--accent-blue)", flexShrink: 0 }} />
-                            <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.name}</span>
-                            <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>{spotCatCounts[c.id] || 0} spots</span>
-                            <button onClick={() => setEditSpotCat({ id: c.id, name: c.name, color: c.color || "#8868D8" })} style={{ padding: "3px 8px", fontSize: 10, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", flexShrink: 0 }}>Rename</button>
-                            <button onClick={() => removeSpotCat(c)} title="Delete category" style={{ padding: "3px 7px", fontSize: 10, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer", flexShrink: 0 }}>✕</button>
+                            <span style={{ flex: 1, minWidth: 0, fontSize: "var(--t-body)", fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{c.name}</span>
+                            <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>{spotCatCounts[c.id] || 0} spots</span>
+                            <button onClick={() => setEditSpotCat({ id: c.id, name: c.name, color: c.color || "#8868D8" })} style={{ padding: "3px 8px", fontSize: "var(--t-micro)", fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", flexShrink: 0 }}>Rename</button>
+                            <button onClick={() => removeSpotCat(c)} title="Delete category" style={{ padding: "3px 7px", fontSize: "var(--t-micro)", fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer", flexShrink: 0 }}>✕</button>
                           </>
                         )}
                       </div>
@@ -1045,8 +1045,8 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   <input type="color" value={newSpotCatColor} onChange={e => setNewSpotCatColor(e.target.value)} title="Category color" style={{ width: 28, height: 28, border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", cursor: "pointer", padding: 0, flexShrink: 0 }} />
                   <input placeholder="New category…" value={newSpotCatName} onChange={e => setNewSpotCatName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") addSpotCat(); }}
-                    style={{ flex: 1, minWidth: 0, padding: "6px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
-                  <button onClick={addSpotCat} style={{ padding: "6px 12px", fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", flexShrink: 0 }}>Add</button>
+                    style={{ flex: 1, minWidth: 0, padding: "6px 10px", borderRadius: 0, fontSize: "var(--t-body)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+                  <button onClick={addSpotCat} style={{ padding: "6px 12px", fontSize: "var(--t-body)", fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", flexShrink: 0 }}>Add</button>
                 </div>
               </div>
               </>)}
@@ -1054,15 +1054,15 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
               {/* Timed Spot Breaks (per clock) — anchor spots to a minute; music fills around them */}
               <div style={{ flex: "1 1 340px", minWidth: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 16 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif" }}>Timed Spot Breaks</div>
-                <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "var(--accent-green)", opacity: breaksSaved ? 1 : 0, transition: "opacity 0.2s" }}>✓ Saved</span>
+                <div style={{ fontSize: "var(--t-lead)", fontWeight: 700, color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif" }}>Timed Spot Breaks</div>
+                <span style={{ fontSize: "var(--t-micro)", fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "var(--accent-green)", opacity: breaksSaved ? 1 : 0, transition: "opacity 0.2s" }}>✓ Saved</span>
               </div>
-              <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 12 }}>
+              <div style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)", marginBottom: 12 }}>
                 Air spots at set minutes past the hour on this clock — music fills around them. :00 = exact top of hour; other minutes land at the nearest song boundary (a song is never cut). Empty = no timed breaks (this clock plays its slots in order). Changes save automatically — <strong style={{ color: "var(--text-secondary)" }}>Generate in the Calendar</strong> to air them.
               </div>
               {breaks.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column" as const, gap: 8, marginBottom: 12 }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "110px 1fr 90px 34px", gap: 8, fontSize: 9, fontWeight: 800, color: "var(--text-tertiary)", textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "110px 1fr 90px 34px", gap: 8, fontSize: "var(--t-micro)", fontWeight: 800, color: "var(--text-tertiary)", textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>
                     <span>Min past hr</span><span>Spot category</span><span>Spots</span><span></span>
                   </div>
                   {breaks.map(b => {
@@ -1075,25 +1075,25 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                     <div key={b.id}>
                     <div style={{ display: "grid", gridTemplateColumns: "110px 1fr 90px 34px", gap: 8, alignItems: "center" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <span style={{ fontSize: 14, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>:</span>
+                        <span style={{ fontSize: "var(--t-lead)", color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>:</span>
                         <input type="text" inputMode="numeric" value={String(b.minute)}
                           onFocus={e => e.currentTarget.select()}
                           onChange={e => { const n = parseInt(e.target.value.replace(/\D/g, ''), 10); updateBreak(b.id, { minute: isNaN(n) ? 0 : Math.max(0, Math.min(59, n)) }); }}
-                          style={{ width: 66, padding: "6px 8px", borderRadius: 0, fontSize: 13, fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", textAlign: "center" as const }} />
+                          style={{ width: 66, padding: "6px 8px", borderRadius: 0, fontSize: "var(--t-lead)", fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", textAlign: "center" as const }} />
                       </div>
                       <select value={foreign ? "" : (b.spot_category_id ?? "")} onChange={e => updateBreak(b.id, { spot_category_id: e.target.value === "" ? null : parseInt(e.target.value, 10) })}
-                        style={{ padding: "6px 10px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: `1px solid ${elig === 0 ? "rgba(251,191,36,0.55)" : "var(--border-primary)"}`, color: b.spot_category_id == null ? "var(--text-tertiary)" : "var(--text-primary)", outline: "none", cursor: "pointer" }}>
+                        style={{ padding: "6px 10px", borderRadius: 0, fontSize: "var(--t-lead)", background: "var(--bg-tertiary)", border: `1px solid ${elig === 0 ? "rgba(251,191,36,0.55)" : "var(--border-primary)"}`, color: b.spot_category_id == null ? "var(--text-tertiary)" : "var(--text-primary)", outline: "none", cursor: "pointer" }}>
                         <option value="">Any spot</option>
                         {spotCats.map(sc => <option key={sc.id} value={sc.id}>{sc.name} ({breakEligible[sc.id] || 0})</option>)}
                       </select>
                       <input type="text" inputMode="numeric" value={String(b.count)}
                         onFocus={e => e.currentTarget.select()}
                         onChange={e => { const n = parseInt(e.target.value.replace(/\D/g, ''), 10); updateBreak(b.id, { count: isNaN(n) ? 1 : Math.max(1, Math.min(10, n)) }); }}
-                        style={{ width: 74, padding: "6px 8px", borderRadius: 0, fontSize: 13, fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", textAlign: "center" as const }} />
-                      <button onClick={() => removeBreak(b)} title="Remove break" style={{ padding: "6px 9px", fontSize: 12, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                        style={{ width: 74, padding: "6px 8px", borderRadius: 0, fontSize: "var(--t-lead)", fontFamily: "'DM Mono', monospace", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", textAlign: "center" as const }} />
+                      <button onClick={() => removeBreak(b)} title="Remove break" style={{ padding: "6px 9px", fontSize: "var(--t-body)", fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
                     </div>
                     {elig === 0 && (
-                      <div style={{ marginTop: 3, marginLeft: 118, fontSize: 10, fontWeight: 700, color: "#fbbf24", letterSpacing: "0.02em" }}>
+                      <div style={{ marginTop: 3, marginLeft: 118, fontSize: "var(--t-micro)", fontWeight: 700, color: "#fbbf24", letterSpacing: "0.02em" }}>
                         ⚠ 0 eligible spots — this break airs nothing.{" "}
                         {foreign ? "This category belongs to another station — re-pick one below."
                           : b.spot_category_id == null ? "No active spots on this station yet."
@@ -1106,15 +1106,15 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                 </div>
               )}
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <button onClick={addBreak} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "#ef4444", color: "#fff", border: "none", cursor: "pointer" }}>+ Add break</button>
-                {spotCats.length === 0 && <span style={{ fontSize: 11, color: "var(--accent-amber)" }}>Add a spot category first (left) — a break needs one to pull from.</span>}
+                <button onClick={addBreak} style={{ padding: "7px 14px", borderRadius: 0, fontSize: "var(--t-body)", fontWeight: 700, background: "#ef4444", color: "#fff", border: "none", cursor: "pointer" }}>+ Add break</button>
+                {spotCats.length === 0 && <span style={{ fontSize: "var(--t-small)", color: "var(--accent-amber)" }}>Add a spot category first (left) — a break needs one to pull from.</span>}
               </div>
               </div>
 
             </div>
           </div>
         ) : (
-          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-tertiary)", fontSize: 12, fontStyle: "italic" }}>
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-tertiary)", fontSize: "var(--t-body)", fontStyle: "italic" }}>
             Select a clock or create a new one
           </div>
         )}

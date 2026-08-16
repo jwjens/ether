@@ -55,8 +55,8 @@ function Section({ title, sub, children }: { title: string; sub?: string; childr
   return (
     <div style={{ ...card, overflow: "hidden" }}>
       <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif" }}>{title}</div>
-        {sub && <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>{sub}</div>}
+        <div style={{ fontSize: "var(--t-lead)", fontWeight: 700, color: "var(--text-primary)", fontFamily: "'Newsreader', Georgia, serif" }}>{title}</div>
+        {sub && <div style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)", marginTop: 2 }}>{sub}</div>}
       </div>
       {children}
     </div>
@@ -91,7 +91,7 @@ export default function RotationAnalytics({ hideHeader }: RotationAnalyticsProps
 
   const rangeBtn = (id: Range, label: string) => (
     <button key={id} onClick={() => setRange(id)} style={{
-      padding: "6px 14px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer",
+      padding: "6px 14px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 700, cursor: "pointer",
       background: range === id ? "var(--accent-purple)" : "var(--bg-secondary)",
       color: range === id ? "#fff" : "var(--text-tertiary)",
       border: range === id ? "none" : "1px solid var(--border-primary)",
@@ -133,17 +133,17 @@ export default function RotationAnalytics({ hideHeader }: RotationAnalyticsProps
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, fontFamily: "'Inter', system-ui, sans-serif" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: hideHeader ? "flex-end" : "space-between", flexWrap: "wrap", gap: 10 }}>
-        {!hideHeader && <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Newsreader', Georgia, serif" }}>Rotation Analytics</h1>}
+        {!hideHeader && <h1 style={{ fontSize: "var(--t-head)", fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Newsreader', Georgia, serif" }}>Rotation Analytics</h1>}
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           {rangeBtn("24h", "24 Hours")}{rangeBtn("7d", "7 Days")}{rangeBtn("30d", "30 Days")}
-          <button onClick={load} disabled={busy} style={{ padding: "6px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: busy ? "wait" : "pointer" }}>{busy ? "…" : "Refresh"}</button>
+          <button onClick={load} disabled={busy} style={{ padding: "6px 12px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: busy ? "wait" : "pointer" }}>{busy ? "…" : "Refresh"}</button>
         </div>
       </div>
 
-      {err && <div style={{ ...card, padding: "12px 14px", borderColor: "var(--accent-red)", fontSize: 12, color: "var(--accent-red)" }}>{err}</div>}
+      {err && <div style={{ ...card, padding: "12px 14px", borderColor: "var(--accent-red)", fontSize: "var(--t-body)", color: "var(--accent-red)" }}>{err}</div>}
 
       {snap && (
-        <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+        <div style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)" }}>
           {new Date(snap.fromTs * 1000).toLocaleString()} → {new Date(snap.toTs * 1000).toLocaleString()} · read-only, nothing here changes what airs
         </div>
       )}
@@ -222,16 +222,16 @@ export default function RotationAnalytics({ hideHeader }: RotationAnalyticsProps
           sub="Reasons are written as the log is generated. They cannot be reconstructed afterwards — the vetoed and losing candidates only exist during the pick.">
           <div style={{ padding: "14px" }}>
             {snap.reasonCoverage.total === 0 ? (
-              <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>No music rows in this window.</div>
+              <div style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)" }}>No music rows in this window.</div>
             ) : snap.reasonCoverage.withReason === 0 ? (
-              <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
+              <div style={{ fontSize: "var(--t-body)", color: "var(--text-secondary)", lineHeight: 1.6 }}>
                 <strong style={{ color: "var(--accent-amber)" }}>0 of {snap.reasonCoverage.total} rows carry a reason.</strong><br />
                 {snap.reasonCoverage.columnPresent
                   ? "These rows were generated before pick_reason existed. Run Generate again and new rows will record why each song was chosen — the existing ones cannot be explained retroactively."
                   : "This database has not picked up the pick_reason column yet. Fully close and reopen Ether, then run Generate."}
               </div>
             ) : (
-              <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+              <div style={{ fontSize: "var(--t-body)", color: "var(--text-secondary)" }}>
                 <strong style={{ color: "var(--accent-green)" }}>{snap.reasonCoverage.withReason} of {snap.reasonCoverage.total}</strong> rows ({snap.reasonCoverage.pct}%) carry a recorded reason.
                 <div style={{ marginTop: 6, color: "var(--text-tertiary)" }}>Open the Calendar and click a scheduled row to see its explanation.</div>
               </div>
@@ -240,7 +240,7 @@ export default function RotationAnalytics({ hideHeader }: RotationAnalyticsProps
         </Section>
       )}
 
-      {!snap && !err && <div style={{ ...card, padding: "48px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>Loading rotation data…</div>}
+      {!snap && !err && <div style={{ ...card, padding: "48px", textAlign: "center", color: "var(--text-tertiary)", fontSize: "var(--t-lead)" }}>Loading rotation data…</div>}
     </div>
   );
 }

@@ -2581,6 +2581,8 @@ function buildMenu() {
       { label: "Shows & Dayparts", click: () => { send("nav:clocks"); send("nav:scheduler-tab:shows"); } },
       { label: "Categories",       click: () => { send("nav:clocks"); send("nav:scheduler-tab:categories"); } },
       { type: "separator" },
+      // Two DIFFERENT documents, named for what they are. Program Log is the PLAN and lives as a pane
+      // in the Schedule Manager; Play Log is the as-run RECORD and is now one page, not two.
       { label: "Program Log",      click: () => send("nav:programlog") },
       { label: "Play Log",         click: () => send("nav:logs") },
       // 2026-08-10: added HERE, in the NATIVE menubar. Phase 4 first put Rotation Analytics into the

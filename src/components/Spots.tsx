@@ -346,7 +346,7 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
 
   const iBtn = (label: string, color: string, onClick: () => void, outline = false) => (
     <button onClick={onClick} style={{
-      padding: "7px 14px", borderRadius: 0, fontSize: 11, fontWeight: 600, cursor: "pointer",
+      padding: "7px 14px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 600, cursor: "pointer",
       background: outline ? "var(--bg-secondary)" : color,
       color: outline ? "var(--text-secondary)" : "#fff",
       border: outline ? "1px solid var(--border-primary)" : "none",
@@ -359,7 +359,7 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Newsreader', Georgia, serif" }}>Spots & Promos</h1>
+        <h1 style={{ fontSize: "var(--t-head)", fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Newsreader', Georgia, serif" }}>Spots & Promos</h1>
         <div style={{ display: "flex", gap: 8 }}>
           {iBtn("Add Files", "var(--accent-green)", handleImport)}
           {iBtn("Import Folder", "var(--accent-blue)", handleImportFolder)}
@@ -370,7 +370,7 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
       {/* Type filter pills */}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as any }}>
         <button onClick={() => setFilter("all")} style={{
-          padding: "5px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, cursor: "pointer",
+          padding: "5px 12px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 600, cursor: "pointer",
           background: filter === "all" ? "var(--accent-blue)" : "var(--bg-secondary)",
           color: filter === "all" ? "#fff" : "var(--text-tertiary)",
           border: filter === "all" ? "none" : "1px solid var(--border-primary)",
@@ -381,7 +381,7 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
           const color = TYPE_COLORS[t] || "var(--accent-blue)";
           return (
             <button key={t} onClick={() => setFilter(t)} style={{
-              padding: "5px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, cursor: "pointer",
+              padding: "5px 12px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 600, cursor: "pointer",
               background: filter === t ? color : "var(--bg-secondary)",
               color: filter === t ? "#000" : "var(--text-tertiary)",
               border: filter === t ? "none" : "1px solid var(--border-primary)",
@@ -393,13 +393,13 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
       {/* Category filter pills */}
       {cats.length > 0 && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" as any, alignItems: "center" }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em", marginRight: 2 }}>Category</span>
+          <span style={{ fontSize: "var(--t-micro)", fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em", marginRight: 2 }}>Category</span>
           {([["all", "All"], ...cats.map(c => [c.id, `${c.name} (${catCounts[c.id] || 0})`] as [number, string]), ["none", "Uncategorized"]] as [string | number, string][]).map(([val, label]) => {
             const active = catFilter === val;
             const color = typeof val === "number" ? (catColor(val) || "var(--accent-blue)") : "var(--accent-blue)";
             return (
               <button key={String(val)} onClick={() => setCatFilter(val as any)} style={{
-                padding: "5px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600, cursor: "pointer",
+                padding: "5px 12px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 600, cursor: "pointer",
                 background: active ? color : "var(--bg-secondary)",
                 color: active ? "#000" : "var(--text-tertiary)",
                 border: active ? "none" : "1px solid var(--border-primary)",
@@ -409,13 +409,13 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
         </div>
       )}
 
-      {status && <div style={{ padding: "10px 14px", background: "rgb(from var(--accent-blue) r g b / 0.08)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.2)", borderRadius: 0, fontSize: 12, color: "var(--accent-blue)" }}>{status}</div>}
+      {status && <div style={{ padding: "10px 14px", background: "rgb(from var(--accent-blue) r g b / 0.08)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.2)", borderRadius: 0, fontSize: "var(--t-body)", color: "var(--accent-blue)" }}>{status}</div>}
 
       {/* Empty-break sense — silent breaks that would air nothing, made visible (v4.4.83). */}
       {emptyBreaks.length > 0 && (
         <div style={{ padding: "12px 14px", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.45)", borderRadius: 0 }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: "#fbbf24", marginBottom: 4 }}>⚠ {emptyBreaks.length} spot break{emptyBreaks.length > 1 ? "s" : ""} on this station's active clock will air NOTHING</div>
-          <div style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+          <div style={{ fontSize: "var(--t-body)", fontWeight: 800, color: "#fbbf24", marginBottom: 4 }}>⚠ {emptyBreaks.length} spot break{emptyBreaks.length > 1 ? "s" : ""} on this station's active clock will air NOTHING</div>
+          <div style={{ fontSize: "var(--t-small)", color: "var(--text-secondary)", lineHeight: 1.5 }}>
             Each pulls a category with <strong>0 eligible spots</strong> (active, categorized, in-flight, on-disk):
             <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
               {emptyBreaks.map((e, i) => (
@@ -436,16 +436,16 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
           { label: "Total Plays", value: totalPlays, color: "var(--text-primary)" },
         ].map(s => (
           <div key={s.label} style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 16, textAlign: "center" as any }}>
-            <div style={{ fontSize: 28, fontWeight: 700, fontFamily: "'DM Mono', monospace", letterSpacing: "-0.04em", color: s.color }}>{s.value}</div>
-            <div style={{ fontSize: 10, fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em", marginTop: 4 }}>{s.label}</div>
+            <div style={{ fontSize: "var(--t-head)", fontWeight: 700, fontFamily: "'DM Mono', monospace", letterSpacing: "-0.04em", color: s.color }}>{s.value}</div>
+            <div style={{ fontSize: "var(--t-micro)", fontWeight: 600, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em", marginTop: 4 }}>{s.label}</div>
           </div>
         ))}
       </div>
 
       {/* ── Manage spot categories (per station) ── */}
       <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 20 }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4, fontFamily: "'Newsreader', Georgia, serif" }}>Spot Categories</div>
-        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 14 }}>Group your spots — e.g. Top-of-Hour IDs, Local Sponsors, Ad Campaign. A spot-break slot in your clocks pulls from one of these. Per station.</div>
+        <div style={{ fontSize: "var(--t-lead)", fontWeight: 700, color: "var(--text-primary)", marginBottom: 4, fontFamily: "'Newsreader', Georgia, serif" }}>Spot Categories</div>
+        <div style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", marginBottom: 14 }}>Group your spots — e.g. Top-of-Hour IDs, Local Sponsors, Ad Campaign. A spot-break slot in your clocks pulls from one of these. Per station.</div>
         {cats.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column" as any, marginBottom: 14 }}>
             {cats.map((c, i) => (
@@ -454,17 +454,17 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
                   <>
                     <input type="color" value={editCat.color} onChange={e => setEditCat({ ...editCat, color: e.target.value })} style={{ width: 28, height: 28, border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", cursor: "pointer", padding: 0 }} />
                     <input value={editCat.name} onChange={e => setEditCat({ ...editCat, name: e.target.value })} onKeyDown={e => { if (e.key === "Enter") saveCat(); if (e.key === "Escape") setEditCat(null); }} autoFocus
-                      style={{ flex: 1, padding: "6px 10px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
-                    <button onClick={saveCat} style={{ padding: "5px 12px", fontSize: 11, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Save</button>
-                    <button onClick={() => setEditCat(null)} style={{ padding: "5px 10px", fontSize: 11, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
+                      style={{ flex: 1, padding: "6px 10px", borderRadius: 0, fontSize: "var(--t-lead)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+                    <button onClick={saveCat} style={{ padding: "5px 12px", fontSize: "var(--t-small)", fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Save</button>
+                    <button onClick={() => setEditCat(null)} style={{ padding: "5px 10px", fontSize: "var(--t-small)", fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
                   </>
                 ) : (
                   <>
                     <span style={{ width: 14, height: 14, borderRadius: 0, background: c.color || "var(--accent-blue)", flexShrink: 0 }} />
-                    <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{c.name}</span>
-                    <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>{catCounts[c.id] || 0} spots</span>
-                    <button onClick={() => setEditCat({ id: c.id, name: c.name, color: c.color || "#8868D8" })} style={{ padding: "4px 9px", fontSize: 10, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Rename</button>
-                    <button onClick={() => removeCat(c)} title="Delete category" style={{ padding: "4px 9px", fontSize: 10, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                    <span style={{ flex: 1, fontSize: "var(--t-lead)", fontWeight: 600, color: "var(--text-primary)" }}>{c.name}</span>
+                    <span style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>{catCounts[c.id] || 0} spots</span>
+                    <button onClick={() => setEditCat({ id: c.id, name: c.name, color: c.color || "#8868D8" })} style={{ padding: "4px 9px", fontSize: "var(--t-micro)", fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Rename</button>
+                    <button onClick={() => removeCat(c)} title="Delete category" style={{ padding: "4px 9px", fontSize: "var(--t-micro)", fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
                   </>
                 )}
               </div>
@@ -474,47 +474,47 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <input type="color" value={newCatColor} onChange={e => setNewCatColor(e.target.value)} title="Category color" style={{ width: 32, height: 32, border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", cursor: "pointer", padding: 0 }} />
           <input placeholder="New category name…" value={newCatName} onChange={e => setNewCatName(e.target.value)} onKeyDown={e => { if (e.key === "Enter") addCat(); }}
-            style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
-          <button onClick={addCat} style={{ padding: "8px 16px", fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Add Category</button>
+            style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: "var(--t-lead)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+          <button onClick={addCat} style={{ padding: "var(--s-2) var(--s-3)", fontSize: "var(--t-small)", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", borderRadius: "var(--r-0)", cursor: "pointer" }}>Add Category</button>
         </div>
       </div>
 
       {/* Edit panel */}
       {editing && (
         <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, padding: 20 }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 14, fontFamily: "'Newsreader', Georgia, serif" }}>Edit Spot</div>
+          <div style={{ fontSize: "var(--t-lead)", fontWeight: 700, color: "var(--text-primary)", marginBottom: 14, fontFamily: "'Newsreader', Georgia, serif" }}>Edit Spot</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 160px", gap: 8, marginBottom: 8 }}>
             <input placeholder="Title" value={editing.title || ""} onChange={e => setEditing({...editing, title: e.target.value})}
-              style={{ gridColumn: "1 / 3", padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+              style={{ gridColumn: "1 / 3", padding: "8px 12px", borderRadius: 0, fontSize: "var(--t-lead)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
             <select value={editing.spot_type || "promo"} onChange={e => setEditing({...editing, spot_type: e.target.value})}
-              style={{ padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
+              style={{ padding: "8px 12px", borderRadius: 0, fontSize: "var(--t-lead)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
               {SPOT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            <span style={{ fontSize: 12, color: "var(--text-tertiary)", whiteSpace: "nowrap" as any }}>Spot category:</span>
+            <span style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", whiteSpace: "nowrap" as any }}>Spot category:</span>
             <select value={editing.spot_category_id ?? ""} onChange={e => setEditing({ ...editing, spot_category_id: e.target.value === "" ? null : parseInt(e.target.value, 10) })}
-              style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
+              style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: "var(--t-lead)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
               <option value="">— No category (won't be pulled by a timed break) —</option>
               {cats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
             <input placeholder="Advertiser" value={editing.advertiser || ""} onChange={e => setEditing({...editing, advertiser: e.target.value})}
-              style={{ padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+              style={{ padding: "8px 12px", borderRadius: 0, fontSize: "var(--t-lead)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
             <input type="date" value={editing.start_date || ""} onChange={e => setEditing({...editing, start_date: e.target.value})}
-              style={{ padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+              style={{ padding: "8px 12px", borderRadius: 0, fontSize: "var(--t-lead)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
             <input type="date" value={editing.end_date || ""} onChange={e => setEditing({...editing, end_date: e.target.value})}
-              style={{ padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+              style={{ padding: "8px 12px", borderRadius: 0, fontSize: "var(--t-lead)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Max plays/day:</span>
+              <span style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)" }}>Max plays/day:</span>
               <input type="number" value={editing.max_plays_day || 999} onChange={e => setEditing({...editing, max_plays_day: parseInt(e.target.value) || 999})}
-                style={{ width: 60, padding: "6px 10px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", textAlign: "center" as any }} />
+                style={{ width: 60, padding: "6px 10px", borderRadius: 0, fontSize: "var(--t-lead)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", textAlign: "center" as any }} />
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Active:</span>
+              <span style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)" }}>Active:</span>
               <div onClick={() => setEditing({...editing, is_active: editing.is_active ? 0 : 1})} style={{
                 width: 36, height: 20, borderRadius: 0, cursor: "pointer",
                 background: editing.is_active ? "var(--accent-green)" : "var(--bg-tertiary)",
@@ -528,7 +528,7 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
           {/* Notes + Artwork, side by side — artwork sits beside Advertiser and Notes. */}
           <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "stretch" }}>
             <textarea placeholder="Notes" value={editing.notes || ""} onChange={e => setEditing({...editing, notes: e.target.value})}
-              style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", height: 84, resize: "none" as any, boxSizing: "border-box" as any }} />
+              style={{ flex: 1, padding: "8px 12px", borderRadius: 0, fontSize: "var(--t-lead)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", height: 84, resize: "none" as any, boxSizing: "border-box" as any }} />
 
             <div style={{ display: "flex", gap: 10, alignItems: "center", padding: 10, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", boxSizing: "border-box" as any, minWidth: 250 }}>
               {/* Thumbnail, or an empty state that explains itself */}
@@ -536,26 +536,26 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
                 <img src={editing.art_image} alt="Spot artwork"
                   style={{ width: 64, height: 64, objectFit: "cover" as any, border: "1px solid var(--border-secondary)", flexShrink: 0, background: "var(--bg-secondary)" }} />
               ) : (
-                <div style={{ width: 64, height: 64, flexShrink: 0, border: "1px dashed var(--border-secondary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, lineHeight: 1.25, textAlign: "center" as any, color: "var(--text-tertiary)", padding: 4, boxSizing: "border-box" as any }}>
+                <div style={{ width: 64, height: 64, flexShrink: 0, border: "1px dashed var(--border-secondary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "var(--t-micro)", lineHeight: 1.25, textAlign: "center" as any, color: "var(--text-tertiary)", padding: 4, boxSizing: "border-box" as any }}>
                   No artwork
                 </div>
               )}
               <div style={{ display: "flex", flexDirection: "column" as any, gap: 6, minWidth: 0 }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-secondary)" }}>Artwork</span>
-                <span style={{ fontSize: 10, color: "var(--text-tertiary)", lineHeight: 1.3 }}>
+                <span style={{ fontSize: "var(--t-small)", fontWeight: 700, color: "var(--text-secondary)" }}>Artwork</span>
+                <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", lineHeight: 1.3 }}>
                   {editing.art_image ? "Stays on this computer." : "Pick your own image for this spot."}
                 </span>
                 <div style={{ display: "flex", gap: 6 }}>
-                  <button onClick={chooseArt} style={{ padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", whiteSpace: "nowrap" as any }}>Choose image…</button>
+                  <button onClick={chooseArt} style={{ padding: "5px 10px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer", whiteSpace: "nowrap" as any }}>Choose image…</button>
                   <button onClick={clearArt} disabled={!editing.art_image}
-                    style={{ padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: editing.art_image ? "pointer" : "default", opacity: editing.art_image ? 1 : 0.4, whiteSpace: "nowrap" as any }}>Clear</button>
+                    style={{ padding: "5px 10px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: editing.art_image ? "pointer" : "default", opacity: editing.art_image ? 1 : 0.4, whiteSpace: "nowrap" as any }}>Clear</button>
                 </div>
               </div>
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={save} style={{ padding: "7px 18px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Save</button>
-            <button onClick={() => setEditing(null)} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
+            <button onClick={save} style={{ padding: "7px 18px", borderRadius: 0, fontSize: "var(--t-body)", fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Save</button>
+            <button onClick={() => setEditing(null)} style={{ padding: "7px 14px", borderRadius: 0, fontSize: "var(--t-body)", fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Cancel</button>
           </div>
         </div>
       )}
@@ -564,20 +564,20 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
       {spots.length === 0 ? (
         <div style={{ textAlign: "center" as any, padding: "64px 24px" }}>
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.4 }}><path d="M3 11l19-9-9 19-2-8-8-2z"/></svg>
-          <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>No spots yet</div>
-          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 20 }}>Import jingles, promos, PSAs, and liners — pick individual files or a whole folder</div>
+          <div style={{ fontSize: "var(--t-head)", fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>No spots yet</div>
+          <div style={{ fontSize: "var(--t-lead)", color: "var(--text-tertiary)", marginBottom: 20 }}>Import jingles, promos, PSAs, and liners — pick individual files or a whole folder</div>
           <div style={{ display: "flex", gap: 8, justifyContent: "center" as any }}>
-            <button onClick={handleImport} style={{ padding: "9px 20px", borderRadius: 0, fontSize: 13, fontWeight: 700, background: "var(--accent-green)", color: "#fff", border: "none", cursor: "pointer" }}>Add Files</button>
-            <button onClick={handleImportFolder} style={{ padding: "9px 20px", borderRadius: 0, fontSize: 13, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Import Folder</button>
+            <button onClick={handleImport} style={{ padding: "9px 20px", borderRadius: 0, fontSize: "var(--t-lead)", fontWeight: 700, background: "var(--accent-green)", color: "#fff", border: "none", cursor: "pointer" }}>Add Files</button>
+            <button onClick={handleImportFolder} style={{ padding: "9px 20px", borderRadius: 0, fontSize: "var(--t-lead)", fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Import Folder</button>
           </div>
         </div>
       ) : (
         <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 13 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: "var(--t-lead)" }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
                 {["Title", "Type", "Category", "Advertiser", "Plays", "Active", ""].map(h => (
-                  <th key={h} style={{ padding: "10px 14px", textAlign: "left" as any, fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em" }}>{h}</th>
+                  <th key={h} style={{ padding: "10px 14px", textAlign: "left" as any, fontSize: "var(--t-micro)", fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em" }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -595,29 +595,29 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
                       {(!s.is_active || s.spot_category_id == null) && (
                         <span
                           title={`This spot will not be placed by Generate — ${!s.is_active ? "it is inactive" : ""}${!s.is_active && s.spot_category_id == null ? " and " : ""}${s.spot_category_id == null ? "it has no category (category breaks pull spots by category)" : ""}. Edit it to fix.`}
-                          style={{ marginLeft: 8, padding: "1px 6px", fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: "#fbbf24", background: "rgba(251,191,36,0.14)", border: "1px solid rgba(251,191,36,0.45)", letterSpacing: "0.05em", verticalAlign: "middle" as any }}
+                          style={{ marginLeft: 8, padding: "1px 6px", fontSize: "var(--t-micro)", fontWeight: 800, fontFamily: "'DM Mono', monospace", color: "#fbbf24", background: "rgba(251,191,36,0.14)", border: "1px solid rgba(251,191,36,0.45)", letterSpacing: "0.05em", verticalAlign: "middle" as any }}
                         >⚠ WON'T AIR</span>
                       )}
                     </td>
                     <td style={{ padding: "10px 14px" }}>
-                      <span style={{ fontSize: 9, fontWeight: 700, color: typeColor, background: typeColor + "20", padding: "2px 8px", borderRadius: 0, textTransform: "uppercase" as any, letterSpacing: "0.06em" }}>{s.spot_type}</span>
+                      <span style={{ fontSize: "var(--t-micro)", fontWeight: 700, color: typeColor, background: typeColor + "20", padding: "2px 8px", borderRadius: 0, textTransform: "uppercase" as any, letterSpacing: "0.06em" }}>{s.spot_type}</span>
                     </td>
                     <td style={{ padding: "10px 14px" }}>
                       {catName(s.spot_category_id)
-                        ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-secondary)" }}><span style={{ width: 9, height: 9, background: catColor(s.spot_category_id) || "var(--accent-blue)", flexShrink: 0 }} />{catName(s.spot_category_id)}</span>
-                        : <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>—</span>}
+                        ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "var(--t-body)", color: "var(--text-secondary)" }}><span style={{ width: 9, height: 9, background: catColor(s.spot_category_id) || "var(--accent-blue)", flexShrink: 0 }} />{catName(s.spot_category_id)}</span>
+                        : <span style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)" }}>—</span>}
                     </td>
                     <td style={{ padding: "10px 14px", color: "var(--text-secondary)" }}>{s.advertiser || "—"}</td>
-                    <td style={{ padding: "10px 14px", fontFamily: "'DM Mono', monospace", fontSize: 12, color: "var(--text-tertiary)" }}>{s.play_count}</td>
+                    <td style={{ padding: "10px 14px", fontFamily: "'DM Mono', monospace", fontSize: "var(--t-body)", color: "var(--text-tertiary)" }}>{s.play_count}</td>
                     <td style={{ padding: "10px 14px" }}>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: s.is_active ? "var(--accent-green)" : "var(--text-tertiary)" }}>{s.is_active ? "Yes" : "No"}</span>
+                      <span style={{ fontSize: "var(--t-small)", fontWeight: 600, color: s.is_active ? "var(--accent-green)" : "var(--text-tertiary)" }}>{s.is_active ? "Yes" : "No"}</span>
                     </td>
                     <td style={{ padding: "10px 14px" }}>
                       <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-                        <button onClick={() => playSpot(s)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "rgba(52,211,153,0.15)", color: "var(--accent-green)", border: "none", cursor: "pointer" }}>▶ Play</button>
-                        <button onClick={() => queueSpot(s)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Q</button>
-                        <button onClick={() => setEditing(s)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Edit</button>
-                        <button onClick={() => remove(s.id)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                        <button onClick={() => playSpot(s)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 700, background: "rgba(52,211,153,0.15)", color: "var(--accent-green)", border: "none", cursor: "pointer" }}>▶ Play</button>
+                        <button onClick={() => queueSpot(s)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Q</button>
+                        <button onClick={() => setEditing(s)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Edit</button>
+                        <button onClick={() => remove(s.id)} style={{ padding: "4px 9px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
                       </div>
                     </td>
                   </tr>

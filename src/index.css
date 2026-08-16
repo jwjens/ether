@@ -147,12 +147,16 @@
   --s-1: 2px;  --s-2: 4px;  --s-3: 6px;  --s-4: 8px;
   --s-5: 12px; --s-6: 16px; --s-7: 24px;
 
-  /* type — smaller, five steps */
-  --t-micro: 9px;   /* column headers, badges */
-  --t-small: 10px;  /* dense cells, metadata */
-  --t-body:  12px;  /* default */
-  --t-lead:  14px;  /* pane titles */
-  --t-head:  20px;  /* panel titles only */
+  /* type — five steps, retuned 2026-08-15 to the workspace visual rules.
+     The old scale bottomed out at 9/10px, which reads as fine print rather than as a broadcast
+     tool's chrome, and topped out at 20px, which made every panel title a headline inside a pane
+     that is 300px wide. The band that matters is 11px labels / 12–13px data, and NOTHING above
+     16px inside a working pane. --t-metric is the deliberate exception and stays. */
+  --t-micro: 10px;  /* badges, chips, counts */
+  --t-small: 11px;  /* UPPERCASE labels and column headers — always with letter-spacing */
+  --t-body:  12px;  /* data. the default */
+  --t-lead:  13px;  /* emphasised data, pane titles */
+  --t-head:  16px;  /* panel titles — the ceiling inside a pane */
   /* --t-metric (2026-08-13): the step this scale was missing. The five sizes above top out at 20px
      "panel titles only", so a dashboard number had nowhere to sit — which is why the Health Monitor
      kept reading as text no matter how it was arranged. A metric is not a title; it is the thing

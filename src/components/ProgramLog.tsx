@@ -756,15 +756,15 @@ export default function ProgramLog({ onClose }: Props) {
         {/* Header */}
         <div style={{ padding: "14px 14px 10px", borderBottom: "1px solid var(--border-primary)" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
+            <div style={{ fontSize: "var(--t-lead)", fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
               Program Log
             </div>
             {onClose && (
-              <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, padding: "0 2px" }}>✕</button>
+              <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-lead)", padding: "0 2px" }}>✕</button>
             )}
           </div>
           {globalStatus && (
-            <div style={{ fontSize: 9, marginTop: 4, color: globalStatus.startsWith("✓") ? "#34d399" : globalStatus.startsWith("✗") ? "#ef4444" : "#94a3b8" }}>
+            <div style={{ fontSize: "var(--t-micro)", marginTop: 4, color: globalStatus.startsWith("✓") ? "#34d399" : globalStatus.startsWith("✗") ? "#ef4444" : "#94a3b8" }}>
               {globalStatus}
             </div>
           )}
@@ -774,17 +774,17 @@ export default function ProgramLog({ onClose }: Props) {
         <div style={{ padding: "10px 10px 6px", borderBottom: "1px solid var(--border-primary)" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
             <button onClick={() => setCurrentMonth(m => { const d = new Date(m.year, m.month-1); return { year: d.getFullYear(), month: d.getMonth() }; })}
-              style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 13, padding: "0 2px" }}>‹</button>
-            <span style={{ fontSize: 10, fontWeight: 700, color: "var(--text-primary)" }}>
+              style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-lead)", padding: "0 2px" }}>‹</button>
+            <span style={{ fontSize: "var(--t-micro)", fontWeight: 700, color: "var(--text-primary)" }}>
               {MONTHS[currentMonth.month].slice(0,3)} {currentMonth.year}
             </span>
             <button onClick={() => setCurrentMonth(m => { const d = new Date(m.year, m.month+1); return { year: d.getFullYear(), month: d.getMonth() }; })}
-              style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 13, padding: "0 2px" }}>›</button>
+              style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-lead)", padding: "0 2px" }}>›</button>
           </div>
 
           {/* Day headers */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", marginBottom: 2 }}>
-            {DAYS_SHORT.map(d => <div key={d} style={{ textAlign: "center" as const, fontSize: 8, color: "var(--text-tertiary)", fontWeight: 700, padding: "1px 0" }}>{d}</div>)}
+            {DAYS_SHORT.map(d => <div key={d} style={{ textAlign: "center" as const, fontSize: "var(--t-micro)", color: "var(--text-tertiary)", fontWeight: 700, padding: "1px 0" }}>{d}</div>)}
           </div>
 
           {/* Days */}
@@ -800,7 +800,7 @@ export default function ProgramLog({ onClose }: Props) {
                   padding: "3px 0", borderRadius: 0, border: isToday ? "1px solid var(--accent-blue)" : "1px solid transparent",
                   background: isSelected ? "var(--accent-blue)" : "transparent",
                   color: isSelected ? "#fff" : isToday ? "var(--accent-blue)" : "var(--text-secondary)",
-                  cursor: "pointer", fontSize: 10, fontWeight: isSelected ? 700 : 400,
+                  cursor: "pointer", fontSize: "var(--t-micro)", fontWeight: isSelected ? 700 : 400,
                   position: "relative" as const, textAlign: "center" as const,
                 }}>
                   {day}
@@ -813,18 +813,18 @@ export default function ProgramLog({ onClose }: Props) {
 
         {/* Selected date info */}
         <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border-primary)" }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>
+          <div style={{ fontSize: "var(--t-micro)", fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>
             {new Date(selectedDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const }}>
-            <div style={{ fontSize: 9, color: "var(--text-tertiary)" }}>
+            <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>
               <span style={{ color: "#34d399", fontWeight: 700 }}>{scheduledHours}</span> hours
             </div>
-            <div style={{ fontSize: 9, color: "var(--text-tertiary)" }}>
+            <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>
               <span style={{ color: "var(--text-secondary)", fontWeight: 700 }}>{fmtMs(totalDayMs)}</span> total
             </div>
             {unfilledCount > 0 && (
-              <div style={{ fontSize: 9, color: "#ef4444" }}>
+              <div style={{ fontSize: "var(--t-micro)", color: "#ef4444" }}>
                 ⚠ {unfilledCount} unfilled
               </div>
             )}
@@ -833,8 +833,8 @@ export default function ProgramLog({ onClose }: Props) {
 
         {/* Shows today */}
         <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-primary)", flex: 1, overflowY: "auto" as const }}>
-          <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", marginBottom: 6 }}>TODAY'S SHOWS</div>
-          {shows.length === 0 && <div style={{ fontSize: 10, color: "var(--text-tertiary)", fontStyle: "italic" }}>No shows configured</div>}
+          <div style={{ fontSize: "var(--t-micro)", fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", marginBottom: 6 }}>TODAY'S SHOWS</div>
+          {shows.length === 0 && <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", fontStyle: "italic" }}>No shows configured</div>}
 
           {/* All shows button */}
           <button onClick={() => setSelectedShowId(null)} style={{
@@ -845,7 +845,7 @@ export default function ProgramLog({ onClose }: Props) {
             textAlign: "left" as const,
           }}>
             <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#94a3b8", flexShrink: 0 }} />
-            <div style={{ fontSize: 10, fontWeight: selectedShowId === null ? 700 : 400, color: selectedShowId === null ? "var(--accent-blue)" : "var(--text-secondary)" }}>
+            <div style={{ fontSize: "var(--t-micro)", fontWeight: selectedShowId === null ? 700 : 400, color: selectedShowId === null ? "var(--accent-blue)" : "var(--text-secondary)" }}>
               All Shows
             </div>
           </button>
@@ -864,14 +864,14 @@ export default function ProgramLog({ onClose }: Props) {
               }}>
                 <div style={{ width: 6, height: 6, borderRadius: "50%", background: s.color || "#94a3b8", flexShrink: 0 }} />
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ fontSize: 10, fontWeight: isActive ? 700 : 500, color: isActive ? (s.color || "var(--accent-blue)") : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                  <div style={{ fontSize: "var(--t-micro)", fontWeight: isActive ? 700 : 500, color: isActive ? (s.color || "var(--accent-blue)") : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
                     {s.name}
                   </div>
-                  <div style={{ fontSize: 8, color: "var(--text-tertiary)" }}>
+                  <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>
                     {fmtHour(s.start_hour)}–{fmtHour(s.end_hour)} · {s.clock_name || "no clock"}
                   </div>
                 </div>
-                <div style={{ fontSize: 8, color: scheduled > 0 ? "#34d399" : "var(--text-tertiary)", flexShrink: 0 }}>
+                <div style={{ fontSize: "var(--t-micro)", color: scheduled > 0 ? "#34d399" : "var(--text-tertiary)", flexShrink: 0 }}>
                   {scheduled}/{showHours.length}h
                 </div>
               </button>
@@ -882,16 +882,16 @@ export default function ProgramLog({ onClose }: Props) {
         {/* Action buttons */}
         <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column" as const, gap: 6 }}>
           <button onClick={fillDay} disabled={filling}
-            style={{ padding: "8px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: filling ? "default" : "pointer", background: "rgba(52,211,153,0.12)", color: "#34d399", border: "1px solid rgba(52,211,153,0.3)", opacity: filling ? 0.6 : 1 }}>
+            style={{ padding: "8px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 700, cursor: filling ? "default" : "pointer", background: "rgba(52,211,153,0.12)", color: "#34d399", border: "1px solid rgba(52,211,153,0.3)", opacity: filling ? 0.6 : 1 }}>
             {filling ? "⏳ Scheduling..." : "⚡ Fill Day"}
           </button>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 }}>
             <button onClick={exportCSV}
-              style={{ padding: "6px 4px", borderRadius: 0, fontSize: 10, fontWeight: 700, cursor: "pointer", background: "rgb(from var(--accent-blue) r g b / 0.1)", color: "var(--accent-blue)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.25)" }}>
+              style={{ padding: "6px 4px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 700, cursor: "pointer", background: "rgb(from var(--accent-blue) r g b / 0.1)", color: "var(--accent-blue)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.25)" }}>
               ⬇ CSV
             </button>
             <button onClick={exportPrint}
-              style={{ padding: "6px 4px", borderRadius: 0, fontSize: 10, fontWeight: 700, cursor: "pointer", background: "rgba(251,191,36,0.1)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.25)" }}>
+              style={{ padding: "6px 4px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 700, cursor: "pointer", background: "rgba(251,191,36,0.1)", color: "#fbbf24", border: "1px solid rgba(251,191,36,0.25)" }}>
               🖨 Print
             </button>
           </div>
@@ -899,7 +899,7 @@ export default function ProgramLog({ onClose }: Props) {
             onClick={isPro ? exportPDF : () => window.dispatchEvent(new CustomEvent("ether:open-subscription"))}
             title={isPro ? "Export professional PDF traffic report" : "Studio plan required"}
             style={{
-              padding: "6px 4px", borderRadius: 0, fontSize: 10, fontWeight: 700,
+              padding: "6px 4px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 700,
               cursor: "pointer",
               background: isPro ? "rgba(167,139,250,0.12)" : "rgba(167,139,250,0.06)",
               color: isPro ? "#a78bfa" : "#a78bfa88",
@@ -909,7 +909,7 @@ export default function ProgramLog({ onClose }: Props) {
             {isPro ? "📄 PDF Report" : "🔒 PDF Report"}
           </button>
           <button onClick={clearDay}
-            style={{ padding: "6px", borderRadius: 0, fontSize: 10, fontWeight: 600, cursor: "pointer", background: "transparent", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)" }}>
+            style={{ padding: "6px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 600, cursor: "pointer", background: "transparent", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)" }}>
             Clear Day
           </button>
         </div>
@@ -927,25 +927,25 @@ export default function ProgramLog({ onClose }: Props) {
           background: "var(--bg-secondary)",
         }}>
           <div>
-            <div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
+            <div style={{ fontSize: "var(--t-head)", fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)", letterSpacing: "-0.02em" }}>
               {new Date(selectedDate + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
             </div>
-            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 1 }}>
+            <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", marginTop: 1 }}>
               {scheduledHours} of {hourBlocks.length} hours scheduled · {fmtMs(totalDayMs)} total programming
             </div>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
             <button
               onClick={() => setAssignModal({ hour: -1, showName: null })}
-              style={{ padding: "5px 12px", borderRadius: 0, fontSize: 10, fontWeight: 700, cursor: "pointer", background: "rgba(167,139,250,0.1)", border: "1px solid rgba(167,139,250,0.3)", color: "#a78bfa" }}>
+              style={{ padding: "5px 12px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 700, cursor: "pointer", background: "rgba(167,139,250,0.1)", border: "1px solid rgba(167,139,250,0.3)", color: "#a78bfa" }}>
               ⚙ Shows & Dayparts
             </button>
             <button onClick={() => setExpandedHours(new Set(hourBlocks.map(b => b.hour)))}
-              style={{ padding: "5px 10px", borderRadius: 0, fontSize: 10, fontWeight: 600, cursor: "pointer", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>
+              style={{ padding: "5px 10px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 600, cursor: "pointer", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>
               Expand All
             </button>
             <button onClick={() => setExpandedHours(new Set())}
-              style={{ padding: "5px 10px", borderRadius: 0, fontSize: 10, fontWeight: 600, cursor: "pointer", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>
+              style={{ padding: "5px 10px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 600, cursor: "pointer", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>
               Collapse All
             </button>
           </div>
@@ -954,9 +954,9 @@ export default function ProgramLog({ onClose }: Props) {
         {/* Empty state */}
         {hourBlocks.length === 0 && (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" as const, gap: 12, color: "var(--text-tertiary)" }}>
-            <div style={{ fontSize: 32, opacity: 0.2 }}>◷</div>
-            <div style={{ fontSize: 13, fontStyle: "italic" }}>No shows configured for this day</div>
-            <div style={{ fontSize: 11, opacity: 0.6 }}>Add shows in Schedule → Show Scheduler</div>
+            <div style={{ fontSize: "var(--t-head)", opacity: 0.2 }}>◷</div>
+            <div style={{ fontSize: "var(--t-lead)", fontStyle: "italic" }}>No shows configured for this day</div>
+            <div style={{ fontSize: "var(--t-small)", opacity: 0.6 }}>Add shows in Schedule → Show Scheduler</div>
           </div>
         )}
 
@@ -991,28 +991,28 @@ export default function ProgramLog({ onClose }: Props) {
                   }}
                 >
                   {/* Chevron */}
-                  <span style={{ fontSize: 9, color: "var(--text-tertiary)", transform: isExpanded ? "rotate(90deg)" : "none", display: "inline-block", transition: "transform 0.15s", width: 10, flexShrink: 0 }}>▶</span>
+                  <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", transform: isExpanded ? "rotate(90deg)" : "none", display: "inline-block", transition: "transform 0.15s", width: 10, flexShrink: 0 }}>▶</span>
 
                   {/* Hour label */}
-                  <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "var(--text-primary)", width: 52, flexShrink: 0 }}>
+                  <span style={{ fontSize: "var(--t-body)", fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "var(--text-primary)", width: 52, flexShrink: 0 }}>
                     {fmtHour(block.hour)}
                   </span>
 
                   {/* Show name */}
-                  <span style={{ fontSize: 11, color: isScheduled ? "var(--text-primary)" : "var(--text-tertiary)", flex: 1 }}>
+                  <span style={{ fontSize: "var(--t-small)", color: isScheduled ? "var(--text-primary)" : "var(--text-tertiary)", flex: 1 }}>
                     {block.show_name || "—"}
                   </span>
 
                   {/* Clock name */}
                   {block.clock_name && (
-                    <span style={{ fontSize: 9, color: "var(--text-tertiary)", marginRight: 4 }}>
+                    <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", marginRight: 4 }}>
                       {block.clock_name}
                     </span>
                   )}
 
                   {/* Stats */}
                   {isScheduled && (
-                    <span style={{ fontSize: 9, color: "var(--text-tertiary)", marginRight: 8 }}>
+                    <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", marginRight: 8 }}>
                       {block.entries.length} tracks · {fmtMs(blockMs)}
                       {unfilledInHour > 0 && <span style={{ color: "#ef4444", marginLeft: 4 }}>⚠ {unfilledInHour} unfilled</span>}
                     </span>
@@ -1034,7 +1034,7 @@ export default function ProgramLog({ onClose }: Props) {
                     }}
                     disabled={block.generating}
                     style={{
-                      padding: "3px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700,
+                      padding: "3px 10px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 700,
                       cursor: block.generating ? "default" : "pointer",
                       background: isScheduled ? "rgb(from var(--accent-blue) r g b / 0.08)" : "rgba(52,211,153,0.12)",
                       color: isScheduled ? "var(--accent-blue)" : "#34d399",
@@ -1050,7 +1050,7 @@ export default function ProgramLog({ onClose }: Props) {
                     <button
                       onClick={e => { e.stopPropagation(); setHourModal({ hour: block.hour, block }); }}
                       style={{
-                        padding: "3px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700,
+                        padding: "3px 10px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 700,
                         cursor: "pointer", background: "rgba(167,139,250,0.1)",
                         color: "#a78bfa", border: "1px solid rgba(167,139,250,0.3)", flexShrink: 0,
                       }}
@@ -1063,7 +1063,7 @@ export default function ProgramLog({ onClose }: Props) {
                   {isScheduled && (
                     <button
                       onClick={e => { e.stopPropagation(); clearHour(block.hour); }}
-                      style={{ padding: "3px 6px", borderRadius: 0, fontSize: 10, cursor: "pointer", background: "transparent", border: "none", color: "var(--text-tertiary)", flexShrink: 0 }}
+                      style={{ padding: "3px 6px", borderRadius: 0, fontSize: "var(--t-micro)", cursor: "pointer", background: "transparent", border: "none", color: "var(--text-tertiary)", flexShrink: 0 }}
                       onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
                       onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
                     >✕</button>
@@ -1077,7 +1077,7 @@ export default function ProgramLog({ onClose }: Props) {
                     <div style={{
                       display: "grid", gridTemplateColumns: "32px 48px 1fr 160px 56px 52px",
                       padding: "4px 12px", background: "var(--bg-tertiary)",
-                      fontSize: 8, fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", textTransform: "uppercase" as const,
+                      fontSize: "var(--t-micro)", fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", textTransform: "uppercase" as const,
                     }}>
                       <span>#</span><span>Type</span><span>Title</span><span>Artist</span>
                       <span style={{ textAlign: "right" as const }}>Duration</span>
@@ -1096,27 +1096,27 @@ export default function ProgramLog({ onClose }: Props) {
                           borderBottom: "1px solid rgba(255,255,255,0.02)",
                           borderLeft: isOverflow ? "3px solid rgba(167,139,250,0.5)" : "3px solid transparent",
                         }}>
-                          <span style={{ fontSize: 9, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>{i+1}</span>
-                          <span style={{ fontSize: 8, fontWeight: 800, padding: "1px 4px", borderRadius: 0, background: isOverflow ? "rgba(167,139,250,0.2)" : color+"20", color: isOverflow ? "#a78bfa" : color, letterSpacing: "0.06em", whiteSpace: "nowrap" as const }}>
+                          <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>{i+1}</span>
+                          <span style={{ fontSize: "var(--t-micro)", fontWeight: 800, padding: "1px 4px", borderRadius: 0, background: isOverflow ? "rgba(167,139,250,0.2)" : color+"20", color: isOverflow ? "#a78bfa" : color, letterSpacing: "0.06em", whiteSpace: "nowrap" as const }}>
                             {isOverflow ? "XFADE" : entry.category_code || entry.slot_type.toUpperCase()}
                           </span>
                           <div style={{ minWidth: 0, paddingRight: 8 }}>
-                            <span style={{ fontSize: 11, fontWeight: 500, color: isUnfilled ? "#ef4444" : isOverflow ? "#a78bfa" : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, display: "block" }}>
+                            <span style={{ fontSize: "var(--t-small)", fontWeight: 500, color: isUnfilled ? "#ef4444" : isOverflow ? "#a78bfa" : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, display: "block" }}>
                               {isUnfilled ? "⚠ No eligible song" : entry.song_title || entry.label || "—"}
                             </span>
                             {isOverflow && (
-                              <span style={{ fontSize: 8, color: "rgba(167,139,250,0.6)" }}>
+                              <span style={{ fontSize: "var(--t-micro)", color: "rgba(167,139,250,0.6)" }}>
                                 Fades out at {fmtMs(entry.fade_out_at_ms)} · {fmtMs(entry.fade_duration_ms)} crossfade into next hour
                               </span>
                             )}
                           </div>
-                          <span style={{ fontSize: 10, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, paddingRight: 8 }}>
+                          <span style={{ fontSize: "var(--t-micro)", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, paddingRight: 8 }}>
                             {entry.song_artist || ""}
                           </span>
-                          <span style={{ fontSize: 10, fontFamily: "'DM Mono', monospace", color: isOverflow ? "#a78bfa" : "var(--text-tertiary)", textAlign: "right" as const }}>
+                          <span style={{ fontSize: "var(--t-micro)", fontFamily: "'DM Mono', monospace", color: isOverflow ? "#a78bfa" : "var(--text-tertiary)", textAlign: "right" as const }}>
                             {fmtMs(entry.duration_ms)}
                           </span>
-                          <span style={{ fontSize: 8, textAlign: "right" as const, color: isOverflow ? "#a78bfa" : entry.status === "played" ? "#34d399" : isUnfilled ? "#ef4444" : "rgba(255,255,255,0.2)" }}>
+                          <span style={{ fontSize: "var(--t-micro)", textAlign: "right" as const, color: isOverflow ? "#a78bfa" : entry.status === "played" ? "#34d399" : isUnfilled ? "#ef4444" : "rgba(255,255,255,0.2)" }}>
                             {isOverflow ? "overflow" : entry.status}
                           </span>
                         </div>
@@ -1128,10 +1128,10 @@ export default function ProgramLog({ onClose }: Props) {
                       display: "grid", gridTemplateColumns: "32px 48px 1fr 160px 56px 52px",
                       padding: "4px 12px", background: "var(--bg-tertiary)",
                       borderTop: "1px solid var(--border-primary)",
-                      fontSize: 9, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace",
+                      fontSize: "var(--t-micro)", color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace",
                     }}>
                       <span>{block.entries.length}</span><span></span>
-                      <span style={{ fontFamily: "'Inter', sans-serif", fontSize: 9, color: unfilledInHour > 0 ? "#ef4444" : "#34d399" }}>
+                      <span style={{ fontFamily: "'Inter', sans-serif", fontSize: "var(--t-micro)", color: unfilledInHour > 0 ? "#ef4444" : "#34d399" }}>
                         {unfilledInHour > 0 ? `⚠ ${unfilledInHour} slots need more songs` : "✓ Complete"}
                       </span>
                       <span></span>
@@ -1143,7 +1143,7 @@ export default function ProgramLog({ onClose }: Props) {
 
                 {/* Expanded but not scheduled */}
                 {isExpanded && !isScheduled && (
-                  <div style={{ padding: "10px 14px", borderTop: "1px solid var(--border-primary)", fontSize: 11, color: "var(--text-tertiary)", fontStyle: "italic" }}>
+                  <div style={{ padding: "10px 14px", borderTop: "1px solid var(--border-primary)", fontSize: "var(--t-small)", color: "var(--text-tertiary)", fontStyle: "italic" }}>
                     {block.clock_name
                       ? `Click Generate to fill this hour with ${block.clock_name}`
                       : `Click Generate to assign a clock and schedule this hour`}
@@ -1258,7 +1258,7 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
         width: "min(900px, 95vw)", maxHeight: "85vh", display: "flex", flexDirection: "column" as const,
         background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
         borderRadius: 0, overflow: "hidden",
-        boxShadow: "0 24px 80px rgba(0,0,0,0.6)",
+        boxShadow: "var(--e-float)",
       }}>
 
         {/* Modal header */}
@@ -1268,18 +1268,18 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
           background: "var(--bg-tertiary)",
         }}>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)" }}>
+            <div style={{ fontSize: "var(--t-lead)", fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)" }}>
               {fmtHour(hour)} — {block.show_name || "Unassigned"}
             </div>
-            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 1 }}>
+            <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", marginTop: 1 }}>
               {date} · {block.clock_name} · {entries.length} tracks · {fmtMs(totalMs)}
             </div>
           </div>
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-            <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+            <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>
               Click a row to swap its song
             </div>
-            <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14 }}>✕</button>
+            <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-lead)" }}>✕</button>
           </div>
         </div>
 
@@ -1292,7 +1292,7 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
               display: "grid", gridTemplateColumns: "28px 44px 1fr 180px 60px",
               padding: "5px 14px", background: "var(--bg-tertiary)",
               borderBottom: "1px solid var(--border-primary)",
-              fontSize: 8, fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", textTransform: "uppercase" as const,
+              fontSize: "var(--t-micro)", fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", textTransform: "uppercase" as const,
               position: "sticky" as const, top: 0, zIndex: 1,
             }}>
               <span></span><span>Type</span><span>Title</span><span>Artist</span>
@@ -1331,21 +1331,21 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
                     <circle cx="2" cy="8" r="1"/><circle cx="6" cy="8" r="1"/>
                   </svg>
 
-                  <span style={{ fontSize: 8, fontWeight: 800, padding: "1px 4px", borderRadius: 0, background: color+"20", color, letterSpacing: "0.06em" }}>
+                  <span style={{ fontSize: "var(--t-micro)", fontWeight: 800, padding: "1px 4px", borderRadius: 0, background: color+"20", color, letterSpacing: "0.06em" }}>
                     {entry.category_code || entry.slot_type.toUpperCase()}
                   </span>
 
                   <div style={{ minWidth: 0, paddingRight: 8 }}>
-                    <div style={{ fontSize: 12, fontWeight: 500, color: isUnfilled ? "#ef4444" : isSwapping ? "#a78bfa" : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                    <div style={{ fontSize: "var(--t-body)", fontWeight: 500, color: isUnfilled ? "#ef4444" : isSwapping ? "#a78bfa" : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
                       {isUnfilled ? "⚠ Unfilled — click to assign" : entry.song_title || entry.label || "—"}
                     </div>
                   </div>
 
-                  <span style={{ fontSize: 11, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, paddingRight: 8 }}>
+                  <span style={{ fontSize: "var(--t-small)", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, paddingRight: 8 }}>
                     {entry.song_artist || ""}
                   </span>
 
-                  <span style={{ fontSize: 10, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", textAlign: "right" as const }}>
+                  <span style={{ fontSize: "var(--t-micro)", fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", textAlign: "right" as const }}>
                     {fmtMs(entry.duration_ms)}
                   </span>
                 </div>
@@ -1360,7 +1360,7 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
               display: "flex", flexDirection: "column" as const, background: "var(--bg-primary)",
             }}>
               <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "#a78bfa", marginBottom: 6 }}>
+                <div style={{ fontSize: "var(--t-micro)", fontWeight: 700, color: "#a78bfa", marginBottom: 6 }}>
                   Swap: {swapTarget.category_code} slot #{entries.findIndex(e => e.id === swapTarget.id) + 1}
                 </div>
                 <input
@@ -1369,12 +1369,12 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
                   value={songSearch}
                   onChange={e => setSongSearch(e.target.value)}
                   style={{
-                    width: "100%", padding: "6px 10px", borderRadius: 0, fontSize: 11,
+                    width: "100%", padding: "6px 10px", borderRadius: 0, fontSize: "var(--t-small)",
                     background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
                     color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as const,
                   }}
                 />
-                <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 4 }}>
+                <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", marginTop: 4 }}>
                   {songResults.length} songs in {swapTarget.category_code}
                 </div>
               </div>
@@ -1396,14 +1396,14 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
                       onMouseEnter={e => { if (!isCurrent) (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.04)"; }}
                       onMouseLeave={e => { if (!isCurrent) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
                     >
-                      <div style={{ fontSize: 11, fontWeight: 500, color: isCurrent ? "#a78bfa" : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
+                      <div style={{ fontSize: "var(--t-small)", fontWeight: 500, color: isCurrent ? "#a78bfa" : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
                         {isCurrent && "✓ "}{song.title}
                       </div>
                       <div style={{ display: "flex", gap: 8, marginTop: 1 }}>
-                        <span style={{ fontSize: 9, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1 }}>
+                        <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1 }}>
                           {song.artist_name || "Unknown"}
                         </span>
-                        <span style={{ fontSize: 9, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", flexShrink: 0 }}>
+                        <span style={{ fontSize: "var(--t-micro)", fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", flexShrink: 0 }}>
                           {fmtMs(song.duration_ms)}
                         </span>
                       </div>
@@ -1419,7 +1419,7 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
         <div style={{
           display: "flex", alignItems: "center", gap: 10, padding: "10px 18px",
           borderTop: "1px solid var(--border-primary)", flexShrink: 0,
-          background: "var(--bg-tertiary)", fontSize: 10, color: "var(--text-tertiary)",
+          background: "var(--bg-tertiary)", fontSize: "var(--t-micro)", color: "var(--text-tertiary)",
         }}>
           <span>Drag rows to reorder · Click a music row to swap the song</span>
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
@@ -1427,7 +1427,7 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
               {fmtMs(totalMs)} total
             </span>
             <button onClick={onSaved} style={{
-              padding: "5px 16px", borderRadius: 0, fontSize: 11, fontWeight: 700,
+              padding: "5px 16px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 700,
               background: "rgba(52,211,153,0.15)", color: "#34d399",
               border: "1px solid rgba(52,211,153,0.3)", cursor: "pointer",
             }}>
@@ -1517,7 +1517,7 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
         width: "min(780px, 95vw)", maxHeight: "88vh", display: "flex",
         flexDirection: "column" as const, background: "var(--bg-secondary)",
         border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden",
-        boxShadow: "0 24px 80px rgba(0,0,0,0.6)",
+        boxShadow: "var(--e-float)",
       }}>
 
         {/* Header */}
@@ -1527,20 +1527,20 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
           background: "var(--bg-tertiary)", flexShrink: 0,
         }}>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)" }}>
+            <div style={{ fontSize: "var(--t-lead)", fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)" }}>
               Shows & Dayparts
             </div>
-            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 2 }}>
+            <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", marginTop: 2 }}>
               {hasTargetHour ? `Assign a clock to ${fmtHourLocal(hour)} then click Generate` : "Manage shows, dayparts and clock assignments"}
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {hasTargetHour && !canGenerate && (
-              <span style={{ fontSize: 10, color: "#fbbf24" }}>
+              <span style={{ fontSize: "var(--t-micro)", color: "#fbbf24" }}>
                 ⚠ Assign a clock to {fmtHourLocal(hour)} to enable Generate
               </span>
             )}
-            <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14 }}>✕</button>
+            <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-lead)" }}>✕</button>
           </div>
         </div>
 
@@ -1549,7 +1549,7 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
 
           {/* 24-hour timeline */}
           <div style={{ marginBottom: 14, padding: "10px 12px", background: "var(--bg-tertiary)", borderRadius: 0, border: "1px solid var(--border-primary)" }}>
-            <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", marginBottom: 6 }}>24-HOUR TIMELINE</div>
+            <div style={{ fontSize: "var(--t-micro)", fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", marginBottom: 6 }}>24-HOUR TIMELINE</div>
             <div style={{ position: "relative" as const, height: 32, background: "rgba(255,255,255,0.04)", borderRadius: 0, overflow: "hidden" }}>
               {HOURS_LIST.map(h => (
                 <div key={h} style={{
@@ -1557,7 +1557,7 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
                   left: (h / 24 * 100) + "%", width: (1 / 24 * 100) + "%",
                   borderRight: "1px solid rgba(255,255,255,0.04)",
                 }}>
-                  {h % 6 === 0 && <span style={{ position: "absolute" as const, top: 2, left: 2, fontSize: 7, color: "rgba(255,255,255,0.3)" }}>{fmtHourLocal(h)}</span>}
+                  {h % 6 === 0 && <span style={{ position: "absolute" as const, top: 2, left: 2, fontSize: "var(--t-micro)", color: "rgba(255,255,255,0.3)" }}>{fmtHourLocal(h)}</span>}
                 </div>
               ))}
               {/* Target hour highlight */}
@@ -1576,7 +1576,7 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
                     left: Math.min(l, 100) + "%", width: Math.min(w, 100 - l) + "%",
                     background: (s.color || "#444") + "cc",
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 8, fontWeight: 700, color: "#fff", overflow: "hidden",
+                    fontSize: "var(--t-micro)", fontWeight: 700, color: "#fff", overflow: "hidden",
                   }}>
                     {s.name}
                   </div>
@@ -1587,9 +1587,9 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
 
           {/* New show button */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)" }}>Shows & Dayparts</div>
+            <div style={{ fontSize: "var(--t-body)", fontWeight: 700, color: "var(--text-primary)" }}>Shows & Dayparts</div>
             <button onClick={() => setEditing({ name: "", start_hour: 0, end_hour: 6, color: "#3b82f6" })}
-              style={{ padding: "5px 12px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer", background: "rgb(from var(--accent-blue) r g b / 0.12)", color: "var(--accent-blue)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.3)" }}>
+              style={{ padding: "5px 12px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 700, cursor: "pointer", background: "rgb(from var(--accent-blue) r g b / 0.12)", color: "var(--accent-blue)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.3)" }}>
               + New Show
             </button>
           </div>
@@ -1599,30 +1599,30 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
             <div style={{ padding: "12px", background: "var(--bg-tertiary)", borderRadius: 0, border: "1px solid var(--border-primary)", marginBottom: 10 }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 100px 100px", gap: 6, marginBottom: 6 }}>
                 <input placeholder="Show name" value={editing.name||""} onChange={e => setEditing({...editing, name: e.target.value})}
-                  style={{ padding: "6px 10px", borderRadius: 0, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+                  style={{ padding: "6px 10px", borderRadius: 0, fontSize: "var(--t-small)", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
                 <input placeholder="Description" value={editing.description||""} onChange={e => setEditing({...editing, description: e.target.value})}
-                  style={{ padding: "6px 10px", borderRadius: 0, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+                  style={{ padding: "6px 10px", borderRadius: 0, fontSize: "var(--t-small)", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
                 <select value={editing.start_hour||0} onChange={e => setEditing({...editing, start_hour: +e.target.value})}
-                  style={{ padding: "6px 8px", borderRadius: 0, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
+                  style={{ padding: "6px 8px", borderRadius: 0, fontSize: "var(--t-small)", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
                   {HOURS_LIST.map(h => <option key={h} value={h}>{fmtHourLocal(h)}</option>)}
                 </select>
                 <select value={editing.end_hour||0} onChange={e => setEditing({...editing, end_hour: +e.target.value})}
-                  style={{ padding: "6px 8px", borderRadius: 0, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
+                  style={{ padding: "6px 8px", borderRadius: 0, fontSize: "var(--t-small)", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
                   {HOURS_LIST.map(h => <option key={h} value={h}>{fmtHourLocal(h)}</option>)}
                 </select>
               </div>
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 <input type="color" value={editing.color||"#3b82f6"} onChange={e => setEditing({...editing, color: e.target.value})}
                   style={{ width: 32, height: 28, borderRadius: 0, border: "1px solid var(--border-primary)", cursor: "pointer", background: "none" }} />
-                <button onClick={save} style={{ padding: "5px 14px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer", background: "rgb(from var(--accent-blue) r g b / 0.12)", color: "var(--accent-blue)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.3)" }}>Save</button>
-                <button onClick={() => setEditing(null)} style={{ padding: "5px 12px", borderRadius: 0, fontSize: 11, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>Cancel</button>
+                <button onClick={save} style={{ padding: "5px 14px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 700, cursor: "pointer", background: "rgb(from var(--accent-blue) r g b / 0.12)", color: "var(--accent-blue)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.3)" }}>Save</button>
+                <button onClick={() => setEditing(null)} style={{ padding: "5px 12px", borderRadius: 0, fontSize: "var(--t-small)", cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>Cancel</button>
               </div>
             </div>
           )}
 
           {/* Show list */}
           {modalShows.length === 0 && (
-            <div style={{ textAlign: "center" as const, padding: "24px", color: "var(--text-tertiary)", fontSize: 12, fontStyle: "italic" }}>
+            <div style={{ textAlign: "center" as const, padding: "24px", color: "var(--text-tertiary)", fontSize: "var(--t-body)", fontStyle: "italic" }}>
               No shows yet — click + New Show to create dayparts
             </div>
           )}
@@ -1637,15 +1637,15 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
                   <div style={{ width: 10, height: 10, borderRadius: "50%", background: s.color || "#94a3b8", flexShrink: 0 }} />
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: isTarget ? "#a78bfa" : "var(--text-primary)" }}>
-                      {s.name} {isTarget && <span style={{ fontSize: 9, background: "rgba(167,139,250,0.2)", color: "#a78bfa", padding: "1px 5px", borderRadius: 0, marginLeft: 4 }}>TARGET HOUR</span>}
+                    <div style={{ fontSize: "var(--t-lead)", fontWeight: 600, color: isTarget ? "#a78bfa" : "var(--text-primary)" }}>
+                      {s.name} {isTarget && <span style={{ fontSize: "var(--t-micro)", background: "rgba(167,139,250,0.2)", color: "#a78bfa", padding: "1px 5px", borderRadius: 0, marginLeft: 4 }}>TARGET HOUR</span>}
                     </div>
-                    <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+                    <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>
                       {fmtHourLocal(s.start_hour)} – {fmtHourLocal(s.end_hour)}{s.description ? " · " + s.description : ""}
                     </div>
                   </div>
-                  <button onClick={() => setEditing(s)} style={{ padding: "3px 10px", borderRadius: 0, fontSize: 10, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>Edit</button>
-                  <button onClick={() => removeShow(s.id)} style={{ padding: "3px 8px", borderRadius: 0, fontSize: 10, cursor: "pointer", background: "transparent", border: "none", color: "var(--text-tertiary)" }}
+                  <button onClick={() => setEditing(s)} style={{ padding: "3px 10px", borderRadius: 0, fontSize: "var(--t-micro)", cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>Edit</button>
+                  <button onClick={() => removeShow(s.id)} style={{ padding: "3px 8px", borderRadius: 0, fontSize: "var(--t-micro)", cursor: "pointer", background: "transparent", border: "none", color: "var(--text-tertiary)" }}
                     onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
                     onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
                   >✕</button>
@@ -1653,17 +1653,17 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
 
                 {/* Clock assignment */}
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 10, color: "var(--text-tertiary)", flexShrink: 0 }}>Format Clock:</span>
+                  <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", flexShrink: 0 }}>Format Clock:</span>
                   <select value={s.clock_id||""} onChange={e => assignClock(s.id, e.target.value ? +e.target.value : null)}
                     style={{
-                      flex: 1, padding: "5px 10px", borderRadius: 0, fontSize: 11,
+                      flex: 1, padding: "5px 10px", borderRadius: 0, fontSize: "var(--t-small)",
                       background: "var(--bg-secondary)", border: `1px solid ${s.clock_id ? "rgba(52,211,153,0.3)" : "var(--border-primary)"}`,
                       color: "var(--text-primary)", outline: "none", cursor: "pointer",
                     }}>
                     <option value="">-- No clock assigned --</option>
                     {modalClocks.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
-                  {s.clock_id && <span style={{ fontSize: 10, color: "#34d399", fontWeight: 700, flexShrink: 0 }}>✓ Active</span>}
+                  {s.clock_id && <span style={{ fontSize: "var(--t-micro)", color: "#34d399", fontWeight: 700, flexShrink: 0 }}>✓ Active</span>}
                 </div>
               </div>
             );
@@ -1676,14 +1676,14 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
           display: "flex", alignItems: "center", gap: 10, flexShrink: 0,
           background: "var(--bg-tertiary)",
         }}>
-          <span style={{ fontSize: 10, color: "var(--text-tertiary)", flex: 1 }}>
+          <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", flex: 1 }}>
             {!hasTargetHour
               ? "Changes save automatically"
               : canGenerate
               ? `Ready — ${fmtHourLocal(hour)} will use "${targetShow?.clock_name}"`
               : `Assign a clock to the show covering ${fmtHourLocal(hour)}`}
           </span>
-          <button onClick={onClose} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 11, cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>
+          <button onClick={onClose} style={{ padding: "7px 14px", borderRadius: 0, fontSize: "var(--t-small)", cursor: "pointer", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)" }}>
             {hasTargetHour ? "Close" : "Done"}
           </button>
           {hasTargetHour && (
@@ -1691,7 +1691,7 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
               onClick={onDone}
               disabled={!canGenerate}
               style={{
-                padding: "7px 20px", borderRadius: 0, fontSize: 11, fontWeight: 700,
+                padding: "7px 20px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 700,
                 cursor: canGenerate ? "pointer" : "default",
                 background: canGenerate ? "rgba(52,211,153,0.15)" : "rgba(255,255,255,0.04)",
                 color: canGenerate ? "#34d399" : "var(--text-tertiary)",

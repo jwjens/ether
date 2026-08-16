@@ -97,10 +97,27 @@ describe("layout presets", () => {
     for (const p of PRESETS) expect(p.columns.length).toBeLessThanOrEqual(3);
   });
 
-  it("presets do NOT change the stored payload shape — LAYOUT_VERSION stays 3", () => {
-    // Recording an "active preset" would add a field and invalidate every saved layout for the
-    // third build running. Presets are arrangements applied in place; nothing about them is stored.
-    expect(LAYOUT_VERSION).toBe(3);
+  it("presets do NOT change the stored payload shape", () => {
+    // Recording an "active preset" would add a field and invalidate every saved layout, and buy
+    // only a tick in a menu — while inviting the lie where the stored name says Traffic and the
+    // operator has since rearranged the panes. Presets are arrangements applied in place; nothing
+    // about them is stored. THIS is the invariant that test was always really guarding.
     expect(Object.keys(JSON.parse(serializeLayout({ a: 1 }))).sort()).toEqual(["layout", "v"]);
+  });
+
+  it("LAYOUT_VERSION tracks the PANE SET — add a pane, bump the version", () => {
+    // A saved layout only names panes, so after the set changes it describes a workspace that no
+    // longer exists: restoring it leaves the new pane permanently absent while the Panels menu
+    // insists it is open. That is why the version exists, and it is the ONLY thing that moves it.
+    //
+    // This assertion used to read `expect(LAYOUT_VERSION).toBe(3)` inside the presets test above,
+    // as a proxy for "presets didn't bump it". The proxy outlived its meaning the moment a pane was
+    // legitimately added (v3 → v4, the Log pane): it failed for the one reason a bump is CORRECT.
+    // Pinning the pane set beside the version says what the coupling actually is, so adding a pane
+    // without bumping fails here with the reason attached instead of shipping a stale-layout bug.
+    expect(PANELS.map(p => p.id)).toEqual(
+      ["shows", "clocks", "categories", "spots", "jingles", "rotation", "log", "playlog"]
+    );
+    expect(LAYOUT_VERSION).toBe(5);
   });
 });

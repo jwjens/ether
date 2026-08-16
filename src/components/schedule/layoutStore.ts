@@ -16,8 +16,10 @@ export const LAYOUT_KEY = "schedule_layout_v1";
  *  a change it describes a workspace that no longer exists — restoring it would leave new panes
  *  permanently absent while the Panels menu insists they are open.
  *  v1 → v2: added the Spots and Jingles panes.
- *  v2 → v3: added the Rotation Analytics pane. */
-export const LAYOUT_VERSION = 3;
+ *  v2 → v3: added the Rotation Analytics pane.
+ *  v3 → v4: added the Log pane.
+ *  v4 → v5: added the Play Log pane. */
+export const LAYOUT_VERSION = 5;
 
 export interface StoredLayout { v: number; layout: unknown }
 
@@ -32,6 +34,13 @@ export const PANELS = [
   { id: "spots", title: "Spots" },
   { id: "jingles", title: "Jingles" },
   { id: "rotation", title: "Rotation Analytics" },
+  // The Calendar's day log, hosted. Rotation Analytics says what aired in aggregate; this is the
+  // hour-by-hour log itself — the thing you generate, pin and edit. Same component as the Calendar
+  // page, so it is one editor with two doors, not a second one.
+  { id: "log", title: "Program Log" },
+  // The as-run record, hosted beside the plan that produced it. Same component as the Play Log
+  // page — one document, two doors.
+  { id: "playlog", title: "Play Log" },
 ] as const;
 
 export type PanelId = (typeof PANELS)[number]["id"];
@@ -61,7 +70,17 @@ export const PRESETS: LayoutPreset[] = [
     id: "programming",
     title: "Programming",
     description: "Build the hour: shows, clocks, and the categories they draw from.",
-    columns: [["shows"], ["clocks"], ["categories", "jingles", "spots"]],
+    // Program Log rides as a TAB behind Clocks in the wide middle column rather than as a fourth
+    // column: it is the widest pane here and it is what you check AFTER shaping an hour, so it wants
+    // the room but not the constant attention.
+    //
+    // EVERY pane is opened by the default layout, deliberately. Rotation Analytics and Play Log used
+    // to be reachable only from Analysis, so a fresh workspace opened with the Panels button already
+    // reading "2 hidden" — announcing a problem that isn't one, and worse, hiding two panes behind a
+    // button the operator has no reason to press. Jeff went looking for the Play Log pane and could
+    // not find it; that is the doors-before-rooms failure happening in real time, so the default now
+    // opens the whole set and the operator closes what they do not want.
+    columns: [["shows"], ["clocks", "log"], ["categories", "jingles", "spots", "rotation", "playlog"]],
   },
   {
     id: "traffic",
@@ -73,7 +92,13 @@ export const PRESETS: LayoutPreset[] = [
     id: "analysis",
     title: "Analysis",
     description: "What actually aired, next to the targets and clocks that asked for it.",
-    columns: [["rotation"], ["categories", "shows"], ["clocks"]],
+    columns: [["rotation", "playlog"], ["categories", "shows"], ["clocks"]],
+  },
+  {
+    id: "live",
+    title: "Live",
+    description: "Today's log beside the shows that built it — read the hour you are in.",
+    columns: [["shows"], ["log"]],
   },
 ];
 

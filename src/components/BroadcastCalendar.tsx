@@ -38,7 +38,7 @@ const DAY_LABELS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"];
 const COL_TO_DAY = [1, 2, 3, 4, 5, 6, 0];
 
 const navBtn: React.CSSProperties = {
-  height: 26, padding: "0 10px", fontSize: 10, fontWeight: 700,
+  height: 26, padding: "0 10px", fontSize: "var(--t-micro)", fontWeight: 700,
   background: "transparent", border: "1px solid var(--border-primary)",
   color: "var(--text-secondary)", cursor: "pointer", borderRadius: 0,
   letterSpacing: "0.04em",
@@ -92,9 +92,22 @@ function sameDay(a: Date, b: Date): boolean {
 interface BroadcastCalendarProps {
   /** Called when a show block is clicked — navigate to the show editor */
   onShowClick?: (showId: number) => void;
+  /** ── Hosted as the Log pane in the Schedule Manager (4.4.217) ─────────────────────────────────
+   *  Renders ONLY the day log — no week grid, and no "← Calendar" button, because in a docked pane
+   *  there is no week grid behind it to go back to. Everything else is the same component, the same
+   *  state and the same handlers: Generate, pin, delete, inline edit and drag all behave exactly as
+   *  they do on the Calendar page, because they ARE the ones on the Calendar page. The standalone
+   *  page is unchanged — this prop is absent there, so every branch below is inert without it. */
+  hostedDayLog?: boolean;
+  /** The show the workspace has selected. Scopes the log to that show's hours, the same scoping
+   *  clicking a show block on the week grid already applies. null = the whole day. */
+  focusShow?: { name: string; startHour: number; endHour: number } | null;
+  /** The workspace's ONE refresh path: a pane that writes calls this and the store re-reads, so a
+   *  pin here updates the panes beside it. Absent on the standalone page, which has no hub. */
+  onMutated?: (tables?: string[]) => void;
 }
 
-export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProps) {
+export default function BroadcastCalendar({ onShowClick, hostedDayLog, focusShow, onMutated }: BroadcastCalendarProps) {
   const { stationId } = useActiveStation();
   const [shows, setShows]           = useState<Show[]>([]);
   const [weekOffset, setWeekOffset] = useState(0);
@@ -224,6 +237,10 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
       setShowTracks(true);
       await loadTrackCounts();
       window.dispatchEvent(new CustomEvent("ether:schedule-regenerated"));
+    // Hosted: the workspace's ONE refresh path, so a pin or a Generate here refreshes the panes
+    // beside it. The event above is the app-wide signal; this is the hub's, and it is a no-op on
+    // the standalone page where there is no hub to tell.
+    onMutated?.(["generated_schedule"]);
       window.dispatchEvent(new CustomEvent("ether:gen-report", { detail: { station, count, days } }));
       if (res?.cancelled) {
         // Days already committed are intact; the in-flight day was discarded whole, never half-written.
@@ -255,7 +272,13 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
   };
 
   // ── Day view — click a day to open its date and see the airing log hour-by-hour ──
-  const [selectedDay, setSelectedDay] = useState<Date | null>(null);
+  // Hosted as the Log pane there is no week grid to click, so it opens on TODAY and stays in day
+  // view. On the standalone page the initial value is null, exactly as before, and the week grid
+  // is the way in.
+  const [selectedDay, setSelectedDay] = useState<Date | null>(() => {
+    if (!hostedDayLog) return null;
+    const d = new Date(); d.setHours(0, 0, 0, 0); return d;
+  });
   // MANUAL LOG EDITING (Fix 2): id/uuid/source/state added. Without a stable handle nothing could be
   // addressed for mutation; `source` says who owns the row (and therefore whether Generate may touch
   // it); `state` says whether it has already aired, which makes it a record rather than a plan.
@@ -297,6 +320,16 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
   const [dayLoading, setDayLoading]   = useState(false);
   const [genDayBusy, setGenDayBusy]   = useState(false);
   const [dayShow, setDayShow]         = useState<{ name: string; startHour: number; endHour: number } | null>(null);
+  /** Hosted only: the date-label jump picker. */
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  // Hosted: the workspace's selected show scopes the log to its hours — the SAME scoping that
+  // clicking a show block on the week grid applies, driven by the Shows pane instead. Deselecting
+  // in the Shows pane widens back to the whole day. Only ever runs in the pane: `focusShow` is
+  // undefined on the standalone page, so this leaves its own dayShow alone.
+  useEffect(() => {
+    if (!hostedDayLog) return;
+    setDayShow(focusShow ?? null);
+  }, [hostedDayLog, focusShow?.name, focusShow?.startHour, focusShow?.endHour]);
   // The scrollable hour list. Held so an edit can put the operator back exactly where they were.
   const dayScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -324,6 +357,14 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
       }
     } catch { /* ignore */ } finally { if (!quiet) setDayLoading(false); }
   };
+  /** Day paging for the hosted pane. delta 0 = today. Keeps the show scope: if the operator is
+   *  reading a show's hours, they want that show yesterday too, not the whole day. */
+  const shiftDay = async (delta: number) => {
+    const base = delta === 0 ? new Date() : new Date((selectedDay ?? new Date()).getTime() + delta * 86_400_000);
+    base.setHours(0, 0, 0, 0);
+    setSelectedDay(base);
+    await loadDayRows(base);
+  };
   const openDay = async (date: Date, show?: Show) => {
     const d = new Date(date); d.setHours(0, 0, 0, 0);
     setSelectedDay(d);
@@ -339,6 +380,10 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
     // QUIET re-read: an edit must never move the operator's view. See loadDayRows.
     if (selectedDay) await loadDayRows(selectedDay, true);
     window.dispatchEvent(new CustomEvent("ether:schedule-regenerated"));
+    // Hosted: the workspace's ONE refresh path, so a pin or a Generate here refreshes the panes
+    // beside it. The event above is the app-wide signal; this is the hub's, and it is a no-op on
+    // the standalone page where there is no hub to tell.
+    onMutated?.(["generated_schedule"]);
     // The warning is asked for AFTER the move has applied — it informs, it never gates (design §3
     // Layer 5). A failed check is silent: it must not look like a rule violation.
     if (warnFor) {
@@ -400,6 +445,10 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
       await (window as any).ether.invoke("schedule:generateDay", ts);
       await loadDayRows(selectedDay);   // keep the current show scope
       window.dispatchEvent(new CustomEvent("ether:schedule-regenerated"));
+    // Hosted: the workspace's ONE refresh path, so a pin or a Generate here refreshes the panes
+    // beside it. The event above is the app-wide signal; this is the hub's, and it is a no-op on
+    // the standalone page where there is no hub to tell.
+    onMutated?.(["generated_schedule"]);
     } catch { /* ignore */ } finally { setGenDayBusy(false); }
   };
 
@@ -480,7 +529,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
 
     const cellBtn: React.CSSProperties = {
       background: "transparent", border: "none", padding: "0 3px",
-      color: "var(--text-tertiary)", fontSize: 13, lineHeight: 1,
+      color: "var(--text-tertiary)", fontSize: "var(--t-lead)", lineHeight: 1,
     };
     // An inline editor shared by the three editable cells. Enter commits, Escape abandons, blur
     // commits — the spreadsheet conventions, so nobody has to be told.
@@ -526,7 +575,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         accessor: (r) => typeOf(r).label,
         cell: (r) => {
           const t = typeOf(r);
-          return <span style={{ color: t.color, fontWeight: 700, fontSize: 12 }}>{t.label}</span>;
+          return <span style={{ color: t.color, fontWeight: 700, fontSize: "var(--t-body)" }}>{t.label}</span>;
         },
       },
       {
@@ -544,7 +593,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                   off the row or the operator cannot predict what Regenerate will do. */}
               {r.source && (
                 <span title="You placed, pinned or edited this. Generate will not move, replace or remove it."
-                  style={{ padding: "1px 5px", fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace",
+                  style={{ padding: "1px 5px", fontSize: "var(--t-micro)", fontWeight: 800, fontFamily: "'DM Mono', monospace",
                            color: "#8868D8", background: "rgba(136,104,216,0.14)",
                            border: "1px solid rgba(136,104,216,0.5)", letterSpacing: "0.06em" }}>YOURS</span>
               )}
@@ -582,7 +631,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
           const s = String(r.state || "pending");
           const col = s === "played" ? "var(--text-tertiary)" : s === "playing" ? "var(--accent-green)"
                     : s === "missed" || s === "skipped" ? "#b3564f" : "var(--text-tertiary)";
-          return <span style={{ color: col, fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" as const }}>{s}</span>;
+          return <span style={{ color: col, fontSize: "var(--t-small)", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" as const }}>{s}</span>;
         },
       },
       {
@@ -614,25 +663,82 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
       <div style={{ height: "100%", display: "flex", flexDirection: "column", background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "var(--font-ui, 'Inter', sans-serif)" }}>
         {/* Day toolbar */}
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, background: "var(--bg-secondary)" }}>
-          <button onClick={() => setSelectedDay(null)} style={navBtn}>← Calendar</button>
-          <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em" }}>{dateLabel}{isToday ? " · Today" : ""}</span>
-          {dayShow && (
-            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--accent-green)", display: "flex", alignItems: "center", gap: 6 }}>
-              {dayShow.name} ({fmtHour(dayShow.startHour)}–{fmtHour(dayShow.endHour === 0 ? 24 : dayShow.endHour)})
-              <button onClick={() => setDayShow(null)} title="Show the full day" style={{ ...navBtn, height: 20, padding: "0 7px", fontSize: 9 }}>full day</button>
+          {/* Hosted, there is nothing behind this pane to go back TO — the week grid lives on the
+              Calendar page. Day paging replaces it so the pane can still reach yesterday and
+              tomorrow, which is the only thing the back button was really being used for here. */}
+          {hostedDayLog ? (
+            <div style={{ display: "flex", gap: 4 }}>
+              <button onClick={() => shiftDay(-1)} title="Previous day" style={navBtn}>‹</button>
+              <button onClick={() => shiftDay(0)} title="Today" style={navBtn}>Today</button>
+              <button onClick={() => shiftDay(1)} title="Next day" style={navBtn}>›</button>
+            </div>
+          ) : (
+            <button onClick={() => setSelectedDay(null)} style={navBtn}>← Calendar</button>
+          )}
+          {/* The date is a way IN, not just a caption. Hosted, there is no week grid to click, so
+              clicking the label opens a small picker and you can jump anywhere. */}
+          {hostedDayLog ? (
+            <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+              <button onClick={() => setDatePickerOpen(v => !v)} title="Jump to a date"
+                style={{ ...navBtn, fontWeight: 800, letterSpacing: "-0.01em" }}>
+                {dateLabel}{isToday ? " · Today" : ""} ▾
+              </button>
+              {datePickerOpen && (
+                <>
+                  <div style={{ position: "fixed", inset: 0, zIndex: 60 }} onClick={() => setDatePickerOpen(false)} />
+                  <div style={{ position: "absolute", top: "calc(100% + var(--s-2))", left: 0, zIndex: 61,
+                                background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
+                                boxShadow: "var(--e-float)", padding: "var(--s-3)",
+                                display: "flex", flexDirection: "column", gap: "var(--s-2)" }}>
+                    {/* The native date input IS the small calendar popup: keyboard-accessible,
+                        localised, and no second calendar widget in a build that already ships one. */}
+                    <input type="date" autoFocus
+                      value={selectedDay
+                        ? new Date(selectedDay.getTime() - selectedDay.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+                        : ""}
+                      onChange={async (e) => {
+                        if (!e.target.value) return;
+                        const [y, m, d] = e.target.value.split("-").map(Number);
+                        const next = new Date(y, m - 1, d); next.setHours(0, 0, 0, 0);
+                        setDatePickerOpen(false);
+                        setSelectedDay(next);
+                        await loadDayRows(next);   // same loader every other day change uses
+                      }}
+                      style={{ padding: "var(--s-2) var(--s-3)", borderRadius: "var(--r-0)", fontSize: "var(--t-body)",
+                               background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
+                               color: "var(--text-primary)", outline: "none" }} />
+                    <button onClick={() => { setDatePickerOpen(false); shiftDay(0); }} style={navBtn}>Today</button>
+                  </div>
+                </>
+              )}
+            </span>
+          ) : (
+            <span style={{ fontSize: "var(--t-lead)", fontWeight: 800, letterSpacing: "-0.01em" }}>{dateLabel}{isToday ? " · Today" : ""}</span>
+          )}
+          {/* One clarifying line, permanent. The plan and the proof are different documents; the
+              screen should never leave which one you are reading to inference. */}
+          {hostedDayLog && (
+            <span style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)" }}>
+              What is scheduled to air. Editable.
             </span>
           )}
-          <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{total} item{total !== 1 ? "s" : ""}{dayShow ? " in show" : " scheduled"}</span>
+          {dayShow && (
+            <span style={{ fontSize: "var(--t-small)", fontWeight: 700, color: "var(--accent-green)", display: "flex", alignItems: "center", gap: 6 }}>
+              {dayShow.name} ({fmtHour(dayShow.startHour)}–{fmtHour(dayShow.endHour === 0 ? 24 : dayShow.endHour)})
+              <button onClick={() => setDayShow(null)} title="Show the full day" style={{ ...navBtn, height: 20, padding: "0 7px", fontSize: "var(--t-micro)" }}>full day</button>
+            </span>
+          )}
+          <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>{total} item{total !== 1 ? "s" : ""}{dayShow ? " in show" : " scheduled"}</span>
           {/* The accumulation risk, made visible (design §7): pin enough rows and Generate can no
               longer heal the day. The count says so before it becomes a mystery. */}
           {dayRows.some(r => r.source) && (
             <span title="Generate will not move, replace or remove these. Use 📌 on a row to release it."
-              style={{ fontSize: 10, fontWeight: 700, color: "#8868D8", padding: "1px 6px", border: "1px solid rgba(136,104,216,0.5)", background: "rgba(136,104,216,0.12)" }}>
+              style={{ fontSize: "var(--t-micro)", fontWeight: 700, color: "#8868D8", padding: "1px 6px", border: "1px solid rgba(136,104,216,0.5)", background: "rgba(136,104,216,0.12)" }}>
               {dayRows.filter(r => r.source).length} yours — Generate won’t touch
             </span>
           )}
           {editErr && (
-            <span style={{ fontSize: 10, fontWeight: 700, color: "#f87171" }}>{editErr}</span>
+            <span style={{ fontSize: "var(--t-micro)", fontWeight: 700, color: "#f87171" }}>{editErr}</span>
           )}
           <div style={{ flex: 1 }} />
           <button onClick={generateThisDay} disabled={genDayBusy}
@@ -648,7 +754,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
             every existing grid renders byte-identically without them. */}
         <div ref={dayScrollRef} style={{ flex: 1, overflowY: "auto" }}>
           {dayLoading ? (
-            <div style={{ padding: 40, textAlign: "center", color: "var(--text-tertiary)", fontSize: 12 }}>Loading…</div>
+            <div style={{ padding: 40, textAlign: "center", color: "var(--text-tertiary)", fontSize: "var(--t-body)" }}>Loading…</div>
           ) : (
             <>
               {/* Rule warnings, consolidated above the grid. They used to sit under the hour they
@@ -658,11 +764,11 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
               {visibleRows.some(r => (rowWarn[r.uuid] || []).length > 0) && (
                 <div style={{ margin: "8px 12px", padding: "7px 10px", border: "1px solid rgba(251,191,36,0.45)", background: "rgba(251,191,36,0.08)" }}>
                   {visibleRows.flatMap(r => (rowWarn[r.uuid] || []).map((w, k) => (
-                    <div key={`${r.uuid}-${k}`} style={{ fontSize: 12, color: "#fbbf24", lineHeight: 1.6 }}>
+                    <div key={`${r.uuid}-${k}`} style={{ fontSize: "var(--t-body)", color: "#fbbf24", lineHeight: 1.6 }}>
                       <strong style={{ fontWeight: 800 }}>{r.title}</strong> — {w}
                     </div>
                   )))}
-                  <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 3 }}>
+                  <div style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)", marginTop: 3 }}>
                     Your edit was applied. This is a heads-up, not a refusal.
                   </div>
                 </div>
@@ -671,7 +777,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
               {/* Sorted by something other than time: say what that costs, in place, rather than
                   letting the operator discover that dragging silently stopped working. */}
               {!timeOrdered && (
-                <div style={{ margin: "8px 12px", padding: "7px 10px", border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", fontSize: 12, color: "var(--text-tertiary)", lineHeight: 1.6 }}>
+                <div style={{ margin: "8px 12px", padding: "7px 10px", border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", fontSize: "var(--t-body)", color: "var(--text-tertiary)", lineHeight: 1.6 }}>
                   Sorted by <strong style={{ color: "var(--text-secondary)" }}>{logSort[0]?.id || "—"}</strong> — hour markers are hidden and
                   drag-to-reorder is off. A log is time-ordered: swapping two rows in this view would
                   swap two unrelated airtimes. Click <strong style={{ color: "var(--text-secondary)" }}>TIME</strong> to sort by time and get dragging back.
@@ -692,7 +798,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                   key: (r) => Math.floor((r.scheduled_at - dayStart) / 3600),
                   render: (k) => (
                     <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                      <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.06em", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+                      <span style={{ fontSize: "var(--t-lead)", fontWeight: 800, letterSpacing: "0.06em", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
                         ⏤ {fmtHour(Number(k))} ⏤
                       </span>
                       <span style={{ flex: 1, borderTop: "1px solid var(--border-primary)" }} />
@@ -767,23 +873,23 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
         background: "var(--bg-secondary)",
       }}>
         {/* Month navigation — clear ‹ Month Year › */}
-        <button onClick={() => jumpMonth(-1)} title="Previous month" style={{ ...navBtn, width: 34, height: 30, padding: 0, fontSize: 26, fontWeight: 800, lineHeight: 1 }}>‹</button>
-        <span style={{ fontSize: 16, fontWeight: 800, minWidth: 150, textAlign: "center" as const, letterSpacing: "-0.01em" }}>{monthLabel}</span>
-        <button onClick={() => jumpMonth(1)} title="Next month" style={{ ...navBtn, width: 34, height: 30, padding: 0, fontSize: 26, fontWeight: 800, lineHeight: 1 }}>›</button>
+        <button onClick={() => jumpMonth(-1)} title="Previous month" style={{ ...navBtn, width: 34, height: 30, padding: 0, fontSize: "var(--t-head)", fontWeight: 800, lineHeight: 1 }}>‹</button>
+        <span style={{ fontSize: "var(--t-head)", fontWeight: 800, minWidth: 150, textAlign: "center" as const, letterSpacing: "-0.01em" }}>{monthLabel}</span>
+        <button onClick={() => jumpMonth(1)} title="Next month" style={{ ...navBtn, width: 34, height: 30, padding: 0, fontSize: "var(--t-head)", fontWeight: 800, lineHeight: 1 }}>›</button>
         <div style={{ width: 1, height: 18, background: "var(--border-primary)", margin: "0 8px" }} />
         {/* Week navigation */}
-        <button onClick={() => setWeekOffset(w => w - 1)} title="Previous week" style={{ ...navBtn, fontSize: 13, fontWeight: 800, height: 30 }}><span style={{ fontSize: 20, verticalAlign: "middle" }}>←</span> Wk</button>
+        <button onClick={() => setWeekOffset(w => w - 1)} title="Previous week" style={{ ...navBtn, fontSize: "var(--t-lead)", fontWeight: 800, height: 30 }}><span style={{ fontSize: "var(--t-head)", verticalAlign: "middle" }}>←</span> Wk</button>
         <button
           onClick={() => setWeekOffset(0)}
           style={{
-            ...navBtn, fontSize: 13, fontWeight: 800, height: 30,
+            ...navBtn, fontSize: "var(--t-lead)", fontWeight: 800, height: 30,
             color: weekOffset === 0 ? "var(--accent-green)" : "var(--text-secondary)",
             borderColor: weekOffset === 0 ? "var(--accent-green)" : "var(--border-primary)",
           }}
         >Today</button>
-        <button onClick={() => setWeekOffset(w => w + 1)} title="Next week" style={{ ...navBtn, fontSize: 13, fontWeight: 800, height: 30 }}>Wk <span style={{ fontSize: 20, verticalAlign: "middle" }}>→</span></button>
+        <button onClick={() => setWeekOffset(w => w + 1)} title="Next week" style={{ ...navBtn, fontSize: "var(--t-lead)", fontWeight: 800, height: 30 }}>Wk <span style={{ fontSize: "var(--t-head)", verticalAlign: "middle" }}>→</span></button>
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 16, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.01em" }}>{weekLabel}</span>
+        <span style={{ fontSize: "var(--t-head)", fontWeight: 800, color: "var(--text-primary)", letterSpacing: "-0.01em" }}>{weekLabel}</span>
         <div style={{ flex: 1 }} />
         <button
           onClick={() => setShowTracks(t => !t)}
@@ -795,7 +901,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
           title="Show generated schedule track counts per hour"
         >{showTracks ? "Hide Tracks" : "Show Tracks"}</button>
         <div style={{ width: 1, height: 18, background: "var(--border-primary)", margin: "0 6px" }} />
-        {genMsg && <span style={{ fontSize: 10, fontWeight: 700, color: genMsg.startsWith("✓") ? "#34d399" : genMsg.startsWith("✗") ? "#ef4444" : "var(--text-secondary)" }}>{genMsg}</span>}
+        {genMsg && <span style={{ fontSize: "var(--t-micro)", fontWeight: 700, color: genMsg.startsWith("✓") ? "#34d399" : genMsg.startsWith("✗") ? "#ef4444" : "var(--text-secondary)" }}>{genMsg}</span>}
         {/* The inline meter was removed 2026-08-06: it lived in this component, so painting it re-rendered
             the day list on every one of the 168 hourly ticks. Progress is now the always-mounted
             bottom-left <GenerateProgressBar/>, which also survives navigating away mid-run. */}
@@ -809,7 +915,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
       {viewMode === "month" ? (
         <div style={{ flex: 1, minHeight: 0, overflow: "hidden", padding: 12, background: "var(--bg-primary)", display: "flex", flexDirection: "column" as const }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 4, flexShrink: 0 }}>
-            {DAY_LABELS.map(d => <div key={d} style={{ textAlign: "center" as const, fontSize: 12, fontWeight: 800, color: "var(--text-secondary)", letterSpacing: "0.1em" }}>{d}</div>)}
+            {DAY_LABELS.map(d => <div key={d} style={{ textAlign: "center" as const, fontSize: "var(--t-body)", fontWeight: 800, color: "var(--text-secondary)", letterSpacing: "0.1em" }}>{d}</div>)}
           </div>
           <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gridAutoRows: "1fr", gap: 4 }}>
             {monthCells.map((cell, i) => {
@@ -820,17 +926,17 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
               return (
                 <div key={i} onClick={() => openDay(cell)} style={{ background: "var(--bg-secondary)", border: `1px solid ${cellToday ? "var(--accent-green)" : "var(--border-primary)"}`, padding: 5, cursor: "pointer", display: "flex", flexDirection: "column" as const, gap: 2, overflow: "hidden" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontSize: 15, fontWeight: 800, color: cellToday ? "var(--accent-green)" : "var(--text-primary)" }}>{cell.getDate()}</span>
+                    <span style={{ fontSize: "var(--t-lead)", fontWeight: 800, color: cellToday ? "var(--accent-green)" : "var(--text-primary)" }}>{cell.getDate()}</span>
                     {/* Built by the unattended extender, not by a person. Quiet by design: this is
                         provenance, not a warning — an auto-generated day is the system working. */}
                     {autoDays.has(dayKey(cell)) && (
                       <span title="Generated automatically by this machine — the log was running low"
-                        style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.08em", padding: "1px 4px", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)" }}>AUTO</span>
+                        style={{ fontSize: "var(--t-micro)", fontWeight: 800, letterSpacing: "0.08em", padding: "1px 4px", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)" }}>AUTO</span>
                     )}
                   </div>
                   {cellShows.map(s => (
                     <div key={s.id} onClick={(e) => { e.stopPropagation(); openDay(cell, s); }} title={s.name}
-                      style={{ flex: 1, minHeight: 14, display: "flex", alignItems: "center", fontSize: 9, fontWeight: 700, color: "#fff", background: (s.color || "#3b82f6") + "cc", borderLeft: `2px solid ${s.color || "#3b82f6"}`, padding: "0 5px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, cursor: "pointer" }}>{s.name}</div>
+                      style={{ flex: 1, minHeight: 14, display: "flex", alignItems: "center", fontSize: "var(--t-micro)", fontWeight: 700, color: "#fff", background: (s.color || "#3b82f6") + "cc", borderLeft: `2px solid ${s.color || "#3b82f6"}`, padding: "0 5px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, cursor: "pointer" }}>{s.name}</div>
                   ))}
                 </div>
               );
@@ -852,7 +958,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                 display: "flex", alignItems: "flex-start", justifyContent: "flex-end",
                 paddingRight: 6, paddingTop: 3, boxSizing: "border-box",
               }}>
-                <span style={{ fontSize: 9, fontWeight: 600, color: "var(--text-tertiary)", letterSpacing: "0.04em", whiteSpace: "nowrap" }}>
+                <span style={{ fontSize: "var(--t-micro)", fontWeight: 600, color: "var(--text-tertiary)", letterSpacing: "0.04em", whiteSpace: "nowrap" }}>
                   {fmtHour(h)}
                 </span>
               </div>
@@ -883,10 +989,10 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                 onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = "rgb(from var(--accent-green) r g b / 0.14)"; }}
                 onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = isToday ? "rgb(from var(--accent-green) r g b / 0.07)" : "var(--bg-secondary)"; }}
                 >
-                  <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.12em", color: isToday ? "var(--accent-green)" : "var(--text-secondary)" }}>
+                  <span style={{ fontSize: "var(--t-small)", fontWeight: 800, letterSpacing: "0.12em", color: isToday ? "var(--accent-green)" : "var(--text-secondary)" }}>
                     {label}
                   </span>
-                  <span style={{ fontSize: 19, fontWeight: 800, color: isToday ? "var(--accent-green)" : "var(--text-primary)", lineHeight: 1, letterSpacing: "-0.01em" }}>
+                  <span style={{ fontSize: "var(--t-head)", fontWeight: 800, color: isToday ? "var(--accent-green)" : "var(--text-primary)", lineHeight: 1, letterSpacing: "-0.01em" }}>
                     {colDate.getDate()}
                   </span>
                 </div>
@@ -907,7 +1013,7 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                       {count > 0 && (
                         <span style={{
                           position: "absolute", bottom: 2, right: 3,
-                          fontSize: 8, fontWeight: 700, lineHeight: 1,
+                          fontSize: "var(--t-micro)", fontWeight: 700, lineHeight: 1,
                           color: "#34d399",
                           pointerEvents: "none",
                         }}>{count}</span>
@@ -965,13 +1071,13 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
                         onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.filter = "brightness(1.25)"; }}
                         onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.filter = ""; }}
                       >
-                        <div style={{ fontSize: 13, fontWeight: 800, color: "#fff", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", letterSpacing: "0.01em" }}>
+                        <div style={{ fontSize: "var(--t-lead)", fontWeight: 800, color: "#fff", lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", letterSpacing: "0.01em" }}>
                           {show.name}
                         </div>
                         {showTracks && blockSongs.length > 0 && clampDur >= 1 && (
                           <div style={{ flex: 1, minHeight: 0, overflowY: "auto", marginTop: 3 }}>
                             {blockSongs.map((s, i) => (
-                              <div key={i} style={{ fontSize: 8, color: "rgba(255,255,255,0.92)", lineHeight: 1.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                              <div key={i} style={{ fontSize: "var(--t-micro)", color: "rgba(255,255,255,0.92)", lineHeight: 1.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                                 <span style={{ opacity: 0.6, fontFamily: "'DM Mono', monospace" }}>{new Date(s.scheduled_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span> {s.title}
                               </div>
                             ))}
@@ -1015,20 +1121,20 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
             onClick={e => e.stopPropagation()}
             style={{ width: 430, maxWidth: "88vw", background: "var(--bg-secondary)",
                      border: "1px solid var(--border-primary)", borderTop: "3px solid var(--accent-green)",
-                     boxShadow: "0 18px 50px rgba(0,0,0,0.5)", padding: "18px 20px 16px",
+                     boxShadow: "var(--e-float)", padding: "18px 20px 16px",
                      fontFamily: "'Inter', system-ui, sans-serif" }}
           >
-            <div style={{ fontSize: 15, fontWeight: 800, color: "var(--text-primary)", marginBottom: 10 }}>
+            <div style={{ fontSize: "var(--t-lead)", fontWeight: 800, color: "var(--text-primary)", marginBottom: 10 }}>
               Generate this week?
             </div>
-            <div style={{ fontSize: 13, lineHeight: 1.55, color: "var(--text-secondary)", marginBottom: 12 }}>
+            <div style={{ fontSize: "var(--t-lead)", lineHeight: 1.55, color: "var(--text-secondary)", marginBottom: 12 }}>
               Ether builds the log <strong>one day at a time</strong>, picking every song against your clocks
               and separation rules. A full week takes a few minutes.
               <br /><br />
               You can keep working while it runs — a progress bar appears in the bottom-left corner showing
               which day it is on, and you can stop it at any time. Days already finished are kept.
             </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12,
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--t-body)",
                             color: "var(--text-tertiary)", marginBottom: 16, cursor: "pointer" }}>
               <input
                 type="checkbox"
@@ -1039,13 +1145,13 @@ export default function BroadcastCalendar({ onShowClick }: BroadcastCalendarProp
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <button
                 onClick={() => setConfirmGen(false)}
-                style={{ padding: "8px 16px", borderRadius: 0, fontSize: 13, fontWeight: 600,
+                style={{ padding: "8px 16px", borderRadius: 0, fontSize: "var(--t-lead)", fontWeight: 600,
                          background: "var(--bg-tertiary)", color: "var(--text-secondary)",
                          border: "1px solid var(--border-primary)", cursor: "pointer" }}
               >Cancel</button>
               <button
                 onClick={() => { setConfirmGen(false); generate(); }}
-                style={{ padding: "8px 22px", borderRadius: 0, fontSize: 13, fontWeight: 800,
+                style={{ padding: "8px 22px", borderRadius: 0, fontSize: "var(--t-lead)", fontWeight: 800,
                          background: "var(--accent-green)", color: "#0a160d", border: "none", cursor: "pointer" }}
               >OK, generate</button>
             </div>

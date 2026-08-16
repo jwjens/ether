@@ -86,8 +86,8 @@ export default function JinglesPanel({ stationId, onMutated }: { stationId: numb
   const catValue = (c: MusicCat) => c.overlay_kind === "item" && c.overlay_song_id != null ? `item:${c.overlay_song_id}` : c.overlay_kind === "pool" && c.overlay_category_id != null ? `pool:${c.overlay_category_id}` : "";
   const setHours = async (c: MusicCat, mask: number) => { try { await ether()?.categories?.updateById(c.id, { overlay_active_hours: mask }); await reload(); onMutated?.(["categories"]); } catch {} };
 
-  const inp: React.CSSProperties = { width: 46, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", borderRadius: 3, padding: "2px 4px", fontSize: 12, fontFamily: "'DM Mono', monospace" };
-  const sel: React.CSSProperties = { background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", borderRadius: 4, padding: "3px 6px", fontSize: 12 };
+  const inp: React.CSSProperties = { width: 46, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", borderRadius: "var(--r-0)", padding: "2px 4px", fontSize: "var(--t-body)", fontFamily: "'DM Mono', monospace" };
+  const sel: React.CSSProperties = { background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", borderRadius: "var(--r-0)", padding: "3px 6px", fontSize: "var(--t-body)" };
 
   const jinPools = pools.filter(p => (p.type || "JIN") === "JIN");
   const swpPools = pools.filter(p => (p.type || "JIN") === "SWP");
@@ -101,7 +101,7 @@ export default function JinglesPanel({ stationId, onMutated }: { stationId: numb
         {(["manage", "create"] as const).map(m => (
           <button key={m} onClick={() => { setMode(m); if (m === "manage") reload(); }} style={{
             padding: "6px 14px", background: "transparent", border: "none", borderBottom: `2px solid ${mode === m ? accent : "transparent"}`,
-            color: mode === m ? accent : "var(--text-tertiary)", fontWeight: 800, fontSize: 12, letterSpacing: "0.04em", cursor: "pointer",
+            color: mode === m ? accent : "var(--text-tertiary)", fontWeight: 800, fontSize: "var(--t-body)", letterSpacing: "0.04em", cursor: "pointer",
           }}>{m === "manage" ? "MANAGE" : "ADD IMAGING — CUT A REEL"}</button>
         ))}
       </div>
@@ -109,29 +109,29 @@ export default function JinglesPanel({ stationId, onMutated }: { stationId: numb
         <div style={{ flex: 1, minHeight: 0 }}><ReelSplitter stationId={stationId} embedded onCommitted={reload} /></div>
       ) : (
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 16, maxWidth: 900 }}>
-      <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 16, lineHeight: 1.5 }}>
+      <div style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", marginBottom: 16, lineHeight: 1.5 }}>
         Overlay imaging fires on the seam between songs (over master). Assign a <b>specific</b> jingle/sweeper
         or a <b>rotating pool</b> to each music category below — some categories get imaging, some don't. Mark
         songs <b style={{ color: JIN_TEAL }}>JIN</b> / <b style={{ color: SWP_INDIGO }}>SWP</b> in the Library first.
       </div>
 
       {/* ── Category assignments (the core) ── */}
-      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: 8 }}>Category assignments</div>
+      <div style={{ fontSize: "var(--t-small)", fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: 8 }}>Category assignments</div>
       {cats.length === 0 ? (
-        <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic", marginBottom: 20 }}>No music categories yet.</div>
+        <div style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", fontStyle: "italic", marginBottom: 20 }}>No music categories yet.</div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "150px 1fr auto", gap: "6px 14px", alignItems: "center", marginBottom: 14 }}>
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>CATEGORY</div>
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>OVERLAY</div>
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>ACTIVE HOURS</div>
+          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>CATEGORY</div>
+          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>OVERLAY</div>
+          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>ACTIVE HOURS</div>
           {cats.map(c => {
             const rng = rangeFromMask(c.overlay_active_hours ?? ALWAYS);
             const always = rng === null;
             return (
               <Fragment key={c.id}>
                 <div key={c.id + "n"} style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 2, background: c.color || "var(--text-tertiary)", flexShrink: 0 }} />
-                  <span style={{ fontSize: 12.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.code}{c.name && c.name !== c.code ? ` · ${c.name}` : ""}</span>
+                  <span style={{ width: 8, height: 8, borderRadius: "var(--r-0)", background: c.color || "var(--text-tertiary)", flexShrink: 0 }} />
+                  <span style={{ fontSize: "var(--t-small)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.code}{c.name && c.name !== c.code ? ` · ${c.name}` : ""}</span>
                 </div>
                 <select key={c.id + "s"} value={catValue(c)} onChange={e => assignCategory(c, e.target.value)} style={sel}>
                   <option value="">— none (clean segue) —</option>
@@ -141,7 +141,7 @@ export default function JinglesPanel({ stationId, onMutated }: { stationId: numb
                   {swpPools.length > 0 && <optgroup label="Sweeper pool (rotates)">{swpPools.map(p => <option key={"p" + p.id} value={`pool:${p.id}`}>◆ {p.name}</option>)}</optgroup>}
                 </select>
                 <div key={c.id + "h"} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-secondary)", cursor: "pointer" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "var(--t-small)", color: "var(--text-secondary)", cursor: "pointer" }}>
                     <input type="checkbox" checked={always} onChange={e => setHours(c, e.target.checked ? ALWAYS : maskFromRange(6, 19))} /> Always
                   </label>
                   {!always && rng && (
@@ -149,7 +149,7 @@ export default function JinglesPanel({ stationId, onMutated }: { stationId: numb
                       <select value={rng.from} onChange={e => setHours(c, maskFromRange(Math.min(Number(e.target.value), rng.to), rng.to))} style={{ ...sel, padding: "2px 4px" }}>
                         {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{hhLabel(h)}</option>)}
                       </select>
-                      <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>–</span>
+                      <span style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)" }}>–</span>
                       <select value={rng.to} onChange={e => setHours(c, maskFromRange(rng.from, Math.max(Number(e.target.value), rng.from)))} style={{ ...sel, padding: "2px 4px" }}>
                         {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{hhLabel(h)}</option>)}
                       </select>
@@ -161,7 +161,7 @@ export default function JinglesPanel({ stationId, onMutated }: { stationId: numb
           })}
         </div>
       )}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 22, fontSize: 12, color: "var(--text-secondary)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 22, fontSize: "var(--t-body)", color: "var(--text-secondary)" }}>
         <span>Fallback for unassigned categories:</span>
         <select value={fallbackId ?? ""} onChange={e => setFallback(e.target.value ? Number(e.target.value) : null)} style={sel}>
           <option value="">None (clean segue — silence is fine)</option>
@@ -174,7 +174,7 @@ export default function JinglesPanel({ stationId, onMutated }: { stationId: numb
         {(["JIN", "SWP"] as const).map(t => (
           <button key={t} onClick={() => setTab(t)} style={{
             padding: "6px 14px", background: "transparent", border: "none", borderBottom: `2px solid ${tab === t ? (t === "SWP" ? SWP_INDIGO : JIN_TEAL) : "transparent"}`,
-            color: tab === t ? (t === "SWP" ? SWP_INDIGO : JIN_TEAL) : "var(--text-tertiary)", fontWeight: 800, fontSize: 12, letterSpacing: "0.06em", cursor: "pointer",
+            color: tab === t ? (t === "SWP" ? SWP_INDIGO : JIN_TEAL) : "var(--text-tertiary)", fontWeight: 800, fontSize: "var(--t-body)", letterSpacing: "0.06em", cursor: "pointer",
           }}>{t === "SWP" ? "SWEEPERS" : "JINGLES"}</button>
         ))}
       </div>
@@ -182,43 +182,43 @@ export default function JinglesPanel({ stationId, onMutated }: { stationId: numb
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === "Enter" && createPool()}
           placeholder={tab === "SWP" ? "New sweeper pool (e.g. Legal IDs)" : "New jingle pool (e.g. Station IDs)"}
-          style={{ flex: 1, maxWidth: 280, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", borderRadius: 4, padding: "6px 10px", fontSize: 13 }} />
-        <button onClick={createPool} disabled={busy || !newName.trim()} style={{ padding: "6px 14px", borderRadius: 4, border: "none", background: accent, color: "#04201c", fontWeight: 700, fontSize: 13, cursor: "pointer", opacity: busy || !newName.trim() ? 0.5 : 1 }}>Add pool</button>
+          style={{ flex: 1, maxWidth: 280, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", borderRadius: "var(--r-0)", padding: "6px 10px", fontSize: "var(--t-lead)" }} />
+        <button onClick={createPool} disabled={busy || !newName.trim()} style={{ padding: "var(--s-2) var(--s-3)", borderRadius: "var(--r-0)", border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", color: "var(--text-secondary)", fontWeight: 700, fontSize: "var(--t-small)", letterSpacing: "0.06em", textTransform: "uppercase", cursor: "pointer", opacity: busy || !newName.trim() ? 0.5 : 1 }}>Add pool</button>
       </div>
 
       {tabPools.length > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: "6px 12px", alignItems: "center", marginBottom: 16 }}>
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>POOL</div>
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>LEAD-IN s</div>
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>UNDERLAP s</div>
+          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>POOL</div>
+          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>LEAD-IN s</div>
+          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>UNDERLAP s</div>
           <div />
           {tabPools.map(p => (
             <Fragment key={p.id}>
               <div key={p.id + "n"} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: p.color || accent }} />
                 <input defaultValue={p.name} onBlur={e => e.target.value.trim() && e.target.value !== p.name && patchPool(p, { name: e.target.value.trim() })}
-                  style={{ flex: 1, background: "transparent", color: "var(--text-primary)", border: "1px solid transparent", borderRadius: 3, padding: "2px 4px", fontSize: 13, fontWeight: 600 }} />
-                <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{tabSongs.filter(s => s.jingle_category_id === p.id).length} in pool</span>
+                  style={{ flex: 1, background: "transparent", color: "var(--text-primary)", border: "1px solid transparent", borderRadius: "var(--r-0)", padding: "2px 4px", fontSize: "var(--t-lead)", fontWeight: 600 }} />
+                <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>{tabSongs.filter(s => s.jingle_category_id === p.id).length} in pool</span>
               </div>
               <input key={p.id + "l"} type="number" min={0} step={0.5} defaultValue={p.lead_in_sec} onBlur={e => patchPool(p, { lead_in_sec: Math.max(0, parseFloat(e.target.value) || p.lead_in_sec) })} style={inp} />
               <input key={p.id + "u"} type="number" min={0} step={0.5} defaultValue={p.underlap_sec} onBlur={e => patchPool(p, { underlap_sec: Math.max(0, parseFloat(e.target.value) || p.underlap_sec) })} style={inp} />
-              <button key={p.id + "d"} onClick={() => delPool(p)} title="Delete pool" style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14 }}>✕</button>
+              <button key={p.id + "d"} onClick={() => delPool(p)} title="Delete pool" style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-lead)" }}>✕</button>
             </Fragment>
           ))}
         </div>
       )}
 
-      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: 8 }}>{tab === "SWP" ? "Sweepers" : "Jingles"} ({tabSongs.length})</div>
+      <div style={{ fontSize: "var(--t-small)", fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: 8 }}>{tab === "SWP" ? "Sweepers" : "Jingles"} ({tabSongs.length})</div>
       {tabSongs.length === 0 ? (
-        <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>None tagged. In the Library, right-click an item and choose “Mark as {tab === "SWP" ? "Sweeper (SWP)" : "Jingle (JIN)"}”, then assign it to a pool here.</div>
+        <div style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", fontStyle: "italic" }}>None tagged. In the Library, right-click an item and choose “Mark as {tab === "SWP" ? "Sweeper (SWP)" : "Jingle (JIN)"}”, then assign it to a pool here.</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {tabSongs.map(s => (
-            <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 8px", background: "var(--bg-secondary)", borderRadius: 4 }}>
+            <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 8px", background: "var(--bg-secondary)", borderRadius: "var(--r-0)" }}>
               <span style={{ width: 6, height: 6, borderRadius: "50%", background: accent, flexShrink: 0 }} />
               <InlineNameEditor
                 value={s.title}
-                display={<span style={{ fontSize: 13 }}>{s.title}{s.artist_name ? ` — ${s.artist_name}` : ""}</span>}
+                display={<span style={{ fontSize: "var(--t-lead)" }}>{s.title}{s.artist_name ? ` — ${s.artist_name}` : ""}</span>}
                 onSave={async (next) => { try { await ether()?.songs?.updateById(s.id, { title: next }); await reload(); } catch {} }}
               />
               <select value={s.jingle_category_id ?? ""} onChange={e => assignSong(s, e.target.value ? Number(e.target.value) : null)} style={sel}>

@@ -38,6 +38,8 @@ import { CategoriesTab } from "../scheduler/CategoriesTab";
 import Spots from "../Spots";
 import JinglesPanel from "../JinglesPanel";
 import RotationAnalytics from "../RotationAnalytics";
+import BroadcastCalendar from "../BroadcastCalendar";
+import Logs from "../Logs";
 import type { ClockSlot } from "../scheduler/types";
 
 // ── dev instrumentation (kept from the Phase 0 spike) ────────────────────────────────────────────
@@ -48,7 +50,7 @@ const STATS_ON = (() => {
     return window.localStorage?.getItem("ether.dockstats") === "1";
   } catch { return false; }
 })();
-const renderCounts = { shell: 0, shows: 0, clocks: 0, categories: 0, spots: 0, jingles: 0, rotation: 0 };
+const renderCounts = { shell: 0, shows: 0, clocks: 0, categories: 0, spots: 0, jingles: 0, rotation: 0, log: 0, playlog: 0 };
 
 export type GoalRow = { categoryId: number; category: string; target: number; slots: number; delta: number; unused: boolean };
 type GoalClock = { clockId: number; clock: string; musicSlots: number; rows: GoalRow[] };
@@ -73,9 +75,16 @@ const MIN_PANE_PX = 220;
 // pane and that no pane is unreachable from all of them.
 
 // ── panes ────────────────────────────────────────────────────────────────────────────────────────
-function PaneFrame({ children }: { children: React.ReactNode }) {
+/** `flush` = no padding and NO outer scroll, for a pane that is already a full-height layout with a
+ *  sticky toolbar and its own scroll region. Wrapping such a pane in the padded, scrolling frame
+ *  gives it two scrollbars and pushes its toolbar out of view — which is exactly what the Log pane
+ *  does, since it is the Calendar's day view whole. */
+function PaneFrame({ children, flush }: { children: React.ReactNode; flush?: boolean }) {
   return (
-    <div style={{ height: "100%", overflowY: "auto", padding: "var(--s-4)", background: "var(--bg-secondary)", borderRadius: "var(--r-0)", boxShadow: "var(--e-0)" }}>
+    <div style={{
+      height: "100%", background: "var(--bg-secondary)", borderRadius: "var(--r-0)", boxShadow: "var(--e-0)",
+      ...(flush ? { overflow: "hidden", padding: 0 } : { overflowY: "auto", padding: "var(--s-4)" }),
+    }}>
       {children}
     </div>
   );
@@ -152,6 +161,47 @@ const components = {
     return (
       <PaneFrame>
         <RotationAnalytics hideHeader />
+      </PaneFrame>
+    );
+  },
+  // ── THE LOG ────────────────────────────────────────────────────────────────────────────────────
+  // The Calendar's day view, hosted whole — the same component, the same state, the same handlers.
+  // Generate, pin, delete, inline edit and drag-to-reorder are not re-implemented here; they are the
+  // ones the Calendar page has always used, which is why they behave identically. The Calendar page
+  // stays exactly as it was: another door onto this room.
+  //
+  // It already renders on the SHARED DataGrid (4.4.200) — sortable headers, operator-resizable
+  // columns persisted per station, dense rows, required empty state. So "reuse the grid, do not
+  // invent a second one" is satisfied by hosting rather than by conversion; there was no second grid
+  // to avoid building.
+  //
+  // Unlike Rotation Analytics — which is read-only history and deliberately takes no hub props —
+  // this pane WRITES. So it takes onMutated and joins the workspace's one-store-one-refresh rule.
+  log: () => {
+    if (STATS_ON) renderCounts.log++;
+    const { hub } = useModel();
+    // Click a show → the log focuses that show's hours (the same scoping a show block on the week
+    // grid applies). Deselect and it widens back to the whole day.
+    const show = hub.shows.find(s => s.id === hub.selection.showId);
+    return (
+      <PaneFrame flush>
+        <BroadcastCalendar
+          hostedDayLog
+          focusShow={show ? { name: show.name, startHour: show.start_hour, endHour: show.end_hour } : null}
+          onMutated={hub.onMutated}
+        />
+      </PaneFrame>
+    );
+  },
+  // ── PLAY LOG ───────────────────────────────────────────────────────────────────────────────────
+  // The as-run record, hosted beside the plan that produced it. Read-only and permanent, so like
+  // Rotation Analytics it takes NO hub props: nothing edited in this workspace can change what
+  // already went to air, and wiring it to the store would imply otherwise.
+  playlog: () => {
+    if (STATS_ON) renderCounts.playlog++;
+    return (
+      <PaneFrame flush>
+        <Logs hideHeader />
       </PaneFrame>
     );
   },
@@ -300,6 +350,27 @@ export default function ScheduleWorkspace({ onOpenAnalytics, onUseFixedLayout }:
     api.onDidLayoutChange(() => { persist(api); syncOpen(api); });
   }, [buildDefault, syncOpen, persist]);
 
+  // ── Focus a pane from outside ──────────────────────────────────────────────────────────────────
+  // Schedule ▸ Program Log opens this workspace and asks for that pane. It REOPENS the pane first
+  // if the operator had closed it: a menu item that lands on a workspace where the thing it just
+  // named is hidden is a door onto a wall.
+  useEffect(() => {
+    const onFocusPane = (e: Event) => {
+      const id = String((e as CustomEvent).detail || "");
+      const api = apiRef.current;
+      if (!api || !PANELS.some(p => p.id === id)) return;
+      if (!api.panels.find(p => p.id === id)) {
+        const anchor = api.panels[api.panels.length - 1];
+        addPanel(api, id, anchor ? { position: { referencePanel: anchor.id, direction: "right" } } : undefined);
+        syncOpen(api);
+      }
+      try { (api.panels.find(p => p.id === id) as any)?.api?.setActive?.(); }
+      catch { /* focus is a nicety, never a blocker */ }
+    };
+    window.addEventListener("ether:focus-schedule-pane", onFocusPane);
+    return () => window.removeEventListener("ether:focus-schedule-pane", onFocusPane);
+  }, [addPanel, syncOpen]);
+
   // ── Panels menu: close is reversible ───────────────────────────────────────────────────────────
   const togglePanel = useCallback((id: string) => {
     const api = apiRef.current;
@@ -364,7 +435,7 @@ export default function ScheduleWorkspace({ onOpenAnalytics, onUseFixedLayout }:
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "var(--s-4)", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: "var(--s-5)" }}>
-          <h1 style={{ fontSize: "var(--t-head)", fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", margin: 0 }}>Schedule Manager</h1>
+          <h1 style={{ fontSize: "var(--t-lead)", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-secondary)", margin: 0 }}>Schedule Manager</h1>
           <span style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)", letterSpacing: "0.04em" }}>
             {hub.loading ? "LOADING" : `${hub.shows.length} SHOWS · ${hub.clocks.length} CLOCKS · ${hub.categories.length} CATEGORIES`}
           </span>
@@ -374,7 +445,7 @@ export default function ScheduleWorkspace({ onOpenAnalytics, onUseFixedLayout }:
           {STATS_ON && (
             <span style={{ ...btn, cursor: "default", fontFamily: "'DM Mono', monospace", color: "var(--accent-amber)" }}
               onClick={() => forceStats(n => n + 1)}>
-              shell {renderCounts.shell} · s{renderCounts.shows} c{renderCounts.clocks} k{renderCounts.categories} p{renderCounts.spots} j{renderCounts.jingles}
+              shell {renderCounts.shell} · s{renderCounts.shows} c{renderCounts.clocks} k{renderCounts.categories} p{renderCounts.spots} j{renderCounts.jingles} r{renderCounts.rotation} L{renderCounts.log}
             </span>
           )}
 

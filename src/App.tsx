@@ -64,7 +64,6 @@ import UpNext from "./components/UpNext";
 import InlineNameEditor from "./components/InlineNameEditor";
 import Scheduler from "./components/Scheduler";
 import ProgramLog from "./components/ProgramLog";
-import PlayLog from "./components/PlayLog";
 import Logs from "./components/Logs";
 import RotationAnalytics from "./components/RotationAnalytics";
 import ScheduleManager from "./components/ScheduleManager";
@@ -129,7 +128,7 @@ import VUMeter from "./components/VUMeter";
 import IrisBadge from "./components/IrisBadge";
 import { SchedulerHealthHost } from "./components/SchedulerHealthPanel";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "programlog" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "rotation" | "schedulehub" | "schedulehubfixed" | "help";
+type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "rotation" | "schedulehub" | "schedulehubfixed" | "help";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -1025,8 +1024,17 @@ export default function App() {
   // Native menu IPC handler
   useEffect(() => {
     const handler = (window as any).ether.on("menu-action", (cmd: string) => {
-      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:programlog":"programlog","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio","nav:importlibrary":"importlibrary","nav:cloudbackup":"cloudbackup","nav:clipeditor":"clipeditor","nav:captions":"captions","nav:eas":"eas","nav:rotation":"rotation","nav:schedulehub":"schedulehub" };
+      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio","nav:importlibrary":"importlibrary","nav:cloudbackup":"cloudbackup","nav:clipeditor":"clipeditor","nav:captions":"captions","nav:eas":"eas","nav:rotation":"rotation","nav:schedulehub":"schedulehub" };
       if (panels[cmd]) { setPanel(panels[cmd] as Panel); return; }
+      // Schedule ▸ Program Log — the PLAN, which lives as a pane in the workspace rather than as a
+      // page of its own. Open the workspace and focus that pane. (It used to open the as-run record,
+      // i.e. the opposite document under the right name.) The event is fired after the panel switch
+      // so the workspace is mounted and listening by the time it lands.
+      if (cmd === "nav:programlog") {
+        setPanel("schedulehub");
+        setTimeout(() => window.dispatchEvent(new CustomEvent("ether:focus-schedule-pane", { detail: "log" })), 0);
+        return;
+      }
       if (cmd === "nav:scheduler-tab:clocks")     { setSchedulerTab("clocks"); return; }
       if (cmd === "nav:scheduler-tab:shows")      { setSchedulerTab("shows"); return; }
       if (cmd === "nav:scheduler-tab:categories") { setSchedulerTab("categories"); return; }
@@ -2524,7 +2532,7 @@ export default function App() {
                   { key: "schedule",       emoji: "📋", label: "Schedule",     action: () => setPanel("clocks"),          active: panel === "clocks"          },
                   { key: "schedulebuilder", emoji: "🗓", label: "Program Log",  action: () => setPanel("schedulebuilder"), active: panel === "schedulebuilder" },
                   { key: "calendar",       emoji: "📅", label: "Calendar",     action: () => setPanel("calendar"),        active: panel === "calendar"        },
-                  { key: "programlog",     emoji: "📜", label: "Play History", action: () => setPanel("programlog"),      active: panel === "programlog"      },
+                  { key: "logs",           emoji: "📜", label: "Play Log",     action: () => setPanel("logs"),            active: panel === "logs"            },
                   { key: "schedulehub",    emoji: "🗂", label: "Schedule Manager", action: () => setPanel("schedulehub"), active: panel === "schedulehub" },
                   { key: "rotation",       emoji: "📊", label: "Rotation Analytics", action: () => setPanel("rotation"), active: panel === "rotation"   },
                   { key: "cartwall",   emoji: "🎛️", label: "Carts",       action: () => setPanel("cartwall"),    active: panel === "cartwall"    },
@@ -2702,7 +2710,6 @@ export default function App() {
             <div style={{ flex: 1, overflowY: "auto" }}>
               {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onLoadC={loadC} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} onSendToStudio={(s) => { try { (window as any).ether.invoke("studio:push-track", { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms }); } catch { /* not in electron */ } }} />}
               {panel === "clocks" && <Scheduler defaultTab={schedulerTab} />}
-              {panel === "programlog" && <PlayLog onClose={() => setPanel("live")} />}
               {panel === "schedulebuilder" && <ProgramLog onClose={() => setPanel("live")} />}
               {/* Show+ DAW is no longer an inline takeover — it opens as its own pop-out window
                   (WINDOWS → Show+ DAW / Tools → Show+ DAW → window:popout "studiopro"). Single

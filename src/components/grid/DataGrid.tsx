@@ -201,17 +201,24 @@ export function DataGrid<T>({
 
   const byId = useMemo(() => new Map(columns.map(c => [c.id, c])), [columns]);
 
+  // Column headers: 11px UPPERCASE with letter-spacing — the workspace's label voice, used
+  // identically in every pane so a header reads as a header anywhere you look.
   const th: React.CSSProperties = {
-    position: "relative", padding: "var(--s-3) var(--s-4)", textAlign: "left",
-    fontSize: "var(--t-micro)", fontWeight: 700, color: "var(--text-tertiary)",
+    position: "relative", padding: "var(--s-2) var(--s-4)", textAlign: "left",
+    fontSize: "var(--t-small)", fontWeight: 700, color: "var(--text-tertiary)",
     textTransform: "uppercase", letterSpacing: "0.1em", whiteSpace: "nowrap",
     userSelect: "none", cursor: "pointer",
   };
+  // ROW HEIGHT IS THE WHOLE ARGUMENT. Both densities now land inside 24–28px, where a broadcast
+  // log belongs: the operator is scanning a hundred rows for the one that is wrong, and every
+  // pixel of row height is a row they cannot see. `roomy` was 38px with 14px text — a third of the
+  // screen spent on air. It is now 28px/13px: still the roomier of the two, still comfortable for
+  // the drag-and-edit the log needs, but a third more rows in the same pane.
   const roomy = density === "roomy";
   const td: React.CSSProperties = {
-    padding: roomy ? "var(--s-3) var(--s-4)" : "var(--s-2) var(--s-4)",
-    fontSize: roomy ? 14 : "var(--t-small)",
-    height: roomy ? 38 : undefined,
+    padding: roomy ? "var(--s-2) var(--s-4)" : "var(--s-1) var(--s-4)",
+    fontSize: roomy ? "var(--t-lead)" : "var(--t-body)",
+    height: roomy ? 28 : 24,
     color: "var(--text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
   };
 

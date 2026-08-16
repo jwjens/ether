@@ -42,7 +42,12 @@ const DECK_COLORS: Record<string, string> = {
   C: "var(--accent-purple)",
 };
 
-export default function Logs() {
+export interface LogsProps {
+  /** Hosted as the Play Log pane in the Schedule Manager, where the pane tab already names it. */
+  hideHeader?: boolean;
+}
+
+export default function Logs({ hideHeader }: LogsProps = {}) {
   const { stationId } = useActiveStation();
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [total, setTotal] = useState(0);
@@ -51,6 +56,11 @@ export default function Logs() {
   const [filter, setFilter] = useState<"today" | "week" | "month" | "all">("today");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  // PARITY with the simple play-log page this one replaces (4.4.218). Both were real filters an
+  // operator used to answer "did that song air, and off which deck" — consolidating onto this page
+  // without them would have been a downgrade dressed as a cleanup.
+  const [search, setSearch] = useState("");
+  const [deckFilter, setDeckFilter] = useState("");
   // Customer's actual station name — used in CSV exports + printed traffic
   // log header instead of a hardcoded placeholder. Empty until KV fetch
   // resolves; headers and exports gracefully omit the prefix when empty.
@@ -352,8 +362,19 @@ export default function Logs() {
     if (win) { win.document.write(html); win.document.close(); setTimeout(() => win.print(), 500); }
   };
 
-  const uniqueArtists = new Set(entries.filter(e => e.artist).map(e => e.artist)).size;
-  const uniqueSongs = new Set(entries.map(e => e.title)).size;
+  // Client-side, like the page it replaces: the range query already bounded the rows, and these two
+  // are a scan of what is on screen rather than a re-query.
+  const visible = entries.filter(e => {
+    const q = search.trim().toLowerCase();
+    const matchSearch = !q
+      || (e.title || "").toLowerCase().includes(q)
+      || (e.artist || "").toLowerCase().includes(q);
+    const matchDeck = !deckFilter || (e.deck || "").toUpperCase() === deckFilter.toUpperCase();
+    return matchSearch && matchDeck;
+  });
+  const decks = Array.from(new Set(entries.map(e => e.deck).filter(Boolean))) as string[];
+  const uniqueArtists = new Set(visible.filter(e => e.artist).map(e => e.artist)).size;
+  const uniqueSongs = new Set(visible.map(e => e.title)).size;
 
   const filterBtn = (id: typeof filter, label: string) => (
     <button onClick={() => setFilter(id)} style={{
@@ -361,7 +382,7 @@ export default function Logs() {
       background: filter === id ? "var(--accent-blue)" : "var(--bg-secondary)",
       color: filter === id ? "#fff" : "var(--text-tertiary)",
       border: filter === id ? "none" : "1px solid var(--border-primary)",
-      boxShadow: filter === id ? "0 2px 8px rgba(14,165,233,0.3)" : "none",
+      boxShadow: "var(--e-0)",
     }}>{label}</button>
   );
 
@@ -370,10 +391,21 @@ export default function Logs() {
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" as any, gap: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Newsreader', Georgia, serif" }}>
-            {view === "traffic" ? "Traffic" : "Play Log"}
-          </h1>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
+          {!hideHeader && (
+            <div>
+              <h1 style={{ fontSize: "var(--t-head)", fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", margin: 0, fontFamily: "'Newsreader', Georgia, serif" }}>
+                {view === "traffic" ? "Traffic" : "Play Log"}
+              </h1>
+              {/* One clarifying line, permanent — this is THE record page now, and it must never be
+                  mistaken for the plan. */}
+              <div style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)", marginTop: 2 }}>
+                {view === "traffic"
+                  ? "Spots scheduled against spots aired."
+                  : "What actually aired. Permanent record."}
+              </div>
+            </div>
+          )}
           {/* Two readings of the same period: everything that aired, or just the spots and whether
               they made air. Same date filter drives both. */}
           <div style={{ display: "flex", gap: 2 }}>
@@ -402,6 +434,23 @@ export default function Logs() {
           <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>→</span>
           <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setFilter("all"); }}
             style={{ padding: "5px 8px", borderRadius: 0, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+
+          {/* Search + deck — carried over from the simple page (parity, 4.4.218). Plays view only:
+              neither applies to the traffic affidavit, which is spots by advertiser. */}
+          {view === "plays" && (<>
+            <div style={{ width: 1, height: 20, background: "var(--border-primary)", margin: "0 2px" }} />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search title or artist…"
+              style={{ padding: "5px 8px", borderRadius: 0, fontSize: 11, width: 170, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+            <select value={deckFilter} onChange={e => setDeckFilter(e.target.value)}
+              style={{ padding: "5px 8px", borderRadius: 0, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
+              <option value="">All decks</option>
+              {decks.map(d => <option key={d} value={d}>Deck {d}</option>)}
+            </select>
+            {(search || deckFilter) && (
+              <button onClick={() => { setSearch(""); setDeckFilter(""); }} title="Clear search and deck filter"
+                style={{ padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer" }}>Clear</button>
+            )}
+          </>)}
 
           {/* Export buttons */}
           <div style={{ width: 1, height: 20, background: "var(--border-primary)", margin: "0 2px" }} />
@@ -483,7 +532,7 @@ export default function Logs() {
       {view === "plays" && (<>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
         {[
-          { label: "Songs Played", value: total },
+          { label: "Songs Played", value: visible.length === entries.length ? total : visible.length },
           { label: "Unique Artists", value: uniqueArtists },
           { label: "Unique Songs", value: uniqueSongs },
         ].map(s => (
@@ -495,11 +544,11 @@ export default function Logs() {
       </div>
 
       {/* Table */}
-      {entries.length === 0 ? (
-        <div style={{ textAlign: "center" as any, padding: "64px 24px" }}>
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.4 }}><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
-          <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>No plays yet</div>
-          <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Start playing music and it will appear here automatically</div>
+      {visible.length === 0 ? (
+        <div style={{ padding: "var(--s-5)", fontSize: "var(--t-body)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", background: "var(--bg-secondary)" }}>
+          {search || deckFilter
+            ? "Nothing in this period matches that search."
+            : "Nothing aired in this period."}
         </div>
       ) : (
         <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden" }}>
@@ -512,9 +561,9 @@ export default function Logs() {
               </tr>
             </thead>
             <tbody>
-              {entries.map((e, i) => (
+              {visible.map((e, i) => (
                 <tr key={e.id}
-                  style={{ borderBottom: i < entries.length - 1 ? "1px solid var(--border-primary)" : "none" }}
+                  style={{ borderBottom: i < visible.length - 1 ? "1px solid var(--border-primary)" : "none" }}
                   onMouseEnter={ev => (ev.currentTarget.style.background = "var(--bg-hover)")}
                   onMouseLeave={ev => (ev.currentTarget.style.background = "transparent")}
                 >
