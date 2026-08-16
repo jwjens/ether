@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import ethercastWordmark from "../assets/ethercast-wordmark.svg";
-import { queryOne } from "../db/client";
+import { queryOne, query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { useAudioEngine } from "../audio/AudioEngineContext";
@@ -8,7 +8,19 @@ import { getNextTransition } from "../audio/showClock";
 
 // ── Types ─────────────────────────────────────────────────────
 
-interface Operator { id: number; name: string; initials: string; }
+/** A MEMBER of this profile — the person whose PIN unlocks the app (users table), not a separate
+ *  "operator" roster. The operators table is dead: it carried a name and initials, no credential and
+ *  no privileges, and it was station-scoped, so a station re-key silently emptied the shift screen.
+ *  A person is not per-station; this read is deliberately UNSCOPED and cannot break that way again. */
+interface Operator { id: number; name: string; initials: string; role?: string | null; }
+
+/** users has no initials column — derive them, same shape the old roster stored. */
+function initialsOf(name: string): string {
+  const parts = String(name || "").trim().split(/s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
 interface ShowInfo  { name: string; start_hour: number; end_hour: number; }
 interface QueueItem { title: string; artist: string; durationMs?: number; duration_ms?: number; }
 
@@ -67,9 +79,7 @@ export default function OnShiftScreen({ onStart }: Props) {
   const [inviteUsed, setInviteUsed]     = useState(false);
   const [invitedBy, setInvitedBy]       = useState("Deniro");
   const [stationLogo, setStationLogo]   = useState<string | null>(null);
-  const [showNewOp, setShowNewOp]       = useState(false);
-  const [newName, setNewName]           = useState("");
-  const [newInitials, setNewInitials]   = useState("");
+  // showNewOp / newName / newInitials — REMOVED with the "+ Add operator" form (4.4.221).
   const [fadeOut, setFadeOut]           = useState(false);
   const noteRef = useRef<HTMLTextAreaElement>(null);
 
@@ -80,8 +90,11 @@ export default function OnShiftScreen({ onStart }: Props) {
     async function doLoad() {
       const v = ++loadVersionRef.current;
       try {
-        // Operators
-        const ops = await queryScoped<Operator>("SELECT id, name, initials FROM operators ORDER BY id", [], stationId);
+        // MEMBERS — the same rows UserLogin.tsx:60 authenticates against, read the same way
+        // (unscoped: a person belongs to the profile, not to one station).
+        const rows = await query<{ id: number; name: string; role: string | null }>(
+          "SELECT id, name, role FROM users ORDER BY id");
+        const ops: Operator[] = rows.map(r => ({ id: r.id, name: r.name, initials: initialsOf(r.name), role: r.role }));
         if (v !== loadVersionRef.current) return;
         setOperators(ops);
 
@@ -206,19 +219,10 @@ export default function OnShiftScreen({ onStart }: Props) {
     } catch {}
   };
 
-  // ── Add new operator ──────────────────────────────────────────
+  // addOperator — REMOVED (4.4.221). People are added as MEMBERS with a PIN in the membership UI,
+  // not as a second roster here. A button that created rows in a table nothing authenticates against
+  // was a trap: every click made a record that had to be migrated away later.
 
-  const addOperator = async () => {
-    if (!newName.trim()) return;
-    try {
-      await (window as any).ether.operators.create({ station_id: stationId, name: newName.trim(), initials: newInitials.trim() || newName.trim().charAt(0) });
-      const ops = await queryScoped<Operator>("SELECT id, name, initials FROM operators ORDER BY id", [], stationId);
-      setOperators(ops);
-      const newest = ops[ops.length - 1];
-      setOperator(newest);
-      setNewName(""); setNewInitials(""); setShowNewOp(false);
-    } catch {}
-  };
 
   // ── Start shift ───────────────────────────────────────────────
 
@@ -300,20 +304,10 @@ export default function OnShiftScreen({ onStart }: Props) {
                     {op.name}
                   </button>
                 ))}
-                {showNewOp ? (
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                    <input autoFocus value={newName} onChange={e => setNewName(e.target.value)}
-                      placeholder="Full name"
-                      style={{ padding: "6px 10px", background: S.card, border: `1px solid ${S.border}`, color: S.text, fontSize: 12, borderRadius: 0, width: 140, outline: "none" }} />
-                    <input value={newInitials} onChange={e => setNewInitials(e.target.value.slice(0, 3))}
-                      placeholder="Init"
-                      style={{ padding: "6px 8px", background: S.card, border: `1px solid ${S.border}`, color: S.text, fontSize: 12, borderRadius: 0, width: 50, outline: "none", textAlign: "center" }} />
-                    <button onClick={addOperator} style={{ padding: "6px 12px", background: S.purple, border: "none", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", borderRadius: 0 }}>Add</button>
-                    <button onClick={() => setShowNewOp(false)} style={{ padding: "6px 10px", background: "none", border: `1px solid ${S.border}`, color: S.muted, fontSize: 11, cursor: "pointer", borderRadius: 0 }}>✕</button>
-                  </div>
-                ) : (
-                  <button onClick={() => setShowNewOp(true)} style={{ padding: "11px 16px", background: "none", border: `1px dashed ${S.border}`, color: S.muted, fontSize: 14, cursor: "pointer", borderRadius: 0 }}>+ Add operator</button>
-                )}
+                {/* "+ Add operator" — REMOVED (4.4.221). This roster is now the profile's MEMBERS,
+                    the same rows the PIN screen authenticates against. Adding a person means adding
+                    a member with a PIN in the membership UI; a second roster here could create
+                    records nothing could log in as. */}
               </div>
             </div>
 
