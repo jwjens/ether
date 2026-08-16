@@ -201,10 +201,30 @@ class MergeEngine {
       if (this._uuidIdentity) this._remapRefs(m, row);
 
       // Build column list from defined values (undefined = column missing from payload).
-      // Under uuid-identity the row's own integer `id` is NOT cross-install identity (rows are keyed
-      // by uuid), so never write it — that is what prevents renumbering local rows out from under
-      // generated_schedule's local-id references.
-      const cols = Object.keys(row).filter(k => row[k] !== undefined && !(this._uuidIdentity && k === 'id'));
+      //
+      // UUID-IDENTITY AND THE LOCAL `id` — the defect this replaces (4.4.220).
+      // Under uuid-identity the sender's integer `id` is meaningless here: rows are keyed by uuid.
+      // The previous code therefore DROPPED `id` entirely, with a comment claiming that "is what
+      // prevents renumbering local rows". It does the exact opposite. The write below is
+      // INSERT OR REPLACE and `uuid` is UNIQUE — so REPLACE DELETES the local row and inserts a
+      // fresh one, which takes a NEW autoincrement id. On this machine that renumbered stations
+      // 1,2,3,4 -> 5,6,7,8 on the first pull after uuid-identity was enabled, orphaning every
+      // station-scoped child row (4 shows, 4 clocks, 78 clock_slots, 15 categories, 20 separation
+      // rules, 12 station_programming, 3 spots, plus ~177k history rows) — the "half-empty world".
+      //
+      // The fix does what that comment always intended: resolve the row's LOCAL id by uuid and write
+      // THAT, so a REPLACE re-inserts under the same id and every local reference survives. When no
+      // local row exists yet, `id` is still omitted so SQLite assigns one — a genuinely new row is
+      // the only case in which a new id is correct.
+      let localId = null;
+      if (this._uuidIdentity && row_id) {
+        try { localId = db.prepare(`SELECT id FROM ${table_name} WHERE uuid = ?`).get(row_id)?.id ?? null; }
+        catch (_) { localId = null; }   // no id/uuid pair on this table — behave as before
+      }
+      if (localId != null) row.id = localId;
+      const cols = Object.keys(row).filter(k =>
+        row[k] !== undefined && !(this._uuidIdentity && k === 'id' && localId == null)
+      );
       if (cols.length === 0) return;
 
       const placeholders = cols.map(() => '?').join(', ');

@@ -240,6 +240,34 @@ try {
 const ACTIVE_PROFILE = P.resolveActive({ freshPending: true });
 console.log(`[profiles] active=${ACTIVE_PROFILE.key}${ACTIVE_PROFILE.pending ? " (PENDING — sign-in required)" : ""}`);
 
+// ── THE IDENTITY RECEIPT (4.4.220) ─────────────────────────────────────────────────────────────
+// ONE line, written to the startup log on every launch, naming exactly who this install woke up as.
+// It is the first thing to read at a transmitter after an update: if the profile or the machine-id
+// is not the expected one, STOP — do not sign in, do not generate, do not go on air.
+//
+// Written here and not later because this is the moment identity is decided: the pointer has just
+// been read and the profile resolved, and everything downstream (database path, daemon, sync) hangs
+// off it. Machine-id is read separately and deliberately — it is NOT an input to profile resolution
+// (that is the pointer's job alone), so printing both together is what makes a mismatch visible
+// rather than inferable.
+try {
+  const fsx = require("fs");
+  const midFile = path.join(
+    (process.platform === "win32" && process.env.LOCALAPPDATA)
+      ? process.env.LOCALAPPDATA
+      : path.dirname(app.getPath("userData")),
+    "EtherMachine", "machine-id");
+  let mid = "(none yet — will be minted)";
+  try { if (fsx.existsSync(midFile)) mid = String(fsx.readFileSync(midFile, "utf8")).trim(); } catch {}
+  const banner =
+    `[identity] profile=${ACTIVE_PROFILE.key} pending=${ACTIVE_PROFILE.pending} ` +
+    `pointer=${P.readPointer() ?? "(none)"} machineId=${mid} ` +
+    `db=${P.dbPath(ACTIVE_PROFILE.key)} packaged=${(() => { try { return app.isPackaged; } catch { return "?"; } })()} ` +
+    `migration=${PROFILE_MIGRATION && PROFILE_MIGRATION.status}`;
+  console.log(banner);
+  try { logStartup(banner); } catch { /* startup log opens later; console line already stands */ }
+} catch (e) { console.error("[identity] banner failed:", e.message); }
+
 let SYNCED_TABLES, SYNCED_TABLES_SET;
 try {
   ({ SYNCED_TABLES } = require('./sync/synced-tables'));
