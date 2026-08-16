@@ -1062,7 +1062,8 @@ export default function App() {
     return () => (window as any).ether.off("menu-action", handler);
   }, []);
 
-  // Keep the File ▸ Switch Account enabled/greyed state in sync with the plan.
+  // Rebuild the native menu when the plan changes, so any plan-dependent items stay current.
+  // (This used to exist for File ▸ Switch Account's greyed state; that item was removed in 4.4.216.)
   useEffect(() => { (window as any).ether?.invoke?.("menu:rebuild")?.catch?.(() => {}); }, [currentPlan]);
 
   // Allow any UpgradePrompt button anywhere in the app to open the subscription panel

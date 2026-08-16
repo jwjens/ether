@@ -64,15 +64,22 @@ let _db = null;
 function getDb() {
   if (_db) return _db;
   const { DatabaseSync } = require("node:sqlite");
-  // Resolve the DB path the SAME way the main app does (electron/main.js _etherDir): prefer the
-  // explicit ETHER_DB_PATH the app sets, then the machine-local %LOCALAPPDATA%\Ether path. The old
-  // Roaming location is kept only as a last-resort legacy fallback. Without this unification the
-  // daemon could open a DIFFERENT, empty DB (Roaming) if ETHER_DB_PATH were ever missing.
-  const dbPath = process.env.ETHER_DB_PATH || (
-    (process.platform === "win32" && process.env.LOCALAPPDATA)
-      ? path.join(process.env.LOCALAPPDATA, "Ether", "com.ether.radio", "openair.db")
-      : path.join(os.homedir(), "AppData", "Roaming", "com.ether.radio", "openair.db")
-  );
+  // Resolve the DB path the SAME way the main app does: prefer the explicit ETHER_DB_PATH the app
+  // sets (spawnDaemon passes it through, and profile:adopt refreshes it on an account switch), then
+  // fall back to resolving the ACTIVE PROFILE through the same one path module main.js uses.
+  //
+  // PROFILE-PER-ACCOUNT: this fallback used to hardcode the single install-wide directory. Under
+  // profiles that would open a database belonging to nobody — or, after an account switch, the
+  // WRONG account's. It now reads profiles/active exactly as the app does. With no active profile
+  // there is nothing to play: the operator is signed out, and a signed-out profile stays dormant
+  // (design property 6) rather than quietly airing someone's stations.
+  let dbPath = process.env.ETHER_DB_PATH;
+  if (!dbPath) {
+    const P = require("../electron/profile-paths");
+    const active = P.resolveActive();
+    if (active.pending) throw new Error("no active profile (nobody is signed in) — refusing to open a database");
+    dbPath = P.dbPath(active.key);
+  }
   // Ensure the parent folder exists before opening — on a clean machine it won't, and SQLite
   // throws SQLITE_CANTOPEN if the directory is missing (fresh-install crash).
   try { require("fs").mkdirSync(path.dirname(dbPath), { recursive: true }); } catch {}

@@ -346,7 +346,6 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   const [authBusy, setAuthBusy] = useState(false);
   // Account isolation: the account currently loaded on THIS computer, when it differs from the one
   // signing in — so we offer to switch (swap to that account's own local DB) instead of mixing.
-  const [switchFromAccount, setSwitchFromAccount] = useState<string | null>(null);
   // Account hub handle (listen.ether-technologies.com/@<handle>) — chosen at sign-up.
   const [authHandle, setAuthHandle] = useState('');
   const [handleState, setHandleState] = useState<'idle' | 'checking' | 'ok' | 'taken' | 'invalid'>('idle');
@@ -463,6 +462,18 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     if (!res.ok || !data.ok) {
       throw new Error(data.error === 'invalid_credentials' ? 'Email or password is incorrect.' : (data.message || 'Could not activate your account. Please try again.'));
     }
+    if (!data.license_key) throw new Error('No license returned for this account. Please contact support.');
+    // ── SELECT THE PROFILE BEFORE WRITING A SINGLE BYTE ────────────────────────────────────────
+    // PROFILE-PER-ACCOUNT: the license key names this account's data directory. Adopt it FIRST, so
+    // every write below lands in THIS account's database. If the stamp went first it would be
+    // written into whichever database happened to be open — on a cold start with a stale session
+    // that is the PREVIOUS account's, and this account's license/email/JWT would contaminate it.
+    // Adopting first also means a returning account simply re-opens the folder it already has:
+    // nothing is wiped, nothing is pulled down again, and switching back is instant.
+    const adopted = await (window as any).ether.invoke('profile:adopt', { licenseKey: String(data.license_key).trim() });
+    if (!adopted?.ok) {
+      throw new Error(adopted?.detail || 'Could not open this account\'s data folder on this computer. Please try again.');
+    }
     const kv = (window as any).ether.stationConfigKv;
     await kv.upsertByKey(stationId, 'plan_tier', data.plan);
     // THE KEY THE ACCOUNT OWNS, STAMPED WHERE IT COUNTS.
@@ -482,7 +493,6 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     await kv.upsertByKey(stationId, 'license_email', data.email || email);
     if (data.trial && data.trial_ends_at) await kv.upsertByKey(stationId, 'trial_ends_at', data.trial_ends_at);
     setPlanGlobally(data.plan as PlanTier);
-    if (!data.license_key) throw new Error('No license returned for this account. Please contact support.');
     // Mark which account owns this install's data, at INSTALL level so it survives the per-station
     // key clears that Switch Account / sign-out do — that's what lets a later different-account
     // sign-in be detected and routed to its own database.
@@ -506,59 +516,29 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     } catch { return ''; }
   };
 
-  // Sign the current account out and relaunch to the sign-in screen (one database per install — the
-  // per-account DB-swap was removed). After relaunch the operator signs in as the target account.
-  const doAccountSwitch = async (toEmail: string) => {
-    setAuthBusy(true); setAuthErr('');
-    try { await (window as any).ether.invoke('account:switch-to', { email: toEmail.trim().toLowerCase() }); }
-    catch { setAuthBusy(false); setAuthErr('Could not switch accounts — please try again.'); }
-  };
+  // doAccountSwitch — REMOVED (4.4.216) along with the "Switch accounts on this computer?"
+  // interstitial it drove. Signing in as a different account no longer needs the operator's
+  // permission to do anything, because it no longer does anything TO the account already here: it
+  // opens a different folder. The one door out is File ▸ Sign Out, which quits completely.
 
   // Sign in = returning user. On a FRESH machine the account already has stations
   // in the cloud (profiles, theme, shows, calendar, rotations) but nothing locally
   // — so instead of dropping straight to "create a profile", offer to pull them
   // down (the 'cloudSync' step). If the account has no stations there is nothing to
   // sync: mark first-run complete and go straight to the profile PIN login.
-  // CLEAN-ROOM guard (sign-in clause of the total-sign-out invariant): a FRESH sign-in/sign-up must
-  // start from zero. If residual local stations exist — a DB contaminated before the invariant shipped,
-  // or any leftover from a prior account — wipe + relaunch FIRST so the new sign-in provisions ONLY the
-  // account signed into (never inherits a foreign active station). Returns true if it triggered a reset
-  // (the app is relaunching → caller must stop). On a clean DB (0 local stations) it's a no-op.
-  // Clean-room reset — ACCOUNT-AWARE. Only wipe when the local data belongs to a DIFFERENT account
-  // (a genuine account switch made without signing out first). A SAME-account re-sign-in — e.g. after a
-  // reboot, when the short-lived resume-session marker has gone stale and the sign-in screen reappears —
-  // must PRESERVE all local work. The old version wiped on ANY existing stations, which meant a plain
-  // reboot + re-sign-in destroyed the operator's whole session (profile, imports, categories, stations)
-  // — total data loss shipped in v4.4.31. Never destroy data on uncertainty: unknown/empty local email
-  // (or same email) → preserve.
-  const ensureCleanRoom = async (emailSigningIn: string): Promise<boolean> => {
-    try {
-      const local = await (window as any).ether.stations.list();
-      const localList = Array.isArray(local) ? local : (local?.rows || []);
-      if (localList.length === 0) return false;   // nothing local → nothing to clean
-      const localEmail = String((await (window as any).ether.installConfigKv?.get?.('account_email'))?.row?.value || '').trim().toLowerCase();
-      const signingIn = String(emailSigningIn || '').trim().toLowerCase();
-      if (localEmail && signingIn && localEmail !== signingIn) {
-        console.log('[cleanroom] local data belongs to a DIFFERENT account → total reset', { localEmail, signingIn, stations: localList.length });
-        // READ THE ANSWER. This used to `return true` regardless, so a reset that could not wipe still
-        // aborted the sign-in — and main relaunched anyway, so every attempt closed the app and came
-        // back to the sign-in screen unchanged. On success main never returns (relaunch + exit); any
-        // answer we actually receive therefore means the wipe did NOT happen.
-        const r = await (window as any).ether.invoke('account:cleanRoomReset');
-        if (r && r.ok === false) {
-          setAuthBusy(false);
-          setAuthErr(
-            'This computer still holds another account\'s data, and it could not be cleared while Ether is using it. ' +
-            'Close Ether completely (including the audio engine in the system tray), reopen it, and sign in again.'
-          );
-          return true;   // stop the sign-in — but on the sign-in screen, with a reason, not in a loop
-        }
-        return true;
-      }
-      // Same account (or local owner unknown) → this is a resume/re-sign-in; KEEP the work.
-    } catch { /* can't check → don't block sign-in, don't wipe */ }
-    return false;
-  };
+  // ensureCleanRoom — REMOVED (profile-per-account, 2026-08-15).
+  //
+  // It wiped this computer's database whenever the email signing in differed from the one on file,
+  // because a single shared database had no other way to keep two accounts apart. That made SIGNING
+  // IN A DESTRUCTIVE ACT: it shipped total data loss in v4.4.31 when a plain reboot + re-sign-in was
+  // mistaken for an account switch, and every guard added afterwards was another attempt to narrow a
+  // wipe that should never have been on this path at all.
+  //
+  // Each account now has its own directory, so a different account signing in opens a different
+  // folder (profile:adopt in activateAndContinue, called BEFORE anything is written). Nothing is
+  // deleted, nothing leaks between accounts, and switching back is instant and lossless.
+  // SIGNING IN IS A READ. The wipe survives only behind the typed-confirmation Factory Reset in
+  // Preferences, where the operator asks for it by name.
 
   const doSignIn = async () => {
     if (!authEmail.trim() || !authPassword) { setAuthErr('Enter your email and password.'); return; }
@@ -566,7 +546,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     // computer" detour belonged to the removed per-account-DB swap and caused a sign-in loop.)
     setAuthBusy(true); setAuthErr('');
     try {
-      if (await ensureCleanRoom(authEmail.trim())) return;   // ONLY a different-account switch wipes; same-account re-sign-in preserves
+      // No clean-room check: signing in selects a profile, it never clears one (see above).
       const lk = await activateAndContinue(authEmail.trim(), authPassword);
       await routeAfterAuth(lk);   // shared clean-room decision table (Phase 4) — same for sign-in + sign-up
       return;
@@ -800,7 +780,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     // One database per install — sign up directly (no per-account-DB switch detour).
     setAuthBusy(true); setAuthErr('');
     try {
-      if (await ensureCleanRoom(authEmail.trim())) return;   // ONLY a different-account switch wipes; same-account preserves
+      // No clean-room check: signing up selects a profile, it never clears one (see above).
       const res = await fetch(`${ETHER_BACKEND_URL}/api/user/signup`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: authEmail.trim(), password: authPassword, name: authName.trim() || null }),
@@ -1232,18 +1212,6 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
                   : 'Create a free account — your trial starts right away.'}
               </p>
             </div>
-            {switchFromAccount ? (
-              <div style={{ maxWidth: 440, margin: "0 auto", padding: 22, border: "1px solid rgba(136,104,216,0.4)", background: "rgba(136,104,216,0.06)" }}>
-                <div style={{ fontSize: 17, fontWeight: 800, color: "#fff", marginBottom: 12, fontFamily: "'Newsreader', Georgia, serif" }}>Switch accounts on this computer?</div>
-                <div style={{ fontSize: 14, color: "rgba(255,255,255,0.62)", lineHeight: 1.65, marginBottom: 18 }}>
-                  This computer is currently signed in as <strong style={{ color: "#fff" }}>{switchFromAccount}</strong>. Continuing signs that account out and returns to the sign-in screen, where you can sign in as <strong style={{ color: "#fff" }}>{authEmail}</strong>.
-                </div>
-                <div style={{ display: "flex", gap: 10 }}>
-                  <button onClick={() => doAccountSwitch(authEmail)} disabled={authBusy} style={{ flex: 1, padding: "13px 0", background: "#8868D8", color: "#fff", border: "none", fontSize: 14, fontWeight: 700, cursor: authBusy ? "default" : "pointer", letterSpacing: "0.04em", opacity: authBusy ? 0.7 : 1 }}>{authBusy ? 'Signing out…' : 'Sign out & continue'}</button>
-                  <button onClick={() => setSwitchFromAccount(null)} disabled={authBusy} style={{ padding: "13px 20px", background: "transparent", color: "rgba(255,255,255,0.55)", border: "1px solid rgba(255,255,255,0.15)", fontSize: 14, cursor: "pointer" }}>Cancel</button>
-                </div>
-              </div>
-            ) : (
             <div style={{ maxWidth: 420, margin: "0 auto", display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
                 <button onClick={() => { setAuthMode('signin'); setAuthErr(''); }} style={tab(authMode === 'signin')}>Sign in</button>
@@ -1291,7 +1259,6 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
                 </button>
               )}
             </div>
-            )}
           </div>
         </div>
         <style>{ANIMATION_CSS}</style>

@@ -26,7 +26,7 @@ function pidAlive(pid) { try { process.kill(pid, 0); return true; } catch (e) { 
     if (!process.argv.includes("--i-am-off-air")) { console.error("Plays audio — pass --i-am-off-air."); process.exit(2); }
     const file = process.env.ETHER_SPIKE_FILE;
     if (!file) { console.error("Set ETHER_SPIKE_FILE."); process.exit(2); }
-    const src = process.env.ETHER_DB_PATH || path.join(os.homedir(), "AppData", "Roaming", "com.ether.radio", "openair.db");
+    const src = process.env.ETHER_DB_PATH || require("../electron/profile-paths").dbPath(require("../electron/profile-paths").activeKey());
     for (const e of ["", "-wal", "-shm"]) { try { fs.unlinkSync(TMP + e); } catch {} }
     fs.copyFileSync(src, TMP);
     // EXACTLY the audio-daemon-client spawn: detached + unref so it outlives this process.

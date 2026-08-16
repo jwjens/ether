@@ -158,6 +158,29 @@ const path = require("path");
 const fs = require("fs");
 const semver = require("semver");
 const { ETHER_BACKEND_URL } = require('./lib/etherBackend');
+// PROFILE-PER-ACCOUNT — the ONE place any Ether data path is built. Every data path in this file
+// resolves through it; nothing may re-derive %LOCALAPPDATA%\Ether by hand. See profile-paths.js for
+// the layout and the boot circularity the pointer file exists to break.
+const P = require('./profile-paths');
+
+/**
+ * THE ONE FUNCTION every per-account data path in this file goes through.
+ *
+ * Anything that belongs to the ACCOUNT — its database, health ledger, logs, backups, caches, session
+ * markers — is built with this. Anything that belongs to the MACHINE stays on app.getPath("userData")
+ * (Roaming\Ether): the updater's state, the single-instance lock, the watchdog's identity/log/pid,
+ * ha-config.json, window geometry, and the startup log. That split is deliberate — the watchdog and
+ * the updater resolve Roaming\Ether independently of any account and must keep finding it there.
+ *
+ * Directories are created on demand so no caller has to remember to mkdir (SQLite and appendFileSync
+ * both fail on a missing parent, which is how the fresh-install crash happened).
+ */
+function _profileData(...segments) {
+  const dir = P.ensureProfileDir(P.activeKey());
+  const full = path.join(dir, ...segments);
+  try { fs.mkdirSync(path.dirname(full), { recursive: true }); } catch {}
+  return full;
+}
 
 // Stop leaving a Roaming\openair folder behind: store this app's userData under an "Ether" folder
 // instead of the legacy "openair" app-name default. We redirect the userData PATH only (not the
@@ -184,6 +207,39 @@ if (global.__etherDiag) global.__etherDiag('POINT-1b: path/fs loaded OK');
 let Database;
 try { Database = require("better-sqlite3"); if (global.__etherDiag) global.__etherDiag('POINT-1c: better-sqlite3 loaded OK'); }
 catch(e) { if (global.__etherDiag) global.__etherDiag('POINT-1c: better-sqlite3 FAILED: ' + e.message); throw e; }
+
+// ── PROFILE SELECTION — the first thing that happens, before ANY data path is built ────────────
+// The license key that names a profile lives inside that profile's database, so it cannot be read
+// before one is open. profiles/active is the only account fact readable at this moment, and it is
+// what makes the whole design possible. Order is load-bearing:
+//   1. one-time migration of the legacy single data dir into profiles/<licenseKey>/ (pointer LAST)
+//   2. resolve the active profile from the pointer
+//   3. only then may anything build a data path
+// This sits here — immediately after better-sqlite3 loads and before the first module-level path
+// constant is evaluated — because resolveActive() caches, and a path built before this point would
+// pin the process to the wrong profile for its whole life.
+//
+// No pointer, or a pointer naming a directory that is not there -> the scratch profile, and every
+// resume door refuses so the app lands on sign-in. Nothing is ever guessed or auto-adopted.
+let PROFILE_MIGRATION = { status: "not-run" };
+try {
+  PROFILE_MIGRATION = require("./profile-migrate").migrateToProfiles({
+    Database,
+    userDataDir: app.getPath("userData"),
+  });
+  if (PROFILE_MIGRATION.status === "refused") {
+    // Non-destructive by construction: nothing was moved, so the app keeps running on the legacy
+    // path exactly as it did before. Loud, because a silent refusal is how a machine quietly stops
+    // being migrated for months.
+    console.error("[profiles] MIGRATION REFUSED —", PROFILE_MIGRATION.reason);
+  }
+} catch (e) {
+  PROFILE_MIGRATION = { status: "refused", reason: e.message };
+  console.error("[profiles] migration threw (continuing on the legacy path):", e.message);
+}
+const ACTIVE_PROFILE = P.resolveActive({ freshPending: true });
+console.log(`[profiles] active=${ACTIVE_PROFILE.key}${ACTIVE_PROFILE.pending ? " (PENDING — sign-in required)" : ""}`);
+
 let SYNCED_TABLES, SYNCED_TABLES_SET;
 try {
   ({ SYNCED_TABLES } = require('./sync/synced-tables'));
@@ -331,7 +387,7 @@ const replayIntents = (client, autoIntent, streamIntent, opts) => {
 // (the incident: 4.4.59 update → reload → only Open Format resumed). Persist the exact on-air set to disk on
 // every automationStart/Stop, and SEED it back on boot BEFORE the first command, so replayIntents resumes
 // EVERY station that was intentionally airing — no privileged/active station, no inference.
-function _automationIntentPath() { try { return path.join(app.getPath("userData"), "automation-intent.json"); } catch { return null; } }
+function _automationIntentPath() { try { return _profileData("automation-intent.json"); } catch { return null; } }
 function _persistAutomationIntent() {
   const p = _automationIntentPath(); if (!p) return;
   try { fs.writeFileSync(p, JSON.stringify([..._automationIntent.keys()])); } catch (e) { /* best-effort */ }
@@ -429,7 +485,7 @@ function _publishDaemonVersion(next) {
   try { sendToAllWindows("audio:daemon-version", next); } catch {}
   if (!changed) return;                       // transition only — never a repeating event
   try {
-    require("fs").appendFileSync(path.join(app.getPath("userData"), "health-events.jsonl"),
+    require("fs").appendFileSync(_profileData("health-events.jsonl"),
       JSON.stringify({ t: new Date().toISOString(), kind: "daemon-version", ...next }) + "\n");
   } catch {}
 }
@@ -544,7 +600,7 @@ if (AUDIO_DAEMON_DESIRED) {
   // audio state, never triggers recovery. Two display-only signals the daemon emits only to its log
   // (per-station drain B/s, daemon pid) are read from a cheap tail of ether-audiod.log.
   const { createHealthMonitor } = require("./audio-health");
-  const _healthLogDir = path.join(app.getPath("userData"), "logs");
+  const _healthLogDir = _profileData("logs");
   const _healthDaemonLog = path.join(_healthLogDir, "ether-audiod.log");
   let _healthTail = { at: 0, drain: {}, pid: null };
   function _readLastBytes(p, n) {
@@ -617,7 +673,7 @@ if (AUDIO_DAEMON_DESIRED) {
       try {
         if (typeof kind !== "string" || !kind) return false;
         const row = { t: new Date().toISOString(), kind, ...(data && typeof data === "object" ? data : {}) };
-        require("fs").appendFileSync(path.join(app.getPath("userData"), "health-events.jsonl"), JSON.stringify(row) + "\n");
+        require("fs").appendFileSync(_profileData("health-events.jsonl"), JSON.stringify(row) + "\n");
         return true;
       } catch { return false; }   // the ledger must never be able to break its caller
     });
@@ -635,7 +691,9 @@ if (AUDIO_DAEMON_DESIRED) {
       backendUrl: ETHER_BACKEND_URL,
       licenseKeyFn: () => { try { return accountLicenseKey(); } catch { return null; } },
       broadcast: sendToAllWindows,
-      userDataDir: app.getPath("userData"),
+      // The health ledger is ACCOUNT state (it records this account's library), so it lives in the
+      // profile alongside the database it describes — not in machine-level Roaming.
+      userDataDir: P.profileDir(P.activeKey()),
     });
     _libHealth.start();
     ipcMain.handle("library-health:get", () => { try { return _libHealth.snapshot(); } catch { return null; } });
@@ -686,7 +744,7 @@ if (AUDIO_DAEMON_DESIRED) {
         // OWN categories (2026-07-26) — surfaced loudly here instead of silently borrowing another
         // station's songs. Appended to the honest health ledger so the law-bending is visible, never silent.
         try {
-          require('fs').appendFileSync(path.join(app.getPath('userData'), 'health-events.jsonl'),
+          require('fs').appendFileSync(_profileData('health-events.jsonl'),
             JSON.stringify({ t: new Date().toISOString(), kind: m.event, ...m }) + "\n");
         } catch { /* a lost ledger line is cosmetic */ }
       } else if (m.event === "logreader-shadow") {
@@ -694,7 +752,7 @@ if (AUDIO_DAEMON_DESIRED) {
         // flip WOULD have aired vs what legacy aired. Append the honest JSONL ledger (the burn-in) AND
         // fold a per-station rolling summary the Health Monitor surfaces. Observation only.
         try {
-          require('fs').appendFileSync(path.join(app.getPath('userData'), 'logreader-shadow.jsonl'),
+          require('fs').appendFileSync(_profileData('logreader-shadow.jsonl'),
             JSON.stringify({ t: new Date().toISOString(), ...m }) + "\n");
         } catch { /* a lost ledger line is cosmetic */ }
         try {
@@ -874,6 +932,7 @@ async function setupAudioBackend() {
 // app and the out-of-process engine ALWAYS open the same database. Critical now that the DB lives on
 // local disk: without this the daemon falls back to its legacy Roaming default (ether-audiod.js) and
 // diverges from the app. Spawned daemons inherit it through {...process.env} in spawnDaemon().
+// Now also what keeps the daemon on the ACTIVE PROFILE's database across an account switch.
 try { process.env.ETHER_DB_PATH = getDbPath(); }
 catch (e) { console.error("[DB] early path resolve failed (initDb will surface it):", e.message); }
 setupAudioBackend();
@@ -882,19 +941,12 @@ setupAudioBackend();
 let db;
 let cloudBackupTrigger = null; // set when cloud-backup module loads
 
-// The local data folder (machine-local; never the redirected Roaming/SMB path — see getDbPath).
+// THE ACTIVE PROFILE'S data folder (machine-local; never the redirected Roaming/SMB path — see
+// getDbPath). Was a single install-wide directory; it is now one directory per account, selected by
+// profiles/active. Every per-account artifact in this file resolves from here, so an account switch
+// moves the whole world at once instead of leaving one straggler pointing at the old account.
 function _etherDir() {
-  const fs = require("fs");
-  let baseDir;
-  if (process.platform === "win32" && process.env.LOCALAPPDATA) {
-    baseDir = path.join(process.env.LOCALAPPDATA, "Ether");
-  } else {
-    baseDir = app.getPath("userData");
-  }
-  const etherDir = path.join(baseDir, "com.ether.radio");
-  try { fs.mkdirSync(etherDir, { recursive: true }); }
-  catch (e) { throw new Error(`Cannot create local data folder ${etherDir}: ${e.message}`); }
-  return etherDir;
+  return P.ensureProfileDir(P.activeKey());
 }
 
 // ── Stable machine identity (survives every wipe) ───────────────────────────────────────────────
@@ -995,20 +1047,26 @@ async function _wipeLocalIdentityAndData(opts = {}) {
     }
   };
 
-  // TOTAL file wipe (fresh DB on next launch = correct infrastructure, no residue, no corruption).
+  // TOTAL file wipe of THIS PROFILE (fresh DB on next launch = correct infrastructure, no residue).
   try { db.close(); } catch {}
-  // THE ONE THAT DECIDES. The others are legacy/auxiliary paths whose absence is harmless; if THIS
-  // directory survives, the install still holds the previous account's database and a relaunch would
-  // come straight back to the same state.
-  const dataWiped = rm(path.dirname(_etherDir()));            // %LOCALAPPDATA%\Ether (DB, WAL, keyed copies, engine staging)
+  // SCOPED TO ONE PROFILE. This used to remove %LOCALAPPDATA%\Ether wholesale, which under
+  // profile-per-account would destroy EVERY account on the machine plus the staged engine — a
+  // Factory Reset of one account must never touch another's data. Only the active profile's own
+  // directory goes; the pointer goes with it so the next launch lands on sign-in (edge rule 1).
+  const activeKey = P.activeKey();
+  const profileDir = P.profileDir(activeKey);
+  const dataWiped = rm(profileDir);
+  P.clearPointer();
   rm(path.join(app.getPath("appData"), "com.ether.radio"));  // legacy Roaming DB
   rm(path.join(app.getPath("appData"), "openair"));          // pre-rename Roaming userData
   try { rm(app.getPath("sessionData")); } catch {}           // Chromium session store on disk
+  // Pre-migration installs may still have these under Roaming userData; post-migration they live in
+  // the profile and went with it above.
   for (const m of [".ether-on-air", ".ether-keep-session"]) {
     try { fs.rmSync(path.join(app.getPath("userData"), m), { force: true }); } catch {}
   }
-  if (!dataWiped) console.error("[wipe] DATA DIRECTORY SURVIVED — the install still holds the previous account's database");
-  return { ok: dataWiped, dataDir: path.dirname(_etherDir()) };
+  if (!dataWiped) console.error("[wipe] PROFILE DIRECTORY SURVIVED — this computer still holds", activeKey);
+  return { ok: dataWiped, dataDir: profileDir, profile: activeKey };
 }
 
 // Which account's data this DB holds, kept at install level so it SURVIVES the per-station
@@ -1033,28 +1091,48 @@ function _backfillAccountMarker() {
   } catch (e) { console.error("[account] backfill marker:", e.message); }
 }
 
-// File ▸ Sign Out / Switch Account — run ENTIRELY in the main process (native dialog + relaunch).
-// The renderer's window.confirm silently no-ops in this packaged build (Electron 41), which is why
-// the menu items "did nothing". Clears the per-station account/onboarding keys so App re-runs the
-// sign-in gate; leaves the install-level account marker + local station data intact (the per-account
-// detection relies on the marker). `switching` only changes the wording.
-async function accountSignOut(switching) {
+// File ▸ Sign Out — run ENTIRELY in the main process (native dialog + full exit). The renderer's
+// window.confirm silently no-ops in this packaged build (Electron 41), which is why the menu items
+// "did nothing". This is the ONE door out of an account; "Switch Account…" was removed in 4.4.216.
+//
+// SIGN-OUT DESTROYS NOTHING. Under profile-per-account the account's data lives in its own
+// directory, so leaving is just closing the door: clear the pointer and quit. Signing back in
+// re-points at the same directory and everything is exactly where it was. The old "TOTAL sign-out
+// invariant" wipe existed only because one shared database could not tell two accounts apart — the
+// directory does that now, without deleting anything.
+//
+// FULL EXIT, NOT A RELAUNCH. The app and the audio daemon both hold the outgoing profile's database
+// open, and on Windows nothing can rename or adopt a directory while a file inside it is open. A
+// relaunch raced its own file handles: the next sign-in could land while the old process was still
+// letting go, and profile:adopt would refuse with profile_in_use. Quitting completely means the next
+// launch starts with NOTHING holding files, so any account's sign-in adopts its profile cleanly.
+// This also makes the daemon shutdown below a hard guarantee rather than a hope.
+async function accountSignOut() {
   try {
     const { dialog } = require("electron");
     const win = BrowserWindow.getFocusedWindow() || mainWindow;
     const choice = dialog.showMessageBoxSync(win, {
       type: "question", noLink: true, defaultId: 1, cancelId: 0,
-      buttons: ["Cancel", switching ? "Switch Account" : "Sign Out"],
-      title: switching ? "Switch Account" : "Sign Out",
-      message: switching ? "Switch to a different account?" : "Sign out of this account?",
-      detail: "Signs out COMPLETELY — this account and ALL its local data are removed from this computer. The next sign-in starts fresh and pulls only that account's stations and library. Nothing is left behind.",
+      buttons: ["Cancel", "Sign Out"],
+      title: "Sign Out",
+      message: "Sign out?",
+      detail: "Ether will close completely, including the audio engine. Reopen it to sign in.",
     });
     if (choice !== 1) return;
-    // TOTAL sign-out invariant: clear every identity store (same as factory-reset). Nothing residual.
-    try { await _wipeLocalIdentityAndData({ spareProfiles: true }); }  // sign-out spares operator profiles (in-app, not account)
-    catch (e) { console.error("[account] sign-out wipe:", e.message); }
-    try { markHaExpectedRestart(); } catch {}
-    app.relaunch();
+    // A deliberate full quit — the watchdog must stand down, not respawn us into a signed-out box.
+    _userFullQuit = true;
+    app.isQuitting = true;
+    try { pauseKeepOnAir(); } catch {}
+    try { writeHaSentinel(".ether-clean-exit"); } catch {}
+    // Stop the daemon FIRST: it holds this profile's database open, and a signed-out profile must be
+    // fully dormant — its stations do not broadcast and do not maintain themselves (design property 6).
+    try { if (AUDIO_DAEMON) await audiodClient.cmd("shutdown").catch(() => {}); } catch {}
+    try { audiodClient.stop(); } catch {}
+    // Clear the on-air marker while the profile is still resolvable — after the pointer goes there is
+    // no profile to find it in, and a stale marker would sit in the account's folder forever.
+    try { _persistOnAir(false); } catch {}
+    try { P.clearPointer(); } catch (e) { console.error("[account] clear pointer:", e.message); }
+    try { db.close(); } catch {}
     app.exit(0);
   } catch (e) { console.error("[accountSignOut]", e.message); }
 }
@@ -1064,13 +1142,16 @@ function getDbPath() {
   // app.getPath("appData") location) to a network H:\ share, where SQLite's WAL shared-memory
   // (-shm mmap) is unsupported → new Database()/WAL throws and the app dies before its window.
   // %LOCALAPPDATA% is machine-local and not part of the usual folder-redirection set.
+  //
+  // ONE DATABASE PER PROFILE. _etherDir() is now the ACTIVE profile's directory, so this returns
+  // that account's database and nothing else. Isolation is the directory — there is no keyed
+  // filename scheme and no owner-column filtering to get wrong.
   const fs = require("fs");
   const etherDir = _etherDir();
-  // ONE database per install. The per-account DB-swap experiment was removed (it made sign-out
-  // unreliable — it cleared the login flag in one DB but reopened another). Safety net: if a prior
-  // build stranded the active data in a keyed openair__<hash>.db and there's no default file, reclaim
-  // the newest keyed file as the single DB so no data is lost, and drop the stale account pointer.
   const localDb = path.join(etherDir, "openair.db");
+  // Safety net kept from the removed per-account-DB-swap experiment: if a prior build stranded the
+  // data in a keyed openair__<hash>.db and there is no default file, reclaim the newest one rather
+  // than silently starting empty. Harmless inside a profile (there is normally nothing to reclaim).
   try {
     if (!fs.existsSync(localDb)) {
       const keyed = fs.readdirSync(etherDir)
@@ -1082,7 +1163,7 @@ function getDbPath() {
         for (const sfx of ["", "-wal", "-shm", "-journal"]) {
           if (fs.existsSync(src + sfx)) fs.renameSync(src + sfx, localDb + sfx);
         }
-        console.log("[DB] reclaimed per-account DB → single DB:", keyed[0].f);
+        console.log("[DB] reclaimed per-account DB → profile DB:", keyed[0].f);
       }
     }
     fs.rmSync(path.join(etherDir, "active-account"), { force: true });
@@ -2331,11 +2412,12 @@ function createWindow() {
         const daemonDesired = AUDIO_DAEMON_DESIRED;
         const daemonStarted = AUDIO_DAEMON === true;
         let daemonLogStaged = false;
-        // Staged engine lives at %LOCALAPPDATA%\Ether\engine (stage-engine.js engineBaseDir), NOT userData
-        // (which is Roaming) — check the real staged path or this reads false on a healthy build.
-        // Staged engine lives at %LOCALAPPDATA%\Ether\engine (stage-engine engineBaseDir). _etherDir()
-        // returns …\Ether\com.ether.radio (the DB dir), so its PARENT (…\Ether) + engine is the stage root.
-        try { daemonLogStaged = require("fs").existsSync(path.join(path.dirname(_etherDir()), "engine", "audiod", "daemon-log.js")); } catch { /* ignore */ }
+        // Staged engine lives at %LOCALAPPDATA%\Ether\engine (audiod/stage-engine.js engineBaseDir),
+        // NOT userData (which is Roaming) — check the real staged path or this reads false on a
+        // healthy build. MACHINE-level: the engine is a build for this machine and is shared by every
+        // profile, so it resolves from the Ether root and NOT from _etherDir() (which is now one
+        // account's directory — its parent is …\profiles, which holds no engine).
+        try { daemonLogStaged = require("fs").existsSync(path.join(P.engineStageDir(), "audiod", "daemon-log.js")); } catch { /* ignore */ }
         const daemonOk = !daemonDesired || (daemonStarted && daemonLogStaged);
         // MANDATORY air-isolation: a smoke must run against an EMPTY DB (0 stations → no automationStart →
         // no encoder → no Icecast). If the DB has stations, REFUSE to pass regardless of everything else.
@@ -2457,11 +2539,6 @@ function buildMenu() {
     if (isDev) win.loadURL(VITE_DEV_URL + `#popout/${panel}`);
     else win.loadFile(path.join(__dirname, "../dist/index.html"), { hash: `popout/${panel}` });
   };
-  // Cloud account actions need an account — the free/solo tier has none, so Switch Account
-  // is greyed there. Read the live plan at build time; menu:rebuild refreshes it on change.
-  let planTier = 'free';
-  try { planTier = (db.prepare("SELECT value FROM station_config_kv WHERE key='plan_tier' LIMIT 1").get())?.value || 'free'; } catch {}
-  const hasAccount = planTier !== 'free';
   const template = [
     { label: "File", submenu: [
       { label: "New Session", accelerator: "CmdOrCtrl+N", click: () => send("file:new-session") },
@@ -2470,8 +2547,11 @@ function buildMenu() {
       { label: "Import Music...", click: () => send("file:import") },
       { label: "Preferences", click: () => send("file:preferences") },
       { type: "separator" },
-      { label: "Sign Out", click: () => accountSignOut(false) },
-      { label: "Switch Account…", click: () => accountSignOut(true) },
+      // ONE DOOR. "Switch Account…" is gone: under profile-per-account, switching IS signing out
+      // and signing back in as someone else — a second menu item for it only invited the operator to
+      // think the two were different, and it was the path that tried to swap accounts while the app
+      // still held the outgoing profile's files open.
+      { label: "Sign Out", click: () => accountSignOut() },
       { type: "separator" },
       { label: "Quit Ether", accelerator: "CmdOrCtrl+Q", click: () => fullStopAndQuit() },
     ]},
@@ -2554,8 +2634,9 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-// Rebuild the native menu (e.g. after the plan tier changes) so Switch Account's
-// enabled/greyed state stays correct without an app restart.
+// Rebuild the native menu (e.g. after the plan tier changes) so any plan-dependent item stays
+// correct without an app restart. (Its original reason — File ▸ Switch Account's greyed state —
+// went away with that item in 4.4.216.)
 ipcMain.handle('menu:rebuild', () => { try { buildMenu(); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } });
 
 // ── VIP invite file detection ─────────────────────────────────
@@ -3185,7 +3266,7 @@ function markHaExpectedRestart() { _haExpectedRestart = true; writeHaSentinel(".
 // explicit sign-out. The launch gate reads it (account:was-on-air): if a stream was live, a crash /
 // reboot / watchdog respawn must come straight back on air WITHOUT a sign-in (no human is there to
 // enter a PIN on an unattended box). If nothing was on air, the launch requires sign-in.
-function _onAirMarkerFile() { return path.join(app.getPath("userData"), ".ether-on-air"); }
+function _onAirMarkerFile() { return _profileData(".ether-on-air"); }
 function _persistOnAir(anyLive) {
   try {
     if (anyLive) fs.writeFileSync(_onAirMarkerFile(), String(Date.now()));
@@ -3194,6 +3275,15 @@ function _persistOnAir(anyLive) {
 }
 function _wasOnAir() {
   try {
+    // EDGE RULE 1 — an identity-less door may only resume a profile that is actually open. With no
+    // pointer (or a pointer naming a directory that is gone) there is no account to come back on air
+    // as, so the door refuses and the app lands on sign-in. This is the hole the profile design had
+    // to close: this path sets accountSignedIn=true without ever producing a license key, so before
+    // profiles it could only ever have meant "resume the one database" — and now there are many.
+    if (P.isPending()) {
+      console.warn("[profiles] on-air recovery refused — no active profile; routing to sign-in");
+      return false;
+    }
     if (!fs.existsSync(_onAirMarkerFile())) return false;
     // The marker alone is not enough to skip sign-in: it can be stranded by an unclean prior
     // run (crash, force-kill, dev taskkill). Only HONOR it as on-air recovery when THIS launch
@@ -3212,12 +3302,18 @@ ipcMain.handle("account:was-on-air", () => _wasOnAir());
 // written by sign-out / switch / factory-reset (those must land on the sign-in screen). Consumed on
 // read and only honored if recent (<2min), so a later cold start or reboot still requires sign-in.
 function markKeepSession() {
-  try { fs.writeFileSync(path.join(app.getPath("userData"), ".ether-keep-session"), String(Date.now())); }
+  try { fs.writeFileSync(_profileData(".ether-keep-session"), String(Date.now())); }
   catch (e) { console.error("[HA] keep-session write:", e.message); }
 }
 function _consumeRecentKeepSession() {
   try {
-    const f = path.join(app.getPath("userData"), ".ether-keep-session");
+    // EDGE RULE 1 — see _wasOnAir(). A continuation self-relaunch resumes whatever the pointer
+    // names; with no profile open there is nothing to continue into, so the door refuses.
+    if (P.isPending()) {
+      console.warn("[profiles] session resume refused — no active profile; routing to sign-in");
+      return false;
+    }
+    const f = _profileData(".ether-keep-session");
     if (!fs.existsSync(f)) return false;
     const ts = parseInt(fs.readFileSync(f, "utf8").trim(), 10) || 0;
     fs.rmSync(f, { force: true });
@@ -3374,6 +3470,9 @@ function readHaConfigFile() {
   try { return JSON.parse(fs.readFileSync(_haConfigPath(), "utf8")); } catch { return { enabled: true }; }
 }
 function _haAlarmActive() {
+  // MACHINE-level, NOT per-profile: the watchdog writes and reads this in Roaming\Ether
+  // (watchdog/watchdog.js ALARM_MARKER) and knows nothing about accounts. Moving it into a profile
+  // would leave the app watching for an alarm the watchdog never puts there.
   try { return fs.existsSync(path.join(app.getPath("userData"), ".ether-ha-alarm")); } catch { return false; }
 }
 
@@ -3513,7 +3612,7 @@ ipcMain.handle("ha:readLog", (_e, lines) => {
 ipcMain.handle("activity:tail", (_e, fromOffset) => {
   const MAX_CHUNK = 256 * 1024;   // bound one call's work — a burst can never stall the UI
   try {
-    const p = path.join(app.getPath("userData"), "logs", "ether-audiod.log");
+    const p = _profileData("logs", "ether-audiod.log");
     const size = fs.statSync(p).size;
     const prev = Number(fromOffset);
     const seeding = !Number.isFinite(prev) || prev < 0;      // first call → seed from the tail
@@ -4098,7 +4197,7 @@ ipcMain.handle("fs:readDir", (_, dirPath) => {
 // DISABLED` vs `[ROT] in-process engine (daemon not active)` — the single line that answers which engine
 // is driving a station. It now lands beside the other userData logs, the same convention audio-health
 // uses (_healthLogDir, :476). WHAT IS LOGGED IS UNCHANGED — only where it goes.
-const _rotationLogDir = path.join(app.getPath("userData"), "logs");
+const _rotationLogDir = _profileData("logs");
 const _rotationLogPath = path.join(_rotationLogDir, "rotation.log");
 try { fs.mkdirSync(_rotationLogDir, { recursive: true }); } catch {}
 let _rotationLogWarned = false;   // warn ONCE — this is a diagnostic channel; it must never spam or throw
@@ -4209,7 +4308,7 @@ ipcMain.handle("watermark:verify", async (_, { filePath }) => {
 ipcMain.handle("system:getLocalIp", () => audio.getLocalIp());
 ipcMain.handle("system:openUrl", (_, url) => shell.openExternal(url));
 ipcMain.handle("system:openSoundSettings", () => audio.openSoundSettings());
-ipcMain.handle("system:getAppDataDir", () => app.getPath("userData"));
+ipcMain.handle("system:getAppDataDir", () => P.profileDir(P.activeKey()));
 ipcMain.handle("system:getPlatform", () => process.platform);
 ipcMain.handle("system:getVersion", () => app.getVersion());
 
@@ -4233,7 +4332,7 @@ ipcMain.handle("user:verify-pin", (_evt, pin, stored) => {
 ipcMain.handle("db:backup", () => {
   try {
     const dbPath = getDbPath();
-    const backupDir = path.join(app.getPath("userData"), "backups");
+    const backupDir = _profileData("backups");
     fs.mkdirSync(backupDir, { recursive: true });
     const timestamp = Math.floor(Date.now() / 1000);
     const backupName = `openair-backup-${timestamp}.db`;
@@ -4284,7 +4383,7 @@ ipcMain.handle("deck-configs:reset", () => {
 
 ipcMain.handle("db:listBackups", () => {
   try {
-    const backupDir = path.join(app.getPath("userData"), "backups");
+    const backupDir = _profileData("backups");
     if (!fs.existsSync(backupDir)) return [];
     return fs.readdirSync(backupDir)
       .filter(n => n.startsWith("openair-backup-"))
@@ -4294,7 +4393,7 @@ ipcMain.handle("db:listBackups", () => {
 
 ipcMain.handle("db:restore", async (_, backupName) => {
   try {
-    const backupPath = path.join(app.getPath("userData"), "backups", backupName);
+    const backupPath = _profileData("backups", backupName);
     if (!fs.existsSync(backupPath)) return { error: "Backup not found" };
     // close → copy → reopen(retry) → verify → rollback-on-failure; throws a real error (never bricks).
     await swapDatabaseFile(backupPath);
@@ -4325,22 +4424,87 @@ ipcMain.handle("app:relaunch", () => {
   return { ok: true };
 });
 
-// Switch Account — the per-account DB-swap was removed (one database per install). This now simply
-// signs out: clear the account/onboarding session keys and relaunch, landing on the sign-in screen
-// where the operator authenticates as whichever account they want. No file moves, no data mixing.
-// (Account data isolation is handled by scoping what's shown to the signed-in account, not by
-// juggling DB files.) The `email` arg is ignored — kept for call-site compatibility.
-ipcMain.handle("account:switch-to", async () => {
+// account:switch-to — REMOVED (4.4.216). There is ONE door out of an account: File ▸ Sign Out,
+// which quits completely. Switching accounts is sign out -> reopen -> sign in as someone else, and
+// the full exit is what makes that reliable: nothing holds the outgoing profile's files, so the next
+// sign-in adopts its own profile cleanly instead of racing a relaunch for the same handles.
+
+// ── PROFILE ADOPTION — sign-in selects the profile ─────────────────────────────────────────────
+// Called by the renderer the moment a sign-in has a license key IN HAND and BEFORE it writes one
+// byte of that account's identity (OnboardingFlow activateAndContinue). This is the ONLY writer of
+// profiles/active besides the one-time migration, and it is what makes the identity-less resume
+// doors safe: they resume whatever this pointed at.
+//
+// ORDER MATTERS, AND IT IS THE WHOLE POINT. The key must select the directory BEFORE the stamp,
+// never after. A cold start with a stale session opens account A's profile and still shows the
+// sign-in screen; if account B signed in and the stamp landed first, B's license, email and JWT
+// would be written into A's database — one account quietly contaminating another, which is the
+// exact failure the clean-room wipe was flailing at. Adopt first, stamp second, and it cannot
+// happen at all.
+//
+//   already on that profile      -> re-affirm the pointer, carry on
+//   profile exists on this box   -> open it (instant account switch, nothing copied, nothing lost)
+//   signed in on the scratch one -> rename _pending -> <key>: that scratch directory IS this
+//                                   account's profile now, no copy and no second database
+//   different account, new here  -> create an empty profile; the existing zero-station addStation
+//                                   path takes over (OnboardingFlow.tsx:428)
+//
+// The switch happens IN PROCESS — close the database, move the directory, reopen. No relaunch:
+// relaunching mid-sign-in would drop the operator back at the sign-in screen with the onboarding
+// flow half-finished, which is the sign-in loop this codebase has already paid for twice.
+//
+// The daemon is stopped before the pointer moves and restarted after (item 5, design property 6):
+// only the ACTIVE profile's daemon runs, so a signed-out account never keeps broadcasting.
+ipcMain.handle("profile:adopt", async (_e, { licenseKey } = {}) => {
   try {
-    // Switch = sign-out (spares operator profiles) then a fresh sign-in as the other account. Nothing
-    // of the old ACCOUNT (identity/stations/library/session) survives; in-app profiles persist.
-    await _wipeLocalIdentityAndData({ spareProfiles: true });
-    try { markHaExpectedRestart(); } catch {}
-    app.relaunch();
-    app.exit(0);
-    return { ok: true, switched: true };
-  } catch (e) { console.error("[account:switch-to]", e.message); return { ok: false, error: e.message }; }
+    const key = P.sanitizeKey(licenseKey);
+    if (!key) return { ok: false, error: "bad_key", detail: `Not a usable profile name: ${JSON.stringify(licenseKey)}` };
+
+    const active = P.activeKey();
+    if (active === key && !P.isPending()) { P.writePointer(key); return { ok: true, switched: false, profile: key }; }
+
+    // 1. Stop the daemon — it holds the outgoing profile's database open, and on Windows a
+    //    directory rename fails while any file inside it is open.
+    try { if (AUDIO_DAEMON) await audiodClient.cmd("shutdown").catch(() => {}); } catch {}
+    try { db.close(); } catch {}
+
+    // 2. Move into place.
+    if (!P.profileExists(key)) {
+      if (active === P.PENDING) {
+        try {
+          fs.renameSync(P.profileDir(P.PENDING), P.profileDir(key));
+        } catch (e) {
+          console.error("[profiles] could not adopt the pending profile:", e.message);
+          try { initDb(); } catch {}   // put the old handle back so the app stays usable
+          return { ok: false, error: "profile_in_use", detail: "Ether could not finish opening your account's folder because a file was still in use. Close Ether completely (including the audio engine in the system tray), reopen it, and sign in again." };
+        }
+      } else {
+        P.ensureProfileDir(key);   // a different account, new to this machine → empty profile
+      }
+    }
+
+    // 3. Point at it, then reopen everything against the new directory.
+    P.writePointer(key);
+    P.setActive(key);
+    try { process.env.ETHER_DB_PATH = getDbPath(); } catch {}
+    initDb();                       // open + migrate + seed the adopted profile's database
+    try { if (AUDIO_DAEMON) audiodClient.ensure(); } catch {}   // daemon comes back on the new DB
+    console.log(`[profiles] adopted ${key} (was ${active})`);
+    return { ok: true, switched: active !== key, profile: key };
+  } catch (e) {
+    console.error("[profile:adopt]", e.message);
+    return { ok: false, error: e.message };
+  }
 });
+
+/** Which profiles this machine holds, and which one is open. Read-only. */
+ipcMain.handle("profile:list", () => ({
+  ok: true,
+  active: P.isPending() ? null : P.activeKey(),
+  pending: P.isPending(),
+  profiles: P.listProfiles(),
+  migration: PROFILE_MIGRATION,
+}));
 
 // CLEAN-ROOM SIGN-IN guard (the invariant's sign-in clause): a FRESH sign-in/sign-up must start from
 // absolute zero. If the local DB carries residual station/identity data (e.g. a DB contaminated before
@@ -4359,19 +4523,13 @@ ipcMain.handle("account:switch-to", async () => {
 // A relaunch that did not wipe is strictly worse than no relaunch: it destroys the operator's
 // context and changes nothing. So the wipe now reports, and a failure returns instead — the caller
 // keeps the operator on the sign-in screen and tells them why.
-ipcMain.handle("account:cleanRoomReset", async () => {
-  try {
-    const wiped = await _wipeLocalIdentityAndData({ spareProfiles: true });  // clean-room for a fresh sign-in; keep operator profiles
-    if (!wiped || !wiped.ok) {
-      console.error("[account:cleanRoomReset] wipe FAILED — not relaunching (a relaunch without a wipe is an infinite loop)");
-      return { ok: false, error: "db_in_use", detail: "The local database is in use, so this computer's existing account data could not be cleared." };
-    }
-    try { markHaExpectedRestart(); } catch {}
-    app.relaunch();
-    app.exit(0);
-    return { ok: true };
-  } catch (e) { console.error("[account:cleanRoomReset]", e.message); return { ok: false, error: e.message }; }
-});
+// account:cleanRoomReset — REMOVED (profile-per-account, 2026-08-15).
+// It wiped this computer's database whenever a DIFFERENT account signed in, because one shared
+// database had no other way to keep two accounts apart. A different account now simply opens its own
+// directory (profile:adopt), so there is nothing to clear and nothing to lose: signing in is a read.
+// The wipe machinery itself survives ONLY behind the typed-confirmation Factory Reset in
+// Preferences (system:factoryReset -> SettingsPanel.tsx doFactoryReset), and is now scoped to the
+// active profile so resetting one account cannot touch another's data.
 
 // ── Legacy Tauri command aliases — called by SettingsPanel ────
 ipcMain.handle("get_local_ip", () => audio.getLocalIp());
@@ -4380,7 +4538,7 @@ ipcMain.handle("get_local_ip", () => audio.getLocalIp());
 ipcMain.handle("backup_db", async () => {
   try {
     const ts = Math.floor(Date.now() / 1000);
-    const backupDir = path.join(app.getPath("userData"), "backups");
+    const backupDir = _profileData("backups");
     fs.mkdirSync(backupDir, { recursive: true });
     const backupName = `openair-backup-${ts}.db`;
     fs.copyFileSync(getDbPath(), path.join(backupDir, backupName));
@@ -4402,7 +4560,7 @@ ipcMain.handle("backup_db", async () => {
 
 ipcMain.handle("list_backups", () => {
   try {
-    const backupDir = path.join(app.getPath("userData"), "backups");
+    const backupDir = _profileData("backups");
     if (!fs.existsSync(backupDir)) return [];
     return fs.readdirSync(backupDir)
       .filter(n => n.startsWith("openair-backup-") && n.endsWith(".db"))
@@ -4414,7 +4572,7 @@ ipcMain.handle("list_backups", () => {
 ipcMain.handle("restore_db", async (_, { backupName } = {}) => {
   try {
     if (!backupName) throw new Error("backupName is required");
-    const backupPath = path.join(app.getPath("userData"), "backups", backupName);
+    const backupPath = _profileData("backups", backupName);
     if (!fs.existsSync(backupPath)) throw new Error("Backup not found: " + backupName);
     await swapDatabaseFile(backupPath);   // close → copy → reopen(retry) → verify → rollback-on-failure
     return "Restored from " + backupName + ". Restart Ether for all changes to take effect.";
@@ -4482,9 +4640,10 @@ ipcMain.handle("station:install-from-cloud", async (_evt, { force } = {}) => {
     // userData is %APPDATA%\Ether (ROAMING), and managed profiles (OV) redirect Roaming to a network
     // H:\ share. That is the same hazard getDbPath() exists to avoid: writing a multi-hundred-MB file
     // across a redirected share is where it arrives truncated, and a truncated file fails at open with
-    // "malformed database schema". _etherDir() is %LOCALAPPDATA%\Ether\com.ether.radio on Windows —
-    // machine-local, never redirected, and the same volume the file is about to be copied to anyway.
-    const tmp = path.join(_etherDir(), "cloud-restore.db");
+    // "malformed database schema". _etherDir() is the ACTIVE PROFILE's directory under
+    // %LOCALAPPDATA%\Ether\profiles on Windows — machine-local, never redirected, and the same
+    // volume (indeed the same folder) the restored file is about to replace a database in.
+    const tmp = _profileData("cloud-restore.db");
     fs.writeFileSync(tmp, raw);
     // Verify the staged file is the full download before it goes anywhere near the live database.
     // A short write (full disk, interrupted network share) is otherwise silent until SQLite chokes.
@@ -5035,7 +5194,7 @@ ipcMain.handle("updater:install", () => {
 
 // ── AI key storage (safeStorage) ─────────────────────────────
 function getAiConfigPath() {
-  return path.join(app.getPath("userData"), "ai-config.json");
+  return _profileData("ai-config.json");
 }
 function readAiConfig() {
   try { return JSON.parse(fs.readFileSync(getAiConfigPath(), "utf8")); }
@@ -5210,7 +5369,7 @@ try {
 // ── AI Voice Studio (TTS generation + segment library) ──────────────────────
 try {
   const { installAIVoice } = require("./ai-voice.js");
-  installAIVoice(ipcMain, getDb, { userDataPath: app.getPath("userData") });   // getDb (function) → resolves the live handle after a reopen
+  installAIVoice(ipcMain, getDb, { userDataPath: P.profileDir(P.activeKey()) });   // getDb (function) → resolves the live handle after a reopen
 } catch (e) {
   console.warn("[AI-VOICE] installAIVoice failed:", e.message);
 }
@@ -5375,7 +5534,7 @@ ipcMain.handle("ffmpeg:export", async (_, { sourcePath, defaultName, filters }) 
 
 // Return the clip auto-save directory path
 ipcMain.handle("media:getSaveDir", () => {
-  const dir = path.join(app.getPath("userData"), "clips");
+  const dir = _profileData("clips");
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 });
@@ -6464,8 +6623,8 @@ ipcMain.handle('captions:get-loopback-source', async () => {
 // Where the music library is stored. Default = <userData>/r2-cache, but the operator can pick a
 // folder during cloud sync (e.g. a big drive). Persisted in a FILE (not the DB) so it survives the
 // install-from-cloud DB swap. getMusicDir() always returns an existing dir.
-const R2_CACHE_DIR    = path.join(app.getPath('userData'), 'r2-cache'); // hard fallback only
-const MUSIC_DIR_FILE  = path.join(app.getPath('userData'), 'music-dir.txt');
+const R2_CACHE_DIR    = _profileData('r2-cache'); // hard fallback only
+const MUSIC_DIR_FILE  = _profileData('music-dir.txt');
 // The designated library folder. Default = <user's Music>\ether music library (per-user, so it's
 // the same relative location on every machine without hardcoding a username) — this is where cloud
 // downloads materialize AND where the uploader consolidates, so the folder is the single source of
@@ -6832,7 +6991,7 @@ function _noteSchedulerCore(stationId, ctx) {
               `${g && g.hours ? ` | goal-shadow: ${g.wouldDiffer}/${g.positions} positions would change` : ""}`);
   try {
     require('fs').appendFileSync(
-      path.join(app.getPath('userData'), 'scheduler-core-shadow.jsonl'),
+      _profileData('scheduler-core-shadow.jsonl'),
       JSON.stringify({ t: new Date().toISOString(), stationId, mode: ctx.schedulerMode, diff: d, goalShadow: g }) + "\n");
   } catch { /* a lost ledger line is cosmetic */ }
 }
@@ -6882,7 +7041,7 @@ function _genEmit(payload) {
 // the thing being observed.
 function _healthEvent(kind, data) {
   try {
-    require('fs').appendFileSync(path.join(app.getPath('userData'), 'health-events.jsonl'),
+    require('fs').appendFileSync(_profileData('health-events.jsonl'),
       JSON.stringify({ t: new Date().toISOString(), kind, ...(data && typeof data === 'object' ? data : {}) }) + "\n");
   } catch {}
 }
@@ -6892,7 +7051,7 @@ function _noteGenerateTiming(stationId, ctx, days) {
     if (!ms.length) return;
     const s = [...ms].sort((a, b) => a - b);
     const at = (p) => s[Math.min(s.length - 1, Math.floor(s.length * p))];
-    require('fs').appendFileSync(path.join(app.getPath('userData'), 'health-events.jsonl'),
+    require('fs').appendFileSync(_profileData('health-events.jsonl'),
       JSON.stringify({ t: new Date().toISOString(), kind: 'generate-timing', stationId, days,
                        hours: s.length, p50: at(0.50), p95: at(0.95), max: s[s.length - 1],
                        totalMs: s.reduce((a, b) => a + b, 0) }) + "\n");
@@ -7480,7 +7639,7 @@ try {
     const limit = Math.max(1, Math.min(200, (opts && opts.limit) || 25));
     try {
       const fs = require('fs');
-      const p = path.join(app.getPath('userData'), 'health-events.jsonl');
+      const p = _profileData('health-events.jsonl');
       if (!fs.existsSync(p)) return { ok: true, rows: [], note: 'no ledger yet' };
       const size = fs.statSync(p).size;
       const start = Math.max(0, size - TAIL_BYTES);
@@ -7873,13 +8032,13 @@ function _maybeRunDeletionSweep(stationId) {
     if (!stamped) {
       // No durable singleton → do not send DELETEs. Evaluating is still safe and still useful.
       console.error('[deletion-sweep] no durable last-run stamp — evaluating only, NO releases this tick');
-      try { require('./deletion-sweep').runSweep(db, { machineId, logDir: app.getPath('userData'), now }); }
+      try { require('./deletion-sweep').runSweep(db, { machineId, logDir: P.profileDir(P.activeKey()), now }); }
       finally { _sweepInFlight = false; }
       return;
     }
 
     const sweep = require('./deletion-sweep');
-    sweep.runSweep(db, { machineId, logDir: app.getPath('userData'), now });
+    sweep.runSweep(db, { machineId, logDir: P.profileDir(P.activeKey()), now });
 
     // The release pass. Async, so the flag is cleared in its own completion rather than here.
     // Rows the checks cleared are released now instead of waiting another 24h for the next tick.
@@ -8156,7 +8315,7 @@ ipcMain.handle('schedule:playhead-view', (_e, stationId, limit) => {
 ipcMain.on('health:playhead-divergence', (_e, record) => {
   try {
     const line = JSON.stringify({ t: new Date().toISOString(), ...(record || {}) }) + "\n";
-    require('fs').appendFileSync(path.join(app.getPath('userData'), 'playhead-divergence.jsonl'), line);
+    require('fs').appendFileSync(_profileData('playhead-divergence.jsonl'), line);
   } catch { /* best-effort; a lost divergence line is cosmetic */ }
 });
 

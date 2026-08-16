@@ -19,8 +19,14 @@ const fs   = require('fs');
 
 // DB lives in LocalAppData\Ether (NOT Roaming — Roaming is redirected to a network share on managed
 // boxes like OV, where SQLite WAL fails). Resolve the same way the main app + engine do. [CLAUDE.md]
-const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-const dbPath  = path.join(localAppData, 'Ether', 'com.ether.radio', 'openair.db');
+//
+// PROFILE-PER-ACCOUNT (4.4.216): the single install-wide data directory became one directory per
+// account, selected by profiles/active. This hook hardcoded the old path, so after the migration it
+// blocked every commit with "DB not found". It now resolves the ACTIVE profile through the same one
+// path module the app and the daemon use.
+const P = require('../electron/profile-paths');
+const active = P.resolveActive();
+const dbPath = active.pending ? null : P.dbPath(active.key);
 const scriptsDir = path.join(__dirname);
 
 // ── Test harness ──────────────────────────────────────────────
@@ -56,10 +62,18 @@ function section(title) {
 
 section('STEP 1 — Read current schema_version from DB');
 
+if (!dbPath) {
+  // No account is signed in on this machine, so there is no database to check the chain against.
+  // That is not a broken transformer chain and must not block a commit — say so and pass.
+  console.log('[verify-transformer-chain] no active profile (nobody signed in) — nothing to verify, skipping.');
+  process.exit(0);
+}
 if (!fs.existsSync(dbPath)) {
   console.error('[verify-transformer-chain] ERROR: DB not found at', dbPath);
+  console.error('  active profile:', active.key);
   process.exit(1);
 }
+console.log('[verify-transformer-chain] profile:', active.key);
 
 const Database = require(path.join(__dirname, '../node_modules/better-sqlite3'));
 const db = new Database(dbPath, { readonly: true });

@@ -10,7 +10,7 @@ if (!process.argv.includes("--i-am-off-air")) { console.error("Plays audio — p
 const file = process.env.ETHER_SPIKE_FILE;
 if (!file) { console.error("Set ETHER_SPIKE_FILE to a local audio file."); process.exit(2); }
 const SID = 99;
-const src = process.env.ETHER_DB_PATH || path.join(os.homedir(), "AppData", "Roaming", "com.ether.radio", "openair.db");
+const src = process.env.ETHER_DB_PATH || require("../electron/profile-paths").dbPath(require("../electron/profile-paths").activeKey());
 const tmp = path.join(os.tmpdir(), "ether-spike-playlog-" + Date.now() + ".db");
 fs.copyFileSync(src, tmp);
 for (const ext of ["-wal", "-shm"]) { try { fs.unlinkSync(tmp + ext); } catch {} }

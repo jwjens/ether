@@ -224,27 +224,10 @@ export default function SubscriptionPanel() {
     setPlanGlobally("free");
   };
 
-  // Sign out of the current cloud account and return to the Sign in / Sign up screen — so a
-  // different account (e.g. a new email + its own cluster of stations) can take over this install.
-  // Clears only the account/login + onboarding flags; the local station DB is left intact (back it
-  // up to the cloud first if you need it). Relaunches so App.tsx re-runs the first-run gate → auth.
-  const switchAccount = async () => {
-    if (!confirm(
-      "Switch account?\n\nThis signs out of the current account and restarts to the Sign in / Sign up screen, where you can sign in or create a new account.\n\nThis install's local station data isn't deleted — but if you need it, make sure it's backed up to the cloud first. Continue?"
-    )) return;
-    try {
-      const kv = (window as any).ether.stationConfigKv;
-      const keys = [
-        'license_key', 'license_email', 'plan_tier', 'account_name',
-        'first_run_complete', 'onboarding_account_joined', 'onboarding_license_entered',
-        'onboarding_library_pulled', 'onboarding_library_source',
-      ];
-      for (const k of keys) { try { await kv.removeByKey(stationId, k); } catch {} }
-      await (window as any).ether.invoke('app:relaunch');
-    } catch {
-      alert("Couldn't switch accounts — please try again.");
-    }
-  };
+  // switchAccount — REMOVED (4.4.216). It stripped license_key / license_email / plan_tier and the
+  // onboarding flags out of the CURRENT account's database and relaunched, which under
+  // profile-per-account damages the profile it leaves behind rather than switching away from it.
+  // There is one door out of an account now: File ▸ Sign Out, which closes Ether completely.
 
   const planColor = (plan: PlanTier) => {
     if (plan === "pro")              return "var(--accent-cyan)";
@@ -324,21 +307,6 @@ export default function SubscriptionPanel() {
               Manage Devices →
             </button>
           )}
-          <button
-            onClick={switchAccount}
-            title="Sign out of this account and return to the Sign in / Sign up screen"
-            style={{
-              marginLeft: currentPlan !== "free" ? 8 : "auto",
-              padding: "5px 12px", borderRadius: 0, fontSize: 11, fontWeight: 600,
-              background: "var(--bg-tertiary)", color: "var(--text-secondary)",
-              border: "1px solid var(--border-primary)", cursor: "pointer",
-              letterSpacing: "0.02em",
-            }}
-            onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "var(--accent-cyan)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--accent-cyan)"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-secondary)"; (e.currentTarget as HTMLElement).style.borderColor = "var(--border-primary)"; }}
-          >
-            Switch Account
-          </button>
         </div>
       </div>
 
