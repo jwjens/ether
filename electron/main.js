@@ -980,17 +980,35 @@ async function _wipeLocalIdentityAndData(opts = {}) {
     await session.defaultSession.clearStorageData();   // cookies + all web storage, all origins
     await session.defaultSession.clearCache();
   } catch (e) { console.error("[wipe] clearStorageData:", e.message); }
-  const rm = (p) => { try { if (p && fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true }); } catch {} };
+  // rm REPORTS. It used to swallow every failure, which is what made a failed wipe indistinguishable
+  // from a successful one — and the caller relaunched either way. On Windows a recursive delete of the
+  // data directory FAILS while any other process holds openair.db open (the audio daemon does), so the
+  // silent failure was not a corner case: it was the normal outcome on any machine that has played audio.
+  const rm = (p) => {
+    try {
+      if (!p || !fs.existsSync(p)) return true;               // nothing there = nothing to remove
+      fs.rmSync(p, { recursive: true, force: true });
+      return !fs.existsSync(p);                                // VERIFY: force:true can return quietly
+    } catch (e) {
+      console.error(`[wipe] could not remove ${p}: ${e.message}`);
+      return false;
+    }
+  };
 
   // TOTAL file wipe (fresh DB on next launch = correct infrastructure, no residue, no corruption).
   try { db.close(); } catch {}
-  rm(path.dirname(_etherDir()));                              // %LOCALAPPDATA%\Ether (DB, WAL, keyed copies, engine staging)
+  // THE ONE THAT DECIDES. The others are legacy/auxiliary paths whose absence is harmless; if THIS
+  // directory survives, the install still holds the previous account's database and a relaunch would
+  // come straight back to the same state.
+  const dataWiped = rm(path.dirname(_etherDir()));            // %LOCALAPPDATA%\Ether (DB, WAL, keyed copies, engine staging)
   rm(path.join(app.getPath("appData"), "com.ether.radio"));  // legacy Roaming DB
   rm(path.join(app.getPath("appData"), "openair"));          // pre-rename Roaming userData
   try { rm(app.getPath("sessionData")); } catch {}           // Chromium session store on disk
   for (const m of [".ether-on-air", ".ether-keep-session"]) {
     try { fs.rmSync(path.join(app.getPath("userData"), m), { force: true }); } catch {}
   }
+  if (!dataWiped) console.error("[wipe] DATA DIRECTORY SURVIVED — the install still holds the previous account's database");
+  return { ok: dataWiped, dataDir: path.dirname(_etherDir()) };
 }
 
 // Which account's data this DB holds, kept at install level so it SURVIVES the per-station
@@ -4329,9 +4347,25 @@ ipcMain.handle("account:switch-to", async () => {
 // the total-sign-out invariant shipped, or any leftover from a prior account), the renderer calls this
 // BEFORE establishing the new identity — total wipe (reuse the same clear) + relaunch, so the next
 // sign-in provisions ONLY the account signed into. On a clean DB the renderer never calls it.
+// RELAUNCH ONLY ON A REAL WIPE.
+//
+// This used to relaunch unconditionally. When the delete failed — which it does whenever another
+// process holds openair.db open — the app restarted into IDENTICAL data: same stations, same
+// account_email. The next sign-in hit the same different-account branch and reset again, forever.
+// An operator signing into a second account saw the window close and reopen on the sign-in screen
+// with no message, on every attempt (2026-08-15; receipts: Ether pids restarted 19:12 while
+// ether-engine stayed up from 18:27, and %LOCALAPPDATA%\Ether kept its 13:28 timestamp).
+//
+// A relaunch that did not wipe is strictly worse than no relaunch: it destroys the operator's
+// context and changes nothing. So the wipe now reports, and a failure returns instead — the caller
+// keeps the operator on the sign-in screen and tells them why.
 ipcMain.handle("account:cleanRoomReset", async () => {
   try {
-    await _wipeLocalIdentityAndData({ spareProfiles: true });  // clean-room for a fresh sign-in; keep operator profiles
+    const wiped = await _wipeLocalIdentityAndData({ spareProfiles: true });  // clean-room for a fresh sign-in; keep operator profiles
+    if (!wiped || !wiped.ok) {
+      console.error("[account:cleanRoomReset] wipe FAILED — not relaunching (a relaunch without a wipe is an infinite loop)");
+      return { ok: false, error: "db_in_use", detail: "The local database is in use, so this computer's existing account data could not be cleared." };
+    }
     try { markHaExpectedRestart(); } catch {}
     app.relaunch();
     app.exit(0);

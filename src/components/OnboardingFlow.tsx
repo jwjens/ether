@@ -540,7 +540,19 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
       const signingIn = String(emailSigningIn || '').trim().toLowerCase();
       if (localEmail && signingIn && localEmail !== signingIn) {
         console.log('[cleanroom] local data belongs to a DIFFERENT account → total reset', { localEmail, signingIn, stations: localList.length });
-        await (window as any).ether.invoke('account:cleanRoomReset'); // wipes everything + relaunches
+        // READ THE ANSWER. This used to `return true` regardless, so a reset that could not wipe still
+        // aborted the sign-in — and main relaunched anyway, so every attempt closed the app and came
+        // back to the sign-in screen unchanged. On success main never returns (relaunch + exit); any
+        // answer we actually receive therefore means the wipe did NOT happen.
+        const r = await (window as any).ether.invoke('account:cleanRoomReset');
+        if (r && r.ok === false) {
+          setAuthBusy(false);
+          setAuthErr(
+            'This computer still holds another account\'s data, and it could not be cleared while Ether is using it. ' +
+            'Close Ether completely (including the audio engine in the system tray), reopen it, and sign in again.'
+          );
+          return true;   // stop the sign-in — but on the sign-in screen, with a reason, not in a loop
+        }
         return true;
       }
       // Same account (or local owner unknown) → this is a resume/re-sign-in; KEEP the work.
