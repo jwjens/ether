@@ -47,6 +47,13 @@ const USERDATA_ITEMS = [
   "ai-config.json",
   ".ether-on-air",
   ".ether-keep-session",
+  // Append-only ledgers. These carry a RECEIPT TRAIL — r2-deletion-report.jsonl in particular is the
+  // evidence of what was released from R2 and why — so losing their history is not the same as
+  // losing a log file. They belong with the database they describe.
+  "logreader-shadow.jsonl",
+  "playhead-divergence.jsonl",
+  "scheduler-core-shadow.jsonl",
+  "r2-deletion-report.jsonl",
 ];
 
 /** Read the account's license key out of a database file, in the transport's order of trust. */
@@ -147,7 +154,13 @@ function migrateToProfiles(opts = {}) {
       if (!fs.existsSync(src)) continue;
       const dst = path.join(target, item);
       try {
-        if (fs.existsSync(dst)) { fs.rmSync(src, { recursive: true, force: true }); continue; }
+        if (fs.existsSync(dst)) {
+          // NEVER delete the source just because something is already at the destination — that
+          // silently discards whichever copy is older, and for the append-only ledgers above the
+          // older copy is the entire history. Leave it where it is and say so; a human can merge.
+          log(`${item} already exists in the profile — leaving the copy at ${src} untouched (merge by hand if you want one file)`);
+          continue;
+        }
         fs.renameSync(src, dst);
         moved.push(item);
       } catch (e) {
