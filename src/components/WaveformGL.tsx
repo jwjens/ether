@@ -21,6 +21,26 @@ interface Props {
   // color instead of the intro/outro/body zone colors — used by the multitrack
   // timeline so each track's waveform matches its track color.
   tint?:       string;
+  // Fade boundaries in the SAME normalized space as viewStart/viewEnd. The waveform's
+  // amplitude is scaled by the fade gain between viewStart→fadeInEnd and fadeOutStart→viewEnd,
+  // so a committed fade is visible as a taper in the audio itself, not just as an overlay.
+  // Defaults (undefined) mean "no fade" — the amplitude is untouched.
+  fadeInEnd?:    number;
+  fadeOutStart?: number;
+  /** The clip's FULL trimmed span. When viewStart/viewEnd is a viewport slice of a clip too wide to
+   *  allocate as one canvas, these stay fixed at the clip's real edges so fades and cue geometry are
+   *  measured against the clip, not against whatever happens to be on screen. Defaults to the view. */
+  clipStart?:    number;
+  clipEnd?:      number;
+  /** Identifies this instance in the debug log — without it, "a clip stopped drawing" names no clip. */
+  label?:        string;
+  /** Log-only context. `fullClipPx` is what an UNSLICED canvas would have had to allocate for this
+   *  clip — it keeps the illegal-allocation measurement visible even though slicing now prevents
+   *  the allocation from happening. None of these affect rendering. */
+  clipDurationMs?: number;
+  clipStartMs?:    number;
+  zoom?:           number;
+  fullClipPx?:     number;
 }
 
 function hexToRgb(hex?: string): [number, number, number] {
@@ -36,11 +56,18 @@ function hexToRgb(hex?: string): [number, number, number] {
 // bar structure 100% intact.
 const GLOW_PAD = 0.006;
 
+/** The waveform surface is dark by convention — Audition, Pro Tools, every DAW — regardless of the
+ *  app skin. It is set on the canvas ELEMENT as well as in the GL clear so that a canvas which never
+ *  gets a context, or loses one, still reads as part of the timeline instead of a white hole. */
+const SURFACE_DARK = "#0d0d0d";
+
 const VERT = `#version 300 es
 precision highp float;
 uniform sampler2D u_peaks;
 uniform int  u_n;
 uniform float u_vs, u_ve;
+uniform float u_fadeInEnd, u_fadeOutStart;
+uniform float u_cs, u_ce;   // the clip's full trimmed span; u_vs/u_ve may be a slice of it
 out float v_t, v_amp, v_y;
 void main() {
   int pi  = gl_VertexID / 6;
@@ -58,6 +85,22 @@ void main() {
   float t    = u_vs + (float(pi) + float(col)) / float(u_n) * (u_ve - u_vs);
   float peak = texture(u_peaks, vec2(t, 0.5)).r;
   float amp  = peak * 0.92;
+
+  // ── Fade gain ──
+  // A committed fade must be READABLE in the waveform, not only in an overlay drawn on top of it.
+  // The envelope is scaled by the same linear gain the mix applies, so the clip's audio visibly
+  // tapers to nothing at the edge — the Audition read.
+  // Ramps are measured against the CLIP's own edges (u_cs/u_ce), never against the drawn slice —
+  // when only part of a clip is on screen, u_vs/u_ve is a window into it, and using those would
+  // make the fade restart at the edge of the viewport.
+  float gain = 1.0;
+  if (u_fadeInEnd > u_cs && t < u_fadeInEnd) {
+    gain *= clamp((t - u_cs) / max(u_fadeInEnd - u_cs, 1e-6), 0.0, 1.0);
+  }
+  if (u_fadeOutStart < u_ce && t > u_fadeOutStart) {
+    gain *= clamp((u_ce - t) / max(u_ce - u_fadeOutStart, 1e-6), 0.0, 1.0);
+  }
+  amp *= gain;
   // Extend quad beyond actual amplitude for the glow region
   float extent = amp + ${GLOW_PAD.toFixed(4)};
   float y    = (row == 0) ? extent : -extent;
@@ -115,7 +158,21 @@ export default function WaveformGL({
   peaks, viewStart, viewEnd,
   cueIn, cueOut, introEnd, outroStart,
   playhead, hoverPos, dragRegion, onMount, tint,
+  fadeInEnd, fadeOutStart, clipStart, clipEnd, label,
+  clipDurationMs, clipStartMs, zoom, fullClipPx,
 }: Props) {
+  /** Draw-state log, deduped by signature.
+   *
+   *  The draw effect runs on EVERY render, so logging each pass would bury the signal. This emits
+   *  only when the state actually CHANGES — a new bail reason, a new mip level, a resize, a lost
+   *  or restored context. A clip that silently stops painting therefore leaves exactly one line
+   *  saying why, and a healthy clip goes quiet after one line. */
+  const lastLogRef = useRef<string>("");
+  const logState = (sig: string) => {
+    if (lastLogRef.current === sig) return;
+    lastLogRef.current = sig;
+    console.log(`[WaveformGL${label ? ` ${label}` : ""}] ${sig}`);
+  };
   const glRef  = useRef<HTMLCanvasElement>(null);
   const ovRef  = useRef<HTMLCanvasElement>(null);
 
@@ -154,15 +211,50 @@ export default function WaveformGL({
     gl: WebGL2RenderingContext; prog: WebGLProgram;
     tex: WebGLTexture; vao: WebGLVertexArrayObject;
     u: Record<string, WebGLUniformLocation | null>; n: number;
+    maxDim: number;
   } | null>(null);
 
-  // Init GL once
+  // Bumped whenever the GL context is lost/restored, purely to force the draw effects to re-run
+  // against the rebuilt context.
+  const [glEpoch, setGlEpoch] = useState(0);
+
+  // Init GL. Runs on mount AND on every context restore — a WebGL context is not permanent.
+  //
+  // Each clip owns its own WebGL context, so a session with many clips can exceed the browser's
+  // live-context cap (Chrome evicts at roughly 16). Eviction fires `webglcontextlost` and is
+  // otherwise SILENT: no exception, no console error, the canvas simply stops painting forever.
+  // That is the "dead instance" — it looked white only because every layer behind it is
+  // theme-dependent and not reliably dark. Losing the context is now recoverable, and even an
+  // unrecovered one paints dark via the canvas's own CSS background.
   useEffect(() => {
     const can = glRef.current;
     if (!can) return;
     if (onMount) onMount(can);
+    const onLost = (e: Event) => {
+      e.preventDefault();            // preventDefault is REQUIRED or the context never restores
+      st.current = null;
+      uploadedRef.current = -1;
+      console.warn(`[WaveformGL${label ? ` ${label}` : ""}] CONTEXT LOST — this is the silent death; recovery armed`);
+      lastLogRef.current = "";
+      setGlEpoch(n => n + 1);        // repaint: the CSS dark background carries the clip meanwhile
+    };
+    const onRestored = () => {
+      uploadedRef.current = -1;      // the texture died with the context — force a re-upload
+      console.log(`[WaveformGL${label ? ` ${label}` : ""}] CONTEXT RESTORED — rebuilding program/VAO/texture`);
+      lastLogRef.current = "";
+      setGlEpoch(n => n + 1);        // re-runs this effect, which rebuilds program/VAO/texture
+    };
+    can.addEventListener("webglcontextlost", onLost as EventListener, false);
+    can.addEventListener("webglcontextrestored", onRestored as EventListener, false);
+
     const gl = can.getContext("webgl2", { antialias: true, alpha: true }) as WebGL2RenderingContext;
-    if (!gl) { console.warn("WebGL2 not available"); return; }
+    if (!gl || gl.isContextLost?.()) {
+      console.warn("[WaveformGL] no WebGL2 context — clip renders dark, not blank");
+      return () => {
+        can.removeEventListener("webglcontextlost", onLost as EventListener, false);
+        can.removeEventListener("webglcontextrestored", onRestored as EventListener, false);
+      };
+    }
     // Required for R32F texture format
     gl.getExtension("EXT_color_buffer_float");
     gl.getExtension("OES_texture_float_linear");
@@ -179,7 +271,8 @@ export default function WaveformGL({
       gl.attachShader(prog, mk(FRAG, gl.FRAGMENT_SHADER));
       gl.linkProgram(prog);
       if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog)!);
-      const names = ["u_peaks","u_n","u_vs","u_ve","u_ci","u_co","u_ie","u_os","u_tint","u_tintAmt"];
+      const names = ["u_peaks","u_n","u_vs","u_ve","u_ci","u_co","u_ie","u_os","u_tint","u_tintAmt",
+                     "u_fadeInEnd","u_fadeOutStart","u_cs","u_ce"];
       const u: Record<string, WebGLUniformLocation | null> = {};
       names.forEach(n => { u[n] = gl.getUniformLocation(prog, n); });
       const vao = gl.createVertexArray()!;
@@ -189,51 +282,139 @@ export default function WaveformGL({
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      st.current = { gl, prog, tex, vao, u, n: 0 };
+      // The driver's own ceiling. A canvas wider than this cannot be rendered: the draw fails
+      // SILENTLY — no exception, no console error — and the canvas stays blank. That is what a
+      // 160634px-wide clip hit at full zoom. 8192 is a further self-imposed ceiling: no display
+      // needs more, and it keeps allocation sane on drivers that report an optimistic maximum.
+      const maxTex    = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
+      const maxRender = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) as number;
+      const maxView   = (gl.getParameter(gl.MAX_VIEWPORT_DIMS) as Int32Array | null)?.[0] ?? maxTex;
+      const maxDim    = Math.max(1024, Math.min(maxTex || 4096, maxRender || 4096, maxView || 4096, 8192));
+      st.current = { gl, prog, tex, vao, u, n: 0, maxDim };
+      console.log(`[WaveformGL${label ? ` ${label}` : ""}] INIT MAX_TEXTURE_SIZE=${maxTex} `
+                + `MAX_RENDERBUFFER_SIZE=${maxRender} MAX_VIEWPORT_DIMS=${maxView} → cap=${maxDim}px`);
+      uploadedRef.current = -1;   // a fresh context holds no texture — force the next draw to upload
     } catch(e) { console.error("WebGL init failed:", e); }
-  }, []);
+    return () => {
+      can.removeEventListener("webglcontextlost", onLost as EventListener, false);
+      can.removeEventListener("webglcontextrestored", onRestored as EventListener, false);
+    };
+  }, [glEpoch]);
 
-  // Upload peaks
+  /** Max-pooled mip pyramid over the peak data.
+   *
+   *  Zoomed out, a full song is ~10^5–10^6 peaks squeezed into a few hundred device pixels. Drawing
+   *  one quad per peak means thousands of fragments landing on the SAME pixel; each one composites
+   *  over the last, so the pixel converges to fully-opaque tint no matter how quiet the audio is —
+   *  the lane turns into a solid slab and every transient in it is lost. Level 0 is the raw peaks;
+   *  each level above is the pairwise MAX of the one below, so a decimated view still shows the
+   *  loudest sample in each column rather than an average that erases the peaks.
+   *  The draw picks the coarsest level that still has ~2 texels per device pixel. */
+  const mipsRef     = useRef<{ data: Uint8Array; n: number }[]>([]);
+  const uploadedRef = useRef<number>(-1);
+
   useEffect(() => {
-    const s = st.current;
-    if (!s || !peaks || !peaks.length) return;
-    const { gl, tex } = s;
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    // Convert to RGBA bytes (0-255) for maximum compatibility
-    const rgba = new Uint8Array(peaks.length * 4);
-    for (let i = 0; i < peaks.length; i++) {
-      const v = Math.floor(Math.min(1, Math.max(0, peaks[i])) * 255);
-      rgba[i*4] = v; rgba[i*4+1] = 0; rgba[i*4+2] = 0; rgba[i*4+3] = 255;
+    mipsRef.current = [];
+    uploadedRef.current = -1;
+    if (!peaks || !peaks.length) return;
+    const toRgba = (src: Float32Array | Uint8Array, n: number, raw: boolean) => {
+      const rgba = new Uint8Array(n * 4);
+      for (let i = 0; i < n; i++) {
+        const v = raw
+          ? Math.floor(Math.min(1, Math.max(0, (src as Float32Array)[i])) * 255)
+          : (src as Uint8Array)[i];
+        rgba[i*4] = v; rgba[i*4+1] = 0; rgba[i*4+2] = 0; rgba[i*4+3] = 255;
+      }
+      return rgba;
+    };
+    // Level 0 — raw peaks.
+    const levels: { data: Uint8Array; n: number }[] = [{ data: toRgba(peaks, peaks.length, true), n: peaks.length }];
+    // Successive levels — pairwise max, so a peak survives every decimation.
+    let cur = new Uint8Array(peaks.length);
+    for (let i = 0; i < peaks.length; i++) cur[i] = Math.floor(Math.min(1, Math.max(0, peaks[i])) * 255);
+    while (cur.length > 64) {
+      const half = Math.ceil(cur.length / 2);
+      const next = new Uint8Array(half);
+      for (let i = 0; i < half; i++) {
+        const a = cur[i*2], b = i*2 + 1 < cur.length ? cur[i*2+1] : 0;
+        next[i] = a > b ? a : b;
+      }
+      levels.push({ data: toRgba(next, half, false), n: half });
+      cur = next;
     }
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, peaks.length, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgba);
-    s.n = peaks.length;
+    mipsRef.current = levels;
+    const s = st.current;
+    if (s) s.n = peaks.length;
   }, [peaks]);
 
   // Draw GL every render
   useEffect(() => {
     const s = st.current; const can = glRef.current;
-    if (!s || !can || s.n === 0) return;
+    const mips = mipsRef.current;
+    // Every one of these bail paths leaves the canvas painting its CSS dark background rather than
+    // nothing — that is the invariant: if it cannot paint the waveform, it paints DARK.
+    if (!s)            return logState("BAIL no-gl-state (context lost or init failed)");
+    if (!can)          return logState("BAIL no-canvas");
+    if (!mips.length)  return logState("BAIL no-peaks (mip pyramid empty)");
+    if (s.gl.isContextLost?.()) return logState("BAIL context-lost");
     const { gl, prog, tex, vao, u } = s;
     const w = can.clientWidth, h = can.clientHeight;
-    if (!w || !h) return;
+    if (!w || !h) return logState(`BAIL zero-css-size w=${w} h=${h}`);
     const k = scaleFor(w, h);
-    if (can.width !== Math.floor(w*k) || can.height !== Math.floor(h*k)) {
-      can.width = Math.floor(w*k); can.height = Math.floor(h*k);
+    // PER-DIMENSION cap, not just total area. The old area cap let a 160634x62 canvas through
+    // (only ~10M pixels) and the driver refused to draw it without saying so.
+    const wantW = Math.floor(w * k), wantH = Math.floor(h * k);
+    const capW = Math.max(1, Math.min(wantW, s.maxDim));
+    const capH = Math.max(1, Math.min(wantH, s.maxDim));
+    if (capW < wantW || capH < wantH) {
+      logState(`CAP: requested ${wantW}x${wantH}, granted ${capW}x${capH} (driver cap ${s.maxDim})`);
     }
+    if (can.width !== capW || can.height !== capH) { can.width = capW; can.height = capH; }
+    if (!can.width || !can.height) return logState(`BAIL zero-backing-store ${can.width}x${can.height} (css ${w}x${h}, dpr ${dpr})`);
+
+    // ── Level select: the coarsest mip that still carries ~2 texels per device pixel ──
+    const span = Math.max(viewEnd - viewStart, 1e-6);
+    const targetBars = Math.max(1, Math.min(4096, can.width));
+    let level = 0;
+    while (level + 1 < mips.length && mips[level].n * span > targetBars * 2) level++;
+    if (uploadedRef.current !== level) {
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, mips[level].n, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, mips[level].data);
+      uploadedRef.current = level;
+    }
+    // One quad per device pixel at most. This is the cap that makes over-accumulation structurally
+    // impossible at ANY zoom: fragments can no longer stack thousands-deep on one pixel.
+    const barsInView = Math.max(1, Math.round(mips[level].n * span));
+    const nDraw = Math.max(1, Math.min(targetBars, barsInView));
+
     gl.viewport(0, 0, can.width, can.height);
-    gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+    // OPAQUE DARK, never transparent. A clip that fails to draw its waveform for any reason —
+    // lost context, an empty mip, a bail-out below — now paints DARK rather than letting whatever
+    // sits behind it show through. The layers behind are theme-dependent and not reliably dark.
+    gl.clearColor(0.05, 0.05, 0.05, 1.0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.useProgram(prog); gl.bindVertexArray(vao);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.uniform1i(u.u_peaks, 0); gl.uniform1i(u.u_n, s.n);
+    gl.uniform1i(u.u_peaks, 0); gl.uniform1i(u.u_n, nDraw);
     gl.uniform1f(u.u_vs, viewStart); gl.uniform1f(u.u_ve, viewEnd);
     gl.uniform1f(u.u_ci, cueIn);     gl.uniform1f(u.u_co, cueOut);
     gl.uniform1f(u.u_ie, introEnd);  gl.uniform1f(u.u_os, outroStart);
+    // Undefined fade bounds collapse to the view edges, which the shader reads as "no fade".
+    gl.uniform1f(u.u_cs, clipStart ?? viewStart);
+    gl.uniform1f(u.u_ce, clipEnd   ?? viewEnd);
+    gl.uniform1f(u.u_fadeInEnd,    fadeInEnd    ?? (clipStart ?? viewStart));
+    gl.uniform1f(u.u_fadeOutStart, fadeOutStart ?? (clipEnd   ?? viewEnd));
     const [tr, tg, tb] = hexToRgb(tint);
     gl.uniform3f(u.u_tint, tr, tg, tb);
     gl.uniform1f(u.u_tintAmt, tint ? 1 : 0);
-    gl.drawArrays(gl.TRIANGLES, 0, s.n * 6);
+    gl.drawArrays(gl.TRIANGLES, 0, nDraw * 6);
     gl.bindVertexArray(null);
+    logState(`DRAW ok mip=${level}/${mips.length - 1} texels=${mips[level].n} bars=${nDraw} `
+           + `canvas=${can.width}x${can.height} drawingBuffer=${gl.drawingBufferWidth}x${gl.drawingBufferHeight} `
+           + `css=${w}x${h} dpr=${dpr.toFixed(2)} `
+           + `fullClipPx=${fullClipPx ?? "n/a"} clipDurMs=${clipDurationMs ?? "n/a"} clipStartMs=${clipStartMs ?? "n/a"} `
+           + `zoom=${zoom ?? "n/a"} view=[${viewStart.toFixed(4)},${viewEnd.toFixed(4)}] span=${span.toFixed(5)}`);
   });
 
   // Draw 2D overlay
@@ -263,6 +444,27 @@ export default function WaveformGL({
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(0, h/2); ctx.lineTo(w, h/2); ctx.stroke();
 
+    // ── Fade geometry ──
+    // The taper lives in the waveform itself (vertex shader). These are the read-off marks:
+    // the gain line you can follow, and a hairline at the boundary so the fade's length is exact.
+    const drawFade = (fromP: number, toP: number, rising: boolean) => {
+      const x0 = toX(fromP), x1 = toX(toP);
+      if (!isFinite(x0) || !isFinite(x1) || Math.abs(x1 - x0) < 0.5) return;
+      ctx.strokeStyle = "rgba(255,255,255,0.85)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x0, rising ? h : 0);
+      ctx.lineTo(x1, rising ? 0 : h);
+      ctx.stroke();
+      // Hairline at the boundary — where the fade ends and full level begins.
+      const bx = rising ? x1 : x0;
+      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(bx, 0); ctx.lineTo(bx, h); ctx.stroke();
+    };
+    if (fadeInEnd !== undefined && fadeInEnd > viewStart) drawFade(viewStart, fadeInEnd, true);
+    if (fadeOutStart !== undefined && fadeOutStart < viewEnd) drawFade(fadeOutStart, viewEnd, false);
+
     if (hoverPos !== null) {
       const hx = toX(hoverPos);
       ctx.strokeStyle = "rgba(255,255,255,0.4)"; ctx.lineWidth = 1;
@@ -282,7 +484,9 @@ export default function WaveformGL({
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      <canvas ref={glRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} />
+      {/* The dark background is on the ELEMENT, so a canvas with no context — or one whose context
+          was evicted — still paints dark instead of showing the layers behind it. */}
+      <canvas ref={glRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", background: SURFACE_DARK }} />
       <canvas ref={ovRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }} />
     </div>
   );

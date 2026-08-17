@@ -73,6 +73,18 @@ const HANDLE_W         = 6;
 const FADE_ZONE        = 12;
 const DRAWER_H         = 320;
 const BASE_PPS         = 80;
+// Zoom floor. The old 0.25 floor meant 20 px/s — a three-minute song was 3,600px wide and could
+// NEVER be seen whole in a ~1,200px editor, which is why zoom-out felt broken rather than merely
+// limited. 0.002 is 0.16 px/s: an hour-long session fits inside 600px. Fit-to-window computes the
+// exact factor and only meets this floor on sessions longer than about ten hours.
+/** The edit surface is dark by convention under ANY skin — Audition, Pro Tools, every DAW.
+ *  It must NEVER be `var(--bg-primary)`: that variable is theme-dependent and at least two shipped
+ *  themes define it light (`.light-theme` #f0eeeb, `.theme-ether-default` #b8bcc4 "polished
+ *  aluminum"). A light ancestor is what turned any non-painting clip into a white hole. */
+const SURFACE_DARK     = "#0d0d0d";
+
+const MIN_ZOOM         = 0.002;
+const MAX_ZOOM         = 8;
 const MAX_UNDO         = 50;
 const MAX_AUTOSAVES    = 10;
 const AUTOSAVE_LABEL   = "Auto-save";
@@ -747,7 +759,63 @@ interface Props {
   stationId:  number;   // active station — for chop-and-send (imaging pools + the real deck-load path)
 }
 
-type EditTool = "select" | "grab" | "blade" | "trim" | "fade";
+// "smart" is the default: no mandatory tool-switching. The pointer's position within a clip
+// picks the gesture (trim / I-beam / grab / fade / crossfade). The five named tools survive
+// as EXPLICIT overrides — pick one and it wins everywhere, press it again to fall back to smart.
+type EditTool = "smart" | "select" | "grab" | "blade" | "trim" | "fade";
+
+// ── Smart-tool zones ──────────────────────────────────────────────
+// Bands are measured from the clip's own box. Every band is clamped against clip width so a
+// two-second clip doesn't become all-corner-and-no-body.
+type SmartZone = "trim-l" | "trim-r" | "fade-in" | "fade-out" | "xfade-l" | "xfade-r" | "ibeam" | "move";
+
+const SMART_EDGE_W       = 8;    // left/right trim band
+const SMART_CORNER_W     = 14;   // top-corner fade handle
+const SMART_CORNER_H     = 14;
+const SMART_XFADE_H      = 8;    // bottom band, only where a neighbour abuts
+const SMART_XFADE_GAP_MS = 120;  // how close a neighbour must sit to offer a crossfade
+
+/** ONE threshold for every overlay drawn on a clip — borders, wedges, handles, markers.
+ *  Below this clip width they render NOTHING. Hand-tuned per-element thresholds are how a 14px
+ *  white wedge ended up painted across a 6px clip; there is one number now and everything passes
+ *  through it. The cursor still carries the meaning at any width. */
+const OVERLAY_VISIBILITY_THRESHOLD_PX = 16;
+
+/** How far beyond the visible window a clip's waveform canvas still renders, in CSS px.
+ *  Wide enough that a normal scroll or wheel-zoom does not expose an unpainted edge; small enough
+ *  that the canvas stays far below the driver's per-dimension limit at any zoom. */
+const VIEWPORT_RENDER_MARGIN_PX = 400;
+
+function smartZoneAt(
+  x: number, y: number, w: number, h: number,
+  abutsLeft: boolean, abutsRight: boolean,
+): SmartZone {
+  const edge   = Math.min(SMART_EDGE_W,   Math.max(2, w * 0.2));
+  const corner = Math.min(SMART_CORNER_W, Math.max(3, w * 0.25));
+  // Most specific first: corners beat edges, edges beat the body.
+  if (y <= SMART_CORNER_H) {
+    if (x <= corner)     return "fade-in";
+    if (x >= w - corner) return "fade-out";
+  }
+  if (y >= h - SMART_XFADE_H) {
+    if (abutsLeft  && x <= corner)     return "xfade-l";
+    if (abutsRight && x >= w - corner) return "xfade-r";
+  }
+  if (x <= edge)     return "trim-l";
+  if (x >= w - edge) return "trim-r";
+  return y <= h / 2 ? "ibeam" : "move";
+}
+
+const SMART_CURSOR: Record<SmartZone, string> = {
+  "trim-l":   "ew-resize",
+  "trim-r":   "ew-resize",
+  "fade-in":  "nesw-resize",
+  "fade-out": "nwse-resize",
+  "xfade-l":  "col-resize",
+  "xfade-r":  "col-resize",
+  "ibeam":    "text",
+  "move":     "grab",
+};
 type FxWindowType = "eq" | "comp" | "reverb";
 
 const FX_WINDOW_LABELS: Record<FxWindowType, string> = {
@@ -814,7 +882,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
   const [paletteForTrack, setPaletteForTrack] = useState<string | null>(null);
 
   // Edit tool
-  const [tool, setTool] = useState<EditTool>("select");
+  const [tool, setTool] = useState<EditTool>("smart");
   const [bladeHover, setBladeHover] = useState<{ trackId: string; regionId: string; ms: number } | null>(null);
   const [snapMs, setSnapMs] = useState<number | null>(null);
 
@@ -1185,6 +1253,54 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     return max;
   }, [tracks]);
 
+  /** Fit-to-window: the session's whole duration spans the visible editor width.
+   *  The focal point is the PLAYHEAD (song centre when the playhead is parked at 0) — on a session
+   *  too long to fit even at MIN_ZOOM, the view centres on where you were working instead of
+   *  snapping to the left edge and losing your place. */
+  const fitToWindow = useCallback(() => {
+    const el = timelineRef.current;
+    if (!el) return;
+    const width = el.clientWidth;
+    if (!width) return;
+    const end = Math.max(1000, totalDurMs);
+    const next = clamp((width * 1000) / (end * BASE_PPS), MIN_ZOOM, MAX_ZOOM);
+    const focusMs = playheadMs > 0 && playheadMs <= end ? playheadMs : end / 2;
+    setZoom(next);
+    requestAnimationFrame(() => {
+      const e2 = timelineRef.current;
+      if (!e2) return;
+      const focusX = (focusMs / 1000) * (BASE_PPS * next);
+      e2.scrollLeft = Math.max(0, focusX - e2.clientWidth / 2);
+    });
+  }, [totalDurMs, playheadMs]);
+
+  /** The visible horizontal window of the timeline, in content pixels.
+   *
+   *  This exists because a clip's canvas cannot be the width of the clip. At full zoom a
+   *  three-minute song is ~160,000px wide, which is past every driver's MAX_TEXTURE_SIZE — the
+   *  draw then fails SILENTLY and the clip paints nothing. Clips now render only the slice of
+   *  themselves that is on screen, so canvas width is bounded by the window, not by the song. */
+  const [viewport, setViewport] = useState({ left: 0, width: 0 });
+  const syncViewport = useCallback(() => {
+    const el = timelineRef.current;
+    if (!el) return;
+    setViewport(prev => {
+      const left = el.scrollLeft, width = el.clientWidth;
+      // Only commit meaningful movement — a scroll event per pixel would re-render every lane.
+      if (Math.abs(prev.left - left) < 32 && prev.width === width) return prev;
+      return { left, width };
+    });
+  }, []);
+  // Zoom changes content width without firing a scroll event, so re-measure on pps too.
+  useEffect(() => { syncViewport(); }, [pps, syncViewport]);
+  useEffect(() => {
+    const el = timelineRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => syncViewport());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [syncViewport]);
+
   const anySolo = useMemo(() => tracks.some(t => t.solo), [tracks]);
 
   const selectedTrack = useMemo(
@@ -1305,14 +1421,38 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
 
   const historyRef = useRef<{ past: StudioTrack[][]; future: StudioTrack[][] }>({ past: [], future: [] });
   const lastTracksRef = useRef<StudioTrack[]>(state.tracks);
+
+  // A drag dispatches on every mousemove. Without coalescing, one trim writes ~40 history
+  // entries and Ctrl+Z walks back through the drag a pixel at a time instead of undoing it.
+  // A gesture captures the pre-drag tracks once and pushes exactly one entry on mouse-up.
+  const gestureRef = useRef<{ active: boolean; base: StudioTrack[] | null }>({ active: false, base: null });
+
   useEffect(() => {
     if (lastTracksRef.current !== state.tracks) {
-      historyRef.current.past.push(lastTracksRef.current);
-      if (historyRef.current.past.length > MAX_UNDO) historyRef.current.past.shift();
-      historyRef.current.future = [];
+      if (!gestureRef.current.active) {
+        historyRef.current.past.push(lastTracksRef.current);
+        if (historyRef.current.past.length > MAX_UNDO) historyRef.current.past.shift();
+        historyRef.current.future = [];
+      }
       lastTracksRef.current = state.tracks;
     }
   }, [state.tracks]);
+
+  const beginGesture = useCallback(() => {
+    if (gestureRef.current.active) return;
+    gestureRef.current = { active: true, base: lastTracksRef.current };
+  }, []);
+
+  const endGesture = useCallback(() => {
+    const g = gestureRef.current;
+    gestureRef.current = { active: false, base: null };
+    if (!g.active || !g.base) return;
+    // A drag that moved nothing (a click that never travelled) leaves no undo entry.
+    if (g.base === lastTracksRef.current) return;
+    historyRef.current.past.push(g.base);
+    if (historyRef.current.past.length > MAX_UNDO) historyRef.current.past.shift();
+    historyRef.current.future = [];
+  }, []);
 
   const doUndo = useCallback(() => {
     const h = historyRef.current;
@@ -1496,20 +1636,23 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         setPlayheadMs(p => Math.max(0, p + (e.key === "," ? -step : step)));
         return;
       }
-      // Z — zoom to fit ; Shift+Z — reset to 1x
+      // \ — fit the whole session in the window ; Z — same ; Shift+Z — reset to 1x
+      // The old Z formula was (30000/end)*4, which never consulted the editor's width — it could
+      // not fit anything except by coincidence. Both keys now run the real fit.
+      if (e.key === "\\" && !mod) {
+        e.preventDefault(); e.stopImmediatePropagation();
+        fitToWindow();
+        return;
+      }
       if (k === "z" && !mod) {
         e.preventDefault(); e.stopImmediatePropagation();
-        if (e.shiftKey) setZoom(1);
-        else {
-          const end = Math.max(1000, ...state.tracks.map(trackEndMs));
-          setZoom(clamp((30_000 / end) * 4, 0.05, 8));
-        }
+        if (e.shiftKey) setZoom(1); else fitToWindow();
         return;
       }
       // + / - — zoom in / out
       if ((e.key === "+" || e.key === "=" || e.key === "-") && !mod) {
         e.preventDefault(); e.stopImmediatePropagation();
-        setZoom(zv => clamp(e.key === "-" ? zv / 1.25 : zv * 1.25, 0.05, 8));
+        setZoom(zv => clamp(e.key === "-" ? zv / 1.25 : zv * 1.25, MIN_ZOOM, MAX_ZOOM));
         return;
       }
       // G — toggle snap
@@ -1551,10 +1694,12 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       if (k === "v" || k === "g" || k === "c" || k === "t" || k === "f") {
         e.preventDefault();
         e.stopImmediatePropagation();
-        if (k === "v") { setTool("select"); return; }
-        if (k === "g") { setTool("grab");   return; }
-        if (k === "t") { setTool("trim");   return; }
-        if (k === "f") { setTool("fade");   return; }
+        // Same key twice releases the override — you never have to hunt for "back to normal".
+        const toggleTool = (id: EditTool) => setTool(cur => (cur === id ? "smart" : id));
+        if (k === "v") { toggleTool("select"); return; }
+        if (k === "g") { toggleTool("grab");   return; }
+        if (k === "t") { toggleTool("trim");   return; }
+        if (k === "f") { toggleTool("fade");   return; }
         // "c" = splice. In the Blade tool, cut at the hovered point; in any
         // other tool, splice the selected clip at the playhead.
         if (tool === "blade") {
@@ -1576,7 +1721,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [doUndo, doRedo, tool, bladeHover, splitRegion, selection, selectedAutoPoint,
+  }, [doUndo, doRedo, fitToWindow, tool, bladeHover, splitRegion, selection, selectedAutoPoint,
       copySelectedRegion, pasteAtPlayhead, duplicateSelectedRegion,
       playheadMs, helpOpen, snapshotsOpen, ctxMenu]);
 
@@ -2775,9 +2920,13 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     const t = stateRef.current.tracks.find(x => x.id === trackId);
     const r0 = t?.regions.find(x => x.id === regionId);
     if (!r0 || !r0.buffer) return;
+    beginGesture();
+    // Alt + edge-drag trims AND lays a fade over exactly the amount trimmed away.
+    const withFade = e.altKey && mode !== "move";
     const startX = e.clientX;
     const orig = { offset: r0.offsetMs, ts: r0.trimStartMs, te: r0.trimEndMs };
     const dragDurMs = regionDurMs(r0);
+    const maxFadeMs = dragDurMs / 2;
     const playheadSnapshot = playheadMs;
     const snapTargets: number[] = [0, playheadSnapshot];
     for (const t of stateRef.current.tracks) {
@@ -2849,18 +2998,27 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         }
       } else if (mode === "trim-l") {
         dispatch({ type: "TRIM_REGION", trackId, regionId, trimStartMs: orig.ts + dms, offsetMs: orig.offset + dms });
+        if (withFade) {
+          const fade = Math.max(0, Math.min(maxFadeMs, dms));
+          dispatch({ type: "UPDATE_REGION", trackId, regionId, patch: { fadeInMs: fade } });
+        }
       } else {
         dispatch({ type: "TRIM_REGION", trackId, regionId, trimEndMs: orig.te - dms });
+        if (withFade) {
+          const fade = Math.max(0, Math.min(maxFadeMs, -dms));
+          dispatch({ type: "UPDATE_REGION", trackId, regionId, patch: { fadeOutMs: fade } });
+        }
       }
     };
     const onUp = () => {
       setSnapMs(null);
+      endGesture();
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-  }, [xToMs, playheadMs, bpm, gridEnabled]);
+  }, [xToMs, playheadMs, bpm, gridEnabled, beginGesture, endGesture]);
 
   const beginFadeDrag = useCallback((
     e: React.MouseEvent, trackId: string, regionId: string, side: "in" | "out",
@@ -2870,6 +3028,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     const t = stateRef.current.tracks.find(x => x.id === trackId);
     const r0 = t?.regions.find(x => x.id === regionId);
     if (!r0 || !r0.buffer) return;
+    beginGesture();
     const startX = e.clientX;
     const orig = side === "in" ? r0.fadeInMs : r0.fadeOutMs;
     const maxMs = regionDurMs(r0) / 2;
@@ -2882,10 +3041,60 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         patch: side === "in" ? { fadeInMs: next } : { fadeOutMs: next },
       });
     };
-    const onUp = () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    const onUp = () => { endGesture(); window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-  }, [xToMs]);
+  }, [xToMs, beginGesture, endGesture]);
+
+  // Crossfade: the bottom corner where two clips meet drags BOTH sides of the joint at once —
+  // this clip's fade and the neighbour's opposing fade, kept equal. One gesture, one undo entry.
+  const beginCrossfadeDrag = useCallback((
+    e: React.MouseEvent, trackId: string, regionId: string, side: "left" | "right",
+  ) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const t = stateRef.current.tracks.find(x => x.id === trackId);
+    const r0 = t?.regions.find(x => x.id === regionId);
+    if (!t || !r0 || !r0.buffer) return;
+    const myStart = r0.offsetMs;
+    const myEnd   = r0.offsetMs + regionDurMs(r0);
+    // The neighbour on that side, nearest joint wins.
+    let neighbour: StudioRegion | null = null;
+    for (const r of t.regions) {
+      if (r.id === regionId || !r.buffer) continue;
+      const rEnd = r.offsetMs + regionDurMs(r);
+      const gap = side === "left" ? Math.abs(myStart - rEnd) : Math.abs(r.offsetMs - myEnd);
+      if (gap <= SMART_XFADE_GAP_MS) {
+        if (!neighbour) neighbour = r;
+        else {
+          const nEnd = neighbour.offsetMs + regionDurMs(neighbour);
+          const nGap = side === "left" ? Math.abs(myStart - nEnd) : Math.abs(neighbour.offsetMs - myEnd);
+          if (gap < nGap) neighbour = r;
+        }
+      }
+    }
+    if (!neighbour) return;
+    beginGesture();
+    const startX = e.clientX;
+    // side "left"  → my fade-IN  pairs with the neighbour's fade-OUT
+    // side "right" → my fade-OUT pairs with the neighbour's fade-IN
+    const origMine  = side === "left" ? r0.fadeInMs        : r0.fadeOutMs;
+    const maxMs     = Math.min(regionDurMs(r0), regionDurMs(neighbour)) / 2;
+    const nbId      = neighbour.id;
+    const onMove = (ev: MouseEvent) => {
+      const dms = xToMs(ev.clientX - startX);
+      const next = Math.max(0, Math.min(maxMs, origMine + (side === "left" ? dms : -dms)));
+      dispatch({
+        type: "AUTO_CROSSFADE", trackId,
+        updates: side === "left"
+          ? [{ regionId, fadeInMs: next },  { regionId: nbId, fadeOutMs: next }]
+          : [{ regionId, fadeOutMs: next }, { regionId: nbId, fadeInMs:  next }],
+      });
+    };
+    const onUp = () => { endGesture(); window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [xToMs, beginGesture, endGesture]);
 
   const onLaneDrop = useCallback((e: React.DragEvent, trackId: string) => {
     e.preventDefault();
@@ -2959,7 +3168,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       const cursorMs = (cursorContentX / pps) * 1000;
       const factor = e.deltaY > 0 ? 1 / 1.15 : 1.15;
       setZoom(prev => {
-        const next = Math.max(0.25, Math.min(8, prev * factor));
+        const next = clamp(prev * factor, MIN_ZOOM, MAX_ZOOM);
         requestAnimationFrame(() => {
           if (!timelineRef.current) return;
           const newPps = BASE_PPS * next;
@@ -3566,9 +3775,10 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
           style={{ width: 44, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", padding: "3px 4px", fontSize: "var(--t-micro)", borderRadius: 0 }}
         />
         <div style={{ width: 1, height: 20, background: "var(--border-primary)", flexShrink: 0 }} />
-        <TBtn onClick={() => setZoom(z => Math.max(0.25, z / 1.25))} title="Zoom out">−</TBtn>
+        <TBtn onClick={() => setZoom(z => clamp(z / 1.25, MIN_ZOOM, MAX_ZOOM))} title="Zoom out">−</TBtn>
         <span style={{ fontSize: "var(--t-micro)", color: "var(--text-secondary)", minWidth: 28, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
-        <TBtn onClick={() => setZoom(z => Math.min(8, z * 1.25))} title="Zoom in">+</TBtn>
+        <TBtn onClick={() => setZoom(z => clamp(z * 1.25, MIN_ZOOM, MAX_ZOOM))} title="Zoom in">+</TBtn>
+        <TBtn onClick={fitToWindow} title="Fit the whole session in the window (\)">FIT</TBtn>
         <div style={{ width: 1, height: 20, background: "var(--border-primary)", flexShrink: 0 }} />
         <TBtn onClick={() => setMasterFxOpen(v => !v)} title="Master FX (EQ + Compressor + Limiter)" active={masterFxOpen}>FX</TBtn>
         <TBtn onClick={() => setSnapshotsOpen(v => !v)} title="Snapshots — save/recall mixer state" active={snapshotsOpen}>📸</TBtn>
@@ -3657,6 +3867,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         display: "flex", alignItems: "center", padding: "0 12px", gap: 6,
       }}>
         {([
+          { id: "smart",  icon: <span style={{ fontSize: "var(--t-lead)" }}>✦</span>, label: "Smart",  key: "" },
           { id: "select", icon: <span style={{ fontSize: "var(--t-lead)" }}>⌖</span>, label: "Select", key: "V" },
           { id: "grab",   icon: <span style={{ fontSize: "var(--t-lead)" }}>✋</span>, label: "Grab",   key: "G" },
           { id: "blade",  icon: <IBeamIcon />,                            label: "Splice", key: "C" },
@@ -3666,7 +3877,12 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
           const active = tool === t.id;
           const accent = selectedTrack?.color || "var(--accent-blue)";
           return (
-            <button key={t.id} onClick={() => setTool(t.id as EditTool)} title={`${t.label} (${t.key})`}
+            <button key={t.id}
+              // An explicit tool is an override, so pressing the active one releases it back to smart.
+              onClick={() => setTool(cur => (cur === t.id && t.id !== "smart") ? "smart" : (t.id as EditTool))}
+              title={t.id === "smart"
+                ? "Smart — the cursor follows the pointer's position on the clip"
+                : `${t.label} (${t.key}) — click again to release back to Smart`}
               style={{
                 height: 26, padding: "0 10px", borderRadius: 0,
                 background: active ? `${accent}22` : "var(--button-bg, var(--bg-tertiary))",
@@ -3685,6 +3901,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         })}
         <div style={{ flex: 1 }} />
         <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>
+          {tool === "smart"  && "Edges trim · top corners fade · upper half sets the cursor · lower half moves · bottom corners crossfade · Alt+edge trims with a fade"}
           {tool === "select" && "Click a clip to drop the cursor for a precise cut · Shift-click to multi-select · C splices there"}
           {tool === "grab"   && "Drag clips to move them"}
           {tool === "blade"  && "Click region to cut at cursor"}
@@ -3786,8 +4003,10 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
 
         {/* TIMELINE */}
         <div ref={timelineRef}
-          onScroll={() => syncScroll("timeline")}
-          style={{ flex: 1, overflow: "auto", background: "var(--bg-primary)", position: "relative" }}
+          onScroll={() => { syncScroll("timeline"); syncViewport(); }}
+          // The edit surface is explicitly dark — never var(--bg-primary), which two shipped themes
+          // define light. This is the outermost timeline container: everything inside inherits it.
+          style={{ flex: 1, overflow: "auto", background: SURFACE_DARK, position: "relative" }}
           className="studiopro-scroll"
         >
           {/* Ruler */}
@@ -3970,6 +4189,8 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                   onBladeLeave={() => setBladeHover(null)}
                   onBladeSplit={(regionId, ms) => splitRegion(t.id, regionId, ms)}
                   onFadeDrag={(e, regionId, side) => beginFadeDrag(e, t.id, regionId, side)}
+                  onCrossfadeDrag={(e, regionId, side) => beginCrossfadeDrag(e, t.id, regionId, side)}
+                  viewport={viewport}
                   onRegionContext={(e, regionId) => openRegionContextMenu(e, t.id, regionId)}
                   onOpenEditor={(regionId) => { setSelection({ trackId: t.id, regionId }); setEditorMode("wave"); setEditorOpen(true); }}
                   onSeek={(ms) => setPlayheadMs(Math.max(0, ms))}
@@ -4798,7 +5019,7 @@ function BeatGrid({ totalMs, bpm, pps, height }: { totalMs: number; bpm: number;
 function TrackLane({
   track, pps, laneH, tool, selection, selectedRegionIds, bladeHover, liveRec,
   onSelectRegion, onSelectTrack, onDrop,
-  onRegionDrag, onBladeHover, onBladeLeave, onBladeSplit, onFadeDrag,
+  onRegionDrag, onBladeHover, onBladeLeave, onBladeSplit, onFadeDrag, onCrossfadeDrag, viewport,
   onRegionContext, onOpenEditor, onSeek,
 }: {
   track: StudioTrack;
@@ -4817,11 +5038,15 @@ function TrackLane({
   onBladeLeave: () => void;
   onBladeSplit: (regionId: string, ms: number) => void;
   onFadeDrag: (e: React.MouseEvent, regionId: string, side: "in" | "out") => void;
+  onCrossfadeDrag: (e: React.MouseEvent, regionId: string, side: "left" | "right") => void;
+  viewport: { left: number; width: number };
   onRegionContext: (e: React.MouseEvent, regionId: string) => void;
   onOpenEditor: (regionId: string) => void;
   onSeek: (ms: number) => void;
 }) {
-  const laneBg = track.color + "0a";
+  // Explicit dark base with the track's 4% wash composited ON it, rather than a 4% wash over
+  // whatever the theme happens to make the ancestor. The lane is never lighter than the surface.
+  const laneBg = `linear-gradient(${track.color}0a, ${track.color}0a), ${SURFACE_DARK}`;
   const empty = track.regions.length === 0;
   return (
     <div data-track-id={track.id}
@@ -4844,9 +5069,21 @@ function TrackLane({
           pointerEvents: "none",
         }}>Drop audio here</div>
       )}
-      {track.regions.map(r => (
+      {track.regions.map(r => {
+        // A crossfade zone only exists where a neighbour actually meets this clip.
+        const rStart = r.offsetMs;
+        const rEnd   = r.offsetMs + regionDurMs(r);
+        let abutsLeft = false, abutsRight = false;
+        for (const o of track.regions) {
+          if (o.id === r.id || !o.buffer) continue;
+          const oEnd = o.offsetMs + regionDurMs(o);
+          if (Math.abs(rStart - oEnd) <= SMART_XFADE_GAP_MS) abutsLeft = true;
+          if (Math.abs(o.offsetMs - rEnd) <= SMART_XFADE_GAP_MS) abutsRight = true;
+        }
+        return (
         <RegionBlock key={r.id}
           track={track} region={r} pps={pps} laneH={laneH} tool={tool}
+          abutsLeft={abutsLeft} abutsRight={abutsRight} viewport={viewport}
           selected={(selection?.trackId === track.id && selection?.regionId === r.id) || selectedRegionIds.includes(r.id)}
           bladeHoverMs={bladeHover && bladeHover.regionId === r.id ? bladeHover.ms : null}
           onSelect={(additive) => onSelectRegion(r.id, additive)}
@@ -4855,11 +5092,13 @@ function TrackLane({
           onBladeLeave={onBladeLeave}
           onBladeSplit={(ms) => onBladeSplit(r.id, ms)}
           onFadeDrag={(e, side) => onFadeDrag(e, r.id, side)}
+          onCrossfadeDrag={(e, side) => onCrossfadeDrag(e, r.id, side)}
           onContext={(e) => onRegionContext(e, r.id)}
           onOpenEditor={() => onOpenEditor(r.id)}
           onSeek={onSeek}
         />
-      ))}
+        );
+      })}
       {liveRec && (
         <LiveRecordingOverlay color={track.color} laneH={laneH}
           startMs={liveRec.startMs} peaks={liveRec.peaks}
@@ -5078,30 +5317,64 @@ function RegionEditorDrawer({
 }
 
 function RegionBlock({
-  track, region, pps, laneH, tool, selected, bladeHoverMs,
-  onSelect, onRegionDrag, onBladeHover, onBladeLeave, onBladeSplit, onFadeDrag, onContext, onOpenEditor, onSeek,
+  track, region, pps, laneH, tool, selected, bladeHoverMs, abutsLeft, abutsRight, viewport,
+  onSelect, onRegionDrag, onBladeHover, onBladeLeave, onBladeSplit, onFadeDrag, onCrossfadeDrag,
+  onContext, onOpenEditor, onSeek,
 }: {
   track: StudioTrack; region: StudioRegion; pps: number; laneH: number; tool: EditTool;
   selected: boolean; bladeHoverMs: number | null;
+  abutsLeft: boolean; abutsRight: boolean;
+  viewport: { left: number; width: number };
   onSelect: (additive: boolean) => void;
   onRegionDrag: (e: React.MouseEvent, mode: "move" | "trim-l" | "trim-r") => void;
   onBladeHover: (ms: number) => void;
   onBladeLeave: () => void;
   onBladeSplit: (ms: number) => void;
   onFadeDrag: (e: React.MouseEvent, side: "in" | "out") => void;
+  onCrossfadeDrag: (e: React.MouseEvent, side: "left" | "right") => void;
   onContext: (e: React.MouseEvent) => void;
   onOpenEditor: () => void;
   onSeek: (ms: number) => void;
 }) {
+  // The zone under the pointer right now — set on hover, BEFORE any click, so the cursor
+  // is the affordance. null when the pointer is elsewhere or an explicit tool is active.
+  const [smartZone, setSmartZone] = useState<SmartZone | null>(null);
   const durMs   = regionDurMs(region);
   const regionX = (region.offsetMs / 1000) * pps;
   const regionW = (durMs / 1000) * pps;
   const fadeInX  = Math.min(regionW, (region.fadeInMs  / 1000) * pps);
   const fadeOutX = Math.min(regionW, (region.fadeOutMs / 1000) * pps);
+  // Fade bounds handed to the renderer in ITS normalized space (fraction of the whole buffer),
+  // so the waveform's amplitude tapers under the fade instead of the fade being a decal on top.
+  const bufMs        = region.buffer ? region.buffer.duration * 1000 : 0;
+  const vStart       = bufMs ? region.trimStartMs / bufMs : 0;
+  const vEnd         = bufMs ? 1 - region.trimEndMs / bufMs : 1;
+  const fadeInEndT   = bufMs && region.fadeInMs  > 0 ? vStart + region.fadeInMs  / bufMs : undefined;
+  const fadeOutStartT= bufMs && region.fadeOutMs > 0 ? vEnd   - region.fadeOutMs / bufMs : undefined;
+
+  // ── Viewport slice ──
+  // The canvas covers only the part of this clip that is on screen (plus a margin). At full zoom a
+  // whole-clip canvas is ~160,000px wide — past every driver's MAX_TEXTURE_SIZE, where the draw
+  // fails silently and the clip paints nothing. Slicing bounds canvas width by the WINDOW rather
+  // than by the song, so zoom depth no longer decides whether a clip can render at all.
+  const visLeft  = Math.max(regionX, viewport.left - VIEWPORT_RENDER_MARGIN_PX);
+  const visRight = Math.min(regionX + regionW, viewport.left + viewport.width + VIEWPORT_RENDER_MARGIN_PX);
+  const sliceOn  = viewport.width > 0 && visRight > visLeft;
+  // Offsets are relative to the clip's own box, which is what the canvas is positioned inside.
+  const sliceX   = sliceOn ? visLeft - regionX : 0;
+  const sliceW   = sliceOn ? visRight - visLeft : regionW;
+  const fracA    = regionW > 0 ? sliceX / regionW : 0;
+  const fracB    = regionW > 0 ? (sliceX + sliceW) / regionW : 1;
+  const sliceVStart = vStart + fracA * (vEnd - vStart);
+  const sliceVEnd   = vStart + fracB * (vEnd - vStart);
   const regionMouseToMs = (ev: React.MouseEvent, el: HTMLElement): number => {
     const rect = el.getBoundingClientRect();
     const xWithinRegion = ev.clientX - rect.left;
     return region.offsetMs + (xWithinRegion / pps) * 1000;
+  };
+  const zoneAtEvent = (e: React.MouseEvent, el: HTMLElement): SmartZone => {
+    const rect = el.getBoundingClientRect();
+    return smartZoneAt(e.clientX - rect.left, e.clientY - rect.top, rect.width, rect.height, abutsLeft, abutsRight);
   };
   const onRegionMouseDown = (e: React.MouseEvent) => {
     if (!region.buffer) return;
@@ -5110,6 +5383,19 @@ function RegionBlock({
     onSelect(additive);
     // Shift/ctrl/cmd-click is a multi-select toggle — don't start a move drag.
     if (additive) { e.stopPropagation(); e.preventDefault(); return; }
+    // Smart tool: the zone under the pointer IS the gesture. No toolbar round-trip.
+    if (tool === "smart") {
+      const z = zoneAtEvent(e, el);
+      if (z === "fade-in")  { onFadeDrag(e, "in");         return; }
+      if (z === "fade-out") { onFadeDrag(e, "out");        return; }
+      if (z === "xfade-l")  { onCrossfadeDrag(e, "left");  return; }
+      if (z === "xfade-r")  { onCrossfadeDrag(e, "right"); return; }
+      if (z === "trim-l")   { onRegionDrag(e, "trim-l");   return; }
+      if (z === "trim-r")   { onRegionDrag(e, "trim-r");   return; }
+      if (z === "move")     { onRegionDrag(e, "move");     return; }
+      onSeek(regionMouseToMs(e, el));   // "ibeam" — drop the cursor for a precise cut
+      return;
+    }
     if (tool === "blade") {
       const ms = regionMouseToMs(e, el);
       onBladeHover(ms); onBladeSplit(ms);
@@ -5134,11 +5420,15 @@ function RegionBlock({
     if (tool === "select") onSeek(regionMouseToMs(e, el));
   };
   const onRegionMouseMove = (e: React.MouseEvent) => {
-    if (tool !== "blade" || !region.buffer) return;
+    if (!region.buffer) return;
     const el = e.currentTarget as HTMLElement;
+    if (tool === "smart") { setSmartZone(zoneAtEvent(e, el)); return; }
+    if (tool !== "blade") return;
     onBladeHover(regionMouseToMs(e, el));
   };
+  const onRegionMouseLeave = () => { setSmartZone(null); onBladeLeave(); };
   const regionCursor =
+    tool === "smart"  ? (smartZone ? SMART_CURSOR[smartZone] : "default") :
     tool === "blade"  ? "text" :
     tool === "select" ? "text" :
     tool === "trim"   ? "ew-resize" :
@@ -5150,7 +5440,7 @@ function RegionBlock({
     <div
       onMouseDown={onRegionMouseDown}
       onMouseMove={onRegionMouseMove}
-      onMouseLeave={onBladeLeave}
+      onMouseLeave={onRegionMouseLeave}
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={(e) => { e.stopPropagation(); onSelect(false); onOpenEditor(); }}
       onContextMenu={onContext}
@@ -5158,20 +5448,37 @@ function RegionBlock({
         position: "absolute",
         left: regionX, top: 4, width: regionW, height: laneH - 8,
         background: track.color + "1f",
-        border: `${selected ? 2 : 1}px solid ${selected ? "#fff" : track.color + "99"}`,
+        // A 2px white selection border on a clip only a few pixels wide IS the clip — zoomed far
+        // out, a selected region painted as a solid white block. Narrow clips keep a 1px, dimmer
+        // edge so selection still reads without the border swallowing the body.
+        border: regionW < OVERLAY_VISIBILITY_THRESHOLD_PX
+          ? `1px solid ${selected ? "rgba(255,255,255,0.55)" : track.color + "99"}`
+          : `${selected ? 2 : 1}px solid ${selected ? "#fff" : track.color + "99"}`,
         cursor: regionCursor, overflow: "hidden",
       }}
     >
-      <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
-        <WaveformGL
-          peaks={region.peaks}
-          viewStart={region.buffer ? region.trimStartMs / (region.buffer.duration * 1000) : 0}
-          viewEnd={  region.buffer ? 1 - region.trimEndMs / (region.buffer.duration * 1000) : 1}
-          cueIn={0} cueOut={1} introEnd={0} outroStart={1}
-          playhead={-1} hoverPos={null} dragRegion={null}
-          tint={track.color}
-        />
-      </div>
+      {/* Positioned over the visible slice only — never the full clip width. */}
+      {sliceOn && (
+        <div style={{ position: "absolute", left: sliceX, top: 0, width: sliceW, height: "100%", pointerEvents: "none" }}>
+          <WaveformGL
+            peaks={region.peaks}
+            viewStart={sliceVStart}
+            viewEnd={sliceVEnd}
+            clipStart={vStart}
+            clipEnd={vEnd}
+            cueIn={0} cueOut={1} introEnd={0} outroStart={1}
+            playhead={-1} hoverPos={null} dragRegion={null}
+            tint={track.color}
+            fadeInEnd={fadeInEndT}
+            fadeOutStart={fadeOutStartT}
+            label={`${track.name}/${region.id.slice(0, 6)}`}
+            clipDurationMs={durMs}
+            clipStartMs={region.offsetMs}
+            zoom={pps / 80}
+            fullClipPx={Math.round(regionW)}
+          />
+        </div>
+      )}
       {(fadeInX > 0 || fadeOutX > 0) && (
         <svg width={regionW} height={laneH - 8} style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
           {fadeInX > 0 && (
@@ -5229,6 +5536,32 @@ function RegionBlock({
             style={{ position: "absolute", right: 0, top: 0, width: FADE_ZONE, height: "100%", cursor: "col-resize", background: "transparent" }} />
         </>
       )}
+      {/* Smart-tool affordance: the cursor says WHAT, this says WHERE. Paints only the hovered zone. */}
+      {tool === "smart" && smartZone && regionW >= OVERLAY_VISIBILITY_THRESHOLD_PX && (() => {
+        // Markers are sized from the SAME clamped bands the hit-test uses. Drawing the raw
+        // constants would paint a 14px white wedge onto a clip only a few pixels wide — at far
+        // zoom-out that is a white block, not an affordance. Below 24px there is no room for a
+        // marker at all, so none is drawn; the cursor still carries the meaning.
+        const corner = Math.min(SMART_CORNER_W, Math.max(3, regionW * 0.25));
+        const bar: React.CSSProperties = { position: "absolute", background: "#fff", opacity: 0.75, pointerEvents: "none" };
+        if (smartZone === "trim-l") return <div style={{ ...bar, left: 0, top: 0, width: 2, height: "100%" }} />;
+        if (smartZone === "trim-r") return <div style={{ ...bar, right: 0, top: 0, width: 2, height: "100%" }} />;
+        if (smartZone === "xfade-l") return <div style={{ ...bar, left: 0, bottom: 0, width: corner, height: 2 }} />;
+        if (smartZone === "xfade-r") return <div style={{ ...bar, right: 0, bottom: 0, width: corner, height: 2 }} />;
+        if (smartZone === "fade-in" || smartZone === "fade-out") {
+          const left = smartZone === "fade-in";
+          const cw = corner, ch = Math.min(SMART_CORNER_H, laneH - 8);
+          return (
+            <svg width={cw} height={ch}
+              style={{ position: "absolute", top: 0, [left ? "left" : "right"]: 0, pointerEvents: "none" }}>
+              <polygon
+                points={left ? `0,0 ${cw},0 0,${ch}` : `${cw},0 0,0 ${cw},${ch}`}
+                fill="#fff" fillOpacity={0.7} />
+            </svg>
+          );
+        }
+        return null;
+      })()}
     </div>
   );
 }
