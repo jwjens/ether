@@ -445,3 +445,20 @@ resolution to give.
 **Real fix:** past the zoom where `peaks` runs out, render from the region's `AudioBuffer` samples
 directly instead of the peak pyramid. That belongs with the phase (c) renderer work in
 `docs/show-daw-redesign-2026-08-16.md`, not with a defect patch.
+
+---
+
+## Dedup: StudioPro's private `extractPeaks` copy (filed 2026-08-16, NON-BLOCKING)
+
+`StudioPro.tsx:433` carries a byte-identical copy of `src/audio/wavEdit.ts:5`, and the file admits it
+at `StudioPro.tsx:3` ("It copies `extractPeaks`"). As of the phase (c) job 1 change, StudioPro now
+imports `extractPeaksRange` from the shared module while still calling its own local `extractPeaks` —
+so the same file both imports from `wavEdit` and duplicates part of it.
+
+**Fix:** delete the local copy, import `extractPeaks` from `wavEdit`. Deliberately NOT done in the
+renderer change — it touches seven call sites (`:1214, :1329, :1508, :1509, :2330, :2852, :3547`) and
+belongs in its own commit with its own gate run.
+
+**Worth noting while there:** the shared `extractPeaks` takes a fixed `resolution = 2000` for any clip
+length. That constant is the entire reason zoomed-in detail had to be re-extracted per slice. A
+duration-aware default would reduce how often the slice path engages, though it cannot replace it.

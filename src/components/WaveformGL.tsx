@@ -32,6 +32,11 @@ interface Props {
    *  measured against the clip, not against whatever happens to be on screen. Defaults to the view. */
   clipStart?:    number;
   clipEnd?:      number;
+  /** Which span of the clip the `peaks` array covers, in the same normalized space. Defaults to
+   *  the whole clip (0..1). When the caller supplies a high-detail slice extraction instead of the
+   *  coarse whole-clip array, these say where that slice sits. */
+  peaksStart?:   number;
+  peaksEnd?:     number;
   /** Identifies this instance in the debug log — without it, "a clip stopped drawing" names no clip. */
   label?:        string;
   /** Log-only context. `fullClipPx` is what an UNSLICED canvas would have had to allocate for this
@@ -68,6 +73,7 @@ uniform int  u_n;
 uniform float u_vs, u_ve;
 uniform float u_fadeInEnd, u_fadeOutStart;
 uniform float u_cs, u_ce;   // the clip's full trimmed span; u_vs/u_ve may be a slice of it
+uniform float u_ps, u_pe;   // the span of the clip that the peak array actually covers
 out float v_t, v_amp, v_y;
 void main() {
   int pi  = gl_VertexID / 6;
@@ -83,7 +89,12 @@ void main() {
   else               { col = 0; row = 1; }
 
   float t    = u_vs + (float(pi) + float(col)) / float(u_n) * (u_ve - u_vs);
-  float peak = texture(u_peaks, vec2(t, 0.5)).r;
+  // The peak array does not always cover the whole clip. When zoomed in past the resolution of the
+  // coarse array, the caller hands us a HIGH-DETAIL extraction of just the visible slice, and
+  // u_ps/u_pe say which part of the clip that array spans. t is remapped into the array's own
+  // domain so the same shader draws a whole-clip array and a slice array identically.
+  float tex  = (t - u_ps) / max(u_pe - u_ps, 1e-6);
+  float peak = texture(u_peaks, vec2(tex, 0.5)).r;
   float amp  = peak * 0.92;
 
   // ── Fade gain ──
@@ -158,9 +169,11 @@ export default function WaveformGL({
   peaks, viewStart, viewEnd,
   cueIn, cueOut, introEnd, outroStart,
   playhead, hoverPos, dragRegion, onMount, tint,
-  fadeInEnd, fadeOutStart, clipStart, clipEnd, label,
+  fadeInEnd, fadeOutStart, clipStart, clipEnd, peaksStart, peaksEnd, label,
   clipDurationMs, clipStartMs, zoom, fullClipPx,
 }: Props) {
+  const pStart = peaksStart ?? 0;
+  const pEnd   = peaksEnd   ?? 1;
   /** Draw-state log, deduped by signature.
    *
    *  The draw effect runs on EVERY render, so logging each pass would bury the signal. This emits
@@ -272,7 +285,7 @@ export default function WaveformGL({
       gl.linkProgram(prog);
       if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog)!);
       const names = ["u_peaks","u_n","u_vs","u_ve","u_ci","u_co","u_ie","u_os","u_tint","u_tintAmt",
-                     "u_fadeInEnd","u_fadeOutStart","u_cs","u_ce"];
+                     "u_fadeInEnd","u_fadeOutStart","u_cs","u_ce","u_ps","u_pe"];
       const u: Record<string, WebGLUniformLocation | null> = {};
       names.forEach(n => { u[n] = gl.getUniformLocation(prog, n); });
       const vao = gl.createVertexArray()!;
@@ -366,9 +379,10 @@ export default function WaveformGL({
     const wantW = Math.floor(w * k), wantH = Math.floor(h * k);
     const capW = Math.max(1, Math.min(wantW, s.maxDim));
     const capH = Math.max(1, Math.min(wantH, s.maxDim));
-    if (capW < wantW || capH < wantH) {
-      logState(`CAP: requested ${wantW}x${wantH}, granted ${capW}x${capH} (driver cap ${s.maxDim})`);
-    }
+    // Folded into the DRAW line below rather than logged separately — one event, one line.
+    const capNote = (capW < wantW || capH < wantH)
+      ? ` CAP(requested ${wantW}x${wantH}, granted ${capW}x${capH}, driverMax ${s.maxDim})`
+      : "";
     if (can.width !== capW || can.height !== capH) { can.width = capW; can.height = capH; }
     if (!can.width || !can.height) return logState(`BAIL zero-backing-store ${can.width}x${can.height} (css ${w}x${h}, dpr ${dpr})`);
 
@@ -403,6 +417,8 @@ export default function WaveformGL({
     // Undefined fade bounds collapse to the view edges, which the shader reads as "no fade".
     gl.uniform1f(u.u_cs, clipStart ?? viewStart);
     gl.uniform1f(u.u_ce, clipEnd   ?? viewEnd);
+    gl.uniform1f(u.u_ps, pStart);
+    gl.uniform1f(u.u_pe, pEnd);
     gl.uniform1f(u.u_fadeInEnd,    fadeInEnd    ?? (clipStart ?? viewStart));
     gl.uniform1f(u.u_fadeOutStart, fadeOutStart ?? (clipEnd   ?? viewEnd));
     const [tr, tg, tb] = hexToRgb(tint);
@@ -414,7 +430,9 @@ export default function WaveformGL({
            + `canvas=${can.width}x${can.height} drawingBuffer=${gl.drawingBufferWidth}x${gl.drawingBufferHeight} `
            + `css=${w}x${h} dpr=${dpr.toFixed(2)} `
            + `fullClipPx=${fullClipPx ?? "n/a"} clipDurMs=${clipDurationMs ?? "n/a"} clipStartMs=${clipStartMs ?? "n/a"} `
-           + `zoom=${zoom ?? "n/a"} view=[${viewStart.toFixed(4)},${viewEnd.toFixed(4)}] span=${span.toFixed(5)}`);
+           + `zoom=${zoom ?? "n/a"} view=[${viewStart.toFixed(4)},${viewEnd.toFixed(4)}] span=${span.toFixed(5)} `
+           + `peakSpan=[${pStart.toFixed(4)},${pEnd.toFixed(4)}] barsPerDevicePx=${(nDraw / can.width).toFixed(2)}`
+           + capNote);
   });
 
   // Draw 2D overlay

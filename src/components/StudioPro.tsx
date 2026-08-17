@@ -35,6 +35,9 @@ import React, {
 } from "react";
 import { createPortal } from "react-dom";
 import WaveformGL from "./WaveformGL";
+// The shared range extractor — "gives true detail when zoomed" (wavEdit.ts:21) and, until now,
+// wired to nothing. StudioPro's own extractPeaks copy at :433 stays put; dedup is a backlog item.
+import { extractPeaksRange } from "../audio/wavEdit";
 import VoiceTracker from "./VoiceTracker";
 import StudioSendBar from "./StudioSendBar";
 import { execute, query } from "../db/client";
@@ -785,6 +788,47 @@ const OVERLAY_VISIBILITY_THRESHOLD_PX = 16;
  *  Wide enough that a normal scroll or wheel-zoom does not expose an unpainted edge; small enough
  *  that the canvas stays far below the driver's per-dimension limit at any zoom. */
 const VIEWPORT_RENDER_MARGIN_PX = 400;
+
+/** ── Zoomed-in detail peaks ────────────────────────────────────────────────
+ *
+ *  `region.peaks` is a FIXED 2000 samples for any clip length (extractPeaks, :433 — a private
+ *  copy of the shared one; see the dedup item in docs/backlog.md). A 243-second clip therefore
+ *  carries one peak per 122ms, and at zoom 8 a 1652px slice spans 1.06% of it — 21 texels stretched
+ *  across 1652 pixels. That is the "blocky bars" starvation, and no mip level can fix it: level 0
+ *  is already the finest thing that exists.
+ *
+ *  When the coarse array runs out of resolution we re-extract the VISIBLE SLICE ONLY from the
+ *  decoded AudioBuffer at the density the screen can actually show. Same discipline as the viewport
+ *  slice: never the whole clip.
+ */
+const DETAIL_BARS_PER_DEVICE_PX = 2;
+const DETAIL_MAX_RESOLUTION     = 8192;
+const DETAIL_MAX_SAMPLES        = 4_000_000;  // ~90s @44.1k — beyond this the coarse array stands
+const detailCache = new Map<string, Float32Array>();
+const DETAIL_CACHE_MAX = 24;
+
+function sliceDetailPeaks(
+  region: StudioRegion, tStart: number, tEnd: number, resolution: number,
+): Float32Array | null {
+  const buf = region.buffer;
+  if (!buf || tEnd <= tStart) return null;
+  const startSec = tStart * buf.duration;
+  const endSec   = tEnd   * buf.duration;
+  if ((endSec - startSec) * buf.sampleRate > DETAIL_MAX_SAMPLES) return null;
+  // Keyed on everything that changes the samples: trim and splice both mint new buffers or new
+  // trim bounds, so a mutated region can never read a stale array.
+  const key = `${region.id}|${region.trimStartMs}|${region.trimEndMs}|${buf.length}`
+            + `|${tStart.toFixed(6)}|${tEnd.toFixed(6)}|${resolution}`;
+  const hit = detailCache.get(key);
+  if (hit) return hit;
+  const peaks = extractPeaksRange(buf, startSec, endSec, resolution);
+  if (detailCache.size >= DETAIL_CACHE_MAX) {
+    const oldest = detailCache.keys().next().value;
+    if (oldest !== undefined) detailCache.delete(oldest);
+  }
+  detailCache.set(key, peaks);
+  return peaks;
+}
 
 function smartZoneAt(
   x: number, y: number, w: number, h: number,
@@ -4191,6 +4235,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                   onFadeDrag={(e, regionId, side) => beginFadeDrag(e, t.id, regionId, side)}
                   onCrossfadeDrag={(e, regionId, side) => beginCrossfadeDrag(e, t.id, regionId, side)}
                   viewport={viewport}
+                  playheadMs={playheadMs}
                   onRegionContext={(e, regionId) => openRegionContextMenu(e, t.id, regionId)}
                   onOpenEditor={(regionId) => { setSelection({ trackId: t.id, regionId }); setEditorMode("wave"); setEditorOpen(true); }}
                   onSeek={(ms) => setPlayheadMs(Math.max(0, ms))}
@@ -5019,7 +5064,7 @@ function BeatGrid({ totalMs, bpm, pps, height }: { totalMs: number; bpm: number;
 function TrackLane({
   track, pps, laneH, tool, selection, selectedRegionIds, bladeHover, liveRec,
   onSelectRegion, onSelectTrack, onDrop,
-  onRegionDrag, onBladeHover, onBladeLeave, onBladeSplit, onFadeDrag, onCrossfadeDrag, viewport,
+  onRegionDrag, onBladeHover, onBladeLeave, onBladeSplit, onFadeDrag, onCrossfadeDrag, viewport, playheadMs,
   onRegionContext, onOpenEditor, onSeek,
 }: {
   track: StudioTrack;
@@ -5040,6 +5085,7 @@ function TrackLane({
   onFadeDrag: (e: React.MouseEvent, regionId: string, side: "in" | "out") => void;
   onCrossfadeDrag: (e: React.MouseEvent, regionId: string, side: "left" | "right") => void;
   viewport: { left: number; width: number };
+  playheadMs: number;
   onRegionContext: (e: React.MouseEvent, regionId: string) => void;
   onOpenEditor: (regionId: string) => void;
   onSeek: (ms: number) => void;
@@ -5083,7 +5129,7 @@ function TrackLane({
         return (
         <RegionBlock key={r.id}
           track={track} region={r} pps={pps} laneH={laneH} tool={tool}
-          abutsLeft={abutsLeft} abutsRight={abutsRight} viewport={viewport}
+          abutsLeft={abutsLeft} abutsRight={abutsRight} viewport={viewport} playheadMs={playheadMs}
           selected={(selection?.trackId === track.id && selection?.regionId === r.id) || selectedRegionIds.includes(r.id)}
           bladeHoverMs={bladeHover && bladeHover.regionId === r.id ? bladeHover.ms : null}
           onSelect={(additive) => onSelectRegion(r.id, additive)}
@@ -5269,6 +5315,7 @@ function RegionEditorDrawer({
             cueIn={0} cueOut={1} introEnd={0} outroStart={1}
             playhead={-1} hoverPos={null} dragRegion={null}
             tint={track.color}
+            label={`editor/${region.id.slice(0, 6)}`}
           />
         </div>
 
@@ -5317,7 +5364,7 @@ function RegionEditorDrawer({
 }
 
 function RegionBlock({
-  track, region, pps, laneH, tool, selected, bladeHoverMs, abutsLeft, abutsRight, viewport,
+  track, region, pps, laneH, tool, selected, bladeHoverMs, abutsLeft, abutsRight, viewport, playheadMs,
   onSelect, onRegionDrag, onBladeHover, onBladeLeave, onBladeSplit, onFadeDrag, onCrossfadeDrag,
   onContext, onOpenEditor, onSeek,
 }: {
@@ -5325,6 +5372,7 @@ function RegionBlock({
   selected: boolean; bladeHoverMs: number | null;
   abutsLeft: boolean; abutsRight: boolean;
   viewport: { left: number; width: number };
+  playheadMs: number;
   onSelect: (additive: boolean) => void;
   onRegionDrag: (e: React.MouseEvent, mode: "move" | "trim-l" | "trim-r") => void;
   onBladeHover: (ms: number) => void;
@@ -5367,6 +5415,27 @@ function RegionBlock({
   const fracB    = regionW > 0 ? (sliceX + sliceW) / regionW : 1;
   const sliceVStart = vStart + fracA * (vEnd - vStart);
   const sliceVEnd   = vStart + fracB * (vEnd - vStart);
+
+  // ── Detail peaks for the visible slice, only when the coarse array has run out ──
+  const detail = useMemo(() => {
+    if (!sliceOn || !region.buffer || !region.peaks) return null;
+    const dpr      = typeof window === "undefined" ? 1 : (window.devicePixelRatio || 1);
+    const deviceW  = Math.max(1, sliceW * dpr);
+    const coarseInView = region.peaks.length * Math.max(0, sliceVEnd - sliceVStart);
+    if (coarseInView >= deviceW * DETAIL_BARS_PER_DEVICE_PX) return null;   // coarse is enough
+    const resolution = Math.max(256, Math.min(DETAIL_MAX_RESOLUTION,
+                                Math.round(deviceW * DETAIL_BARS_PER_DEVICE_PX)));
+    // Synchronous by construction — extractPeaksRange scans only the slice, so there is no
+    // "pending" state in which the clip could go blank. A refusal returns null and the coarse
+    // array below is used unchanged.
+    return sliceDetailPeaks(region, sliceVStart, sliceVEnd, resolution);
+  }, [sliceOn, region, region.peaks, region.trimStartMs, region.trimEndMs, sliceW, sliceVStart, sliceVEnd]);
+
+  // ── Playback cursor, mapped from the timeline into this clip's own normalized space ──
+  // Driven by the DAW's AudioContext clock via playheadMs (the rAF tick at :2138) — NOT the
+  // daemon, which governs on-air state only. -1 keeps it off-screen when the playhead is elsewhere.
+  const relPlay   = durMs > 0 ? (playheadMs - region.offsetMs) / durMs : -1;
+  const playheadT = relPlay >= 0 && relPlay <= 1 ? vStart + relPlay * (vEnd - vStart) : -1;
   const regionMouseToMs = (ev: React.MouseEvent, el: HTMLElement): number => {
     const rect = el.getBoundingClientRect();
     const xWithinRegion = ev.clientX - rect.left;
@@ -5447,7 +5516,9 @@ function RegionBlock({
       style={{
         position: "absolute",
         left: regionX, top: 4, width: regionW, height: laneH - 8,
-        background: track.color + "1f",
+        // The clip's tint composites ON the dark surface rather than over whatever the theme makes
+        // the ancestor — the clip body is never lighter than the timeline it sits in.
+        background: `linear-gradient(${track.color}1f, ${track.color}1f), ${SURFACE_DARK}`,
         // A 2px white selection border on a clip only a few pixels wide IS the clip — zoomed far
         // out, a selected region painted as a solid white block. Narrow clips keep a 1px, dimmer
         // edge so selection still reads without the border swallowing the body.
@@ -5461,13 +5532,15 @@ function RegionBlock({
       {sliceOn && (
         <div style={{ position: "absolute", left: sliceX, top: 0, width: sliceW, height: "100%", pointerEvents: "none" }}>
           <WaveformGL
-            peaks={region.peaks}
+            peaks={detail ?? region.peaks}
+            peaksStart={detail ? sliceVStart : 0}
+            peaksEnd={detail ? sliceVEnd : 1}
             viewStart={sliceVStart}
             viewEnd={sliceVEnd}
             clipStart={vStart}
             clipEnd={vEnd}
             cueIn={0} cueOut={1} introEnd={0} outroStart={1}
-            playhead={-1} hoverPos={null} dragRegion={null}
+            playhead={playheadT} hoverPos={null} dragRegion={null}
             tint={track.color}
             fadeInEnd={fadeInEndT}
             fadeOutStart={fadeOutStartT}
