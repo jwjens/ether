@@ -88,7 +88,18 @@ const BASE_PPS         = 80;
 const SURFACE_DARK     = "#0d0d0d";
 
 const MIN_ZOOM         = 0.002;
-const MAX_ZOOM         = 8;
+/** Zoom ceiling. 8 put the floor of sample mode out of reach: that mode needs fewer than 2 samples
+ *  per device pixel, i.e. pps > ~24,000 at 48kHz, i.e. zoom > ~300. At 512 (pps 40,960) a 48kHz
+ *  file sits near 1.17 samples/px — inside sample mode with margin. */
+const MAX_ZOOM         = 512;
+
+/** …but zoom also sets the timeline's DOM width, and browsers cap element dimensions near 33.5M px
+ *  (Chrome tracks layout in 1/64px units on a 32-bit int). At zoom 512 a three-minute song is
+ *  ~7.4M px — fine — while a one-hour session would demand ~147M px and the layout would simply
+ *  break. The ceiling is therefore whichever is smaller: MAX_ZOOM, or the zoom that keeps the
+ *  content inside this budget. Long sessions lose the deepest zoom rather than losing the timeline.
+ *  Consequence worth knowing: sample mode stays reachable up to roughly a 20-minute session. */
+const MAX_CONTENT_PX   = 30_000_000;
 const MAX_UNDO         = 50;
 const MAX_AUTOSAVES    = 10;
 const AUTOSAVE_LABEL   = "Auto-save";
@@ -1306,6 +1317,17 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     return max;
   }, [tracks]);
 
+  /** The live zoom ceiling — MAX_ZOOM unless this session is long enough that it would blow past
+   *  the browser's element-width limit first. Recomputed as the session grows. */
+  const maxZoom = useMemo(() => {
+    const totalSec = Math.max(1, totalDurMs / 1000);
+    return clamp(MAX_CONTENT_PX / (totalSec * BASE_PPS), 1, MAX_ZOOM);
+  }, [totalDurMs]);
+  // Read through a ref inside the wheel and keydown handlers: both are long-lived listeners, and
+  // closing over the value would freeze the ceiling at whatever the session length was on mount.
+  const maxZoomRef = useRef(maxZoom);
+  useEffect(() => { maxZoomRef.current = maxZoom; }, [maxZoom]);
+
   /** Fit-to-window: the session's whole duration spans the visible editor width.
    *  The focal point is the PLAYHEAD (song centre when the playhead is parked at 0) — on a session
    *  too long to fit even at MIN_ZOOM, the view centres on where you were working instead of
@@ -1316,7 +1338,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     const width = el.clientWidth;
     if (!width) return;
     const end = Math.max(1000, totalDurMs);
-    const next = clamp((width * 1000) / (end * BASE_PPS), MIN_ZOOM, MAX_ZOOM);
+    const next = clamp((width * 1000) / (end * BASE_PPS), MIN_ZOOM, maxZoom);
     const focusMs = playheadMs > 0 && playheadMs <= end ? playheadMs : end / 2;
     setZoom(next);
     requestAnimationFrame(() => {
@@ -1325,7 +1347,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       const focusX = (focusMs / 1000) * (BASE_PPS * next);
       e2.scrollLeft = Math.max(0, focusX - e2.clientWidth / 2);
     });
-  }, [totalDurMs, playheadMs]);
+  }, [totalDurMs, playheadMs, maxZoom]);
 
   /** The visible horizontal window of the timeline, in content pixels.
    *
@@ -1705,7 +1727,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       // + / - — zoom in / out
       if ((e.key === "+" || e.key === "=" || e.key === "-") && !mod) {
         e.preventDefault(); e.stopImmediatePropagation();
-        setZoom(zv => clamp(e.key === "-" ? zv / 1.25 : zv * 1.25, MIN_ZOOM, MAX_ZOOM));
+        setZoom(zv => clamp(e.key === "-" ? zv / 1.25 : zv * 1.25, MIN_ZOOM, maxZoomRef.current));
         return;
       }
       // G — toggle snap
@@ -3221,7 +3243,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       const cursorMs = (cursorContentX / pps) * 1000;
       const factor = e.deltaY > 0 ? 1 / 1.15 : 1.15;
       setZoom(prev => {
-        const next = clamp(prev * factor, MIN_ZOOM, MAX_ZOOM);
+        const next = clamp(prev * factor, MIN_ZOOM, maxZoomRef.current);
         requestAnimationFrame(() => {
           if (!timelineRef.current) return;
           const newPps = BASE_PPS * next;
@@ -3828,9 +3850,15 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
           style={{ width: 44, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", padding: "3px 4px", fontSize: "var(--t-micro)", borderRadius: 0 }}
         />
         <div style={{ width: 1, height: 20, background: "var(--border-primary)", flexShrink: 0 }} />
-        <TBtn onClick={() => setZoom(z => clamp(z / 1.25, MIN_ZOOM, MAX_ZOOM))} title="Zoom out">−</TBtn>
-        <span style={{ fontSize: "var(--t-micro)", color: "var(--text-secondary)", minWidth: 28, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
-        <TBtn onClick={() => setZoom(z => clamp(z * 1.25, MIN_ZOOM, MAX_ZOOM))} title="Zoom in">+</TBtn>
+        <TBtn onClick={() => setZoom(z => clamp(z / 1.25, MIN_ZOOM, maxZoom))} title="Zoom out">−</TBtn>
+        {/* The range is now 0.002–512, so a fixed percent reads as "0%" at one end and "51200%" at
+            the other. Below 1x stays a percent (0.2% is meaningful); at or above 1x it becomes a
+            multiplier, which is both shorter and what a DAW operator actually thinks in. */}
+        <span style={{ fontSize: "var(--t-micro)", color: "var(--text-secondary)", minWidth: 46, textAlign: "center" }}
+              title={`Zoom ${(zoom * 100).toFixed(zoom < 0.1 ? 2 : 0)}% · ceiling ${maxZoom.toFixed(0)}×`}>
+          {zoom >= 1 ? `${zoom < 10 ? zoom.toFixed(1) : Math.round(zoom)}×` : `${(zoom * 100).toFixed(zoom < 0.1 ? 1 : 0)}%`}
+        </span>
+        <TBtn onClick={() => setZoom(z => clamp(z * 1.25, MIN_ZOOM, maxZoom))} title="Zoom in">+</TBtn>
         <TBtn onClick={fitToWindow} title="Fit the whole session in the window (\)">FIT</TBtn>
         <div style={{ width: 1, height: 20, background: "var(--border-primary)", flexShrink: 0 }} />
         <TBtn onClick={() => setMasterFxOpen(v => !v)} title="Master FX (EQ + Compressor + Limiter)" active={masterFxOpen}>FX</TBtn>
