@@ -44,6 +44,12 @@ interface Props {
   detail?:          WaveDetail | null;
   /** Log-only: the samples-per-pixel the caller used to choose `detail`. */
   samplesPerPixel?: number;
+  /** Log-only: whether `detail` came from the slice cache. */
+  cacheHit?:        boolean;
+  /** Crossfade weight across the peakrms↔sample band. 0 draws the envelope alone, 1 the trace
+   *  alone, and anything between draws both with complementary alpha so the seam is a morph
+   *  rather than a cut. Ignored outside the band, where the caller passes 0 or 1. */
+  blend?:           number;
   /** Identifies this instance in the debug log — without it, "a clip stopped drawing" names no clip. */
   label?:        string;
   /** Log-only context. `fullClipPx` is what an UNSLICED canvas would have had to allocate for this
@@ -179,12 +185,14 @@ precision highp float;
 in float v_t, v_edge;
 uniform vec3  u_tint;
 uniform float u_tintAmt;
+uniform float u_alpha;
 out vec4 color;
 void main() {
   vec3 c = mix(vec3(0.98, 0.75, 0.14), u_tint, u_tintAmt);
   // The RMS core is the brightest thing in the lane; the peak body sits behind it, dimmer.
-  color = (v_edge > 0.5) ? vec4(min(c * 1.35 + 0.18, vec3(1.0)), 1.0)
-                         : vec4(c * 0.62, 0.92);
+  vec4 base = (v_edge > 0.5) ? vec4(min(c * 1.35 + 0.18, vec3(1.0)), 1.0)
+                             : vec4(c * 0.62, 0.92);
+  color = vec4(base.rgb, base.a * u_alpha);
 }`;
 
 // ── Sample program ──
@@ -205,10 +213,11 @@ const FRAG_SMP = `#version 300 es
 precision highp float;
 uniform vec3  u_tint;
 uniform float u_tintAmt;
+uniform float u_alpha;
 out vec4 color;
 void main() {
   vec3 c = mix(vec3(0.98, 0.75, 0.14), u_tint, u_tintAmt);
-  color = vec4(min(c * 1.45 + 0.22, vec3(1.0)), 1.0);
+  color = vec4(min(c * 1.45 + 0.22, vec3(1.0)), u_alpha);
 }`;
 
 const FRAG = `#version 300 es
@@ -259,7 +268,7 @@ export default function WaveformGL({
   cueIn, cueOut, introEnd, outroStart,
   playhead, hoverPos, dragRegion, onMount, tint,
   fadeInEnd, fadeOutStart, clipStart, clipEnd, peaksStart, peaksEnd, label,
-  clipDurationMs, clipStartMs, zoom, fullClipPx, detail, samplesPerPixel,
+  clipDurationMs, clipStartMs, zoom, fullClipPx, detail, samplesPerPixel, cacheHit, blend,
 }: Props) {
   const pStart = peaksStart ?? 0;
   const pEnd   = peaksEnd   ?? 1;
@@ -410,8 +419,8 @@ export default function WaveformGL({
       };
       const envNames = ["u_peaks","u_n","u_vs","u_ve","u_ps","u_pe","u_cs","u_ce",
                         "u_fadeInEnd","u_fadeOutStart","u_laneCenter","u_laneHalf","u_texV",
-                        "u_rmsPass","u_tint","u_tintAmt"];
-      const smpNames = ["u_peaks","u_n","u_laneCenter","u_laneHalf","u_texV","u_tint","u_tintAmt"];
+                        "u_rmsPass","u_tint","u_tintAmt","u_alpha"];
+      const smpNames = ["u_peaks","u_n","u_laneCenter","u_laneHalf","u_texV","u_tint","u_tintAmt","u_alpha"];
       const env = link(VERT_ENV, FRAG_ENV, envNames);
       const smp = link(VERT_SMP, FRAG_SMP, smpNames);
       const detailTex = gl.createTexture()!;
@@ -548,7 +557,13 @@ export default function WaveformGL({
         const half   = lanes === 1 ? 0.92 : 0.44;
         const centre = lanes === 1 ? 0 : (c === 0 ? 0.5 : -0.5);
         const texV   = lanes === 1 ? 0.5 : (c + 0.5) / detail.channels;
-        if (detail.kind === "samples") {
+        // Inside the hysteresis band both draw, with complementary alpha — the body fades out as
+        // the trace fades in, so the seam reads as a morph instead of a cut. Outside the band the
+        // caller passes 0 or 1 and the losing program is skipped entirely, costing nothing.
+        const w = Math.max(0, Math.min(1, blend ?? (detail.kind === "samples" ? 1 : 0)));
+        const drawTrace = detail.kind === "samples" && w > 0.001;
+        const drawEnv   = detail.kind === "envelope" && w < 0.999;
+        if (drawTrace) {
           const p = s.smpProg, uu = s.smpU;
           gl.useProgram(p);
           gl.uniform1i(uu.u_peaks, 0);
@@ -557,8 +572,10 @@ export default function WaveformGL({
           gl.uniform1f(uu.u_texV, texV);
           gl.uniform3f(uu.u_tint, tr2, tg2, tb2);
           gl.uniform1f(uu.u_tintAmt, tint ? 1 : 0);
+          gl.uniform1f(uu.u_alpha, w);
           gl.drawArrays(gl.LINE_STRIP, 0, detail.length);
-        } else {
+        }
+        if (drawEnv) {
           const p = s.envProg, uu = s.envU;
           gl.useProgram(p);
           gl.uniform1i(uu.u_peaks, 0);
@@ -573,6 +590,7 @@ export default function WaveformGL({
           gl.uniform1f(uu.u_texV, texV);
           gl.uniform3f(uu.u_tint, tr2, tg2, tb2);
           gl.uniform1f(uu.u_tintAmt, tint ? 1 : 0);
+          gl.uniform1f(uu.u_alpha, 1 - w);
           // Peak body first, RMS core over it.
           gl.uniform1i(uu.u_rmsPass, 0); gl.drawArrays(gl.TRIANGLES, 0, detail.length * 6);
           gl.uniform1i(uu.u_rmsPass, 1); gl.drawArrays(gl.TRIANGLES, 0, detail.length * 6);
@@ -580,6 +598,7 @@ export default function WaveformGL({
       }
       gl.bindVertexArray(null);
       logState(`DRAW ok mode=${detail.kind === "samples" ? "sample" : "peakrms"} `
+             + `cacheHit=${cacheHit === true} blend=${(blend ?? 0).toFixed(2)} `
              + `lanes=${lanes} n=${detail.length} spPerPx=${(samplesPerPixel ?? -1).toFixed(2)} `
              + `canvas=${can.width}x${can.height} drawingBuffer=${gl.drawingBufferWidth}x${gl.drawingBufferHeight} `
              + `css=${w}x${h} dpr=${dpr.toFixed(2)} fullClipPx=${fullClipPx ?? "n/a"} `

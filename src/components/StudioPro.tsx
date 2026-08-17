@@ -822,6 +822,23 @@ const SAMPLE_MODE_SPP   = 2;
 const PEAKRMS_MODE_SPP  = 4000;
 const SAMPLE_MAX_POINTS = 32_768;
 
+/** Hysteresis bands, ±20% around each threshold.
+ *  A bare comparison re-evaluated every draw flips the render mode on a one-pixel width change when
+ *  the view happens to sit on the boundary — the mode oscillates while the wheel is still turning.
+ *  Entering a mode requires crossing the NEAR edge; leaving it requires crossing the FAR edge, so
+ *  the boundary has to be genuinely passed rather than merely touched. */
+const SAMPLE_ENTER_SPP   = SAMPLE_MODE_SPP  * 0.8;   // 1.6 — below this, become sample mode
+const SAMPLE_EXIT_SPP    = SAMPLE_MODE_SPP  * 1.2;   // 2.4 — above this, stop being sample mode
+const PEAKRMS_ENTER_SPP  = PEAKRMS_MODE_SPP * 0.8;   // 3200
+const PEAKRMS_EXIT_SPP   = PEAKRMS_MODE_SPP * 1.2;   // 4800
+
+/** Extraction window quantisation.
+ *  The slice range is snapped OUTWARD to a grid of quarter-view steps and padded by a quarter view
+ *  each side. Scrolling inside that padded window reuses the cached texture outright; a new
+ *  extraction happens only when the view leaves it. This turns a guaranteed miss every 32px of
+ *  scroll into an occasional one. */
+const SLICE_QUANTUM_FRAC = 0.25;
+
 const DETAIL_BARS_PER_DEVICE_PX = 2;
 const DETAIL_MAX_RESOLUTION     = 8192;
 const DETAIL_MAX_SAMPLES        = 4_000_000;  // ~90s @44.1k — beyond this the coarse array stands
@@ -830,24 +847,39 @@ const DETAIL_CACHE_MAX = 24;
 
 /** Cache keyed on everything that changes the samples: trim and splice both mint new buffers or new
  *  trim bounds, so a mutated region can never read a stale array. */
+/** Snap a view range outward onto a padded grid, so nearby views share one extraction. */
+function quantizeSlice(tStart: number, tEnd: number): { qStart: number; qEnd: number } {
+  const span = Math.max(1e-9, tEnd - tStart);
+  const step = span * SLICE_QUANTUM_FRAC;
+  const qStart = Math.max(0, Math.floor((tStart - step) / step) * step);
+  const qEnd   = Math.min(1, Math.ceil((tEnd + step) / step) * step);
+  return { qStart, qEnd: Math.max(qEnd, qStart + step) };
+}
+
 function sliceDetailCached(
   region: StudioRegion, tStart: number, tEnd: number, resolution: number,
-  kind: "samples" | "envelope", make: () => WaveDetail | null,
-): WaveDetail | null {
+  kind: "samples" | "envelope", make: (qStart: number, qEnd: number) => WaveDetail | null,
+): { detail: WaveDetail | null; qStart: number; qEnd: number; hit: boolean } {
   const buf = region.buffer;
-  if (!buf || tEnd <= tStart) return null;
+  const miss = { detail: null, qStart: tStart, qEnd: tEnd, hit: false };
+  if (!buf || tEnd <= tStart) return miss;
+  const { qStart, qEnd } = quantizeSlice(tStart, tEnd);
   const key = `${kind}|${region.id}|${region.trimStartMs}|${region.trimEndMs}|${buf.length}`
-            + `|${tStart.toFixed(6)}|${tEnd.toFixed(6)}|${resolution}`;
+            + `|${qStart.toFixed(6)}|${qEnd.toFixed(6)}|${resolution}`;
   const hit = detailCache.get(key);
-  if (hit) return hit;
-  const made = make();
-  if (!made) return null;
+  if (hit) {
+    // Refresh recency — this Map is the LRU, and a hit must not age out ahead of colder entries.
+    detailCache.delete(key); detailCache.set(key, hit);
+    return { detail: hit, qStart, qEnd, hit: true };
+  }
+  const made = make(qStart, qEnd);
+  if (!made) return miss;
   if (detailCache.size >= DETAIL_CACHE_MAX) {
     const oldest = detailCache.keys().next().value;
     if (oldest !== undefined) detailCache.delete(oldest);
   }
   detailCache.set(key, made);
-  return made;
+  return { detail: made, qStart, qEnd, hit: false };
 }
 
 function smartZoneAt(
@@ -5453,9 +5485,16 @@ function RegionBlock({
   const sliceVStart = vStart + fracA * (vEnd - vStart);
   const sliceVEnd   = vStart + fracB * (vEnd - vStart);
 
-  // ── Render mode for the visible slice, chosen by samples per device pixel ──
-  const { detail, spp } = useMemo(() => {
-    const none = { detail: null as WaveDetail | null, spp: -1 };
+  // ── Render mode for the visible slice ──
+  // The mode is STICKY: it is remembered across draws and only changes when spp crosses the far
+  // edge of a hysteresis band. Without that, a boundary-adjacent view flips style on any one-pixel
+  // change and the waveform flickers between bars and body while the wheel is still moving.
+  const modeRef  = useRef<"sample" | "peakrms" | "mip">("mip");
+  const staleRef = useRef<{ detail: WaveDetail; start: number; end: number } | null>(null);
+
+  const { detail, spp, cacheHit, blend, pSpanStart, pSpanEnd } = useMemo(() => {
+    const none = { detail: null as WaveDetail | null, spp: -1, cacheHit: false, blend: 0,
+                   pSpanStart: 0, pSpanEnd: 1 };
     const buf = region.buffer;
     if (!sliceOn || !buf) return none;
     const dpr     = typeof window === "undefined" ? 1 : (window.devicePixelRatio || 1);
@@ -5464,24 +5503,61 @@ function RegionBlock({
     const endSec   = sliceVEnd   * buf.duration;
     const samplesPerPx = ((endSec - startSec) * buf.sampleRate) / deviceW;
     if (samplesPerPx <= 0) return none;
-    // Synchronous by construction — every extractor scans only the slice, so there is no "pending"
-    // state in which the clip could blank. A refusal returns null and the coarse/mip path draws.
-    if (samplesPerPx < SAMPLE_MODE_SPP) {
-      const d = sliceDetailCached(region, sliceVStart, sliceVEnd, 0, "samples",
-                                  () => extractSamplesRange(buf, startSec, endSec, SAMPLE_MAX_POINTS));
-      if (d) return { detail: d, spp: samplesPerPx };
+
+    // Sticky transition. Enter on the near edge, leave on the far edge, and log the crossing so
+    // flapping is countable rather than merely felt.
+    const prev = modeRef.current;
+    let next = prev;
+    if (prev === "sample")       next = samplesPerPx > SAMPLE_EXIT_SPP
+                                        ? (samplesPerPx > PEAKRMS_EXIT_SPP ? "mip" : "peakrms") : "sample";
+    else if (prev === "peakrms") next = samplesPerPx < SAMPLE_ENTER_SPP ? "sample"
+                                      : samplesPerPx > PEAKRMS_EXIT_SPP ? "mip" : "peakrms";
+    else                         next = samplesPerPx < SAMPLE_ENTER_SPP ? "sample"
+                                      : samplesPerPx < PEAKRMS_ENTER_SPP ? "peakrms" : "mip";
+    if (next !== prev) {
+      console.log(`[WaveformGL ${track.name}/${region.id.slice(0, 6)}] MODE ${prev}→${next} at spp=${samplesPerPx.toFixed(2)}`);
+      modeRef.current = next;
     }
-    if (samplesPerPx < PEAKRMS_MODE_SPP) {
+
+    // Crossfade weight across the sample band: 0 at the exit edge, 1 at the enter edge. Both
+    // programs draw inside the band with complementary alpha, so body becomes line as a morph.
+    const blendW = next === "sample" || next === "peakrms"
+      ? Math.max(0, Math.min(1, (SAMPLE_EXIT_SPP - samplesPerPx) / (SAMPLE_EXIT_SPP - SAMPLE_ENTER_SPP)))
+      : 0;
+
+    if (next === "sample") {
+      const r = sliceDetailCached(region, sliceVStart, sliceVEnd, 0, "samples",
+        (qs, qe) => extractSamplesRange(buf, qs * buf.duration, qe * buf.duration, SAMPLE_MAX_POINTS));
+      if (r.detail) {
+        staleRef.current = { detail: r.detail, start: r.qStart, end: r.qEnd };
+        return { detail: r.detail, spp: samplesPerPx, cacheHit: r.hit, blend: blendW,
+                 pSpanStart: r.qStart, pSpanEnd: r.qEnd };
+      }
+    }
+    if (next === "peakrms") {
       const res = Math.max(256, Math.min(DETAIL_MAX_RESOLUTION,
                            Math.round(deviceW * DETAIL_BARS_PER_DEVICE_PX)));
       if ((endSec - startSec) * buf.sampleRate <= DETAIL_MAX_SAMPLES) {
-        const d = sliceDetailCached(region, sliceVStart, sliceVEnd, res, "envelope",
-                                    () => extractEnvelopeRange(buf, startSec, endSec, res));
-        if (d) return { detail: d, spp: samplesPerPx };
+        const r = sliceDetailCached(region, sliceVStart, sliceVEnd, res, "envelope",
+          (qs, qe) => extractEnvelopeRange(buf, qs * buf.duration, qe * buf.duration, res));
+        if (r.detail) {
+          staleRef.current = { detail: r.detail, start: r.qStart, end: r.qEnd };
+          return { detail: r.detail, spp: samplesPerPx, cacheHit: r.hit, blend: blendW,
+                   pSpanStart: r.qStart, pSpanEnd: r.qEnd };
+        }
       }
     }
-    return { detail: null, spp: samplesPerPx };
-  }, [sliceOn, region, region.buffer, region.trimStartMs, region.trimEndMs, sliceW, sliceVStart, sliceVEnd]);
+    // A genuine miss in a detail mode prefers the PREVIOUS slice — stale geometry in the right mode
+    // beats a correct-but-coarse bar flash. Coarse fallback survives only for the refusal path
+    // (>4M samples) and for mip mode proper, which is what `detail: null` selects.
+    if (next !== "mip" && staleRef.current) {
+      const s = staleRef.current;
+      return { detail: s.detail, spp: samplesPerPx, cacheHit: false, blend: blendW,
+               pSpanStart: s.start, pSpanEnd: s.end };
+    }
+    staleRef.current = null;
+    return { detail: null, spp: samplesPerPx, cacheHit: false, blend: 0, pSpanStart: 0, pSpanEnd: 1 };
+  }, [sliceOn, region, region.buffer, region.trimStartMs, region.trimEndMs, sliceW, sliceVStart, sliceVEnd, track.name]);
 
   // ── Playback cursor, mapped from the timeline into this clip's own normalized space ──
   // Driven by the DAW's AudioContext clock via playheadMs (the rAF tick at :2138) — NOT the
@@ -5589,8 +5665,10 @@ function RegionBlock({
             peaks={region.peaks}
             detail={detail}
             samplesPerPixel={spp}
-            peaksStart={detail ? sliceVStart : 0}
-            peaksEnd={detail ? sliceVEnd : 1}
+            cacheHit={cacheHit}
+            blend={blend}
+            peaksStart={pSpanStart}
+            peaksEnd={pSpanEnd}
             viewStart={sliceVStart}
             viewEnd={sliceVEnd}
             clipStart={vStart}
