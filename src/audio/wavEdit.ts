@@ -34,6 +34,81 @@ export function extractPeaksRange(buffer: AudioBuffer, startSec: number, endSec:
   return peaks;
 }
 
+/** What a waveform draw needs, packed as a GL-ready texture.
+ *  width = `length`, height = `channels`; row c is channel c.
+ *  - kind "envelope": R = max, G = min (both signed, encoded (v+1)/2), B = RMS (0..1)
+ *  - kind "samples":  R = the sample itself, signed, encoded (v+1)/2
+ */
+export interface WaveDetail {
+  kind:     "envelope" | "samples";
+  channels: number;
+  length:   number;
+  rgba:     Uint8Array;
+}
+
+const enc = (v: number) => Math.max(0, Math.min(255, Math.round((Math.max(-1, Math.min(1, v)) + 1) * 127.5)));
+
+/** Per-channel min/max/RMS over `resolution` buckets of [startSec, endSec].
+ *  Unlike extractPeaks this keeps BOTH excursions and the RMS inside them, which is what gives a
+ *  waveform its two-tone body — the outer shape is the peak, the brighter core is the energy. */
+export function extractEnvelopeRange(
+  buffer: AudioBuffer, startSec: number, endSec: number, resolution: number,
+): WaveDetail {
+  const chans = Math.min(2, buffer.numberOfChannels);
+  const sr    = buffer.sampleRate;
+  const s     = Math.max(0, Math.floor(startSec * sr));
+  const e     = Math.min(buffer.length, Math.floor(endSec * sr));
+  const span  = Math.max(1, e - s);
+  const step  = Math.max(1, Math.floor(span / resolution));
+  const rgba  = new Uint8Array(resolution * chans * 4);
+  for (let c = 0; c < chans; c++) {
+    const data = buffer.getChannelData(c);
+    const row  = c * resolution * 4;
+    for (let i = 0; i < resolution; i++) {
+      let mn = 1, mx = -1, sum = 0, cnt = 0;
+      const base = s + i * step;
+      for (let j = 0; j < step; j++) {
+        const v = data[base + j];
+        if (v === undefined) break;
+        if (v < mn) mn = v;
+        if (v > mx) mx = v;
+        sum += v * v; cnt++;
+      }
+      if (!cnt) { mn = 0; mx = 0; }
+      const o = row + i * 4;
+      rgba[o]     = enc(mx);
+      rgba[o + 1] = enc(mn);
+      rgba[o + 2] = Math.min(255, Math.round(Math.sqrt(sum / Math.max(1, cnt)) * 255));
+      rgba[o + 3] = 255;
+    }
+  }
+  return { kind: "envelope", channels: chans, length: resolution, rgba };
+}
+
+/** Raw per-channel samples over [startSec, endSec], for the zoom depth where a waveform stops
+ *  being a bar chart and becomes an actual signal trace. Refuses spans wider than `maxSamples`. */
+export function extractSamplesRange(
+  buffer: AudioBuffer, startSec: number, endSec: number, maxSamples: number,
+): WaveDetail | null {
+  const chans = Math.min(2, buffer.numberOfChannels);
+  const sr    = buffer.sampleRate;
+  const s     = Math.max(0, Math.floor(startSec * sr));
+  const e     = Math.min(buffer.length, Math.floor(endSec * sr));
+  const n     = e - s;
+  if (n <= 1 || n > maxSamples) return null;
+  const rgba = new Uint8Array(n * chans * 4);
+  for (let c = 0; c < chans; c++) {
+    const data = buffer.getChannelData(c);
+    const row  = c * n * 4;
+    for (let i = 0; i < n; i++) {
+      const o = row + i * 4;
+      rgba[o] = enc(data[s + i] ?? 0);
+      rgba[o + 3] = 255;
+    }
+  }
+  return { kind: "samples", channels: chans, length: n, rgba };
+}
+
 /** Decode any recorded blob (webm/ogg/wav) to an AudioBuffer. */
 export async function decodeBlobToBuffer(blob: Blob): Promise<AudioBuffer> {
   const ab = await blob.arrayBuffer();

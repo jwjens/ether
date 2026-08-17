@@ -4,6 +4,7 @@
 // Falls back gracefully if WebGL2 unavailable.
 
 import { useEffect, useRef, useState } from "react";
+import type { WaveDetail } from "../audio/wavEdit";
 
 interface Props {
   peaks:       Float32Array | null;
@@ -37,6 +38,12 @@ interface Props {
    *  coarse whole-clip array, these say where that slice sits. */
   peaksStart?:   number;
   peaksEnd?:     number;
+  /** High-detail data for the visible slice. Its `kind` selects the render mode: "samples" draws a
+   *  continuous trace through actual sample values, "envelope" draws min/max body + RMS core, and
+   *  its absence falls through to the mip path unchanged. Two channels draw as stereo lanes. */
+  detail?:          WaveDetail | null;
+  /** Log-only: the samples-per-pixel the caller used to choose `detail`. */
+  samplesPerPixel?: number;
   /** Identifies this instance in the debug log — without it, "a clip stopped drawing" names no clip. */
   label?:        string;
   /** Log-only context. `fullClipPx` is what an UNSLICED canvas would have had to allocate for this
@@ -122,6 +129,88 @@ void main() {
   v_y   = y;   // interpolated across the quad — tells the frag where it is
 }`;
 
+// ── Envelope program ──
+// One quad per bucket spanning min→max (the outer, dimmer body), then a second pass spanning
+// ±RMS (the inner, brighter core). Two-tone is not decoration: the peak says how far the signal
+// went, the RMS says how much of the time it was actually there. Audition's green/red read.
+const VERT_ENV = `#version 300 es
+precision highp float;
+uniform sampler2D u_peaks;
+uniform int   u_n;
+uniform float u_vs, u_ve, u_ps, u_pe;
+uniform float u_cs, u_ce, u_fadeInEnd, u_fadeOutStart;
+uniform float u_laneCenter, u_laneHalf, u_texV;
+uniform int   u_rmsPass;
+out float v_t, v_edge;
+void main() {
+  int pi = gl_VertexID / 6, sub = gl_VertexID % 6;
+  if (pi >= u_n) { gl_Position = vec4(2.0,2.0,0.0,1.0); return; }
+  int col = (sub == 0 || sub == 2 || sub == 5) ? 0 : 1;
+  int row = (sub == 0 || sub == 1 || sub == 3) ? 0 : 1;
+
+  float t   = u_vs + (float(pi) + float(col)) / float(u_n) * (u_ve - u_vs);
+  float tex = (t - u_ps) / max(u_pe - u_ps, 1e-6);
+  vec3  smp = texture(u_peaks, vec2(tex, u_texV)).rgb;
+  float mx  = smp.r * 2.0 - 1.0;
+  float mn  = smp.g * 2.0 - 1.0;
+  float rms = smp.b;
+
+  float gain = 1.0;
+  if (u_fadeInEnd > u_cs && t < u_fadeInEnd)
+    gain *= clamp((t - u_cs) / max(u_fadeInEnd - u_cs, 1e-6), 0.0, 1.0);
+  if (u_fadeOutStart < u_ce && t > u_fadeOutStart)
+    gain *= clamp((u_ce - t) / max(u_ce - u_fadeOutStart, 1e-6), 0.0, 1.0);
+
+  float hi = (u_rmsPass == 1 ?  rms : mx) * gain;
+  float lo = (u_rmsPass == 1 ? -rms : mn) * gain;
+  // Never let a live bucket collapse below a hairline, or quiet passages vanish entirely.
+  float halfSpan = max(abs(hi - lo) * 0.5, 0.004);
+  float mid      = (hi + lo) * 0.5;
+  float y        = mid + (row == 0 ? halfSpan : -halfSpan);
+
+  gl_Position = vec4((t - u_vs) / (u_ve - u_vs) * 2.0 - 1.0,
+                     u_laneCenter + y * u_laneHalf, 0.0, 1.0);
+  v_t    = t;
+  v_edge = float(u_rmsPass);
+}`;
+
+const FRAG_ENV = `#version 300 es
+precision highp float;
+in float v_t, v_edge;
+uniform vec3  u_tint;
+uniform float u_tintAmt;
+out vec4 color;
+void main() {
+  vec3 c = mix(vec3(0.98, 0.75, 0.14), u_tint, u_tintAmt);
+  // The RMS core is the brightest thing in the lane; the peak body sits behind it, dimmer.
+  color = (v_edge > 0.5) ? vec4(min(c * 1.35 + 0.18, vec3(1.0)), 1.0)
+                         : vec4(c * 0.62, 0.92);
+}`;
+
+// ── Sample program ──
+// A continuous trace through the ACTUAL samples. At this zoom a bar chart is a lie about the
+// signal: what the ear hears is a waveform, and it should look like one.
+const VERT_SMP = `#version 300 es
+precision highp float;
+uniform sampler2D u_peaks;
+uniform int   u_n;
+uniform float u_laneCenter, u_laneHalf, u_texV;
+void main() {
+  float f = float(gl_VertexID) / float(max(u_n - 1, 1));
+  float v = texture(u_peaks, vec2(f, u_texV)).r * 2.0 - 1.0;
+  gl_Position = vec4(f * 2.0 - 1.0, u_laneCenter + v * u_laneHalf, 0.0, 1.0);
+}`;
+
+const FRAG_SMP = `#version 300 es
+precision highp float;
+uniform vec3  u_tint;
+uniform float u_tintAmt;
+out vec4 color;
+void main() {
+  vec3 c = mix(vec3(0.98, 0.75, 0.14), u_tint, u_tintAmt);
+  color = vec4(min(c * 1.45 + 0.22, vec3(1.0)), 1.0);
+}`;
+
 const FRAG = `#version 300 es
 precision highp float;
 in float v_t, v_amp, v_y;
@@ -170,7 +259,7 @@ export default function WaveformGL({
   cueIn, cueOut, introEnd, outroStart,
   playhead, hoverPos, dragRegion, onMount, tint,
   fadeInEnd, fadeOutStart, clipStart, clipEnd, peaksStart, peaksEnd, label,
-  clipDurationMs, clipStartMs, zoom, fullClipPx,
+  clipDurationMs, clipStartMs, zoom, fullClipPx, detail, samplesPerPixel,
 }: Props) {
   const pStart = peaksStart ?? 0;
   const pEnd   = peaksEnd   ?? 1;
@@ -225,7 +314,13 @@ export default function WaveformGL({
     tex: WebGLTexture; vao: WebGLVertexArrayObject;
     u: Record<string, WebGLUniformLocation | null>; n: number;
     maxDim: number;
+    // Job 2 programs: envelope (min/max + RMS) and sample-trace. Each owns its own texture so a
+    // detail upload never disturbs the mip texture the far-zoom path depends on.
+    envProg: WebGLProgram; envU: Record<string, WebGLUniformLocation | null>;
+    smpProg: WebGLProgram; smpU: Record<string, WebGLUniformLocation | null>;
+    detailTex: WebGLTexture;
   } | null>(null);
+  const detailKeyRef = useRef<string>("");
 
   // Bumped whenever the GL context is lost/restored, purely to force the draw effects to re-run
   // against the rebuilt context.
@@ -303,7 +398,31 @@ export default function WaveformGL({
       const maxRender = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) as number;
       const maxView   = (gl.getParameter(gl.MAX_VIEWPORT_DIMS) as Int32Array | null)?.[0] ?? maxTex;
       const maxDim    = Math.max(1024, Math.min(maxTex || 4096, maxRender || 4096, maxView || 4096, 8192));
-      st.current = { gl, prog, tex, vao, u, n: 0, maxDim };
+      const link = (vs: string, fs: string, names: string[]) => {
+        const p = gl.createProgram()!;
+        gl.attachShader(p, mk(vs, gl.VERTEX_SHADER));
+        gl.attachShader(p, mk(fs, gl.FRAGMENT_SHADER));
+        gl.linkProgram(p);
+        if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)!);
+        const m: Record<string, WebGLUniformLocation | null> = {};
+        names.forEach(n => { m[n] = gl.getUniformLocation(p, n); });
+        return { p, m };
+      };
+      const envNames = ["u_peaks","u_n","u_vs","u_ve","u_ps","u_pe","u_cs","u_ce",
+                        "u_fadeInEnd","u_fadeOutStart","u_laneCenter","u_laneHalf","u_texV",
+                        "u_rmsPass","u_tint","u_tintAmt"];
+      const smpNames = ["u_peaks","u_n","u_laneCenter","u_laneHalf","u_texV","u_tint","u_tintAmt"];
+      const env = link(VERT_ENV, FRAG_ENV, envNames);
+      const smp = link(VERT_SMP, FRAG_SMP, smpNames);
+      const detailTex = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, detailTex);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      detailKeyRef.current = "";
+      st.current = { gl, prog, tex, vao, u, n: 0, maxDim,
+                     envProg: env.p, envU: env.m, smpProg: smp.p, smpU: smp.m, detailTex };
       console.log(`[WaveformGL${label ? ` ${label}` : ""}] INIT MAX_TEXTURE_SIZE=${maxTex} `
                 + `MAX_RENDERBUFFER_SIZE=${maxRender} MAX_VIEWPORT_DIMS=${maxView} → cap=${maxDim}px`);
       uploadedRef.current = -1;   // a fresh context holds no texture — force the next draw to upload
@@ -408,6 +527,66 @@ export default function WaveformGL({
     gl.clearColor(0.05, 0.05, 0.05, 1.0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    // ── Mode select ──
+    // detail.kind decides: the CALLER knows samples-per-pixel, so it decides what to hand over,
+    // and the renderer draws exactly what it was given. Lanes are split when the detail carries
+    // two channels; a mono buffer keeps the full height.
+    if (detail && detail.length > 0) {
+      const lanes = Math.max(1, Math.min(2, detail.channels));
+      const key = `${detail.kind}|${detail.length}|${detail.channels}|${peaksStart}|${peaksEnd}`;
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, s.detailTex);
+      if (detailKeyRef.current !== key) {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, detail.length, detail.channels, 0,
+                      gl.RGBA, gl.UNSIGNED_BYTE, detail.rgba);
+        detailKeyRef.current = key;
+      }
+      gl.bindVertexArray(vao);
+      const [tr2, tg2, tb2] = hexToRgb(tint);
+      for (let c = 0; c < lanes; c++) {
+        // Lane geometry in clip space: full height for mono, stacked halves for stereo, each
+        // with its own centre so both channels read against their own zero line.
+        const half   = lanes === 1 ? 0.92 : 0.44;
+        const centre = lanes === 1 ? 0 : (c === 0 ? 0.5 : -0.5);
+        const texV   = lanes === 1 ? 0.5 : (c + 0.5) / detail.channels;
+        if (detail.kind === "samples") {
+          const p = s.smpProg, uu = s.smpU;
+          gl.useProgram(p);
+          gl.uniform1i(uu.u_peaks, 0);
+          gl.uniform1i(uu.u_n, detail.length);
+          gl.uniform1f(uu.u_laneCenter, centre); gl.uniform1f(uu.u_laneHalf, half);
+          gl.uniform1f(uu.u_texV, texV);
+          gl.uniform3f(uu.u_tint, tr2, tg2, tb2);
+          gl.uniform1f(uu.u_tintAmt, tint ? 1 : 0);
+          gl.drawArrays(gl.LINE_STRIP, 0, detail.length);
+        } else {
+          const p = s.envProg, uu = s.envU;
+          gl.useProgram(p);
+          gl.uniform1i(uu.u_peaks, 0);
+          gl.uniform1i(uu.u_n, detail.length);
+          gl.uniform1f(uu.u_vs, viewStart);  gl.uniform1f(uu.u_ve, viewEnd);
+          gl.uniform1f(uu.u_ps, pStart);     gl.uniform1f(uu.u_pe, pEnd);
+          gl.uniform1f(uu.u_cs, clipStart ?? viewStart);
+          gl.uniform1f(uu.u_ce, clipEnd   ?? viewEnd);
+          gl.uniform1f(uu.u_fadeInEnd,    fadeInEnd    ?? (clipStart ?? viewStart));
+          gl.uniform1f(uu.u_fadeOutStart, fadeOutStart ?? (clipEnd   ?? viewEnd));
+          gl.uniform1f(uu.u_laneCenter, centre); gl.uniform1f(uu.u_laneHalf, half);
+          gl.uniform1f(uu.u_texV, texV);
+          gl.uniform3f(uu.u_tint, tr2, tg2, tb2);
+          gl.uniform1f(uu.u_tintAmt, tint ? 1 : 0);
+          // Peak body first, RMS core over it.
+          gl.uniform1i(uu.u_rmsPass, 0); gl.drawArrays(gl.TRIANGLES, 0, detail.length * 6);
+          gl.uniform1i(uu.u_rmsPass, 1); gl.drawArrays(gl.TRIANGLES, 0, detail.length * 6);
+        }
+      }
+      gl.bindVertexArray(null);
+      logState(`DRAW ok mode=${detail.kind === "samples" ? "sample" : "peakrms"} `
+             + `lanes=${lanes} n=${detail.length} spPerPx=${(samplesPerPixel ?? -1).toFixed(2)} `
+             + `canvas=${can.width}x${can.height} drawingBuffer=${gl.drawingBufferWidth}x${gl.drawingBufferHeight} `
+             + `css=${w}x${h} dpr=${dpr.toFixed(2)} fullClipPx=${fullClipPx ?? "n/a"} `
+             + `zoom=${zoom ?? "n/a"} view=[${viewStart.toFixed(4)},${viewEnd.toFixed(4)}]` + capNote);
+      return;
+    }
+
     gl.useProgram(prog); gl.bindVertexArray(vao);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.uniform1i(u.u_peaks, 0); gl.uniform1i(u.u_n, nDraw);
@@ -458,9 +637,20 @@ export default function WaveformGL({
       ctx.lineWidth   = 1.5; ctx.strokeRect(x0, 0, x1-x0, h);
     }
 
-    ctx.strokeStyle = "rgba(255,255,255,0.07)";
+    // Centreline(s) — one per lane, so a stereo file reads as two channels each against its own
+    // zero crossing rather than one shape straddling the middle.
+    const lanes = detail && detail.channels >= 2 ? 2 : 1;
+    ctx.strokeStyle = "rgba(255,255,255,0.10)";
     ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(0, h/2); ctx.lineTo(w, h/2); ctx.stroke();
+    for (let c = 0; c < lanes; c++) {
+      const y = lanes === 1 ? h / 2 : (c === 0 ? h * 0.25 : h * 0.75);
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    }
+    if (lanes === 2) {
+      // Lane divider, dimmer than the centrelines so it separates without competing.
+      ctx.strokeStyle = "rgba(255,255,255,0.05)";
+      ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
+    }
 
     // ── Fade geometry ──
     // The taper lives in the waveform itself (vertex shader). These are the read-off marks:

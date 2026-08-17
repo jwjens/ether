@@ -37,7 +37,8 @@ import { createPortal } from "react-dom";
 import WaveformGL from "./WaveformGL";
 // The shared range extractor — "gives true detail when zoomed" (wavEdit.ts:21) and, until now,
 // wired to nothing. StudioPro's own extractPeaks copy at :433 stays put; dedup is a backlog item.
-import { extractPeaksRange } from "../audio/wavEdit";
+import { extractEnvelopeRange, extractSamplesRange } from "../audio/wavEdit";
+import type { WaveDetail } from "../audio/wavEdit";
 import VoiceTracker from "./VoiceTracker";
 import StudioSendBar from "./StudioSendBar";
 import { execute, query } from "../db/client";
@@ -801,33 +802,41 @@ const VIEWPORT_RENDER_MARGIN_PX = 400;
  *  decoded AudioBuffer at the density the screen can actually show. Same discipline as the viewport
  *  slice: never the whole clip.
  */
+/** Mode thresholds, in samples per device pixel.
+ *  Below SAMPLE_MODE_SPP there are so few samples per pixel that a bar chart is a lie about the
+ *  signal — draw the actual trace. Below PEAKRMS_MODE_SPP a bucket still holds enough samples for
+ *  min/max and RMS to mean something. Above it, the mip path, which is the only one cheap enough
+ *  for a whole song on screen. */
+const SAMPLE_MODE_SPP   = 2;
+const PEAKRMS_MODE_SPP  = 4000;
+const SAMPLE_MAX_POINTS = 32_768;
+
 const DETAIL_BARS_PER_DEVICE_PX = 2;
 const DETAIL_MAX_RESOLUTION     = 8192;
 const DETAIL_MAX_SAMPLES        = 4_000_000;  // ~90s @44.1k — beyond this the coarse array stands
-const detailCache = new Map<string, Float32Array>();
+const detailCache = new Map<string, WaveDetail>();
 const DETAIL_CACHE_MAX = 24;
 
-function sliceDetailPeaks(
+/** Cache keyed on everything that changes the samples: trim and splice both mint new buffers or new
+ *  trim bounds, so a mutated region can never read a stale array. */
+function sliceDetailCached(
   region: StudioRegion, tStart: number, tEnd: number, resolution: number,
-): Float32Array | null {
+  kind: "samples" | "envelope", make: () => WaveDetail | null,
+): WaveDetail | null {
   const buf = region.buffer;
   if (!buf || tEnd <= tStart) return null;
-  const startSec = tStart * buf.duration;
-  const endSec   = tEnd   * buf.duration;
-  if ((endSec - startSec) * buf.sampleRate > DETAIL_MAX_SAMPLES) return null;
-  // Keyed on everything that changes the samples: trim and splice both mint new buffers or new
-  // trim bounds, so a mutated region can never read a stale array.
-  const key = `${region.id}|${region.trimStartMs}|${region.trimEndMs}|${buf.length}`
+  const key = `${kind}|${region.id}|${region.trimStartMs}|${region.trimEndMs}|${buf.length}`
             + `|${tStart.toFixed(6)}|${tEnd.toFixed(6)}|${resolution}`;
   const hit = detailCache.get(key);
   if (hit) return hit;
-  const peaks = extractPeaksRange(buf, startSec, endSec, resolution);
+  const made = make();
+  if (!made) return null;
   if (detailCache.size >= DETAIL_CACHE_MAX) {
     const oldest = detailCache.keys().next().value;
     if (oldest !== undefined) detailCache.delete(oldest);
   }
-  detailCache.set(key, peaks);
-  return peaks;
+  detailCache.set(key, made);
+  return made;
 }
 
 function smartZoneAt(
@@ -5416,20 +5425,35 @@ function RegionBlock({
   const sliceVStart = vStart + fracA * (vEnd - vStart);
   const sliceVEnd   = vStart + fracB * (vEnd - vStart);
 
-  // ── Detail peaks for the visible slice, only when the coarse array has run out ──
-  const detail = useMemo(() => {
-    if (!sliceOn || !region.buffer || !region.peaks) return null;
-    const dpr      = typeof window === "undefined" ? 1 : (window.devicePixelRatio || 1);
-    const deviceW  = Math.max(1, sliceW * dpr);
-    const coarseInView = region.peaks.length * Math.max(0, sliceVEnd - sliceVStart);
-    if (coarseInView >= deviceW * DETAIL_BARS_PER_DEVICE_PX) return null;   // coarse is enough
-    const resolution = Math.max(256, Math.min(DETAIL_MAX_RESOLUTION,
-                                Math.round(deviceW * DETAIL_BARS_PER_DEVICE_PX)));
-    // Synchronous by construction — extractPeaksRange scans only the slice, so there is no
-    // "pending" state in which the clip could go blank. A refusal returns null and the coarse
-    // array below is used unchanged.
-    return sliceDetailPeaks(region, sliceVStart, sliceVEnd, resolution);
-  }, [sliceOn, region, region.peaks, region.trimStartMs, region.trimEndMs, sliceW, sliceVStart, sliceVEnd]);
+  // ── Render mode for the visible slice, chosen by samples per device pixel ──
+  const { detail, spp } = useMemo(() => {
+    const none = { detail: null as WaveDetail | null, spp: -1 };
+    const buf = region.buffer;
+    if (!sliceOn || !buf) return none;
+    const dpr     = typeof window === "undefined" ? 1 : (window.devicePixelRatio || 1);
+    const deviceW = Math.max(1, sliceW * dpr);
+    const startSec = sliceVStart * buf.duration;
+    const endSec   = sliceVEnd   * buf.duration;
+    const samplesPerPx = ((endSec - startSec) * buf.sampleRate) / deviceW;
+    if (samplesPerPx <= 0) return none;
+    // Synchronous by construction — every extractor scans only the slice, so there is no "pending"
+    // state in which the clip could blank. A refusal returns null and the coarse/mip path draws.
+    if (samplesPerPx < SAMPLE_MODE_SPP) {
+      const d = sliceDetailCached(region, sliceVStart, sliceVEnd, 0, "samples",
+                                  () => extractSamplesRange(buf, startSec, endSec, SAMPLE_MAX_POINTS));
+      if (d) return { detail: d, spp: samplesPerPx };
+    }
+    if (samplesPerPx < PEAKRMS_MODE_SPP) {
+      const res = Math.max(256, Math.min(DETAIL_MAX_RESOLUTION,
+                           Math.round(deviceW * DETAIL_BARS_PER_DEVICE_PX)));
+      if ((endSec - startSec) * buf.sampleRate <= DETAIL_MAX_SAMPLES) {
+        const d = sliceDetailCached(region, sliceVStart, sliceVEnd, res, "envelope",
+                                    () => extractEnvelopeRange(buf, startSec, endSec, res));
+        if (d) return { detail: d, spp: samplesPerPx };
+      }
+    }
+    return { detail: null, spp: samplesPerPx };
+  }, [sliceOn, region, region.buffer, region.trimStartMs, region.trimEndMs, sliceW, sliceVStart, sliceVEnd]);
 
   // ── Playback cursor, mapped from the timeline into this clip's own normalized space ──
   // Driven by the DAW's AudioContext clock via playheadMs (the rAF tick at :2138) — NOT the
@@ -5516,9 +5540,11 @@ function RegionBlock({
       style={{
         position: "absolute",
         left: regionX, top: 4, width: regionW, height: laneH - 8,
-        // The clip's tint composites ON the dark surface rather than over whatever the theme makes
-        // the ancestor — the clip body is never lighter than the timeline it sits in.
-        background: `linear-gradient(${track.color}1f, ${track.color}1f), ${SURFACE_DARK}`,
+        // CONTRAST FLIP: the signal is the brightest thing in the lane, so the body it sits on has
+        // to get out of the way. The tint drops from 1f (12%) to 0d (5%) — a near-dark wash — and
+        // track identity moves to the border and the header strip below, which are chrome the
+        // waveform never has to compete with.
+        background: `linear-gradient(${track.color}0d, ${track.color}0d), ${SURFACE_DARK}`,
         // A 2px white selection border on a clip only a few pixels wide IS the clip — zoomed far
         // out, a selected region painted as a solid white block. Narrow clips keep a 1px, dimmer
         // edge so selection still reads without the border swallowing the body.
@@ -5532,7 +5558,9 @@ function RegionBlock({
       {sliceOn && (
         <div style={{ position: "absolute", left: sliceX, top: 0, width: sliceW, height: "100%", pointerEvents: "none" }}>
           <WaveformGL
-            peaks={detail ?? region.peaks}
+            peaks={region.peaks}
+            detail={detail}
+            samplesPerPixel={spp}
             peaksStart={detail ? sliceVStart : 0}
             peaksEnd={detail ? sliceVEnd : 1}
             viewStart={sliceVStart}
@@ -5582,8 +5610,17 @@ function RegionBlock({
           }} />
         );
       })()}
+      {/* Header strip — carries the track colour the clip body gave up in the contrast flip, so
+          identity survives without competing with the signal. Suppressed on clips too narrow to
+          read, via the same structural threshold as every other overlay. */}
+      {regionW >= OVERLAY_VISIBILITY_THRESHOLD_PX && (
+        <div style={{
+          position: "absolute", left: 0, right: 0, top: 0, height: 3,
+          background: track.color, opacity: 0.85, pointerEvents: "none",
+        }} />
+      )}
       <div style={{
-        position: "absolute", left: 4, top: 2,
+        position: "absolute", left: 4, top: 5,
         fontSize: "var(--t-micro)", color: "#fff", opacity: 0.9,
         textShadow: "0 0 3px rgba(0,0,0,0.8)", pointerEvents: "none",
       }}>{track.name}</div>
