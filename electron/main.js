@@ -2564,6 +2564,8 @@ function buildMenu() {
         contextIsolation: true, nodeIntegration: false, webSecurity: false,
       },
     });
+    attachPopoutDebugBridge(win, panel);
+
     if (isDev) win.loadURL(VITE_DEV_URL + `#popout/${panel}`);
     else win.loadFile(path.join(__dirname, "../dist/index.html"), { hash: `popout/${panel}` });
   };
@@ -2594,7 +2596,13 @@ function buildMenu() {
       { label: "Reset to Default", click: () => send("view:reset") },
       { type: "separator" },
       { label: "Reload", accelerator: "CmdOrCtrl+R", click: () => mainWindow?.webContents.reload() },
-      { label: "Toggle DevTools", accelerator: "F12", click: () => mainWindow?.webContents.toggleDevTools() },
+      // THE FOCUSED window, not mainWindow. A menu accelerator is app-global, so the old hardcoded
+      // mainWindow meant F12 pressed inside a pop-out opened the DASHBOARD's DevTools — which is
+      // why pop-out renderers looked undebuggable. Falls back to mainWindow when nothing is focused.
+      { label: "Toggle DevTools", accelerator: "F12",
+        click: () => (BrowserWindow.getFocusedWindow() || mainWindow)?.webContents.toggleDevTools() },
+      { label: "Toggle DevTools (Inspect)", accelerator: "CmdOrCtrl+Shift+I", visible: false,
+        click: () => (BrowserWindow.getFocusedWindow() || mainWindow)?.webContents.toggleDevTools() },
     ]},
     { label: "Library", submenu: [
       { label: "Library", click: () => send("nav:library") },
@@ -4995,6 +5003,21 @@ const POPOUT_SIZES = {
   "studiopro":   { width: 1280, height: 800 },  // Show+ DAW — its own window, not a dashboard takeover
 };
 
+// Human-readable names for the debug bridge's log prefix — "[POPOUT: Show+ DAW] …".
+// A panel with no entry falls back to its key, so a new pop-out is never nameless.
+const POPOUT_LABELS = {
+  "decks":       "Decks",
+  "mic":         "Mic",
+  "master":      "Master Output",
+  "upnext":      "Queue / Up Next",
+  "phone":       "Phone Desk",
+  "voicetrack":  "Voice Tracker",
+  "videostudio": "Show+",
+  "camera":      "Camera",
+  "health":      "Station Health",
+  "studiopro":   "Show+ DAW",
+};
+
 // ── Pop-out window bounds persistence (every pop-out remembers size + position) ──
 const POPOUT_BOUNDS_FILE = path.join(app.getPath("userData"), "popout-bounds.json");
 function loadPopoutBounds() {
@@ -5019,6 +5042,50 @@ function boundsOnScreen(b) {
 }
 
 // Factored so studio:push-track can open/reuse the exact same window.
+// ── Pop-out debug bridge — ONE function, every pop-out inherits it ────────────────
+//
+// Pop-outs are separate BrowserWindows with contextIsolation on and nodeIntegration off, so a
+// pop-out renderer has NO window.opener, NO window.parent other than itself, NO ipcRenderer and
+// NO @electron/remote (not a dependency). Every renderer-side transport is therefore unavailable.
+// The main process, however, already sees everything both windows do — so the bridge lives here:
+//
+//   • 'console-message' captures EVERY console call the pop-out makes, with zero renderer code.
+//     No overriding console.*, no serialising objects, no leak risk, and it covers pop-outs that
+//     do not exist yet — including ones written years from now.
+//   • 'before-input-event' binds F12 / Ctrl+Shift+I to THAT window's DevTools, so focus never
+//     decides whose console you get.
+//
+// Gated to dev (or ETHER_DEBUG=1) per the brief. Worth noting for later: field support on a client
+// box would want the DevTools half unconditionally — that is a product decision, not a code one.
+function attachPopoutDebugBridge(win, panel) {
+  const label = POPOUT_LABELS[panel] || panel;
+  const debugOn = isDev || process.env.ETHER_DEBUG === "1";
+  if (!debugOn) return;
+
+  // DevTools for THIS window, whichever window has focus.
+  win.webContents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown") return;
+    const isF12 = input.key === "F12";
+    const isInspect = input.control && input.shift && String(input.key).toLowerCase() === "i";
+    if (!isF12 && !isInspect) return;
+    event.preventDefault();
+    win.webContents.toggleDevTools();
+  });
+
+  // Forward the pop-out's console into the dashboard's console and the terminal.
+  win.webContents.on("console-message", (_e, level, message, line, sourceId) => {
+    const lvl = ["log", "warn", "error"][level] || "log";
+    const src = sourceId ? String(sourceId).split("/").pop() : "";
+    const text = `[POPOUT: ${label}] ${message}`;
+    console.log(`${text}${src ? `  (${src}:${line})` : ""}`);
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("debug:popout-log", { label, level: lvl, message, source: src, line });
+      }
+    } catch { /* dashboard gone — the terminal copy above still stands */ }
+  });
+}
+
 function openPopoutWindow(panel) {
   const tag = `popout:${panel}`;
   const existing = BrowserWindow.getAllWindows().find(w => w.getTitle() === tag);
@@ -5070,6 +5137,8 @@ function openPopoutWindow(panel) {
       try { win.webContents.send("studio:confirm-close"); } catch { /* window gone */ }
     });
   }
+
+  attachPopoutDebugBridge(win, panel);
 
   if (isDev) win.loadURL(VITE_DEV_URL + `#popout/${panel}`);
   else win.loadFile(path.join(__dirname, "../dist/index.html"), { hash: `popout/${panel}` });

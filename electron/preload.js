@@ -2,6 +2,16 @@ const { contextBridge, ipcRenderer } = require("electron");
 const handlers = require('./preload-handlers')(ipcRenderer);
 
 contextBridge.exposeInMainWorld("ether", {
+  // Pop-out debug bridge. The main process tails every pop-out's console via 'console-message'
+  // and re-emits it here, so the dashboard console shows the whole app's renderer output in one
+  // place. Dev-gated in main; this side is a passive subscriber and does nothing on its own.
+  debug: {
+    onPopoutLog: (cb) => {
+      const h = (_e, payload) => cb(payload);
+      ipcRenderer.on("debug:popout-log", h);
+      return () => ipcRenderer.removeListener("debug:popout-log", h);
+    },
+  },
   audio: {
     load: (deck, fp, title, artist, gainDb, stationId) => ipcRenderer.invoke("audio:load", deck, fp, title, artist, gainDb, stationId),
     play: (deck, stationId) => ipcRenderer.invoke("audio:play", deck, stationId),

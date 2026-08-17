@@ -389,3 +389,59 @@ deletes its window unconditionally, including `source='operator'` rows. That is 
 Fix 2 in `docs/manual-log-editing-design-2026-08-10.md` and awaits its own build. Measured
 2026-08-11: 28 operator rows exist, **0 of them in the future**, so nothing is being destroyed today
 — `effStart` is never earlier than the next top of hour.
+
+---
+
+## TEMPORARY TOOLING — Show+ layer diagnostic (created 2026-08-16, **TORN DOWN 2026-08-16**)
+
+`SP_DIAG()` in `StudioPro.tsx` / `WaveformGL.tsx`, toggled by Ctrl+Alt+D. **Removed in full the same
+day** — flag, toggle, colour tinting and banner. Verified zero residual references by grep.
+
+It answered its question, though not the way it was meant to: the toggle was **unreachable dead
+code** (see below), so the colours never ran. What it produced instead was the decisive receipt —
+clips that stop painting are *dead WebGL instances*, and pressing C remounted them healthy.
+
+**Lesson recorded (do not repeat):** the diag key was `Ctrl+Alt+D`, inserted into the StudioPro
+keydown handler *after* two earlier gates — `StudioPro.tsx:1538` claims any `ctrl+d` for
+duplicate-region without excluding Alt, and `:1550` bails on `ctrlKey || altKey` outright. A new
+shortcut must be placed above those gates and must not collide with an existing chord. As written,
+pressing it **duplicated a region** every time, which manufactured exactly the WebGL-context
+pressure the session was trying to diagnose.
+
+No watcher, no scheduled task, no persistence was ever created on any machine.
+
+---
+
+## Show+ DAW — two defects surfaced by the pop-out log bridge (filed 2026-08-16, NON-BLOCKING)
+
+Both became visible only once pop-out console output reached the dashboard. Neither is fixed.
+
+### 1. `studio:set-dirty` — invoke/on mismatch, so the close-guard never arms
+
+Not a missing registration. The handler exists (`electron/main.js:5155`) and the bridge method exists
+(`electron/preload.js:391`). The mismatch is the CALL SHAPE:
+
+- Renderer: `ether.invoke("studio:set-dirty", dirty)` — `StudioPro.tsx:1395` → `ipcRenderer.invoke`
+- Main: `ipcMain.on("studio:set-dirty", …)` — a fire-and-forget listener, **not** `ipcMain.handle`
+
+`invoke` against a channel that only has an `on` listener rejects with *"No handler registered"*. The
+call site wraps it in a synchronous `try/catch`, which cannot catch a Promise rejection — so it has
+always failed silently.
+
+**Consequence:** `win._studioDirty` is never set, so the close-guard at `main.js:5135` never fires.
+**The Show+ DAW can be closed with unsaved regions and no warning.** Same bug shape on
+`studio:force-close` (`StudioPro.tsx:1404`).
+
+**Fix (either, not both):** change main to `ipcMain.handle`, or change the renderer to a `send`-style
+call. Whichever is chosen, the other channel must move with it.
+
+### 2. Zoom-in peak starvation
+
+At extreme zoom-in the view spans very few source peaks, so `barsInView` collapses and a handful of
+bars are stretched across a wide canvas — the waveform reads blocky rather than detailed. This is not
+a mip-selection bug: level 0 IS the finest level. The precomputed peak array simply has no more
+resolution to give.
+
+**Real fix:** past the zoom where `peaks` runs out, render from the region's `AudioBuffer` samples
+directly instead of the peak pyramid. That belongs with the phase (c) renderer work in
+`docs/show-daw-redesign-2026-08-16.md`, not with a defect patch.

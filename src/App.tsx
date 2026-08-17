@@ -602,6 +602,19 @@ export default function App() {
     window.addEventListener("ether:video-status", handler);
     return () => window.removeEventListener("ether:video-status", handler);
   }, []);
+
+  // Pop-out console bridge — every pop-out window's console output lands in THIS console, tagged
+  // with which window it came from. Pop-outs are separate BrowserWindows, so their logs were
+  // otherwise invisible unless you had DevTools open on that exact window.
+  useEffect(() => {
+    const sub = (window as any).ether?.debug?.onPopoutLog;
+    if (typeof sub !== "function") return;
+    return sub((p: { label: string; level: string; message: string; source?: string; line?: number }) => {
+      const where = p.source ? ` (${p.source}:${p.line})` : "";
+      const fn = p.level === "error" ? console.error : p.level === "warn" ? console.warn : console.log;
+      fn(`[POPOUT: ${p.label}] ${p.message}${where}`);
+    });
+  }, []);
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [currentPlan, setCurrentPlan] = useState<PlanTier>("free");
   // Keep App's plan reactive to the live plan cache (license activation AND the dev tier
