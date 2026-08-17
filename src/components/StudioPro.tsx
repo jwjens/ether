@@ -65,7 +65,7 @@ const PALETTE = [
 // ── Layout constants ─────────────────────────────────────────────
 
 const TOOLBAR_H        = 48;
-const HEADER_W         = 220;
+const HEADER_W         = 268;   // was 220 — the button row, name and fader were all fighting for it
 const INSPECTOR_W      = 260;
 const TRACK_H          = 72;
 const RULER_H          = 24;
@@ -767,6 +767,15 @@ interface TrackAudioParams {
   compThresholdParam?: AudioParam;
   reverbWetParam: AudioParam;
   compNode?:      DynamicsCompressorNode;   // for reduction metering (live only)
+  // ── STALE-GRAPH FIX (Phase 1, 2026-08-16) ────────────────────────────────────────────────────
+  // These nodes were built into the graph and then never referenced again, so the live-patch effect
+  // had nothing to write to. Turning Ratio, Attack, Release or Makeup, changing reverb Type or Size,
+  // or moving saturation Drive did nothing audible until the graph was torn down and rebuilt on the
+  // next play: the knob moved, the readout changed, the sound did not. Holding the references here
+  // is the whole fix — no new nodes, no graph change, nothing added to the audio path.
+  compMakeupParam?: AudioParam;      // makeup gain after the compressor
+  satShaper?:       WaveShaperNode;  // curve regenerated when drive changes
+  reverbConv?:      ConvolverNode;   // IR regenerated when type/size change
 }
 
 // ── Main component ───────────────────────────────────────────────
@@ -924,6 +933,10 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     master: 0, perTrack: new Map(),
   });
   const [, setMeterTick]   = useState(0);
+  // Which pane is showing in each dock column (phase b). Static tabs became real here; full
+  // dockview drag/dock/save is the remaining piece of (b) and is tracked in the delta table.
+  const [rightPane, setRightPane] = useState<"Inspector" | "Mixer">("Inspector");
+  const [leftPane,  setLeftPane]  = useState<"Tracks" | "Library">("Tracks");
   const rafRef             = useRef<number | null>(null);
   const playStartRef       = useRef<number>(0);
   const playheadMsRef      = useRef(0);
@@ -1452,6 +1465,70 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         if (playingRef.current) stopRef.current?.(); else playRef.current?.();
         return;
       }
+      // ── KEYBOARD-FIRST (Phase 2, 2026-08-16) ──────────────────────────────────────────────────
+      // Before this there were FOUR global shortcuts: undo/redo, copy/paste/duplicate, delete and
+      // space. Everything else was a mouse trip to a toolbar. These are additive — every one is a
+      // new branch in the handler that already exists, none replaces an existing binding, and none
+      // touches the audio graph. Audition/Pro Tools muscle memory where a convention exists.
+      const mod = e.ctrlKey || e.metaKey;
+
+      // S — split the selected region at the playhead
+      if (k === "s" && !mod && selection?.regionId && selection.trackId) {
+        e.preventDefault(); e.stopImmediatePropagation();
+        splitRegion(selection.trackId, selection.regionId, playheadMs);
+        return;
+      }
+      // Home / End — jump to start / end of session
+      if (e.key === "Home" && !mod) {
+        e.preventDefault(); e.stopImmediatePropagation();
+        setPlayheadMs(0);
+        return;
+      }
+      if (e.key === "End" && !mod) {
+        e.preventDefault(); e.stopImmediatePropagation();
+        setPlayheadMs(Math.max(0, ...state.tracks.map(trackEndMs)));
+        return;
+      }
+      // , / . — nudge the playhead one frame (40ms) ; with Shift, one second
+      if ((e.key === "," || e.key === ".") && !mod) {
+        e.preventDefault(); e.stopImmediatePropagation();
+        const step = e.shiftKey ? 1000 : 40;
+        setPlayheadMs(p => Math.max(0, p + (e.key === "," ? -step : step)));
+        return;
+      }
+      // Z — zoom to fit ; Shift+Z — reset to 1x
+      if (k === "z" && !mod) {
+        e.preventDefault(); e.stopImmediatePropagation();
+        if (e.shiftKey) setZoom(1);
+        else {
+          const end = Math.max(1000, ...state.tracks.map(trackEndMs));
+          setZoom(clamp((30_000 / end) * 4, 0.05, 8));
+        }
+        return;
+      }
+      // + / - — zoom in / out
+      if ((e.key === "+" || e.key === "=" || e.key === "-") && !mod) {
+        e.preventDefault(); e.stopImmediatePropagation();
+        setZoom(zv => clamp(e.key === "-" ? zv / 1.25 : zv * 1.25, 0.05, 8));
+        return;
+      }
+      // G — toggle snap
+      if (k === "g" && !mod) {
+        e.preventDefault(); e.stopImmediatePropagation();
+        setSnapMs(v => (v == null ? 250 : null));
+        return;
+      }
+      // 1..9 — focus the Nth track
+      if (!mod && /^[1-9]$/.test(e.key)) {
+        const idx = parseInt(e.key, 10) - 1;
+        const t = state.tracks[idx];
+        if (t) {
+          e.preventDefault(); e.stopImmediatePropagation();
+          setSelection({ trackId: t.id, regionId: null });
+          return;
+        }
+      }
+
       // Markers: M drops a marker at the playhead
       if (k === "m") {
         e.preventDefault(); e.stopImmediatePropagation();
@@ -1645,8 +1722,10 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       for (const e of eqBands) { chainTail.connect(e); chainTail = e; }
 
       // Saturation (conventional position: pre-comp)
+      let satShaper: WaveShaperNode | undefined;   // held so drive changes reach the live graph
       if (t.saturation.on && t.saturation.drive > 0) {
         const ws = (ctx as AudioContext).createWaveShaper();
+        satShaper = ws;
         ws.curve = makeSatCurve(t.saturation.drive) as Float32Array<ArrayBuffer>;
         ws.oversample = "2x";
         chainTail.connect(ws); chainTail = ws;
@@ -1655,6 +1734,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       // Compressor + makeup gain
       let compNode: DynamicsCompressorNode | undefined;
       let compThresholdParam: AudioParam | undefined;
+      let compMakeupParam: AudioParam | undefined;
       if (t.compressor.on) {
         compNode = (ctx as AudioContext).createDynamicsCompressor();
         compNode.threshold.value = t.compressor.threshold;
@@ -1666,6 +1746,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         compThresholdParam = compNode.threshold;
         const makeup = (ctx as AudioContext).createGain();
         makeup.gain.value = dbToLinear(t.compressor.makeup);
+        compMakeupParam = makeup.gain;   // held so Makeup reaches the live graph
         compNode.connect(makeup);
         chainTail = makeup;
       }
@@ -1701,6 +1782,9 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         compThresholdParam,
         reverbWetParam: reverbWetGain.gain,
         compNode,
+        compMakeupParam,
+        satShaper,
+        reverbConv: conv,
       });
 
       // Schedule region playback
@@ -2022,6 +2106,44 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       }
       if (p.reverbWetParam) { try { p.reverbWetParam.setTargetAtTime(t.reverb.on ? clamp(t.reverb.wet, 0, 1) : 0, now, TC); } catch {} }
       if (p.compThresholdParam) { try { p.compThresholdParam.setTargetAtTime(t.compressor.threshold, now, TC); } catch {} }
+
+      // ── STALE-GRAPH FIX (Phase 1, 2026-08-16) ─────────────────────────────────────────────────
+      // Everything below was built into the graph once and then never updated. Turning Ratio,
+      // Attack, Release or Makeup, moving saturation Drive, or changing reverb Type/Size changed
+      // the readout and nothing else — the sound only caught up when the graph was rebuilt on the
+      // next play. The knob lied, which is the honest-UI failure in its purest form: a control that
+      // reports it did something it did not do.
+      //
+      // Ratio/attack/release are k-rate AudioParams on the existing node — setTargetAtTime, same as
+      // every line above. Makeup is a plain gain. Neither adds a node or changes the signal path.
+      if (p.compNode) {
+        try { p.compNode.ratio.setTargetAtTime(clamp(t.compressor.ratio, 1, 20), now, TC); } catch {}
+        try { p.compNode.attack.setTargetAtTime(clamp(t.compressor.attack / 1000, 0, 1), now, TC); } catch {}
+        try { p.compNode.release.setTargetAtTime(clamp(t.compressor.release / 1000, 0, 1), now, TC); } catch {}
+      }
+      if (p.compMakeupParam) { try { p.compMakeupParam.setTargetAtTime(dbToLinear(t.compressor.makeup), now, TC); } catch {} }
+
+      // Curve and IR are BUFFERS, not params — they are swapped, not ramped. Both are assignments
+      // on a node already in the path, so neither reconnects anything. Guarded by an equality check
+      // so a re-render that did not touch the value does not rebuild an impulse response every tick.
+      if (p.satShaper && t.saturation.on) {
+        const wantDrive = clamp(t.saturation.drive, 0, 24);
+        if ((p.satShaper as any).__driveDb !== wantDrive) {
+          try {
+            p.satShaper.curve = makeSatCurve(wantDrive) as Float32Array<ArrayBuffer>;
+            (p.satShaper as any).__driveDb = wantDrive;
+          } catch {}
+        }
+      }
+      if (p.reverbConv && t.reverb.on) {
+        const sig = `${t.reverb.type}:${t.reverb.size}`;
+        if ((p.reverbConv as any).__irSig !== sig) {
+          try {
+            p.reverbConv.buffer = makeReverbIR(ctx, t.reverb.type, t.reverb.size);
+            (p.reverbConv as any).__irSig = sig;
+          } catch {}
+        }
+      }
     }
   }, [tracks]);
 
@@ -3420,16 +3542,9 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         display: "flex", alignItems: "center", padding: "0 8px", gap: 4,
         overflow: "hidden",
       }}>
-        <TBtn onClick={returnToStart} title="Return to start">⏮</TBtn>
-        <TBtn onClick={playing ? stop : play} title={playing ? "Stop" : "Play (Space)"} active={playing}>
-          {playing ? "⏸" : "▶"}
-        </TBtn>
-        <TBtn onClick={stop} title="Stop">⏹</TBtn>
-        <TBtn onClick={() => setRecordArmed(v => !v)} title="Record arm" danger={recordArmed}>⏺</TBtn>
-        <TBtn onClick={toggleRecord} title="Record" danger={recording}>
-          {recording ? "◼ Rec" : "Rec"}
-        </TBtn>
-        <div style={{ width: 1, height: 20, background: "var(--border-primary)", flexShrink: 0 }} />
+        {/* TRANSPORT MOVED OUT (phase a). Play/stop/record/timecode are RANK 1 and now own the
+            bottom bar — see <TransportBar/>. A utility row that carried transport alongside BPM,
+            zoom, import and export ranked twenty controls equally, which ranks nothing. */}
         <TBtn
           onClick={() => {
             if (!loopRange) { setStatus("Drag on the ruler to set a loop range"); return; }
@@ -3443,20 +3558,16 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         <TBtn onClick={() => setClickEnabled(v => !v)} title="Click / metronome" active={clickEnabled}>♩</TBtn>
         <TBtn onClick={() => setGridEnabled(v => !v)} title="Beat grid" active={gridEnabled}>▦</TBtn>
 
-        <div style={{ flex: 1, display: "flex", justifyContent: "center" }}>
-          <div style={{ fontFamily: "ui-monospace, monospace", fontSize: 16, color: "#fff", letterSpacing: 1 }}>
-            {fmtTimecode(playheadMs)}
-          </div>
-        </div>
+        <div style={{ flex: 1 }} />
 
         <label style={lbl}>BPM</label>
         <input type="number" min={40} max={240} value={bpm}
           onChange={(e) => setBpm(Math.max(40, Math.min(240, +e.target.value || 120)))}
-          style={{ width: 44, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", padding: "3px 4px", fontSize: 10, borderRadius: 0 }}
+          style={{ width: 44, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", padding: "3px 4px", fontSize: "var(--t-micro)", borderRadius: 0 }}
         />
         <div style={{ width: 1, height: 20, background: "var(--border-primary)", flexShrink: 0 }} />
         <TBtn onClick={() => setZoom(z => Math.max(0.25, z / 1.25))} title="Zoom out">−</TBtn>
-        <span style={{ fontSize: 10, color: "var(--text-secondary)", minWidth: 28, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
+        <span style={{ fontSize: "var(--t-micro)", color: "var(--text-secondary)", minWidth: 28, textAlign: "center" }}>{Math.round(zoom * 100)}%</span>
         <TBtn onClick={() => setZoom(z => Math.min(8, z * 1.25))} title="Zoom in">+</TBtn>
         <div style={{ width: 1, height: 20, background: "var(--border-primary)", flexShrink: 0 }} />
         <TBtn onClick={() => setMasterFxOpen(v => !v)} title="Master FX (EQ + Compressor + Limiter)" active={masterFxOpen}>FX</TBtn>
@@ -3469,19 +3580,19 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         <div ref={libAnchorRef} style={{ flexShrink: 0 }}>
           <input value={libQ} onChange={e => runLibSearch(e.target.value)} onFocus={() => { if (libResults.length) setLibOpen(true); }}
             placeholder="Search library…" title="Search the library (title/artist) — drag a result onto a track"
-            style={{ width: 150, padding: "5px 8px", fontSize: 11, background: "var(--bg-primary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+            style={{ width: 150, padding: "5px 8px", fontSize: "var(--t-small)", background: "var(--bg-primary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
         </div>
         {libOpen && libResults.length > 0 && libAnchorRef.current && createPortal(
-          <div ref={libDropRef} style={{ position: "fixed", top: libAnchorRef.current.getBoundingClientRect().bottom + 3, left: libAnchorRef.current.getBoundingClientRect().left, width: 300, maxHeight: 340, overflowY: "auto", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", zIndex: 99999, boxShadow: "0 10px 30px rgba(0,0,0,0.55)" }}>
-              <div style={{ padding: "5px 10px", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, borderBottom: "1px solid var(--border-primary)" }}>Drag onto a track ↓</div>
+          <div ref={libDropRef} style={{ position: "fixed", top: libAnchorRef.current.getBoundingClientRect().bottom + 3, left: libAnchorRef.current.getBoundingClientRect().left, width: 300, maxHeight: 340, overflowY: "auto", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", zIndex: 99999, boxShadow: "var(--e-float)" }}>
+              <div style={{ padding: "5px 10px", fontSize: "var(--t-micro)", fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase" as const, borderBottom: "1px solid var(--border-primary)" }}>Drag onto a track ↓</div>
               {libResults.map(r => (
                 <div key={r.id} draggable
                   onDragStart={e => { e.dataTransfer.setData("application/x-ether-library", JSON.stringify({ title: r.title, file_path: r.file_path, file_key: r.file_key })); e.dataTransfer.effectAllowed = "copy"; }}
                   style={{ padding: "7px 10px", cursor: "grab", borderBottom: "1px solid var(--border-primary)" }}
                   onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
                   onMouseLeave={e => (e.currentTarget.style.background = "transparent")}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.title}</div>
-                  <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{r.artist || "—"}</div>
+                  <div style={{ fontSize: "var(--t-body)", fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.title}</div>
+                  <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>{r.artist || "—"}</div>
                 </div>
               ))}
           </div>,
@@ -3501,7 +3612,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
             }}
             style={{
               height: 24, padding: "0 6px", background: "#1a1a2e", color: "#fff",
-              border: "1px solid #4f4fcc", outline: "none", fontSize: 10,
+              border: "1px solid #4f4fcc", outline: "none", fontSize: "var(--t-micro)",
               fontFamily: "Inter, system-ui, sans-serif", borderRadius: 0, width: 110,
             }}
           />
@@ -3512,7 +3623,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
             style={{
               height: 24, padding: "0 6px", display: "flex", alignItems: "center",
               background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)",
-              fontSize: 10, cursor: "default", maxWidth: 120, flexShrink: 0,
+              fontSize: "var(--t-micro)", cursor: "default", maxWidth: 120, flexShrink: 0,
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
             }}
           >
@@ -3530,7 +3641,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
           <button
             onClick={() => verifyWatermark(lastExportPath)}
             title={`Verify watermark: ${lastExportPath}`}
-            style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px", background: "rgba(0,200,168,0.1)", border: "1px solid #00c8a8", color: "#00c8a8", fontSize: 10, fontWeight: 700, cursor: "pointer", letterSpacing: "0.06em" }}
+            style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 8px", background: "rgba(0,200,168,0.1)", border: "1px solid #00c8a8", color: "#00c8a8", fontSize: "var(--t-micro)", fontWeight: 700, cursor: "pointer", letterSpacing: "0.06em" }}
           >🛡 ✓ Watermarked</button>
         )}
         <TBtn onClick={openVerifyFilePicker} title="Verify watermark on any WAV file">🛡 Verify</TBtn>
@@ -3546,11 +3657,11 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         display: "flex", alignItems: "center", padding: "0 12px", gap: 6,
       }}>
         {([
-          { id: "select", icon: <span style={{ fontSize: 13 }}>⌖</span>, label: "Select", key: "V" },
-          { id: "grab",   icon: <span style={{ fontSize: 13 }}>✋</span>, label: "Grab",   key: "G" },
+          { id: "select", icon: <span style={{ fontSize: "var(--t-lead)" }}>⌖</span>, label: "Select", key: "V" },
+          { id: "grab",   icon: <span style={{ fontSize: "var(--t-lead)" }}>✋</span>, label: "Grab",   key: "G" },
           { id: "blade",  icon: <IBeamIcon />,                            label: "Splice", key: "C" },
-          { id: "trim",   icon: <span style={{ fontSize: 13 }}>⊢⊣</span>, label: "Trim",   key: "T" },
-          { id: "fade",   icon: <span style={{ fontSize: 13 }}>⌒</span>,  label: "Fade",   key: "F" },
+          { id: "trim",   icon: <span style={{ fontSize: "var(--t-lead)" }}>⊢⊣</span>, label: "Trim",   key: "T" },
+          { id: "fade",   icon: <span style={{ fontSize: "var(--t-lead)" }}>⌒</span>,  label: "Fade",   key: "F" },
         ] as const).map(t => {
           const active = tool === t.id;
           const accent = selectedTrack?.color || "var(--accent-blue)";
@@ -3561,19 +3672,19 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                 background: active ? `${accent}22` : "var(--button-bg, var(--bg-tertiary))",
                 color: active ? accent : "var(--button-text, var(--text-secondary))",
                 border: active ? `1px solid ${accent}` : "var(--button-border, 1px solid var(--border-primary))",
-                fontSize: 12, cursor: "pointer",
+                fontSize: "var(--t-body)", cursor: "pointer",
                 display: "flex", alignItems: "center", gap: 6,
                 fontFamily: "ui-monospace, monospace",
               }}
             >
               {t.icon}
-              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 0.5 }}>{t.label}</span>
-              <span style={{ fontSize: 9, color: active ? accent : "var(--text-tertiary)", opacity: 0.7 }}>{t.key}</span>
+              <span style={{ fontSize: "var(--t-micro)", fontWeight: 700, letterSpacing: 0.5 }}>{t.label}</span>
+              <span style={{ fontSize: "var(--t-micro)", color: active ? accent : "var(--text-tertiary)", opacity: 0.7 }}>{t.key}</span>
             </button>
           );
         })}
         <div style={{ flex: 1 }} />
-        <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+        <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>
           {tool === "select" && "Click a clip to drop the cursor for a precise cut · Shift-click to multi-select · C splices there"}
           {tool === "grab"   && "Drag clips to move them"}
           {tool === "blade"  && "Click region to cut at cursor"}
@@ -3583,7 +3694,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       </div>
 
       {status && (
-        <div style={{ height: 20, background: "var(--bg-primary)", borderBottom: "1px solid var(--border-primary)", fontSize: 11, color: "var(--text-secondary)", padding: "2px 12px", display: "flex", alignItems: "center" }}>
+        <div style={{ height: 20, background: "var(--bg-primary)", borderBottom: "1px solid var(--border-primary)", fontSize: "var(--t-small)", color: "var(--text-secondary)", padding: "2px 12px", display: "flex", alignItems: "center" }}>
           {status}
         </div>
       )}
@@ -3594,8 +3705,10 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         <div style={{
           width: HEADER_W, flex: `0 0 ${HEADER_W}px`,
           background: "var(--bg-primary)", borderRight: "1px solid var(--border-primary)",
-          display: "flex", flexDirection: "column",
+          display: "flex", flexDirection: "column", position: "relative",
         }}>
+          <PaneTabs tabs={["Tracks", "Library"]} active={leftPane}
+            onPick={(t) => setLeftPane(t as "Tracks" | "Library")} />
           <div style={{ height: RULER_H, borderBottom: "1px solid var(--border-primary)" }} />
           <div ref={headerScrollRef} onScroll={() => syncScroll("header")}
             style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
@@ -3630,6 +3743,45 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
             ))}
             <AddTrackMenu onAdd={addTrackFromTemplate} />
           </div>
+          {leftPane === "Library" && (
+            <div style={{
+              position: "absolute", inset: 0, top: RULER_H + 30, background: "var(--bg-primary)",
+              display: "flex", flexDirection: "column", zIndex: 3,
+            }}>
+              <div style={{ padding: "var(--s-3) var(--s-4)", borderBottom: "1px solid var(--border-primary)" }}>
+                <input value={libQ} onChange={e => runLibSearch(e.target.value)}
+                  placeholder="Search library…"
+                  style={{
+                    width: "100%", background: "var(--bg-secondary)", color: "var(--text-primary)",
+                    border: "1px solid var(--border-primary)", borderRadius: "var(--r-0)",
+                    padding: "var(--s-2) var(--s-3)", fontSize: "var(--t-body)", outline: "none",
+                  }} />
+              </div>
+              <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+                {libResults.length === 0 ? (
+                  <div style={{ padding: "var(--s-5)", fontSize: "var(--t-body)", color: "var(--text-tertiary)" }}>
+                    {libQ.trim() ? "Nothing in the library matches that." : "Search the library to place a track."}
+                  </div>
+                ) : libResults.map((r: any) => (
+                  <div key={r.id} title={r.file_path}
+                    style={{
+                      display: "flex", alignItems: "center", gap: "var(--s-3)", height: 24,
+                      padding: "0 var(--s-4)", borderBottom: "1px solid var(--border-primary)",
+                      fontSize: "var(--t-body)", color: "var(--text-secondary)",
+                    }}>
+                    <span style={{
+                      flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis",
+                      whiteSpace: "nowrap", color: "var(--text-primary)",
+                    }}>{r.title}</span>
+                    <span style={{
+                      fontSize: "var(--t-micro)", color: "var(--text-tertiary)", maxWidth: 90,
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    }}>{r.artist || ""}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* TIMELINE */}
@@ -3691,7 +3843,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                   filter: `drop-shadow(0 0 3px ${m.color})`,
                 }} />
                 <div style={{
-                  fontSize: 8, color: m.color, marginTop: 1,
+                  fontSize: "var(--t-micro)", color: m.color, marginTop: 1,
                   whiteSpace: "nowrap" as const, fontFamily: "ui-monospace, monospace",
                   background: "rgba(8,8,12,0.7)", padding: "0 2px",
                 }}>{m.label.slice(0, 10)}</div>
@@ -3730,21 +3882,21 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                     position: "absolute", bottom: "100%", left: 0,
                     background: "var(--bg-secondary)", border: `1px solid ${n.color}`,
                     padding: "6px 8px", minWidth: 160, maxWidth: 240, zIndex: 20,
-                    fontFamily: "Inter, system-ui, sans-serif", fontSize: 11,
-                    boxShadow: "0 4px 16px rgba(0,0,0,0.6)",
+                    fontFamily: "Inter, system-ui, sans-serif", fontSize: "var(--t-small)",
+                    boxShadow: "var(--e-float)",
                   }}
                     onClick={e => e.stopPropagation()}
                   >
                     <div style={{ color: n.color, fontWeight: 700, marginBottom: 3 }}>{n.author}</div>
                     <div style={{ color: "var(--text-primary)", lineHeight: 1.4 }}>{n.text}</div>
-                    <div style={{ color: "var(--text-tertiary)", fontSize: 10, marginTop: 4 }}>{fmtTimecode(n.position_ms)}</div>
+                    <div style={{ color: "var(--text-tertiary)", fontSize: "var(--t-micro)", marginTop: 4 }}>{fmtTimecode(n.position_ms)}</div>
                     <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
                       <button onClick={() => { setPlayheadMs(n.position_ms); setNotePopover(null); }}
-                        style={{ flex: 1, padding: "3px 0", fontSize: 10, background: "rgba(255,255,255,0.05)", color: "var(--text-secondary)", border: "1px solid #333", cursor: "pointer" }}>
+                        style={{ flex: 1, padding: "3px 0", fontSize: "var(--t-micro)", background: "rgba(255,255,255,0.05)", color: "var(--text-secondary)", border: "1px solid #333", cursor: "pointer" }}>
                         Jump
                       </button>
                       <button onClick={() => { resolveNote(n.id); setNotePopover(null); }}
-                        style={{ flex: 1, padding: "3px 0", fontSize: 10, background: "rgba(16,185,129,0.1)", color: "#10b981", border: "1px solid rgba(16,185,129,0.3)", cursor: "pointer" }}>
+                        style={{ flex: 1, padding: "3px 0", fontSize: "var(--t-micro)", background: "rgba(16,185,129,0.1)", color: "#10b981", border: "1px solid rgba(16,185,129,0.3)", cursor: "pointer" }}>
                         Resolve
                       </button>
                     </div>
@@ -3758,7 +3910,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                 position: "fixed", top: noteInput.y, left: noteInput.x,
                 zIndex: 99999, background: "#1a1a1e", border: "1px solid #f59e0b",
                 padding: "4px 6px", display: "flex", gap: 4, alignItems: "center",
-                boxShadow: "0 4px 16px rgba(0,0,0,0.6)",
+                boxShadow: "var(--e-float)",
               }}>
                 <input
                   autoFocus
@@ -3774,12 +3926,12 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                   placeholder="Add note… (Enter to save)"
                   style={{
                     width: 200, padding: "3px 6px", background: "var(--bg-secondary)", color: "#fff",
-                    border: "none", outline: "none", fontSize: 11,
+                    border: "none", outline: "none", fontSize: "var(--t-small)",
                     fontFamily: "Inter, system-ui, sans-serif",
                   }}
                 />
                 <button onClick={() => { setNoteInput(null); setNoteInputText(""); }}
-                  style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 12 }}>✕</button>
+                  style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-body)" }}>✕</button>
               </div>
             )}
           </div>
@@ -3881,7 +4033,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                 position: "absolute", left: msToX(snapMs), top: 0,
                 width: 2, height: totalLanesHeight,
                 background: "#fde047",
-                boxShadow: "0 0 8px #fde047, 0 0 2px #fde047",
+                boxShadow: "var(--e-0)",
                 pointerEvents: "none", zIndex: 4,
               }} />
             )}
@@ -3891,18 +4043,34 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
               position: "absolute", left: msToX(playheadMs), top: 0,
               width: 1, height: totalLanesHeight,
               background: "#ef4444",
-              boxShadow: "0 0 8px #ef4444, 0 0 2px #ef4444",
+              boxShadow: "var(--e-0)",
               pointerEvents: "none", zIndex: 5,
             }} />
           </div>
         </div>
 
-        {/* INSPECTOR (slimmed) */}
+        {/* RIGHT PANE — Inspector now; Mixer strips land here in phase (b). */}
         <div style={{
           width: INSPECTOR_W, flex: `0 0 ${INSPECTOR_W}px`,
           background: "var(--bg-primary)", borderLeft: "1px solid var(--border-primary)",
-          padding: 12, overflowY: "auto",
+          display: "flex", flexDirection: "column", overflow: "hidden",
         }}>
+          <PaneTabs tabs={["Inspector", "Mixer"]} active={rightPane}
+            onPick={(t) => setRightPane(t as "Inspector" | "Mixer")} />
+          {rightPane === "Mixer" ? (
+            <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+              <MixerStrips
+                tracks={coloredTracks}
+                levels={meterLevelsRef.current.perTrack}
+                masterLevel={meterLevelsRef.current.master}
+                masterGainDb={masterGainDb}
+                selectedId={selection?.trackId ?? null}
+                onSelect={(id) => setSelection({ trackId: id, regionId: null })}
+                onPatch={(id, patch) => dispatch({ type: "UPDATE_TRACK", id, patch })}
+              />
+            </div>
+          ) : (
+          <div style={{ flex: 1, padding: 12, overflowY: "auto", minHeight: 0 }}>
           <Inspector
             track={selectedTrack}
             region={selectedRegion}
@@ -3924,8 +4092,29 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
             })}
             onOpenEq={() => { if (selectedTrack) { setEditorMode("eq"); setEditorOpen(true); } }}
           />
+          </div>
+          )}
         </div>
       </div>
+
+      {/* ══ RANK 1 — TRANSPORT BAR. Owns the bottom; nothing else lives here. (phase a) ══ */}
+      <TransportBar
+        playing={playing}
+        recording={recording}
+        recordArmed={recordArmed}
+        playheadMs={playheadMs}
+        selStartMs={loopRange?.startMs ?? null}
+        selEndMs={loopRange?.endMs ?? null}
+        sessionEndMs={Math.max(0, ...tracks.map(trackEndMs))}
+        masterLevel={meterLevelsRef.current.master}
+        lufsMomentary={lufsMomentaryRef.current}
+        onPlay={() => (playing ? stop() : play())}
+        onStop={stop}
+        onRecord={toggleRecord}
+        onArm={() => setRecordArmed(v => !v)}
+        onReturnStart={returnToStart}
+        onEnd={() => setPlayheadMs(Math.max(0, ...tracks.map(trackEndMs)))}
+      />
 
       {/* MASTER FX WINDOW */}
       {masterFxOpen && (
@@ -4104,14 +4293,14 @@ function TBtn({ children, onClick, title, active, danger }: {
         background: danger ? "#7f1d1d" : active ? "#1e293b" : "var(--button-bg, var(--bg-tertiary))",
         color: danger ? "#fff" : "var(--button-text, var(--text-secondary))",
         border: danger ? "1px solid #ef4444" : active ? "1px solid #334155" : "var(--button-border, 1px solid var(--border-primary))",
-        fontSize: 10, cursor: "pointer", borderRadius: 0,
+        fontSize: "var(--t-micro)", cursor: "pointer", borderRadius: 0,
         display: "flex", alignItems: "center", justifyContent: "center",
         letterSpacing: 0, whiteSpace: "nowrap", flexShrink: 0,
       }}
     >{children}</button>
   );
 }
-const lbl: React.CSSProperties = { fontSize: 10, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5 };
+const lbl: React.CSSProperties = { fontSize: "var(--t-micro)", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: 0.5 };
 
 // ── Shared toolbar/panel dropdown ───────────────────────────────
 // ROOT FIX for clipped menus: the menu is PORTALED to <body> and positioned
@@ -4270,7 +4459,7 @@ function MeterBar({ level, color, height = 4, width = 120, vertical = false }: {
     <div style={{ width, height, background: "#1a1a1e", overflow: "hidden", position: "relative" }}>
       <div style={{ width: w, height: "100%", background: overshoot, transition: "width 50ms linear" }} />
       {v >= 0.99 && (
-        <div style={{ position: "absolute", right: 0, top: 0, width: 2, height: "100%", background: "#ef4444", boxShadow: "0 0 4px #ef4444" }} />
+        <div style={{ position: "absolute", right: 0, top: 0, width: 2, height: "100%", background: "#ef4444", boxShadow: "var(--e-0)" }} />
       )}
     </div>
   );
@@ -4333,35 +4522,37 @@ function TrackHeaderRow({
         title="Drag to resize · double-click to reset height"
         style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 7, cursor: "row-resize", zIndex: 6 }}
       >
-        <div style={{ position: "absolute", left: "50%", bottom: 2, transform: "translateX(-50%)", width: 28, height: 2, borderRadius: 2, background: "var(--border-primary)" }} />
+        <div style={{ position: "absolute", left: "50%", bottom: 2, transform: "translateX(-50%)", width: 28, height: 2, borderRadius: "var(--r-0)", background: "var(--border-primary)" }} />
       </div>
       {/* Top row (matches TRACK_H) */}
       <div style={{
-        height: TRACK_H, padding: "6px 8px",
+        height: TRACK_H, padding: "var(--s-3) var(--s-4)",
         display: "flex", flexDirection: "column", gap: 4,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <div onClick={(e) => { e.stopPropagation(); onColorPick(); }}
-            style={{ width: 10, height: 10, background: track.color, cursor: "pointer" }} />
+            style={{ width: 12, height: 12, flexShrink: 0, background: track.color, cursor: "pointer" }} />
           {editing ? (
             <input autoFocus value={name}
               onChange={(e) => setName(e.target.value)}
               onBlur={() => { setEditing(false); onPatch({ name: name || "Track" }); }}
               onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-              style={{ flex: 1, background: "var(--bg-secondary)", color: "#fff", border: "1px solid #333", fontSize: 12, padding: "2px 4px", borderRadius: 0 }}
+              style={{ flex: 1, background: "var(--bg-secondary)", color: "#fff", border: "1px solid #333", fontSize: "var(--t-body)", padding: "2px 4px", borderRadius: 0 }}
             />
           ) : (
             <div onDoubleClick={(e) => { e.stopPropagation(); setEditing(true); }}
-              style={{ flex: 1, fontSize: 12, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+              style={{ flex: 1, fontSize: "var(--t-lead)", fontWeight: 500, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
             >{track.name}</div>
           )}
-          <button onClick={(e) => { e.stopPropagation(); onToggleAutomation(); }}
-            title={track.automationOpen ? "Hide automation" : "Show automation"}
-            style={{ background: "transparent", border: "none", color: track.automationOpen ? "#fde047" : "#555", fontSize: 12, cursor: "pointer", padding: "0 2px" }}
-          >▾</button>
+          {/* AUTOMATION DISCLOSURE. Was a borderless ▾ at #555 — a speck you had to know was
+              there. It is now a labelled button the same size as M/S/FX, amber when lanes are
+              open, so the control announces itself instead of being discovered by hovering. */}
+          <MiniBtn active={track.automationOpen} activeColor="var(--accent-amber)"
+            onClick={(e) => { e.stopPropagation(); onToggleAutomation(); }}
+          >A</MiniBtn>
           <button onClick={(e) => { e.stopPropagation(); onDelete(); }}
             title="Delete track"
-            style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", fontSize: 14, cursor: "pointer", padding: "0 2px" }}
+            style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", fontSize: "var(--t-lead)", cursor: "pointer", padding: "0 2px" }}
           >×</button>
         </div>
 
@@ -4387,18 +4578,35 @@ function TrackHeaderRow({
                 onToggleOriginal();
               }}
               title="Mark as original content you own"
-              style={{ background: "transparent", border: "none", color: track.originalContent ? "#00c8a8" : "#555", fontSize: 11, cursor: "pointer", padding: "0 2px", lineHeight: 1 }}
+              style={{ background: "transparent", border: "none", color: track.originalContent ? "#00c8a8" : "#555", fontSize: "var(--t-small)", cursor: "pointer", padding: "0 2px", lineHeight: 1 }}
             >🛡</button>
             {shieldTooltip && (
-              <div style={{ position: "absolute", bottom: "100%", left: 0, zIndex: 50, width: 180, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", padding: "6px 8px", fontSize: 10, color: "#c0c0d8", lineHeight: 1.4, marginBottom: 4 }}>
+              <div style={{ position: "absolute", bottom: "100%", left: 0, zIndex: 50, width: 180, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", padding: "6px 8px", fontSize: "var(--t-micro)", color: "#c0c0d8", lineHeight: 1.4, marginBottom: 4 }}>
                 Only enable for content <strong>you created or own</strong>. Do not mark commercial music or content owned by others.
               </div>
             )}
           </div>
+          {/* PAN sits beside the level, so a rough balance is settable without opening the mixer —
+              the mixer is for the considered pass. Writes through the same onPatch. */}
           <Fader min={-48} max={6} step={0.5} value={track.gainDb}
             onChange={(v) => onPatch({ gainDb: v })}
             style={{ flex: 1, minWidth: 40 }}
           />
+        </div>
+
+        {/* PAN — the control the header was missing. Same dispatch the mixer strip uses, so the
+            two surfaces cannot disagree about where a track sits in the image. */}
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--s-3)" }}>
+          <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", width: 22 }}>PAN</span>
+          <input type="range" min={-1} max={1} step={0.02} value={track.pan}
+            onChange={(e) => onPatch({ pan: +e.target.value })}
+            onDoubleClick={() => onPatch({ pan: 0 })}
+            title="Pan — double-click to centre"
+            style={{ flex: 1, minWidth: 40, accentColor: track.color, height: 14, cursor: "pointer" }} />
+          <span style={{
+            fontFamily: "ui-monospace, monospace", fontSize: "var(--t-micro)",
+            color: "var(--text-tertiary)", width: 26, textAlign: "right",
+          }}>{track.pan === 0 ? "C" : track.pan < 0 ? `L${Math.round(-track.pan * 100)}` : `R${Math.round(track.pan * 100)}`}</span>
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -4426,13 +4634,13 @@ function TrackHeaderRow({
           borderTop: "1px solid var(--border-primary)",
           display: "flex", alignItems: "center", padding: "0 8px", gap: 4,
         }}>
-          <span style={{ fontSize: 9, color: "var(--text-secondary)", letterSpacing: 0.5, textTransform: "uppercase", flex: 1 }}>
+          <span style={{ fontSize: "var(--t-micro)", color: "var(--text-secondary)", letterSpacing: 0.5, textTransform: "uppercase", flex: 1 }}>
             {track.automationLanes.length} lane{track.automationLanes.length === 1 ? "" : "s"}
           </span>
           <button
             onClick={(e) => { e.stopPropagation(); onAddAutomationLane(); }}
             title="Add automation lane"
-            style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: 10, cursor: "pointer", padding: "2px 6px", borderRadius: 0 }}
+            style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: "var(--t-micro)", cursor: "pointer", padding: "2px 6px", borderRadius: 0 }}
           >+ Lane</button>
         </div>
       )}
@@ -4448,7 +4656,7 @@ function TrackHeaderRow({
           <select value={lane.param}
             onClick={(e) => e.stopPropagation()}
             onChange={(e) => onSetAutomationParam(lane.id, e.target.value as AutomationParam)}
-            style={{ flex: 1, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", fontSize: 10, padding: "2px 4px", borderRadius: 0 }}
+            style={{ flex: 1, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", fontSize: "var(--t-micro)", padding: "2px 4px", borderRadius: 0 }}
           >
             {Object.entries(AUTOMATION_SPECS).map(([k, spec]) => (
               <option key={k} value={k}>{spec.label}</option>
@@ -4456,7 +4664,7 @@ function TrackHeaderRow({
           </select>
           <button onClick={(e) => { e.stopPropagation(); onRemoveAutomationLane(lane.id); }}
             title="Remove lane"
-            style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", fontSize: 14, cursor: "pointer", padding: "0 2px" }}
+            style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", fontSize: "var(--t-lead)", cursor: "pointer", padding: "0 2px" }}
           >×</button>
         </div>
       ))}
@@ -4484,7 +4692,7 @@ function TrackHeaderRow({
             position: "absolute", top: 50, left: 8, zIndex: 40,
             background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
             padding: 4, minWidth: 180,
-            boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
+            boxShadow: "var(--e-0)",
           }}
         >
           {(["eq", "comp", "reverb"] as const).map(type => {
@@ -4499,7 +4707,7 @@ function TrackHeaderRow({
                   background: open ? `${track.color}22` : "transparent",
                   color: open ? track.color : "#ccc",
                   border: "none",
-                  fontSize: 11, fontWeight: 600, cursor: "pointer",
+                  fontSize: "var(--t-small)", fontWeight: 600, cursor: "pointer",
                   textAlign: "left" as const,
                   letterSpacing: 0.3,
                 }}
@@ -4524,7 +4732,7 @@ function MiniBtn({ children, onClick, active, activeColor }: {
   return (
     <button onClick={onClick}
       style={{
-        width: 22, height: 16, fontSize: 9, fontWeight: 700,
+        width: 26, height: 20, fontSize: "var(--t-small)", fontWeight: 700,
         background: active ? (activeColor || "#333") : "var(--button-bg, var(--bg-tertiary))",
         color: active ? "#fff" : "var(--button-text, var(--text-secondary))",
         border: active ? `1px solid ${activeColor || "#333"}` : "var(--button-border, 1px solid var(--border-primary))",
@@ -4549,7 +4757,7 @@ function Ruler({ totalMs, pps, bpm, showBeats }: { totalMs: number; pps: number;
     if (isMajor) {
       ticks.push(<div key={`l${s}`} style={{
         position: "absolute", left: x + 3, top: 2,
-        fontSize: 9, color: "var(--text-tertiary)",
+        fontSize: "var(--t-micro)", color: "var(--text-tertiary)",
         fontFamily: "ui-monospace, monospace",
       }}>{fmtDuration(s * 1000)}</div>);
     }
@@ -4561,7 +4769,7 @@ function Ruler({ totalMs, pps, bpm, showBeats }: { totalMs: number; pps: number;
       const x = (bar * beatMs * 4 / 1000) * pps;
       ticks.push(<div key={`bar${bar}`} style={{
         position: "absolute", left: x, top: 0,
-        fontSize: 8, color: "#fde04788",
+        fontSize: "var(--t-micro)", color: "#fde04788",
         fontFamily: "ui-monospace, monospace",
         paddingLeft: 2,
       }}>{bar + 1}</div>);
@@ -4631,7 +4839,7 @@ function TrackLane({
         <div style={{
           position: "absolute", inset: 6,
           border: `1px dashed ${track.color}55`,
-          color: track.color + "66", fontSize: 11,
+          color: track.color + "66", fontSize: "var(--t-small)",
           display: "flex", alignItems: "center", justifyContent: "center",
           pointerEvents: "none",
         }}>Drop audio here</div>
@@ -4680,7 +4888,7 @@ function EditorHeader({ title, subtitle, accent, mode, onMode, onClose }: {
   const tab = (m: "wave" | "eq", label: string) => (
     <button onClick={() => onMode(m)}
       style={{
-        padding: "3px 11px", fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", cursor: "pointer", borderRadius: 5,
+        padding: "3px 11px", fontSize: "var(--t-micro)", fontWeight: 700, letterSpacing: "0.06em", cursor: "pointer", borderRadius: "var(--r-0)",
         border: `1px solid ${mode === m ? accent : "var(--border-primary)"}`,
         background: mode === m ? accent : "var(--bg-tertiary)",
         color: mode === m ? "#fff" : "var(--text-tertiary)",
@@ -4690,14 +4898,14 @@ function EditorHeader({ title, subtitle, accent, mode, onMode, onClose }: {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", flexShrink: 0 }}>
       <span style={{ width: 9, height: 9, borderRadius: "50%", background: accent, boxShadow: `0 0 8px ${accent}` }} />
-      <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
+      <span style={{ fontSize: "var(--t-body)", fontWeight: 700, color: "var(--text-primary)", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</span>
       <div style={{ display: "flex", gap: 4, marginLeft: 2 }}>
         {tab("wave", "WAVEFORM")}
         {tab("eq", "EQ")}
       </div>
-      <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "ui-monospace, monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{subtitle}</span>
+      <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", fontFamily: "ui-monospace, monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{subtitle}</span>
       <button onClick={onClose} title="Close editor"
-        style={{ marginLeft: "auto", background: "transparent", border: "none", color: "var(--text-tertiary)", fontSize: 16, cursor: "pointer", lineHeight: 1 }}
+        style={{ marginLeft: "auto", background: "transparent", border: "none", color: "var(--text-tertiary)", fontSize: "var(--t-head)", cursor: "pointer", lineHeight: 1 }}
       >×</button>
     </div>
   );
@@ -4730,7 +4938,7 @@ function RegionEditorDrawer({
         <div style={{ flex: 1, overflow: "auto", padding: "0 14px 14px" }}>
           {track
             ? <EqGraph track={track} ctx={ctx} onPatch={onPatchTrack} getAnalyser={getAnalyser} trackH={230} />
-            : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-tertiary)", fontSize: 12 }}>Select a track to edit its EQ.</div>}
+            : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-tertiary)", fontSize: "var(--t-body)" }}>Select a track to edit its EQ.</div>}
         </div>
       </div>
     );
@@ -4741,7 +4949,7 @@ function RegionEditorDrawer({
     return (
       <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
         <EditorHeader title="Editor" subtitle="no region selected" accent={accent} mode={mode} onMode={onMode} onClose={onClose} />
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-tertiary)", fontSize: 12 }}>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-tertiary)", fontSize: "var(--t-body)" }}>
           Double-click a region in the timeline to edit it here.
         </div>
       </div>
@@ -4784,14 +4992,14 @@ function RegionEditorDrawer({
     <div onMouseDown={onDown} title={label}
       style={{ position: "absolute", top: 0, bottom: 0, left: pct(leftMs), width: 12, transform: "translateX(-50%)", cursor: "ew-resize", zIndex: 4 }}>
       <div style={{ position: "absolute", top: 0, bottom: 0, left: "50%", width: 2, transform: "translateX(-50%)", background: track.color, boxShadow: `0 0 6px ${track.color}` }} />
-      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: 10, height: 22, borderRadius: 3, background: track.color, boxShadow: "0 1px 4px rgba(0,0,0,.6)" }} />
+      <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: 10, height: 22, borderRadius: "var(--r-0)", background: track.color, boxShadow: "var(--e-0)" }} />
     </div>
   );
 
   const fadeHandle = (leftMs: number, onDown: (e: React.MouseEvent) => void, label: string) => (
     <div onMouseDown={onDown} title={label}
       style={{ position: "absolute", top: 2, left: pct(leftMs), width: 16, height: 16, transform: "translateX(-50%)", cursor: "ew-resize", zIndex: 5 }}>
-      <div style={{ width: 11, height: 11, margin: "0 auto", borderRadius: "50%", background: "#efeaff", border: `2px solid ${track.color}`, boxShadow: "0 1px 4px rgba(0,0,0,.6)" }} />
+      <div style={{ width: 11, height: 11, margin: "0 auto", borderRadius: "50%", background: "#efeaff", border: `2px solid ${track.color}`, boxShadow: "var(--e-0)" }} />
     </div>
   );
 
@@ -4845,7 +5053,7 @@ function RegionEditorDrawer({
 
         {/* playhead */}
         {headVisible && (
-          <div style={{ position: "absolute", top: 0, bottom: 0, left: pct(headClipMs), width: 2, transform: "translateX(-50%)", background: "#fff", boxShadow: "0 0 6px rgba(255,255,255,.8)", pointerEvents: "none", zIndex: 3 }} />
+          <div style={{ position: "absolute", top: 0, bottom: 0, left: pct(headClipMs), width: 2, transform: "translateX(-50%)", background: "#fff", boxShadow: "var(--e-0)", pointerEvents: "none", zIndex: 3 }} />
         )}
 
         {/* handles */}
@@ -4996,12 +5204,12 @@ function RegionBlock({
       })()}
       <div style={{
         position: "absolute", left: 4, top: 2,
-        fontSize: 9, color: "#fff", opacity: 0.9,
+        fontSize: "var(--t-micro)", color: "#fff", opacity: 0.9,
         textShadow: "0 0 3px rgba(0,0,0,0.8)", pointerEvents: "none",
       }}>{track.name}</div>
       <div style={{
         position: "absolute", right: 4, bottom: 2,
-        fontSize: 9, color: "#fff", opacity: 0.7,
+        fontSize: "var(--t-micro)", color: "#fff", opacity: 0.7,
         fontFamily: "ui-monospace, monospace",
         textShadow: "0 0 3px rgba(0,0,0,0.8)", pointerEvents: "none",
       }}>{fmtDuration(durMs)}</div>
@@ -5061,7 +5269,7 @@ function LiveRecordingOverlay({ color, laneH, startMs, peaks, samplePeriodMs, pp
       <canvas ref={canvasRef} style={{ width: w, height: h, display: "block" }} />
       <div style={{
         position: "absolute", left: 4, top: 2,
-        fontSize: 9, color: "#fff", opacity: 0.95,
+        fontSize: "var(--t-micro)", color: "#fff", opacity: 0.95,
         textShadow: "0 0 3px rgba(0,0,0,0.8)",
         fontWeight: 700, letterSpacing: 0.5,
       }}>● REC</div>
@@ -5211,9 +5419,243 @@ function AutomationLaneView({
       <canvas ref={canvasRef} style={{ width: w, height: h, display: "block" }} />
       <div style={{
         position: "absolute", left: 4, top: 2,
-        fontSize: 9, color: "var(--text-tertiary)", letterSpacing: 0.5, textTransform: "uppercase",
+        fontSize: "var(--t-micro)", color: "var(--text-tertiary)", letterSpacing: 0.5, textTransform: "uppercase",
         pointerEvents: "none",
       }}>{spec.label}</div>
+    </div>
+  );
+}
+
+// ── MixerStrips (phase b, 2026-08-16) ───────────────────────────────────────────────────────
+// A real channel strip per track: pan, fader, VU, dB readout, M/S. It is a VIEW — every write goes
+// through the same UPDATE_TRACK dispatch the track header uses, and every level comes from the
+// meter ref the RAF tick already repaints. Nothing here touches the audio graph.
+function MixerStrips({ tracks, levels, masterLevel, masterGainDb, onPatch, onSelect, selectedId }: {
+  tracks: StudioTrack[];
+  levels: Map<string, number>;
+  masterLevel: number;
+  masterGainDb: number;
+  onPatch: (id: string, patch: Partial<StudioTrack>) => void;
+  onSelect: (id: string) => void;
+  selectedId: string | null;
+}) {
+  const VU_H = 104;
+  const vu = (lvl: number, color?: string) => (
+    <span style={{ display: "flex", gap: 2, alignItems: "flex-end", height: VU_H }}>
+      {[0, 1].map(ch => (
+        <span key={ch} style={{
+          width: 5, alignSelf: "flex-end",
+          height: Math.max(2, Math.min(VU_H, lvl * VU_H * (ch ? 0.94 : 1))),
+          background: color
+            ? color
+            : "linear-gradient(to top, var(--accent-green) 0 62%, var(--accent-amber) 62% 86%, var(--accent-red) 86%)",
+        }} />
+      ))}
+    </span>
+  );
+  const strip: React.CSSProperties = {
+    flex: "1 1 0", minWidth: 0, borderRight: "1px solid var(--border-primary)",
+    padding: "var(--s-3)", display: "flex", flexDirection: "column",
+    alignItems: "center", gap: "var(--s-2)",
+  };
+  const name: React.CSSProperties = {
+    fontSize: "var(--t-micro)", textTransform: "uppercase", letterSpacing: "0.06em",
+    color: "var(--text-tertiary)", whiteSpace: "nowrap", overflow: "hidden",
+    textOverflow: "ellipsis", maxWidth: "100%",
+  };
+  const dbTxt: React.CSSProperties = {
+    fontFamily: "ui-monospace, monospace", fontSize: "var(--t-micro)", color: "var(--text-tertiary)",
+  };
+
+  return (
+    <div style={{ display: "flex", height: "100%", overflowX: "auto" }}>
+      {tracks.map(t => {
+        const lvl = levels.get(t.id) || 0;
+        const sel = t.id === selectedId;
+        return (
+          <div key={t.id} style={{
+            ...strip,
+            background: sel ? "var(--bg-tertiary)" : "transparent",
+            borderTop: `2px solid ${sel ? t.color : "transparent"}`,
+          }} onClick={() => onSelect(t.id)}>
+            <span style={{ ...name, color: sel ? "var(--text-primary)" : "var(--text-tertiary)" }}>{t.name}</span>
+            {/* PAN — the control the header never had */}
+            <span style={dbTxt}>{t.pan === 0 ? "C" : t.pan < 0 ? `L${Math.round(-t.pan * 100)}` : `R${Math.round(t.pan * 100)}`}</span>
+            <input type="range" min={-1} max={1} step={0.02} value={t.pan}
+              onChange={e => onPatch(t.id, { pan: +e.target.value })}
+              title="Pan"
+              style={{ width: "100%", accentColor: t.color, height: 14 }} />
+            <div style={{ display: "flex", gap: "var(--s-2)", flex: 1, alignItems: "stretch", minHeight: VU_H }}>
+              <input type="range" min={-48} max={6} step={0.5} value={t.gainDb}
+                onChange={e => onPatch(t.id, { gainDb: +e.target.value })}
+                title="Level"
+                style={{
+                  writingMode: "vertical-lr" as any, direction: "rtl",
+                  width: 22, accentColor: t.color, cursor: "pointer",
+                }} />
+              {vu(lvl)}
+            </div>
+            <span style={dbTxt}>{t.gainDb.toFixed(1)}</span>
+            <span style={{ display: "flex", gap: 2 }}>
+              <MiniBtn active={t.muted} activeColor="#ef4444"
+                onClick={(e) => { e.stopPropagation(); onPatch(t.id, { muted: !t.muted }); }}>M</MiniBtn>
+              <MiniBtn active={t.solo} activeColor="#fbbf24"
+                onClick={(e) => { e.stopPropagation(); onPatch(t.id, { solo: !t.solo }); }}>S</MiniBtn>
+            </span>
+          </div>
+        );
+      })}
+      {/* MASTER — read-only here; its fader lives in Master FX, which owns the master chain. */}
+      <div style={{ ...strip, background: "var(--bg-secondary)", flex: "0 0 74px" }}>
+        <span style={{ ...name, color: "var(--accent-cyan)" }}>Master</span>
+        <span style={dbTxt}>—</span>
+        <div style={{ height: 14 }} />
+        <div style={{ display: "flex", gap: "var(--s-2)", flex: 1, alignItems: "flex-end", minHeight: VU_H }}>
+          {vu(masterLevel)}
+        </div>
+        <span style={dbTxt}>{masterGainDb.toFixed(1)}</span>
+      </div>
+    </div>
+  );
+}
+
+// ── PaneTabs (phase a) ──────────────────────────────────────────────────────────────────────
+// The pane chrome the Schedule Manager already wears: uppercase 11px tabs, 2px active underline,
+// hairline separation. Static in phase (a) — dockview hosting is phase (b). This exists so the
+// three columns read as PANES rather than as three regions of one screen.
+function PaneTabs({ tabs, active, onPick }: { tabs: string[]; active: string; onPick?: (t: string) => void }) {
+  return (
+    <div style={{
+      display: "flex", flex: "0 0 auto", background: "var(--bg-secondary)",
+      borderBottom: "1px solid var(--border-primary)",
+    }}>
+      {tabs.map(t => {
+        const on = t === active;
+        return (
+          <div key={t} onClick={() => onPick?.(t)} style={{
+            padding: "var(--s-3) var(--s-5)", fontSize: "var(--t-small)", fontWeight: 700,
+            letterSpacing: "0.08em", textTransform: "uppercase",
+            color: on ? "var(--text-primary)" : "var(--text-tertiary)",
+            background: on ? "var(--bg-primary)" : "transparent",
+            borderRight: "1px solid var(--border-primary)",
+            boxShadow: on ? "inset 0 -2px 0 0 var(--accent-cyan)" : "none",
+            cursor: onPick ? "pointer" : "default", whiteSpace: "nowrap", userSelect: "none",
+          }}>{t}</div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── TransportBar (phase a, 2026-08-16) ──────────────────────────────────────────────────────
+// RANK 1 — the controls a producer touches every few seconds, on their own full-width bar at the
+// bottom, sized so the eye finds play / timecode / meters without searching. Nothing else lives
+// here: BPM, zoom, import, export, notes and history stayed on the utility row above.
+//
+// SHELL ONLY. Every handler below is the one that already existed on the top strip — play, stop,
+// toggleRecord, setRecordArmed, returnToStart. No audio behaviour changed in this phase.
+function TransportBar({
+  playing, recording, recordArmed, playheadMs, selStartMs, selEndMs, sessionEndMs,
+  masterLevel, lufsMomentary, onPlay, onStop, onRecord, onArm, onReturnStart, onEnd,
+}: {
+  playing: boolean; recording: boolean; recordArmed: boolean;
+  playheadMs: number; selStartMs: number | null; selEndMs: number | null; sessionEndMs: number;
+  masterLevel: number; lufsMomentary: number;
+  onPlay: () => void; onStop: () => void; onRecord: () => void; onArm: () => void;
+  onReturnStart: () => void; onEnd: () => void;
+}) {
+  const lbl: React.CSSProperties = {
+    fontSize: "var(--t-micro)", textTransform: "uppercase", letterSpacing: "0.1em",
+    color: "var(--text-tertiary)",
+  };
+  const btn = (size: number, extra?: React.CSSProperties): React.CSSProperties => ({
+    width: size, height: size, borderRadius: "var(--r-0)", border: "1px solid var(--border-secondary)",
+    background: "var(--bg-tertiary)", color: "var(--text-secondary)", cursor: "pointer",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    fontSize: Math.round(size * 0.42), ...extra,
+  });
+  // True peak from the linear master level. -Infinity reads as "—", never as a misleading 0.
+  const peakDb = masterLevel > 0 ? 20 * Math.log10(masterLevel) : -Infinity;
+  const fmtDb = (v: number) => (Number.isFinite(v) ? v.toFixed(1) : "—");
+  const selDur = selStartMs != null && selEndMs != null ? Math.abs(selEndMs - selStartMs) : null;
+
+  return (
+    <div style={{
+      flex: "0 0 92px", height: 92, background: "var(--bg-secondary)",
+      borderTop: "1px solid var(--border-secondary)",
+      display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center",
+      padding: "0 var(--s-6)", gap: "var(--s-6)",
+    }}>
+      {/* LEFT — metering. Always visible; never behind a panel. */}
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--s-6)" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <span style={lbl}>Peak</span>
+          <span style={{
+            fontFamily: "ui-monospace, monospace", fontSize: 20, fontVariantNumeric: "tabular-nums",
+            color: peakDb > -1 ? "var(--accent-red)" : peakDb > -6 ? "var(--accent-amber)" : "var(--accent-green)",
+          }}>{fmtDb(peakDb)}</span>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <span style={lbl}>LUFS-M</span>
+          <span style={{
+            fontFamily: "ui-monospace, monospace", fontSize: 20, fontVariantNumeric: "tabular-nums",
+            color: "var(--accent-green)",
+          }}>{fmtDb(lufsMomentary)}</span>
+        </div>
+        <div style={{ display: "flex", gap: 3, alignItems: "flex-end", height: 46 }}>
+          {[0, 1].map(ch => (
+            <span key={ch} style={{
+              width: 9, height: Math.max(2, Math.min(46, masterLevel * 46 * (ch ? 0.94 : 1))),
+              background: "linear-gradient(to top, var(--accent-green) 0 62%, var(--accent-amber) 62% 86%, var(--accent-red) 86%)",
+            }} />
+          ))}
+        </div>
+      </div>
+
+      {/* CENTRE — transport. The largest thing on the bar. */}
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--s-6)", justifySelf: "center" }}>
+        <button onClick={onReturnStart} title="Return to start (Home)" style={btn(40)}>⏮</button>
+        <button onClick={onStop} title="Stop" style={btn(40)}>⏹</button>
+        <button onClick={onPlay} title={playing ? "Pause (Space)" : "Play (Space)"}
+          style={btn(58, {
+            background: "rgb(52 211 153 / 0.14)", borderColor: "var(--accent-green)",
+            color: "var(--accent-green)", fontSize: 24,
+          })}>{playing ? "⏸" : "▶"}</button>
+        <button onClick={onArm} title="Record arm"
+          style={btn(40, recordArmed
+            ? { color: "var(--accent-red)", borderColor: "var(--accent-red)", background: "rgb(248 113 113 / 0.14)" }
+            : { color: "var(--accent-red)", borderColor: "#3a2030" })}>⏺</button>
+        <button onClick={onRecord} title="Record" style={btn(40, recording
+          ? { color: "var(--accent-red)", borderColor: "var(--accent-red)", background: "rgb(248 113 113 / 0.2)" }
+          : {})}>{recording ? "◼" : "●"}</button>
+        <button onClick={onEnd} title="Go to end (End)" style={btn(40)}>⏭</button>
+
+        <div style={{ marginLeft: "var(--s-4)" }}>
+          <div style={{
+            fontFamily: "ui-monospace, monospace", fontSize: 46, lineHeight: 1,
+            fontVariantNumeric: "tabular-nums", color: "var(--text-primary)", letterSpacing: "0.01em",
+          }}>{fmtTimecode(playheadMs)}</div>
+          <div style={{
+            fontFamily: "ui-monospace, monospace", fontSize: "var(--t-body)",
+            color: "var(--text-tertiary)", marginTop: 3,
+          }}>
+            sel {selStartMs != null ? fmtDuration(selStartMs) : "—"}
+            {" → "}{selEndMs != null ? fmtDuration(selEndMs) : "—"}
+            {selDur != null ? `  ·  ${fmtDuration(selDur)}` : ""}
+          </div>
+        </div>
+      </div>
+
+      {/* RIGHT — readouts only. No controls: this bar belongs to transport. */}
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--s-6)", justifySelf: "end" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <span style={lbl}>Session</span>
+          <span style={{
+            fontFamily: "ui-monospace, monospace", fontSize: 15,
+            fontVariantNumeric: "tabular-nums", color: "var(--text-secondary)",
+          }}>{fmtDuration(sessionEndMs)}</span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -5253,7 +5695,7 @@ function Inspector({
 
   const masterSection = (
     <div style={{ padding: 8, marginBottom: 10, background: "var(--bg-primary)", border: "1px solid var(--border-primary)" }}>
-      <div style={{ fontSize: 10, color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: 6, letterSpacing: 0.5 }}>Master</div>
+      <div style={{ fontSize: "var(--t-micro)", color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: 6, letterSpacing: 0.5 }}>Master</div>
       <MeterBar level={masterLevel} color="var(--accent-blue)" width={INSPECTOR_W - 32} height={6} />
       <SpectrumAnalyzer analyser={masterAnalyser} width={INSPECTOR_W - 32} height={50} />
       <div style={{ height: 6 }} />
@@ -5265,10 +5707,10 @@ function Inspector({
       </div>
       {limiterEnabled && knob("Threshold", -24, 0, limiterThresh, 0.5, setLimiterThresh, " dB", "#22c55e")}
       {loopRange && (
-        <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border-primary)", fontSize: 10, color: "var(--text-secondary)" }}>
+        <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border-primary)", fontSize: "var(--t-micro)", color: "var(--text-secondary)" }}>
           Loop: {fmtDuration(loopRange.startMs)} → {fmtDuration(loopRange.endMs)}
           <button onClick={onClearLoop}
-            style={{ marginLeft: 8, padding: "2px 6px", background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", fontSize: 10, cursor: "pointer", borderRadius: 0 }}
+            style={{ marginLeft: 8, padding: "2px 6px", background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", fontSize: "var(--t-micro)", cursor: "pointer", borderRadius: 0 }}
           >Clear</button>
         </div>
       )}
@@ -5279,7 +5721,7 @@ function Inspector({
     return (
       <div>
         {masterSection}
-        <div style={{ color: "var(--text-tertiary)", fontSize: 12, textAlign: "center", marginTop: 20 }}>
+        <div style={{ color: "var(--text-tertiary)", fontSize: "var(--t-body)", textAlign: "center", marginTop: 20 }}>
           Select a track
         </div>
       </div>
@@ -5287,18 +5729,18 @@ function Inspector({
   }
 
   return (
-    <div style={{ fontSize: 12 }}>
+    <div style={{ fontSize: "var(--t-body)" }}>
       {masterSection}
 
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
         <div style={{ width: 12, height: 12, background: track.color }} />
         <input value={track.name}
           onChange={(e) => onPatchTrack({ name: e.target.value })}
-          style={{ flex: 1, background: "var(--bg-secondary)", color: "#fff", border: "1px solid var(--border-primary)", padding: "4px 6px", fontSize: 12, borderRadius: 0 }}
+          style={{ flex: 1, background: "var(--bg-secondary)", color: "#fff", border: "1px solid var(--border-primary)", padding: "4px 6px", fontSize: "var(--t-body)", borderRadius: 0 }}
         />
       </div>
 
-      <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 8 }}>
+      <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", marginBottom: 8 }}>
         {track.regions.length} region{track.regions.length !== 1 ? "s" : ""}
       </div>
 
@@ -5306,7 +5748,7 @@ function Inspector({
         style={{
           width: "100%", marginBottom: 10, padding: "7px",
           background: "rgb(from var(--accent-cyan) r g b / 0.12)", color: "var(--accent-cyan)",
-          border: "1px solid rgb(from var(--accent-cyan) r g b / 0.4)", fontSize: 11, fontWeight: 700, cursor: "pointer", borderRadius: 6, letterSpacing: 0.5,
+          border: "1px solid rgb(from var(--accent-cyan) r g b / 0.4)", fontSize: "var(--t-small)", fontWeight: 700, cursor: "pointer", borderRadius: "var(--r-0)", letterSpacing: 0.5,
         }}
       >⤒ Open 7-Band EQ</button>
 
@@ -5332,16 +5774,16 @@ function Inspector({
 
       {region && (
         <div style={{ marginTop: 14, padding: 8, background: "var(--bg-primary)", border: "1px solid var(--border-primary)" }}>
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 6, letterSpacing: 0.5 }}>
+          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 6, letterSpacing: 0.5 }}>
             Selected region
           </div>
-          <div style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 3 }}>
+          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-secondary)", marginBottom: 3 }}>
             Offset: <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>{fmtDuration(region.offsetMs)}</span>
           </div>
-          <div style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 3 }}>
+          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-secondary)", marginBottom: 3 }}>
             Length: <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>{fmtDuration(regionDurMs(region))}</span>
           </div>
-          <div style={{ fontSize: 10, color: "var(--text-secondary)", marginBottom: 3 }}>
+          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-secondary)", marginBottom: 3 }}>
             Fade in: <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>{region.fadeInMs.toFixed(0)}ms</span>
             {"  "}out: <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>{region.fadeOutMs.toFixed(0)}ms</span>
           </div>
@@ -5350,17 +5792,17 @@ function Inspector({
               onChange={(v) => onPatchRegion({ clipGainDb: v })} unit=" dB"
             />
           </div>
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 6, wordBreak: "break-all" }}>
+          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", marginTop: 6, wordBreak: "break-all" }}>
             {region.filePath || "(recorded)"}
           </div>
           <button onClick={onDeleteRegion}
-            style={{ width: "100%", marginTop: 8, padding: "4px", background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", fontSize: 10, cursor: "pointer", borderRadius: 0 }}
+            style={{ width: "100%", marginTop: 8, padding: "4px", background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", fontSize: "var(--t-micro)", cursor: "pointer", borderRadius: 0 }}
           >Delete region</button>
         </div>
       )}
 
       <button onClick={onClear}
-        style={{ width: "100%", marginTop: 10, padding: "6px", background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", fontSize: 11, cursor: "pointer", borderRadius: 0 }}
+        style={{ width: "100%", marginTop: 10, padding: "6px", background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", fontSize: "var(--t-small)", cursor: "pointer", borderRadius: 0 }}
       >Clear all regions</button>
     </div>
   );
@@ -5372,7 +5814,7 @@ function insBtn(active: boolean, color: string): React.CSSProperties {
     background: active ? color : "var(--button-bg, var(--bg-tertiary))",
     color: active ? "#fff" : "var(--button-text, var(--text-secondary))",
     border: active ? `1px solid ${color}` : "var(--button-border, 1px solid var(--border-primary))",
-    fontSize: 10, cursor: "pointer", borderRadius: 0,
+    fontSize: "var(--t-micro)", cursor: "pointer", borderRadius: 0,
   };
 }
 
@@ -5418,18 +5860,18 @@ function Fader({
 
   const bar = (
     <div ref={railRef} onMouseDown={onDown} onClick={(e) => e.stopPropagation()}
-      style={{ position: "relative", height: 18, cursor: "pointer", flex: 1, minWidth: 40, ...style }}
+      style={{ position: "relative", height: 24, cursor: "pointer", flex: 1, minWidth: 56, ...style }}
     >
-      <div style={{ position: "absolute", top: 7, left: 0, right: 0, height: 4, borderRadius: 2, background: "#07070b", boxShadow: "inset 0 1px 1px rgba(0,0,0,.6)" }} />
-      <div style={{ position: "absolute", top: 7, left: 0, width: `${pct * 100}%`, height: 4, borderRadius: 2, background: fillBg, boxShadow: fillGlow }} />
-      <div style={{ position: "absolute", top: 1, left: `${pct * 100}%`, transform: "translateX(-50%)", width: 8, height: 16, borderRadius: 3, background: capBg, border: `1px solid ${capBor}`, boxShadow: "0 1px 3px rgba(0,0,0,.6), 0 0 8px rgba(136,104,216,.5)" }} />
+      <div style={{ position: "absolute", top: 9, left: 0, right: 0, height: 6, borderRadius: "var(--r-0)", background: "#07070b", boxShadow: "inset 0 1px 1px rgba(0,0,0,.6)" }} />
+      <div style={{ position: "absolute", top: 9, left: 0, width: `${pct * 100}%`, height: 6, borderRadius: "var(--r-0)", background: fillBg, boxShadow: fillGlow }} />
+      <div style={{ position: "absolute", top: 2, left: `${pct * 100}%`, transform: "translateX(-50%)", width: 11, height: 20, borderRadius: "var(--r-0)", background: capBg, border: `1px solid ${capBor}`, boxShadow: "var(--e-0)" }} />
     </div>
   );
 
   if (!label) return bar;
   return (
     <div style={{ marginBottom: 10 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-secondary)", marginBottom: 3 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "var(--t-small)", color: "var(--text-secondary)", marginBottom: 3 }}>
         <span>{label}</span>
         <span style={{ fontFamily: "ui-monospace, monospace" }}>{value.toFixed(step < 1 ? 2 : 1)}{unit}</span>
       </div>
@@ -5467,13 +5909,13 @@ function Knob({
         style={{ width: 54, height: 54, position: "relative", cursor: "ns-resize" }}>
         <div style={{ position: "absolute", inset: 9, borderRadius: "50%", background: "radial-gradient(circle at 38% 32%,#26203a,#15111f 70%)", border: "1px solid #2a2440", boxShadow: "0 2px 5px rgba(0,0,0,.55), inset 0 1px 1px rgba(255,255,255,.05)" }} />
         <div style={{ position: "absolute", inset: 0, transform: `rotate(${deg}deg)` }}>
-          <div style={{ position: "absolute", left: "50%", top: 6, marginLeft: -1, width: 2, height: 13, borderRadius: 2, background: "var(--accent-cyan)", boxShadow: "0 0 6px rgba(136,104,216,.8)" }} />
+          <div style={{ position: "absolute", left: "50%", top: 6, marginLeft: -1, width: 2, height: 13, borderRadius: "var(--r-0)", background: "var(--accent-cyan)", boxShadow: "var(--e-0)" }} />
         </div>
-        <div style={{ position: "absolute", inset: 0, top: "50%", transform: "translateY(-50%)", textAlign: "center", fontSize: 11, fontWeight: 700, color: "var(--text-primary)", pointerEvents: "none" }}>
+        <div style={{ position: "absolute", inset: 0, top: "50%", transform: "translateY(-50%)", textAlign: "center", fontSize: "var(--t-small)", fontWeight: 700, color: "var(--text-primary)", pointerEvents: "none" }}>
           {format ? format(value) : value.toFixed(2)}
         </div>
       </div>
-      {label && <span style={{ fontSize: 10, color: "var(--text-secondary)", fontWeight: 600 }}>{label}</span>}
+      {label && <span style={{ fontSize: "var(--t-micro)", color: "var(--text-secondary)", fontWeight: 600 }}>{label}</span>}
     </div>
   );
 }
@@ -5519,7 +5961,7 @@ function FxWindow({
         left: position.x, top: position.y, width: type === "eq" ? 880 : 320,
         zIndex: 1000 + position.z,
         background: "var(--bg-primary)", border: "1px solid var(--border-primary)",
-        boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+        boxShadow: "var(--e-float)",
         fontFamily: "Inter, system-ui, sans-serif",
       }}
     >
@@ -5532,16 +5974,16 @@ function FxWindow({
         }}
       >
         <div style={{ width: 9, height: 9, borderRadius: "50%", background: track.color, boxShadow: `0 0 8px ${track.color}` }} />
-        <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.16em", color: "#ececf2", textTransform: "uppercase" as const }}>ETHER</span>
+        <span style={{ fontSize: "var(--t-body)", fontWeight: 800, letterSpacing: "0.16em", color: "#ececf2", textTransform: "uppercase" as const }}>ETHER</span>
         <span style={{
-          fontSize: 10, fontWeight: 600, letterSpacing: "0.1em", color: "var(--accent-cyan)",
+          fontSize: "var(--t-micro)", fontWeight: 600, letterSpacing: "0.1em", color: "var(--accent-cyan)",
           textTransform: "uppercase" as const, padding: "2px 8px",
-          border: "1px solid rgb(from var(--accent-cyan) r g b / 0.3)", borderRadius: 3,
+          border: "1px solid rgb(from var(--accent-cyan) r g b / 0.3)", borderRadius: "var(--r-0)",
           whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis", maxWidth: type === "eq" ? 600 : 220,
         }}>{track.name} · {FX_WINDOW_LABELS[type]}</span>
         <div style={{ flex: 1 }} />
         <button onClick={onClose} title="Close" data-no-drag
-          style={{ width: 28, height: 28, borderRadius: 4, background: "#1a1a22", border: "1px solid #3a3a48", color: "#a8a8b4", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}
+          style={{ width: 28, height: 28, borderRadius: "var(--r-0)", background: "#1a1a22", border: "1px solid #3a3a48", color: "#a8a8b4", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}
           onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.background = "#ef4444"; el.style.borderColor = "#ef4444"; el.style.color = "#fff"; }}
           onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.background = "#1a1a22"; el.style.borderColor = "#3a3a48"; el.style.color = "#a8a8b4"; }}
         >
@@ -5571,20 +6013,20 @@ function ExportWatermarkDialog({ onConfirm }: { onConfirm: (embed: boolean) => v
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.72)", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{ width: 420, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", padding: "22px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: "#e8e8f0" }}>Export Mix</div>
-        <div style={{ fontSize: 12, color: "#8080b0", lineHeight: 1.5 }}>
+        <div style={{ fontSize: "var(--t-lead)", fontWeight: 800, color: "#e8e8f0" }}>Export Mix</div>
+        <div style={{ fontSize: "var(--t-body)", color: "#8080b0", lineHeight: 1.5 }}>
           One or more tracks are marked as <span style={{ color: "#00c8a8" }}>original content</span>. You can embed an invisible content provenance watermark into this export.
         </div>
         <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "10px 12px", background: "var(--bg-primary)", border: "1px solid var(--border-primary)" }}>
           <input type="checkbox" checked={checked} onChange={e => setChecked(e.target.checked)} style={{ width: 14, height: 14, accentColor: "#00c8a8" }} />
           <div>
-            <div style={{ fontSize: 12, color: "#e8e8f0", fontWeight: 600 }}>🛡 Embed content provenance watermark</div>
-            <div style={{ fontSize: 10, color: "#6060a0", marginTop: 2 }}>Invisibly encodes station ID, timestamp, and content hash into the audio.</div>
+            <div style={{ fontSize: "var(--t-body)", color: "#e8e8f0", fontWeight: 600 }}>🛡 Embed content provenance watermark</div>
+            <div style={{ fontSize: "var(--t-micro)", color: "#6060a0", marginTop: 2 }}>Invisibly encodes station ID, timestamp, and content hash into the audio.</div>
           </div>
         </label>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button onClick={() => onConfirm(false)} style={{ padding: "6px 16px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "#8080b0", fontSize: 12, cursor: "pointer" }}>Export without watermark</button>
-          <button onClick={() => onConfirm(checked)} style={{ padding: "6px 16px", background: "#00c8a8", border: "none", color: "#000", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Export</button>
+          <button onClick={() => onConfirm(false)} style={{ padding: "6px 16px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "#8080b0", fontSize: "var(--t-body)", cursor: "pointer" }}>Export without watermark</button>
+          <button onClick={() => onConfirm(checked)} style={{ padding: "6px 16px", background: "#00c8a8", border: "none", color: "#000", fontSize: "var(--t-body)", fontWeight: 700, cursor: "pointer" }}>Export</button>
         </div>
       </div>
     </div>
@@ -5611,27 +6053,27 @@ function WatermarkVerifyDialog({ filePath, result, verifying, onClose }: {
     >
       <div style={{ width: 440, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", padding: "22px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: "#e8e8f0", letterSpacing: "-0.01em" }}>🛡 Watermark Verification</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "#606080", fontSize: 18, cursor: "pointer", lineHeight: 1 }}>×</button>
+          <div style={{ fontSize: "var(--t-lead)", fontWeight: 800, color: "#e8e8f0", letterSpacing: "-0.01em" }}>🛡 Watermark Verification</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#606080", fontSize: "var(--t-head)", cursor: "pointer", lineHeight: 1 }}>×</button>
         </div>
 
-        <div style={{ fontSize: 11, color: "#6060a0", padding: "5px 8px", background: "var(--bg-primary)", border: "1px solid #1e1e28", wordBreak: "break-all" as const }}>
+        <div style={{ fontSize: "var(--t-small)", color: "#6060a0", padding: "5px 8px", background: "var(--bg-primary)", border: "1px solid #1e1e28", wordBreak: "break-all" as const }}>
           {fname}
         </div>
 
         {verifying && (
-          <div style={{ fontSize: 12, color: "#6060a0", textAlign: "center" as const, padding: "10px 0" }}>Verifying…</div>
+          <div style={{ fontSize: "var(--t-body)", color: "#6060a0", textAlign: "center" as const, padding: "10px 0" }}>Verifying…</div>
         )}
 
         {!verifying && result && (
           <>
             {!found ? (
-              <div style={{ fontSize: 12, color: "#ef4444", padding: "8px 10px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)" }}>
+              <div style={{ fontSize: "var(--t-body)", color: "#ef4444", padding: "8px 10px", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)" }}>
                 {result.error ?? "No Ether watermark found in this file."}
               </div>
             ) : (
               <>
-                <div style={{ display: "grid", gridTemplateColumns: "130px 1fr", rowGap: 8, fontSize: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "130px 1fr", rowGap: 8, fontSize: "var(--t-body)" }}>
                   {[
                     ["Station ID",      result.stationId    ?? "—"],
                     ["Timestamp",       result.timestamp    ?? "—"],
@@ -5640,7 +6082,7 @@ function WatermarkVerifyDialog({ filePath, result, verifying, onClose }: {
                   ].map(([label, value]) => (
                     <React.Fragment key={label}>
                       <span style={{ color: "#6060a0", paddingRight: 8 }}>{label}</span>
-                      <span style={{ color: "#c0c0d8", fontFamily: "ui-monospace, monospace", fontSize: 11 }}>{value}</span>
+                      <span style={{ color: "#c0c0d8", fontFamily: "ui-monospace, monospace", fontSize: "var(--t-small)" }}>{value}</span>
                     </React.Fragment>
                   ))}
                 </div>
@@ -5651,8 +6093,8 @@ function WatermarkVerifyDialog({ filePath, result, verifying, onClose }: {
                   border: `1px solid ${valid ? "rgba(0,200,168,0.3)" : "rgba(239,68,68,0.3)"}`,
                   display: "flex", alignItems: "center", gap: 8,
                 }}>
-                  <span style={{ fontSize: 14 }}>{valid ? "✓" : "✗"}</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: valid ? "#00c8a8" : "#ef4444" }}>
+                  <span style={{ fontSize: "var(--t-lead)" }}>{valid ? "✓" : "✗"}</span>
+                  <span style={{ fontSize: "var(--t-body)", fontWeight: 700, color: valid ? "#00c8a8" : "#ef4444" }}>
                     {valid ? "Content is authentic and unmodified" : "Content has been modified"}
                   </span>
                 </div>
@@ -5662,7 +6104,7 @@ function WatermarkVerifyDialog({ filePath, result, verifying, onClose }: {
         )}
 
         <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
-          <button onClick={onClose} style={{ padding: "6px 18px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "#c0c0d8", fontSize: 12, cursor: "pointer" }}>Close</button>
+          <button onClick={onClose} style={{ padding: "6px 18px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "#c0c0d8", fontSize: "var(--t-body)", cursor: "pointer" }}>Close</button>
         </div>
       </div>
     </div>
@@ -5763,7 +6205,7 @@ function PresetMenu<T>({ store, current, onApply, label }: {
         style={{
           width: "100%", padding: "4px 8px", textAlign: "left" as const,
           background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)",
-          fontSize: 10, cursor: "pointer", borderRadius: 0,
+          fontSize: "var(--t-micro)", cursor: "pointer", borderRadius: 0,
           display: "flex", alignItems: "center", justifyContent: "space-between",
         }}
       >
@@ -5776,7 +6218,7 @@ function PresetMenu<T>({ store, current, onApply, label }: {
             position: "absolute", top: "100%", left: 0, right: 0,
             background: "var(--bg-primary)", border: "1px solid var(--border-primary)",
             zIndex: 50, maxHeight: 240, overflowY: "auto",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.5)",
+            boxShadow: "var(--e-0)",
           }}
         >
           {items.map(it => (
@@ -5787,13 +6229,13 @@ function PresetMenu<T>({ store, current, onApply, label }: {
                 style={{
                   flex: 1, padding: "5px 8px", textAlign: "left" as const,
                   background: "transparent", color: it.builtin ? "#bbb" : "#fde047",
-                  border: "none", fontSize: 11, cursor: "pointer",
+                  border: "none", fontSize: "var(--t-small)", cursor: "pointer",
                 }}
               >{it.builtin ? it.name : "★ " + it.name}</button>
               {!it.builtin && (
                 <button onClick={(e) => { e.stopPropagation(); store.delete(it.name); }}
                   title="Delete preset"
-                  style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", fontSize: 12, cursor: "pointer", padding: "0 6px" }}
+                  style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", fontSize: "var(--t-body)", cursor: "pointer", padding: "0 6px" }}
                 >×</button>
               )}
             </div>
@@ -5803,7 +6245,7 @@ function PresetMenu<T>({ store, current, onApply, label }: {
               const name = prompt("Save current settings as preset:");
               if (name && name.trim()) { store.save(name.trim(), current); setOpen(false); }
             }}
-              style={{ width: "100%", padding: "4px", background: "#1e293b", color: "var(--accent-blue)", border: "1px solid #334155", fontSize: 10, cursor: "pointer", borderRadius: 0 }}
+              style={{ width: "100%", padding: "4px", background: "#1e293b", color: "var(--accent-blue)", border: "1px solid #334155", fontSize: "var(--t-micro)", cursor: "pointer", borderRadius: 0 }}
             >+ Save current as preset</button>
           </div>
         </div>
@@ -5902,7 +6344,7 @@ function MasterFxWindow({
       left: position.x, top: position.y, width: 340,
       zIndex: 1500,
       background: "var(--bg-primary)", border: "1px solid var(--border-primary)",
-      boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+      boxShadow: "var(--e-float)",
       fontFamily: "Inter, system-ui, sans-serif",
     }}>
       <div onMouseDown={startDrag}
@@ -5914,9 +6356,9 @@ function MasterFxWindow({
         }}
       >
         <div style={{ width: 8, height: 8, background: "var(--accent-blue)" }} />
-        <div style={{ flex: 1, fontSize: 11, color: "var(--text-primary)", fontWeight: 600 }}>Master Bus FX</div>
+        <div style={{ flex: 1, fontSize: "var(--t-small)", color: "var(--text-primary)", fontWeight: 600 }}>Master Bus FX</div>
         <button onClick={onClose}
-          style={{ background: "transparent", border: "none", color: "var(--text-secondary)", fontSize: 14, cursor: "pointer", padding: "0 4px" }}
+          style={{ background: "transparent", border: "none", color: "var(--text-secondary)", fontSize: "var(--t-lead)", cursor: "pointer", padding: "0 4px" }}
         >×</button>
       </div>
 
@@ -5965,7 +6407,7 @@ function MasterFxWindow({
             style={miniToggle(limiterEnabled, "#ef4444")}>{limiterEnabled ? "ON" : "OFF"}</button>
         }>
           {compKnob("Threshold", -24, 0, limiterThresh, 0.5, setLimiterThresh, " dB")}
-          <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 4 }}>
+          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", marginTop: 4 }}>
             Brick-wall ceiling: ratio 20:1 · attack 3ms · release 250ms · knee 0
           </div>
         </FxBlock>
@@ -6041,21 +6483,21 @@ function EQRack({ bands, onChange, ctx, getAnalyser, presetKey, accent = "var(--
           <PresetMenu store={eqStore} current={bands} onApply={onChange} label="EQ Presets" />
         </div>
         <button onClick={() => onChange(Array(EQ_BANDS).fill(0))}
-          style={{ padding: "5px 12px", background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", fontSize: 10, fontWeight: 700, cursor: "pointer", borderRadius: 5 }}
+          style={{ padding: "5px 12px", background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", fontSize: "var(--t-micro)", fontWeight: 700, cursor: "pointer", borderRadius: "var(--r-0)" }}
         >FLAT</button>
       </div>
 
       {/* Rack body */}
       <div style={{ display: "flex", gap: 6 }}>
         {/* dB scale */}
-        <div style={{ width: 26, height: TRACK_H, display: "flex", flexDirection: "column", justifyContent: "space-between", fontFamily: "ui-monospace, monospace", fontSize: 9, color: "#5a5a72", textAlign: "right" as const, paddingTop: 2, paddingBottom: 16 }}>
+        <div style={{ width: 26, height: TRACK_H, display: "flex", flexDirection: "column", justifyContent: "space-between", fontFamily: "ui-monospace, monospace", fontSize: "var(--t-micro)", color: "#5a5a72", textAlign: "right" as const, paddingTop: 2, paddingBottom: 16 }}>
           <span>+{MAX}</span><span>0</span><span>−{MAX}</span>
         </div>
         {/* 10 bands over a dark inset */}
         <div style={{
           flex: 1, display: "grid", gridTemplateColumns: `repeat(${EQ_BANDS}, 1fr)`, gap: 3,
           background: "linear-gradient(180deg,#06060a,#0a0a0f)", border: "1px solid #1d1d28",
-          borderRadius: 6, padding: "10px 8px 6px", boxShadow: "inset 0 2px 8px rgba(0,0,0,0.5)",
+          borderRadius: "var(--r-0)", padding: "10px 8px 6px", boxShadow: "inset 0 2px 8px rgba(0,0,0,0.5)",
         }}>
           {EQ_FREQS.map((_, idx) => {
             const gain = bands[idx] ?? 0;
@@ -6069,7 +6511,7 @@ function EQRack({ bands, onChange, ctx, getAnalyser, presetKey, accent = "var(--
                   {/* center line */}
                   <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1, background: "rgb(from var(--accent-cyan) r g b / 0.25)", pointerEvents: "none" }} />
                   {/* live spectrum */}
-                  <div style={{ position: "absolute", bottom: 0, left: "24%", right: "24%", height: `${specPct * 100}%`, background: `linear-gradient(180deg, ${barColor} 0%, ${barColor}40 100%)`, boxShadow: `0 0 8px ${barColor}80`, borderRadius: 1, transition: "height 0.05s linear, background 0.2s", pointerEvents: "none" }} />
+                  <div style={{ position: "absolute", bottom: 0, left: "24%", right: "24%", height: `${specPct * 100}%`, background: `linear-gradient(180deg, ${barColor} 0%, ${barColor}40 100%)`, boxShadow: `0 0 8px ${barColor}80`, borderRadius: "var(--r-0)", transition: "height 0.05s linear, background 0.2s", pointerEvents: "none" }} />
                   {peakPct > 0.02 && (
                     <div style={{ position: "absolute", bottom: `${peakPct * 100}%`, left: "24%", right: "24%", height: 2, background: "#fff", opacity: 0.8, pointerEvents: "none" }} />
                   )}
@@ -6080,17 +6522,17 @@ function EQRack({ bands, onChange, ctx, getAnalyser, presetKey, accent = "var(--
                     <div style={{
                       position: "absolute", top: `${50 - gainPct * 50}%`, left: "50%",
                       transform: "translate(-50%,-50%)", width: 26, height: 12,
-                      background: "linear-gradient(180deg,#5a5a72,#2a2a36)", border: "1px solid #1a1a22", borderRadius: 2,
+                      background: "linear-gradient(180deg,#5a5a72,#2a2a36)", border: "1px solid #1a1a22", borderRadius: "var(--r-0)",
                       boxShadow: Math.abs(gain) > 0.05 ? "0 0 10px rgb(from var(--accent-cyan) r g b / 0.6)" : "0 1px 0 rgba(255,255,255,0.08) inset",
                     }}>
                       <div style={{ position: "absolute", top: "50%", left: 2, right: 2, height: 1, transform: "translateY(-50%)", background: Math.abs(gain) > 0.05 ? accent : "#5a5a72", boxShadow: Math.abs(gain) > 0.05 ? `0 0 4px ${accent}` : "none" }} />
                     </div>
                   </div>
                 </div>
-                <div style={{ marginTop: 5, fontSize: 9, fontFamily: "ui-monospace, monospace", color: Math.abs(gain) > 0.05 ? accent : "#5a5a72", fontWeight: 700, minHeight: 12 }}>
+                <div style={{ marginTop: 5, fontSize: "var(--t-micro)", fontFamily: "ui-monospace, monospace", color: Math.abs(gain) > 0.05 ? accent : "#5a5a72", fontWeight: 700, minHeight: 12 }}>
                   {gain > 0.05 ? "+" : ""}{Math.abs(gain) > 0.05 ? gain.toFixed(1) : ""}
                 </div>
-                <div style={{ fontSize: 9, fontWeight: 700, color: "#a8a8b4", fontFamily: "ui-monospace, monospace" }}>{EQ_LABELS[idx]}</div>
+                <div style={{ fontSize: "var(--t-micro)", fontWeight: 700, color: "#a8a8b4", fontFamily: "ui-monospace, monospace" }}>{EQ_LABELS[idx]}</div>
               </div>
             );
           })}
@@ -6098,7 +6540,7 @@ function EQRack({ bands, onChange, ctx, getAnalyser, presetKey, accent = "var(--
       </div>
 
       {/* Footer strip */}
-      <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 14, fontSize: 9, fontFamily: "ui-monospace, monospace", color: "#5a5a72", letterSpacing: "0.06em" }}>
+      <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 14, fontSize: "var(--t-micro)", fontFamily: "ui-monospace, monospace", color: "#5a5a72", letterSpacing: "0.06em" }}>
         <span>FFT · HANN</span><span>·</span><span>BIQUAD · Q=1.0</span>
         <span style={{ marginLeft: "auto", color: isActive ? "#ef4444" : "#5a5a72" }}>{isActive ? "● EQ ENGAGED" : "○ BYPASS"}</span>
       </div>
@@ -6121,128 +6563,10 @@ function EqGraph({ track, ctx, onPatch, getAnalyser, trackH }: { track: StudioTr
   );
 }
 
-// ── (legacy curve EQ — replaced by EQRack) ────────────────────────
-function EqGraphLegacy({ track, ctx, onPatch }: { track: StudioTrack; ctx: AudioContext; onPatch: (p: TrackPatch) => void }) {
-  const wrapRef   = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const eqRef     = useRef(track.eq7);
-  eqRef.current   = track.eq7;
-  const [w, setW] = useState(720);
-  const [dragBand, setDragBand] = useState<number | null>(null);
-  const h = 200, PAD = 16;
-
-  useEffect(() => {
-    const el = wrapRef.current; if (!el) return;
-    const apply = () => setW(Math.max(320, el.clientWidth));
-    const ro = new ResizeObserver(apply); ro.observe(el); apply();
-    return () => ro.disconnect();
-  }, []);
-
-  const freqToX = (f: number) => (Math.log(f / 20) / Math.log(1000)) * w;
-  const dbToY   = (db: number) => h / 2 - (db / EQ_DB_RANGE) * (h / 2 - PAD);
-  const yToDb   = (y: number) => clamp(((h / 2 - y) / (h / 2 - PAD)) * EQ_DB_RANGE, -EQ_DB_RANGE, EQ_DB_RANGE);
-
-  useEffect(() => {
-    const cv = canvasRef.current; if (!cv) return;
-    const dpr = window.devicePixelRatio || 1;
-    cv.width = Math.floor(w * dpr); cv.height = Math.floor(h * dpr);
-    const g = cv.getContext("2d"); if (!g) return;
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.clearRect(0, 0, w, h);
-    g.fillStyle = "#07070b"; g.fillRect(0, 0, w, h);
-
-    // grid
-    g.lineWidth = 1;
-    [50, 100, 200, 500, 1000, 2000, 5000, 10000].forEach(f => {
-      const x = freqToX(f); g.strokeStyle = "rgba(255,255,255,0.045)";
-      g.beginPath(); g.moveTo(x, 0); g.lineTo(x, h); g.stroke();
-    });
-    [-12, -6, 0, 6, 12].forEach(db => {
-      const y = dbToY(db); g.strokeStyle = db === 0 ? "rgba(255,255,255,0.18)" : "rgba(255,255,255,0.05)";
-      g.beginPath(); g.moveTo(0, y); g.lineTo(w, y); g.stroke();
-      if (db !== 0) { g.fillStyle = "rgba(255,255,255,0.25)"; g.font = "9px ui-monospace, monospace"; g.textAlign = "left"; g.fillText(`${db > 0 ? "+" : ""}${db}`, 3, y - 2); }
-    });
-
-    // response curve
-    const POINTS = Math.max(160, Math.floor(w / 2));
-    const freqArr = new Float32Array(POINTS);
-    for (let i = 0; i < POINTS; i++) freqArr[i] = 20 * Math.pow(1000, i / (POINTS - 1));
-    const totalDb = new Float32Array(POINTS);
-    const mag = new Float32Array(POINTS), phase = new Float32Array(POINTS);
-    for (let b = 0; b < 7; b++) {
-      const f = ctx.createBiquadFilter();
-      f.type = b === 0 ? "lowshelf" : b === 6 ? "highshelf" : "peaking";
-      f.frequency.value = EQ_FREQS[b];
-      if (f.type === "peaking") f.Q.value = 1;
-      f.gain.value = clamp(eqRef.current[b] || 0, -EQ_DB_RANGE, EQ_DB_RANGE);
-      f.getFrequencyResponse(freqArr, mag, phase);
-      for (let i = 0; i < POINTS; i++) totalDb[i] += 20 * Math.log10(Math.max(1e-6, mag[i]));
-    }
-    g.beginPath();
-    for (let i = 0; i < POINTS; i++) { const x = i / (POINTS - 1) * w; const y = dbToY(totalDb[i]); if (i === 0) g.moveTo(x, y); else g.lineTo(x, y); }
-    g.strokeStyle = track.color; g.lineWidth = 2.5; g.stroke();
-    g.lineTo(w, h / 2); g.lineTo(0, h / 2); g.closePath(); g.fillStyle = track.color + "26"; g.fill();
-
-    // nodes
-    for (let b = 0; b < 7; b++) {
-      const x = freqToX(EQ_FREQS[b]); const y = dbToY(eqRef.current[b] || 0);
-      const active = dragBand === b;
-      g.beginPath(); g.arc(x, y, active ? 11 : 8, 0, Math.PI * 2); g.fillStyle = track.color; g.globalAlpha = active ? 0.4 : 0.22; g.fill(); g.globalAlpha = 1;
-      g.beginPath(); g.arc(x, y, 5.5, 0, Math.PI * 2); g.fillStyle = "#efeaff"; g.fill(); g.strokeStyle = track.color; g.lineWidth = 2; g.stroke();
-      g.fillStyle = "rgba(255,255,255,0.55)"; g.font = "9px ui-monospace, monospace"; g.textAlign = "center";
-      g.fillText(EQ_LABELS[b], x, h - 4);
-      const v = eqRef.current[b] || 0;
-      if (active || v !== 0) { g.fillStyle = "#efeaff"; g.fillText(`${v > 0 ? "+" : ""}${v.toFixed(1)}`, x, y - 12); }
-    }
-  }, [track.eq7, track.color, ctx, w, h, dragBand]);
-
-  const onDown = (e: React.MouseEvent) => {
-    const cv = canvasRef.current; if (!cv) return;
-    const rect = cv.getBoundingClientRect();
-    const mx = (e.clientX - rect.left) * (w / rect.width);
-    let bi = 0, best = Infinity;
-    for (let b = 0; b < 7; b++) { const d = Math.abs(freqToX(EQ_FREQS[b]) - mx); if (d < best) { best = d; bi = b; } }
-    setDragBand(bi);
-    const apply = (clientY: number) => {
-      const next = [...eqRef.current];
-      next[bi] = Math.round(yToDb(clientY - rect.top) * 2) / 2;
-      onPatch({ eq7: next });
-    };
-    apply(e.clientY);
-    const mv = (ev: MouseEvent) => apply(ev.clientY);
-    const up = () => { setDragBand(null); window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); };
-    window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up);
-  };
-
-  const onDoubleClick = (e: React.MouseEvent) => {
-    // double-click a node → reset that band to 0 dB
-    const cv = canvasRef.current; if (!cv) return;
-    const rect = cv.getBoundingClientRect();
-    const mx = (e.clientX - rect.left) * (w / rect.width);
-    let bi = 0, best = Infinity;
-    for (let b = 0; b < 7; b++) { const d = Math.abs(freqToX(EQ_FREQS[b]) - mx); if (d < best) { best = d; bi = b; } }
-    const next = [...eqRef.current]; next[bi] = 0; onPatch({ eq7: next });
-  };
-
-  const eqStore = usePresets<number[]>("track_eq", EQ_PRESETS);
-  return (
-    <div ref={wrapRef} style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", gap: 8 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div style={{ width: 220 }}>
-          <PresetMenu store={eqStore} current={track.eq7} onApply={(v) => onPatch({ eq7: v })} label="EQ Presets" />
-        </div>
-        <button onClick={() => onPatch({ eq7: [0, 0, 0, 0, 0, 0, 0] })}
-          style={{ padding: "5px 12px", background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", fontSize: 10, fontWeight: 700, cursor: "pointer", borderRadius: 5 }}
-        >Flat</button>
-        <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>drag the curve nodes ↕ · double-click a node to reset</span>
-      </div>
-      <canvas ref={canvasRef} onMouseDown={onDown} onDoubleClick={onDoubleClick}
-        style={{ width: "100%", height: h, display: "block", cursor: "ns-resize", borderRadius: 6, border: "1px solid var(--border-primary)" }}
-      />
-    </div>
-  );
-}
-
+// EqGraphLegacy — REMOVED (Phase 1, 2026-08-16). 121 lines, replaced by EQRack, rendered nowhere:
+// a grep for "<EqGraphLegacy" across the file returned 0 while every other component returned >=1.
+// Dead code in a 7,000-line file is not free — it is read, searched and reasoned about by everyone
+// who comes after.
 function FxEqSection({ track, ctx, onPatch, getAnalyser }: { track: StudioTrack; ctx: AudioContext; onPatch: (p: TrackPatch) => void; getAnalyser?: () => AnalyserNode | null }) {
   return (
     <FxBlock title="10-Band EQ">
@@ -6270,7 +6594,7 @@ function FxCompSection({ track, reductionDb, onPatch }: { track: StudioTrack; re
         liveReductionDb={reductionDb}
       />
       <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "8px 0" }}>
-        <span style={{ fontSize: 9, color: "var(--text-tertiary)", letterSpacing: 0.5, textTransform: "uppercase" }}>GR</span>
+        <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", letterSpacing: 0.5, textTransform: "uppercase" }}>GR</span>
         <div style={{ flex: 1, height: 6, background: "#1a1a1e", position: "relative", overflow: "hidden" }}>
           <div style={{
             position: "absolute", right: 0, top: 0, bottom: 0,
@@ -6278,7 +6602,7 @@ function FxCompSection({ track, reductionDb, onPatch }: { track: StudioTrack; re
             transition: "width 50ms linear",
           }} />
         </div>
-        <span style={{ fontSize: 9, color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace", minWidth: 36, textAlign: "right" }}>
+        <span style={{ fontSize: "var(--t-micro)", color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace", minWidth: 36, textAlign: "right" }}>
           {reductionDb.toFixed(1)} dB
         </span>
       </div>
@@ -6394,7 +6718,7 @@ function CompressorCurve({
     g.fillText(`thr ${threshold.toFixed(0)} dB`, xFor(threshold) + 3, 10);
   }, [threshold, ratio, makeup, kneeDb, accent, liveReductionDb, w, h]);
 
-  return <canvas ref={canvasRef} style={{ width: w, height: h, display: "block", marginBottom: 8, borderRadius: 6, border: "1px solid #1d1d28" }} />;
+  return <canvas ref={canvasRef} style={{ width: w, height: h, display: "block", marginBottom: 8, borderRadius: "var(--r-0)", border: "1px solid #1d1d28" }} />;
 }
 
 function FxReverbSection({ track, onPatch, ctx }: { track: StudioTrack; onPatch: (p: TrackPatch) => void; ctx: AudioContext }) {
@@ -6415,7 +6739,7 @@ function FxReverbSection({ track, onPatch, ctx }: { track: StudioTrack; onPatch:
               color:      r.type === t ? "var(--accent-cyan)" : "var(--text-tertiary)",
               border:     `1px solid ${r.type === t ? "var(--accent-cyan)" : "var(--border-primary)"}`,
               boxShadow:  r.type === t ? "0 0 8px rgb(from var(--accent-cyan) r g b / 0.3)" : "none",
-              fontSize: 10, fontWeight: 800, cursor: "pointer", borderRadius: 5,
+              fontSize: "var(--t-micro)", fontWeight: 800, cursor: "pointer", borderRadius: "var(--r-0)",
               textTransform: "uppercase", letterSpacing: 0.5, transition: "all 0.15s",
             }}>{t}</button>
         ))}
@@ -6512,7 +6836,7 @@ function ReverbIRDisplay({ ctx, type, size, wet, accent }: {
     g.fillText(`${seconds.toFixed(1)}s`, w - 24, h - 2);
   }, [ctx, type, size, wet, accent, w, h]);
 
-  return <canvas ref={canvasRef} style={{ width: w, height: h, display: "block", marginBottom: 8, borderRadius: 6, border: "1px solid #1d1d28" }} />;
+  return <canvas ref={canvasRef} style={{ width: w, height: h, display: "block", marginBottom: 8, borderRadius: "var(--r-0)", border: "1px solid #1d1d28" }} />;
 }
 
 function FxSatSection({ track, onPatch }: { track: StudioTrack; onPatch: (p: TrackPatch) => void }) {
@@ -6535,7 +6859,7 @@ function FxSidechainSection({ track, allTracks, onPatch }: { track: StudioTrack;
         style={{
           width: "100%", background: "var(--bg-tertiary)", color: "var(--text-primary)",
           border: "1px solid var(--border-primary)", padding: "6px 8px",
-          fontSize: 11, borderRadius: 5, marginBottom: 6,
+          fontSize: "var(--t-small)", borderRadius: "var(--r-0)", marginBottom: 6,
         }}
       >
         <option value="">— off —</option>
@@ -6552,7 +6876,7 @@ function FxSidechainSection({ track, allTracks, onPatch }: { track: StudioTrack;
 function FxBlock({ title, right, children }: { title: string; right?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div style={{
-      marginBottom: 12, borderRadius: 8, overflow: "hidden",
+      marginBottom: 12, borderRadius: "var(--r-0)", overflow: "hidden",
       border: "1px solid #1d1d28",
       background: "linear-gradient(180deg,#0c0c12 0%,#08080d 100%)",
       boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)",
@@ -6562,8 +6886,8 @@ function FxBlock({ title, right, children }: { title: string; right?: React.Reac
         background: "linear-gradient(180deg,#1a1a22 0%,#141420 100%)",
         borderBottom: "1px solid #0a0a0f",
       }}>
-        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent-cyan)", boxShadow: "0 0 6px var(--accent-cyan)" }} />
-        <div style={{ flex: 1, fontSize: 10, color: "#c8c8d4", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 800 }}>
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent-cyan)", boxShadow: "var(--e-0)" }} />
+        <div style={{ flex: 1, fontSize: "var(--t-micro)", color: "#c8c8d4", letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 800 }}>
           {title}
         </div>
         {right}
@@ -6581,12 +6905,12 @@ function compKnob(label: string, min: number, max: number, val: number, step: nu
 
 function miniToggle(active: boolean, color: string): React.CSSProperties {
   return {
-    padding: "4px 13px", borderRadius: 5,
+    padding: "4px 13px", borderRadius: "var(--r-0)",
     background: active ? color : "var(--bg-tertiary)",
     color: active ? "#fff" : "var(--text-tertiary)",
     border: active ? `1px solid ${color}` : "1px solid var(--border-primary)",
     boxShadow: active ? `0 0 8px ${color}88` : "none",
-    fontSize: 9, fontWeight: 800, letterSpacing: "0.08em", cursor: "pointer",
+    fontSize: "var(--t-micro)", fontWeight: 800, letterSpacing: "0.08em", cursor: "pointer",
     transition: "all 0.15s",
   };
 }
@@ -6613,7 +6937,7 @@ function ContextMenu({ x, y, items, onClose }: {
         position: "fixed", left: adjX, top: adjY, minWidth: 200,
         background: "var(--bg-primary)", border: "1px solid var(--border-primary)", padding: 4,
         zIndex: 5000, fontFamily: "Inter, system-ui, sans-serif",
-        boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+        boxShadow: "var(--e-float)",
       }}
     >
       {items.map((it, i) => it.separator ? (
@@ -6626,7 +6950,7 @@ function ContextMenu({ x, y, items, onClose }: {
             padding: "5px 10px",
             background: "transparent",
             color: it.danger ? "#ef4444" : "#ddd",
-            border: "none", fontSize: 11, cursor: "pointer", borderRadius: 0,
+            border: "none", fontSize: "var(--t-small)", cursor: "pointer", borderRadius: 0,
           }}
           onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#1a1a22"; }}
           onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
@@ -6650,7 +6974,7 @@ function SnapshotsPanel({ snapshots, onTake, onRecall, onDelete, onClose }: {
       position: "fixed", right: 16, top: 110,
       width: 280, maxHeight: "60vh",
       background: "var(--bg-primary)", border: "1px solid var(--border-primary)",
-      boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+      boxShadow: "var(--e-float)",
       zIndex: 1500, fontFamily: "Inter, system-ui, sans-serif",
       display: "flex", flexDirection: "column",
     }}>
@@ -6659,9 +6983,9 @@ function SnapshotsPanel({ snapshots, onTake, onRecall, onDelete, onClose }: {
         borderBottom: "1px solid var(--border-primary)",
         display: "flex", alignItems: "center", gap: 8,
       }}>
-        <div style={{ flex: 1, fontSize: 11, color: "var(--text-primary)", fontWeight: 600 }}>Snapshots</div>
+        <div style={{ flex: 1, fontSize: "var(--t-small)", color: "var(--text-primary)", fontWeight: 600 }}>Snapshots</div>
         <button onClick={onClose}
-          style={{ background: "transparent", border: "none", color: "var(--text-secondary)", fontSize: 14, cursor: "pointer", padding: "0 4px" }}
+          style={{ background: "transparent", border: "none", color: "var(--text-secondary)", fontSize: "var(--t-lead)", cursor: "pointer", padding: "0 4px" }}
         >×</button>
       </div>
       <div style={{ padding: 8, overflowY: "auto", flex: 1 }}>
@@ -6670,12 +6994,12 @@ function SnapshotsPanel({ snapshots, onTake, onRecall, onDelete, onClose }: {
             width: "100%", padding: "6px",
             background: "#1e293b", color: "var(--accent-blue)",
             border: "1px solid #334155",
-            fontSize: 11, fontWeight: 700, cursor: "pointer", borderRadius: 0,
+            fontSize: "var(--t-small)", fontWeight: 700, cursor: "pointer", borderRadius: 0,
             marginBottom: 8, letterSpacing: 0.5,
           }}
         >+ TAKE SNAPSHOT</button>
         {snapshots.length === 0 && (
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)", textAlign: "center" as const, padding: "20px 8px" }}>
+          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", textAlign: "center" as const, padding: "20px 8px" }}>
             No snapshots yet. Capture the current mixer state to recall it later.
           </div>
         )}
@@ -6687,13 +7011,13 @@ function SnapshotsPanel({ snapshots, onTake, onRecall, onDelete, onClose }: {
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-              <div style={{ flex: 1, fontSize: 11, color: "#fff", fontWeight: 600 }}>{s.name}</div>
+              <div style={{ flex: 1, fontSize: "var(--t-small)", color: "#fff", fontWeight: 600 }}>{s.name}</div>
               <button onClick={() => onDelete(s.id)}
                 title="Delete snapshot"
-                style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", fontSize: 14, cursor: "pointer", padding: "0 4px" }}
+                style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", fontSize: "var(--t-lead)", cursor: "pointer", padding: "0 4px" }}
               >×</button>
             </div>
-            <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginBottom: 6, fontFamily: "ui-monospace, monospace" }}>
+            <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", marginBottom: 6, fontFamily: "ui-monospace, monospace" }}>
               {new Date(s.takenAt).toLocaleTimeString()} · {s.tracksJson.length} tracks
             </div>
             <button onClick={() => onRecall(s)}
@@ -6701,7 +7025,7 @@ function SnapshotsPanel({ snapshots, onTake, onRecall, onDelete, onClose }: {
                 width: "100%", padding: "4px",
                 background: "var(--bg-secondary)", color: "#22c55e",
                 border: "1px solid #22c55e44",
-                fontSize: 10, fontWeight: 700, cursor: "pointer", borderRadius: 0,
+                fontSize: "var(--t-micro)", fontWeight: 700, cursor: "pointer", borderRadius: 0,
                 letterSpacing: 0.5,
               }}
             >↺ RECALL</button>
@@ -6776,25 +7100,25 @@ function KeyboardHelpOverlay({ onClose }: { onClose: () => void }) {
           width: 720, maxHeight: "80vh", overflowY: "auto",
           background: "var(--bg-primary)", border: "1px solid var(--border-primary)",
           padding: 24, fontFamily: "Inter, system-ui, sans-serif",
-          boxShadow: "0 16px 64px rgba(0,0,0,0.6)",
+          boxShadow: "var(--e-float)",
         }}
       >
         <div style={{ display: "flex", alignItems: "center", marginBottom: 16 }}>
-          <div style={{ flex: 1, fontSize: 16, color: "#fff", fontWeight: 700, letterSpacing: 0.5 }}>
+          <div style={{ flex: 1, fontSize: "var(--t-head)", color: "#fff", fontWeight: 700, letterSpacing: 0.5 }}>
             Keyboard Shortcuts
           </div>
           <button onClick={onClose}
-            style={{ background: "transparent", border: "none", color: "var(--text-secondary)", fontSize: 18, cursor: "pointer" }}
+            style={{ background: "transparent", border: "none", color: "var(--text-secondary)", fontSize: "var(--t-head)", cursor: "pointer" }}
           >×</button>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
           {groups.map(g => (
             <div key={g.name}>
-              <div style={{ fontSize: 10, color: "var(--accent-blue)", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>
+              <div style={{ fontSize: "var(--t-micro)", color: "var(--accent-blue)", textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 8 }}>
                 {g.name}
               </div>
               {g.rows.map(([k, d]) => (
-                <div key={k} style={{ display: "flex", marginBottom: 6, fontSize: 11 }}>
+                <div key={k} style={{ display: "flex", marginBottom: 6, fontSize: "var(--t-small)" }}>
                   <div style={{
                     minWidth: 130, padding: "2px 6px",
                     background: "#1a1a22", color: "#fde047",
@@ -6808,7 +7132,7 @@ function KeyboardHelpOverlay({ onClose }: { onClose: () => void }) {
             </div>
           ))}
         </div>
-        <div style={{ marginTop: 16, fontSize: 10, color: "var(--text-tertiary)", textAlign: "center" as const }}>
+        <div style={{ marginTop: 16, fontSize: "var(--t-micro)", color: "var(--text-tertiary)", textAlign: "center" as const }}>
           Press <span style={{ color: "#fde047" }}>?</span> or <span style={{ color: "#fde047" }}>Esc</span> to close
         </div>
       </div>
@@ -6843,7 +7167,7 @@ function AddTrackMenu({ onAdd }: { onAdd: (template: "vocal" | "music" | "drum" 
         style={{
           width: "100%", height: 36, background: "transparent",
           border: "1px dashed var(--border-primary)", color: "var(--text-secondary)",
-          fontSize: 11, cursor: "pointer", borderRadius: 0,
+          fontSize: "var(--t-small)", cursor: "pointer", borderRadius: 0,
         }}
       >+ Add Track ▾</button>
       {open && (
@@ -6865,13 +7189,13 @@ function AddTrackMenu({ onAdd }: { onAdd: (template: "vocal" | "music" | "drum" 
                 display: "block", width: "100%", textAlign: "left" as const,
                 padding: "6px 8px",
                 background: "transparent", color: "var(--text-primary)",
-                border: "none", fontSize: 11, cursor: "pointer", borderRadius: 0,
+                border: "none", fontSize: "var(--t-small)", cursor: "pointer", borderRadius: 0,
               }}
               onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = "#1a1a22"; }}
               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
             >
               <div style={{ fontWeight: 600 }}>{t.label}</div>
-              {t.desc && <div style={{ fontSize: 9, color: "var(--text-tertiary)" }}>{t.desc}</div>}
+              {t.desc && <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>{t.desc}</div>}
             </button>
           ))}
         </div>
@@ -6897,7 +7221,7 @@ function LUFSMeter({ lufsMomentary, width }: { lufsMomentary: number; width: num
   const color = v <= -23 ? "#3b82f6" : v <= -16 ? "#22c55e" : v <= -9 ? "#fde047" : "#ef4444";
   return (
     <div style={{ width }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--text-secondary)", marginBottom: 3 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "var(--t-micro)", color: "var(--text-secondary)", marginBottom: 3 }}>
         <span>LUFS (momentary, K-weighted)</span>
         <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>
           {isFinite(v) ? v.toFixed(1) : "—"}
@@ -6912,7 +7236,7 @@ function LUFSMeter({ lufsMomentary, width }: { lufsMomentary: number; width: num
           </React.Fragment>
         ))}
       </div>
-      <div style={{ display: "flex", fontSize: 8, color: "var(--text-tertiary)", marginTop: 2, fontFamily: "ui-monospace, monospace" }}>
+      <div style={{ display: "flex", fontSize: "var(--t-micro)", color: "var(--text-tertiary)", marginTop: 2, fontFamily: "ui-monospace, monospace" }}>
         <span style={{ flex: 1, textAlign: "left" }}>-50</span>
         <span style={{ flex: 1, textAlign: "center", color: "#22c55e" }}>-23 broadcast</span>
         <span style={{ flex: 1, textAlign: "center", color: "#fde047" }}>-16 stream</span>
@@ -6931,7 +7255,7 @@ function CorrelationMeter({ correlation, width }: { correlation: number; width: 
   const color = v >= 0.5 ? "#3b82f6" : v >= 0 ? "#22c55e" : v >= -0.5 ? "#fde047" : "#ef4444";
   return (
     <div style={{ width }}>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--text-secondary)", marginBottom: 3 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: "var(--t-micro)", color: "var(--text-secondary)", marginBottom: 3 }}>
         <span>Stereo correlation</span>
         <span style={{ color: "var(--text-secondary)", fontFamily: "ui-monospace, monospace" }}>{v.toFixed(2)}</span>
       </div>
@@ -6944,7 +7268,7 @@ function CorrelationMeter({ correlation, width }: { correlation: number; width: 
           background: color, transition: "all 80ms linear",
         }} />
       </div>
-      <div style={{ display: "flex", fontSize: 8, color: "var(--text-tertiary)", marginTop: 2, fontFamily: "ui-monospace, monospace" }}>
+      <div style={{ display: "flex", fontSize: "var(--t-micro)", color: "var(--text-tertiary)", marginTop: 2, fontFamily: "ui-monospace, monospace" }}>
         <span style={{ flex: 1, textAlign: "left", color: "#ef4444" }}>-1 phase</span>
         <span style={{ flex: 1, textAlign: "center" }}>0 wide</span>
         <span style={{ flex: 1, textAlign: "right", color: "#3b82f6" }}>+1 mono</span>
@@ -7007,7 +7331,7 @@ function Goniometer({ lAnalyser, rAnalyser, size }: {
   }, [lAnalyser, rAnalyser, size]);
   return (
     <div>
-      <div style={{ fontSize: 9, color: "var(--text-secondary)", marginBottom: 3 }}>Goniometer</div>
+      <div style={{ fontSize: "var(--t-micro)", color: "var(--text-secondary)", marginBottom: 3 }}>Goniometer</div>
       <canvas ref={canvasRef}
         style={{ width: size, height: size, display: "block", background: "#050508", margin: "0 auto" }}
       />
@@ -7056,7 +7380,7 @@ function VersionHistoryPanel({
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
             <span style={{
-              fontSize: 9, fontWeight: 700, letterSpacing: "0.1em",
+              fontSize: "var(--t-micro)", fontWeight: 700, letterSpacing: "0.1em",
               color: isAuto ? "#555" : "#6366f1",
               background: isAuto ? "rgba(255,255,255,0.04)" : "rgba(99,102,241,0.15)",
               padding: "2px 6px", flexShrink: 0,
@@ -7064,7 +7388,7 @@ function VersionHistoryPanel({
               v{v.version_number}
             </span>
             <span style={{
-              fontSize: 12, color: isAuto ? "#666" : "#ccc",
+              fontSize: "var(--t-body)", color: isAuto ? "#666" : "#ccc",
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
               fontStyle: isAuto ? "italic" : "normal",
             }}>
@@ -7073,9 +7397,9 @@ function VersionHistoryPanel({
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             {typeof v.track_count === "number" && (
-              <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{v.track_count}t</span>
+              <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>{v.track_count}t</span>
             )}
-            <span style={{ fontSize: 10, color: "#444" }}>{fmtDate(v.created_at)}</span>
+            <span style={{ fontSize: "var(--t-micro)", color: "#444" }}>{fmtDate(v.created_at)}</span>
           </div>
         </div>
 
@@ -7085,7 +7409,7 @@ function VersionHistoryPanel({
               onClick={e => { e.stopPropagation(); onRestore(v); }}
               style={{
                 flex: 1, padding: "7px 0", background: "#6366f1", border: "none",
-                color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer",
+                color: "#fff", fontSize: "var(--t-small)", fontWeight: 700, cursor: "pointer",
                 fontFamily: "Inter, system-ui, sans-serif",
               }}
             >
@@ -7095,7 +7419,7 @@ function VersionHistoryPanel({
               onClick={e => { e.stopPropagation(); onPreview(v.id); }}
               style={{
                 padding: "7px 12px", background: "#1a1a1e", border: "1px solid #333",
-                color: "var(--text-secondary)", fontSize: 11, cursor: "pointer",
+                color: "var(--text-secondary)", fontSize: "var(--t-small)", cursor: "pointer",
               }}
             >
               Collapse
@@ -7111,7 +7435,7 @@ function VersionHistoryPanel({
       position: "absolute", top: 0, right: 0, bottom: 0,
       width: 320, background: "var(--bg-primary)", borderLeft: "1px solid var(--border-primary)",
       display: "flex", flexDirection: "column", zIndex: 60,
-      boxShadow: "-8px 0 32px rgba(0,0,0,0.6)",
+      boxShadow: "var(--e-float)",
     }}>
       {/* Header */}
       <div style={{
@@ -7119,13 +7443,13 @@ function VersionHistoryPanel({
         display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0,
       }}>
         <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", marginBottom: 2 }}>Version History</div>
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
+          <div style={{ fontSize: "var(--t-lead)", fontWeight: 700, color: "var(--text-primary)", marginBottom: 2 }}>Version History</div>
+          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>
             {sessionName}
           </div>
         </div>
         <button onClick={onClose}
-          style={{ background: "transparent", border: "none", color: "var(--text-secondary)", fontSize: 18, cursor: "pointer", lineHeight: 1 }}>
+          style={{ background: "transparent", border: "none", color: "var(--text-secondary)", fontSize: "var(--t-head)", cursor: "pointer", lineHeight: 1 }}>
           ✕
         </button>
       </div>
@@ -7137,7 +7461,7 @@ function VersionHistoryPanel({
           style={{
             width: "100%", padding: "8px 0",
             background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.35)",
-            color: "#a5b4fc", fontSize: 12, fontWeight: 700, cursor: "pointer",
+            color: "#a5b4fc", fontSize: "var(--t-body)", fontWeight: 700, cursor: "pointer",
             fontFamily: "Inter, system-ui, sans-serif", letterSpacing: "0.02em",
           }}
         >
@@ -7148,15 +7472,15 @@ function VersionHistoryPanel({
       {/* Version list */}
       <div className="studiopro-scroll" style={{ flex: 1, overflowY: "auto" }}>
         {safeVersions.length === 0 ? (
-          <div style={{ padding: 24, textAlign: "center", color: "var(--text-tertiary)", fontSize: 12 }}>
+          <div style={{ padding: 24, textAlign: "center", color: "var(--text-tertiary)", fontSize: "var(--t-body)" }}>
             No versions saved yet.<br />
-            <span style={{ fontSize: 11 }}>Click "+ Save Version Now" or use Ctrl+Shift+S.</span>
+            <span style={{ fontSize: "var(--t-small)" }}>Click "+ Save Version Now" or use Ctrl+Shift+S.</span>
           </div>
         ) : (
           <>
             {manualSaves.length > 0 && (
               <>
-                <div style={{ padding: "8px 14px 4px", fontSize: 9, color: "var(--text-tertiary)", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" as const }}>
+                <div style={{ padding: "8px 14px 4px", fontSize: "var(--t-micro)", color: "var(--text-tertiary)", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" as const }}>
                   Manual saves ({manualSaves.length})
                 </div>
                 {manualSaves.map(v => <VersionRow key={v.id} v={v} />)}
@@ -7164,7 +7488,7 @@ function VersionHistoryPanel({
             )}
             {autoSaves.length > 0 && (
               <>
-                <div style={{ padding: "8px 14px 4px", fontSize: 9, color: "var(--text-tertiary)", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" as const }}>
+                <div style={{ padding: "8px 14px 4px", fontSize: "var(--t-micro)", color: "var(--text-tertiary)", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" as const }}>
                   Auto-saves ({autoSaves.length}/{10})
                 </div>
                 {autoSaves.map(v => <VersionRow key={v.id} v={v} />)}
@@ -7176,7 +7500,7 @@ function VersionHistoryPanel({
 
       {/* Footer */}
       <div style={{ padding: "10px 14px", borderTop: "1px solid var(--border-primary)", flexShrink: 0 }}>
-        <div style={{ fontSize: 10, color: "#444", lineHeight: 1.6 }}>
+        <div style={{ fontSize: "var(--t-micro)", color: "#444", lineHeight: 1.6 }}>
           Auto-saves every 5 min · Max {10} auto-saves kept · Restoring auto-saves current state first
         </div>
       </div>
@@ -7205,28 +7529,28 @@ function NotesDrawer({
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
         <div style={{ width: 8, height: 8, borderRadius: "50%", background: n.color, flexShrink: 0 }} />
-        <span style={{ fontSize: 10, fontWeight: 700, color: n.color }}>{n.author}</span>
-        <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "ui-monospace, monospace", marginLeft: "auto" }}>
+        <span style={{ fontSize: "var(--t-micro)", fontWeight: 700, color: n.color }}>{n.author}</span>
+        <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", fontFamily: "ui-monospace, monospace", marginLeft: "auto" }}>
           {fmtTimecode(n.position_ms)}
         </span>
       </div>
       <div style={{
-        fontSize: 12, color: n.resolved ? "#555" : "#ccc", lineHeight: 1.5,
+        fontSize: "var(--t-body)", color: n.resolved ? "#555" : "#ccc", lineHeight: 1.5,
         textDecoration: n.resolved ? "line-through" : "none",
       }}>{n.text}</div>
       <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
         <button onClick={() => onJump(n.position_ms)}
-          style={{ padding: "2px 8px", fontSize: 10, background: "rgba(255,255,255,0.04)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
+          style={{ padding: "2px 8px", fontSize: "var(--t-micro)", background: "rgba(255,255,255,0.04)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
           Jump to
         </button>
         {!n.resolved && (
           <button onClick={() => onResolve(n.id)}
-            style={{ padding: "2px 8px", fontSize: 10, background: "rgba(16,185,129,0.08)", color: "#10b981", border: "1px solid rgba(16,185,129,0.25)", cursor: "pointer" }}>
+            style={{ padding: "2px 8px", fontSize: "var(--t-micro)", background: "rgba(16,185,129,0.08)", color: "#10b981", border: "1px solid rgba(16,185,129,0.25)", cursor: "pointer" }}>
             Resolve
           </button>
         )}
         <button onClick={() => onDelete(n.id)}
-          style={{ padding: "2px 8px", fontSize: 10, background: "transparent", color: "#444", border: "none", cursor: "pointer", marginLeft: "auto" }}>
+          style={{ padding: "2px 8px", fontSize: "var(--t-micro)", background: "transparent", color: "#444", border: "none", cursor: "pointer", marginLeft: "auto" }}>
           ✕
         </button>
       </div>
@@ -7244,29 +7568,29 @@ function NotesDrawer({
         padding: "10px 14px", borderBottom: "1px solid var(--border-primary)",
         display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0,
       }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)" }}>
+        <span style={{ fontSize: "var(--t-body)", fontWeight: 700, color: "var(--text-secondary)" }}>
           Notes {active.length > 0 && <span style={{ color: "#f59e0b" }}>({active.length})</span>}
         </span>
         <button onClick={onClose}
-          style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, padding: 0 }}>
+          style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-lead)", padding: 0 }}>
           ✕
         </button>
       </div>
-      <div style={{ fontSize: 9, color: "var(--text-tertiary)", padding: "6px 14px", borderBottom: "1px solid #111", flexShrink: 0 }}>
+      <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", padding: "6px 14px", borderBottom: "1px solid #111", flexShrink: 0 }}>
         RIGHT-CLICK RULER TO ADD A NOTE
       </div>
       <div className="studiopro-scroll" style={{ flex: 1, overflowY: "auto" }}>
         {notes.length === 0 ? (
-          <div style={{ padding: 24, textAlign: "center", color: "#444", fontSize: 12 }}>
+          <div style={{ padding: 24, textAlign: "center", color: "#444", fontSize: "var(--t-body)" }}>
             No notes yet.<br />
-            <span style={{ fontSize: 11 }}>Right-click the timeline ruler to add one.</span>
+            <span style={{ fontSize: "var(--t-small)" }}>Right-click the timeline ruler to add one.</span>
           </div>
         ) : (
           <>
             {active.map(n => <NoteRow key={n.id} n={n} />)}
             {resolved.length > 0 && (
               <>
-                <div style={{ padding: "8px 14px 4px", fontSize: 9, color: "#444", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" as const }}>
+                <div style={{ padding: "8px 14px 4px", fontSize: "var(--t-micro)", color: "#444", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" as const }}>
                   Resolved ({resolved.length})
                 </div>
                 {resolved.map(n => <NoteRow key={n.id} n={n} />)}

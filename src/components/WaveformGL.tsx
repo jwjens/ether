@@ -3,7 +3,7 @@
 // GPU-accelerated waveform using WebGL2.
 // Falls back gracefully if WebGL2 unavailable.
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface Props {
   peaks:       Float32Array | null;
@@ -34,7 +34,7 @@ function hexToRgb(hex?: string): [number, number, number] {
 // fragment shader can draw a neon falloff around the waveform edge.  The extra
 // geometry is cheap (same draw call, same vertex count) and keeps the per-peak
 // bar structure 100% intact.
-const GLOW_PAD = 0.07;
+const GLOW_PAD = 0.006;
 
 const VERT = `#version 300 es
 precision highp float;
@@ -92,17 +92,22 @@ void main() {
   float dist = abs(v_y) - v_amp;
 
   if (dist > 0.0) {
-    // ── Glow zone — neon falloff outside the waveform ──
-    float glow = exp(-dist * 28.0);       // exponential decay
-    float a = glow * 0.35 * v_amp;        // brighter glow on louder peaks
-    color = vec4(c * a, a);
+    // ── Outside the envelope ──
+    // Was a wide neon falloff, which smeared adjacent peaks into one mass — the "big rectangle".
+    // Now a tight 1px-ish antialias edge only: the shape reads, the glow does not fill the gaps.
+    float aa = exp(-dist * 220.0) * 0.5;
+    color = vec4(c, aa);
   } else {
-    // ── Inside the waveform — solid bars + bright edge ──
-    float edgeDist = -dist;               // distance INTO the waveform (from edge)
-    float edgeGlow = exp(-edgeDist * 18.0) * 0.25;  // subtle inner brightness at edges
-    float base = 0.7 + v_amp * 0.3;
-    float a = base + edgeGlow;
-    color = vec4(c * a, min(a, 1.0));
+    // ── Inside the envelope ──
+    // Alpha now TRACKS AMPLITUDE. It used to floor at 0.7, so a whisper painted almost as solid as
+    // a peak and the lane became a block you could not pick a spike out of. A quiet column is now
+    // visibly quieter, and the crest of a transient is the brightest thing in the clip — which is
+    // what makes "find the spike and pull it down" a thing you can actually do by eye.
+    float edgeDist = -dist;
+    float crest    = exp(-edgeDist * 26.0) * 0.45;   // bright rim right at the peak edge
+    float body     = 0.30 + v_amp * 0.55;            // 0.30 floor keeps quiet passages visible
+    float a        = min(body + crest, 1.0);
+    color = vec4(c, a);
   }
 }`;
 
@@ -113,6 +118,38 @@ export default function WaveformGL({
 }: Props) {
   const glRef  = useRef<HTMLCanvasElement>(null);
   const ovRef  = useRef<HTMLCanvasElement>(null);
+
+  // Live device-pixel ratio. A browser/Electron zoom changes this WITHOUT causing a React render,
+  // so it is held in state and refreshed from a matchMedia listener — that state change is what
+  // re-runs the draw effects below with the correct backing-store size.
+  const [dpr, setDpr] = useState(() => (typeof window === "undefined" ? 1 : window.devicePixelRatio || 1));
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    let mql: MediaQueryList | null = null;
+    let cancelled = false;
+    const attach = () => {
+      if (cancelled) return;
+      const cur = window.devicePixelRatio || 1;
+      setDpr(cur);
+      // A dppx media query only fires for the ratio it was created with, so it is re-armed on
+      // every change. Without re-arming, the SECOND zoom step would go unnoticed.
+      mql = window.matchMedia(`(resolution: ${cur}dppx)`);
+      const onChange = () => { mql?.removeEventListener?.("change", onChange); attach(); };
+      mql.addEventListener?.("change", onChange);
+    };
+    attach();
+    return () => { cancelled = true; try { mql?.removeEventListener?.("change", () => {}); } catch {} };
+  }, []);
+
+  /** Backing-store scale. Caps TOTAL PIXELS rather than the ratio, so a high-DPR display or a
+   *  zoomed window still renders at native density — which is what keeps the additive blend from
+   *  saturating — while a very wide clip cannot allocate an unbounded texture. */
+  const scaleFor = (w: number, h: number) => {
+    const MAX_PX = 4096 * 2048;
+    const want = dpr;
+    const px = w * h * want * want;
+    return px <= MAX_PX ? want : Math.max(1, Math.sqrt(MAX_PX / (w * h)));
+  };
   const st     = useRef<{
     gl: WebGL2RenderingContext; prog: WebGLProgram;
     tex: WebGLTexture; vao: WebGLVertexArrayObject;
@@ -177,15 +214,15 @@ export default function WaveformGL({
     const s = st.current; const can = glRef.current;
     if (!s || !can || s.n === 0) return;
     const { gl, prog, tex, vao, u } = s;
-    const dpr = Math.min(devicePixelRatio || 1, 2);
     const w = can.clientWidth, h = can.clientHeight;
     if (!w || !h) return;
-    if (can.width !== Math.floor(w*dpr) || can.height !== Math.floor(h*dpr)) {
-      can.width = Math.floor(w*dpr); can.height = Math.floor(h*dpr);
+    const k = scaleFor(w, h);
+    if (can.width !== Math.floor(w*k) || can.height !== Math.floor(h*k)) {
+      can.width = Math.floor(w*k); can.height = Math.floor(h*k);
     }
     gl.viewport(0, 0, can.width, can.height);
     gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.useProgram(prog); gl.bindVertexArray(vao);
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.uniform1i(u.u_peaks, 0); gl.uniform1i(u.u_n, s.n);
@@ -203,13 +240,13 @@ export default function WaveformGL({
   useEffect(() => {
     const can = ovRef.current; if (!can) return;
     const ctx = can.getContext("2d"); if (!ctx) return;
-    const dpr = Math.min(devicePixelRatio || 1, 2);
     const w = can.clientWidth, h = can.clientHeight;
     if (!w || !h) return;
-    if (can.width !== Math.floor(w*dpr) || can.height !== Math.floor(h*dpr)) {
-      can.width = Math.floor(w*dpr); can.height = Math.floor(h*dpr);
+    const k = scaleFor(w, h);
+    if (can.width !== Math.floor(w*k) || can.height !== Math.floor(h*k)) {
+      can.width = Math.floor(w*k); can.height = Math.floor(h*k);
     }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.setTransform(k, 0, 0, k, 0, 0);
     ctx.clearRect(0, 0, w, h);
     const span = Math.max(viewEnd - viewStart, 0.0001);
     const toX  = (p: number) => ((p - viewStart) / span) * w;
