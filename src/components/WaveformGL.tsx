@@ -325,8 +325,9 @@ export default function WaveformGL({
     maxDim: number;
     // Job 2 programs: envelope (min/max + RMS) and sample-trace. Each owns its own texture so a
     // detail upload never disturbs the mip texture the far-zoom path depends on.
-    envProg: WebGLProgram; envU: Record<string, WebGLUniformLocation | null>;
-    smpProg: WebGLProgram; smpU: Record<string, WebGLUniformLocation | null>;
+    // Nullable on purpose: a detail program that fails to compile leaves the mip path intact.
+    envProg: WebGLProgram | null; envU: Record<string, WebGLUniformLocation | null>;
+    smpProg: WebGLProgram | null; smpU: Record<string, WebGLUniformLocation | null>;
     detailTex: WebGLTexture;
   } | null>(null);
   const detailKeyRef = useRef<string>("");
@@ -376,22 +377,23 @@ export default function WaveformGL({
     gl.getExtension("EXT_color_buffer_float");
     gl.getExtension("OES_texture_float_linear");
 
-    const mk = (src: string, type: number) => {
+    const tag = label ? ` ${label}` : "";
+    // A compile failure is reported with the FULL info log AND the offending source, numbered, so
+    // "undeclared identifier at line 27" can be read against the actual line 27 instead of guessed
+    // at. Returns null rather than throwing: one broken variant must not take the others down.
+    const mk = (src: string, type: number, name: string) => {
       const s = gl.createShader(type)!;
       gl.shaderSource(s, src); gl.compileShader(s);
-      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)!);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+        const info = gl.getShaderInfoLog(s) || "(no info log)";
+        const numbered = src.split("\n").map((l, i) => `${String(i + 1).padStart(3)} | ${l}`).join("\n");
+        console.error(`[WaveformGL${tag}] SHADER COMPILE FAILED — ${name}\n${info}\n${numbered}`);
+        gl.deleteShader(s);
+        return null;
+      }
       return s;
     };
     try {
-      const prog = gl.createProgram()!;
-      gl.attachShader(prog, mk(VERT, gl.VERTEX_SHADER));
-      gl.attachShader(prog, mk(FRAG, gl.FRAGMENT_SHADER));
-      gl.linkProgram(prog);
-      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog)!);
-      const names = ["u_peaks","u_n","u_vs","u_ve","u_ci","u_co","u_ie","u_os","u_tint","u_tintAmt",
-                     "u_fadeInEnd","u_fadeOutStart","u_cs","u_ce","u_ps","u_pe"];
-      const u: Record<string, WebGLUniformLocation | null> = {};
-      names.forEach(n => { u[n] = gl.getUniformLocation(prog, n); });
       const vao = gl.createVertexArray()!;
       const tex = gl.createTexture()!;
       gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -407,12 +409,18 @@ export default function WaveformGL({
       const maxRender = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) as number;
       const maxView   = (gl.getParameter(gl.MAX_VIEWPORT_DIMS) as Int32Array | null)?.[0] ?? maxTex;
       const maxDim    = Math.max(1024, Math.min(maxTex || 4096, maxRender || 4096, maxView || 4096, 8192));
-      const link = (vs: string, fs: string, names: string[]) => {
+      const link = (vs: string, fs: string, names: string[], name: string) => {
+        const v = mk(vs, gl.VERTEX_SHADER, `${name}.vert`);
+        const f = mk(fs, gl.FRAGMENT_SHADER, `${name}.frag`);
+        if (!v || !f) return null;
         const p = gl.createProgram()!;
-        gl.attachShader(p, mk(vs, gl.VERTEX_SHADER));
-        gl.attachShader(p, mk(fs, gl.FRAGMENT_SHADER));
+        gl.attachShader(p, v); gl.attachShader(p, f);
         gl.linkProgram(p);
-        if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)!);
+        if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+          console.error(`[WaveformGL${tag}] PROGRAM LINK FAILED — ${name}\n${gl.getProgramInfoLog(p) || "(no info log)"}`);
+          gl.deleteProgram(p);
+          return null;
+        }
         const m: Record<string, WebGLUniformLocation | null> = {};
         names.forEach(n => { m[n] = gl.getUniformLocation(p, n); });
         return { p, m };
@@ -421,8 +429,27 @@ export default function WaveformGL({
                         "u_fadeInEnd","u_fadeOutStart","u_laneCenter","u_laneHalf","u_texV",
                         "u_rmsPass","u_tint","u_tintAmt","u_alpha"];
       const smpNames = ["u_peaks","u_n","u_laneCenter","u_laneHalf","u_texV","u_tint","u_tintAmt","u_alpha"];
-      const env = link(VERT_ENV, FRAG_ENV, envNames);
-      const smp = link(VERT_SMP, FRAG_SMP, smpNames);
+      // EACH program links independently. Previously all three were built inside one try block, so
+      // a compile error in a detail variant threw before the mip program was ever stored — and the
+      // "fall back to coarse" path went down with the feature that broke. The mip program is the
+      // floor of this component and must survive anything above it failing.
+      const names = ["u_peaks","u_n","u_vs","u_ve","u_ci","u_co","u_ie","u_os","u_tint","u_tintAmt",
+                     "u_fadeInEnd","u_fadeOutStart","u_cs","u_ce","u_ps","u_pe"];
+      const base = link(VERT, FRAG, names, "mip");
+      if (!base) {
+        console.error(`[WaveformGL${tag}] mip program failed — this clip renders DARK (never blank)`);
+        return () => {
+          can.removeEventListener("webglcontextlost", onLost as EventListener, false);
+          can.removeEventListener("webglcontextrestored", onRestored as EventListener, false);
+        };
+      }
+      const prog = base.p, u = base.m;
+      const env = link(VERT_ENV, FRAG_ENV, envNames, "envelope");
+      const smp = link(VERT_SMP, FRAG_SMP, smpNames, "sample");
+      if (!env || !smp) {
+        console.error(`[WaveformGL${tag}] detail programs unavailable `
+                    + `(envelope=${!!env} sample=${!!smp}) — falling back to the mip path, which linked clean`);
+      }
       const detailTex = gl.createTexture()!;
       gl.bindTexture(gl.TEXTURE_2D, detailTex);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -431,7 +458,8 @@ export default function WaveformGL({
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       detailKeyRef.current = "";
       st.current = { gl, prog, tex, vao, u, n: 0, maxDim,
-                     envProg: env.p, envU: env.m, smpProg: smp.p, smpU: smp.m, detailTex };
+                     envProg: env?.p ?? null, envU: env?.m ?? {},
+                     smpProg: smp?.p ?? null, smpU: smp?.m ?? {}, detailTex };
       console.log(`[WaveformGL${label ? ` ${label}` : ""}] INIT MAX_TEXTURE_SIZE=${maxTex} `
                 + `MAX_RENDERBUFFER_SIZE=${maxRender} MAX_VIEWPORT_DIMS=${maxView} → cap=${maxDim}px`);
       uploadedRef.current = -1;   // a fresh context holds no texture — force the next draw to upload
@@ -540,7 +568,14 @@ export default function WaveformGL({
     // detail.kind decides: the CALLER knows samples-per-pixel, so it decides what to hand over,
     // and the renderer draws exactly what it was given. Lanes are split when the detail carries
     // two channels; a mono buffer keeps the full height.
-    if (detail && detail.length > 0) {
+    // Detail rendering requires the program for that kind. If it failed to link, this falls through
+    // to the mip path below — coarse bars on a dark surface, which is worse-looking but correct,
+    // and infinitely better than a clip that draws nothing.
+    const haveDetailProg = detail
+      ? (detail.kind === "samples" ? !!s.smpProg : !!s.envProg)
+      : false;
+    if (detail && !haveDetailProg) logState(`FALLBACK detail program missing for kind=${detail.kind} — drawing mip`);
+    if (detail && haveDetailProg && detail.length > 0) {
       const lanes = Math.max(1, Math.min(2, detail.channels));
       const key = `${detail.kind}|${detail.length}|${detail.channels}|${peaksStart}|${peaksEnd}`;
       gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, s.detailTex);
@@ -561,8 +596,8 @@ export default function WaveformGL({
         // the trace fades in, so the seam reads as a morph instead of a cut. Outside the band the
         // caller passes 0 or 1 and the losing program is skipped entirely, costing nothing.
         const w = Math.max(0, Math.min(1, blend ?? (detail.kind === "samples" ? 1 : 0)));
-        const drawTrace = detail.kind === "samples" && w > 0.001;
-        const drawEnv   = detail.kind === "envelope" && w < 0.999;
+        const drawTrace = detail.kind === "samples"  && w > 0.001 && !!s.smpProg;
+        const drawEnv   = detail.kind === "envelope" && w < 0.999 && !!s.envProg;
         if (drawTrace) {
           const p = s.smpProg, uu = s.smpU;
           gl.useProgram(p);
