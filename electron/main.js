@@ -2191,6 +2191,39 @@ function getActiveStationId() {
   } catch { return null; }
 }
 
+/**
+ * Read a sync flag for the ACTIVE station.
+ *
+ * THE BUG THIS REPLACES. Every sync flag used to be read as
+ *   SELECT value FROM station_config_kv WHERE key = ? LIMIT 1
+ * with no station filter and no ORDER BY — so SQLite returned whichever row it reached first,
+ * which in practice is the lowest rowid. The WRITER has always been station-scoped
+ * (`sync:set-uuid-identity` → stationConfigKvUpsertByKey(db, activeStationId, …)), so write and
+ * read were looking at different rows.
+ *
+ * Measured on this machine 2026-08-17: `sync_uuid_identity` had rows for stations 5,6,7,8 (='false',
+ * rowids 76-83) and station 2 (='true', rowid 95). Station 2 is the ACTIVE station and holds the
+ * value the operator set; the unscoped read returned rowid 76 — 'false'. Toggle, restart, reverted,
+ * forever. Stations 5-8 do not even exist any more; they are orphan rows left by the uuid re-key,
+ * and they win precisely because they are older.
+ *
+ * `sync_enabled` had the identical defect and merely looked healthy: its winning orphan row said
+ * 'true' while the active station said 'false', so this install was running sync on a deleted
+ * station's configuration.
+ *
+ * Returns null when there is no active station or no row for it — callers already treat null as
+ * "off", which matches the documented default.
+ */
+function syncFlagForActiveStation(db, key) {
+  try {
+    const stationId = getActiveStationId();
+    if (stationId == null) return null;
+    return db.prepare(
+      "SELECT value FROM station_config_kv WHERE key = ? AND station_id = ? AND deleted_at IS NULL LIMIT 1"
+    ).get(key, stationId)?.value ?? null;
+  } catch { return null; }
+}
+
 // ── Account-scoped station ownership ───────────────────────────
 // Mirror of src/lib/slug.ts slugify — turns a station name into a URL-safe slug used as the default
 // Icecast mount (e.g. "OV" → "ov", "All Day Safe Park Music" → "all-day-safe-park-music"). Each
@@ -2947,10 +2980,11 @@ app.whenReady().then(() => {
   // ── Sync scheduler — Phase F Stage 4 ──────────────────────────
   // Off by default. Users opt in via Settings → System → Multi-Device Sync.
   try {
+    // NOTE: every sync flag below is read through syncFlagForActiveStation (defined near the other
+    // station helpers). It used to be an unscoped "WHERE key = ? LIMIT 1", which is the bug this
+    // block now avoids — see that function's comment for what it cost.
     // deleted_at IS NULL — a tombstoned row would otherwise still switch sync on.
-    const enabledRow = db.prepare(
-      "SELECT value FROM station_config_kv WHERE key = 'sync_enabled' AND deleted_at IS NULL LIMIT 1"
-    ).get();
+    const enabledRow = { value: syncFlagForActiveStation(db, 'sync_enabled') };
     if (enabledRow?.value !== 'true') {
       console.log('[SYNC] disabled (set sync_enabled=true in station_config_kv to activate)');
     } else {
@@ -2970,7 +3004,7 @@ app.whenReady().then(() => {
       // The fallback is the SAME backend every other account call already uses (library sync at
       // :2779, cloud backup, account connect). A stored value still wins, so an operator pointing at
       // a different backend is unaffected.
-      const urlRow  = db.prepare("SELECT value FROM station_config_kv WHERE key = 'sync_backend_url' LIMIT 1").get();
+      const urlRow  = { value: syncFlagForActiveStation(db, 'sync_backend_url') };
       const baseUrl = urlRow?.value || process.env.ETHER_SYNC_URL || ETHER_BACKEND_URL || '';
       if (!baseUrl) {
         // REFUSE rather than start a scheduler that cannot reach anything. A dead engine that
@@ -2986,15 +3020,11 @@ app.whenReady().then(() => {
       // OFF by default (shadow-first); set sync_uuid_identity='true' in station_config_kv to enable.
       // NOT enabled for v4.4.24 — cross-machine uuid sync is proven in the harness but not yet
       // validated on the real two machines, so this build ships it disabled.
-      const uuidIdentity = db.prepare(
-        "SELECT value FROM station_config_kv WHERE key = 'sync_uuid_identity' LIMIT 1"
-      ).get()?.value === 'true';
+      const uuidIdentity = syncFlagForActiveStation(db, 'sync_uuid_identity') === 'true';
       // member-operate (default off): when on, a member-accessed station (e.g. OV) is operated as a
       // FULL switchable station and its edits push BACK under the member token (bidirectional). When
       // off, member stations stay pull-only (v4.4.7 behavior) — safe until the harness proof is green.
-      const memberOperate = db.prepare(
-        "SELECT value FROM station_config_kv WHERE key = 'member_operate' LIMIT 1"
-      ).get()?.value === 'true';
+      const memberOperate = syncFlagForActiveStation(db, 'member_operate') === 'true';
       // The local ids of member stations the operator chose — the owner sync must NOT push their edits
       // under THIS install's license key (each member station pushes its own edits under its member
       // token, per-context isolation). Resolved live so newly-chosen stations are picked up.
@@ -3891,10 +3921,7 @@ function handleHaBootstrapFlags() {
 // Sync
 ipcMain.handle('sync:getStats', () => {
   const scheduler = app._syncScheduler ?? null;
-  const enabledRow = db.prepare(
-    "SELECT value FROM station_config_kv WHERE key = 'sync_enabled' LIMIT 1"
-  ).get();
-  const enabled = enabledRow?.value === 'true';
+  const enabled = syncFlagForActiveStation(db, 'sync_enabled') === 'true';
   if (scheduler) {
     return { enabled, running: true, ...scheduler.getStats() };
   }
@@ -9023,10 +9050,10 @@ ipcMain.handle('sync:preflight', () => {
   try {
     const db = getDb();
     const q = (sql, ...a) => { try { return db.prepare(sql).all(...a); } catch (e) { return [{ error: e.message }]; } };
-    const kv = (key) => {
-      try { return db.prepare("SELECT value FROM station_config_kv WHERE key = ? AND deleted_at IS NULL LIMIT 1").get(key)?.value ?? null; }
-      catch { return null; }
-    };
+    // Station-scoped, like the boot path — an unscoped read here reported a DIFFERENT station's
+    // value than the one the toggle wrote, which is what made the panel say "stored: false"
+    // immediately after a successful write.
+    const kv = (key) => syncFlagForActiveStation(db, key);
     const scheduler = app._syncScheduler || null;
     const pending = q("SELECT COUNT(*) n FROM mutations WHERE sync_status = 'pending'")[0]?.n ?? null;
     return {
