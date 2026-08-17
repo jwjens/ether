@@ -24,6 +24,18 @@ const CURSOR_KEY     = 'sync_cursor'; // key in system_state [N-96]
 // `mutations.table_name`, which is always the wire name. Since 2026-08-06 a table's physical name can
 // differ from its wire name (`songs` is a live view over `songs_all`), so using `e.tableName` here
 // would silently stop excluding any such table.
+/** Is this rejection reason one the server will give identically forever?
+ *  The reasons come from ether-backend/src/routes/sync.js:105-118 verbatim. Anything unrecognised
+ *  is treated as TRANSIENT — the safe direction, since the cost of retrying is a wasted round trip
+ *  while the cost of wrongly retiring a row is a silently dropped edit. */
+function isPermanentRejection(reason) {
+  const r = String(reason || '').toLowerCase();
+  return r.includes('excluded from sync')       // BACKEND_EXCLUDED — the generated_schedule case
+      || r.includes('invalid op')               // op not in VALID_OPS
+      || r.includes('schema_version must be')   // malformed schema_version
+      || r.includes('missing required fields'); // no id/table_name/op/row_id/hlc/created_at
+}
+
 const EXCLUDED_TABLES = new Set(
   Object.entries(REGISTRY)
     .filter(([, e]) => e.syncExcluded === true || e.scope === 'local-only')
@@ -95,6 +107,7 @@ class SyncEngine {
 
     // Prepared statements for push
     this._stmtMarkSynced = db.prepare("UPDATE mutations SET sync_status = 'synced' WHERE id = ?");
+    this._stmtMarkConflicted = db.prepare("UPDATE mutations SET sync_status = 'conflicted' WHERE id = ?");
   }
 
   // ── Push [§17] ────────────────────────────────────────────────────────────
@@ -137,8 +150,25 @@ class SyncEngine {
       }
 
       if (rejectedIds.length > 0) {
+        // A rejection is either PERMANENT (the server will refuse this row identically forever —
+        // excluded table, invalid op, malformed row) or TRANSIENT ('server error', a failed insert
+        // worth retrying). Previously both were only logged and left 'pending', so a permanently
+        // refused row was re-sent on every cycle for the life of the install and the queue could
+        // never drain. Permanent rejections are now retired to 'conflicted' — the protocol's own
+        // word for "the receiver refused to apply this" [§N-63] and the only terminal value the
+        // schema's CHECK constraint allows. Transient ones stay pending and retry, unchanged.
+        const permanent = [];
         for (const r of rejectedIds) {
           console.error('[sync-engine] push rejected: id=' + r.id + ' reason=' + r.reason);
+          if (isPermanentRejection(r.reason)) permanent.push(r.id);
+        }
+        if (permanent.length > 0) {
+          const retire = this._db.transaction((ids) => {
+            for (const id of ids) this._stmtMarkConflicted.run(id);
+          });
+          retire(permanent);
+          console.warn(`[sync-engine] retired ${permanent.length} permanently-rejected mutation(s) `
+                     + `to 'conflicted' — they will not be re-sent`);
         }
         rejected += rejectedIds.length;
       }

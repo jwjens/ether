@@ -462,3 +462,18 @@ belongs in its own commit with its own gate run.
 **Worth noting while there:** the shared `extractPeaks` takes a fixed `resolution = 2000` for any clip
 length. That constant is the entire reason zoomed-in detail had to be re-extracted per slice. A
 duration-aware default would reduce how often the slice path engages, though it cannot replace it.
+
+---
+
+## station_config_kv writing ~745 mutations/hour on OV (filed 2026-08-17, NOT INVESTIGATED)
+
+Measured on the production backend, read-only: OV (client `041ceb96`) has **46,861**
+`station_config_kv` mutations stored, **4,472 in a six-hour window** — roughly 745/hour, sustained,
+around the clock. `play_log` is a distant second at 535 in the same window.
+
+Config keys should change when an operator changes a setting. Something is rewriting them
+continuously. Once Ruling A (generated_schedule excluded) lands, **this becomes the largest single
+contributor to the sync journal** — the next backlog driver, exactly where generated_schedule was.
+
+**Not investigated.** Finding the writer means tracing `stationConfigKv.upsertByKey` callers and
+whatever loop is invoking one on a timer. Filed rather than chased, per the ruling that closed A.

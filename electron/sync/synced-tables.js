@@ -301,6 +301,16 @@ const REGISTRY = {
     tableName: 'generated_schedule',
     primaryKey: ['id'],
     scope: 'station',
+    // RULING A. The backend has REFUSED this table since 2026-06-16 (ether-backend ed9b790,
+    // "exclude generated_schedule from peer-sync — runaway table growth"), and its BACKEND_EXCLUDED
+    // list is checked per row. Because the client never excluded it, every Generate journalled
+    // thousands of rows that were pushed, refused, left 'pending', and re-pushed forever — OV's logs
+    // show 26 consecutive batches of accepted=0 rejected=500. The backend holds ZERO rows of this
+    // table and always has, so nothing is lost by not sending it.
+    //
+    // It is also derived data: every install regenerates its own log from clocks, which DO sync.
+    // The row that plays is a local playout artifact, not shared state.
+    syncExcluded: true,
     columns: {
       id:           'scalar',
       scheduled_at: 'scalar',
