@@ -3598,6 +3598,67 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
     });
   };
 
+  // ── JUKEBOX CHANNEL — the board is the sole gate on the kiosk's audio ────────────────────────────
+  //
+  // Jeff's ruling (2026-08-18): the jukebox is audible ONLY when its assigned deck's channel is ON and
+  // the fader is up. The kiosk's AUTO chooses SONGS; the board chooses AIR.
+  //
+  // Before this, a jukebox deck fell through LivePanel's type switch into the generic fallback strip,
+  // whose `deck` came from deckMap = {A,B,C} — undefined for D/E/F. So the strip rendered no state (ON
+  // could never light, isPlaying was always false) and its ON handler called play()/pause() transport
+  // instead of cutting the channel. Audio reached MASTER with the strip showing nothing, which is
+  // exactly what Jeff saw.
+  //
+  // Modelled on the CART channel above, which already does this correctly. Same shape: persisted, and
+  // pushed DOWN to the engine on mount, because Rust boots un-muted and the UI must ASSERT the saved
+  // setting rather than assume it. Rust honours it per slot — deck_index maps D/E/F to slots 3/4/5
+  // (native/src/audio.rs:447) and the mixer sums every slot through `muted`/`volume`
+  // (native/src/audio.rs:1151). The wiring was always there; nothing was sending the cut.
+  //
+  // DEFAULT OFF, unlike carts. A public kiosk must not become audible because someone assigned a deck;
+  // it becomes audible when an operator presses ON. "ON dark = silence" is the spec.
+  //
+  // Stored in station_config_kv (not localStorage) so the KIOSK window can read the same truth and
+  // report its own state honestly — it already polls that table.
+  const jukeboxSlot = deckConfigs?.find(c => c.enabled && c.type === "jukebox")?.slot || null;
+  const [jukeboxOn, setJukeboxOn] = useState(false);
+  // Fader position for the jukebox channel. Asserted downward on mount with the cut, for the same
+  // reason: the engine boots at its own defaults and the board must state the operator's position.
+  const [jukeboxVol, setJukeboxVol] = useState(1);
+
+  useEffect(() => {
+    if (!jukeboxSlot || lpStationId == null) return;
+    let stop = false;
+    (async () => {
+      let on = false;
+      try {
+        const r: any = await (window as any).ether.stationConfigKv.list(lpStationId);
+        on = ((r && r.rows) || []).find((x: any) => x.key === "jukebox_channel_on")?.value === "1";
+      } catch { /* no config yet — stays OFF, the safe direction */ }
+      if (stop) return;
+      setJukeboxOn(on);
+      // Assert BOTH downward every time: the engine boots un-muted and at its own level.
+      try {
+        (engine.getDeck(jukeboxSlot as any) as any)?.setMuted?.(!on);
+        engine.getDeck(jukeboxSlot as any)?.setVolume(jukeboxVol);
+      } catch { /* engine not ready */ }
+    })();
+    return () => { stop = true; };
+  }, [engine, jukeboxSlot, lpStationId]);
+
+  const toggleJukeboxChannel = () => {
+    if (!jukeboxSlot) return;
+    setJukeboxOn(prev => {
+      const next = !prev;
+      try { (engine.getDeck(jukeboxSlot as any) as any)?.setMuted?.(!next); } catch { /* engine not ready */ }
+      // Persist so the kiosk can tell the public the truth, and so a restart restores the operator's
+      // choice rather than silently re-opening the channel.
+      try { (window as any).ether.stationConfigKv.upsertByKey(lpStationId, "jukebox_channel_on", next ? "1" : "0"); }
+      catch { /* non-fatal */ }
+      return next;
+    });
+  };
+
   // Listen for guest level updates pushed from the WebRTC layer (Studio.tsx)
   useEffect(() => {
     const onLevel = (e: Event) => {
@@ -3993,6 +4054,27 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                       // Broadcast guest on/off — VideoStudio/Guest WebRTC layer can mute/unmute
                       window.dispatchEvent(new CustomEvent("ether:guest-toggle", { detail: { slot, active: next } }));
                     }}
+                  />
+                </div>
+              );
+            }
+
+            // JUKEBOX → a real channel strip whose ON is a CHANNEL CUT, not transport.
+            // Same expression as the JINGLES strip: isPlaying carries the switch so the ON button
+            // lights while the channel is engaged, isOn stays true so the strip never takes the
+            // greyed/disabled branch, and the fader rides audio_set_volume on this slot.
+            if (deckType === "jukebox") {
+              return (
+                <div key={slot} style={{ flex: 1, display: "flex", minWidth: 0 }}>
+                  <ConsoleStrip
+                    label={config?.label || "JUKEBOX"}
+                    color={deckColor}
+                    volume={jukeboxVol}
+                    deckId={slot}
+                    isPlaying={jukeboxOn}
+                    isOn={true}
+                    onVolumeChange={v => { setJukeboxVol(v); engine.getDeck(slot)?.setVolume(v); }}
+                    onToggleOn={toggleJukeboxChannel}
                   />
                 </div>
               );

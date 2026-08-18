@@ -195,6 +195,9 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
   const [deckStatus, setDeckStatus] = useState<string | null>(null);
   const [deckVolume, setDeckVolume] = useState<number | null>(null);
   const [autoOn, setAutoOn] = useState(false);
+  /** The DASHBOARD's channel switch for the routed deck — observed, never assumed. Default false: a
+   *  kiosk must not claim air it has not been given. */
+  const [channelOn, setChannelOn] = useState(false);
   const starting = useRef(false);          // one start in flight at a time — never two loads racing
 
   const deckIsBusy = deckStatus === "playing";
@@ -224,6 +227,10 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
           if (Array.isArray(parsed)) ids = parsed.map((n: any) => parseInt(n, 10)).filter(Number.isFinite);
         } catch { ids = []; }
 
+        // THE BOARD IS THE GATE. The dashboard's channel ON/OFF for this deck is stored here, and the
+        // kiosk reports it rather than inferring air from its own AUTO. A cut channel is silence no
+        // matter what this window is doing.
+        const chOn = get("jukebox_channel_on") === "1";
         const rm = parseInt(get("jukebox_repeat_minutes") ?? "", 10);
         const mp = parseInt(get("jukebox_max_pending") ?? "", 10);
         if (stop) return;
@@ -231,6 +238,7 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
         // dependent query effects do not re-run every 4 seconds.
         setCategoryIds(prev => (prev.length === ids.length && prev.every((v, i) => v === ids[i]) ? prev : ids));
         setRequestUrl(String(get("jukebox_request_url") ?? "").trim());
+        setChannelOn(chOn);
         if (Number.isFinite(rm)) setRepeatMinutes(rm);
         if (Number.isFinite(mp)) setMaxPending(mp);
       } catch { if (!stop) setCategoryIds([]); }
@@ -523,15 +531,19 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
   // Observed, never inferred. The queue is kept in every case — routing is about audibility, not about
   // whether people can request. The fader is the operator's decision and this only reports it.
   const faderDown = deckVolume != null && deckVolume <= 0.001;
-  const onAir = deckIsBusy && !faderDown;
-  const routingOk = !!routedDeck && !faderDown;
+  // ON AIR requires ALL THREE: something playing, the channel ON, and the fader up. The board is the
+  // sole gate — AUTO engaged with a cut channel is not on air, and must never blink as if it were.
+  const onAir = deckIsBusy && channelOn && !faderDown;
+  const routingOk = !!routedDeck && channelOn && !faderDown;
   const routingNote = !routedDeck
     ? "Not routed to a deck. On the dashboard, set a deck's source to Jukebox (deck D, E or F) — requests are still being collected in the meantime."
-    : faderDown
-      ? `Routed to Deck ${routedDeck} — the fader is down, so nothing is reaching air. The queue keeps filling.`
-      : autoOn
-        ? `Routed to Deck ${routedDeck} · AUTO on — music keeps playing from the chosen categories between requests.`
-        : `Routed to Deck ${routedDeck} · AUTO off — only requested songs play, and it is silent in between.`;
+    : !channelOn
+      ? `Routed to Deck ${routedDeck} — the channel is OFF on the board, so nothing is reaching air. Press ON on that channel. The queue keeps filling.`
+      : faderDown
+        ? `Routed to Deck ${routedDeck} — the fader is down, so nothing is reaching air. The queue keeps filling.`
+        : autoOn
+          ? `Routed to Deck ${routedDeck} · channel ON · AUTO on — music keeps playing from the chosen categories between requests.`
+          : `Routed to Deck ${routedDeck} · channel ON · AUTO off — only requested songs play, and it is silent in between.`;
 
   return (
     <div style={{

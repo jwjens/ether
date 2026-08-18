@@ -80,27 +80,36 @@ Fix 2 is the one that matters beyond this bug. *"No songs available to pick"* is
 library; the truth was that the query never ran. A plausible sentence over a failed query is how this
 sat unnoticed — the same failure mode as a dead menu item or a handler with no door.
 
-## 5 · Wider exposure — FLAGGED, NOT FIXED (out of scope, Jeff's call)
+## 5 · Wider exposure — CORRECTED 2026-08-18, and smaller than first stated
 
-The same trap is live at roughly ten other call sites: `queryScoped` on a `FROM songs` query with no
-`skipScoping`, including `App.tsx:1672`, `:1867`, `:1951`, `:3339`, `:4948`,
-`canvas/widgets/Widgets.tsx:151`, `components/AutoCue.tsx:231`, `components/CueEditor.tsx:79`,
-`components/DeckConfigurator.tsx:360`, `components/JockStrip.tsx:46`.
+**An earlier version of this section claimed ~10 vulnerable call sites. That was wrong** — it came from
+a `grep -A 3` that could not see a `{ skipScoping: true }` sitting further down a multi-line call.
+Checked properly (8 lines of context per site), **5 of those 10 already carry it**:
 
-Two shapes, two behaviours:
+| Site | Status |
+|---|---|
+| `App.tsx:1672`, `:1867`, `:1951` | already `skipScoping` ✓ |
+| `canvas/widgets/Widgets.tsx:151` | already `skipScoping` ✓ |
+| `components/JockStrip.tsx:46` | already `skipScoping` ✓ |
+| `App.tsx:3339` | **no skipScoping** |
+| `App.tsx:4948` | **no skipScoping** |
+| `components/AutoCue.tsx:231` | **no skipScoping** |
+| `components/CueEditor.tsx:79` | **no skipScoping** |
+| `components/DeckConfigurator.tsx:360` | **no skipScoping** |
 
-- **With** a `LEFT JOIN artists` — silently filters on `artists.station_id` (silent wrong answer).
-- **Without** a join — throws `no such column: station_id` (loud, and whatever catch sits above it
-  decides what the operator sees).
+So the real exposure is **5 sites**, and they fail in the *loud* way, not the jukebox's silent way:
+none of the five carries a `LEFT JOIN artists`, so the injected predicate has no column to bind to and
+the query **throws `no such column: station_id`**. Whatever catch sits above each one decides what the
+operator then sees — most likely an empty list.
 
-**Why it has not been screaming on this machine:** every `artists` row here has `station_id = 1`, so on
-station 1 the injected filter is mostly satisfied. The prediction that follows — untested, stated as a
-prediction — is that these queries return **empty on stations 2/3/4**, because no artist row carries
-those station ids. If halloVeen's library or JockStrip search has ever looked empty, this is the first
-thing to check.
+That also **retracts the prediction** made earlier about stations 2/3/4. It was reasoned from the silent
+`artists.station_id` mechanism, which does not apply to any of the five: they throw on every station,
+including station 1, or they do not throw at all. If AutoCue's song list or the deck-configurator
+playlist has ever been empty, this is the first thing to check — on any station, not just 2/3/4.
 
-`App.tsx:4847` **already carries `{ skipScoping: true }`**, so this trap has been hit and patched once
-before, at one site, without the other ten being swept. That is worth a deliberate pass.
+`App.tsx:4847` carries `skipScoping` already, so the trap has been recognised and patched at several
+sites over time without a sweep that finished the job. Still worth a deliberate pass; still out of
+scope here.
 
 ## 6 · Gates
 
