@@ -56,9 +56,11 @@ class MergeEngine {
     this._localSchemaVersion  = localSchemaVersion;
     this._causalQueue         = causalQueue;
     this._onCursorAdvance     = onCursorAdvance ?? (() => {});
-    // UUID-identity (Tier-2): when on, incoming station_id / parent-FK columns are remapped from the
-    // sender's local integers to THIS install's local ids via the row's stable uuids (m.ref_uuids),
-    // and the row's own integer `id` is never written (matched by uuid). Off → legacy behavior.
+    // UUID-identity (Tier-2). NARROWED 2026-08-17: this flag no longer governs how the apply path
+    // treats integer identity. Ref remapping and local-id preservation are unconditional now (see
+    // _applyToLiveTable) because they are correctness, not a mode — a peer's flag state must never be
+    // able to re-key this machine. The flag now only affects what this install SENDS and how it
+    // SCOPES (sync-engine.js: station_uuid on the wire, uuid-scoped pull).
     this._uuidIdentity        = uuidIdentity ?? false;
     this._refStmts            = {};
 
@@ -195,10 +197,17 @@ class MergeEngine {
       // Deserialization is keyed on the WIRE name (the REGISTRY key), never the physical table.
       const row = deserializePayload(payload_after, m.table_name);
 
-      // UUID-identity: remap the sender's local-integer references (station_id + parent FKs) to THIS
-      // install's local ids via their stable uuids before writing, so a station that is local id 1 on
-      // the sender and id 2 here lands on id 2 here (and its slots link to the local clock/category).
-      if (this._uuidIdentity) this._remapRefs(m, row);
+      // Remap the sender's local-integer references (station_id + parent FKs) to THIS install's local
+      // ids via their stable uuids before writing, so a station that is local id 1 on the sender and
+      // id 2 here lands on id 2 here (and its slots link to the local clock/category).
+      //
+      // UNGATED (2026-08-17). This used to run only when `this._uuidIdentity` was true — i.e. only
+      // when THIS machine's flag was on. That is backwards: the uuids being consumed are attached by
+      // the SENDER (m.ref_uuids), and if a sender took the trouble to send stable identity, ignoring
+      // it because of a local flag writes the sender's integers into our child rows — the same
+      // re-key defect one level down. _remapRefs is a no-op when ref_uuids is absent (every ref is
+      // skipped), so a legacy sender's behavior is unchanged.
+      this._remapRefs(m, row);
 
       // Build column list from defined values (undefined = column missing from payload).
       //
@@ -216,15 +225,39 @@ class MergeEngine {
       // THAT, so a REPLACE re-inserts under the same id and every local reference survives. When no
       // local row exists yet, `id` is still omitted so SQLite assigns one — a genuinely new row is
       // the only case in which a new id is correct.
-      let localId = null;
-      if (this._uuidIdentity && row_id) {
-        try { localId = db.prepare(`SELECT id FROM ${table_name} WHERE uuid = ?`).get(row_id)?.id ?? null; }
-        catch (_) { localId = null; }   // no id/uuid pair on this table — behave as before
+      // THE GATE IS GONE (2026-08-17). Identity preservation is correctness, not a mode.
+      //
+      // 4.4.220 resolved the local id by uuid but made it conditional on `this._uuidIdentity` — a
+      // flag read ONCE at engine construction (main.js) from the ACTIVE station's config. So a peer
+      // whose flag was 'false' still re-keyed this machine: OV pushed its stations as ids 1-4, this
+      // install's 5-8 were REPLACE-deleted and re-inserted as 1-4, and 137,878 generated_schedule
+      // rows plus 48,099 play_log rows were orphaned. That happened twice, the second time AFTER
+      // 4.4.220 shipped the "fix". docs/fix-pass-2026-08-17-sync.md §2.
+      //
+      // The sender's integer id is ALWAYS meaningless here — ids are per-machine AUTOINCREMENT and
+      // rows are matched across machines by uuid — so no flag can make writing it correct. Three
+      // cases, none of which consult a flag:
+      //
+      //   local row exists, id set   → write THAT id, so a REPLACE re-inserts under it and every
+      //                                local reference (station_id, song_id, clock_id …) survives
+      //   local row exists, id NULL  → let the incoming id through. This is the one legitimate id
+      //                                move (shows null -> real, [N-108c])
+      //   no local row               → OMIT `id` and let SQLite assign. Writing the sender's integer
+      //                                for a row we do not have is the second data-loss path: if an
+      //                                UNRELATED local row already holds that id, INSERT OR REPLACE
+      //                                deletes it.
+      //
+      // A table with no id/uuid pair (station_config_kv, install_config_kv …) keeps legacy behavior:
+      // the lookup throws, localRow stays undefined, and `id` is left exactly as the payload had it.
+      let localRow;                    // undefined = no id/uuid pair on this table; null = new row here
+      if (row_id) {
+        try { localRow = db.prepare(`SELECT id FROM ${table_name} WHERE uuid = ?`).get(row_id) ?? null; }
+        catch (_) { localRow = undefined; }
       }
+      const localId = (localRow && localRow.id != null) ? localRow.id : null;
       if (localId != null) row.id = localId;
-      const cols = Object.keys(row).filter(k =>
-        row[k] !== undefined && !(this._uuidIdentity && k === 'id' && localId == null)
-      );
+      const omitId = (localRow === null);   // strictly "we looked, and this row is genuinely new here"
+      const cols = Object.keys(row).filter(k => row[k] !== undefined && !(k === 'id' && omitId));
       if (cols.length === 0) return;
 
       const placeholders = cols.map(() => '?').join(', ');

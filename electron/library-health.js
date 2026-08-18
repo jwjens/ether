@@ -29,7 +29,10 @@ function noteEvent(kind, data) {
 }
 
 function createLibraryHealth(opts) {
-  const { getDb, backendUrl, licenseKeyFn, broadcast, userDataDir } = opts;
+  // musicDirFn: () => this machine's library root. REQUIRED by the prefetch path — it is the only
+  // trustworthy source of a target directory, because every stored file_path column is a synced
+  // `blob-ref` and may hold another machine's absolute path. See prefetchTick below.
+  const { getDb, backendUrl, licenseKeyFn, broadcast, userDataDir, musicDirFn } = opts;
   const jsonlPath = path.join(userDataDir, 'health-events.jsonl');
   const inFlight = new Set();          // file_key currently downloading (dedup)
   const skipCounts = new Map();        // stationId -> { hour: <epoch hour>, n }
@@ -475,7 +478,63 @@ function createLibraryHealth(opts) {
     return snap;
   }
 
-  // ── R2 PREFETCH — materialize absent+file_key upcoming rows to their file_path (background) ──
+  // ── R2 PREFETCH — materialize absent upcoming rows into THIS machine's library (background) ──
+  //
+  // THE PATH RULE (2026-08-17). A stored file_path is NOT a destination. `songs.file_path` is typed
+  // 'blob-ref' in the sync registry, and blob-ref in v0 ships the literal absolute path
+  // (electron/sync/mutation-writer.js:489) — so a peer's `C:\Users\<them>\Music\...` lands verbatim
+  // in this database. Prefetch used to hand that straight to fs.mkdirSync, which produced 2,443
+  // logged failures between 2026-08-15 and 2026-08-16:
+  //   EPERM: operation not permitted, mkdir 'C:\Users\projector\Music\ether music library'
+  // Every one of those is a track that never materialized and was silently missing when it was due
+  // to air. docs/sync-systems-map.md §B and §5.
+  //
+  // Resolution order now, and none of it trusts a synced column:
+  //   1. content_hash → local_files.local_path (the machine-independent design in
+  //      electron/audio-resolver.js). local_files does NOT sync — it is per-machine by construction.
+  //      A hit means the bytes are already here under whatever name this machine gave them.
+  //   2. otherwise materialize under musicDirFn() using only the BASENAME of the candidate path.
+  //      A filename is machine-neutral; the directory it came from is not.
+  // Anything that cannot be resolved to a path inside this machine's library root is SKIPPED with a
+  // reason on the event ledger. Prefetch never creates a directory it did not derive itself.
+
+  // songs → content_hash, if this install has the link. songs_v2/local_files are the v2 identity
+  // tables; `songs` gained no content_hash column on some installs, and songs.file_key is a BASENAME
+  // (verified 2026-08-17: 0 of 543 songs join songs_v2 on file_key). Returns null when the link is
+  // absent, which routes the caller to step 2 rather than inventing a hash.
+  function contentHashFor(db, songId) {
+    if (songId == null) return null;
+    try {
+      const r = db.prepare('SELECT content_hash FROM songs WHERE id = ?').get(songId);
+      return (r && r.content_hash) ? String(r.content_hash) : null;
+    } catch { return null; }   // no such column on this install — expected, not an error
+  }
+
+  // Already-local check by content hash. local_files is the per-machine hash → path map.
+  function localPathByHash(db, contentHash) {
+    if (!contentHash) return null;
+    try {
+      const r = db.prepare('SELECT local_path FROM local_files WHERE content_hash = ?').get(contentHash);
+      return (r && r.local_path && exists(r.local_path)) ? r.local_path : null;
+    } catch { return null; }
+  }
+
+  // Re-root a candidate onto THIS machine's library. Returns { ok, path } or { ok:false, reason }.
+  function localTargetFor(candidate) {
+    const root = (typeof musicDirFn === 'function') ? musicDirFn() : null;
+    if (!root) return { ok: false, reason: 'no library root on this machine' };
+    const base = path.basename(String(candidate || '')).trim();
+    if (!base || base === '.' || base === path.sep) return { ok: false, reason: 'no filename to materialize' };
+    const rootRes   = path.resolve(root);
+    const targetRes = path.resolve(rootRes, base);
+    // Containment assertion — a basename cannot normally escape, but this is the invariant that
+    // matters and it costs nothing to assert it rather than assume it.
+    if (targetRes !== rootRes && !targetRes.startsWith(rootRes + path.sep)) {
+      return { ok: false, reason: 'target escapes this machine library root' };
+    }
+    return { ok: true, path: targetRes };
+  }
+
   async function fetchToPath(fileKey, targetPath) {
     const licenseKey = licenseKeyFn();
     if (!licenseKey) return { ok: false, error: 'no license' };
@@ -489,6 +548,14 @@ function createLibraryHealth(opts) {
       const g = await fetch(d.signed_url);
       if (!g.ok) throw new Error(`GET HTTP ${g.status}`);
       const buf = Buffer.from(await g.arrayBuffer());
+      // LAST GATE BEFORE mkdir. The caller derives targetPath from musicDirFn(), so this should never
+      // fire — which is exactly why it is here: this is the one line that used to create (or fail to
+      // create) another machine's home directory, and it must never be reachable from a stored path
+      // again, whatever a future caller does.
+      const guard = localTargetFor(targetPath);
+      if (!guard.ok || guard.path !== path.resolve(targetPath)) {
+        return { ok: false, error: `refused: target is outside this machine's library (${guard.reason || 'mismatch'})` };
+      }
       fs.mkdirSync(path.dirname(targetPath), { recursive: true });
       const tmp = targetPath + '.tmp';
       fs.writeFileSync(tmp, buf); fs.renameSync(tmp, targetPath);
@@ -502,13 +569,37 @@ function createLibraryHealth(opts) {
     let targets = [];
     for (const sid of stationIds(db)) {
       try {
+        // g.file_path stays (generated_schedule is syncExcluded — a local playout artifact, so its
+        // path is this machine's). s.file_path is kept ONLY as a source of a filename, never as a
+        // destination, and is re-rooted below. s.id carries the song through so the hash route can
+        // run. See THE PATH RULE above.
         const rows = db.prepare(
-          `SELECT DISTINCT COALESCE(g.file_path, s.file_path) fp, s.file_key fk, g.title
+          `SELECT DISTINCT g.file_path gfp, s.file_path sfp, s.file_key fk, s.id sid, g.title
              FROM generated_schedule g LEFT JOIN songs s ON s.id=g.song_id
             WHERE g.station_id=? AND g.deleted_at IS NULL AND (g.state IS NULL OR g.state IN ('pending','playing'))
               AND g.scheduled_at BETWEEN ? AND ? AND (g.content_class IS NULL OR g.content_class NOT IN ('JIN','SWP'))
             ORDER BY g.scheduled_at LIMIT 40`).all(sid, nowSec() - 300, nowSec() + 7200);
-        for (const r of rows) if (r.fp && r.fk && !exists(r.fp) && !inFlight.has(r.fk)) targets.push(r);
+
+        for (const r of rows) {
+          if (!r.fk || inFlight.has(r.fk)) continue;
+
+          // 1. Already here by content hash? Nothing to fetch, whatever any path column claims.
+          const hash = contentHashFor(db, r.sid);
+          if (localPathByHash(db, hash)) continue;
+
+          // The local playout path is trustworthy when it exists; a stored path that is already a
+          // real file on this machine is equally fine. Neither is used as a mkdir target.
+          if (exists(r.gfp) || exists(r.sfp)) continue;
+
+          // 2. Re-root onto this machine's library, using the filename only.
+          const t = localTargetFor(r.gfp || r.sfp || r.fk);
+          if (!t.ok) {
+            appendJsonl({ kind: 'prefetch', ok: false, title: r.title, skipped: true, reason: t.reason });
+            continue;
+          }
+          if (exists(t.path)) continue;                     // already materialized under our own name
+          targets.push({ fp: t.path, fk: r.fk, title: r.title });
+        }
       } catch { /* skip station */ }
     }
     // De-dup by file_key, cap the batch so a tick is bounded.

@@ -342,7 +342,21 @@ export async function stampLicenseEverywhere(key: string): Promise<void> {
       if (st?.owner_license_key !== key) {
         try { await ether.stations.setOwnerLicense(st.id, key); } catch { /* per-station best effort */ }
       }
-      try { await ether.stationConfigKv.upsertByKey(st.id, "license_key", key); } catch { /* legacy slot */ }
+      // READ BEFORE WRITE. This runs on App.tsx's 20s syncCloud interval, and slot 3 is
+      // station_config_kv — a SYNCED table, so an unconditional upsert here journals a CRDT mutation
+      // per station per tick and every peer replays it forever. The owner_license_key stamp above has
+      // always been guarded; this one was not, which is what produced 2,312 no-op `license_key`
+      // mutations (100% of them) in a single day across two machines.
+      //
+      // The main-process writer refuses no-ops too (electron/sync/handlers/station_config_kv.js), so
+      // this is belt-and-suspenders — but it also spares the IPC round trip on the hot path.
+      // docs/sync-systems-map.md §3.
+      try {
+        const rows = (await ether.stationConfigKv.list(st.id))?.rows || [];
+        const current = rows.find((r: any) => r.key === "license_key" && !r.deleted_at);
+        if (current && String(current.value) === String(key)) continue;   // already correct — say nothing
+        await ether.stationConfigKv.upsertByKey(st.id, "license_key", key);
+      } catch { /* legacy slot */ }
     }
   } catch (e) { console.warn("[reconcile] station stamp failed:", (e as any)?.message ?? e); }
 }

@@ -719,6 +719,10 @@ if (AUDIO_DAEMON_DESIRED) {
       backendUrl: ETHER_BACKEND_URL,
       licenseKeyFn: () => { try { return accountLicenseKey(); } catch { return null; } },
       broadcast: sendToAllWindows,
+      // THIS machine's library root, as a function so it tracks a Relocate without a restart.
+      // getMusicDir() reads music-dir.txt (a FILE, not the DB) and so is immune to the synced
+      // file_path columns that used to steer prefetch into another machine's home directory.
+      musicDirFn: () => { try { return getMusicDir(); } catch { return null; } },
       // The health ledger is ACCOUNT state (it records this account's library), so it lives in the
       // profile alongside the database it describes — not in machine-level Roaming.
       userDataDir: P.profileDir(P.activeKey()),
@@ -8949,10 +8953,16 @@ ipcMain.handle('sync:get-state', () => {
 // IPC-only: this is engineering surface, not an operator feature, and a button that force-drains a
 // mutation queue does not belong in the UI.
 
-/** `sync_uuid_identity` decides whether station-scoped rows route by station UUID instead of by the
- *  LOCAL INTEGER station id. It is read ONCE, when the sync engine is constructed at startup
- *  (see the sync bootstrap above), so writing it cannot take effect in the running process —
- *  `restartRequired` is a fact about the read, not caution.
+/** `sync_uuid_identity` decides whether station-scoped rows this install SENDS are scoped by station
+ *  UUID instead of by the LOCAL INTEGER station id.
+ *
+ *  It no longer needs a restart: the scheduler rebuilds its engine in place (setUuidIdentity), the
+ *  same rebuild it already performs when the database handle is reopened.
+ *
+ *  It also no longer governs INBOUND integer identity. Preserving this machine's local ids across an
+ *  apply is unconditional in merge-engine.js as of 2026-08-17 — it used to be gated on this flag,
+ *  which is how a peer with the flag OFF re-keyed this install's stations twice. A flag must never be
+ *  able to make another machine renumber our rows. docs/fix-pass-2026-08-17-sync.md §2.
  *
  *  Written with the SYNCABLE writer, not `stationConfigKvSetLocal`: this key is not in
  *  LOCAL_ONLY_KEYS, and set-local REFUSES any key that is not — the same silent-refusal trap that
@@ -8971,14 +8981,23 @@ ipcMain.handle('sync:set-uuid-identity', (_evt, arg) => {
     stationConfigKvUpsertByKey(db, stationId, 'sync_uuid_identity', enabled ? 'true' : 'false');
     // Read it BACK. A write that reports success without re-reading is how the designation bug hid.
     const readBack = stationConfigKvGetValue(db, stationId, 'sync_uuid_identity');
+    // Apply it to the RUNNING engine, then report what the engine actually holds — not what we hoped
+    // it would hold. A toggle that reports success without re-reading the live engine is the same
+    // class of lie as a write that reports success without re-reading the row.
+    let applied = { changed: false, uuidIdentity: null };
+    try { applied = app._syncScheduler?.setUuidIdentity?.(enabled) ?? applied; }
+    catch (e) { console.error('[sync:set-uuid-identity] live apply failed:', e.message); }
     const engineIsUsingIt = !!(app._syncScheduler && app._syncScheduler._engineOpts?.uuidIdentity);
     return {
-      ok: readBack === (enabled ? 'true' : 'false'),
+      ok: readBack === (enabled ? 'true' : 'false') && engineIsUsingIt === enabled,
       key: 'sync_uuid_identity', stationId, wrote: enabled ? 'true' : 'false', readBack,
       engineIsUsingIt,
-      restartRequired: true,
-      note: 'Stored. The sync engine reads this only at startup — fully quit and reopen Ether (the '
-          + 'audio daemon does not reload on its own) before this affects any push or pull.',
+      engineRebuilt: applied.changed,
+      restartRequired: false,
+      note: app._syncScheduler
+        ? 'Stored and applied to the running sync engine — no restart needed. This affects what this '
+        + 'install SENDS/scopes only; inbound rows never re-key this machine regardless of the flag.'
+        : 'Stored. No sync scheduler is running yet, so it will be picked up when sync starts.',
     };
   } catch (e) {
     console.error('[sync:set-uuid-identity]', e.message);

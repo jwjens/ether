@@ -84,6 +84,22 @@ const SYNCED_TABLE_DDL = {
     );
   `,
 
+  // station_config_kv — needed for T-39/T-40 (the upsert no-op guard). PK is (station_id, key),
+  // which is why a bare `WHERE key = ?` read ever hit the wrong row. Mirrors the live schema.
+  station_config_kv: `
+    CREATE TABLE station_config_kv (
+      station_id   INTEGER NOT NULL,
+      key          TEXT NOT NULL,
+      value        TEXT,
+      uuid         TEXT NOT NULL,
+      created_at   INTEGER DEFAULT (unixepoch()),
+      updated_at   INTEGER DEFAULT (unixepoch()),
+      deleted_at   INTEGER,
+      station_uuid TEXT,
+      PRIMARY KEY (station_id, key)
+    );
+  `,
+
   // install_secrets_kv — needed for T-25 (push-filter excludes it)
   install_secrets_kv: `
     CREATE TABLE install_secrets_kv (

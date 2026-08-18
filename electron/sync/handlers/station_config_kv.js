@@ -56,6 +56,12 @@ const LOCAL_ONLY_PREFIXES = ['grid_widths_'];
 const isLocalOnlyKey = (k) =>
   typeof k === 'string' && (LOCAL_ONLY_KEYS.has(k) || LOCAL_ONLY_PREFIXES.some((p) => k.startsWith(p)));
 
+// Value comparison for the no-op guard below. The column is TEXT but SQLite is loosely typed, so a
+// caller that bound a number reads back as a number — 5 and '5' are the same stored config value and
+// must not journal a mutation. null/undefined stay distinct from '' (clearing a key is a real edit).
+const _sameValue = (a, b) =>
+  (a === b) || (a != null && b != null && String(a) === String(b));
+
 // Direct, MUTATION-LESS upsert for a local-authoritative key. Bypasses withMutation entirely, so the
 // value never becomes a syncable mutation. The ONLY sanctioned writer for a LOCAL_ONLY_KEYS key.
 function stationConfigKvSetLocal(db, stationId, key, value) {
@@ -231,6 +237,19 @@ function stationConfigKvUpsertByKey(db, stationId, key, value) {
       ).run(row.station_id, row.key, row.value, row.uuid, row.created_at, row.updated_at, row.deleted_at);
     });
     return stationConfigKvGet(db, uuid);
+  }
+  // NO-OP GUARD. A write that changes nothing must never journal a mutation: every mutation is
+  // pushed, pulled, applied and retained by every peer, forever. Without this guard any caller on a
+  // timer becomes permanent sync load. Measured 2026-08-17: `stampLicenseEverywhere`
+  // (src/lib/ccData.ts) re-stamped `license_key` on all four stations every 20s from App.tsx's
+  // syncCloud interval, and 2,312 of 2,312 license_key mutations in the journal had
+  // payload_before.value === payload_after.value — 17,280 no-op mutations per machine per day.
+  //
+  // Resurrecting a tombstoned row IS a real change (deleted_at NULL-ing is the whole point of the
+  // upsert), so deleted_at is part of the comparison, not just value.
+  // docs/sync-systems-map.md §C "Timers that write shared state".
+  if (_sameValue(existing.value, value) && existing.deleted_at == null) {
+    return stationConfigKvGet(db, existing.uuid);
   }
   const before  = serializePayload(existing, TABLE);
   const updated = { ...existing, value: value, deleted_at: null, updated_at: now };

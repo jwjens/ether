@@ -125,6 +125,26 @@ class SyncScheduler {
     return this._engine;
   }
 
+  /** Apply a new sync_uuid_identity setting to the RUNNING engine.
+   *
+   *  The flag used to be read once, at construction, so `sync:set-uuid-identity` could only report
+   *  restartRequired:true — and a toggle that appeared to work but did nothing until a full quit is
+   *  how the wrong value stayed live for a day. The engine is cheap to rebuild (that is what
+   *  _ensureEngine already does on a reopen), so a toggle rebuilds it in place.
+   *
+   *  Note this governs SEND/SCOPE behavior only. Inbound integer identity is preserved
+   *  unconditionally by MergeEngine regardless of this setting — see merge-engine.js. */
+  setUuidIdentity(enabled) {
+    const next = !!enabled;
+    const prev = !!this._engineOpts.uuidIdentity;
+    if (prev === next) return { changed: false, uuidIdentity: next };
+    this._engineOpts.uuidIdentity = next;
+    this._engineConn = this._getDb();
+    this._engine = new SyncEngine(this._engineConn, this._transport, this._engineOpts);
+    console.log(`[SYNC] uuid-identity ${next ? 'ENABLED' : 'disabled'} — engine rebuilt in place (no restart)`);
+    return { changed: true, uuidIdentity: next };
+  }
+
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   start() {
