@@ -5,7 +5,16 @@ import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── Types ─────────────────────────────────────────────────────
 
-export type DeckType = "music" | "mic" | "guest" | "cart" | "desk" | "video";
+// "jukebox" (2026-08-17) is a SOURCE you patch into a deck, like a mic — the public request kiosk's
+// audio. It is only offerable on slots D/E/F: station automation enumerates ["A","B","C"] and nothing
+// else (audiod/engine.js:521, :604, :648, :905, :1698 …), so a jukebox on D/E/F is a deck rotation
+// structurally cannot touch. Offering it on A/B/C would put the public and the scheduler on the same
+// deck. docs/jukebox-deck-source-design-2026-08-17.md
+export type DeckType = "music" | "mic" | "guest" | "cart" | "desk" | "video" | "jukebox";
+
+/** Slots the jukebox source may be assigned to. Not a preference — see the note above. */
+export const JUKEBOX_SLOTS = ["D", "E", "F"] as const;
+export const canHostJukebox = (slot: string) => (JUKEBOX_SLOTS as readonly string[]).includes(String(slot).toUpperCase());
 
 export interface DeckConfig {
   slot: string;       // "A" | "B" | "C" | "D" | "E" | "F"
@@ -42,6 +51,7 @@ const TYPE_META: Record<DeckType, { label: string; icon: string; color: string; 
   cart:   { label: "Cart",         icon: "⚡",  color: "#fbbf24", desc: "Hot-key sound effects & stingers" },
   desk:   { label: "Desk",         icon: "🎛️",  color: "#a78bfa", desc: "Producer desk — carts, jingles & production tools" },
   video:  { label: "Video Studio", icon: "🎥",  color: "var(--accent-blue)", desc: "Live video camera, streaming & recording — spans 3 decks" },
+  jukebox:{ label: "Jukebox",      icon: "🎶",  color: "#8868D8", desc: "Public request kiosk — mix it like any source; automation never touches this deck" },
 };
 
 // ── useDeckConfig ─────────────────────────────────────────────
@@ -138,7 +148,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
     setConfigs(p => p.map(c => c.slot === slot ? {
       ...c, type,
       color: TYPE_META[type].color,
-      label: type === "mic" ? "Mic" : type === "guest" ? `Guest ${p.filter(x => x.type === "guest" && x.slot !== slot).length + 1}` : type === "desk" ? "Desk" : `Deck ${slot}`,
+      label: type === "mic" ? "Mic" : type === "jukebox" ? "Jukebox" : type === "guest" ? `Guest ${p.filter(x => x.type === "guest" && x.slot !== slot).length + 1}` : type === "desk" ? "Desk" : `Deck ${slot}`,
     } : c));
   };
 
@@ -212,7 +222,11 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
 
                   {/* Type selector */}
                   <div style={{ display: "flex", gap: 4, flex: 1 }}>
-                    {(Object.keys(TYPE_META) as DeckType[]).map(type => (
+                    {/* Jukebox is offered on D/E/F only — automation owns A/B/C and must never share a
+                        deck with the public request kiosk. See canHostJukebox and the DeckType note. */}
+                    {(Object.keys(TYPE_META) as DeckType[])
+                      .filter(type => type !== "jukebox" || canHostJukebox(c.slot))
+                      .map(type => (
                       <button
                         key={type}
                         onClick={() => {
@@ -226,7 +240,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
                               enabled: true,
                               type,
                               color: TYPE_META[type].color,
-                              label: type === "mic" ? "Mic" : type === "guest" ? `Guest ${p.filter(g => g.type === "guest" && g.slot !== c.slot).length + 1}` : type === "cart" ? `Cart ${p.filter(g => g.type === "cart" && g.slot !== c.slot).length + 1}` : type === "desk" ? "Desk" : `Deck ${x.slot}`,
+                              label: type === "mic" ? "Mic" : type === "jukebox" ? "Jukebox" : type === "guest" ? `Guest ${p.filter(g => g.type === "guest" && g.slot !== c.slot).length + 1}` : type === "cart" ? `Cart ${p.filter(g => g.type === "cart" && g.slot !== c.slot).length + 1}` : type === "desk" ? "Desk" : `Deck ${x.slot}`,
                             } : x);
                           });
                         }}

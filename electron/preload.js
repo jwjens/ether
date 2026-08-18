@@ -368,6 +368,18 @@ contextBridge.exposeInMainWorld("ether", {
   jingleCategories:          handlers.jingleCategories,
   spots:                     handlers.spots,
   stationConfigKv:           handlers.stationConfigKv,
+  // Jukebox requests — LOCAL-ONLY table (migration v38). Who asked for what on the public kiosk;
+  // the daemon's queue remains the source of truth for what actually plays.
+  jukebox: {
+    listRequests: (stationId)  => ipcRenderer.invoke("jukebox:requests-list", stationId),
+    createRequest: (req)       => ipcRenderer.invoke("jukebox:request-create", req),
+    attachQid:    (id, qid)    => ipcRenderer.invoke("jukebox:request-attach-qid", id, qid),
+    closeRequest: (id, outcome)=> ipcRenderer.invoke("jukebox:request-close", id, outcome),
+    // Deck source (D/E/F) — the jukebox airs through a real deck the operator mixes on the board.
+    play:         (req)        => ipcRenderer.invoke("jukebox:play", req),
+    stop:         (req)        => ipcRenderer.invoke("jukebox:stop", req),
+    deckState:    (req)        => ipcRenderer.invoke("jukebox:deck-state", req),
+  },
   stationProgramming:        handlers.stationProgramming,
   stationProgrammingMoods:   handlers.stationProgrammingMoods,
   voiceTracks:               handlers.voiceTracks,

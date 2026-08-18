@@ -2571,47 +2571,71 @@ function createTray() {
 
 // ── App lifecycle ─────────────────────────────────────────────
 function buildMenu() {
+  // Menu commands go to the MAIN WINDOW, always — never to whatever happens to be focused.
+  //
+  // THE BUG THIS FIXES (2026-08-17 audit, docs/native-menu-audit-2026-08-17.md §3.1): this used to be
+  // `getFocusedWindow() || mainWindow`. Pop-outs are ordinary framed BrowserWindows, so on Windows they
+  // display the FULL application menu bar — File, View, Library, Schedule, Tools, Help. But a pop-out
+  // renders <PopoutRenderer/>, not <App/> (src/main.tsx:92-96), and the only "menu-action" listener in
+  // the tree is inside App() (src/App.tsx:1037). So every menu item, in every menu, was delivered to a
+  // window with nobody listening and vanished: a complete menu bar that did nothing, on every pop-out.
+  //
+  // Every one of these commands navigates or toggles THE DASHBOARD, so the dashboard is the only
+  // correct target. It is shown and focused too — routing the message without surfacing the window
+  // would swap one silent click for another.
+  //
+  // NOT changed: Toggle DevTools still targets the focused window, deliberately (see its own note
+  // below — F12 inside a pop-out must open THAT pop-out's DevTools, not the dashboard's).
   const send = (cmd) => {
-    const win = BrowserWindow.getFocusedWindow() || mainWindow;
-    if (win) win.webContents.send("menu-action", cmd);
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    try { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); }
+    catch { /* window is mid-teardown; the message below is still worth attempting */ }
+    mainWindow.webContents.send("menu-action", cmd);
   };
-  const popout = (panel) => {
-    // Re-use the same handler logic as the IPC "window:popout" handler
-    const tag = `popout:${panel}`;
-    const existing = BrowserWindow.getAllWindows().find(w => w.getTitle() === tag);
-    if (existing) { existing.show(); existing.focus(); return; }
-    const { screen } = require("electron");
-    const size = POPOUT_SIZES[panel] || { width: 640, height: 520 };
-    const displays = screen.getAllDisplays();
-    const primary = screen.getPrimaryDisplay();
-    const secondary = displays.find(d => d.id !== primary.id);
-    const x = secondary ? secondary.workArea.x + 60 : undefined;
-    const y = secondary ? secondary.workArea.y + 60 : undefined;
-    const win = new BrowserWindow({
-      width: size.width, height: size.height,
-      minWidth: 320, minHeight: 200, x, y,
-      // NATIVE TITLE BAR (2026-08-05). This was frameless, so the window had no minimize/maximize/close
-      // of its own — the 4.4.142 traffic-light overlay was briefly its only control, and removing that
-      // in 4.4.143 left it with NO way to close or minimise. Native chrome is the fix: every window the
-      // app opens gets real OS controls, and no in-app dots are needed anywhere.
-      title: tag, frame: true, transparent: false,
-      backgroundColor: "#0e0e14", resizable: true,
-      webPreferences: {
-        preload: path.join(__dirname, "preload.js"),
-        contextIsolation: true, nodeIntegration: false, webSecurity: false,
-      },
-    });
-    attachPopoutDebugBridge(win, panel);
 
-    if (isDev) win.loadURL(VITE_DEV_URL + `#popout/${panel}`);
-    else win.loadFile(path.join(__dirname, "../dist/index.html"), { hash: `popout/${panel}` });
+  // ── Where a menu click lands depends on WHERE IT WAS CLICKED (Jeff, 2026-08-17) ─────────────────
+  //
+  // THE MAIN WINDOW IS THE BOARD, AND THE BOARD DOES NOT GET COVERED. During a live event — Jukebox
+  // up, faders hot — a menu click from a pop-out that raises the dashboard and buries the decks under
+  // a panel is exactly the wrong outcome.
+  //
+  //   click from the MAIN window  → unchanged: the panel opens in the dashboard.
+  //   click from a POP-OUT        → the target opens as ITS OWN pop-out window; the dashboard is not
+  //                                 shown, focused or repainted. Already open → that window is focused
+  //                                 rather than duplicated (openPopoutWindow dedupes by title).
+  //
+  // Targets with no stand-alone pop-out (dashboard layout actions, and panels wired to <App/> state)
+  // keep the main-window behavior. They are listed in docs/native-menu-audit-2026-08-17.md §7 rather
+  // than decided silently here.
+  const fromPopout = () => {
+    const w = BrowserWindow.getFocusedWindow();
+    return !!(w && w !== mainWindow && !w.isDestroyed() && w.getTitle().startsWith("popout:"));
   };
+
+  /** A menu target that can stand alone. `popoutPanel` is its #popout/<panel> route. */
+  const menuNav = (cmd, popoutPanel) => {
+    if (popoutPanel && fromPopout()) { openPopoutWindow(popoutPanel); return; }
+    send(cmd);
+  };
+
+  /** Schedule ▸ Clocks / Shows & Dayparts / Categories. In the dashboard these are two commands
+   *  (open the Scheduler, then select its tab); as a pop-out each tab is its own panel, so the pair
+   *  must not fire — two sends would open the scheduler AND raise the dashboard. */
+  const menuNavTab = (tab) => {
+    if (fromPopout()) { openPopoutWindow(tab); return; }
+    send("nav:clocks");
+    send(`nav:scheduler-tab:${tab}`);
+  };
+  // ONE pop-out opener for the whole app. This was a near-copy of openPopoutWindow that drifted:
+  // it had no saved-bounds restore, no jukebox kiosk fullscreen, and its own window options. Menu
+  // routing now depends on a single opener that dedupes by title, so the copy is gone.
+  const popout = (panel) => openPopoutWindow(panel);
   const template = [
     { label: "File", submenu: [
       { label: "New Session", accelerator: "CmdOrCtrl+N", click: () => send("file:new-session") },
       { label: "Save Layout", accelerator: "CmdOrCtrl+S", click: () => send("file:save") },
       { type: "separator" },
-      { label: "Import Music...", click: () => send("file:import") },
+      { label: "Import Music...", click: () => menuNav("file:import", "library") },
       { label: "Preferences", click: () => send("file:preferences") },
       { type: "separator" },
       // ONE DOOR. "Switch Account…" is gone: under profile-per-account, switching IS signing out
@@ -2642,53 +2666,60 @@ function buildMenu() {
         click: () => (BrowserWindow.getFocusedWindow() || mainWindow)?.webContents.toggleDevTools() },
     ]},
     { label: "Library", submenu: [
-      { label: "Library", click: () => send("nav:library") },
-      { label: "Spots & Promos", click: () => send("nav:spots") },
-      { label: "Voice Tracker", click: () => send("nav:voicetrack") },
+      { label: "Library", click: () => menuNav("nav:library", "library") },
+      { label: "Spots & Promos", click: () => menuNav("nav:spots", "spots") },
+      { label: "Voice Tracker", click: () => menuNav("nav:voicetrack", "voicetrack") },
       { type: "separator" },
-      { label: "Import from Folder...", click: () => send("file:import") },
+      { label: "Import from Folder...", click: () => menuNav("file:import", "library") },
       { label: "Cue Editor", click: () => send("nav:trackedit") },
     ]},
     { label: "Schedule", submenu: [
-      { label: "Clocks",           click: () => { send("nav:clocks"); send("nav:scheduler-tab:clocks"); } },
-      { label: "Shows & Dayparts", click: () => { send("nav:clocks"); send("nav:scheduler-tab:shows"); } },
-      { label: "Categories",       click: () => { send("nav:clocks"); send("nav:scheduler-tab:categories"); } },
+      { label: "Clocks",           click: () => menuNavTab("clocks") },
+      { label: "Shows & Dayparts", click: () => menuNavTab("shows") },
+      { label: "Categories",       click: () => menuNavTab("categories") },
       { type: "separator" },
       // Two DIFFERENT documents, named for what they are. Program Log is the PLAN and lives as a pane
       // in the Schedule Manager; Play Log is the as-run RECORD and is now one page, not two.
-      { label: "Program Log",      click: () => send("nav:programlog") },
-      { label: "Play Log",         click: () => send("nav:logs") },
+      { label: "Program Log",      click: () => menuNav("nav:programlog", "programlog") },
+      { label: "Play Log",         click: () => menuNav("nav:logs", "logs") },
       // 2026-08-10: added HERE, in the NATIVE menubar. Phase 4 first put Rotation Analytics into the
       // React <Menu> blocks in App.tsx — which are not what this app renders. The visible menubar is
       // this Electron template, so the item existed in the code and nowhere the operator could reach
       // it. Exactly the "doors before rooms" failure: it's in the code is not shipped.
-      { label: "Rotation Analytics", click: () => send("nav:rotation") },
-      { label: "Schedule Manager",   click: () => send("nav:schedulehub") },
-      { label: "Announcements",    click: () => send("nav:announce") },
-      { label: "EAS Logbook",     click: () => send("nav:eas") },
+      { label: "Rotation Analytics", click: () => menuNav("nav:rotation", "rotation") },
+      { label: "Schedule Manager",   click: () => menuNav("nav:schedulehub", "schedulehub") },
+      { label: "Announcements",    click: () => menuNav("nav:announce", "announce") },
+      { label: "EAS Logbook",     click: () => menuNav("nav:eas", "eas") },
     ]},
     { label: "Tools", submenu: [
-      { label: "Voice Tracker", click: () => send("nav:voicetrack") },
-      { label: "Show+ DAW", click: () => send("nav:studio") },
-      { label: "Show+",  click: () => send("nav:videostudio") },
+      { label: "Voice Tracker", click: () => menuNav("nav:voicetrack", "voicetrack") },
+      // Show+ DAW is a POP-OUT, not an inline panel. This used to send nav:studio → setPanel("studio"),
+      // and "studio" has had ZERO render sites since the DAW moved to its own window (App.tsx:2722) —
+      // so the item set a panel nothing draws and the click did nothing. The drawer entry was updated
+      // at the time; this one was missed. Audit §3.2.
+      { label: "Show+ DAW", click: () => popout("studiopro") },
+      { label: "Show+",  click: () => menuNav("nav:videostudio", "videostudio") },
       { label: "Cue Editor", click: () => send("nav:trackedit") },
       { label: "Clip Editor", click: () => send("nav:clipeditor") },
       { type: "separator" },
-      { label: "Import Library...", click: () => send("nav:importlibrary") },
+      { label: "Import Library...", click: () => menuNav("nav:importlibrary", "importlibrary") },
       { type: "separator" },
-      { label: "Stream Manager", click: () => send("nav:streaming") },
-      { label: "Smart Scheduler", click: () => send("nav:smartschedule") },
-      { label: "Listener Analytics", click: () => send("nav:analytics") },
-      { label: "Cloud Log Backup",   click: () => send("nav:cloudbackup") },
-      { label: "Audio Routing", click: () => send("nav:multioutput") },
+      { label: "Stream Manager", click: () => menuNav("nav:streaming", "streaming") },
+      { label: "Smart Scheduler", click: () => menuNav("nav:smartschedule", "smartschedule") },
+      { label: "Listener Analytics", click: () => menuNav("nav:analytics", "analytics") },
+      { label: "Cloud Log Backup",   click: () => menuNav("nav:cloudbackup", "cloudbackup") },
+      { label: "Audio Routing", click: () => menuNav("nav:multioutput", "multioutput") },
       { label: "Station Manager", click: () => send("nav:stationmanager") },
       { type: "separator" },
-      { label: "System Health", click: () => send("nav:health") },
+      { label: "System Health", click: () => menuNav("nav:health", "health") },
       { type: "separator" },
       { label: "Monitors", submenu: [
         { label: "Decks",          click: () => popout("decks") },
         { label: "Show+",   click: () => popout("videostudio") },
-        { label: "Camera",         click: () => popout("camera") },
+        // "Camera" REMOVED (2026-08-17 audit §3.3): there is no `camera` case in PopoutRenderer, so
+        // this opened a window reading "Unknown pop-out panel: camera". POPOUT_SIZES/POPOUT_LABELS
+        // still carry a camera entry, which is what made it look supported. The camera lives inside
+        // Show+ — an item that opens an error window is worse than no item.
         { label: "Queue / Up Next",click: () => popout("upnext") },
         { label: "Station Health", click: () => popout("health") },
         { type: "separator" },
@@ -3995,6 +4026,91 @@ ipcMain.handle("audio:load", async (_, deck, filePath, title, artist, gainDb, st
 // the SAME file playback does). Returns { ok, filePath, error } — never throws.
 ipcMain.handle("audio:resolve-local-path", async (_, filePath) => resolveLocalAudioPath(filePath));
 
+// ── Jukebox deck source (D/E/F) ────────────────────────────────────────────────────────────────────
+//
+// docs/jukebox-deck-source-design-2026-08-17.md. The jukebox is an event tool patched into a deck like
+// a mic: the operator decides with the fader whether it is on air. THE BOARD IS THE TRUTH — nothing
+// here suppresses deck events, metering or logging. The only isolation is that station automation
+// enumerates ["A","B","C"] and never looks at D/E/F.
+//
+// Restricted to D/E/F on purpose: offering A/B/C would hand the public a deck rotation also drives,
+// which is two schedulers fighting over one deck.
+const JUKEBOX_DECKS = ["D", "E", "F"];
+
+ipcMain.handle("jukebox:play", async (_evt, req) => {
+  const deck = String(req?.deck || "").toUpperCase();
+  if (!JUKEBOX_DECKS.includes(deck)) return { ok: false, reason: "deck-not-allowed", allowed: JUKEBOX_DECKS };
+  const stationId = req?.stationId ?? getActiveStationId();
+  if (stationId == null) return { ok: false, reason: "no-station" };
+  if (!req?.filePath) return { ok: false, reason: "no-file" };
+
+  // Resolve exactly like audio:load does (local-first → file_key → R2). The library
+  // R2-materialization gate is a shipped defect class: a row's file_path can point at a file that is
+  // not on this machine, and a public pick that produces silence is the worst failure this feature
+  // has. Soft-fall to the stored path so the engine reports the error the same way it always does.
+  let fp = req.filePath;
+  try { const r = await resolveLocalAudioPath(req.filePath); if (r?.ok) fp = r.filePath; } catch { /* soft-fall */ }
+
+  if (AUDIO_DAEMON) {
+    return audiodClient.cmd("jukebox:play", {
+      stationId, deck, filePath: fp, title: req.title || "", artist: req.artist || "",
+      durationMs: req.durationMs ?? null, gainDb: req.gainDb ?? 0, contentClass: req.contentClass ?? null,
+    });
+  }
+
+  // In-process fallback (no daemon): same two addon calls, and the same honest play_log row.
+  try {
+    const loaded = audio.audioLoad(deck, fp, req.title || "", req.artist || "", req.gainDb ?? 0, stationId);
+    if (loaded === false) return { ok: false, reason: "load-failed" };
+    const played = audio.audioPlay(deck, stationId);
+    if (played === false) return { ok: false, reason: "play-failed" };
+    try {
+      const { playLogCreate } = require("./sync/handlers/play_log");
+      playLogCreate(getDb(), {
+        title: req.title || "", artist: req.artist || "", deck, deck_id: deck,
+        duration_ms: req.durationMs ?? null, played_at: Math.floor(Date.now() / 1000),
+        station_id: stationId, file_path: fp, content_class: req.contentClass ?? "MUSIC",
+        source: "jukebox",   // v39 — honest history: a public pick, not rotation
+      });
+    } catch (e) { console.error("[jukebox] play_log failed:", e.message); }
+    return { ok: true, deck, title: req.title || "" };
+  } catch (e) {
+    console.error("[jukebox:play]", e.message);
+    return { ok: false, reason: "threw", error: e.message };
+  }
+});
+
+ipcMain.handle("jukebox:stop", async (_evt, req) => {
+  const deck = String(req?.deck || "").toUpperCase();
+  if (!JUKEBOX_DECKS.includes(deck)) return { ok: false, reason: "deck-not-allowed" };
+  const stationId = req?.stationId ?? getActiveStationId();
+  if (stationId == null) return { ok: false, reason: "no-station" };
+  if (AUDIO_DAEMON) return audiodClient.cmd("jukebox:stop", { stationId, deck });
+  try { audio.audioStop(deck, stationId); } catch { /* already stopped */ }
+  return { ok: true, deck };
+});
+
+/** What the routed deck is ACTUALLY doing — status, fader level, finished. The kiosk's routing
+ *  banner and on-air indicator read this and never infer from intent. */
+ipcMain.handle("jukebox:deck-state", async (_evt, req) => {
+  const deck = String(req?.deck || "").toUpperCase();
+  if (!JUKEBOX_DECKS.includes(deck)) return { ok: false, reason: "deck-not-allowed" };
+  const stationId = req?.stationId ?? getActiveStationId();
+  if (stationId == null) return { ok: false, reason: "no-station" };
+  if (AUDIO_DAEMON) return audiodClient.cmd("jukebox:state", { stationId, deck });
+  try {
+    const st = JSON.parse(audio.audioGetState(stationId));
+    const info = st[`deck${deck}`] || null;
+    return {
+      ok: true, deck, info,
+      status: info ? info.status : null,
+      volume: info ? info.volume : null,
+      isFinished: info ? !!info.is_finished : false,
+      nowPlaying: null,
+    };
+  } catch (e) { return { ok: false, reason: "threw", error: e.message }; }
+});
+
 // Item 10 Phase 2 Step 1: deck control + state + levels route to the daemon when AUDIO_DAEMON
 // (it owns the engine), else the in-process addon. getState/getLevels return parsed objects
 // from both paths.
@@ -5032,6 +5148,21 @@ const POPOUT_SIZES = {
   "camera":      { width: 640,  height: 480 },
   "health":      { width: 720,  height: 540 },
   "studiopro":   { width: 1280, height: 800 },  // Show+ DAW — its own window, not a dashboard takeover
+  "jukebox":     { width: 1440, height: 900 },  // public kiosk display — opens large, F11 for true fullscreen
+  // Menu-openable panels (audit §7). Document-shaped panels get a tall window; wizards a smaller one.
+  "programlog":  { width: 1180, height: 820 },
+  "logs":        { width: 1100, height: 780 },
+  "rotation":    { width: 1100, height: 780 },
+  "spots":       { width: 1100, height: 760 },
+  "announce":    { width:  900, height: 700 },
+  "eas":         { width:  980, height: 720 },
+  "schedulehub": { width: 1360, height: 860 },
+  "streaming":   { width:  980, height: 720 },
+  "smartschedule": { width: 1000, height: 740 },
+  "analytics":   { width: 1100, height: 780 },
+  "cloudbackup": { width:  900, height: 680 },
+  "multioutput": { width:  960, height: 700 },
+  "importlibrary": { width: 900, height: 660 },
 };
 
 // Human-readable names for the debug bridge's log prefix — "[POPOUT: Show+ DAW] …".
@@ -5047,6 +5178,20 @@ const POPOUT_LABELS = {
   "camera":      "Camera",
   "health":      "Station Health",
   "studiopro":   "Show+ DAW",
+  "jukebox":     "Jukebox",
+  "programlog":  "Program Log",
+  "logs":        "Play Log",
+  "rotation":    "Rotation Analytics",
+  "spots":       "Spots & Promos",
+  "announce":    "Announcements",
+  "eas":         "EAS Logbook",
+  "schedulehub": "Schedule Manager",
+  "streaming":   "Stream Manager",
+  "smartschedule": "Smart Scheduler",
+  "analytics":   "Listener Analytics",
+  "cloudbackup": "Cloud Log Backup",
+  "multioutput": "Audio Routing",
+  "importlibrary": "Import Library",
 };
 
 // ── Pop-out window bounds persistence (every pop-out remembers size + position) ──
@@ -5169,6 +5314,24 @@ function openPopoutWindow(panel) {
     });
   }
 
+  // JUKEBOX — a kiosk display, so it opens FULLSCREEN and stays escapable by staff.
+  //
+  // Fullscreen is handled ENTIRELY HERE, in the main process. The note below this function records
+  // that the renderer-facing win:toggleFullscreen / win:isFullscreen handlers were removed on
+  // 2026-08-05 ("the app uses NATIVE title bars only … Do not reintroduce them without asking"), so
+  // this deliberately does NOT bring them back: no renderer window-control IPC, no traffic lights.
+  // F11 toggles, Escape leaves fullscreen (it never closes the window and never touches audio).
+  if (panel === "jukebox") {
+    win.once("ready-to-show", () => { try { win.setFullScreen(true); } catch { /* display gone */ } });
+    win.webContents.on("before-input-event", (_e, input) => {
+      if (input.type !== "keyDown") return;
+      try {
+        if (input.key === "F11") win.setFullScreen(!win.isFullScreen());
+        else if (input.key === "Escape" && win.isFullScreen()) win.setFullScreen(false);
+      } catch { /* window gone */ }
+    });
+  }
+
   attachPopoutDebugBridge(win, panel);
 
   if (isDev) win.loadURL(VITE_DEV_URL + `#popout/${panel}`);
@@ -5181,6 +5344,93 @@ function openPopoutWindow(panel) {
 // window controls to serve. Do not reintroduce them without asking.
 
 ipcMain.handle("window:popout", async (_, panel) => { openPopoutWindow(panel); });
+
+// ── Jukebox requests (LOCAL-ONLY table, migration v38) ──────────────────────────────────────────
+//
+// Who asked for what, on the public kiosk. The daemon's queue has no requester field, so the name
+// lives here and the rail joins the two by qid — the DAEMON's queue stays the source of truth for
+// what is actually going to play, and this table only says who asked for it.
+//
+// NOT a synced table, deliberately: docs/jukebox-rebuild-design-2026-08-17.md §0.4 and the v38
+// migration header. A public request is a fact about ONE kiosk on ONE night; journalling it would
+// push a stranger's typed name to every peer install in the account.
+//
+// Every handler degrades to empty/false rather than throwing if the table is missing — an install
+// that has not yet run v38 must still open the window and say so, not crash (robustness rule).
+function jukeboxTableReady() {
+  try {
+    return !!getDb().prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='jukebox_requests'").get();
+  } catch { return false; }
+}
+
+ipcMain.handle("jukebox:requests-list", (_evt, stationId) => {
+  if (!jukeboxTableReady()) return { rows: [], tableMissing: true };
+  try {
+    const sid = Number.isFinite(stationId) ? stationId : getActiveStationId();
+    if (sid == null) return { rows: [], noStation: true };
+    const rows = getDb().prepare(
+      `SELECT id, station_id, requester_name, song_id, file_path, title, artist, status,
+              source, qid, created_at, played_at
+         FROM jukebox_requests
+        WHERE station_id = ? AND status IN ('pending','awaiting','queued')
+        ORDER BY created_at ASC, id ASC`).all(sid);
+    return { rows };
+  } catch (e) {
+    console.error("[jukebox] requests-list:", e.message);
+    return { rows: [], error: e.message };
+  }
+});
+
+ipcMain.handle("jukebox:request-create", (_evt, req) => {
+  if (!jukeboxTableReady()) return { ok: false, error: "jukebox_requests table missing — restart Ether to run migration v38" };
+  try {
+    const sid = Number.isFinite(req?.stationId) ? req.stationId : getActiveStationId();
+    if (sid == null) return { ok: false, error: "no active station" };
+    const name = String(req?.requesterName ?? "").trim().slice(0, 40);
+    if (!name) return { ok: false, error: "a name is required" };
+    if (!req?.filePath || !req?.title) return { ok: false, error: "song is incomplete" };
+    const info = getDb().prepare(
+      `INSERT INTO jukebox_requests
+         (station_id, requester_name, song_id, file_path, title, artist, status, source, qid, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(sid, name, req.songId ?? null, req.filePath, req.title, req.artist ?? null,
+          req.status ?? "queued", req.source ?? "kiosk", req.qid ?? null,
+          Math.floor(Date.now() / 1000));
+    // Read the row BACK rather than reporting success from the insert alone — the same rule the
+    // designation bug taught (a write that reports success without re-reading is how it hid).
+    const row = getDb().prepare("SELECT * FROM jukebox_requests WHERE id = ?").get(info.lastInsertRowid);
+    return { ok: !!row, id: info.lastInsertRowid, row };
+  } catch (e) {
+    console.error("[jukebox] request-create:", e.message);
+    return { ok: false, error: e.message };
+  }
+});
+
+/** Bind a request to the daemon queue entry it became. Called once the enqueue has a real qid. */
+ipcMain.handle("jukebox:request-attach-qid", (_evt, id, qid) => {
+  if (!jukeboxTableReady()) return { ok: false };
+  try {
+    getDb().prepare("UPDATE jukebox_requests SET qid = ?, status = 'queued' WHERE id = ?").run(String(qid ?? ""), id);
+    const row = getDb().prepare("SELECT qid, status FROM jukebox_requests WHERE id = ?").get(id);
+    return { ok: row?.qid === String(qid ?? ""), row };
+  } catch (e) {
+    console.error("[jukebox] attach-qid:", e.message);
+    return { ok: false, error: e.message };
+  }
+});
+
+ipcMain.handle("jukebox:request-close", (_evt, id, outcome) => {
+  if (!jukeboxTableReady()) return { ok: false };
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    if (outcome === "played") getDb().prepare("UPDATE jukebox_requests SET status='played', played_at=? WHERE id=?").run(now, id);
+    else                      getDb().prepare("UPDATE jukebox_requests SET status='cancelled', cancelled_at=? WHERE id=?").run(now, id);
+    return { ok: true };
+  } catch (e) {
+    console.error("[jukebox] request-close:", e.message);
+    return { ok: false, error: e.message };
+  }
+});
 
 // ── Show+ DAW dirty-state + force-close (the close-guard back-channel) ──
 ipcMain.on("studio:set-dirty", (evt, dirty) => {

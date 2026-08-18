@@ -16,6 +16,24 @@ import BroadcastCalendar from "./BroadcastCalendar";
 import { LibraryPanel } from "../App";
 import StudioPro from "./StudioPro";
 import VideoStudio from "./ShowPlus";
+import Jukebox from "./Jukebox";
+// Panels the native menu can open as their own window when the click came from a pop-out
+// (docs/native-menu-audit-2026-08-17.md §7). Each of these renders stand-alone — no props, or an
+// onClose the window satisfies by closing itself.
+import ProgramLog from "./ProgramLog";
+import Logs from "./Logs";
+import RotationAnalytics from "./RotationAnalytics";
+import Spots from "./Spots";
+import Announcements from "./Announcements";
+import EASLogbook from "./EASLogbook";
+import ScheduleWorkspace from "./schedule/ScheduleWorkspace";
+import StreamManager from "./StreamManager";
+import SmartScheduler from "./SmartScheduler";
+import ListenerAnalytics from "./ListenerAnalytics";
+import CloudBackup from "./CloudBackup";
+import AudioRoutingScreen from "./AudioRoutingPanel";
+import LibraryImport from "./LibraryImport";
+import { PlanGate } from "../hooks/usePlan";
 import { getEngine } from "../audio/engine-registry";
 import { useActiveStation } from "../hooks/useActiveStation";
 
@@ -58,6 +76,21 @@ const TITLES: Record<string, string> = {
   "calendar":  "Calendar",
   "studiopro": "Show+ DAW",
   "videostudio":"Show+",
+  "jukebox":   "Jukebox",
+  // Menu-openable panels (audit §7)
+  "programlog":   "Program Log",
+  "logs":         "Play Log",
+  "rotation":     "Rotation Analytics",
+  "spots":        "Spots & Promos",
+  "announce":     "Announcements",
+  "eas":          "EAS Logbook",
+  "schedulehub":  "Schedule Manager",
+  "streaming":    "Stream Manager",
+  "smartschedule":"Smart Scheduler",
+  "analytics":    "Listener Analytics",
+  "cloudbackup":  "Cloud Log Backup",
+  "multioutput":  "Audio Routing",
+  "importlibrary":"Import Library",
 };
 
 // Show+ DAW in its own window — resolves the ACTIVE station (machine-global, via getActive) so
@@ -98,6 +131,11 @@ function PopoutLibrary() {
 
 export default function PopoutRenderer({ panel }: { panel: string }) {
   const title = TITLES[panel] ?? panel;
+
+  // JUKEBOX — the public kiosk. It is the ONE pop-out that does not wear PopoutShell: the shell adds
+  // a 28px EtherCast titlebar, and this window faces an audience fullscreen. It also needs no station
+  // prop — Jukebox resolves the active station itself and refuses to guess (see its header).
+  if (panel === "jukebox") return <Jukebox />;
 
   let content: React.ReactNode;
   switch (panel) {
@@ -149,6 +187,57 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
     // needed here; `active` defaults to true, which is what opens the camera.
     case "videostudio":
       content = <VideoStudio />;
+      break;
+
+    // ── Panels the native menu opens as their own window when clicked from a pop-out ──
+    // The dashboard is the board and must not be covered mid-event, so these stand alone here
+    // instead of raising <App/>. onClose closes THIS window — in the dashboard the same components
+    // return to the live panel, which has no meaning in a window of their own.
+    case "programlog":
+      content = <ProgramLog onClose={() => window.close()} />;
+      break;
+    case "logs":
+      content = <Logs />;
+      break;
+    case "rotation":
+      content = <RotationAnalytics />;
+      break;
+    case "spots":
+      content = <Spots />;
+      break;
+    case "announce":
+      content = <Announcements />;
+      break;
+    case "eas":
+      content = <EASLogbook onClose={() => window.close()} />;
+      break;
+    case "schedulehub":
+      // The workspace's two escape hatches are dashboard navigation. In a window of its own the
+      // analytics pane opens as its own pop-out rather than swapping this window's contents.
+      content = (
+        <ScheduleWorkspace
+          onOpenAnalytics={() => { try { (window as any).ether.invoke("window:popout", "rotation"); } catch { /* not in electron */ } }}
+          onUseFixedLayout={() => { /* fixed layout is a dashboard-only alternative */ }}
+        />
+      );
+      break;
+    case "streaming":
+      content = <StreamManager />;
+      break;
+    case "smartschedule":
+      content = <SmartScheduler onClose={() => window.close()} />;
+      break;
+    case "analytics":
+      content = <PlanGate requires="pro" feature="Listener Analytics"><ListenerAnalytics onClose={() => window.close()} /></PlanGate>;
+      break;
+    case "cloudbackup":
+      content = <PlanGate requires="pro" feature="Cloud Log Backup"><CloudBackup /></PlanGate>;
+      break;
+    case "multioutput":
+      content = <PlanGate requires="pro" feature="Multi-Output Audio Routing"><AudioRoutingScreen /></PlanGate>;
+      break;
+    case "importlibrary":
+      content = <LibraryImport onClose={() => window.close()} />;
       break;
     default:
       content = (

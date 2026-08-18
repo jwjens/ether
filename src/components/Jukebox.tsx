@@ -1,42 +1,54 @@
-// Jukebox Mode — Slice 1, "the room".
+// Jukebox — the public request kiosk. TouchTunes-style wall of artwork, named request queue, QR.
 //
-// Design of record: docs/jukebox-mode-design-2026-08-04.md (APPROVED 2026-08-04).
+// Design of record: docs/jukebox-rebuild-design-2026-08-17.md, which supersedes parts of
+// docs/jukebox-mode-design-2026-08-04.md. Read §0 of the rebuild doc before changing anything here —
+// it records which of the 08-04 decisions Jeff reversed and what each reversal costs.
 //
-// A fullscreen takeover of THIS renderer — not a second window. The engine, active station and daemon
-// connection are already resolved here; a second window would need the whole station-context handshake
-// again, which is a bug class this codebase has already paid for twice.
+// WHAT THIS IS NOW (the rebuild):
+//   • a POP-OUT kiosk window (#popout/jukebox), opened from the hamburger → Windows. It is no longer
+//     a bottom-tab fullscreen takeover of the main renderer.
+//   • its pool is the CATEGORIES an operator checked in Preferences → Jukebox — NOT a clock. The
+//     clock-as-playlist setup from 08-04 §2.4 is dead; jukebox_source_clock_id is ignored.
+//   • every request carries the REQUESTER'S NAME, kept in the local-only jukebox_requests table
+//     (migration v38) because the daemon's queue has no field for it.
 //
-// The public browses and picks. A pick becomes PLAY NEXT on the operator's running station via the two
-// EXISTING id-addressed queue intents — queue:enqueue then queue:move(top) (engine-rodio.ts:610,613).
-// The daemon is the single source of truth: the up-next list renders the daemon's queue, never an
-// optimistic local list. If the daemon didn't take the pick, the public sees that it didn't.
+// STATION IDENTITY — the reason this file is careful:
+//   08-04 §2.1 refused to make this a second window precisely because a popout has to redo the
+//   station handshake, and cited the popout `?? 1` fallback as a bug this codebase already paid for
+//   twice. PopoutRenderer.tsx:72,81 still carry that fallback. This component does NOT: with no
+//   resolved active station it renders an honest "no station" panel and picks nothing. A kiosk that
+//   guesses station 1 would show a stranger a different station's library and queue onto air nobody
+//   asked for.
 //
-// ELIGIBILITY — "clock as playlist". A clock is a category-SEQUENCE template (clock_slots carries
-// clock_id/position/slot_type/category_id), so the pickable set is the UNION of songs in the DISTINCT
-// categories that clock's music slots reference. Order is discarded — sequence is a scheduling concern.
-// Non-music slots carry spot_category_id, not category_id, so spots and talk breaks are never pickable.
+// WHAT PLAYS, AND WHO DECIDES — the deck-source model (Jeff, 2026-08-17;
+// docs/jukebox-deck-source-design-2026-08-17.md):
+//   The jukebox is an AUDIO SOURCE patched into a deck, like a microphone — not a station mode. The
+//   operator picks "Jukebox" as the source of deck D/E/F on the dashboard, and the fader decides
+//   whether it is on air. THE BOARD IS THE TRUTH.
 //
-// v1 is RESTRICTED to the ACTIVE station's clocks (Jeff, §7a.1): a foreign station's category resolves
-// to that station's songs, whose file_path may not exist on this machine, and a public pick that
-// produces dead air is the worst failure this feature can have.
-//
-// NOT in this slice: the PIN-gated settings overlay and the MANUAL-precondition banner (Slice 2), and
-// real artwork (library artwork Slice A). Tiles render a neutral art-forward treatment — deliberately,
-// not as a stub: firing a music-store lookup per tile across hundreds of songs would be both slow and
-// exactly the guessing the spot fix removed.
+//   • Requests are NEVER enqueued onto the station's queue. The old play-next-into-rotation path was
+//     removed with this ruling: a request in the station queue would air through the station's decks,
+//     outside the jukebox fader, on the operator's rotation.
+//   • This window drives its own deck: strict FIFO, oldest request first, and it NEVER cuts a playing
+//     song. No priority and no paid-skip — that is a future design with donations.
+//   • Its AUTO is its own. Engaged, it shuffles the checked categories when no request is waiting;
+//     disengaged, it plays only requests and is silent otherwise. Station AUTO/MANUAL is untouched:
+//     station automation enumerates ["A","B","C"] and never looks at D/E/F.
+//   • It is an EVENT TOOL, not playout — no traffic, no spots, ever.
 
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
-import { useAudioEngine } from "../audio/AudioEngineContext";
+import { getLocalArt } from "../lib/albumArt";
 
-// ── Payment layer (design §4) ──────────────────────────────────────────────────────────────────────
-// Phase 1 is cash/free — the reality is a bucket. The pick path calls authorize() and enqueues ONLY on
-// ok:true; nothing else in the jukebox knows anything about money, so Clover / QR drop in behind this
-// same interface as a config value rather than a change at the call site.
+// ── Payment layer (08-04 §4) — kept as the seam, still free ────────────────────────────────────────
+// The pick path calls authorize() and enqueues ONLY on ok:true, so a donation/card step drops in here
+// without touching the call site. Phase 1 is free; jukebox_requests.donation_cents exists and is
+// written by nothing. No payments code.
 export interface JukeboxPaymentProvider {
   readonly id: "free" | "clover" | "qr";
-  readonly label: string;                       // the confirm button's verb
+  readonly label: string;
   authorize(sel: { songId: number; title: string; artist: string }):
     Promise<{ ok: boolean; reference?: string; declineReason?: string }>;
 }
@@ -47,10 +59,10 @@ const FreeProvider: JukeboxPaymentProvider = {
   async authorize() { return { ok: true }; },
 };
 
-// ── Tunables, read from station_config_kv with the design's defaults (§7a) ─────────────────────────
 const DEFAULT_REPEAT_MINUTES = 60;
 const DEFAULT_MAX_PENDING = 12;
 const PAGE_SIZE = 60;
+const NAME_MAX = 40;
 
 interface JukeSong {
   id: number;
@@ -60,28 +72,101 @@ interface JukeSong {
   duration_ms: number | null;
 }
 
-const fmtDur = (ms: number | null) => {
-  if (!ms || ms <= 0) return "";
-  const s = Math.round(ms / 1000);
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-};
+interface JukeRequest {
+  id: number;
+  requester_name: string;
+  title: string;
+  artist: string | null;
+  file_path: string;
+  qid: string | null;
+  status: string;
+  source: string;
+  created_at: number;
+}
 
-/** Deterministic tile tint from the title, so the neutral grid still reads as a wall of distinct
- *  covers rather than 200 identical grey squares. Replaced by real art in library artwork Slice A. */
+/** Deterministic tint from the title so a tile whose art hasn't resolved still reads as a distinct
+ *  cover rather than one of 200 identical grey squares. Never an empty square (08-04 §3). */
 function tintFor(seed: string): string {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;
-  return `hsl(${h} 42% 22%)`;
+  return `hsl(${h} 45% 20%)`;
 }
 
-export default function Jukebox({ onExit }: { onExit: () => void }) {
-  const { stationId, isReady } = useActiveStation();
-  const engine = useAudioEngine();
+// ── One tile. Art resolves lazily, once, per visible tile. ─────────────────────────────────────────
+function Tile({ song, onPick }: { song: JukeSong; onPick: (s: JukeSong) => void }) {
+  const [art, setArt] = useState<string | null>(null);
+  const ref = useRef<HTMLButtonElement | null>(null);
+  const asked = useRef(false);
 
-  const [clockId, setClockId] = useState<number | null>(null);
-  const [clockName, setClockName] = useState<string | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Only resolve art for tiles that actually come into view, and only ONCE per tile.
+    //
+    // getLocalArt, NOT resolveArtwork: resolveArtwork falls back to fetchMusicStoreArt, which is an
+    // iTunes lookup per (title, artist). Across a wall of thousands of songs that is a network
+    // request storm, and 08-04 §3 ruled it out explicitly ("firing a music-store lookup per tile
+    // across hundreds of songs would be both slow and exactly the guessing the spot fix removed").
+    // getLocalArt reads the embedded cover out of the file itself, is per-file cached, and never
+    // touches the network — so scrolling back is free.
+    const io = new IntersectionObserver(entries => {
+      if (!entries.some(e => e.isIntersecting) || asked.current) return;
+      asked.current = true;
+      getLocalArt(song.file_path)
+        .then(src => { if (src) setArt(src); })
+        .catch(() => { /* neutral tile stands */ });
+    }, { rootMargin: "300px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [song.file_path, song.title, song.artist]);
+
+  return (
+    <button
+      ref={ref}
+      onClick={() => onPick(song)}
+      style={{
+        position: "relative", aspectRatio: "1 / 1", width: "100%",
+        border: "none", borderRadius: 10, cursor: "pointer", padding: 0, overflow: "hidden",
+        background: art ? `#000 center/cover no-repeat url("${art}")` : tintFor(song.title),
+        boxShadow: "0 8px 24px rgba(0,0,0,0.55)",
+        transition: "transform 0.12s ease, box-shadow 0.12s ease",
+        outline: "1px solid rgba(255,255,255,0.06)",
+      }}
+      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1.035)"; }}
+      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.transform = "scale(1)"; }}
+    >
+      {/* Title/artist always legible over art — a gradient scrim, not a flat bar. */}
+      <div style={{
+        position: "absolute", left: 0, right: 0, bottom: 0, padding: "34px 12px 11px",
+        textAlign: "left",
+        background: "linear-gradient(to top, rgba(0,0,0,0.92) 0%, rgba(0,0,0,0.72) 45%, transparent 100%)",
+      }}>
+        <div style={{
+          fontSize: art ? 15 : 19, fontWeight: 800, color: "#fff", lineHeight: 1.15,
+          overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box",
+          WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const,
+        }}>{song.title}</div>
+        <div style={{
+          fontSize: 12.5, fontWeight: 600, color: "rgba(255,255,255,0.72)", marginTop: 3,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>{song.artist || "—"}</div>
+      </div>
+    </button>
+  );
+}
+
+export default function Jukebox({ onExit }: { onExit?: () => void }) {
+  const { stationId, isReady } = useActiveStation();
+
+  // NO renderer-side engine handle here, deliberately. AudioEngineContext defaults to 1
+  // (AudioEngineContext.tsx:6) and a pop-out has no AudioEngineProvider above it, so useAudioEngine()
+  // would silently bind this kiosk to STATION 1 — the `?? 1` popout bug wearing a convenience hook.
+  // Playback goes through the jukebox IPC, which resolves the station explicitly and refuses D/E/F
+  // violations in the main process.
+
   const [categoryIds, setCategoryIds] = useState<number[]>([]);
   const [categoryNames, setCategoryNames] = useState<string[]>([]);
+  const [requestUrl, setRequestUrl] = useState<string>("");
   const [configLoaded, setConfigLoaded] = useState(false);
 
   const [repeatMinutes, setRepeatMinutes] = useState(DEFAULT_REPEAT_MINUTES);
@@ -94,17 +179,27 @@ export default function Jukebox({ onExit }: { onExit: () => void }) {
   const [loading, setLoading] = useState(false);
 
   const [confirming, setConfirming] = useState<JukeSong | null>(null);
+  const [nameInput, setNameInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
-  const [queue, setQueue] = useState<any[]>([]);
-  /** file_paths this session has queued — the basis for the pending cap. Honest about its own limit:
-   *  a reload forgets them, which only ever makes the cap more permissive, never less safe. */
-  const myPicks = useRef<Set<string>>(new Set());
+  const [requests, setRequests] = useState<JukeRequest[]>([]);
+  const [tableMissing, setTableMissing] = useState(false);
+
+  // ── Deck source state ───────────────────────────────────────────────────────────────────────────
+  // The jukebox airs through a real deck (D/E/F) the operator patched it into, and the DECK is the
+  // truth about whether anything is reaching air. None of this is inferred from intent.
+  const [routedDeck, setRoutedDeck] = useState<string | null>(null);
+  const [deckStatus, setDeckStatus] = useState<string | null>(null);
+  const [deckVolume, setDeckVolume] = useState<number | null>(null);
+  const [autoOn, setAutoOn] = useState(false);
+  const starting = useRef(false);          // one start in flight at a time — never two loads racing
+
+  const deckIsBusy = deckStatus === "playing";
 
   const provider: JukeboxPaymentProvider = FreeProvider;
 
-  // ── Config: which clock, and the tunables ────────────────────────────────────────────────────────
+  // ── Config: the CHECKED CATEGORIES (not a clock), the request URL, the tunables ─────────────────
   useEffect(() => {
     if (!isReady || stationId == null) return;
     let stop = false;
@@ -113,47 +208,44 @@ export default function Jukebox({ onExit }: { onExit: () => void }) {
         const r: any = await (window as any).ether.stationConfigKv.list(stationId);
         const rows: any[] = (r && r.rows) || [];
         const get = (k: string) => rows.find(x => x.key === k)?.value;
-        const cid = parseInt(get("jukebox_source_clock_id") ?? "", 10);
+
+        let ids: number[] = [];
+        try {
+          const raw = get("jukebox_categories");
+          const parsed = raw ? JSON.parse(raw) : [];
+          if (Array.isArray(parsed)) ids = parsed.map((n: any) => parseInt(n, 10)).filter(Number.isFinite);
+        } catch { ids = []; }
+
         const rm = parseInt(get("jukebox_repeat_minutes") ?? "", 10);
         const mp = parseInt(get("jukebox_max_pending") ?? "", 10);
         if (stop) return;
-        setClockId(Number.isFinite(cid) ? cid : null);
+        setCategoryIds(ids);
+        setRequestUrl(String(get("jukebox_request_url") ?? "").trim());
         if (Number.isFinite(rm)) setRepeatMinutes(rm);
         if (Number.isFinite(mp)) setMaxPending(mp);
-      } catch { /* defaults */ }
+      } catch { if (!stop) setCategoryIds([]); }
       finally { if (!stop) setConfigLoaded(true); }
     })();
     return () => { stop = true; };
   }, [isReady, stationId]);
 
-  // ── Clock → its DISTINCT music categories. This is the whole eligibility rule. ───────────────────
+  // Resolved category NAMES — so staff can see at a glance that the pool is what they checked.
   useEffect(() => {
-    if (!isReady || stationId == null || clockId == null) { setCategoryIds([]); setCategoryNames([]); return; }
+    if (stationId == null || !categoryIds.length) { setCategoryNames([]); return; }
     let stop = false;
     (async () => {
       try {
-        const nameRows = await queryScoped<{ name: string }>(
-          "SELECT name FROM clocks WHERE id = ? AND deleted_at IS NULL LIMIT 1", [clockId], stationId);
-        const slots = await queryScoped<{ category_id: number }>(
-          `SELECT DISTINCT category_id FROM clock_slots
-            WHERE clock_id = ? AND category_id IS NOT NULL AND deleted_at IS NULL`, [clockId], stationId);
-        if (stop) return;
-        setClockName(nameRows[0]?.name ?? null);
-        const ids = slots.map(s => s.category_id).filter(n => Number.isFinite(n));
-        setCategoryIds(ids);
-        if (ids.length) {
-          const cats = await queryScoped<{ name: string }>(
-            `SELECT name FROM categories WHERE id IN (${ids.map(() => "?").join(",")}) AND deleted_at IS NULL ORDER BY name`,
-            ids, stationId);
-          if (!stop) setCategoryNames(cats.map(c => c.name));
-        } else setCategoryNames([]);
-      } catch { if (!stop) { setCategoryIds([]); setCategoryNames([]); } }
+        const rows = await queryScoped<{ name: string }>(
+          `SELECT name FROM categories
+            WHERE id IN (${categoryIds.map(() => "?").join(",")}) AND deleted_at IS NULL
+            ORDER BY name`, categoryIds, stationId);
+        if (!stop) setCategoryNames(rows.map(r => r.name));
+      } catch { if (!stop) setCategoryNames([]); }
     })();
     return () => { stop = true; };
-  }, [isReady, stationId, clockId]);
+  }, [stationId, categoryIds]);
 
-  // ── LIVE search. Filters in SQL, paged — never loads the whole set into an array. Debounced by one
-  //    frame-ish tick so a fast typist doesn't queue a query per keystroke, while still feeling instant.
+  // ── LIVE search over the pool. Filters in SQL, paged — never loads the whole set into an array. ──
   const runQuery = useCallback(async (term: string, pageIdx: number, append: boolean) => {
     if (stationId == null || !categoryIds.length) { setSongs([]); setTotal(0); return; }
     setLoading(true);
@@ -161,6 +253,8 @@ export default function Jukebox({ onExit }: { onExit: () => void }) {
       const inList = categoryIds.map(() => "?").join(",");
       const like = `%${term.trim()}%`;
       const hasTerm = term.trim().length > 0;
+      // file_path present is not optional here: a public pick that resolves to a missing file is
+      // dead air in front of an audience (08-04 §2.5.1).
       const where =
         `s.deleted_at IS NULL AND s.file_path IS NOT NULL AND TRIM(s.file_path) <> ''
          AND (s.content_class IS NULL OR s.content_class = 'MUSIC')
@@ -190,294 +284,455 @@ export default function Jukebox({ onExit }: { onExit: () => void }) {
     return () => clearTimeout(t);
   }, [search, runQuery]);
 
-  // ── Up-next: the DAEMON's queue, never a local optimistic list. ─────────────────────────────────
-  useEffect(() => {
-    const pull = () => { try { setQueue(engine.getQueue() || []); } catch { setQueue([]); } };
-    pull();
-    const onChange = () => pull();
-    window.addEventListener("ether:queue-changed", onChange);
-    const tick = setInterval(pull, 2000);
-    return () => { window.removeEventListener("ether:queue-changed", onChange); clearInterval(tick); };
-  }, [engine]);
+  /** One random playable song from the checked categories — the AUTO filler.
+   *  Chosen in SQL (ORDER BY RANDOM() LIMIT 1) rather than by loading the pool into memory: the pool
+   *  can be thousands of rows and this runs at every song boundary. */
+  const pickShuffleSong = useCallback(async (): Promise<JukeSong | null> => {
+    if (stationId == null || !categoryIds.length) return null;
+    try {
+      const rows = await queryScoped<JukeSong>(
+        `SELECT s.id, s.title, a.name AS artist, s.file_path, s.duration_ms
+           FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
+          WHERE s.deleted_at IS NULL AND s.file_path IS NOT NULL AND TRIM(s.file_path) <> ''
+            AND (s.content_class IS NULL OR s.content_class = 'MUSIC')
+            AND s.category_id IN (${categoryIds.map(() => "?").join(",")})
+          ORDER BY RANDOM() LIMIT 1`, categoryIds, stationId);
+      return rows[0] ?? null;
+    } catch { return null; }
+  }, [stationId, categoryIds]);
 
-  const pendingMine = useMemo(
-    () => queue.filter(q => myPicks.current.has(q.filePath)).length, [queue]);
+  // ── Which deck is the jukebox patched into? ─────────────────────────────────────────────────────
+  // Read from deck_configs, the same table the dashboard's deck source dropdown writes. Not a
+  // jukebox-private setting: the operator patches the source on the board, and this follows.
+  useEffect(() => {
+    if (stationId == null) return;
+    let stop = false;
+    const pull = async () => {
+      try {
+        const rows = await queryScoped<{ slot: string }>(
+          "SELECT slot FROM deck_configs WHERE type = 'jukebox' AND enabled = 1 ORDER BY slot LIMIT 1",
+          [], stationId);
+        if (!stop) setRoutedDeck(rows[0]?.slot ?? null);
+      } catch { if (!stop) setRoutedDeck(null); }
+    };
+    void pull();
+    const tick = setInterval(pull, 5000);   // the operator can re-patch while the kiosk is open
+    return () => { stop = true; clearInterval(tick); };
+  }, [stationId]);
+
+  // ── What the deck is ACTUALLY doing — status and fader, straight off the engine. ────────────────
+  useEffect(() => {
+    if (stationId == null || !routedDeck) { setDeckStatus(null); setDeckVolume(null); return; }
+    let stop = false;
+    const pull = async () => {
+      try {
+        const r: any = await (window as any).ether.jukebox?.deckState({ stationId, deck: routedDeck });
+        if (stop) return;
+        if (r?.ok) { setDeckStatus(r.status ?? null); setDeckVolume(typeof r.volume === "number" ? r.volume : null); }
+        else { setDeckStatus(null); setDeckVolume(null); }
+      } catch { if (!stop) { setDeckStatus(null); setDeckVolume(null); } }
+    };
+    void pull();
+    const tick = setInterval(pull, 1000);
+    return () => { stop = true; clearInterval(tick); };
+  }, [stationId, routedDeck]);
+
+  // ── THE DRIVE — strict FIFO, and it never cuts a playing song. ──────────────────────────────────
+  //
+  // Runs only when the deck is free. Requests first, oldest first (no priority, no paid-skip — that
+  // is a future design with donations). With no requests it shuffles the checked categories ONLY if
+  // the jukebox's own AUTO is engaged; otherwise it stays silent, deliberately, and says so.
+  //
+  // This AUTO is the jukebox's alone. It has nothing to do with the station's AUTO/MANUAL: the deck
+  // it drives is D/E/F, which station automation never enumerates.
+  useEffect(() => {
+    if (stationId == null || !routedDeck) return;
+    if (deckStatus === null) return;              // no reading yet — never act on an unknown deck
+    if (deckIsBusy || starting.current) return;   // a playing song is NEVER cut
+
+    let cancelled = false;
+    (async () => {
+      starting.current = true;
+      try {
+        const next = requests.find(r => r.status === "queued" || r.status === "pending");
+        let toPlay: { filePath: string; title: string; artist: string | null; durationMs: number | null } | null = null;
+        let reqId: number | null = null;
+
+        if (next) {
+          toPlay = { filePath: next.file_path, title: next.title, artist: next.artist, durationMs: null };
+          reqId = next.id;
+        } else if (autoOn) {
+          const pick = await pickShuffleSong();
+          if (pick) toPlay = { filePath: pick.file_path, title: pick.title, artist: pick.artist, durationMs: pick.duration_ms };
+        }
+        if (!toPlay || cancelled) return;
+
+        const r: any = await (window as any).ether.jukebox?.play({
+          stationId, deck: routedDeck, filePath: toPlay.filePath, title: toPlay.title,
+          artist: toPlay.artist || "", durationMs: toPlay.durationMs, contentClass: "MUSIC",
+        });
+        if (r?.ok) {
+          if (reqId != null) await (window as any).ether.jukebox?.closeRequest(reqId, "played");
+          setDeckStatus("playing");   // optimistic ONLY until the next 1s poll corrects it
+          await loadRequests();
+        } else if (reqId != null) {
+          // The engine refused it (missing file, bad deck). Close it rather than retrying forever in
+          // front of an audience, and say so instead of silently dropping a stranger's request.
+          await (window as any).ether.jukebox?.closeRequest(reqId, "cancelled");
+          await loadRequests();
+          say(`Couldn't play "${toPlay.title}" — skipping to the next request.`);
+        }
+      } finally {
+        starting.current = false;
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [stationId, routedDeck, deckStatus, deckIsBusy, requests, autoOn]);
+
+  // ── The request rail — names + placement, from the local-only jukebox_requests table. ───────────
+  const loadRequests = useCallback(async () => {
+    if (stationId == null) return;
+    try {
+      const r: any = await (window as any).ether.jukebox?.listRequests(stationId);
+      setTableMissing(!!r?.tableMissing);
+      setRequests((r?.rows as JukeRequest[]) || []);
+    } catch { setRequests([]); }
+  }, [stationId]);
+
+  useEffect(() => {
+    void loadRequests();
+    const tick = setInterval(() => { void loadRequests(); }, 3000);
+    return () => clearInterval(tick);
+  }, [loadRequests]);
+
+  const pendingCount = requests.filter(r => r.status === "queued" || r.status === "pending").length;
 
   // ── The pick path ───────────────────────────────────────────────────────────────────────────────
-  const say = (m: string) => { setToast(m); setTimeout(() => setToast(null), 3600); };
+  const say = (m: string) => { setToast(m); setTimeout(() => setToast(null), 4200); };
 
-  /** Wait for the daemon's next queue emit so the qid we need actually exists. Resolves either way —
-   *  a timeout falls through to the lookup, which simply won't find it and we say so. */
-  const waitForQueue = (ms = 2000) => new Promise<void>(resolve => {
-    let done = false;
-    const fin = () => { if (done) return; done = true; window.removeEventListener("ether:queue-changed", fin); resolve(); };
-    window.addEventListener("ether:queue-changed", fin);
-    setTimeout(fin, ms);
-  });
-
-  const pick = async (song: JukeSong) => {
-    if (busy) return;
+  const submit = async () => {
+    const song = confirming;
+    const who = nameInput.trim().slice(0, NAME_MAX);
+    if (!song || busy) return;
+    if (stationId == null) { say("No station is active — nothing can be queued."); return; }
+    if (!who) { say("Please enter your name first."); return; }
     setBusy(true);
     try {
-      // Queue-depth cap (§7a.3) — told, not silently refused.
-      if (pendingMine >= maxPending) {
+      if (pendingCount >= maxPending) {
         say(`The queue is full right now — ${maxPending} songs are already waiting. Try again shortly.`);
         return;
       }
-      // Repeat protection (§7a.2) — already waiting, or played too recently.
-      if (queue.some(q => q.filePath === song.file_path)) {
-        say(`"${song.title}" is already coming up.`);
+      if (requests.some(r => r.file_path === song.file_path && r.status === "queued")) {
+        say(`"${song.title}" is already on the list.`);
         return;
       }
-      try {
-        const since = Math.floor(Date.now() / 1000) - repeatMinutes * 60;
-        const recent = await queryScoped<{ c: number }>(
-          `SELECT COUNT(*) c FROM play_log
-            WHERE file_path = ? AND played_at >= ? AND deleted_at IS NULL`,
-          [song.file_path, since], stationId!);
-        if ((recent[0]?.c ?? 0) > 0) {
-          say(`"${song.title}" played in the last ${repeatMinutes} minutes — pick another for now.`);
-          return;
-        }
-      } catch { /* play_log unreadable → don't block the pick on a diagnostic */ }
 
-      // Payment layer. Phase 1 approves instantly; the shape is what lets Clover/QR slot in.
       const auth = await provider.authorize({ songId: song.id, title: song.title, artist: song.artist || "" });
-      if (!auth.ok) { say(auth.declineReason || "Payment was not completed."); return; }
+      if (!auth.ok) { say(auth.declineReason || "That didn't go through."); return; }
 
-      // PLAY NEXT = the two existing intents. The playing song is never touched.
-      await engine.queueEnqueue([{
-        filePath: song.file_path,
-        title: song.title,
-        artist: song.artist || "",
-        durationMs: song.duration_ms ?? undefined,
-      }]);
-      myPicks.current.add(song.file_path);
-      await waitForQueue();
+      // A request is a row in the jukebox's OWN queue. It is never enqueued onto the station's queue:
+      // the jukebox is a source patched into a deck, and a request that entered the station queue
+      // would air through the station's decks, outside the jukebox fader, on the operator's rotation.
+      // (The old play-next-into-rotation path was removed with the deck-source ruling, 2026-08-17.)
+      const created: any = await (window as any).ether.jukebox?.createRequest({
+        stationId, requesterName: who, songId: song.id, filePath: song.file_path,
+        title: song.title, artist: song.artist, source: "kiosk",
+      });
+      if (!created?.ok) { say(created?.error || "Couldn't record that request."); return; }
 
-      const q = engine.getQueue() || [];
-      const mine = [...q].reverse().find((it: any) => it.filePath === song.file_path);
-      if (mine?.qid) {
-        await engine.queueMove(mine.qid, "top");
-        say(`"${song.title}" is up next.`);
-      } else {
-        // Honest: it went in, we could not confirm the move. Never claim "up next" without the receipt.
-        say(`"${song.title}" was added to the queue.`);
-      }
-      setQueue(engine.getQueue() || []);
-    } catch {
-      say("That didn't go through. Please ask a member of staff.");
+      await loadRequests();
+      setConfirming(null);
+      setNameInput("");
+      // STRICT FIFO, and never cut a playing song (Jeff, 2026-08-17): a request takes its place at the
+      // back of the queue and plays when the deck is free. No priority, no paid-skip — that is a
+      // future design with donations, deliberately not built.
+      say(deckIsBusy
+        ? `Thanks ${who} — "${song.title}" is in the queue.`
+        : `Thanks ${who} — "${song.title}" is up next.`);
+    } catch (e: any) {
+      say(e?.message || "Something went wrong.");
     } finally {
       setBusy(false);
-      setConfirming(null);
     }
   };
 
-  // ── Staff exit chord (§7a.5): Ctrl+Shift+J. The corner button is the other way out. ─────────────
-  useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && (e.key === "J" || e.key === "j")) { e.preventDefault(); onExit(); }
-      if (e.key === "Escape" && confirming) setConfirming(null);
-    };
-    window.addEventListener("keydown", h);
-    return () => window.removeEventListener("keydown", h);
-  }, [onExit, confirming]);
+  // ── Honest states before the room ───────────────────────────────────────────────────────────────
+  const shell = (body: React.ReactNode) => (
+    <div style={{
+      position: "fixed", inset: 0, background: "#07070b", color: "#e8e8f0",
+      fontFamily: "'Inter', system-ui, sans-serif", display: "flex",
+      alignItems: "center", justifyContent: "center", padding: 48, textAlign: "center",
+    }}>{body}</div>
+  );
 
-  const searchRef = useRef<HTMLInputElement | null>(null);
-  useEffect(() => { searchRef.current?.focus(); }, []);
+  if (!isReady) return shell(<div style={{ color: "#606078", fontSize: 15 }}>Resolving station…</div>);
 
-  // ── Render ──────────────────────────────────────────────────────────────────────────────────────
-  const notConfigured = configLoaded && (clockId == null || categoryIds.length === 0);
+  // NO `?? 1`. A kiosk that guesses a station shows strangers the wrong library (rebuild doc §0.1).
+  if (stationId == null) return shell(
+    <div style={{ maxWidth: 560 }}>
+      <div style={{ fontSize: 34, fontWeight: 900, letterSpacing: "-0.02em" }}>No station selected</div>
+      <div style={{ marginTop: 14, fontSize: 15, color: "#8a8aa0", lineHeight: 1.6 }}>
+        The jukebox plays to one station and none is active on this install yet. Sign in and choose a
+        station in the main window, then open this display again.
+      </div>
+    </div>
+  );
+
+  if (configLoaded && !categoryIds.length) return shell(
+    <div style={{ maxWidth: 620 }}>
+      <div style={{ fontSize: 34, fontWeight: 900, letterSpacing: "-0.02em" }}>The jukebox isn't set up yet</div>
+      <div style={{ marginTop: 14, fontSize: 15, color: "#8a8aa0", lineHeight: 1.6 }}>
+        Nobody has chosen which music the public can pick from. In the main window open
+        <strong style={{ color: "#c8c8e0" }}> Settings → Jukebox</strong> and tick the categories that
+        should be available, then reopen this display.
+      </div>
+    </div>
+  );
+
+  const upNextIndex = 1;   // #2 in the rail — see the rebuild doc §1 on placement semantics.
+
+  // ── Routing truth ───────────────────────────────────────────────────────────────────────────────
+  // Observed, never inferred. The queue is kept in every case — routing is about audibility, not about
+  // whether people can request. The fader is the operator's decision and this only reports it.
+  const faderDown = deckVolume != null && deckVolume <= 0.001;
+  const onAir = deckIsBusy && !faderDown;
+  const routingOk = !!routedDeck && !faderDown;
+  const routingNote = !routedDeck
+    ? "Not routed to a deck. On the dashboard, set a deck's source to Jukebox (deck D, E or F) — requests are still being collected in the meantime."
+    : faderDown
+      ? `Routed to Deck ${routedDeck} — the fader is down, so nothing is reaching air. The queue keeps filling.`
+      : autoOn
+        ? `Routed to Deck ${routedDeck} · AUTO on — music keeps playing from the chosen categories between requests.`
+        : `Routed to Deck ${routedDeck} · AUTO off — only requested songs play, and it is silent in between.`;
 
   return (
     <div style={{
-      position: "fixed", inset: 0, zIndex: 9000,
-      background: "#07070b", color: "#f2f2f7",
-      display: "flex", flexDirection: "column",
-      fontFamily: "'Inter', system-ui, sans-serif",
+      position: "fixed", inset: 0, background: "#07070b", color: "#e8e8f0",
+      fontFamily: "'Inter', system-ui, sans-serif", display: "flex", overflow: "hidden",
     }}>
-      {/* ── Header: search is the primary control, nothing competes with it ── */}
-      <div style={{ flexShrink: 0, padding: "20px 28px 14px", display: "flex", alignItems: "center", gap: 18, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-        <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 30, fontWeight: 800, letterSpacing: "-0.03em", flexShrink: 0 }}>
-          Pick a song
-        </div>
-        <input
-          ref={searchRef}
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search by song or artist…"
-          style={{
-            flex: 1, minWidth: 0, height: 60, padding: "0 22px",
-            fontSize: 21, fontWeight: 600,
-            background: "rgba(255,255,255,0.06)",
-            border: "1px solid rgba(255,255,255,0.14)",
-            color: "#fff", outline: "none", borderRadius: 8,
-          }}
-        />
-        {/* ✕, not ⚙. This control EXITS — the PIN-gated settings overlay is Slice 2 and does not
-            exist yet, so a gear here promised settings and delivered an exit. A glyph that lies about
-            what a control does is a defect, not a placeholder. */}
-        <button onClick={onExit} title="Staff — exit jukebox (Ctrl+Shift+J)"
-          style={{
-            flexShrink: 0, width: 46, height: 46, borderRadius: 8, cursor: "pointer",
-            background: "transparent", border: "1px solid rgba(255,255,255,0.14)",
-            color: "rgba(255,255,255,0.35)", fontSize: 18, lineHeight: 1,
-          }}>✕</button>
-      </div>
+      <style>{`
+        @keyframes juke-flash { 0%,100% { opacity: 1; } 50% { opacity: 0.28; } }
+        @keyframes juke-rise  { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+        .juke-scroll::-webkit-scrollbar { width: 10px; }
+        .juke-scroll::-webkit-scrollbar-thumb { background: #23233a; border-radius: 6px; }
+      `}</style>
 
-      <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
-        {/* ── Browse grid ── */}
-        <div style={{
-          flex: 1, minWidth: 0, overflowY: "auto", padding: "22px 28px 40px",
-          scrollBehavior: "smooth", WebkitOverflowScrolling: "touch" as any,
-        }}>
-          {notConfigured ? (
-            <div style={{ maxWidth: 560, margin: "14vh auto 0", textAlign: "center", color: "rgba(255,255,255,0.6)" }}>
-              <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 28, color: "#fff", marginBottom: 12 }}>
-                The jukebox isn't set up yet
-              </div>
-              <div style={{ fontSize: 16, lineHeight: 1.6 }}>
-                A member of staff needs to choose which clock the jukebox plays from,
-                using the settings button in the top corner.
-              </div>
+      {/* ── LEFT: the wall ───────────────────────────────────────────────────────────────────────── */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        <div style={{ padding: "22px 30px 16px", flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <div style={{ fontSize: 30, fontWeight: 900, letterSpacing: "-0.02em" }}>Pick a song</div>
+            <div style={{ fontSize: 13, color: "#6a6a85", flex: 1 }}>
+              {total.toLocaleString()} song{total === 1 ? "" : "s"}
+              {categoryNames.length ? ` · ${categoryNames.join(" · ")}` : ""}
             </div>
-          ) : songs.length === 0 && !loading ? (
-            <div style={{ maxWidth: 560, margin: "14vh auto 0", textAlign: "center", color: "rgba(255,255,255,0.6)" }}>
-              <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 26, color: "#fff", marginBottom: 10 }}>
-                {search.trim() ? "Nothing matched that" : "No songs available"}
+
+            {/* ON AIR — driven by the DECK's observed status, never by whether AUTO is engaged.
+                AUTO on with the fader down must not blink "on air"; that would be a claimed state. */}
+            {onAir && (
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8, padding: "7px 14px", borderRadius: 999,
+                background: "rgba(220,60,60,0.14)", border: "1px solid #dc3c3c",
+                animation: "juke-flash 1.2s ease-in-out infinite",
+              }}>
+                <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#dc3c3c" }} />
+                <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.16em", color: "#ff8080" }}>ON AIR</span>
               </div>
-              <div style={{ fontSize: 16 }}>
-                {search.trim() ? "Try a different song or artist." : "Ask a member of staff."}
-              </div>
+            )}
+
+            {/* The JUKEBOX's own AUTO. Nothing to do with the station's AUTO/MANUAL. */}
+            <button
+              onClick={() => setAutoOn(v => !v)}
+              title={autoOn
+                ? "AUTO is on — the jukebox keeps music going from the chosen categories when nobody has requested anything."
+                : "AUTO is off — the jukebox plays only what people request, and is silent in between."}
+              style={{
+                padding: "9px 18px", borderRadius: 10, cursor: "pointer", fontFamily: "inherit",
+                fontSize: 12, fontWeight: 900, letterSpacing: "0.14em",
+                background: autoOn ? "#6040c0" : "transparent",
+                border: `1px solid ${autoOn ? "#8868D8" : "#2a2a44"}`,
+                color: autoOn ? "#fff" : "#6a6a85",
+              }}>
+              AUTO {autoOn ? "ON" : "OFF"}
+            </button>
+          </div>
+
+          {/* ROUTING — what the operator needs to know, read off the deck itself. */}
+          {routingNote && (
+            <div style={{
+              marginTop: 12, padding: "10px 14px", borderRadius: 10, fontSize: 12.5, lineHeight: 1.5,
+              background: routingOk ? "rgba(96,64,192,0.10)" : "rgba(200,120,50,0.12)",
+              border: `1px solid ${routingOk ? "#33335a" : "#a06030"}`,
+              color: routingOk ? "#8a8aa8" : "#e0a060",
+            }}>{routingNote}</div>
+          )}
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search by song or artist…"
+            style={{
+              marginTop: 14, width: "100%", padding: "16px 20px", fontSize: 19,
+              background: "#101018", border: "1px solid #23233a", borderRadius: 12,
+              color: "#e8e8f0", outline: "none", fontFamily: "inherit",
+            }}
+          />
+        </div>
+
+        <div className="juke-scroll" style={{ flex: 1, overflowY: "auto", padding: "4px 30px 30px" }}
+             onScroll={e => {
+               const el = e.currentTarget;
+               if (loading || songs.length >= total) return;
+               if (el.scrollTop + el.clientHeight > el.scrollHeight - 500) {
+                 const next = page + 1;
+                 setPage(next);
+                 void runQuery(search, next, true);
+               }
+             }}>
+          {songs.length === 0 && !loading ? (
+            <div style={{ color: "#5a5a70", fontSize: 15, padding: "60px 0", textAlign: "center" }}>
+              {search ? `Nothing matches "${search}".` : "No songs available to pick."}
             </div>
           ) : (
-            <>
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))",
-                gap: 18,
-              }}>
-                {songs.map(s => (
-                  <button key={s.id} onClick={() => setConfirming(s)}
-                    style={{
-                      display: "block", textAlign: "left", padding: 0, cursor: "pointer",
-                      background: "transparent", border: "none", color: "inherit",
-                    }}>
-                    <div style={{
-                      width: "100%", aspectRatio: "1", borderRadius: 10, overflow: "hidden",
-                      background: tintFor(s.title + (s.artist || "")),
-                      border: "1px solid rgba(255,255,255,0.10)",
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      padding: 16, boxSizing: "border-box",
-                    }}>
-                      <span style={{
-                        fontFamily: "'Newsreader', Georgia, serif", fontSize: 22, lineHeight: 1.2,
-                        fontWeight: 700, color: "rgba(255,255,255,0.92)", textAlign: "center",
-                        display: "-webkit-box", WebkitLineClamp: 4, WebkitBoxOrient: "vertical",
-                        overflow: "hidden", wordBreak: "break-word",
-                      }}>{s.title}</span>
-                    </div>
-                    <div style={{ marginTop: 10, fontSize: 15, fontWeight: 700, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</div>
-                    <div style={{ fontSize: 13, color: "rgba(255,255,255,0.55)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {s.artist || "Unknown artist"}{s.duration_ms ? ` · ${fmtDur(s.duration_ms)}` : ""}
-                    </div>
-                  </button>
-                ))}
-              </div>
-
-              {songs.length < total && (
-                <div style={{ textAlign: "center", marginTop: 30 }}>
-                  <button
-                    onClick={() => { const n = page + 1; setPage(n); void runQuery(search, n, true); }}
-                    disabled={loading}
-                    style={{
-                      height: 56, padding: "0 34px", fontSize: 17, fontWeight: 800, cursor: "pointer",
-                      background: "rgba(255,255,255,0.07)", color: "#fff",
-                      border: "1px solid rgba(255,255,255,0.16)", borderRadius: 8,
-                    }}>
-                    {loading ? "Loading…" : `Show more (${songs.length} of ${total})`}
-                  </button>
-                </div>
-              )}
-            </>
+            <div style={{
+              display: "grid", gap: 18,
+              gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))",
+            }}>
+              {songs.map(s => <Tile key={s.id} song={s} onPick={sel => { setConfirming(sel); setNameInput(""); }} />)}
+            </div>
           )}
+          {loading && <div style={{ color: "#5a5a70", fontSize: 13, padding: 20, textAlign: "center" }}>Loading…</div>}
+        </div>
+      </div>
+
+      {/* ── RIGHT RAIL: the named queue + the QR ─────────────────────────────────────────────────── */}
+      <div style={{
+        width: 400, flexShrink: 0, background: "#0b0b12", borderLeft: "1px solid #1a1a2a",
+        display: "flex", flexDirection: "column",
+      }}>
+        <div style={{ padding: "24px 22px 14px", flexShrink: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.16em", color: "#6040c0" }}>UP NEXT</div>
+          <div style={{ fontSize: 12, color: "#5a5a70", marginTop: 5 }}>
+            {pendingCount} request{pendingCount === 1 ? "" : "s"} waiting
+          </div>
         </div>
 
-        {/* ── Up next — the daemon's queue ── */}
-        <div style={{
-          width: 300, flexShrink: 0, borderLeft: "1px solid rgba(255,255,255,0.08)",
-          display: "flex", flexDirection: "column", background: "rgba(255,255,255,0.02)",
-        }}>
-          <div style={{ padding: "18px 20px 10px", fontSize: 12, fontWeight: 800, letterSpacing: "0.16em", color: "rgba(255,255,255,0.45)" }}>
-            UP NEXT
-          </div>
-          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "0 20px 20px" }}>
-            {queue.length === 0 ? (
-              <div style={{ fontSize: 14, color: "rgba(255,255,255,0.35)", lineHeight: 1.5 }}>
-                Nothing waiting yet. Your song will show up here.
-              </div>
-            ) : queue.slice(0, 24).map((q: any, i: number) => (
-              <div key={q.qid || `${q.filePath}-${i}`} style={{
-                padding: "11px 0", borderBottom: "1px solid rgba(255,255,255,0.06)",
-                display: "flex", gap: 12, alignItems: "baseline",
+        <div className="juke-scroll" style={{ flex: 1, overflowY: "auto", padding: "0 16px 16px" }}>
+          {tableMissing && (
+            <div style={{ color: "#c08040", fontSize: 12.5, padding: 12, lineHeight: 1.5 }}>
+              The request store hasn't been created on this install yet. Close and reopen Ether to run
+              the pending database migration.
+            </div>
+          )}
+          {!tableMissing && requests.length === 0 && (
+            <div style={{ color: "#4a4a60", fontSize: 13.5, padding: "26px 8px", lineHeight: 1.6 }}>
+              No requests yet. Scan the code below, or pick something from the wall.
+            </div>
+          )}
+          {requests.map((r, i) => {
+            const isUpNext = i === upNextIndex;
+            return (
+              <div key={r.id} style={{
+                display: "flex", gap: 13, alignItems: "center",
+                padding: isUpNext ? "18px 16px" : "12px 14px",
+                marginBottom: 9, borderRadius: 12,
+                background: isUpNext ? "rgba(96,64,192,0.16)" : "#101018",
+                border: `1px solid ${isUpNext ? "#6040c0" : "#1c1c2c"}`,
+                animation: "juke-rise 0.22s ease",
               }}>
-                <span style={{ fontSize: 12, fontFamily: "'DM Mono', monospace", color: "rgba(255,255,255,0.3)", width: 18, flexShrink: 0 }}>{i + 1}</span>
-                <span style={{ minWidth: 0 }}>
-                  <span style={{ display: "block", fontSize: 14, fontWeight: 700, color: myPicks.current.has(q.filePath) ? "var(--accent-cyan, #22d3ee)" : "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{q.title}</span>
-                  <span style={{ display: "block", fontSize: 12, color: "rgba(255,255,255,0.45)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{q.artist || ""}</span>
-                </span>
+                <div style={{
+                  flexShrink: 0, width: isUpNext ? 44 : 32, height: isUpNext ? 44 : 32,
+                  borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+                  background: isUpNext ? "#6040c0" : "#1a1a2a",
+                  color: isUpNext ? "#fff" : "#7a7a95",
+                  fontSize: isUpNext ? 17 : 13, fontWeight: 900,
+                }}>{i + 1}</div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{
+                    fontSize: isUpNext ? 17 : 14, fontWeight: 800, color: "#fff",
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>{r.requester_name}</div>
+                  <div style={{
+                    fontSize: isUpNext ? 14 : 12.5, color: isUpNext ? "#c0b0f0" : "#7a7a95", marginTop: 2,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                  }}>{r.title}{r.artist ? ` — ${r.artist}` : ""}</div>
+                  {isUpNext && (
+                    <div style={{
+                      marginTop: 7, fontSize: 10.5, fontWeight: 900, letterSpacing: "0.16em",
+                      color: "#8868D8", animation: "juke-flash 1.1s ease-in-out infinite",
+                    }}>● UP NEXT</div>
+                  )}
+                </div>
               </div>
-            ))}
-          </div>
-          {clockName && (
-            <div style={{ padding: "10px 20px 16px", fontSize: 11, color: "rgba(255,255,255,0.28)", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
-              {total} songs · {clockName}
-              {categoryNames.length ? ` · ${categoryNames.join(", ")}` : ""}
+            );
+          })}
+        </div>
+
+        {/* QR — rendered every time this window opens (spec item 5). Big enough to scan across a room. */}
+        <div style={{ padding: "18px 22px 24px", borderTop: "1px solid #1a1a2a", flexShrink: 0, textAlign: "center" }}>
+          {requestUrl ? (
+            <>
+              <div style={{ background: "#fff", padding: 12, borderRadius: 12, display: "inline-block" }}>
+                <QRCodeSVG value={requestUrl} size={188} level="M" />
+              </div>
+              <div style={{ marginTop: 11, fontSize: 13.5, fontWeight: 700, color: "#c8c8e0" }}>
+                Request from your phone
+              </div>
+              <div style={{ marginTop: 3, fontSize: 11, color: "#4a4a60", wordBreak: "break-all" }}>{requestUrl}</div>
+            </>
+          ) : (
+            <div style={{ fontSize: 12.5, color: "#5a5a70", lineHeight: 1.55 }}>
+              No request link set yet — add one in <strong style={{ color: "#8a8aa0" }}>Settings → Jukebox</strong> and
+              it will show here as a scannable code.
             </div>
           )}
         </div>
       </div>
 
-      {/* ── Confirm card — large, not a small dialog ── */}
+      {/* ── CONFIRM CARD — big cover, name, one huge button ──────────────────────────────────────── */}
       {confirming && (
         <div
-          onClick={() => !busy && setConfirming(null)}
-          style={{ position: "fixed", inset: 0, zIndex: 9100, background: "rgba(0,0,0,0.78)", display: "flex", alignItems: "center", justifyContent: "center", padding: 30 }}>
-          <div onClick={e => e.stopPropagation()}
-            style={{
-              width: "min(560px, 100%)", background: "#101018", borderRadius: 16,
-              border: "1px solid rgba(255,255,255,0.12)", padding: 34, textAlign: "center",
-              boxShadow: "0 30px 90px rgba(0,0,0,0.6)",
-            }}>
-            <div style={{
-              width: 260, height: 260, margin: "0 auto 24px", borderRadius: 12,
-              background: tintFor(confirming.title + (confirming.artist || "")),
-              border: "1px solid rgba(255,255,255,0.10)",
-              display: "flex", alignItems: "center", justifyContent: "center", padding: 22, boxSizing: "border-box",
-            }}>
-              <span style={{
-                fontFamily: "'Newsreader', Georgia, serif", fontSize: 27, lineHeight: 1.2, fontWeight: 700,
-                color: "rgba(255,255,255,0.92)", display: "-webkit-box", WebkitLineClamp: 5,
-                WebkitBoxOrient: "vertical", overflow: "hidden", wordBreak: "break-word",
-              }}>{confirming.title}</span>
-            </div>
-            <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 30, fontWeight: 800, lineHeight: 1.15, marginBottom: 6 }}>{confirming.title}</div>
-            <div style={{ fontSize: 17, color: "rgba(255,255,255,0.55)", marginBottom: 28 }}>
-              {confirming.artist || "Unknown artist"}{confirming.duration_ms ? ` · ${fmtDur(confirming.duration_ms)}` : ""}
-            </div>
-            <button onClick={() => void pick(confirming)} disabled={busy}
+          onClick={() => { if (!busy) { setConfirming(null); setNameInput(""); } }}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(4,4,8,0.88)", backdropFilter: "blur(6px)",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: 32,
+          }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            width: "min(560px, 94vw)", background: "#0e0e16", border: "1px solid #23233a",
+            borderRadius: 20, padding: 34, textAlign: "center", animation: "juke-rise 0.2s ease",
+          }}>
+            <div style={{ fontSize: 27, fontWeight: 900, color: "#fff", lineHeight: 1.2 }}>{confirming.title}</div>
+            <div style={{ fontSize: 16, color: "#8a8aa0", marginTop: 7 }}>{confirming.artist || "—"}</div>
+
+            <input
+              autoFocus
+              value={nameInput}
+              onChange={e => setNameInput(e.target.value.slice(0, NAME_MAX))}
+              onKeyDown={e => { if (e.key === "Enter") void submit(); }}
+              placeholder="Your name"
               style={{
-                width: "100%", height: 78, fontSize: 22, fontWeight: 900, letterSpacing: "0.06em",
-                cursor: busy ? "default" : "pointer", borderRadius: 10, border: "none",
-                background: busy ? "rgba(255,255,255,0.14)" : "var(--accent-blue, #6040C0)", color: "#fff",
+                marginTop: 26, width: "100%", padding: "17px 20px", fontSize: 20, textAlign: "center",
+                background: "#08080e", border: "1px solid #2a2a44", borderRadius: 12,
+                color: "#fff", outline: "none", fontFamily: "inherit", fontWeight: 700,
+              }}
+            />
+
+            <button
+              onClick={() => void submit()}
+              disabled={busy}
+              style={{
+                marginTop: 18, width: "100%", padding: "20px 0", fontSize: 19, fontWeight: 900,
+                letterSpacing: "0.06em", border: "none", borderRadius: 13,
+                background: busy ? "#2a2a44" : "#6040c0", color: "#fff",
+                cursor: busy ? "default" : "pointer", fontFamily: "inherit",
               }}>
-              {busy ? "…" : provider.label}
+              {busy ? "SENDING…" : provider.label}
             </button>
-            <button onClick={() => setConfirming(null)} disabled={busy}
+            <button
+              onClick={() => { setConfirming(null); setNameInput(""); }}
+              disabled={busy}
               style={{
-                marginTop: 14, height: 52, width: "100%", fontSize: 15, fontWeight: 700, cursor: "pointer",
-                background: "transparent", color: "rgba(255,255,255,0.5)",
-                border: "1px solid rgba(255,255,255,0.14)", borderRadius: 10,
+                marginTop: 12, background: "transparent", border: "none", color: "#5a5a70",
+                fontSize: 13.5, cursor: "pointer", fontFamily: "inherit", padding: 8,
               }}>
               Cancel
             </button>
@@ -485,14 +740,24 @@ export default function Jukebox({ onExit }: { onExit: () => void }) {
         </div>
       )}
 
-      {/* ── Toast ── */}
       {toast && (
         <div style={{
-          position: "fixed", bottom: 34, left: "50%", transform: "translateX(-50%)", zIndex: 9200,
-          background: "rgba(20,20,28,0.97)", border: "1px solid rgba(255,255,255,0.16)",
-          borderRadius: 10, padding: "18px 30px", fontSize: 17, fontWeight: 700,
-          maxWidth: "80vw", textAlign: "center", boxShadow: "0 18px 50px rgba(0,0,0,0.5)",
+          position: "fixed", bottom: 34, left: "50%", transform: "translateX(-50%)",
+          background: "#151522", border: "1px solid #2a2a44", borderRadius: 12,
+          padding: "16px 28px", fontSize: 16, fontWeight: 600, color: "#e8e8f0",
+          boxShadow: "0 12px 40px rgba(0,0,0,0.6)", zIndex: 60, animation: "juke-rise 0.2s ease",
         }}>{toast}</div>
+      )}
+
+      {/* Staff exit — deliberately small and quiet. Only rendered when the host gave us a way out
+          (the in-window takeover did; the pop-out is closed with the window / F11). */}
+      {onExit && (
+        <button
+          onClick={onExit}
+          style={{
+            position: "fixed", top: 12, right: 14, background: "transparent", border: "none",
+            color: "#2e2e40", fontSize: 11, letterSpacing: "0.1em", cursor: "pointer", zIndex: 40,
+          }}>EXIT</button>
       )}
     </div>
   );

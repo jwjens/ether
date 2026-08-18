@@ -118,6 +118,43 @@ function modeToggle(stationId, fn) {
   return next;
 }
 
+// ── JUKEBOX DECK SOURCE (D/E/F) ────────────────────────────────────────────────────────────────────
+//
+// Design: docs/jukebox-deck-source-design-2026-08-17.md. The jukebox is an EVENT TOOL patched into a
+// deck like a microphone — not playout. It airs through a real Rust deck so the operator mixes it on
+// the board, and it logs its plays, but it must not perturb the station in any other way.
+//
+// THE BOARD IS THE TRUTH (Jeff, 2026-08-17). Whatever fader is live is what streams; putting the
+// jukebox on air is an operator decision at the fader, exactly like a mic. So there is NO suppression
+// and NO stealth here — a jukebox play emits `deck` and `playstart` and writes play_log like any other
+// deck play. The ONLY isolation is the one that already exists: station automation enumerates
+// ["A","B","C"] and nothing else (engine.js:521, :604, :648, :905, :1698, …), so it never touches or
+// reads a jukebox deck. That is isolation by construction, not by hiding.
+//
+// Rust already treats D/E/F as first-class: the mixer sums EVERY deck slot with fader, channel cut and
+// trim (`native/src/audio.rs:1151` — `for (i, deck) in bus.decks.iter_mut().enumerate()`), and
+// `audio_get_state` reports deckD/E/F (`native/src/lib.rs:182-210`). So the audio path needs nothing new.
+//
+// STANDALONE FOR ONE STRUCTURAL REASON, not a policy one: `engine.js:396` is
+//   `_deckState(id) { return id === "A" ? this.stateA : id === "B" ? this.stateB : this.stateC; }`
+// Anything that is not A or B resolves to **deck C's state object**. Routing a jukebox load through
+// the engine's deck machinery would silently read and overwrite the mirrored state of deck C — the
+// deck the station may be airing from. The daemon's JS engine models exactly three decks; until that
+// model is widened, a jukebox deck keeps its own state here and emits the same events.
+const JUKEBOX_DECKS = ["D", "E", "F"];
+const JUKEBOX_SESSION = require("crypto").randomUUID();
+const _jukeboxPlaylog = (() => { try { return require("./playlog"); } catch { return null; } })();
+/** stationId → { deck, filePath, title, artist, startedAtMs } — what the kiosk last put on air. */
+const jukeboxNow = new Map();
+
+function jukeboxDeckInfo(stationId, deck) {
+  // The DAEMON is the source of truth for what a deck is doing; the kiosk renders this, never a guess.
+  try {
+    const st = JSON.parse(A.audioGetState(stationId));
+    return st[`deck${deck}`] || null;
+  } catch { return null; }
+}
+
 const handlers = {
   init:               (m) => { A.initAudioEngine(m.stationId); stations.add(m.stationId); return true; },
   // Quiesce for a database swap. This process holds openair.db open in WAL mode, which locks
@@ -214,6 +251,86 @@ const handlers = {
   // ── Stage 1: explicit-intent commands (additive; run ALONGSIDE the legacy ones above) ──
   // The renderer does not call these yet (Stage 2 flips it). All id-addressed, idempotent, tolerant
   // — a stale/unknown intent returns false (a quiet no-op), never an error or a corrupting mutation.
+  // ── Jukebox deck source — D/E/F only (see the block above the handler map) ──
+  "jukebox:play": (m) => {
+    const deck = String(m.deck || "").toUpperCase();
+    if (!JUKEBOX_DECKS.includes(deck)) return { ok: false, reason: "deck-not-allowed", allowed: JUKEBOX_DECKS };
+    if (!m.filePath) return { ok: false, reason: "no-file" };
+    stations.add(m.stationId);
+    let loaded;
+    try { loaded = A.audioLoad(deck, m.filePath, m.title || "", m.artist || "", m.gainDb ?? 0, m.stationId); }
+    catch (e) { return { ok: false, reason: "load-threw", error: String(e && e.message || e) }; }
+    if (loaded === false) return { ok: false, reason: "load-failed" };
+    let played;
+    try { played = A.audioPlay(deck, m.stationId); }
+    catch (e) { return { ok: false, reason: "play-threw", error: String(e && e.message || e) }; }
+    if (played === false) return { ok: false, reason: "play-failed" };
+
+    jukeboxNow.set(m.stationId, {
+      deck, filePath: m.filePath, title: m.title || "", artist: m.artist || "", startedAtMs: Date.now(),
+    });
+
+    // Normal deck lifecycle events — the same two the automation decks emit, on the same channels.
+    // The board is the truth: a live jukebox fader is on air, so the deck state and now-playing say so.
+    broadcast({
+      event: "deck", stationId: m.stationId, deck,
+      state: {
+        status: "playing", title: m.title || "", artist: m.artist || "",
+        filePath: m.filePath, durationSec: m.durationMs ? m.durationMs / 1000 : 0,
+        positionSec: 0, scheduledAt: null, contentClass: m.contentClass ?? null,
+      },
+      ready: false,
+    });
+    broadcast({
+      event: "playstart", stationId: m.stationId, deck,
+      title: m.title || "", artist: m.artist || "", filePath: m.filePath,
+    });
+
+    // Honest history (v39): the row is marked `source='jukebox'` so Play History can tell a public
+    // pick from rotation. Logging must never throw into the audio path.
+    try {
+      if (_jukeboxPlaylog) {
+        _jukeboxPlaylog.logPlay(getDb(), {
+          stationId: m.stationId, title: m.title || "", artist: m.artist || "", deck,
+          durationMs: m.durationMs ?? null, sessionId: JUKEBOX_SESSION,
+          filePath: m.filePath, source: "jukebox",
+        });
+      }
+    } catch (e) { console.error("[audiod/jukebox] play_log failed:", e && e.message); }
+
+    return { ok: true, deck, title: m.title || "" };
+  },
+
+  "jukebox:stop": (m) => {
+    const deck = String(m.deck || "").toUpperCase();
+    if (!JUKEBOX_DECKS.includes(deck)) return { ok: false, reason: "deck-not-allowed" };
+    try { A.audioStop(deck, m.stationId); } catch { /* already stopped / never opened */ }
+    jukeboxNow.delete(m.stationId);
+    broadcast({
+      event: "deck", stationId: m.stationId, deck,
+      state: { status: "stopped", title: "", artist: "", filePath: null, durationSec: 0, positionSec: 0,
+               scheduledAt: null, contentClass: null },
+      ready: false,
+    });
+    return { ok: true, deck };
+  },
+
+  /** What the jukebox deck is ACTUALLY doing, straight off the engine — status, volume, is_finished.
+   *  The kiosk's routing banner and its on-air blink read this and nothing else. */
+  "jukebox:state": (m) => {
+    const deck = String(m.deck || "").toUpperCase();
+    if (!JUKEBOX_DECKS.includes(deck)) return { ok: false, reason: "deck-not-allowed" };
+    const info = jukeboxDeckInfo(m.stationId, deck);
+    const now = jukeboxNow.get(m.stationId) || null;
+    return {
+      ok: true, deck, info,
+      status: info ? info.status : null,
+      volume: info ? info.volume : null,
+      isFinished: info ? !!info.is_finished : false,
+      nowPlaying: now && now.deck === deck ? now : null,
+    };
+  },
+
   "queue:enqueue":    (m) => getEngine(m.stationId).intentEnqueue(m.items || []),
   "queue:remove":     (m) => getEngine(m.stationId).intentRemove(m.qid),
   "queue:reorder":    (m) => getEngine(m.stationId).intentReorder(m.qid, m.toIndex),

@@ -1083,6 +1083,9 @@ function MultiMachineSyncSection() {
   const [pf, setPf] = useState<SyncPreflight | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string>("");
+  // Clear-pending is armed by a typed confirmation, never a single click.
+  const [clearArmed, setClearArmed] = useState(false);
+  const [clearTyped, setClearTyped] = useState("");
 
   const call = <T,>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 
@@ -1125,22 +1128,18 @@ function MultiMachineSyncSection() {
   // ONE act, not two: main's sync:clear-pending sets the watermark and discards the journal in a
   // single transaction, baseline FIRST. Doing it as two clicks would leave a window with an empty
   // journal and no watermark, which is exactly the state that refills.
+  // TYPED confirm, not window.confirm(). Two reasons: a native confirm() blocks the renderer (the
+  // dialog class this codebase already had to stop using), and this action is irreversible on a machine
+  // that may be holding tens of thousands of queued changes. Typing the word is the point, and the
+  // arming block below shows the count it is about to discard.
   const clearPending = async () => {
-    const pending = pf?.mutations?.pending ?? 0;
-    if (!confirm(
-      "Clear pending sync history?\n\n" +
-      "Discards all queued sync history — " + pending.toLocaleString() + " queued change(s) — and marks this moment as the baseline. " +
-      "Edits made after this moment sync normally.\n\n" +
-      "This does NOT delete songs, stations, clocks or settings. Only the sync backlog.\n\n" +
-      "This cannot be undone. Continue?"
-    )) return;
     setBusy("baseline"); setMsg("");
     try {
       const r: any = await call("sync:clear-pending");
       if (!r?.ok) setMsg(`✗ clear pending: ${r?.error || "failed"}`);
       else setMsg(`✓ baseline set — pending ${r.pendingBefore?.toLocaleString?.() ?? r.pendingBefore} → ${r.pendingAfter}. Edits from now on sync normally.`);
     } catch (e: any) { setMsg(`✗ clear pending: ${e?.message || String(e)}`); }
-    finally { setBusy(null); refresh(); }
+    finally { setBusy(null); setClearArmed(false); setClearTyped(""); refresh(); }
   };
 
   const toggleUuid = async () => {
@@ -1312,7 +1311,49 @@ function MultiMachineSyncSection() {
         <button style={btn} onClick={refresh} disabled={busy !== null}>{busy === "preflight" ? "CHECKING…" : "PREFLIGHT"}</button>
         <button style={btn} onClick={() => run("sync:push-now", "push")} disabled={busy !== null}>{busy === "push" ? "PUSHING…" : "PUSH NOW"}</button>
         <button style={btn} onClick={() => run("sync:pull-now", "pull")} disabled={busy !== null}>{busy === "pull" ? "PULLING…" : "PULL NOW"}</button>
+        {/* CLEAR PENDING — the DOOR for sync:clear-pending. The IPC handler and the baseline module
+            shipped in 4.4.225; this button did not, so the handler was unreachable and the renderer's
+            clearPending() was dead code the bundler dropped. A handler with no door does not exist to an
+            operator. docs/clear-pending-button-verify-2026-08-18.md
+            Disabled whenever ANY sync action is in flight (busy covers preflight/push/pull): clearing
+            the journal mid-push would delete rows the push is still sending. */}
+        <button
+          style={{ ...btn, borderColor: "#a0522d", color: clearArmed ? "#e0a060" : "var(--text-secondary)" }}
+          onClick={() => { setClearArmed(a => !a); setClearTyped(""); setMsg(""); }}
+          disabled={busy !== null || !pf?.ok}
+          title="Discard the queued sync backlog and make this moment the baseline"
+        >{busy === "baseline" ? "CLEARING…" : "CLEAR PENDING…"}</button>
       </div>
+
+      {clearArmed && (
+        <div style={{ marginTop: 10, padding: 12, border: "1px solid #a0522d", background: "rgba(160,82,45,0.08)" }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text-primary)" }}>
+            Discard {(pf?.mutations?.pending ?? 0).toLocaleString()} queued change{(pf?.mutations?.pending ?? 0) === 1 ? "" : "s"} and set the baseline to now?
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 6, lineHeight: 1.55 }}>
+            The sync backlog on this machine is thrown away and this moment becomes the baseline, so edits
+            made from now on sync normally. <strong>Nothing else is touched</strong> — no songs, stations,
+            clocks, logs or settings are deleted. Other machines keep their own history.
+            <br />This cannot be undone.
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Type <strong style={{ color: "#e0a060" }}>CLEAR</strong> to confirm:</span>
+            <input
+              autoFocus
+              value={clearTyped}
+              onChange={e => setClearTyped(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && clearTyped.trim().toUpperCase() === "CLEAR" && busy === null) void clearPending(); }}
+              style={{ width: 110, padding: "5px 8px", fontSize: 12, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-secondary)" }}
+            />
+            <button
+              style={{ ...btn, borderColor: "#a0522d", opacity: clearTyped.trim().toUpperCase() === "CLEAR" ? 1 : 0.45 }}
+              onClick={() => void clearPending()}
+              disabled={busy !== null || clearTyped.trim().toUpperCase() !== "CLEAR"}
+            >{busy === "baseline" ? "CLEARING…" : "DISCARD BACKLOG"}</button>
+            <button style={btn} onClick={() => { setClearArmed(false); setClearTyped(""); }} disabled={busy !== null}>CANCEL</button>
+          </div>
+        </div>
+      )}
 
       {msg && (
         <div style={{ marginTop: 10, fontSize: 12, lineHeight: 1.5, color: msg.startsWith("✓") ? "#4ade80" : "#f87171" }}>{msg}</div>
@@ -2067,6 +2108,164 @@ function PublicPageSettings() {
 // Per-station music folder + Test-sync / Re-sync (DESIGN-TRUTH §2 — each station is independent).
 // Pick THIS station's audio folder, dry-run "Test sync" to see if the files are there, and "Re-sync"
 // to relink them by title from that folder only — returning the list of songs whose file is missing.
+// ── Jukebox — which categories the public may pick from ───────────────────────────────────────────
+//
+// The pool is CATEGORIES, not a clock. docs/jukebox-rebuild-design-2026-08-17.md §0.2 supersedes the
+// clock-as-playlist rule from the 08-04 design; jukebox_source_clock_id is now dead and ignored.
+//
+// Stored as a JSON array of category ids in station_config_kv (`jukebox_categories`) — a user-managed
+// scalar in the existing per-station KV store, exactly like proc_local / station_logo. NO migration,
+// no new table, per the standing code-managed-vs-user-managed rule.
+//
+// The song count next to each category is the honest sense: an operator can see at a glance whether
+// what they ticked resolves to something sane, and the total is the same query the kiosk itself runs
+// (file present, MUSIC only) rather than a raw category size that would over-promise.
+function JukeboxSection() {
+  const { stationId } = useActiveStation();
+  const [cats, setCats] = useState<{ id: number; name: string; n: number }[]>([]);
+  const [checked, setChecked] = useState<number[]>([]);
+  const [url, setUrl] = useState("");
+  const [savedUrl, setSavedUrl] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [msg, setMsg] = useState("");
+
+  const kv = () => (window as any).ether.stationConfigKv;
+
+  useEffect(() => {
+    if (stationId == null) return;
+    let on = true;
+    (async () => {
+      setLoading(true);
+      try {
+        // Categories with the count of songs the kiosk could ACTUALLY play from each — same
+        // predicate as the wall: not deleted, has a file, music.
+        const rows = await queryScoped<{ id: number; name: string; n: number }>(
+          `SELECT c.id, c.name,
+                  (SELECT COUNT(*) FROM songs s
+                    WHERE s.category_id = c.id AND s.deleted_at IS NULL
+                      AND s.file_path IS NOT NULL AND TRIM(s.file_path) <> ''
+                      AND (s.content_class IS NULL OR s.content_class = 'MUSIC')) AS n
+             FROM categories c
+            WHERE c.deleted_at IS NULL
+            ORDER BY c.name`, [], stationId);
+        const r: any = await kv().list(stationId);
+        const kvRows: any[] = (r && r.rows) || [];
+        const get = (k: string) => kvRows.find(x => x.key === k)?.value;
+        let ids: number[] = [];
+        try {
+          const parsed = JSON.parse(get("jukebox_categories") ?? "[]");
+          if (Array.isArray(parsed)) ids = parsed.map((n: any) => parseInt(n, 10)).filter(Number.isFinite);
+        } catch { ids = []; }
+        const u = String(get("jukebox_request_url") ?? "");
+        if (!on) return;
+        setCats(rows);
+        setChecked(ids);
+        setUrl(u);
+        setSavedUrl(u);
+      } catch { if (on) { setCats([]); setChecked([]); } }
+      finally { if (on) setLoading(false); }
+    })();
+    return () => { on = false; };
+  }, [stationId]);
+
+  /** Write through and re-read: a toggle that reports success without confirming the stored value is
+   *  the same class of lie the designation bug taught this codebase about. */
+  const persist = async (ids: number[]) => {
+    if (stationId == null) return;
+    const value = JSON.stringify(ids);
+    try {
+      await kv().upsertByKey(stationId, "jukebox_categories", value);
+      const r: any = await kv().list(stationId);
+      const back = ((r && r.rows) || []).find((x: any) => x.key === "jukebox_categories")?.value;
+      setMsg(back === value ? "Saved." : "Saved, but the value did not read back — check the log.");
+    } catch (e: any) {
+      setMsg(e?.message || "Could not save.");
+    }
+    setTimeout(() => setMsg(""), 2600);
+  };
+
+  const toggle = (id: number) => {
+    const next = checked.includes(id) ? checked.filter(x => x !== id) : [...checked, id];
+    setChecked(next);
+    void persist(next);
+  };
+
+  const saveUrl = async () => {
+    if (stationId == null) return;
+    try {
+      await kv().upsertByKey(stationId, "jukebox_request_url", url.trim());
+      setSavedUrl(url.trim());
+      setMsg("Request link saved.");
+    } catch (e: any) { setMsg(e?.message || "Could not save."); }
+    setTimeout(() => setMsg(""), 2600);
+  };
+
+  const poolTotal = cats.filter(c => checked.includes(c.id)).reduce((a, c) => a + c.n, 0);
+
+  return (
+    <Section
+      category="programming"
+      icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>}
+      title="Jukebox"
+      description="Which categories the public can pick from on the Jukebox kiosk. Tick as many as you like — their songs are the whole pool. Open the display from the ☰ menu → Jukebox."
+    >
+      {loading ? (
+        <div style={{ padding: "14px 0", fontSize: 12, color: "var(--text-tertiary)" }}>Loading categories…</div>
+      ) : cats.length === 0 ? (
+        <div style={{ padding: "14px 0", fontSize: 12.5, color: "var(--text-tertiary)", lineHeight: 1.6 }}>
+          This station has no rotation categories yet. Create them in Schedule → Categories, then come
+          back and tick the ones the public may choose from.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 6, padding: "6px 0 12px" }}>
+            {cats.map(c => {
+              const on = checked.includes(c.id);
+              return (
+                <label key={c.id} style={{
+                  display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", cursor: "pointer",
+                  background: on ? "rgba(136,104,216,0.10)" : "var(--bg-secondary)",
+                  border: `1px solid ${on ? "#6040C0" : "var(--border-secondary)"}`,
+                }}>
+                  <input type="checkbox" checked={on} onChange={() => toggle(c.id)} style={{ accentColor: "#6040C0", width: 15, height: 15 }} />
+                  <span style={{ flex: 1, fontSize: 12.5, fontWeight: on ? 700 : 500, color: on ? "var(--text-primary)" : "var(--text-secondary)" }}>{c.name}</span>
+                  <span style={{ fontSize: 11, color: c.n === 0 ? "#a06040" : "var(--text-tertiary)" }}>
+                    {c.n === 0 ? "no playable songs" : `${c.n.toLocaleString()}`}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", paddingBottom: 14 }}>
+            {checked.length === 0
+              ? "Nothing ticked — the kiosk will tell staff it isn't set up yet."
+              : <>Pool: <strong style={{ color: "var(--text-primary)" }}>{poolTotal.toLocaleString()}</strong> song{poolTotal === 1 ? "" : "s"} across {checked.length} categor{checked.length === 1 ? "y" : "ies"}. Songs with no file on this machine are excluded — a public pick must never produce dead air.</>}
+          </div>
+
+          <SettingRow label="Request link (QR)" hint="The public page this station's QR code points at. Shown on the kiosk every time the window opens. Phase 2 wires the page itself.">
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                value={url}
+                onChange={e => setUrl(e.target.value)}
+                placeholder="https://listen.ether-technologies.com/jukebox/your-station"
+                style={{ width: 340, padding: "7px 10px", fontSize: 12, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-secondary)" }}
+              />
+              <button
+                onClick={() => void saveUrl()}
+                disabled={url.trim() === savedUrl}
+                style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: url.trim() === savedUrl ? "var(--text-tertiary)" : "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: url.trim() === savedUrl ? "default" : "pointer" }}
+              >Save</button>
+            </div>
+          </SettingRow>
+
+          {msg && <div style={{ fontSize: 12, color: "var(--text-secondary)", paddingTop: 6 }}>{msg}</div>}
+        </>
+      )}
+    </Section>
+  );
+}
+
 function MusicFolderSection() {
   const { stationId } = useActiveStation();
   const [folder, setFolder] = useState<string | null>(null);
@@ -2851,6 +3050,9 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, seg
 
       {/* ── Per-station Music Folder & Sync ── */}
       <MusicFolderSection />
+
+      {/* ── Jukebox — the public request kiosk's song pool ── */}
+      <JukeboxSection />
 
       {/* Jingles & Sweepers moved to its own bottom-bar push-up (JINGLES) — the one imaging home (4.4.59). */}
 

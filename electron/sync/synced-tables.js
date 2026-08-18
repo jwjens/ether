@@ -573,6 +573,11 @@ const REGISTRY = {
       programming_row_id:  'scalar',
       file_path:           'blob-ref',   // v19: the audio that aired — affidavit join key
       content_class:       'scalar',     // jingles design 1b — MUSIC/JIN/SPOT (v29)
+      // v39: which SOURCE aired it. NULL = ordinary playout; 'jukebox' = the event-tool deck source.
+      // SYNCED on purpose (unlike generated_schedule.source, which is local-authoritative playout
+      // state): play_log is history that already travels, and a mark that stayed home would make the
+      // history honest on one machine and misleading everywhere else.
+      source:              'scalar',
     },
   },
 

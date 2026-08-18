@@ -77,7 +77,6 @@ import ActiveStationBadge from "./components/ActiveStationBadge";
 import GSelectorImport from "./components/GSelectorImport";
 import HelpPanel from "./components/HelpPanel";
 import NowPlaying from "./components/NowPlaying";
-import Jukebox from "./components/Jukebox";
 import { openNowPlayingWindow } from "./components/NowPlayingWindow";
 import NowPlayingStationPicker from "./components/NowPlayingStationPicker";
 import Spots from "./components/Spots";
@@ -725,9 +724,8 @@ export default function App() {
   const [queueLen, setQueueLen] = useState(0);
   const [darkMode, setDarkMode] = useState(false);
   const [showCarts, setShowCarts] = useState(false);
-  // Jukebox Mode — fullscreen public takeover. The rest of the app stays MOUNTED underneath so the
-  // engine, station context and daemon connection keep running; this is an overlay, not a route swap.
-  const [jukeboxOpen, setJukeboxOpen] = useState(false);
+  // Jukebox has no state here any more — it is a separate kiosk window, opened through the same
+  // window:popout path as every other pop-out (rebuild design §0.1).
   // On-air programming push-up docks (like carts): one editor at a time, mutually
   // exclusive with the cart strip. null = closed.
   const [progPanel, setProgPanel] = useState<null | "shows" | "categories" | "clocks" | "library" | "calendar" | "phone" | "jingles">(null);
@@ -1037,7 +1035,7 @@ export default function App() {
   // Native menu IPC handler
   useEffect(() => {
     const handler = (window as any).ether.on("menu-action", (cmd: string) => {
-      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:logs":"logs","nav:studio":"studio","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio","nav:importlibrary":"importlibrary","nav:cloudbackup":"cloudbackup","nav:clipeditor":"clipeditor","nav:captions":"captions","nav:eas":"eas","nav:rotation":"rotation","nav:schedulehub":"schedulehub" };
+      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:logs":"logs","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio","nav:importlibrary":"importlibrary","nav:cloudbackup":"cloudbackup","nav:clipeditor":"clipeditor","nav:captions":"captions","nav:eas":"eas","nav:rotation":"rotation","nav:schedulehub":"schedulehub" };
       if (panels[cmd]) { setPanel(panels[cmd] as Panel); return; }
       // Schedule ▸ Program Log — the PLAN, which lives as a pane in the workspace rather than as a
       // page of its own. Open the workspace and focus that pane. (It used to open the as-run record,
@@ -2292,9 +2290,10 @@ export default function App() {
   // Bottom-toolbar view tabs — rendered inline on wide screens, collapsed into a
   // bottom-right hamburger menu on tablet/narrow widths (viewport.bottomCollapsed).
   const viewTabs = [
-    // JUKEBOX — fullscreen public takeover (docs/jukebox-mode-design-2026-08-04.md). Slice 1 is the
-    // room; the PIN gate on entry/exit is Slice 2, so this door is deliberately plain for now.
-    { label: "JUKEBOX",    active: jukeboxOpen,                fn: () => setJukeboxOpen(true) },
+    // JUKEBOX is NOT here any more. It left the bottom tab bar in the 2026-08-17 rebuild and lives in
+    // the hamburger → Windows list, opening as its own kiosk pop-out window
+    // (docs/jukebox-rebuild-design-2026-08-17.md §0.1). A public-facing display does not belong on a
+    // view tab the operator clicks by accident mid-show.
     { label: "DECKS",      active: showDeckConfig,             fn: () => { setPanel("live"); setShowDeckConfig(true); } },
     // CARTS is SUPPRESSED when a deck slot is already configured as a cart wall — LivePanel's
     // `cartOpen` (App.tsx ~4119) refuses to open the push-up in that case, deliberately, so you don't
@@ -2322,9 +2321,8 @@ export default function App() {
     <EtherErrorBoundary>
     <div className="h-screen flex flex-col" onContextMenu={handleContextMenu} style={{ background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "'Inter', system-ui, sans-serif" }}>
       <KeyboardHelp />
-      {/* Jukebox takeover — inside AudioEngineProvider so it uses the SAME engine and station context
-          the operator is running. Everything else stays mounted beneath it. */}
-      {jukeboxOpen && <Jukebox onExit={() => setJukeboxOpen(false)} />}
+      {/* Jukebox is no longer a takeover of this window — it opens as its own kiosk pop-out
+          (hamburger → Windows → Jukebox → #popout/jukebox). See the rebuild design §0.1. */}
       <TrialGate />
       <IrisBadge open={irisOpen} onClose={() => setIrisOpen(false)} />{/* Iris chat panel — opened by the bottom-bar IRIS button (contract: docs/iris-ether-contract.md) */}
       <SchedulerHealthHost />{/* Movable Scheduler Health panel — opened from Tools */}
@@ -2603,6 +2601,7 @@ export default function App() {
 
                 {/* Pop-out windows for every bottom-toolbar feature — drag to another monitor */}
                 {([
+                  { key: "po-jukebox",    label: "Jukebox",    panel: "jukebox" },
                   { key: "po-videostudio",label: "Show+",      panel: "videostudio" },
                   { key: "po-studiopro",  label: "Show+ DAW",  panel: "studiopro" },
                   { key: "po-decks",      label: "Decks",      panel: "decks" },
