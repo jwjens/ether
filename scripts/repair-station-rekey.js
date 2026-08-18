@@ -21,6 +21,19 @@ const Database = require("better-sqlite3");
 const argv = process.argv.slice(2);
 const WRITE = argv.includes("--write");
 const dbArg = (() => { const i = argv.indexOf("--db"); return i >= 0 ? argv[i + 1] : null; })();
+// --json <path> writes a machine-readable receipt of what this run saw and did. Added 2026-08-18: a
+// console transcript is not a receipt anyone can diff or hand to another session. Written from an
+// exit handler so EVERY exit path (refusal, dry run, success) leaves one behind.
+const jsonArg = (() => { const i = argv.indexOf("--json"); return i >= 0 ? argv[i + 1] : null; })();
+const receipt = { tool: "repair-station-rekey", ranAt: new Date().toISOString(), mode: null, db: null,
+                  stations: [], orphanIds: [], map: [], plan: [], totalRows: 0, collisions: [],
+                  applied: false, verify: null, exitCode: null };
+process.on("exit", (code) => {
+  if (!jsonArg) return;
+  receipt.exitCode = code;
+  try { fs.writeFileSync(jsonArg, JSON.stringify(receipt, null, 2)); }
+  catch (e) { try { console.error(`  receipt NOT written: ${e.message}`); } catch (_) {} }
+});
 const DB_PATH = dbArg || (() => {
   const P = require(path.join(__dirname, "..", "electron", "profile-paths"));
   return P.dbPath(P.activeKey());
@@ -33,6 +46,8 @@ const CHILD_TABLES = [
 
 const sep = (t) => { console.log("\n" + "=".repeat(78)); console.log(t); console.log("=".repeat(78)); };
 console.log(WRITE ? "WRITE MODE" : "DRY RUN (pass --write to commit)");
+receipt.mode = WRITE ? "write" : "dry-run";
+receipt.db = DB_PATH;
 console.log("DB:", DB_PATH, `(${(fs.statSync(DB_PATH).size / 1048576).toFixed(1)} MB)`);
 
 const db = new Database(DB_PATH, { readonly: !WRITE });
@@ -44,6 +59,7 @@ const n1 = (s, ...p) => db.prepare(s).get(...p);
 sep("1. CURRENT STATE");
 const stations = q("SELECT id, uuid, name, created_at FROM stations ORDER BY created_at, id");
 for (const s of stations) console.log(`  station id=${s.id} ${String(s.name).padEnd(22)} uuid=${s.uuid}`);
+receipt.stations = stations.map(s => ({ id: s.id, uuid: s.uuid, name: s.name, created_at: s.created_at }));
 
 const orphanIds = new Set();
 for (const t of CHILD_TABLES) {
@@ -57,6 +73,7 @@ for (const t of CHILD_TABLES) {
 }
 console.log("\n  orphaned station_id values:", [...orphanIds].sort((a, b) => a - b).join(", ") || "(none)");
 
+receipt.orphanIds = [...orphanIds].sort((a, b) => a - b);
 if (orphanIds.size === 0) { console.log("\n  Nothing to repair."); db.close(); process.exit(0); }
 
 // ── 2. build the map, and PROVE it before using it ──────────────────────────────────────────────
@@ -73,6 +90,7 @@ oldIds.forEach((oldId, i) => map.set(oldId, stations[i].id));
 for (const [o, nw] of map) {
   const st = stations.find(s => s.id === nw);
   console.log(`  ${o} -> ${nw}   ${st.name}  (uuid ${st.uuid})`);
+  receipt.map.push({ from: o, to: nw, name: st.name, uuid: st.uuid });
 }
 
 // Sanity: every new id must be distinct and must exist
@@ -90,9 +108,10 @@ for (const t of CHILD_TABLES) {
     try { c = n1(`SELECT COUNT(*) n FROM ${t} WHERE station_id = ?`, o).n; } catch { c = 0; }
     if (c > 0) { parts.push(`${o}->${nw}:${c}`); sub += c; }
   }
-  if (sub > 0) { plan.push(t); grand += sub; console.log(`  ${t.padEnd(22)} ${String(sub).padStart(8)}   ${parts.join("  ")}`); }
+  if (sub > 0) { plan.push(t); grand += sub; console.log(`  ${t.padEnd(22)} ${String(sub).padStart(8)}   ${parts.join("  ")}`); receipt.plan.push({ table: t, rows: sub, moves: parts }); }
 }
 console.log(`  ${"TOTAL".padEnd(22)} ${String(grand).padStart(8)}`);
+receipt.totalRows = grand;
 
 if (!WRITE) { console.log("\nDRY RUN — nothing written. Re-run with --write."); db.close(); process.exit(0); }
 
@@ -115,7 +134,7 @@ for (const [o, nw] of map) {
               WHERE k.station_id = ?
                 AND EXISTS (SELECT 1 FROM station_config_kv o WHERE o.station_id = ? AND o.key = k.key)`, nw, o);
   } catch (_) {}
-  for (const r of rows) { collisions.push({ newId: nw, key: r.key }); console.log(`  st${nw} ${r.key} — duplicate of st${o}, will be dropped`); }
+  for (const r of rows) { collisions.push({ newId: nw, key: r.key }); receipt.collisions.push({ newId: nw, key: r.key, duplicateOf: o }); console.log(`  st${nw} ${r.key} — duplicate of st${o}, will be dropped`); }
 }
 console.log(`  ${collisions.length} collision(s)`);
 
@@ -139,6 +158,7 @@ db.transaction(() => {
   }
 })();
 console.log(`  applied — ${collisions.length} duplicate(s) dropped, ${grand} row(s) re-pointed.`);
+receipt.applied = true;
 
 // ── 5. verify ───────────────────────────────────────────────────────────────────────────────────
 sep("5. VERIFY");
@@ -152,6 +172,13 @@ for (const t of CHILD_TABLES) {
   } catch (_) {}
 }
 console.log(remaining === 0 ? "  orphans: 0" : `  orphans REMAINING: ${remaining}`);
+receipt.verify = { orphansRemaining: remaining, perStation: q("SELECT id, name FROM stations WHERE deleted_at IS NULL ORDER BY id").map(st => {
+  const g = (t) => { try { return n1(`SELECT COUNT(*) n FROM ${t} WHERE station_id=? AND deleted_at IS NULL`, st.id).n; } catch { return null; } };
+  return { id: st.id, name: st.name, shows: g("shows"), clocks: g("clocks"), clock_slots: g("clock_slots"),
+           categories: g("categories"), separation_rules: g("separation_rules"), spots: g("spots"),
+           station_programming: g("station_programming"), generated_schedule: g("generated_schedule"),
+           play_log: g("play_log"), station_config_kv: g("station_config_kv") };
+}) };
 
 console.log("\n  per-station, after:");
 for (const s of q("SELECT id, name FROM stations WHERE deleted_at IS NULL ORDER BY id")) {

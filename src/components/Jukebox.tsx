@@ -185,6 +185,8 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
 
   const [requests, setRequests] = useState<JukeRequest[]>([]);
   const [tableMissing, setTableMissing] = useState(false);
+  /** Set when the pool query itself FAILED. Distinct from "the pool is empty" — never conflate them. */
+  const [poolError, setPoolError] = useState<string | null>(null);
 
   // ── Deck source state ───────────────────────────────────────────────────────────────────────────
   // The jukebox airs through a real deck (D/E/F) the operator patched it into, and the DECK is the
@@ -200,10 +202,16 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
   const provider: JukeboxPaymentProvider = FreeProvider;
 
   // ── Config: the CHECKED CATEGORIES (not a clock), the request URL, the tunables ─────────────────
+  //
+  // POLLED, not read once (2026-08-18). The deps used to be [isReady, stationId], so an operator could
+  // tick categories in Settings and the open kiosk would keep showing the old pool until the window was
+  // reopened — a stale-until-reopen bug on a screen that faces the public. The re-read only touches
+  // state when the stored value actually CHANGES, so a steady state costs one KV list every few seconds
+  // and causes no re-render.
   useEffect(() => {
     if (!isReady || stationId == null) return;
     let stop = false;
-    (async () => {
+    const load = async () => {
       try {
         const r: any = await (window as any).ether.stationConfigKv.list(stationId);
         const rows: any[] = (r && r.rows) || [];
@@ -219,14 +227,18 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
         const rm = parseInt(get("jukebox_repeat_minutes") ?? "", 10);
         const mp = parseInt(get("jukebox_max_pending") ?? "", 10);
         if (stop) return;
-        setCategoryIds(ids);
+        // Identity-stable update: same ids in the same order -> keep the existing array so the
+        // dependent query effects do not re-run every 4 seconds.
+        setCategoryIds(prev => (prev.length === ids.length && prev.every((v, i) => v === ids[i]) ? prev : ids));
         setRequestUrl(String(get("jukebox_request_url") ?? "").trim());
         if (Number.isFinite(rm)) setRepeatMinutes(rm);
         if (Number.isFinite(mp)) setMaxPending(mp);
       } catch { if (!stop) setCategoryIds([]); }
       finally { if (!stop) setConfigLoaded(true); }
-    })();
-    return () => { stop = true; };
+    };
+    void load();
+    const tick = setInterval(() => { void load(); }, 4000);
+    return () => { stop = true; clearInterval(tick); };
   }, [isReady, stationId]);
 
   // Resolved category NAMES — so staff can see at a glance that the pool is what they checked.
@@ -249,6 +261,7 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
   const runQuery = useCallback(async (term: string, pageIdx: number, append: boolean) => {
     if (stationId == null || !categoryIds.length) { setSongs([]); setTotal(0); return; }
     setLoading(true);
+    setPoolError(null);
     try {
       const inList = categoryIds.map(() => "?").join(",");
       const like = `%${term.trim()}%`;
@@ -262,19 +275,34 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
         (hasTerm ? ` AND (s.title LIKE ? OR a.name LIKE ?)` : "");
       const params = hasTerm ? [...categoryIds, like, like] : [...categoryIds];
 
+      // skipScoping IS THE FIX (2026-08-18). queryScoped injects `station_id = ?` unless the SQL
+      // already mentions it (db/stationScoped.ts) — but `songs` HAS NO station_id column: the library
+      // is account-scoped, not per-station. With the LEFT JOIN present the injected predicate does not
+      // even error; it silently binds to artists.station_id, turns the outer join inner, and returns
+      // ZERO rows. That is why Settings showed "156 songs across 6 categories" while this wall showed
+      // "0 songs" from the same ticks. Proven on the live db: same SQL unscoped = 156, scoped = 0, and
+      // without the join the injection throws "no such column: station_id".
+      // The pool is filtered by category, and the categories are already this station's.
       const countRows = await queryScoped<{ c: number }>(
         `SELECT COUNT(*) c FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE ${where}`,
-        params, stationId);
+        params, stationId, { skipScoping: true });
       const rows = await queryScoped<JukeSong>(
         `SELECT s.id, s.title, a.name AS artist, s.file_path, s.duration_ms
            FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
           WHERE ${where}
           ORDER BY s.title
           LIMIT ? OFFSET ?`,
-        [...params, PAGE_SIZE, pageIdx * PAGE_SIZE], stationId);
+        [...params, PAGE_SIZE, pageIdx * PAGE_SIZE], stationId, { skipScoping: true });
       setTotal(countRows[0]?.c ?? 0);
       setSongs(prev => (append ? [...prev, ...rows] : rows));
-    } catch { if (!append) { setSongs([]); setTotal(0); } }
+    } catch (e: any) {
+      // A failed query must never read as an empty pool. That is exactly how this bug hid: the wall
+      // said "No songs available to pick" — a sentence about the library — when the truth was that the
+      // query never ran. Say which it is.
+      console.error("[jukebox] pool query failed:", e?.message || e);
+      if (!append) { setSongs([]); setTotal(0); }
+      setPoolError(e?.message || String(e));
+    }
     finally { setLoading(false); }
   }, [stationId, categoryIds]);
 
@@ -296,7 +324,7 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
           WHERE s.deleted_at IS NULL AND s.file_path IS NOT NULL AND TRIM(s.file_path) <> ''
             AND (s.content_class IS NULL OR s.content_class = 'MUSIC')
             AND s.category_id IN (${categoryIds.map(() => "?").join(",")})
-          ORDER BY RANDOM() LIMIT 1`, categoryIds, stationId);
+          ORDER BY RANDOM() LIMIT 1`, categoryIds, stationId, { skipScoping: true });   // see runQuery
       return rows[0] ?? null;
     } catch { return null; }
   }, [stationId, categoryIds]);
@@ -588,7 +616,17 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
                  void runQuery(search, next, true);
                }
              }}>
-          {songs.length === 0 && !loading ? (
+          {poolError ? (
+            /* A FAILED query is not an empty pool. Saying "no songs available" when the query never ran
+               is what let the 2026-08-18 scoping bug sit behind a plausible sentence. */
+            <div style={{ padding: "50px 20px", textAlign: "center", color: "#e0a060" }}>
+              <div style={{ fontSize: 19, fontWeight: 800 }}>The song list couldn't be loaded</div>
+              <div style={{ marginTop: 10, fontSize: 13, color: "#8a8aa0", lineHeight: 1.6 }}>
+                This is a fault, not an empty library — staff should check the log.
+              </div>
+              <div style={{ marginTop: 12, fontSize: 11.5, color: "#6a6a85", fontFamily: "monospace" }}>{poolError}</div>
+            </div>
+          ) : songs.length === 0 && !loading ? (
             <div style={{ color: "#5a5a70", fontSize: 15, padding: "60px 0", textAlign: "center" }}>
               {search ? `Nothing matches "${search}".` : "No songs available to pick."}
             </div>
