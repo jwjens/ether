@@ -1,11 +1,11 @@
-// Jukebox — the public request kiosk. TouchTunes-style wall of artwork, named request queue, QR.
+// Jukebox — the public request wall. TouchTunes-style wall of artwork, named request queue, QR.
 //
 // Design of record: docs/jukebox-rebuild-design-2026-08-17.md, which supersedes parts of
 // docs/jukebox-mode-design-2026-08-04.md. Read §0 of the rebuild doc before changing anything here —
 // it records which of the 08-04 decisions Jeff reversed and what each reversal costs.
 //
 // WHAT THIS IS NOW (the rebuild):
-//   • a POP-OUT kiosk window (#popout/jukebox), opened from the hamburger → Windows. It is no longer
+//   • a POP-OUT jukebox window (#popout/jukebox), opened from the hamburger → Windows. It is no longer
 //     a bottom-tab fullscreen takeover of the main renderer.
 //   • its pool is the CATEGORIES an operator checked in Preferences → Jukebox — NOT a clock. The
 //     clock-as-playlist setup from 08-04 §2.4 is dead; jukebox_source_clock_id is ignored.
@@ -16,7 +16,7 @@
 //   08-04 §2.1 refused to make this a second window precisely because a popout has to redo the
 //   station handshake, and cited the popout `?? 1` fallback as a bug this codebase already paid for
 //   twice. PopoutRenderer.tsx:72,81 still carry that fallback. This component does NOT: with no
-//   resolved active station it renders an honest "no station" panel and picks nothing. A kiosk that
+//   resolved active station it renders an honest "no station" panel and picks nothing. A jukebox that
 //   guesses station 1 would show a stranger a different station's library and queue onto air nobody
 //   asked for.
 //
@@ -161,12 +161,16 @@ function Tile({ song, onPick }: { song: JukeSong; onPick: (s: JukeSong) => void 
 // Row 1 never renders blank: a shuffle/system pick says "Unknown", so the field is visibly working
 // rather than looking broken. Row 3 is a row of its own — the artist used to be glued to the title
 // with an em dash, which is not the same thing and read as "artist missing".
+// Sized to be READ ACROSS A ROOM, not at desk distance — this hangs on a wall in a venue. Each row
+// carries an explicit lineHeight: without one the three rows inherit whatever the browser picks and
+// crowd into each other at the larger sizes, which is the overlap this fixes.
 type EntrySize = "lg" | "md" | "sm";
 const ENTRY_SCALE: Record<EntrySize, { name: number; title: number; artist: number }> = {
-  lg: { name: 13,   title: 20, artist: 14.5 },
-  md: { name: 12,   title: 17, artist: 13.5 },
-  sm: { name: 11.5, title: 14, artist: 12.5 },
+  lg: { name: 15,   title: 25, artist: 17 },   // now playing, in the header strip
+  md: { name: 14,   title: 21, artist: 16 },   // up next
+  sm: { name: 13.5, title: 18, artist: 14.5 }, // queue rows
 };
+const ENTRY_LINE = 1.25;
 
 function EntryBlock({ name, title, artist, size = "sm", accent = false }: {
   name: string | null | undefined;
@@ -182,22 +186,24 @@ function EntryBlock({ name, title, artist, size = "sm", accent = false }: {
   return (
     <div style={{ minWidth: 0, flex: 1 }}>
       <div style={{
-        fontSize: s.name, fontWeight: 800, letterSpacing: "0.02em",
+        fontSize: s.name, fontWeight: 800, letterSpacing: "0.02em", lineHeight: ENTRY_LINE,
         color: accent ? "#c0b0f0" : "#8a8aa0", ...clip,
       }}>{who}</div>
-      <div style={{ fontSize: s.title, fontWeight: 800, color: "#fff", marginTop: 3, ...clip }}>
-        {title}
-      </div>
-      <div style={{ fontSize: s.artist, fontWeight: 600, color: "#7a7a95", marginTop: 2, ...clip }}>
-        {(artist || "").trim() || "—"}
-      </div>
+      <div style={{
+        fontSize: s.title, fontWeight: 800, color: "#fff", lineHeight: ENTRY_LINE,
+        marginTop: 4, ...clip,
+      }}>{title}</div>
+      <div style={{
+        fontSize: s.artist, fontWeight: 600, color: "#7a7a95", lineHeight: ENTRY_LINE,
+        marginTop: 3, ...clip,
+      }}>{(artist || "").trim() || "—"}</div>
     </div>
   );
 }
 
 // Now-playing artwork. Same rules as the wall (08-04 §3): getLocalArt only — embedded cover, per-path
 // cache, never the network — and a tinted panel rather than an empty square when there is no art.
-function NowArt({ filePath, title }: { filePath: string | null; title: string }) {
+function NowArt({ filePath, title, square }: { filePath: string | null; title: string; square?: boolean }) {
   const [art, setArt] = useState<string | null>(null);
   useEffect(() => {
     let stop = false;
@@ -208,7 +214,11 @@ function NowArt({ filePath, title }: { filePath: string | null; title: string })
   }, [filePath]);
   return (
     <div style={{
-      width: "100%", aspectRatio: "1 / 1", borderRadius: 12, marginBottom: 12,
+      // `square` fills a caller-sized box (the horizontal header strip); otherwise it is a full-width
+      // panel. Same art, same fallback — only the box differs.
+      width: "100%", height: square ? "100%" : undefined,
+      aspectRatio: square ? undefined : "1 / 1",
+      borderRadius: square ? 10 : 12, marginBottom: square ? 0 : 12,
       background: art ? `#000 center/cover no-repeat url("${art}")` : tintFor(title || "?"),
       boxShadow: "0 10px 30px rgba(0,0,0,0.6)", outline: "1px solid rgba(255,255,255,0.07)",
     }} />
@@ -220,7 +230,7 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
 
   // NO renderer-side engine handle here, deliberately. AudioEngineContext defaults to 1
   // (AudioEngineContext.tsx:6) and a pop-out has no AudioEngineProvider above it, so useAudioEngine()
-  // would silently bind this kiosk to STATION 1 — the `?? 1` popout bug wearing a convenience hook.
+  // would silently bind this jukebox to STATION 1 — the `?? 1` popout bug wearing a convenience hook.
   // Playback goes through the jukebox IPC, which resolves the station explicitly and refuses D/E/F
   // violations in the main process.
 
@@ -255,7 +265,12 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
   const [deckStatus, setDeckStatus] = useState<string | null>(null);
   const [deckVolume, setDeckVolume] = useState<number | null>(null);
   const [autoOn, setAutoOn] = useState(false);
-  /** What the routed deck is actually playing, read off the deck — the kiosk must show what IT chose,
+  /** The operator's own drawer. Routing, ON AIR and AUTO are OPERATOR facts, not customer facts, so
+   *  they live behind one small affordance instead of on the public face. Closed by default — the
+   *  customer sees a jukebox, not a console. Not hidden outright: an operator standing at the machine
+   *  still needs to reach AUTO and to know why nothing is audible (doors before rooms). */
+  const [opsOpen, setOpsOpen] = useState(false);
+  /** What the routed deck is actually playing, read off the deck — the jukebox must show what IT chose,
    *  and a shuffle pick is just as much its choice as a request. */
   const [nowPlaying, setNowPlaying] = useState<{ title: string; artist: string; filePath: string | null } | null>(null);
   /** Who asked for the song this window STARTED — the deck knows title/artist but never a requester.
@@ -266,7 +281,7 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
    *  so the display is a promise the drive keeps rather than a guess it re-rolls. */
   const [nextUp, setNextUp] = useState<JukeSong | null>(null);
   /** The DASHBOARD's channel switch for the routed deck — observed, never assumed. Default false: a
-   *  kiosk must not claim air it has not been given. */
+   *  jukebox must not claim air it has not been given. */
   const [channelOn, setChannelOn] = useState(false);
   const starting = useRef(false);          // one start in flight at a time — never two loads racing
 
@@ -277,7 +292,7 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
   // ── Config: the CHECKED CATEGORIES (not a clock), the request URL, the tunables ─────────────────
   //
   // POLLED, not read once (2026-08-18). The deps used to be [isReady, stationId], so an operator could
-  // tick categories in Settings and the open kiosk would keep showing the old pool until the window was
+  // tick categories in Settings and the open jukebox would keep showing the old pool until the window was
   // reopened — a stale-until-reopen bug on a screen that faces the public. The re-read only touches
   // state when the stored value actually CHANGES, so a steady state costs one KV list every few seconds
   // and causes no re-render.
@@ -298,7 +313,7 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
         } catch { ids = []; }
 
         // THE BOARD IS THE GATE. The dashboard's channel ON/OFF for this deck is stored here, and the
-        // kiosk reports it rather than inferring air from its own AUTO. A cut channel is silence no
+        // jukebox reports it rather than inferring air from its own AUTO. A cut channel is silence no
         // matter what this window is doing.
         const chOn = get("jukebox_channel_on") === "1";
         const rm = parseInt(get("jukebox_repeat_minutes") ?? "", 10);
@@ -422,7 +437,7 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
       } catch { if (!stop) setRoutedDeck(null); }
     };
     void pull();
-    const tick = setInterval(pull, 5000);   // the operator can re-patch while the kiosk is open
+    const tick = setInterval(pull, 5000);   // the operator can re-patch while the jukebox is open
     return () => { stop = true; clearInterval(tick); };
   }, [stationId]);
 
@@ -452,7 +467,7 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
   }, [stationId, routedDeck]);
 
   // ── LOOK-AHEAD — the shuffle's next pick, chosen before it is needed ────────────────────────────
-  // Without this the kiosk had nothing to show between requests: the shuffle chose a song at the
+  // Without this the jukebox had nothing to show between requests: the shuffle chose a song at the
   // moment the deck freed, so "up next" did not exist until it was already "now playing". Choosing it
   // in advance makes the display honest AND deterministic — the drive plays exactly this row.
   useEffect(() => {
@@ -577,7 +592,7 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
       // (The old play-next-into-rotation path was removed with the deck-source ruling, 2026-08-17.)
       const created: any = await (window as any).ether.jukebox?.createRequest({
         stationId, requesterName: who, songId: song.id, filePath: song.file_path,
-        title: song.title, artist: song.artist, source: "kiosk",
+        title: song.title, artist: song.artist, source: "jukebox",
       });
       if (!created?.ok) { say(created?.error || "Couldn't record that request."); return; }
 
@@ -608,7 +623,7 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
 
   if (!isReady) return shell(<div style={{ color: "#606078", fontSize: 15 }}>Resolving station…</div>);
 
-  // NO `?? 1`. A kiosk that guesses a station shows strangers the wrong library (rebuild doc §0.1).
+  // NO `?? 1`. A jukebox that guesses a station shows strangers the wrong library (rebuild doc §0.1).
   if (stationId == null) return shell(
     <div style={{ maxWidth: 560 }}>
       <div style={{ fontSize: 34, fontWeight: 900, letterSpacing: "-0.02em" }}>No station selected</div>
@@ -682,51 +697,104 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
       {/* ── LEFT: the wall ───────────────────────────────────────────────────────────────────────── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         <div style={{ padding: "22px 30px 16px", flexShrink: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <div style={{ fontSize: 30, fontWeight: 900, letterSpacing: "-0.02em" }}>Pick a song</div>
-            <div style={{ fontSize: 13, color: "#6a6a85", flex: 1 }}>
-              {total.toLocaleString()} song{total === 1 ? "" : "s"}
-              {categoryNames.length ? ` · ${categoryNames.join(" · ")}` : ""}
-            </div>
-
-            {/* ON AIR — driven by the DECK's observed status, never by whether AUTO is engaged.
-                AUTO on with the fader down must not blink "on air"; that would be a claimed state. */}
-            {onAir && (
-              <div style={{
-                display: "flex", alignItems: "center", gap: 8, padding: "7px 14px", borderRadius: 999,
-                background: "rgba(220,60,60,0.14)", border: "1px solid #dc3c3c",
-                animation: "juke-flash 1.2s ease-in-out infinite",
-              }}>
-                <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#dc3c3c" }} />
-                <span style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.16em", color: "#ff8080" }}>ON AIR</span>
+          {/* ── HEADER STRIP — NOW PLAYING, horizontal ───────────────────────────────────────────
+              This strip replaces BOTH the old "Pick a song" title row AND the routing banner. The
+              banner said "Routed to Deck D · channel ON · AUTO on": true, useful, and entirely
+              OPERATOR information — it has no business on the face a paying customer reads. It moved
+              into the operator drawer below, intact, rather than being deleted.
+              Artwork left, three lines right: NAME / TITLE / ARTIST, the same block the queue uses. */}
+          <div style={{
+            display: "flex", alignItems: "center", gap: 20, padding: "14px 18px", borderRadius: 16,
+            background: "rgba(96,64,192,0.10)", border: "1px solid #33335a", minHeight: 118,
+          }}>
+            {nowPlaying ? (
+              <>
+                <div style={{ flexShrink: 0, width: 90, height: 90 }}>
+                  <NowArt filePath={nowPlaying.filePath} title={nowPlaying.title} square />
+                </div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.18em",
+                                color: "#8868D8", marginBottom: 7 }}>
+                    NOW PLAYING
+                  </div>
+                  <EntryBlock
+                    name={nowRequester}
+                    title={nowPlaying.title}
+                    artist={nowPlaying.artist}
+                    size="lg"
+                    accent
+                  />
+                </div>
+              </>
+            ) : (
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.18em",
+                              color: "#4a4a60", marginBottom: 7 }}>
+                  NOW PLAYING
+                </div>
+                <div style={{ fontSize: 19, fontWeight: 800, color: "#5a5a70" }}>
+                  Nothing playing — pick a song below.
+                </div>
               </div>
             )}
 
-            {/* The JUKEBOX's own AUTO. Nothing to do with the station's AUTO/MANUAL. */}
+            {/* The operator's affordance: deliberately small, deliberately last, deliberately not
+                shouting. A dot rather than a banner. Amber when routing is broken, so an operator can
+                still SEE at a glance that something needs attention without the customer being told
+                about decks and faders. */}
             <button
-              onClick={() => setAutoOn(v => !v)}
-              title={autoOn
-                ? "AUTO is on — the jukebox keeps music going from the chosen categories when nobody has requested anything."
-                : "AUTO is off — the jukebox plays only what people request, and is silent in between."}
+              onClick={() => setOpsOpen(v => !v)}
+              title="Operator: routing, on-air state and AUTO"
               style={{
-                padding: "9px 18px", borderRadius: 10, cursor: "pointer", fontFamily: "inherit",
-                fontSize: 12, fontWeight: 900, letterSpacing: "0.14em",
-                background: autoOn ? "#6040c0" : "transparent",
-                border: `1px solid ${autoOn ? "#8868D8" : "#2a2a44"}`,
-                color: autoOn ? "#fff" : "#6a6a85",
+                flexShrink: 0, alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 7,
+                padding: "6px 11px", borderRadius: 999, cursor: "pointer", fontFamily: "inherit",
+                background: "transparent",
+                border: `1px solid ${routingOk ? "#2a2a44" : "#a06030"}`,
+                color: routingOk ? "#4a4a60" : "#e0a060",
+                fontSize: 10, fontWeight: 900, letterSpacing: "0.14em",
               }}>
-              AUTO {autoOn ? "ON" : "OFF"}
+              <span style={{
+                width: 7, height: 7, borderRadius: "50%",
+                background: onAir ? "#dc3c3c" : (routingOk ? "#3a3a4a" : "#e0a060"),
+                animation: onAir ? "juke-flash 1.2s ease-in-out infinite" : "none",
+              }} />
+              {onAir ? "ON AIR" : "OPERATOR"}
             </button>
           </div>
 
-          {/* ROUTING — what the operator needs to know, read off the deck itself. */}
-          {routingNote && (
+          {/* OPERATOR DRAWER — everything that used to sit on the customer face, unchanged in content
+              and now opt-in. Closed by default; nothing here is shown to the public unasked. */}
+          {opsOpen && (
             <div style={{
-              marginTop: 12, padding: "10px 14px", borderRadius: 10, fontSize: 12.5, lineHeight: 1.5,
+              marginTop: 10, padding: "12px 15px", borderRadius: 12,
               background: routingOk ? "rgba(96,64,192,0.10)" : "rgba(200,120,50,0.12)",
               border: `1px solid ${routingOk ? "#33335a" : "#a06030"}`,
-              color: routingOk ? "#8a8aa8" : "#e0a060",
-            }}>{routingNote}</div>
+            }}>
+              <div style={{ fontSize: 12.5, lineHeight: 1.5, color: routingOk ? "#8a8aa8" : "#e0a060" }}>
+                {routingNote}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 11, flexWrap: "wrap" }}>
+                {/* The JUKEBOX's own AUTO. Nothing to do with the station's AUTO/MANUAL. */}
+                <button
+                  onClick={() => setAutoOn(v => !v)}
+                  title={autoOn
+                    ? "AUTO is on — the jukebox keeps music going from the chosen categories when nobody has requested anything."
+                    : "AUTO is off — the jukebox plays only what people request, and is silent in between."}
+                  style={{
+                    padding: "8px 16px", borderRadius: 10, cursor: "pointer", fontFamily: "inherit",
+                    fontSize: 12, fontWeight: 900, letterSpacing: "0.14em",
+                    background: autoOn ? "#6040c0" : "transparent",
+                    border: `1px solid ${autoOn ? "#8868D8" : "#2a2a44"}`,
+                    color: autoOn ? "#fff" : "#6a6a85",
+                  }}>
+                  AUTO {autoOn ? "ON" : "OFF"}
+                </button>
+                <div style={{ fontSize: 12, color: "#6a6a85" }}>
+                  {total.toLocaleString()} song{total === 1 ? "" : "s"}
+                  {categoryNames.length ? ` · ${categoryNames.join(" · ")}` : ""}
+                </div>
+              </div>
+            </div>
           )}
           <input
             value={search}
@@ -781,12 +849,13 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
         width: 400, flexShrink: 0, background: "#0b0b12", borderLeft: "1px solid #1a1a2a",
         display: "flex", flexDirection: "column",
       }}>
-        {/* No "UP NEXT" header here — up-next has exactly one home, below now-playing. */}
+        {/* This column is the QUEUE, whole. Now-playing moved to the header strip so the names get the
+            room — they are what people paid for. UP NEXT keeps exactly one home: the top of this list. */}
         <div style={{ padding: "24px 22px 12px", flexShrink: 0 }}>
           <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.16em", color: "#6040c0" }}>
-            THE JUKEBOX
+            THE QUEUE
           </div>
-          <div style={{ fontSize: 12, color: "#5a5a70", marginTop: 5 }}>
+          <div style={{ fontSize: 12.5, color: "#5a5a70", marginTop: 5 }}>
             {pendingCount} request{pendingCount === 1 ? "" : "s"} waiting
           </div>
         </div>
@@ -798,28 +867,11 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
               the pending database migration.
             </div>
           )}
-          {/* NOW PLAYING — the kiosk shows what IT chose, whether that was a request or its own
+          {/* NOW PLAYING — the jukebox shows what IT chose, whether that was a request or its own
               shuffle. Read off the routed deck, so it cannot claim a song the deck is not playing. */}
-          {nowPlaying && (
-            <div style={{
-              padding: "14px 14px 13px", marginBottom: 12, borderRadius: 14,
-              background: "rgba(96,64,192,0.10)", border: "1px solid #33335a",
-            }}>
-              <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.16em",
-                            color: "#8868D8", marginBottom: 11 }}>
-                NOW PLAYING
-              </div>
-              {/* Artwork first, the three-row block beneath it. */}
-              <NowArt filePath={nowPlaying.filePath} title={nowPlaying.title} />
-              <EntryBlock
-                name={nowRequester}
-                title={nowPlaying.title}
-                artist={nowPlaying.artist}
-                size="lg"
-                accent
-              />
-            </div>
-          )}
+          {/* NOW PLAYING is NOT here any more — it lives in the header strip. This whole column is the
+              QUEUE, because the NAMES ARE THE PRODUCT: people pay to see their name up there, so the
+              queue gets the column and the now-playing card does not compete with it. */}
 
           {/* UP NEXT — the one and only place the rail says it. A waiting request wins; with none, this
               is the shuffle's held pick, which is the exact row the drive goes on to play. */}
@@ -849,7 +901,7 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
           {queueRest.length > 0 && (
             <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.16em",
                           color: "#5a5a70", margin: "4px 2px 9px" }}>
-              QUEUE
+              AFTER THAT
             </div>
           )}
           {queueRest.map((r, i) => (

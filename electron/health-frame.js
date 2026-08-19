@@ -30,13 +30,14 @@ function num(v, p = 2) {
  * @param mode        "daemon" | "in-process"
  * @param designation this station's row from designation:status, or null
  * @param runway      { days, level, throughDate } from runway.computeRunway, or null
+ * @param runwaySeries summarised 7-day trend [{at, days}], or null — see the field comment below
  * @param proc        the decimated processing sample for this station, or null (§3.3)
  * @param machineId   this machine's stable id
  * @param cadenceSec  the push interval this machine is CURRENTLY using — the reader's staleness
  *                    thresholds are relative to it (§4), so it must be the live value, not a constant
  * @param nowIso      observation timestamp, machine clock (the SERVER's clock decides staleness)
  */
-function buildHealthFrame({ station, engine, mode, designation, runway, proc, machineId, cadenceSec, nowIso }) {
+function buildHealthFrame({ station, engine, mode, designation, runway, runwaySeries, proc, machineId, cadenceSec, nowIso }) {
   const s = station || {};
   return {
     // ── identity ────────────────────────────────────────────────────────────────────────────────
@@ -114,6 +115,19 @@ function buildHealthFrame({ station, engine, mode, designation, runway, proc, ma
       reason: runway.reason ?? null,
     } : null,
 
+    // ── runway TREND — a SUMMARISED 7-day series, per-machine attributed ────────────────────────
+    // Ruled 2026-08-19. The reasoning is the same one that already put the runway VALUE in the frame
+    // (design §2.1): runway_history is local-only because syncing it AS A TABLE would merge two
+    // machines' observations of their own schedules into one meaningless line. This is not that: the
+    // series rides INSIDE a frame keyed `station:machine`, so two machines' trends sit side by side
+    // and are never merged. No table is synced; nothing is written anywhere by this.
+    //
+    // SUMMARISED, not raw: the local history is hourly (168 points/week). This carries 6-hour buckets
+    // (28 points) holding each bucket's LOW-WATER mark — for a runway, the dip is the fact that
+    // matters; an average would hide exactly the moment the log nearly ran out.
+    // `days: null` is preserved and means "no active show", NOT zero.
+    runwaySeries: Array.isArray(runwaySeries) ? runwaySeries : null,
+
     // ── processing trio — a 1s decimated SAMPLE, never a stream (§3.3) ───────────────────────────
     proc: proc ? {
       local: !!proc.local,
@@ -136,7 +150,7 @@ function buildHealthFrame({ station, engine, mode, designation, runway, proc, ma
  * each to the station it belongs to — /api/account/data/sync validates station ownership per call.
  * Stations with no uuid are skipped: an un-migrated row has no cloud identity to push under.
  */
-function buildHealthFrames({ snapshot, designations, runwayFor, procFor, machineId, cadenceSec, now }) {
+function buildHealthFrames({ snapshot, designations, runwayFor, runwaySeriesFor, procFor, machineId, cadenceSec, now }) {
   if (!snapshot || !Array.isArray(snapshot.stations)) return [];
   const nowIso = new Date(now ?? Date.now()).toISOString();
   const desigBy = new Map();
@@ -150,6 +164,8 @@ function buildHealthFrames({ snapshot, designations, runwayFor, procFor, machine
     try { runway = runwayFor ? runwayFor(st.stationId) : null; } catch { runway = null; }
     let proc = null;
     try { proc = procFor ? procFor(st.stationId) : null; } catch { proc = null; }
+    let runwaySeries = null;
+    try { runwaySeries = runwaySeriesFor ? runwaySeriesFor(st.stationId) : null; } catch { runwaySeries = null; }
     out.push({
       stationUuid: st.uuid,
       row: buildHealthFrame({
@@ -158,6 +174,7 @@ function buildHealthFrames({ snapshot, designations, runwayFor, procFor, machine
         mode: snapshot.mode,
         designation: desigBy.get(st.stationId) || null,
         runway,
+        runwaySeries,
         proc,
         machineId,
         cadenceSec,

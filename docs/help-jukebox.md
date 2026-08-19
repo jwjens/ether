@@ -1,6 +1,6 @@
 ---
 feature: jukebox
-title: Jukebox (public request kiosk)
+title: Jukebox (public request wall)
 summary: A fullscreen wall of album art the public can browse and request from — each request shows the requester's name and its place in line.
 where: ☰ menu (top right) → Windows → Jukebox
 since: unreleased (Phase 1 build, 2026-08-17)
@@ -8,7 +8,7 @@ audience: operator
 tour: true
 ---
 
-# Jukebox (public request kiosk)
+# Jukebox (public request wall)
 
 ## What it is
 
@@ -18,12 +18,12 @@ The queue is on the right of the screen with each person's **name** and their **
 everyone can see their song coming.
 
 You choose exactly what the public may pick from: you tick **categories** in Settings, and their songs
-are the whole pool. Nothing else in your library is reachable from the kiosk.
+are the whole pool. Nothing else in your library is reachable from the jukebox.
 
 ## When to use it
 
 An event, a bar, a park night, a lobby — anywhere the audience picks the music and staff are nearby.
-It is a **display**, not a control surface: nothing on the kiosk screen can change your station's
+It is a **display**, not a control surface: nothing on the jukebox screen can change your station's
 settings, edit your library, or stop what is on air.
 
 ## Set it up (two minutes)
@@ -35,10 +35,10 @@ settings, edit your library, or stop what is on air.
    - The count under the list is the real pool ("1,284 songs across 4 categories"). Songs whose file
      isn't on this machine are **left out on purpose** — a request that can't play would be dead air
      in front of an audience.
-   - A category showing **"no playable songs"** has nothing the kiosk can use. Ticking it adds nothing.
+   - A category showing **"no playable songs"** has nothing the jukebox can use. Ticking it adds nothing.
 2. **Add your request link (optional, for phones).** In the same place, paste the public request page
-   address into **Request link (QR)** and press **Save**. The kiosk turns it into a QR code big enough
-   to scan from across the room. Leave it empty and the kiosk simply doesn't show a code.
+   address into **Request link (QR)** and press **Save**. The jukebox turns it into a QR code big enough
+   to scan from across the room. Leave it empty and the jukebox simply doesn't show a code.
 3. **Patch it into a deck.** On the dashboard open the deck configurator and set the source of
    **deck D, E or F** to **Jukebox**. That is the jukebox's channel on your board — bring the fader up
    and it is on air, exactly like a microphone.
@@ -53,17 +53,26 @@ settings, edit your library, or stop what is on air.
 - **Search** — type in the box at the top. Results narrow as you type; there's no button to press.
 - **Request** — tap a cover, type a name, press **PLAY NEXT**. The song joins the queue and the person
   sees their name appear on the right.
-- **The right-hand panel** reads top to bottom in the order things happen:
-  1. **NOW PLAYING** — the album artwork of the song on the deck, and under it the name, song and artist.
-  2. **UP NEXT** — whatever plays next, shown in **one place only**. If someone is waiting, it is their
-     request; if nobody is, it is the song the jukebox has already chosen for itself.
-  3. **QUEUE** — everyone waiting behind that, numbered #2, #3, #4… in the order they arrived.
+- **The strip across the top** shows **NOW PLAYING**: the album artwork on the left, and beside it the
+  name, song and artist of what is on the deck right now. The search box sits just below it, and the
+  wall of covers below that.
+- **The whole right-hand column is the queue** — that is where people look for their name, so it gets
+  the room:
+  1. **UP NEXT** at the top, drawn larger. If someone is waiting, it is their request; if nobody is, it
+     is the song the jukebox has already chosen for itself.
+  2. **Everyone waiting behind that**, numbered #2, #3, #4… in the order they arrived.
+  As songs play, the column climbs — each person moves up until they are UP NEXT, then on air.
 - **Every entry looks the same** — three lines, always in this order: the **person's name**, the
   **song title**, then the **artist**. When the jukebox picked the song itself rather than a person
   requesting it, the name line reads **Unknown** — that is normal, not a fault.
 - Requests play **in the order they arrived**, and a request **never cuts a song that is already
   playing** — it starts when the current one finishes.
-- **AUTO** (top right of the kiosk) is the **jukebox's own** AUTO and has nothing to do with the
+- **Operator controls are off the public face.** Routing ("which deck this jukebox feeds"), the ON AIR
+  lamp and the AUTO switch live behind the small **OPERATOR** button at the right of the top strip.
+  Click it to open them; it stays shut otherwise, so the public sees a jukebox and not a console. The
+  button's dot turns **amber** when something needs attention (not routed, channel off, or fader down),
+  so staff can spot a problem without the room being told about decks and faders.
+- **AUTO** (behind the OPERATOR button) is the **jukebox's own** AUTO and has nothing to do with the
   station's AUTO/MANUAL:
   - **AUTO ON** — between requests the jukebox keeps music going, shuffled from the categories you
     ticked. A request plays as soon as the current song ends.
@@ -75,7 +84,7 @@ settings, edit your library, or stop what is on air.
 
 - **Escape** leaves fullscreen so you get the normal window bar back. **F11** puts it back to
   fullscreen. Escape never stops audio and never closes the window.
-- Close it like any window when the night is over. Closing the kiosk does **not** stop your station.
+- Close it like any window when the night is over. Closing the jukebox does **not** stop your station.
 - Drag it to a second monitor and it remembers where you put it.
 
 ## What it does to what's on air
@@ -94,7 +103,7 @@ can tell a public pick from rotation.
 
 - **"The jukebox isn't set up yet"** — no categories are ticked. Settings → Programming → Jukebox.
 - **"No station selected"** — this install has no active station. Sign in and pick a station in the
-  main window, then reopen the kiosk. The kiosk will never guess a station for you.
+  main window, then reopen the jukebox. The jukebox will never guess a station for you.
 - **The wall is empty but categories are ticked** — the ticked categories have no songs with playable
   files on this machine. Check Settings → Music Folder & Sync.
 - **"The queue is full right now"** — the number of waiting requests hit the cap. It clears as songs
@@ -106,7 +115,7 @@ can tell a public pick from rotation.
 - **The VU meter on a jukebox deck sits at zero** — decks D, E and F do not have level meters yet
   (this affects any source on those decks, not just the jukebox). The audio is playing and mixed
   normally; only the meter is missing.
-- **A song won't queue twice** — if it's already coming up, the kiosk says so rather than stacking
+- **A song won't queue twice** — if it's already coming up, the jukebox says so rather than stacking
   duplicates.
 
 ## Not included yet

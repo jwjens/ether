@@ -132,7 +132,7 @@ function PopoutLibrary() {
 export default function PopoutRenderer({ panel }: { panel: string }) {
   const title = TITLES[panel] ?? panel;
 
-  // JUKEBOX — the public kiosk. It is the ONE pop-out that does not wear PopoutShell: the shell adds
+  // JUKEBOX — the public jukebox. It is the ONE pop-out that does not wear PopoutShell: the shell adds
   // a 28px EtherCast titlebar, and this window faces an audience fullscreen. It also needs no station
   // prop — Jukebox resolves the active station itself and refuses to guess (see its header).
   if (panel === "jukebox") return <Jukebox />;

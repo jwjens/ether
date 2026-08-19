@@ -65,10 +65,22 @@ const PROC = {
        sampledAt: "2026-08-18T23:30:00.000Z", windowPeakDb: -0.9 },
 };
 
+// The summarised 7-day trend: 6-hour buckets, low-water mark per bucket, nulls preserved.
+const H = 3600;
+const SERIES = {
+  1: [
+    { at: 1000 * H, days: 6.5 },
+    { at: 1006 * H, days: 5.9 },
+    { at: 1012 * H, days: null },   // a bucket that only ever saw "no active show"
+    { at: 1018 * H, days: 6.1 },
+  ],
+};
+
 const frames = buildHealthFrames({
   snapshot: SNAPSHOT,
   designations: DESIGNATIONS,
   runwayFor: (sid) => RUNWAY[sid] || null,
+  runwaySeriesFor: (sid) => SERIES[sid] || null,
   procFor: (sid) => PROC[sid] || null,
   machineId: "machine-abc",
   cadenceSec: 60,
@@ -127,6 +139,20 @@ test("the processing trio carries ride and limiter as separate facts", () => {
   assert.equal(p.rideGainDb, 4.2);   // the RIDE's applied gain — what the bars show
   assert.equal(p.grDb, -0.3);        // the LIMITER's reduction — 0 at steady state by design
   assert.equal(p.windowPeakDb, -0.9);
+});
+test("the runway trend rides in the frame, per-machine attributed", () => {
+  const sr = frames[0].row.runwaySeries;
+  assert.ok(Array.isArray(sr), "runwaySeries must be an array when history exists");
+  assert.equal(sr.length, 4);
+  assert.equal(sr[0].days, 6.5);
+  // The frame it rides in is keyed station:machine, which is what makes sending it safe at all.
+  assert.ok(frames[0].row.uuid.includes(":machine-abc"));
+});
+test("a null bucket stays null — 'no active show' is not zero days", () => {
+  assert.equal(frames[0].row.runwaySeries[2].days, null);
+});
+test("a station with no history reports null rather than an empty chart", () => {
+  assert.equal(frames[1].row.runwaySeries, null);
 });
 test("a station with processing off reports null rather than a zeroed trio", () => {
   assert.equal(frames[1].row.proc, null);

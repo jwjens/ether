@@ -734,6 +734,38 @@ if (AUDIO_DAEMON_DESIRED) {
             if (!db || sid == null) return null;
             try { return require("./runway").computeRunway(db, sid) || null; } catch { return null; }
           },
+          // The 7-day trend, SUMMARISED to 6-hour buckets (28 points) holding each bucket's LOW-WATER
+          // mark. Read-only from runway_history; nothing is synced and nothing is written — the series
+          // rides inside a frame keyed station:machine, so two machines' observations never merge
+          // (the ruling of 2026-08-19; see electron/health-frame.js and design §2.1).
+          //
+          // The low-water mark, not an average: for a runway the DIP is the fact that matters, and an
+          // average would smooth away the exact hour the log nearly ran out.
+          // days: null is preserved — "no active show" is not zero days.
+          runwaySeriesFor: (sid) => {
+            if (!db || sid == null) return null;
+            try {
+              const BUCKET = 6 * 3600;
+              const nowHour = Math.floor(Date.now() / 3600_000) * 3600;
+              const since = nowHour - (7 * 24 - 1) * 3600;
+              const rows = db.prepare(
+                "SELECT at, days FROM runway_history WHERE station_id = ? AND at >= ? ORDER BY at"
+              ).all(sid, since);
+              if (!rows.length) return null;
+              const buckets = new Map();
+              for (const r of rows) {
+                const slot = Math.floor(r.at / BUCKET) * BUCKET;
+                const prev = buckets.get(slot);
+                // A bucket with ANY measured value reports the lowest of them. A bucket that only ever
+                // saw nulls stays null rather than becoming 0.
+                if (prev === undefined) buckets.set(slot, r.days == null ? null : Number(r.days));
+                else if (r.days != null) buckets.set(slot, prev == null ? Number(r.days) : Math.min(prev, Number(r.days)));
+              }
+              return [...buckets.entries()]
+                .sort((a, b) => a[0] - b[0])
+                .map(([at, days]) => ({ at, days: days == null ? null : Math.round(days * 100) / 100 }));
+            } catch { return null; }
+          },
           procFor: (sid) => _procLast.get(sid) || null,
         });
       } catch (e) { console.error("[health:frames]", e.message); return []; }
@@ -2703,7 +2735,7 @@ function buildMenu() {
     send(`nav:scheduler-tab:${tab}`);
   };
   // ONE pop-out opener for the whole app. This was a near-copy of openPopoutWindow that drifted:
-  // it had no saved-bounds restore, no jukebox kiosk fullscreen, and its own window options. Menu
+  // it had no saved-bounds restore, no jukebox fullscreen, and its own window options. Menu
   // routing now depends on a single opener that dedupes by title, so the copy is gone.
   const popout = (panel) => openPopoutWindow(panel);
   const template = [
@@ -4168,7 +4200,7 @@ ipcMain.handle("jukebox:stop", async (_evt, req) => {
   return { ok: true, deck };
 });
 
-/** What the routed deck is ACTUALLY doing — status, fader level, finished. The kiosk's routing
+/** What the routed deck is ACTUALLY doing — status, fader level, finished. The jukebox's routing
  *  banner and on-air indicator read this and never infer from intent. */
 ipcMain.handle("jukebox:deck-state", async (_evt, req) => {
   const deck = String(req?.deck || "").toUpperCase();
@@ -5236,7 +5268,7 @@ const POPOUT_SIZES = {
   "camera":      { width: 640,  height: 480 },
   "health":      { width: 720,  height: 540 },
   "studiopro":   { width: 1280, height: 800 },  // Show+ DAW — its own window, not a dashboard takeover
-  "jukebox":     { width: 1440, height: 900 },  // public kiosk display — opens large, F11 for true fullscreen
+  "jukebox":     { width: 1440, height: 900 },  // public jukebox display — opens large, F11 for true fullscreen
   // Menu-openable panels (audit §7). Document-shaped panels get a tall window; wizards a smaller one.
   "programlog":  { width: 1180, height: 820 },
   "logs":        { width: 1100, height: 780 },
@@ -5402,7 +5434,7 @@ function openPopoutWindow(panel) {
     });
   }
 
-  // JUKEBOX — a kiosk display, so it opens FULLSCREEN and stays escapable by staff.
+  // JUKEBOX — a jukebox display, so it opens FULLSCREEN and stays escapable by staff.
   //
   // Fullscreen is handled ENTIRELY HERE, in the main process. The note below this function records
   // that the renderer-facing win:toggleFullscreen / win:isFullscreen handlers were removed on
@@ -5435,12 +5467,12 @@ ipcMain.handle("window:popout", async (_, panel) => { openPopoutWindow(panel); }
 
 // ── Jukebox requests (LOCAL-ONLY table, migration v38) ──────────────────────────────────────────
 //
-// Who asked for what, on the public kiosk. The daemon's queue has no requester field, so the name
+// Who asked for what, on the public jukebox. The daemon's queue has no requester field, so the name
 // lives here and the rail joins the two by qid — the DAEMON's queue stays the source of truth for
 // what is actually going to play, and this table only says who asked for it.
 //
 // NOT a synced table, deliberately: docs/jukebox-rebuild-design-2026-08-17.md §0.4 and the v38
-// migration header. A public request is a fact about ONE kiosk on ONE night; journalling it would
+// migration header. A public request is a fact about ONE jukebox on ONE night; journalling it would
 // push a stranger's typed name to every peer install in the account.
 //
 // Every handler degrades to empty/false rather than throwing if the table is missing — an install
@@ -5482,7 +5514,7 @@ ipcMain.handle("jukebox:request-create", (_evt, req) => {
          (station_id, requester_name, song_id, file_path, title, artist, status, source, qid, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(sid, name, req.songId ?? null, req.filePath, req.title, req.artist ?? null,
-          req.status ?? "queued", req.source ?? "kiosk", req.qid ?? null,
+          req.status ?? "queued", req.source ?? "jukebox", req.qid ?? null,
           Math.floor(Date.now() / 1000));
     // Read the row BACK rather than reporting success from the insert alone — the same rule the
     // designation bug taught (a write that reports success without re-reading is how it hid).

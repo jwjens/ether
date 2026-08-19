@@ -1,5 +1,5 @@
 'use strict';
-// Migration v38 — jukebox_requests: who asked for what, on the public kiosk.
+// Migration v38 — jukebox_requests: who asked for what, on the public jukebox.
 //
 // Cause (docs/jukebox-rebuild-design-2026-08-17.md §0.4):
 //   The jukebox queue rail has to show a REQUESTER'S NAME next to each song, and the daemon's queue
@@ -13,9 +13,9 @@
 //
 //   docs/sync-systems-map.md §2 records that cloud-authored rows written through ordinary IPC
 //   handlers BECOME CRDT MUTATIONS and propagate to peers — "Two machines both importing the same
-//   staged programming will both journal it." A public song request is a statement about ONE kiosk
+//   staged programming will both journal it." A public song request is a statement about ONE jukebox
 //   in front of ONE station on ONE night. Journalling it would push a stranger's typed name to every
-//   peer install in the account and re-play their pick on machines that never had a kiosk open.
+//   peer install in the account and re-play their pick on machines that never had a jukebox open.
 //
 //   Hazard A in that same map (integer station ids in a uuid world) is the second reason: this table
 //   references station_id as an integer, and integer station ids are exactly what the 2026-08-17
@@ -81,9 +81,9 @@ function applyMigration(db) {
         -- RESERVED for the donation step. Written by nothing in this release.
         donation_cents INTEGER NOT NULL DEFAULT 0,
         payment_status TEXT    NOT NULL DEFAULT 'none',
-        -- 'kiosk' (typed at the machine) or 'web' (Phase 2, scanned the QR). Present now so Phase 2
+        -- 'jukebox' (typed at the machine) or 'web' (Phase 2, scanned the QR). Present now so Phase 2
         -- does not need a migration to tell the two apart in the queue rail.
-        source         TEXT    NOT NULL DEFAULT 'kiosk',
+        source         TEXT    NOT NULL DEFAULT 'jukebox',
         -- The daemon queue entry this request became, once accepted. The join back to honest state:
         -- the rail renders the DAEMON's queue and reads names from here, never the other way round.
         qid            TEXT,
@@ -174,7 +174,7 @@ if (require.main === module) {
     check("  status defaults to 'queued'", row && row.status === 'queued', row ? row.status : 'none');
     check('  donation_cents defaults to 0 and is UNUSED', row && row.donation_cents === 0);
     check("  payment_status defaults to 'none'", row && row.payment_status === 'none', row ? row.payment_status : 'none');
-    check("  source defaults to 'kiosk'", row && row.source === 'kiosk', row ? row.source : 'none');
+    check("  source defaults to 'jukebox'", row && row.source === 'jukebox', row ? row.source : 'none');
     check('  qid starts NULL — set only once the daemon accepts it', row && row.qid === null);
 
     let threw = false;

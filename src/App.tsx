@@ -728,7 +728,7 @@ export default function App() {
   const [queueLen, setQueueLen] = useState(0);
   const [darkMode, setDarkMode] = useState(false);
   const [showCarts, setShowCarts] = useState(false);
-  // Jukebox has no state here any more — it is a separate kiosk window, opened through the same
+  // Jukebox has no state here any more — it is a separate jukebox window, opened through the same
   // window:popout path as every other pop-out (rebuild design §0.1).
   // On-air programming push-up docks (like carts): one editor at a time, mutually
   // exclusive with the cart strip. null = closed.
@@ -2339,7 +2339,7 @@ export default function App() {
   // bottom-right hamburger menu on tablet/narrow widths (viewport.bottomCollapsed).
   const viewTabs = [
     // JUKEBOX is NOT here any more. It left the bottom tab bar in the 2026-08-17 rebuild and lives in
-    // the hamburger → Windows list, opening as its own kiosk pop-out window
+    // the hamburger → Windows list, opening as its own jukebox pop-out window
     // (docs/jukebox-rebuild-design-2026-08-17.md §0.1). A public-facing display does not belong on a
     // view tab the operator clicks by accident mid-show.
     { label: "DECKS",      active: showDeckConfig,             fn: () => { setPanel("live"); setShowDeckConfig(true); } },
@@ -2369,7 +2369,7 @@ export default function App() {
     <EtherErrorBoundary>
     <div className="h-screen flex flex-col" onContextMenu={handleContextMenu} style={{ background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "'Inter', system-ui, sans-serif" }}>
       <KeyboardHelp />
-      {/* Jukebox is no longer a takeover of this window — it opens as its own kiosk pop-out
+      {/* Jukebox is no longer a takeover of this window — it opens as its own jukebox pop-out
           (hamburger → Windows → Jukebox → #popout/jukebox). See the rebuild design §0.1. */}
       <TrialGate />
       <IrisBadge open={irisOpen} onClose={() => setIrisOpen(false)} />{/* Iris chat panel — opened by the bottom-bar IRIS button (contract: docs/iris-ether-contract.md) */}
@@ -3646,10 +3646,10 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
     });
   };
 
-  // ── JUKEBOX CHANNEL — the board is the sole gate on the kiosk's audio ────────────────────────────
+  // ── JUKEBOX CHANNEL — the board is the sole gate on the jukebox's audio ────────────────────────────
   //
   // Jeff's ruling (2026-08-18): the jukebox is audible ONLY when its assigned deck's channel is ON and
-  // the fader is up. The kiosk's AUTO chooses SONGS; the board chooses AIR.
+  // the fader is up. The jukebox's AUTO chooses SONGS; the board chooses AIR.
   //
   // Before this, a jukebox deck fell through LivePanel's type switch into the generic fallback strip,
   // whose `deck` came from deckMap = {A,B,C} — undefined for D/E/F. So the strip rendered no state (ON
@@ -3663,10 +3663,10 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   // (native/src/audio.rs:447) and the mixer sums every slot through `muted`/`volume`
   // (native/src/audio.rs:1151). The wiring was always there; nothing was sending the cut.
   //
-  // DEFAULT OFF, unlike carts. A public kiosk must not become audible because someone assigned a deck;
+  // DEFAULT OFF, unlike carts. A public jukebox must not become audible because someone assigned a deck;
   // it becomes audible when an operator presses ON. "ON dark = silence" is the spec.
   //
-  // Stored in station_config_kv (not localStorage) so the KIOSK window can read the same truth and
+  // Stored in station_config_kv (not localStorage) so the JUKEBOX window can read the same truth and
   // report its own state honestly — it already polls that table.
   const jukeboxSlot = deckConfigs?.find(c => c.enabled && c.type === "jukebox")?.slot || null;
   const [jukeboxOn, setJukeboxOn] = useState(false);
@@ -3699,7 +3699,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
     setJukeboxOn(prev => {
       const next = !prev;
       try { (engine.getDeck(jukeboxSlot as any) as any)?.setMuted?.(!next); } catch { /* engine not ready */ }
-      // Persist so the kiosk can tell the public the truth, and so a restart restores the operator's
+      // Persist so the jukebox can tell the public the truth, and so a restart restores the operator's
       // choice rather than silently re-opening the channel.
       try { (window as any).ether.stationConfigKv.upsertByKey(lpStationId, "jukebox_channel_on", next ? "1" : "0"); }
       catch { /* non-fatal */ }

@@ -5,7 +5,7 @@ import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── Types ─────────────────────────────────────────────────────
 
-// "jukebox" (2026-08-17) is a SOURCE you patch into a deck, like a mic — the public request kiosk's
+// "jukebox" (2026-08-17) is a SOURCE you patch into a deck, like a mic — the public request jukebox's
 // audio. It is only offerable on slots D/E/F: station automation enumerates ["A","B","C"] and nothing
 // else (audiod/engine.js:521, :604, :648, :905, :1698 …), so a jukebox on D/E/F is a deck rotation
 // structurally cannot touch. Offering it on A/B/C would put the public and the scheduler on the same
@@ -51,7 +51,7 @@ const TYPE_META: Record<DeckType, { label: string; icon: string; color: string; 
   cart:   { label: "Cart",         icon: "⚡",  color: "#fbbf24", desc: "Hot-key sound effects & stingers" },
   desk:   { label: "Desk",         icon: "🎛️",  color: "#a78bfa", desc: "Producer desk — carts, jingles & production tools" },
   video:  { label: "Video Studio", icon: "🎥",  color: "var(--accent-blue)", desc: "Live video camera, streaming & recording — spans 3 decks" },
-  jukebox:{ label: "Jukebox",      icon: "🎶",  color: "#8868D8", desc: "Public request kiosk — mix it like any source; automation never touches this deck" },
+  jukebox:{ label: "Jukebox",      icon: "🎶",  color: "#8868D8", desc: "Public request jukebox — mix it like any source; automation never touches this deck" },
 };
 
 // ── useDeckConfig ─────────────────────────────────────────────
@@ -223,7 +223,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
                   {/* Type selector */}
                   <div style={{ display: "flex", gap: 4, flex: 1 }}>
                     {/* Jukebox is offered on D/E/F only — automation owns A/B/C and must never share a
-                        deck with the public request kiosk. See canHostJukebox and the DeckType note. */}
+                        deck with the public request jukebox. See canHostJukebox and the DeckType note. */}
                     {(Object.keys(TYPE_META) as DeckType[])
                       .filter(type => type !== "jukebox" || canHostJukebox(c.slot))
                       .map(type => (

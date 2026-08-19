@@ -370,7 +370,7 @@ contextBridge.exposeInMainWorld("ether", {
   jingleCategories:          handlers.jingleCategories,
   spots:                     handlers.spots,
   stationConfigKv:           handlers.stationConfigKv,
-  // Jukebox requests — LOCAL-ONLY table (migration v38). Who asked for what on the public kiosk;
+  // Jukebox requests — LOCAL-ONLY table (migration v38). Who asked for what on the public jukebox;
   // the daemon's queue remains the source of truth for what actually plays.
   jukebox: {
     listRequests: (stationId)  => ipcRenderer.invoke("jukebox:requests-list", stationId),

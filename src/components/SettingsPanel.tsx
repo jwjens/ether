@@ -2057,7 +2057,7 @@ function PublicPageSettings() {
 // no new table, per the standing code-managed-vs-user-managed rule.
 //
 // The song count next to each category is the honest sense: an operator can see at a glance whether
-// what they ticked resolves to something sane, and the total is the same query the kiosk itself runs
+// what they ticked resolves to something sane, and the total is the same query the jukebox itself runs
 // (file present, MUSIC only) rather than a raw category size that would over-promise.
 function JukeboxSection() {
   const { stationId } = useActiveStation();
@@ -2076,7 +2076,7 @@ function JukeboxSection() {
     (async () => {
       setLoading(true);
       try {
-        // Categories with the count of songs the kiosk could ACTUALLY play from each — same
+        // Categories with the count of songs the jukebox could ACTUALLY play from each — same
         // predicate as the wall: not deleted, has a file, music.
         const rows = await queryScoped<{ id: number; name: string; n: number }>(
           `SELECT c.id, c.name,
@@ -2146,7 +2146,7 @@ function JukeboxSection() {
       category="programming"
       icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>}
       title="Jukebox"
-      description="Which categories the public can pick from on the Jukebox kiosk. Tick as many as you like — their songs are the whole pool. Open the display from the ☰ menu → Jukebox."
+      description="Which categories the public can pick from on the Jukebox. Tick as many as you like — their songs are the whole pool. Open the display from the ☰ menu → Jukebox."
     >
       {loading ? (
         <div style={{ padding: "14px 0", fontSize: 12, color: "var(--text-tertiary)" }}>Loading categories…</div>
@@ -2178,11 +2178,11 @@ function JukeboxSection() {
 
           <div style={{ fontSize: 12, color: "var(--text-secondary)", paddingBottom: 14 }}>
             {checked.length === 0
-              ? "Nothing ticked — the kiosk will tell staff it isn't set up yet."
+              ? "Nothing ticked — the jukebox will tell staff it isn't set up yet."
               : <>Pool: <strong style={{ color: "var(--text-primary)" }}>{poolTotal.toLocaleString()}</strong> song{poolTotal === 1 ? "" : "s"} across {checked.length} categor{checked.length === 1 ? "y" : "ies"}. Songs with no file on this machine are excluded — a public pick must never produce dead air.</>}
           </div>
 
-          <SettingRow label="Request link (QR)" hint="The public page this station's QR code points at. Shown on the kiosk every time the window opens. Phase 2 wires the page itself.">
+          <SettingRow label="Request link (QR)" hint="The public page this station's QR code points at. Shown on the jukebox every time the window opens. Phase 2 wires the page itself.">
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input
                 value={url}
@@ -2990,7 +2990,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, seg
       {/* ── Per-station Music Folder & Sync ── */}
       <MusicFolderSection />
 
-      {/* ── Jukebox — the public request kiosk's song pool ── */}
+      {/* ── Jukebox — the public request wall's song pool ── */}
       <JukeboxSection />
 
       {/* Jingles & Sweepers moved to its own bottom-bar push-up (JINGLES) — the one imaging home (4.4.59). */}

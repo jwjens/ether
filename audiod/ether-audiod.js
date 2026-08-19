@@ -239,11 +239,11 @@ function modeToggle(stationId, fn) {
 const JUKEBOX_DECKS = ["D", "E", "F"];
 const JUKEBOX_SESSION = require("crypto").randomUUID();
 const _jukeboxPlaylog = (() => { try { return require("./playlog"); } catch { return null; } })();
-/** stationId → { deck, filePath, title, artist, startedAtMs } — what the kiosk last put on air. */
+/** stationId → { deck, filePath, title, artist, startedAtMs } — what the jukebox last put on air. */
 const jukeboxNow = new Map();
 
 function jukeboxDeckInfo(stationId, deck) {
-  // The DAEMON is the source of truth for what a deck is doing; the kiosk renders this, never a guess.
+  // The DAEMON is the source of truth for what a deck is doing; the jukebox renders this, never a guess.
   try {
     const st = JSON.parse(A.audioGetState(stationId));
     return st[`deck${deck}`] || null;
@@ -428,7 +428,7 @@ const handlers = {
   },
 
   /** What the jukebox deck is ACTUALLY doing, straight off the engine — status, volume, is_finished.
-   *  The kiosk's routing banner and its on-air blink read this and nothing else. */
+   *  The jukebox's routing banner and its on-air blink read this and nothing else. */
   "jukebox:state": (m) => {
     const deck = String(m.deck || "").toUpperCase();
     if (!JUKEBOX_DECKS.includes(deck)) return { ok: false, reason: "deck-not-allowed" };
