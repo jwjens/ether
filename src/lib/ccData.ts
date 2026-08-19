@@ -25,6 +25,32 @@ export async function pushCcData(
   } catch (e) { console.log(`[CCPUSH] ${table} sync error:`, (e as any)?.message ?? e); }
 }
 
+// ── FLEET HEALTH FRAMES (web Health Monitor) ──────────────────────────────────────────────────────
+// Pushed as table "health" on THIS channel — no second channel, per the design doc §1. The frame is
+// assembled in the main process (electron/health-frame.js via the health:frames IPC), so there is one
+// builder and the renderer only carries it. One push per station: /api/account/data/sync validates
+// station ownership per call.
+//
+// The backend does NOT tombstone-sweep table "health" (index.js, the `table !== "health"` guard):
+// many machines write frames for one station and each only ever sends its own row, so a sweep would
+// make them delete each other. Stale rows go dark by AGE at the reader instead.
+export async function pushHealthFrames(
+  licenseKey: string | null | undefined,
+  cadenceSec: number,
+): Promise<number> {
+  if (!licenseKey) return 0;
+  let frames: { stationUuid: string; row: any }[] = [];
+  try {
+    frames = (await (window as any).ether?.invoke?.("health:frames", cadenceSec)) || [];
+  } catch (e) { console.log("[CCPUSH] health frames unavailable:", (e as any)?.message ?? e); return 0; }
+  if (!Array.isArray(frames) || frames.length === 0) return 0;
+  for (const f of frames) {
+    if (!f?.stationUuid || !f?.row) continue;
+    await pushCcData(licenseKey, f.stationUuid, "health", [f.row]);
+  }
+  return frames.length;
+}
+
 // Gather a table's live rows via the typed sync handlers and push them. Any table in the
 // NS map below is supported (categories, clocks, clock_slots, shows).
 export async function pushCcTable(

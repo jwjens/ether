@@ -83,6 +83,8 @@ let lastSpawnAt = 0;               // debounce — never spawn more than once pe
 let spawnAttempts = 0;            // consecutive spawn-without-successful-connect cycles
 const MAX_SPAWN_ATTEMPTS = 5;     // after this, stop SPAWNING (no PID storm) — but keep PROBING (v4.4.50)
 let spawnGivenUp = false;         // v4.4.50: hit the spawn cap → probe-only (non-terminal); reset on connect
+let disownAttempts = 0;           // dev: consecutive "that daemon isn't ours" evictions (storm guard)
+const MAX_DISOWN = 3;             // after this, use it and say so LOUDLY rather than loop forever
 
 function setEventHandler(fn) { onEvent = typeof fn === "function" ? fn : (() => {}); }
 function setConnectedHandler(fn) { onConnected = typeof fn === "function" ? fn : (() => {}); }
@@ -137,7 +139,12 @@ function spawnDaemon() {
       // ETHER_DAEMON_DEV (dev only) tells the daemon to self-terminate when its last client (this
       // app) disconnects, so it never lingers as a zombie across restarts. Packaged OMITS it — the
       // daemon must outlive the app during a gapless update.
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ETHER_DAEMON_VERSION: appVersion(), ...(dev ? { ETHER_DAEMON_DEV: "1" } : {}), ...(logFile ? { ETHER_AUDIOD_LOG: logFile } : {}) },
+      // ETHER_OWNER_PID (2026-08-18, "no owner, no engine"): the daemon watches this pid and exits
+      // when it dies. Passed in BOTH dev and packaged — an ownerless engine is forbidden either way;
+      // what differs is only the grace period (5s dev / 45s packaged / 120s during an update).
+      // Before this, a packaged daemon had no owner concept at all and a force-killed or crashed app
+      // left it playing until the machine was rebooted, with no window and no tray to stop it.
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ETHER_DAEMON_VERSION: appVersion(), ETHER_OWNER_PID: String(process.pid), ...(dev ? { ETHER_DAEMON_DEV: "1" } : {}), ...(logFile ? { ETHER_AUDIOD_LOG: logFile } : {}) },
       // Packaged: detached + unref so an app/UI restart leaves the engine playing (gapless updates).
       // Dev: attached, so a graceful app exit reaps it too (the self-terminate above is the backstop
       // for a hard kill, where the OS closes the socket → the daemon sees its last client leave).
@@ -182,7 +189,45 @@ function attach(s) {
   // automationStart for on-air stations so a respawned daemon resumes instead of dead air. Deferred
   // a tick so the connect handler finishes and `connected`/`sock` are fully settled before any
   // replayed cmd() writes. Never throws into the socket path.
-  setImmediate(() => { if (sock === s && connected) { try { onConnected(); } catch {} } });
+  // OWNERSHIP + DEV FRESHNESS, before anything else uses this daemon.
+  //
+  // hello() tells the daemon which process owns it. This is what lets a RESTARTED app adopt a
+  // daemon that is still playing (crash / update / watchdog respawn) — and, just as importantly,
+  // what stops a bare probe from counting as an owner.
+  //
+  // DEV ONLY, then: refuse a daemon this app process did not spawn. The existing stale-daemon check
+  // (checkStaleDaemon → cmd "version") compares APP VERSION STRINGS, which are identical across a
+  // dev edit — so a leftover daemon running yesterday's code reported the same version, was declared
+  // fresh, and every "full restart" ran against it. That is how three sessions in a row tested new
+  // daemon code that had never been loaded. In dev there is no gapless requirement, so the rule is
+  // simply: the app only ever talks to a daemon IT spawned. Anything else is evicted and respawned.
+  setImmediate(async () => {
+    if (sock !== s || !connected) return;
+    let hi = null;
+    // supervisorPid: the HA watchdog that spawned/adopted us. Naming it keeps a supervised station
+    // on air when THIS process is force-killed — the daemon sees a responsible party still standing
+    // and keeps playing until the watchdog brings the app back, instead of counting down to silence.
+    const supervisorPid = Number(process.env.ETHER_WATCHDOG_PID) || 0;
+    try { hi = await cmd("hello", { ownerPid: process.pid, supervisorPid }); } catch { /* pre-hello daemon */ }
+    if (sock !== s || !connected) return;
+    const dev = !isPackagedApp();
+    const foreign = dev && hi && Number(hi.spawnedFor) !== process.pid;
+    if (foreign || (dev && !hi)) {
+      if (disownAttempts >= MAX_DISOWN) {
+        const m = `[audiod-client] dev: daemon pid ${hi && hi.pid} is NOT ours (spawnedFor=${hi && hi.spawnedFor}) but eviction failed ${MAX_DISOWN}x — USING IT ANYWAY. Daemon-side code changes may not be live.`;
+        console.warn(m); try { _log(m); } catch {}
+      } else {
+        disownAttempts++;
+        const m = `[audiod-client] dev: attached daemon is NOT ours (pid ${hi && hi.pid}, spawnedFor ${hi ? hi.spawnedFor : "pre-hello"}) — evicting + respawning so dev runs THIS tree's code [${disownAttempts}/${MAX_DISOWN}]`;
+        console.warn(m); try { _log(m); } catch {}
+        try { cmd("shutdown").catch(() => {}); } catch {}
+        try { s.destroy(); } catch {}          // → close → drop() → scheduleReconnect → spawn a fresh one
+        return;
+      }
+    }
+    disownAttempts = 0;
+    try { onConnected(); } catch {}
+  });
 }
 
 function scheduleReconnect() {

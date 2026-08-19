@@ -155,6 +155,66 @@ function Tile({ song, onPick }: { song: JukeSong; onPick: (s: JukeSong) => void 
   );
 }
 
+// ── THE ENTRY BLOCK — one shape, worn by every entry in the rail ──────────────────────────────────
+// Now playing, up next and every queue row are the SAME three rows, always in this order:
+//   1. the requester's NAME   2. the SONG TITLE   3. the ARTIST
+// Row 1 never renders blank: a shuffle/system pick says "Unknown", so the field is visibly working
+// rather than looking broken. Row 3 is a row of its own — the artist used to be glued to the title
+// with an em dash, which is not the same thing and read as "artist missing".
+type EntrySize = "lg" | "md" | "sm";
+const ENTRY_SCALE: Record<EntrySize, { name: number; title: number; artist: number }> = {
+  lg: { name: 13,   title: 20, artist: 14.5 },
+  md: { name: 12,   title: 17, artist: 13.5 },
+  sm: { name: 11.5, title: 14, artist: 12.5 },
+};
+
+function EntryBlock({ name, title, artist, size = "sm", accent = false }: {
+  name: string | null | undefined;
+  title: string;
+  artist: string | null | undefined;
+  size?: EntrySize;
+  accent?: boolean;
+}) {
+  const s = ENTRY_SCALE[size];
+  const clip = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } as const;
+  // "Unknown" is the honest label for a pick nobody requested — never an empty row.
+  const who = (name || "").trim() || "Unknown";
+  return (
+    <div style={{ minWidth: 0, flex: 1 }}>
+      <div style={{
+        fontSize: s.name, fontWeight: 800, letterSpacing: "0.02em",
+        color: accent ? "#c0b0f0" : "#8a8aa0", ...clip,
+      }}>{who}</div>
+      <div style={{ fontSize: s.title, fontWeight: 800, color: "#fff", marginTop: 3, ...clip }}>
+        {title}
+      </div>
+      <div style={{ fontSize: s.artist, fontWeight: 600, color: "#7a7a95", marginTop: 2, ...clip }}>
+        {(artist || "").trim() || "—"}
+      </div>
+    </div>
+  );
+}
+
+// Now-playing artwork. Same rules as the wall (08-04 §3): getLocalArt only — embedded cover, per-path
+// cache, never the network — and a tinted panel rather than an empty square when there is no art.
+function NowArt({ filePath, title }: { filePath: string | null; title: string }) {
+  const [art, setArt] = useState<string | null>(null);
+  useEffect(() => {
+    let stop = false;
+    setArt(null);
+    if (!filePath) return;
+    getLocalArt(filePath).then(src => { if (!stop && src) setArt(src); }).catch(() => { /* tint stands */ });
+    return () => { stop = true; };
+  }, [filePath]);
+  return (
+    <div style={{
+      width: "100%", aspectRatio: "1 / 1", borderRadius: 12, marginBottom: 12,
+      background: art ? `#000 center/cover no-repeat url("${art}")` : tintFor(title || "?"),
+      boxShadow: "0 10px 30px rgba(0,0,0,0.6)", outline: "1px solid rgba(255,255,255,0.07)",
+    }} />
+  );
+}
+
 export default function Jukebox({ onExit }: { onExit?: () => void }) {
   const { stationId, isReady } = useActiveStation();
 
@@ -197,7 +257,11 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
   const [autoOn, setAutoOn] = useState(false);
   /** What the routed deck is actually playing, read off the deck — the kiosk must show what IT chose,
    *  and a shuffle pick is just as much its choice as a request. */
-  const [nowPlaying, setNowPlaying] = useState<{ title: string; artist: string } | null>(null);
+  const [nowPlaying, setNowPlaying] = useState<{ title: string; artist: string; filePath: string | null } | null>(null);
+  /** Who asked for the song this window STARTED — the deck knows title/artist but never a requester.
+   *  Kept beside the title it belongs to and only shown when the deck is still playing THAT title, so
+   *  the rail can never attach a person's name to a song they did not request. */
+  const startedBy = useRef<{ title: string; requester: string } | null>(null);
   /** The shuffle's NEXT pick, chosen in advance so the window can show it — and then actually played,
    *  so the display is a promise the drive keeps rather than a guess it re-rolls. */
   const [nextUp, setNextUp] = useState<JukeSong | null>(null);
@@ -375,7 +439,10 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
           setDeckVolume(typeof r.volume === "number" ? r.volume : null);
           const t = String(r.info?.title ?? r.nowPlaying?.title ?? "").trim();
           const a = String(r.info?.artist ?? r.nowPlaying?.artist ?? "").trim();
-          setNowPlaying(t ? { title: t, artist: a } : null);
+          // Rust's DeckInfo is snake_case (`file_path`); the daemon's jukeboxNow record is camelCase
+          // (`filePath`). Read both — the second is the fallback when the deck info is thin.
+          const fp = String(r.info?.file_path ?? r.nowPlaying?.filePath ?? "").trim();
+          setNowPlaying(t ? { title: t, artist: a, filePath: fp || null } : null);
         } else { setDeckStatus(null); setDeckVolume(null); setNowPlaying(null); }
       } catch { if (!stop) { setDeckStatus(null); setDeckVolume(null); } }
     };
@@ -428,12 +495,14 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
         if (next) {
           toPlay = { filePath: next.file_path, title: next.title, artist: next.artist, durationMs: null };
           reqId = next.id;
+          startedBy.current = { title: next.title, requester: next.requester_name };
         } else if (autoOn) {
           // Play the song the window has been SHOWING as up next, not a fresh roll — otherwise the
           // display and the audio disagree, which is the defect this fixes.
           const pick = nextUp ?? await pickShuffleSong();
           if (pick) {
             toPlay = { filePath: pick.file_path, title: pick.title, artist: pick.artist, durationMs: pick.duration_ms };
+            startedBy.current = { title: pick.title, requester: "Unknown" };   // the shuffle's own pick
             setNextUp(null);   // consumed — the look-ahead picks the following one
           }
         }
@@ -561,7 +630,24 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
     </div>
   );
 
-  const upNextIndex = 1;   // #2 in the rail — see the rebuild doc §1 on placement semantics.
+  // ── ONE up-next, ONE place ───────────────────────────────────────────────────────────────────────
+  // The rail used to say "up next" in three places at once: a panel-top header, the AUTO look-ahead
+  // line, and a flashing badge on queue row #2 (the rebuild doc §1 flagged that #2 placement as an
+  // assumption to confirm — this supersedes it). There is now a single UP NEXT section, and it names
+  // whatever ACTUALLY plays next: a waiting request if there is one, otherwise the shuffle's held pick.
+  const pending = requests.filter(r => r.status === "queued" || r.status === "pending");
+  const upNext: { name: string; title: string; artist: string | null } | null =
+    pending.length ? { name: pending[0].requester_name, title: pending[0].title, artist: pending[0].artist }
+    : nextUp ? { name: "Unknown", title: nextUp.title, artist: nextUp.artist }
+    : null;
+  // The queue is what is waiting BEHIND the up-next entry, so nothing is listed twice.
+  const queueRest = pending.length ? pending.slice(1) : [];
+  // A requester name is only attached to the playing song when the deck is still on the title this
+  // window started. Anything else — an operator load, a stale ref — reads "Unknown" rather than lying.
+  const nowRequester =
+    nowPlaying && startedBy.current && startedBy.current.title === nowPlaying.title
+      ? startedBy.current.requester
+      : "Unknown";
 
   // ── Routing truth ───────────────────────────────────────────────────────────────────────────────
   // Observed, never inferred. The queue is kept in every case — routing is about audibility, not about
@@ -695,8 +781,11 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
         width: 400, flexShrink: 0, background: "#0b0b12", borderLeft: "1px solid #1a1a2a",
         display: "flex", flexDirection: "column",
       }}>
-        <div style={{ padding: "24px 22px 14px", flexShrink: 0 }}>
-          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.16em", color: "#6040c0" }}>UP NEXT</div>
+        {/* No "UP NEXT" header here — up-next has exactly one home, below now-playing. */}
+        <div style={{ padding: "24px 22px 12px", flexShrink: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.16em", color: "#6040c0" }}>
+            THE JUKEBOX
+          </div>
           <div style={{ fontSize: 12, color: "#5a5a70", marginTop: 5 }}>
             {pendingCount} request{pendingCount === 1 ? "" : "s"} waiting
           </div>
@@ -713,44 +802,38 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
               shuffle. Read off the routed deck, so it cannot claim a song the deck is not playing. */}
           {nowPlaying && (
             <div style={{
-              padding: "12px 14px", marginBottom: 10, borderRadius: 12,
+              padding: "14px 14px 13px", marginBottom: 12, borderRadius: 14,
               background: "rgba(96,64,192,0.10)", border: "1px solid #33335a",
             }}>
-              <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.16em", color: "#8868D8" }}>
+              <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.16em",
+                            color: "#8868D8", marginBottom: 11 }}>
                 NOW PLAYING
               </div>
-              <div style={{ fontSize: 16, fontWeight: 800, color: "#fff", marginTop: 5,
-                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {nowPlaying.title}
-              </div>
-              {nowPlaying.artist && (
-                <div style={{ fontSize: 13, color: "#8a8aa0", marginTop: 2,
-                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {nowPlaying.artist}
-                </div>
-              )}
+              {/* Artwork first, the three-row block beneath it. */}
+              <NowArt filePath={nowPlaying.filePath} title={nowPlaying.title} />
+              <EntryBlock
+                name={nowRequester}
+                title={nowPlaying.title}
+                artist={nowPlaying.artist}
+                size="lg"
+                accent
+              />
             </div>
           )}
 
-          {/* The shuffle's held pick, shown only when no request is waiting — a request always wins,
-              and this is the exact row the drive will play next. */}
-          {!requests.length && nextUp && (
+          {/* UP NEXT — the one and only place the rail says it. A waiting request wins; with none, this
+              is the shuffle's held pick, which is the exact row the drive goes on to play. */}
+          {upNext && (
             <div style={{
-              display: "flex", gap: 13, alignItems: "center", padding: "12px 14px", marginBottom: 9,
-              borderRadius: 12, background: "#101018", border: "1px dashed #2a2a44",
+              padding: "13px 14px", marginBottom: 12, borderRadius: 14,
+              background: "#101018", border: "1px solid #6040c0",
             }}>
-              <div style={{
-                flexShrink: 0, width: 32, height: 32, borderRadius: "50%", display: "flex",
-                alignItems: "center", justifyContent: "center", background: "#1a1a2a",
-                color: "#7a7a95", fontSize: 10, fontWeight: 900, letterSpacing: "0.04em",
-              }}>AUTO</div>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: 12.5, color: "#7a7a95" }}>Up next — from the chosen categories</div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: "#c0b0f0", marginTop: 2,
-                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {nextUp.title}{nextUp.artist ? ` — ${nextUp.artist}` : ""}
-                </div>
+              <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.16em",
+                            color: "#8868D8", marginBottom: 9,
+                            animation: "juke-flash 1.1s ease-in-out infinite" }}>
+                ● UP NEXT
               </div>
+              <EntryBlock name={upNext.name} title={upNext.title} artist={upNext.artist} size="md" accent />
             </div>
           )}
 
@@ -761,43 +844,29 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
                 : "No requests yet. Scan the code below, or pick something from the wall."}
             </div>
           )}
-          {requests.map((r, i) => {
-            const isUpNext = i === upNextIndex;
-            return (
-              <div key={r.id} style={{
-                display: "flex", gap: 13, alignItems: "center",
-                padding: isUpNext ? "18px 16px" : "12px 14px",
-                marginBottom: 9, borderRadius: 12,
-                background: isUpNext ? "rgba(96,64,192,0.16)" : "#101018",
-                border: `1px solid ${isUpNext ? "#6040c0" : "#1c1c2c"}`,
-                animation: "juke-rise 0.22s ease",
-              }}>
-                <div style={{
-                  flexShrink: 0, width: isUpNext ? 44 : 32, height: isUpNext ? 44 : 32,
-                  borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-                  background: isUpNext ? "#6040c0" : "#1a1a2a",
-                  color: isUpNext ? "#fff" : "#7a7a95",
-                  fontSize: isUpNext ? 17 : 13, fontWeight: 900,
-                }}>{i + 1}</div>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{
-                    fontSize: isUpNext ? 17 : 14, fontWeight: 800, color: "#fff",
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                  }}>{r.requester_name}</div>
-                  <div style={{
-                    fontSize: isUpNext ? 14 : 12.5, color: isUpNext ? "#c0b0f0" : "#7a7a95", marginTop: 2,
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                  }}>{r.title}{r.artist ? ` — ${r.artist}` : ""}</div>
-                  {isUpNext && (
-                    <div style={{
-                      marginTop: 7, fontSize: 10.5, fontWeight: 900, letterSpacing: "0.16em",
-                      color: "#8868D8", animation: "juke-flash 1.1s ease-in-out infinite",
-                    }}>● UP NEXT</div>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+          {/* THE QUEUE — what is waiting behind up-next. Same three-row block, numbered from #2 so the
+              placement matches the rail read top-to-bottom (now playing, up next, then these). */}
+          {queueRest.length > 0 && (
+            <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.16em",
+                          color: "#5a5a70", margin: "4px 2px 9px" }}>
+              QUEUE
+            </div>
+          )}
+          {queueRest.map((r, i) => (
+            <div key={r.id} style={{
+              display: "flex", gap: 13, alignItems: "center",
+              padding: "12px 14px", marginBottom: 9, borderRadius: 12,
+              background: "#101018", border: "1px solid #1c1c2c",
+              animation: "juke-rise 0.22s ease",
+            }}>
+              <div style={{
+                flexShrink: 0, width: 32, height: 32, borderRadius: "50%", display: "flex",
+                alignItems: "center", justifyContent: "center", background: "#1a1a2a",
+                color: "#7a7a95", fontSize: 13, fontWeight: 900,
+              }}>{i + 2}</div>
+              <EntryBlock name={r.requester_name} title={r.title} artist={r.artist} size="sm" />
+            </div>
+          ))}
         </div>
 
         {/* QR — rendered every time this window opens (spec item 5). Big enough to scan across a room. */}

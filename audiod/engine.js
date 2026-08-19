@@ -312,6 +312,8 @@ class DaemonEngine {
   // levels already runs ~90/s and is implicated in a renderer OOM, so this rides a separate, lower-rate
   // channel gated to ON. Quiet unless processing is on AND automation is engaged (no silence spam). The
   // meters are OBSERVED at the stage taps (in/out LUFS, gain-reduction, in/out peak) — never claimed.
+  // RETAINED for audiod/smoke-manual-mode.js, which calls it directly to assert it is not gated on
+  // automation. Nothing schedules it any more — the daemon's station loop is the live emitter.
   _emitProcMeters() {
     // NOT gated on _started (2026-07-31): meters are the jock's level check, and MANUAL is exactly when
     // a human is watching them. Processing is still running in MANUAL, so reporting it is honest.
@@ -371,8 +373,12 @@ class DaemonEngine {
   init() {
     A.initAudioEngine(this.stationId);
     if (!this.pollTimer) { this.processingEnd = false; this.pollTimer = setInterval(() => this.poll(), 250); }
-    // Audio Processing v1: dedicated ~15Hz meter emit (self-gates to processing-on + automation-engaged).
-    if (!this._procMeterTimer) this._procMeterTimer = setInterval(() => this._emitProcMeters(), 66);
+    // Audio Processing meters are NO LONGER emitted here (2026-08-19). They rode this timer, which
+    // exists only for stations that have an automation engine — so a station playing only the jukebox
+    // (jukebox:play talks to the addon directly and creates no engine) reported nothing, and the panel
+    // read "waiting for audio" while the processor was working. The emit now lives in the daemon's
+    // station loop, gated on the PROCESSOR's own state. One writer, and it does not care whether
+    // automation is running.
   }
   // ── MANUAL MODE (2026-07-31) — stop DECIDING, never stop RUNNING ───────────────────────────────
   // This used to tear the engine down: it cleared the poll timer and stopped all three decks. That made

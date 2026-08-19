@@ -37,6 +37,101 @@ const isFileSocket = !PIPE.startsWith("\\\\.\\pipe\\");
 // must exit instead of lingering as a zombie that holds the audio device + pipe. Packaged daemons
 // NEVER set this — they must outlive the app during a gapless update. Off by default.
 const DEV_REAP = process.env.ETHER_DAEMON_DEV === "1";
+
+// ── NO OWNER, NO ENGINE (2026-08-18) ─────────────────────────────────────────
+// An engine nobody can see and nobody can stop is the worst defect an audio product can have, and
+// it happened: the app was closed, Halloween music kept playing, and there was no window, no tray
+// icon and no control anywhere that could stop it. The previous safety net was ONE 3-second timer
+// armed inside sock.on("close"), dev-only. It has never fired — 0 occurrences across 57 daemon
+// starts in ether-audiod.log (2026-08-16 → 08-19), while 6 of those starts have no matching
+// shutdown. Event-armed, single-shot, and disarmed for good by any client (the watchdog's own
+// liveness probe) that happens to be connected at the 3s mark.
+//
+// The rule now: this daemon ALWAYS has a named owner process, and it EXITS when that owner is gone.
+// Not an event — a poll, so a dropped/erroring close event cannot leave the engine running forever.
+//
+// The owner is a PID:
+//   · at birth, ETHER_OWNER_PID from whoever spawned us (app client OR watchdog — both pass it);
+//   · thereafter, whoever sends `hello` — the app identifies itself on every connect, so an app
+//     that restarts (crash, update, watchdog respawn) ADOPTS this daemon and the countdown clears.
+// A bare pipe connection is NOT ownership. The watchdog's probeDaemon() connects and destroys
+// without a word; a diagnostic probe likewise. Neither can keep an orphaned engine alive.
+// No ETHER_OWNER_PID means nobody claimed us: a hand-started daemon, or one of the audiod/smoke-*
+// harnesses. Fall back to the PARENT process -- still a real, named, living owner, so the rule holds
+// with no exception carved out for tests. When the harness (or the shell) exits, so do we.
+const OWNER_ENV_PID = Number(process.env.ETHER_OWNER_PID) || Number(process.ppid) || 0;
+let ownerPid = OWNER_ENV_PID;      // current owner; updated by `hello`
+let supervisorPid = 0;             // HA watchdog, told to us in `hello` — a responsible party too
+const SPAWNED_FOR = OWNER_ENV_PID; // birth owner, never changes — dev uses it to spot a foreign daemon
+let orphanSince = 0;               // ms timestamp we first saw no owner; 0 = owned
+// PID REUSE GUARD: a pid we have OBSERVED dead is never believed alive again. Windows recycles pids,
+// and without this an unrelated process inheriting the old app's number would silently re-own an
+// orphaned engine — the exact failure this whole mechanism exists to prevent, wearing a disguise.
+const _knownDead = new Set();
+// How long an ownerless engine may keep playing before it stops itself.
+//   dev       — 5s. There is no gapless requirement in dev and code changes every restart.
+//   packaged  — 45s. Long enough for the HA watchdog to relaunch Ether and for that cold start to
+//               reach `hello` (splash + DB open), so a supervised station never drops. Not
+//               unbounded: with HA off, a crash now costs 45s of trailing audio instead of an
+//               engine that plays until the machine is rebooted.
+//   update    — 120s from the app's .ether-expected-restart sentinel, the gapless-update window.
+//               THIS is what keeps "the daemon outlives the app during an update" true; survival is
+//               now something the app must ASK for, with a deadline, instead of the default.
+const ORPHAN_GRACE_MS        = DEV_REAP ? 5000 : 45000;
+const ORPHAN_GRACE_UPDATE_MS = 120000;
+// userData, derived from the log path the app hands us (userData/logs/ether-audiod.log). Only used
+// to read the update sentinel; absent → no extension, which fails SAFE (shorter life, never longer).
+function _userDataDir() {
+  const lf = process.env.ETHER_AUDIOD_LOG;
+  if (!lf) return null;
+  try { return path.dirname(path.dirname(lf)); } catch { return null; }
+}
+function _expectedRestartFresh() {
+  const ud = _userDataDir();
+  if (!ud) return false;
+  try {
+    const st = require("fs").statSync(path.join(ud, ".ether-expected-restart"));
+    return Date.now() - st.mtimeMs < ORPHAN_GRACE_UPDATE_MS;
+  } catch { return false; }
+}
+function _pidAlive(pid) {
+  if (!pid || _knownDead.has(pid)) return false;
+  let alive = false;
+  try { process.kill(pid, 0); alive = true; } catch (e) { alive = e.code === "EPERM"; }
+  if (!alive) _knownDead.add(pid);
+  return alive;
+}
+// Is ANY responsible party still there? The owner (this app), the HA watchdog it named, or whoever
+// spawned us. The watchdog counts because its entire job is to bring an owner back — that is what
+// keeps a supervised station on air across an app crash instead of dropping for 45 seconds.
+function _ownedBy() {
+  for (const [pid, what] of [[ownerPid, "owner"], [supervisorPid, "watchdog"], [SPAWNED_FOR, "spawner"]]) {
+    if (_pidAlive(pid)) return `${what} pid ${pid}`;
+  }
+  return null;
+}
+// Polled every second, not armed. Runs from boot, forever, regardless of whether any client ever
+// connected —
+// a daemon spawned into an app that died before it finished starting is an orphan too.
+setInterval(() => {
+  const owned = _ownedBy();
+  if (owned) {
+    if (orphanSince) { log(`${owned} is alive — orphan countdown cleared`); orphanSince = 0; }
+    return;
+  }
+  if (!orphanSince) {
+    orphanSince = Date.now();
+    log(`ORPHANED — owner ${ownerPid || "(never set)"} / watchdog ${supervisorPid || "(none)"} / spawner ${SPAWNED_FOR || "(none)"} all gone; no owner, no engine. ` +
+        `Exiting in ${Math.round((_expectedRestartFresh() ? ORPHAN_GRACE_UPDATE_MS : ORPHAN_GRACE_MS) / 1000)}s ` +
+        `unless an app adopts me (clients=${clients.size})`);
+    return;
+  }
+  const grace = _expectedRestartFresh() ? ORPHAN_GRACE_UPDATE_MS : ORPHAN_GRACE_MS;
+  if (Date.now() - orphanSince >= grace) {
+    log(`ORPHANED for ${Math.round((Date.now() - orphanSince) / 1000)}s with no owner — shutting the engine down (no unstoppable audio)`);
+    shutdown();
+  }
+}, 1000).unref?.();
 // Test seam (never set in production; mirrors the watchdog's WATCHDOG_TEST_* seams): exit
 // immediately to simulate a daemon that can't start, so the app's audio-backend fallback
 // (electron/main.js setupAudioBackend → in-process engine) can be verified deterministically.
@@ -210,7 +305,20 @@ const handlers = {
   dump:               (m) => A.audioDump(m.stationId),
   broadcastDelayState:(m) => JSON.parse(A.audioBroadcastDelayState(m.stationId)),
   watchdogSet:        (m) => A.watchdogSet(m.active, m.thresholdSec, m.stationId),
-  ping:               ()  => ({ pong: true, pid: process.pid, startedAt: DAEMON_STARTED_AT }),
+  ping:               ()  => ({ pong: true, pid: process.pid, startedAt: DAEMON_STARTED_AT, ownerPid, spawnedFor: SPAWNED_FOR }),
+  // OWNERSHIP HANDSHAKE — the app says who it is on every connect. Sending this is what makes a
+  // client an OWNER rather than a visitor; the orphan poll above watches exactly this pid. An app
+  // that restarts (crash / update / watchdog respawn) adopts a running daemon here and clears the
+  // countdown, which is what keeps a supervised station on air across an app restart.
+  hello:              (m) => {
+    const prev = ownerPid;
+    const pid = Number(m && m.ownerPid) || 0;
+    if (pid && pid !== prev) log(`owner ${prev || "(none)"} → ${pid} (adopted via hello)`);
+    if (pid) { _knownDead.delete(pid); ownerPid = pid; if (orphanSince) { log("adopted while orphaned — countdown cleared"); orphanSince = 0; } }
+    const sup = Number(m && m.supervisorPid) || 0;
+    if (sup !== supervisorPid) { _knownDead.delete(sup); supervisorPid = sup; log(`supervisor (HA watchdog) pid → ${sup || "(none)"}`); }
+    return { ok: true, pid: process.pid, startedAt: DAEMON_STARTED_AT, ownerPid, supervisorPid, spawnedFor: SPAWNED_FOR, version: process.env.ETHER_DAEMON_VERSION || "0" };
+  },
   // The app version this daemon was spawned with (passed via env). Lets the app detect a stale
   // daemon left running across an update and reload it (the dead-air-on-update gotcha).
   version:            ()  => process.env.ETHER_DAEMON_VERSION || "0",
@@ -385,7 +493,43 @@ const eventTimer = setInterval(() => {
   if (clients.size === 0 || stations.size === 0) return;
   tick++;
   for (const sid of stations) {
-    try { broadcast({ event: "levels", stationId: sid, ...JSON.parse(A.audioGetLevels(sid)) }); } catch {}
+    let lv = null;
+    try { lv = JSON.parse(A.audioGetLevels(sid)); } catch {}
+    if (lv) {
+      broadcast({ event: "levels", stationId: sid, ...lv });
+
+      // ── PROCESSING METERS — emitted HERE, from the station loop, at ~10 Hz ────────────────────
+      // Moved off DaemonEngine (2026-08-19). It used to ride an engine timer created in
+      // DaemonEngine.init(), so meters existed only for stations that had an automation engine. A
+      // station playing ONLY the jukebox never creates one — jukebox:play talks to the addon
+      // directly — so the panel sat on "waiting for audio" while the processor was demonstrably
+      // working on audible material.
+      //
+      // The gate is now the PROCESSOR'S OWN state and nothing else: the native reports proc_local /
+      // proc_stream, and the processor is the last stage on the master sum, so whatever reaches it —
+      // rotation, a hand-loaded deck, the jukebox on an aux deck — is measured. Deck, engine and
+      // automation state are deliberately not consulted; they were never the right question.
+      //
+      // SINGLE WRITER: the engine's own emit is gone, so there is exactly one source of this frame.
+      if (tick % 1 === 0 && (lv.proc_local || lv.proc_stream)) {
+        const dbfs = (pk) => (pk > 0 ? Math.max(-70, 20 * Math.log10(pk)) : -70);
+        broadcast({
+          event: "procmeters", stationId: sid,
+          local: !!lv.proc_local, stream: !!lv.proc_stream,
+          target: lv.proc_target_lufs ?? -14,
+          inLufs: lv.proc_in_lufs ?? -70, outLufs: lv.proc_out_lufs ?? -70,
+          grDb: lv.proc_gr_db ?? 0,
+          rideGainDb: lv.proc_ride_gain_db ?? 0,
+          inPeakDb: dbfs(lv.proc_in_peak ?? 0), outPeakDb: dbfs(lv.proc_out_peak ?? 0),
+          // The aux (deck) chain rides the same frame — see the Health Monitor's deck row.
+          aux: (lv.aux_peak ?? 0) > 0 || (lv.aux_proc_out_lufs ?? -70) > -69 ? {
+            inLufs: lv.aux_proc_in_lufs ?? -70, outLufs: lv.aux_proc_out_lufs ?? -70,
+            grDb: lv.aux_proc_gr_db ?? 0, rideGainDb: lv.aux_proc_ride_db ?? 0,
+            inPeakDb: dbfs(lv.aux_peak ?? 0), outPeakDb: dbfs(lv.aux_peak ?? 0),
+          } : null,
+        });
+      }
+    }
     // Engine-owned stations emit their own per-deck `deck` events from poll(); only emit the
     // generic full-state deck snapshot for stations WITHOUT an automation engine.
     if (tick % 3 === 0 && !engines.has(sid)) { // ~4 Hz
@@ -407,12 +551,11 @@ const server = net.createServer((sock) => {
   sock.on("close", () => {
     clients.delete(sock);
     log("client disconnected (" + clients.size + " left)");
-    // Dev: when the last client (the app) goes away, self-terminate so we don't zombie across a
-    // restart. Short grace so a transient pipe blip + reconnect (client.scheduleReconnect, ~1s)
-    // doesn't kill a daemon the app is about to re-attach to.
-    if (DEV_REAP && clients.size === 0) {
-      setTimeout(() => { if (clients.size === 0) { log("dev: no clients for 3s — exiting (no zombie)"); shutdown(); } }, 3000);
-    }
+    // NO event-armed reap here any more. It was the whole safety net and it never once fired
+    // (see "NO OWNER, NO ENGINE" at the top): single-shot, dev-only, and permanently disarmed by
+    // any client connected at the 3s mark. Lifetime is now decided by the OWNER POLL, which does
+    // not depend on this event firing at all — a close that never arrives, or arrives only as
+    // sock.on("error") below, no longer leaves an engine playing forever.
   });
   sock.on("error", () => { clients.delete(sock); });
 });

@@ -1103,6 +1103,12 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
               const lufs = (v?: number) => (v == null || v <= -70 ? "—" : `${v.toFixed(1)}`);
               // RIDE GAIN is what moves — bidirectional from unity. Limiter GR sits at 0 at steady
               // state by design, so a bar bound to it read as permanently broken (2026-08-01).
+              // "WAITING" KEYS OFF THE PROCESSOR'S OWN SIGNAL, not off frames arriving and not off
+              // deck/engine/automation state (2026-08-19). The processor is the LAST stage on the
+              // master sum, so anything audible reaches it — rotation, a hand-loaded deck, or the
+              // jukebox on an aux deck. Asking "is a deck playing?" was the wrong question and is why
+              // this read "waiting" while the jukebox was audibly running with automation off.
+              const hasSignal = !!m && ((m.outLufs ?? -70) > -69 || (m.inLufs ?? -70) > -69);
               const ride = m ? m.rideGainDb : 0;
               const gr = m ? Math.abs(m.grDb) : 0;
               const SPAN = 12;
@@ -1125,10 +1131,10 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                                 marginBottom: anyOn && m ? "var(--s-4, 8px)" : 0, lineHeight: 1.45 }}>
                     {!anyOn
                       ? "Off on both paths — no loudness ride or limiter on this station, so quiet tracks stay quiet."
-                      : m ? `${paths} · riding to ${m.target} LUFS · limiter holds −1 dBTP`
+                      : hasSignal ? `${paths} · riding to ${m!.target} LUFS · limiter holds −1 dBTP`
                           : `${paths} · on, waiting for audio`}
                   </div>
-                  {anyOn && m && (
+                  {anyOn && hasSignal && m && (
                     <div style={{ display: "flex", flexDirection: "column", gap: "var(--s-3, 6px)" }}>
                       {/* BEFORE and AFTER level meters — the actual signal, moving. These say the
                           chain is passing audio and what it is doing to the level; the ride meter
@@ -1167,7 +1173,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                       bus, and "the ride is working" has to be answerable about the one you are
                       listening to. Absent rather than blank when no aux deck is feeding — a row of
                       dashes is indistinguishable from a dead tap. */}
-                  {anyOn && m?.aux && (
+                  {anyOn && hasSignal && m?.aux && (
                     <div style={{ marginTop: "var(--s-5, 12px)", paddingTop: "var(--s-4, 8px)",
                                   borderTop: "1px solid var(--border-primary)" }}>
                       <div style={{ fontSize: 11, textTransform: "uppercase" as const, letterSpacing: 0.5,

@@ -53,9 +53,16 @@ settings, edit your library, or stop what is on air.
 - **Search** — type in the box at the top. Results narrow as you type; there's no button to press.
 - **Request** — tap a cover, type a name, press **PLAY NEXT**. The song joins the queue and the person
   sees their name appear on the right.
-- **The queue** — each entry shows the name, the position (#1, #2, #3…) and the song. The **#2** entry
-  is drawn larger with a flashing **UP NEXT** badge. Requests play **in the order they arrived**, and a
-  request **never cuts a song that is already playing** — it starts when the current one finishes.
+- **The right-hand panel** reads top to bottom in the order things happen:
+  1. **NOW PLAYING** — the album artwork of the song on the deck, and under it the name, song and artist.
+  2. **UP NEXT** — whatever plays next, shown in **one place only**. If someone is waiting, it is their
+     request; if nobody is, it is the song the jukebox has already chosen for itself.
+  3. **QUEUE** — everyone waiting behind that, numbered #2, #3, #4… in the order they arrived.
+- **Every entry looks the same** — three lines, always in this order: the **person's name**, the
+  **song title**, then the **artist**. When the jukebox picked the song itself rather than a person
+  requesting it, the name line reads **Unknown** — that is normal, not a fault.
+- Requests play **in the order they arrived**, and a request **never cuts a song that is already
+  playing** — it starts when the current one finishes.
 - **AUTO** (top right of the kiosk) is the **jukebox's own** AUTO and has nothing to do with the
   station's AUTO/MANUAL:
   - **AUTO ON** — between requests the jukebox keeps music going, shuffled from the categories you

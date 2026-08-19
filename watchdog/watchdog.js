@@ -144,7 +144,11 @@ function spawnDaemon(reason) {
   try {
     let exe = process.execPath, script = DAEMON_SCRIPT, tag = 'in-dir engine';
     try { const staged = stagedTarget(); if (staged) { exe = staged.exe; script = staged.script; tag = 'staged engine'; } } catch { /* fall back to in-dir */ }
-    const child2 = spawn(exe, [script], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, detached: true, stdio: 'ignore' });
+    // ETHER_OWNER_PID (2026-08-18, "no owner, no engine"): a daemon must never exist without a
+    // named, living owner. THIS supervisor is the right owner for a daemon it spawned — its whole
+    // job is to bring the app back — and when the app connects it takes ownership via `hello`.
+    // Without this the watchdog was the one spawner that produced a permanently ownerless engine.
+    const child2 = spawn(exe, [script], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ETHER_OWNER_PID: String(process.pid) }, detached: true, stdio: 'ignore' });
     child2.unref();
     log(`ether-audiod not responding (${reason}) — (re)spawned daemon pid ${child2.pid} (${tag})`);
   } catch (e) { log(`ether-audiod spawn failed: ${e.message}`); }

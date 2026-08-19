@@ -347,6 +347,29 @@ const VITE_DEV_URL = "http://127.0.0.1:1420";
 const AUDIO_DAEMON_DESIRED = process.env.ETHER_AUDIO_DAEMON !== "0";
 let AUDIO_DAEMON = false;
 let _health = null;                 // v4.4.50: Health Monitor state — module scope so BOTH the daemon and the in-process paths feed it
+
+// ── Fleet health frame: the processing meters, DECIMATED ───────────────────────────────────────────
+// procmeters arrives at ~15Hz. The web Health Monitor gets a 1-SECOND SAMPLE of it, never the stream
+// (docs/web-health-monitor-design-2026-08-18.md §3.3) — 15Hz to the cloud would be ~1.3M frames per
+// station per day. We keep the latest frame plus the loudest output peak seen inside the current
+// second, so a brief transient between samples is still represented instead of being invisible.
+// This is retention of a frame the app already emits — no new measurement, no new channel.
+const _procLast = new Map();        // stationId → { ...frame, sampledAt, windowPeakDb }
+function _noteProcSample(m) {
+  if (!m || m.stationId == null) return;
+  const t = Date.now();
+  const prev = _procLast.get(m.stationId);
+  const within = prev && (t - prev._windowStart) < 1000;
+  const peak = Number.isFinite(m.outPeakDb) ? m.outPeakDb : null;
+  _procLast.set(m.stationId, {
+    ...m,
+    sampledAt: new Date(t).toISOString(),
+    _windowStart: within ? prev._windowStart : t,
+    windowPeakDb: within && prev.windowPeakDb != null && peak != null
+      ? Math.max(prev.windowPeakDb, peak)
+      : (peak != null ? peak : (within ? prev.windowPeakDb : null)),
+  });
+}
 // Log-Reader Flip Phase 3 — §2.7 boundary-shadow rolling summary, per station id. Fed by the daemon's
 // `logreader-shadow` event (what the flipped reader WOULD air vs what legacy aired, at each go-live).
 // A live "sense" the Health Monitor reads (logreader-shadow:get); the full history is the JSONL ledger.
@@ -686,6 +709,36 @@ if (AUDIO_DAEMON_DESIRED) {
   });
   _health.start();
   try { ipcMain.handle("health:snapshot", () => { try { return _health.getSnapshot(); } catch { return null; } }); } catch {}
+
+  // ── health:frames — the fleet frame, assembled HERE ────────────────────────────────────────────
+  // Assembled in main rather than the renderer because every source already lives here: the health
+  // snapshot, the designation tick, the runway reader, the decimated processing sample and the stable
+  // machine id. The renderer's only job is to push the result up the existing CC channel, so the frame
+  // has ONE builder and cannot drift between callers.
+  // Returns [{ stationUuid, row }] — see electron/health-frame.js and the design doc §2.
+  try {
+    ipcMain.handle("health:frames", (_evt, cadenceSec) => {
+      try {
+        const { buildHealthFrames } = require("./health-frame");
+        let snapshot = null;
+        try { snapshot = _health.getSnapshot(); } catch {}
+        if (!snapshot) return [];
+        let designations = [];
+        try { designations = [..._desigStatus.values()]; } catch {}
+        return buildHealthFrames({
+          snapshot,
+          designations,
+          machineId: getStableMachineId(),
+          cadenceSec: Number(cadenceSec) > 0 ? Number(cadenceSec) : 60,
+          runwayFor: (sid) => {
+            if (!db || sid == null) return null;
+            try { return require("./runway").computeRunway(db, sid) || null; } catch { return null; }
+          },
+          procFor: (sid) => _procLast.get(sid) || null,
+        });
+      } catch (e) { console.error("[health:frames]", e.message); return []; }
+    });
+  } catch {}
   // (designation IPC is registered at top level — see _designationTick.)
 
   // Renderer → the honest health ledger. The daemon has had this since the log-reader work; the
@@ -766,6 +819,7 @@ if (AUDIO_DAEMON_DESIRED) {
         // forwarded untagged, so a panel showed whichever station's frame arrived last: exactly the
         // crosstalk the levels channel was fixed for. The integer id is kept for existing consumers.
         sendToAllWindows("audio:proc-meters", { ...m, stationUuid: _stationUuidById(m.stationId) });
+        try { _noteProcSample(m); } catch {}   // 1s decimated retention for the fleet health frame
       } else if (m.event === "deck") {
         // Per-deck state change from the daemon's poll → renderer proxy (Step 2).
         // Stage 0: forward deckReady (cued) so the renderer mirrors it instead of guessing.
@@ -2512,21 +2566,32 @@ function createWindow() {
     if (app.isQuitting) return;   // a real quit is already in progress → let it close
     e.preventDefault();
     const onAir = _isOnAir();
+    // NO INVISIBLE ENGINE. Hiding to the tray is only an option if there IS a tray to hide to.
+    // Otherwise the window vanishes, audio keeps playing, and there is no icon, no window and no
+    // control anywhere that can stop it -- not hypothetical; it happened on 2026-08-18.
+    const canTray = trayExists();
+    const buttons = canTray
+      ? ["Keep Playing in Tray", "Stop & Quit Ether", "Cancel"]
+      : ["Stop & Quit Ether", "Cancel"];
     const choice = dialog.showMessageBoxSync(mainWindow, {
       type: "question",
-      buttons: ["Keep Playing in Tray", "Stop & Quit Ether", "Cancel"],
+      buttons,
       defaultId: 0,
-      cancelId: 2,
+      cancelId: buttons.length - 1,
       noLink: true,
       title: "Close Ether",
       message: onAir ? "Ether is on air." : "Close Ether?",
-      detail:
+      detail: !canTray
+        ? "The system-tray icon could not be created on this machine, so closing this window would leave Ether playing with nothing to click. Closing therefore stops everything.\n\n" +
+          "Stop & Quit Ether: stop automation and the stream, shut the audio engine down, and exit completely."
+        :
         "Keep Playing in Tray — close this window; audio keeps streaming in the background (find Ether in the system tray).\n\n" +
         "Stop & Quit Ether — stop automation and the stream, shut the audio engine down, and exit completely. It won't auto-restart.",
     });
-    if (choice === 0) mainWindow.hide();
-    else if (choice === 1) fullStopAndQuit();
-    // choice === 2 (Cancel) → stay open, do nothing
+    const picked = canTray ? choice : choice + 1;   // the no-tray dialog omits index 0
+    if (picked === 0) mainWindow.hide();
+    else if (picked === 1) fullStopAndQuit();
+    // picked === 2 (Cancel) → stay open, do nothing
   });
 
   // Grant mic/camera permissions — both layers required for packaged (file://) builds.
@@ -2549,6 +2614,11 @@ function createWindow() {
     }
   });
 }
+
+// Returns true only if a tray icon is actually PRESENT. "Keep Playing in Tray" is offered only when
+// this is true. An engine that keeps playing with no window AND no tray is an engine the operator
+// cannot see or stop -- exactly what happened on 2026-08-18. See docs/orphan-engine-fix-2026-08-18.md.
+function trayExists() { try { return !!tray && !tray.isDestroyed(); } catch { return false; } }
 
 function createTray() {
   const icon = nativeImage.createFromPath(TRAY_PNG).resize({ width: 32, height: 32 });
@@ -3229,7 +3299,9 @@ app.whenReady().then(() => {
     }
   } catch (e) { console.warn('[BOOT] report send failed:', e.message); }
   logStartup('createWindow() done — mainWindow hidden, waiting for ready-to-show');
-  createTray();
+  // A failed tray must not take the app down -- but it MUST be recorded, because it removes the only
+  // way to bring a hidden window back, and the close dialog below now depends on knowing.
+  try { createTray(); } catch (e) { tray = null; console.error("[TRAY] createTray failed:", e.message); try { logStartup("[TRAY] createTray FAILED: " + e.message + " -- close-to-tray will be withheld"); } catch {} }
   buildMenu();
 
   // ── Startup sequence ─────────────────────────────────────────

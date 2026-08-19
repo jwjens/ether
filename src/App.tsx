@@ -9,7 +9,7 @@ import { startLicenseGuard } from "./lib/licenseGuard";
 import CloudInstallPrompt from "./components/CloudInstallPrompt";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import { pushInstallUsers } from "./lib/syncUsers";
-import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong, pushPlayHistory, reconcileAccountStations, importStagedProgramming } from "./lib/ccData";
+import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong, pushPlayHistory, reconcileAccountStations, importStagedProgramming, pushHealthFrames } from "./lib/ccData";
 import etherMarkSvg from "./assets/ether-logo.svg";
 import VideoStudio from "./components/ShowPlus";
 import { UserContext, AppUser, useRole } from "./UserContext";
@@ -623,6 +623,10 @@ export default function App() {
   const [panel, setPanel] = useState<Panel>("live");
   const [schedulerTab, setSchedulerTab] = useState<"shows" | "categories" | "clocks">("shows");
   const apiKeyRef = useRef<string>("");
+  // Fleet health WATCH window: the epoch-ms at which the fast (5s) push cadence lapses back to the
+  // 60s heartbeat. A stamp, not a boolean, so a viewer that vanishes without saying goodbye still
+  // stops costing bandwidth. Set by the health:watch command (see execCmd).
+  const healthWatchUntilRef = useRef<number>(0);
   // Slice 4: the CURRENT active station id (the SSE command handler reads this, not its captured stationId).
   // D1 (docs/cold-start-contract-design-2026-08-03.md §D1.2): NO STATION IS ADOPTED BEFORE AUTH.
   // This used to call getActiveStationIdSync() inside the useRef initialiser — i.e. at FIRST RENDER,
@@ -957,6 +961,39 @@ export default function App() {
     return () => clearInterval(id);
   }, [stationId, stationUuid, firstRunChecked, currentUser]);
 
+  // ── FLEET HEALTH FRAMES — the web Health Monitor's feed ──────────────────────────────────────────
+  // docs/web-health-monitor-design-2026-08-18.md §3. Two rates, one channel:
+  //   • HEARTBEAT 60s by default — the same interval the CC mirror above already keeps.
+  //   • WATCH 5s while somebody actually has the page open.
+  //
+  // The install cannot know a viewer is watching, so it is TOLD over the command bus that already
+  // exists (health:watch → execCmd). The window EXPIRES on its own after 5 minutes: a closed tab, a
+  // dead browser or a dropped SSE must fall back to heartbeat without needing a "stop" that might
+  // never arrive. That is why this is an expiry stamp and not a boolean.
+  //
+  // NOT gated on the active station — the frame covers every station this machine is metering, which
+  // is the whole point of a FLEET view. Gated only on having a license key to push under.
+  useEffect(() => {
+    if (!(firstRunChecked && apiKeyRef.current && currentUser)) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const tick = async () => {
+      if (stopped) return;
+      const watching = Date.now() < healthWatchUntilRef.current;
+      const cadenceSec = watching ? 5 : 60;
+      try { await pushHealthFrames(apiKeyRef.current, cadenceSec); }
+      catch (e) { console.log("[HEALTH] push failed:", (e as any)?.message ?? e); }
+      if (stopped) return;
+      // Re-read the watch state AFTER the push so a window that opened mid-push takes effect now
+      // rather than one heartbeat later.
+      const nextMs = (Date.now() < healthWatchUntilRef.current ? 5 : 60) * 1000;
+      timer = setTimeout(tick, nextMs);
+    };
+    void tick();
+    return () => { stopped = true; if (timer) clearTimeout(timer); };
+  }, [firstRunChecked, currentUser]);
+
   // Push play history for analytics (Phase 3a): catch up on boot, then every 3 min so
   // the dashboard's Analytics view stays current. Incremental + deduped server-side.
   useEffect(() => {
@@ -1168,6 +1205,17 @@ export default function App() {
           (window as any).ether?.audio?.daemon?.(c, { stationId: targetId, ...args });
 
         switch (cmd) {
+          // ── Fleet health WATCH — somebody opened the web Health Monitor ──
+          // License-scoped, NOT station-scoped: the page shows the whole fleet, so every machine on
+          // the license raises its cadence. Arms an EXPIRY rather than a flag, so the fast rate lapses
+          // by itself if the viewer never comes back (design doc §3.1). A refresh from the page simply
+          // re-arms it. Costs nothing but a timestamp — no push happens here.
+          case "health:watch": {
+            const secs = Number(data?.seconds) > 0 ? Math.min(Number(data.seconds), 900) : 300;
+            healthWatchUntilRef.current = Date.now() + secs * 1000;
+            console.log(`[HEALTH] watch window armed for ${secs}s`);
+            break;
+          }
           // ── Control set (Slice 4) — routed daemon-direct to the target station ──
           case "stop_all":
             if (useDaemon) await dcmd("stopAll");

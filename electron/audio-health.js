@@ -97,6 +97,54 @@ function createHealthMonitor(opts) {
       if (typeof lv.mon_vol === "number") r.monVol = lv.mon_vol;
       // next-deck-ready: a non-active deck that already has a source loaded = a preloaded standby.
       if (Array.isArray(lv.decks)) r.nextDeckReady = lv.decks.some(d => d && d.source_present && !d.active);
+
+      // ── PROCESSING RECORD — one ledger line per minute, per station that is processing audio ────
+      //
+      // So "what was our loudness at 3pm Tuesday" is answerable without anyone having been watching.
+      // Written into the EXISTING health-events.jsonl, from data this function already receives —
+      // no second store, no new IPC, no new timer.
+      //
+      // ACCUMULATED, not sampled: an instantaneous reading once a minute can land in a quiet bar and
+      // misreport the hour. Each line carries the mean IN/OUT LUFS over the window plus the WORST
+      // ride and limiter figures seen in it, which is what a loudness question is actually asking.
+      //
+      // Silence is not recorded. A line is written only if the processor saw programme in the window
+      // (out > -69 LUFS), so the file does not fill with "off air" and its absence is itself the
+      // answer for a period nothing aired.
+      if (lv.proc_local || lv.proc_stream) {
+        const a = r._procAcc || (r._procAcc = { since: t, n: 0, inSum: 0, outSum: 0, maxRide: 0, maxGr: 0, maxPeak: 0, auxN: 0, auxOutSum: 0, auxMaxRide: 0, auxMaxGr: 0 });
+        const inL  = typeof lv.proc_in_lufs  === "number" ? lv.proc_in_lufs  : -70;
+        const outL = typeof lv.proc_out_lufs === "number" ? lv.proc_out_lufs : -70;
+        if (outL > -69) { a.n++; a.inSum += inL; a.outSum += outL; }
+        const ride = Math.abs(lv.proc_ride_gain_db ?? 0); if (ride > a.maxRide) a.maxRide = ride;
+        const gr   = Math.abs(lv.proc_gr_db ?? 0);        if (gr   > a.maxGr)   a.maxGr   = gr;
+        const opk  = lv.proc_out_peak ?? 0;               if (opk  > a.maxPeak) a.maxPeak = opk;
+        // The aux (deck) chain is recorded alongside, because the park hears that bus, not the
+        // programme bus — a loudness history that omitted it would answer the wrong question.
+        const auxOut = typeof lv.aux_proc_out_lufs === "number" ? lv.aux_proc_out_lufs : -70;
+        if (auxOut > -69) { a.auxN++; a.auxOutSum += auxOut; }
+        const aRide = Math.abs(lv.aux_proc_ride_db ?? 0); if (aRide > a.auxMaxRide) a.auxMaxRide = aRide;
+        const aGr   = Math.abs(lv.aux_proc_gr_db ?? 0);   if (aGr   > a.auxMaxGr)   a.auxMaxGr   = aGr;
+
+        if (t - a.since >= 60000) {
+          if (a.n > 0) {
+            const d1 = (v) => Math.round(v * 10) / 10;
+            const dbfs = (pk) => (pk > 0 ? Math.max(-70, 20 * Math.log10(pk)) : -70);
+            const ev = {
+              ts: iso(t), type: "processing", stationUuid: r.uuid, stationName: r.name,
+              windowSec: Math.round((t - a.since) / 1000), samples: a.n,
+              target: lv.proc_target_lufs ?? -14,
+              inLufs: d1(a.inSum / a.n), outLufs: d1(a.outSum / a.n),
+              rideMaxDb: d1(a.maxRide), limiterMaxGrDb: d1(a.maxGr),
+              outPeakMaxDbfs: d1(dbfs(a.maxPeak)),
+              paths: [lv.proc_local ? "local" : null, lv.proc_stream ? "stream" : null].filter(Boolean).join("+"),
+              aux: a.auxN > 0 ? { outLufs: d1(a.auxOutSum / a.auxN), rideMaxDb: d1(a.auxMaxRide), limiterMaxGrDb: d1(a.auxMaxGr), samples: a.auxN } : null,
+            };
+            try { if (jsonlPath) fs.appendFileSync(jsonlPath, JSON.stringify(ev) + "\n"); } catch {}
+          }
+          r._procAcc = null;
+        }
+      }
     } catch {}
   }
   function noteEngineState(stationId, state) { try { const r = rec(uuidOf(stationId)); r.stationId = stationId; r.enginestate = state || "off"; } catch {} }

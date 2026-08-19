@@ -12,7 +12,7 @@
     "electron:start": "electron electron/main.js",
     "watchdog:dev": "cross-env ELECTRON_RUN_AS_NODE=1 electron watchdog/watchdog.js",
     "watchdog:test": "node watchdog/test/run-tests.js",
-    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:1420 && cross-env NODE_ENV=development electron electron/main.js\"",
+    "electron:dev": "concurrently -k --kill-signal SIGTERM \"npm run dev\" \"wait-on http://localhost:1420 && cross-env NODE_ENV=development electron electron/main.js\"",
     "build": "vite build",
     "electron:build:win": "electron-builder --win",
     "electron:build:mac": "electron-builder --mac",
