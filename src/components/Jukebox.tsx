@@ -59,6 +59,12 @@ const FreeProvider: JukeboxPaymentProvider = {
   async authorize() { return { ok: true }; },
 };
 
+// Catalogue art wins over the embedded tag (Jeff's ruling, 2026-08-19). The exception is a track with
+// NO artist recorded, where the search is title-only and therefore a guess: there, the catalogue only
+// fills a gap rather than replacing a cover that is already correct. Set true to drop that exception
+// and let the catalogue win unconditionally.
+const CATALOGUE_OVERRIDES_WITHOUT_ARTIST = false;
+
 const DEFAULT_REPEAT_MINUTES = 60;
 const DEFAULT_MAX_PENDING = 12;
 const PAGE_SIZE = 60;
@@ -96,37 +102,67 @@ function tintFor(seed: string): string {
 function Tile({ song, onPick }: { song: JukeSong; onPick: (s: JukeSong) => void }) {
   const [art, setArt] = useState<string | null>(null);
   const ref = useRef<HTMLButtonElement | null>(null);
-  const asked = useRef(false);
+  const started = useRef(false);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    // Only resolve art for tiles that actually come into view, and only ONCE per tile.
+    let cancelled = false;
+
+    // TWO PHASES, in this order (Jeff's ruling, 2026-08-19). CATALOGUE ART WINS over the embedded
+    // tag — but embedded paints FIRST so no tile is ever blank while the network is thinking. The
+    // tile upgrades in place: the local cover appears immediately and is replaced the moment iTunes
+    // returns one. A track with no iTunes match keeps its embedded cover; one with neither keeps
+    // the tint.
     //
-    // getLocalArt, NOT resolveArtwork: resolveArtwork falls back to fetchMusicStoreArt, which is an
-    // iTunes lookup per (title, artist). Across a wall of thousands of songs that is a network
-    // request storm, and 08-04 §3 ruled it out explicitly ("firing a music-store lookup per tile
-    // across hundreds of songs would be both slow and exactly the guessing the spot fix removed").
-    // getLocalArt reads the embedded cover out of the file itself, is per-file cached, and never
-    // touches the network — so scrolling back is free.
+    // COST, stated because it changed: every tile now makes an iTunes call on FIRST view, where
+    // before only art-less tracks did. At 18 calls/min that is ~9 minutes to fill a 160-song wall —
+    // once ever, because results (including misses) are cached to disk with their provenance.
+    //
+    // Only tiles that actually scroll into view resolve, and only once each.
     const io = new IntersectionObserver(entries => {
-      if (!entries.some(e => e.isIntersecting) || asked.current) return;
-      asked.current = true;
-      // Embedded cover first — free, local, per-file cached. Only when a file carries no art at all
-      // does this reach for the music store, and that call is cached to disk in MAIN with a
-      // ~20-calls/minute limiter (electron/artwork-cache.js), so a big wall fills in gradually
-      // rather than storming Apple. Still ONE resolve per tile, ever, and only for tiles that
-      // actually scroll into view.
-      (async () => {
-        const local = await getLocalArt(song.file_path);
-        if (local) return local;
-        return await fetchMusicStoreArt(song.title, song.artist || "");
-      })()
-        .then(src => { if (src) setArt(src); })
-        .catch(() => { /* neutral tile stands */ });
+      if (!entries.some(e => e.isIntersecting) || started.current) return;
+      started.current = true;
+
+      void (async () => {
+        let got = false;
+
+        // PHASE 1 — embedded. Free, local, instant, concurrency-gated in albumArt.ts.
+        try {
+          const local = await getLocalArt(song.file_path);
+          if (cancelled) return;
+          if (local) { setArt(local); got = true; }
+        } catch { /* fall through to the catalogue */ }
+
+        // PHASE 2 — the catalogue cover. Ruled to WIN over the embedded tag.
+        //
+        // ONE GUARD, and the reason is measured rather than theoretical: 100% of the songs in BOTH
+        // jukebox pools have NO artist recorded (160/160 and 37/37). A title-only search is a guess —
+        // "All I Wanna Do" is Sheryl Crow, Jewel, Bebe Rexha and a dozen others — so with no artist to
+        // disambiguate, letting the catalogue OVERWRITE a correct embedded cover would trade art that
+        // is right for art that merely exists. So: with an artist, the catalogue wins as ruled; with
+        // no artist, it only FILLS IN where there is no embedded cover.
+        //
+        // Flip CATALOGUE_OVERRIDES_WITHOUT_ARTIST to true for a strict always-catalogue wall.
+        try {
+          const haveArtist = !!(song.artist && song.artist.trim());
+          const mayOverride = haveArtist || CATALOGUE_OVERRIDES_WITHOUT_ARTIST || !got;
+          if (mayOverride) {
+            const remote = await fetchMusicStoreArt(song.title, song.artist || "");
+            if (cancelled) return;
+            if (remote) { setArt(remote); got = true; }
+          }
+        } catch { /* keep whatever phase 1 gave us */ }
+
+        // Nothing at all? Release the latch so a later pass can try again. Marking a tile done
+        // BEFORE knowing the outcome is what turns one transient failure into a permanently tinted
+        // tile — the shape of the "60 tiles, 15 with art" report.
+        if (!cancelled && !got) started.current = false;
+      })();
     }, { rootMargin: "300px" });
+
     io.observe(el);
-    return () => io.disconnect();
+    return () => { cancelled = true; io.disconnect(); };
   }, [song.file_path, song.title, song.artist]);
 
   return (
@@ -220,15 +256,19 @@ function NowArt({ filePath, title, artist, square }: {
     let stop = false;
     setArt(null);
     if (!filePath && !title) return;
-    // Same chain as the wall tiles: embedded cover, then the music store. The now-playing strip is
-    // the one piece of art people actually look at, so it is worth the fallback.
-    (async () => {
-      const local = filePath ? await getLocalArt(filePath) : null;
-      if (local) return local;
-      return await fetchMusicStoreArt(title, artist || "");
-    })()
-      .then(src => { if (!stop && src) setArt(src); })
-      .catch(() => { /* tint stands */ });
+    // Same two phases as the wall, same order: embedded paints immediately so the strip is never
+    // blank, then the catalogue cover overwrites it when it resolves. This is the piece of art
+    // people actually look at, so it should never be the one still thinking.
+    void (async () => {
+      try {
+        const local = filePath ? await getLocalArt(filePath) : null;
+        if (!stop && local) setArt(local);
+      } catch { /* fall through */ }
+      try {
+        const remote = await fetchMusicStoreArt(title, artist || "");
+        if (!stop && remote) setArt(remote);
+      } catch { /* keep the embedded cover */ }
+    })();
     return () => { stop = true; };
   }, [filePath, title, artist]);
   return (

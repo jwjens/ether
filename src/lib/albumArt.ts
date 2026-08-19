@@ -23,12 +23,36 @@ export function isImagingClass(cc: string | null | undefined): boolean {
 
 /** Embedded cover art for a local file as a data: URL, or null if the file has none
  *  (or isn't a local path). Reads the audio file itself — no network. */
+// ── Embedded-art concurrency gate ─────────────────────────────────────────────────────────────────
+// A wall mounts every visible tile at once and each one asks main for its cover. Main is SINGLE
+// THREADED and each request parses a whole audio file (music-metadata) and re-encodes the image, so
+// 60 simultaneous asks put 60 file parses on the same event loop that also runs the audio IPC, the
+// deck polls and the window itself. Tiles then paint in an unpredictable dribble — which is what
+// "60 tiles, 15 with art" looked like.
+//
+// Six at a time keeps main responsive and still fills a screenful quickly. The queue is FIFO, so
+// tiles resolve roughly in the order they came into view rather than at random.
+const EMBEDDED_CONCURRENCY = 6;
+let _inFlight = 0;
+const _waiting: (() => void)[] = [];
+async function _slot<T>(fn: () => Promise<T>): Promise<T> {
+  if (_inFlight >= EMBEDDED_CONCURRENCY) await new Promise<void>(r => _waiting.push(r));
+  _inFlight++;
+  try { return await fn(); }
+  finally {
+    _inFlight--;
+    const next = _waiting.shift();
+    if (next) next();
+  }
+}
+
 export async function getLocalArt(filePath: string | null | undefined): Promise<string | null> {
   if (!filePath) return null;
   if (filePath in _localArtCache) return _localArtCache[filePath];
   let url: string | null = null;
   try {
-    url = (await (window as any).ether?.audio?.embeddedArt?.(filePath)) ?? null;
+    url = await _slot(async () =>
+      (await (window as any).ether?.audio?.embeddedArt?.(filePath)) ?? null);
   } catch { url = null; }
   _localArtCache[filePath] = url;
   return url;
