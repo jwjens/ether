@@ -4269,6 +4269,31 @@ ipcMain.handle("audio:getLevels", (_, stationId) => AUDIO_DAEMON ? audiodClient.
 // daemon when it owns playout (it has the live audio), else the in-process addon.
 ipcMain.handle("audio:getSpectrum", (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("getSpectrum", { stationId }) : JSON.parse(audio.audioGetSpectrum(stationId)));
 ipcMain.handle("audio:getFileDuration", (_, filePath) => audio.getFileDuration(filePath));
+// Cover art is DOWNSCALED before it crosses to the renderer. Full-size embedded art on this library
+// runs 150-230KB per image, which as a base64 data URL is ~200-310K CHARACTERS. The Jukebox wall puts
+// that string in an INLINE STYLE on every tile: 160 tiles measured at 30.8 MB of markup, rebuilt by
+// the template literal on every render — and the wall re-renders on a 1s deck poll. A page with just
+// TWO such tiles was already enough to time out a screenshot at 30s.
+//
+// A tile is 230px. Anything past ~2x that is invisible detail bought at a hundredfold cost, so this
+// resizes to 320px and re-encodes at JPEG 82: ~20KB per image, ~4MB for the same wall.
+// nativeImage is built into Electron — no new dependency, no image library.
+//
+// Falls back to the ORIGINAL bytes if resizing fails for any reason: a slightly heavy cover is a
+// performance problem, but no cover at all is a blank wall.
+function _artDataUrl(buf, format) {
+  try {
+    const img = nativeImage.createFromBuffer(buf);
+    if (!img.isEmpty()) {
+      const { width } = img.getSize();
+      const out = width > 320 ? img.resize({ width: 320, quality: "good" }) : img;
+      const jpeg = out.toJPEG(82);
+      if (jpeg && jpeg.length) return `data:image/jpeg;base64,${jpeg.toString("base64")}`;
+    }
+  } catch { /* fall through to the original */ }
+  return `data:${format || "image/jpeg"};base64,${buf.toString("base64")}`;
+}
+
 // Embedded cover art straight from the audio file (local-first artwork — primary source;
 // iTunes is the caller's fallback). music-metadata is ESM-only (v11), so it's loaded via
 // dynamic import. Returns a data: URL of the first embedded picture, or null. Cached by
@@ -4284,7 +4309,7 @@ ipcMain.handle("audio:embeddedArt", async (_, filePath) => {
     const meta = await mm.parseFile(filePath, { duration: false });
     const pic = meta.common && meta.common.picture && meta.common.picture[0];
     if (pic && pic.data && pic.data.length) {
-      result = `data:${pic.format || "image/jpeg"};base64,${Buffer.from(pic.data).toString("base64")}`;
+      result = _artDataUrl(Buffer.from(pic.data), pic.format);
     }
   } catch (e) { /* unreadable/missing/no-tags → null, caller falls back to iTunes */ }
   if (_embeddedArtCache.size >= _EMBEDDED_ART_CACHE_MAX) {
@@ -4316,8 +4341,9 @@ try {
     try {
       const p = await _artwork.getMusicStoreArt(title, artist);
       if (!p) return null;
-      const buf = require("fs").readFileSync(p);
-      return `data:image/jpeg;base64,${buf.toString("base64")}`;
+      // Same downscale as embedded art. The 600px file stays on disk as the cache and the
+      // provenance; only what crosses to the renderer is reduced.
+      return _artDataUrl(require("fs").readFileSync(p), "image/jpeg");
     } catch { return null; }
   });
   // Provenance roll-up — what came from iTunes, how many files, how many bytes.
