@@ -99,12 +99,24 @@ function defaultDbPath() {
     artistCache.set(artistKey(a.station_id ?? 1, a.name), a.id);
   }
 
+  // Albums: title is NOT NULL, station_id is NOT NULL, and the row carries artist_id + uuid.
+  // Keyed by (station, title, artist) — the same album title by two artists is two albums.
+  const albumKey = (sid, title, aid) => `${sid}::${String(title).trim().toLowerCase()}::${aid ?? ''}`;
+  const albumCache = new Map();
+  for (const al of db.prepare('SELECT id, title, artist_id, station_id FROM albums').all()) {
+    albumCache.set(albumKey(al.station_id ?? 1, al.title, al.artist_id), al.id);
+  }
+
   const insArtist = APPLY ? db.prepare(
     `INSERT INTO artists (name, station_id, uuid, created_at) VALUES (?, ?, ?, unixepoch())`) : null;
+  const insAlbum = APPLY ? db.prepare(
+    `INSERT INTO albums (title, artist_id, year, station_id, uuid, created_at) VALUES (?, ?, ?, ?, ?, unixepoch())`) : null;
+  const updAlbum = APPLY ? db.prepare('UPDATE songs SET album_id = ? WHERE id = ?') : null;
   const updSong = APPLY ? db.prepare('UPDATE songs SET artist_id = ? WHERE id = ?') : null;
   const updGenre = APPLY ? db.prepare('UPDATE songs SET genre = ? WHERE id = ?') : null;
 
-  const stats = { relinked: 0, created: 0, alreadyOk: 0, noTag: 0, unreadable: 0, missing: 0, genre: 0 };
+  const stats = { relinked: 0, created: 0, alreadyOk: 0, noTag: 0, unreadable: 0, missing: 0,
+                  genre: 0, albumLinked: 0, albumCreated: 0, noAlbumTag: 0 };
   const samples = [];
 
   const work = () => {
@@ -138,6 +150,29 @@ function defaultDbPath() {
         if (APPLY) updSong.run(aid, s.id);
       }
 
+      // ── ALBUM ────────────────────────────────────────────────────────────────────────────────
+      // albums had ONE row and ZERO songs linked to it — the same breakage as artists, one table over.
+      const albumTitle = (tag.album || '').trim();
+      if (!albumTitle) { stats.noAlbumTag++; }
+      else {
+        const realAid = aid === -1 ? null : aid;
+        const akey = albumKey(sid, albumTitle, realAid);
+        let alid = albumCache.get(akey);
+        if (alid == null) {
+          stats.albumCreated++;
+          if (APPLY) {
+            const yr = Number(tag.year) || null;
+            const info = insAlbum.run(albumTitle, realAid, yr, sid, require('crypto').randomUUID());
+            alid = Number(info.lastInsertRowid);
+            albumCache.set(akey, alid);
+          } else { alid = -1; }
+        }
+        if (s.album_id !== alid) {
+          stats.albumLinked++;
+          if (APPLY) updAlbum.run(alid, s.id);
+        }
+      }
+
       const g = (tag.genre && tag.genre[0] || '').trim();
       if (g && !(s.genre && String(s.genre).trim())) {
         stats.genre++;
@@ -169,6 +204,9 @@ function defaultDbPath() {
   console.log(`  file has no artist tag: ${stats.noTag}`);
   console.log(`  unreadable tags       : ${stats.unreadable}`);
   console.log(`  file missing on disk  : ${stats.missing}`);
+  console.log(`  album linked          : ${stats.albumLinked}`);
+  console.log(`  albums created        : ${stats.albumCreated}`);
+  console.log(`  file has no album tag : ${stats.noAlbumTag}`);
   console.log(`  genre filled in       : ${stats.genre}`);
   if (samples.length) { console.log('\n  examples:'); samples.forEach(x => console.log('   ', x)); }
 
