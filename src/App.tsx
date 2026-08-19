@@ -9,7 +9,7 @@ import { startLicenseGuard } from "./lib/licenseGuard";
 import CloudInstallPrompt from "./components/CloudInstallPrompt";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import { pushInstallUsers } from "./lib/syncUsers";
-import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong, pushPlayHistory, reconcileAccountStations, importStagedProgramming, pushHealthFrames } from "./lib/ccData";
+import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong, pushPlayHistory, reconcileAccountStations, importStagedProgramming, pushHealthFrames, pushJukeboxPool } from "./lib/ccData";
 import etherMarkSvg from "./assets/ether-logo.svg";
 import VideoStudio from "./components/ShowPlus";
 import { UserContext, AppUser, useRole } from "./UserContext";
@@ -952,6 +952,10 @@ export default function App() {
         pushCcTable(apiKeyRef.current, stationUuid, stationId, t);
       }
       pushLibrary(apiKeyRef.current, stationUuid, stationId);
+      // The jukebox pool a phone may search. Rides the SAME refresh as the CC mirror rather than
+      // adding a timer: the pool only changes when an operator re-ticks categories or the library
+      // moves, and 60s is well inside "before the next guest scans the QR".
+      pushJukeboxPool(apiKeyRef.current, stationUuid, stationId, null);
     };
     push();
     // Light periodic refresh: keep the dashboard's license-keyed store (station_cc_data) current
@@ -1205,6 +1209,53 @@ export default function App() {
           (window as any).ether?.audio?.daemon?.(c, { stationId: targetId, ...args });
 
         switch (cmd) {
+          // ── JUKEBOX REQUEST from a guest's phone (Phase 2) ──
+          // Arrives over the SAME command bus the dashboard's db:apply already rides — the backend's
+          // /public/jukebox/:slug/request resolves the slug to this license and emits it here. The
+          // phone never holds a license key and never talks to this machine directly.
+          //
+          // The request is written to the LOCAL jukebox_requests table and goes no further: a request
+          // is a live event at one venue on one night, not shared state, so it is deliberately not
+          // CRDT-synced (design §0.4).
+          case "jukebox:request": {
+            const rawName = String(data?.name ?? "").replace(/[<>]/g, "").trim().slice(0, 40);
+            const songUuid = String(data?.song_uuid ?? "").trim();
+            if (!rawName || !songUuid) { console.log("[Jukebox] web request ignored — missing name or song"); break; }
+
+            // Resolve the song HERE, by uuid. The phone's pick has to land on this machine's own row:
+            // integer ids mean different things on different installs, which is the whole reason the
+            // pool is published by uuid.
+            const rows = await query<any>(
+              `SELECT s.id, s.title, s.file_path, a.name AS artist
+                 FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
+                WHERE s.uuid = ? AND s.deleted_at IS NULL LIMIT 1`, [songUuid]);
+            const song = rows[0];
+            if (!song || !song.file_path) {
+              console.log(`[Jukebox] web request "${rawName}" — song ${songUuid} not playable here`);
+              break;
+            }
+
+            // Route to the station that owns the request, not merely the active one: the operator may
+            // be looking at a different station than the one whose QR the guest scanned.
+            let targetStation = activeStationIdRef.current;
+            if (data?.station_uuid) {
+              try {
+                const st = await queryOne<any>("SELECT id FROM stations WHERE uuid = ?", [String(data.station_uuid)]);
+                if (st?.id != null) targetStation = st.id;
+              } catch { /* fall back to the active station */ }
+            }
+
+            const created: any = await (window as any).ether?.jukebox?.createRequest?.({
+              stationId: targetStation, requesterName: rawName, songId: song.id,
+              filePath: song.file_path, title: song.title, artist: song.artist,
+              source: "web",
+            });
+            console.log(`[Jukebox] web request from "${rawName}": ${song.title} -> station ${targetStation}`,
+                        created?.ok ? "queued" : created?.error || "failed");
+            // The wall polls jukebox_requests, so it appears there on its next tick without a nudge.
+            break;
+          }
+
           // ── Fleet health WATCH — somebody opened the web Health Monitor ──
           // License-scoped, NOT station-scoped: the page shows the whole fleet, so every machine on
           // the license raises its cadence. Arms an EXPIRY rather than a flag, so the fast rate lapses

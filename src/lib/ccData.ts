@@ -1,5 +1,6 @@
 import { ETHER_BACKEND_URL } from "./etherBackend";
 import { query } from "../db/client";
+import { queryScoped } from "../db/stationScoped";
 import { selectAttachedStationsToMaterialize, chooseActiveStation } from "./provisioning";
 
 // Control Center data mirror (Phase 2). Pushes install-owned table rows up so the
@@ -49,6 +50,71 @@ export async function pushHealthFrames(
     await pushCcData(licenseKey, f.stationUuid, "health", [f.row]);
   }
   return frames.length;
+}
+
+// ── JUKEBOX PUBLIC POOL (Phase 2) ────────────────────────────────────────────────────────────────
+// Publish the songs a phone may search, keyed by this station's PUBLIC SLUG.
+//
+// THE INSTALL OWNS THE POOL. The backend never derives it, because the two facts that define it live
+// only here: which categories the operator ticked, and whether the file is actually playable on THIS
+// machine. A guest must never be offered a song that would be dead air in front of the room.
+//
+// The predicate below is the wall's own (Jukebox.tsx runQuery) — deliberately copied rather than
+// approximated, so the phone and the wall can never disagree about what is in the pool. Including
+// skipScoping: `songs` has no station_id, and the injected predicate silently binds to
+// artists.station_id and returns ZERO rows (the 156-vs-0 bug of 2026-08-18).
+export async function pushJukeboxPool(
+  licenseKey: string | null | undefined,
+  stationUuid: string | null | undefined,
+  stationId: number,
+  stationName: string | null | undefined,
+): Promise<void> {
+  if (!licenseKey || !stationUuid) return;
+  try {
+    const eth = (window as any).ether;
+    // Read config exactly as the wall does (Jukebox.tsx: stationConfigKv.list -> find by key), so the
+    // two cannot drift on how they interpret the operator's settings.
+    const r: any = await eth?.stationConfigKv?.list?.(stationId);
+    const kv: any[] = (r && r.rows) || [];
+    const get = (k: string) => kv.find(x => x.key === k)?.value;
+
+    const slug = String(get("jukebox_request_url") ?? "").trim().toLowerCase();
+    if (!slug) return;   // no public URL configured → nothing to publish, and no QR to scan either
+
+    let categoryIds: number[] = [];
+    try {
+      const raw = get("jukebox_categories");
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(parsed)) categoryIds = parsed.map((n: any) => parseInt(n, 10)).filter(Number.isFinite);
+    } catch { categoryIds = []; }
+    if (!categoryIds.length) return;   // nothing ticked → an empty pool is not worth publishing
+
+    const inList = categoryIds.map(() => "?").join(",");
+    const rows = await queryScoped<any>(
+      `SELECT s.uuid, s.title, a.name AS artist, s.duration_ms
+         FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
+        WHERE s.deleted_at IS NULL AND s.file_path IS NOT NULL AND TRIM(s.file_path) <> ''
+          AND (s.content_class IS NULL OR s.content_class = 'MUSIC')
+          AND s.uuid IS NOT NULL
+          AND s.category_id IN (${inList})
+        ORDER BY s.title`,
+      categoryIds, stationId, { skipScoping: true });
+
+    // UUID is the identity on the wire, never the local integer id — the phone's pick has to survive
+    // being resolved on a machine whose integer ids mean something else entirely.
+    const songs = rows.map(r => ({
+      uuid: r.uuid, title: r.title, artist: r.artist ?? null, duration_ms: r.duration_ms ?? null,
+    }));
+
+    const res = await fetch(`${ETHER_BACKEND_URL}/api/account/jukebox/pool`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-license-key": licenseKey },
+      body: JSON.stringify({ station_uuid: stationUuid, slug, station_name: stationName ?? null, songs }),
+    });
+    console.log(`[JUKEBOX] published pool "${slug}": ${songs.length} songs → HTTP ${res.status}`);
+  } catch (e) {
+    console.log("[JUKEBOX] pool publish failed:", (e as any)?.message ?? e);
+  }
 }
 
 // Gather a table's live rows via the typed sync handlers and push them. Any table in the
