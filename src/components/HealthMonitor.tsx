@@ -908,7 +908,8 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   // OFF is a real state, shown honestly: "processing off" rather than a blank row or a permanent
   // "waiting", which is what the panel showed for the whole time the meters were unwired.
   const [procOn, setProcOn] = useState<{ local: boolean; stream: boolean } | null>(null);
-  const [procMeters, setProcMeters] = useState<{ inLufs: number; outLufs: number; grDb: number; rideGainDb: number; target: number; inPeakDb: number; outPeakDb: number } | null>(null);
+  type AuxProc = { inLufs: number; outLufs: number; grDb: number; rideGainDb: number; inPeakDb: number; outPeakDb: number };
+  const [procMeters, setProcMeters] = useState<{ inLufs: number; outLufs: number; grDb: number; rideGainDb: number; target: number; inPeakDb: number; outPeakDb: number; aux?: AuxProc | null } | null>(null);
   useEffect(() => {
     // The daemon only emits while processing is ON, so absence of frames IS the off signal — but read
     // the KV too, so the row can distinguish "off" from "on but not yet reporting".
@@ -930,7 +931,10 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     let staleTimer: any = null;
     const h = audio.onProcMeters((m: any) => {
       if (!m || m.stationId !== stationId) return;
-      setProcMeters({ inLufs: m.inLufs, outLufs: m.outLufs, grDb: m.grDb, rideGainDb: m.rideGainDb ?? 0, target: m.target, inPeakDb: m.inPeakDb ?? -70, outPeakDb: m.outPeakDb ?? -70 });
+      // `aux` (the deck bus's chain) is carried through explicitly. This object is built field by
+      // field, so anything not named here is silently dropped — the same trap that once lost the
+      // proc_* meters in lib.rs's hand-built JSON, one layer up.
+      setProcMeters({ inLufs: m.inLufs, outLufs: m.outLufs, grDb: m.grDb, rideGainDb: m.rideGainDb ?? 0, target: m.target, inPeakDb: m.inPeakDb ?? -70, outPeakDb: m.outPeakDb ?? -70, aux: m.aux ?? null });
       if (staleTimer) clearTimeout(staleTimer);
       staleTimer = setTimeout(() => setProcMeters(null), 1500);   // frames stopped → stale, not stuck
     });
@@ -1085,12 +1089,16 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         {/* ── AUDIO PROCESSING — the loudness chain, at a glance ──────────────────────────────────
             IN → OUT LUFS and the gain-reduction bar say whether the ride is actually riding. OFF is
             stated, never blank. Fed by the same audio:proc-meters push the Settings panel uses. */}
-        {procOn && (
+        {/* ALWAYS RENDERED (2026-08-18). This was `{procOn && (...)}`, so the whole panel vanished
+            until the flags had been read — and a panel that is absent cannot say "processing is off".
+            That contradicted this section's own rule two lines up ("OFF is stated, never blank") and
+            is why an operator looking for the loudness meters found nothing at all. */}
+        {(
           <HealthPanel id="audio-processing" title="Audio Processing">
             {(() => {
-              const anyOn = procOn.local || procOn.stream;
+              const anyOn = !!(procOn && (procOn.local || procOn.stream));
               const paths = !anyOn ? "off on both paths"
-                : [procOn.local ? "monitor" : null, procOn.stream ? "stream" : null].filter(Boolean).join(" + ");
+                : [procOn?.local ? "monitor" : null, procOn?.stream ? "stream" : null].filter(Boolean).join(" + ");
               const m = procMeters;
               const lufs = (v?: number) => (v == null || v <= -70 ? "—" : `${v.toFixed(1)}`);
               // RIDE GAIN is what moves — bidirectional from unity. Limiter GR sits at 0 at steady
@@ -1149,6 +1157,57 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                                   color="var(--accent-blue)"
                                   read={gr > 0.1 ? `−${gr.toFixed(1)} dB` : "idle"}
                                   readTone={gr > 0.1 ? "var(--accent-blue)" : "var(--text-tertiary)"} />
+                    </div>
+                  )}
+
+                  {/* ── DECKS (aux D–F) ─────────────────────────────────────────────────────────
+                      The aux bus runs the SAME processor on its own instance, so its chain gets the
+                      same four readings in the same geometry, directly under the station's. Reading
+                      them side by side is the point: the park hears the deck bus, not the programme
+                      bus, and "the ride is working" has to be answerable about the one you are
+                      listening to. Absent rather than blank when no aux deck is feeding — a row of
+                      dashes is indistinguishable from a dead tap. */}
+                  {anyOn && m?.aux && (
+                    <div style={{ marginTop: "var(--s-5, 12px)", paddingTop: "var(--s-4, 8px)",
+                                  borderTop: "1px solid var(--border-primary)" }}>
+                      <div style={{ fontSize: 11, textTransform: "uppercase" as const, letterSpacing: 0.5,
+                                    color: "var(--text-tertiary)", marginBottom: "var(--s-3, 6px)" }}>
+                        Decks · aux D–F
+                      </div>
+                      <div style={{ display: "grid", gap: "var(--s-5, 12px)", marginBottom: "var(--s-4, 8px)",
+                                    gridTemplateColumns: "repeat(auto-fit, minmax(96px, 1fr))" }}>
+                        <StatTile label="in lufs"  value={lufs(m.aux.inLufs)} />
+                        <StatTile label="out lufs" value={lufs(m.aux.outLufs)} />
+                        <StatTile label="ride"
+                                  value={`${(m.aux.rideGainDb ?? 0) >= 0 ? "+" : "−"}${Math.abs(m.aux.rideGainDb ?? 0).toFixed(1)}`}
+                                  tone={Math.abs(m.aux.rideGainDb ?? 0) > 6 ? "yellow" : undefined} />
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "var(--s-3, 6px)" }}>
+                        {(() => {
+                          const aRide = m.aux.rideGainDb ?? 0;
+                          const aGr = Math.abs(m.aux.grDb ?? 0);
+                          const aPct = Math.min(50, (Math.abs(aRide) / SPAN) * 50);
+                          const aBoost = aRide >= 0;
+                          const pk = m.aux.outPeakDb ?? -70;
+                          const col = pk >= -1 ? "var(--accent-red)" : pk >= -6 ? "var(--accent-amber)" : "var(--accent-blue)";
+                          return (
+                            <>
+                              <PanelMeter label="out" color={col} pct={dbToPercent(pk)} tickPct={dbToPercent(-6)}
+                                          read={pk <= -70 ? "—" : `${pk.toFixed(1)} dBFS`} />
+                              <PanelMeter label="ride"
+                                          from={aBoost ? 50 : 50 - aPct} pct={aPct} tickPct={50}
+                                          tickColor="var(--border-secondary)"
+                                          color={aBoost ? "var(--accent-green)" : "var(--accent-amber)"}
+                                          read={`${aRide >= 0 ? "+" : "−"}${Math.abs(aRide).toFixed(1)} dB`}
+                                          readTone={Math.abs(aRide) > 0.3 ? "var(--text-primary)" : undefined} />
+                              <PanelMeter label="limiter" pct={Math.min(100, (aGr / 6) * 100)}
+                                          color="var(--accent-blue)"
+                                          read={aGr > 0.1 ? `−${aGr.toFixed(1)} dB` : "idle"}
+                                          readTone={aGr > 0.1 ? "var(--accent-blue)" : "var(--text-tertiary)"} />
+                            </>
+                          );
+                        })()}
+                      </div>
                     </div>
                   )}
                 </>

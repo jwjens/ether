@@ -195,6 +195,12 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
   const [deckStatus, setDeckStatus] = useState<string | null>(null);
   const [deckVolume, setDeckVolume] = useState<number | null>(null);
   const [autoOn, setAutoOn] = useState(false);
+  /** What the routed deck is actually playing, read off the deck — the kiosk must show what IT chose,
+   *  and a shuffle pick is just as much its choice as a request. */
+  const [nowPlaying, setNowPlaying] = useState<{ title: string; artist: string } | null>(null);
+  /** The shuffle's NEXT pick, chosen in advance so the window can show it — and then actually played,
+   *  so the display is a promise the drive keeps rather than a guess it re-rolls. */
+  const [nextUp, setNextUp] = useState<JukeSong | null>(null);
   /** The DASHBOARD's channel switch for the routed deck — observed, never assumed. Default false: a
    *  kiosk must not claim air it has not been given. */
   const [channelOn, setChannelOn] = useState(false);
@@ -364,14 +370,39 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
       try {
         const r: any = await (window as any).ether.jukebox?.deckState({ stationId, deck: routedDeck });
         if (stop) return;
-        if (r?.ok) { setDeckStatus(r.status ?? null); setDeckVolume(typeof r.volume === "number" ? r.volume : null); }
-        else { setDeckStatus(null); setDeckVolume(null); }
+        if (r?.ok) {
+          setDeckStatus(r.status ?? null);
+          setDeckVolume(typeof r.volume === "number" ? r.volume : null);
+          const t = String(r.info?.title ?? r.nowPlaying?.title ?? "").trim();
+          const a = String(r.info?.artist ?? r.nowPlaying?.artist ?? "").trim();
+          setNowPlaying(t ? { title: t, artist: a } : null);
+        } else { setDeckStatus(null); setDeckVolume(null); setNowPlaying(null); }
       } catch { if (!stop) { setDeckStatus(null); setDeckVolume(null); } }
     };
     void pull();
     const tick = setInterval(pull, 1000);
     return () => { stop = true; clearInterval(tick); };
   }, [stationId, routedDeck]);
+
+  // ── LOOK-AHEAD — the shuffle's next pick, chosen before it is needed ────────────────────────────
+  // Without this the kiosk had nothing to show between requests: the shuffle chose a song at the
+  // moment the deck freed, so "up next" did not exist until it was already "now playing". Choosing it
+  // in advance makes the display honest AND deterministic — the drive plays exactly this row.
+  useEffect(() => {
+    if (!autoOn || nextUp || stationId == null || !categoryIds.length) return;
+    if (requests.some(r => r.status === "queued" || r.status === "pending")) return;   // requests win
+    let stop = false;
+    (async () => {
+      const pick = await pickShuffleSong();
+      if (!stop && pick) setNextUp(pick);
+    })();
+    return () => { stop = true; };
+  }, [autoOn, nextUp, stationId, categoryIds, requests, pickShuffleSong]);
+
+  // A request arriving supersedes a held shuffle pick — FIFO among requests, requests over filler.
+  useEffect(() => {
+    if (nextUp && requests.some(r => r.status === "queued" || r.status === "pending")) setNextUp(null);
+  }, [requests, nextUp]);
 
   // ── THE DRIVE — strict FIFO, and it never cuts a playing song. ──────────────────────────────────
   //
@@ -398,8 +429,13 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
           toPlay = { filePath: next.file_path, title: next.title, artist: next.artist, durationMs: null };
           reqId = next.id;
         } else if (autoOn) {
-          const pick = await pickShuffleSong();
-          if (pick) toPlay = { filePath: pick.file_path, title: pick.title, artist: pick.artist, durationMs: pick.duration_ms };
+          // Play the song the window has been SHOWING as up next, not a fresh roll — otherwise the
+          // display and the audio disagree, which is the defect this fixes.
+          const pick = nextUp ?? await pickShuffleSong();
+          if (pick) {
+            toPlay = { filePath: pick.file_path, title: pick.title, artist: pick.artist, durationMs: pick.duration_ms };
+            setNextUp(null);   // consumed — the look-ahead picks the following one
+          }
         }
         if (!toPlay || cancelled) return;
 
@@ -423,7 +459,7 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [stationId, routedDeck, deckStatus, deckIsBusy, requests, autoOn]);
+  }, [stationId, routedDeck, deckStatus, deckIsBusy, requests, autoOn, nextUp]);
 
   // ── The request rail — names + placement, from the local-only jukebox_requests table. ───────────
   const loadRequests = useCallback(async () => {
@@ -673,9 +709,56 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
               the pending database migration.
             </div>
           )}
+          {/* NOW PLAYING — the kiosk shows what IT chose, whether that was a request or its own
+              shuffle. Read off the routed deck, so it cannot claim a song the deck is not playing. */}
+          {nowPlaying && (
+            <div style={{
+              padding: "12px 14px", marginBottom: 10, borderRadius: 12,
+              background: "rgba(96,64,192,0.10)", border: "1px solid #33335a",
+            }}>
+              <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.16em", color: "#8868D8" }}>
+                NOW PLAYING
+              </div>
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#fff", marginTop: 5,
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {nowPlaying.title}
+              </div>
+              {nowPlaying.artist && (
+                <div style={{ fontSize: 13, color: "#8a8aa0", marginTop: 2,
+                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {nowPlaying.artist}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* The shuffle's held pick, shown only when no request is waiting — a request always wins,
+              and this is the exact row the drive will play next. */}
+          {!requests.length && nextUp && (
+            <div style={{
+              display: "flex", gap: 13, alignItems: "center", padding: "12px 14px", marginBottom: 9,
+              borderRadius: 12, background: "#101018", border: "1px dashed #2a2a44",
+            }}>
+              <div style={{
+                flexShrink: 0, width: 32, height: 32, borderRadius: "50%", display: "flex",
+                alignItems: "center", justifyContent: "center", background: "#1a1a2a",
+                color: "#7a7a95", fontSize: 10, fontWeight: 900, letterSpacing: "0.04em",
+              }}>AUTO</div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 12.5, color: "#7a7a95" }}>Up next — from the chosen categories</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#c0b0f0", marginTop: 2,
+                              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {nextUp.title}{nextUp.artist ? ` — ${nextUp.artist}` : ""}
+                </div>
+              </div>
+            </div>
+          )}
+
           {!tableMissing && requests.length === 0 && (
             <div style={{ color: "#4a4a60", fontSize: 13.5, padding: "26px 8px", lineHeight: 1.6 }}>
-              No requests yet. Scan the code below, or pick something from the wall.
+              {autoOn && nextUp
+                ? "No requests waiting — the jukebox is keeping music going. Scan the code below to add one."
+                : "No requests yet. Scan the code below, or pick something from the wall."}
             </div>
           )}
           {requests.map((r, i) => {

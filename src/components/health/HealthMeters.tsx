@@ -106,12 +106,22 @@ function HealthMetersImpl({ id, stationUuid }: { id?: string; stationUuid?: stri
   }, [stationUuid]);
 
   // ── processing meters — 15 Hz and only while a toggle is on, so state is fine here ────────────
+  //
+  // STATION-SCOPED, like the levels subscription above. Every station is its own thing — its own
+  // output device, its own Icecast stream, its own processor — so a meter bound to one station must
+  // not render another's frame. This channel used to be taken unscoped, so with several stations
+  // running the panel showed whichever frame arrived last: the same crosstalk the levels channel was
+  // fixed for. Untagged frames still render (boot/edge) so the meters never go dark waiting for an id.
   useEffect(() => {
     const eth = (window as any).ether;
     if (!eth?.audio?.onProcMeters) return;
-    const h = eth.audio.onProcMeters((m: any) => { if (m) setProc(m); });
+    const h = eth.audio.onProcMeters((m: any) => {
+      if (!m) return;
+      if (stationUuid && m.stationUuid != null && m.stationUuid !== stationUuid) return;
+      setProc(m);
+    });
     return () => { try { eth.audio.offProcMeters?.(h); } catch {} };
-  }, []);
+  }, [stationUuid]);
 
   const target = proc?.target ?? -14;
   const outLevel = loudnessLevel(proc?.outLufs, target);

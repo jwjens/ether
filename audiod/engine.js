@@ -331,6 +331,20 @@ class DaemonEngine {
         // state by design, which made a bar bound to it look permanently broken (2026-08-01).
         rideGainDb: lv.proc_ride_gain_db ?? 0,
         inPeakDb: dbfs(lv.proc_in_peak ?? 0), outPeakDb: dbfs(lv.proc_out_peak ?? 0),
+        // DECK (aux) PROCESSING — the same four measurements, from the aux bus's own instance of the
+        // same processor, on THIS frame rather than a second channel. The Health Monitor renders it
+        // with the identical component; there is one processing system and one meter grammar.
+        // Present only when an aux deck is actually feeding, so "no deck processing" stays
+        // distinguishable from "deck processing at silence".
+        aux: (lv.aux_peak ?? 0) > 0 || (lv.aux_proc_out_lufs ?? -70) > -69 ? {
+          inLufs: lv.aux_proc_in_lufs ?? -70,
+          outLufs: lv.aux_proc_out_lufs ?? -70,
+          grDb: lv.aux_proc_gr_db ?? 0,
+          rideGainDb: lv.aux_proc_ride_db ?? 0,
+          // The aux bus reports its own peak; there is no separate in/out peak tap on it, so both
+          // columns read the one measured value rather than inventing a second.
+          inPeakDb: dbfs(lv.aux_peak ?? 0), outPeakDb: dbfs(lv.aux_peak ?? 0),
+        } : null,
       });
     } catch { /* never break playout for a meter frame */ }
   }

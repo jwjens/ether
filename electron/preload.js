@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld("ether", {
     setMuted: (deck, muted, stationId) => ipcRenderer.invoke("audio:setMuted", deck, muted, stationId),
     getState: (stationId) => ipcRenderer.invoke("audio:getState", stationId),
     getLevels: (stationId) => ipcRenderer.invoke("audio:getLevels", stationId),
+    setAuxMonitor: (stationId, deck, gain) => ipcRenderer.invoke("audio:set-aux-monitor", stationId, deck, gain),
+    setAuxDevice:  (stationId, device)      => ipcRenderer.invoke("audio:set-aux-device", stationId, device),
     getSpectrum: (stationId) => ipcRenderer.invoke("audio:getSpectrum", stationId),
     getFileDuration: (fp) => ipcRenderer.invoke("audio:getFileDuration", fp),
     embeddedArt: (fp) => ipcRenderer.invoke("audio:embeddedArt", fp),

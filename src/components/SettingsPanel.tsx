@@ -13,6 +13,9 @@ import { useStreamStatus } from "../contexts/StreamStatusContext";
 import PairMobileApp from "./PairMobileApp";
 import BetaProgram from "./BetaProgram";
 import { validateSlug, slugify } from "../lib/slug";
+// The loudness trio lives in ONE component now — Preferences and the Health Monitor render the same
+// meters on the same scales (moved from here, 2026-08-18).
+import { ProcessingTrio, dbfsPct } from "./ProcessingMeters";
 import { fetchMyMemberships, type Membership } from "../lib/memberships";
 
 // ── Settings categories ──────────────────────────────────────
@@ -774,44 +777,7 @@ function AudioProcessingSection() {
           <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--text-tertiary)", marginBottom: 8 }}>
             Live meters {meters ? "" : "· waiting for audio…"}
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
-            <Meter label="IN" lufs={meters?.inLufs} peakDb={meters?.inPeakDb} />
-            <Meter label="OUT" lufs={meters?.outLufs} peakDb={meters?.outPeakDb} accent />
-            {/* RIDE GAIN — the number that MOVES. Bidirectional from unity: right/green when boosting
-                quiet material toward the target, left/amber when pulling loud material down. Limiter GR
-                gets its own small indicator below, because it is 0 at steady state BY DESIGN and a bar
-                bound to it read as broken (2026-08-01). */}
-            {(() => {
-              const ride = meters?.rideGainDb ?? 0;
-              const gr = Math.abs(meters?.grDb ?? 0);
-              const SPAN = 12;                                    // ±12 dB across the bar
-              const pct = Math.min(50, (Math.abs(ride) / SPAN) * 50);
-              const boosting = ride >= 0;
-              return (
-                <div>
-                  <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 2 }}>RIDE GAIN</div>
-                  <div style={{ fontSize: 20, fontVariantNumeric: "tabular-nums", color: !meters ? "var(--text-primary)" : Math.abs(ride) > 0.3 ? (boosting ? "var(--accent-green)" : "var(--accent-amber, #fbbf24)") : "var(--text-primary)" }}>
-                    {meters ? `${ride >= 0 ? "+" : "−"}${Math.abs(ride).toFixed(1)}` : "—"}<span style={{ fontSize: 11, color: "var(--text-tertiary)" }}> dB</span>
-                  </div>
-                  <div style={{ position: "relative" as const, height: 6, background: "var(--bg-tertiary)", borderRadius: 3, marginTop: 6, overflow: "hidden" }}>
-                    <div style={{ position: "absolute" as const, left: "50%", top: 0, bottom: 0, width: 1, background: "var(--border-secondary)", zIndex: 1 }} />
-                    <div style={{
-                      position: "absolute" as const, top: 0, bottom: 0,
-                      left: boosting ? "50%" : `${50 - pct}%`, width: `${pct}%`,
-                      background: boosting ? "var(--accent-green)" : "var(--accent-amber, #fbbf24)",
-                      transition: "left .1s, width .1s",
-                    }} />
-                  </div>
-                  <div style={{ fontSize: 9, color: "var(--text-tertiary)", marginTop: 4 }}>
-                    limiter{" "}
-                    <span style={{ color: gr > 0.1 ? "var(--accent-blue)" : "var(--text-tertiary)", fontWeight: gr > 0.1 ? 700 : 400 }}>
-                      {gr > 0.1 ? `clamping −${gr.toFixed(1)} dB` : "idle"}
-                    </span>
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
+          <ProcessingTrio meters={meters} />
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 8 }}>
             Riding to {target} LUFS · limiter holds −1 dBTP · {local && stream ? "monitor + stream" : local ? "monitor only" : "stream only"}.
           </div>
@@ -827,33 +793,6 @@ function AudioProcessingSection() {
 
 // Compact LUFS + peak readout for one processing stage (IN or OUT).
 /** dBFS → 0-100% across a -60..0 scale, the usual broadcast meter span. */
-export function dbfsPct(db?: number): number {
-  if (db == null || !Number.isFinite(db)) return 0;
-  return Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
-}
-
-function Meter({ label, lufs, peakDb, accent }: { label: string; lufs?: number; peakDb?: number; accent?: boolean }) {
-  const fmt = (v?: number) => (v == null || v <= -70 ? "—" : v.toFixed(1));
-  // A LEVEL BAR, not just a number (2026-08-01). The IN and OUT peaks are the actual signal and they
-  // move with the audio — that is what tells an operator the chain is passing and what it is doing to
-  // the level. Amber above -6 dBFS, red at -1 and up (the limiter's ceiling).
-  const pct = dbfsPct(peakDb);
-  const col = (peakDb ?? -70) >= -1 ? "#f87171" : (peakDb ?? -70) >= -6 ? "var(--accent-amber, #fbbf24)"
-            : accent ? "var(--accent-blue)" : "var(--accent-green)";
-  return (
-    <div>
-      <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 2 }}>{label} LOUDNESS</div>
-      <div style={{ fontSize: 20, fontVariantNumeric: "tabular-nums", color: accent ? "var(--accent-blue)" : "var(--text-primary)" }}>
-        {fmt(lufs)}<span style={{ fontSize: 11, color: "var(--text-tertiary)" }}> LUFS</span>
-      </div>
-      <div style={{ height: 6, background: "var(--bg-tertiary)", borderRadius: 3, marginTop: 6, overflow: "hidden", position: "relative" as const }}>
-        <div style={{ height: "100%", width: `${pct}%`, background: col, transition: "width .08s linear" }} />
-      </div>
-      <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>peak {fmt(peakDb)} dBFS</div>
-    </div>
-  );
-}
-
 function ControllersSection() {
   const [devices,   setDevices]   = useState<string[]>([]);
   const [status,    setStatus]    = useState<{ connected: boolean; deviceName: string }>({ connected: false, deviceName: "" });

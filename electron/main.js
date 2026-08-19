@@ -758,8 +758,14 @@ if (AUDIO_DAEMON_DESIRED) {
       } else if (m.event === "procmeters") {
         // Audio Processing v1: dedicated per-station processing-meter frame (~15Hz, ONLY while a toggle
         // is on). Deliberately its OWN channel — the levels channel already runs ~90/s and is implicated
-        // in a renderer OOM, so this stays separate and lower-rate. Observed at the taps; forward as-is.
-        sendToAllWindows("audio:proc-meters", m);
+        // in a renderer OOM, so this stays separate and lower-rate. Observed at the taps.
+        //
+        // TAGGED WITH THE STATION UUID (2026-08-18), the same treatment the levels frame gets. Every
+        // station is its own thing — its own output device, its own Icecast stream, its own processor —
+        // so a meter bound to one station must never render another's frame. This channel was
+        // forwarded untagged, so a panel showed whichever station's frame arrived last: exactly the
+        // crosstalk the levels channel was fixed for. The integer id is kept for existing consumers.
+        sendToAllWindows("audio:proc-meters", { ...m, stationUuid: _stationUuidById(m.stationId) });
       } else if (m.event === "deck") {
         // Per-deck state change from the daemon's poll → renderer proxy (Step 2).
         // Stage 0: forward deckReady (cued) so the renderer mirrors it instead of guessing.
@@ -4117,6 +4123,16 @@ ipcMain.handle("jukebox:deck-state", async (_evt, req) => {
 ipcMain.handle("audio:play", (_, deck, stationId) => AUDIO_DAEMON ? audiodClient.cmd("play", { deck, stationId }) : audio.audioPlay(deck, stationId));
 ipcMain.handle("audio:pause", (_, deck, stationId) => AUDIO_DAEMON ? audiodClient.cmd("pause", { deck, stationId }) : audio.audioPause(deck, stationId));
 ipcMain.handle("audio:stop", (_, deck, stationId) => AUDIO_DAEMON ? audiodClient.cmd("stop", { deck, stationId }) : audio.audioStop(deck, stationId));
+// AUX MONITOR — the ROOM level for an aux deck (D/E/F). "Slot = room, board = air": this is the ONLY
+// way those decks reach the local speakers, and it never touches the programme bus.
+// AUX OUTPUT DEVICE — where the aux monitor bus is heard. "" closes it. Deliberately never falls back
+// to a default: aux audio only ever leaves via a device the operator chose.
+ipcMain.handle("audio:set-aux-device", (_, stationId, device) =>
+  AUDIO_DAEMON ? audiodClient.cmd("setAuxDevice", { stationId, device })
+               : audio.audioSetAuxDevice(stationId, device || ""));
+ipcMain.handle("audio:set-aux-monitor", (_, stationId, deck, gain) =>
+  AUDIO_DAEMON ? audiodClient.cmd("setAuxMonitor", { stationId, deck, gain })
+               : audio.audioSetAuxMonitor(stationId, deck, gain));
 ipcMain.handle("audio:setVolume", (_, deck, volume, stationId) => AUDIO_DAEMON ? audiodClient.cmd("setVolume", { deck, volume, stationId }) : audio.audioSetVolume(deck, volume, stationId));
 // Console channel cut (CART/jingle channel today). Routed exactly like setVolume so it reaches whichever
 // engine actually owns the audio — the daemon when AUDIO_DAEMON is on, the in-process addon otherwise.

@@ -187,6 +187,10 @@ const handlers = {
   // daemon whenever AUDIO_DAEMON is on (the default on Windows), so a renderer-only or in-process-only
   // mute would be a silent no-op on exactly the setup most operators run.
   setMuted:           (m) => A.audioSetMuted(m.deck, !!m.muted, m.stationId),
+  // AUX MONITOR (room) level for one aux deck — D/E/F only, enforced in Rust. 0 = silent locally.
+  setAuxMonitor:      (m) => A.audioSetAuxMonitor(m.stationId, m.deck, m.gain),
+  // AUX output device. "" = none = the aux stream closes and the bus is silent. Never falls back.
+  setAuxDevice:       (m) => A.audioSetAuxDevice(m.stationId, m.device || ""),
   setEq:              (m) => A.audioSetEq(m.stationId, JSON.stringify(m.bands || [])),
   getState:           (m) => JSON.parse(A.audioGetState(m.stationId)),
   getLevels:          (m) => JSON.parse(A.audioGetLevels(m.stationId)),

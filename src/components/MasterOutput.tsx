@@ -11,6 +11,7 @@ import MasterEQRack from "./MasterEQRack";
 import { useAudioHealth, HealthDot, HealthStyles, HealthModeBanner, rateLabel, peakLabel, LEVEL_COLOR } from "../audio/health";
 import { EQ_DEFAULT } from "./GraphicEQ";
 import StationMonitorMixer from "./StationMonitorMixer";
+import AuxMonitorSlots from "./AuxMonitorSlots";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { vuSmooth, vuPeak } from "../lib/vuMeter";
 
@@ -882,6 +883,8 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
 
       {/* Per-station monitor mixer — each station's local speaker level (broadcasts unaffected) */}
       <StationMonitorMixer />
+      {/* Aux decks D–F: one slot each, in the same monitors area (Jeff, 2026-08-18). */}
+      <AuxMonitorSlots />
 
       {/* ── Expanded sections — only when cart wall is hidden ── */}
       {expanded && (

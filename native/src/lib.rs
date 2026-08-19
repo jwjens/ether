@@ -230,18 +230,19 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
     // daemon's _emitProcMeters returned at `if (!lv.proc_local …)` on every frame, and the Settings
     // panel read "waiting for audio" forever. The processing itself was running; only its meters were
     // blind. Adding a field to AudioLevels is NOT enough — it has to be named here too.
-    let (la, lb, lc, lcart, lmaster, frames, active, mon, decks,
+    let (la, lb, lc, lcart, lmaster, lroom, auxframes, auxpeak, auxin, auxout, auxgr, auxride, frames, active, mon, decks,
          p_local, p_stream, p_target, p_in_lufs, p_out_lufs, p_gr, p_in_peak, p_out_peak, p_ride) = match levels_arc.lock() {
-        Ok(lvl) => (lvl.level_a, lvl.level_b, lvl.level_c, lvl.level_cart, lvl.level_master,
+        Ok(lvl) => (lvl.level_a, lvl.level_b, lvl.level_c, lvl.level_cart, lvl.level_master, lvl.level_room, lvl.aux_frames, lvl.aux_peak, lvl.aux_proc_in_lufs, lvl.aux_proc_out_lufs, lvl.aux_proc_gr_db, lvl.aux_proc_ride_db,
                     lvl.frames_total, lvl.active_decks, lvl.mon_vol, lvl.decks.clone(),
                     lvl.proc_local, lvl.proc_stream, lvl.proc_target_lufs,
                     lvl.proc_in_lufs, lvl.proc_out_lufs, lvl.proc_gr_db,
                     lvl.proc_in_peak, lvl.proc_out_peak, lvl.proc_ride_gain_db),
-        Err(_)  => (0.0, 0.0, 0.0, 0.0, 0.0, 0u64, 0u32, 0.0f32, Vec::new(),
+        Err(_)  => (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0u64, 0.0f32, -70.0f32, -70.0f32, 0.0f32, 0.0f32, 0u64, 0u32, 0.0f32, Vec::new(),
                     false, false, -14.0f32, -70.0f32, -70.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32),
     };
     serde_json::json!({
-        "a": la, "b": lb, "c": lc, "cart": lcart, "master": lmaster,
+        "a": la, "b": lb, "c": lc, "cart": lcart, "master": lmaster, "room": lroom, "aux_frames": auxframes, "aux_peak": auxpeak,
+        "aux_proc_in_lufs": auxin, "aux_proc_out_lufs": auxout, "aux_proc_gr_db": auxgr, "aux_proc_ride_db": auxride,
         "frames_total": frames, "active_decks": active, "mon_vol": mon, "decks": decks,
         "proc_local": p_local, "proc_stream": p_stream, "proc_target_lufs": p_target,
         "proc_in_lufs": p_in_lufs, "proc_out_lufs": p_out_lufs, "proc_gr_db": p_gr,
@@ -509,6 +510,36 @@ pub fn audio_get_program_bus_port(station_id: u32) -> u32 {
     let engine = get_or_create_engine(station_id, None);
     let Ok(audio) = engine.lock() else { return 0 };
     audio.program_bus_port as u32
+}
+
+/// AUX MONITOR OUTPUT DEVICE — where the aux bus is heard. Empty string = NONE = the aux stream is
+/// closed and the bus is silent.
+///
+/// This is a SECOND output stream per station, opened only when an operator picks a device, and it is
+/// deliberately the only way aux audio leaves the machine. It never falls back to the system default:
+/// substituting an output nobody chose is unsafe on a broadcast machine (the "default" could be the
+/// very speakers feeding a mic). A named device that is absent stays unopened and the bus stays quiet.
+#[napi]
+pub fn audio_set_aux_device(station_id: u32, device_name: String) -> bool {
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetAuxDevice(device_name)).is_ok()
+}
+
+/// AUX MONITOR LEVEL — the ROOM level for one aux deck (D/E/F), 0.0 = silent locally.
+///
+/// "Slot = room, board = air" (Jeff, 2026-08-18). The AUX monitor slots are the ONLY way decks D/E/F
+/// are heard on the local speakers: they are excluded from the room sum entirely and re-enter it only
+/// through this gain, taken PRE-CUT and PRE-FADER so the board's channel switch cannot silence the
+/// room. Air is untouched — those decks stay in the programme bus, fully EQ'd and processed.
+///
+/// Rejected for any deck that is not D/E/F: A/B/C and CART are board channels and their local
+/// monitoring is unchanged by this feature.
+#[napi]
+pub fn audio_set_aux_monitor(station_id: u32, deck: String, gain: f64) -> bool {
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetAuxMonitor { deck, gain: gain as f32 }).is_ok()
 }
 
 #[napi]

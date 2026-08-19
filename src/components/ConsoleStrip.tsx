@@ -140,19 +140,33 @@ export default function ConsoleStrip({
     if (!ether?.audio?.onLevels) return;
     let rafId = 0;
     let smoothed = 0; // smoothed bar HEIGHT (0..1): fast attack, slow release (VU ballistic)
-    const h = ether.audio.onLevels((lvl: { a?: number; b?: number; c?: number; cart?: number; master?: number; stationUuid?: string }) => {
+    const h = ether.audio.onLevels((lvl: { a?: number; b?: number; c?: number; cart?: number; master?: number; stationUuid?: string; decks?: { id: string; peak?: number }[] }) => {
       if (!matchesStation(lvl, myUuidRef.current)) return; // station scope
       const id = deckId.toUpperCase();
+      // D/E/F read their OWN post-fader peak out of the per-deck telemetry array.
+      //
+      // THEY USED TO FALL THROUGH TO `master` (2026-08-18 incident): an aux deck's strip showed the
+      // programme meter, not its own. With that deck's fader down, master was silent, so the meter
+      // read 0 while the deck was still playing — the operator saw "nothing is running" while a
+      // jukebox track was live on deck D. A meter that reads zero on a playing deck is worse than no
+      // meter: it is used as evidence. The array (`decks[].peak`) covers every slot as of the same
+      // day's native change.
+      const auxPeak = (d: string) => lvl.decks?.find(x => x.id === d)?.peak ?? 0;
       let raw = id === "A" ? (lvl.a ?? 0)
               : id === "B" ? (lvl.b ?? 0)
               : id === "C" ? (lvl.c ?? 0)
               : id === "CART" ? (lvl.cart ?? 0)   // jingle overlay bus (native slot 6, level_cart)
+              : (id === "D" || id === "E" || id === "F") ? auxPeak(id)
               : (lvl.master ?? 0);
       if (id === "MIC") raw = isOnRef.current ? (lvl.master ?? 0) * 0.6 : 0;
       // Meters are taps: the CART/jingle overlay has no steady "playing" status like a rotation deck
       // (jingles fire briefly over master), so its VU always reflects the live tap. Other strips keep
       // the existing isPlaying gate unchanged.
-      if (id !== "CART") raw = isPlayingRef.current ? raw : 0;
+      // D/E/F are NOT gated on isPlaying either. For an aux strip `isPlaying` carries the CHANNEL
+      // switch, so a cut channel forced the meter to 0 — the second way this meter hid a live deck.
+      // Their peak is already post-fader and post-cut, so it reads zero when it should and only when
+      // it should: the tap tells the truth without help.
+      if (id !== "CART" && id !== "D" && id !== "E" && id !== "F") raw = isPlayingRef.current ? raw : 0;
       const targetH = vuHeight(Math.min(1, raw));   // dB-scaled target height
       // Snap up to peaks (track the music), ease down — kills the flickery top edge.
       smoothed += (targetH - smoothed) * (targetH > smoothed ? 0.5 : 0.12);

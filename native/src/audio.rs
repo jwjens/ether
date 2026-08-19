@@ -115,6 +115,13 @@ pub struct DeckTel {
     /// docs/sample-accurate-position-design-2026-08-09.md
     #[serde(default)]
     pub frames_played: u64,
+    /// POST-FADER PEAK for this slot, 0..1 (1.0 = 0 dBFS) — the same number `level_a/b/c/cart`
+    /// carry, but available for EVERY slot. bus.peaks has always been computed for all 7
+    /// (`for i in 0..7` at the end of the mixer callback); only A/B/C/CART were ever surfaced, so a
+    /// deck D/E/F meter had nothing to read. Additive and #[serde(default)], so an older reader that
+    /// does not know this field is unaffected.
+    #[serde(default)]
+    pub peak: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -124,6 +131,23 @@ pub struct AudioLevels {
     pub level_c: f32,
     pub level_cart: f32,
     pub level_master: f32,
+    /// ROOM (local speaker) peak — see BusState::room_peak. Distinct from level_master: master is what
+    /// AIRS, room is what the operator HEARS. With the aux monitor bus these are no longer the same
+    /// signal, which is exactly why this exists.
+    #[serde(default)]
+    pub level_room: f32,
+    /// Frames the AUX output device callback has written. Monotonic; a rising value is the only
+    /// honest evidence that the aux bus is reaching a device.
+    #[serde(default)]
+    pub aux_frames: u64,
+    /// Peak of the AUX feed (post fader/cut, post slot level) — what the aux monitor is putting out.
+    #[serde(default)]
+    pub aux_peak: f32,
+    /// AUX processing meters — same four measurements as the station's, same taps, same processor.
+    #[serde(default)] pub aux_proc_in_lufs:  f32,
+    #[serde(default)] pub aux_proc_out_lufs: f32,
+    #[serde(default)] pub aux_proc_gr_db:    f32,
+    #[serde(default)] pub aux_proc_ride_db:  f32,
     /// 10-band post-EQ master spectrum (0..~1 normalized magnitude), computed by the
     /// master EQ analyzer and surfaced for the Master EQ rack's live FFT display.
     #[serde(default)]
@@ -265,6 +289,12 @@ pub enum AudioCmd {
     /// Audio Processing v1 — per-station program-bus loudness. (process_local, process_stream, target LUFS).
     /// Both bools default OFF; the daemon delivers this like the segue setting (survives respawns).
     SetProcessing { local: bool, stream: bool, target_lufs: f32 },
+    /// AUX MONITOR (2026-08-18): set the ROOM level for one aux deck (D/E/F only). 0.0 = not selected
+    /// by any slot = silent on the local speakers. Never affects air.
+    SetAuxMonitor { deck: String, gain: f32 },
+    /// Choose the output device for the AUX monitor bus. Empty string = none = the aux stream is
+    /// closed and the bus is silent.
+    SetAuxDevice(String),
 }
 
 pub struct AudioState {
@@ -403,6 +433,63 @@ pub struct BusState {
     pub proc_stream: bool,
     pub proc_target_lufs: f32,
     pub processor:   Arc<Mutex<crate::program_processor::ProgramProcessor>>,
+
+    // ── AUX MONITOR BUS (2026-08-18) — "slot = room, board = air" ────────────────────────────────
+    // Decks D/E/F (slots 3/4/5) are AUX decks: automation never touches them, and per Jeff's ruling
+    // they must NOT be summed into the local speaker output. They reach the room ONLY through an AUX
+    // monitor slot that selects them, at that slot's own level. Air is untouched: they stay in the
+    // program bus exactly as before, fully EQ'd and processed.
+    //
+    // Per-slot ROOM level. 0.0 = not selected by any slot = SILENT IN THE ROOM, which is the ruling.
+    // Only indices 3/4/5 are ever non-zero; SetAuxMonitor refuses every other slot.
+    pub aux_monitor_gain: [f32; 7],
+    /// ROOM PEAK — what is actually reaching the local speakers (post room-chain, pre monitor gains),
+    /// 0..1. The air VU has never answered "is anything coming out of the speakers", and with the aux
+    /// bus that question now has a different answer from the air meter: a deck can be on air and
+    /// silent in the room, or in the room and off air. Built in with the feature rather than bolted
+    /// on, and it is what makes "no slot selected = silence in the room" observable instead of a claim.
+    pub room_peak: f32,
+    /// The room chain's OWN EQ + processor state.
+    ///
+    /// Why a second instance rather than re-running `eq`/`processor`: the room feed is a DIFFERENT sum
+    /// (the aux decks are excluded), and both of these are STATEFUL — biquad histories and a limiter.
+    /// Running one instance over two different signals in the same callback corrupts its state. And the
+    /// arithmetic shortcut (room = air − aux) is invalid: the ride and the −1 dBTP limiter are
+    /// non-linear, so an aux contribution cannot be subtracted back out.
+    ///
+    /// COST IS ONLY PAID WHEN USED. If no aux deck has a source, the room takes the original path and
+    /// is bit-identical to the previous build; these instances are never touched.
+    /// Kept in lockstep with the air chain by SetEq / SetProcessing, so the room hears the same EQ and
+    /// the same loudness treatment it always did for A/B/C.
+    /// Producer end of the AUX monitor ring. `Some` only while an aux output stream is open on a
+    /// device the operator picked; `None` = no device = the mixer writes nothing and the aux bus is
+    /// silent. This is the single gate that makes "no device chosen = silence" true in the audio path
+    /// rather than in a comment.
+    pub aux_ring_prod:  Option<HeapProd<f32>>,
+    /// Frames the AUX output callback has actually written to its device. "The stream opened" is not
+    /// evidence that audio is flowing; this is. Surfaced as `aux_frames` in getLevels so the panel —
+    /// and any probe — can tell a live aux feed from an open-but-starved one.
+    pub aux_out_frames: Arc<AtomicU64>,
+    /// The AUX feed's own instance of the EXISTING program processor (the loudness ride + -1 dBTP
+    /// limiter already in Preferences). Its own, because the processor is stateful and the air and
+    /// room chains are already using theirs on different sums this callback.
+    pub processor_aux: Arc<Mutex<crate::program_processor::ProgramProcessor>>,
+    /// The AUX processor's OBSERVED meters — the same four the station's processor reports
+    /// (proc_in_lufs / proc_out_lufs / proc_gr_db / proc_ride_gain_db), taken at the same taps on the
+    /// same processor type. They exist so the Health Monitor can show deck processing with the same
+    /// meters and the same grammar as a station, rather than a parallel readout.
+    pub aux_proc_in_lufs:  f32,
+    pub aux_proc_out_lufs: f32,
+    pub aux_proc_gr_db:    f32,
+    pub aux_proc_ride_db:  f32,
+    /// PEAK OF THE AUX FEED — the level actually being sent to the aux device, after the deck's
+    /// fader/cut AND the slot level. Distinct from `decks[].peak` (which is the DECK, regardless of
+    /// any slot) and from `room_peak` (the station's speakers). Without this there was no way to ask
+    /// "is the aux monitor making sound", and a probe that used the deck peak instead reported a
+    /// control as broken when it was working.
+    pub aux_peak: f32,
+    pub eq_room:        crate::eq::SharedEq,
+    pub processor_room: Arc<Mutex<crate::program_processor::ProgramProcessor>>,
     /// Processing meters written by mixer_callback (observed), read by GetLevel → the daemon meter event.
     pub proc_in_peak:  f32,
     pub proc_out_peak: f32,
@@ -435,6 +522,18 @@ impl BusState {
             proc_stream: false,
             proc_target_lufs: -14.0,
             processor:   Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
+            aux_monitor_gain: [0.0; 7],   // nothing selected → aux decks silent in the room
+            aux_ring_prod: None,          // no aux device open → nowhere to send, by construction
+            aux_out_frames: Arc::new(AtomicU64::new(0)),
+            aux_peak: 0.0,
+            processor_aux: Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
+            aux_proc_in_lufs: -70.0,
+            aux_proc_out_lufs: -70.0,
+            aux_proc_gr_db: 0.0,
+            aux_proc_ride_db: 0.0,
+            room_peak: 0.0,
+            eq_room:        crate::eq::new_shared_eq(sample_rate as f32),
+            processor_room: Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
             proc_in_peak: 0.0, proc_out_peak: 0.0,
             proc_in_lufs: -70.0, proc_out_lufs: -70.0, proc_gr_db: 0.0, proc_ride_gain_db: 0.0,
         }
@@ -644,6 +743,13 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::SetMasterVolume(_) => {}
                             AudioCmd::SetMasterMonitorVolume(_) => {}
                             AudioCmd::SetProcessing { .. } => {} // no-device context: applied when the stream is live
+                            // Same no-device context: with no output stream there is no room to feed,
+                            // so the aux monitor level is simply not applicable here. The live mixer
+                            // path (below) is the one that owns bus.aux_monitor_gain.
+                            AudioCmd::SetAuxMonitor { .. } => {}
+                            // Superseded no-device path (see start_station_mixer's header): it owns no
+                            // aux stream, so there is nothing here to open or close.
+                            AudioCmd::SetAuxDevice(_) => {}
                         }
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -713,6 +819,12 @@ mod deck_finished_key_tests {
 }
 const PROGRAM_RATE:   u32       = 44100;
 const PROGRAM_BUS_BUF: usize    = PROGRAM_RATE as usize * 2 * 4; // 4 s at 44100 Hz stereo
+/// AUX monitor ring — ~0.5 s of 44100 Hz stereo. Deliberately SHORT: this is a monitor feed and
+/// latency matters more than resilience. The writer bounds it further (see AUX_RING_HIGH).
+const AUX_BUS_BUF: usize = PROGRAM_RATE as usize;          // 44100 samples = 0.5 s stereo
+/// Above this fill the writer drops a frame — the drift bound. Two device clocks run independently,
+/// so without this the ring creeps toward full and the monitor drifts seconds behind the room.
+const AUX_RING_HIGH: usize = PROGRAM_RATE as usize / 4;    // ~0.125 s stereo
 
 pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     std::sync::mpsc::Sender<AudioCmd>,
@@ -742,6 +854,11 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     // this station's mixer (via BusState) reads it; this station's drain thread writes it.
     let stream_connected = Arc::new(AtomicBool::new(false));
 
+    // ── AUX MONITOR OUTPUT — its own device, its own stream, its own clock ───────────────────────
+    // Empty string = no device chosen = no stream = silence. The operator's choice is the only thing
+    // that ever opens this.
+    let aux_req: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+
     let shared_eq = crate::eq::new_shared_eq(44100.0);
     let bus_state: SharedBusState = Arc::new(Mutex::new(
         BusState::new(shared_eq, ring_prod, 44100, stream_connected.clone())
@@ -757,6 +874,159 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     std::thread::spawn(move || {
         drain_program_bus(station_id, listener, ring_cons, delay_drain, stream_connected);
     });
+
+    // ── AUX MONITOR OUTPUT THREAD ────────────────────────────────────────────────────────────────
+    // Owns the second cpal stream: opens it when the operator picks a device, closes it when they
+    // clear the choice, reopens it when they switch. It is the ONLY thing that installs the ring
+    // producer into BusState, so "no device chosen = silence" is true in the audio path itself and
+    // not merely in a comment.
+    //
+    // Its own clock: the aux device runs independently of the station device. The callback drains
+    // what the mixer produced and resamples 44100 -> the aux rate with a persistent phase; on
+    // underrun it writes silence rather than stretching, and the writer bounds the ring so latency
+    // cannot creep. Two clocks always drift; this bounds the consequence to an occasional tick on a
+    // MONITOR feed, and it never touches air.
+    {
+        let bus_aux = bus_state.clone();
+        let req_aux = aux_req.clone();
+        std::thread::spawn(move || {
+            use cpal::traits::{DeviceTrait, StreamTrait};
+            let mut open_name = String::new();
+            let mut _stream: Option<cpal::Stream> = None;
+            // A REQUESTED-BUT-ABSENT device is a normal state, not an error to hammer: the operator may
+            // have picked headphones that are currently unplugged. Retry slowly and log once, instead
+            // of re-attempting every poll (which logged 4x/second) or giving up forever (which would
+            // never notice the device coming back).
+            let mut retry_at: Option<std::time::Instant> = None;
+            loop {
+                let want = req_aux.lock().map(|r| r.clone()).unwrap_or_default();
+                let retry_due = retry_at.map(|t| std::time::Instant::now() >= t).unwrap_or(false);
+                if want != open_name || (retry_due && !want.is_empty() && _stream.is_none()) {
+                    // Tear down first, always: clearing the producer stops the mixer writing before
+                    // the stream that drains it goes away.
+                    let changed = want != open_name;
+                    if let Ok(mut bus) = bus_aux.lock() { bus.aux_ring_prod = None; }
+                    if _stream.is_some() || (changed && !open_name.is_empty()) {
+                        eprintln!("[RUST] Station {} AUX monitor output closed", station_id);
+                    }
+                    _stream = None;
+                    open_name = want.clone();
+                    retry_at = None;
+
+                    if !open_name.is_empty() {
+                        match open_named_output_device(station_id, &open_name) {
+                            Some((device, sr, ch)) => {
+                                let rb = HeapRb::<f32>::new(AUX_BUS_BUF);
+                                let (prod, mut cons) = rb.split();
+                                let frames_ctr = {
+                                    let mut g = bus_aux.lock().ok();
+                                    let c = g.as_ref().map(|b| b.aux_out_frames.clone());
+                                    if let Some(ref mut b) = g { b.aux_ring_prod = Some(prod); }
+                                    match c { Some(c) => c, None => Arc::new(AtomicU64::new(0)) }
+                                };
+
+                                let cfg = cpal::StreamConfig {
+                                    channels: ch,
+                                    sample_rate: cpal::SampleRate(sr),
+                                    buffer_size: cpal::BufferSize::Default,
+                                };
+                                let mut phase: f64 = 0.0;
+                                let base_step: f64 = PROGRAM_RATE as f64 / sr as f64;
+                                let mut cur = (0.0f32, 0.0f32);
+                                let mut nxt = (0.0f32, 0.0f32);
+                                let mut primed = false;
+                                // Target ring fill (stereo samples). The two device clocks never agree
+                                // exactly, so SOMETHING has to absorb the difference. Dropping samples
+                                // does it audibly; nudging the resample ratio by a fraction of a
+                                // percent does it inaudibly, which is how a monitor bus should behave.
+                                let target_fill: f64 = (sr as f64 * 0.04 * 2.0).max(256.0); // ~40 ms
+
+                                let built = device.build_output_stream::<f32, _, _>(
+                                    &cfg,
+                                    move |data: &mut [f32], _| {
+                                        let frames = data.len() / ch as usize;
+                                        if !primed {
+                                            let a = cons.try_pop().and_then(|l| cons.try_pop().map(|r| (l, r)));
+                                            let b = cons.try_pop().and_then(|l| cons.try_pop().map(|r| (l, r)));
+                                            match (a, b) {
+                                                (Some(x), Some(y)) => { cur = x; nxt = y; primed = true; }
+                                                _ => { data.iter_mut().for_each(|x| *x = 0.0); return; }
+                                            }
+                                        }
+                                        // DRIFT CORRECTION, not sample dropping. Nudge the resample
+                                        // ratio by at most ±0.3% toward the target fill — well under
+                                        // the ~1% where pitch shift becomes audible, and it removes
+                                        // the need to throw samples away at all.
+                                        let fill = cons.occupied_len() as f64;
+                                        let err = (fill - target_fill) / target_fill;          // -1..+n
+                                        let step = base_step * (1.0 + err.clamp(-1.0, 1.0) * 0.003);
+                                        for f in 0..frames {
+                                            while phase >= 1.0 {
+                                                cur = nxt;
+                                                nxt = match cons.try_pop() {
+                                                    Some(l) => (l, cons.try_pop().unwrap_or(l)),
+                                                    None => {
+                                                        // UNDERRUN: fade toward silence instead of
+                                                        // stepping to zero. A hard jump to 0 mid-wave
+                                                        // is itself a click — the very artifact this
+                                                        // path is supposed to avoid. Never repeats a
+                                                        // tail: it decays and stays there.
+                                                        (cur.0 * 0.5, cur.1 * 0.5)
+                                                    }
+                                                };
+                                                phase -= 1.0;
+                                            }
+                                            let t = phase as f32;
+                                            let l = cur.0 + (nxt.0 - cur.0) * t;
+                                            let r = cur.1 + (nxt.1 - cur.1) * t;
+                                            if ch == 2 { data[f * 2] = l; data[f * 2 + 1] = r; }
+                                            else { data[f] = (l + r) * 0.5; }
+                                            phase += step;
+                                        }
+                                        // Proof of flow, not merely of opening.
+                                        frames_ctr.fetch_add(frames as u64, Ordering::Relaxed);
+                                    },
+                                    |err| eprintln!("[cpal aux] {}", err),
+                                    None,
+                                );
+                                match built {
+                                    Ok(st) => {
+                                        if let Err(e) = st.play() {
+                                            eprintln!("[RUST] Station {} AUX stream.play(): {}", station_id, e);
+                                            if let Ok(mut bus) = bus_aux.lock() { bus.aux_ring_prod = None; }
+                                            retry_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+                                        } else {
+                                            eprintln!("[RUST] Station {} AUX monitor output opened ({}Hz {}ch)", station_id, sr, ch);
+                                            _stream = Some(st);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[RUST] Station {} AUX build_output_stream: {}", station_id, e);
+                                        if let Ok(mut bus) = bus_aux.lock() { bus.aux_ring_prod = None; }
+                                        retry_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+                                    }
+                                }
+                            }
+                            None => {
+                                // NO FALLBACK. A named device that is not present stays unopened and
+                                // the bus stays silent. Substituting a different output for the
+                                // operator is the unsafe behaviour this whole path exists to avoid.
+                                // Logged ONCE per change; the slow retry below is silent until it
+                                // succeeds, so an unplugged headphone does not fill the log.
+                                if changed {
+                                    eprintln!("[RUST] Station {} AUX monitor device not found: {:?} — staying silent (will retry)", station_id, open_name);
+                                }
+                                retry_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+                            }
+                        }
+                    } else {
+                        eprintln!("[RUST] Station {} AUX monitor output closed (no device selected)", station_id);
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(250));
+            }
+        });
+    }
 
     // ── Audio dispatch thread ─────────────────────────────────────────────────
     std::thread::spawn(move || {
@@ -924,6 +1194,21 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     bus.decks[idx].muted = muted;
                                 }
                             }
+                            AudioCmd::SetAuxDevice(name) => {
+                                // Recorded for the aux thread, which owns opening/closing that stream.
+                                // Empty = none = it closes the stream and clears the ring producer.
+                                if let Ok(mut r) = aux_req.lock() { *r = name; }
+                            }
+                            AudioCmd::SetAuxMonitor { deck, gain } => {
+                                // AUX DECKS ONLY. A/B/C and CART are board channels and their local
+                                // monitoring is unchanged by this feature; refusing them here means no
+                                // caller can accidentally route a programme deck through the aux path.
+                                let Some(idx) = deck_index(&deck) else { continue };
+                                if !(3..=5).contains(&idx) { continue; }
+                                if let Ok(mut bus) = bus_cmd.lock() {
+                                    bus.aux_monitor_gain[idx] = gain.clamp(0.0, 4.0);
+                                }
+                            }
                             AudioCmd::GetLevel => {
                                 // REAL levels — the mixer callback writes true post-fader peaks
                                 // (per deck) + the post-EQ program peak (master) into bus.peaks;
@@ -936,6 +1221,13 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     lvl.level_c      = bus.peaks[2];
                                     lvl.level_cart   = bus.peaks[6];
                                     lvl.level_master = bus.master_peak;
+                                    lvl.level_room   = bus.room_peak;
+                                    lvl.aux_frames   = bus.aux_out_frames.load(Ordering::Relaxed);
+                                    lvl.aux_peak     = bus.aux_peak;
+                                    lvl.aux_proc_in_lufs  = bus.aux_proc_in_lufs;
+                                    lvl.aux_proc_out_lufs = bus.aux_proc_out_lufs;
+                                    lvl.aux_proc_gr_db    = bus.aux_proc_gr_db;
+                                    lvl.aux_proc_ride_db  = bus.aux_proc_ride_db;
                                     lvl.spectrum     = bus.spectrum;
                                     // v4.4.46 mix telemetry — snapshot per-deck + counters under the
                                     // SAME lock (no extra lock; diagnostic only). Fed to `[mix sN]`.
@@ -958,8 +1250,15 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     // DECK_LETTERS[6] (len 6, A–F) — that panicked the cpal output
                                     // thread and caused permanent dead air.
                                     // docs/incident-jingle-cart-panic-2026-07-15.md
-                                    let mut dt = Vec::with_capacity(4);
-                                    for (i, id) in [(0usize, "A"), (1, "B"), (2, "C"), (6, "CART")] {
+                                    // D/E/F ADDED 2026-08-18 so the AUX monitor strips have live
+                                    // meters and positions. Deck slots 3/4/5 are valid indices into
+                                    // `decks: [DeckSlot; 7]`, and — the point of the incident note
+                                    // above — they are addressed by EXPLICIT LITERALS in this tuple
+                                    // list, exactly like "CART". Nothing here indexes DECK_LETTERS,
+                                    // which is what panicked the output thread on 2026-07-15.
+                                    let mut dt = Vec::with_capacity(7);
+                                    for (i, id) in [(0usize, "A"), (1, "B"), (2, "C"),
+                                                    (3, "D"), (4, "E"), (5, "F"), (6, "CART")] {
                                         let d = &bus.decks[i];
                                         let present = d.source.is_some();
                                         // active_decks stays A/B/C ONLY — electron/audio-health.js
@@ -974,6 +1273,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                             volume: d.volume,
                                             gain_db: d.gain_db,
                                             frames_played: d.frames_played,
+                                            peak: bus.peaks[i],
                                         });
                                     }
                                     lvl.active_decks = active;
@@ -992,6 +1292,12 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 break;
                             }
                             AudioCmd::SetEq(gains) => {
+                                // Mirror onto the ROOM chain's own EQ. Both instances must carry the
+                                // same bands or the room would be tonally different from air whenever
+                                // an aux deck is live and the room is running its own chain.
+                                if let Ok(bus) = bus_cmd.lock() {
+                                    if let Ok(mut eqr) = bus.eq_room.lock() { eqr.set_bands(&gains); }
+                                }
                                 if let Ok(bus) = bus_cmd.lock() {
                                     if let Ok(mut eq) = bus.eq.lock() {
                                         eq.set_bands(&gains);
@@ -1058,6 +1364,23 @@ fn open_output_device(
     let ch  = cfg.channels().min(2).max(1);
     eprintln!("[RUST] Station {} device: {} ({}Hz {}ch)",
         station_id, device.name().unwrap_or_default(), sr, ch);
+    Some((device, sr, ch))
+}
+
+/// Open a SPECIFICALLY NAMED output device. Unlike open_output_device this NEVER falls back to the
+/// system default: the aux monitor bus must only ever reach a device the operator chose. "No device
+/// picked" has to mean silence, not "whatever was default" — on a broadcast machine the default could
+/// be anything, including the very speakers feeding a mic.
+fn open_named_output_device(station_id: u32, name: &str) -> Option<(cpal::Device, u32, u16)> {
+    use cpal::traits::{DeviceTrait, HostTrait};
+    let device = cpal::available_hosts().into_iter().find_map(|host_id| {
+        let host = cpal::host_from_id(host_id).ok()?;
+        host.output_devices().ok()?.find(|d| d.name().ok().as_deref() == Some(name))
+    })?;
+    let cfg = device.default_output_config().ok()?;
+    let sr  = cfg.sample_rate().0;
+    let ch  = cfg.channels().min(2).max(1);
+    eprintln!("[RUST] Station {} AUX monitor device: {} ({}Hz {}ch)", station_id, name, sr, ch);
     Some((device, sr, ch))
 }
 
@@ -1144,6 +1467,17 @@ fn mixer_callback(
 
     let mut mix_l = vec![0f32; prog_frames];
     let mut mix_r = vec![0f32; prog_frames];
+    // ── ROOM vs AIR (2026-08-18) ─────────────────────────────────────────────────────────────────
+    // core_* = every slot EXCEPT the aux decks — the room's programme base.
+    // aux_*  = the aux decks a monitor slot has selected, PRE-CUT and PRE-FADER, at the slot level.
+    // mix_*  = everything, unchanged — this is what airs.
+    // Copied out before the &mut borrow of bus.decks below.
+    let aux_gain = bus.aux_monitor_gain;
+    let mut core_l = vec![0f32; prog_frames];
+    let mut core_r = vec![0f32; prog_frames];
+    let mut aux_l  = vec![0f32; prog_frames];
+    let mut aux_r  = vec![0f32; prog_frames];
+    let mut aux_present = false;   // an aux deck is producing audio → the room must use core_*
     let mut any_playing = false;
     let mut exhausted   = [false; 7];
     let mut frame_peaks = [0.0f32; 7]; // this-buffer post-fader peak per deck
@@ -1169,14 +1503,30 @@ fn mixer_callback(
         //
         // The source is still advanced below while cut, so a cut track runs out and its finished-flag
         // fires normally — cutting a channel must never strand a deck.
-        let vol = if deck.muted {
-            0.0
-        } else {
-            let trim = if deck.gain_db != 0.0 {
-                10f32.powf(deck.gain_db / 20.0).clamp(0.1, 4.0)
-            } else { 1.0 };
-            deck.volume * trim
-        };
+        // TRIM is computed unconditionally now: the aux monitor tap is PRE-CUT, so it still needs the
+        // file's loudness trim even while the channel is cut. `vol` is unchanged — muted is still 0.0,
+        // open is still volume x trim — so the AIR path is bit-identical.
+        let trim = if deck.gain_db != 0.0 {
+            10f32.powf(deck.gain_db / 20.0).clamp(0.1, 4.0)
+        } else { 1.0 };
+        let vol = if deck.muted { 0.0 } else { deck.volume * trim };
+        // AUX decks are slots 3/4/5. `mon` is the ROOM level for this deck: the slot's own level,
+        // taken PRE-CUT and PRE-FADER so the board's channel switch cannot silence the room —
+        // "channel ON/OFF affects the stream, never the room path".
+        let is_aux = i >= 3 && i <= 5;
+        // AUX MONITOR TAP — POST-FADER, POST-CUT (Jeff's ruling, 2026-08-18).
+        //
+        // `mon` is the SLOT level applied on top of `vol`, and `vol` is already 0 when the channel is
+        // cut and follows the fader otherwise. So the board's fader and channel switch silence this
+        // deck EVERYWHERE, monitor included.
+        //
+        // WHAT THIS REPLACES, AND WHY: the tap used to be `aux_gain[i] * trim` — independent of both
+        // deck.volume and deck.muted. That was a true PFL, and it produced a source with no off
+        // switch: fader down and channel off silenced air while the aux monitor kept playing at full
+        // level, with nothing on the board able to stop it. The slot decides WHERE a deck is heard
+        // locally and at what level; it never resurrects audio the board has killed.
+        let mon = if is_aux { aux_gain[i] } else { 0.0 };
+        if is_aux { aux_present = true; }
         let mut pk = 0.0f32;
         let mut pulled = 0u64;   // frames actually taken from THIS deck's source this buffer
         for f in 0..prog_frames {
@@ -1186,8 +1536,17 @@ fn mixer_callback(
                     let r = src.next().unwrap_or(0.0);
                     let lv = l * vol;
                     let rv = r * vol;
-                    mix_l[f] += lv;
+                    mix_l[f] += lv;                       // AIR — every slot, unchanged
                     mix_r[f] += rv;
+                    if !is_aux {                          // ROOM base — aux decks excluded entirely
+                        core_l[f] += lv;
+                        core_r[f] += rv;
+                    } else if mon != 0.0 {                // AUX monitor — POST-fader, POST-cut
+                        // lv/rv, NOT l/r: these are the samples after the channel cut and the fader,
+                        // so a cut or a closed fader yields zero here as well as on air.
+                        aux_l[f] += lv * mon;
+                        aux_r[f] += rv * mon;
+                    }
                     pulled += 1;
                     let a = lv.abs().max(rv.abs());
                     if a > pk { pk = a; }
@@ -1314,9 +1673,153 @@ fn mixer_callback(
     // level to Icecast, so turning the monitor down never changes what airs.
     // Device (studio-monitor) taps PROCESSED when "Process local output" is on, else clean — this IS the
     // PRE/POST monitor choice (broadcast is the stream branch above, unaffected). monitor_vol applies HERE only.
-    let (dl, dr): (&[f32], &[f32]) = if bus.proc_local && proc_l.is_some() {
+    //
+    // ── AUX MONITOR BUS (2026-08-18): the room is NOT the air feed when aux decks are live ────────
+    // Jeff's ruling: decks D/E/F must never sum into the local speaker output; they are heard in the
+    // room ONLY through an AUX slot that selects them, at that slot's level. Air keeps them.
+    //
+    // aux_present == false (every station not using an aux deck) → this whole block is skipped and the
+    // room takes the ORIGINAL path below, bit-identical to the previous build. The second chain costs
+    // nothing until the feature is in use.
+    let room_owned: Option<(Vec<f32>, Vec<f32>)> = if aux_present {
+        // The room's programme base is core_* (aux decks excluded), run through the room's OWN EQ and
+        // master gain so A/B/C local monitoring is unchanged. Separate instances because both stages
+        // are stateful and the air chain has already used its own on a different sum this callback.
+        let (mut rl, mut rr): (Vec<f32>, Vec<f32>) = if let Ok(mut eqr) = bus.eq_room.try_lock() {
+            let mut a = Vec::with_capacity(prog_frames);
+            let mut b = Vec::with_capacity(prog_frames);
+            for f in 0..prog_frames {
+                let (l, r) = eqr.process_stereo(core_l[f], core_r[f]);
+                a.push(l.clamp(-1.0, 1.0));
+                b.push(r.clamp(-1.0, 1.0));
+            }
+            (a, b)
+        } else {
+            // Never block the audio thread for EQ — fall back to clean, exactly as the air chain does.
+            (core_l.iter().map(|&s| s.clamp(-1.0, 1.0)).collect(),
+             core_r.iter().map(|&s| s.clamp(-1.0, 1.0)).collect())
+        };
+        if master_vol != 1.0 {
+            for f in 0..prog_frames { rl[f] *= master_vol; rr[f] *= master_vol; }
+        }
+        // Same PRE/POST monitor choice the operator already has for the room.
+        if bus.proc_local {
+            let target = bus.proc_target_lufs;
+            if let Ok(mut p) = bus.processor_room.try_lock() {
+                p.set_target(target);
+                p.process_planar(&mut rl, &mut rr);
+            }
+        }
+        // NOTE: the aux sum is NOT added here. It has exactly ONE destination — the device chosen in
+        // the AUX MONITORS section — and it reaches it through the aux ring below. An earlier revision
+        // mixed it into the room and then bypassed the station monitor fader so it would be audible;
+        // that amounted to picking an output on the operator's behalf, which is unsafe on a broadcast
+        // machine. Reverted deliberately (Jeff, 2026-08-18): no device chosen = silence.
+        //
+        // What this chain still does, and must: build the room from the NON-aux slots, so decks D/E/F
+        // never sum into the station's local speaker output.
+        let _ = &aux_l;   // consumed by the aux ring below, not by the room
+        Some((rl, rr))
+    } else { None };
+
+    let (dl, dr): (&[f32], &[f32]) = if let Some((ref rl, ref rr)) = room_owned {
+        (rl, rr)
+    } else if bus.proc_local && proc_l.is_some() {
         (proc_l.as_ref().unwrap(), proc_r.as_ref().unwrap())
     } else { (&out_l, &out_r) };
+    // ── AUX FEED THROUGH THE EXISTING PROCESSOR (Jeff, 2026-08-18) ───────────────────────────────
+    // The aux sum is a MIX (up to three decks at their own slot levels) and can exceed full scale even
+    // when every part is sane. The first attempt clamped it — but clamp() IS a hard clipper, so the
+    // "safety" was itself the distortion. This is a local monitor feed, so it goes through the SAME
+    // program processor the operator already configures in Preferences (loudness ride + -1 dBTP
+    // limiter), following the same "Process local output" toggle and target as the room. Nothing new
+    // is invented and nothing is hand-rolled; the limiter that was bench-proven for air does this job.
+    //
+    // Its own instance: the processor is stateful and the air and room chains have already run theirs
+    // on different sums in this callback.
+    if bus.proc_local {
+        let target = bus.proc_target_lufs;
+        if let Ok(mut p) = bus.processor_aux.try_lock() {
+            p.set_target(target);
+            p.process_planar(&mut aux_l, &mut aux_r);
+        }
+    }
+
+    // ── AUX BUS PROCESSING — the processor from Preferences, not a bespoke clamp ─────────────────
+    // The aux bus carries the jukebox to the park's speakers, and that material includes Disney tracks
+    // whose spoken dialogue is simply not audible outdoors without the loudness ride. So this is not a
+    // safety net, it is part of the product: the same ride + -1 dBTP limiter the operator already
+    // configures in Preferences ("Process local output" + target LUFS), applied to the aux sum.
+    //
+    // It REPLACES a hard clamp(-1.0, 1.0) that was doing peak control here. A hard clamp IS a clipper:
+    // the moment the sum passed full scale it produced exactly the distortion it was meant to prevent,
+    // and it did nothing at all for quiet dialogue. The limiter was already in the product.
+    //
+    // Its own instance because the processor is stateful and the air/room chains have already run
+    // theirs over different sums this callback. try_lock only — never block the audio thread; a missed
+    // lock falls through to the clamp below, which is the same fallback the other chains take.
+    if bus.proc_local && aux_present {
+        let target = bus.proc_target_lufs;
+        // Meters extracted before the guard drops, exactly as the station chain does it — observed at
+        // the taps, never claimed.
+        let meters = if let Ok(mut p) = bus.processor_aux.try_lock() {
+            p.set_target(target);
+            p.process_planar(&mut aux_l, &mut aux_r);
+            Some((p.in_lufs(), p.out_lufs(), p.gain_reduction_db(), p.ride_gain_db()))
+        } else { None };
+        if let Some((il, ol, gr, ride)) = meters {
+            bus.aux_proc_in_lufs = il;
+            bus.aux_proc_out_lufs = ol;
+            bus.aux_proc_gr_db = gr;
+            bus.aux_proc_ride_db = ride;
+        }
+    }
+
+    // AUX FEED VU — the peak of what the aux bus is sending, with the same release ballistics as the
+    // other meters. Computed whether or not a device is open, so "the slot is feeding but nothing is
+    // selected to hear it on" is a distinguishable state.
+    {
+        let ap = aux_l.iter().chain(aux_r.iter()).map(|&s| s.abs()).fold(0.0f32, f32::max);
+        bus.aux_peak = ap.max(bus.aux_peak * VU_RELEASE);
+    }
+
+    // ── AUX MONITOR SEND ─────────────────────────────────────────────────────────────────────────
+    // The aux sum's ONE destination. Written only when an aux output stream is open, which only
+    // happens when the operator picked a device. Interleaved stereo at PROGRAM_RATE; the aux stream's
+    // own callback resamples to whatever its device runs at.
+    //
+    // DRIFT BOUND: the aux device has its own clock, so producer and consumer never agree exactly.
+    // Past AUX_RING_HIGH we drop a frame rather than let the ring creep toward full — a monitor that
+    // is seconds behind is useless, and a dropped frame on a monitor feed is a tick, not a fault.
+    // try_push is used throughout: the audio thread must never block on a full ring.
+    {
+        if let Some(ref mut prod) = bus.aux_ring_prod {
+            for f in 0..prog_frames {
+                // NO CLAMP HERE. Peak control on this bus belongs to the program processor above —
+                // the same -1 dBTP limiter the rest of the product uses. An earlier revision clamped
+                // instead, which is a hard clipper: it produced the very distortion it was meant to
+                // prevent on loud material, and did nothing for the quiet dialogue that is the reason
+                // this bus is processed at all. One system, one place that controls peaks.
+                let l = aux_l[f];
+                let r = aux_r[f];
+                // NO mid-buffer break. This used to `break` out of the loop once the ring reached its
+                // high-water mark, which threw away the REST of the buffer — a hard discontinuity in
+                // the waveform every time it fired, i.e. a click, repeating for as long as the two
+                // device clocks disagreed. That is the crackle. Rate correction now happens on the
+                // CONSUMER side (a sub-audible resample nudge), where it belongs; the producer's only
+                // job is to hand over every sample it made.
+                let _ = prod.try_push(l);
+                let _ = prod.try_push(r);
+            }
+        }
+    }
+
+    // ROOM VU — the peak of what the speakers are about to get, with the same release ballistics as
+    // the air meters. Taken BEFORE the monitor gains so it reads the content, not the knob.
+    {
+        let rp = dl.iter().chain(dr.iter()).map(|&s| s.abs()).fold(0.0f32, f32::max);
+        bus.room_peak = rp.max(bus.room_peak * VU_RELEASE);
+    }
     // Room level = this station's strip level x the ONE master monitor level. Both local-only: the
     // stream push above already happened, so neither can change what airs.
     let mvol = bus.monitor_vol * bus.master_monitor_vol;
