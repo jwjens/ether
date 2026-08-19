@@ -41,6 +41,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { getLocalArt, fetchMusicStoreArt } from "../lib/albumArt";
+import { pushJukeboxState } from "../lib/ccData";
 
 // ── Payment layer (08-04 §4) — kept as the seam, still free ────────────────────────────────────────
 // The pick path calls authorize() and enqueues ONLY on ok:true, so a donation/card step drops in here
@@ -312,6 +313,12 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
   const [categoryIds, setCategoryIds] = useState<number[]>([]);
   const [categoryNames, setCategoryNames] = useState<string[]>([]);
   const [requestUrl, setRequestUrl] = useState<string>("");
+  /** The raw slug ("party"), as opposed to the composed URL the QR carries. The lobby feed is
+   *  addressed by slug, and it must be the SAME one the pool was published under. */
+  const [requestSlug, setRequestSlug] = useState<string>("");
+  /** Read from the SAME station_config_kv load as everything else here (App.tsx does the same:
+   *  get('license_key')). The lobby publish is license-keyed like every other install->cloud push. */
+  const [licenseKey, setLicenseKey] = useState<string>("");
   const [configLoaded, setConfigLoaded] = useState(false);
 
   const [repeatMinutes, setRepeatMinutes] = useState(DEFAULT_REPEAT_MINUTES);
@@ -398,6 +405,8 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
         // dependent query effects do not re-run every 4 seconds.
         setCategoryIds(prev => (prev.length === ids.length && prev.every((v, i) => v === ids[i]) ? prev : ids));
         setRequestUrl(jukeboxPublicUrl(get("jukebox_request_url")));
+        setRequestSlug(String(get("jukebox_request_url") ?? "").trim().toLowerCase());
+        setLicenseKey(String(get("license_key") ?? "").trim());
         setChannelOn(chOn);
         if (Number.isFinite(rm)) setRepeatMinutes(rm);
         if (Number.isFinite(mp)) setMaxPending(mp);
@@ -686,6 +695,43 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
       setBusy(false);
     }
   };
+
+  // ── LOBBY FEED ───────────────────────────────────────────────────────────────────────────────────
+  // Publish what the room-facing lobby screen shows. Every value here is one this window already
+  // holds and already renders — nothing is measured a second time, so the lobby and the wall cannot
+  // disagree about who is next.
+  //
+  // Five seconds: fast enough that a song change reaches the lobby before anyone notices, slow enough
+  // that it is 12 writes a minute rather than 60.
+  useEffect(() => {
+    if (stationId == null) return;
+    let stop = false;
+    const publish = async () => {
+      if (stop) return;
+      if (!licenseKey || !requestSlug) return;
+      const pending = requests.filter(r => r.status === "queued" || r.status === "pending");
+      await pushJukeboxState(licenseKey, requestSlug, {
+        nowPlaying: nowPlaying
+          ? { title: nowPlaying.title, artist: nowPlaying.artist || null,
+              // Derived HERE, not read from the render body. This hook must sit ABOVE the early
+              // returns — a hook placed after a conditional return changes the hook count between
+              // renders, which is exactly the "Rendered more hooks than during the previous render"
+              // crash this caused. So it cannot close over consts declared below them.
+              requester: (startedBy.current && startedBy.current.title === nowPlaying.title)
+                ? startedBy.current.requester : null }
+          : null,
+        upNext: pending.length
+          ? { title: pending[0].title, artist: pending[0].artist, requester: pending[0].requester_name }
+          : (nextUp ? { title: nextUp.title, artist: nextUp.artist, requester: null } : null),
+        queue: pending.slice(1).map(r => ({ title: r.title, artist: r.artist, requester: r.requester_name })),
+        autoOn,
+        onAir: deckStatus === "playing" && channelOn && !(deckVolume != null && deckVolume <= 0.001),
+      });
+    };
+    void publish();
+    const id = setInterval(publish, 5000);
+    return () => { stop = true; clearInterval(id); };
+  }, [stationId, licenseKey, requestSlug, nowPlaying, nextUp, requests, autoOn, deckStatus, channelOn, deckVolume]);
 
   // ── Honest states before the room ───────────────────────────────────────────────────────────────
   const shell = (body: React.ReactNode) => (
