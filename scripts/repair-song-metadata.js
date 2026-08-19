@@ -126,7 +126,15 @@ function defaultDbPath() {
       try { tag = (await0(s)); } catch { stats.unreadable++; continue; }
       if (!tag) { stats.unreadable++; continue; }
 
-      const name = (tag.artist || tag.albumartist || '').trim();
+      // music-metadata SPLITS some artist tags on '/', so a band whose name contains one comes back
+      // truncated: AC/DC arrives as artist="AC" with artists=["AC","DC"], and taking `artist` alone
+      // invents an artist called "AC". Detect exactly that case — `artist` equal to the FIRST element
+      // of a multi-element split — and rejoin. A properly-formed name ("Ariana Grande, The Weeknd",
+      // "Robert Palmer/Eric 'ET' Thorngren") is not split and is left untouched.
+      let name = (tag.artist || tag.albumartist || '').trim();
+      if (Array.isArray(tag.artists) && tag.artists.length > 1 && name === String(tag.artists[0]).trim()) {
+        name = tag.artists.map(x => String(x).trim()).join('/');
+      }
       if (!name) { stats.noTag++; continue; }
 
       const sid = ARTIST_STATION;   // artists are station-scoped; songs are not
