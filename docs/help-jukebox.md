@@ -36,9 +36,15 @@ settings, edit your library, or stop what is on air.
      isn't on this machine are **left out on purpose** — a request that can't play would be dead air
      in front of an audience.
    - A category showing **"no playable songs"** has nothing the jukebox can use. Ticking it adds nothing.
-2. **Add your request link (optional, for phones).** In the same place, paste the public request page
-   address into **Request link (QR)** and press **Save**. The jukebox turns it into a QR code big enough
-   to scan from across the room. Leave it empty and the jukebox simply doesn't show a code.
+2. **Name your request page.** In the same place, type a short name into **Request link (QR)** and
+   press **Save** — e.g. `party` gives your guests
+   **listen.ether-technologies.com/jukebox/party**. Letters, numbers and dashes; the Jukebox builds
+   the full address and turns it into a QR code big enough to scan from across the room. Leave it
+   empty and the Jukebox simply doesn't show a code.
+   - Type a **name**, not a web address. A bare word on its own is not a link — the app adds the rest.
+     (If you'd rather paste a full `https://` address, that works too and is used exactly as given.)
+   - The same page works on a **phone** and fullscreen on a **tablet** at a stand — it's one page that
+     fits whatever it's opened on.
 3. **Patch it into a deck.** On the dashboard open the deck configurator and set the source of
    **deck D, E or F** to **Jukebox**. That is the jukebox's channel on your board — bring the fader up
    and it is on air, exactly like a microphone.

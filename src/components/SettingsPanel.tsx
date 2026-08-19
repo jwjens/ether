@@ -2182,7 +2182,7 @@ function JukeboxSection() {
               : <>Pool: <strong style={{ color: "var(--text-primary)" }}>{poolTotal.toLocaleString()}</strong> song{poolTotal === 1 ? "" : "s"} across {checked.length} categor{checked.length === 1 ? "y" : "ies"}. Songs with no file on this machine are excluded — a public pick must never produce dead air.</>}
           </div>
 
-          <SettingRow label="Request link (QR)" hint="The public page this station's QR code points at. Shown on the jukebox every time the window opens. Phase 2 wires the page itself.">
+          <SettingRow label="Request link (QR)" hint="A short name for this station's public request page — e.g. “party” gives listen.ether-technologies.com/jukebox/party. Letters, numbers and dashes. The Jukebox turns it into a QR code guests scan with their phone. A full https:// address is accepted too.">
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input
                 value={url}

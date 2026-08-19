@@ -65,6 +65,22 @@ const FreeProvider: JukeboxPaymentProvider = {
 // and let the catalogue win unconditionally.
 const CATALOGUE_OVERRIDES_WITHOUT_ARTIST = false;
 
+// Where the public request page lives. The QR has to carry a URL a phone camera will OPEN — a bare
+// word like "party" is treated as a SEARCH TERM, which is exactly what happened: scanning the code
+// took the guest to a Google search for "party" instead of the request page.
+//
+// So the setting is a SLUG and the app composes the address. A full URL is still accepted verbatim,
+// for an operator who pastes one.
+const JUKEBOX_PUBLIC_BASE = "https://listen.ether-technologies.com";
+function jukeboxPublicUrl(raw: string | null | undefined): string {
+  const v = String(raw ?? "").trim();
+  if (!v) return "";
+  if (/^https?:\/\//i.test(v)) return v;                  // already a full address
+  const slug = v.replace(/^\/+|\/+$/g, "").toLowerCase();  // "party", "/party/", "PARTY" -> "party"
+  if (!slug) return "";
+  return `${JUKEBOX_PUBLIC_BASE}/jukebox/${encodeURIComponent(slug)}`;
+}
+
 const DEFAULT_REPEAT_MINUTES = 60;
 const DEFAULT_MAX_PENDING = 12;
 const PAGE_SIZE = 60;
@@ -381,7 +397,7 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
         // Identity-stable update: same ids in the same order -> keep the existing array so the
         // dependent query effects do not re-run every 4 seconds.
         setCategoryIds(prev => (prev.length === ids.length && prev.every((v, i) => v === ids[i]) ? prev : ids));
-        setRequestUrl(String(get("jukebox_request_url") ?? "").trim());
+        setRequestUrl(jukeboxPublicUrl(get("jukebox_request_url")));
         setChannelOn(chOn);
         if (Number.isFinite(rm)) setRepeatMinutes(rm);
         if (Number.isFinite(mp)) setMaxPending(mp);
