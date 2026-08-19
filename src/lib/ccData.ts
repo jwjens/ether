@@ -117,6 +117,41 @@ export async function pushJukeboxPool(
   }
 }
 
+// ── JUKEBOX LIVE STATE (lobby display) ───────────────────────────────────────────────────────────
+// What the room-facing lobby screen shows: what is playing, what is next, and who asked for it.
+//
+// Published by the JUKEBOX WINDOW, because that window is the only place these facts exist together —
+// it already polls the routed deck every second and the request list every five. Nothing new is
+// measured here; this is the same state the wall renders, addressed to the lobby.
+//
+// If the operator closes the Jukebox window the state stops updating, and the lobby says
+// "reconnecting…" while holding its last frame. That is honest: with the window shut there is nothing
+// driving the deck either.
+export async function pushJukeboxState(
+  licenseKey: string | null | undefined,
+  slug: string | null | undefined,
+  state: {
+    nowPlaying: { title: string; artist: string | null; requester: string | null } | null;
+    upNext: { title: string; artist: string | null; requester: string | null } | null;
+    queue: { title: string; artist: string | null; requester: string | null }[];
+    autoOn: boolean;
+    onAir: boolean;
+  },
+): Promise<void> {
+  const s = String(slug ?? "").trim().toLowerCase();
+  if (!licenseKey || !s) return;
+  try {
+    await fetch(`${ETHER_BACKEND_URL}/api/account/jukebox/state`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-license-key": licenseKey },
+      body: JSON.stringify({ slug: s, state }),
+    });
+  } catch (e) {
+    // Best-effort by design: the lobby going stale must never disturb the room the wall is serving.
+    console.log("[JUKEBOX] state publish failed:", (e as any)?.message ?? e);
+  }
+}
+
 // Gather a table's live rows via the typed sync handlers and push them. Any table in the
 // NS map below is supported (categories, clocks, clock_slots, shows).
 export async function pushCcTable(
