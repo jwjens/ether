@@ -4281,7 +4281,10 @@ try {
   const _artwork = require("./artwork-cache");
   try {
     _artwork.init({
-      db,
+      // A PROVIDER, not the handle. This block is evaluated at require time and `db` is not assigned
+      // until openDb() runs later (main.js:1347) — passing `db` here captured undefined and pinned it,
+      // so artwork_cache was never written to or read from (0 rows on a machine that had run v41).
+      getDb: () => db,
       cacheDir: path.join(app.getPath("userData"), "artwork-cache"),
       log: (m) => { try { logStartup(m); } catch {} },
     });
@@ -4289,10 +4292,17 @@ try {
 
   // Returns a file:// URL the renderer can use directly, or null. Never throws — artwork is
   // decoration, and a failed lookup must leave the neutral tile rather than break a render.
+  // Returns a data: URL, NOT file://. In dev the renderer is served from http://127.0.0.1:1420
+  // (main.js:5485), and Chromium blocks a file:// subresource from an http origin — so a file:// URL
+  // renders as nothing in dev while working in a packaged build, which is the worst possible split.
+  // The file still lives on disk (that is the cache and the provenance); this reads it back and
+  // inlines it, exactly as audio:embeddedArt already does for embedded covers.
   ipcMain.handle("artwork:music-store", async (_e, title, artist) => {
     try {
       const p = await _artwork.getMusicStoreArt(title, artist);
-      return p ? require("url").pathToFileURL(p).href : null;
+      if (!p) return null;
+      const buf = require("fs").readFileSync(p);
+      return `data:image/jpeg;base64,${buf.toString("base64")}`;
     } catch { return null; }
   });
   // Provenance roll-up — what came from iTunes, how many files, how many bytes.

@@ -31,7 +31,7 @@ db.exec("CREATE TABLE schema_version (version INTEGER PRIMARY KEY)");
 require("./migrate-artwork-cache-phase-sync-41.js").applyMigration(db);
 
 const artwork = require("../electron/artwork-cache");
-artwork.init({ db, cacheDir, log: () => {} });
+artwork.init({ getDb: () => db, cacheDir, log: () => {} });
 
 // ── Stub the network. Every call is counted, so "one call ever" is measurable rather than asserted.
 let searchCalls = 0, imageCalls = 0;
@@ -76,7 +76,7 @@ global.fetch = async (url) => {
   await test("SURVIVES A RESTART — a fresh module instance still finds it", async () => {
     delete require.cache[require.resolve("../electron/artwork-cache")];
     const fresh = require("../electron/artwork-cache");
-    fresh.init({ db, cacheDir, log: () => {} });
+    fresh.init({ getDb: () => db, cacheDir, log: () => {} });
     const p = await fresh.getMusicStoreArt("Be Our Guest", "Angela Lansbury");
     assert.ok(p && fs.existsSync(p));
     assert.equal(searchCalls, 1, "a reload must not re-fetch — this is the whole point of the disk cache");
@@ -125,6 +125,24 @@ global.fetch = async (url) => {
   });
 
   console.log("\nrate limiting — Apple's ~20/min guidance");
+  await test("a database that only exists AFTER init is still used", async () => {
+    // REGRESSION 2026-08-19: main.js evaluates this module at require time, but `db` is not assigned
+    // until openDb() runs later in startup. Capturing the handle at init caught `undefined` and
+    // pinned it — v41 had run, the table existed, and artwork_cache stayed empty forever. The
+    // provider must be consulted per call, not once.
+    delete require.cache[require.resolve("../electron/artwork-cache")];
+    const late = require("../electron/artwork-cache");
+    let handle = null;                                   // nothing yet, exactly like startup
+    late.init({ getDb: () => handle, cacheDir, log: () => {} });
+    assert.equal(late.stats().ready, false, "with no db yet it must report not-ready, not throw");
+    handle = db;                                         // ...openDb() finally runs
+    assert.equal(late.stats().ready, true, "once the db exists it must be seen WITHOUT a re-init");
+    const before = searchCalls;
+    const p = await late.getMusicStoreArt("Be Our Guest", "Angela Lansbury");
+    assert.ok(p, "should resolve from the cache it can now read");
+    assert.equal(searchCalls, before, "and must NOT re-fetch — proof it read the table, not the network");
+  });
+
   await test("the limiter is set below the guidance and queues rather than bursts", () => {
     const src = fs.readFileSync(path.join(__dirname, "..", "electron", "artwork-cache.js"), "utf8");
     const max = Number(/MAX_CALLS\s*=\s*(\d+)/.exec(src)[1]);

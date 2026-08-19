@@ -32,13 +32,16 @@ const WINDOW_MS = 60_000;
 const _callTimes = [];              // epoch ms of recent calls, pruned to the window
 let _chain = Promise.resolve();     // serialises fetches so the limiter cannot be raced
 
-let _db = null;
+// A PROVIDER, not a handle. main.js evaluates this module at require time, but `db` is not assigned
+// until openDb() runs later in startup (main.js:1347) — capturing it here caught `undefined` and
+// pinned it forever, so nothing was ever written to or read from artwork_cache. It also survives a
+// database swap, which a captured handle would not.
+let _getDb = () => null;
 let _dir = null;
 let _log = () => {};
 
-/** Wire up. `dbProvider` is a function so this module never holds a handle across a database swap. */
-function init({ db, cacheDir, log }) {
-  _db = db || null;
+function init({ getDb, cacheDir, log }) {
+  if (typeof getDb === "function") _getDb = getDb;
   _dir = cacheDir || null;
   if (typeof log === "function") _log = log;
   try { if (_dir) fs.mkdirSync(_dir, { recursive: true }); }
@@ -61,22 +64,24 @@ function cacheKey(title, artist) {
 }
 
 function _tableReady() {
-  try { return !!_db && !!_db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='artwork_cache'").get(); }
-  catch { return false; }
+  try {
+    const db = _getDb();
+    return !!db && !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='artwork_cache'").get();
+  } catch { return false; }
 }
 
 /** What we already know about this key. Returns undefined when never asked — which is NOT the same
  *  as a row whose local_path is null ("asked, nothing there"). */
 function _lookup(key) {
   if (!_tableReady()) return undefined;
-  try { return _db.prepare("SELECT * FROM artwork_cache WHERE cache_key = ?").get(key); }
+  try { return _getDb().prepare("SELECT * FROM artwork_cache WHERE cache_key = ?").get(key); }
   catch { return undefined; }
 }
 
 function _remember(key, title, artist, sourceUrl, localPath, bytes) {
   if (!_tableReady()) return;
   try {
-    _db.prepare(`INSERT INTO artwork_cache (cache_key, title, artist, source, source_url, local_path, fetched_at, bytes)
+    _getDb().prepare(`INSERT INTO artwork_cache (cache_key, title, artist, source, source_url, local_path, fetched_at, bytes)
                  VALUES (?,?,?,'itunes',?,?,?,?)
                  ON CONFLICT(cache_key) DO UPDATE SET
                    source_url = excluded.source_url, local_path = excluded.local_path,
@@ -162,7 +167,7 @@ async function getMusicStoreArt(title, artist) {
 function stats() {
   if (!_tableReady()) return { ready: false };
   try {
-    const r = _db.prepare(`SELECT source, COUNT(*) AS rows,
+    const r = _getDb().prepare(`SELECT source, COUNT(*) AS rows,
                                   SUM(CASE WHEN local_path IS NOT NULL THEN 1 ELSE 0 END) AS withArt,
                                   COALESCE(SUM(bytes), 0) AS bytes
                              FROM artwork_cache GROUP BY source`).all();
