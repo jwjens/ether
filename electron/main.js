@@ -1424,6 +1424,25 @@ function bootStep(label, fn) {
   }
 }
 
+// Music-store artwork cache. Called from initDb() once the database is open and migrated — never at
+// module scope, where `db` does not exist yet (the defect that left artwork_cache empty on a machine
+// that had already run v41). Logs the handle state ONCE so "did it get a real db?" is answerable from
+// the log instead of by inference.
+function initArtworkCache() {
+  try {
+    const _artwork = require("./artwork-cache");
+    const dir = path.join(app.getPath("userData"), "artwork-cache");
+    _artwork.init({ getDb: () => db, cacheDir: dir, log: (m) => { try { logStartup(m); } catch {} } });
+    const st = _artwork.stats();
+    const line = `[artwork] cache ready — db=${db ? "CONNECTED" : "NULL"} table=${st && st.ready ? "ready" : "NOT READY"} dir=${dir}`;
+    console.log(line);
+    try { logStartup(line); } catch {}
+  } catch (e) {
+    console.error("[artwork] init failed:", e.message);
+    try { logStartup(`[artwork] init FAILED: ${e.message}`); } catch {}
+  }
+}
+
 function initDb() {
   const dbPath = getDbPath();
   console.log("[DB] Path:", dbPath);
@@ -1431,6 +1450,9 @@ function initDb() {
   console.log("[DB] Connected:", dbPath);
   bootStep("Checking station database…", () => repairSchema(db));   // in-place, offline, before anything else
   bootStep("Updating station database…", () => runMigrations());
+  // AFTER openDb() + runMigrations(): the handle exists and artwork_cache (v41) is present. Calling
+  // this at module scope caught `db === undefined` and pinned it, so nothing was ever cached.
+  bootStep("Preparing artwork cache…", () => initArtworkCache());
   bootStep("Preparing decks…", () => seedDeckConfigs());
   setTimeout(() => { try { console.log("[DB] Song count:", db.prepare("SELECT COUNT(*) as c FROM songs").get()); } catch(e) { console.log("[DB] Song count error:", e.message); } }, 500);
 }
@@ -4279,16 +4301,9 @@ ipcMain.handle("audio:embeddedArt", async (_, filePath) => {
 // See electron/artwork-cache.js and migration v41 for why the source is recorded.
 try {
   const _artwork = require("./artwork-cache");
-  try {
-    _artwork.init({
-      // A PROVIDER, not the handle. This block is evaluated at require time and `db` is not assigned
-      // until openDb() runs later (main.js:1347) — passing `db` here captured undefined and pinned it,
-      // so artwork_cache was never written to or read from (0 rows on a machine that had run v41).
-      getDb: () => db,
-      cacheDir: path.join(app.getPath("userData"), "artwork-cache"),
-      log: (m) => { try { logStartup(m); } catch {} },
-    });
-  } catch (e) { console.error("[artwork] init:", e.message); }
+  // init() is called from initDb(), AFTER openDb() has assigned `db` — see initArtworkCache below.
+  // It also takes a PROVIDER rather than the handle, so the module re-reads `db` per call and a
+  // database swap cannot strand it on a closed connection.
 
   // Returns a file:// URL the renderer can use directly, or null. Never throws — artwork is
   // decoration, and a failed lookup must leave the neutral tile rather than break a render.
