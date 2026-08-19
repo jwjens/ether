@@ -40,7 +40,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
-import { getLocalArt } from "../lib/albumArt";
+import { getLocalArt, fetchMusicStoreArt } from "../lib/albumArt";
 
 // ── Payment layer (08-04 §4) — kept as the seam, still free ────────────────────────────────────────
 // The pick path calls authorize() and enqueues ONLY on ok:true, so a donation/card step drops in here
@@ -112,7 +112,16 @@ function Tile({ song, onPick }: { song: JukeSong; onPick: (s: JukeSong) => void 
     const io = new IntersectionObserver(entries => {
       if (!entries.some(e => e.isIntersecting) || asked.current) return;
       asked.current = true;
-      getLocalArt(song.file_path)
+      // Embedded cover first — free, local, per-file cached. Only when a file carries no art at all
+      // does this reach for the music store, and that call is cached to disk in MAIN with a
+      // ~20-calls/minute limiter (electron/artwork-cache.js), so a big wall fills in gradually
+      // rather than storming Apple. Still ONE resolve per tile, ever, and only for tiles that
+      // actually scroll into view.
+      (async () => {
+        const local = await getLocalArt(song.file_path);
+        if (local) return local;
+        return await fetchMusicStoreArt(song.title, song.artist || "");
+      })()
         .then(src => { if (src) setArt(src); })
         .catch(() => { /* neutral tile stands */ });
     }, { rootMargin: "300px" });
@@ -203,15 +212,25 @@ function EntryBlock({ name, title, artist, size = "sm", accent = false }: {
 
 // Now-playing artwork. Same rules as the wall (08-04 §3): getLocalArt only — embedded cover, per-path
 // cache, never the network — and a tinted panel rather than an empty square when there is no art.
-function NowArt({ filePath, title, square }: { filePath: string | null; title: string; square?: boolean }) {
+function NowArt({ filePath, title, artist, square }: {
+  filePath: string | null; title: string; artist?: string | null; square?: boolean;
+}) {
   const [art, setArt] = useState<string | null>(null);
   useEffect(() => {
     let stop = false;
     setArt(null);
-    if (!filePath) return;
-    getLocalArt(filePath).then(src => { if (!stop && src) setArt(src); }).catch(() => { /* tint stands */ });
+    if (!filePath && !title) return;
+    // Same chain as the wall tiles: embedded cover, then the music store. The now-playing strip is
+    // the one piece of art people actually look at, so it is worth the fallback.
+    (async () => {
+      const local = filePath ? await getLocalArt(filePath) : null;
+      if (local) return local;
+      return await fetchMusicStoreArt(title, artist || "");
+    })()
+      .then(src => { if (!stop && src) setArt(src); })
+      .catch(() => { /* tint stands */ });
     return () => { stop = true; };
-  }, [filePath]);
+  }, [filePath, title, artist]);
   return (
     <div style={{
       // `square` fills a caller-sized box (the horizontal header strip); otherwise it is a full-width
@@ -710,7 +729,7 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
             {nowPlaying ? (
               <>
                 <div style={{ flexShrink: 0, width: 90, height: 90 }}>
-                  <NowArt filePath={nowPlaying.filePath} title={nowPlaying.title} square />
+                  <NowArt filePath={nowPlaying.filePath} title={nowPlaying.title} artist={nowPlaying.artist} square />
                 </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontSize: 10, fontWeight: 900, letterSpacing: "0.18em",

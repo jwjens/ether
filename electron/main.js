@@ -4271,6 +4271,34 @@ ipcMain.handle("audio:embeddedArt", async (_, filePath) => {
   _embeddedArtCache.set(filePath, result);
   return result;
 });
+// ── MUSIC-STORE ARTWORK — the Jukebox's fallback when a file has no embedded cover ────────────────
+// Ruling 2026-08-19: embedded art first (audio:embeddedArt above), iTunes Search as the FALLBACK,
+// same in-house non-commercial use as the rest of Ether. It runs in MAIN, not the renderer, so the
+// disk cache, the provenance row and the ~20-calls/minute limiter are shared by every window — a
+// per-renderer cache would let two pop-outs each hammer the API independently.
+// See electron/artwork-cache.js and migration v41 for why the source is recorded.
+try {
+  const _artwork = require("./artwork-cache");
+  try {
+    _artwork.init({
+      db,
+      cacheDir: path.join(app.getPath("userData"), "artwork-cache"),
+      log: (m) => { try { logStartup(m); } catch {} },
+    });
+  } catch (e) { console.error("[artwork] init:", e.message); }
+
+  // Returns a file:// URL the renderer can use directly, or null. Never throws — artwork is
+  // decoration, and a failed lookup must leave the neutral tile rather than break a render.
+  ipcMain.handle("artwork:music-store", async (_e, title, artist) => {
+    try {
+      const p = await _artwork.getMusicStoreArt(title, artist);
+      return p ? require("url").pathToFileURL(p).href : null;
+    } catch { return null; }
+  });
+  // Provenance roll-up — what came from iTunes, how many files, how many bytes.
+  ipcMain.handle("artwork:stats", () => { try { return _artwork.stats(); } catch { return null; } });
+} catch (e) { console.error("[artwork] module unavailable:", e.message); }
+
 ipcMain.handle("audio:watchdogSet", (_, active, thresholdSec, stationId) => AUDIO_DAEMON ? audiodClient.cmd("watchdogSet", { active, thresholdSec, stationId }) : audio.watchdogSet(active, thresholdSec, stationId));
 // Broadcast (profanity) delay + dump — delay lives on the stream path only.
 ipcMain.handle("audio:setBroadcastDelay", (_, seconds, stationId) => AUDIO_DAEMON ? audiodClient.cmd("setBroadcastDelay", { seconds, stationId }) : audio.audioSetBroadcastDelay(seconds, stationId));

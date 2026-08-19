@@ -35,15 +35,21 @@ export async function getLocalArt(filePath: string | null | undefined): Promise<
 }
 
 /** Music-store artwork by title/artist. MUSIC ONLY — never call this for a spot or imaging.
- *  `resolveArtwork` is the only thing that should be calling it. */
+ *  `resolveArtwork` is the only thing that should be calling it.
+ *
+ *  RESOLVED IN MAIN as of 2026-08-19 (electron/artwork-cache.js). This used to fetch iTunes straight
+ *  from the renderer into an in-memory object — which meant the cache died with every window reload,
+ *  so closing and reopening a pop-out re-fetched the entire visible wall, and two windows open at once
+ *  each hammered the API independently. Main now owns one disk cache, one provenance row per lookup
+ *  (source='itunes', migration v41) and one ~20-calls/minute limiter shared by every window.
+ *
+ *  The map below stays as an L1: it saves an IPC round trip per repeated tile within a session. It is
+ *  no longer the only thing standing between a wall of 3,000 tiles and Apple's rate limit. */
 export async function fetchMusicStoreArt(title: string, artist: string): Promise<string | null> {
   const key = `${title}::${artist}`;
   if (_musicArtCache[key] !== undefined) return _musicArtCache[key] || null;
   try {
-    const q = encodeURIComponent(`${title} ${artist}`.replace(/\(feat\..*?\)/gi, "").replace(/\s*[-–]\s*remaster.*/gi, "").trim());
-    const r = await fetch(`https://itunes.apple.com/search?term=${q}&media=music&entity=song&limit=1`);
-    const d = await r.json();
-    const url = d?.results?.[0]?.artworkUrl100?.replace("100x100bb", "60x60bb") ?? null;
+    const url = (await (window as any).ether?.audio?.musicStoreArt?.(title, artist)) ?? null;
     _musicArtCache[key] = url || "";
     return url;
   } catch { _musicArtCache[key] = ""; return null; }

@@ -50,6 +50,14 @@ settings, edit your library, or stop what is on air.
 ## Using it
 
 - **Browse** — scroll the wall. Covers load as you go.
+- **Where the covers come from.** Ether uses the artwork stored **inside your music files** first —
+  that is instant, works offline, and is always the art you tagged. For tracks with no embedded cover
+  it looks the artwork up **once** from the iTunes catalogue and keeps a copy on this machine, so it
+  never has to ask again — including after you close and reopen the window.
+  - On a big wall the first run fills in **gradually** rather than all at once. That is deliberate:
+    lookups are paced so Ether stays a polite visitor to Apple's service. Tiles without art yet show
+    the tinted cover with the song title, never an empty square.
+  - A track that genuinely has no cover anywhere is asked about **once** and then left alone.
 - **Search** — type in the box at the top. Results narrow as you type; there's no button to press.
 - **Request** — tap a cover, type a name, press **PLAY NEXT**. The song joins the queue and the person
   sees their name appear on the right.

@@ -26,6 +26,10 @@ contextBridge.exposeInMainWorld("ether", {
     getSpectrum: (stationId) => ipcRenderer.invoke("audio:getSpectrum", stationId),
     getFileDuration: (fp) => ipcRenderer.invoke("audio:getFileDuration", fp),
     embeddedArt: (fp) => ipcRenderer.invoke("audio:embeddedArt", fp),
+    // Music-store cover art (iTunes fallback). Resolved in MAIN so the disk cache, the provenance
+    // row and the rate limiter are shared across every window. Returns a file:// URL or null.
+    musicStoreArt: (title, artist) => ipcRenderer.invoke("artwork:music-store", title, artist),
+    artworkStats: () => ipcRenderer.invoke("artwork:stats"),
     // Broadcast (profanity) delay + dump.
     setBroadcastDelay: (seconds, stationId) => ipcRenderer.invoke("audio:setBroadcastDelay", seconds, stationId),
     dump: (stationId) => ipcRenderer.invoke("audio:dump", stationId),
