@@ -5,6 +5,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 
 const require_ = createRequire(import.meta.url);
+const REAL_HOME = process.env.HOME;
 const SANDBOX = path.join(os.tmpdir(), "ether-profile-paths-test");
 
 /** Fresh module per test — profile-paths caches the active profile for the life of the process. */
@@ -12,7 +13,12 @@ function load(sub) {
   const root = path.join(SANDBOX, sub);
   fs.rmSync(root, { recursive: true, force: true });
   fs.mkdirSync(root, { recursive: true });
-  process.env.LOCALAPPDATA = root;
+  // etherRoot() reads a DIFFERENT variable per platform, so setting only LOCALAPPDATA isolated
+  // the sandbox on Windows and nowhere else — on the Linux CI runner all 16 tests shared the
+  // runner's real ~/.local/share/Ether and leaked state into each other. Set all three.
+  process.env.LOCALAPPDATA  = root;   // win32
+  process.env.XDG_DATA_HOME = root;   // linux
+  process.env.HOME          = root;   // darwin (os.homedir() honours HOME on posix)
   delete require_.cache[require_.resolve("./profile-paths.js")];
   return { P: require_("./profile-paths.js"), root };
 }
@@ -25,7 +31,10 @@ function seedProfile(P, key) {
 }
 
 beforeEach(() => { delete process.env.ETHER_DB_PATH; });
-afterAll(() => { try { fs.rmSync(SANDBOX, { recursive: true, force: true }); } catch {} });
+afterAll(() => {
+  if (REAL_HOME === undefined) delete process.env.HOME; else process.env.HOME = REAL_HOME;
+  try { fs.rmSync(SANDBOX, { recursive: true, force: true }); } catch {}
+});
 
 describe("profile key sanitising", () => {
   it("accepts a real license key and upper-cases it", () => {
