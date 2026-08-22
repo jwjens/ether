@@ -22,7 +22,6 @@ interface Props {
   config: DeckConfig;
   /** Fader position 0..1 for this slot. */
   volume: number;
-  isPlaying: boolean;
   onVolumeChange: (v: number) => void;
   /** Channel CUT — the board's on/off door. Commands the engine's per-slot mute. */
   onSetMuted: (muted: boolean) => void;
@@ -35,7 +34,7 @@ interface Props {
 }
 
 export default function SourceChannelStrip({
-  config, volume, isPlaying, onVolumeChange, onSetMuted, onPfl, onKindChange, onRemove, compact,
+  config, volume, onVolumeChange, onSetMuted, onPfl, onKindChange, onRemove, compact,
 }: Props) {
   const meta = sourceKindMeta(config.kind);
 
@@ -120,8 +119,19 @@ export default function SourceChannelStrip({
           color="#8868D8"
           volume={volume}
           deckId={config.slot}
-          isPlaying={isPlaying}
-          isOn={isOn}
+          // ON COLOUR — the same two colours every other channel uses, via the same code path.
+          //
+          // ConsoleStrip derives "engaged" from `isOn && isPlaying` (ConsoleStrip.tsx:262/278/289).
+          // Passing the deck's TRANSPORT status as isPlaying read inverted here: deckMap covers A/B/C
+          // only, so a source slot's status is always false and the strip showed OFF while the channel
+          // was on. An operator reads channel state by colour, so a wrong one is a hazard, not a
+          // cosmetic bug.
+          //
+          // The CART and JUKEBOX channels already solved this: pass isOn={true} and let isPlaying
+          // carry the CHANNEL SWITCH. Same shape here — no new prop, no special case in the shared
+          // component.
+          isOn={true}
+          isPlaying={isOn}
           onVolumeChange={onVolumeChange}
           onToggleOn={() => { const next = !isOn; setIsOn(next); onSetMuted(!next); }}
           onPfl={onPfl}

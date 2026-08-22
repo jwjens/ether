@@ -4145,7 +4145,6 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                   <SourceChannelStrip
                     config={config}
                     volume={dk?.volume ?? 1}
-                    isPlaying={dk?.status === "playing"}
                     onVolumeChange={v => engine.getDeck(slot)?.setVolume(v)}
                     onSetMuted={m => engine.getDeck(slot)?.setMuted(m)}
                     onKindChange={k => onSetSourceKind?.(slot, k)}
