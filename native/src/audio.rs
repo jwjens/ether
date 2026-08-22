@@ -327,6 +327,9 @@ pub type SharedAudioState = Arc<Mutex<AudioState>>;
 // held only for microseconds (file I/O happens before the lock is acquired).
 
 pub struct DeckSlot {
+    /// SLICE 1 — what this slot IS. Set once at construction from default_kind_for(); slice 2 will
+    /// let deck_config drive it. Read by the AUX monitor tap and (slice 3) the ducker.
+    pub kind:     SlotKind,
     /// Live decoder — None when no track is loaded or after a track finishes.
     pub source:   Option<Box<dyn Iterator<Item = f32> + Send>>,
     pub volume:   f32,
@@ -366,6 +369,9 @@ pub struct DeckSlot {
 impl DeckSlot {
     pub fn new() -> Self {
         DeckSlot {
+            // Overwritten immediately by BusState::new via default_kind_for(i); this default only
+            // applies to a DeckSlot built outside the pool.
+            kind:    SlotKind::Rotation,
             source:  None,
             volume:  1.0,
             paused:  true,
@@ -386,13 +392,13 @@ impl DeckSlot {
 // Six decks: index 0=A, 1=B, 2=C, 3=D, 4=E, 5=F.
 
 pub struct BusState {
-    pub decks:       [DeckSlot; 7],
+    pub decks:       [DeckSlot; SLOT_COUNT],
     pub eq:          crate::eq::SharedEq,
     pub ring_prod:   HeapProd<f32>,
     pub sample_rate: u32,
     /// REAL post-fader peak per deck (0..1, 1.0 = 0 dBFS) + the program/master peak,
     /// written by mixer_callback each buffer with VU release ballistics; read by GetLevel.
-    pub peaks:       [f32; 7],
+    pub peaks:       [f32; SLOT_COUNT],
     pub master_peak: f32,
     /// 10-band post-EQ master spectrum snapshot, written by mixer_callback from the
     /// EQ analyzer each buffer; read by GetLevel into AudioLevels.spectrum.
@@ -442,7 +448,7 @@ pub struct BusState {
     //
     // Per-slot ROOM level. 0.0 = not selected by any slot = SILENT IN THE ROOM, which is the ruling.
     // Only indices 3/4/5 are ever non-zero; SetAuxMonitor refuses every other slot.
-    pub aux_monitor_gain: [f32; 7],
+    pub aux_monitor_gain: [f32; SLOT_COUNT],
     /// ROOM PEAK — what is actually reaching the local speakers (post room-chain, pre monitor gains),
     /// 0..1. The air VU has never answered "is anything coming out of the speakers", and with the aux
     /// bus that question now has a different answer from the air meter: a deck can be on air and
@@ -502,15 +508,18 @@ pub struct BusState {
 impl BusState {
     pub fn new(eq: crate::eq::SharedEq, ring_prod: HeapProd<f32>, sample_rate: u32, stream_connected: Arc<AtomicBool>) -> Self {
         BusState {
-            decks: [
-                DeckSlot::new(), DeckSlot::new(), DeckSlot::new(),
-                DeckSlot::new(), DeckSlot::new(), DeckSlot::new(),
-                DeckSlot::new(), // slot 6 = dedicated cart channel ("CART")
-            ],
+            // SLICE 1 — SLOT_COUNT slots, each stamped with what it IS. Indices 0..6 keep their
+            // historic meaning exactly (A/B/C, D/E/F, CART); 7..11 are the new source channels and
+            // start inactive, so they contribute nothing until something loads them.
+            decks: {
+                let mut d: [DeckSlot; SLOT_COUNT] = std::array::from_fn(|_| DeckSlot::new());
+                for i in 0..SLOT_COUNT { d[i].kind = default_kind_for(i); }
+                d
+            },
             eq,
             ring_prod,
             sample_rate,
-            peaks:       [0.0; 7],
+            peaks:       [0.0; SLOT_COUNT],
             master_peak: 0.0,
             spectrum:    [0.0; 10],
             monitor_vol: 1.0,
@@ -522,7 +531,7 @@ impl BusState {
             proc_stream: false,
             proc_target_lufs: -14.0,
             processor:   Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
-            aux_monitor_gain: [0.0; 7],   // nothing selected → aux decks silent in the room
+            aux_monitor_gain: [0.0; SLOT_COUNT],   // nothing selected → aux decks silent in the room
             aux_ring_prod: None,          // no aux device open → nowhere to send, by construction
             aux_out_frames: Arc::new(AtomicU64::new(0)),
             aux_peak: 0.0,
@@ -552,6 +561,12 @@ pub fn deck_index(deck: &str) -> Option<usize> {
         "E" => Some(4),
         "F" => Some(5),
         "CART" => Some(6), // dedicated cart channel — not user-assignable
+        // SLICE 1 — the new source channels, addressable so slice 2 can load them.
+        "S1" => Some(7),
+        "S2" => Some(8),
+        "S3" => Some(9),
+        "S4" => Some(10),
+        "S5" => Some(11),
         _   => None,
     }
 }
@@ -794,6 +809,45 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
 // Called from lib.rs get_or_create_engine after this lands in Step D.
 
 const DECK_LETTERS:   [&str; 6] = ["A", "B", "C", "D", "E", "F"];
+/// SLICE 1 (2026-08-21) — the slot pool. Was a bare literal 7 in eight places; it is a
+/// COMPILE-TIME SIZE, never a runtime one. Growing it costs one predictable branch per unused slot
+/// per buffer (the callback skips inactive slots before touching any state), which is why the
+/// console feel is affordable without making the array dynamic. Layout:
+///     0,1,2   rotation decks A/B/C
+///     3,4,5   legacy aux decks D/E/F   (the jukebox lives here)
+///     6       CART                     (jingle/cart overlay)
+///     7..11   SOURCE channels          (new — surfaced by the +/- strip in slice 2)
+/// Indices 0..6 are UNCHANGED so every existing consumer keeps working.
+pub const SLOT_COUNT: usize = 12;
+/// Telemetry / finished-flag ids for the new source channels. Deliberately NOT more letters:
+/// DECK_LETTERS is len 6 and indexing it out of range is what killed the output thread on
+/// 2026-07-15. These are their own namespace.
+const SOURCE_IDS: [&str; 5] = ["S1", "S2", "S3", "S4", "S5"];
+
+/// WHAT A SLOT IS, not where it sits.
+///
+/// This replaces the positional `is_aux = i >= 3 && i <= 5` test. With source channels at 7.. that
+/// test would have become `i >= 3 && i <= 5 || i >= 7`, which is arithmetic pretending to be a
+/// rule. The ducker's "never carts" contract and the AUX monitor routing both read this instead, so
+/// they follow the slot's declared identity and cannot drift when the layout changes again.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SlotKind {
+    /// A/B/C — automation's rotation decks.
+    Rotation,
+    /// CART — the jingle/cart overlay. NEVER duck-eligible (a sweeper must not duck its own song).
+    Cart,
+    /// D/E/F and the new 7.. channels — operator sources: jukebox, announcement, hand-fired jingle.
+    Source,
+}
+
+/// The layout above, expressed once.
+pub fn default_kind_for(i: usize) -> SlotKind {
+    match i {
+        0..=2 => SlotKind::Rotation,
+        6     => SlotKind::Cart,
+        _     => SlotKind::Source,
+    }
+}
 
 // Finished-flag key for a mixer deck slot. Slots 0–5 are the assignable decks (A–F); slot 6 is the CART
 // overlay channel, which is NOT in DECK_LETTERS. This is bounds-safe for any i (returns "CART" for the cart
@@ -801,7 +855,13 @@ const DECK_LETTERS:   [&str; 6] = ["A", "B", "C", "D", "E", "F"];
 // crash that killed the cpal output thread on the maiden jingle fire (2026-07-15).
 #[inline]
 fn deck_finished_key(i: usize) -> &'static str {
-    if i < DECK_LETTERS.len() { DECK_LETTERS[i] } else { "CART" }
+    if i < DECK_LETTERS.len() { DECK_LETTERS[i] }
+    else if i == 6 { "CART" }
+    // SLICE 1: without this, every slot >= 6 fell through to "CART", so a finished SOURCE channel
+    // would have raised the CART finished-flag and stranded the real cart. Bounds-safe as before:
+    // anything past the known slots still returns "CART" rather than panicking.
+    else if i - 7 < SOURCE_IDS.len() { SOURCE_IDS[i - 7] }
+    else { "CART" }
 }
 
 #[cfg(test)]
@@ -814,9 +874,78 @@ mod deck_finished_key_tests {
         assert_eq!(deck_finished_key(0), "A");
         assert_eq!(deck_finished_key(5), "F");
         assert_eq!(deck_finished_key(6), "CART");   // the crash index — now safe
+        // SLICE 1 — source channels get their OWN keys; they must never raise CART's flag.
+        assert_eq!(deck_finished_key(7), "S1");
+        assert_eq!(deck_finished_key(11), "S5");
         assert_eq!(deck_finished_key(99), "CART");  // any out-of-range slot never panics
     }
 }
+#[cfg(test)]
+mod slice1_regression {
+    // THE SLICE-1 RECEIPT — growing the slot pool from 7 to 12 must be INAUDIBLE.
+    //
+    // mixer_callback is a plain function over (data, ch, bus, finished, playing) and contains no
+    // clock or RNG, so its output is a pure function of its inputs. That makes a true bit-identical
+    // golden possible: run A/B/C/CART through it with NO source channels configured and checksum the
+    // raw bits of every output sample. The number below was captured on the 7-slot build BEFORE the
+    // pool grew. If growing the pool perturbs the existing path by one ULP, this fails.
+    use super::*;
+
+    /// Deterministic stereo source — no external RNG dep, identical on every platform and run.
+    struct Det(u64);
+    impl Iterator for Det {
+        type Item = f32;
+        fn next(&mut self) -> Option<f32> {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            Some(((self.0 >> 33) as f32 / (1u64 << 31) as f32) - 1.0)
+        }
+    }
+
+    /// FNV-1a over the raw bits — compares exact float payloads, not approximate values.
+    fn checksum(v: &[f32]) -> u64 {
+        let mut h = 1469598103934665603u64;
+        for s in v { h ^= s.to_bits() as u64; h = h.wrapping_mul(1099511628211); }
+        h
+    }
+
+    fn run_abc_cart() -> u64 {
+        let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
+        let (prod, _cons) = rb.split();
+        let eq = crate::eq::new_shared_eq(44100.0);
+        let bus = Arc::new(Mutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
+        {
+            let mut b = bus.lock().unwrap();
+            // ONLY the slots that exist today: A, B, C and CART. No source channels configured —
+            // which is exactly the state every shipped station is in.
+            for (i, seed) in [(0usize, 11u64), (1usize, 22u64), (2usize, 33u64), (6usize, 66u64)] {
+                b.decks[i].source = Some(Box::new(Det(seed)));
+                b.decks[i].active = true;
+                b.decks[i].volume = 0.8;
+            }
+        }
+        let fin = FinishedFlags::new();
+        let playing = Arc::new(Mutex::new(true));
+        let mut out: Vec<f32> = Vec::new();
+        for _ in 0..50 {
+            let mut data = vec![0f32; 480 * 2];
+            mixer_callback(&mut data, 2, &bus, &fin, &playing);
+            out.extend_from_slice(&data);
+        }
+        checksum(&out)
+    }
+
+    /// Captured on the 7-slot build, 2026-08-21, before the pool grew to 12.
+    const GOLDEN_7_SLOT: u64 = 0x95e7975ad1774d83;
+
+    #[test]
+    fn abc_cart_bit_identical_with_no_source_channels() {
+        let sum = run_abc_cart();
+        println!("[slice1] A/B/C/CART checksum = {:#018x}", sum);
+        assert_eq!(sum, GOLDEN_7_SLOT,
+            "A/B/C/CART output changed — growing the slot pool is NOT transparent to existing stations");
+    }
+}
+
 const PROGRAM_RATE:   u32       = 44100;
 const PROGRAM_BUS_BUF: usize    = PROGRAM_RATE as usize * 2 * 4; // 4 s at 44100 Hz stereo
 /// AUX monitor ring — ~0.5 s of 44100 Hz stereo. Deliberately SHORT: this is a monitor feed and
@@ -1256,9 +1385,14 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     // above — they are addressed by EXPLICIT LITERALS in this tuple
                                     // list, exactly like "CART". Nothing here indexes DECK_LETTERS,
                                     // which is what panicked the output thread on 2026-07-15.
-                                    let mut dt = Vec::with_capacity(7);
+                                    // SLICE 1 — the new source channels report too, through the
+                                    // SAME generic per-slot vector D/E/F were added to on
+                                    // 2026-08-18. Still explicit literals, still nothing indexing
+                                    // DECK_LETTERS — the 2026-07-15 panic rule holds.
+                                    let mut dt = Vec::with_capacity(SLOT_COUNT);
                                     for (i, id) in [(0usize, "A"), (1, "B"), (2, "C"),
-                                                    (3, "D"), (4, "E"), (5, "F"), (6, "CART")] {
+                                                    (3, "D"), (4, "E"), (5, "F"), (6, "CART"),
+                                                    (7, "S1"), (8, "S2"), (9, "S3"), (10, "S4"), (11, "S5")] {
                                         let d = &bus.decks[i];
                                         let present = d.source.is_some();
                                         // active_decks stays A/B/C ONLY — electron/audio-health.js
@@ -1479,8 +1613,8 @@ fn mixer_callback(
     let mut aux_r  = vec![0f32; prog_frames];
     let mut aux_present = false;   // an aux deck is producing audio → the room must use core_*
     let mut any_playing = false;
-    let mut exhausted   = [false; 7];
-    let mut frame_peaks = [0.0f32; 7]; // this-buffer post-fader peak per deck
+    let mut exhausted   = [false; SLOT_COUNT];
+    let mut frame_peaks = [0.0f32; SLOT_COUNT]; // this-buffer post-fader peak per deck
 
     for (i, deck) in bus.decks.iter_mut().enumerate() {
         if !deck.active || deck.paused { continue; }
@@ -1513,7 +1647,10 @@ fn mixer_callback(
         // AUX decks are slots 3/4/5. `mon` is the ROOM level for this deck: the slot's own level,
         // taken PRE-CUT and PRE-FADER so the board's channel switch cannot silence the room —
         // "channel ON/OFF affects the stream, never the room path".
-        let is_aux = i >= 3 && i <= 5;
+        // SLICE 1 — the rule now reads what the slot IS. Behaviour is unchanged for the shipped
+        // layout (3/4/5 are Source, 0/1/2 Rotation, 6 Cart); the new 7.. channels are Source too,
+        // and being inactive they reach this line only once something loads them.
+        let is_aux = deck.kind == SlotKind::Source;
         // AUX MONITOR TAP — POST-FADER, POST-CUT (Jeff's ruling, 2026-08-18).
         //
         // `mon` is the SLOT level applied on top of `vol`, and `vol` is already 0 when the channel is
@@ -1623,7 +1760,7 @@ fn mixer_callback(
     // Publish REAL VU levels — post-fader peak per deck + post-EQ program (master) peak,
     // with VU release ballistics (instant rise, smooth ~50ms fall). Read by GetLevel.
     const VU_RELEASE: f32 = 0.82;
-    for i in 0..7 { bus.peaks[i] = frame_peaks[i].max(bus.peaks[i] * VU_RELEASE); }
+    for i in 0..SLOT_COUNT { bus.peaks[i] = frame_peaks[i].max(bus.peaks[i] * VU_RELEASE); }
     bus.master_peak = peak.max(bus.master_peak * VU_RELEASE);
 
     // ── Audio Processing v1: per-station program-bus loudness ────────────────────────────────────────────
