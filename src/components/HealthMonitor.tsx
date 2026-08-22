@@ -391,7 +391,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   const [exporting, setExporting] = useState(false);
   const [exported, setExported] = useState(false);
   const [sessionStart] = useState(Date.now());
-  const { stationId, isReady } = useActiveStation();
+  const { stationId, stationUuid, isReady } = useActiveStation();
 
   // ── HA dashboard (combined /health snapshot + watchdog control-plane) ──
   const [dash, setDash] = useState<HaDashboard | null>(null);
@@ -930,7 +930,10 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     if (!audio?.onProcMeters || !stationId) return;
     let staleTimer: any = null;
     const h = audio.onProcMeters((m: any) => {
-      if (!m || m.stationId !== stationId) return;
+      // Scoped by UUID, mirroring HealthMeters — the frame no longer carries an integer id.
+      // Untagged frames still render (boot/edge) so the meters never go dark waiting for an id.
+      if (!m) return;
+      if (stationUuid && m.stationUuid != null && m.stationUuid !== stationUuid) return;
       // `aux` (the deck bus's chain) is carried through explicitly. This object is built field by
       // field, so anything not named here is silently dropped — the same trap that once lost the
       // proc_* meters in lib.rs's hand-built JSON, one layer up.
@@ -939,7 +942,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
       staleTimer = setTimeout(() => setProcMeters(null), 1500);   // frames stopped → stale, not stuck
     });
     return () => { try { audio.offProcMeters?.(h); } catch { /* ignore */ } if (staleTimer) clearTimeout(staleTimer); };
-  }, [stationId]);
+  }, [stationId, stationUuid]);
 
   // §3.4 — poll the active station's engine for its committed playout mode (1s; it is a local getter,
   // no IPC). Read-only: this reports the mode, it never sets it.

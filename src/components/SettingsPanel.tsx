@@ -714,7 +714,7 @@ function CloudPlayoutSection() {
 // live meters back over its dedicated "audio:proc-meters" channel. Both OFF by default → bit-identical
 // passthrough. Native DSP + fork bench-proven (native/src/program_processor.rs).
 function AudioProcessingSection() {
-  const { stationId } = useActiveStation();
+  const { stationId, stationUuid } = useActiveStation();
   const [local, setLocal]   = useState(false);
   const [stream, setStream] = useState(false);
   const [target, setTarget] = useState(-14);
@@ -741,13 +741,16 @@ function AudioProcessingSection() {
     if (!audio?.onProcMeters || !stationId) return;
     let staleTimer: any = null;
     const h = audio.onProcMeters((m: any) => {
-      if (!m || m.stationId !== stationId) return;
+      // Scoped by UUID, mirroring HealthMeters — the frame no longer carries an integer id.
+      // Untagged frames still render (boot/edge) so the meters never go dark waiting for an id.
+      if (!m) return;
+      if (stationUuid && m.stationUuid != null && m.stationUuid !== stationUuid) return;
       setMeters({ inLufs: m.inLufs, outLufs: m.outLufs, grDb: m.grDb, rideGainDb: m.rideGainDb ?? 0, inPeakDb: m.inPeakDb, outPeakDb: m.outPeakDb });
       if (staleTimer) clearTimeout(staleTimer);
       staleTimer = setTimeout(() => setMeters(null), 1000);   // no frames for 1s → meters idle
     });
     return () => { try { audio.offProcMeters?.(h); } catch { /* ignore */ } if (staleTimer) clearTimeout(staleTimer); };
-  }, [stationId]);
+  }, [stationId, stationUuid]);
   const on = local || stream;
   const Toggle = ({ on, onClick }: { on: boolean; onClick: () => void }) => (
     <button onClick={onClick} role="switch" aria-checked={on} style={{ width: 44, height: 24, borderRadius: 999, border: "none", cursor: "pointer", background: on ? "var(--accent-blue)" : "var(--bg-tertiary)", position: "relative", transition: "background .15s", flexShrink: 0 }}>

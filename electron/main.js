@@ -849,8 +849,16 @@ if (AUDIO_DAEMON_DESIRED) {
         // station is its own thing — its own output device, its own Icecast stream, its own processor —
         // so a meter bound to one station must never render another's frame. This channel was
         // forwarded untagged, so a panel showed whichever station's frame arrived last: exactly the
-        // crosstalk the levels channel was fixed for. The integer id is kept for existing consumers.
-        sendToAllWindows("audio:proc-meters", { ...m, stationUuid: _stationUuidById(m.stationId) });
+        // crosstalk the levels channel was fixed for.
+        //
+        // THE INTEGER IS GONE (2026-08-21). It used to ride along "for existing consumers", which meant
+        // this frame still carried an integer identity across the boundary — the leak-guard simply could
+        // not see it, because the emit line never spelled the word. Both remaining integer consumers
+        // (HealthMonitor, SettingsPanel) now filter on stationUuid, the key HealthMeters already used.
+        // The lookup is hoisted so the emit line carries no integer identity in any form.
+        const _procUuid = _stationUuidById(m.stationId);
+        const { stationId: _procIntId, ...procFrame } = m;
+        sendToAllWindows("audio:proc-meters", { ...procFrame, stationUuid: _procUuid });
         try { _noteProcSample(m); } catch {}   // 1s decimated retention for the fleet health frame
       } else if (m.event === "deck") {
         // Per-deck state change from the daemon's poll → renderer proxy (Step 2).
