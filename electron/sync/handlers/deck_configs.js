@@ -14,7 +14,11 @@ const { REGISTRY } = require('../synced-tables');
 
 const TABLE              = 'deck_configs';
 const HAS_STATION_ID_COL = true;
-const PATCHABLE          = ["type","label","color","enabled","purpose","updated_at"];
+// SLICE 2 (2026-08-22): kind + address are patchable — `kind` is what the SOURCE channel's
+// dropdown writes on every change, and `address` is its Phase 2 companion (mic device id /
+// network endpoint). Without them here the guard rejects the write outright:
+//   "[deck_configs] cannot patch immutable field(s): kind, address"
+const PATCHABLE          = ["type","label","color","enabled","purpose","updated_at","kind","address"];
 
 // ── Scope guard ───────────────────────────────────────────────────────────────
 
@@ -72,8 +76,11 @@ function deckConfigsCreate(db, payload) {
     actor_id:       payload.actor_id ?? null,
   }, () => {
     db.prepare(
-      `INSERT INTO ${TABLE} (slot, type, label, color, enabled, purpose, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(row.slot, row.type, row.label, row.color, row.enabled, row.purpose, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at);
+      // SLICE 2 — kind/address are in the column list because a SOURCE channel on a brand-new slot
+      // (S1..S5) is CREATED through here. Fixing only PATCHABLE would let an existing slot be
+      // patched while a newly created one came back with an empty dropdown.
+      `INSERT INTO ${TABLE} (slot, type, label, color, enabled, purpose, kind, address, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(row.slot, row.type, row.label, row.color, row.enabled, row.purpose, row.kind ?? '', row.address ?? null, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at);
   });
   return deckConfigsGet(db, uuid);
 }

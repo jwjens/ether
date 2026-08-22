@@ -271,6 +271,11 @@ const REGISTRY = {
       color:      'scalar',
       enabled:    'scalar',
       purpose:    'scalar',
+      // SLICE 2 (2026-08-22) — the SOURCE channel's patch point. serializePayload() walks this map,
+      // so a column missing here is silently dropped from the mutation: the local board would show
+      // the source while a second machine's board showed an empty dropdown.
+      kind:       'scalar',
+      address:    'scalar',
       station_id: 'scalar',
       uuid:       'scalar',
       created_at: 'scalar',
