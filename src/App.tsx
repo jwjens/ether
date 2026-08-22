@@ -27,7 +27,7 @@ const open = (opts?: { directory?: boolean; title?: string; multiple?: boolean }
   opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const readDir = (path: string) =>
   (window as any).ether.fs.readDir(path);
-import React, { useState, useEffect, useRef, useLayoutEffect, useCallback } from "react";
+import React, { useState, useEffect, useRef, useLayoutEffect, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { query, execute, queryOne, logPlay, searchSongs, dbHealthCheck } from "./db/client";
 import { queryScoped } from "./db/stationScoped";
@@ -83,6 +83,8 @@ import Spots from "./components/Spots";
 import MacrosPanel, { useMacroHotkeys, useMacroClock } from "./components/MacroEngine";
 import MidiSettingsPanel, { MidiProvider } from "./components/MidiEngine";
 import ConsoleStrip from "./components/ConsoleStrip";
+import SourceChannelStrip from "./components/SourceChannelStrip";
+import { SOURCE_SLOTS, type SourceKind } from "./components/DeckConfigurator";
 import MicChannel from "./components/MicChannel";
 import RulesEditor from "./components/RulesEditor";
 import ProcessingPanel from "./components/ProcessingPanel";
@@ -869,6 +871,57 @@ export default function App() {
   };
   const { configs: deckConfigs, save: saveDeckConfigs, enabled: enabledDecks } = useDeckConfig();
   useEffect(() => { deckConfigsRef.current = deckConfigs; }, [deckConfigs]);
+
+  // ── SOURCE CHANNELS (slice 2) ────────────────────────────────────────────────────────────────
+  // "Addable" is a UI property: the engine's slot pool is a fixed compile-time size (SLOT_COUNT=12,
+  // slice 1) and never changes shape at runtime. Pressing + ENABLES the next free source-capable
+  // slot; updateBySlot creates the row if that slot has none yet, so no separate insert path exists
+  // to drift. Pressing − disables it again, which leaves the row (and its patch point) intact for
+  // next time rather than destroying the operator's setup.
+  const sourceSlotsInUse = useMemo(
+    () => new Set((deckConfigs || []).filter(c => c.enabled && c.type === "source").map(c => c.slot)),
+    [deckConfigs]
+  );
+  const nextFreeSourceSlot = useMemo(
+    () => (SOURCE_SLOTS as readonly string[]).find(sl => {
+      const row = (deckConfigs || []).find(c => c.slot === sl);
+      return !row || !row.enabled;          // a disabled row is reusable; an enabled one is taken
+    }) || null,
+    [deckConfigs]
+  );
+
+  const addSourceChannel = useCallback(async () => {
+    const slot = nextFreeSourceSlot;
+    if (!slot) return;
+    const existing = (deckConfigs || []).find(c => c.slot === slot);
+    const next: DeckConfig = {
+      slot,
+      type: "source",
+      label: `Source ${slot}`,
+      color: "#8868D8",
+      enabled: true,
+      purpose: existing?.purpose || "",
+      kind: (existing?.kind as any) || "",
+      address: existing?.address ?? null,
+    };
+    const merged = (deckConfigs || []).some(c => c.slot === slot)
+      ? (deckConfigs || []).map(c => (c.slot === slot ? next : c))
+      : [...(deckConfigs || []), next];
+    try { await saveDeckConfigs(merged); }
+    catch (e) { console.error("[SourceChannel] add failed:", e); }
+  }, [deckConfigs, nextFreeSourceSlot, saveDeckConfigs]);
+
+  const setSourceKind = useCallback(async (slot: string, kind: SourceKind | "") => {
+    const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, kind } : c));
+    try { await saveDeckConfigs(merged); }
+    catch (e) { console.error("[SourceChannel] patch failed:", e); }
+  }, [deckConfigs, saveDeckConfigs]);
+
+  const removeSourceChannel = useCallback(async (slot: string) => {
+    const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, enabled: false } : c));
+    try { await saveDeckConfigs(merged); }
+    catch (e) { console.error("[SourceChannel] remove failed:", e); }
+  }, [deckConfigs, saveDeckConfigs]);
 
   // Experience mode — controls deck visibility
   const [shiftStarted, setShiftStarted] = useState(false);
@@ -2793,6 +2846,10 @@ export default function App() {
                   inputDevice={inputDevice}
                   visiblePanels={visiblePanels}
                   deckConfigs={visibleEnabledDecks}
+                  onAddSourceChannel={addSourceChannel}
+                  onSetSourceKind={setSourceKind}
+                  onRemoveSourceChannel={removeSourceChannel}
+                  canAddSourceChannel={!!nextFreeSourceSlot}
                   onConfigureDecks={() => setShowDeckConfig(true)}
                   autoSilenceTrim={autoSilenceTrim}
                   setAutoSilenceTrim={v => { setAutoSilenceTrim(v); localStorage.setItem("ether_auto_silence_trim", String(v)); }}
@@ -3557,7 +3614,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, autoXfade, setAutoXfade, onOpenCarts, libraryDock, jingleOverlay, hasJinglePool, onOpenJingleSettings, onCloseDock }: {
+function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onAddSourceChannel, onSetSourceKind, onRemoveSourceChannel, canAddSourceChannel, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, autoXfade, setAutoXfade, onOpenCarts, libraryDock, jingleOverlay, hasJinglePool, onOpenJingleSettings, onCloseDock }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
   autoAdv: boolean | null; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
@@ -3566,6 +3623,10 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   inputDevice: string;
   visiblePanels?: Record<string, boolean>;
   deckConfigs?: DeckConfig[];
+  onAddSourceChannel?: () => void;
+  onSetSourceKind?: (slot: string, kind: SourceKind | "") => void;
+  onRemoveSourceChannel?: (slot: string) => void;
+  canAddSourceChannel?: boolean;
   onConfigureDecks?: () => void;
   autoSilenceTrim?: boolean;
   setAutoSilenceTrim?: (v: boolean) => void;
@@ -3719,7 +3780,12 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   //
   // Stored in station_config_kv (not localStorage) so the JUKEBOX window can read the same truth and
   // report its own state honestly — it already polls that table.
-  const jukeboxSlot = deckConfigs?.find(c => c.enabled && c.type === "jukebox")?.slot || null;
+  // A jukebox now reaches the board two ways: the legacy deck TYPE (Configure Decks), or a SOURCE
+  // channel patched to it (slice 2). Both are the same routing — one lookup, so the dropdown is a
+  // real patch point and not decoration.
+  const jukeboxSlot = deckConfigs?.find(c =>
+    c.enabled && (c.type === "jukebox" || (c.type === "source" && c.kind === "jukebox"))
+  )?.slot || null;
   const [jukeboxOn, setJukeboxOn] = useState(false);
   // Fader position for the jukebox channel. Asserted downward on mount with the cut, for the same
   // reason: the engine boots at its own defaults and the board must state the operator's position.
@@ -4067,6 +4133,28 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
               ? deckColors[slot]
               : (config?.color || deckColors[slot] || "var(--accent-blue)");
 
+            // SOURCE channel → the strip with the patch-point dropdown (slice 2)
+            if (deckType === "source" && config) {
+              // deckMap covers A/B/C only, so this is undefined for a source slot — exactly as it is
+              // for D/E/F in the fallback branch below. The fader starts at unity and the VU comes
+              // from ConsoleStrip's own levels subscription (which DOES cover every slot since
+              // 2026-08-18). engine.getDeck() is a command handle, not state.
+              const dk = deckMap[slot as string];
+              return (
+                <div key={slot} style={{ flex: 1, display: "flex", minWidth: 0 }}>
+                  <SourceChannelStrip
+                    config={config}
+                    volume={dk?.volume ?? 1}
+                    isPlaying={dk?.status === "playing"}
+                    onVolumeChange={v => engine.getDeck(slot)?.setVolume(v)}
+                    onSetMuted={m => engine.getDeck(slot)?.setMuted(m)}
+                    onKindChange={k => onSetSourceKind?.(slot, k)}
+                    onRemove={() => onRemoveSourceChannel?.(slot)}
+                  />
+                </div>
+              );
+            }
+
             // Music decks → ConsoleStrip (fader + VU)
             if (deckType === "music") {
               return (
@@ -4199,6 +4287,32 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
               </div>
             );
           })}
+          {/* ── ADD A SOURCE CHANNEL (slice 2) ──────────────────────────────────────────────────
+              The console gesture: press +, get a channel, pick its source. It is a UI affordance
+              over a FIXED engine slot pool (SLOT_COUNT = 12, slice 1) — nothing about the realtime
+              callback changes shape when a channel appears, which is the whole reason this is safe.
+              When every source-capable slot is in use the control says so rather than vanishing. */}
+          {onAddSourceChannel && (
+            <div style={{ display: "flex", alignItems: "stretch", padding: "0 2px" }}>
+              <button
+                onClick={() => canAddSourceChannel && onAddSourceChannel()}
+                disabled={!canAddSourceChannel}
+                title={canAddSourceChannel
+                  ? "Add a source channel — jukebox, announcement or hand-fired jingle"
+                  : "Every source channel is already on the board"}
+                aria-label="Add a source channel"
+                style={{
+                  width: 26, alignSelf: "center", padding: "10px 0",
+                  background: "var(--bg-tertiary)",
+                  border: "1px solid var(--border-primary)", borderRadius: 3,
+                  color: canAddSourceChannel ? "var(--accent-cyan)" : "var(--text-tertiary)",
+                  fontSize: 15, fontWeight: 700, lineHeight: 1,
+                  cursor: canAddSourceChannel ? "pointer" : "not-allowed",
+                  opacity: canAddSourceChannel ? 1 : 0.45,
+                }}
+              >+</button>
+            </div>
+          )}
           {/* Jingle overlay fader (CART slot 6) — a separate aux/cue level for jingles/carts, teal.
               Rides the overlay bus gain via audio_set_volume("CART"); each item's gain_db (trim) stays
               independent. Always shown alongside Master since jingles are a station-wide overlay. */}

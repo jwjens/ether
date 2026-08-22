@@ -167,6 +167,11 @@ function deckConfigsUpdateBySlot(db, stationId, slot, patch) {
       color:   patch.color   ?? '#34d399',
       enabled: patch.enabled ?? 0,
       purpose: patch.purpose ?? '',
+      // SLICE 2 — a SOURCE channel is created by this path (the + button calls updateBySlot on a
+      // slot that has no row yet), so the patch point must survive the create or the channel would
+      // come back with an empty dropdown.
+      kind:    patch.kind    ?? '',
+      address: patch.address ?? null,
     });
   }
   if (!existing.uuid) {

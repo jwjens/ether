@@ -1974,6 +1974,14 @@ function runMigrations() {
 
   // Part 1 — deck purpose (controls mode-based visibility)
   alterSafe("ALTER TABLE deck_configs ADD COLUMN purpose TEXT DEFAULT ''");
+  // SLICE 2 (2026-08-22) — the SOURCE channel's patch point: { kind, address? }.
+  //
+  // `kind` is WHAT IS PATCHED IN (jukebox | announcement | jingle | mic | network); `type` stays
+  // WHAT THE STRIP IS. `address` is unused by the file kinds and carries a device id for Mic or an
+  // endpoint for a network source — both Phase 2. It is added NOW, empty, precisely so Phase 2 needs
+  // no migration: docs/aux-channel-ducker-announcements-design-2026-08-21.md §A.6.
+  alterSafe("ALTER TABLE deck_configs ADD COLUMN kind TEXT DEFAULT ''");
+  alterSafe("ALTER TABLE deck_configs ADD COLUMN address TEXT DEFAULT NULL");
   // Part 7 — per-operator theme + station logo
   alterSafe("ALTER TABLE operators ADD COLUMN theme TEXT DEFAULT NULL");
   // Part 8 — Spotify URI on songs

@@ -10,19 +10,64 @@ import { useActiveStation } from "../hooks/useActiveStation";
 // else (audiod/engine.js:521, :604, :648, :905, :1698 …), so a jukebox on D/E/F is a deck rotation
 // structurally cannot touch. Offering it on A/B/C would put the public and the scheduler on the same
 // deck. docs/jukebox-deck-source-design-2026-08-17.md
-export type DeckType = "music" | "mic" | "guest" | "cart" | "desk" | "video" | "jukebox";
+export type DeckType = "music" | "mic" | "guest" | "cart" | "desk" | "video" | "jukebox" | "source";
+
+// ── SOURCE channels (slice 2, 2026-08-22) ──────────────────────────────────────────────────────
+// A SOURCE channel is a console strip whose input you PICK, the way a Wheatstone bus selector does.
+// `type: "source"` says the strip is a source channel; `kind` says what is patched into it.
+//
+// The real dividing line is NOT mic-vs-rest, it is FILE sources vs STREAMED sources
+// (docs/aux-channel-ducker-announcements-design-2026-08-21.md §A.6):
+//   · file    — the engine loads a path and plays it. Works today.
+//   · stream  — samples arrive from a device or a network endpoint. Needs a PCM-in path the engine
+//               does not have. Mic and network are ONE build, and that build is Phase 2.
+// Phase 2 entries are shown DISABLED rather than hidden: a door that says "not yet" beats a door
+// that is not there.
+export type SourceKind = "jukebox" | "announcement" | "jingle" | "mic" | "network";
+
+export interface SourceKindMeta {
+  kind: SourceKind;
+  label: string;
+  /** "file" works today; "stream" needs the Phase 2 capture path. */
+  family: "file" | "stream";
+  /** What the operator is told on the strip — honest about what does and does not play yet. */
+  state: string;
+}
+
+export const SOURCE_KINDS: SourceKindMeta[] = [
+  { kind: "jukebox",      label: "Jukebox",              family: "file",
+    state: "Public request wall — patched and playing" },
+  { kind: "announcement", label: "Announcement",         family: "file",
+    state: "Patched. Announcement playout arrives in a later slice — nothing fires yet." },
+  { kind: "jingle",       label: "Jingle (hand-fired)",  family: "file",
+    state: "Patched for hand-fired imaging. Automated seam jingles stay on CART." },
+  { kind: "mic",          label: "Mic (device…)",        family: "stream",
+    state: "Needs the engine capture path — Phase 2." },
+  { kind: "network",      label: "Network (IP / Zephyr / AoIP)", family: "stream",
+    state: "Needs the engine capture path — Phase 2." },
+];
+
+export const sourceKindMeta = (k?: string | null) =>
+  SOURCE_KINDS.find(s => s.kind === k) || null;
+
+/** Slots a SOURCE channel may occupy: the existing aux decks first, then the new engine slots. */
+export const SOURCE_SLOTS = ["D", "E", "F", "S1", "S2", "S3", "S4", "S5"] as const;
 
 /** Slots the jukebox source may be assigned to. Not a preference — see the note above. */
 export const JUKEBOX_SLOTS = ["D", "E", "F"] as const;
 export const canHostJukebox = (slot: string) => (JUKEBOX_SLOTS as readonly string[]).includes(String(slot).toUpperCase());
 
 export interface DeckConfig {
-  slot: string;       // "A" | "B" | "C" | "D" | "E" | "F"
+  slot: string;       // "A" | "B" | "C" | "D" | "E" | "F" | "S1".."S5"
   type: DeckType;
   label: string;
   color: string;
   enabled: boolean;
   purpose?: string;   // If set, deck is always visible regardless of experience mode
+  /** SOURCE channels only — what is patched in. Empty for every other deck type. */
+  kind?: SourceKind | "";
+  /** Phase 2 — device id for Mic, endpoint for a network source. Stored from day one, unused now. */
+  address?: string | null;
 }
 
 export interface PlaylistTrack {
@@ -46,6 +91,9 @@ export function compareSlots(a: { slot: string }, b: { slot: string }): number {
 
 const TYPE_META: Record<DeckType, { label: string; icon: string; color: string; desc: string }> = {
   music:  { label: "Music",        icon: "🎵", color: "#34d399", desc: "Play tracks from library or playlist" },
+  // A SOURCE channel is added from the board with +, not from this panel — it appears here only so
+  // the type map is total. Its input is chosen on the strip itself.
+  source: { label: "Source",       icon: "🎚",  color: "#8868D8", desc: "Console channel with a source dropdown — jukebox, announcement, hand-fired jingle" },
   mic:    { label: "Mic",          icon: "🎙",  color: "#ef4444", desc: "Live microphone input channel" },
   guest:  { label: "Guest",        icon: "👤",  color: "var(--accent-blue)", desc: "Remote guest audio (WebRTC)" },
   cart:   { label: "Cart",         icon: "⚡",  color: "#fbbf24", desc: "Hot-key sound effects & stingers" },
@@ -69,12 +117,12 @@ export function useDeckConfig() {
     // Depends on stationId: switching station must RE-READ that station's decks. With
     // [isReady] alone the list loaded at mount persisted across switches, so a station
     // could show another station's deck layout.
-    queryScoped<{ slot: string; type: string; label: string; color: string; enabled: number; purpose: string }>(
-      "SELECT slot, type, label, color, enabled, COALESCE(purpose,'') as purpose FROM deck_configs ORDER BY slot",
+    queryScoped<{ slot: string; type: string; label: string; color: string; enabled: number; purpose: string; kind: string; address: string | null }>(
+      "SELECT slot, type, label, color, enabled, COALESCE(purpose,'') as purpose, COALESCE(kind,'') as kind, address FROM deck_configs ORDER BY slot",
       [], stationId
     ).then(rows => {
       const sorted = [...rows].sort(compareSlots);
-      setConfigs(sorted.map(r => ({ ...r, type: r.type as DeckType, enabled: r.enabled === 1 })));
+      setConfigs(sorted.map(r => ({ ...r, type: r.type as DeckType, enabled: r.enabled === 1, kind: (r.kind || "") as any })));
       setError(null);
     }).catch(e => {
       console.error("[DeckConfig] Failed to load from DB:", e);
@@ -90,6 +138,10 @@ export function useDeckConfig() {
       const res = await (window as any).ether.deckConfigs.updateBySlot(stationId, c.slot, {
         type: c.type, label: c.label, color: c.color,
         enabled: c.enabled ? 1 : 0, purpose: c.purpose || "",
+        // SLICE 2 — the patch point travels with every save, so a source channel keeps what it is
+        // patched to across a reload. address is written even while unused so Phase 2 needs no
+        // migration.
+        kind: c.kind || "", address: c.address ?? null,
       });
       return { slot: c.slot, res };
     }));
