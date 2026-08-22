@@ -920,6 +920,7 @@ mod slice1_regression {
             for (i, seed) in [(0usize, 11u64), (1usize, 22u64), (2usize, 33u64), (6usize, 66u64)] {
                 b.decks[i].source = Some(Box::new(Det(seed)));
                 b.decks[i].active = true;
+                b.decks[i].paused = false;   // DeckSlot::new() starts paused; without this the callback skips it
                 b.decks[i].volume = 0.8;
             }
         }
@@ -934,8 +935,79 @@ mod slice1_regression {
         checksum(&out)
     }
 
-    /// Captured on the 7-slot build, 2026-08-21, before the pool grew to 12.
-    const GOLDEN_7_SLOT: u64 = 0x95e7975ad1774d83;
+    /// AUX MONITOR PATH — the check this path never had.
+    ///
+    /// The slice-1 golden below covers A/B/C/CART and the CORE mix only, so it passed while the aux
+    /// monitor was audibly distorted: the aux sum was being run through the ride + limiter TWICE
+    /// (two process_planar blocks, f76ca2c). Nothing in the suite looked at the aux ring.
+    ///
+    /// This drives a real aux deck (slot 3 = D) with processing ON, drains the aux ring, and pins the
+    /// result. Honest about what it proves: the golden was captured AFTER the duplicate was removed,
+    /// so it does not retro-prove the fix — Jeff's ears did that. It stops the double pass, or any
+    /// other change to this path, from coming back unnoticed in a later slice.
+    fn run_aux_monitor() -> u64 {
+        let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
+        let (prod, _cons) = rb.split();
+        let eq = crate::eq::new_shared_eq(44100.0);
+        let bus = Arc::new(Mutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
+
+        let aux_rb = HeapRb::<f32>::new(AUX_BUS_BUF);
+        let (aux_prod, mut aux_cons) = aux_rb.split();
+        {
+            let mut b = bus.lock().unwrap();
+            // A rotation deck so the core mix is non-trivial, and deck D as the aux source.
+            b.decks[0].source = Some(Box::new(Det(11)));
+            b.decks[0].active = true;
+            b.decks[0].paused = false;
+            b.decks[0].volume = 0.8;
+            b.decks[3].source = Some(Box::new(Det(44)));
+            b.decks[3].active = true;
+            b.decks[3].paused = false;
+            b.decks[3].volume = 0.9;
+            b.aux_monitor_gain[3] = 1.0;      // slot D selected into the room at unity
+            b.proc_local = true;              // the toggle that gates the aux processor
+            b.aux_ring_prod = Some(aux_prod);
+        }
+        let fin = FinishedFlags::new();
+        let playing = Arc::new(Mutex::new(true));
+        for _ in 0..50 {
+            let mut data = vec![0f32; 480 * 2];
+            mixer_callback(&mut data, 2, &bus, &fin, &playing);
+        }
+        let mut got: Vec<f32> = Vec::new();
+        while let Some(v) = aux_cons.try_pop() { got.push(v); }
+        assert!(!got.is_empty(), "aux ring produced nothing — the test is not exercising the aux path");
+        checksum(&got)
+    }
+
+    /// Captured 2026-08-22 on the SINGLE-PASS aux chain, after the duplicate block was removed.
+    ///
+    /// PROVEN TO DETECT THE DEFECT, not merely to pin the path — the two builds differ:
+    ///     two passes (pre-fix, f76ca2c's duplicate present) : 0xc209c866cea3d4ca
+    ///     one pass   (after the 2026-08-22 fix)             : 0x769d4d2c7a0689d7
+    /// If a second ride/limiter pass over aux_l/aux_r ever returns, this test goes red.
+    const GOLDEN_AUX_SINGLE_PASS: u64 = 0x769d4d2c7a0689d7;
+
+    #[test]
+    fn aux_monitor_single_pass_regression() {
+        let sum = run_aux_monitor();
+        println!("[aux] monitor-path checksum = {:#018x}", sum);
+        assert_eq!(sum, GOLDEN_AUX_SINGLE_PASS,
+            "the aux monitor path changed — if the ride/limiter is running more than once over aux_l/aux_r, that is the 2026-08-22 distortion");
+    }
+
+    /// MEASURED 2026-08-22 on real audio, both sides.
+    ///
+    /// The first attempt at this receipt was worthless and is recorded here so it is not repeated:
+    /// DeckSlot::new() starts `paused: true`, and the test set source/active/volume but never
+    /// cleared it — so the callback's first guard skipped every deck and the "bit-identical" golden
+    /// compared SILENCE to SILENCE. It would have passed against any change whatsoever.
+    ///
+    /// With the decks actually playing, the same number comes off both builds:
+    ///     pre-slice-1  (7 slots, positional is_aux) : 0xfb5c26536f759828
+    ///     slice-1      (12 slots, SlotKind flag)    : 0xfb5c26536f759828
+    /// So growing the pool and replacing the positional test is transparent to the core mix.
+    const GOLDEN_7_SLOT: u64 = 0xfb5c26536f759828;
 
     #[test]
     fn abc_cart_bit_identical_with_no_source_channels() {
@@ -1864,23 +1936,20 @@ fn mixer_callback(
     } else if bus.proc_local && proc_l.is_some() {
         (proc_l.as_ref().unwrap(), proc_r.as_ref().unwrap())
     } else { (&out_l, &out_r) };
-    // ── AUX FEED THROUGH THE EXISTING PROCESSOR (Jeff, 2026-08-18) ───────────────────────────────
-    // The aux sum is a MIX (up to three decks at their own slot levels) and can exceed full scale even
-    // when every part is sane. The first attempt clamped it — but clamp() IS a hard clipper, so the
-    // "safety" was itself the distortion. This is a local monitor feed, so it goes through the SAME
-    // program processor the operator already configures in Preferences (loudness ride + -1 dBTP
-    // limiter), following the same "Process local output" toggle and target as the room. Nothing new
-    // is invented and nothing is hand-rolled; the limiter that was bench-proven for air does this job.
+    // ── (REMOVED 2026-08-22) A SECOND, EARLIER AUX PROCESSING BLOCK STOOD HERE ───────────────────
+    // It ran `if bus.proc_local { processor_aux.process_planar(&mut aux_l, &mut aux_r) }` — the same
+    // stateful ride + -1 dBTP limiter the block below runs, over the SAME buffer. With processing on
+    // and an aux deck playing, the aux sum was ridden and limited TWICE: audible distortion on the
+    // monitor feed, and exactly the artefact the clamp-to-limiter change was made to remove.
     //
-    // Its own instance: the processor is stateful and the air and room chains have already run theirs
-    // on different sums in this callback.
-    if bus.proc_local {
-        let target = bus.proc_target_lufs;
-        if let Ok(mut p) = bus.processor_aux.try_lock() {
-            p.set_target(target);
-            p.process_planar(&mut aux_l, &mut aux_r);
-        }
-    }
+    // Both blocks arrived together in f76ca2c (2026-08-18) — the lower one REPLACED this one and this
+    // one was never deleted. It went unheard for four days because the addon in use had been built
+    // 39 minutes BEFORE that commit; the slice-1 rebuild (2026-08-22) was the first binary to contain
+    // it, which is how a source-only defect reached Jeff's ears as a "slice 1 regression".
+    //
+    // The surviving block below is the right one: it is gated on aux_present (so it does not advance
+    // the ride's state over silence when no aux deck is up) and it publishes the aux processing
+    // meters. Do not reintroduce a second pass here. See aux_monitor_single_pass_regression.
 
     // ── AUX BUS PROCESSING — the processor from Preferences, not a bespoke clamp ─────────────────
     // The aux bus carries the jukebox to the park's speakers, and that material includes Disney tracks
