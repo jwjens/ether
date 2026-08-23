@@ -402,13 +402,18 @@ export class AudioEngine {
     // playing payload + keepalive report the real state. Only THIS station's events.
     if (a.onEngineState) {
       const h = a.onEngineState((m: any) => {
-        // TRACE 1 — does the enginestate event ARRIVE, for which station, carrying what?
-        bootSeq(`ENGINESTATE-IN inst=${this.engineInstanceId} myStation=${this.stationId} msgStation=${m?.stationId} state=${m?.state} started=${JSON.stringify(m?.started)} typeof=${typeof m?.started}`);
+        // (TRACE 1 REMOVED 2026-08-23) Three bootSeq() calls stood in this handler, and the first one
+        // logged BEFORE the station filter below — so EVERY engine instance logged EVERY station's
+        // event. On a multi-station install that is N² console.warn + IPC forwards per state change,
+        // and NOT-APPLIED fired unfiltered on every event carrying no boolean. It was written for the
+        // D3 investigation, which closed.
+        //
+        // TEMPORARY TOOLING EXPIRES (CLAUDE.md). The state it traced is not lost: _daemonEngineState
+        // and _daemonStarted are exactly what the engine already reports.
         if (m && m.stationId != null && m.stationId !== this.stationId) return;
         if (m?.state === "live" || m?.state === "stalled" || m?.state === "off") this._daemonEngineState = m.state;
         // D3: automation engaged is OBSERVED here, never inferred from KV.
-        if (typeof m?.started === "boolean") { this._daemonStarted = m.started; bootSeq(`ENGINESTATE-APPLIED inst=${this.engineInstanceId} _daemonStarted=${m.started}`); }
-        else bootSeq(`ENGINESTATE-NOT-APPLIED inst=${this.engineInstanceId} started field absent/non-boolean`);
+        if (typeof m?.started === "boolean") this._daemonStarted = m.started;
       });
       this.daemonUnsub.push(() => a.offEngineState?.(h));
     }
@@ -514,16 +519,18 @@ export class AudioEngine {
   /** D3 — the daemon's OBSERVED automation state, or null while unknown. Never KV, never a default.
    *  null means "the daemon has not answered yet" and the UI must render UNKNOWN, not MANUAL. */
   get observedAutomation(): boolean | null {
-    // TRACE 2 — what does the pill actually read, from WHICH instance, and why null?
-    const out = this.attachState !== "daemon" ? null : this._daemonStarted;
-    const now = Date.now();                        // throttled: a 500ms poll reads this
-    if (now - AudioEngine._lastObsTrace > 1000) {
-      AudioEngine._lastObsTrace = now;
-      bootSeq("OBSERVED-AUTO inst=" + this.engineInstanceId + " station=" + this.stationId
-        + " attachState=" + this.attachState + " _daemonStarted=" + JSON.stringify(this._daemonStarted)
-        + " returns=" + JSON.stringify(out));
-    }
-    return out;
+    // (TRACE REMOVED 2026-08-23) This getter used to call bootSeq() on every read, throttled to one
+    // line per second. It is read by a 500 ms poll, so it logged FOREVER, on every station, for the
+    // life of the session — an unbounded console.warn + IPC forward + log append that no one had
+    // asked for since the D3 investigation it was written for closed.
+    //
+    // TEMPORARY TOOLING EXPIRES (CLAUDE.md). A diagnostic left running is not free: this one made a
+    // property READ have a side effect, which is its own trap — a getter that logs is a getter you
+    // cannot call from a render path without consequences.
+    //
+    // The state it traced is still fully observable: attachState and the daemon's automation state
+    // are both surfaced through the engine's normal telemetry.
+    return this.attachState !== "daemon" ? null : this._daemonStarted;
   }
   private _daemonStarted: boolean | null = null;
 
