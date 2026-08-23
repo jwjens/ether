@@ -245,14 +245,14 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
     // panel read "waiting for audio" forever. The processing itself was running; only its meters were
     // blind. Adding a field to AudioLevels is NOT enough — it has to be named here too.
     let (la, lb, lc, lcart, lmaster, lroom, auxframes, auxpeak, auxin, auxout, auxgr, auxride, frames, active, mon, decks,
-         p_local, p_stream, p_target, p_in_lufs, p_out_lufs, p_gr, p_in_peak, p_out_peak, p_ride) = match levels_arc.lock() {
+         p_local, p_stream, p_target, p_in_lufs, p_out_lufs, p_gr, p_in_peak, p_out_peak, p_ride, duckg) = match levels_arc.lock() {
         Ok(lvl) => (lvl.level_a, lvl.level_b, lvl.level_c, lvl.level_cart, lvl.level_master, lvl.level_room, lvl.aux_frames, lvl.aux_peak, lvl.aux_proc_in_lufs, lvl.aux_proc_out_lufs, lvl.aux_proc_gr_db, lvl.aux_proc_ride_db,
                     lvl.frames_total, lvl.active_decks, lvl.mon_vol, lvl.decks.clone(),
                     lvl.proc_local, lvl.proc_stream, lvl.proc_target_lufs,
                     lvl.proc_in_lufs, lvl.proc_out_lufs, lvl.proc_gr_db,
-                    lvl.proc_in_peak, lvl.proc_out_peak, lvl.proc_ride_gain_db),
+                    lvl.proc_in_peak, lvl.proc_out_peak, lvl.proc_ride_gain_db, lvl.duck_gain),
         Err(_)  => (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0u64, 0.0f32, -70.0f32, -70.0f32, 0.0f32, 0.0f32, 0u64, 0u32, 0.0f32, Vec::new(),
-                    false, false, -14.0f32, -70.0f32, -70.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32),
+                    false, false, -14.0f32, -70.0f32, -70.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32, 1.0f32),
     };
     serde_json::json!({
         "a": la, "b": lb, "c": lc, "cart": lcart, "master": lmaster, "room": lroom, "aux_frames": auxframes, "aux_peak": auxpeak,
@@ -260,7 +260,11 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
         "frames_total": frames, "active_decks": active, "mon_vol": mon, "decks": decks,
         "proc_local": p_local, "proc_stream": p_stream, "proc_target_lufs": p_target,
         "proc_in_lufs": p_in_lufs, "proc_out_lufs": p_out_lufs, "proc_gr_db": p_gr,
-        "proc_in_peak": p_in_peak, "proc_out_peak": p_out_peak, "proc_ride_gain_db": p_ride
+        "proc_in_peak": p_in_peak, "proc_out_peak": p_out_peak, "proc_ride_gain_db": p_ride,
+        // DUCKER (slice 3) — the live gain on THIS station's programme. 1.0 = not ducking.
+        // Named here deliberately: the comment above this function exists because adding a field to
+        // AudioLevels and stopping there is exactly how the proc_* meters were lost once already.
+        "duck_gain": duckg
     }).to_string()
 }
 

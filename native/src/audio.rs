@@ -115,6 +115,13 @@ pub struct DeckTel {
     /// docs/sample-accurate-position-design-2026-08-09.md
     #[serde(default)]
     pub frames_played: u64,
+    /// DUCKER (slice 3) — does the ENGINE have this slot armed?
+    ///
+    /// Observed, never inferred. The strip's DUCK ON is what the DATABASE says; this is what the
+    /// engine was actually told. A control whose stored state and engine state can silently disagree
+    /// is how "the toggle is on and nothing ducks" becomes a diagnosis instead of a glance.
+    #[serde(default)]
+    pub duck: bool,
     /// POST-FADER PEAK for this slot, 0..1 (1.0 = 0 dBFS) — the same number `level_a/b/c/cart`
     /// carry, but available for EVERY slot. bus.peaks has always been computed for all 7
     /// (`for i in 0..7` at the end of the mixer callback); only A/B/C/CART were ever surfaced, so a
@@ -148,6 +155,9 @@ pub struct AudioLevels {
     #[serde(default)] pub aux_proc_out_lufs: f32,
     #[serde(default)] pub aux_proc_gr_db:    f32,
     #[serde(default)] pub aux_proc_ride_db:  f32,
+    /// DUCKER (slice 3) — the gain currently applied to this station's programme. 1.0 = not ducking.
+    /// Per station, like everything else on this bus: one station ducking says nothing about another.
+    #[serde(default)] pub duck_gain: f32,
     /// 10-band post-EQ master spectrum (0..~1 normalized magnitude), computed by the
     /// master EQ analyzer and surfaced for the Master EQ rack's live FFT display.
     #[serde(default)]
@@ -1616,6 +1626,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     lvl.aux_proc_out_lufs = bus.aux_proc_out_lufs;
                                     lvl.aux_proc_gr_db    = bus.aux_proc_gr_db;
                                     lvl.aux_proc_ride_db  = bus.aux_proc_ride_db;
+                                    lvl.duck_gain         = bus.duck_gain;
                                     lvl.spectrum     = bus.spectrum;
                                     // v4.4.46 mix telemetry — snapshot per-deck + counters under the
                                     // SAME lock (no extra lock; diagnostic only). Fed to `[mix sN]`.
@@ -1667,6 +1678,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                             gain_db: d.gain_db,
                                             frames_played: d.frames_played,
                                             peak: bus.peaks[i],
+                                            duck: bus.duck_enabled[i],
                                         });
                                     }
                                     lvl.active_decks = active;

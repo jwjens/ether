@@ -985,6 +985,9 @@ if (AUDIO_DAEMON_DESIRED) {
       for (const d of ["A", "B", "C"]) { try { audio.audioStop(d, sid); } catch {} }               // release the (already-ended) in-process decks
       try { replayIntents(audiodClient, _automationIntent, _streamIntent, { log: (m) => logStartup(`[AUDIO] ${m}`) }); } catch {}
       if (_handoverWatch) { clearInterval(_handoverWatch); _handoverWatch = null; }
+      // The duck flags were pushed to the IN-PROCESS engine at boot; the daemon that just attached
+      // has never heard them. Re-arm against the engine that now owns the audio.
+      try { armAllStationDuckers("daemon-handover"); } catch (e) { logStartup("[duck] re-arm: " + (e && e.message)); }
       logStartup("[AUDIO] HANDOVER complete — playout on daemon (AUDIO_DAEMON=true)");
     } catch (e) { logStartup("[AUDIO] handover error: " + (e && e.message)); }
   }
@@ -1462,6 +1465,8 @@ function initDb() {
   // this at module scope caught `db === undefined` and pinned it, so nothing was ever cached.
   bootStep("Preparing artwork cache…", () => initArtworkCache());
   bootStep("Preparing decks…", () => seedDeckConfigs());
+  // Every station's ducker, from its own row, whether or not its board is ever opened.
+  bootStep("Arming duckers…", () => { try { armAllStationDuckers("boot"); } catch (e) { console.warn("[duck]", e.message); } });
   setTimeout(() => { try { console.log("[DB] Song count:", db.prepare("SELECT COUNT(*) as c FROM songs").get()); } catch(e) { console.log("[DB] Song count error:", e.message); } }, 500);
 }
 
@@ -4432,6 +4437,49 @@ ipcMain.handle("audio:setMasterVolume", (_, stationId, volume) => {
 //
 // Applied to every station's own bus, multiplied with that station's monitor strip level, device
 // branch only — so it can never reach air and one station's level can never gate another's.
+// ── ARM EVERY STATION'S DUCKER FROM THE DATABASE (slice 3, 2026-08-23) ────────────────────────
+//
+// Jeff's requirement: the ducker works on ALL stations, independently, at their own times. The
+// ENGINE already does — each station has its own BusState, so duck_enabled, the envelope and the
+// ride hold are per-station with nothing shared. What did NOT was the ARMING: the only thing telling
+// an engine its flags was a renderer effect scoped to the ACTIVE station, so a station's ducker was
+// armed only if its board had been opened this session. With every station always running audio and
+// one monitor up, the station being listened to is exactly the one that might never be told.
+//
+// Fan-out lives HERE, in main, which knows the station list — the same rule as
+// audio:setMasterMonitorVolume below, and for the same reason: a global static in the engine was
+// tried on 2026-08-06 and correctly rejected by the station-isolation guard.
+//
+// Called at boot (after the decks are seeded) and again on daemon handover, because a command sent
+// to the in-process engine does not reach a daemon that attaches later.
+function armAllStationDuckers(reason) {
+  let rows = [];
+  try {
+    rows = db.prepare(
+      "SELECT station_id, slot, COALESCE(duck,0) AS duck FROM deck_configs " +
+      "WHERE type = 'source' AND enabled = 1 AND deleted_at IS NULL " +
+      "ORDER BY station_id, slot"
+    ).all();
+  } catch (e) {
+    // A database without the v43 column is simply a database with nothing to arm.
+    console.warn('[duck] fan-out skipped:', e.message);
+    return { ok: false, armed: 0 };
+  }
+  let armed = 0;
+  for (const r of rows) {
+    try {
+      if (AUDIO_DAEMON) { audiodClient.cmd('setDuck', { stationId: r.station_id, deck: r.slot, enabled: !!r.duck }); armed++; }
+      else if (audio && typeof audio.audioSetDuck === 'function') {
+        if (audio.audioSetDuck(r.station_id, r.slot, !!r.duck)) armed++;
+      }
+    } catch (e) { console.error('[duck] station', r.station_id, r.slot, e.message); }
+  }
+  if (rows.length) {
+    console.log('[duck] fan-out (' + reason + '): armed ' + armed + '/' + rows.length + ' source channel(s) — ' +
+      rows.map(r => 's' + r.station_id + ':' + r.slot + '=' + (r.duck ? 'on' : 'off')).join(' '));
+  }
+  return { ok: true, armed };
+}
 ipcMain.handle("audio:setMasterMonitorVolume", (_, volume) => {
   let ids = [];
   try { ids = db.prepare("SELECT id FROM stations WHERE deleted_at IS NULL").all().map(r => r.id); }
