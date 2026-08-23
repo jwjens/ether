@@ -3787,6 +3787,10 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
     c.enabled && (c.type === "jukebox" || (c.type === "source" && c.kind === "jukebox"))
   )?.slot || null;
   const [jukeboxOn, setJukeboxOn] = useState(false);
+  // Channel switch for source channels that are NOT the jukebox. The jukebox has its own persisted
+  // state (station_config_kv, default OFF) because it faces the public; a jingle or announcement
+  // channel is ordinary board furniture and starts ON like every other deck.
+  const [srcChannelOn, setSrcChannelOn] = useState<Record<string, boolean>>({});
   // Fader position for the jukebox channel. Asserted downward on mount with the cut, for the same
   // reason: the engine boots at its own defaults and the board must state the operator's position.
   const [jukeboxVol, setJukeboxVol] = useState(1);
@@ -4140,13 +4144,26 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
               // from ConsoleStrip's own levels subscription (which DOES cover every slot since
               // 2026-08-18). engine.getDeck() is a command handle, not state.
               const dk = deckMap[slot as string];
+              const isJukeboxSrc = config.kind === "jukebox";
               return (
                 <div key={slot} style={{ flex: 1, display: "flex", minWidth: 0 }}>
                   <SourceChannelStrip
                     config={config}
-                    volume={dk?.volume ?? 1}
-                    onVolumeChange={v => engine.getDeck(slot)?.setVolume(v)}
-                    onSetMuted={m => engine.getDeck(slot)?.setMuted(m)}
+                    // A jukebox-patched channel IS the jukebox channel: same persisted cut, same
+                    // default-OFF, same fader the retired legacy branch drove. Anything else is an
+                    // ordinary channel. One strip, two owners of state — never two strips.
+                    volume={isJukeboxSrc ? jukeboxVol : (dk?.volume ?? 1)}
+                    isOn={isJukeboxSrc ? jukeboxOn : (srcChannelOn[slot] ?? true)}
+                    onVolumeChange={v => {
+                      if (isJukeboxSrc) setJukeboxVol(v);
+                      engine.getDeck(slot)?.setVolume(v);
+                    }}
+                    onToggleOn={() => {
+                      if (isJukeboxSrc) { toggleJukeboxChannel(); return; }
+                      const next = !(srcChannelOn[slot] ?? true);
+                      setSrcChannelOn(p => ({ ...p, [slot]: next }));
+                      engine.getDeck(slot)?.setMuted(!next);
+                    }}
                     onKindChange={k => onSetSourceKind?.(slot, k)}
                     onRemove={() => onRemoveSourceChannel?.(slot)}
                   />
@@ -4245,26 +4262,18 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
               );
             }
 
-            // JUKEBOX → a real channel strip whose ON is a CHANNEL CUT, not transport.
-            // Same expression as the JINGLES strip: isPlaying carries the switch so the ON button
-            // lights while the channel is engaged, isOn stays true so the strip never takes the
-            // greyed/disabled branch, and the fader rides audio_set_volume on this slot.
-            if (deckType === "jukebox") {
-              return (
-                <div key={slot} style={{ flex: 1, display: "flex", minWidth: 0 }}>
-                  <ConsoleStrip
-                    label={config?.label || "JUKEBOX"}
-                    color={deckColor}
-                    volume={jukeboxVol}
-                    deckId={slot}
-                    isPlaying={jukeboxOn}
-                    isOn={true}
-                    onVolumeChange={v => { setJukeboxVol(v); engine.getDeck(slot)?.setVolume(v); }}
-                    onToggleOn={toggleJukeboxChannel}
-                  />
-                </div>
-              );
-            }
+            // (RETIRED 2026-08-22) The legacy `deckType === "jukebox"` strip stood here.
+            //
+            // The jukebox is a SOURCE you patch in, not a deck type — so it is now one entry in the
+            // source dropdown and renders through the SOURCE branch above, which carries the same
+            // persisted channel cut and the same default-OFF. Two strips for one routing was the
+            // duplication the console model exists to remove.
+            //
+            // Existing rows were migrated in place (electron/main.js runMigrations: type='jukebox'
+            // → type='source', kind='jukebox'), so a station that had deck D as a jukebox keeps its
+            // deck, its fader and its remembered ON state. station_config_kv's jukebox_channel_on is
+            // station-scoped, not slot-scoped, so the key survives the type change untouched — and
+            // the Jukebox window still reads the same truth.
 
             // Fallback: ConsoleStrip
             return (
@@ -4312,12 +4321,25 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
               >+</button>
             </div>
           )}
-          {/* Jingle overlay fader (CART slot 6) — a separate aux/cue level for jingles/carts, teal.
+          {/* CART — the overlay bus (slot 6), teal.
               Rides the overlay bus gain via audio_set_volume("CART"); each item's gain_db (trim) stays
-              independent. Always shown alongside Master since jingles are a station-wide overlay. */}
+              independent. Always shown alongside Master since it is a station-wide overlay.
+
+              KEPT — deliberately — when the static Jukebox strip was retired (2026-08-22). It is NOT
+              redundant with a source channel: this is the only on-screen level control and the only
+              CUT for the CART bus, and removing it would leave a station airing imaging it could
+              neither ride nor take off air.
+
+              LABELLED "CART" BECAUSE THAT IS HONESTLY WHAT IT IS TODAY. It currently carries two
+              different things: hand-fired carts/drops, AND automated sweepers, which wrongly divert
+              to this overlay instead of playing on the normal playout path. The sweeper arc
+              (docs/sweepers-rcs-model-design-2026-08-22.md) moves automated sweepers onto dedicated
+              sweeper decks and leaves CART as the hand-fired bus — at which point this strip gets its
+              final name. Calling it "JINGLES" was wrong twice over: wrong word (Jeff asked for
+              SWEEPERS from the start) and wrong architecture. */}
           <div style={{ flex: 1, minWidth: 0, maxWidth: 140, display: "flex", position: "relative" }}>
             <ConsoleStrip
-              label="JINGLES"
+              label="CART"
               color="#14e0c8"
               volume={jingleVol}
               deckId="CART"

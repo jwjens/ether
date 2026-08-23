@@ -1982,6 +1982,39 @@ function runMigrations() {
   // no migration: docs/aux-channel-ducker-announcements-design-2026-08-21.md §A.6.
   alterSafe("ALTER TABLE deck_configs ADD COLUMN kind TEXT DEFAULT ''");
   alterSafe("ALTER TABLE deck_configs ADD COLUMN address TEXT DEFAULT NULL");
+
+  // ── JUKEBOX DECKS BECOME SOURCE CHANNELS (2026-08-22) ────────────────────────────────────────
+  //
+  // The jukebox is a SOURCE you patch into a channel, not a deck TYPE. Slice 2 made that real, so
+  // the legacy `type='jukebox'` rows are migrated in place and the legacy strip is retired. A
+  // station that had deck D as a jukebox keeps its deck, its fader and its remembered ON state.
+  //
+  // IN PLACE AND IDEMPOTENT: after this runs no row matches the WHERE, so every later boot is a
+  // no-op. Deliberately a RAW UPDATE rather than a routed mutation — this is a schema-shaped
+  // migration and every peer runs the identical statement at its own boot, exactly like the
+  // alterSafe calls above. Routing it through the mutation writer would push a data change that the
+  // receiving build is already performing for itself.
+  //
+  // The channel cut is NOT touched: jukebox_channel_on lives in station_config_kv keyed per STATION,
+  // not per slot, so it survives the type change and the Jukebox window keeps reading the same truth.
+  try {
+    const jb = db.prepare(
+      "UPDATE deck_configs SET type = 'source', kind = 'jukebox' " +
+      "WHERE type = 'jukebox' AND deleted_at IS NULL"
+    ).run();
+    if (jb.changes > 0) {
+      console.log(`[migrate] jukebox deck → SOURCE channel: ${jb.changes} row(s) converted`);
+      for (const r of db.prepare(
+        "SELECT station_id, slot, type, kind, enabled FROM deck_configs WHERE kind = 'jukebox' AND deleted_at IS NULL ORDER BY station_id, slot"
+      ).all()) {
+        console.log(`[migrate]   station ${r.station_id} slot ${r.slot} → type=${r.type} kind=${r.kind} enabled=${r.enabled}`);
+      }
+    }
+  } catch (e) {
+    // Never fatal: a station that cannot be migrated still opens, it just keeps the legacy type
+    // until the next boot. Robustness rule — never dead-end a launch on a cosmetic migration.
+    console.warn("[migrate] jukebox→source conversion skipped:", e.message);
+  }
   // Part 7 — per-operator theme + station logo
   alterSafe("ALTER TABLE operators ADD COLUMN theme TEXT DEFAULT NULL");
   // Part 8 — Spotify URI on songs

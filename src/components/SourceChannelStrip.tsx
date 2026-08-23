@@ -13,7 +13,7 @@
 // let the operator infer it from silence, the strip SAYS which it is, underneath the dropdown.
 // A control that looks live and is not is the defect this project keeps paying for.
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import ConsoleStrip from "./ConsoleStrip";
 import { SOURCE_KINDS, sourceKindMeta, type SourceKind, type DeckConfig } from "./DeckConfigurator";
 import { canHostJukebox } from "./DeckConfigurator";
@@ -23,8 +23,15 @@ interface Props {
   /** Fader position 0..1 for this slot. */
   volume: number;
   onVolumeChange: (v: number) => void;
-  /** Channel CUT — the board's on/off door. Commands the engine's per-slot mute. */
-  onSetMuted: (muted: boolean) => void;
+  /** CHANNEL SWITCH — controlled by the board, not by this strip.
+   *
+   *  It was internal state until the legacy jukebox branch was retired. That branch carried the
+   *  jukebox's channel cut, which is persisted in station_config_kv and DEFAULTS OFF on purpose —
+   *  "a public jukebox must not become audible because someone assigned a deck". Local state here
+   *  would have defaulted a public jukebox to ON at every launch. The owner of the state is the
+   *  board; this strip only renders it. */
+  isOn: boolean;
+  onToggleOn: () => void;
   onPfl?: () => void;
   /** Persist a new patch point for this slot. */
   onKindChange: (kind: SourceKind | "") => void;
@@ -34,17 +41,9 @@ interface Props {
 }
 
 export default function SourceChannelStrip({
-  config, volume, onVolumeChange, onSetMuted, onPfl, onKindChange, onRemove, compact,
+  config, volume, isOn, onVolumeChange, onToggleOn, onPfl, onKindChange, onRemove, compact,
 }: Props) {
   const meta = sourceKindMeta(config.kind);
-
-  // CHANNEL ON reflects the last command this strip issued. Stated plainly because it is a real
-  // limitation: the engine does not publish a per-slot muted flag to the renderer, so there is
-  // nothing to mirror yet. It is not invented state — pressing ON always commands the engine — but
-  // if something else muted the slot this would not know. Mirroring engine truth belongs with the
-  // slice that gives these channels audio; claiming it now would be the kind of confident-and-wrong
-  // indicator this project has paid for before.
-  const [isOn, setIsOn] = useState(true);
 
   // Jukebox is offerable only where it can actually be routed. Automation enumerates A/B/C and
   // nothing else, so the jukebox has always been restricted to the aux slots; the new engine slots
@@ -133,7 +132,7 @@ export default function SourceChannelStrip({
           isOn={true}
           isPlaying={isOn}
           onVolumeChange={onVolumeChange}
-          onToggleOn={() => { const next = !isOn; setIsOn(next); onSetMuted(!next); }}
+          onToggleOn={onToggleOn}
           onPfl={onPfl}
           compact={compact}
           hideLabel={false}
