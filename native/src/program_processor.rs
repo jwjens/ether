@@ -134,6 +134,24 @@ struct LoudnessRide {
     since_eval: usize,     // frames since last loudness evaluation
     eval_every: usize,     // ~100 ms
     in_lufs: f32, out_lufs_est: f32,
+    /// DUCK HOLD (slice 3, 2026-08-22) — while the ducker has the music down, the ride's gain does
+    /// NOT move.
+    ///
+    /// Without this the two features cancel: the duck lowers the programme, the ride measures a
+    /// quieter programme, computes `desired = target - in_lufs` and walks gain_db up at
+    /// rate_db_per_s toward the ±clamp — clawing the duck back over a few seconds and then pumping
+    /// when it releases. See docs/aux-channel-ducker-announcements-design-2026-08-21.md §B.2.
+    ///
+    /// WHY A HOLD RATHER THAN A SEPARATE MUSIC-ONLY METER (§B.3a): feeding the ride its own
+    /// un-ducked stream at this point in the chain needs a second pass through bus.eq — ONE
+    /// stateful biquad instance, which the aux-monitor design ruled a trap — and measuring pre-EQ
+    /// instead would change the shipped ride's measurement basis for every processing-on station,
+    /// duck or no duck. Freezing delivers the same outcome (the ride cannot claw back, because it
+    /// cannot move) and touches nothing that already works.
+    ///
+    /// The METER IS STILL FED while held, so in_lufs stays an observed number rather than a stale
+    /// one — only the corrective gain is frozen.
+    hold: bool,
 }
 impl LoudnessRide {
     fn new(sample_rate: f32, target: f32) -> Self {
@@ -143,6 +161,7 @@ impl LoudnessRide {
             rate_db_per_s: 1.5, clamp_db: 12.0,
             since_eval: 0, eval_every: (sample_rate * 0.100) as usize,
             in_lufs: -70.0, out_lufs_est: -70.0,
+            hold: false,
         }
     }
     // Feed the INPUT block to the meter and advance the ride gain; returns the linear gain to apply.
@@ -156,10 +175,14 @@ impl LoudnessRide {
             if let Ok(m) = self.meter.loudness_momentary() {
                 if m.is_finite() && m > -70.0 {
                     self.in_lufs = m as f32;
-                    let desired = self.target - self.in_lufs;              // gain that would hit target
-                    let max_step = self.rate_db_per_s * 0.100;             // per eval tick
-                    let delta = (desired - self.gain_db).clamp(-max_step, max_step);
-                    self.gain_db = (self.gain_db + delta).clamp(-self.clamp_db, self.clamp_db);
+                    // HELD: the meter above still ran, so in_lufs is current — but the corrective
+                    // gain stays exactly where the duck found it. Nothing to claw back with.
+                    if !self.hold {
+                        let desired = self.target - self.in_lufs;          // gain that would hit target
+                        let max_step = self.rate_db_per_s * 0.100;         // per eval tick
+                        let delta = (desired - self.gain_db).clamp(-max_step, max_step);
+                        self.gain_db = (self.gain_db + delta).clamp(-self.clamp_db, self.clamp_db);
+                    }
                     self.out_lufs_est = self.in_lufs + self.gain_db;
                 }
             }
@@ -186,6 +209,11 @@ impl ProgramProcessor {
     }
     /// Runtime target change (from settings) — no realloc, no state reset.
     pub fn set_target(&mut self, target_lufs: f32) { self.target_lufs = target_lufs; self.ride.target = target_lufs; }
+    /// DUCK HOLD — freeze the loudness ride's corrective gain while the ducker has the music down.
+    /// Set every buffer by the mixer callback from the live duck gain; see LoudnessRide::hold.
+    pub fn set_ride_hold(&mut self, hold: bool) { self.ride.hold = hold; }
+    /// Whether the ride is currently frozen — surfaced so the meters can say so rather than look stuck.
+    pub fn ride_held(&self) -> bool { self.ride.hold }
     /// Process planar L/R IN PLACE (the callback holds separate out_l/out_r Vecs). Same chain as
     /// process_block; the ebur128 meter is fed via a preallocated interleave scratch (no RT alloc).
     #[inline]

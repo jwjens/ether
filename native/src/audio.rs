@@ -449,6 +449,34 @@ pub struct BusState {
     // Per-slot ROOM level. 0.0 = not selected by any slot = SILENT IN THE ROOM, which is the ruling.
     // Only indices 3/4/5 are ever non-zero; SetAuxMonitor refuses every other slot.
     pub aux_monitor_gain: [f32; SLOT_COUNT],
+
+    // ── THE DUCKER (slice 3, 2026-08-22) ─────────────────────────────────────────────────────────
+    // docs/aux-channel-ducker-announcements-design-2026-08-21.md §B.3/§B.3a/§B.6.
+    //
+    // When a SOURCE channel has audio, the programme ducks UNDER it and rises back when it stops.
+    // Nothing is stopped and nothing is started — this is a gain on the music, so the song continues
+    // underneath and comes back mid-song, which is the whole behaviour Jeff specified.
+    //
+    // PER CHANNEL, and only Source slots. A Rotation deck or CART can never trigger a duck: the
+    // detector reads the slot's declared KIND (slice 1), so "never carts, never sound effects" is
+    // structural rather than a flag someone can get wrong. A sweeper must never duck its own song.
+    /// Which slots arm the ducker. Default all-false — opt in per channel, like every processing
+    /// toggle on this bus, so an install's audio is unchanged until an operator asks for it.
+    pub duck_enabled: [bool; SLOT_COUNT],
+    /// Source-sum peak above which the duck engages (linear). ~-45 dBFS.
+    pub duck_threshold: f32,
+    /// How far the music drops, in dB (negative). -12 dB default.
+    pub duck_depth_db: f32,
+    /// Duck fast — a late duck is heard as a stumble.
+    pub duck_attack_ms: f32,
+    /// Stay down between words. THIS is what stops the music fluttering up inside a sentence.
+    pub duck_hold_ms: f32,
+    /// Come back like a house system returning, not a lurch.
+    pub duck_release_ms: f32,
+    /// LIVE STATE — the smoothed gain currently applied to the music (1.0 = no duck) and the
+    /// milliseconds of hold still owed. Persist across buffers; written only by the callback.
+    pub duck_gain: f32,
+    pub duck_hold_left_ms: f32,
     /// ROOM PEAK — what is actually reaching the local speakers (post room-chain, pre monitor gains),
     /// 0..1. The air VU has never answered "is anything coming out of the speakers", and with the aux
     /// bus that question now has a different answer from the air meter: a deck can be on air and
@@ -532,6 +560,15 @@ impl BusState {
             proc_target_lufs: -14.0,
             processor:   Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
             aux_monitor_gain: [0.0; SLOT_COUNT],   // nothing selected → aux decks silent in the room
+            // Ducker: OFF everywhere until asked for. Defaults are §B.6's.
+            duck_enabled: [false; SLOT_COUNT],
+            duck_threshold: 0.0056,   // ~-45 dBFS
+            duck_depth_db: -12.0,
+            duck_attack_ms: 30.0,
+            duck_hold_ms: 700.0,
+            duck_release_ms: 500.0,
+            duck_gain: 1.0,
+            duck_hold_left_ms: 0.0,
             aux_ring_prod: None,          // no aux device open → nowhere to send, by construction
             aux_out_frames: Arc::new(AtomicU64::new(0)),
             aux_peak: 0.0,
@@ -1015,6 +1052,141 @@ mod slice1_regression {
         println!("[slice1] A/B/C/CART checksum = {:#018x}", sum);
         assert_eq!(sum, GOLDEN_7_SLOT,
             "A/B/C/CART output changed — growing the slot pool is NOT transparent to existing stations");
+    }
+}
+
+#[cfg(test)]
+mod duck_regression {
+    // THE DUCKER — proof that it engages, holds, releases, and cannot be triggered by the wrong slot.
+    //
+    // The slice-1 goldens prove the duck-OFF path is untouched. These prove the duck-ON path does
+    // what Jeff specified, so the feature is not shipping on an argument.
+    use super::*;
+
+    /// Constant-magnitude source — DC is fine here because the detector is a peak follower.
+    struct Tone(f32);
+    impl Iterator for Tone {
+        type Item = f32;
+        fn next(&mut self) -> Option<f32> { Some(self.0) }
+    }
+
+    fn bus_with(music: f32, source: f32, duck_on: bool) -> SharedBusState {
+        let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
+        let (prod, _cons) = rb.split();
+        let eq = crate::eq::new_shared_eq(44100.0);
+        let bus = Arc::new(Mutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
+        {
+            let mut b = bus.lock().unwrap();
+            b.decks[0].source = Some(Box::new(Tone(music)));   // Rotation — the music
+            b.decks[0].active = true; b.decks[0].paused = false; b.decks[0].volume = 1.0;
+            b.decks[3].source = Some(Box::new(Tone(source)));  // Source (D) — the announcement
+            b.decks[3].active = true; b.decks[3].paused = false; b.decks[3].volume = 1.0;
+            b.duck_enabled[3] = duck_on;
+        }
+        bus
+    }
+
+    fn run(bus: &SharedBusState, buffers: usize) {
+        let fin = FinishedFlags::new();
+        let playing = Arc::new(Mutex::new(true));
+        for _ in 0..buffers {
+            let mut data = vec![0f32; 480 * 2];
+            mixer_callback(&mut data, 2, bus, &fin, &playing);
+        }
+    }
+    fn set_source(bus: &SharedBusState, level: f32) {
+        let mut b = bus.lock().unwrap();
+        b.decks[3].source = Some(Box::new(Tone(level)));
+    }
+    fn duck_gain(bus: &SharedBusState) -> f32 { bus.lock().unwrap().duck_gain }
+
+    #[test]
+    fn engages_holds_and_releases() {
+        let bus = bus_with(0.25, 0.0, true);
+
+        // Silence on the source → the music is untouched.
+        run(&bus, 20);
+        assert!(duck_gain(&bus) > 0.999, "music ducked with no source audio: g={}", duck_gain(&bus));
+
+        // Announcement starts → the music is pulled down to the -12 dB floor (0.251 linear).
+        set_source(&bus, 0.5);
+        run(&bus, 40);                       // ~400 ms, well past a 30 ms attack
+        let ducked = duck_gain(&bus);
+        assert!((ducked - 0.251).abs() < 0.02, "did not reach the -12 dB floor: g={}", ducked);
+
+        // Announcement stops. WITHIN the hold the music must NOT start creeping back — this is the
+        // parameter that stops it fluttering up between words.
+        set_source(&bus, 0.0);
+        run(&bus, 20);                       // ~200 ms into a 700 ms hold
+        let held = duck_gain(&bus);
+        assert!((held - ducked).abs() < 0.01, "music crept up during the hold: {} -> {}", ducked, held);
+
+        // Past the hold + release → it rises back on its own. Nothing restarted it.
+        run(&bus, 200);                      // ~2 s
+        assert!(duck_gain(&bus) > 0.95, "music never came back: g={}", duck_gain(&bus));
+    }
+
+    #[test]
+    fn a_channel_with_ducking_off_still_airs_but_never_ducks() {
+        let bus = bus_with(0.25, 0.5, false);
+        run(&bus, 40);
+        assert!(duck_gain(&bus) > 0.999,
+                "a channel with its duck toggle OFF pulled the music down: g={}", duck_gain(&bus));
+    }
+
+    #[test]
+    fn rotation_and_cart_can_never_duck() {
+        // The rule is structural: the detector reads the slot's KIND, so arming a Rotation deck or
+        // CART does nothing. A sweeper must never duck the song it is sweeping into.
+        let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
+        let (prod, _cons) = rb.split();
+        let eq = crate::eq::new_shared_eq(44100.0);
+        let bus = Arc::new(Mutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
+        {
+            let mut b = bus.lock().unwrap();
+            for i in [0usize, 6usize] {                  // deck A (Rotation) and CART
+                b.decks[i].source = Some(Box::new(Tone(0.7)));
+                b.decks[i].active = true; b.decks[i].paused = false; b.decks[i].volume = 1.0;
+                b.duck_enabled[i] = true;                // armed, and still must not duck
+            }
+            assert_eq!(b.decks[0].kind, SlotKind::Rotation);
+            assert_eq!(b.decks[6].kind, SlotKind::Cart);
+        }
+        run(&bus, 40);
+        assert!(duck_gain(&bus) > 0.999,
+                "a Rotation/CART slot triggered the ducker: g={}", duck_gain(&bus));
+    }
+
+    #[test]
+    fn the_ride_is_frozen_while_ducked() {
+        // §B.3a — the ride must not claw the duck back. Feed the processor a QUIET programme, which
+        // is exactly what a duck produces, and prove its corrective gain does not move while held.
+        let mut p = crate::program_processor::ProgramProcessor::new(44100.0, -14.0);
+        // A 1 kHz SINE, not DC: ebur128 K-weights the signal, so a DC level reads as no loudness at
+        // all and the ride would never move — the control assertion below would fail for a reason
+        // that has nothing to do with the hold.
+        let quiet: Vec<f32> = (0..48_000)
+            .flat_map(|n| {
+                let v = (2.0 * std::f32::consts::PI * 1000.0 * (n as f32) / 44_100.0).sin() * 0.02;
+                [v, v]
+            })
+            .collect();
+
+        p.set_ride_hold(false);
+        let mut free = quiet.clone();
+        p.process_block(&mut free);
+        let moved = p.ride_gain_db();
+        assert!(moved > 0.1, "control: an unheld ride should push a quiet programme UP, got {} dB", moved);
+
+        p.set_ride_hold(true);
+        let before = p.ride_gain_db();
+        for _ in 0..10 {
+            let mut held = quiet.clone();
+            p.process_block(&mut held);
+        }
+        let after = p.ride_gain_db();
+        assert_eq!(before.to_bits(), after.to_bits(),
+                   "the ride moved while held: {} -> {} dB", before, after);
     }
 }
 
@@ -1683,6 +1855,19 @@ fn mixer_callback(
     let mut core_r = vec![0f32; prog_frames];
     let mut aux_l  = vec![0f32; prog_frames];
     let mut aux_r  = vec![0f32; prog_frames];
+    // DUCKER (slice 3): the source contribution AT AIR LEVEL, and the part of it that arms the duck.
+    //   src_* — every Source slot, post-cut/post-fader. NOT scaled by the monitor gain: aux_* is the
+    //           ROOM feed and is a different signal entirely.
+    //   det_* — only the Source slots whose duck toggle is on. A channel with ducking off still
+    //           airs, it just does not push the music down.
+    // core_* is already the music: every slot EXCEPT the Source slots. So core + src == mix by
+    // construction, which is what makes the duck-off path provably bit-identical below.
+    let duck_enabled = bus.duck_enabled;
+    let mut src_l = vec![0f32; prog_frames];
+    let mut src_r = vec![0f32; prog_frames];
+    let mut det_l = vec![0f32; prog_frames];
+    let mut det_r = vec![0f32; prog_frames];
+    let mut duck_armed = false;    // at least one duck-enabled Source slot is actually producing
     let mut aux_present = false;   // an aux deck is producing audio → the room must use core_*
     let mut any_playing = false;
     let mut exhausted   = [false; SLOT_COUNT];
@@ -1736,6 +1921,7 @@ fn mixer_callback(
         // locally and at what level; it never resurrects audio the board has killed.
         let mon = if is_aux { aux_gain[i] } else { 0.0 };
         if is_aux { aux_present = true; }
+        if is_aux && duck_enabled[i] { duck_armed = true; }
         let mut pk = 0.0f32;
         let mut pulled = 0u64;   // frames actually taken from THIS deck's source this buffer
         for f in 0..prog_frames {
@@ -1750,7 +1936,14 @@ fn mixer_callback(
                     if !is_aux {                          // ROOM base — aux decks excluded entirely
                         core_l[f] += lv;
                         core_r[f] += rv;
-                    } else if mon != 0.0 {                // AUX monitor — POST-fader, POST-cut
+                    }
+                    if is_aux {
+                        // AIR-level source sum for the ducker (distinct from the room's aux_*).
+                        src_l[f] += lv;
+                        src_r[f] += rv;
+                        if duck_enabled[i] { det_l[f] += lv; det_r[f] += rv; }
+                    }
+                    if is_aux && mon != 0.0 {             // AUX monitor — POST-fader, POST-cut
                         // lv/rv, NOT l/r: these are the samples after the channel cut and the fader,
                         // so a cut or a closed fader yields zero here as well as on air.
                         aux_l[f] += lv * mon;
@@ -1790,6 +1983,69 @@ fn mixer_callback(
 
     // Apply EQ to the 44100 Hz stereo mix
     let mut eq_spectrum: Option<[f32; 10]> = None;
+    // ── THE DUCKER (slice 3) ─────────────────────────────────────────────────────────────────────
+    //
+    // mix == core + src by construction (the loop adds every slot to mix, non-Source to core, Source
+    // to src). So ducking is: rebuild mix as core*g + src. With g == 1.0 that is arithmetically the
+    // same sum in the same order, and when no channel arms the ducker the rewrite is SKIPPED
+    // ENTIRELY — the accumulated mix is passed through untouched, bit-identical. The golden
+    // regression test depends on that skip, not on floating-point luck.
+    //
+    // WHY HERE:
+    //   · BEFORE the EQ — bus.eq is one stateful biquad instance and must see exactly one stream.
+    //     Splitting it to give the ride a music-only feed is the trap the aux-monitor design named.
+    //   · ON THE MIX PATH, not inside ProgramProcessor — processing defaults OFF, so a duck living
+    //     inside the processor would silently do nothing on a default install (§B.4). This runs
+    //     whether or not the operator has ever turned processing on.
+    //
+    // The ride is FROZEN while the duck is down (§B.3a) so it cannot claw the music back up.
+    let duck_active = if duck_armed {
+        let fs_ms = PROGRAM_RATE as f32 / 1000.0;          // frames per millisecond
+        let depth = 10f32.powf(bus.duck_depth_db / 20.0);  // linear floor
+        let thr   = bus.duck_threshold;
+        // One-pole coefficients from the millisecond settings. Computed per buffer (a few exp()),
+        // never per sample.
+        let atk = 1.0 - (-1.0 / (bus.duck_attack_ms.max(1.0) * fs_ms)).exp();
+        let rel = 1.0 - (-1.0 / (bus.duck_release_ms.max(1.0) * fs_ms)).exp();
+        let hold_ms = bus.duck_hold_ms.max(0.0);
+        let ms_per_frame = 1000.0 / PROGRAM_RATE as f32;
+
+        let mut g = bus.duck_gain;
+        let mut hold_left = bus.duck_hold_left_ms;
+
+        for f in 0..prog_frames {
+            // Detector: peak of the ARMED source sum. Post-fader and post-cut already, so a closed
+            // fader or a cut channel simply cannot duck — the board stays the gate.
+            let s = det_l[f].abs().max(det_r[f].abs());
+            if s > thr {
+                // Signal present: pull down toward the floor and re-arm the full hold.
+                g += (depth - g) * atk;
+                hold_left = hold_ms;
+            } else if hold_left > 0.0 {
+                // Between words. Stay down — this is what stops the music fluttering up inside a
+                // sentence, and it is the single parameter most worth tuning by ear.
+                hold_left -= ms_per_frame;
+            } else {
+                g += (1.0 - g) * rel;
+            }
+            let gc = g.clamp(depth.min(1.0), 1.0);
+            mix_l[f] = core_l[f] * gc + src_l[f];
+            mix_r[f] = core_r[f] * gc + src_r[f];
+        }
+
+        bus.duck_gain = g;
+        bus.duck_hold_left_ms = hold_left;
+        // "Ducking right now" for the ride hold and for telemetry. A hair below unity rather than
+        // != 1.0, so a gain still trickling back up over the last dB does not read as ducked forever.
+        g < 0.999
+    } else {
+        // No channel arms the ducker → the mix is exactly what the loop accumulated. Nothing is
+        // rewritten, so nothing can drift.
+        bus.duck_gain = 1.0;
+        bus.duck_hold_left_ms = 0.0;
+        false
+    };
+
     let (out_l, out_r): (Vec<f32>, Vec<f32>) = if let Ok(mut eq) = bus.eq.try_lock() {
         let mut ol = Vec::with_capacity(prog_frames);
         let mut or_ = Vec::with_capacity(prog_frames);
@@ -1847,6 +2103,9 @@ fn mixer_callback(
         let mut pr = out_r.clone();
         let meters = if let Ok(mut p) = bus.processor.try_lock() {
             p.set_target(target);
+            // §B.3a — freeze the loudness ride while the duck has the music down, so the two
+            // features cannot fight. The meter still runs; only the corrective gain is held.
+            p.set_ride_hold(duck_active);
             p.process_planar(&mut pl, &mut pr);
             Some((p.in_lufs(), p.out_lufs(), p.gain_reduction_db(), p.ride_gain_db()))
         } else { None };
