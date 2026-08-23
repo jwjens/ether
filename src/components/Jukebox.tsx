@@ -514,8 +514,23 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
     let stop = false;
     const pull = async () => {
       try {
+        // THE ROUTED DECK — resolved BOTH ways, and this is not belt-and-braces.
+        //
+        // The jukebox reaches the board two ways: the legacy deck TYPE (Configure Decks) and a SOURCE
+        // channel patched to it (slice 2, 2026-08-22). Migration v42 converts type='jukebox' rows to
+        // type='source' + kind='jukebox' — and when it did, this query silently returned zero rows.
+        // routedDeck went null, which does NOT merely blank the readout: it gates the load-and-play
+        // effect below (:582) and the deck-state poll (:530). The strip rendered, the channel was
+        // live, the fader worked, and nothing was ever loaded onto the deck. Channel present, sound
+        // absent.
+        //
+        // The legacy arm STAYS. A peer that has not run v42 yet, or a rollback to a build before it,
+        // still has type='jukebox' rows — and this window must find the deck on either shape.
         const rows = await queryScoped<{ slot: string }>(
-          "SELECT slot FROM deck_configs WHERE type = 'jukebox' AND enabled = 1 ORDER BY slot LIMIT 1",
+          `SELECT slot FROM deck_configs
+             WHERE enabled = 1
+               AND (type = 'jukebox' OR (type = 'source' AND kind = 'jukebox'))
+             ORDER BY slot LIMIT 1`,
           [], stationId);
         if (!stop) setRoutedDeck(rows[0]?.slot ?? null);
       } catch { if (!stop) setRoutedDeck(null); }

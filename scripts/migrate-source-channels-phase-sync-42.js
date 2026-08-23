@@ -72,6 +72,38 @@ function applyMigration(db) {
       console.log('[migrate-v42] deck_configs.address added.');
     }
 
+    // DUPLICATE GUARD — never leave a station with TWO enabled jukebox patch points.
+    //
+    // A station can already have a SOURCE channel patched to jukebox (an operator added one with +)
+    // while a legacy type='jukebox' deck still exists. Converting the legacy deck blindly gives that
+    // station two jukebox channels, and every consumer resolves the routed deck with
+    // "ORDER BY slot LIMIT 1" — so the jukebox silently jumps to whichever slot sorts first, taking
+    // audio off the channel the operator was actually using. That reads as "the migration broke the
+    // jukebox" days later; it is really an ambiguous double-patch.
+    //
+    // Where a station already has an enabled source-jukebox, the legacy deck is converted but left
+    // UNPATCHED (kind = '') rather than disabled: the deck stays on the board, so nothing the
+    // operator set up disappears, and there is exactly one jukebox. It is logged, never silent.
+    const dupStations = db.prepare(
+      `SELECT DISTINCT legacy.station_id AS sid
+         FROM ${TABLE} legacy
+         JOIN ${TABLE} src
+           ON src.station_id = legacy.station_id
+          AND src.type = 'source' AND src.kind = 'jukebox'
+          AND src.enabled = 1 AND src.deleted_at IS NULL
+        WHERE legacy.type = 'jukebox' AND legacy.deleted_at IS NULL`
+    ).all().map(r => r.sid);
+
+    if (dupStations.length) {
+      const marks = dupStations.map(() => '?').join(',');
+      const dup = db.prepare(
+        `UPDATE ${TABLE} SET type = 'source', kind = ''
+          WHERE type = 'jukebox' AND deleted_at IS NULL AND station_id IN (${marks})`
+      ).run(...dupStations);
+      console.log(`[migrate-v42] duplicate jukebox avoided on station(s) ${dupStations.join(', ')}: ` +
+                  `${dup.changes} legacy deck(s) converted UNPATCHED — a source channel already carries the jukebox`);
+    }
+
     const jb = db.prepare(
       `UPDATE ${TABLE} SET type = 'source', kind = 'jukebox'
         WHERE type = 'jukebox' AND deleted_at IS NULL`
