@@ -6,6 +6,26 @@
 per element · CART retired only as the *automated* path and kept for hand-fired carts · the
 jingle→sweeper rename, migrating existing audio and scheduling.
 
+### Rulings of record (2026-08-22)
+
+| # | Item | Ruling |
+|---|---|---|
+| 1 | Sweeper decks | **TWO.** One preloads while another weaves, so a tight seam never starves. |
+| 2 | Slot kind | **Its own `SlotKind::Sweeper`.** A sweeper structurally cannot duck — never duck the song you are sweeping into. The kind flag enforces it, not slot arithmetic; the same principle as cart-never-ducks. |
+| 3 | Downgrade safety | **YES to a legacy `jingle_categories` VIEW.** The 4.4.151 stranding rule: a migration that reaches customers must leave the database openable by the previous build. Costs nothing, keeps rollback safe. |
+| 4 | Leak-guard | **Re-check the station-identity ratchet** when renaming `audio:daemon-jingle` → `audio:daemon-sweeper`. Do not assume the baseline holds. |
+| — | Migration | **Freeze JIN's 5/2 timing onto each row BEFORE reclassifying.** No station's sweepers get silently re-timed. |
+| — | Phasing | **Rename LAST**, after the re-route. |
+
+**THE ACCEPTANCE, in Jeff's words:** *a station sounds identical after the rename — only the word
+changed.* Any audible difference is a defect, not a side effect.
+
+**Build order:** this arc is designed and ruled but **BUILD STAYS GATED**. The aux/ducker slices
+finish first — slice 3 (the ducker), slice 4 (announcements), slice 5 (triggers) — and sweepers build
+after, on the same 12-slot foundation.
+
+---
+
 ---
 
 ## 0 · What the read established
