@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, createContext, useContext } f
 const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 import { query, execute } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
+import DuckerSection from "./DuckerSection";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { usePlan } from "../hooks/usePlan";
 import { useStreaming } from "../hooks/useStreaming";
@@ -3164,6 +3165,19 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, seg
 
       {/* ── Audio Processing (program-bus loudness) ── */}
       <AudioProcessingSection />
+
+      {/* ── Ducker (source channels duck the programme) ──
+          Lives beside Audio Processing because it is the same kind of thing: a per-station setting on
+          this station's programme bus. There is ONE duck envelope per station, so these are
+          station-wide by construction — the only per-channel part (does this channel arm the duck)
+          stays on the channel strip where the audio is. */}
+      <Section
+        category="audio"
+        icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg>}
+        title="Ducker"
+        description="How far and how long the programme drops under a SOURCE channel — dial it by ear against real audio">
+        <DuckerSection />
+      </Section>
 
       {/* ── MIDI Controllers ── */}
       <ControllersSection />

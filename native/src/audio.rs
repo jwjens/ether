@@ -305,6 +305,9 @@ pub enum AudioCmd {
     /// DUCKER (slice 3) — arm or disarm one channel's duck. A preference on the channel; whether it
     /// can duck at all is decided by the slot's KIND, which this cannot override.
     SetDuck { deck: String, enabled: bool },
+    /// DUCKER tuning, per STATION — there is ONE duck envelope per bus, so every one of these is
+    /// station-wide by construction, never per channel. Dialled by ear from Preferences.
+    SetDuckParams { depth_db: f32, threshold_db: f32, attack_ms: f32, hold_ms: f32, release_ms: f32 },
     /// Choose the output device for the AUX monitor bus. Empty string = none = the aux stream is
     /// closed and the bus is silent.
     SetAuxDevice(String),
@@ -576,7 +579,11 @@ impl BusState {
             // Ducker: OFF everywhere until asked for. Defaults are §B.6's.
             duck_enabled: [false; SLOT_COUNT],
             duck_threshold: 0.0056,   // ~-45 dBFS
-            duck_depth_db: -12.0,
+            // -22 dB, not -12: Jeff's ears on a live jukebox-over-music test. A short announcement
+            // sits fine at -12, but a CONTINUOUS source needs the programme much further down or the
+            // two clash. A starting point, not a rebuild — every value here is tunable at runtime
+            // from that station's Preferences (SetDuckParams).
+            duck_depth_db: -22.0,
             duck_attack_ms: 30.0,
             duck_hold_ms: 700.0,
             duck_release_ms: 500.0,
@@ -813,6 +820,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             // path (below) is the one that owns bus.aux_monitor_gain.
                             AudioCmd::SetAuxMonitor { .. } => {}
                             AudioCmd::SetDuck { .. } => {}
+                            AudioCmd::SetDuckParams { .. } => {}
                             // Superseded no-device path (see start_station_mixer's header): it owns no
                             // aux stream, so there is nothing here to open or close.
                             AudioCmd::SetAuxDevice(_) => {}
@@ -1122,11 +1130,19 @@ mod duck_regression {
         run(&bus, 20);
         assert!(duck_gain(&bus) > 0.999, "music ducked with no source audio: g={}", duck_gain(&bus));
 
-        // Announcement starts → the music is pulled down to the -12 dB floor (0.251 linear).
+        // Announcement starts → the music is pulled down to the configured floor.
+        //
+        // The floor is DERIVED from the bus's own depth, never hardcoded: depth is an operator
+        // setting dialled by ear from Preferences, and it moved from -12 to -22 dB the first time
+        // Jeff heard it against a continuous source. A literal here would fail on every tuning
+        // change and say "the ducker is broken" when the ducker was doing exactly as told.
+        let depth_db = bus.lock().unwrap().duck_depth_db;
+        let floor = 10f32.powf(depth_db / 20.0);
         set_source(&bus, 0.5);
         run(&bus, 40);                       // ~400 ms, well past a 30 ms attack
         let ducked = duck_gain(&bus);
-        assert!((ducked - 0.251).abs() < 0.02, "did not reach the -12 dB floor: g={}", ducked);
+        assert!((ducked - floor).abs() < 0.02,
+                "did not reach the {} dB floor ({:.4} linear): g={}", depth_db, floor, ducked);
 
         // Announcement stops. WITHIN the hold the music must NOT start creeping back — this is the
         // parameter that stops it fluttering up between words.
@@ -1595,6 +1611,19 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 let Some(idx) = deck_index(&deck) else { continue };
                                 if let Ok(mut bus) = bus_cmd.lock() {
                                     bus.duck_enabled[idx] = enabled;
+                                }
+                            }
+                            AudioCmd::SetDuckParams { depth_db, threshold_db, attack_ms, hold_ms, release_ms } => {
+                                if let Ok(mut bus) = bus_cmd.lock() {
+                                    // Clamped at the edges only — every value in between is a
+                                    // legitimate operator choice. 0 dB depth means "armed but not
+                                    // ducking", and a 0 ms hold means "release the moment the source
+                                    // stops", both of which someone may genuinely want to hear.
+                                    bus.duck_depth_db  = depth_db.clamp(-60.0, 0.0);
+                                    bus.duck_threshold = 10f32.powf(threshold_db.clamp(-90.0, 0.0) / 20.0);
+                                    bus.duck_attack_ms = attack_ms.clamp(1.0, 1000.0);
+                                    bus.duck_hold_ms   = hold_ms.clamp(0.0, 5000.0);
+                                    bus.duck_release_ms= release_ms.clamp(1.0, 5000.0);
                                 }
                             }
                             AudioCmd::SetAuxMonitor { deck, gain } => {

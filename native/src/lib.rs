@@ -154,6 +154,21 @@ pub fn audio_set_duck(station_id: u32, deck: String, enabled: bool) -> bool {
     audio.sender.send(AudioCmd::SetDuck { deck, enabled }).is_ok()
 }
 
+/// DUCKER tuning for ONE station. Threshold arrives in dBFS and is converted to the linear peak the
+/// detector compares against; everything else is as the operator sees it. One envelope per station
+/// bus, so these are station-wide by construction — which is why they live in that station's
+/// Preferences and not on a channel strip.
+#[napi]
+pub fn audio_set_duck_params(station_id: u32, depth_db: f64, threshold_db: f64,
+                             attack_ms: f64, hold_ms: f64, release_ms: f64) -> bool {
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetDuckParams {
+        depth_db: depth_db as f32, threshold_db: threshold_db as f32,
+        attack_ms: attack_ms as f32, hold_ms: hold_ms as f32, release_ms: release_ms as f32,
+    }).is_ok()
+}
+
 /// Local studio-monitor (speaker) gain for one station — 0.0 = silent speakers, 1.0 = unity.
 /// Affects ONLY the local device output; the program bus → Icecast stream is untouched, so an
 /// operator can mute/blend what they HEAR without changing what any station BROADCASTS.

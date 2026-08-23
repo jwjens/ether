@@ -4282,6 +4282,11 @@ ipcMain.handle("audio:set-aux-device", (_, stationId, device) =>
 ipcMain.handle("audio:set-duck", (_, stationId, deck, enabled) =>
   AUDIO_DAEMON ? audiodClient.cmd("setDuck", { stationId, deck, enabled })
                : audio.audioSetDuck(stationId, deck, !!enabled));
+ipcMain.handle("audio:set-duck-params", (_, stationId, p) =>
+  AUDIO_DAEMON
+    ? audiodClient.cmd("setDuckParams", { stationId, depthDb: p.depthDb, thresholdDb: p.thresholdDb, attackMs: p.attackMs, holdMs: p.holdMs, releaseMs: p.releaseMs })
+    : (audio && typeof audio.audioSetDuckParams === "function"
+         ? audio.audioSetDuckParams(stationId, p.depthDb, p.thresholdDb, p.attackMs, p.holdMs, p.releaseMs) : false));
 ipcMain.handle("audio:set-aux-monitor", (_, stationId, deck, gain) =>
   AUDIO_DAEMON ? audiodClient.cmd("setAuxMonitor", { stationId, deck, gain })
                : audio.audioSetAuxMonitor(stationId, deck, gain));
@@ -4474,6 +4479,33 @@ function armAllStationDuckers(reason) {
       }
     } catch (e) { console.error('[duck] station', r.station_id, r.slot, e.message); }
   }
+  // TUNING, per station, from that station's own Preferences (station_config_kv). Without this a
+  // station's dialled depth/hold only reached the engine if someone opened its Preferences — the
+  // same UI-scoped arming bug the per-channel flags had. Absent keys leave the engine on its own
+  // defaults, which are the same numbers the panel shows.
+  try {
+    const sids = db.prepare(
+      "SELECT DISTINCT station_id AS sid FROM deck_configs WHERE type = 'source' AND deleted_at IS NULL"
+    ).all().map(r => r.sid);
+    const readKv = db.prepare("SELECT key, value FROM station_config_kv WHERE station_id = ?");
+    for (const sid of sids) {
+      let kv = [];
+      try { kv = readKv.all(sid); } catch { continue; }
+      const num = (k, d) => { const v = kv.find(x => x.key === k)?.value; const n = v == null ? NaN : Number(v); return Number.isFinite(n) ? n : d; };
+      const p = {
+        depthDb:     num('duck_depth_db', -22),
+        thresholdDb: num('duck_threshold_db', -45),
+        attackMs:    num('duck_attack_ms', 30),
+        holdMs:      num('duck_hold_ms', 700),
+        releaseMs:   num('duck_release_ms', 500),
+      };
+      try {
+        if (AUDIO_DAEMON) audiodClient.cmd('setDuckParams', { stationId: sid, ...p });
+        else if (audio && typeof audio.audioSetDuckParams === 'function')
+          audio.audioSetDuckParams(sid, p.depthDb, p.thresholdDb, p.attackMs, p.holdMs, p.releaseMs);
+      } catch (e) { console.error('[duck] params station', sid, e.message); }
+    }
+  } catch (e) { console.warn('[duck] params fan-out skipped:', e.message); }
   if (rows.length) {
     console.log('[duck] fan-out (' + reason + '): armed ' + armed + '/' + rows.length + ' source channel(s) — ' +
       rows.map(r => 's' + r.station_id + ':' + r.slot + '=' + (r.duck ? 'on' : 'off')).join(' '));
