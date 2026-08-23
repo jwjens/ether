@@ -18,7 +18,7 @@ const HAS_STATION_ID_COL = true;
 // dropdown writes on every change, and `address` is its Phase 2 companion (mic device id /
 // network endpoint). Without them here the guard rejects the write outright:
 //   "[deck_configs] cannot patch immutable field(s): kind, address"
-const PATCHABLE          = ["type","label","color","enabled","purpose","updated_at","kind","address"];
+const PATCHABLE          = ["type","label","color","enabled","purpose","updated_at","kind","address","duck"];
 
 // ── Scope guard ───────────────────────────────────────────────────────────────
 
@@ -79,8 +79,8 @@ function deckConfigsCreate(db, payload) {
       // SLICE 2 — kind/address are in the column list because a SOURCE channel on a brand-new slot
       // (S1..S5) is CREATED through here. Fixing only PATCHABLE would let an existing slot be
       // patched while a newly created one came back with an empty dropdown.
-      `INSERT INTO ${TABLE} (slot, type, label, color, enabled, purpose, kind, address, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(row.slot, row.type, row.label, row.color, row.enabled, row.purpose, row.kind ?? '', row.address ?? null, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at);
+      `INSERT INTO ${TABLE} (slot, type, label, color, enabled, purpose, kind, address, duck, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(row.slot, row.type, row.label, row.color, row.enabled, row.purpose, row.kind ?? '', row.address ?? null, row.duck ?? 0, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at);
   });
   return deckConfigsGet(db, uuid);
 }
@@ -179,6 +179,7 @@ function deckConfigsUpdateBySlot(db, stationId, slot, patch) {
       // come back with an empty dropdown.
       kind:    patch.kind    ?? '',
       address: patch.address ?? null,
+      duck:    patch.duck    ?? 0,
     });
   }
   if (!existing.uuid) {

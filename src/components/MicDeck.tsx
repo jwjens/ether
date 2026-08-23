@@ -17,34 +17,17 @@ interface Props {
   inputDeviceId?: string;
 }
 
-function DuckToggle() {
-  const [duck, setDuck] = useState(true);
-  useEffect(() => {
-    (window as any).__etherDuck = duck;
-  }, [duck]);
-  return (
-    <div style={{ padding: "0 14px 6px" }}>
-      <button
-        onClick={() => setDuck(d => !d)}
-        style={{
-          width: "100%", padding: "5px 10px", borderRadius: 0,
-          background: duck ? "rgb(from var(--accent-blue) r g b / 0.1)" : "var(--bg-tertiary)",
-          border: `1px solid ${duck ? "rgb(from var(--accent-blue) r g b / 0.3)" : "var(--border-primary)"}`,
-          color: duck ? "var(--accent-cyan)" : "var(--text-tertiary)",
-          fontSize: 9, fontWeight: 700, letterSpacing: "0.1em",
-          cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-          transition: "all 0.15s",
-        }}
-      >
-        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-          <path d="M11 5L6 9H2v6h4l5 4V5z"/>
-          {duck ? <path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/> : <line x1="23" y1="1" x2="1" y2="23"/>}
-        </svg>
-        {duck ? "AUTO-DUCK ON" : "AUTO-DUCK OFF"}
-      </button>
-    </div>
-  );
-}
+// (RETIRED 2026-08-23) A DuckToggle component stood here rendering "AUTO-DUCK ON / OFF".
+//
+// Its entire effect was `window.__etherDuck = duck`, and NOTHING in the tree read it — a grep
+// across src/, electron/, audiod/ and native/ returned exactly one hit: that write. It was started
+// and never finished, so the board carried a control claiming a feature the product did not have.
+//
+// The real ducker is slice 3 (docs/aux-channel-ducker-announcements-design-2026-08-21.md §B): a
+// per-channel toggle on the SOURCE strip, persisted on the channel's own row (deck_configs.duck)
+// and pushed to the engine, where the detector reads the slot's kind so only a source channel can
+// ever duck. The toggle lives with the audio it governs — not on the mic, which does not even reach
+// the program bus (that is the Phase 2 capture path).
 
 export default function MicDeck({ inputDeviceId }: Props) {
   const { stationId } = useActiveStation();
@@ -322,7 +305,6 @@ export default function MicDeck({ inputDeviceId }: Props) {
           </div>
         )}
       </div>
-      <DuckToggle />
 
       {/* EQ panel — slides up */}
       <div style={{

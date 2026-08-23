@@ -140,6 +140,20 @@ pub fn audio_set_muted(deck: String, muted: bool, station_id: Option<u32>) -> bo
     audio.sender.send(AudioCmd::SetMuted { deck, muted }).is_ok()
 }
 
+/// DUCKER (slice 3) — arm or disarm one channel's duck.
+///
+/// When an armed SOURCE channel has audio, the programme ducks under it and rises back when it
+/// stops: nothing is stopped and nothing is started, so the song continues underneath and returns
+/// mid-song. Only SOURCE slots can duck; the mixer callback reads the slot's kind, so arming a
+/// rotation deck or CART stores the preference and never fires — a sweeper must never duck the song
+/// it is sweeping into.
+#[napi]
+pub fn audio_set_duck(station_id: u32, deck: String, enabled: bool) -> bool {
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetDuck { deck, enabled }).is_ok()
+}
+
 /// Local studio-monitor (speaker) gain for one station — 0.0 = silent speakers, 1.0 = unity.
 /// Affects ONLY the local device output; the program bus → Icecast stream is untouched, so an
 /// operator can mute/blend what they HEAR without changing what any station BROADCASTS.

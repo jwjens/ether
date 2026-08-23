@@ -282,6 +282,10 @@ const handlers = {
   // daemon whenever AUDIO_DAEMON is on (the default on Windows), so a renderer-only or in-process-only
   // mute would be a silent no-op on exactly the setup most operators run.
   setMuted:           (m) => A.audioSetMuted(m.deck, !!m.muted, m.stationId),
+  // DUCKER (slice 3) — arm/disarm one channel's duck. MUST live here as well as in-process for the
+  // same reason setMuted does: main.js routes to the daemon whenever AUDIO_DAEMON is on, which is
+  // the default on Windows, so a renderer-only path would be a silent no-op on most installs.
+  setDuck:            (m) => A.audioSetDuck(m.stationId, m.deck, !!m.enabled),
   // AUX MONITOR (room) level for one aux deck — D/E/F only, enforced in Rust. 0 = silent locally.
   setAuxMonitor:      (m) => A.audioSetAuxMonitor(m.stationId, m.deck, m.gain),
   // AUX output device. "" = none = the aux stream closes and the bus is silent. Never falls back.

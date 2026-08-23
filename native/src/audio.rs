@@ -292,6 +292,9 @@ pub enum AudioCmd {
     /// AUX MONITOR (2026-08-18): set the ROOM level for one aux deck (D/E/F only). 0.0 = not selected
     /// by any slot = silent on the local speakers. Never affects air.
     SetAuxMonitor { deck: String, gain: f32 },
+    /// DUCKER (slice 3) — arm or disarm one channel's duck. A preference on the channel; whether it
+    /// can duck at all is decided by the slot's KIND, which this cannot override.
+    SetDuck { deck: String, enabled: bool },
     /// Choose the output device for the AUX monitor bus. Empty string = none = the aux stream is
     /// closed and the bus is silent.
     SetAuxDevice(String),
@@ -799,6 +802,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             // so the aux monitor level is simply not applicable here. The live mixer
                             // path (below) is the one that owns bus.aux_monitor_gain.
                             AudioCmd::SetAuxMonitor { .. } => {}
+                            AudioCmd::SetDuck { .. } => {}
                             // Superseded no-device path (see start_station_mixer's header): it owns no
                             // aux stream, so there is nothing here to open or close.
                             AudioCmd::SetAuxDevice(_) => {}
@@ -1571,6 +1575,17 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 // Recorded for the aux thread, which owns opening/closing that stream.
                                 // Empty = none = it closes the stream and clears the ring producer.
                                 if let Ok(mut r) = aux_req.lock() { *r = name; }
+                            }
+                            AudioCmd::SetDuck { deck, enabled } => {
+                                // Accepted for ANY slot and stored as given. The rule that only a
+                                // SOURCE slot can actually duck lives in the mixer callback, which
+                                // reads deck.kind — so a caller that arms deck A gets an honest
+                                // "stored, and it will never fire" rather than a silent refusal that
+                                // the UI would then misreport as enabled.
+                                let Some(idx) = deck_index(&deck) else { continue };
+                                if let Ok(mut bus) = bus_cmd.lock() {
+                                    bus.duck_enabled[idx] = enabled;
+                                }
                             }
                             AudioCmd::SetAuxMonitor { deck, gain } => {
                                 // AUX DECKS ONLY. A/B/C and CART are board channels and their local

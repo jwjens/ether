@@ -68,6 +68,10 @@ export interface DeckConfig {
   kind?: SourceKind | "";
   /** Phase 2 — device id for Mic, endpoint for a network source. Stored from day one, unused now. */
   address?: string | null;
+  /** SOURCE channels only — does audio on this channel duck the programme? Default off.
+   *  A preference, not the rule: only SOURCE slots can duck at all, enforced in Rust by the slot's
+   *  kind, so arming a rotation deck stores a setting that can never fire. */
+  duck?: boolean;
 }
 
 export interface PlaylistTrack {
@@ -117,12 +121,12 @@ export function useDeckConfig() {
     // Depends on stationId: switching station must RE-READ that station's decks. With
     // [isReady] alone the list loaded at mount persisted across switches, so a station
     // could show another station's deck layout.
-    queryScoped<{ slot: string; type: string; label: string; color: string; enabled: number; purpose: string; kind: string; address: string | null }>(
-      "SELECT slot, type, label, color, enabled, COALESCE(purpose,'') as purpose, COALESCE(kind,'') as kind, address FROM deck_configs ORDER BY slot",
+    queryScoped<{ slot: string; type: string; label: string; color: string; enabled: number; purpose: string; kind: string; address: string | null; duck: number }>(
+      "SELECT slot, type, label, color, enabled, COALESCE(purpose,'') as purpose, COALESCE(kind,'') as kind, address, COALESCE(duck,0) as duck FROM deck_configs ORDER BY slot",
       [], stationId
     ).then(rows => {
       const sorted = [...rows].sort(compareSlots);
-      setConfigs(sorted.map(r => ({ ...r, type: r.type as DeckType, enabled: r.enabled === 1, kind: (r.kind || "") as any })));
+      setConfigs(sorted.map(r => ({ ...r, type: r.type as DeckType, enabled: r.enabled === 1, kind: (r.kind || "") as any, duck: r.duck === 1 })));
       setError(null);
     }).catch(e => {
       console.error("[DeckConfig] Failed to load from DB:", e);
@@ -141,7 +145,7 @@ export function useDeckConfig() {
         // SLICE 2 — the patch point travels with every save, so a source channel keeps what it is
         // patched to across a reload. address is written even while unused so Phase 2 needs no
         // migration.
-        kind: c.kind || "", address: c.address ?? null,
+        kind: c.kind || "", address: c.address ?? null, duck: c.duck ? 1 : 0,
       });
       return { slot: c.slot, res };
     }));

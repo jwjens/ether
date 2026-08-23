@@ -35,13 +35,17 @@ interface Props {
   onPfl?: () => void;
   /** Persist a new patch point for this slot. */
   onKindChange: (kind: SourceKind | "") => void;
+  /** DUCK — when this channel has audio, the programme drops under it and rises back after.
+   *  Persisted on the channel's own row (deck_configs.duck, v43) and pushed to the engine. */
+  duck: boolean;
+  onDuckChange: (duck: boolean) => void;
   /** Remove this channel from the board (the − control). */
   onRemove: () => void;
   compact?: boolean;
 }
 
 export default function SourceChannelStrip({
-  config, volume, isOn, onVolumeChange, onToggleOn, onPfl, onKindChange, onRemove, compact,
+  config, volume, isOn, onVolumeChange, onToggleOn, onPfl, onKindChange, duck, onDuckChange, onRemove, compact,
 }: Props) {
   const meta = sourceKindMeta(config.kind);
 
@@ -101,6 +105,28 @@ export default function SourceChannelStrip({
             </option>
           ))}
         </select>
+
+        {/* DUCK — the one control §B.6 exposes today. Threshold, attack, hold, release and depth
+            are implemented with the design's defaults but have no tuning UI yet, so this says ON/OFF
+            and nothing more. A control that implied tunability it does not have would be the same
+            defect as the AUTO-DUCK button this replaces. */}
+        <button
+          onClick={() => onDuckChange(!duck)}
+          role="switch"
+          aria-checked={duck}
+          title={duck
+            ? "Audio on this channel ducks the programme under it, and it rises back when the channel goes quiet"
+            : "Ducking off — this channel mixes over the programme at full level"}
+          style={{
+            width: "100%", padding: "3px 4px", borderRadius: 2, cursor: "pointer",
+            fontSize: 8, fontWeight: 700, letterSpacing: "0.08em",
+            background: duck ? "rgb(from var(--accent-cyan) r g b / 0.12)" : "var(--bg-tertiary)",
+            border: `1px solid ${duck ? "rgb(from var(--accent-cyan) r g b / 0.45)" : "var(--border-primary)"}`,
+            color: duck ? "var(--accent-cyan)" : "var(--text-tertiary)",
+          }}
+        >
+          {duck ? "DUCK ON" : "DUCK OFF"}
+        </button>
 
         {/* The honest state line. Never claims audio that cannot happen. */}
         <div style={{

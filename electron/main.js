@@ -4271,6 +4271,12 @@ ipcMain.handle("audio:stop", (_, deck, stationId) => AUDIO_DAEMON ? audiodClient
 ipcMain.handle("audio:set-aux-device", (_, stationId, device) =>
   AUDIO_DAEMON ? audiodClient.cmd("setAuxDevice", { stationId, device })
                : audio.audioSetAuxDevice(stationId, device || ""));
+// DUCKER (slice 3) — arm/disarm one channel's duck. Routed like setMuted for the same reason: the
+// daemon owns the audio whenever AUDIO_DAEMON is on (the default on Windows), so an in-process-only
+// path would be a silent no-op on most installs.
+ipcMain.handle("audio:set-duck", (_, stationId, deck, enabled) =>
+  AUDIO_DAEMON ? audiodClient.cmd("setDuck", { stationId, deck, enabled })
+               : audio.audioSetDuck(stationId, deck, !!enabled));
 ipcMain.handle("audio:set-aux-monitor", (_, stationId, deck, gain) =>
   AUDIO_DAEMON ? audiodClient.cmd("setAuxMonitor", { stationId, deck, gain })
                : audio.audioSetAuxMonitor(stationId, deck, gain));

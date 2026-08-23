@@ -911,11 +911,33 @@ export default function App() {
     catch (e) { console.error("[SourceChannel] add failed:", e); }
   }, [deckConfigs, nextFreeSourceSlot, saveDeckConfigs]);
 
+  // DUCK — persisted on the channel's own row (deck_configs.duck, v43) and pushed to whichever
+  // engine owns the audio. Both, every time: the row is what survives a restart, the engine call is
+  // what makes it true right now. Storing without pushing would leave a toggle that only takes
+  // effect after a relaunch; pushing without storing would forget it.
+  const setSourceDuck = useCallback(async (slot: string, duck: boolean) => {
+    const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, duck } : c));
+    try { await saveDeckConfigs(merged); }
+    catch (e) { console.error("[SourceChannel] duck save failed:", e); }
+    try { await (window as any).ether?.audio?.setDuck?.(stationId, slot, duck); }
+    catch (e) { console.error("[SourceChannel] duck push failed:", e); }
+  }, [deckConfigs, saveDeckConfigs, stationId]);
+
   const setSourceKind = useCallback(async (slot: string, kind: SourceKind | "") => {
     const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, kind } : c));
     try { await saveDeckConfigs(merged); }
     catch (e) { console.error("[SourceChannel] patch failed:", e); }
   }, [deckConfigs, saveDeckConfigs]);
+
+  useEffect(() => {
+    // The engine boots un-armed. Push every stored duck toggle down once the configs are known, or a
+    // channel the operator armed yesterday would silently not duck until they toggled it again.
+    if (!deckConfigs || !deckConfigs.length || stationId == null) return;
+    for (const c of deckConfigs) {
+      if (c.type !== "source" || !c.enabled) continue;
+      try { (window as any).ether?.audio?.setDuck?.(stationId, c.slot, !!c.duck); } catch { /* engine not up yet */ }
+    }
+  }, [deckConfigs, stationId]);
 
   const removeSourceChannel = useCallback(async (slot: string) => {
     const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, enabled: false } : c));
@@ -2848,6 +2870,7 @@ export default function App() {
                   deckConfigs={visibleEnabledDecks}
                   onAddSourceChannel={addSourceChannel}
                   onSetSourceKind={setSourceKind}
+                  onSetSourceDuck={setSourceDuck}
                   onRemoveSourceChannel={removeSourceChannel}
                   canAddSourceChannel={!!nextFreeSourceSlot}
                   onConfigureDecks={() => setShowDeckConfig(true)}
@@ -3614,7 +3637,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onAddSourceChannel, onSetSourceKind, onRemoveSourceChannel, canAddSourceChannel, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, autoXfade, setAutoXfade, onOpenCarts, libraryDock, jingleOverlay, hasJinglePool, onOpenJingleSettings, onCloseDock }: {
+function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onAddSourceChannel, onSetSourceKind, onSetSourceDuck, onRemoveSourceChannel, canAddSourceChannel, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, autoXfade, setAutoXfade, onOpenCarts, libraryDock, jingleOverlay, hasJinglePool, onOpenJingleSettings, onCloseDock }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
   autoAdv: boolean | null; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
@@ -3625,6 +3648,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   deckConfigs?: DeckConfig[];
   onAddSourceChannel?: () => void;
   onSetSourceKind?: (slot: string, kind: SourceKind | "") => void;
+  onSetSourceDuck?: (slot: string, duck: boolean) => void;
   onRemoveSourceChannel?: (slot: string) => void;
   canAddSourceChannel?: boolean;
   onConfigureDecks?: () => void;
@@ -4165,6 +4189,8 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                       engine.getDeck(slot)?.setMuted(!next);
                     }}
                     onKindChange={k => onSetSourceKind?.(slot, k)}
+                    duck={!!config.duck}
+                    onDuckChange={d => onSetSourceDuck?.(slot, d)}
                     onRemove={() => onRemoveSourceChannel?.(slot)}
                   />
                 </div>

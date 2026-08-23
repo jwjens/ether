@@ -276,6 +276,9 @@ const REGISTRY = {
       // the source while a second machine's board showed an empty dropdown.
       kind:       'scalar',
       address:    'scalar',
+      // SLICE 3 — the per-channel ducker toggle. A preference, not the rule: only SOURCE slots can
+      // duck and that is enforced in Rust by the slot's kind.
+      duck:       'scalar',
       station_id: 'scalar',
       uuid:       'scalar',
       created_at: 'scalar',
