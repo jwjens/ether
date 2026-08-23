@@ -1974,47 +1974,13 @@ function runMigrations() {
 
   // Part 1 — deck purpose (controls mode-based visibility)
   alterSafe("ALTER TABLE deck_configs ADD COLUMN purpose TEXT DEFAULT ''");
-  // SLICE 2 (2026-08-22) — the SOURCE channel's patch point: { kind, address? }.
-  //
-  // `kind` is WHAT IS PATCHED IN (jukebox | announcement | jingle | mic | network); `type` stays
-  // WHAT THE STRIP IS. `address` is unused by the file kinds and carries a device id for Mic or an
-  // endpoint for a network source — both Phase 2. It is added NOW, empty, precisely so Phase 2 needs
-  // no migration: docs/aux-channel-ducker-announcements-design-2026-08-21.md §A.6.
-  alterSafe("ALTER TABLE deck_configs ADD COLUMN kind TEXT DEFAULT ''");
-  alterSafe("ALTER TABLE deck_configs ADD COLUMN address TEXT DEFAULT NULL");
+  // SLICE 2's deck_configs.kind / .address are NOT here. They moved to the numbered transformer
+  // scripts/migrate-source-channels-phase-sync-42.js (Jeff's ruling, 2026-08-22): new schema goes
+  // through the versioned chain so every machine reaches the same schema the same way, and
+  // schema_version tells the truth about what the schema contains. alterSafe is the legacy path —
+  // do not add to it.
 
-  // ── JUKEBOX DECKS BECOME SOURCE CHANNELS (2026-08-22) ────────────────────────────────────────
-  //
-  // The jukebox is a SOURCE you patch into a channel, not a deck TYPE. Slice 2 made that real, so
-  // the legacy `type='jukebox'` rows are migrated in place and the legacy strip is retired. A
-  // station that had deck D as a jukebox keeps its deck, its fader and its remembered ON state.
-  //
-  // IN PLACE AND IDEMPOTENT: after this runs no row matches the WHERE, so every later boot is a
-  // no-op. Deliberately a RAW UPDATE rather than a routed mutation — this is a schema-shaped
-  // migration and every peer runs the identical statement at its own boot, exactly like the
-  // alterSafe calls above. Routing it through the mutation writer would push a data change that the
-  // receiving build is already performing for itself.
-  //
-  // The channel cut is NOT touched: jukebox_channel_on lives in station_config_kv keyed per STATION,
-  // not per slot, so it survives the type change and the Jukebox window keeps reading the same truth.
-  try {
-    const jb = db.prepare(
-      "UPDATE deck_configs SET type = 'source', kind = 'jukebox' " +
-      "WHERE type = 'jukebox' AND deleted_at IS NULL"
-    ).run();
-    if (jb.changes > 0) {
-      console.log(`[migrate] jukebox deck → SOURCE channel: ${jb.changes} row(s) converted`);
-      for (const r of db.prepare(
-        "SELECT station_id, slot, type, kind, enabled FROM deck_configs WHERE kind = 'jukebox' AND deleted_at IS NULL ORDER BY station_id, slot"
-      ).all()) {
-        console.log(`[migrate]   station ${r.station_id} slot ${r.slot} → type=${r.type} kind=${r.kind} enabled=${r.enabled}`);
-      }
-    }
-  } catch (e) {
-    // Never fatal: a station that cannot be migrated still opens, it just keeps the legacy type
-    // until the next boot. Robustness rule — never dead-end a launch on a cosmetic migration.
-    console.warn("[migrate] jukebox→source conversion skipped:", e.message);
-  }
+  // The jukebox → SOURCE channel conversion is likewise in the v42 transformer, not here.
   // Part 7 — per-operator theme + station logo
   alterSafe("ALTER TABLE operators ADD COLUMN theme TEXT DEFAULT NULL");
   // Part 8 — Spotify URI on songs
