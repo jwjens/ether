@@ -2056,8 +2056,21 @@ fn mixer_callback(
                 g += (1.0 - g) * rel;
             }
             let gc = g.clamp(depth.min(1.0), 1.0);
-            mix_l[f] = core_l[f] * gc + src_l[f];
-            mix_r[f] = core_r[f] * gc + src_r[f];
+            // DUCK THE MUSIC IN PLACE, then sum. Both buses then inherit it from ONE multiply.
+            //
+            // This is the fix for "the telemetry says -12 dB and the operator hears nothing"
+            // (2026-08-23). The duck originally rewrote mix_* only — and mix_* is the AIR feed.
+            // The ROOM feed is rebuilt further down from core_* whenever aux_present is true
+            // (see room_owned), which is EXACTLY when a source is playing and the duck is engaged.
+            // So the stream ducked perfectly and the studio monitor — the only thing the operator
+            // was listening to — never did.
+            //
+            // Ducking core_* in place means the room's own EQ/master chain reads already-ducked
+            // music, with no second gain to keep in step and no way for the two buses to disagree.
+            core_l[f] *= gc;
+            core_r[f] *= gc;
+            mix_l[f] = core_l[f] + src_l[f];
+            mix_r[f] = core_r[f] + src_r[f];
         }
 
         bus.duck_gain = g;
