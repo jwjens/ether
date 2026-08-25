@@ -27,6 +27,8 @@ module.exports = function buildHandlers(ipcRenderer) {
     // triggers use the identical path and cannot drift from what a hand-fire does.
     fire:       (stationId, uuid)  => ipcRenderer.invoke('announcements:fire',     stationId, uuid),
     canFire:    (stationId)        => ipcRenderer.invoke('announcements:can-fire', stationId),
+    getClosingTimes: (stationId)               => ipcRenderer.invoke('announcements:get-closing-times', stationId),
+    setClosingTime:  (stationId, dow, hhmm)    => ipcRenderer.invoke('announcements:set-closing-time', stationId, dow, hhmm),
     list:       (stationId, opts) => ipcRenderer.invoke('announcements:list',          stationId, opts),
     getById:    (uuid)            => ipcRenderer.invoke('announcements:get-by-id',     uuid),
     create:     (payload)         => ipcRenderer.invoke('announcements:create',        payload),

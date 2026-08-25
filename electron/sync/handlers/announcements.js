@@ -14,7 +14,7 @@ const { REGISTRY } = require('../synced-tables');
 
 const TABLE              = 'announcements';
 const HAS_STATION_ID_COL = true;
-const PATCHABLE          = ["title","file_path","trigger_time","days","duck_music","resume_music","duck_level","is_active","last_played_at","updated_at"];
+const PATCHABLE          = ["title","file_path","trigger_time","days","duck_music","resume_music","duck_level","is_active","last_played_at","updated_at","trigger_type","close_offset_min"];
 
 // ── Scope guard ───────────────────────────────────────────────────────────────
 
@@ -72,8 +72,8 @@ function announcementsCreate(db, payload) {
     actor_id:       payload.actor_id ?? null,
   }, () => {
     db.prepare(
-      `INSERT INTO ${TABLE} (title, file_path, trigger_time, days, duck_music, resume_music, duck_level, is_active, last_played_at, created_at, station_id, uuid, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(row.title, row.file_path, row.trigger_time, row.days, row.duck_music, row.resume_music, row.duck_level, row.is_active, row.last_played_at, row.created_at, row.station_id, row.uuid, row.updated_at, row.deleted_at);
+      `INSERT INTO ${TABLE} (title, file_path, trigger_time, days, duck_music, resume_music, duck_level, is_active, last_played_at, created_at, station_id, uuid, updated_at, deleted_at, trigger_type, close_offset_min) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(row.title, row.file_path, row.trigger_time, row.days, row.duck_music, row.resume_music, row.duck_level, row.is_active, row.last_played_at, row.created_at, row.station_id, row.uuid, row.updated_at, row.deleted_at, row.trigger_type ?? 'absolute', row.close_offset_min ?? 0);
   });
   return announcementsGet(db, uuid);
 }

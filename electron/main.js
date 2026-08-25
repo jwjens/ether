@@ -1467,6 +1467,8 @@ function initDb() {
   bootStep("Preparing decks…", () => seedDeckConfigs());
   // Every station's ducker, from its own row, whether or not its board is ever opened.
   bootStep("Arming duckers…", () => { try { armAllStationDuckers("boot"); } catch (e) { console.warn("[duck]", e.message); } });
+  // Scheduled announcements fire whether or not any window is open.
+  bootStep("Starting announcement scheduler…", () => { try { startAnnouncementScheduler(); } catch (e) { console.warn("[announce]", e.message); } });
   setTimeout(() => { try { console.log("[DB] Song count:", db.prepare("SELECT COUNT(*) as c FROM songs").get()); } catch(e) { console.log("[DB] Song count error:", e.message); } }, 500);
 }
 
@@ -4282,6 +4284,125 @@ ipcMain.handle("audio:set-aux-device", (_, stationId, device) =>
 ipcMain.handle("audio:set-duck", (_, stationId, deck, enabled) =>
   AUDIO_DAEMON ? audiodClient.cmd("setDuck", { stationId, deck, enabled })
                : audio.audioSetDuck(stationId, deck, !!enabled));
+// ── THE ANNOUNCEMENT SCHEDULER (slice 5, 2026-08-25) ──────────────────────────────────────────
+//
+// docs/aux-channel-ducker-announcements-design-2026-08-21.md §C.2.
+//
+// IN MAIN, not the renderer. The old timer was a setInterval inside the Announcements PANEL, so a
+// scheduled announcement only fired while that window happened to be open. A trigger that depends
+// on someone having a panel on screen is not a broadcast feature. It also kept lastFiredMinute in a
+// module-level global, shared across every station on the install.
+//
+// FIRING IS NOT AIRING (Jeff's ruling, 2026-08-25). This decides WHEN an announcement fires onto the
+// Announcement source channel. Whether anyone hears it is the board's business — fader up, channel
+// ON — exactly like every other channel. There is deliberately NO closed-day logic, no suppression,
+// no special case: an announcement firing onto a channel that is down is simply nobody hearing it,
+// the same as muting any source. One rule, no exceptions to remember.
+//
+// EVERY STATION, every tick — not just the one whose board is on screen. Same lesson the duck
+// fan-out learned: anything scoped to the visible station is armed only by luck.
+const ANNOUNCE_TICK_MS = 15000;
+let _announceTimer = null;
+
+/** Closing time for one station on one weekday (0=Sun), 'HH:MM' or null if never set. */
+function closingTimeFor(stationId, dow) {
+  try {
+    const v = db.prepare('SELECT value FROM station_config_kv WHERE station_id = ? AND key = ?')
+      .get(stationId, 'closing_time_' + dow)?.value;
+    return /^\d{1,2}:\d{2}$/.test(String(v || '')) ? String(v) : null;
+  } catch { return null; }
+}
+
+/** 'HH:MM' minus N minutes, as 'HH:MM'. Wraps backwards past midnight the honest way. */
+function minusMinutes(hhmm, mins) {
+  const [h, m] = String(hhmm).split(':').map(Number);
+  let t = h * 60 + m - (Number(mins) || 0);
+  while (t < 0) t += 1440;
+  t %= 1440;
+  return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0');
+}
+
+/** The clock time this row wants to fire at TODAY, or null if it cannot be resolved. */
+function dueTimeFor(row, stationId, dow) {
+  if (row.trigger_type === 'close_offset') {
+    const close = closingTimeFor(stationId, dow);
+    // No closing time set for this weekday is not an error and not a guess: the row simply has no
+    // time today. Guessing one would put audio on air at an hour nobody chose.
+    if (!close) return null;
+    return minusMinutes(close, row.close_offset_min);
+  }
+  return /^\d{1,2}:\d{2}$/.test(String(row.trigger_time || '')) ? String(row.trigger_time) : null;
+}
+
+function announceTick() {
+  let stations = [];
+  try { stations = db.prepare('SELECT id FROM stations WHERE deleted_at IS NULL').all().map(r => r.id); }
+  catch { return; }
+  const now = new Date();
+  const hhmm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+  const dow = String(now.getDay());
+  const nowEpoch = Math.floor(Date.now() / 1000);
+
+  for (const stationId of stations) {
+    let rows = [];
+    try {
+      rows = db.prepare(
+        "SELECT uuid, title, days, trigger_time, last_played_at, " +
+        "COALESCE(trigger_type,'absolute') AS trigger_type, COALESCE(close_offset_min,0) AS close_offset_min " +
+        "FROM announcements WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL"
+      ).all(stationId);
+    } catch { continue; }
+
+    for (const row of rows) {
+      // ACTIVE DAYS decide whether the event exists today at all. An unchecked day is not a
+      // suppressed announcement — it is no announcement.
+      if (!String(row.days || '').includes(dow)) continue;
+      const due = dueTimeFor(row, stationId, dow);
+      if (!due || due !== hhmm) continue;
+      // Fired already this minute-or-two? The tick is 15s, so without this the same minute fires
+      // four times. Keyed on the row's OWN last_played_at, not a module global — a per-station
+      // global is how the old renderer timer let one station's fire suppress another's.
+      if (row.last_played_at && (nowEpoch - row.last_played_at) < 120) continue;
+      try {
+        const r = fireAnnouncement(stationId, row.uuid);
+        if (!r.ok) logStartup('[announce] scheduled fire FAILED station ' + stationId + ' "' + (row.title || '') + '": ' + r.error);
+        else logStartup('[announce] scheduled fire station ' + stationId + ' "' + (row.title || '') + '" at ' + due + ' (' + row.trigger_type + ')');
+      } catch (e) { logStartup('[announce] scheduled fire threw: ' + (e && e.message)); }
+    }
+  }
+}
+
+function startAnnouncementScheduler() {
+  if (_announceTimer) return;
+  // Never let a scheduling fault reach playout: the tick is wrapped, and a throw inside one station
+  // must not stop the others or kill the timer.
+  _announceTimer = setInterval(() => { try { announceTick(); } catch (e) { console.error('[announce] tick:', e && e.message); } }, ANNOUNCE_TICK_MS);
+  console.log('[announce] scheduler started (every ' + (ANNOUNCE_TICK_MS / 1000) + 's, all stations)');
+}
+
+// Closing time, seven per station — read and written by the Announcements panel.
+ipcMain.handle('announcements:get-closing-times', (_, stationId) => {
+  try {
+    const out = {};
+    for (let d = 0; d < 7; d++) out[d] = closingTimeFor(stationId, d);
+    return { ok: true, times: out };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+ipcMain.handle('announcements:set-closing-time', (_, stationId, dow, hhmm) => {
+  try {
+    const key = 'closing_time_' + Number(dow);
+    const val = (hhmm == null || hhmm === '') ? '' : String(hhmm);
+    if (val && !/^\d{1,2}:\d{2}$/.test(val)) return { ok: false, error: 'expected HH:MM' };
+    // Through the SANCTIONED upsert, not raw SQL. station_config_kv.uuid is NOT NULL and the row has
+    // to be journalled for sync — a hand-rolled INSERT would have failed on the first write and, if
+    // it had not, would have written a row no peer ever saw. Closing times are per-station config and
+    // belong on the wire like the rest of it.
+    const { stationConfigKvUpsertByKey } = require('./sync/handlers/station_config_kv');
+    stationConfigKvUpsertByKey(db, stationId, key, val);
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 // ── ANNOUNCEMENTS ON AIR (slice 4, 2026-08-25) ────────────────────────────────────────────────
 //
 // docs/aux-channel-ducker-announcements-design-2026-08-21.md §C.1.

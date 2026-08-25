@@ -17,6 +17,10 @@ interface Announcement {
    *  real duck is the source channel's DUCK ON plus Preferences → Ducker, per station. */
   duck_music: number; resume_music: number; duck_level: number;
   is_active: number;
+  /** 'absolute' = fire at trigger_time. 'close_offset' = fire close_offset_min before THAT
+   *  weekday's closing time, so a station that shuts earlier on Sunday announces earlier too. */
+  trigger_type: "absolute" | "close_offset";
+  close_offset_min: number;
   last_played_at: number | null;
 }
 
@@ -28,49 +32,20 @@ function fmtTime(t: string): string {
   return (hr === 0 ? 12 : hr > 12 ? hr - 12 : hr) + ":" + m + " " + (hr >= 12 ? "PM" : "AM");
 }
 
-let announcementTimer: any = null;
-let lastFiredMinute = "";
-
-async function checkAnnouncements() {
-  const now = new Date();
-  const currentTime = String(now.getHours()).padStart(2,"0") + ":" + String(now.getMinutes()).padStart(2,"0");
-  const currentDay = String(now.getDay());
-  if (currentTime === lastFiredMinute) return;
-  try {
-    const announcements = await queryScoped<Announcement>("SELECT * FROM announcements WHERE is_active = 1 AND trigger_time = ?", [currentTime], getActiveStationIdSync());
-    for (const ann of announcements) {
-      if (!ann.days.includes(currentDay)) continue;
-      const nowEpoch = Math.floor(Date.now() / 1000);
-      if (ann.last_played_at && nowEpoch - ann.last_played_at < 120) continue;
-      lastFiredMinute = currentTime;
-      // SLICE 4 — ON AIR, through the engine.
-      //
-      // What stood here played the file with `new Audio(url)` — the renderer's own output, which
-      // never touches the program bus. No listener has ever heard an announcement. It also faked a
-      // duck by writing deck A and B's faders and restoring them to 1.0, clobbering whatever level
-      // the operator had set.
-      //
-      // Both are gone. main's fireAnnouncement loads the file onto the SOURCE CHANNEL patched to
-      // Announcement and plays it like any other element, so it reaches the room AND the stream, and
-      // the REAL ducker pulls the programme under it because that channel is a source with DUCK ON.
-      // last_played_at is stamped in main, only once the engine has actually been told.
-      //
-      // Hand-firing and this timer now call the SAME function — the only way they can be relied on
-      // to behave identically. (The timer itself moves out of the renderer in slice 5.)
-      const r: any = await (window as any).ether.announcements.fire(getActiveStationIdSync(), ann.uuid);
-      if (!r?.ok) console.error("[announce] fire failed:", r?.error);
-    }
-  } catch {}
-}
-
-export function startAnnouncementEngine() {
-  if (announcementTimer) clearInterval(announcementTimer);
-  announcementTimer = setInterval(checkAnnouncements, 10000);
-}
-export function stopAnnouncementEngine() {
-  if (announcementTimer) clearInterval(announcementTimer);
-  announcementTimer = null;
-}
+// (RETIRED 2026-08-25, slice 5) A setInterval lived here and fired scheduled announcements from the
+// RENDERER — so they only fired while this panel's window happened to be open. A trigger that
+// depends on someone having a panel on screen is not a broadcast feature. It also kept
+// lastFiredMinute in a module-level global shared by every station, so one station's fire could
+// suppress another's.
+//
+// Firing now lives in main (startAnnouncementScheduler), runs for EVERY station on a 15s tick, and
+// uses the same fireAnnouncement() a hand-fire does — the only way the two can be relied on to
+// behave the same.
+//
+// These exports remain as no-ops because App.tsx calls them on mount; removing the call sites is a
+// separate tidy, and a no-op is honest where a second timer would not be.
+export function startAnnouncementEngine() { /* main owns the schedule now */ }
+export function stopAnnouncementEngine()  { /* main owns the schedule now */ }
 
 function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
@@ -99,7 +74,7 @@ export default function Announcements() {
     if (!files) return;
     const filePath = Array.isArray(files) ? files[0] : files;
     const title = (filePath.split(/[\\/]/).pop() || "").replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
-    setEditing({ title, file_path: filePath, trigger_time: "17:30", days: "0123456", duck_music: 1, resume_music: 1, duck_level: 0.1, is_active: 1 });
+    setEditing({ title, file_path: filePath, trigger_time: "17:30", days: "0123456", duck_music: 1, resume_music: 1, duck_level: 0.1, is_active: 1, trigger_type: "absolute", close_offset_min: 30 });
   };
 
   const save = async () => {
@@ -109,6 +84,8 @@ export default function Announcements() {
         title: editing.title, trigger_time: editing.trigger_time, days: editing.days,
         duck_music: editing.duck_music ? 1 : 0, resume_music: editing.resume_music ? 1 : 0,
         duck_level: editing.duck_level, is_active: editing.is_active ? 1 : 0,
+        trigger_type: editing.trigger_type || "absolute",
+        close_offset_min: Number(editing.close_offset_min ?? 0),
       });
     } else {
       await (window as any).ether.announcements.create({
@@ -116,6 +93,8 @@ export default function Announcements() {
         trigger_time: editing.trigger_time, days: editing.days,
         duck_music: editing.duck_music ? 1 : 0, resume_music: editing.resume_music ? 1 : 0,
         duck_level: editing.duck_level, is_active: editing.is_active ? 1 : 0,
+        trigger_type: editing.trigger_type || "absolute",
+        close_offset_min: Number(editing.close_offset_min ?? 0),
       });
     }
     setEditing(null); load();
@@ -136,6 +115,23 @@ export default function Announcements() {
   // instead of failing at the moment someone presses it.
   const [airSlot, setAirSlot] = useState<string | null>(null);
   const [fireMsg, setFireMsg] = useState<string | null>(null);
+  // CLOSING TIME, SEVEN PER STATION (slice 5). Jeff's ruling: it varies by day of week, and the
+  // seven rows are the default view — a park that shuts earlier on Sunday is the ordinary case, not
+  // an exception to reveal behind a toggle.
+  const [closing, setClosing] = useState<Record<string, string>>({});
+  const loadClosing = () => {
+    if (stationId == null) return;
+    (window as any).ether.announcements.getClosingTimes(stationId)
+      .then((r: any) => { if (r?.ok) setClosing(Object.fromEntries(Object.entries(r.times).map(([k, v]) => [k, (v as string) || ""]))); })
+      .catch(() => { /* the panel shows empty fields, which is honest: nothing is set */ });
+  };
+  useEffect(loadClosing, [stationId]);
+  const saveClosing = async (dow: number, hhmm: string) => {
+    setClosing(c => ({ ...c, [dow]: hhmm }));
+    if (stationId == null) return;
+    try { await (window as any).ether.announcements.setClosingTime(stationId, dow, hhmm); }
+    catch (e) { console.error("[announce] closing time save failed:", e); }
+  };
   useEffect(() => {
     if (stationId == null) return;
     (window as any).ether.announcements.canFire(stationId)
@@ -186,6 +182,32 @@ export default function Announcements() {
           {fireMsg && (
             <p style={{ fontSize: 11, color: "var(--text-secondary)", margin: "6px 0 0" }}>{fireMsg}</p>
           )}
+
+          {/* ── CLOSING TIME, one per day ────────────────────────────────────────────────────
+              Beside the announcements it governs, not buried in Preferences: an operator setting a
+              "30 minutes before closing" announcement needs to see what closing means today. */}
+          <div style={{ marginTop: 14, padding: "12px 14px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 6 }}>
+              Closing time — this station, per day
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" as any }}>
+              {DAY_NAMES.map((name, i) => (
+                <label key={i} style={{ display: "flex", flexDirection: "column" as any, gap: 3 }}>
+                  <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 700 }}>{name}</span>
+                  <input
+                    type="time"
+                    value={closing[String(i)] || ""}
+                    onChange={e => saveClosing(i, e.target.value)}
+                    style={{ padding: "5px 7px", fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+                </label>
+              ))}
+            </div>
+            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1.4 }}>
+              Used by announcements set to fire <strong>before closing</strong>. Each day is its own
+              time, so a day you close earlier announces earlier. A day left blank fires no
+              closing-relative announcement at all — nothing is guessed.
+            </div>
+          </div>
         </div>
         <button onClick={addNew} style={{ padding: "8px 16px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", flexShrink: 0, boxShadow: "0 2px 8px rgba(14,165,233,0.3)" }}>
           ＋ Add Announcement
@@ -206,9 +228,38 @@ export default function Announcements() {
                 style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as any }} />
             </div>
             <div>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 5 }}>Trigger Time</div>
-              <input type="time" value={editing.trigger_time || "17:30"} onChange={e => setEditing({...editing, trigger_time: e.target.value})}
-                style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as any }} />
+              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 5 }}>Trigger</div>
+              <select
+                value={editing.trigger_type || "absolute"}
+                onChange={e => setEditing({ ...editing, trigger_type: e.target.value as any })}
+                style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as any }}>
+                <option value="absolute">At a set time</option>
+                <option value="close_offset">Before closing</option>
+              </select>
+              {(editing.trigger_type || "absolute") === "absolute" ? (
+                <input type="time" value={editing.trigger_time || "17:30"} onChange={e => setEditing({...editing, trigger_time: e.target.value})}
+                  style={{ width: "100%", marginTop: 6, padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as any }} />
+              ) : (
+                <>
+                  <select
+                    value={String(editing.close_offset_min ?? 30)}
+                    onChange={e => setEditing({ ...editing, close_offset_min: Number(e.target.value) })}
+                    style={{ width: "100%", marginTop: 6, padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as any }}>
+                    <option value="30">30 minutes before closing</option>
+                    <option value="15">15 minutes before closing</option>
+                    <option value="5">5 minutes before closing</option>
+                    <option value="1">1 minute before closing</option>
+                    <option value="0">At closing time</option>
+                  </select>
+                  {/* Says WHICH closing time it means, because that is the whole point of the
+                      seven-per-day setting below: a station that shuts earlier on Sunday announces
+                      earlier on Sunday, without a second announcement existing. */}
+                  <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 4, lineHeight: 1.35 }}>
+                    Uses each day's own closing time, set below. A day with no closing time set does
+                    not fire this announcement — nothing is guessed.
+                  </div>
+                </>
+              )}
             </div>
           </div>
 

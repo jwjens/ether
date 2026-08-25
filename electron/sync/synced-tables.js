@@ -81,6 +81,9 @@ const REGISTRY = {
       file_path:      'blob-ref',
       trigger_time:   'scalar',
       days:           'scalar',
+      // SLICE 5 — what KIND of trigger this is, and how far before closing it fires.
+      trigger_type:     'scalar',
+      close_offset_min: 'scalar',
       duck_music:     'scalar',
       resume_music:   'scalar',
       duck_level:     'scalar',
