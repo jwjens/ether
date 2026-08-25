@@ -583,7 +583,7 @@ impl BusState {
             // sits fine at -12, but a CONTINUOUS source needs the programme much further down or the
             // two clash. A starting point, not a rebuild — every value here is tunable at runtime
             // from that station's Preferences (SetDuckParams).
-            duck_depth_db: -22.0,
+            duck_depth_db: -28.0,
             duck_attack_ms: 30.0,
             duck_hold_ms: 700.0,
             duck_release_ms: 500.0,
@@ -1154,6 +1154,31 @@ mod duck_regression {
         // Past the hold + release → it rises back on its own. Nothing restarted it.
         run(&bus, 200);                      // ~2 s
         assert!(duck_gain(&bus) > 0.95, "music never came back: g={}", duck_gain(&bus));
+    }
+
+    #[test]
+    fn a_source_deck_going_inactive_releases_it_does_not_snap() {
+        // THE TRACK-GAP BUG (2026-08-23). duck_armed means "an armed source deck is active, unpaused
+        // and holding a source THIS buffer" — and a jukebox drops all three between tracks. The gain
+        // used to snap straight back to unity there, throwing the programme to full level with no
+        // release, on EVERY track change. Heard as "the music rises while the source is still
+        // playing", because from the operator's chair it is.
+        let bus = bus_with(0.25, 0.5, true);
+        run(&bus, 40);
+        let ducked = duck_gain(&bus);
+        assert!(ducked < 0.2, "control: should be ducked before the gap, g={}", ducked);
+
+        // The deck goes away entirely — exactly what a track change looks like to the callback.
+        { let mut b = bus.lock().unwrap(); b.decks[3].source = None; b.decks[3].active = false; }
+
+        run(&bus, 10);                       // ~100 ms into a 700 ms hold
+        let during_gap = duck_gain(&bus);
+        assert!((during_gap - ducked).abs() < 0.01,
+                "the duck SNAPPED on a track gap instead of holding: {} -> {}", ducked, during_gap);
+
+        // And it still comes home on its own once the hold really has expired.
+        run(&bus, 300);
+        assert!(duck_gain(&bus) > 0.95, "never released after the source went away: g={}", duck_gain(&bus));
     }
 
     #[test]
@@ -2055,7 +2080,18 @@ fn mixer_callback(
     //     whether or not the operator has ever turned processing on.
     //
     // The ride is FROZEN while the duck is down (§B.3a) so it cannot claw the music back up.
-    let duck_active = if duck_armed {
+    // KEEP RUNNING WHILE STILL DOWN. duck_armed means "an armed source deck is active, unpaused and
+    // holding a source THIS buffer" — and a jukebox drops all three between tracks. Snapping the gain
+    // back to unity there threw the programme to full level with no release at all, every single
+    // track change, which is heard as "the music rises while the source is still playing" (Jeff,
+    // 2026-08-23). The gap is short; the HOLD exists precisely to ride through it.
+    //
+    // So the envelope also runs whenever the gain is still below unity: det_* is all zeros when
+    // nothing is armed, so the detector simply reads silence and the normal hold-then-release path
+    // takes it home at the operator's release time. Once it is fully back, and only then, the block
+    // is skipped again and the mix is bit-identical.
+    let duck_running = duck_armed || bus.duck_gain < 0.999;
+    let duck_active = if duck_running {
         let fs_ms = PROGRAM_RATE as f32 / 1000.0;          // frames per millisecond
         let depth = 10f32.powf(bus.duck_depth_db / 20.0);  // linear floor
         let thr   = bus.duck_threshold;
@@ -2108,8 +2144,10 @@ fn mixer_callback(
         // != 1.0, so a gain still trickling back up over the last dB does not read as ducked forever.
         g < 0.999
     } else {
-        // No channel arms the ducker → the mix is exactly what the loop accumulated. Nothing is
-        // rewritten, so nothing can drift.
+        // Nothing armed AND the release has already finished — the mix is exactly what the loop
+        // accumulated, nothing is rewritten, and nothing can drift. The gain is pinned to exactly
+        // 1.0 here only because it is already within a thousandth of it; this is not a reset, and
+        // there is no path that jumps the programme back to full level.
         bus.duck_gain = 1.0;
         bus.duck_hold_left_ms = 0.0;
         false
