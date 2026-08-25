@@ -170,9 +170,16 @@ export default function DuckerSection() {
         {" "}These settings are for <strong>{stationName || "this station"}</strong> only.
       </p>
 
-      <Row label="Depth" unit=" dB" value={p.depthDb} min={-40} max={0} step={1}
-           hint="How far the programme drops. A short announcement sits fine around −12; a continuous source needs much more or the two clash."
-           onChange={change("depthDb")} onCommit={commit} />
+      {/* DEPTH READS AS AN AMOUNT OF DUCKING, NOT A NEGATIVE GAIN.
+          It was min=-40 max=0, so dragging to "max" gave 0 dB — NO ducking. Jeff maxed it, landed on
+          -2 dB, and reported the duck had got weaker; the engine was obeying perfectly. A control
+          whose maximum delivers the least of what it is named for is the same defect as the inverted
+          ON button earlier in this slice.
+          The slider now moves the way the ear expects — right is deeper — and says "28 dB down".
+          The stored value stays negative, because that is what the engine's gain maths wants. */}
+      <Row label="Depth" unit=" dB down" value={-p.depthDb} min={0} max={40} step={1}
+           hint="How far the programme drops under a source. Right is deeper. A short announcement sits fine around 12 dB; a continuous source needs much more or the two clash."
+           onChange={v => change("depthDb")(-v)} onCommit={commit} />
 
       <Row label="Hold" unit=" ms" value={p.holdMs} min={0} max={3000} step={50}
            hint="How long it stays down after the source goes quiet. This is what stops the music fluttering up between words — the setting most worth dialling by ear."
