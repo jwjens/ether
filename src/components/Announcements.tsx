@@ -12,8 +12,11 @@ interface Announcement {
   uuid: string;
   title: string; file_path: string;
   trigger_time: string; days: string;
-  duck_music: number; resume_music: number;
-  duck_level: number; is_active: number;
+  /** DEPRECATED (slice 4). The old fake-duck settings. Written at their schema defaults so a build
+   *  older than slice 4 still opens and reads sane values; nothing in this build acts on them. The
+   *  real duck is the source channel's DUCK ON plus Preferences → Ducker, per station. */
+  duck_music: number; resume_music: number; duck_level: number;
+  is_active: number;
   last_played_at: number | null;
 }
 
@@ -227,19 +230,29 @@ export default function Announcements() {
             </div>
           </div>
 
-          {/* Duck settings */}
-          <div style={{ display: "flex", gap: 20, alignItems: "center", marginBottom: 14, padding: "12px 14px", background: "var(--bg-tertiary)", borderRadius: 0, border: "1px solid var(--border-primary)" }}>
-            <Toggle value={!!editing.duck_music} onChange={v => setEditing({...editing, duck_music: v ? 1 : 0})} label="Duck music while playing" />
-            {!!editing.duck_music && (
-              <>
-                <Toggle value={!!editing.resume_music} onChange={v => setEditing({...editing, resume_music: v ? 1 : 0})} label="Resume music after" />
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: "auto" }}>
-                  <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Duck to {Math.round((editing.duck_level || 0.1) * 100)}%</span>
-                  <input type="range" min="0" max="50" value={Math.round((editing.duck_level || 0.1) * 100)} onChange={e => setEditing({...editing, duck_level: parseInt(e.target.value) / 100})}
-                    style={{ width: 100, accentColor: "var(--accent-blue)" }} />
-                </div>
-              </>
-            )}
+          {/* (REMOVED 2026-08-25) "Duck music while playing", "Resume music after" and a "Duck to
+              N%" slider stood here. They were the OLD fake duck — the renderer path that wrote deck
+              A and B's faders directly — and slice 4 replaced that with the real one. Jeff confirmed
+              by ear that neither the toggle nor the percentage did anything.
+
+              A dead control beside a working one is worse than no control: it is how an operator
+              mis-sets the duck and then distrusts the feature that does work. An announcement now
+              ducks because it PLAYS ON A SOURCE CHANNEL WITH DUCK ON, and how far it ducks is that
+              station's setting in Preferences → Ducker. One place, one truth.
+
+              The duck_music / resume_music / duck_level COLUMNS stay in the schema, deliberately: a
+              build older than slice 4 still reads them, and a migration that reaches customers must
+              leave the database openable by the previous build (the 4.4.151 rule). They are written
+              at their schema defaults and read by nothing. */}
+          <div style={{ marginBottom: 14, padding: "10px 14px", background: "var(--bg-tertiary)", borderRadius: 0, border: "1px solid var(--border-primary)" }}>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+              Ducking is set per station in <strong>Preferences → Ducker</strong>.
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 3, lineHeight: 1.4 }}>
+              This announcement ducks the programme because it plays on a source channel with
+              <strong> DUCK ON</strong>. Depth, hold and release are that station's settings and apply
+              to every source alike.
+            </div>
           </div>
 
           <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>

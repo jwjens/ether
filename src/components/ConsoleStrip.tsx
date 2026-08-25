@@ -29,6 +29,9 @@ interface Props {
   deckId?: string;
   /** Hide the channel label row — used when an external bar (ThreeSlotBar) shows it instead. */
   hideLabel?: boolean;
+  /** This strip is a SOURCE channel, so its meter reads its OWN slot and is never gated on the
+   *  channel switch. Routed by KIND rather than by slot letter — see the meter below. */
+  sourceChannel?: boolean;
   /** Rotation role for the color strip: playing rides a progress fill, next pulses, third is solid. */
   role?: "playing" | "next" | "third";
   /** JINGLES overlay v1: 'ARMED' (white) or 'FIRING' (yellow) when a jingle bridges this deck's seam. */
@@ -55,7 +58,7 @@ const DB_MARKS: { label: string; db: number; isUnity?: boolean }[] = [
 ];
 
 export default function ConsoleStrip({
-  label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId, hideLabel, role = "third", jingle = null, jingleClass = null,
+  label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId, hideLabel, sourceChannel = false, role = "third", jingle = null, jingleClass = null,
 }: Props) {
   const engine = useAudioEngine();
   const midi = useMidiState();
@@ -78,6 +81,7 @@ export default function ConsoleStrip({
   const vuPeakRef   = useRef<HTMLDivElement>(null);
   const isOnRef     = useRef(isOn);
   const isPlayingRef = useRef(isPlaying);
+  const sourceChannelRef = useRef(sourceChannel);
   const colorRef    = useRef(color);
   const fillRef      = useRef<HTMLDivElement>(null);
   const fillTrackRef = useRef<string>("");
@@ -97,6 +101,7 @@ export default function ConsoleStrip({
   // Sync prop refs so the onLevels handler always sees current values
   useEffect(() => { isOnRef.current = isOn; },       [isOn]);
   useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
+  useEffect(() => { sourceChannelRef.current = sourceChannel; }, [sourceChannel]);
   useEffect(() => { colorRef.current = color; },     [color]);
 
   // Progress fill — imperative DOM, no React state, same pattern as VU
@@ -152,7 +157,19 @@ export default function ConsoleStrip({
       // meter: it is used as evidence. The array (`decks[].peak`) covers every slot as of the same
       // day's native change.
       const auxPeak = (d: string) => lvl.decks?.find(x => x.id === d)?.peak ?? 0;
-      let raw = id === "A" ? (lvl.a ?? 0)
+      // ROUTED BY KIND, NOT BY LETTER (2026-08-25).
+      //
+      // This chain used to end `: (lvl.master ?? 0)` — so any slot that was not A/B/C/CART/D/E/F
+      // showed the PROGRAMME MIX on its meter. Slice 1 added source channels at S1..S5, and the
+      // moment the + button reached one of those, an IDLE channel would have displayed the whole
+      // station dancing on its meter. A meter that shows another signal is not a cosmetic fault: it
+      // is read as evidence, and this codebase has already paid for a VU showing the wrong source.
+      //
+      // A source channel now reads its OWN slot's peak whatever it is called, so adding slots can
+      // never rot this again. The letter list below stays only for legacy non-source strips.
+      const isSrc = sourceChannelRef.current;
+      let raw = isSrc ? auxPeak(id)
+              : id === "A" ? (lvl.a ?? 0)
               : id === "B" ? (lvl.b ?? 0)
               : id === "C" ? (lvl.c ?? 0)
               : id === "CART" ? (lvl.cart ?? 0)   // jingle overlay bus (native slot 6, level_cart)
@@ -166,7 +183,11 @@ export default function ConsoleStrip({
       // switch, so a cut channel forced the meter to 0 — the second way this meter hid a live deck.
       // Their peak is already post-fader and post-cut, so it reads zero when it should and only when
       // it should: the tap tells the truth without help.
-      if (id !== "CART" && id !== "D" && id !== "E" && id !== "F") raw = isPlayingRef.current ? raw : 0;
+      // A source channel is exempt for the same reason D/E/F are: for these strips `isPlaying`
+      // carries the CHANNEL SWITCH, so gating on it forced a cut channel's meter to zero and hid a
+      // deck that was genuinely running. Their peak is already post-fader and post-cut — the tap
+      // tells the truth without help.
+      if (!isSrc && id !== "CART" && id !== "D" && id !== "E" && id !== "F") raw = isPlayingRef.current ? raw : 0;
       const targetH = vuHeight(Math.min(1, raw));   // dB-scaled target height
       // Snap up to peaks (track the music), ease down — kills the flickery top edge.
       smoothed += (targetH - smoothed) * (targetH > smoothed ? 0.5 : 0.12);

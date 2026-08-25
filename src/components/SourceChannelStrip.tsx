@@ -144,6 +144,8 @@ export default function SourceChannelStrip({
           color="#8868D8"
           volume={volume}
           deckId={config.slot}
+          // Read this slot's OWN level, on any slot letter — D/E/F today, S1..S5 once the pool fills.
+          sourceChannel
           // ON COLOUR — the same two colours every other channel uses, via the same code path.
           //
           // ConsoleStrip derives "engaged" from `isOn && isPlaying` (ConsoleStrip.tsx:262/278/289).
