@@ -6,7 +6,11 @@ const readFile = (p: string) => (window as any).ether.fs.readFile(p);
 import { getEngine } from "../audio/engine-registry";
 
 interface Announcement {
-  id: number; title: string; file_path: string;
+  id: number;
+  /** The row's stable identity. main's fireAnnouncement keys on this, not the integer id — the same
+   *  uuid the sync layer uses, so a hand-fire and a peer see the same row. */
+  uuid: string;
+  title: string; file_path: string;
   trigger_time: string; days: string;
   duck_music: number; resume_music: number;
   duck_level: number; is_active: number;
@@ -36,24 +40,22 @@ async function checkAnnouncements() {
       const nowEpoch = Math.floor(Date.now() / 1000);
       if (ann.last_played_at && nowEpoch - ann.last_played_at < 120) continue;
       lastFiredMinute = currentTime;
-      const engine = getEngine(getActiveStationIdSync());
-      const deckA = engine.getDeck("A");
-      const deckB = engine.getDeck("B");
-      if (ann.duck_music) { deckA?.setVolume(ann.duck_level); deckB?.setVolume(ann.duck_level); }
-      try {
-        const bytes = await readFile(ann.file_path);
-        const blob = new Blob([bytes], { type: "audio/mpeg" });
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        audio.onended = () => {
-          URL.revokeObjectURL(url);
-          if (ann.duck_music && ann.resume_music) { deckA?.setVolume(1); deckB?.setVolume(1); }
-        };
-        audio.play();
-        (window as any).ether.announcements.updateById(ann.id, { last_played_at: Math.floor(Date.now() / 1000) });
-      } catch (e) {
-        if (ann.duck_music) { deckA?.setVolume(1); deckB?.setVolume(1); }
-      }
+      // SLICE 4 — ON AIR, through the engine.
+      //
+      // What stood here played the file with `new Audio(url)` — the renderer's own output, which
+      // never touches the program bus. No listener has ever heard an announcement. It also faked a
+      // duck by writing deck A and B's faders and restoring them to 1.0, clobbering whatever level
+      // the operator had set.
+      //
+      // Both are gone. main's fireAnnouncement loads the file onto the SOURCE CHANNEL patched to
+      // Announcement and plays it like any other element, so it reaches the room AND the stream, and
+      // the REAL ducker pulls the programme under it because that channel is a source with DUCK ON.
+      // last_played_at is stamped in main, only once the engine has actually been told.
+      //
+      // Hand-firing and this timer now call the SAME function — the only way they can be relied on
+      // to behave identically. (The timer itself moves out of the renderer in slice 5.)
+      const r: any = await (window as any).ether.announcements.fire(getActiveStationIdSync(), ann.uuid);
+      if (!r?.ok) console.error("[announce] fire failed:", r?.error);
     }
   } catch {}
 }
@@ -127,6 +129,31 @@ export default function Announcements() {
     setEditing({ ...editing, days: days.includes(day) ? days.replace(day, "") : days + day });
   };
 
+  // Can this station air an announcement at all? Asked once, so the AIR button explains itself
+  // instead of failing at the moment someone presses it.
+  const [airSlot, setAirSlot] = useState<string | null>(null);
+  const [fireMsg, setFireMsg] = useState<string | null>(null);
+  useEffect(() => {
+    if (stationId == null) return;
+    (window as any).ether.announcements.canFire(stationId)
+      .then((r: any) => setAirSlot(r?.ready ? r.slot : null))
+      .catch(() => setAirSlot(null));
+  }, [stationId]);
+
+  // ON AIR — through the engine, on the source channel patched to Announcement. This is the one
+  // that listeners hear. Distinct from Test below, which is a local audition and always has been.
+  const airPlay = async (ann: Announcement) => {
+    setFireMsg(null);
+    try {
+      const r: any = await (window as any).ether.announcements.fire(stationId, ann.uuid);
+      if (r?.ok) setFireMsg(`"${r.title}" is on air on channel ${r.slot}`);
+      else setFireMsg(r?.error || "could not fire");
+    } catch (e: any) { setFireMsg(String(e?.message || e)); }
+  };
+
+  /** AUDITION ONLY — plays out of this machine's default output, NOT the program bus. It has always
+   *  been local; it is labelled so now, because "it played when I pressed Test" is exactly how a
+   *  feature that never reached air went unnoticed for its whole life. */
   const testPlay = async (ann: Announcement) => {
     try {
       const bytes = await readFile(ann.file_path);
@@ -145,7 +172,17 @@ export default function Announcements() {
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Newsreader', Georgia, serif" }}>Scheduled Announcements</h1>
-          <p style={{ fontSize: 12, color: "var(--text-tertiary)", margin: "4px 0 0" }}>Auto-play audio at specific times — music ducks, announcement plays, music resumes</p>
+          <p style={{ fontSize: 12, color: "var(--text-tertiary)", margin: "4px 0 0" }}>Play audio at set times on a SOURCE channel — the programme ducks under it and comes back, mid-song.</p>
+          {!airSlot && (
+            <p style={{ fontSize: 11, color: "var(--accent-amber, #fbbf24)", margin: "6px 0 0" }}>
+              No source channel is patched to <strong>Announcement</strong> on this station, so nothing can
+              go to air. Press <strong>+</strong> on the board, choose <strong>Announcement</strong>, and
+              turn <strong>DUCK ON</strong> for the programme to step back.
+            </p>
+          )}
+          {fireMsg && (
+            <p style={{ fontSize: 11, color: "var(--text-secondary)", margin: "6px 0 0" }}>{fireMsg}</p>
+          )}
         </div>
         <button onClick={addNew} style={{ padding: "8px 16px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", flexShrink: 0, boxShadow: "0 2px 8px rgba(14,165,233,0.3)" }}>
           ＋ Add Announcement
@@ -264,7 +301,11 @@ export default function Announcements() {
                     </div>
                   </td>
                   <td style={{ padding: "12px 14px", color: "var(--text-tertiary)", fontSize: 12 }}>
-                    {a.duck_music ? `↓ ${Math.round(a.duck_level * 100)}%` : "—"}
+                    {/* The ducker owns this now — depth/hold live in Preferences > Ducker, per
+                        station, and apply to every source. These per-announcement duck columns are
+                        vestigial: left in the schema so an older build can still open the database,
+                        but nothing reads them. */}
+                    <span title="Ducking is set per station in Preferences → Ducker">—</span>
                   </td>
                   <td style={{ padding: "12px 14px" }}>
                     <button onClick={async () => { await (window as any).ether.announcements.updateById(a.id, { is_active: a.is_active ? 0 : 1 }); load(); }} style={{
@@ -275,7 +316,19 @@ export default function Announcements() {
                   </td>
                   <td style={{ padding: "12px 14px" }}>
                     <div style={{ display: "flex", gap: 4, justifyContent: "flex-end" }}>
-                      <button onClick={() => testPlay(a)} style={{ padding: "5px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "rgba(52,211,153,0.12)", color: "var(--accent-green)", border: "none", cursor: "pointer" }}>▶ Test</button>
+                      <button
+                        onClick={() => airPlay(a)}
+                        disabled={!airSlot}
+                        title={airSlot
+                          ? `Play on air now, on source channel ${airSlot}`
+                          : "No source channel is patched to Announcement on this station — press + on the board and choose Announcement"}
+                        style={{
+                          padding: "5px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700, border: "none",
+                          background: airSlot ? "rgb(from var(--accent-cyan) r g b / 0.15)" : "var(--bg-tertiary)",
+                          color: airSlot ? "var(--accent-cyan)" : "var(--text-tertiary)",
+                          cursor: airSlot ? "pointer" : "not-allowed",
+                        }}>▶ AIR</button>
+                      <button onClick={() => testPlay(a)} title="Audition on this machine only — does NOT go to air" style={{ padding: "5px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "rgba(52,211,153,0.12)", color: "var(--accent-green)", border: "none", cursor: "pointer" }}>▶ Test</button>
                       <button onClick={() => setEditing(a)} style={{ padding: "5px 10px", borderRadius: 0, fontSize: 10, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>Edit</button>
                       <button onClick={() => remove(a.id)} style={{ padding: "5px 8px", borderRadius: 0, fontSize: 10, color: "var(--text-tertiary)", background: "transparent", border: "none", cursor: "pointer" }}>✕</button>
                     </div>

@@ -23,6 +23,10 @@ module.exports = function buildHandlers(ipcRenderer) {
     delete:  (uuid)            => ipcRenderer.invoke('albums:delete',    uuid),
   },
   announcements: {
+    // Slice 4 — put an announcement ON AIR through the engine. Main owns this so slice 5's timed
+    // triggers use the identical path and cannot drift from what a hand-fire does.
+    fire:       (stationId, uuid)  => ipcRenderer.invoke('announcements:fire',     stationId, uuid),
+    canFire:    (stationId)        => ipcRenderer.invoke('announcements:can-fire', stationId),
     list:       (stationId, opts) => ipcRenderer.invoke('announcements:list',          stationId, opts),
     getById:    (uuid)            => ipcRenderer.invoke('announcements:get-by-id',     uuid),
     create:     (payload)         => ipcRenderer.invoke('announcements:create',        payload),

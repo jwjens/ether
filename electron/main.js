@@ -4282,6 +4282,89 @@ ipcMain.handle("audio:set-aux-device", (_, stationId, device) =>
 ipcMain.handle("audio:set-duck", (_, stationId, deck, enabled) =>
   AUDIO_DAEMON ? audiodClient.cmd("setDuck", { stationId, deck, enabled })
                : audio.audioSetDuck(stationId, deck, !!enabled));
+// ── ANNOUNCEMENTS ON AIR (slice 4, 2026-08-25) ────────────────────────────────────────────────
+//
+// docs/aux-channel-ducker-announcements-design-2026-08-21.md §C.1.
+//
+// Until now an announcement played through the RENDERER: `new Audio(url).play()`, straight out of
+// the default sound card. It never touched the program bus, so in the entire history of this
+// feature NO LISTENER HAS EVER HEARD ONE. It also faked its own duck by writing deck A and B's
+// faders and restoring them to 1.0 — clobbering whatever level the operator had set.
+//
+// This is the real path: load the file onto the SOURCE CHANNEL patched to Announcement and play it
+// like any other element. It reaches air, the room, and the stream, and the REAL ducker pulls the
+// programme under it because that channel is a source with DUCK ON. Nothing fakes anything.
+//
+// IN MAIN, not the renderer, deliberately: slice 5's timed triggers need exactly this function and
+// must not depend on a window being open. Hand-firing and a trigger are then the same code path,
+// which is the only way they can be relied on to behave the same.
+function fireAnnouncement(stationId, uuid) {
+  // 1. WHERE does it play? A source channel patched to Announcement, on THIS station.
+  let slot = null;
+  try {
+    slot = db.prepare(
+      "SELECT slot FROM deck_configs WHERE station_id = ? AND enabled = 1 " +
+      "AND type = 'source' AND kind = 'announcement' AND deleted_at IS NULL ORDER BY slot LIMIT 1"
+    ).get(stationId)?.slot ?? null;
+  } catch (e) { return { ok: false, error: 'deck lookup failed: ' + e.message }; }
+  if (!slot) {
+    // Honest, and actionable: this is a patching problem, not a broken announcement.
+    return { ok: false, error: 'No source channel is patched to Announcement on this station. Press + on the board and choose Announcement.' };
+  }
+
+  // 2. WHAT plays?
+  let row = null;
+  try { row = db.prepare('SELECT uuid, title, file_path FROM announcements WHERE uuid = ? AND station_id = ?').get(uuid, stationId); }
+  catch (e) { return { ok: false, error: 'announcement lookup failed: ' + e.message }; }
+  if (!row) return { ok: false, error: 'announcement not found' };
+
+  // 3. THE MATERIALIZATION GATE. Half a station's library once never aired because file_path named
+  //    a file that lived only in R2 (project_library_r2_materialization). An announcement that
+  //    cannot be found is dead air at exactly the moment someone is listening for it, so it is
+  //    checked BEFORE anything is told to play — and reported, never swallowed.
+  if (!row.file_path) return { ok: false, error: 'this announcement has no audio file attached' };
+  try {
+    if (!require('fs').existsSync(row.file_path)) {
+      const msg = 'audio file is not on this machine: ' + row.file_path;
+      try { logStartup('[announce] ' + msg); } catch {}
+      return { ok: false, error: msg, missingFile: true };
+    }
+  } catch (e) { return { ok: false, error: 'file check failed: ' + e.message }; }
+
+  // 4. Load and play on the real engine — whichever one owns the audio.
+  try {
+    if (AUDIO_DAEMON) {
+      audiodClient.cmd('load', { deck: slot, filePath: row.file_path, title: row.title || 'Announcement', artist: '', gainDb: 0, stationId, contentClass: 'ANN' });
+      audiodClient.cmd('play', { deck: slot, stationId });
+    } else {
+      audio.audioLoad(slot, row.file_path, row.title || 'Announcement', '', 0, stationId);
+      audio.audioPlay(slot, stationId);
+    }
+  } catch (e) { return { ok: false, error: 'engine refused the announcement: ' + e.message }; }
+
+  // 5. Stamp it ONLY once the engine has been told — an announcement that never played must not
+  //    look like it did.
+  try { db.prepare('UPDATE announcements SET last_played_at = ? WHERE uuid = ?').run(Math.floor(Date.now() / 1000), uuid); } catch {}
+  try { logStartup('[announce] fired "' + (row.title || '') + '" on ' + slot + ' (station ' + stationId + ')'); } catch {}
+  return { ok: true, slot, title: row.title || '' };
+}
+
+ipcMain.handle('announcements:fire', (_, stationId, uuid) => {
+  try { return fireAnnouncement(stationId, uuid); }
+  catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+
+// Is this station able to air an announcement at all? The panel asks so it can say WHY a fire
+// button is disabled instead of failing at the moment someone presses it.
+ipcMain.handle('announcements:can-fire', (_, stationId) => {
+  try {
+    const slot = db.prepare(
+      "SELECT slot FROM deck_configs WHERE station_id = ? AND enabled = 1 " +
+      "AND type = 'source' AND kind = 'announcement' AND deleted_at IS NULL ORDER BY slot LIMIT 1"
+    ).get(stationId)?.slot ?? null;
+    return { ok: true, slot, ready: !!slot };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 ipcMain.handle("audio:set-duckable", (_, stationId, deck, duckable) =>
   AUDIO_DAEMON ? audiodClient.cmd("setDuckable", { stationId, deck, duckable })
                : (audio && typeof audio.audioSetDuckable === "function"
