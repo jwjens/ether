@@ -305,6 +305,8 @@ pub enum AudioCmd {
     /// DUCKER (slice 3) — arm or disarm one channel's duck. A preference on the channel; whether it
     /// can duck at all is decided by the slot's KIND, which this cannot override.
     SetDuck { deck: String, enabled: bool },
+    /// Receiver side — does this deck step back when a source ducks?
+    SetDuckable { deck: String, duckable: bool },
     /// DUCKER tuning, per STATION — there is ONE duck envelope per bus, so every one of these is
     /// station-wide by construction, never per channel. Dialled by ear from Preferences.
     SetDuckParams { depth_db: f32, threshold_db: f32, attack_ms: f32, hold_ms: f32, release_ms: f32 },
@@ -479,6 +481,13 @@ pub struct BusState {
     /// Which slots arm the ducker. Default all-false — opt in per channel, like every processing
     /// toggle on this bus, so an install's audio is unchanged until an operator asks for it.
     pub duck_enabled: [bool; SLOT_COUNT],
+    /// THE RECEIVER SIDE (2026-08-25). A ducker is a sidechain: a trigger, and a SET OF CHANNELS it
+    /// acts on. This is that set — which decks step back when a source ducks. Chosen per station by
+    /// the operator; default all true, which is exactly the behaviour before this existed.
+    ///
+    /// A SOURCE slot is never ducked regardless of this flag: that is structural, from the slot's
+    /// kind. You do not duck the thing doing the ducking.
+    pub duck_duckable: [bool; SLOT_COUNT],
     /// Source-sum peak above which the duck engages (linear). ~-45 dBFS.
     pub duck_threshold: f32,
     /// How far the music drops, in dB (negative). -12 dB default.
@@ -578,6 +587,7 @@ impl BusState {
             aux_monitor_gain: [0.0; SLOT_COUNT],   // nothing selected → aux decks silent in the room
             // Ducker: OFF everywhere until asked for. Defaults are §B.6's.
             duck_enabled: [false; SLOT_COUNT],
+            duck_duckable: [true; SLOT_COUNT],   // every deck ducks until an operator says otherwise
             duck_threshold: 0.0056,   // ~-45 dBFS
             // -22 dB, not -12: Jeff's ears on a live jukebox-over-music test. A short announcement
             // sits fine at -12, but a CONTINUOUS source needs the programme much further down or the
@@ -820,6 +830,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             // path (below) is the one that owns bus.aux_monitor_gain.
                             AudioCmd::SetAuxMonitor { .. } => {}
                             AudioCmd::SetDuck { .. } => {}
+                            AudioCmd::SetDuckable { .. } => {}
                             AudioCmd::SetDuckParams { .. } => {}
                             // Superseded no-device path (see start_station_mixer's header): it owns no
                             // aux stream, so there is nothing here to open or close.
@@ -1187,6 +1198,56 @@ mod duck_regression {
         run(&bus, 40);
         assert!(duck_gain(&bus) > 0.999,
                 "a channel with its duck toggle OFF pulled the music down: g={}", duck_gain(&bus));
+    }
+
+    /// Peak of the DEVICE output over a run — what actually leaves the box.
+    fn out_peak(bus: &SharedBusState, buffers: usize) -> f32 {
+        let fin = FinishedFlags::new();
+        let playing = Arc::new(Mutex::new(true));
+        let mut pk = 0.0f32;
+        for _ in 0..buffers {
+            let mut data = vec![0f32; 480 * 2];
+            mixer_callback(&mut data, 2, bus, &fin, &playing);
+            for v in &data { pk = pk.max(v.abs()); }
+        }
+        pk
+    }
+
+    #[test]
+    fn an_immune_deck_punches_through_the_duck() {
+        // THE RECEIVER SIDE. A ducker is a sidechain: a trigger AND a set of channels it acts on.
+        // A deck the operator marked immune must keep full level while the rest steps back — the
+        // sound-effects-under-a-mic case.
+        //
+        // DIFFERENTIAL, deliberately: the output passes through EQ and master gain, so rather than
+        // model that chain the test runs the SAME material twice, flipping only the flag. If immune
+        // did nothing, the two would match.
+        let mk = |immune: bool| {
+            let bus = bus_with(0.0, 0.5, true);          // source on D, armed
+            {
+                let mut b = bus.lock().unwrap();
+                b.decks[1].source = Some(Box::new(Tone(0.30)));   // deck B — the deck under test
+                b.decks[1].active = true; b.decks[1].paused = false; b.decks[1].volume = 1.0;
+                b.duck_duckable[1] = !immune;
+            }
+            bus
+        };
+
+        // SETTLE FIRST, then measure. out_peak takes a maximum, so measuring across the attack
+        // captures the pre-duck level and both cases read the same — which is exactly how this test
+        // failed the first time it ran.
+        let ducked = mk(false);
+        run(&ducked, 60);
+        let p_ducked = out_peak(&ducked, 20);
+        assert!(duck_gain(&ducked) < 0.2, "control: the duck did not engage, g={}", duck_gain(&ducked));
+
+        let immune = mk(true);
+        run(&immune, 60);
+        let p_immune = out_peak(&immune, 20);
+        assert!(duck_gain(&immune) < 0.2, "control: the duck did not engage, g={}", duck_gain(&immune));
+
+        assert!(p_immune > p_ducked * 1.5,
+                "an immune deck did not punch through: immune peak {:.4} vs ducked {:.4}", p_immune, p_ducked);
     }
 
     #[test]
@@ -1638,6 +1699,10 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     bus.duck_enabled[idx] = enabled;
                                 }
                             }
+                            AudioCmd::SetDuckable { deck, duckable } => {
+                                let Some(idx) = deck_index(&deck) else { continue };
+                                if let Ok(mut bus) = bus_cmd.lock() { bus.duck_duckable[idx] = duckable; }
+                            }
                             AudioCmd::SetDuckParams { depth_db, threshold_db, attack_ms, hold_ms, release_ms } => {
                                 if let Ok(mut bus) = bus_cmd.lock() {
                                     // Clamped at the edges only — every value in between is a
@@ -1944,8 +2009,15 @@ fn mixer_callback(
     // core_* is already the music: every slot EXCEPT the Source slots. So core + src == mix by
     // construction, which is what makes the duck-off path provably bit-identical below.
     let duck_enabled = bus.duck_enabled;
+    let duck_duckable = bus.duck_duckable;
     let mut src_l = vec![0f32; prog_frames];
     let mut src_r = vec![0f32; prog_frames];
+    // RECEIVER SIDE: the non-source music splits in two. `duckable` is what the duck multiplies;
+    // `immune` punches through at full level. core = duckable + immune, rebuilt after the duck, so
+    // the room and the air both read one already-correct sum. Excluding at the source rather than
+    // adding immune back afterwards: the same cost, and it says what it does.
+    let mut imm_l = vec![0f32; prog_frames];
+    let mut imm_r = vec![0f32; prog_frames];
     let mut det_l = vec![0f32; prog_frames];
     let mut det_r = vec![0f32; prog_frames];
     let mut duck_armed = false;    // at least one duck-enabled Source slot is actually producing
@@ -2017,6 +2089,8 @@ fn mixer_callback(
                     if !is_aux {                          // ROOM base — aux decks excluded entirely
                         core_l[f] += lv;
                         core_r[f] += rv;
+                        // ...and, of that, the part the duck may NOT touch.
+                        if !duck_duckable[i] { imm_l[f] += lv; imm_r[f] += rv; }
                     }
                     if is_aux {
                         // AIR-level source sum for the ducker (distinct from the room's aux_*).
@@ -2132,8 +2206,12 @@ fn mixer_callback(
             //
             // Ducking core_* in place means the room's own EQ/master chain reads already-ducked
             // music, with no second gain to keep in step and no way for the two buses to disagree.
-            core_l[f] *= gc;
-            core_r[f] *= gc;
+            // Duck only what the operator marked duckable. core currently holds duckable+immune,
+            // so scaling the whole thing and adding back the immune share leaves exactly
+            // duckable*gc + immune — one multiply, no third buffer, and immune audio is never
+            // attenuated even for a sample.
+            core_l[f] = core_l[f] * gc + imm_l[f] * (1.0 - gc);
+            core_r[f] = core_r[f] * gc + imm_r[f] * (1.0 - gc);
             mix_l[f] = core_l[f] + src_l[f];
             mix_r[f] = core_r[f] + src_r[f];
         }

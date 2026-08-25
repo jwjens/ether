@@ -286,6 +286,8 @@ const handlers = {
   // same reason setMuted does: main.js routes to the daemon whenever AUDIO_DAEMON is on, which is
   // the default on Windows, so a renderer-only path would be a silent no-op on most installs.
   setDuck:            (m) => A.audioSetDuck(m.stationId, m.deck, !!m.enabled),
+  // Receiver side — which decks step back when a source ducks.
+  setDuckable:        (m) => A.audioSetDuckable(m.stationId, m.deck, !!m.duckable),
   // Ducker tuning, dialled by ear in that station's Preferences. Station-wide: one envelope per bus.
   setDuckParams:      (m) => A.audioSetDuckParams(m.stationId, m.depthDb, m.thresholdDb, m.attackMs, m.holdMs, m.releaseMs),
   // AUX MONITOR (room) level for one aux deck — D/E/F only, enforced in Rust. 0 = silent locally.

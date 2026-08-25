@@ -4282,6 +4282,10 @@ ipcMain.handle("audio:set-aux-device", (_, stationId, device) =>
 ipcMain.handle("audio:set-duck", (_, stationId, deck, enabled) =>
   AUDIO_DAEMON ? audiodClient.cmd("setDuck", { stationId, deck, enabled })
                : audio.audioSetDuck(stationId, deck, !!enabled));
+ipcMain.handle("audio:set-duckable", (_, stationId, deck, duckable) =>
+  AUDIO_DAEMON ? audiodClient.cmd("setDuckable", { stationId, deck, duckable })
+               : (audio && typeof audio.audioSetDuckable === "function"
+                    ? audio.audioSetDuckable(stationId, deck, !!duckable) : false));
 ipcMain.handle("audio:set-duck-params", (_, stationId, p) =>
   AUDIO_DAEMON
     ? audiodClient.cmd("setDuckParams", { stationId, depthDb: p.depthDb, thresholdDb: p.thresholdDb, attackMs: p.attackMs, holdMs: p.holdMs, releaseMs: p.releaseMs })
@@ -4461,8 +4465,8 @@ function armAllStationDuckers(reason) {
   let rows = [];
   try {
     rows = db.prepare(
-      "SELECT station_id, slot, COALESCE(duck,0) AS duck FROM deck_configs " +
-      "WHERE type = 'source' AND enabled = 1 AND deleted_at IS NULL " +
+      "SELECT station_id, slot, type, COALESCE(duck,0) AS duck, COALESCE(duckable,1) AS duckable " +
+      "FROM deck_configs WHERE enabled = 1 AND deleted_at IS NULL " +
       "ORDER BY station_id, slot"
     ).all();
   } catch (e) {
@@ -4473,10 +4477,19 @@ function armAllStationDuckers(reason) {
   let armed = 0;
   for (const r of rows) {
     try {
-      if (AUDIO_DAEMON) { audiodClient.cmd('setDuck', { stationId: r.station_id, deck: r.slot, enabled: !!r.duck }); armed++; }
-      else if (audio && typeof audio.audioSetDuck === 'function') {
-        if (audio.audioSetDuck(r.station_id, r.slot, !!r.duck)) armed++;
+      // TRIGGER side — only a source channel can arm the ducker.
+      if (r.type === 'source') {
+        if (AUDIO_DAEMON) { audiodClient.cmd('setDuck', { stationId: r.station_id, deck: r.slot, enabled: !!r.duck }); armed++; }
+        else if (audio && typeof audio.audioSetDuck === 'function') {
+          if (audio.audioSetDuck(r.station_id, r.slot, !!r.duck)) armed++;
+        }
       }
+      // RECEIVER side — every enabled deck says whether it steps back. Pushed for ALL decks, not
+      // just sources, and at boot rather than when a panel opens: the same UI-scoped arming trap the
+      // trigger flags fell into, which cost a whole diagnosis.
+      if (AUDIO_DAEMON) audiodClient.cmd('setDuckable', { stationId: r.station_id, deck: r.slot, duckable: !!r.duckable });
+      else if (audio && typeof audio.audioSetDuckable === 'function')
+        audio.audioSetDuckable(r.station_id, r.slot, !!r.duckable);
     } catch (e) { console.error('[duck] station', r.station_id, r.slot, e.message); }
   }
   // TUNING, per station, from that station's own Preferences (station_config_kv). Without this a
@@ -4508,7 +4521,7 @@ function armAllStationDuckers(reason) {
   } catch (e) { console.warn('[duck] params fan-out skipped:', e.message); }
   if (rows.length) {
     console.log('[duck] fan-out (' + reason + '): armed ' + armed + '/' + rows.length + ' source channel(s) — ' +
-      rows.map(r => 's' + r.station_id + ':' + r.slot + '=' + (r.duck ? 'on' : 'off')).join(' '));
+      rows.map(r => 's' + r.station_id + ':' + r.slot + '=' + (r.type === 'source' ? (r.duck ? 'trigger' : 'off') : (r.duckable ? 'ducks' : 'IMMUNE'))).join(' '));
   }
   return { ok: true, armed };
 }

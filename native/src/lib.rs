@@ -154,6 +154,15 @@ pub fn audio_set_duck(station_id: u32, deck: String, enabled: bool) -> bool {
     audio.sender.send(AudioCmd::SetDuck { deck, enabled }).is_ok()
 }
 
+/// RECEIVER SIDE — does this deck step back when a source ducks? Per station, per deck, operator's
+/// choice. A source slot is never ducked regardless: that is structural, from the slot's kind.
+#[napi]
+pub fn audio_set_duckable(station_id: u32, deck: String, duckable: bool) -> bool {
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetDuckable { deck, duckable }).is_ok()
+}
+
 /// DUCKER tuning for ONE station. Threshold arrives in dBFS and is converted to the linear peak the
 /// detector compares against; everything else is as the operator sees it. One envelope per station
 /// bus, so these are station-wide by construction — which is why they live in that station's

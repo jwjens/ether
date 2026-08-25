@@ -279,6 +279,8 @@ const REGISTRY = {
       // SLICE 3 — the per-channel ducker toggle. A preference, not the rule: only SOURCE slots can
       // duck and that is enforced in Rust by the slot's kind.
       duck:       'scalar',
+      // SLICE 3 receiver side — does this deck step back when a source ducks? Default 1 (it does).
+      duckable:   'scalar',
       station_id: 'scalar',
       uuid:       'scalar',
       created_at: 'scalar',

@@ -17,6 +17,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { queryScoped } from "../db/stationScoped";
+
+/** One deck's line in the receiver-side list. */
+type DeckRow = { slot: string; label: string; type: string; duckable: boolean };
 
 /** The engine's own defaults (native/src/audio.rs BusState::new) — kept in step deliberately. */
 export const DUCK_DEFAULTS = {
@@ -66,8 +70,39 @@ export default function DuckerSection() {
   const { stationId, stationName } = useActiveStation();
   const [p, setP] = useState<Params>(DUCK_DEFAULTS);
   const [loaded, setLoaded] = useState(false);
+  const [decks, setDecks] = useState<DeckRow[]>([]);
   const pRef = useRef(p);
   pRef.current = p;
+
+  // ── THE RECEIVER SIDE ────────────────────────────────────────────────────────────────────────
+  // A ducker is a sidechain: a TRIGGER and a SET OF CHANNELS it acts on. This list is that set.
+  // Every deck is individually duckable or immune, per station, operator's choice — no baked-in rule
+  // about any particular deck. Default is all duckable, which is what stations did before this
+  // existed, so nothing changes until someone unchecks something here.
+  useEffect(() => {
+    if (stationId == null) return;
+    let stop = false;
+    queryScoped<{ slot: string; label: string; type: string; duckable: number }>(
+      "SELECT slot, label, type, COALESCE(duckable,1) AS duckable FROM deck_configs " +
+      "WHERE enabled = 1 AND deleted_at IS NULL ORDER BY slot",
+      [], stationId
+    ).then(rows => {
+      if (stop) return;
+      setDecks(rows.map(r => ({ slot: r.slot, label: r.label, type: r.type, duckable: r.duckable === 1 })));
+    }).catch(() => { /* the panel's own error line covers a failed read */ });
+    return () => { stop = true; };
+  }, [stationId]);
+
+  const toggleDuckable = async (slot: string, next: boolean) => {
+    setDecks(ds => ds.map(d => (d.slot === slot ? { ...d, duckable: next } : d)));
+    if (stationId == null) return;
+    // Store on the deck's own row, and tell the engine now — the row survives a restart, the push
+    // makes it true immediately. Both, every time.
+    try { await (window as any).ether.deckConfigs.updateBySlot(stationId, slot, { duckable: next ? 1 : 0 }); }
+    catch (e) { console.error("[Ducker] duckable save failed:", e); }
+    try { await (window as any).ether?.audio?.setDuckable?.(stationId, slot, next); }
+    catch (e) { console.error("[Ducker] duckable push failed:", e); }
+  };
 
   // Load this station's stored values. Absent keys fall back to the engine's own defaults, so a
   // station that has never been tuned shows exactly what it is actually doing.
@@ -154,6 +189,47 @@ export default function DuckerSection() {
       <Row label="Threshold" unit=" dBFS" value={p.thresholdDb} min={-70} max={-10} step={1}
            hint="The source level that engages the duck. It is read post-fader and post-cut, so a closed fader or a cut channel can never duck — the board stays the gate."
            onChange={change("thresholdDb")} onCommit={commit} />
+
+      {/* ── Which decks step back ──────────────────────────────────────────────────────────── */}
+      <div style={{ marginTop: 14, borderTop: "1px solid var(--border-primary)", paddingTop: 10 }}>
+        <div style={{ fontSize: 12, color: "var(--text-primary)", fontWeight: 600, marginBottom: 2 }}>
+          Which decks step back
+        </div>
+        <p style={{ fontSize: 10, color: "var(--text-tertiary)", margin: "0 0 8px", lineHeight: 1.4 }}>
+          Ticked decks duck when a source plays. Unticked decks <strong>punch through</strong> at full
+          level — uncheck CART if you want stingers and drops to cut over a jock on the mic.
+          Source channels are never ducked: they are the thing doing the ducking.
+        </p>
+
+        {decks.length === 0 && (
+          <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>No decks enabled on this station.</span>
+        )}
+
+        {decks.map(d => {
+          const isSource = d.type === "source";
+          return (
+            <label
+              key={d.slot}
+              title={isSource ? "A source channel is the trigger — it is never ducked" : undefined}
+              style={{
+                display: "flex", alignItems: "center", gap: 8, padding: "3px 0",
+                cursor: isSource ? "not-allowed" : "pointer", opacity: isSource ? 0.45 : 1,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={isSource ? false : d.duckable}
+                disabled={isSource}
+                onChange={e => toggleDuckable(d.slot, e.target.checked)}
+              />
+              <span style={{ fontSize: 12, color: "var(--text-primary)", minWidth: 34 }}>{d.slot}</span>
+              <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
+                {d.label}{isSource ? " — source (trigger)" : ""}
+              </span>
+            </label>
+          );
+        })}
+      </div>
 
       <button
         onClick={reset}
