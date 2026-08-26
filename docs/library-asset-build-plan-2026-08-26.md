@@ -22,51 +22,53 @@ station_programming(uuid, song_id, station_id, category_id, energy, daypart_mask
 So the design does **not** invent `asset_music_meta`. It **generalises `station_programming` from
 songs to every asset type** — one install-scoped asset, N per-station treatment rows.
 
-### But it is barely wired, and that is the real finding
+### Four stations run independently today — that is live, and it is not in question
+
+Jeff, confirming: *"it is live — 4 stations are working independently right now."* Open Format,
+halloVeen, Magical Forest and Christmas in Jully each have their own station-scoped categories, their
+own clocks, their own rotation, their own log and their own output. The library convergence must
+**preserve** that, and nothing in this plan changes it.
+
+An earlier draft of this section framed the measurements below as "the library is partitioned, not
+per-station" — which read as though per-station operation did not work. **That was wrong and is
+withdrawn.** It does work. The measurements are narrower than that, and they matter only for what the
+arc still has to finish.
+
+### The narrow finding the arc has to act on
 
 Measured read-only on the live profile:
 
 | | |
 |---|---|
-| `station_programming` rows | **12** (all station 2) |
-| `songs` rows | **510** |
-| songs with treatment on **2+ stations** | **0** |
-| `categories.station_id` exists | ✅ yes — categories ARE station-scoped |
-| what rotation actually filters on | **`s.category_id`, `s.rotation_status`, `s.daypart_mask`** — the INSTALL-scoped columns on `songs` (`audiod/loggen.js:70`) |
+| Songs whose `category_id` belongs to each station | Open Format 163 · halloVeen 151 · Magical Forest 76 · Christmas in Jully 46 |
+| `categories.station_id` exists | ✅ categories ARE station-scoped |
+| `station_programming` rows | 12 |
+| Songs carrying treatment on **2+ stations at once** | **0** |
+| What rotation filters on | `s.category_id`, `s.rotation_status`, `s.daypart_mask` — the columns on `songs` (`audiod/loggen.js:70`) |
 
-And each song's `category_id` points at exactly ONE station's category:
+So: each station has its own pool and its own treatment, and **no single audio file is currently
+carrying different treatment on two stations at the same time** — the case Jeff's ruling names
+explicitly ("*the same song is categorized and badged differently*").
 
-```
-Open Format 163 · halloVeen 151 · Magical Forest 76 · Christmas in Jully 46
-```
+Whether that is because the product cannot express it, or simply because the same file has not been
+put on two stations yet, is **UNVERIFIED** — it is a data reading, not a claim about the running app.
+The check that settles it: categorise one song on Open Format, switch to halloVeen, and see whether
+that same song can be categorised there too.
 
-**So today the shared library is PARTITIONED across stations, not TREATED differently by them.** A
-song is assigned to one station's category; it is not simultaneously Power Gold on Open Format and
-Halloween on halloVeen. Switching stations shows a different set of songs — which looks like
-per-station treatment and is worth stating carefully, because the mechanism is different and it caps
-what the model can do.
+**Either way the target is the same**, which is why this does not block the plan: per-station
+treatment rows keyed to an install-scoped asset, generalising `station_programming` to every type.
+The arc finishes a model Phase 4 started, and rotation moves from the `songs` columns onto the
+per-station rows.
 
-**UNVERIFIED at runtime.** This is a schema-and-data reading, not a claim about the running app. The
-one check that settles it: categorise a song on Open Format, switch to halloVeen, and see whether that
-same song is available to categorise there too, or whether it has effectively left the pool.
+### The one decision this opens
 
-**This makes the arc more valuable, not less.** Finishing the per-station treatment model is what
-turns Jeff's stated intent into how the product actually behaves, and the library convergence is the
-natural place to do it — the alternative is a second migration later over the same rows.
+Migrating the 436 categorised songs into per-station treatment rows needs a rule:
 
-### Consequence: one open decision
+- **(a) Preserve exactly** — one treatment row each, on the station whose category it points at now.
+- **(b) Preserve, and make the asset available to every station** to add its own treatment.
 
-Migrating `songs.category_id` into per-station treatment rows needs a rule for the 436 categorised
-songs:
-
-- **(a) Preserve today exactly** — each song gets ONE treatment row, on the station whose category it
-  currently points at. Nothing changes on air; the model is correct but the library stays partitioned
-  until someone widens it by hand.
-- **(b) Preserve + make available** — same row, and every other station can now add its own treatment
-  for that asset. Nothing changes on air either, but the shared library becomes genuinely shared.
-
-**My recommendation: (b)** — it is what Jeff described, it changes nothing that is currently
-scheduled, and (a) would need a second pass later anyway. **Jeff rules.**
+**Neither changes what is scheduled or what airs.** (b) is what the ruling describes and avoids a
+second pass later. **My recommendation: (b). Jeff rules.**
 
 ---
 
