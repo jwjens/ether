@@ -1,3 +1,4 @@
+import { ClassBadge, ClassFilter, passesClassFilter } from "../lib/contentClass";
 import { useState, useEffect, useMemo } from "react";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -61,6 +62,10 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
   // without them would have been a downgrade dressed as a cleanup.
   const [search, setSearch] = useState("");
   const [deckFilter, setDeckFilter] = useState("");
+  // ELEMENT-TYPE FILTER (2026-08-26, Jeff's ruling — the Zetta Log filter). The log SHOWS EVERYTHING
+  // that aired; this narrows what is on screen and is undone with one press. Empty set = everything,
+  // which is the default and must never be confused with "show nothing".
+  const [classFilter, setClassFilter] = useState<Set<string>>(new Set());
   // Customer's actual station name — used in CSV exports + printed traffic
   // log header instead of a hardcoded placeholder. Empty until KV fetch
   // resolves; headers and exports gracefully omit the prefix when empty.
@@ -370,7 +375,8 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
       || (e.title || "").toLowerCase().includes(q)
       || (e.artist || "").toLowerCase().includes(q);
     const matchDeck = !deckFilter || (e.deck || "").toUpperCase() === deckFilter.toUpperCase();
-    return matchSearch && matchDeck;
+    const matchClass = passesClassFilter((e as any).content_class, classFilter);
+    return matchSearch && matchDeck && matchClass;
   });
   const decks = Array.from(new Set(entries.map(e => e.deck).filter(Boolean))) as string[];
   const uniqueArtists = new Set(visible.filter(e => e.artist).map(e => e.artist)).size;
@@ -446,8 +452,13 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
               <option value="">All decks</option>
               {decks.map(d => <option key={d} value={d}>Deck {d}</option>)}
             </select>
-            {(search || deckFilter) && (
-              <button onClick={() => { setSearch(""); setDeckFilter(""); }} title="Clear search and deck filter"
+            <ClassFilter selected={classFilter} onChange={setClassFilter}
+              counts={entries.reduce((m: any, e: any) => {
+                const k = String(e.content_class || "MUSIC").toUpperCase();
+                m[k] = (m[k] || 0) + 1; return m;
+              }, {})} />
+            {(search || deckFilter || classFilter.size > 0) && (
+              <button onClick={() => { setSearch(""); setDeckFilter(""); setClassFilter(new Set()); }} title="Clear search, deck and element-type filters"
                 style={{ padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer" }}>Clear</button>
             )}
           </>)}
@@ -546,7 +557,7 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
       {/* Table */}
       {visible.length === 0 ? (
         <div style={{ padding: "var(--s-5)", fontSize: "var(--t-body)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", background: "var(--bg-secondary)" }}>
-          {search || deckFilter
+          {search || deckFilter || classFilter.size > 0
             ? "Nothing in this period matches that search."
             : "Nothing aired in this period."}
         </div>
@@ -568,7 +579,7 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
                   onMouseLeave={ev => (ev.currentTarget.style.background = "transparent")}
                 >
                   <td style={{ padding: "10px 14px", fontFamily: "'DM Mono', monospace", fontSize: 11, color: "var(--text-tertiary)", whiteSpace: "nowrap" as any }}>{fmtTimestamp(e.played_at)}</td>
-                  <td style={{ padding: "10px 14px", color: "var(--text-primary)", fontWeight: 500, maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{e.title}</td>
+                  <td style={{ padding: "10px 14px", color: "var(--text-primary)", fontWeight: 500, maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}><span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><ClassBadge value={(e as any).content_class} />{e.title}</span></td>
                   <td style={{ padding: "10px 14px", color: "var(--text-secondary)", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{e.artist || "—"}</td>
                   <td style={{ padding: "10px 14px", color: "var(--text-tertiary)", fontSize: 11 }}>{e.category_code || "—"}</td>
                   <td style={{ padding: "10px 14px", color: "var(--text-tertiary)", fontSize: 11, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{e.show_name || "—"}</td>

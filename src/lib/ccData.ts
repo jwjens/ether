@@ -247,9 +247,11 @@ export async function pushPlayHistory(
       const rows: any[] = await query(
         `SELECT id, uuid, title, artist, duration_ms, played_at, category_code, show_name, file_path
            FROM play_log
-          -- ANN excluded: the Control Center's history is a song history; an announcement
-          -- airing is proven in the local play log, not in the dashboard's track list.
-          WHERE station_id = ? AND id > ? AND deleted_at IS NULL AND (content_class IS NULL OR content_class = 'MUSIC')
+          -- EVERYTHING THAT AIRED (2026-08-26). The push carries every element with its
+          -- content_class so the Control Center can type, colour and filter them exactly as the
+          -- desktop does. Filtering belongs to whoever is looking, not to the query that ships the
+          -- data — a row withheld here can never be shown there.
+          WHERE station_id = ? AND id > ? AND deleted_at IS NULL
           ORDER BY id LIMIT ?`,
         [stationId, cursor, BATCH],
       );

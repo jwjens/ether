@@ -7116,10 +7116,23 @@ const irisHttpServer = require('http').createServer((req, res) => {
 
   if (req.method === 'GET' && url === '/api/log') {
     try {
-      // ANN excluded (2026-08-26): a recently-played feed is songs. Announcements are logged so they
-      // can be proven to have aired (see fireAnnouncement), and they are read back from the Logs
-      // viewer and the affidavit, not from here.
-      const rows = db.prepare("SELECT * FROM play_log WHERE (content_class IS NULL OR content_class = 'MUSIC') ORDER BY played_at DESC LIMIT 50").all();
+      // EVERYTHING THAT AIRED, and each row says what it was (2026-08-26). No hardcoded exclusion:
+      // this is a LOG endpoint, and a log that silently omits the spot that just aired is worse than
+      // no log. content_class rides along so the caller can badge and filter.
+      //
+      // OPTIONAL ?class= narrows it — a comma-separated list, e.g. /api/log?class=SPOT,ANN. Absent
+      // means everything, which is the default and the thing an empty value must never be confused
+      // with.
+      const _classParam = (() => {
+        try { return new URL(req.url, 'http://x').searchParams.get('class'); } catch { return null; }
+      })();
+      const _wanted = String(_classParam || '').split(',').map(x => x.trim().toUpperCase()).filter(Boolean);
+      let rows = db.prepare("SELECT * FROM play_log ORDER BY played_at DESC LIMIT 200").all();
+      if (_wanted.length) {
+        // NULL/'' is MUSIC, the same rule the whole schema uses.
+        rows = rows.filter(r => _wanted.includes(String(r.content_class || 'MUSIC').toUpperCase()));
+      }
+      rows = rows.slice(0, 50);
       res.end(JSON.stringify({ ok: true, entries: rows }));
     } catch (e) { res.statusCode = 500; res.end(JSON.stringify({ ok: false, error: e.message })); }
     return;

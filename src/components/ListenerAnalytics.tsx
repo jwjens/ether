@@ -10,6 +10,7 @@
  * The component creates play_log if it doesn't exist yet.
  */
 
+import { ClassBadge, ClassFilter, passesClassFilter } from "../lib/contentClass";
 import { useState, useEffect, useCallback } from "react";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -154,6 +155,10 @@ export default function ListenerAnalytics({ onClose }: Props) {
   const [categories, setCategories]         = useState<CategoryBreakdown[]>([]);
   const [dailyTrend, setDailyTrend]         = useState<DailyTrend[]>([]);
   const [recentPlays, setRecentPlays]       = useState<PlayEntry[]>([]);
+  // THE FILTER IS THE USER'S, and it starts empty — empty means EVERYTHING (Jeff's ruling, the Zetta
+  // model). The list itself is never narrowed by the query; narrowing is a choice made here and
+  // undone here.
+  const [recentClasses, setRecentClasses] = useState<Set<string>>(new Set());
 
   const rangeDays: Record<Range, number | null> = { "7d": 7, "30d": 30, "90d": 90, "all": null };
 
@@ -265,7 +270,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
 
       // Recent plays — station_id scoping: Strategy B (single table, queryScoped injects)
       const recent = await queryScoped<PlayEntry>(`
-        SELECT * FROM play_log WHERE (content_class IS NULL OR content_class = 'MUSIC') ORDER BY played_at DESC LIMIT 20
+        SELECT * FROM play_log ORDER BY played_at DESC LIMIT 60
       `, [], stationId);
       setRecentPlays(recent);
 
@@ -412,12 +417,24 @@ export default function ListenerAnalytics({ onClose }: Props) {
             {/* Recent plays */}
             <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden" }}>
               <div style={{ padding: "12px 16px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", textTransform: "uppercase" }}>Recent Plays</div>
-              {recentPlays.length === 0 ? (
-                <div style={{ padding: "32px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 12 }}>No play history yet — plays are logged when tracks air on any deck.</div>
+              <div style={{ padding: "8px 16px", borderBottom: "1px solid var(--border-primary)", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" as const }}>
+                <ClassFilter selected={recentClasses} onChange={setRecentClasses}
+                  counts={recentPlays.reduce((m: any, p: any) => {
+                    const k = String(p.content_class || "MUSIC").toUpperCase();
+                    m[k] = (m[k] || 0) + 1; return m;
+                  }, {})} />
+              </div>
+              {recentPlays.filter(p => passesClassFilter((p as any).content_class, recentClasses)).length === 0 ? (
+                <div style={{ padding: "32px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 12 }}>
+                  {recentPlays.length === 0
+                    ? "No play history yet — plays are logged when tracks air."
+                    : "Nothing matches this filter. Press ALL to see everything that aired."}
+                </div>
               ) : (
-                recentPlays.map((p, i) => (
+                recentPlays.filter(p => passesClassFilter((p as any).content_class, recentClasses)).map((p, i) => (
                   <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", borderBottom: i < recentPlays.length - 1 ? "1px solid var(--border-primary)" : "none", background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)" }}>
                     <div style={{ width: 22, height: 22, borderRadius: 0, background: "var(--bg-tertiary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>{i + 1}</div>
+                    <ClassBadge value={(p as any).content_class} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.title}</div>
                       <div style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{p.artist || "Unknown Artist"}</div>

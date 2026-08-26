@@ -1,12 +1,17 @@
-// RECENTLY PLAYED = SONGS. Announcements log to play_log as content_class='ANN' (2026-08-26) so
-// they can be proven to have aired; they are not tracks, and a "recently played" strip listing
-// "HALLOVEEN CLOSED" between two songs reads as a fault. Excluded here, kept in the Logs viewer
-// and the affidavit where the as-run record is the point.
+// EVERYTHING THAT AIRED, TYPED BY CLASS (Jeff's ruling, 2026-08-26 — the Zetta model). These strips
+// show songs, spots, jingles, sweepers and announcements alike, each badged by content_class. There
+// is NO hardcoded exclusion: narrowing a log to one kind of element is a choice the operator makes
+// and can undo, never one baked in by whoever wrote the query.
+//
+// A previous pass here DID bake one in — it filtered these to MUSIC, which quietly dropped spots and
+// jingles as well as announcements. That is the mistake this comment exists to stop repeating.
 import { useState, useEffect, useRef } from "react";
 import { query } from "../db/client";
+import { ClassBadge, classMeta } from "../lib/contentClass";
 
 // ── Types ─────────────────────────────────────────────────────
 interface PlayedSong {
+  content_class?: string | null;   // MUSIC/JIN/SWP/SPOT/ANN — what aired, not just that something did
   title: string;
   artist: string;
   played_at: number;
@@ -25,7 +30,7 @@ export function LiveHourClock() {
       try {
         const hourStart = Math.floor(Date.now() / 1000) - (Math.floor(Date.now() / 1000) % 3600);
         const rows = await query<PlayedSong>(
-          "SELECT title, artist, deck, played_at FROM play_log WHERE played_at >= ? AND (content_class IS NULL OR content_class = 'MUSIC') ORDER BY played_at ASC LIMIT 30",
+          "SELECT title, artist, deck, played_at, content_class FROM play_log WHERE played_at >= ? ORDER BY played_at ASC LIMIT 30",
           [hourStart]
         );
         setPlayed(rows);
@@ -83,10 +88,16 @@ export function LiveHourClock() {
           const a = -Math.PI / 2 + songPct * Math.PI * 2;
           const r = R_IN + (R_OUT - R_IN) / 2;
           return (
+            // COLOURED BY CLASS. Every element that aired this hour is a dot, and the dot says what
+            // it was — a spot break reads as a run of amber, an announcement as a cyan mark. A ring
+            // of identical dots would show that something aired but never what.
             <circle key={i}
               cx={CX + r * Math.cos(a)} cy={CY + r * Math.sin(a)}
-              r="2.5" fill="var(--accent-amber)" opacity="0.9"
-            />
+              r="2.5" fill={classMeta(p.content_class).code === "MUSIC" ? "var(--accent-amber)" : classMeta(p.content_class).fg}
+              opacity="0.9"
+            >
+              <title>{`${p.title}${classMeta(p.content_class).code === "MUSIC" ? "" : " · " + classMeta(p.content_class).label}`}</title>
+            </circle>
           );
         })}
         {/* 15-min ticks */}
@@ -122,7 +133,7 @@ export function SongHistoryStrip() {
     const load = async () => {
       try {
         const rows = await query<PlayedSong>(
-          "SELECT title, artist, deck, played_at FROM play_log WHERE (content_class IS NULL OR content_class = 'MUSIC') ORDER BY played_at DESC LIMIT 5",
+          "SELECT title, artist, deck, played_at, content_class FROM play_log ORDER BY played_at DESC LIMIT 5",
           []
         );
         setHistory(rows);
@@ -163,6 +174,7 @@ export function SongHistoryStrip() {
           minWidth: 0,
         }}>
           <div style={{ width: 2, height: 20, borderRadius: 0, background: deckColor(song.deck), flexShrink: 0 }} />
+          <ClassBadge value={song.content_class} />
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 10, fontWeight: 600, color: "var(--text-primary)", whiteSpace: "nowrap" as const, overflow: "hidden", textOverflow: "ellipsis", maxWidth: 120 }}>{song.title}</div>
             <div style={{ fontSize: 8, color: "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 4 }}>
