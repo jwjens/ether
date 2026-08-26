@@ -115,6 +115,20 @@ per-announcement duck controls with the note *"A dead control beside a working o
 control: it is how an operator mis-sets the duck and then distrusts the feature that does work."*
 A decorative `ducks` column on eight types is the same defect with more surface area.
 
+**DUCK IS A CHANNEL FUNCTION, FULL STOP** (Jeff, clarified 2026-08-26):
+
+> *"The duck is a function of the CHANNEL/DECK, available to ANYTHING on that deck — mic,
+> announcement, any source — not tied to content type. A live jock rides his own bed manually, but the
+> mic on an aux deck should still have its DUCK button, because duck is a channel function, period."*
+
+So the rule is stronger than "types do not carry duck flags". It is: **the channel's DUCK control is
+universal and content-agnostic, and nothing in the type system may override, replace, gate or
+pre-empt it.** A deck has a DUCK button because it is a deck — whatever happens to be loaded on it,
+including a live mic, including nothing.
+
+That also forbids a tempting future shortcut: "hide the DUCK button for types that do not duck". The
+button belongs to the channel, not to the content, so it is always there.
+
 **Ducking stays exactly as built and is untouched by this arc:** per-station depth/hold/release/
 attack/threshold in Preferences → Ducker, DUCK ON per source channel, duckable per deck. The operator
 rides their own levels — including a bed, which is a fader move, not a rule.

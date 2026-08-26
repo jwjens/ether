@@ -1,5 +1,29 @@
 # Backlog
 
+## MIC on the aux/source decks is still greyed out — Phase 2 capture path (filed 2026-08-26)
+**Jeff's report, verbatim:** *"the MIC option on the aux/source decks is still greyed out — that's the
+Phase 2 capture path that was never finished."* Flagged at his instruction; **do NOT fix now.**
+- Diagnosis (read-only, `src/components/DeckConfigurator.tsx:44`): the `mic` source kind carries
+  `state: "Needs the engine capture path — Phase 2."` — and so does `network` (IP / Zephyr / AoIP).
+  Both are declared source kinds with no engine capture behind them.
+- So a SOURCE channel can be patched to a file-family kind (jukebox, announcement, jingle) and it
+  works, but the two stream-family kinds have no path into the engine.
+- This is the same gap the Show+ device-layer work names: there is no capture/acquisition service.
+  See `project_showplus_device_layer` and `docs/showplus-device-layer-design-2026-07-27.md`.
+- Relevant to the ducker ruling of the same day: **duck is a channel function available to anything on
+  the deck, including a mic.** The DUCK button is not the blocker here — the capture path is.
+  (added 2026-08-26)
+
+## STALE state string: the Announcement source kind still says "nothing fires yet" (filed 2026-08-26)
+- `src/components/DeckConfigurator.tsx:41` — the `announcement` source kind reads
+  *"Patched. Announcement playout arrives in a later slice — nothing fires yet."*
+- **That is no longer true.** Announcements have fired to air since slice 4, and as of 4.4.231 they
+  fire themselves on a schedule, duck, air and log. An operator patching the channel today reads a
+  string telling them the feature does not work.
+- Found while checking the MIC gating. One-line fix, not taken without Jeff's word because it sits in
+  the panel he is actively using. The `jingle` kind's string wants the same read once the sweeper
+  rename lands. (added 2026-08-26)
+
 ## Play-log SPOT backfill — 35,826 rows logged as music (filed 2026-08-26)
 Root cause and the forward fix: commit `e56f70a`. **Not built — deliberate, separate task.**
 - `logPlay`'s classifier was dead (a `station_id` predicate against install-scoped `songs`), so every
