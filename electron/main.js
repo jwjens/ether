@@ -4301,25 +4301,77 @@ ipcMain.handle("audio:set-duck", (_, stationId, deck, enabled) =>
 //
 // EVERY STATION, every tick — not just the one whose board is on screen. Same lesson the duck
 // fan-out learned: anything scoped to the visible station is armed only by luck.
-const ANNOUNCE_TICK_MS = 15000;
+// SECOND-LEVEL PRECISION (2026-08-26). Everything below matches on HH:MM:SS instead of HH:MM,
+// because :15 and :30 spot boundaries need an announcement to land on the second it was set to, not
+// somewhere inside that minute.
+//
+// THE TICK HAD TO MOVE, and this is the only reason it did. The match is an equality test against
+// the clock, so the tick must VISIT every second or a target second is simply never seen — at 15s it
+// visited four seconds a minute, and a to-the-second trigger would essentially never fire.
+//
+// 250ms, NOT 1000ms. 1000 is the largest interval that can visit every second, but only if no tick
+// is ever late: one delayed tick steps over a second and that fire is gone. At 250ms every second is
+// visited about four times, so a late tick cannot skip one. The repeat hits inside the matched
+// second are absorbed by the last_played_at guard THAT IS ALREADY THERE — this buys robustness with
+// no new firing rule at all, which is the whole constraint. It is also the cadence the daemon's
+// station poll has run at for the life of the product (audiod/engine.js:375), so it is a proven
+// number on this machine rather than a new one.
+//
+// NOTHING ELSE CHANGED with it: same equality match, same 120s last_played_at guard, same backwards
+// midnight wrap, no grace window, no catch-up, no suppression. Resolution only.
+//
+// This tick governs ANNOUNCEMENTS AND NOTHING ELSE (verified 2026-08-26,
+// docs/scheduler-tick-blast-radius-2026-08-26.md). Spots, clock elements and the top-of-hour hard
+// cut are not on it and never were — they run in the daemon off preload/segue and a 250ms poll.
+const ANNOUNCE_TICK_MS = 250;
 let _announceTimer = null;
 
-/** Closing time for one station on one weekday (0=Sun), 'HH:MM' or null if never set. */
+// PREPARED ONCE, not per tick. These used to be compiled inside announceTick, which was affordable
+// at one tick per 15s and is not at one per second on the process that also carries the audio
+// command path. Same statements, same results — only the compilation is hoisted.
+let _annStmts = null;
+function annStmts() {
+  if (!_annStmts) _annStmts = {
+    stations: db.prepare('SELECT id FROM stations WHERE deleted_at IS NULL'),
+    closing:  db.prepare('SELECT value FROM station_config_kv WHERE station_id = ? AND key = ?'),
+    rows:     db.prepare(
+      "SELECT uuid, title, days, trigger_time, last_played_at, " +
+      "COALESCE(trigger_type,'absolute') AS trigger_type, COALESCE(close_offset_min,0) AS close_offset_min " +
+      "FROM announcements WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL"),
+  };
+  return _annStmts;
+}
+
+/** 'H:M[:S]' → 'HH:MM:SS', or null if it is not a time. A stored 'HH:MM' reads as 'HH:MM:00', so
+ *  every row written before seconds existed keeps the exact time it has always had. */
+function hmsNormalize(t) {
+  const p = String(t == null ? '' : t).split(':');
+  if (p.length < 2 || p.length > 3) return null;
+  const h = Number(p[0]), m = Number(p[1]), s = p.length > 2 ? Number(p[2]) : 0;
+  if (![h, m, s].every(n => Number.isInteger(n)) ) return null;
+  if (h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59) return null;
+  return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+
+/** Closing time for one station on one weekday (0=Sun), 'HH:MM:SS' or null if never set. */
 function closingTimeFor(stationId, dow) {
   try {
-    const v = db.prepare('SELECT value FROM station_config_kv WHERE station_id = ? AND key = ?')
-      .get(stationId, 'closing_time_' + dow)?.value;
-    return /^\d{1,2}:\d{2}$/.test(String(v || '')) ? String(v) : null;
+    const v = annStmts().closing.get(stationId, 'closing_time_' + dow)?.value;
+    return hmsNormalize(v);
   } catch { return null; }
 }
 
-/** 'HH:MM' minus N minutes, as 'HH:MM'. Wraps backwards past midnight the honest way. */
-function minusMinutes(hhmm, mins) {
-  const [h, m] = String(hhmm).split(':').map(Number);
-  let t = h * 60 + m - (Number(mins) || 0);
-  while (t < 0) t += 1440;
-  t %= 1440;
-  return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0');
+/** 'HH:MM:SS' minus N minutes, as 'HH:MM:SS'. Seconds ride through untouched, so a 9:00:00 close
+ *  with a 15-minute offset resolves to 8:45:00 exactly. Wraps backwards past midnight exactly as it
+ *  did before — that behaviour is unchanged. */
+function minusMinutes(hms, mins) {
+  const [h, m, s] = String(hms).split(':').map(Number);
+  let t = h * 3600 + m * 60 + (s || 0) - (Number(mins) || 0) * 60;
+  while (t < 0) t += 86400;
+  t %= 86400;
+  return String(Math.floor(t / 3600)).padStart(2, '0') + ':' +
+         String(Math.floor(t / 60) % 60).padStart(2, '0') + ':' +
+         String(t % 60).padStart(2, '0');
 }
 
 /** The clock time this row wants to fire at TODAY, or null if it cannot be resolved. */
@@ -4331,37 +4383,39 @@ function dueTimeFor(row, stationId, dow) {
     if (!close) return null;
     return minusMinutes(close, row.close_offset_min);
   }
-  return /^\d{1,2}:\d{2}$/.test(String(row.trigger_time || '')) ? String(row.trigger_time) : null;
+  return hmsNormalize(row.trigger_time);
 }
 
 function announceTick() {
   let stations = [];
-  try { stations = db.prepare('SELECT id FROM stations WHERE deleted_at IS NULL').all().map(r => r.id); }
-  catch { return; }
+  // A cached statement must never become a PERMANENT failure. If the handle it was compiled against
+  // ever goes away, drop the cache so the next tick re-prepares — the scheduler heals itself instead
+  // of going quiet for the rest of the session. Same swallow-and-carry-on as before otherwise.
+  try { stations = annStmts().stations.all().map(r => r.id); }
+  catch { _annStmts = null; return; }
   const now = new Date();
-  const hhmm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+  const hhmmss = String(now.getHours()).padStart(2, '0') + ':' +
+                 String(now.getMinutes()).padStart(2, '0') + ':' +
+                 String(now.getSeconds()).padStart(2, '0');
   const dow = String(now.getDay());
   const nowEpoch = Math.floor(Date.now() / 1000);
 
   for (const stationId of stations) {
     let rows = [];
-    try {
-      rows = db.prepare(
-        "SELECT uuid, title, days, trigger_time, last_played_at, " +
-        "COALESCE(trigger_type,'absolute') AS trigger_type, COALESCE(close_offset_min,0) AS close_offset_min " +
-        "FROM announcements WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL"
-      ).all(stationId);
-    } catch { continue; }
+    try { rows = annStmts().rows.all(stationId); }
+    catch { _annStmts = null; continue; }
 
     for (const row of rows) {
       // ACTIVE DAYS decide whether the event exists today at all. An unchecked day is not a
       // suppressed announcement — it is no announcement.
       if (!String(row.days || '').includes(dow)) continue;
       const due = dueTimeFor(row, stationId, dow);
-      if (!due || due !== hhmm) continue;
-      // Fired already this minute-or-two? The tick is 15s, so without this the same minute fires
-      // four times. Keyed on the row's OWN last_played_at, not a module global — a per-station
-      // global is how the old renderer timer let one station's fire suppress another's.
+      if (!due || due !== hhmmss) continue;
+      // Fired already? The tick is 250ms and the match is to the second, so a matching second is hit
+      // about four times — this guard is what makes that safe, and it is why the faster tick needs no
+      // new rule of its own. UNCHANGED from the 15s era, deliberately: same 120s window, still keyed
+      // on the row's OWN last_played_at, not a module global — a per-station global is how the old
+      // renderer timer let one station's fire suppress another's.
       if (row.last_played_at && (nowEpoch - row.last_played_at) < 120) continue;
       try {
         const r = fireAnnouncement(stationId, row.uuid);
@@ -4377,7 +4431,7 @@ function startAnnouncementScheduler() {
   // Never let a scheduling fault reach playout: the tick is wrapped, and a throw inside one station
   // must not stop the others or kill the timer.
   _announceTimer = setInterval(() => { try { announceTick(); } catch (e) { console.error('[announce] tick:', e && e.message); } }, ANNOUNCE_TICK_MS);
-  console.log('[announce] scheduler started (every ' + (ANNOUNCE_TICK_MS / 1000) + 's, all stations)');
+  console.log('[announce] scheduler started (every ' + ANNOUNCE_TICK_MS + 'ms, matching to the second, all stations)');
 }
 
 // Closing time, seven per station — read and written by the Announcements panel.
@@ -4389,11 +4443,14 @@ ipcMain.handle('announcements:get-closing-times', (_, stationId) => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
-ipcMain.handle('announcements:set-closing-time', (_, stationId, dow, hhmm) => {
+ipcMain.handle('announcements:set-closing-time', (_, stationId, dow, hhmmss) => {
   try {
     const key = 'closing_time_' + Number(dow);
-    const val = (hhmm == null || hhmm === '') ? '' : String(hhmm);
-    if (val && !/^\d{1,2}:\d{2}$/.test(val)) return { ok: false, error: 'expected HH:MM' };
+    // Stored normalised to HH:MM:SS so a close-offset resolves to the second. A bare 'HH:MM' from an
+    // older client still writes, as 'HH:MM:00' — the same instant it has always meant.
+    const raw = (hhmmss == null || hhmmss === '') ? '' : String(hhmmss);
+    const val = raw === '' ? '' : hmsNormalize(raw);
+    if (raw !== '' && !val) return { ok: false, error: 'expected HH:MM or HH:MM:SS' };
     // Through the SANCTIONED upsert, not raw SQL. station_config_kv.uuid is NOT NULL and the row has
     // to be journalled for sync — a hand-rolled INSERT would have failed on the first write and, if
     // it had not, would have written a row no peer ever saw. Closing times are per-station config and

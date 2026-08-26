@@ -26,10 +26,15 @@ interface Announcement {
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+// Seconds are shown ONLY when they are non-zero. Every row that sits on the minute — which is most
+// of them — reads exactly as it always has, and a :30 trigger is unmistakable when it is there.
+// A stored 'HH:MM' has no seconds part and means :00, so it renders unchanged.
 function fmtTime(t: string): string {
-  const [h, m] = t.split(":");
+  const [h, m, s] = String(t || "").split(":");
   const hr = parseInt(h);
-  return (hr === 0 ? 12 : hr > 12 ? hr - 12 : hr) + ":" + m + " " + (hr >= 12 ? "PM" : "AM");
+  const sec = Number(s || 0);
+  return (hr === 0 ? 12 : hr > 12 ? hr - 12 : hr) + ":" + m +
+         (sec ? ":" + String(sec).padStart(2, "0") : "") + " " + (hr >= 12 ? "PM" : "AM");
 }
 
 // (RETIRED 2026-08-25, slice 5) A setInterval lived here and fired scheduled announcements from the
@@ -74,7 +79,7 @@ export default function Announcements() {
     if (!files) return;
     const filePath = Array.isArray(files) ? files[0] : files;
     const title = (filePath.split(/[\\/]/).pop() || "").replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
-    setEditing({ title, file_path: filePath, trigger_time: "17:30", days: "0123456", duck_music: 1, resume_music: 1, duck_level: 0.1, is_active: 1, trigger_type: "absolute", close_offset_min: 30 });
+    setEditing({ title, file_path: filePath, trigger_time: "17:30:00", days: "0123456", duck_music: 1, resume_music: 1, duck_level: 0.1, is_active: 1, trigger_type: "absolute", close_offset_min: 30 });
   };
 
   const save = async () => {
@@ -196,6 +201,7 @@ export default function Announcements() {
                   <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontWeight: 700 }}>{name}</span>
                   <input
                     type="time"
+                    step={1}
                     value={closing[String(i)] || ""}
                     onChange={e => saveClosing(i, e.target.value)}
                     style={{ padding: "5px 7px", fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
@@ -237,7 +243,7 @@ export default function Announcements() {
                 <option value="close_offset">Before closing</option>
               </select>
               {(editing.trigger_type || "absolute") === "absolute" ? (
-                <input type="time" value={editing.trigger_time || "17:30"} onChange={e => setEditing({...editing, trigger_time: e.target.value})}
+                <input type="time" step={1} value={editing.trigger_time || "17:30:00"} onChange={e => setEditing({...editing, trigger_time: e.target.value})}
                   style={{ width: "100%", marginTop: 6, padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as any }} />
               ) : (
                 <>
