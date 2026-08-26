@@ -1,14 +1,72 @@
 # `library_asset` — the build plan (2026-08-26)
 
-**Status: PLAN. NOT BUILT. Jeff sees the extensibility walkthrough (§3) before any code.**
+**Status: PLAN. NOT BUILT.**
 
-Jeff's rulings: a **new `library_asset` table**, not `songs` grown and renamed later. One library,
-every asset typed, **the type drives behaviour through a registry — not scattered hardcoded
-branches**. Tabs become filtered views. Spots leave their separate table. Sweepers are named
-correctly. This is dev, so no canary flags and no off-air staging — but the migration still has to be
-correct on a machine with real data, because OV took 4.4.231 today.
+## 0. SCOPE — ruled, and it absorbs a table that already exists
 
-The extensibility requirement is the one that shapes everything, so it comes first.
+Jeff, 2026-08-26:
+
+> *"The audio files are ONE shared library all stations draw from — an asset exists once. But how each
+> station treats that asset is per-station: category, badges, rotation behavior, scheduling are all
+> unique to each station. Change stations and the same song is categorized and badged differently."*
+
+**That model already has a table: `station_programming`** — added by the same Phase-4 / Direction-C
+work that made `songs` install-scoped. Its shape is exactly the ruling:
+
+```sql
+station_programming(uuid, song_id, station_id, category_id, energy, daypart_mask,
+                    rotation_status, no_repeat_hours, last_played_at, play_count, notes,
+                    UNIQUE(station_id, song_id, category_id))
+```
+
+So the design does **not** invent `asset_music_meta`. It **generalises `station_programming` from
+songs to every asset type** — one install-scoped asset, N per-station treatment rows.
+
+### But it is barely wired, and that is the real finding
+
+Measured read-only on the live profile:
+
+| | |
+|---|---|
+| `station_programming` rows | **12** (all station 2) |
+| `songs` rows | **510** |
+| songs with treatment on **2+ stations** | **0** |
+| `categories.station_id` exists | ✅ yes — categories ARE station-scoped |
+| what rotation actually filters on | **`s.category_id`, `s.rotation_status`, `s.daypart_mask`** — the INSTALL-scoped columns on `songs` (`audiod/loggen.js:70`) |
+
+And each song's `category_id` points at exactly ONE station's category:
+
+```
+Open Format 163 · halloVeen 151 · Magical Forest 76 · Christmas in Jully 46
+```
+
+**So today the shared library is PARTITIONED across stations, not TREATED differently by them.** A
+song is assigned to one station's category; it is not simultaneously Power Gold on Open Format and
+Halloween on halloVeen. Switching stations shows a different set of songs — which looks like
+per-station treatment and is worth stating carefully, because the mechanism is different and it caps
+what the model can do.
+
+**UNVERIFIED at runtime.** This is a schema-and-data reading, not a claim about the running app. The
+one check that settles it: categorise a song on Open Format, switch to halloVeen, and see whether that
+same song is available to categorise there too, or whether it has effectively left the pool.
+
+**This makes the arc more valuable, not less.** Finishing the per-station treatment model is what
+turns Jeff's stated intent into how the product actually behaves, and the library convergence is the
+natural place to do it — the alternative is a second migration later over the same rows.
+
+### Consequence: one open decision
+
+Migrating `songs.category_id` into per-station treatment rows needs a rule for the 436 categorised
+songs:
+
+- **(a) Preserve today exactly** — each song gets ONE treatment row, on the station whose category it
+  currently points at. Nothing changes on air; the model is correct but the library stays partitioned
+  until someone widens it by hand.
+- **(b) Preserve + make available** — same row, and every other station can now add its own treatment
+  for that asset. Nothing changes on air either, but the shared library becomes genuinely shared.
+
+**My recommendation: (b)** — it is what Jeff described, it changes nothing that is currently
+scheduled, and (a) would need a second pass later anyway. **Jeff rules.**
 
 ---
 
