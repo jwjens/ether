@@ -29,7 +29,20 @@ function logPlay(db, { stationId, title, artist, deck, durationMs, sessionId, fi
   let content_class = contentClass || null;
   if (!content_class && filePath) {
     try {
-      const s = db.prepare("SELECT content_class FROM songs WHERE file_path = ? AND station_id = ? AND deleted_at IS NULL LIMIT 1").get(filePath, stationId);
+      // NO station_id ON songs, and that predicate is what broke this whole classifier (2026-08-26).
+      // songs went INSTALL-scoped in the Phase-4 library architecture (Direction C), so this query
+      // threw `no such column: station_id` on every call, the catch below swallowed it, THE SPOTS
+      // BRANCH WAS NEVER REACHED, and everything fell through to MUSIC.
+      //
+      // Measured on the live install before the fix: play_log held MUSIC 35,826 / JIN 14,073 / ANN 7
+      // and ZERO SPOT rows — every commercial ever aired was logged as music. JIN and ANN were
+      // unaffected only because their callers pass contentClass explicitly and never reach here; the
+      // rotation-deck path (engine._fireStart), which is the path spots actually air on, is the one
+      // that depends on this.
+      //
+      // A song's class is a property of the FILE, not of a station, so there was never anything for
+      // station_id to scope here.
+      const s = db.prepare("SELECT content_class FROM songs WHERE file_path = ? AND deleted_at IS NULL LIMIT 1").get(filePath);
       if (s && s.content_class) content_class = s.content_class;
       else if (db.prepare("SELECT 1 FROM spots WHERE file_path = ? AND station_id = ? AND deleted_at IS NULL LIMIT 1").get(filePath, stationId)) content_class = "SPOT";
     } catch { /* logging must never throw into playout */ }
