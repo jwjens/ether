@@ -160,21 +160,54 @@ interface ScheduleEntry {
 }
 
 /** One line of the schedule: WHICH announcement, and at WHAT TIME. That is the whole entry. */
-function EntryRow({ entry, assets, onPatch, onDelete }: {
+/** 'HH:MM' or 'HH:MM:SS' → 'HH:MM:SS'. The picker emits either depending on how it was filled in;
+ *  the entry stores one shape so the list and the scheduler read the same string. */
+function toHms(v: string): string {
+  const p = String(v || "").split(":");
+  if (p.length < 2) return "";
+  const n = (x: string) => String(Number(x) || 0).padStart(2, "0");
+  return `${n(p[0])}:${n(p[1])}:${p.length > 2 ? n(p[2]) : "00"}`;
+}
+
+/** One line of the schedule: WHICH announcement, at WHAT TIME, and — when the row spans days beyond
+ *  the current selection — which days it actually covers. */
+function EntryRow({ entry, assets, onPatch, onDelete, selection }: {
   entry: ScheduleEntry;
   assets: Announcement[];
   onPatch: (patch: any) => void;
   onDelete: () => void;
+  selection: string;          // the day-set currently selected ('' for a date)
 }) {
   const fld = {
     padding: "7px 9px", fontSize: 12, background: "var(--bg-secondary)",
     border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none",
   };
   const missing = !assets.some(a => a.uuid === entry.announcement_uuid);
-  // A row carried over from the old closing-relative model has no clock time and, with closing times
-  // gone, can never resolve one — so it would sit here looking scheduled and never play. Said plainly
-  // instead, and typing a time fixes it.
-  const needsTime = entry.trigger_type !== "absolute" || !entry.trigger_time;
+
+  // THE TIME FIELD IS A DRAFT WHILE IT HAS FOCUS, and that is the whole fix for "typing a second
+  // digit replaces the first". It used to be fully controlled off entry.trigger_time and to write on
+  // every keystroke: typing "1" is an INCOMPLETE time, so the picker emits "", we saved "", the list
+  // reloaded, and the field snapped back to empty — so the "0" started over and only the arrows
+  // could reach 10+. Now keystrokes go to local state, and the row is only written on blur (or
+  // Enter), which also stops one IPC round-trip per keypress.
+  const [draft, setDraft]   = useState(entry.trigger_time || "");
+  const [typing, setTyping] = useState(false);
+  // Re-sync when the row changes underneath us — but NEVER while the field has focus, or we would be
+  // fighting the operator's typing again with a different mechanism.
+  useEffect(() => { if (!typing) setDraft(entry.trigger_time || ""); }, [entry.trigger_time, typing]);
+
+  const commit = () => {
+    setTyping(false);
+    const v = toHms(draft);
+    if (!v) { setDraft(entry.trigger_time || ""); return; }      // incomplete — put back what was there
+    if (v === (entry.trigger_time || "")) { setDraft(v); return; }
+    setDraft(v);
+    onPatch({ trigger_time: v, trigger_type: "absolute" });
+  };
+
+  const needsTime = !draft;
+  const covers = entry.scope === "weekday" ? (entry.days || "") : "";
+  const spans  = covers && selection && covers !== selection;
 
   return (
     <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
@@ -186,8 +219,23 @@ function EntryRow({ entry, assets, onPatch, onDelete }: {
         {assets.map(a => <option key={a.uuid} value={a.uuid}>{a.title}</option>)}
       </select>
 
-      <input type="time" step={1} value={entry.trigger_time || ""}
-        onChange={e => onPatch({ trigger_time: e.target.value, trigger_type: "absolute" })}
+      {/* Which days this line ACTUALLY covers, shown whenever that is not exactly what is selected.
+          Editing a Fri+Sat line while only Fri is selected still changes both days, so the row has to
+          say so — a silent wider edit is how a Saturday slot moves without anyone asking. */}
+      {spans && (
+        <span title={`This line plays on ${covers.split("").map(d => DAY_NAMES[Number(d)]).join(", ")}`}
+          style={{ fontSize: 9, fontWeight: 700, padding: "3px 6px", background: "var(--bg-tertiary)",
+                   color: "var(--accent-amber)", border: "1px solid var(--border-primary)", whiteSpace: "nowrap" as any }}>
+          {covers.split("").map(d => DAY_NAMES[Number(d)][0]).join("")}
+        </span>
+      )}
+
+      <input type="time" step={1}
+        value={draft}
+        onFocus={() => setTyping(true)}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
         style={{ ...fld, width: 124, borderColor: needsTime ? "var(--accent-amber)" : "var(--border-primary)" }} />
 
       <button onClick={onDelete} title="Remove this entry"
@@ -210,6 +258,7 @@ function EntryList({ stationId, assets, scope, days, date, entries, reload }: {
 }) {
   const [err, setErr] = useState<string | null>(null);
   const api = () => (window as any).ether.announcements;
+  const selection = scope === "weekday" ? (days || "") : "";
 
   const add = async () => {
     if (stationId == null) return;
@@ -271,7 +320,7 @@ function EntryList({ stationId, assets, scope, days, date, entries, reload }: {
         </div>
       ) : (
         entries.map(e => (
-          <EntryRow key={e.uuid} entry={e} assets={assets}
+          <EntryRow key={e.uuid} entry={e} assets={assets} selection={selection}
             onPatch={pp => patch(e.uuid, pp)} onDelete={() => del(e.uuid)} />
         ))
       )}
@@ -289,7 +338,8 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
   stationId: number | null; assets: Announcement[]; entries: ScheduleEntry[]; reload: () => void;
 }) {
   const [mode, setMode] = useState<"weekday" | "date">("weekday");
-  const [days, setDays] = useState<string>("1");
+  // Seeded to TODAY, not a hardcoded Monday: the panel opens on the day the operator is standing in.
+  const [days, setDays] = useState<string>(() => String(new Date().getDay()));
   const [date, setDate] = useState<string | null>(null);
 
   const toggleDay = (d: string) => {
@@ -298,19 +348,16 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
   };
   const pickDate = (d: string) => { setMode("date"); setDate(d); };
 
-  // EXACT-SET matching. Checking Fri+Sat edits the list that plays on Fri AND Sat; it is a different
-  // list from Friday-only, because those are two different lineups and merging them would make it
-  // impossible to tell which one an edit is about.
+  // OVERLAP matching, NOT exact-set (fixed 2026-08-26). This used to require the entry's day-set to
+  // EQUAL the selection, which made selecting a second day look like it had replaced the first:
+  // picking Fri showed the Friday lines, then adding Sat showed the — empty — "Fri+Sat" list, so the
+  // lines vanished. Selecting more days now shows everything that plays on ANY selected day, which is
+  // what "the schedule for the selected days" means to the person reading it. Rows that reach beyond
+  // the selection carry a day badge so a wider edit is never silent.
   const mine = mode === "weekday"
-    ? entries.filter(e => e.scope === "weekday" && (e.days || "") === days)
-    : entries.filter(e => e.scope === "date" && e.date === date);
-
-  // A day can also be covered by OTHER day groups. Hiding that is how "where did my Friday
-  // announcements go?" happens, so it is stated rather than left to be discovered.
-  const alsoOn = mode === "weekday" && days
-    ? entries.filter(e => e.scope === "weekday" && (e.days || "") !== days &&
+    ? entries.filter(e => e.scope === "weekday" &&
                           days.split("").some(d => (e.days || "").includes(d)))
-    : [];
+    : entries.filter(e => e.scope === "date" && e.date === date);
 
   const dayLabel = days ? days.split("").map(d => DAY_NAMES[Number(d)]).join(" + ") : "no days selected";
   const selDow   = date ? new Date(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10))).getDay() : 0;
@@ -338,8 +385,8 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
             })}
           </div>
           <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1.4 }}>
-            Days that run the same announcements can be selected together. Days that differ are set
-            separately.
+            Click each day you want — they <strong>add up</strong>. Days that run the same
+            announcements can be selected together; days that differ are set separately.
           </div>
         </div>
 
@@ -359,8 +406,9 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
         <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10, lineHeight: 1.45 }}>
           {mode === "weekday" ? (
             days
-              ? <>Playing every <strong style={{ color: "var(--text-primary)" }}>{dayLabel}</strong></>
-              : <>Select one or more days on the left.</>
+              ? <>Playing every <strong style={{ color: "var(--text-primary)" }}>{dayLabel}</strong>
+                  {days.length > 1 && <span style={{ color: "var(--text-tertiary)" }}> — {days.length} days selected; a new line is added to all of them</span>}</>
+              : <>Select one or more days on the left. Click each day you want — they add up.</>
           ) : (
             <>
               <strong style={{ color: "var(--text-primary)" }}>{date}</strong>
@@ -378,16 +426,6 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
             entries={mine} reload={reload} />
         )}
 
-        {alsoOn.length > 0 && (
-          <div style={{ marginTop: 12, paddingTop: 9, borderTop: "1px solid var(--border-primary)",
-                        fontSize: 10, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
-            Also playing on {days.split("").map(d => DAY_NAMES[Number(d)]).join("/")} from other day
-            groups: {alsoOn.map(e => {
-              const a = assets.find(x => x.uuid === e.announcement_uuid);
-              return `${a?.title || "?"} (${fmtTime(e.trigger_time || "")}, ${(e.days || "").split("").map(d => DAY_NAMES[Number(d)]).join("+")})`;
-            }).join(" · ")}. Select exactly those days to edit them.
-          </div>
-        )}
       </div>
     </div>
   );
