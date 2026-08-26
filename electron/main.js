@@ -4539,6 +4539,32 @@ function fireAnnouncement(stationId, uuid, entryUuid) {
   if (entryUuid) {
     try { annStmts().schedStamp?.run(_stampAt, entryUuid); } catch {}
   }
+
+  // 6. LOG IT. Until now an announcement was the ONLY audible element in the product that aired and
+  //    left no trace anywhere: logPlay's three callers are the rotation decks (engine._fireStart),
+  //    CART/jingle and the jukebox, and this path reaches none of them — the daemon's `play` command
+  //    calls the addon directly and never routes through _fireStart, and noteManualCue early-returns
+  //    for anything that is not deck A/B/C. So a scheduled announcement could go to air and be
+  //    unanswerable afterwards. docs/announcements-in-the-log-investigation-2026-08-26.md.
+  //
+  //    contentClass 'ANN' — the same class the load command already declares, and a column play_log
+  //    has carried since v29. NO SCHEMA CHANGE, and nothing above this line moved: the load, the
+  //    play, the source channel and the ducker are untouched. This is Option C part 1, deliberately
+  //    NOT Option B — no ANN row goes anywhere near generated_schedule, which is what the log reader
+  //    and the auto-fitter read.
+  //
+  //    AFTER the engine call succeeded, like the stamps: an announcement that never played must not
+  //    appear in the as-run log. Wrapped, because a logging fault must never reach playout.
+  try {
+    let _durMs = 0;
+    try { _durMs = Math.round((audio.getFileDuration(row.file_path) || 0) * 1000); } catch { _durMs = 0; }
+    require('../audiod/playlog').logPlay(db, {
+      stationId, title: row.title || 'Announcement', artist: '', deck: slot,
+      durationMs: _durMs, sessionId: null, filePath: row.file_path,
+      contentClass: 'ANN', source: 'announcement',
+    });
+  } catch (e) { try { logStartup('[announce] play_log write failed: ' + (e && e.message)); } catch {} }
+
   try { logStartup('[announce] fired "' + (row.title || '') + '" on ' + slot + ' (station ' + stationId + ')'); } catch {}
   return { ok: true, slot, title: row.title || '' };
 }

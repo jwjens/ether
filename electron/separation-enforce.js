@@ -25,8 +25,14 @@ function buildRestMaps(db, stationId) {
       restByArtist.set(r.aid, r.m || 0);
   } catch { /* */ }
   try {
+      // ANN EXCLUSION (2026-08-26). This map is keyed by TITLE and joins nothing, so every play_log
+      // row reaches it whatever it was. Announcements now log as content_class='ANN'
+      // (docs/announcements-in-the-log-investigation-2026-08-26.md), and an announcement titled the
+      // same as a song would otherwise impose that song's title-separation rest — an announcement
+      // silently resting a song is exactly the rotation effect announcements must never have. This
+      // was the ONLY genuine rotation risk the play_log consumer audit found.
     for (const r of db.prepare(
-      "SELECT LOWER(TRIM(title)) tk, MAX(played_at) m FROM play_log WHERE station_id=? AND deleted_at IS NULL AND title IS NOT NULL GROUP BY LOWER(TRIM(title))").all(stationId))
+      "SELECT LOWER(TRIM(title)) tk, MAX(played_at) m FROM play_log WHERE station_id=? AND deleted_at IS NULL AND title IS NOT NULL AND (content_class IS NULL OR content_class = 'MUSIC') GROUP BY LOWER(TRIM(title))").all(stationId))
       restByTitle.set(r.tk, r.m || 0);
   } catch { /* */ }
   return { restByFile, restByArtist, restByTitle };

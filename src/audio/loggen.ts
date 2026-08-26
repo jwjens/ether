@@ -152,7 +152,7 @@ async function buildRestMapsTwin(stationId: number): Promise<Pick<RestMaps, "res
   const restByFile = new Map<string, number>(), restByArtist = new Map<number, number>(), restByTitle = new Map<string, number>();
   try { for (const r of await query<{ file_path: string; m: number }>("SELECT file_path, MAX(played_at) m FROM play_log WHERE station_id=? AND deleted_at IS NULL AND file_path IS NOT NULL GROUP BY file_path", [stationId])) restByFile.set(r.file_path, r.m || 0); } catch { /* */ }
   try { for (const r of await query<{ aid: number; m: number }>("SELECT s.artist_id aid, MAX(pl.played_at) m FROM play_log pl JOIN songs s ON s.file_path=pl.file_path WHERE pl.station_id=? AND pl.deleted_at IS NULL AND s.artist_id IS NOT NULL GROUP BY s.artist_id", [stationId])) restByArtist.set(r.aid, r.m || 0); } catch { /* */ }
-  try { for (const r of await query<{ tk: string; m: number }>("SELECT LOWER(TRIM(title)) tk, MAX(played_at) m FROM play_log WHERE station_id=? AND deleted_at IS NULL AND title IS NOT NULL GROUP BY LOWER(TRIM(title))", [stationId])) restByTitle.set(r.tk, r.m || 0); } catch { /* */ }
+  try { for (const r of await query<{ tk: string; m: number }>("SELECT LOWER(TRIM(title)) tk, MAX(played_at) m FROM play_log WHERE station_id=? AND deleted_at IS NULL AND title IS NOT NULL AND (content_class IS NULL OR content_class = 'MUSIC') GROUP BY LOWER(TRIM(title))", [stationId])) restByTitle.set(r.tk, r.m || 0); } catch { /* */ }
   return { restByFile, restByArtist, restByTitle };
 }
 

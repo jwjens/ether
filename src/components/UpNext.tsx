@@ -18,6 +18,17 @@ function fmtDur(ms: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+/** 'HH:MM:SS' → '8:45 PM', or '8:45:30 PM' when the seconds matter. An announcement's time is an
+ *  exact instant, so it is shown as one. */
+function fmtTime12(t: string): string {
+  const [h, m, sec] = String(t || "").split(":");
+  const hr = parseInt(h);
+  if (!Number.isFinite(hr)) return "";
+  const ss = Number(sec || 0);
+  return (hr === 0 ? 12 : hr > 12 ? hr - 12 : hr) + ":" + m +
+         (ss ? ":" + String(ss).padStart(2, "0") : "") + " " + (hr >= 12 ? "PM" : "AM");
+}
+
 function fmtSec(sec: number): string {
   if (!sec || sec <= 0) return "0:00";
   const m = Math.floor(sec / 60);
@@ -84,6 +95,59 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
   const isDraggingRef  = useRef(false);
   const dragStartYRef  = useRef(0);
   const [dragVisual, setDragVisual] = useState<{ from: number | null; over: number | null }>({ from: null, over: null });
+
+  // ── UPCOMING ANNOUNCEMENTS (2026-08-26) ───────────────────────────────────────────────────────
+  // docs/announcements-in-the-log-investigation-2026-08-26.md — Option C, part 2.
+  //
+  // DISPLAY-ONLY MERGE. These rows are read from announcement_schedule and interleaved into the list
+  // for viewing. They are NOT put into the queue and NOT into generated_schedule — that is Option B,
+  // which the log reader and the auto-fitter read, and it is explicitly deferred to the flip's
+  // Phase 3 as a separate, deliberately-verified change. Nothing here can move a song, a spot or a
+  // jingle: it is a second array rendered alongside the first.
+  //
+  // An announcement still fires exactly as it did — its own 250ms tick in main, onto the Announcement
+  // source channel, through the ducker. This only shows the operator where it will land.
+  const [annRows, setAnnRows] = useState<{ uuid: string; title: string; at: number; time: string }[]>([]);
+  useEffect(() => {
+    if (!isReady || stationId == null) return;
+    let stop = false;
+    const load = async () => {
+      try {
+        const now = new Date();
+        // Local date parts, never toISOString() — that is UTC and would ask for the wrong day's
+        // announcements every evening west of Greenwich.
+        const today = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0");
+        const r = await (window as any).ether?.announcements?.listSchedule?.(stationId, { scope: "date", date: today });
+        if (!r?.ok || stop) return;
+        // Titles live on the ASSET, not the entry. One small read rather than widening the handler.
+        const assets = await queryScoped<{ uuid: string; title: string }>(
+          "SELECT uuid, title FROM announcements WHERE is_active = 1 AND deleted_at IS NULL", [], stationId);
+        const byUuid = new Map(assets.map(a => [a.uuid, a.title]));
+        const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+        const rows = (r.rows || [])
+          // An entry whose asset is inactive or gone will not fire, so it must not be shown as if it
+          // would — the queue is a claim about what is about to happen.
+          .filter((e: any) => e.trigger_time && byUuid.has(e.announcement_uuid))
+          .map((e: any) => {
+            const [h, m, sec] = String(e.trigger_time).split(":").map(Number);
+            return {
+              uuid: e.uuid as string,
+              title: byUuid.get(e.announcement_uuid) || "Announcement",
+              at: midnight + ((h || 0) * 3600 + (m || 0) * 60 + (sec || 0)) * 1000,
+              time: String(e.trigger_time),
+            };
+          })
+          // Only what is still ahead. One that has already fired is history, and history now lives in
+          // the play log — announcements finally write a play_log row when they air.
+          .filter((x: { at: number }) => x.at >= Date.now() - 30_000)
+          .sort((a: { at: number }, b: { at: number }) => a.at - b.at);
+        if (!stop) setAnnRows(rows);
+      } catch { /* the queue renders without them — nothing is invented */ }
+    };
+    load();
+    const id = setInterval(load, 20000);
+    return () => { stop = true; clearInterval(id); };
+  }, [stationId, isReady]);
 
   const [queue, setQueue] = useState(() => engine.getQueue());
   // Slice C: live queue lint — scheduledAt → seconds-too-early for any upcoming row whose song/artist
@@ -347,6 +411,24 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
     }
   };
 
+  // INTERLEAVE BY PROJECTED TIME. The queue plays back to back, so a row's air time is now plus the
+  // durations ahead of it — that projection is exactly how a queue is read. An announcement's time is
+  // NOT a projection: it is the clock time it will fire at. That is why the two kinds of row are
+  // shown differently — a song carries a duration, an announcement carries its time.
+  const mergedUpcoming: any[] = (() => {
+    const out: any[] = [];
+    const upcoming = queue.slice(2, 52);
+    let clock = Date.now();
+    let ai = 0;
+    for (let qi = 0; qi < upcoming.length; qi++) {
+      while (ai < annRows.length && annRows[ai].at <= clock) out.push({ __ann: annRows[ai++] });
+      out.push(upcoming[qi]);
+      clock += (upcoming[qi] as any)?.durationMs || 0;
+    }
+    while (ai < annRows.length) out.push({ __ann: annRows[ai++] });
+    return out;
+  })();
+
   return (
     <div
       style={{ background: "var(--bg-primary)", border: "none", display: "flex", flexDirection: "column" as any, height: "100%", overflow: "hidden" }}
@@ -481,7 +563,32 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
           </div>
         ) : (
           <AnimatePresence initial={false}>
-            {queue.slice(2, 52).map((item, i) => {
+            {mergedUpcoming.map((item: any, i: number) => {
+              // An ANNOUNCEMENT row. Styled by class the way SPOT rows already are, and carrying its
+              // exact fire time instead of a duration.
+              if (item.__ann) {
+                const a = item.__ann;
+                return (
+                  <div key={"ann-" + a.uuid} style={{
+                    display: "flex", alignItems: "center", gap: 10, padding: "11px 16px 11px 13px",
+                    borderLeft: "3px solid var(--accent-cyan)",
+                    background: "rgb(from var(--accent-cyan) r g b / 0.07)",
+                  }}>
+                    <span style={{
+                      padding: "1px 5px", fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace",
+                      color: "var(--accent-cyan)", background: "rgb(from var(--accent-cyan) r g b / 0.14)",
+                      border: "1px solid rgb(from var(--accent-cyan) r g b / 0.45)", letterSpacing: "0.06em",
+                      flexShrink: 0,
+                    }}>ANN</span>
+                    <div style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: "var(--text-primary)",
+                                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{a.title}</div>
+                    <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, color: "var(--accent-cyan)", flexShrink: 0 }}>
+                      {fmtTime12(a.time)}
+                    </div>
+                  </div>
+                );
+              }
+
           const engineIdx = i + 2;
           const color = getItemColor(item);
           const catLabel = getCatLabel(item);

@@ -246,7 +246,10 @@ export default function ListenerAnalytics({ onClose }: Props) {
         SELECT date(datetime(played_at, 'unixepoch', 'localtime')) as date,
                COUNT(*) as play_count
         FROM play_log
-        WHERE station_id = ? AND played_at >= ${Math.floor(Date.now() / 1000) - trendDays * 86400}
+        -- ANN excluded (2026-08-26): announcements log as content_class='ANN' and would inflate the
+        -- plays trend as if they were music. The overview stats above already filter this way.
+        WHERE station_id = ? AND (content_class IS NULL OR content_class = 'MUSIC')
+          AND played_at >= ${Math.floor(Date.now() / 1000) - trendDays * 86400}
         GROUP BY date ORDER BY date
       `, [stationId], stationId, { skipScoping: true });
       // Fill in missing days

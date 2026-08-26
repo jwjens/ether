@@ -424,7 +424,8 @@ export function OneClickExport() {
         `SELECT pl.title, pl.artist, s.file_path, pl.played_at
          FROM play_log pl
          LEFT JOIN songs s ON s.title = pl.title
-         WHERE pl.station_id = ? AND date(datetime(pl.played_at, 'unixepoch'), 'localtime') = ?
+         WHERE pl.station_id = ? AND (pl.content_class IS NULL OR pl.content_class = 'MUSIC')
+           AND date(datetime(pl.played_at, 'unixepoch'), 'localtime') = ?
          AND s.file_path IS NOT NULL
          ORDER BY pl.played_at ASC`,
         [stationId, selectedSession],
