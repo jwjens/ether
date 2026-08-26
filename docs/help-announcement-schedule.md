@@ -1,7 +1,7 @@
 ---
 feature: announcement-schedule
 title: Scheduling Announcements
-summary: Pick the days (or a date) on the left, then build that selection's list of announcements and times on the right.
+summary: Pick the dates on the calendar — they add up — then build that selection's list of announcements and times.
 where: Announcements panel → Schedule
 since: 4.4.x
 audience: operator
@@ -13,39 +13,37 @@ tour: true
 ## What it is
 
 An announcement is just **the audio** — a name and a file, uploaded in the list at the bottom of the
-page. **When it plays is separate**, and one announcement can play as many times, on as many days, as
-you need.
+page. **When it plays is separate.**
 
-That's the whole idea. The same "we're closing" chime can play at 8:45 on a Friday and 7:45 on a
-Sunday without you making two copies of it.
+Everything is scheduled against **real calendar dates**. There is no "every Wednesday" — you pick the
+actual dates and give them a list. What plays on a day is exactly what you put on that day.
 
-**One rule: nothing scheduled means nothing plays.** There is no other condition to remember.
+**One rule: nothing scheduled means nothing plays.**
 
 ## The layout
 
-**Left — what you're scheduling.** The days across the top, and a calendar underneath for a single
-date.
+**Left — the calendar.** Multi-select the dates you're scheduling. **‹ ›** move between months.
 
-**Right — that selection's schedule.** A **＋ Add Announcement** button and a list of lines. Each line
-is one announcement and one time.
+**Right — the schedule for those dates.** A **＋ Add Announcement** button and a list of lines. Each
+line is one announcement and one time.
 
-The right column always says in words what it's editing, so you never have to work it out.
+## Build a schedule
 
-## Schedule by day
-
-1. Open **Announcements**. Along the top of the left column: **S M T W T F S**.
-2. **Click the day or days you want.** Days that run the *same* announcements can be selected
-   together — click **F** and **S** if the weekend runs the same list. Days that differ are set
-   separately.
-3. On the right, press **＋ Add Announcement**. A line appears.
-4. Pick the announcement from the dropdown, and set its time. Seconds are real — `20:45:30` fires at
-   20:45:30, not somewhere in that minute.
-5. Press **＋ Add Announcement** again for as many as you want.
-6. Press **✕** on a line to remove it.
+1. Open **Announcements**. Today is selected on the calendar to start with.
+2. **Click each date you want — they add up.** Click Oct 15, Oct 16, Oct 22 and all three stay
+   selected. Move to another month with **‹ ›** and keep picking; your earlier dates stay selected.
+   - To take a whole run quickly, click a **weekday letter** at the top of the calendar — that selects
+     every one of them in the visible month (every Friday in October, say).
+   - **Clear N** at the bottom drops the whole selection.
+3. On the right, press **＋ Add Announcement**. The line is added to **every selected date**.
+4. Pick the announcement from the dropdown and set its time. Type the digits normally — `10:15:00`.
+   Seconds are real: `20:45:30` fires at 20:45:30, not somewhere in that minute.
+5. Press **＋ Add Announcement** again for as many as you want per date.
+6. Press **✕** to remove that line from all the selected dates.
 
 Nothing to save — every change writes immediately.
 
-**A typical closing set** — select the days, then three lines:
+**A typical closing set** — select your event dates, then three lines:
 
 | Announcement | Time |
 |---|---|
@@ -53,36 +51,21 @@ Nothing to save — every change writes immediately.
 | Closing in 15 minutes | 8:45:00 PM |
 | We are now closed | 9:00:00 PM |
 
-## Schedule a specific date
-
-For a holiday, a special event, or any single date that runs something different.
-
-1. In the calendar on the left, use **‹** and **›** to find the month, then **click the date**.
-2. The right column switches to that date. Build its list exactly the same way.
-
-**A date with its own list runs THAT list instead of the usual weekday one.** If Oct 31 has three
-announcements of its own, the normal Friday list does not play that day. The right column says which
-is in force.
-
-Remove all of a date's lines and it goes back to following its weekday.
-
-Click any day letter to go back to editing the weekly schedule.
-
 ## How to read it
 
-- On the calendar, a date showing **♪3** has three announcements of its own.
-- In the announcements list at the bottom, the **Scheduled** column summarises where each one plays —
-  `MTWTF 5:30 PM`, or `3 dates`, or **not scheduled** in amber.
-- **"not scheduled" means it will never fire.** That's the first thing to check if something didn't
-  go to air.
-- A time box outlined in **amber** means that line has no time yet and won't play. Type one.
+- A date on the calendar showing **♪3** has three announcements on it.
+- Each line shows a **date count** — `3 dates` means that announcement-and-time exists on all three
+  dates you have selected.
+- **`2/5 dates` in amber** means the line only covers 2 of your 5 selected dates. Editing it changes
+  those 2. Add it again with all 5 selected if you want it everywhere.
+- In the announcements list at the bottom, the **Scheduled** column shows the next date each one
+  plays. **not scheduled** in amber means it will never fire — the first thing to check if something
+  didn't go to air.
 
 ## Worth knowing
 
-- **Selecting days picks which list you're editing.** Select **F+S** and you're editing the list that
-  plays on both. Select **F** alone and you're editing the Friday-only list — a different list. If
-  other day groups also cover the day you've selected, the panel says so underneath, so nothing is
-  hidden from you.
+- **A line added to several dates is several entries.** The list groups them back into one line so
+  you edit what you built, and the date count tells you how many it really covers.
 - **Deleting an announcement removes it from every schedule.** You'll be told how many lines go with
   it first.
 - **Whether anyone hears it is still the board's call.** The schedule decides *when* an announcement

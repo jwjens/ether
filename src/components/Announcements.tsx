@@ -62,7 +62,6 @@ export function stopAnnouncementEngine()  { /* main owns the schedule now */ }
 // nothing scheduled means nothing plays. Both were deleted rather than hidden, along with the
 // "before closing" trigger, so there is one way to say when something airs and nothing to reason
 // about. The date_closing_times table and its IPC still exist and are simply unused by this panel.
-const DOW_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 /** Local 'YYYY-MM-DD'. Built from local parts, NEVER toISOString() — that is UTC and would name the
  *  wrong day for every evening announcement west of Greenwich, which is where the parks are. */
@@ -70,12 +69,14 @@ function ymd(d: Date): string {
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
 
-/** A month grid whose only job is CHOOSING A DATE. It carries no closing-time editing of any kind —
- *  there is no closing-time concept in this panel any more. A date that has its own entries is
- *  marked, so the exceptions are visible without clicking through the year. */
-function DatePicker({ selected, onPick, entries }: {
-  selected: string | null;
-  onPick: (d: string) => void;
+/** A month grid for MULTI-SELECTING real calendar dates. Clicking a date toggles it and the others
+ *  stay selected, so a whole season can be picked one date at a time and given one schedule.
+ *  ‹ › move across months and the selection survives — the dates you picked in October are still
+ *  selected when you page into November. */
+function DatePicker({ selected, onToggle, onClearAll, entries }: {
+  selected: Set<string>;
+  onToggle: (d: string) => void;
+  onClearAll: () => void;
   entries: ScheduleEntry[];
 }) {
   const today = new Date();
@@ -93,34 +94,42 @@ function DatePicker({ selected, onPick, entries }: {
   const monthLabel = month.toLocaleDateString("en-US", { month: "long", year: "numeric" });
   const navBtn = { padding: "2px 9px", fontSize: 13, fontWeight: 800, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", lineHeight: 1.6 };
 
+  // Selecting a whole run of dates one click at a time is the common case for a season, so the week
+  // headers select and deselect that weekday across the visible month.
+  const toggleColumn = (col: number) => {
+    for (let d = 1; d <= dim; d++) {
+      const dt = new Date(month.getFullYear(), month.getMonth(), d);
+      if (dt.getDay() === col) onToggle(ymd(dt));
+    }
+  };
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, flex: 1 }}>
-          Specific dates
-        </div>
         <button onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))} title="Previous month" style={navBtn}>‹</button>
-        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-primary)", minWidth: 104, textAlign: "center" as any }}>{monthLabel}</div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", flex: 1, textAlign: "center" as any }}>{monthLabel}</div>
         <button onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))} title="Next month" style={navBtn}>›</button>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
         {DAY_NAMES.map((n, i) => (
-          <div key={i} style={{ fontSize: 9, fontWeight: 700, color: "var(--text-tertiary)", textAlign: "center" as any, padding: "2px 0" }}>{n[0]}</div>
+          <button key={i} onClick={() => toggleColumn(i)} title={`Select every ${n} this month`}
+            style={{ fontSize: 9, fontWeight: 700, color: "var(--text-tertiary)", textAlign: "center" as any,
+                     padding: "3px 0", background: "transparent", border: "none", cursor: "pointer" }}>{n[0]}</button>
         ))}
         {cells.map((d, i) => {
           if (d == null) return <div key={"b" + i} />;
           const key   = ymd(new Date(month.getFullYear(), month.getMonth(), d));
-          const n     = entries.filter(e => e.scope === "date" && e.date === key).length;
-          const isSel = key === selected;
+          const n     = entries.filter(e => e.date === key).length;
+          const isSel = selected.has(key);
           return (
-            <button key={key} onClick={() => onPick(key)}
-              title={n ? `${n} announcement${n === 1 ? "" : "s"} on this date` : "No list of its own — uses the weekday schedule"}
+            <button key={key} onClick={() => onToggle(key)}
+              title={n ? `${n} announcement${n === 1 ? "" : "s"} on this date` : "Nothing scheduled on this date"}
               style={{
-                padding: "3px 2px", minHeight: 30, cursor: "pointer", fontSize: 11, lineHeight: 1.1,
+                padding: "3px 2px", minHeight: 32, cursor: "pointer", fontSize: 11, lineHeight: 1.1,
                 background: isSel ? "var(--accent-blue)" : n ? "var(--bg-secondary)" : "transparent",
                 color: isSel ? "#fff" : "var(--text-primary)",
-                border: "1px solid " + (key === ymd(today) ? "var(--accent-cyan)" : n ? "var(--border-secondary)" : "var(--border-primary)"),
+                border: "1px solid " + (key === ymd(today) ? "var(--accent-cyan)" : isSel ? "var(--accent-blue)" : n ? "var(--border-secondary)" : "var(--border-primary)"),
                 display: "flex", flexDirection: "column" as any, alignItems: "center", justifyContent: "center",
               }}>
               <span style={{ fontWeight: key === ymd(today) ? 800 : 500 }}>{d}</span>
@@ -131,6 +140,20 @@ function DatePicker({ selected, onPick, entries }: {
           );
         })}
       </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+        <div style={{ fontSize: 10, color: "var(--text-tertiary)", flex: 1, lineHeight: 1.4 }}>
+          Click each date you want — they <strong>add up</strong>, and stay selected as you move
+          between months. Click a weekday letter to take every one of them this month.
+        </div>
+        {selected.size > 0 && (
+          <button onClick={onClearAll}
+            style={{ padding: "4px 9px", fontSize: 10, background: "var(--bg-secondary)", color: "var(--text-secondary)",
+                     border: "1px solid var(--border-primary)", cursor: "pointer", whiteSpace: "nowrap" as any }}>
+            Clear {selected.size}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -138,17 +161,19 @@ function DatePicker({ selected, onPick, entries }: {
 // ── THE SCHEDULE (v47) ───────────────────────────────────────────────────────────────────────────
 // docs/announcement-schedule-frame-design-2026-08-26.md.
 //
-// An announcement is now an ASSET — a title and an audio file. WHEN it plays is a separate row, and
-// there can be many. One entry = one (announcement, time) pair attached either to a set of WEEKDAYS
-// ('56' = Fri+Sat) or to a single DATE. A date's list replaces the weekday list for that date.
+// An announcement is an ASSET — a title and an audio file. WHEN it plays is a separate row, and
+// there can be many.
 //
-// The two editors below are the SAME editor: EntryList does not know or care whether it is showing a
-// weekday set or a date. That is deliberate — Jeff's model is one list shape attached two ways, and
-// two copies of this component would be two places for the behaviour to drift.
+// ONE ENTRY = one (announcement, time) on ONE SPECIFIC CALENDAR DATE. There is no weekday or
+// recurring concept (Jeff, 2026-08-26): dates are multi-selected on the calendar and a line added to
+// five dates writes five rows. What plays on a day is exactly what was put on that day, so nothing
+// has to be resolved, overridden, or reasoned about.
 
 interface ScheduleEntry {
   uuid: string;
   announcement_uuid: string;
+  /** Always 'date' from v48. The column and the 'weekday' value remain in the schema so an older
+   *  build can still open the database; nothing here writes or reads them. */
   scope: "weekday" | "date";
   days: string | null;
   date: string | null;
@@ -161,7 +186,7 @@ interface ScheduleEntry {
 
 /** One line of the schedule: WHICH announcement, and at WHAT TIME. That is the whole entry. */
 /** 'HH:MM' or 'HH:MM:SS' → 'HH:MM:SS'. The picker emits either depending on how it was filled in;
- *  the entry stores one shape so the list and the scheduler read the same string. */
+ *  entries store one shape so the list and the scheduler read the same string. */
 function toHms(v: string): string {
   const p = String(v || "").split(":");
   if (p.length < 2) return "";
@@ -169,66 +194,66 @@ function toHms(v: string): string {
   return `${n(p[0])}:${n(p[1])}:${p.length > 2 ? n(p[2]) : "00"}`;
 }
 
-/** One line of the schedule: WHICH announcement, at WHAT TIME, and — when the row spans days beyond
- *  the current selection — which days it actually covers. */
-function EntryRow({ entry, assets, onPatch, onDelete, selection }: {
-  entry: ScheduleEntry;
+/** A LINE of the schedule. One line is one announcement at one time, and — because a line added to
+ *  several dates is several rows — it carries the rows it stands for so an edit reaches all of them. */
+interface Line {
+  key: string;                 // announcement_uuid | time
+  announcement_uuid: string;
+  trigger_time: string;
+  rows: ScheduleEntry[];       // the underlying per-date rows within the current selection
+}
+
+function EntryRow({ line, assets, selectedCount, onPatch, onDelete }: {
+  line: Line;
   assets: Announcement[];
+  selectedCount: number;
   onPatch: (patch: any) => void;
   onDelete: () => void;
-  selection: string;          // the day-set currently selected ('' for a date)
 }) {
   const fld = {
     padding: "7px 9px", fontSize: 12, background: "var(--bg-secondary)",
     border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none",
   };
-  const missing = !assets.some(a => a.uuid === entry.announcement_uuid);
+  const missing = !assets.some(a => a.uuid === line.announcement_uuid);
 
-  // THE TIME FIELD IS A DRAFT WHILE IT HAS FOCUS, and that is the whole fix for "typing a second
-  // digit replaces the first". It used to be fully controlled off entry.trigger_time and to write on
-  // every keystroke: typing "1" is an INCOMPLETE time, so the picker emits "", we saved "", the list
-  // reloaded, and the field snapped back to empty — so the "0" started over and only the arrows
-  // could reach 10+. Now keystrokes go to local state, and the row is only written on blur (or
-  // Enter), which also stops one IPC round-trip per keypress.
-  const [draft, setDraft]   = useState(entry.trigger_time || "");
+  // THE TIME FIELD IS A DRAFT WHILE IT HAS FOCUS. Fully controlled + write-per-keystroke was why a
+  // typed second digit replaced the first: "1" is an INCOMPLETE time, the picker emits "", we saved
+  // "", the list reloaded, and the field snapped back. Keystrokes go to local state; the write
+  // happens on blur or Enter.
+  const [draft, setDraft]   = useState(line.trigger_time || "");
   const [typing, setTyping] = useState(false);
-  // Re-sync when the row changes underneath us — but NEVER while the field has focus, or we would be
-  // fighting the operator's typing again with a different mechanism.
-  useEffect(() => { if (!typing) setDraft(entry.trigger_time || ""); }, [entry.trigger_time, typing]);
+  useEffect(() => { if (!typing) setDraft(line.trigger_time || ""); }, [line.trigger_time, typing]);
 
   const commit = () => {
     setTyping(false);
     const v = toHms(draft);
-    if (!v) { setDraft(entry.trigger_time || ""); return; }      // incomplete — put back what was there
-    if (v === (entry.trigger_time || "")) { setDraft(v); return; }
+    if (!v) { setDraft(line.trigger_time || ""); return; }
+    if (v === (line.trigger_time || "")) { setDraft(v); return; }
     setDraft(v);
-    onPatch({ trigger_time: v, trigger_type: "absolute" });
+    onPatch({ trigger_time: v });
   };
 
-  const needsTime = !draft;
-  const covers = entry.scope === "weekday" ? (entry.days || "") : "";
-  const spans  = covers && selection && covers !== selection;
+  // How many of the selected dates this line actually covers. Said out loud whenever it is not all
+  // of them: editing a line that only exists on 2 of your 5 selected dates changes those 2, and a
+  // silent partial edit is how a date quietly keeps an old time.
+  const partial = line.rows.length < selectedCount;
 
   return (
     <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
-      <select value={entry.announcement_uuid} onChange={e => onPatch({ announcement_uuid: e.target.value })}
+      <select value={line.announcement_uuid} onChange={e => onPatch({ announcement_uuid: e.target.value })}
         style={{ ...fld, flex: 1, minWidth: 0, borderColor: missing ? "var(--accent-red)" : "var(--border-primary)" }}>
         {/* An entry whose announcement is gone says so rather than silently showing the first item in
             the list — a schedule that quietly points somewhere else is how the wrong audio airs. */}
-        {missing && <option value={entry.announcement_uuid}>⚠ announcement missing</option>}
+        {missing && <option value={line.announcement_uuid}>⚠ announcement missing</option>}
         {assets.map(a => <option key={a.uuid} value={a.uuid}>{a.title}</option>)}
       </select>
 
-      {/* Which days this line ACTUALLY covers, shown whenever that is not exactly what is selected.
-          Editing a Fri+Sat line while only Fri is selected still changes both days, so the row has to
-          say so — a silent wider edit is how a Saturday slot moves without anyone asking. */}
-      {spans && (
-        <span title={`This line plays on ${covers.split("").map(d => DAY_NAMES[Number(d)]).join(", ")}`}
-          style={{ fontSize: 9, fontWeight: 700, padding: "3px 6px", background: "var(--bg-tertiary)",
-                   color: "var(--accent-amber)", border: "1px solid var(--border-primary)", whiteSpace: "nowrap" as any }}>
-          {covers.split("").map(d => DAY_NAMES[Number(d)][0]).join("")}
-        </span>
-      )}
+      <span title={line.rows.map(r => r.date).join(", ")}
+        style={{ fontSize: 9, fontWeight: 700, padding: "3px 7px", whiteSpace: "nowrap" as any,
+                 background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
+                 color: partial ? "var(--accent-amber)" : "var(--text-tertiary)" }}>
+        {line.rows.length}{partial ? `/${selectedCount}` : ""} date{line.rows.length === 1 ? "" : "s"}
+      </span>
 
       <input type="time" step={1}
         value={draft}
@@ -236,196 +261,143 @@ function EntryRow({ entry, assets, onPatch, onDelete, selection }: {
         onChange={e => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-        style={{ ...fld, width: 124, borderColor: needsTime ? "var(--accent-amber)" : "var(--border-primary)" }} />
+        style={{ ...fld, width: 124, borderColor: draft ? "var(--border-primary)" : "var(--accent-amber)" }} />
 
-      <button onClick={onDelete} title="Remove this entry"
+      <button onClick={onDelete} title="Remove this line from the selected dates"
         style={{ padding: "7px 9px", fontSize: 12, background: "var(--bg-secondary)", color: "var(--accent-red)",
                  border: "1px solid var(--border-primary)", cursor: "pointer", lineHeight: 1 }}>✕</button>
     </div>
   );
 }
 
-/** The list of entries for ONE key — a weekday set or a single date. It does not know which, because
- *  they are the same list attached two ways; two copies would be two places to drift. */
-function EntryList({ stationId, assets, scope, days, date, entries, reload }: {
-  stationId: number | null;
-  assets: Announcement[];
-  scope: "weekday" | "date";
-  days?: string;
-  date?: string;
-  entries: ScheduleEntry[];
-  reload: () => void;
+// ── THE SCHEDULE BOARD ───────────────────────────────────────────────────────────────────────────
+// Left: the calendar — multi-select the real dates you are scheduling. Right: the announcements and
+// times for those dates.
+//
+// EVERYTHING IS DATE-KEYED. There is no weekday or recurring concept: an entry is one announcement
+// at one time on ONE calendar date, so what plays on a day is exactly what you put on that day and
+// nothing has to be resolved or overridden.
+//
+// A LINE IS NOT A ROW. Adding a line to five selected dates writes five rows, one per date, because
+// that is what the scheduler reads. The list groups them back into one line by (announcement, time)
+// so the operator edits what they built rather than five copies of it, and the row's date count says
+// how many of the selection it really covers.
+function ScheduleBoard({ stationId, assets, entries, reload }: {
+  stationId: number | null; assets: Announcement[]; entries: ScheduleEntry[]; reload: () => void;
 }) {
+  const [selected, setSelected] = useState<Set<string>>(() => new Set([ymd(new Date())]));
   const [err, setErr] = useState<string | null>(null);
   const api = () => (window as any).ether.announcements;
-  const selection = scope === "weekday" ? (days || "") : "";
+
+  const toggle = (d: string) =>
+    setSelected(prev => { const n = new Set(prev); n.has(d) ? n.delete(d) : n.add(d); return n; });
+
+  const dates = [...selected].sort();
+
+  // Group the selected dates' rows into lines by (announcement, time).
+  const lines: Line[] = (() => {
+    const map = new Map<string, Line>();
+    for (const e of entries) {
+      if (!e.date || !selected.has(e.date)) continue;
+      const t = e.trigger_time || "";
+      const key = e.announcement_uuid + "|" + t;
+      if (!map.has(key)) map.set(key, { key, announcement_uuid: e.announcement_uuid, trigger_time: t, rows: [] });
+      map.get(key)!.rows.push(e);
+    }
+    return [...map.values()].sort((a, b) => (a.trigger_time || "").localeCompare(b.trigger_time || ""));
+  })();
 
   const add = async () => {
     if (stationId == null) return;
+    if (!dates.length) { setErr("Select one or more dates on the calendar first."); return; }
     if (!assets.length) { setErr("There are no announcements yet — upload one below first."); return; }
     setErr(null);
     try {
-      const r = await api().createEntry({
-        station_id: stationId, announcement_uuid: assets[0].uuid, scope,
-        days: scope === "weekday" ? days : null, date: scope === "date" ? date : null,
-        trigger_type: "absolute", trigger_time: "17:30:00", close_offset_min: 0,
-        sort_order: entries.length,
-      });
-      if (!r?.ok) { setErr(r?.error || "could not add"); return; }
-      reload();
-    } catch (e: any) { setErr(String(e?.message || e)); }
-  };
-
-  const patch = async (uuid: string, patchObj: any) => {
-    setErr(null);
-    try {
-      // announcement_uuid is part of the entry's identity for the sync refs, not a patchable field,
-      // so changing WHICH announcement plays is a delete + create.
-      if ("announcement_uuid" in patchObj) {
-        const old = entries.find(e => e.uuid === uuid);
-        if (!old) return;
-        await api().deleteEntry(uuid, stationId);
-        await api().createEntry({
-          station_id: stationId, announcement_uuid: patchObj.announcement_uuid, scope,
-          days: scope === "weekday" ? days : null, date: scope === "date" ? date : null,
-          trigger_type: "absolute", trigger_time: old.trigger_time,
-          close_offset_min: 0, sort_order: old.sort_order,
+      for (const d of dates) {
+        const r = await api().createEntry({
+          station_id: stationId, announcement_uuid: assets[0].uuid, scope: "date", date: d,
+          trigger_type: "absolute", trigger_time: "17:30:00", close_offset_min: 0, sort_order: lines.length,
         });
-      } else {
-        const r = await api().updateEntry(uuid, patchObj);
-        if (!r?.ok) { setErr(r?.error || "could not save"); return; }
+        if (!r?.ok) { setErr(r?.error || "could not add"); break; }
       }
       reload();
     } catch (e: any) { setErr(String(e?.message || e)); }
   };
 
-  const del = async (uuid: string) => {
+  // An edit reaches every row the line stands for, so "this announcement at this time on these
+  // dates" behaves as the single thing the operator built it as.
+  const patch = async (line: Line, p: any) => {
     setErr(null);
-    try { await api().deleteEntry(uuid, stationId); reload(); }
-    catch (e: any) { setErr(String(e?.message || e)); }
+    try {
+      for (const row of line.rows) {
+        if ("announcement_uuid" in p) {
+          // announcement_uuid is part of the row's identity for the sync refs, not patchable.
+          await api().deleteEntry(row.uuid, stationId);
+          await api().createEntry({
+            station_id: stationId, announcement_uuid: p.announcement_uuid, scope: "date", date: row.date,
+            trigger_type: "absolute", trigger_time: row.trigger_time, close_offset_min: 0, sort_order: row.sort_order,
+          });
+        } else {
+          const r = await api().updateEntry(row.uuid, p);
+          if (!r?.ok) { setErr(r?.error || "could not save"); break; }
+        }
+      }
+      reload();
+    } catch (e: any) { setErr(String(e?.message || e)); }
   };
 
-  return (
-    <div>
-      <button onClick={add}
-        style={{ padding: "7px 13px", fontSize: 11, fontWeight: 700, background: "var(--accent-blue)",
-                 color: "#fff", border: "none", cursor: "pointer", marginBottom: 10 }}>
-        ＋ Add Announcement
-      </button>
-
-      {entries.length === 0 ? (
-        <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
-          Nothing scheduled here, so nothing plays. Press <strong>＋ Add Announcement</strong> to add
-          one, then set its time.
-        </div>
-      ) : (
-        entries.map(e => (
-          <EntryRow key={e.uuid} entry={e} assets={assets} selection={selection}
-            onPatch={pp => patch(e.uuid, pp)} onDelete={() => del(e.uuid)} />
-        ))
-      )}
-      {err && <div style={{ fontSize: 10, color: "var(--accent-red)", marginTop: 6 }}>{err}</div>}
-    </div>
-  );
-}
-
-// ── THE SCHEDULE BOARD ───────────────────────────────────────────────────────────────────────────
-// Left: what you are scheduling — the days, or a date. Right: that selection's list of announcements
-// and times. Picking days and picking a date are the SAME choice made two ways, so they are mutually
-// exclusive: whichever you touched last is what the right column is editing, and the right column
-// says which in words. Nothing scheduled means nothing plays — there is no other rule.
-function ScheduleBoard({ stationId, assets, entries, reload }: {
-  stationId: number | null; assets: Announcement[]; entries: ScheduleEntry[]; reload: () => void;
-}) {
-  const [mode, setMode] = useState<"weekday" | "date">("weekday");
-  // Seeded to TODAY, not a hardcoded Monday: the panel opens on the day the operator is standing in.
-  const [days, setDays] = useState<string>(() => String(new Date().getDay()));
-  const [date, setDate] = useState<string | null>(null);
-
-  const toggleDay = (d: string) => {
-    setMode("weekday");
-    setDays(c => (c.includes(d) ? c.split("").filter(x => x !== d).join("") : (c + d).split("").sort().join("")));
+  const del = async (line: Line) => {
+    setErr(null);
+    try {
+      for (const row of line.rows) await api().deleteEntry(row.uuid, stationId);
+      reload();
+    } catch (e: any) { setErr(String(e?.message || e)); }
   };
-  const pickDate = (d: string) => { setMode("date"); setDate(d); };
-
-  // OVERLAP matching, NOT exact-set (fixed 2026-08-26). This used to require the entry's day-set to
-  // EQUAL the selection, which made selecting a second day look like it had replaced the first:
-  // picking Fri showed the Friday lines, then adding Sat showed the — empty — "Fri+Sat" list, so the
-  // lines vanished. Selecting more days now shows everything that plays on ANY selected day, which is
-  // what "the schedule for the selected days" means to the person reading it. Rows that reach beyond
-  // the selection carry a day badge so a wider edit is never silent.
-  const mine = mode === "weekday"
-    ? entries.filter(e => e.scope === "weekday" &&
-                          days.split("").some(d => (e.days || "").includes(d)))
-    : entries.filter(e => e.scope === "date" && e.date === date);
-
-  const dayLabel = days ? days.split("").map(d => DAY_NAMES[Number(d)]).join(" + ") : "no days selected";
-  const selDow   = date ? new Date(Number(date.slice(0, 4)), Number(date.slice(5, 7)) - 1, Number(date.slice(8, 10))).getDay() : 0;
 
   const box = { padding: "12px 14px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" };
   const cap = { fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 8 };
 
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(250px, 320px) 1fr", gap: 12, alignItems: "start" }}>
-      {/* ── LEFT: what am I scheduling? ── */}
-      <div style={{ display: "flex", flexDirection: "column" as any, gap: 12 }}>
-        <div style={box}>
-          <div style={cap}>Days</div>
-          <div style={{ display: "flex", gap: 4 }}>
-            {DAY_NAMES.map((name, i) => {
-              const on = mode === "weekday" && days.includes(String(i));
-              return (
-                <button key={i} onClick={() => toggleDay(String(i))} title={name} style={{
-                  flex: 1, padding: "8px 0", fontSize: 12, fontWeight: 700, cursor: "pointer",
-                  background: on ? "var(--accent-blue)" : "var(--bg-secondary)",
-                  color: on ? "#fff" : "var(--text-tertiary)",
-                  border: on ? "1px solid var(--accent-blue)" : "1px solid var(--border-primary)",
-                }}>{name[0]}</button>
-              );
-            })}
-          </div>
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1.4 }}>
-            Click each day you want — they <strong>add up</strong>. Days that run the same
-            announcements can be selected together; days that differ are set separately.
-          </div>
-        </div>
+  const label = dates.length === 0 ? "no dates selected"
+    : dates.length === 1 ? new Date(Number(dates[0].slice(0, 4)), Number(dates[0].slice(5, 7)) - 1, Number(dates[0].slice(8, 10)))
+        .toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+    : `${dates.length} dates — ${dates[0]} to ${dates[dates.length - 1]}`;
 
-        <div style={box}>
-          <DatePicker selected={mode === "date" ? date : null} onPick={pickDate} entries={entries} />
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1.4 }}>
-            A date with its own list runs that list <strong>instead of</strong> the weekday one.
-          </div>
-        </div>
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 330px) 1fr", gap: 12, alignItems: "start" }}>
+      <div style={box}>
+        <div style={cap}>Dates</div>
+        <DatePicker selected={selected} onToggle={toggle} onClearAll={() => setSelected(new Set())} entries={entries} />
       </div>
 
-      {/* ── RIGHT: the schedule for that selection ── */}
       <div style={box}>
-        <div style={cap}>
-          {mode === "weekday" ? "Schedule" : "Schedule — this date only"}
-        </div>
+        <div style={cap}>Schedule</div>
         <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10, lineHeight: 1.45 }}>
-          {mode === "weekday" ? (
-            days
-              ? <>Playing every <strong style={{ color: "var(--text-primary)" }}>{dayLabel}</strong>
-                  {days.length > 1 && <span style={{ color: "var(--text-tertiary)" }}> — {days.length} days selected; a new line is added to all of them</span>}</>
-              : <>Select one or more days on the left. Click each day you want — they add up.</>
-          ) : (
-            <>
-              <strong style={{ color: "var(--text-primary)" }}>{date}</strong>
-              {" — "}
-              {mine.length
-                ? <span style={{ color: "var(--accent-green)" }}>runs its own list instead of the usual {DOW_FULL[selDow]} one.</span>
-                : <span>no list of its own, so it runs the usual {DOW_FULL[selDow]} announcements. Add one to override them.</span>}
-            </>
-          )}
+          {dates.length
+            ? <>Playing on <strong style={{ color: "var(--text-primary)" }}>{label}</strong>
+                {dates.length > 1 && <span style={{ color: "var(--text-tertiary)" }}> — a new line is added to all {dates.length}</span>}</>
+            : <>Select one or more dates on the calendar to build their schedule.</>}
         </div>
 
-        {(mode === "date" || days) && (
-          <EntryList stationId={stationId} assets={assets}
-            scope={mode} days={days} date={date ?? undefined}
-            entries={mine} reload={reload} />
+        <button onClick={add} disabled={!dates.length}
+          style={{ padding: "7px 13px", fontSize: 11, fontWeight: 700, background: "var(--accent-blue)",
+                   color: "#fff", border: "none", cursor: dates.length ? "pointer" : "not-allowed",
+                   opacity: dates.length ? 1 : 0.5, marginBottom: 10 }}>
+          ＋ Add Announcement
+        </button>
+
+        {dates.length > 0 && lines.length === 0 && (
+          <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
+            Nothing scheduled on {dates.length === 1 ? "this date" : "these dates"}, so nothing plays.
+            Press <strong>＋ Add Announcement</strong>, then set its time.
+          </div>
         )}
 
+        {lines.map(l => (
+          <EntryRow key={l.key} line={l} assets={assets} selectedCount={dates.length}
+            onPatch={pp => patch(l, pp)} onDelete={() => del(l)} />
+        ))}
+
+        {err && <div style={{ fontSize: 10, color: "var(--accent-red)", marginTop: 6 }}>{err}</div>}
       </div>
     </div>
   );
@@ -685,19 +657,18 @@ export default function Announcements() {
                       visible in the list rather than discovered when it does not go to air. */}
                   <td style={{ padding: "12px 14px", fontSize: 12 }}>
                     {(() => {
-                      const mine = entries.filter(e => e.announcement_uuid === a.uuid);
+                      const mine = entries.filter(e => e.announcement_uuid === a.uuid && e.date);
                       if (!mine.length) return <span style={{ color: "var(--accent-amber)" }}>not scheduled</span>;
-                      const wk = mine.filter(e => e.scope === "weekday");
-                      const dt = mine.filter(e => e.scope === "date");
-                      const bits: string[] = [];
-                      for (const e of wk) {
-                        // Time-only now. An entry with no clock time can never resolve one, so it
-                        // is called out rather than shown as if it were scheduled.
-                        const when = e.trigger_time ? fmtTime(e.trigger_time) : "no time set";
-                        bits.push(`${(e.days || "").split("").map(d => DAY_NAMES[Number(d)][0]).join("")} ${when}`);
-                      }
-                      if (dt.length) bits.push(`${dt.length} date${dt.length === 1 ? "" : "s"}`);
-                      return <span style={{ color: "var(--accent-cyan)", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>{bits.join(" · ")}</span>;
+                      const dates = [...new Set(mine.map(e => e.date))].sort();
+                      const times = [...new Set(mine.map(e => e.trigger_time || ""))].sort();
+                      // The next date it plays plus how many in total — enough to know it is live and
+                      // when it next matters, without turning a table cell into a calendar.
+                      const today = ymd(new Date());
+                      const next  = dates.find(d => (d as string) >= today) || dates[dates.length - 1];
+                      const when  = times.length === 1 && times[0] ? fmtTime(times[0]) : `${times.length} times`;
+                      return <span style={{ color: "var(--accent-cyan)", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
+                        {next} {when}{dates.length > 1 ? ` · ${dates.length} dates` : ""}
+                      </span>;
                     })()}
                   </td>
                   <td style={{ padding: "12px 14px", color: "var(--text-tertiary)", fontSize: 12 }}>

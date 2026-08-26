@@ -4333,25 +4333,11 @@ let _annStmts = null;
 function annStmts() {
   if (!_annStmts) _annStmts = {
     stations: db.prepare('SELECT id FROM stations WHERE deleted_at IS NULL'),
-    closing:  db.prepare('SELECT value FROM station_config_kv WHERE station_id = ? AND key = ?'),
   };
-  // v46 — the date-specific closing time for one station on one date, PREPARED DEFENSIVELY. If
-  // date_closing_times is absent (a DB the v46 migration has not reached), a bare db.prepare here
-  // would throw and take the whole announcement scheduler down with it — announcements would stop
-  // firing because a NEW, OPTIONAL layer could not initialise. Degrade instead: no date overrides,
-  // weekday defaults still work, everything still fires.
-  try {
-    _annStmts.dateClosing = db.prepare(
-      "SELECT closing_time FROM date_closing_times " +
-      "WHERE station_id = ? AND date = ? AND deleted_at IS NULL");
-  } catch (e) {
-    _annStmts.dateClosing = null;
-    try { logStartup('[announce] date_closing_times unavailable (' + e.message + ') — weekday closing times only'); } catch {}
-  }
   // v47 — THE SCHEDULE ENTRIES the tick now iterates. Both JOIN announcements, so an asset that is
   // deleted or switched off takes its entries out of the plan in ONE place rather than in the loop.
-  // Prepared defensively for the same reason dateClosing is: on a DB the v47 migration has not
-  // reached, a bare prepare would throw and take the whole scheduler down. Absent here means the tick
+  // Prepared DEFENSIVELY: on a DB the v47 migration has not reached, a bare prepare would throw and
+  // take the whole announcement scheduler down with it. Absent here means the tick
   // falls back to the pre-v47 announcements path, so announcements keep firing either way.
   try {
     const SCHED_COLS =
@@ -4361,38 +4347,13 @@ function annStmts() {
       "FROM announcement_schedule s " +
       "JOIN announcements a ON a.uuid = s.announcement_uuid AND a.deleted_at IS NULL AND a.is_active = 1 " +
       "WHERE s.station_id = ? AND s.deleted_at IS NULL ";
-    _annStmts.schedDate    = db.prepare(SCHED_COLS + "AND s.scope = 'date' AND s.date = ? ORDER BY s.sort_order, s.trigger_time");
-    _annStmts.schedWeekday = db.prepare(SCHED_COLS + "AND s.scope = 'weekday' AND instr(COALESCE(s.days,''), ?) > 0 ORDER BY s.sort_order, s.trigger_time");
-    _annStmts.schedStamp   = db.prepare("UPDATE announcement_schedule SET last_played_at = ? WHERE uuid = ?");
+    _annStmts.schedDate  = db.prepare(SCHED_COLS + "AND s.scope = 'date' AND s.date = ? ORDER BY s.sort_order, s.trigger_time");
+    _annStmts.schedStamp = db.prepare("UPDATE announcement_schedule SET last_played_at = ? WHERE uuid = ?");
   } catch (e) {
-    _annStmts.schedDate = _annStmts.schedWeekday = _annStmts.schedStamp = null;
+    _annStmts.schedDate = _annStmts.schedStamp = null;
     try { logStartup('[announce] announcement_schedule unavailable (' + e.message + ') — using the pre-v47 announcements schedule'); } catch {}
   }
   return _annStmts;
-}
-
-// ── THE SCHEDULE RESOLVER (v47) — precedence in ONE place ─────────────────────────────────────────
-//
-// docs/announcement-schedule-frame-design-2026-08-26.md.
-//
-//   entries for TODAY'S DATE exist  →  use exactly those, and ONLY those
-//   otherwise                       →  weekday entries whose `days` set contains today's dow
-//   otherwise                       →  nothing
-//
-// A date's list REPLACES the weekday list wholesale — Oct 31 runs its own entries instead of the
-// normal Friday ones, never in addition to them. Emptying a date's list falls back to the weekday
-// list (Jeff's ruling: no explicit-silent-date marker in v1).
-//
-// Returns null — distinct from an empty array — when announcement_schedule is unavailable, which is
-// the caller's signal to use the pre-v47 path. Empty array means "resolved, and nothing is due".
-function scheduleForDate(stationId, dateStr, dow) {
-  const st = annStmts();
-  if (!st.schedDate || !st.schedWeekday) return null;
-  try {
-    const dated = st.schedDate.all(stationId, dateStr);
-    if (dated.length) return dated;
-    return st.schedWeekday.all(stationId, String(dow));
-  } catch { return null; }
 }
 
 /** 'H:M[:S]' → 'HH:MM:SS', or null if it is not a time. A stored 'HH:MM' reads as 'HH:MM:00', so
@@ -4401,71 +4362,37 @@ function hmsNormalize(t) {
   const p = String(t == null ? '' : t).split(':');
   if (p.length < 2 || p.length > 3) return null;
   const h = Number(p[0]), m = Number(p[1]), s = p.length > 2 ? Number(p[2]) : 0;
-  if (![h, m, s].every(n => Number.isInteger(n)) ) return null;
+  if (![h, m, s].every(n => Number.isInteger(n))) return null;
   if (h < 0 || h > 23 || m < 0 || m > 59 || s < 0 || s > 59) return null;
   return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
 }
 
-/** Closing time for one station on one weekday (0=Sun), 'HH:MM:SS' or null if never set. */
-function closingTimeFor(stationId, dow) {
-  try {
-    const v = annStmts().closing.get(stationId, 'closing_time_' + dow)?.value;
-    return hmsNormalize(v);
-  } catch { return null; }
-}
-
-// ── DATE-SPECIFIC CLOSING TIMES (v46) — THE ONE RESOLVER ──────────────────────────────────────
-//
-// docs/station-date-overrides-design-2026-08-26.md, ruled by Jeff 2026-08-26.
-//
-//   a row in date_closing_times for this DATE  >  closing_time_<dow>  >  nothing
-//
-// Precedence lives HERE AND NOWHERE ELSE. Everything downstream — dueTimeFor, minusMinutes, the
-// tick — asks this one function what a day's closing time is, so there is no second site for the
-// order to be implemented differently.
-//
-// A ROW WITH A BLANK closing_time IS NOT THE SAME AS NO ROW. No row means "use the weekday default".
-// A row with '' means "this date has no closing time", which returns null and therefore gives
-// closing-relative announcements nothing to fire at — exactly what a blank weekday default already
-// does. That is how a closed date works, and it needs no closed flag and no suppression logic.
-function closingTimeForDate(stationId, dateStr, dow) {
-  try {
-    const stmt = annStmts().dateClosing;
-    if (stmt) {
-      const row = stmt.get(stationId, dateStr);
-      if (row) return hmsNormalize(row.closing_time);   // '' → null, which is the point
-    }
-  } catch { /* fall through to the weekday default — an override read must never lose the default */ }
-  return closingTimeFor(stationId, dow);
-}
-
-/** 'HH:MM:SS' minus N minutes, as 'HH:MM:SS'. Seconds ride through untouched, so a 9:00:00 close
- *  with a 15-minute offset resolves to 8:45:00 exactly. Wraps backwards past midnight exactly as it
- *  did before — that behaviour is unchanged. */
-function minusMinutes(hms, mins) {
-  const [h, m, s] = String(hms).split(':').map(Number);
-  let t = h * 3600 + m * 60 + (s || 0) - (Number(mins) || 0) * 60;
-  while (t < 0) t += 86400;
-  t %= 86400;
-  return String(Math.floor(t / 3600)).padStart(2, '0') + ':' +
-         String(Math.floor(t / 60) % 60).padStart(2, '0') + ':' +
-         String(t % 60).padStart(2, '0');
-}
-
-/** The clock time this row wants to fire at TODAY, or null if it cannot be resolved.
- *  `close` is TODAY'S already-resolved closing time (date override, else weekday default) — resolved
- *  once per station per tick by the caller, not once per row: at a 250ms tick, a per-row lookup would
- *  put the override read on the hot path for no reason. */
-function dueTimeFor(row, close) {
-  if (row.trigger_type === 'close_offset') {
-    // No closing time for this date is not an error and not a guess: the row simply has no time
-    // today. Guessing one would put audio on air at an hour nobody chose. This is also exactly what
-    // a date whose override is set to a BLANK closing time produces — the whole mechanism, no
-    // suppression logic anywhere.
-    if (!close) return null;
-    return minusMinutes(close, row.close_offset_min);
-  }
+/** The clock time this entry fires at, or null if it has none.
+ *
+ *  ABSOLUTE ONLY (v48). The close_offset branch went with the weekday scope and the closing-time
+ *  UI: an entry carries a clock time, and an entry without one simply has no time — which the panel
+ *  states rather than this function guessing. Guessing would put audio on air at an hour nobody
+ *  chose. */
+function dueTimeFor(row) {
   return hmsNormalize(row.trigger_time);
+}
+
+// ── THE SCHEDULE RESOLVER (v48) — one date, one list ─────────────────────────────────────────────
+//
+// docs/announcement-schedule-frame-design-2026-08-26.md, as re-ruled by Jeff 2026-08-26.
+//
+// THERE IS NO WEEKDAY CONCEPT. An entry is one (announcement, time) on ONE specific calendar date,
+// so "what plays today" is a single indexed lookup on today's date and there is no precedence to
+// resolve — the v47 date-overrides-weekday rule is gone with the weekday scope it arbitrated.
+//
+// Returns null — distinct from an empty array — when announcement_schedule is unavailable, which is
+// the caller's signal to skip rather than to fire something it guessed. Empty array means "resolved,
+// and nothing is due today", which is a normal day.
+function scheduleForDate(stationId, dateStr) {
+  const st = annStmts();
+  if (!st.schedDate) return null;
+  try { return st.schedDate.all(stationId, dateStr); }
+  catch { return null; }
 }
 
 function announceTick() {
@@ -4479,21 +4406,15 @@ function announceTick() {
   const hhmmss = String(now.getHours()).padStart(2, '0') + ':' +
                  String(now.getMinutes()).padStart(2, '0') + ':' +
                  String(now.getSeconds()).padStart(2, '0');
-  const dow = String(now.getDay());
-  // TODAY'S local calendar date, the key date_closing_times is written under. Built from local
-  // getFullYear/getMonth/getDate, never from toISOString() — that is UTC and would name the wrong
-  // day for every evening closing time west of Greenwich, which is where the parks are.
+  // TODAY'S local calendar date — the key an entry is filed under. Built from local
+  // getFullYear/getMonth/getDate, never from toISOString(): that is UTC and would name the wrong day
+  // for every evening announcement west of Greenwich, which is where the parks are.
   const dateStr = now.getFullYear() + '-' +
                   String(now.getMonth() + 1).padStart(2, '0') + '-' +
                   String(now.getDate()).padStart(2, '0');
   const nowEpoch = Math.floor(Date.now() / 1000);
 
   for (const stationId of stations) {
-    // ONCE PER STATION PER TICK, not once per entry. The tick runs at 250ms; resolving these inside
-    // the entry loop would multiply both lookups by the number of entries for no gain, since every
-    // entry on a station shares the same day.
-    const close = closingTimeForDate(stationId, dateStr, dow);
-
     // v47 — the tick iterates SCHEDULE ENTRIES, not announcements. What changed is WHAT IS WALKED;
     // the match, the guard and the fire path below are the same code they were before.
     // NO FALLBACK TO THE OLD COLUMNS. announcements.trigger_time/days are dead now — the panel does
@@ -4501,11 +4422,11 @@ function announceTick() {
     // is worse than not firing. A missing table means the v47 migration has not applied; the chain
     // retries it on every launch, so the recovery is a relaunch and it is automatic. The absence is
     // logged loudly (annStmts) and the panel says so rather than looking empty-but-fine.
-    const rows = scheduleForDate(stationId, dateStr, dow);
+    const rows = scheduleForDate(stationId, dateStr);
     if (rows === null) continue;
 
     for (const row of rows) {
-      const due = dueTimeFor(row, close);
+      const due = dueTimeFor(row);
       if (!due || due !== hhmmss) continue;
       // Fired already? The tick is 250ms and the match is to the second, so a matching second is hit
       // about four times — this guard is what makes that safe. Same 120s window it has always been.
@@ -4535,76 +4456,16 @@ function startAnnouncementScheduler() {
   console.log('[announce] scheduler started (every ' + ANNOUNCE_TICK_MS + 'ms, matching to the second, all stations)');
 }
 
-// Closing time, seven per station — read and written by the Announcements panel.
-ipcMain.handle('announcements:get-closing-times', (_, stationId) => {
-  try {
-    const out = {};
-    for (let d = 0; d < 7; d++) out[d] = closingTimeFor(stationId, d);
-    return { ok: true, times: out };
-  } catch (e) { return { ok: false, error: e.message }; }
-});
+// (REMOVED 2026-08-26) The closing-time IPC lived here — get/set the seven weekday closing times,
+// and list/set/clear/resolve the per-date overrides. Jeff removed the closing-time concept from the
+// product, and v48 removed the weekday scope that the "before closing" trigger depended on, so none
+// of it was reachable and none of it could resolve a time any more. Deleted rather than left as an
+// unreachable API, which is how dead surface area gets rediscovered and re-wired years later.
+//
+// The date_closing_times TABLE and its sync handler still exist and are untouched — dropping a
+// synced table is its own change with its own migration. Nothing reads or writes them now.
+// See docs/station-date-overrides-design-2026-08-26.md, marked superseded.
 
-// ── DATE-SPECIFIC closing times (v46) — the exception layer over the seven weekday defaults ────
-// Deliberately alongside the weekday handlers above: they are the same setting at two resolutions,
-// and the panel edits them side by side.
-
-ipcMain.handle('announcements:list-date-closing-times', (_, stationId, from, to) => {
-  try {
-    const { dateClosingList } = require('./sync/handlers/date_closing_times');
-    return { ok: true, rows: dateClosingList(db, stationId, { from, to }) };
-  } catch (e) { return { ok: false, error: e.message }; }
-});
-
-// Set (or blank) ONE date's closing time. A blank value is a real, deliberate setting: it means this
-// date has no closing time, so nothing closing-relative has a time to fire at.
-ipcMain.handle('announcements:set-date-closing-time', (_, stationId, date, hhmmss) => {
-  try {
-    const { dateClosingUpsert } = require('./sync/handlers/date_closing_times');
-    return { ok: true, row: dateClosingUpsert(db, stationId, date, hhmmss ?? '') };
-  } catch (e) { return { ok: false, error: e.message }; }
-});
-
-// Remove the override so the date goes back to its WEEKDAY default. NOT the same as setting it
-// blank, which keeps the override and means "no closing time on this date".
-ipcMain.handle('announcements:clear-date-closing-time', (_, stationId, date) => {
-  try {
-    const { dateClosingClear } = require('./sync/handlers/date_closing_times');
-    return { ok: true, ...dateClosingClear(db, stationId, date) };
-  } catch (e) { return { ok: false, error: e.message }; }
-});
-
-// What closing time does this station ACTUALLY use on this date, and where did it come from? The
-// panel shows this verbatim so "what happens that day" never requires reasoning about precedence.
-ipcMain.handle('announcements:resolve-closing-time', (_, stationId, date) => {
-  try {
-    const [y, m, d] = String(date).split('-').map(Number);
-    const dow = String(new Date(y, m - 1, d).getDay());
-    let source = 'weekday';
-    try {
-      const stmt = annStmts().dateClosing;
-      if (stmt && stmt.get(stationId, date)) source = 'date';
-    } catch { /* absent table — it is the weekday default by definition */ }
-    return { ok: true, closing: closingTimeForDate(stationId, date, dow), source, dow: Number(dow) };
-  } catch (e) { return { ok: false, error: e.message }; }
-});
-
-ipcMain.handle('announcements:set-closing-time', (_, stationId, dow, hhmmss) => {
-  try {
-    const key = 'closing_time_' + Number(dow);
-    // Stored normalised to HH:MM:SS so a close-offset resolves to the second. A bare 'HH:MM' from an
-    // older client still writes, as 'HH:MM:00' — the same instant it has always meant.
-    const raw = (hhmmss == null || hhmmss === '') ? '' : String(hhmmss);
-    const val = raw === '' ? '' : hmsNormalize(raw);
-    if (raw !== '' && !val) return { ok: false, error: 'expected HH:MM or HH:MM:SS' };
-    // Through the SANCTIONED upsert, not raw SQL. station_config_kv.uuid is NOT NULL and the row has
-    // to be journalled for sync — a hand-rolled INSERT would have failed on the first write and, if
-    // it had not, would have written a row no peer ever saw. Closing times are per-station config and
-    // belong on the wire like the rest of it.
-    const { stationConfigKvUpsertByKey } = require('./sync/handlers/station_config_kv');
-    stationConfigKvUpsertByKey(db, stationId, key, val);
-    return { ok: true };
-  } catch (e) { return { ok: false, error: e.message }; }
-});
 // ── ANNOUNCEMENTS ON AIR (slice 4, 2026-08-25) ────────────────────────────────────────────────
 //
 // docs/aux-channel-ducker-announcements-design-2026-08-21.md §C.1.
