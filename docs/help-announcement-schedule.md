@@ -1,7 +1,7 @@
 ---
 feature: announcement-schedule
 title: Scheduling Announcements
-summary: Build a list of announcements and times for each day — check the days that share a lineup, or give a single date its own list.
+summary: Pick the days (or a date) on the left, then build that selection's list of announcements and times on the right.
 where: Announcements panel → Schedule
 since: 4.4.x
 audience: operator
@@ -12,86 +12,82 @@ tour: true
 
 ## What it is
 
-An announcement is now just **the audio** — a name and a file. **When it plays is separate**, and one
-announcement can play as many times, on as many days, as you need.
+An announcement is just **the audio** — a name and a file, uploaded in the list at the bottom of the
+page. **When it plays is separate**, and one announcement can play as many times, on as many days, as
+you need.
 
 That's the whole idea. The same "we're closing" chime can play at 8:45 on a Friday and 7:45 on a
 Sunday without you making two copies of it.
 
-You build a **list** for each day: *this announcement at this time*, then another, then another.
+**One rule: nothing scheduled means nothing plays.** There is no other condition to remember.
 
-## When to use it
+## The layout
 
-Any timed announcement — closing warnings, park info, legal IDs, event reminders.
+**Left — what you're scheduling.** The days across the top, and a calendar underneath for a single
+date.
 
-## Two ways to schedule
+**Right — that selection's schedule.** A **＋ Add Announcement** button and a list of lines. Each line
+is one announcement and one time.
 
-### 1. By weekday — the normal week
+The right column always says in words what it's editing, so you never have to work it out.
 
-This is your repeating pattern.
+## Schedule by day
 
-1. Open **Announcements** → **Schedule — by weekday**.
-2. **Check the day or days you want.** Days that run the *same* lineup can be checked together —
-   check **Fri** and **Sat** if the weekend runs the same announcements. Days that differ are set
+1. Open **Announcements**. Along the top of the left column: **S M T W T F S**.
+2. **Click the day or days you want.** Days that run the *same* announcements can be selected
+   together — click **F** and **S** if the weekend runs the same list. Days that differ are set
    separately.
-3. Under the checkboxes you'll see that group's list. Press **＋ Add another** to add a line.
-4. On each line, pick the announcement and say when:
-   - **at a set time** — type an exact time, including seconds if you want them (`20:45:30`).
-   - **before closing** — 30, 15, 10, 5, 1 minutes, or right at closing. This uses **that day's own
-     closing time**, so a day you close earlier announces earlier automatically.
-5. Press **✕** on a line to remove it.
+3. On the right, press **＋ Add Announcement**. A line appears.
+4. Pick the announcement from the dropdown, and set its time. Seconds are real — `20:45:30` fires at
+   20:45:30, not somewhere in that minute.
+5. Press **＋ Add Announcement** again for as many as you want.
+6. Press **✕** on a line to remove it.
 
-There's nothing to save — every change writes immediately.
+Nothing to save — every change writes immediately.
 
-**A typical closing set** (check the days it applies to, then three lines):
+**A typical closing set** — select the days, then three lines:
 
-| Announcement | When |
+| Announcement | Time |
 |---|---|
-| Park closes in 30 minutes | 30 minutes before closing |
-| Closing in 15 minutes | 15 minutes before closing |
-| We are now closed | At closing time |
+| Park closes in 30 minutes | 8:30:00 PM |
+| Closing in 15 minutes | 8:45:00 PM |
+| We are now closed | 9:00:00 PM |
 
-### 2. By date — a one-off
+## Schedule a specific date
 
 For a holiday, a special event, or any single date that runs something different.
 
-1. Scroll to the month calendar under **Closing time — specific dates**.
-2. **Click the date.** Its page opens underneath, showing everything special about that date.
-3. Under **Announcements on this date**, press **＋ Add another** and build that date's list the same
-   way.
+1. In the calendar on the left, use **‹** and **›** to find the month, then **click the date**.
+2. The right column switches to that date. Build its list exactly the same way.
 
-**A date with its own list runs THAT list INSTEAD OF the usual weekday one.** If Oct 31 has three
-announcements of its own, the normal Friday list does not play that day. The panel says which is in
-force, so you never have to work it out.
+**A date with its own list runs THAT list instead of the usual weekday one.** If Oct 31 has three
+announcements of its own, the normal Friday list does not play that day. The right column says which
+is in force.
 
-Remove all of a date's entries and it goes back to following its weekday.
+Remove all of a date's lines and it goes back to following its weekday.
+
+Click any day letter to go back to editing the weekly schedule.
 
 ## How to read it
 
-- In the announcements list, the **Scheduled** column summarises where each one plays —
+- On the calendar, a date showing **♪3** has three announcements of its own.
+- In the announcements list at the bottom, the **Scheduled** column summarises where each one plays —
   `MTWTF 5:30 PM`, or `3 dates`, or **not scheduled** in amber.
-- **"not scheduled" means it will never fire.** An announcement with no entry has no time, so nothing
-  plays it. That's the first thing to check if something didn't go to air.
-- On the calendar, a date showing **♪3** has three announcements of its own. A date showing a time has
-  its own closing time. A date can have both, one, or neither.
+- **"not scheduled" means it will never fire.** That's the first thing to check if something didn't
+  go to air.
+- A time box outlined in **amber** means that line has no time yet and won't play. Type one.
 
 ## Worth knowing
 
-- **Checking days is how you pick which list you're editing.** Check **Fri+Sat** and you're editing
-  the list that plays on both. Check **Fri** alone and you're editing the Friday-only list — a
-  different list. If other day groups also cover the day you've checked, the panel says so
-  underneath, so nothing is hidden from you.
-- **Deleting an announcement removes it from every schedule.** You'll be told how many entries go
-  with it before it happens.
-- **Seconds are real.** `20:45:30` fires at 20:45:30, not somewhere in that minute.
+- **Selecting days picks which list you're editing.** Select **F+S** and you're editing the list that
+  plays on both. Select **F** alone and you're editing the Friday-only list — a different list. If
+  other day groups also cover the day you've selected, the panel says so underneath, so nothing is
+  hidden from you.
+- **Deleting an announcement removes it from every schedule.** You'll be told how many lines go with
+  it first.
 - **Whether anyone hears it is still the board's call.** The schedule decides *when* an announcement
   fires onto the Announcement channel. The fader and channel ON decide whether it reaches air. If a
   scheduled announcement didn't go out, check the channel before you check the schedule.
-- **A day with no closing time fires no "before closing" announcements.** Nothing is guessed. Set the
-  weekday closing times just above the calendar, or give a single date its own.
+- **Ducking is set per station** in Preferences → Ducker, and applies to every source. There is no
+  per-announcement duck setting.
 - **It syncs.** Your other machines running this station get the same schedule.
-
-## See also
-
-- **Closing Times for Specific Dates** — `help-date-closing-times.md`, the other half of that
-  calendar.

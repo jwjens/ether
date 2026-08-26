@@ -1,16 +1,20 @@
 # Station date overrides — the calendar exception layer (design, 2026-08-26)
 
-**Status: RULED AND BUILT (2026-08-26). This doc is the record; the build is the simple version.**
+**Status: SUPERSEDED SAME DAY. The closing-time UI this describes was REMOVED (2026-08-26).**
 
-Jeff ruled: **no `is_closed`, no suppression logic, no notes field.** Date-keyed closing times only —
-"extend the closing-time picker to specific DATES". So §0's Option A and Option C were REJECTED, and
-what shipped is Option B arrived at from the other direction: a date whose closing time is set BLANK
-has no closing time, so nothing closing-relative fires that day — the same thing a blank weekday
-default already does. No new firing logic exists anywhere.
+Jeff's later ruling: **announcements only, no closing-time concept.** The seven weekday closing-time
+fields, the closing-time calendar and the "before closing" trigger were all deleted from the
+Announcements panel. An entry now carries a clock time, and nothing scheduled means nothing plays.
 
-Also cut from the design as built: the `is_closed` column, the `note` column, and every reference to
-a CLOSED marker. The table is `date_closing_times` (id, date, closing_time, station_id, uuid,
-created_at, updated_at, deleted_at). Read §1's table and §0's Options A/C as history, not as the build.
+The **v46 `date_closing_times` table, its IPC handlers and `closingTimeForDate` still exist** and are
+still wired into the tick — they are simply unreachable from any UI, so no closing time can be set
+and `close_offset` entries can never resolve. Left in place rather than ripped out mid-arc; removing a
+synced table is its own change. **If this is picked up again, that is the decision to make first:
+finish removing it, or give it a door.**
+
+Read this doc as the record of a design that shipped and was then withdrawn, not as current
+behaviour. Current behaviour: `docs/announcement-schedule-frame-design-2026-08-26.md` and
+`docs/help-announcement-schedule.md`.
 
 Requirement (Jeff, 2026-08-26): a station-scoped calendar picker to select specific DATES that
 override the normal weekly pattern. The park may be closed on certain dates, or open different hours
