@@ -1,5 +1,32 @@
 # Backlog
 
+## Popout console bridge — level table off by one (filed 2026-08-26)
+Found while fixing the BOOTSEQ flood — `docs/bootseq-flood-health-popout-2026-08-26.md`. **Not built.**
+- `electron/main.js:5771` maps the pop-out's `console-message` level with
+  `["log","warn","error"][level]`, but Electron's levels are `0=verbose, 1=info, 2=warning, 3=error` —
+  which the OTHER capture site in the same file (`main.js:2582`) already states correctly. The table is
+  shifted one place, so **every pop-out `console.warn` arrives as "error"**.
+- Two consequences: (1) `ether-startup.log` mislabels pop-out warnings as `[renderer:error]`, which is
+  actively misleading when reading a log to find a real fault; (2) the main window's bridge then calls
+  `console.error`, which trips `_rendererSawError = true` (`main.js:2583`) — **the SMOKE-mode failure
+  flag**. A pop-out that only ever warns can therefore fail a packaged smoke run.
+- Fix is one line, but it changes what SMOKE considers a failure, so it wants its own verification pass
+  rather than riding along with an unrelated commit. (added 2026-08-26)
+
+## BOOTSEQ PRE-AUTH labels are meaningless on a normal launch (filed 2026-08-26)
+Same investigation — `docs/bootseq-flood-health-popout-2026-08-26.md`. **Not built.**
+- `bootMarkAuthComplete()` has exactly ONE caller in the tree: `src/App.tsx:1566`, inside
+  `handleWizardComplete` — the **onboarding wizard**. It is not called on sign-in and not on launch.
+- So on every already-onboarded install `authDone` stays `false` forever and the whole boot map reads
+  "PRE-AUTH", whether or not anyone signed in. In a pop-out it can never be true at all: `main.tsx:95`
+  routes `#popout/*` to `PopoutRenderer` and `<App/>` never mounts there.
+- This matters beyond cosmetics: the PRE-AUTH/post-auth split is the **D1 evidence for the
+  account-is-the-root ordering** (`docs/cold-start-contract-design-2026-08-03.md` §D1.2). A dividing line
+  that never moves cannot testify to anything — it will read "PRE-AUTH" for a correctly-ordered boot and
+  a broken one alike.
+- Fix is to mark auth complete where a session actually becomes valid, not where onboarding finishes.
+  Needs Jeff's call on which point in the sign-in path is the true line. (added 2026-08-26)
+
 ## Show+ device layer — one acquisition service (filed 2026-07-27)
 Full design: `docs/showplus-device-layer-design-2026-07-27.md`.
 - **Systemic root:** NO device manager/broker/refcount anywhere — every component calls
