@@ -4,6 +4,7 @@ import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStat
 const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const readFile = (p: string) => (window as any).ether.fs.readFile(p);
 import { getEngine } from "../audio/engine-registry";
+import { diffSchedule } from "../lib/scheduleDiff";
 
 interface Announcement {
   id: number;
@@ -143,8 +144,9 @@ function DatePicker({ selected, onToggle, onClearAll, entries }: {
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
         <div style={{ fontSize: 10, color: "var(--text-tertiary)", flex: 1, lineHeight: 1.4 }}>
-          Click each date you want — they <strong>add up</strong>, and stay selected as you move
-          between months. Click a weekday letter to take every one of them this month.
+          Click a date to load its schedule. Click more and they <strong>add up</strong> — they stay
+          selected across months, and Apply writes to all of them. A weekday letter takes every one
+          of them in this month.
         </div>
         {selected.size > 0 && (
           <button onClick={onClearAll}
@@ -194,20 +196,15 @@ function toHms(v: string): string {
   return `${n(p[0])}:${n(p[1])}:${p.length > 2 ? n(p[2]) : "00"}`;
 }
 
-/** A LINE of the schedule. One line is one announcement at one time, and — because a line added to
- *  several dates is several rows — it carries the rows it stands for so an edit reaches all of them. */
-interface Line {
-  key: string;                 // announcement_uuid | time
-  announcement_uuid: string;
-  trigger_time: string;
-  rows: ScheduleEntry[];       // the underlying per-date rows within the current selection
-}
+/** A line in the EDITOR. Nothing here exists in the database until APPLY — `id` is a local handle so
+ *  React can key rows that have no uuid yet. */
+interface Draft { id: number; announcement_uuid: string; trigger_time: string; }
+let _draftSeq = 0;
 
-function EntryRow({ line, assets, selectedCount, onPatch, onDelete }: {
-  line: Line;
+function DraftRow({ line, assets, onPatch, onDelete }: {
+  line: Draft;
   assets: Announcement[];
-  selectedCount: number;
-  onPatch: (patch: any) => void;
+  onPatch: (patch: Partial<Draft>) => void;
   onDelete: () => void;
 }) {
   const fld = {
@@ -216,10 +213,10 @@ function EntryRow({ line, assets, selectedCount, onPatch, onDelete }: {
   };
   const missing = !assets.some(a => a.uuid === line.announcement_uuid);
 
-  // THE TIME FIELD IS A DRAFT WHILE IT HAS FOCUS. Fully controlled + write-per-keystroke was why a
-  // typed second digit replaced the first: "1" is an INCOMPLETE time, the picker emits "", we saved
-  // "", the list reloaded, and the field snapped back. Keystrokes go to local state; the write
-  // happens on blur or Enter.
+  // THE TIME FIELD IS A DRAFT WHILE IT HAS FOCUS. A fully controlled field that re-rendered on every
+  // keystroke was why a typed second digit replaced the first: "1" is an INCOMPLETE time, so the
+  // picker emits "" and the value snapped back. Keystrokes go to local state; the line is updated on
+  // blur or Enter. (Nothing reaches the database either way until APPLY.)
   const [draft, setDraft]   = useState(line.trigger_time || "");
   const [typing, setTyping] = useState(false);
   useEffect(() => { if (!typing) setDraft(line.trigger_time || ""); }, [line.trigger_time, typing]);
@@ -228,32 +225,17 @@ function EntryRow({ line, assets, selectedCount, onPatch, onDelete }: {
     setTyping(false);
     const v = toHms(draft);
     if (!v) { setDraft(line.trigger_time || ""); return; }
-    if (v === (line.trigger_time || "")) { setDraft(v); return; }
     setDraft(v);
-    onPatch({ trigger_time: v });
+    if (v !== line.trigger_time) onPatch({ trigger_time: v });
   };
-
-  // How many of the selected dates this line actually covers. Said out loud whenever it is not all
-  // of them: editing a line that only exists on 2 of your 5 selected dates changes those 2, and a
-  // silent partial edit is how a date quietly keeps an old time.
-  const partial = line.rows.length < selectedCount;
 
   return (
     <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
       <select value={line.announcement_uuid} onChange={e => onPatch({ announcement_uuid: e.target.value })}
         style={{ ...fld, flex: 1, minWidth: 0, borderColor: missing ? "var(--accent-red)" : "var(--border-primary)" }}>
-        {/* An entry whose announcement is gone says so rather than silently showing the first item in
-            the list — a schedule that quietly points somewhere else is how the wrong audio airs. */}
         {missing && <option value={line.announcement_uuid}>⚠ announcement missing</option>}
         {assets.map(a => <option key={a.uuid} value={a.uuid}>{a.title}</option>)}
       </select>
-
-      <span title={line.rows.map(r => r.date).join(", ")}
-        style={{ fontSize: 9, fontWeight: 700, padding: "3px 7px", whiteSpace: "nowrap" as any,
-                 background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
-                 color: partial ? "var(--accent-amber)" : "var(--text-tertiary)" }}>
-        {line.rows.length}{partial ? `/${selectedCount}` : ""} date{line.rows.length === 1 ? "" : "s"}
-      </span>
 
       <input type="time" step={1}
         value={draft}
@@ -263,101 +245,125 @@ function EntryRow({ line, assets, selectedCount, onPatch, onDelete }: {
         onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
         style={{ ...fld, width: 124, borderColor: draft ? "var(--border-primary)" : "var(--accent-amber)" }} />
 
-      <button onClick={onDelete} title="Remove this line from the selected dates"
+      <button onClick={onDelete} title="Remove this line"
         style={{ padding: "7px 9px", fontSize: 12, background: "var(--bg-secondary)", color: "var(--accent-red)",
                  border: "1px solid var(--border-primary)", cursor: "pointer", lineHeight: 1 }}>✕</button>
     </div>
   );
 }
 
-// ── THE SCHEDULE BOARD ───────────────────────────────────────────────────────────────────────────
-// Left: the calendar — multi-select the real dates you are scheduling. Right: the announcements and
-// times for those dates.
+// ── THE SCHEDULE BOARD — select, edit, APPLY ─────────────────────────────────────────────────────
 //
-// EVERYTHING IS DATE-KEYED. There is no weekday or recurring concept: an entry is one announcement
-// at one time on ONE calendar date, so what plays on a day is exactly what you put on that day and
-// nothing has to be resolved or overridden.
+// SELECT the date(s) on the left, EDIT the list on the right, press APPLY. Nothing is written until
+// APPLY, and APPLY makes each selected date's schedule EXACTLY what is in the editor. Then the
+// selection and the editor clear, so what you are editing is never in doubt.
 //
-// A LINE IS NOT A ROW. Adding a line to five selected dates writes five rows, one per date, because
-// that is what the scheduler reads. The list groups them back into one line by (announcement, time)
-// so the operator edits what they built rather than five copies of it, and the row's date count says
-// how many of the selection it really covers.
+// This replaced a live-accumulating editor that wrote on every keystroke and grouped rows across
+// whatever happened to be selected. It could show a line as "24 dates" — a number that came from the
+// selection rather than from anything the operator had built — and it was never clear what an edit
+// was about to change. Each date owns its own list now, and the editor is a staging area for exactly
+// one commit.
+//
+// LOADING RULE, so the editor is never silently replaced under a half-finished edit:
+//   • start from an empty selection and click a date  → the editor LOADS that date's schedule
+//   • click more dates                                → the editor is left alone; APPLY writes it to all of them
+//   • deselect a date                                 → the editor is left alone
+//   • APPLY or Clear                                  → selection and editor both empty
+// So "click one date and edit it" and "build a batch for many dates" are the same two gestures, and
+// loading a day then adding dates is how a day gets copied onto others.
 function ScheduleBoard({ stationId, assets, entries, reload }: {
   stationId: number | null; assets: Announcement[]; entries: ScheduleEntry[]; reload: () => void;
 }) {
-  const [selected, setSelected] = useState<Set<string>>(() => new Set([ymd(new Date())]));
-  const [err, setErr] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [draft, setDraft]       = useState<Draft[]>([]);
+  const [dirty, setDirty]       = useState(false);
+  const [busy, setBusy]         = useState(false);
+  const [err, setErr]           = useState<string | null>(null);
+  const [msg, setMsg]           = useState<string | null>(null);
   const api = () => (window as any).ether.announcements;
 
-  const toggle = (d: string) =>
-    setSelected(prev => { const n = new Set(prev); n.has(d) ? n.delete(d) : n.add(d); return n; });
+  const linesFor = (d: string): Draft[] =>
+    entries.filter(e => e.date === d)
+      .slice()
+      .sort((a, b) => (a.trigger_time || "").localeCompare(b.trigger_time || ""))
+      .map(e => ({ id: ++_draftSeq, announcement_uuid: e.announcement_uuid, trigger_time: e.trigger_time || "" }));
+
+  // Computed OUTSIDE the state updater, deliberately. React double-invokes updaters in development,
+  // so seeding the editor from inside one would run linesFor twice and could load a stale list over
+  // a fresh click. The updater stays pure; the editor is set alongside it.
+  const toggleDate = (d: string) => {
+    setErr(null); setMsg(null);
+    if (selected.size === 0) {
+      // Starting a fresh selection LOADS that date's schedule — this is the "click one day and edit
+      // it" gesture. Once a selection exists the editor is the operator's; adding or removing dates
+      // never reaches in and rewrites it under a half-finished edit.
+      setSelected(new Set([d]));
+      setDraft(linesFor(d));
+      setDirty(false);
+      return;
+    }
+    const n = new Set(selected);
+    n.has(d) ? n.delete(d) : n.add(d);
+    setSelected(n);
+    if (n.size === 0) { setDraft([]); setDirty(false); }
+  };
+
+  const clearAll = () => { setSelected(new Set()); setDraft([]); setDirty(false); setErr(null); setMsg(null); };
 
   const dates = [...selected].sort();
 
-  // Group the selected dates' rows into lines by (announcement, time).
-  const lines: Line[] = (() => {
-    const map = new Map<string, Line>();
-    for (const e of entries) {
-      if (!e.date || !selected.has(e.date)) continue;
-      const t = e.trigger_time || "";
-      const key = e.announcement_uuid + "|" + t;
-      if (!map.has(key)) map.set(key, { key, announcement_uuid: e.announcement_uuid, trigger_time: t, rows: [] });
-      map.get(key)!.rows.push(e);
-    }
-    return [...map.values()].sort((a, b) => (a.trigger_time || "").localeCompare(b.trigger_time || ""));
-  })();
-
-  const add = async () => {
-    if (stationId == null) return;
-    if (!dates.length) { setErr("Select one or more dates on the calendar first."); return; }
+  const addLine = () => {
     if (!assets.length) { setErr("There are no announcements yet — upload one below first."); return; }
-    setErr(null);
-    try {
-      for (const d of dates) {
-        const r = await api().createEntry({
-          station_id: stationId, announcement_uuid: assets[0].uuid, scope: "date", date: d,
-          trigger_type: "absolute", trigger_time: "17:30:00", close_offset_min: 0, sort_order: lines.length,
-        });
-        if (!r?.ok) { setErr(r?.error || "could not add"); break; }
-      }
-      reload();
-    } catch (e: any) { setErr(String(e?.message || e)); }
+    setDraft(d => [...d, { id: ++_draftSeq, announcement_uuid: assets[0].uuid, trigger_time: "17:30:00" }]);
+    setDirty(true); setMsg(null);
   };
+  const patchLine  = (id: number, p: Partial<Draft>) => { setDraft(d => d.map(l => l.id === id ? { ...l, ...p } : l)); setDirty(true); setMsg(null); };
+  const removeLine = (id: number) => { setDraft(d => d.filter(l => l.id !== id)); setDirty(true); setMsg(null); };
 
-  // An edit reaches every row the line stands for, so "this announcement at this time on these
-  // dates" behaves as the single thing the operator built it as.
-  const patch = async (line: Line, p: any) => {
-    setErr(null);
+  // ── APPLY ──────────────────────────────────────────────────────────────────────────────────────
+  // Per date, a DIFF and not a wipe-and-rewrite. A line that is already on the date keeps its row —
+  // and therefore its last_played_at, which is the 120s double-fire guard. Recreating every row on
+  // every apply would reset that guard and let something re-fire inside its own window.
+  const apply = async () => {
+    if (stationId == null || !dates.length) return;
+    const bad = draft.filter(l => !toHms(l.trigger_time));
+    if (bad.length) { setErr("Every line needs a time before this can be applied."); return; }
+    setBusy(true); setErr(null); setMsg(null);
     try {
-      for (const row of line.rows) {
-        if ("announcement_uuid" in p) {
-          // announcement_uuid is part of the row's identity for the sync refs, not patchable.
-          await api().deleteEntry(row.uuid, stationId);
-          await api().createEntry({
-            station_id: stationId, announcement_uuid: p.announcement_uuid, scope: "date", date: row.date,
-            trigger_type: "absolute", trigger_time: row.trigger_time, close_offset_min: 0, sort_order: row.sort_order,
+      let created = 0, removed = 0, kept = 0;
+      const want = draft.map(l => ({ ...l, trigger_time: toHms(l.trigger_time) }));
+      for (const d of dates) {
+        // diffSchedule is in src/lib and has its own tests — the rule that an unchanged line keeps
+        // its row (and therefore its 120s guard) is load-bearing enough to be tested, not asserted
+        // in a comment.
+        const { remove, create, keep } = diffSchedule(entries.filter(e => e.date === d), want);
+        kept += keep.length;
+        for (const e of remove) { await api().deleteEntry(e.uuid, stationId); removed++; }
+        for (const l of create) {
+          const r = await api().createEntry({
+            station_id: stationId, announcement_uuid: l.announcement_uuid, scope: "date", date: d,
+            trigger_type: "absolute", trigger_time: l.trigger_time, close_offset_min: 0, sort_order: 0,
           });
-        } else {
-          const r = await api().updateEntry(row.uuid, p);
-          if (!r?.ok) { setErr(r?.error || "could not save"); break; }
+          if (!r?.ok) throw new Error(r?.error || "could not write an entry");
+          created++;
         }
       }
       reload();
-    } catch (e: any) { setErr(String(e?.message || e)); }
+      setMsg(`Applied to ${dates.length} date${dates.length === 1 ? "" : "s"} — ${created} added, ${removed} removed${kept ? `, ${kept} unchanged` : ""}.`);
+      setSelected(new Set()); setDraft([]); setDirty(false);
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+      reload();                                  // show whatever did land, rather than a stale editor
+    } finally { setBusy(false); }
   };
 
-  const del = async (line: Line) => {
-    setErr(null);
-    try {
-      for (const row of line.rows) await api().deleteEntry(row.uuid, stationId);
-      reload();
-    } catch (e: any) { setErr(String(e?.message || e)); }
-  };
+  // What APPLY is about to overwrite. Stated before the press, never discovered after it.
+  const willReplace = dates.filter(d => entries.some(e => e.date === d)).length;
 
   const box = { padding: "12px 14px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" };
   const cap = { fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 8 };
 
-  const label = dates.length === 0 ? "no dates selected"
+  const label = dates.length === 0 ? ""
     : dates.length === 1 ? new Date(Number(dates[0].slice(0, 4)), Number(dates[0].slice(5, 7)) - 1, Number(dates[0].slice(8, 10)))
         .toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
     : `${dates.length} dates — ${dates[0]} to ${dates[dates.length - 1]}`;
@@ -366,38 +372,69 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
     <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 330px) 1fr", gap: 12, alignItems: "start" }}>
       <div style={box}>
         <div style={cap}>Dates</div>
-        <DatePicker selected={selected} onToggle={toggle} onClearAll={() => setSelected(new Set())} entries={entries} />
+        <DatePicker selected={selected} onToggle={toggleDate} onClearAll={clearAll} entries={entries} />
       </div>
 
       <div style={box}>
         <div style={cap}>Schedule</div>
-        <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10, lineHeight: 1.45 }}>
-          {dates.length
-            ? <>Playing on <strong style={{ color: "var(--text-primary)" }}>{label}</strong>
-                {dates.length > 1 && <span style={{ color: "var(--text-tertiary)" }}> — a new line is added to all {dates.length}</span>}</>
-            : <>Select one or more dates on the calendar to build their schedule.</>}
-        </div>
 
-        <button onClick={add} disabled={!dates.length}
-          style={{ padding: "7px 13px", fontSize: 11, fontWeight: 700, background: "var(--accent-blue)",
-                   color: "#fff", border: "none", cursor: dates.length ? "pointer" : "not-allowed",
-                   opacity: dates.length ? 1 : 0.5, marginBottom: 10 }}>
-          ＋ Add Announcement
-        </button>
-
-        {dates.length > 0 && lines.length === 0 && (
+        {dates.length === 0 ? (
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
-            Nothing scheduled on {dates.length === 1 ? "this date" : "these dates"}, so nothing plays.
-            Press <strong>＋ Add Announcement</strong>, then set its time.
+            Click a date to see and edit its schedule. Click more dates to set them all together.
+            Nothing is written until you press <strong>Apply</strong>.
           </div>
+        ) : (
+          <>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10, lineHeight: 1.45 }}>
+              Editing <strong style={{ color: "var(--text-primary)" }}>{label}</strong>
+            </div>
+
+            <button onClick={addLine}
+              style={{ padding: "7px 13px", fontSize: 11, fontWeight: 700, background: "var(--bg-secondary)",
+                       color: "var(--accent-blue)", border: "1px solid var(--border-primary)", cursor: "pointer", marginBottom: 10 }}>
+              ＋ Add Announcement
+            </button>
+
+            {draft.length === 0 ? (
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5, marginBottom: 10 }}>
+                Empty. Applying now would clear {dates.length === 1 ? "this date" : "these dates"} — nothing would play.
+              </div>
+            ) : (
+              draft.map(l => (
+                <DraftRow key={l.id} line={l} assets={assets}
+                  onPatch={pp => patchLine(l.id, pp)} onDelete={() => removeLine(l.id)} />
+              ))
+            )}
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border-primary)" }}>
+              <button onClick={apply} disabled={busy}
+                style={{ padding: "9px 20px", fontSize: 12, fontWeight: 800, letterSpacing: "0.04em",
+                         background: busy ? "var(--bg-secondary)" : "var(--accent-blue)", color: busy ? "var(--text-tertiary)" : "#fff",
+                         border: "none", cursor: busy ? "wait" : "pointer" }}>
+                {busy ? "Applying…" : `APPLY to ${dates.length} date${dates.length === 1 ? "" : "s"}`}
+              </button>
+              <button onClick={clearAll} disabled={busy}
+                style={{ padding: "9px 14px", fontSize: 11, background: "var(--bg-secondary)", color: "var(--text-secondary)",
+                         border: "1px solid var(--border-primary)", cursor: "pointer" }}>
+                Cancel
+              </button>
+              {dirty && <span style={{ fontSize: 10, color: "var(--accent-amber)" }}>unapplied changes</span>}
+            </div>
+
+            {/* Said BEFORE the press. Apply sets each selected date's schedule to exactly this list,
+                so a date that already had something loses whatever is not in the editor. */}
+            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1.45 }}>
+              Apply replaces the schedule on {dates.length === 1 ? "the selected date" : `all ${dates.length} selected dates`} with
+              exactly {draft.length === 0 ? "nothing" : `these ${draft.length} line${draft.length === 1 ? "" : "s"}`}.
+              {willReplace > 0 && dates.length > 1 && (
+                <span style={{ color: "var(--accent-amber)" }}> {willReplace} of them already {willReplace === 1 ? "has" : "have"} entries, which will be replaced.</span>
+              )}
+            </div>
+          </>
         )}
 
-        {lines.map(l => (
-          <EntryRow key={l.key} line={l} assets={assets} selectedCount={dates.length}
-            onPatch={pp => patch(l, pp)} onDelete={() => del(l)} />
-        ))}
-
-        {err && <div style={{ fontSize: 10, color: "var(--accent-red)", marginTop: 6 }}>{err}</div>}
+        {err && <div style={{ fontSize: 11, color: "var(--accent-red)", marginTop: 8 }}>{err}</div>}
+        {msg && <div style={{ fontSize: 11, color: "var(--accent-green)", marginTop: 8 }}>{msg}</div>}
       </div>
     </div>
   );
