@@ -4352,7 +4352,51 @@ function annStmts() {
     _annStmts.dateClosing = null;
     try { logStartup('[announce] date_closing_times unavailable (' + e.message + ') — weekday closing times only'); } catch {}
   }
+  // v47 — THE SCHEDULE ENTRIES the tick now iterates. Both JOIN announcements, so an asset that is
+  // deleted or switched off takes its entries out of the plan in ONE place rather than in the loop.
+  // Prepared defensively for the same reason dateClosing is: on a DB the v47 migration has not
+  // reached, a bare prepare would throw and take the whole scheduler down. Absent here means the tick
+  // falls back to the pre-v47 announcements path, so announcements keep firing either way.
+  try {
+    const SCHED_COLS =
+      "SELECT s.uuid AS uuid, s.announcement_uuid AS announcement_uuid, s.trigger_type AS trigger_type, " +
+      "s.trigger_time AS trigger_time, s.close_offset_min AS close_offset_min, " +
+      "s.last_played_at AS last_played_at, a.title AS title " +
+      "FROM announcement_schedule s " +
+      "JOIN announcements a ON a.uuid = s.announcement_uuid AND a.deleted_at IS NULL AND a.is_active = 1 " +
+      "WHERE s.station_id = ? AND s.deleted_at IS NULL ";
+    _annStmts.schedDate    = db.prepare(SCHED_COLS + "AND s.scope = 'date' AND s.date = ? ORDER BY s.sort_order, s.trigger_time");
+    _annStmts.schedWeekday = db.prepare(SCHED_COLS + "AND s.scope = 'weekday' AND instr(COALESCE(s.days,''), ?) > 0 ORDER BY s.sort_order, s.trigger_time");
+    _annStmts.schedStamp   = db.prepare("UPDATE announcement_schedule SET last_played_at = ? WHERE uuid = ?");
+  } catch (e) {
+    _annStmts.schedDate = _annStmts.schedWeekday = _annStmts.schedStamp = null;
+    try { logStartup('[announce] announcement_schedule unavailable (' + e.message + ') — using the pre-v47 announcements schedule'); } catch {}
+  }
   return _annStmts;
+}
+
+// ── THE SCHEDULE RESOLVER (v47) — precedence in ONE place ─────────────────────────────────────────
+//
+// docs/announcement-schedule-frame-design-2026-08-26.md.
+//
+//   entries for TODAY'S DATE exist  →  use exactly those, and ONLY those
+//   otherwise                       →  weekday entries whose `days` set contains today's dow
+//   otherwise                       →  nothing
+//
+// A date's list REPLACES the weekday list wholesale — Oct 31 runs its own entries instead of the
+// normal Friday ones, never in addition to them. Emptying a date's list falls back to the weekday
+// list (Jeff's ruling: no explicit-silent-date marker in v1).
+//
+// Returns null — distinct from an empty array — when announcement_schedule is unavailable, which is
+// the caller's signal to use the pre-v47 path. Empty array means "resolved, and nothing is due".
+function scheduleForDate(stationId, dateStr, dow) {
+  const st = annStmts();
+  if (!st.schedDate || !st.schedWeekday) return null;
+  try {
+    const dated = st.schedDate.all(stationId, dateStr);
+    if (dated.length) return dated;
+    return st.schedWeekday.all(stationId, String(dow));
+  } catch { return null; }
 }
 
 /** 'H:M[:S]' → 'HH:MM:SS', or null if it is not a time. A stored 'HH:MM' reads as 'HH:MM:00', so
@@ -4449,29 +4493,43 @@ function announceTick() {
   const nowEpoch = Math.floor(Date.now() / 1000);
 
   for (const stationId of stations) {
-    let rows = [];
-    try { rows = annStmts().rows.all(stationId); }
-    catch { _annStmts = null; continue; }
-
-    // ONCE PER STATION PER TICK, not once per row. The tick runs at 250ms; resolving the closing
-    // time inside the row loop would multiply the override lookup by the number of announcements
-    // for no gain, since every row on a station shares the same day.
+    // ONCE PER STATION PER TICK, not once per entry. The tick runs at 250ms; resolving these inside
+    // the entry loop would multiply both lookups by the number of entries for no gain, since every
+    // entry on a station shares the same day.
     const close = closingTimeForDate(stationId, dateStr, dow);
 
+    // v47 — the tick iterates SCHEDULE ENTRIES, not announcements. What changed is WHAT IS WALKED;
+    // the match, the guard and the fire path below are the same code they were before.
+    let rows = scheduleForDate(stationId, dateStr, dow);
+    if (rows === null) {
+      // announcement_schedule is unavailable (a DB v47 has not reached). Fall back to the pre-v47
+      // shape rather than going silent: a station that stops announcing entirely because an OPTIONAL
+      // new layer failed to install would be a far worse outcome than running the old schedule.
+      try {
+        rows = annStmts().rows.all(stationId)
+          .filter(r => String(r.days || '').includes(dow))
+          .map(r => ({ uuid: null, announcement_uuid: r.uuid, title: r.title,
+                       trigger_type: r.trigger_type, trigger_time: r.trigger_time,
+                       close_offset_min: r.close_offset_min, last_played_at: r.last_played_at }));
+      } catch { _annStmts = null; continue; }
+    }
+
     for (const row of rows) {
-      // ACTIVE DAYS decide whether the event exists today at all. An unchecked day is not a
-      // suppressed announcement — it is no announcement.
-      if (!String(row.days || '').includes(dow)) continue;
       const due = dueTimeFor(row, close);
       if (!due || due !== hhmmss) continue;
       // Fired already? The tick is 250ms and the match is to the second, so a matching second is hit
-      // about four times — this guard is what makes that safe, and it is why the faster tick needs no
-      // new rule of its own. UNCHANGED from the 15s era, deliberately: same 120s window, still keyed
-      // on the row's OWN last_played_at, not a module global — a per-station global is how the old
-      // renderer timer let one station's fire suppress another's.
+      // about four times — this guard is what makes that safe. Same 120s window it has always been.
+      //
+      // v47: it is now keyed on the ENTRY's last_played_at, not the announcement's, and that is
+      // load-bearing rather than tidy. "Closes in 30" at 8:45 and "closing" at 9:00 may be the SAME
+      // audio file; an asset-level guard would let the first fire suppress the second and the whole
+      // point of the schedule frame would collapse. Still per-row, never a module global — a shared
+      // global is how the old renderer timer let one station's fire suppress another's.
       if (row.last_played_at && (nowEpoch - row.last_played_at) < 120) continue;
       try {
-        const r = fireAnnouncement(stationId, row.uuid);
+        // WHAT plays is the announcement uuid; WHICH ENTRY fired is row.uuid, and they are different
+        // things now. Passing the entry uuid here would look up an announcement that does not exist.
+        const r = fireAnnouncement(stationId, row.announcement_uuid, row.uuid);
         if (!r.ok) logStartup('[announce] scheduled fire FAILED station ' + stationId + ' "' + (row.title || '') + '": ' + r.error);
         else logStartup('[announce] scheduled fire station ' + stationId + ' "' + (row.title || '') + '" at ' + due + ' (' + row.trigger_type + ')');
       } catch (e) { logStartup('[announce] scheduled fire threw: ' + (e && e.message)); }
@@ -4573,7 +4631,11 @@ ipcMain.handle('announcements:set-closing-time', (_, stationId, dow, hhmmss) => 
 // IN MAIN, not the renderer, deliberately: slice 5's timed triggers need exactly this function and
 // must not depend on a window being open. Hand-firing and a trigger are then the same code path,
 // which is the only way they can be relied on to behave the same.
-function fireAnnouncement(stationId, uuid) {
+// `entryUuid` (v47, optional) is the announcement_schedule row that caused this fire. The TICK passes
+// it and guards on it; a hand-fire from the panel has no entry and passes nothing. Both stamps are
+// written: the asset stamp stays because "when did this audio last play" is a real thing the list
+// shows and the hand-fire path has nothing else to record.
+function fireAnnouncement(stationId, uuid, entryUuid) {
   // 1. WHERE does it play? A source channel patched to Announcement, on THIS station.
   let slot = null;
   try {
@@ -4619,7 +4681,13 @@ function fireAnnouncement(stationId, uuid) {
 
   // 5. Stamp it ONLY once the engine has been told — an announcement that never played must not
   //    look like it did.
-  try { db.prepare('UPDATE announcements SET last_played_at = ? WHERE uuid = ?').run(Math.floor(Date.now() / 1000), uuid); } catch {}
+  const _stampAt = Math.floor(Date.now() / 1000);
+  try { db.prepare('UPDATE announcements SET last_played_at = ? WHERE uuid = ?').run(_stampAt, uuid); } catch {}
+  // THE ENTRY STAMP IS THE ONE THE TICK GUARDS ON. Without it the 250ms tick would re-fire this
+  // entry ~4 times inside the matched second, because its guard reads the entry, not the asset.
+  if (entryUuid) {
+    try { annStmts().schedStamp?.run(_stampAt, entryUuid); } catch {}
+  }
   try { logStartup('[announce] fired "' + (row.title || '') + '" on ' + slot + ' (station ' + stationId + ')'); } catch {}
   return { ok: true, slot, title: row.title || '' };
 }

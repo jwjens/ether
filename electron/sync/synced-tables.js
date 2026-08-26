@@ -13,6 +13,7 @@
 
 const SYNCED_TABLES = [
   'albums',
+  'announcement_schedule',
   'announcements',
   'artists',
   'cart_slots',
@@ -69,6 +70,36 @@ const REGISTRY = {
       uuid:       'scalar',
       updated_at: 'scalar',
       deleted_at: 'scalar',
+    },
+  },
+
+  // THE ANNOUNCEMENT SCHEDULE (v47) — one row per (announcement, time) attached to weekdays or to a
+  // single date. The schedule came OFF announcements so one asset can play at many times on many
+  // days; `announcements` is now the ASSET and this is the ENTRY.
+  //
+  // announcement_uuid is a cross-row reference, so it is declared in `refs`: causal ordering must not
+  // apply an entry on a peer before the announcement it points at exists there.
+  announcement_schedule: {
+    tableName: 'announcement_schedule',
+    primaryKey: ['id'],
+    scope: 'station',
+    refs: { station_id: 'stations', announcement_uuid: 'announcements' },
+    columns: {
+      id:                'scalar',
+      station_id:        'scalar',
+      uuid:              'scalar',
+      announcement_uuid: 'scalar',
+      scope:             'scalar',
+      days:              'scalar',
+      date:              'scalar',
+      trigger_type:      'scalar',
+      trigger_time:      'scalar',
+      close_offset_min:  'scalar',
+      sort_order:        'scalar',
+      last_played_at:    'scalar',
+      created_at:        'scalar',
+      updated_at:        'scalar',
+      deleted_at:        'scalar',
     },
   },
 

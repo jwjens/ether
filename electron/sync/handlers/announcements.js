@@ -11,6 +11,9 @@
 const crypto = require('crypto');
 const { withMutation, serializePayload } = require('../mutation-writer');
 const { REGISTRY } = require('../synced-tables');
+// PASS 1 ONLY (v47) — the announcements panel has not been rebuilt yet, so every write here has to
+// keep the schedule entry the tick reads in step. Both of these go away in pass 2.
+const { mirrorLegacySchedule, mirrorLegacyDelete } = require('./announcement_schedule');
 
 const TABLE              = 'announcements';
 const HAS_STATION_ID_COL = true;
@@ -75,6 +78,10 @@ function announcementsCreate(db, payload) {
       `INSERT INTO ${TABLE} (title, file_path, trigger_time, days, duck_music, resume_music, duck_level, is_active, last_played_at, created_at, station_id, uuid, updated_at, deleted_at, trigger_type, close_offset_min) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(row.title, row.file_path, row.trigger_time, row.days, row.duck_music, row.resume_music, row.duck_level, row.is_active, row.last_played_at, row.created_at, row.station_id, row.uuid, row.updated_at, row.deleted_at, row.trigger_type ?? 'absolute', row.close_offset_min ?? 0);
   });
+  // PASS 1 (v47): keep this announcement's single weekday schedule entry in step. Without it a NEWLY
+  // CREATED announcement would have no entry and would NEVER FIRE, because the tick now iterates
+  // announcement_schedule. Removed in pass 2 when the panel edits entries directly.
+  mirrorLegacySchedule(db, announcementsGet(db, uuid));
   return announcementsGet(db, uuid);
 }
 
@@ -113,6 +120,9 @@ function announcementsUpdate(db, uuid, patch) {
     const vals = patchFields.map(k => patch[k]);
     db.prepare(`UPDATE ${TABLE} SET ${sets}, updated_at = ? WHERE uuid = ?`).run(...vals, now, uuid);
   });
+  // PASS 1 (v47): the panel still edits trigger_time/days here, so the entry the tick reads has to
+  // follow. Removed in pass 2.
+  mirrorLegacySchedule(db, announcementsGet(db, uuid));
   return announcementsGet(db, uuid);
 }
 
@@ -137,6 +147,10 @@ function announcementsDelete(db, uuid, stationId) {
       `UPDATE ${TABLE} SET deleted_at = ?, updated_at = ? WHERE uuid = ?`
     ).run(now, now, uuid);
   });
+  // PASS 1 (v47): a deleted announcement must not leave a live schedule entry pointing at it — the
+  // tick would try to fire a row that no longer exists. Soft-deleted so peers converge. Pass 2 keeps
+  // this behaviour but owns it from the panel instead.
+  mirrorLegacyDelete(db, uuid, stationId ?? existing.station_id);
   return { ok: true };
 }
 
