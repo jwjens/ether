@@ -8,10 +8,9 @@
 // to a single DATE. `announcements` is now the ASSET (title, file, is_active); this is WHEN it plays,
 // and there can be many per asset.
 //
-// PASS 1 ships the model, the backfill and the tick — NO panel rebuild. The existing Announcements
-// panel still edits announcements rows, so announcementsCreate/Update/Delete keep a single weekday
-// entry mirrored for each announcement (see mirrorLegacySchedule below, called from the announcements
-// handler). Pass 2 rebuilds the panel to edit entries directly and deletes the mirror.
+// The panel edits these rows DIRECTLY. There is no bridge to the old per-announcement trigger_time /
+// days columns and no mirror keeping them in step — the old scheduling UI was deleted rather than
+// wrapped, so this table is the single source of truth for when an announcement plays.
 
 const crypto = require('crypto');
 const { withMutation, serializePayload } = require('../mutation-writer');
@@ -137,48 +136,12 @@ function scheduleDelete(db, uuid, stationId) {
   return { ok: true, deleted: true };
 }
 
-// ── PASS-1 COMPATIBILITY MIRROR — delete this with the panel rebuild ──────────────────────────────
-//
-// WHY THIS EXISTS. Pass 1 moves the tick onto announcement_schedule but does NOT rebuild the panel,
-// so the panel still writes trigger_time/days onto the announcements row. Without a mirror, editing
-// an announcement would silently stop changing when it fires, and — far worse — a NEWLY CREATED
-// announcement would have no entry at all and would NEVER FIRE. A new announcement that is silently
-// never scheduled is precisely the class of defect this codebase keeps paying for, so pass 1 carries
-// the mirror rather than leaving a gap for one release.
-//
-// It maintains EXACTLY ONE weekday entry per announcement, which is the only shape pass 1 can
-// produce (the backfill made one per announcement, and the legacy panel can only express one).
-// Pass 2 rebuilds the panel to edit entries directly and REMOVES this function and its call sites.
-function mirrorLegacySchedule(db, row) {
-  if (!row || !row.uuid || row.station_id == null) return;
-  try {
-    const live = db.prepare(
-      `SELECT * FROM ${TABLE} WHERE announcement_uuid = ? AND scope = 'weekday' AND deleted_at IS NULL
-       ORDER BY rowid LIMIT 1`
-    ).get(row.uuid);
-    const spec = {
-      days:             row.days ?? '0123456',
-      trigger_type:     row.trigger_type ?? 'absolute',
-      trigger_time:     row.trigger_time ?? null,
-      close_offset_min: row.close_offset_min ?? 0,
-    };
-    if (!live) {
-      scheduleCreate(db, {
-        station_id: row.station_id, announcement_uuid: row.uuid, scope: 'weekday',
-        last_played_at: row.last_played_at ?? null, ...spec,
-      });
-      return;
-    }
-    scheduleUpdate(db, live.uuid, spec);   // the no-op guard above makes an unchanged save free
-  } catch (e) {
-    // The mirror must never break an announcement edit. A failure here means the entry is stale,
-    // which is visible and fixable; a throw would block the operator's save outright.
-    console.error('[announcement_schedule] legacy mirror failed:', (e && e.message) || e);
-  }
-}
+// ── CASCADE ───────────────────────────────────────────────────────────────────────────────────────
 
-/** The announcement is gone — its entries go with it. Soft delete, so peers converge. */
-function mirrorLegacyDelete(db, announcementUuid, stationId) {
+/** The announcement is gone — its entries go with it. Soft delete, so peers converge on the same
+ *  removal. This is referential cleanup, not a compatibility shim: an entry that points at a deleted
+ *  asset is a row the panel would list and the tick would have to filter forever. */
+function deleteEntriesForAnnouncement(db, announcementUuid, stationId) {
   if (!announcementUuid) return;
   try {
     const rows = db.prepare(
@@ -186,11 +149,11 @@ function mirrorLegacyDelete(db, announcementUuid, stationId) {
     ).all(announcementUuid);
     for (const r of rows) scheduleDelete(db, r.uuid, stationId);
   } catch (e) {
-    console.error('[announcement_schedule] legacy mirror delete failed:', (e && e.message) || e);
+    console.error('[announcement_schedule] cascade delete failed:', (e && e.message) || e);
   }
 }
 
-// ── IPC (read-only in pass 1; the panel does not write entries until pass 2) ───
+// ── IPC — the panel edits entries through these ───────────────────────────────
 
 function installAnnouncementSchedule(ipcMain, db) {
   const getDb = (typeof db === 'function') ? db : () => db;
@@ -223,7 +186,6 @@ module.exports = {
   scheduleCreate,
   scheduleUpdate,
   scheduleDelete,
-  mirrorLegacySchedule,
-  mirrorLegacyDelete,
+  deleteEntriesForAnnouncement,
   installAnnouncementSchedule,
 };

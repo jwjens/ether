@@ -11,14 +11,19 @@ interface Announcement {
    *  uuid the sync layer uses, so a hand-fire and a peer see the same row. */
   uuid: string;
   title: string; file_path: string;
+  /** DEAD (v47). The schedule moved to announcement_schedule — an announcement can now play at many
+   *  times on many days, which one column pair cannot express. Kept on the type because the columns
+   *  still exist (a build older than v47 opens the same database and reads them), but NOTHING in
+   *  this build writes or reads them: the panel edits entries and the tick iterates entries. */
   trigger_time: string; days: string;
   /** DEPRECATED (slice 4). The old fake-duck settings. Written at their schema defaults so a build
    *  older than slice 4 still opens and reads sane values; nothing in this build acts on them. The
    *  real duck is the source channel's DUCK ON plus Preferences → Ducker, per station. */
   duck_music: number; resume_music: number; duck_level: number;
   is_active: number;
-  /** 'absolute' = fire at trigger_time. 'close_offset' = fire close_offset_min before THAT
-   *  weekday's closing time, so a station that shuts earlier on Sunday announces earlier too. */
+  /** DEAD (v47), same as trigger_time/days above — these are properties of a SCHEDULE ENTRY now,
+   *  not of the announcement, which is what makes "the same chime at 8:45 Friday and 7:45 Sunday"
+   *  expressible at all. */
   trigger_type: "absolute" | "close_offset";
   close_offset_min: number;
   last_played_at: number | null;
@@ -75,7 +80,10 @@ function ymd(d: Date): string {
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 }
 
-function DateClosingCalendar({ stationId, weekdayDefaults }: { stationId: number | null; weekdayDefaults: Record<string, string> }) {
+function DateClosingCalendar({ stationId, weekdayDefaults, assets, entries, reloadEntries }: {
+  stationId: number | null; weekdayDefaults: Record<string, string>;
+  assets: Announcement[]; entries: ScheduleEntry[]; reloadEntries: () => void;
+}) {
   const today = new Date();
   const [month, setMonth]       = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
   const [rows, setRows]         = useState<Record<string, string>>({});   // 'YYYY-MM-DD' -> closing_time ('' = none)
@@ -159,6 +167,7 @@ function DateClosingCalendar({ stationId, weekdayDefaults }: { stationId: number
           const key     = ymd(new Date(month.getFullYear(), month.getMonth(), d));
           const over    = has(key);
           const blank   = over && !rows[key];
+          const nEntries = entries.filter(e => e.scope === "date" && e.date === key).length;
           const isToday = key === ymd(today);
           const isSel   = key === selected;
           return (
@@ -166,12 +175,20 @@ function DateClosingCalendar({ stationId, weekdayDefaults }: { stationId: number
               title={over ? (blank ? "No closing time this date" : rows[key]) : "Uses the weekday default"}
               style={{
                 padding: "4px 2px", minHeight: 34, cursor: "pointer", fontSize: 11, lineHeight: 1.15,
-                background: isSel ? "var(--accent-blue)" : over ? "var(--bg-secondary)" : "transparent",
+                background: isSel ? "var(--accent-blue)" : (over || nEntries) ? "var(--bg-secondary)" : "transparent",
                 color: isSel ? "#fff" : "var(--text-primary)",
-                border: "1px solid " + (isToday ? "var(--accent-cyan)" : over ? "var(--border-secondary)" : "var(--border-primary)"),
+                border: "1px solid " + (isToday ? "var(--accent-cyan)" : (over || nEntries) ? "var(--border-secondary)" : "var(--border-primary)"),
                 display: "flex", flexDirection: "column" as any, alignItems: "center", justifyContent: "center", gap: 1,
               }}>
               <span style={{ fontWeight: isToday ? 800 : 500 }}>{d}</span>
+              {/* A date can be special in TWO independent ways — its own closing time, its own
+                  announcement list — so both are marked. A dot that meant "something is different
+                  here" without saying which would send the operator hunting. */}
+              {nEntries > 0 && (
+                <span style={{ fontSize: 8, fontWeight: 700, color: isSel ? "#fff" : "var(--accent-green)" }}>
+                  ♪{nEntries}
+                </span>
+              )}
               {over && (
                 <span style={{ fontSize: 8, fontFamily: "'DM Mono', monospace", color: isSel ? "#fff" : blank ? "var(--accent-amber)" : "var(--accent-cyan)" }}>
                   {blank ? "none" : rows[key].slice(0, 5)}
@@ -207,6 +224,32 @@ function DateClosingCalendar({ stationId, weekdayDefaults }: { stationId: number
             )}
           </div>
           {err && <div style={{ fontSize: 10, color: "var(--accent-red)", marginTop: 5 }}>{err}</div>}
+
+          {/* THIS DATE'S OWN ANNOUNCEMENTS (Jeff's ruling: one calendar, and the date's page shows
+              everything special about that date). A date with its own list runs THAT list INSTEAD OF
+              the weekday one — not in addition to it — so the panel says which is in force rather
+              than leaving it to be inferred from precedence. */}
+          <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border-primary)" }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 6 }}>
+              Announcements on this date
+            </div>
+            {(() => {
+              const dayEntries = entries.filter(e => e.scope === "date" && e.date === selected);
+              const wdName = DOW_FULL[selDow];
+              return (
+                <>
+                  <div style={{ fontSize: 11, color: dayEntries.length ? "var(--accent-green)" : "var(--text-tertiary)", marginBottom: 8, lineHeight: 1.45 }}>
+                    {dayEntries.length
+                      ? `This date runs its own ${dayEntries.length} announcement${dayEntries.length === 1 ? "" : "s"} INSTEAD OF the usual ${wdName} list.`
+                      : `No list of its own — this date runs the usual ${wdName} announcements. Add one below to override them.`}
+                  </div>
+                  <EntryList stationId={stationId} assets={assets} scope="date" date={selected}
+                    entries={dayEntries} reload={reloadEntries}
+                    emptyHint="" />
+                </>
+              );
+            })()}
+          </div>
         </div>
       ) : (
         <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 8, lineHeight: 1.4 }}>
@@ -214,6 +257,234 @@ function DateClosingCalendar({ stationId, weekdayDefaults }: { stationId: number
             ? "No dates set this month — every date uses its weekday closing time above. Click a date to give it its own."
             : "Click a date to set, blank, or reset its closing time."}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── THE SCHEDULE (v47) ───────────────────────────────────────────────────────────────────────────
+// docs/announcement-schedule-frame-design-2026-08-26.md.
+//
+// An announcement is now an ASSET — a title and an audio file. WHEN it plays is a separate row, and
+// there can be many. One entry = one (announcement, time) pair attached either to a set of WEEKDAYS
+// ('56' = Fri+Sat) or to a single DATE. A date's list replaces the weekday list for that date.
+//
+// The two editors below are the SAME editor: EntryList does not know or care whether it is showing a
+// weekday set or a date. That is deliberate — Jeff's model is one list shape attached two ways, and
+// two copies of this component would be two places for the behaviour to drift.
+
+interface ScheduleEntry {
+  uuid: string;
+  announcement_uuid: string;
+  scope: "weekday" | "date";
+  days: string | null;
+  date: string | null;
+  trigger_type: "absolute" | "close_offset";
+  trigger_time: string | null;
+  close_offset_min: number;
+  sort_order: number;
+  last_played_at: number | null;
+}
+
+const OFFSETS = [
+  { v: 30, label: "30 minutes before closing" },
+  { v: 15, label: "15 minutes before closing" },
+  { v: 10, label: "10 minutes before closing" },
+  { v: 5,  label: "5 minutes before closing" },
+  { v: 1,  label: "1 minute before closing" },
+  { v: 0,  label: "At closing time" },
+];
+
+/** One row of the list: which announcement, and when. */
+function EntryRow({ entry, assets, onPatch, onDelete }: {
+  entry: ScheduleEntry;
+  assets: Announcement[];
+  onPatch: (patch: any) => void;
+  onDelete: () => void;
+}) {
+  const sel = {
+    padding: "6px 8px", fontSize: 12, background: "var(--bg-secondary)",
+    border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none",
+  };
+  const missing = !assets.some(a => a.uuid === entry.announcement_uuid);
+  return (
+    <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" as any, marginBottom: 6 }}>
+      <select value={entry.announcement_uuid} onChange={e => onPatch({ announcement_uuid: e.target.value })}
+        style={{ ...sel, minWidth: 190, flex: 1, borderColor: missing ? "var(--accent-red)" : "var(--border-primary)" }}>
+        {/* An entry whose asset is gone says so instead of silently showing the first item in the
+            list — a schedule that quietly points somewhere else is how the wrong audio goes to air. */}
+        {missing && <option value={entry.announcement_uuid}>⚠ announcement missing</option>}
+        {assets.map(a => <option key={a.uuid} value={a.uuid}>{a.title}</option>)}
+      </select>
+
+      <select value={entry.trigger_type} onChange={e => onPatch({ trigger_type: e.target.value })} style={{ ...sel, width: 130 }}>
+        <option value="absolute">at a set time</option>
+        <option value="close_offset">before closing</option>
+      </select>
+
+      {entry.trigger_type === "absolute" ? (
+        <input type="time" step={1} value={entry.trigger_time || ""} onChange={e => onPatch({ trigger_time: e.target.value })}
+          style={{ ...sel, width: 120 }} />
+      ) : (
+        <select value={String(entry.close_offset_min ?? 0)} onChange={e => onPatch({ close_offset_min: Number(e.target.value) })}
+          style={{ ...sel, width: 190 }}>
+          {OFFSETS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
+        </select>
+      )}
+
+      <button onClick={onDelete} title="Remove this entry"
+        style={{ padding: "6px 9px", fontSize: 12, background: "var(--bg-secondary)", color: "var(--accent-red)",
+                 border: "1px solid var(--border-primary)", cursor: "pointer", lineHeight: 1 }}>✕</button>
+    </div>
+  );
+}
+
+/** The list of (announcement, time) entries for ONE key — a weekday set or a single date. */
+function EntryList({ stationId, assets, scope, days, date, entries, reload, emptyHint }: {
+  stationId: number | null;
+  assets: Announcement[];
+  scope: "weekday" | "date";
+  days?: string;
+  date?: string;
+  entries: ScheduleEntry[];
+  reload: () => void;
+  emptyHint: string;
+}) {
+  const [err, setErr] = useState<string | null>(null);
+  const api = () => (window as any).ether.announcements;
+
+  const add = async () => {
+    if (stationId == null) return;
+    if (!assets.length) { setErr("Add an announcement first — there is nothing to schedule."); return; }
+    setErr(null);
+    try {
+      const r = await api().createEntry({
+        station_id: stationId, announcement_uuid: assets[0].uuid, scope,
+        days: scope === "weekday" ? days : null, date: scope === "date" ? date : null,
+        trigger_type: "absolute", trigger_time: "17:30:00", close_offset_min: 0,
+        sort_order: entries.length,
+      });
+      if (!r?.ok) { setErr(r?.error || "could not add"); return; }
+      reload();
+    } catch (e: any) { setErr(String(e?.message || e)); }
+  };
+
+  const patch = async (uuid: string, p: any) => {
+    setErr(null);
+    try {
+      // announcement_uuid is not patchable on the entry (it is part of its identity for sync refs),
+      // so changing WHICH announcement plays is a delete + create rather than an update.
+      if ("announcement_uuid" in p) {
+        const old = entries.find(e => e.uuid === uuid);
+        if (!old) return;
+        await api().deleteEntry(uuid, stationId);
+        await api().createEntry({
+          station_id: stationId, announcement_uuid: p.announcement_uuid, scope,
+          days: scope === "weekday" ? days : null, date: scope === "date" ? date : null,
+          trigger_type: old.trigger_type, trigger_time: old.trigger_time,
+          close_offset_min: old.close_offset_min, sort_order: old.sort_order,
+        });
+      } else {
+        const r = await api().updateEntry(uuid, p);
+        if (!r?.ok) { setErr(r?.error || "could not save"); return; }
+      }
+      reload();
+    } catch (e: any) { setErr(String(e?.message || e)); }
+  };
+
+  const del = async (uuid: string) => {
+    setErr(null);
+    try { await api().deleteEntry(uuid, stationId); reload(); }
+    catch (e: any) { setErr(String(e?.message || e)); }
+  };
+
+  return (
+    <div>
+      {entries.length === 0 ? (
+        <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5, marginBottom: 8 }}>{emptyHint}</div>
+      ) : (
+        entries.map(e => (
+          <EntryRow key={e.uuid} entry={e} assets={assets}
+            onPatch={p => patch(e.uuid, p)} onDelete={() => del(e.uuid)} />
+        ))
+      )}
+      <button onClick={add}
+        style={{ padding: "6px 12px", fontSize: 11, fontWeight: 700, background: "var(--bg-secondary)",
+                 color: "var(--accent-blue)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
+        ＋ Add another
+      </button>
+      {err && <div style={{ fontSize: 10, color: "var(--accent-red)", marginTop: 6 }}>{err}</div>}
+    </div>
+  );
+}
+
+/** BY WEEKDAY — the repeating pattern. Check the day(s) that share a lineup, then build their list. */
+function WeekdaySchedule({ stationId, assets, entries, reload }: {
+  stationId: number | null; assets: Announcement[]; entries: ScheduleEntry[]; reload: () => void;
+}) {
+  const [checked, setChecked] = useState<string>("1");   // Monday, arbitrary but never empty
+
+  const toggle = (d: string) =>
+    setChecked(c => (c.includes(d) ? c.split("").filter(x => x !== d).join("") : (c + d).split("").sort().join("")));
+
+  // EXACT-SET matching. Checking Fri+Sat edits the list that plays on Fri AND Sat; it does not merge
+  // in the Friday-only list, because those are two different lineups and merging them would make it
+  // impossible to tell which one an edit is about.
+  const mine = entries.filter(e => e.scope === "weekday" && (e.days || "") === checked);
+
+  // …but a day can also be covered by OTHER sets, and hiding that is how "where did my Friday
+  // announcements go?" happens. Stated, never left to be discovered.
+  const alsoOn = checked
+    ? entries.filter(e => e.scope === "weekday" && (e.days || "") !== checked &&
+                          checked.split("").some(d => (e.days || "").includes(d)))
+    : [];
+
+  const label = checked
+    ? checked.split("").map(d => DAY_NAMES[Number(d)]).join(" + ")
+    : "no days selected";
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" as any }}>
+        {DAY_NAMES.map((name, i) => {
+          const on = checked.includes(String(i));
+          return (
+            <button key={i} onClick={() => toggle(String(i))} style={{
+              padding: "6px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer",
+              background: on ? "var(--accent-blue)" : "var(--bg-secondary)",
+              color: on ? "#fff" : "var(--text-tertiary)",
+              border: on ? "none" : "1px solid var(--border-primary)",
+            }}>{name}</button>
+          );
+        })}
+      </div>
+
+      {!checked ? (
+        <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
+          Check the day or days you want to schedule. Days that run the same lineup can be checked
+          together; days that differ are set separately.
+        </div>
+      ) : (
+        <>
+          <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 8 }}>
+            Playing on <strong style={{ color: "var(--text-primary)" }}>{label}</strong>
+          </div>
+          <EntryList stationId={stationId} assets={assets} scope="weekday" days={checked}
+            entries={mine} reload={reload}
+            emptyHint={`Nothing scheduled on ${label} yet. Add an announcement and a time.`} />
+          {alsoOn.length > 0 && (
+            <div style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--border-primary)",
+                          fontSize: 10, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
+              Also playing on {checked.split("").map(d => DAY_NAMES[Number(d)]).join("/")} from other
+              day groups: {alsoOn.map(e => {
+                const a = assets.find(x => x.uuid === e.announcement_uuid);
+                const when = e.trigger_type === "absolute" ? fmtTime(e.trigger_time || "")
+                                                           : `${e.close_offset_min} min before closing`;
+                return `${a?.title || "?"} (${when}, ${(e.days || "").split("").map(d => DAY_NAMES[Number(d)]).join("+")})`;
+              }).join(" · ")}. Check exactly those days to edit them.
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -235,52 +506,64 @@ export default function Announcements() {
   const [list, setList] = useState<Announcement[]>([]);
   const [editing, setEditing] = useState<Partial<Announcement> | null>(null);
 
+  // The ASSETS. Ordered by title now, not by trigger_time — an announcement no longer HAS one time.
   const load = async () => {
     if (!isReady) return;
-    setList(await queryScoped<Announcement>("SELECT * FROM announcements ORDER BY trigger_time", [], stationId));
+    setList(await queryScoped<Announcement>("SELECT * FROM announcements ORDER BY title", [], stationId));
   };
-  useEffect(() => { load(); startAnnouncementEngine(); }, [isReady]);
+
+  // THE SCHEDULE (v47). Every entry for this station, loaded once and split by scope where it is
+  // used — the whole set is a handful of rows, and one read keeps the weekday list and the calendar
+  // from disagreeing with each other.
+  const [entries, setEntries] = useState<ScheduleEntry[]>([]);
+  const [schedErr, setSchedErr] = useState<string | null>(null);
+  const loadEntries = async () => {
+    if (stationId == null) return;
+    try {
+      const r = await (window as any).ether.announcements.listSchedule(stationId, {});
+      if (r?.ok) { setEntries(r.rows || []); setSchedErr(null); }
+      // An honest failure, not an empty list: an empty schedule and a broken one look identical
+      // otherwise, and "nothing is scheduled" is the more dangerous of the two to get wrong.
+      else setSchedErr(r?.error || "the schedule could not be read");
+    } catch (e: any) { setSchedErr(String(e?.message || e)); }
+  };
+  useEffect(() => { load(); loadEntries(); }, [isReady, stationId]);
 
   const addNew = async () => {
     const files = await open({ multiple: false, title: "Select announcement audio", filters: [{ name: "Audio", extensions: ["mp3","flac","ogg","wav","m4a","aac"] }] });
     if (!files) return;
     const filePath = Array.isArray(files) ? files[0] : files;
     const title = (filePath.split(/[\\/]/).pop() || "").replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
-    setEditing({ title, file_path: filePath, trigger_time: "17:30:00", days: "0123456", duck_music: 1, resume_music: 1, duck_level: 0.1, is_active: 1, trigger_type: "absolute", close_offset_min: 30 });
+    // No time, no days: an announcement is an ASSET now. When it plays is set in the Schedule below.
+    setEditing({ title, file_path: filePath, duck_music: 1, resume_music: 1, duck_level: 0.1, is_active: 1 });
   };
 
   const save = async () => {
     if (!editing) return;
     if (editing.id) {
+      // trigger_time / days / trigger_type / close_offset_min are NOT written any more. They are
+      // vestigial columns kept so an older build can still open the database; the schedule lives in
+      // announcement_schedule and nothing else may write it.
       await (window as any).ether.announcements.updateById(editing.id, {
-        title: editing.title, trigger_time: editing.trigger_time, days: editing.days,
-        duck_music: editing.duck_music ? 1 : 0, resume_music: editing.resume_music ? 1 : 0,
-        duck_level: editing.duck_level, is_active: editing.is_active ? 1 : 0,
-        trigger_type: editing.trigger_type || "absolute",
-        close_offset_min: Number(editing.close_offset_min ?? 0),
+        title: editing.title, is_active: editing.is_active ? 1 : 0,
       });
     } else {
       await (window as any).ether.announcements.create({
         station_id: stationId, title: editing.title, file_path: editing.file_path,
-        trigger_time: editing.trigger_time, days: editing.days,
-        duck_music: editing.duck_music ? 1 : 0, resume_music: editing.resume_music ? 1 : 0,
-        duck_level: editing.duck_level, is_active: editing.is_active ? 1 : 0,
-        trigger_type: editing.trigger_type || "absolute",
-        close_offset_min: Number(editing.close_offset_min ?? 0),
+        duck_music: 1, resume_music: 1, duck_level: 0.1, is_active: editing.is_active ? 1 : 0,
       });
     }
-    setEditing(null); load();
+    setEditing(null); load(); loadEntries();
   };
 
   const remove = async (id: number) => {
-    if (!confirm("Delete this announcement?")) return;
-    await (window as any).ether.announcements.deleteById(id); load();
-  };
-
-  const toggleDay = (day: string) => {
-    if (!editing) return;
-    const days = editing.days || "0123456";
-    setEditing({ ...editing, days: days.includes(day) ? days.replace(day, "") : days + day });
+    const a = list.find(x => x.id === id);
+    const n = a ? entries.filter(e => e.announcement_uuid === a.uuid).length : 0;
+    // Says what ELSE goes, because deleting the asset cascades its schedule entries. A delete that
+    // silently removes rows the operator did not name is how a schedule quietly loses a slot.
+    if (!confirm(n ? `Delete "${a?.title}" and remove it from ${n} schedule ${n === 1 ? "entry" : "entries"}?`
+                   : "Delete this announcement?")) return;
+    await (window as any).ether.announcements.deleteById(id); load(); loadEntries();
   };
 
   // Can this station air an announcement at all? Asked once, so the AIR button explains itself
@@ -381,7 +664,29 @@ export default function Announcements() {
               closing-relative announcement at all — nothing is guessed.
             </div>
           </div>
-          <DateClosingCalendar stationId={stationId} weekdayDefaults={closing} />
+          {/* ── THE SCHEDULE (v47) ─────────────────────────────────────────────────────────────
+              An announcement is an asset; this is when it plays. BY WEEKDAY is the repeating
+              pattern; the calendar underneath is the date-specific exception, and a date with its
+              own list replaces the weekday one for that date. */}
+          <div style={{ marginTop: 12, padding: "12px 14px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 8 }}>
+              Schedule — by weekday
+            </div>
+            {schedErr ? (
+              <div style={{ fontSize: 11, color: "var(--accent-red)", lineHeight: 1.5 }}>
+                The schedule could not be read: {schedErr}
+                <div style={{ color: "var(--text-tertiary)", marginTop: 4 }}>
+                  Nothing will fire until this is resolved. Close Ether fully and reopen — the
+                  database upgrade runs on launch and retries itself.
+                </div>
+              </div>
+            ) : (
+              <WeekdaySchedule stationId={stationId} assets={list} entries={entries} reload={loadEntries} />
+            )}
+          </div>
+
+          <DateClosingCalendar stationId={stationId} weekdayDefaults={closing}
+            assets={list} entries={entries} reloadEntries={loadEntries} />
         </div>
         <button onClick={addNew} style={{ padding: "8px 16px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", flexShrink: 0, boxShadow: "0 2px 8px rgba(14,165,233,0.3)" }}>
           ＋ Add Announcement
@@ -395,63 +700,19 @@ export default function Announcements() {
             {editing.id ? "Edit" : "New"} Announcement
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 180px", gap: 10, marginBottom: 12 }}>
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 5 }}>Title</div>
-              <input value={editing.title || ""} onChange={e => setEditing({...editing, title: e.target.value})}
-                style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as any }} />
-            </div>
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 5 }}>Trigger</div>
-              <select
-                value={editing.trigger_type || "absolute"}
-                onChange={e => setEditing({ ...editing, trigger_type: e.target.value as any })}
-                style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as any }}>
-                <option value="absolute">At a set time</option>
-                <option value="close_offset">Before closing</option>
-              </select>
-              {(editing.trigger_type || "absolute") === "absolute" ? (
-                <input type="time" step={1} value={editing.trigger_time || "17:30:00"} onChange={e => setEditing({...editing, trigger_time: e.target.value})}
-                  style={{ width: "100%", marginTop: 6, padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as any }} />
-              ) : (
-                <>
-                  <select
-                    value={String(editing.close_offset_min ?? 30)}
-                    onChange={e => setEditing({ ...editing, close_offset_min: Number(e.target.value) })}
-                    style={{ width: "100%", marginTop: 6, padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as any }}>
-                    <option value="30">30 minutes before closing</option>
-                    <option value="15">15 minutes before closing</option>
-                    <option value="5">5 minutes before closing</option>
-                    <option value="1">1 minute before closing</option>
-                    <option value="0">At closing time</option>
-                  </select>
-                  {/* Says WHICH closing time it means, because that is the whole point of the
-                      seven-per-day setting below: a station that shuts earlier on Sunday announces
-                      earlier on Sunday, without a second announcement existing. */}
-                  <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 4, lineHeight: 1.35 }}>
-                    Uses each day's own closing time, set below. A day with no closing time set does
-                    not fire this announcement — nothing is guessed.
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* Days */}
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 8 }}>Active Days</div>
-            <div style={{ display: "flex", gap: 6 }}>
-              {DAY_NAMES.map((name, i) => {
-                const active = (editing.days || "").includes(String(i));
-                return (
-                  <button key={i} onClick={() => toggleDay(String(i))} style={{
-                    padding: "6px 12px", borderRadius: 0, fontSize: 11, fontWeight: 700, cursor: "pointer",
-                    background: active ? "var(--accent-blue)" : "var(--bg-tertiary)",
-                    color: active ? "#fff" : "var(--text-tertiary)",
-                    border: active ? "none" : "1px solid var(--border-primary)",
-                  }}>{name}</button>
-                );
-              })}
+          {/* AN ANNOUNCEMENT IS AN ASSET (v47). Title and audio file — that is all it is.
+              The trigger type, the time and the Active Days checkboxes used to live here; they were
+              deleted rather than hidden, because WHEN this plays is no longer a property of the
+              announcement. One announcement can now play at several times on several days, so its
+              schedule lives in the Schedule section and nowhere else. */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 5 }}>Title</div>
+            <input value={editing.title || ""} onChange={e => setEditing({...editing, title: e.target.value})}
+              style={{ width: "100%", padding: "9px 12px", borderRadius: 0, fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" as any }} />
+            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1.45 }}>
+              {editing.id
+                ? "When this plays is set in Schedule, below — it can appear on as many days and at as many times as you need."
+                : "Save it, then add it to a day in Schedule below to give it a time."}
             </div>
           </div>
 
@@ -510,7 +771,7 @@ export default function Announcements() {
           <table style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
-                {["Title", "Time", "Days", "Duck", "Status", ""].map(h => (
+                {["Title", "Scheduled", "Duck", "Status", ""].map(h => (
                   <th key={h} style={{ padding: "10px 14px", textAlign: "left" as any, fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em" }}>{h}</th>
                 ))}
               </tr>
@@ -523,20 +784,23 @@ export default function Announcements() {
                   onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
                 >
                   <td style={{ padding: "12px 14px", color: "var(--text-primary)", fontWeight: 500 }}>{a.title}</td>
-                  <td style={{ padding: "12px 14px", fontFamily: "'DM Mono', monospace", fontSize: 13, color: "var(--accent-cyan)", fontWeight: 500 }}>{fmtTime(a.trigger_time)}</td>
-                  <td style={{ padding: "12px 14px" }}>
-                    <div style={{ display: "flex", gap: 3 }}>
-                      {DAY_NAMES.map((name, j) => {
-                        const on = a.days.includes(String(j));
-                        return (
-                          <span key={j} style={{
-                            fontSize: 9, fontWeight: 700, padding: "2px 5px", borderRadius: 0,
-                            background: on ? "rgb(from var(--accent-blue) r g b / 0.15)" : "var(--bg-tertiary)",
-                            color: on ? "var(--accent-blue)" : "var(--text-tertiary)",
-                          }}>{name[0]}</span>
-                        );
-                      })}
-                    </div>
+                  {/* WHERE this plays, summarised from the schedule. "Not scheduled" is a real and
+                      important state: an announcement with no entry never fires, and that has to be
+                      visible in the list rather than discovered when it does not go to air. */}
+                  <td style={{ padding: "12px 14px", fontSize: 12 }}>
+                    {(() => {
+                      const mine = entries.filter(e => e.announcement_uuid === a.uuid);
+                      if (!mine.length) return <span style={{ color: "var(--accent-amber)" }}>not scheduled</span>;
+                      const wk = mine.filter(e => e.scope === "weekday");
+                      const dt = mine.filter(e => e.scope === "date");
+                      const bits: string[] = [];
+                      for (const e of wk) {
+                        const when = e.trigger_type === "absolute" ? fmtTime(e.trigger_time || "") : `${e.close_offset_min}m before close`;
+                        bits.push(`${(e.days || "").split("").map(d => DAY_NAMES[Number(d)][0]).join("")} ${when}`);
+                      }
+                      if (dt.length) bits.push(`${dt.length} date${dt.length === 1 ? "" : "s"}`);
+                      return <span style={{ color: "var(--accent-cyan)", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>{bits.join(" · ")}</span>;
+                    })()}
                   </td>
                   <td style={{ padding: "12px 14px", color: "var(--text-tertiary)", fontSize: 12 }}>
                     {/* The ducker owns this now — depth/hold live in Preferences > Ducker, per

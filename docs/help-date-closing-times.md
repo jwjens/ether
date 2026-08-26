@@ -76,7 +76,8 @@ Simple order, top to bottom:
   anything, treat it like a normal Tuesday." Two different buttons for two different intentions.
 - **Only closing-relative announcements are affected.** An announcement set to a fixed clock time
   ("play at 10:00:00") still fires on its own schedule, because that's what a fixed time means. If you
-  don't want it on a closed date, switch it off or take that day out of its Active Days.
+  don't want it on a closed date, give that date its own announcement list (see below) or remove the
+  entry from the weekday list.
 - **Whether anyone hears it is still the board's call.** As with every announcement, this decides
   *when* something fires onto the Announcement channel. The fader and channel ON decide whether it
   goes to air.
@@ -87,3 +88,11 @@ Simple order, top to bottom:
   Move back through the months to see them.
 - **It syncs.** Set a date on one machine and your other machines running this station get it too,
   like the rest of your station's settings.
+
+## The other half of this calendar
+
+Clicking a date also shows **Announcements on this date** — that date's own list of announcements and
+times, which runs *instead of* the usual weekday list. Closing time and announcement list are
+independent: a date can have one, both, or neither. See **Scheduling Announcements**
+(`help-announcement-schedule.md`).
+

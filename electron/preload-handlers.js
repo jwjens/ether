@@ -32,6 +32,12 @@ module.exports = function buildHandlers(ipcRenderer) {
     // v46 — DATE-specific closing times (the exception layer over the seven weekday defaults).
     // setDateClosingTime with a blank value is a real setting ("no closing time this date");
     // clearDateClosingTime removes the override so the date falls back to its weekday default.
+    // v47 — THE SCHEDULE ENTRIES. `announcements` is the asset; these say when it plays. One entry =
+    // one (announcement, time) attached to a weekday set ('56' = Fri+Sat) or to a single date.
+    listSchedule:   (stationId, opts)   => ipcRenderer.invoke('announcement_schedule:list', stationId, opts),
+    createEntry:    (payload)           => ipcRenderer.invoke('announcement_schedule:create', payload),
+    updateEntry:    (uuid, patch)       => ipcRenderer.invoke('announcement_schedule:update', uuid, patch),
+    deleteEntry:    (uuid, stationId)   => ipcRenderer.invoke('announcement_schedule:delete', uuid, stationId),
     listDateClosingTimes:  (stationId, from, to)   => ipcRenderer.invoke('announcements:list-date-closing-times', stationId, from, to),
     setDateClosingTime:    (stationId, date, hhmmss) => ipcRenderer.invoke('announcements:set-date-closing-time', stationId, date, hhmmss),
     clearDateClosingTime:  (stationId, date)       => ipcRenderer.invoke('announcements:clear-date-closing-time', stationId, date),

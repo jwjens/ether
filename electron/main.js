@@ -4334,10 +4334,6 @@ function annStmts() {
   if (!_annStmts) _annStmts = {
     stations: db.prepare('SELECT id FROM stations WHERE deleted_at IS NULL'),
     closing:  db.prepare('SELECT value FROM station_config_kv WHERE station_id = ? AND key = ?'),
-    rows:     db.prepare(
-      "SELECT uuid, title, days, trigger_time, last_played_at, " +
-      "COALESCE(trigger_type,'absolute') AS trigger_type, COALESCE(close_offset_min,0) AS close_offset_min " +
-      "FROM announcements WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL"),
   };
   // v46 — the date-specific closing time for one station on one date, PREPARED DEFENSIVELY. If
   // date_closing_times is absent (a DB the v46 migration has not reached), a bare db.prepare here
@@ -4500,19 +4496,13 @@ function announceTick() {
 
     // v47 — the tick iterates SCHEDULE ENTRIES, not announcements. What changed is WHAT IS WALKED;
     // the match, the guard and the fire path below are the same code they were before.
-    let rows = scheduleForDate(stationId, dateStr, dow);
-    if (rows === null) {
-      // announcement_schedule is unavailable (a DB v47 has not reached). Fall back to the pre-v47
-      // shape rather than going silent: a station that stops announcing entirely because an OPTIONAL
-      // new layer failed to install would be a far worse outcome than running the old schedule.
-      try {
-        rows = annStmts().rows.all(stationId)
-          .filter(r => String(r.days || '').includes(dow))
-          .map(r => ({ uuid: null, announcement_uuid: r.uuid, title: r.title,
-                       trigger_type: r.trigger_type, trigger_time: r.trigger_time,
-                       close_offset_min: r.close_offset_min, last_played_at: r.last_played_at }));
-      } catch { _annStmts = null; continue; }
-    }
+    // NO FALLBACK TO THE OLD COLUMNS. announcements.trigger_time/days are dead now — the panel does
+    // not write them, so firing from them would mean firing a schedule nobody can see or edit, which
+    // is worse than not firing. A missing table means the v47 migration has not applied; the chain
+    // retries it on every launch, so the recovery is a relaunch and it is automatic. The absence is
+    // logged loudly (annStmts) and the panel says so rather than looking empty-but-fine.
+    const rows = scheduleForDate(stationId, dateStr, dow);
+    if (rows === null) continue;
 
     for (const row of rows) {
       const due = dueTimeFor(row, close);

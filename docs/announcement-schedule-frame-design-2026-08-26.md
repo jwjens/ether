@@ -1,29 +1,27 @@
 # The announcement schedule frame — design (2026-08-26)
 
-**Status: RULED 2026-08-26. PASS 1 BUILT. Pass 2 (the panel rebuild) NOT started.**
+**Status: BUILT IN ONE PASS (2026-08-26). The two-pass plan and the compatibility mirror were SCRAPPED.**
 
-Jeff's rulings on §9:
-1. **Weekday fallback accepted** — no explicit-silent-date marker in v1. An empty date list falls back
-   to the weekday list.
-2. **No per-entry active toggle** — delete the entry. One place, not two.
-3. **Calendar option (c)** — clicking a date opens a page showing both its closing-time override and
-   its announcement list.
-4. **`days` as a set string** (`'56'`).
-5. **TWO passes.** Pass 1 = model split + invisible backfill + guard moves to the entry + the tick
-   iterates entries, with NO UI change. Pass 2 = the panel rebuild. Stop for the acceptance run in
-   between.
+Jeff's rulings on §9: (1) weekday fallback accepted, no explicit-silent-date marker; (2) no per-entry
+active toggle — delete the entry; (3) calendar option (c), clicking a date opens a page showing both
+its closing-time override and its announcement list; (4) `days` as a set string (`'56'`).
 
-**PASS 1 CARRIES ONE THING THIS DESIGN DID NOT ANTICIPATE — a compatibility mirror.** With the tick
-reading `announcement_schedule` but the panel still writing `announcements`, editing an announcement
-would silently stop changing when it fires, and a NEWLY CREATED announcement would have no entry at
-all and would **never fire**. So `announcementsCreate/Update/Delete` keep that announcement's single
-weekday entry in step (`mirrorLegacySchedule` / `mirrorLegacyDelete` in
-`electron/sync/handlers/announcement_schedule.js`). **Pass 2 rebuilds the panel and deletes the
-mirror and its three call sites.**
+**(5) was reversed.** The two-pass split was scrapped: this is dev, nothing is on air, and the old
+panel did not need to keep working. So the model split AND the new panel shipped together, and the
+old announcement scheduling UI was **deleted rather than wrapped**:
 
-Pass 1 also keeps a **pre-v47 fallback in the tick**: if `announcement_schedule` is unavailable (a DB
-the migration has not reached — the chain fails soft by design), the tick reads the old announcements
-shape rather than going silent.
+- **The compatibility mirror is gone** — `mirrorLegacySchedule` / `mirrorLegacyDelete` and their call
+  sites. What remains in its place is `deleteEntriesForAnnouncement`, a real CASCADE: deleting an
+  asset takes its entries with it. That is referential cleanup, not a bridge.
+- **The tick's pre-v47 fallback is gone.** `announcements.trigger_time` / `days` are dead columns now;
+  nothing writes them, so firing from them would mean firing a schedule nobody can see or edit. A
+  missing table is reported loudly in the panel instead, and the migration chain retries on every
+  launch, so the recovery is automatic.
+- **The old panel's trigger picker and Active Days checkboxes are deleted**, not hidden. The panel is
+  now an ASSET list plus a SCHEDULE (weekday lists + per-date lists).
+
+Kept exactly as designed: the v47 backfill, the per-entry `last_played_at` guard, second precision,
+the existing fire path and the real ducker.
 
 Requirement (Jeff, 2026-08-26): an announcement schedule is a **list of (announcement, time) entries
 attached to days**. Attach by WEEKDAY (repeating, days sharing a lineup checked together) or by
