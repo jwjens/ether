@@ -265,7 +265,7 @@ export default function ListenerAnalytics({ onClose }: Props) {
 
       // Recent plays — station_id scoping: Strategy B (single table, queryScoped injects)
       const recent = await queryScoped<PlayEntry>(`
-        SELECT * FROM play_log ORDER BY played_at DESC LIMIT 20
+        SELECT * FROM play_log WHERE (content_class IS NULL OR content_class = 'MUSIC') ORDER BY played_at DESC LIMIT 20
       `, [], stationId);
       setRecentPlays(recent);
 

@@ -4462,9 +4462,8 @@ function startAnnouncementScheduler() {
 // of it was reachable and none of it could resolve a time any more. Deleted rather than left as an
 // unreachable API, which is how dead surface area gets rediscovered and re-wired years later.
 //
-// The date_closing_times TABLE and its sync handler still exist and are untouched — dropping a
-// synced table is its own change with its own migration. Nothing reads or writes them now.
-// See docs/station-date-overrides-design-2026-08-26.md, marked superseded.
+// The table went with it in v49 (scripts/migrate-drop-date-closing-phase-sync-49.js), along with its
+// sync handler and registry entry. See docs/station-date-overrides-design-2026-08-26.md, superseded.
 
 // ── ANNOUNCEMENTS ON AIR (slice 4, 2026-08-25) ────────────────────────────────────────────────
 //
@@ -7117,7 +7116,10 @@ const irisHttpServer = require('http').createServer((req, res) => {
 
   if (req.method === 'GET' && url === '/api/log') {
     try {
-      const rows = db.prepare("SELECT * FROM play_log ORDER BY played_at DESC LIMIT 50").all();
+      // ANN excluded (2026-08-26): a recently-played feed is songs. Announcements are logged so they
+      // can be proven to have aired (see fireAnnouncement), and they are read back from the Logs
+      // viewer and the affidavit, not from here.
+      const rows = db.prepare("SELECT * FROM play_log WHERE (content_class IS NULL OR content_class = 'MUSIC') ORDER BY played_at DESC LIMIT 50").all();
       res.end(JSON.stringify({ ok: true, entries: rows }));
     } catch (e) { res.statusCode = 500; res.end(JSON.stringify({ ok: false, error: e.message })); }
     return;

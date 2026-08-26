@@ -1,18 +1,25 @@
 # Station date overrides — the calendar exception layer (design, 2026-08-26)
 
-**Status: SUPERSEDED SAME DAY. The closing-time UI this describes was REMOVED (2026-08-26).**
+**Status: SHIPPED, WITHDRAWN, AND NOW REMOVED — same day. Kept as the record only.**
 
-Jeff's later ruling: **announcements only, no closing-time concept.** The seven weekday closing-time
-fields, the closing-time calendar and the "before closing" trigger were all deleted from the
-Announcements panel. An entry now carries a clock time, and nothing scheduled means nothing plays.
+Built as v46, then Jeff removed the closing-time concept from the product entirely: an announcement
+carries a clock time, and nothing scheduled means nothing plays. v48 removed the weekday scope the
+"before closing" trigger depended on, which left this table reachable by nothing.
 
-The **v46 `date_closing_times` table, its IPC handlers and `closingTimeForDate` still exist** and are
-still wired into the tick — they are simply unreachable from any UI, so no closing time can be set
-and `close_offset` entries can never resolve. Left in place rather than ripped out mid-arc; removing a
-synced table is its own change. **If this is picked up again, that is the decision to make first:
-finish removing it, or give it a door.**
+**v49 removed it outright** (`scripts/migrate-drop-date-closing-phase-sync-49.js`): the table is
+dropped, its orphaned sync-journal rows are deleted, and the sync handler and registry entry are
+gone. A synced table nobody can reach is not harmless — it keeps a contract and a shape that a future
+reader has to understand before touching anything near it, and that is how dead surface area gets
+re-wired years later on the assumption it was load-bearing.
 
-Read this doc as the record of a design that shipped and was then withdrawn, not as current
+Receipt: `scripts/smoke-v49-drop.js`, 12/12 — table gone, its mutations gone, *other* tables'
+mutations untouched, neighbours intact, absent from both the registry and the name list, handler file
+gone, and re-running is a no-op.
+
+v46 stays in the chain and still creates the table on a fresh install; v49 then drops it. Migrations
+are history and are not rewritten.
+
+Read everything below as the record of a design that shipped and was withdrawn, not as current
 behaviour. Current behaviour: `docs/announcement-schedule-frame-design-2026-08-26.md` and
 `docs/help-announcement-schedule.md`.
 

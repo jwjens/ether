@@ -1,3 +1,7 @@
+// RECENTLY PLAYED = SONGS. Announcements log to play_log as content_class='ANN' (2026-08-26) so
+// they can be proven to have aired; they are not tracks, and a "recently played" strip listing
+// "HALLOVEEN CLOSED" between two songs reads as a fault. Excluded here, kept in the Logs viewer
+// and the affidavit where the as-run record is the point.
 import { useState, useEffect, useRef } from "react";
 import { query } from "../db/client";
 
@@ -21,7 +25,7 @@ export function LiveHourClock() {
       try {
         const hourStart = Math.floor(Date.now() / 1000) - (Math.floor(Date.now() / 1000) % 3600);
         const rows = await query<PlayedSong>(
-          "SELECT title, artist, deck, played_at FROM play_log WHERE played_at >= ? ORDER BY played_at ASC LIMIT 30",
+          "SELECT title, artist, deck, played_at FROM play_log WHERE played_at >= ? AND (content_class IS NULL OR content_class = 'MUSIC') ORDER BY played_at ASC LIMIT 30",
           [hourStart]
         );
         setPlayed(rows);
@@ -118,7 +122,7 @@ export function SongHistoryStrip() {
     const load = async () => {
       try {
         const rows = await query<PlayedSong>(
-          "SELECT title, artist, deck, played_at FROM play_log ORDER BY played_at DESC LIMIT 5",
+          "SELECT title, artist, deck, played_at FROM play_log WHERE (content_class IS NULL OR content_class = 'MUSIC') ORDER BY played_at DESC LIMIT 5",
           []
         );
         setHistory(rows);

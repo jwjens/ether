@@ -253,6 +253,7 @@ candidate song's path, so an ANN key can never match. Left alone.
 - `src/lib/ccData.ts:249` — pushes rows to the web dashboard's history.
 - `electron/main.js:7094` — a recent-50 IPC.
 
-These are all "what has been playing" displays. Whether an announcement should appear in them is
-taste, not correctness, and none of them feeds a scheduling decision. **Say the word and I will
-filter any or all of them.**
+**RESOLVED 2026-08-26 — Jeff ruled: filter all four.** A "recently played" strip listing
+"HALLOVEEN CLOSED" between two songs reads as a fault, and this build ships complete. All four now
+exclude ANN. Announcements remain in the Logs viewer, the affidavit and HealthMonitor liveness, where
+the as-run record is the entire point of having logged them.

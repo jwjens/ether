@@ -21,7 +21,6 @@ const SYNCED_TABLES = [
   'clock_breaks',
   'clock_slots',
   'clocks',
-  'date_closing_times',
   'deck_configs',
   'format_clocks',
   'generated_schedule',
@@ -293,26 +292,6 @@ const REGISTRY = {
       deleted_at:  'scalar',
     },
     refs: { station_id: 'stations', show_id: 'shows' },
-  },
-
-  // DATE-SPECIFIC CLOSING TIMES (v46) — the exception layer over the seven recurring
-  // closing_time_0..6 keys in station_config_kv. One row per (station, date); the row's EXISTENCE is
-  // the override, which is why a blank closing_time is meaningful and is not the same as no row.
-  // Station-owned scheduling config, so it syncs like the rest of it.
-  date_closing_times: {
-    tableName: 'date_closing_times',
-    primaryKey: ['id'],
-    scope: 'station',
-    columns: {
-      id:           'scalar',
-      date:         'scalar',
-      closing_time: 'scalar',
-      station_id:   'scalar',
-      uuid:         'scalar',
-      created_at:   'scalar',
-      updated_at:   'scalar',
-      deleted_at:   'scalar',
-    },
   },
 
   deck_configs: {

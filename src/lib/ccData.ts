@@ -247,7 +247,9 @@ export async function pushPlayHistory(
       const rows: any[] = await query(
         `SELECT id, uuid, title, artist, duration_ms, played_at, category_code, show_name, file_path
            FROM play_log
-          WHERE station_id = ? AND id > ? AND deleted_at IS NULL
+          -- ANN excluded: the Control Center's history is a song history; an announcement
+          -- airing is proven in the local play log, not in the dashboard's track list.
+          WHERE station_id = ? AND id > ? AND deleted_at IS NULL AND (content_class IS NULL OR content_class = 'MUSIC')
           ORDER BY id LIMIT ?`,
         [stationId, cursor, BATCH],
       );

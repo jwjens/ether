@@ -62,7 +62,7 @@ export function stopAnnouncementEngine()  { /* main owns the schedule now */ }
 // here. Jeff's rule: announcements only, no closing-time concept — an entry has a clock time, and
 // nothing scheduled means nothing plays. Both were deleted rather than hidden, along with the
 // "before closing" trigger, so there is one way to say when something airs and nothing to reason
-// about. The date_closing_times table and its IPC still exist and are simply unused by this panel.
+// about. The table, its IPC, its sync handler and its registry entry were removed outright in v49.
 
 /** Local 'YYYY-MM-DD'. Built from local parts, NEVER toISOString() — that is UTC and would name the
  *  wrong day for every evening announcement west of Greenwich, which is where the parks are. */
