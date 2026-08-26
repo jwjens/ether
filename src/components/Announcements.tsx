@@ -52,6 +52,173 @@ function fmtTime(t: string): string {
 export function startAnnouncementEngine() { /* main owns the schedule now */ }
 export function stopAnnouncementEngine()  { /* main owns the schedule now */ }
 
+// ── DATE-SPECIFIC CLOSING TIMES (v46) ───────────────────────────────────────────────────────────
+// docs/station-date-overrides-design-2026-08-26.md.
+//
+// The seven weekday fields above are the RECURRING pattern. This is the exception layer: pick a date
+// that differs — a holiday, a special event, a seasonal change — and give it its own closing time.
+//
+// It lives HERE, immediately under the weekday defaults it overrides, rather than in a calendar
+// surface of its own. The exception belongs next to the rule, and this panel already has a door.
+//
+// THREE STATES PER DATE, and the difference between the last two is the only subtlety in the
+// feature, so the buttons say it in words rather than leaving it to an icon:
+//   • no override   → the date uses its weekday default
+//   • a time        → the date closes at that time
+//   • a BLANK time  → the date has NO closing time, so nothing closing-relative fires that day —
+//                     exactly what a blank weekday default already does. No suppression logic.
+const DOW_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** Local 'YYYY-MM-DD'. Built from local parts, NEVER toISOString() — that is UTC and would name the
+ *  wrong day for every evening closing time west of Greenwich, which is where the parks are. */
+function ymd(d: Date): string {
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+
+function DateClosingCalendar({ stationId, weekdayDefaults }: { stationId: number | null; weekdayDefaults: Record<string, string> }) {
+  const today = new Date();
+  const [month, setMonth]       = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
+  const [rows, setRows]         = useState<Record<string, string>>({});   // 'YYYY-MM-DD' -> closing_time ('' = none)
+  const [selected, setSelected] = useState<string | null>(null);
+  const [draft, setDraft]       = useState("");
+  const [err, setErr]           = useState<string | null>(null);
+
+  const first = new Date(month.getFullYear(), month.getMonth(), 1);
+  const dim   = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const lead  = first.getDay();
+
+  const load = async () => {
+    if (stationId == null) return;
+    const from = ymd(first);
+    const to   = ymd(new Date(month.getFullYear(), month.getMonth(), dim));
+    try {
+      const r = await (window as any).ether.announcements.listDateClosingTimes(stationId, from, to);
+      if (r?.ok) setRows(Object.fromEntries((r.rows || []).map((x: any) => [x.date, x.closing_time ?? ""])));
+    } catch { /* the grid simply shows no overrides, which is honest */ }
+  };
+  useEffect(() => { load(); }, [stationId, month.getFullYear(), month.getMonth()]);
+
+  const has = (d: string) => Object.prototype.hasOwnProperty.call(rows, d);
+
+  const write = async (date: string, value: string) => {
+    if (stationId == null) return;
+    setErr(null);
+    try {
+      const r = await (window as any).ether.announcements.setDateClosingTime(stationId, date, value);
+      if (!r?.ok) { setErr(r?.error || "could not save"); return; }
+      await load();
+    } catch (e: any) { setErr(String(e?.message || e)); }
+  };
+  const clear = async (date: string) => {
+    if (stationId == null) return;
+    setErr(null);
+    try {
+      await (window as any).ether.announcements.clearDateClosingTime(stationId, date);
+      await load();
+    } catch (e: any) { setErr(String(e?.message || e)); }
+  };
+
+  const pick = (d: string) => { setSelected(d); setDraft(has(d) ? rows[d] : ""); setErr(null); };
+
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < lead; i++) cells.push(null);
+  for (let d = 1; d <= dim; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const monthLabel = month.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const navBtn = { padding: "2px 9px", fontSize: 13, fontWeight: 800, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", lineHeight: 1.6 };
+
+  // What ACTUALLY happens on the selected date, and where it came from. Stated, never left to be
+  // inferred from precedence — the whole point of an override layer is that the answer is visible.
+  const selDow  = selected ? new Date(Number(selected.slice(0, 4)), Number(selected.slice(5, 7)) - 1, Number(selected.slice(8, 10))).getDay() : 0;
+  const selWeek = weekdayDefaults[String(selDow)] || "";
+  const resolved = selected
+    ? (has(selected)
+        ? (rows[selected] ? fmtTime(rows[selected]) : "no closing time") + " — this date"
+        : (selWeek ? fmtTime(selWeek) + " — " + DOW_FULL[selDow] + " default"
+                   : "no closing time — the " + DOW_FULL[selDow] + " default is blank"))
+    : "";
+
+  return (
+    <div style={{ marginTop: 12, padding: "12px 14px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, flex: 1 }}>
+          Closing time — specific dates
+        </div>
+        <button onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))} title="Previous month" style={navBtn}>‹</button>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", minWidth: 120, textAlign: "center" as any }}>{monthLabel}</div>
+        <button onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))} title="Next month" style={navBtn}>›</button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
+        {DAY_NAMES.map(n => (
+          <div key={n} style={{ fontSize: 9, fontWeight: 700, color: "var(--text-tertiary)", textAlign: "center" as any, padding: "2px 0" }}>{n}</div>
+        ))}
+        {cells.map((d, i) => {
+          if (d == null) return <div key={"b" + i} />;
+          const key     = ymd(new Date(month.getFullYear(), month.getMonth(), d));
+          const over    = has(key);
+          const blank   = over && !rows[key];
+          const isToday = key === ymd(today);
+          const isSel   = key === selected;
+          return (
+            <button key={key} onClick={() => pick(key)}
+              title={over ? (blank ? "No closing time this date" : rows[key]) : "Uses the weekday default"}
+              style={{
+                padding: "4px 2px", minHeight: 34, cursor: "pointer", fontSize: 11, lineHeight: 1.15,
+                background: isSel ? "var(--accent-blue)" : over ? "var(--bg-secondary)" : "transparent",
+                color: isSel ? "#fff" : "var(--text-primary)",
+                border: "1px solid " + (isToday ? "var(--accent-cyan)" : over ? "var(--border-secondary)" : "var(--border-primary)"),
+                display: "flex", flexDirection: "column" as any, alignItems: "center", justifyContent: "center", gap: 1,
+              }}>
+              <span style={{ fontWeight: isToday ? 800 : 500 }}>{d}</span>
+              {over && (
+                <span style={{ fontSize: 8, fontFamily: "'DM Mono', monospace", color: isSel ? "#fff" : blank ? "var(--accent-amber)" : "var(--accent-cyan)" }}>
+                  {blank ? "none" : rows[key].slice(0, 5)}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {selected ? (
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border-primary)" }}>
+          <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 6 }}>
+            <strong style={{ color: "var(--text-primary)" }}>{selected}</strong> closes at{" "}
+            <strong style={{ color: "var(--accent-cyan)" }}>{resolved}</strong>
+          </div>
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" as any }}>
+            <input type="time" step={1} value={draft} onChange={e => setDraft(e.target.value)}
+              style={{ padding: "5px 7px", fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+            <button onClick={() => write(selected, draft)} disabled={!draft}
+              style={{ padding: "5px 10px", fontSize: 11, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: draft ? "pointer" : "not-allowed", opacity: draft ? 1 : 0.5 }}>
+              Set for this date
+            </button>
+            <button onClick={() => write(selected, "")}
+              style={{ padding: "5px 10px", fontSize: 11, background: "var(--bg-secondary)", color: "var(--accent-amber)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
+              No closing time this date
+            </button>
+            {has(selected) && (
+              <button onClick={() => clear(selected)}
+                style={{ padding: "5px 10px", fontSize: 11, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
+                Use {DOW_FULL[selDow]} default
+              </button>
+            )}
+          </div>
+          {err && <div style={{ fontSize: 10, color: "var(--accent-red)", marginTop: 5 }}>{err}</div>}
+        </div>
+      ) : (
+        <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 8, lineHeight: 1.4 }}>
+          {Object.keys(rows).length === 0
+            ? "No dates set this month — every date uses its weekday closing time above. Click a date to give it its own."
+            : "Click a date to set, blank, or reset its closing time."}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -214,6 +381,7 @@ export default function Announcements() {
               closing-relative announcement at all — nothing is guessed.
             </div>
           </div>
+          <DateClosingCalendar stationId={stationId} weekdayDefaults={closing} />
         </div>
         <button onClick={addNew} style={{ padding: "8px 16px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", flexShrink: 0, boxShadow: "0 2px 8px rgba(14,165,233,0.3)" }}>
           ＋ Add Announcement

@@ -29,6 +29,13 @@ module.exports = function buildHandlers(ipcRenderer) {
     canFire:    (stationId)        => ipcRenderer.invoke('announcements:can-fire', stationId),
     getClosingTimes: (stationId)               => ipcRenderer.invoke('announcements:get-closing-times', stationId),
     setClosingTime:  (stationId, dow, hhmm)    => ipcRenderer.invoke('announcements:set-closing-time', stationId, dow, hhmm),
+    // v46 — DATE-specific closing times (the exception layer over the seven weekday defaults).
+    // setDateClosingTime with a blank value is a real setting ("no closing time this date");
+    // clearDateClosingTime removes the override so the date falls back to its weekday default.
+    listDateClosingTimes:  (stationId, from, to)   => ipcRenderer.invoke('announcements:list-date-closing-times', stationId, from, to),
+    setDateClosingTime:    (stationId, date, hhmmss) => ipcRenderer.invoke('announcements:set-date-closing-time', stationId, date, hhmmss),
+    clearDateClosingTime:  (stationId, date)       => ipcRenderer.invoke('announcements:clear-date-closing-time', stationId, date),
+    resolveClosingTime:    (stationId, date)       => ipcRenderer.invoke('announcements:resolve-closing-time', stationId, date),
     list:       (stationId, opts) => ipcRenderer.invoke('announcements:list',          stationId, opts),
     getById:    (uuid)            => ipcRenderer.invoke('announcements:get-by-id',     uuid),
     create:     (payload)         => ipcRenderer.invoke('announcements:create',        payload),

@@ -4339,6 +4339,19 @@ function annStmts() {
       "COALESCE(trigger_type,'absolute') AS trigger_type, COALESCE(close_offset_min,0) AS close_offset_min " +
       "FROM announcements WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL"),
   };
+  // v46 — the date-specific closing time for one station on one date, PREPARED DEFENSIVELY. If
+  // date_closing_times is absent (a DB the v46 migration has not reached), a bare db.prepare here
+  // would throw and take the whole announcement scheduler down with it — announcements would stop
+  // firing because a NEW, OPTIONAL layer could not initialise. Degrade instead: no date overrides,
+  // weekday defaults still work, everything still fires.
+  try {
+    _annStmts.dateClosing = db.prepare(
+      "SELECT closing_time FROM date_closing_times " +
+      "WHERE station_id = ? AND date = ? AND deleted_at IS NULL");
+  } catch (e) {
+    _annStmts.dateClosing = null;
+    try { logStartup('[announce] date_closing_times unavailable (' + e.message + ') — weekday closing times only'); } catch {}
+  }
   return _annStmts;
 }
 
@@ -4361,6 +4374,31 @@ function closingTimeFor(stationId, dow) {
   } catch { return null; }
 }
 
+// ── DATE-SPECIFIC CLOSING TIMES (v46) — THE ONE RESOLVER ──────────────────────────────────────
+//
+// docs/station-date-overrides-design-2026-08-26.md, ruled by Jeff 2026-08-26.
+//
+//   a row in date_closing_times for this DATE  >  closing_time_<dow>  >  nothing
+//
+// Precedence lives HERE AND NOWHERE ELSE. Everything downstream — dueTimeFor, minusMinutes, the
+// tick — asks this one function what a day's closing time is, so there is no second site for the
+// order to be implemented differently.
+//
+// A ROW WITH A BLANK closing_time IS NOT THE SAME AS NO ROW. No row means "use the weekday default".
+// A row with '' means "this date has no closing time", which returns null and therefore gives
+// closing-relative announcements nothing to fire at — exactly what a blank weekday default already
+// does. That is how a closed date works, and it needs no closed flag and no suppression logic.
+function closingTimeForDate(stationId, dateStr, dow) {
+  try {
+    const stmt = annStmts().dateClosing;
+    if (stmt) {
+      const row = stmt.get(stationId, dateStr);
+      if (row) return hmsNormalize(row.closing_time);   // '' → null, which is the point
+    }
+  } catch { /* fall through to the weekday default — an override read must never lose the default */ }
+  return closingTimeFor(stationId, dow);
+}
+
 /** 'HH:MM:SS' minus N minutes, as 'HH:MM:SS'. Seconds ride through untouched, so a 9:00:00 close
  *  with a 15-minute offset resolves to 8:45:00 exactly. Wraps backwards past midnight exactly as it
  *  did before — that behaviour is unchanged. */
@@ -4374,12 +4412,16 @@ function minusMinutes(hms, mins) {
          String(t % 60).padStart(2, '0');
 }
 
-/** The clock time this row wants to fire at TODAY, or null if it cannot be resolved. */
-function dueTimeFor(row, stationId, dow) {
+/** The clock time this row wants to fire at TODAY, or null if it cannot be resolved.
+ *  `close` is TODAY'S already-resolved closing time (date override, else weekday default) — resolved
+ *  once per station per tick by the caller, not once per row: at a 250ms tick, a per-row lookup would
+ *  put the override read on the hot path for no reason. */
+function dueTimeFor(row, close) {
   if (row.trigger_type === 'close_offset') {
-    const close = closingTimeFor(stationId, dow);
-    // No closing time set for this weekday is not an error and not a guess: the row simply has no
-    // time today. Guessing one would put audio on air at an hour nobody chose.
+    // No closing time for this date is not an error and not a guess: the row simply has no time
+    // today. Guessing one would put audio on air at an hour nobody chose. This is also exactly what
+    // a date whose override is set to a BLANK closing time produces — the whole mechanism, no
+    // suppression logic anywhere.
     if (!close) return null;
     return minusMinutes(close, row.close_offset_min);
   }
@@ -4398,6 +4440,12 @@ function announceTick() {
                  String(now.getMinutes()).padStart(2, '0') + ':' +
                  String(now.getSeconds()).padStart(2, '0');
   const dow = String(now.getDay());
+  // TODAY'S local calendar date, the key date_closing_times is written under. Built from local
+  // getFullYear/getMonth/getDate, never from toISOString() — that is UTC and would name the wrong
+  // day for every evening closing time west of Greenwich, which is where the parks are.
+  const dateStr = now.getFullYear() + '-' +
+                  String(now.getMonth() + 1).padStart(2, '0') + '-' +
+                  String(now.getDate()).padStart(2, '0');
   const nowEpoch = Math.floor(Date.now() / 1000);
 
   for (const stationId of stations) {
@@ -4405,11 +4453,16 @@ function announceTick() {
     try { rows = annStmts().rows.all(stationId); }
     catch { _annStmts = null; continue; }
 
+    // ONCE PER STATION PER TICK, not once per row. The tick runs at 250ms; resolving the closing
+    // time inside the row loop would multiply the override lookup by the number of announcements
+    // for no gain, since every row on a station shares the same day.
+    const close = closingTimeForDate(stationId, dateStr, dow);
+
     for (const row of rows) {
       // ACTIVE DAYS decide whether the event exists today at all. An unchecked day is not a
       // suppressed announcement — it is no announcement.
       if (!String(row.days || '').includes(dow)) continue;
-      const due = dueTimeFor(row, stationId, dow);
+      const due = dueTimeFor(row, close);
       if (!due || due !== hhmmss) continue;
       // Fired already? The tick is 250ms and the match is to the second, so a matching second is hit
       // about four times — this guard is what makes that safe, and it is why the faster tick needs no
@@ -4440,6 +4493,50 @@ ipcMain.handle('announcements:get-closing-times', (_, stationId) => {
     const out = {};
     for (let d = 0; d < 7; d++) out[d] = closingTimeFor(stationId, d);
     return { ok: true, times: out };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// ── DATE-SPECIFIC closing times (v46) — the exception layer over the seven weekday defaults ────
+// Deliberately alongside the weekday handlers above: they are the same setting at two resolutions,
+// and the panel edits them side by side.
+
+ipcMain.handle('announcements:list-date-closing-times', (_, stationId, from, to) => {
+  try {
+    const { dateClosingList } = require('./sync/handlers/date_closing_times');
+    return { ok: true, rows: dateClosingList(db, stationId, { from, to }) };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// Set (or blank) ONE date's closing time. A blank value is a real, deliberate setting: it means this
+// date has no closing time, so nothing closing-relative has a time to fire at.
+ipcMain.handle('announcements:set-date-closing-time', (_, stationId, date, hhmmss) => {
+  try {
+    const { dateClosingUpsert } = require('./sync/handlers/date_closing_times');
+    return { ok: true, row: dateClosingUpsert(db, stationId, date, hhmmss ?? '') };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// Remove the override so the date goes back to its WEEKDAY default. NOT the same as setting it
+// blank, which keeps the override and means "no closing time on this date".
+ipcMain.handle('announcements:clear-date-closing-time', (_, stationId, date) => {
+  try {
+    const { dateClosingClear } = require('./sync/handlers/date_closing_times');
+    return { ok: true, ...dateClosingClear(db, stationId, date) };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// What closing time does this station ACTUALLY use on this date, and where did it come from? The
+// panel shows this verbatim so "what happens that day" never requires reasoning about precedence.
+ipcMain.handle('announcements:resolve-closing-time', (_, stationId, date) => {
+  try {
+    const [y, m, d] = String(date).split('-').map(Number);
+    const dow = String(new Date(y, m - 1, d).getDay());
+    let source = 'weekday';
+    try {
+      const stmt = annStmts().dateClosing;
+      if (stmt && stmt.get(stationId, date)) source = 'date';
+    } catch { /* absent table — it is the weekday default by definition */ }
+    return { ok: true, closing: closingTimeForDate(stationId, date, dow), source, dow: Number(dow) };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
