@@ -1,0 +1,502 @@
+<title>Show+ Workspace</title>
+<style>
+:root{
+  --bg-primary:#0d0d0f; --bg-secondary:#111116; --bg-tertiary:#141420;
+  --bg-elevated:#18181e; --bg-hover:#1e1e26;
+  --text-primary:#e8e8f0; --text-secondary:#8878c0; --text-tertiary:#6060a0;
+  --border-primary:#1a1a22; --border-secondary:#1e1e2e;
+  --accent-blue:#6040c0; --accent-cyan:#8868D8; --accent-green:#34d399;
+  --accent-red:#f87171; --accent-amber:#fbbf24;
+  --r-0:0px; --r-full:999px;
+  --s-1:2px; --s-2:4px; --s-3:6px; --s-4:8px; --s-5:12px; --s-6:16px; --s-7:24px;
+  --t-micro:10px; --t-small:11px; --t-body:12px; --t-lead:13px; --t-head:16px;
+  --mono:ui-monospace,'DM Mono',Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#08080a;color:var(--text-primary);
+  font:var(--t-body)/1.5 Inter,system-ui,sans-serif}
+.wrap{max-width:1600px;margin:0 auto;padding:var(--s-7)}
+h1{font-size:var(--t-head);margin:0 0 var(--s-2)}
+.lede{color:var(--text-tertiary);max-width:88ch;margin:0 0 var(--s-6)}
+.lede b{color:var(--text-secondary)}
+h2{font-size:var(--t-small);text-transform:uppercase;letter-spacing:.1em;
+  color:var(--text-tertiary);font-weight:700;margin:var(--s-7) 0 var(--s-4)}
+code{font-family:var(--mono);font-size:var(--t-small);color:var(--accent-cyan)}
+
+/* ── rank legend ─────────────────────────────────────────────── */
+.ranks{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s-4);margin-bottom:var(--s-5)}
+.rank{border:1px solid var(--border-primary);background:var(--bg-secondary);padding:var(--s-4) var(--s-5);
+  border-left-width:3px}
+.rank b{display:block;font-size:var(--t-micro);text-transform:uppercase;letter-spacing:.12em;
+  margin-bottom:var(--s-2)}
+.rank span{color:var(--text-tertiary);font-size:var(--t-body)}
+.r1{border-left-color:var(--accent-green)} .r1 b{color:var(--accent-green)}
+.r2{border-left-color:var(--accent-cyan)}  .r2 b{color:var(--accent-cyan)}
+.r3{border-left-color:var(--text-tertiary)} .r3 b{color:var(--text-tertiary)}
+
+/* ── shell ───────────────────────────────────────────────────── */
+.app{border:1px solid var(--border-primary);background:var(--bg-primary);
+  display:flex;flex-direction:column;height:720px}
+
+/* RANK 3 — session/file ops live in the menubar and a quiet right corner ONLY */
+.menubar{display:flex;align-items:center;gap:var(--s-6);height:26px;padding:0 var(--s-5);
+  background:var(--bg-secondary);border-bottom:1px solid var(--border-primary);flex:0 0 26px}
+.menubar span{font-size:var(--t-body);color:var(--text-tertiary)}
+.menubar .sess{margin-left:auto;color:var(--text-secondary);font-size:var(--t-small)}
+.quiet{display:flex;gap:var(--s-2)}
+.quiet i{width:20px;height:16px;border:1px solid var(--border-primary);background:var(--bg-tertiary);
+  color:var(--text-tertiary);font-size:9px;font-style:normal;display:flex;align-items:center;
+  justify-content:center}
+
+.tabs{display:flex;background:var(--bg-secondary);border-bottom:1px solid var(--border-primary);flex:0 0 auto}
+.tab{padding:var(--s-3) var(--s-5);font-size:var(--t-small);font-weight:700;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--text-tertiary);border-right:1px solid var(--border-primary)}
+.tab.sel{background:var(--bg-primary);color:var(--text-primary);box-shadow:inset 0 -2px 0 0 var(--accent-cyan)}
+
+.grid{display:grid;grid-template-columns:236px 1fr 240px;flex:1;min-height:0}
+.pane{display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--border-primary);overflow:hidden}
+.pane:last-child{border-right:none}
+.pbody{flex:1;overflow:hidden;background:var(--bg-primary);min-height:0}
+
+/* RANK 2 — editing tools, attached to the editor they act on */
+.tools{display:flex;align-items:center;gap:var(--s-2);padding:var(--s-3) var(--s-4);
+  background:var(--bg-tertiary);border-bottom:1px solid var(--border-primary);flex:0 0 auto}
+.tool{height:24px;padding:0 var(--s-4);border:1px solid var(--border-primary);background:var(--bg-secondary);
+  color:var(--text-secondary);font-family:var(--mono);font-size:var(--t-small);display:flex;
+  align-items:center;gap:var(--s-3)}
+.tool.on{background:rgb(136 104 216 / .16);border-color:var(--accent-cyan);color:#cbb8ff}
+.tool u{text-decoration:none;font-size:9px;color:var(--text-tertiary)}
+.tools .hint{margin-left:auto;font-size:var(--t-micro);color:var(--text-tertiary)}
+
+/* library */
+.lrow{display:flex;align-items:center;gap:var(--s-3);height:24px;padding:0 var(--s-4);
+  border-bottom:1px solid var(--border-primary);font-size:var(--t-body);color:var(--text-secondary)}
+.lrow:nth-child(odd){background:rgb(255 255 255 / .012)}
+.lrow .dur{margin-left:auto;font-family:var(--mono);font-size:var(--t-micro);color:var(--text-tertiary)}
+.sw{width:3px;height:14px;flex:0 0 3px}
+.lname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-primary)}
+
+/* editor */
+.ruler{height:18px;background:var(--bg-secondary);border-bottom:1px solid var(--border-primary);
+  position:relative;font-family:var(--mono);font-size:9px;color:var(--text-tertiary);flex:0 0 18px}
+.ruler span{position:absolute;top:3px;padding-left:3px;border-left:1px solid var(--border-secondary);height:12px}
+.lanes{flex:1;position:relative;overflow:hidden}
+.trk{display:flex;border-bottom:1px solid var(--border-primary);height:74px}
+.thead{width:142px;flex:0 0 142px;background:var(--bg-secondary);border-right:1px solid var(--border-primary);
+  padding:var(--s-3) var(--s-4);display:flex;flex-direction:column;gap:var(--s-2)}
+.tname{display:flex;align-items:center;gap:var(--s-3);font-size:var(--t-body);color:var(--text-primary)}
+.tdot{width:8px;height:8px;flex:0 0 8px}
+.tbtns{display:flex;gap:var(--s-1)}
+.mini{width:17px;height:15px;border:1px solid var(--border-primary);background:var(--bg-tertiary);
+  color:var(--text-tertiary);font-size:8px;display:flex;align-items:center;justify-content:center}
+.mini.on{background:rgb(52 211 153 / .16);border-color:var(--accent-green);color:var(--accent-green)}
+.mini.rec{background:rgb(248 113 113 / .16);border-color:var(--accent-red);color:var(--accent-red)}
+.tmeter{display:flex;gap:2px;align-items:flex-end;height:9px}
+/* INVARIANT: a track header carries its own level and pan — you set a rough balance here without
+   opening the mixer, exactly as Audition does. The mixer is for the considered pass. */
+.hctl{display:flex;align-items:center;gap:var(--s-2);margin-top:auto}
+.hslider{flex:1;height:3px;background:var(--bg-tertiary);position:relative;min-width:28px}
+.hslider i{position:absolute;top:-3px;width:6px;height:9px;background:var(--text-secondary)}
+.hslider.pan i{background:#60a5fa}
+.hval{font-family:var(--mono);font-size:8px;color:var(--text-tertiary);width:26px;text-align:right}
+.tlane{flex:1;position:relative;
+  background:repeating-linear-gradient(90deg,transparent 0 79px,var(--border-primary) 79px 80px)}
+/* COLOUR IS LABEL, NOT PAINT. The body is neutral; the track's colour appears as a 3px cap and as
+   a muted waveform tint. Full saturation is reserved for STATE: record, clipping, playhead. */
+.clip{position:absolute;top:5px;bottom:5px;border:1px solid var(--border-secondary);
+  background:#15151b;overflow:hidden}
+.cliphead{height:3px}
+.clipname{position:absolute;top:5px;left:5px;font-family:var(--mono);font-size:9px;
+  color:var(--text-tertiary);pointer-events:none;text-shadow:0 1px 2px #000}
+/* INVARIANT: clip edges are grabbable — the outer 6px trims, the corner square drags the fade.
+   The shaded wedge IS the fade, so its length is readable without selecting anything. */
+.edge{position:absolute;top:0;bottom:0;width:6px;background:rgb(255 255 255 / .07);
+  border-left:1px solid var(--border-secondary);border-right:1px solid var(--border-secondary);
+  cursor:ew-resize}
+.edge.l{left:0} .edge.r{right:0}
+.fadeh{position:absolute;top:4px;width:7px;height:7px;background:var(--text-primary);
+  border:1px solid #000;cursor:nwse-resize}
+.fadewedge{position:absolute;top:0;bottom:0;pointer-events:none}
+.playhead{position:absolute;top:0;bottom:0;width:1px;background:var(--accent-green);z-index:5}
+.playhead::before{content:"";position:absolute;top:0;left:-4px;border:4px solid transparent;
+  border-top-color:var(--accent-green)}
+
+/* ── EFFECTS RACK — docked left, where Audition users' hands expect it ──────────────────────── */
+.fxhdr{padding:var(--s-3) var(--s-4);border-bottom:1px solid var(--border-primary);
+  background:var(--bg-tertiary);display:flex;align-items:center;gap:var(--s-3)}
+.fxhdr .who{font-size:var(--t-body);color:var(--text-primary)}
+.fxhdr .role{margin-left:auto;font-size:9px;text-transform:uppercase;letter-spacing:.08em;
+  color:var(--text-tertiary);border:1px solid var(--border-primary);padding:1px 5px}
+.slot{border-bottom:1px solid var(--border-primary);padding:var(--s-3) var(--s-4);background:var(--bg-primary)}
+.slot.empty{color:var(--text-tertiary);font-size:var(--t-micro);font-style:italic;
+  border-style:dashed;border-color:var(--border-secondary)}
+.slotrow{display:flex;align-items:center;gap:var(--s-3);margin-bottom:var(--s-2)}
+.byp{width:16px;height:14px;border:1px solid var(--border-primary);background:var(--bg-tertiary);
+  color:var(--text-tertiary);font-size:8px;display:flex;align-items:center;justify-content:center}
+.byp.on{background:rgb(52 211 153 / .16);border-color:var(--accent-green);color:var(--accent-green)}
+.slotname{font-size:var(--t-body);color:var(--text-primary)}
+.slotpre{margin-left:auto;font-size:9px;color:var(--text-tertiary);font-family:var(--mono)}
+.par{display:flex;align-items:center;gap:var(--s-3);margin-bottom:2px;font-size:9px;color:var(--text-tertiary)}
+.par .k{width:40px}
+.slider{flex:1;height:3px;background:var(--bg-tertiary);position:relative}
+.slider i{position:absolute;top:-3px;width:6px;height:9px;background:var(--text-secondary)}
+.par .v{width:42px;text-align:right;font-family:var(--mono);color:var(--text-secondary)}
+
+/* ── AUTOMATION LANE TOGGLE in the track header ─────────────────────────────────────────────── */
+.mini.aut{background:rgb(251 191 36 / .16);border-color:var(--accent-amber);color:var(--accent-amber)}
+.autkey{display:flex;gap:var(--s-3);align-items:center;padding:var(--s-2) var(--s-4);
+  border-bottom:1px solid var(--border-primary);background:var(--bg-secondary);font-size:9px;
+  color:var(--text-tertiary);flex:0 0 auto}
+.autkey b{display:inline-flex;align-items:center;gap:4px;font-weight:400}
+.autkey i{width:14px;height:2px;display:block}
+
+/* mixer */
+.strips{display:flex;height:100%}
+.strip{flex:1;min-width:0;border-right:1px solid var(--border-primary);padding:var(--s-3);
+  display:flex;flex-direction:column;align-items:center;gap:var(--s-2)}
+.strip.master{background:var(--bg-secondary)}
+.sname{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-tertiary);
+  white-space:nowrap;overflow:hidden;max-width:100%}
+.knob{width:24px;height:24px;border-radius:var(--r-full);border:1px solid var(--border-secondary);
+  background:conic-gradient(from 220deg,var(--accent-blue) 0 60%,var(--bg-tertiary) 60%);position:relative}
+.knob::after{content:"";position:absolute;inset:5px;border-radius:var(--r-full);background:var(--bg-tertiary)}
+.fader{flex:1;width:20px;background:var(--bg-tertiary);border:1px solid var(--border-primary);
+  position:relative;min-height:70px}
+.cap{position:absolute;left:-3px;right:-3px;height:9px;background:var(--text-secondary);border:1px solid #000}
+.vu{display:flex;gap:2px;align-items:flex-end}
+.vu i{width:5px;display:block;align-self:flex-end;
+  background:linear-gradient(to top,var(--accent-green) 0 62%,var(--accent-amber) 62% 86%,var(--accent-red) 86%)}
+.db{font-family:var(--mono);font-size:9px;color:var(--text-tertiary)}
+
+/* rack */
+.par{display:flex;align-items:center;gap:var(--s-3);margin-bottom:var(--s-2);font-size:var(--t-micro);
+  color:var(--text-tertiary)}
+.par .k{width:44px}
+.slider{flex:1;height:3px;background:var(--bg-tertiary);position:relative}
+.slider i{position:absolute;top:-3px;width:7px;height:9px;background:var(--text-secondary)}
+.par .v{width:44px;text-align:right;font-family:var(--mono);color:var(--text-secondary)}
+
+/* ══ RANK 1 — TRANSPORT. Own bar, bottom, centred. Nothing else lives here. ══ */
+.transport{flex:0 0 96px;background:var(--bg-secondary);border-top:1px solid var(--border-secondary);
+  display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding:0 var(--s-6);gap:var(--s-6)}
+.tleft{display:flex;align-items:center;gap:var(--s-5)}
+.tcentre{display:flex;align-items:center;gap:var(--s-6);justify-self:center}
+.tright{display:flex;align-items:center;gap:var(--s-6);justify-self:end}
+.tbtn{width:42px;height:42px;border:1px solid var(--border-secondary);background:var(--bg-tertiary);
+  color:var(--text-secondary);display:flex;align-items:center;justify-content:center;font-size:15px}
+.tbtn.play{width:60px;height:60px;font-size:26px;background:rgb(52 211 153 / .14);
+  border-color:var(--accent-green);color:var(--accent-green)}
+.tbtn.rec{color:var(--accent-red);border-color:#3a2030;font-size:18px}
+.tc{font-family:var(--mono);font-size:46px;line-height:1;font-variant-numeric:tabular-nums;
+  letter-spacing:.01em;color:var(--text-primary)}
+.tc .ms{color:var(--text-tertiary);font-size:28px}
+.tcsub{font-family:var(--mono);font-size:var(--t-body);color:var(--text-tertiary);margin-top:3px}
+.lbl{font-size:var(--t-micro);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)}
+.big{font-family:var(--mono);font-size:20px;color:var(--accent-green);font-variant-numeric:tabular-nums}
+.big.warn{color:var(--accent-amber)}
+.mstack{display:flex;flex-direction:column;align-items:flex-start;gap:2px}
+.mrow{display:flex;gap:var(--s-4);align-items:flex-end}
+
+/* tables */
+table{width:100%;border-collapse:collapse;font-size:var(--t-body);margin-top:var(--s-4)}
+th,td{text-align:left;padding:var(--s-3) var(--s-4);border-bottom:1px solid var(--border-primary);vertical-align:top}
+th{font-size:var(--t-small);text-transform:uppercase;letter-spacing:.1em;color:var(--text-tertiary)}
+td.y{color:var(--accent-green)}td.n{color:var(--accent-red)}td.p{color:var(--accent-amber)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:var(--s-7)}
+.card{border:1px solid var(--border-primary);background:var(--bg-secondary);padding:var(--s-5)}
+.card h3{margin:0 0 var(--s-3);font-size:var(--t-lead)}
+.card p{margin:0;color:var(--text-tertiary)}
+.note{border-left:2px solid var(--accent-amber);padding-left:var(--s-5);color:var(--text-tertiary);margin:var(--s-5) 0}
+@media (max-width:1100px){.two,.ranks{grid-template-columns:1fr}}
+</style>
+
+<div class="wrap">
+<h1>Show+ — workspace</h1>
+<p class="lede">
+  The governing rule: <b>controls are ranked by how often a producer touches them.</b> Transport owns
+  its own bar at the bottom centre and shares it with nothing. Editing tools sit against the editor
+  they act on. Save / export / import / notes / history are demoted to the menubar and a quiet corner.
+  <b>Mockup only — no app code has changed.</b> Built from the app's own tokens.
+</p>
+
+<div class="ranks">
+  <div class="rank r1"><b>Rank 1 · every few seconds</b>
+    <span>Play, stop, record, timecode, meters. Own bar, bottom centre, largest type on screen.</span></div>
+  <div class="rank r2"><b>Rank 2 · every few minutes</b>
+    <span>Select, grab, splice, trim, fade. Attached to the editor, keyed V/G/C/T/F.</span></div>
+  <div class="rank r3"><b>Rank 3 · a few times a session</b>
+    <span>Save, export, import, notes, history, verify. Menubar and a quiet corner. Never a row of their own.</span></div>
+</div>
+
+<div class="app">
+  <!-- RANK 3 -->
+  <div class="menubar">
+    <span>File</span><span>Edit</span><span>View</span><span>Session</span><span>Effects</span><span>Help</span>
+    <span class="sess">Halloween Promo · 30s</span>
+    <span class="lbl" style="margin-left:var(--s-5)">Layout</span>
+    <span class="tool" style="height:18px;font-size:var(--t-micro)">Edit ▾</span>
+  </div>
+
+  <div class="tabs">
+    <div class="tab sel">Editor</div><div class="tab">Spectral</div><div class="tab">Mixer</div>
+    <div class="tab">Effects</div><div class="tab">Library</div><div class="tab">Markers</div>
+  </div>
+
+  <div class="grid">
+    <div class="pane">
+      <div class="tabs" style="flex:0 0 auto">
+        <div class="tab sel">Effects</div><div class="tab">Library</div><div class="tab">Markers</div>
+      </div>
+      <div class="pbody" id="fx" style="overflow-y:auto"></div>
+    </div>
+
+    <div class="pane">
+      <!-- RANK 2 -->
+      <div class="tools">
+        <span class="tool on">⌖ Select <u>V</u></span><span class="tool">✋ Grab <u>G</u></span>
+        <span class="tool">⌶ Splice <u>C</u></span><span class="tool">⊢⊣ Trim <u>T</u></span>
+        <span class="tool">⌒ Fade <u>F</u></span>
+        <span class="hint">Snap 1/4 · G toggles</span>
+        <span class="tool" style="height:24px">− Zoom +</span>
+      </div>
+      <div class="autkey">
+        <b><i style="background:#fbbf24"></i> Volume</b>
+        <b><i style="background:#60a5fa"></i> Pan</b>
+        <span style="margin-left:auto">Drag a dot to move a keyframe · Alt-click to add · A toggles a track's lanes</span>
+      </div>
+      <div class="ruler" id="ruler"></div>
+      <div class="lanes" id="tracks"></div>
+    </div>
+
+    <div class="pane">
+      <div class="pbody"><div class="strips" id="mixer"></div></div>
+    </div>
+  </div>
+
+  <!-- ══ RANK 1 ══ -->
+  <div class="transport">
+    <div class="tleft">
+      <div class="mstack">
+        <span class="lbl">Peak</span><span class="big warn">-1.8</span>
+      </div>
+      <div class="mstack">
+        <span class="lbl">LUFS-I</span><span class="big">-16.2</span>
+      </div>
+      <div class="mrow">
+        <div class="vu" id="mL"></div><div class="vu" id="mR"></div>
+        <div style="display:flex;flex-direction:column;justify-content:space-between;height:44px;
+                    font-family:var(--mono);font-size:8px;color:var(--text-tertiary)">
+          <span>0</span><span>-12</span><span>-24</span><span>-60</span></div>
+      </div>
+    </div>
+
+    <div class="tcentre">
+      <span class="tbtn">⏮</span>
+      <span class="tbtn play">▶</span>
+      <span class="tbtn">⏹</span>
+      <span class="tbtn rec">●</span>
+      <div>
+        <div class="tc">00:00:12<span class="ms">.480</span></div>
+        <div class="tcsub">sel 00:04.120 &nbsp;·&nbsp; end 00:30.000</div>
+      </div>
+    </div>
+
+    <div class="tright">
+      <div class="mstack"><span class="lbl">Limiter</span>
+        <span class="big" style="font-size:15px">−1.0<span style="font-size:10px;color:var(--text-tertiary)"> dBTP</span></span></div>
+      <div class="mstack"><span class="lbl">Session</span>
+        <span class="big" style="font-size:15px;color:var(--text-secondary)">00:30.000</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="note">
+  <b>What the ranking changed.</b> The old top-left strip carried transport, BPM, zoom, FX, import,
+  search, session name, notes, history, export, verify, deck-send and VT in <em>one row at one size</em> —
+  twenty-odd controls ranked equally, which ranks nothing. Here the eye lands on three things without
+  searching: the green play button, the 34px timecode beside it, and the meters to its left. Everything
+  a producer touches once a session moved to the menubar.
+</div>
+
+<h2>Waveform rendering — what the canvas must draw</h2>
+<div class="two">
+  <div class="card"><h3>Today</h3>
+    <p>One peak polyline per clip from <code>extractPeaks()</code> at a fixed <b>2000 points</b>
+      regardless of length or zoom. Mono-summed, unfilled, no RMS. At high zoom it under-samples into
+      straight lines; over a long session it computes detail nobody sees.</p></div>
+  <div class="card"><h3>Proposed</h3>
+    <p><b>Per channel</b> — L above, R mirrored below — each pixel column drawing <b>min/max peak</b>
+      as a filled bar at full clip colour, with <b>RMS</b> overdrawn inside at ~55%. That two-layer
+      read is what makes a waveform look professional: transient envelope and perceived energy at once.</p></div>
+</div>
+<table>
+  <tr><th>Property</th><th>Today</th><th>Proposed</th></tr>
+  <tr><td>Resolution</td><td class="n">fixed 2000 pts</td><td class="y">1 column per device pixel, re-derived on zoom</td></tr>
+  <tr><td>Channels</td><td class="n">mono sum</td><td class="y">true stereo, mirrored</td></tr>
+  <tr><td>Layers</td><td class="n">peak only, stroked</td><td class="y">peak filled + RMS overlay</td></tr>
+  <tr><td>Cache</td><td class="n">recomputed per render</td><td class="y">mip pyramid per clip (÷2/level), picked by zoom</td></tr>
+  <tr><td>Draw</td><td class="p">SVG path</td><td class="y">canvas, <code>devicePixelRatio</code>-scaled, offscreen per clip</td></tr>
+</table>
+
+<h2>Against Adobe Audition</h2>
+<table>
+  <tr><th>Capability</th><th>Audition</th><th>Show+ today</th><th>Show+ proposed</th></tr>
+  <tr><td>Transport on its own bar, centred</td><td class="y">yes</td><td class="n">in a 20-control strip</td><td class="y">bottom centre, rank 1</td></tr>
+  <tr><td>Dockable panes, saved layouts</td><td class="y">yes</td><td class="n">fixed</td><td class="y">dockview — already shipped</td></tr>
+  <tr><td>Filled stereo peak+RMS waveform</td><td class="y">yes</td><td class="n">mono line</td><td class="y">spec above</td></tr>
+  <tr><td>Per-channel meters</td><td class="y">yes</td><td class="n">none</td><td class="y">every strip + every track</td></tr>
+  <tr><td>Master LUFS / true peak</td><td class="y">yes</td><td class="n">none</td><td class="y">in the transport bar</td></tr>
+  <tr><td>Channel-strip mixer</td><td class="y">yes</td><td class="p">inline sliders</td><td class="y">real strips</td></tr>
+  <tr><td>Clip gain envelope</td><td class="y">yes</td><td class="n">none</td><td class="p">Phase 3</td></tr>
+  <tr><td>Spectral repair</td><td class="y">yes</td><td class="n">none</td><td class="n">not planned</td></tr>
+  <tr><td>Send to air / jingle pool</td><td class="n">no</td><td class="y">yes</td><td class="y">yes — what Audition cannot do</td></tr>
+</table>
+
+<div class="note">
+  <b>No Audition screenshot is shown, deliberately.</b> I cannot capture one, and a fabricated
+  "reference" beside a real proposal is the wrong thing to judge against. Put a real Audition window
+  next to this page — the transport-at-the-bottom claim checks itself in seconds.
+</div>
+</div>
+
+<script>
+const R=(s=>()=>((s=Math.imul(s^s>>>15,1|s))>>>0)/4294967296)(20260816);
+const C=['#8868D8','#34d399','#fbbf24','#f87171'];
+// Desaturated for FILLS. Track identity survives; the screen stops reading as candy.
+const mute=(hex,k=.62,grey=[122,122,148])=>{const n=parseInt(hex.slice(1),16);
+ const c=[n>>16&255,n>>8&255,n&255].map((v,i)=>Math.round(v*(1-k)+grey[i]*k));
+ return '#'+c.map(v=>v.toString(16).padStart(2,'0')).join('')};
+const MUTED=C.map(c=>mute(c));
+
+// ── EFFECTS RACK, docked left. Per-track slots, stacked, each with a bypass toggle. ──────────
+const SLOT=(name,pre,on,pars)=>`<div class="slot">
+  <div class="slotrow"><span class="byp ${on?'on':''}">${on?'●':'○'}</span>
+    <span class="slotname">${name}</span><span class="slotpre">${pre}</span></div>
+  ${pars.map(([k,pct,v,warn])=>`<div class="par"><span class="k">${k}</span>
+    <span class="slider"><i style="left:${pct}%${warn?';background:var(--accent-amber)':''}"></i></span>
+    <span class="v"${warn?' style="color:var(--accent-amber)"':''}>${v}</span></div>`).join('')}
+</div>`;
+document.getElementById('fx').innerHTML=
+ `<div class="fxhdr"><span class="tdot" style="background:${C[0]}"></span>
+    <span class="who">VO Lead</span><span class="role">Dialogue</span></div>`
+ + SLOT('EQ — Broadcast VO','Preset ▾',true,[['Low cut',18,'80 Hz'],['Presence',62,'+3.5 dB'],['Air',74,'+2.0 dB']])
+ + SLOT('Compressor','VO Tight ▾',true,[['Thresh',38,'−18.0'],['Ratio',52,'4.0:1'],['Attack',22,'12 ms'],['GR',30,'−4.2',1]])
+ + SLOT('De-esser','Default ▾',false,[['Freq',66,'6.4 kHz'],['Amount',30,'−3 dB']])
+ + `<div class="slot empty">+ Insert effect…</div>`
+ + `<div class="fxhdr" style="margin-top:var(--s-4)"><span class="tdot" style="background:${C[1]}"></span>
+     <span class="who">Music Bed</span><span class="role">Music</span></div>`
+ + SLOT('EQ — Duck shelf','Bed ▾',true,[['HF shelf',44,'−2.5 dB']])
+ + `<div class="slot empty">+ Insert effect…</div>`;
+
+document.getElementById('ruler').innerHTML=Array.from({length:14},(_,i)=>
+ `<span style="left:${142+i*80}px">0:${String(i*2).padStart(2,'0')}</span>`).join('');
+
+function wave(cv,color,dens){
+ const dpr=devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
+ if(!w||!h)return;
+ cv.width=w*dpr;cv.height=h*dpr;const x=cv.getContext('2d');x.scale(dpr,dpr);
+ const mid=h/2;
+ for(let i=0;i<w;i++){
+  const t=i/w,env=Math.min(1,(Math.sin(t*Math.PI)*.7+.5))*dens;
+  const pk=env*(.45+R()*.55),rms=pk*(.45+R()*.2);
+  x.globalAlpha=1;x.fillStyle=color;
+  x.fillRect(i,mid-pk*mid,1,pk*mid);
+  x.fillRect(i,mid,1,pk*mid*.92);
+  x.globalAlpha=.55;x.fillStyle='#fff';
+  x.fillRect(i,mid-rms*mid,1,rms*mid);
+  x.fillRect(i,mid,1,rms*mid*.92);
+ }
+ x.globalAlpha=1;x.strokeStyle='rgba(255,255,255,.14)';
+ x.beginPath();x.moveTo(0,mid);x.lineTo(w,mid);x.stroke();
+}
+
+// [x, width, name, density, volumeEnvelope, panEnvelope]  — envelopes are [t,v] in 0..1
+const FLAT=[[0,.28],[1,.28]];
+// per-track header level + pan  [volPct, volLabel, panPct, panLabel]
+const HDR=[[.86,'-2.5',.50,'C'],[.55,'-8.0',.42,'L12'],[.62,'-6.0',.58,'R08'],[.70,'-4.5',.50,'C']];
+// THE DAILY EDIT: the bed sits at 0 dB, dives under the VO (which ends at x=300 of 760 = t .39),
+// holds down through the read, then recovers. This is the curve a producer draws every session.
+const DUCK=[[0,.20],[.03,.20],[.07,.66],[.36,.66],[.42,.20],[.95,.20],[1,.30]];
+const CTR=[[0,.5],[1,.5]];                       // pan centred — still a live, grabbable lane
+const TR=[['VO Lead',0,[[0,300,'VO — Halloween tag',.95,[[0,.24],[.12,.24],[.5,.30],[1,.30]],CTR,10,12]]],
+ ['Music Bed',1,[[0,760,'Bed — Dark Synth',.55,DUCK,[[0,.5],[.4,.5],[.7,.36],[1,.36]],20,26]]],
+ ['SFX',2,[[120,90,'Thunder',.8,FLAT,[[0,.44],[1,.44]],8,10],
+           [430,70,'Wolf',.7,FLAT,[[0,.58],[1,.58]],6,8],
+           [600,60,'Creak',.6,FLAT,CTR,6,8]]],
+ ['Sweeper',3,[[640,120,'OV ID',.85,[[0,.26],[.6,.26],[1,.44]],[[0,.5],[.55,.5],[1,.62]],10,14]]]];
+document.getElementById('tracks').innerHTML=TR.map(([n,ci,clips])=>`<div class="trk">
+  <div class="thead">
+    <div class="tname"><span class="tdot" style="background:${C[ci]}"></span>${n}</div>
+    <div class="tbtns"><span class="mini">M</span><span class="mini on">S</span>
+      <span class="mini${ci===0?' rec':''}">●</span><span class="mini">FX</span>
+      <span class="mini${ci===1?' aut':''}" title="Automation lanes">A</span></div>
+    <div class="hctl"><span style="font-size:8px;color:var(--text-tertiary)">VOL</span>
+      <span class="hslider"><i style="left:${Math.round(HDR[ci][0]*100)}%"></i></span>
+      <span class="hval">${HDR[ci][1]}</span></div>
+    <div class="hctl" style="margin-top:0"><span style="font-size:8px;color:var(--text-tertiary)">PAN</span>
+      <span class="hslider pan"><i style="left:${Math.round(HDR[ci][2]*100)}%"></i></span>
+      <span class="hval">${HDR[ci][3]}</span></div>
+    <div class="tmeter" style="margin-top:var(--s-2)"></div></div>
+  <div class="tlane">${clips.map(([l,w,t,d,v,p,fi=14,fo=18])=>
+   `<div class="clip" style="left:${l}px;width:${w}px">
+      <div class="cliphead" style="background:${C[ci]}"></div>
+      <canvas data-d="${d}" data-c="${MUTED[ci]}" data-vol='${JSON.stringify(v||[])}'
+              data-pan='${JSON.stringify(p||[])}'
+              style="width:100%;height:calc(100% - 3px);display:block"></canvas>
+      <span class="clipname">${t}</span>
+      <span class="fadewedge" style="left:0;width:${fi}px;
+        background:linear-gradient(to right,rgb(13 13 15 / .82),transparent)"></span>
+      <span class="fadewedge" style="right:0;width:${fo}px;
+        background:linear-gradient(to left,rgb(13 13 15 / .82),transparent)"></span>
+      <span class="edge l"></span><span class="edge r"></span>
+      <span class="fadeh" style="left:${fi-3}px"></span><span class="fadeh" style="right:${fo-3}px"></span>
+    </div>`).join('')}</div></div>`).join('')
+ +'<div class="playhead" style="left:402px"></div>';
+
+document.querySelectorAll('.tmeter').forEach(m=>m.innerHTML=Array.from({length:12},(_,i)=>{
+ const on=i<7+Math.floor(R()*3);
+ return `<i style="width:3px;height:${3+i*.5}px;display:block;background:${on?(i>9?'#fbbf24':'#34d399'):'#1e1e2e'}"></i>`}).join(''));
+
+const MX=[['VO Lead',.86,-2.5],['Music Bed',.55,-8.0],['SFX',.62,-6.0],['Sweeper',.7,-4.5]];
+const bar=l=>`<i style="height:${Math.round(l*70*(.85+R()*.15))}px"></i>`;
+document.getElementById('mixer').innerHTML=MX.map(([n,l,db])=>`
+ <div class="strip"><span class="sname">${n}</span><span class="knob"></span>
+  <div style="display:flex;gap:var(--s-2);flex:1;align-items:stretch">
+   <span class="fader"><i class="cap" style="bottom:${l*78}%"></i></span>
+   <span class="vu" style="height:70px">${bar(l)}${bar(l)}</span></div>
+  <span class="db">${db.toFixed(1)}</span></div>`).join('')
+ +`<div class="strip master"><span class="sname" style="color:var(--accent-cyan)">MASTER</span>
+   <span class="knob"></span>
+   <div style="display:flex;gap:var(--s-2);flex:1;align-items:stretch">
+    <span class="fader"><i class="cap" style="bottom:72%"></i></span>
+    <span class="vu" style="height:70px">${bar(.9)}${bar(.87)}</span></div>
+   <span class="db">0.0</span></div>`;
+
+['mL','mR'].forEach((id,k)=>document.getElementById(id).innerHTML=
+ `<i style="height:${k?40:44}px;width:9px"></i>`);
+
+// Envelope: a grabbable line with keyframe dots, drawn OVER the waveform — Audition's model,
+// where automation belongs to the clip you are looking at, not to a widget somewhere else.
+function envelope(cv,pts,color){
+ if(!pts||!pts.length)return;
+ const dpr=devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
+ const x=cv.getContext('2d');x.save();x.scale(dpr,dpr);
+ const X=t=>t*w, Y=v=>h-v*h;
+ x.beginPath();pts.forEach(([t,v],i)=>i?x.lineTo(X(t),Y(v)):x.moveTo(X(t),Y(v)));
+ x.strokeStyle=color;x.lineWidth=1.5;x.shadowColor='#000';x.shadowBlur=2;x.stroke();
+ x.shadowBlur=0;
+ pts.forEach(([t,v])=>{const px=X(t),py=Y(v);
+  x.fillStyle=color;x.fillRect(px-3,py-3,6,6);
+  x.fillStyle='#0d0d0f';x.fillRect(px-1.5,py-1.5,3,3);});
+ x.restore();
+}
+requestAnimationFrame(()=>document.querySelectorAll('.clip canvas').forEach(c=>{
+ wave(c,c.dataset.c,+c.dataset.d);
+ envelope(c,JSON.parse(c.dataset.pan||'[]'),'#60a5fa');
+ envelope(c,JSON.parse(c.dataset.vol||'[]'),'#fbbf24');
+}));
+
+
+
+
+</script>
