@@ -268,6 +268,32 @@ module.exports = function buildHandlers(ipcRenderer) {
     listBySong:  (songIds, stationId) => ipcRenderer.invoke('song_metadata_values:list-by-song', songIds, stationId),
     upsert:      (payload)         => ipcRenderer.invoke('song_metadata_values:upsert',        payload),
   },
+  // ── THE UNIFIED LIBRARY (v50) ────────────────────────────────────────────────────────────────
+  // Install-scoped: an asset is a FILE and every station draws from one shared library, so none of
+  // these take a stationId. The per-station halves — traffic terms, programming treatment, metadata
+  // overrides — are separate calls that do.
+  //
+  // NOTHING IN THE UI READS THESE YET. v50 is additive; `songs` and `spots` are still authoritative.
+  libraryAsset: {
+    list:    (opts)         => ipcRenderer.invoke('library_asset:list', opts),
+    getById: (uuid)         => ipcRenderer.invoke('library_asset:get-by-id', uuid),
+    counts:  ()             => ipcRenderer.invoke('library_asset:counts'),
+    create:  (payload)      => ipcRenderer.invoke('library_asset:create', payload),
+    update:  (uuid, patch)  => ipcRenderer.invoke('library_asset:update', uuid, patch),
+    delete:  (uuid)         => ipcRenderer.invoke('library_asset:delete', uuid),
+  },
+  // Traffic terms are PER STATION — the same audio file can be sold to two stations differently.
+  assetSpotMeta: {
+    list:    (stationId, opts)  => ipcRenderer.invoke('asset_spot_meta:list', stationId, opts),
+    upsert:  (payload)          => ipcRenderer.invoke('asset_spot_meta:upsert', payload),
+    delete:  (uuid, stationId)  => ipcRenderer.invoke('asset_spot_meta:delete', uuid, stationId),
+  },
+  assetSweeperMeta: {
+    list:    (opts)     => ipcRenderer.invoke('asset_sweeper_meta:list', opts),
+    upsert:  (payload)  => ipcRenderer.invoke('asset_sweeper_meta:upsert', payload),
+    delete:  (uuid)     => ipcRenderer.invoke('asset_sweeper_meta:delete', uuid),
+  },
+
   songs: {
     list:                   (opts)           => ipcRenderer.invoke('songs:list',                       opts),
     getById:                (uuid)           => ipcRenderer.invoke('songs:get-by-id',                  uuid),

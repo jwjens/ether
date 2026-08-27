@@ -14,6 +14,8 @@
 const SYNCED_TABLES = [
   'albums',
   'announcement_schedule',
+  'asset_spot_meta',
+  'asset_sweeper_meta',
   'announcements',
   'artists',
   'cart_slots',
@@ -27,6 +29,7 @@ const SYNCED_TABLES = [
   'install_config_kv',
   'install_secrets_kv',
   'jingle_categories',
+  'library_asset',
   'liner_cards',
   'macros',
   'metadata_definitions',
@@ -82,7 +85,13 @@ const REGISTRY = {
     tableName: 'announcement_schedule',
     primaryKey: ['id'],
     scope: 'station',
-    refs: { station_id: 'stations', announcement_uuid: 'announcements' },
+    // NO REF FOR announcement_uuid, deliberately. `refs` is UUID-IDENTITY REMAPPING: it maps a
+    // column holding a LOCAL INTEGER ID to the table it points at, so the sender attaches the
+    // parent's uuid (_enrichWire → SELECT ... WHERE id = ?) and the receiver resolves it back to ITS
+    // OWN local id (_remapRefs → row[col] = localId). A UUID column needs none of that — a uuid is
+    // globally stable, which is exactly why it was chosen. Listing one here made every row look
+    // dangling to rebaselineScan (SELECT 1 FROM announcements WHERE id = '<uuid>' never matches).
+    refs: { station_id: 'stations' },
     columns: {
       id:                'scalar',
       station_id:        'scalar',
@@ -99,6 +108,69 @@ const REGISTRY = {
       created_at:        'scalar',
       updated_at:        'scalar',
       deleted_at:        'scalar',
+    },
+  },
+
+  // ── THE UNIFIED LIBRARY (v50) ────────────────────────────────────────────────────────────────
+  // docs/library-asset-build-plan-2026-08-26.md
+  //
+  // INSTALL-SCOPED, like `songs`: an asset is a FILE, and every station draws from one shared
+  // library. NO station_id — adding one would break that and is prohibited by the design.
+  //
+  // `type` is a registry code with NO CHECK constraint in the schema, so a type this build has never
+  // seen still syncs, still stores and still displays (normalizeType degrades it rather than dropping
+  // the row). A newer peer's asset must never vanish here.
+  //
+  // No `refs`: install-scoped tables are skipped by _enrichWire and _remapRefs entirely, and the
+  // columns that would want remapping (artist_id, album_id) point at install-scoped tables whose ids
+  // are already the same on every install of this account.
+  library_asset: {
+    tableName: 'library_asset',
+    primaryKey: ['id'],
+    scope: 'install',
+    columns: {
+      id: 'scalar', uuid: 'scalar', type: 'scalar',
+      title: 'scalar', artist_id: 'scalar', album_id: 'scalar', genre: 'scalar',
+      file_path: 'blob-ref', file_key: 'scalar', duration_ms: 'scalar',
+      bpm: 'scalar', energy: 'scalar', mood: 'scalar', gender: 'scalar',
+      is_explicit: 'scalar', spotify_uri: 'scalar', cart_id: 'scalar',
+      cue_in: 'scalar', cue_out: 'scalar', cue_in_ms: 'scalar', cue_out_ms: 'scalar',
+      intro_end: 'scalar', outro_start: 'scalar', intro_end_ms: 'scalar', outro_start_ms: 'scalar',
+      has_intro: 'scalar', intro_version_path: 'scalar',
+      lufs_measured: 'scalar', peak_db: 'scalar', gain_db: 'scalar', is_processed: 'scalar',
+      last_played_at: 'scalar', play_count: 'scalar',
+      raw_metadata: 'scalar', r2_uploaded_at: 'scalar',
+      created_at: 'scalar', updated_at: 'scalar', deleted_at: 'scalar',
+    },
+  },
+
+  // TRAFFIC DETAIL — STATION-SCOPED, because the same audio file can be sold to two stations on
+  // different terms. asset_uuid is a UUID and therefore carries NO ref (see the note on
+  // announcement_schedule above); spot_category_id IS a local integer id and does.
+  asset_spot_meta: {
+    tableName: 'asset_spot_meta',
+    primaryKey: ['id'],
+    scope: 'station',
+    refs: { station_id: 'stations', spot_category_id: 'spot_categories' },
+    columns: {
+      id: 'scalar', asset_uuid: 'scalar', station_id: 'scalar',
+      spot_type: 'scalar', advertiser: 'scalar', agency: 'scalar',
+      isci_code: 'scalar', cart_number: 'scalar', spot_category_id: 'scalar',
+      start_date: 'scalar', end_date: 'scalar', max_plays_day: 'scalar',
+      play_count: 'scalar', last_played_at: 'scalar', length_sec: 'scalar',
+      notes: 'scalar', art_image: 'scalar', is_active: 'scalar',
+      uuid: 'scalar', created_at: 'scalar', updated_at: 'scalar', deleted_at: 'scalar',
+    },
+  },
+
+  // SWEEPER DETAIL — install-scoped, keyed by the asset alone.
+  asset_sweeper_meta: {
+    tableName: 'asset_sweeper_meta',
+    primaryKey: ['id'],
+    scope: 'install',
+    columns: {
+      id: 'scalar', asset_uuid: 'scalar', sweeper_category_id: 'scalar',
+      uuid: 'scalar', created_at: 'scalar', updated_at: 'scalar', deleted_at: 'scalar',
     },
   },
 
@@ -785,6 +857,8 @@ const REGISTRY = {
       uuid:                'scalar',
       station_id:          'scalar',
       song_id:             'scalar',
+      // v50: the same overlay, widened to any asset type. A UUID, so no ref.
+      asset_uuid:          'scalar',
       definition_id:       'scalar',
       value_text:          'scalar',
       value_vocabulary_id: 'scalar',
@@ -915,6 +989,8 @@ const REGISTRY = {
       id:              'scalar',
       uuid:            'scalar',
       song_id:         'scalar',
+      // v50: the same overlay, widened to any asset type. A UUID, so no ref.
+      asset_uuid:      'scalar',
       station_id:      'scalar',
       category_id:     'scalar',
       energy:          'scalar',

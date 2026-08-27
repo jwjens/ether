@@ -11,6 +11,8 @@ const { installArtists } = require('./artists');
 const { installCartSlots } = require('./cart_slots');
 const { installCategories } = require('./categories');
 const { installAnnouncementSchedule } = require('./announcement_schedule');
+const { installLibraryAsset } = require('./library_asset');
+const { installAssetMeta } = require('./asset_meta');
 const { installClockBreaks } = require('./clock_breaks');
 const { installClockSlots } = require('./clock_slots');
 const { installClocks } = require('./clocks');
@@ -55,6 +57,8 @@ function installAll(ipcMain, db) {
   installCartSlots(ipcMain, db);
   installCategories(ipcMain, db);
   installAnnouncementSchedule(ipcMain, db);
+  installLibraryAsset(ipcMain, db);
+  installAssetMeta(ipcMain, db);
   installClockBreaks(ipcMain, db);
   installClockSlots(ipcMain, db);
   installClocks(ipcMain, db);
