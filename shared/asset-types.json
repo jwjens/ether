@@ -1,0 +1,180 @@
+{
+  "$comment": [
+    "THE ASSET TYPE REGISTRY — the single definition of what kinds of thing this product can air.",
+    "docs/asset-type-fixed-vs-configurable-2026-08-26.md · docs/library-asset-build-plan-2026-08-26.md",
+    "",
+    "ONE FILE, TWO LOADERS. src/lib/assetTypes.ts (renderer) and electron/asset-types.js (main +",
+    "daemon) both read THIS data. Never two definitions — a type that existed in one and not the other",
+    "is how a row becomes invisible to half the product.",
+    "",
+    "STRUCTURAL fields sit at the top level: code, badge, colours, commercial, metaTable. They are the",
+    "same on every station and are NOT overridable — `logsAs` is the code itself, and the as-run record",
+    "must mean the same thing everywhere or no cross-station report can be trusted.",
+    "",
+    "`defaults` are OPERATOR-CONFIGURABLE per station, overridden in station_config_kv under",
+    "asset_type.<CODE>.<behaviour>. The registry says how a type behaves by default; the operator",
+    "decides how THEIR station runs. An absent override means 'use the default' — never false.",
+    "",
+    "DUCKING IS DELIBERATELY ABSENT. Duck is a function of the CHANNEL/DECK, available to anything",
+    "loaded on it including a live mic. Nothing here may override, replace, gate or pre-empt it.",
+    "",
+    "ADDING A TYPE = ADDING AN OBJECT HERE. No migration (library_asset.type has no CHECK constraint),",
+    "no edits to rotation, the scheduler, the log generator or the UI. That is the acceptance criterion,",
+    "and assetTypes.test.ts asserts it by registering a fake type and checking it appears everywhere."
+  ],
+
+  "types": [
+    {
+      "code": "SONG",
+      "badge": "",
+      "color": "var(--text-tertiary)",
+      "bg": "transparent",
+      "border": "transparent",
+      "commercial": false,
+      "metaTable": null,
+      "defaults": {
+        "label": "Songs", "labelOne": "Song",
+        "rotationEligible": true,
+        "scheduler": "rotation",
+        "bus": "rotation-deck",
+        "honorsSeparation": true,
+        "countsAsMusic": true,
+        "showAsTab": true,
+        "sortOrder": 10
+      }
+    },
+    {
+      "code": "SPOT",
+      "badge": "SPOT",
+      "color": "#f59e0b",
+      "bg": "rgba(245, 158, 11, 0.14)",
+      "border": "rgba(245, 158, 11, 0.45)",
+      "commercial": true,
+      "metaTable": "asset_spot_meta",
+      "defaults": {
+        "label": "Spots", "labelOne": "Spot",
+        "rotationEligible": false,
+        "scheduler": "traffic-break",
+        "bus": "rotation-deck",
+        "honorsSeparation": false,
+        "countsAsMusic": false,
+        "showAsTab": true,
+        "sortOrder": 20
+      }
+    },
+    {
+      "code": "PROMO",
+      "badge": "PROMO",
+      "color": "#fb923c",
+      "bg": "rgba(251, 146, 60, 0.14)",
+      "border": "rgba(251, 146, 60, 0.45)",
+      "commercial": false,
+      "metaTable": "asset_spot_meta",
+      "defaults": {
+        "label": "Promos", "labelOne": "Promo",
+        "rotationEligible": false,
+        "scheduler": "traffic-break",
+        "bus": "rotation-deck",
+        "honorsSeparation": false,
+        "countsAsMusic": false,
+        "showAsTab": true,
+        "sortOrder": 25
+      }
+    },
+    {
+      "code": "SWEEPER",
+      "badge": "SWP",
+      "color": "#4f46e5",
+      "bg": "rgba(79, 70, 229, 0.14)",
+      "border": "rgba(79, 70, 229, 0.5)",
+      "commercial": false,
+      "metaTable": "asset_sweeper_meta",
+      "defaults": {
+        "label": "Sweepers", "labelOne": "Sweeper",
+        "rotationEligible": false,
+        "scheduler": "cadence",
+        "bus": "cart-overlay",
+        "honorsSeparation": false,
+        "countsAsMusic": false,
+        "showAsTab": true,
+        "sortOrder": 30
+      }
+    },
+    {
+      "code": "ANNOUNCEMENT",
+      "badge": "ANN",
+      "color": "var(--accent-cyan)",
+      "bg": "rgb(from var(--accent-cyan) r g b / 0.14)",
+      "border": "rgb(from var(--accent-cyan) r g b / 0.45)",
+      "commercial": false,
+      "metaTable": null,
+      "defaults": {
+        "label": "Announcements", "labelOne": "Announcement",
+        "rotationEligible": false,
+        "scheduler": "date-list",
+        "bus": "source-channel",
+        "honorsSeparation": false,
+        "countsAsMusic": false,
+        "showAsTab": true,
+        "sortOrder": 40
+      }
+    },
+    {
+      "code": "VOICE_TRACK",
+      "badge": "VT",
+      "color": "#a78bfa",
+      "bg": "rgba(167, 139, 250, 0.14)",
+      "border": "rgba(167, 139, 250, 0.45)",
+      "commercial": false,
+      "metaTable": null,
+      "defaults": {
+        "label": "Voice Tracks", "labelOne": "Voice Track",
+        "rotationEligible": false,
+        "scheduler": "log-element",
+        "bus": "rotation-deck",
+        "honorsSeparation": false,
+        "countsAsMusic": false,
+        "showAsTab": true,
+        "sortOrder": 50
+      }
+    },
+    {
+      "code": "BED",
+      "badge": "BED",
+      "color": "#34d399",
+      "bg": "rgba(52, 211, 153, 0.14)",
+      "border": "rgba(52, 211, 153, 0.45)",
+      "commercial": false,
+      "metaTable": null,
+      "defaults": {
+        "label": "Beds", "labelOne": "Bed",
+        "rotationEligible": false,
+        "scheduler": "manual",
+        "bus": "source-channel",
+        "honorsSeparation": false,
+        "countsAsMusic": false,
+        "showAsTab": true,
+        "sortOrder": 60
+      }
+    },
+    {
+      "code": "SFX",
+      "badge": "SFX",
+      "color": "#f472b6",
+      "bg": "rgba(244, 114, 182, 0.14)",
+      "border": "rgba(244, 114, 182, 0.45)",
+      "commercial": false,
+      "metaTable": null,
+      "defaults": {
+        "label": "Sound Effects", "labelOne": "Sound Effect",
+        "rotationEligible": false,
+        "scheduler": "manual",
+        "bus": "source-channel",
+        "honorsSeparation": false,
+        "countsAsMusic": false,
+        "showAsTab": true,
+        "sortOrder": 70
+      }
+    }
+  ]
+}
