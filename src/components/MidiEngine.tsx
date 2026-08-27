@@ -81,7 +81,7 @@ export const MIDI_ACTIONS: { category: string; actions: { id: string; label: str
     category: "Master",
     actions: [
       { id: "master_volume",  label: "Master Volume",   isFader: true },
-      { id: "cart_volume",    label: "Jingles/CART Volume", isFader: true },
+      { id: "cart_volume",    label: "Sweepers/CART Volume", isFader: true },
       { id: "crossfader",     label: "Crossfader A↔B",  isFader: true },
       { id: "skip_next",      label: "Skip to Next",    isFader: false },
       { id: "auto_toggle",    label: "Auto-Advance Toggle", isFader: false },

@@ -532,7 +532,7 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
                 const scheduled = jingleOverlay.state === "SCHEDULED";
                 // SCHEDULED (read-ahead, from song start) = grey · ARMED (seam imminent) = white · FIRING = yellow.
                 const col = firing ? "#ffe93b" : scheduled ? "#8b909b" : "#ffffff";
-                const tag = jingleOverlay.contentClass === "SWP" ? "SWP" : "JIN";
+                const tag = "SWP";   // v52: one imaging class
                 const jdur = jingleOverlay.jinDurSec || 0;
                 return (
                   <div className={firing ? "jingle-blink" : ""} style={{

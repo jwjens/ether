@@ -46,7 +46,7 @@ function jingleCategoriesCreate(db, payload) {
   const uuid = payload.uuid ?? crypto.randomUUID();
   const row  = {
     ...payload,
-    type:            payload.type === 'SWP' ? 'SWP' : 'JIN',
+    type:            'SWP',   // v52: one imaging class, so one pool type. Never writes the retired 'JIN'.
     lead_in_sec:     payload.lead_in_sec ?? 5,
     underlap_sec:    payload.underlap_sec ?? 2,
     cadence_every_n: payload.cadence_every_n ?? 4,

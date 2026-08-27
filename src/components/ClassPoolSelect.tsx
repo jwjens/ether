@@ -19,28 +19,20 @@ export function useImagingPools(stationId: number): ImagingPool[] {
 }
 
 export default function ClassPoolSelect({ cls, poolId, pools, onCls, onPool, compact }: {
-  cls: "JIN" | "SWP";
+  cls: "SWP";
   poolId: number | null;
   pools: ImagingPool[];
-  onCls: (c: "JIN" | "SWP") => void;
+  onCls: (c: "SWP") => void;
   onPool: (id: number | null) => void;
   compact?: boolean;
 }) {
-  const tabPools = pools.filter(p => (p.type || "JIN") === cls);
+  // v52: one imaging class, so every pool is a sweeper pool. The old JIN/SWP toggle is gone —
+  // a two-button choice with one possible answer is a control that cannot be used wrongly only
+  // because it cannot be used at all. `cls` is kept in the signature so callers are unchanged.
+  const tabPools = pools;
   const pad = compact ? "4px 10px" : "5px 12px";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-      <div style={{ display: "flex", gap: 4 }}>
-        {(["JIN", "SWP"] as const).map(c => (
-          <button key={c} onClick={() => { onCls(c); onPool(null); }} style={{
-            padding: pad, borderRadius: 4,
-            border: `1px solid ${cls === c ? (c === "SWP" ? SWP_INDIGO : JIN_TEAL) : "var(--border-primary)"}`,
-            background: cls === c ? `${c === "SWP" ? SWP_INDIGO : JIN_TEAL}22` : "transparent",
-            color: cls === c ? (c === "SWP" ? SWP_INDIGO : JIN_TEAL) : "var(--text-secondary)",
-            fontSize: 12, fontWeight: 700, cursor: "pointer",
-          }}>{c === "SWP" ? "Sweepers" : "Jingles"}</button>
-        ))}
-      </div>
       <label style={{ fontSize: 12, color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: 6 }}>
         Pool
         <select value={poolId ?? ""} onChange={e => onPool(e.target.value ? Number(e.target.value) : null)}

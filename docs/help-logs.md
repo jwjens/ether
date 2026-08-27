@@ -41,7 +41,7 @@ An empty cell means Ether does not know, and it will not invent a value:
 | Column | Empty when |
 |---|---|
 | **Advertiser, ISCI, Cart Number** | The spot's record has no such value. Fill them in on **Spots & Promos** and every export after that carries them. |
-| **Category** | The item is not a library song in a category — a jingle, a sweeper or a cart. |
+| **Category** | The item is not a library song in a category — a sweeper, a sweeper or a cart. |
 | **End Time, Duration** | The length was never recorded. These stay blank rather than showing `0:00`, which would claim a zero-length airing. |
 
 > **If ISCI and Cart Number are empty across the board**, nothing is broken — those fields have not

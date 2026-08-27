@@ -72,7 +72,7 @@ function getMondayOfWeek(offset: number): Date {
 function typeOf(r: { content_class?: string | null; channel?: string | null; song_id: number | null }):
   { label: string; color: string } {
   const cc = String(r.content_class || "").toUpperCase();
-  if (cc === "JIN") return { label: "Jingle", color: "#6f8fae" };
+  if (cc === "JIN") return { label: "Sweeper", color: "#7d8fa8" };   // pre-v52 rows still say JIN
   if (cc === "SWP") return { label: "Sweeper", color: "#7d8fa8" };
   if (cc === "SPOT") return { label: "Spot", color: "#b39445" };
   if (cc === "CART") return { label: "Cart", color: "#8f7fae" };

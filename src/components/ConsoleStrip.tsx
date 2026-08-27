@@ -36,7 +36,7 @@ interface Props {
   role?: "playing" | "next" | "third";
   /** JINGLES overlay v1: 'ARMED' (white) or 'FIRING' (yellow) when a jingle bridges this deck's seam. */
   jingle?: string | null;
-  /** Overlay class ('JIN' | 'SWP') so the indicator names what's armed/firing (v2). */
+  /** Overlay class ('SWP') so the indicator names what's armed/firing (v2). */
   jingleClass?: string | null;
 }
 

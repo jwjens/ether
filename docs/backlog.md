@@ -565,3 +565,47 @@ contributor to the sync journal** — the next backlog driver, exactly where gen
 
 **Not investigated.** Finding the writer means tracing `stationConfigKv.upsertByKey` callers and
 whatever loop is invoking one on a timer. Filed rather than chased, per the ruling that closed A.
+
+---
+
+## Unified library UI — the `library_asset`-backed grid (FILED 2026-08-27, not started)
+
+`docs/library-current-state.md` is the source of truth for this arc.
+
+**What is done:** the DATA is unified. `library_asset` holds every non-music element type
+(SWEEPER=64, ANNOUNCEMENT=5, SPOT=3), each keyed to the table that owns it, with a writer keeping
+announcements in step. Music stays in `songs`, authoritative and untouched.
+
+**What is NOT done:** the INTERFACE. There are still four separate surfaces — a music Library over
+`songs`, plus Spots, Sweepers and Announcements panels that each query one type behind the scenes.
+RCS has one Library module with a type filter and everything visible together; Ether does not.
+
+**Concretely, the gap the operator sees:** announcements cannot appear in the Library at all,
+because the Library reads `songs` and announcements have never been in `songs`. The content-class
+filter added on 2026-08-27 improves the music grid but cannot close this — it can only offer what
+is already in `songs`.
+
+**Size:** `LibraryPanel` is `src/App.tsx:4785–6086`, roughly 1,300 lines and deeply song-shaped —
+load-to-deck, cue editor, category assignment and rotation eligibility all assume a `SongRow`.
+Making it read `library_asset` means a type-aware path for every row action (what does "load to
+deck" mean for an announcement? what does the cue editor do with a spot?). This is a rework of that
+panel, not a filter bolted onto it. Ruled: file, do not build.
+
+## Deep sweeper rename — JIN→SWP (FILED 2026-08-27, not started)
+
+The operator-facing feature is now called **Sweepers** (bottom-bar button, MIDI fader label, panel
+header). What was deliberately NOT renamed, and why:
+
+- **The JIN vs SWP tab split** inside the panel (`JinglesPanel.tsx:193`, `ClassPoolSelect.tsx:41`).
+  These name two distinct content classes that both exist in the model. Renaming both to "Sweepers"
+  gives the panel two identically-named tabs. Note the live data: `songs` JIN=64, **SWP=0** — every
+  item is JIN and the SWEEPERS tab is empty, so the split may be vestigial. Deciding that is a
+  design question, not a label change.
+- **The data and its history.** A JIN→SWP rename rewrites `generated_schedule` (46,349 JIN rows) and
+  `play_log` (16,336 JIN rows), plus `jingle_categories` (4 rows, all type=JIN).
+- **The code surface:** 177 `'JIN'` literals, 136 `jingle_categories` refs, 73 `jingle_category_id`
+  refs, 106 in engine/daemon, 51 in sync handlers, 8 IPC channels, 9 shipped migrations,
+  13 help docs.
+
+This belongs with the sweeper redesign (`docs/sweepers-rcs-model-design-2026-08-22.md`), not as a
+standalone rename.

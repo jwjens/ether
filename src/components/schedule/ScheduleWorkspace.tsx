@@ -36,7 +36,7 @@ import { ShowsTab } from "../scheduler/ShowsTab";
 import { ClocksTab } from "../scheduler/ClocksTab";
 import { CategoriesTab } from "../scheduler/CategoriesTab";
 import Spots from "../Spots";
-import JinglesPanel from "../JinglesPanel";
+import SweepersPanel from "../SweepersPanel";
 import RotationAnalytics from "../RotationAnalytics";
 import BroadcastCalendar from "../BroadcastCalendar";
 import Logs from "../Logs";
@@ -148,7 +148,7 @@ const components = {
     if (!hub.stationId) return <PaneFrame><div style={{ color: "var(--text-tertiary)", fontSize: "var(--t-body)" }}>No station selected.</div></PaneFrame>;
     return (
       <PaneFrame>
-        <JinglesPanel stationId={hub.stationId} onMutated={hub.onMutated} />
+        <SweepersPanel stationId={hub.stationId} onMutated={hub.onMutated} />
       </PaneFrame>
     );
   },

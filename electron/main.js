@@ -7881,7 +7881,7 @@ function _placeJingles(db, stationId, rows) {
   let stmtAssign, stmtItem, stmtPoolType, stmtPool;
   try {
     stmtAssign = db.prepare("SELECT overlay_kind, overlay_song_id, overlay_category_id, overlay_lead_in_sec, overlay_underlap_sec, overlay_active_hours FROM categories WHERE id = ?");
-    stmtItem = db.prepare("SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.duration_ms, s.content_class FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ? AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND s.content_class IN ('JIN','SWP')");
+    stmtItem = db.prepare("SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.duration_ms, s.content_class FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ? AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND s.content_class IN ('SWP','JIN')");   // JIN read-only: a pre-v52 row from an un-migrated peer
     stmtPoolType = db.prepare("SELECT type FROM jingle_categories WHERE id = ? AND deleted_at IS NULL");
     stmtPool = db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.duration_ms, s.content_class
        FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
@@ -7894,7 +7894,12 @@ function _placeJingles(db, stationId, rows) {
                     .slice().sort((a, b) => a.scheduled_at - b.scheduled_at);
   if (!music.length) return;
   const usedByPool = new Map();            // poolId → Set of overlay-song ids used this run (LRP anti-repeat)
-  const DEFAULTS = { JIN: { lead: 5, under: 2 }, SWP: { lead: 2, under: 1 } };
+  // ONE sweeper type, so ONE default (v52). This was { JIN: 5/2, SWP: 2/1 } and the class picked
+  // between them — which meant retiring JIN would silently have moved every new overlay from a 5s
+  // lead-in to 2s. No category sets an override (overlay_lead_in_sec is null on all 15), so the
+  // default IS what airs. 5/2 is kept deliberately: it is what has been on air, and a rename must
+  // not change the sound.
+  const SWEEPER_DEFAULT = { lead: 5, under: 2 };
   // THE GENERATE FREEZE (2026-08-06, 4.4.153). A CPU profile of the LIVE frozen main process put
   // 99.2% of 30s inside one native better-sqlite3 `.all()` under resolvePool. This query re-ran for
   // EVERY music row, and its correlated MAX(played_at) subquery scanned all ~36,900 play_log rows per
@@ -7911,7 +7916,7 @@ function _placeJingles(db, stationId, rows) {
   const resolvePool = (poolId) => {
     let cands = poolCands.get(poolId);
     if (cands === undefined) {
-      let type = 'JIN'; try { const t = stmtPoolType.get(poolId); if (t && t.type) type = t.type; } catch {}
+      let type = 'SWP'; try { const t = stmtPoolType.get(poolId); if (t && t.type) type = t.type; } catch {}
       try { cands = stmtPool.all(poolId, type, stationId); } catch { cands = []; }
       poolCands.set(poolId, cands);
     }
@@ -7950,8 +7955,8 @@ function _placeJingles(db, stationId, rows) {
       }
       else if (kind === 'pool' && poolId != null) { pick = resolvePool(poolId); }
       if (!pick || !pick.file_path) continue;
-      const cls = pick.content_class === 'SWP' ? 'SWP' : 'JIN';
-      const def = DEFAULTS[cls];
+      const cls = 'SWP';                       // v52: the only imaging class
+      const def = SWEEPER_DEFAULT;
       jinRows.push({
         scheduled_at: incoming.scheduled_at, song_id: pick.id,
         title: pick.title, artist: pick.artist_name || '',

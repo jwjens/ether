@@ -114,7 +114,7 @@ in this panel now sits under the table it describes.
 
 ## In the Schedule Manager
 
-Rotation Analytics is also a **pane** in Schedule Manager, beside Categories, Spots and Jingles. That
+Rotation Analytics is also a **pane** in Schedule Manager, beside Categories, Spots and Sweepers. That
 completes the loop in one window: declare a target on a category, shape the clock against the
 advisor, then read here what actually aired. It is the same panel — the menu entry still opens it
 full-screen, and nothing was moved.

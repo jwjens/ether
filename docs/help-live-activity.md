@@ -14,7 +14,7 @@ tour: true
 
 **Live Activity** is a terminal that sits beside the health sections and shows you, line by line, what Ether's
 automation is doing **right now** — which deck just went live, which song ended, when a stop was issued, when
-a jingle fired, when a spot went to air. It is the answer to "is it actually doing anything, and what?"
+a sweeper fired, when a spot went to air. It is the answer to "is it actually doing anything, and what?"
 
 It reads the log the audio engine already writes. It is a **window, not a control** — nothing you do here
 changes what is on air.
@@ -23,7 +23,7 @@ changes what is on air.
 
 - Something sounds wrong and you want to see what the engine just did.
 - You want to confirm a station is rotating normally without staring at the decks.
-- You're checking whether a spot or jingle actually fired.
+- You're checking whether a spot or sweeper actually fired.
 - You're on the phone with support and need to describe what's happening.
 
 ## How to use it
@@ -38,7 +38,7 @@ changes what is on air.
 Three buttons across the middle:
 
 - **Decisions** *(the default)* — only the moments something changed: a deck went live, a song ended, a stop
-  was issued, a jingle or spot fired, automation started or stopped. This is what you want almost always.
+  was issued, a sweeper or spot fired, automation started or stopped. This is what you want almost always.
 - **All activity** — everything, including the engine's four-times-a-second heartbeat. Useful for deep
   troubleshooting, very noisy otherwise.
 - **Warnings** — only things worth a second look: a stall, a forced stop, a safety guard firing, a station
@@ -68,7 +68,7 @@ Each line is: **time · station · what happened**.
 | `advance → stop:A` | Deck A was stopped and cleared after handing over. |
 | `segue overlap: A→B` | The next song started early over the tail of the last one — a normal segue. |
 | `clean spot edge` | A commercial is playing on its own, with no overlap. That's deliberate. |
-| `jingle FIRING` | A jingle or sweeper is playing over the seam. |
+| `sweeper FIRING` | A sweeper or sweeper is playing over the seam. |
 | `top-of-hour HARD CUT` | The top of the hour arrived and the schedule was re-synced to the clock. |
 | `liveDeck OBSERVER — TWO DECKS ON AIR` | **Two songs are playing at once.** Report this. |
 | `watchdog: STALL` | Nothing was playing and the engine forced a recovery. |

@@ -1,6 +1,6 @@
-# Renaming an item (Library, Jingles, Reel Splitter)
+# Renaming an item (Library, Sweepers, Reel Splitter)
 
-You can rename any song, jingle, or sweeper right from its row — no need to open a full editor. The rename
+You can rename any song, sweeper, or sweeper right from its row — no need to open a full editor. The rename
 is explicit: you click **EDIT**, change the name, and choose **SAVE** or **CANCEL**.
 
 ## In the Library
@@ -14,14 +14,14 @@ is explicit: you click **EDIT**, change the name, and choose **SAVE** or **CANCE
 The new name is saved to the song and shows up everywhere that song appears — the decks, Up Next, any pool it
 belongs to, category assignments, and the schedule.
 
-## In the Jingles panel
+## In the Sweepers panel
 
-1. Open **JINGLES** (bottom bar) → the pool list (JIN or SWP tab).
-2. Click **EDIT** on any jingle/sweeper row.
+1. Open **SWEEPERS** (bottom bar) → the pool list (JIN or SWP tab).
+2. Click **EDIT** on any sweeper/sweeper row.
 3. Type the new name, then **SAVE** (or **CANCEL**).
 
-The rename propagates the same way — the jingle's new name appears in the category-assignment dropdowns and in
-the on-air jingle indicator.
+The rename propagates the same way — the sweeper's new name appears in the category-assignment dropdowns and in
+the on-air sweeper indicator.
 
 ## In the Reel Splitter
 

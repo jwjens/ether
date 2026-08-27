@@ -221,7 +221,7 @@ export function LiveHealthMonitor() {
                     color: s.jingle.state === "FIRING" ? "#ffe93b" : "#ffffff",
                     border: `1px solid ${s.jingle.state === "FIRING" ? "#ffe93b" : "#ffffff"}`,
                     background: s.jingle.state === "FIRING" ? "rgba(255,233,59,0.16)" : "rgba(255,255,255,0.12)",
-                  }}>{`${s.jingle.contentClass === "SWP" ? "SWP" : "JIN"} ${s.jingle.state === "FIRING" ? "▶" : "◈"}`}</span>
+                  }}>{`SWP ${s.jingle.state === "FIRING" ? "▶" : "◈"}`}</span>
                 )}
               </div>
               <div style={cell}>{s.trackLeftSec != null ? `-${fmtLeft(s.trackLeftSec)}` : ""} {s.nextDeckReady ? <span style={{ color: LEVEL_COLOR.GREEN }}>· next ✓</span> : <span style={{ color: "var(--text-tertiary)" }}>· next …</span>}</div>

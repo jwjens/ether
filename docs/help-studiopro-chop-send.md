@@ -1,7 +1,7 @@
 # Cut and send from the Show+ DAW
 
 The Show+ DAW (StudioPro) is where you produce audio: bring a file in, cut the piece you want, and send
-it straight to air or your library — **quick import, chop, send to deck or jingle or sweeper or library.**
+it straight to air or your library — **quick import, chop, send to deck or sweeper or sweeper or library.**
 
 ## Open it — its own window
 
@@ -15,7 +15,7 @@ Drag it to a second monitor if you have one. The window **remembers its size and
 time. Closing it is safe — but if you have **uncommitted regions** (audio loaded that you haven't sent to
 a deck, the Library, or a pool yet), it **warns you before closing** so you don't lose your work. The
 chop-and-send exits keep working from this window exactly as they do inline — → Deck loads the real deck,
-→ Jingle/Sweeper/Library file into the active station.
+→ Sweeper/Sweeper/Library file into the active station.
 
 ## Import audio
 
@@ -40,7 +40,7 @@ The **Send selection** bar sits under the waveform. Name your cut (click the nam
 exit:
 
 - **→ Library** — imports the cut as a normal library song.
-- **→ Jingle** — imports it as a **jingle (JIN)** and, if you pick a **pool**, files it there.
+- **→ Sweeper** — imports it as a **sweeper (JIN)** and, if you pick a **pool**, files it there.
 - **→ Sweeper** — imports it as a **sweeper (SWP)** into the pool you choose.
 - **→ Deck** — loads the cut straight onto **Deck A, B, or C**, ready to fire. (A deck that's currently on
   air is protected — it won't be interrupted.)
@@ -50,7 +50,7 @@ the deck is exactly what you framed.
 
 ## Notes
 
-- The same cut-and-tag engine powers the **Reel Splitter** (the JINGLES push-up → Add imaging). One engine,
+- The same cut-and-tag engine powers the **Reel Splitter** (the SWEEPERS push-up → Add imaging). One engine,
   two places — a cut behaves the same wherever you make it.
-- Jingles/sweepers you send here appear in the JINGLES panel's pools and are eligible for automatic seam
+- Sweepers/sweepers you send here appear in the SWEEPERS panel's pools and are eligible for automatic seam
   placement, exactly like ones cut in the Reel Splitter.

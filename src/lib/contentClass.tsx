@@ -10,11 +10,26 @@
 // surfaces and not the fourth. One table, imported.
 //
 // The tokens are the ones already audited in the tree ("Class-color audit (jingles v1 D3)"):
-//   JIN  teal   #14e0c8      SWP  indigo #4f46e5      SPOT amber #f59e0b
+//   SWP  indigo #4f46e5      SPOT amber #f59e0b
 //   ANN  cyan   (accent)     MUSIC — no badge, because most rows are music and a badge on every row
 //                            is noise rather than information.
+//
+// v52 (2026-08-27): JIN is retired. There is ONE imaging class, SWP ("Sweepers"). JIN survives here
+// as a READ-ONLY legacy value — a row written before v52, or one arriving from a peer that has not
+// run it yet, still says JIN and must still render as a sweeper rather than falling back to MUSIC
+// and disappearing into the music list. It is never written.
 
-export type ContentClass = "MUSIC" | "JIN" | "SWP" | "SPOT" | "ANN";
+export type ContentClass = "MUSIC" | "SWP" | "SPOT" | "ANN";
+
+/** The one imaging class. Write this, never a literal. */
+export const SWEEPER: ContentClass = "SWP";
+/** Pre-v52 rows and un-migrated peers still say this. Read it, never write it. */
+export const LEGACY_SWEEPER = "JIN";
+/** Is this row a sweeper, whichever vocabulary wrote it? */
+export const isSweeper = (v: string | null | undefined): boolean => {
+  const k = String(v ?? "").trim().toUpperCase();
+  return k === SWEEPER || k === LEGACY_SWEEPER;
+};
 
 export interface ClassMeta {
   /** The canonical class code. */
@@ -30,14 +45,13 @@ export interface ClassMeta {
 
 const META: Record<ContentClass, ClassMeta> = {
   MUSIC: { code: "MUSIC", label: "Songs",         badge: "MUS",  fg: "var(--text-tertiary)", bg: "transparent",              border: "transparent" },
-  JIN:   { code: "JIN",   label: "Jingles",       badge: "JIN",  fg: "#14e0c8",              bg: "rgba(20, 224, 200, 0.12)", border: "rgba(20, 224, 200, 0.45)" },
   SWP:   { code: "SWP",   label: "Sweepers",      badge: "SWP",  fg: "#4f46e5",              bg: "rgba(79, 70, 229, 0.14)",  border: "rgba(79, 70, 229, 0.5)" },
   SPOT:  { code: "SPOT",  label: "Spots",         badge: "SPOT", fg: "#f59e0b",              bg: "rgba(245, 158, 11, 0.14)", border: "rgba(245, 158, 11, 0.45)" },
   ANN:   { code: "ANN",   label: "Announcements", badge: "ANN",  fg: "var(--accent-cyan)",   bg: "rgb(from var(--accent-cyan) r g b / 0.14)", border: "rgb(from var(--accent-cyan) r g b / 0.45)" },
 };
 
 /** The order a filter control offers them in — most common first. */
-export const CLASS_ORDER: ContentClass[] = ["MUSIC", "SPOT", "JIN", "SWP", "ANN"];
+export const CLASS_ORDER: ContentClass[] = ["MUSIC", "SPOT", "SWP", "ANN"];
 
 /**
  * NULL and '' mean MUSIC. Every row written before v29 has no class, and the whole schema treats a
@@ -47,6 +61,10 @@ export const CLASS_ORDER: ContentClass[] = ["MUSIC", "SPOT", "JIN", "SWP", "ANN"
  */
 export function normalizeClass(v: string | null | undefined): ContentClass {
   const k = String(v ?? "").trim().toUpperCase();
+  // A pre-v52 row still says JIN. Fold it into the one sweeper class so it keeps its badge, its
+  // colour and its place under the Sweepers filter chip — rather than falling through to MUSIC and
+  // vanishing into the music list, which is how a retired name causes real data loss on screen.
+  if (k === LEGACY_SWEEPER) return SWEEPER;
   return (k in META ? k : "MUSIC") as ContentClass;
 }
 

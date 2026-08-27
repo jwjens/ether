@@ -18,7 +18,9 @@ const _musicArtCache: Record<string, string | null> = {};
 
 /** Content classes that are imaging/commercials, never music. */
 export function isImagingClass(cc: string | null | undefined): boolean {
-  return ["JIN", "SWP", "SPOT"].includes(String(cc || "").toUpperCase());
+  // "JIN" stays as a READ of pre-v52 rows — those still exist in play_log history and must keep
+  // being treated as imaging rather than falling back to a music artwork lookup.
+  return ["SWP", "JIN", "SPOT"].includes(String(cc || "").toUpperCase());
 }
 
 /** Embedded cover art for a local file as a data: URL, or null if the file has none

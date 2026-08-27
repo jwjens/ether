@@ -1,7 +1,7 @@
 // StudioSendBar — the StudioPro (Show+ DAW) "chop & send" exits. Operates on the SELECTED region's decoded
 // buffer, chopped by its real trim handles [startSec,endSec], and sends that selection via FOUR first-class
 // exits, all on VERIFIED rails (never a decorative event):
-//   → LIBRARY / → JINGLE / → SWEEPER : the ONE shared imaging engine (imagingCommit.commitRegionToLibrary)
+//   → LIBRARY / → SWEEPER : the ONE shared imaging engine (imagingCommit.commitRegionToLibrary)
 //   → DECK                           : render to disk, then the REAL deck-load command path
 //                                      (getEngine(stationId).deckCue / loadToDeck — the Library A/B/C path)
 // Audition uses the shared regionAudition. Name via the shared InlineNameEditor; class/pool via the shared
@@ -13,7 +13,7 @@ import ClassPoolSelect, { useImagingPools } from "./ClassPoolSelect";
 import { auditionRegion } from "../audio/regionAudition";
 import { commitRegionToLibrary, renderRegionToDisk } from "../audio/imagingCommit";
 import { getEngine } from "../audio/engine-registry";
-import { JIN_TEAL, SWP_INDIGO } from "../lib/classColors";
+import { SWP_INDIGO } from "../lib/classColors";
 
 type Status = { kind: "idle" | "busy" | "ok" | "err"; msg?: string };
 type Exit = null | "class" | "deck";
@@ -28,7 +28,7 @@ export default function StudioSendBar({ buffer, startSec, endSec, defaultName, s
 }) {
   const [name, setName] = useState(defaultName);
   const [exit, setExit] = useState<Exit>(null);
-  const [cls, setCls] = useState<"JIN" | "SWP">("JIN");
+  const [cls, setCls] = useState<"SWP">("SWP");
   const [poolId, setPoolId] = useState<number | null>(null);
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [playing, setPlaying] = useState(false);
@@ -56,7 +56,7 @@ export default function StudioSendBar({ buffer, startSec, endSec, defaultName, s
 
   const sendLibrary = () => run("Library", () =>
     commitRegionToLibrary(buffer, startSec, endSec, { name, cls: "MUS", poolId: null, reelSlug }));
-  const sendClass = () => run(cls === "JIN" ? "Jingles" : "Sweepers", () =>
+  const sendClass = () => run("Sweepers", () =>
     commitRegionToLibrary(buffer, startSec, endSec, { name, cls, poolId, reelSlug }));
   const sendDeck = (deck: "A" | "B" | "C") => run(`Deck ${deck}`, async () => {
     const { filePath, durationMs } = await renderRegionToDisk(buffer, startSec, endSec, reelSlug, name);
@@ -66,7 +66,7 @@ export default function StudioSendBar({ buffer, startSec, endSec, defaultName, s
     else await eng.loadToDeck(deck, filePath, name, "", 0, durationMs);
   });
 
-  const openClass = (c: "JIN" | "SWP") => { setCls(c); setPoolId(null); setExit("class"); };
+  const openClass = () => { setPoolId(null); setExit("class"); };
   const selDur = Math.max(0, endSec - startSec);
 
   return (
@@ -80,16 +80,15 @@ export default function StudioSendBar({ buffer, startSec, endSec, defaultName, s
         <button onClick={audition} title="Audition the selection (this DAW only — not on air)" style={btn("var(--accent-cyan)", playing)}>{playing ? "■ Stop" : "▶ Audition"}</button>
         <div style={{ flex: 1 }} />
         <button onClick={sendLibrary} style={btn("var(--accent-green)")}>→ Library</button>
-        <button onClick={() => openClass("JIN")} style={btn(JIN_TEAL, exit === "class" && cls === "JIN")}>→ Jingle</button>
-        <button onClick={() => openClass("SWP")} style={btn(SWP_INDIGO, exit === "class" && cls === "SWP")}>→ Sweeper</button>
+        <button onClick={openClass} style={btn(SWP_INDIGO, exit === "class")}>→ Sweeper</button>
         <button onClick={() => setExit(exit === "deck" ? null : "deck")} style={btn("var(--accent-blue)", exit === "deck")}>→ Deck</button>
       </div>
 
       {exit === "class" && (
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <ClassPoolSelect cls={cls} poolId={poolId} pools={pools} onCls={setCls} onPool={setPoolId} compact />
-          <button onClick={sendClass} style={{ ...btn(cls === "SWP" ? SWP_INDIGO : JIN_TEAL), fontWeight: 800 }}>
-            Send to {cls === "SWP" ? "Sweepers" : "Jingles"} →
+          <button onClick={sendClass} style={{ ...btn(SWP_INDIGO), fontWeight: 800 }}>
+            Send to Sweepers →
           </button>
           <button onClick={() => setExit(null)} style={{ ...btn("var(--text-tertiary)"), border: "none" }}>cancel</button>
         </div>

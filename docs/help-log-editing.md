@@ -16,7 +16,7 @@ Type, Title, Artist, Category, Status** — that you can sort, resize and edit.
 ## Reading the sheet
 
 - **Hour markers** — `⏤ 3:00 PM ⏤` separates each hour.
-- **The thin coloured bar** on the left of each row is its type: Song, Spot, Jingle, Sweeper, Voice,
+- **The thin coloured bar** on the left of each row is its type: Song, Spot, Sweeper, Sweeper, Voice,
   Cart. Muted on purpose — it should be readable at a glance, not shout.
 - **Dimmed rows** have already aired.
 - **Click any column header** to sort by it. Shift-click adds a second sort.

@@ -10,8 +10,13 @@ import { query } from "../db/client";
 
 const ether = () => (window as any).ether;
 
-// JIN = jingle overlay · SWP = sweeper overlay · MUS = a plain Library item (no overlay tag).
-export type ImagingClass = "JIN" | "SWP" | "MUS";
+// SWP = a sweeper · MUS = a plain Library item (no overlay tag).
+//
+// v52 (2026-08-27): "JIN" is gone. This file is the LIVE WRITER behind the Reel Splitter and the
+// StudioPro chop-and-send, so leaving the old value here would have re-seeded retired data into a
+// freshly-migrated library — the migration correct on the day it ran and wrong again by the next
+// import. That is why this lands in the same commit as v52 rather than a later sweep.
+export type ImagingClass = "SWP" | "MUS";
 
 /** Filesystem-safe reel/name slug (mirrors the Reel Splitter's original). */
 export const imagingSlug = (s: string) =>
@@ -48,8 +53,9 @@ export async function commitRegionToLibrary(
     // `id`, not `rowid`: songs is a VIEW over songs_all (live rows only) and views have no rowid.
     try { const rows = await query<{ id: number }>("SELECT id FROM songs WHERE file_path = ?", [filePath]); songId = rows?.[0]?.id ?? null; } catch { /* leave null */ }
   }
-  if (songId && (opts.cls === "JIN" || opts.cls === "SWP")) {
-    await ether().songs.updateById(songId, { content_class: opts.cls, jingle_category_id: opts.poolId ?? null });
+  // Only ever writes SWP. There is one imaging class now, so there is one value to write.
+  if (songId && opts.cls === "SWP") {
+    await ether().songs.updateById(songId, { content_class: "SWP", jingle_category_id: opts.poolId ?? null });
   }
   return { songId, filePath, durationMs };
 }

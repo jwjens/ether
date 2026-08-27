@@ -12,9 +12,9 @@ import { auditionRegion } from "../audio/regionAudition";
 import { commitRegionToLibrary, imagingSlug as slug } from "../audio/imagingCommit";
 import InlineNameEditor from "./InlineNameEditor";
 import ClassPoolSelect, { useImagingPools } from "./ClassPoolSelect";
-import { JIN_TEAL, SWP_INDIGO } from "../lib/classColors";
+import { SWP_INDIGO } from "../lib/classColors";
 
-type Cls = "JIN" | "SWP";
+type Cls = "SWP";
 interface Reg extends Region { name: string }
 const ether = () => (window as any).ether;
 const fmtDur = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}.${String(Math.floor((s % 1) * 10))}`;
@@ -26,7 +26,7 @@ export default function ReelSplitter({ stationId, embedded, onCommitted }: { sta
   const [regions, setRegions] = useState<Reg[]>([]);
   const [sel, setSel] = useState(0);
   const [threshold, setThreshold] = useState(-45);
-  const [cls, setCls] = useState<Cls>("JIN");
+  const [cls, setCls] = useState<Cls>("SWP");
   const [poolId, setPoolId] = useState<number | null>(null);
   const pools = useImagingPools(stationId);
   const [playing, setPlaying] = useState(false);
@@ -144,7 +144,7 @@ export default function ReelSplitter({ stationId, embedded, onCommitted }: { sta
     } catch (e) { setCommitState(s => ({ busy: false, done: s?.done || 0, total: regions.length, err: (e as Error).message })); }
   };
 
-  const accent = cls === "SWP" ? SWP_INDIGO : JIN_TEAL;
+  const accent = SWP_INDIGO;
   const dur = buffer?.duration || 1;
 
   return (

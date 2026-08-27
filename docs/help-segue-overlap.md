@@ -29,8 +29,8 @@ There are two separate settings in **Settings → Audio**:
   the overlap you chose, then the outgoing song finishes on its own.
 - **Your faders never move.** The deck faders are yours; automation never touches them. Songs bring their own
   mastered fade-outs — the overlap just lets the next one begin over that tail.
-- **Jingles overlap too.** When a jingle plays over a transition, the next song starts early **under** the
-  jingle instead of waiting for the jingle to finish — no more jingle-playing-alone gap.
+- **Sweepers overlap too.** When a sweeper plays over a transition, the next song starts early **under** the
+  sweeper instead of waiting for the sweeper to finish — no more sweeper-playing-alone gap.
 
 ## Tips
 

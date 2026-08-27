@@ -1,13 +1,23 @@
-// JinglesPanel — JINGLES/SWEEPERS v2 overlay manager (per-station). Three jobs:
-//   1) Overlay pools (JIN / SWP tabs) — typed rotating pools with lead-in/underlap. Burnout protection.
-//   2) Assign overlay songs (marked JIN/SWP in the Library) to pools.
+// SweepersPanel — the imaging home (per-station). Three jobs:
+//
+// v52 (2026-08-27): "jingle" is retired. There is ONE imaging concept — a sweeper — so this panel
+// has ONE list, not two tabs. The JIN/SWP split that used to live here is gone with it.
+//
+// The `jingle_categories` TABLE keeps its name deliberately: it is a synced table and the receiver
+// dispatches on REGISTRY[m.table_name], so renaming it would make a peer's mutation under the old
+// name land nowhere and drop silently. Invisible to operators; not worth the divergence risk.
+// (Superseded note, kept for the reader: the old text here said renaming meant rewriting ~63k
+// generated_schedule and play_log rows, which is a separate filed project tied to the sweeper
+// redesign, not a label change.
+//   1) Sweeper pools — rotating pools with lead-in/underlap. Burnout protection.
+//   2) Assign sweepers (marked in the Library) to pools.
 //   3) The CORE: per-music-category ASSIGNMENT — each category names a SPECIFIC overlay item OR a pool,
 //      with active hours + optional timing override. This is what Generate reads to place overlays.
 //   + an optional station-level FALLBACK pool for unassigned categories (none = clean dead segue).
 // Selection lives here in the ONE scheduler (Generate); the daemon only orchestrates the fire. Cadence retired.
 import { useEffect, useState, useCallback, Fragment } from "react";
 import { query } from "../db/client";
-import { JIN_TEAL, SWP_INDIGO } from "../lib/classColors";
+import { SWP_INDIGO } from "../lib/classColors";
 import ReelSplitter from "./ReelSplitter";
 import InlineNameEditor from "./InlineNameEditor";
 
@@ -29,13 +39,12 @@ const rangeFromMask = (mask: number) => {
 };
 const hhLabel = (h: number) => `${((h % 12) || 12)}${h < 12 ? "a" : "p"}`;
 
-// Hosted in the Schedule Manager's docking shell as the Jingles pane (v2 Phase 2). It keeps its own
+// Hosted in the Schedule Manager's docking shell as the Sweepers pane (v2 Phase 2). It keeps its own
 // fetching — pools, overlay songs and the fallback are its data alone. The one overlap is the music
 // CATEGORY rows it patches (overlay_kind / overlay_song_id / overlay_category_id / overlay_active_hours),
 // which the hub also owns; onMutated is how the Categories pane learns an assignment changed.
-// Optional, so the JINGLES push-up (its canonical home) is unchanged.
-export default function JinglesPanel({ stationId, onMutated }: { stationId: number; onMutated?: (tables?: string[]) => void }) {
-  const [tab, setTab] = useState<"JIN" | "SWP">("JIN");
+// Optional, so the SWEEPERS push-up (its canonical home) is unchanged.
+export default function SweepersPanel({ stationId, onMutated }: { stationId: number; onMutated?: (tables?: string[]) => void }) {
   const [pools, setPools] = useState<Pool[]>([]);
   const [songs, setSongs] = useState<OverlaySong[]>([]);
   const [cats, setCats] = useState<MusicCat[]>([]);
@@ -50,11 +59,10 @@ export default function JinglesPanel({ stationId, onMutated }: { stationId: numb
     try {
       // A FILTERED VIEW OVER THE ONE TYPED LIBRARY (docs/library-current-state.md, Option 1).
       // library_asset type='SWEEPER' drives the list; the row still comes from `songs` because that is
-      // where a sweeper's JIN/SWP sub-kind and pool assignment live.
+      // where a sweeper's pool assignment lives.
       //
-      // The tab split deliberately still reads s.content_class. v50 mapped BOTH 'JIN' and 'SWP' to the
-      // single type SWEEPER, so filtering on type alone would collapse the two tabs into one — the
-      // distinction the operator uses to tell a jingle from a sweeper would simply vanish from the UI.
+      // One list: v50 typed both old classes as SWEEPER and v52 collapsed the data to a single SWP,
+      // so the type filter alone is now the whole story.
       const rows = await query<OverlaySong>("SELECT s.id, la.title AS title, a.name AS artist_name, s.content_class, s.jingle_category_id FROM library_asset la JOIN songs s ON s.uuid = la.uuid LEFT JOIN artists a ON a.id = s.artist_id WHERE la.type = 'SWEEPER' AND la.deleted_at IS NULL AND s.deleted_at IS NULL ORDER BY s.content_class, la.title");
       setSongs(rows || []);
     } catch { setSongs([]); }
@@ -66,15 +74,18 @@ export default function JinglesPanel({ stationId, onMutated }: { stationId: numb
   }, [stationId]);
   useEffect(() => { reload(); }, [reload]);
 
-  const tabPools = pools.filter(p => (p.type || "JIN") === tab);
-  const tabSongs = songs.filter(s => s.content_class === tab);
-  const accent = tab === "SWP" ? SWP_INDIGO : JIN_TEAL;
+  // One class, so no filtering: every pool is a sweeper pool and every row is a sweeper.
+  const tabPools = pools;
+  const tabSongs = songs;
+  const accent = SWP_INDIGO;
 
   const createPool = async () => {
     const name = newName.trim(); if (!name || busy) return; setBusy(true);
     try {
-      await ether()?.jingleCategories?.create({ station_id: stationId, name, color: accent, type: tab,
-        lead_in_sec: tab === "SWP" ? 2 : 5, underlap_sec: tab === "SWP" ? 1 : 2, sort_order: tabPools.length });
+      // 5s / 2s matches SWEEPER_DEFAULT in electron/main.js — one type, one default, one place to
+      // change it. The old 2s/1s belonged to the retired second class.
+      await ether()?.jingleCategories?.create({ station_id: stationId, name, color: accent, type: "SWP",
+        lead_in_sec: 5, underlap_sec: 2, sort_order: tabPools.length });
       setNewName(""); await reload();
     } finally { setBusy(false); }
   };
@@ -96,10 +107,8 @@ export default function JinglesPanel({ stationId, onMutated }: { stationId: numb
   const inp: React.CSSProperties = { width: 46, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", borderRadius: "var(--r-0)", padding: "2px 4px", fontSize: "var(--t-body)", fontFamily: "'DM Mono', monospace" };
   const sel: React.CSSProperties = { background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", borderRadius: "var(--r-0)", padding: "3px 6px", fontSize: "var(--t-body)" };
 
-  const jinPools = pools.filter(p => (p.type || "JIN") === "JIN");
-  const swpPools = pools.filter(p => (p.type || "JIN") === "SWP");
-  const jinItems = songs.filter(s => s.content_class === "JIN");
-  const swpItems = songs.filter(s => s.content_class === "SWP");
+  const swpPools = pools;
+  const swpItems = songs;
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", color: "var(--text-primary)", minHeight: 0 }}>
@@ -119,7 +128,7 @@ export default function JinglesPanel({ stationId, onMutated }: { stationId: numb
       <div style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", marginBottom: 16, lineHeight: 1.5 }}>
         Overlay imaging fires on the seam between songs (over master). Assign a <b>specific</b> jingle/sweeper
         or a <b>rotating pool</b> to each music category below — some categories get imaging, some don't. Mark
-        songs <b style={{ color: JIN_TEAL }}>JIN</b> / <b style={{ color: SWP_INDIGO }}>SWP</b> in the Library first.
+        songs as <b style={{ color: SWP_INDIGO }}>sweepers</b> in the Library first.
       </div>
 
       {/* ── Category assignments (the core) ── */}
@@ -142,9 +151,8 @@ export default function JinglesPanel({ stationId, onMutated }: { stationId: numb
                 </div>
                 <select key={c.id + "s"} value={catValue(c)} onChange={e => assignCategory(c, e.target.value)} style={sel}>
                   <option value="">— none (clean segue) —</option>
-                  {jinItems.length > 0 && <optgroup label="Specific jingle">{jinItems.map(s => <option key={"i" + s.id} value={`item:${s.id}`}>♪ {s.title}</option>)}</optgroup>}
                   {swpItems.length > 0 && <optgroup label="Specific sweeper">{swpItems.map(s => <option key={"i" + s.id} value={`item:${s.id}`}>♫ {s.title}</option>)}</optgroup>}
-                  {jinPools.length > 0 && <optgroup label="Jingle pool (rotates)">{jinPools.map(p => <option key={"p" + p.id} value={`pool:${p.id}`}>◆ {p.name}</option>)}</optgroup>}
+
                   {swpPools.length > 0 && <optgroup label="Sweeper pool (rotates)">{swpPools.map(p => <option key={"p" + p.id} value={`pool:${p.id}`}>◆ {p.name}</option>)}</optgroup>}
                 </select>
                 <div key={c.id + "h"} style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -176,19 +184,13 @@ export default function JinglesPanel({ stationId, onMutated }: { stationId: numb
         </select>
       </div>
 
-      {/* ── Overlay library: JIN / SWP pools + song assignment ── */}
+      {/* ── Sweeper pools + assignment. One list: there is one imaging class (v52). ── */}
       <div style={{ display: "flex", gap: 6, marginBottom: 12, borderBottom: "1px solid var(--border-primary)" }}>
-        {(["JIN", "SWP"] as const).map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{
-            padding: "6px 14px", background: "transparent", border: "none", borderBottom: `2px solid ${tab === t ? (t === "SWP" ? SWP_INDIGO : JIN_TEAL) : "transparent"}`,
-            color: tab === t ? (t === "SWP" ? SWP_INDIGO : JIN_TEAL) : "var(--text-tertiary)", fontWeight: 800, fontSize: "var(--t-body)", letterSpacing: "0.06em", cursor: "pointer",
-          }}>{t === "SWP" ? "SWEEPERS" : "JINGLES"}</button>
-        ))}
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === "Enter" && createPool()}
-          placeholder={tab === "SWP" ? "New sweeper pool (e.g. Legal IDs)" : "New jingle pool (e.g. Station IDs)"}
+          placeholder="New sweeper pool (e.g. Legal IDs)"
           style={{ flex: 1, maxWidth: 280, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", borderRadius: "var(--r-0)", padding: "6px 10px", fontSize: "var(--t-lead)" }} />
         <button onClick={createPool} disabled={busy || !newName.trim()} style={{ padding: "var(--s-2) var(--s-3)", borderRadius: "var(--r-0)", border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", color: "var(--text-secondary)", fontWeight: 700, fontSize: "var(--t-small)", letterSpacing: "0.06em", textTransform: "uppercase", cursor: "pointer", opacity: busy || !newName.trim() ? 0.5 : 1 }}>Add pool</button>
       </div>
@@ -215,9 +217,9 @@ export default function JinglesPanel({ stationId, onMutated }: { stationId: numb
         </div>
       )}
 
-      <div style={{ fontSize: "var(--t-small)", fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: 8 }}>{tab === "SWP" ? "Sweepers" : "Jingles"} ({tabSongs.length})</div>
+      <div style={{ fontSize: "var(--t-small)", fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: 8 }}>Sweepers ({tabSongs.length})</div>
       {tabSongs.length === 0 ? (
-        <div style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", fontStyle: "italic" }}>None tagged. In the Library, right-click an item and choose “Mark as {tab === "SWP" ? "Sweeper (SWP)" : "Jingle (JIN)"}”, then assign it to a pool here.</div>
+        <div style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", fontStyle: "italic" }}>None tagged. In the Library, right-click an item and choose “Mark as Sweeper”, then assign it to a pool here.</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {tabSongs.map(s => (

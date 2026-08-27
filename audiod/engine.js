@@ -1306,7 +1306,8 @@ class DaemonEngine {
    *  may exist in NEITHER songs NOR spots. That is exactly how "Adele   Someone Like You 68" — a cart
    *  with no songs row — took the MUSIC default and became an airable music row (2026-08-04).
    *
-   *  Returns "MUSIC" | "JIN" | "SWP" | "SPOT" | "CART" | null. null means UNKNOWN, and unknown must
+   *  Returns "MUSIC" | "SWP" | "SPOT" | "CART" | null (pre-v52 rows may still read "JIN").
+   *  null means UNKNOWN, and unknown must
    *  never be treated as music. */
   _resolveHandLoadClass(filePath) {
     if (!filePath) return null;
@@ -1823,7 +1824,7 @@ class DaemonEngine {
     this._jingle = {
       phase: "armed", rowId: jin.rowId, filePath: jin.filePath, title: jin.title, artist: jin.artist,
       jinDur: (jin.durationMs || 0) / 1000, leadIn: jin.leadInSec, underlap: jin.underlapSec,
-      categoryId: jin.jingleCategoryId, contentClass: jin.contentClass === 'SWP' ? 'SWP' : 'JIN',
+      categoryId: jin.jingleCategoryId, contentClass: 'SWP',   // v52: one imaging class
       deck, airGen: this._airGen, deckGen: this.deckGen[deck],
       firedAt: 0, firingConfirmedAt: 0, nextStart: 0, outgoingEndedAt: 0,
     };
@@ -1847,7 +1848,7 @@ class DaemonEngine {
     this._jingle = null;
   }
 
-  // Stamp the jingle play — ONLY on observed firing (rider #2), stamped content_class='JIN' so Phase-1b
+  // Stamp the sweeper play — ONLY on observed firing (rider #2), stamped content_class='SWP' so Phase-1b
   // isolation excludes it from music math / affidavit. deck="CART" (overlay, not a rotation deck).
   _logJinglePlay(j) {
     try {
@@ -2089,7 +2090,7 @@ class DaemonEngine {
     if (prev && prev.rowId === jin.rowId && prev.deck === deck) return;   // unchanged → no re-emit
     this._scheduled = {
       rowId: jin.rowId, deck, title: jin.title, artist: jin.artist,
-      contentClass: jin.contentClass === "SWP" ? "SWP" : "JIN",
+      contentClass: "SWP",                                   // v52: one imaging class
       categoryId: jin.jingleCategoryId, leadIn: jin.leadInSec, underlap: jin.underlapSec,
       jinDur: (jin.durationMs || 0) / 1000,
     };

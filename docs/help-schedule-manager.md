@@ -1,9 +1,9 @@
 ---
 feature: schedule-manager
 title: Schedule Manager
-summary: Shows, Clocks, Categories, Spots and Jingles side by side in one window, linked — pick a category and the clocks using it light up; edit anything and every pane refreshes.
+summary: Shows, Clocks, Categories, Spots and Sweepers side by side in one window, linked — pick a category and the clocks using it light up; edit anything and every pane refreshes.
 where: Menu → Schedule Manager · or Schedule → Schedule Manager in the menubar
-since: 4.4.172 (Spots and Jingles panes added 4.4.176)
+since: 4.4.172 (Spots and Sweepers panes added 4.4.176)
 audience: programmer
 tour: true
 ---
@@ -20,14 +20,14 @@ The Schedule Manager puts the whole picture in one window and links it:
 
 ```
 ┌──────────────┬────────────────────────────┬──────────────────────────────┐
-│ SHOWS        │ CLOCK                      │ CATEGORIES │ SPOTS │ JINGLES │
+│ SHOWS        │ CLOCK                      │ CATEGORIES │ SPOTS │ SWEEPERS │
 │ which clock  │ the hour grid for the      │ ───────────┴───────┴──────── │
 │ airs when    │ selected show's clock      │ targets and library depth    │
 └──────────────┴────────────────────────────┴──────────────────────────────┘
 ```
 
-**Categories, Spots, Jingles and Rotation Analytics share the right-hand column as tabs.** Click a tab to switch. Five
-columns side by side would leave every one of them too narrow to use, and Spots and Jingles are
+**Categories, Spots, Sweepers and Rotation Analytics share the right-hand column as tabs.** Click a tab to switch. Five
+columns side by side would leave every one of them too narrow to use, and Spots and Sweepers are
 things you consult while building a clock rather than watch continuously. Drag any tab out if you
 want it as its own column — see *Arranging it*.
 
@@ -44,8 +44,8 @@ something that should rearrange a colleague's.
 
 | Layout | Opens | For |
 |---|---|---|
-| **Programming** | Shows · Clocks · Categories (+ Jingles, Spots) | Building the hour |
-| **Traffic** | Spots · Clocks · Jingles, Categories | Spot and break work |
+| **Programming** | Shows · Clocks · Categories (+ Sweepers, Spots) | Building the hour |
+| **Traffic** | Spots · Clocks · Sweepers, Categories | Spot and break work |
 | **Analysis** | Rotation Analytics · Categories, Shows · Clocks | Reading what aired |
 
 Picking one **replaces your current arrangement** — same as Reset layout, and just as harmless: it
@@ -61,7 +61,7 @@ button turns amber and says how many are hidden, so a missing pane reads as reco
 data affected, and **you stay signed in** — it only moves panes.
 
 > **After updating to 4.4.176 your saved arrangement is rebuilt once.** Two new panes exist that
-> your old layout had never heard of; restoring it would have left Spots and Jingles invisible with
+> your old layout had never heard of; restoring it would have left Spots and Sweepers invisible with
 > no way to reach them. Arrange it again and it will stick.
 
 **Fixed layout** switches to the older non-dockable three-pane view if you prefer it.
@@ -74,7 +74,7 @@ data affected, and **you stay signed in** — it only moves panes.
 | **Click a show** | The Clock pane focuses that show's clock |
 | **Edit anything** | Every pane refreshes — one store, one refresh |
 | **Add or delete a spot category** | The Clock pane's break rows and segment picker update with it |
-| **Assign a jingle to a category** | The Categories pane picks the change up |
+| **Assign a sweeper to a category** | The Categories pane picks the change up |
 
 The panes are the **same editors** as the tabs and popouts. Anything you can do there you can do
 here, and vice versa; nothing was rebuilt.
@@ -90,13 +90,13 @@ here, and vice versa; nothing was rebuilt.
 The numbers there are history. Editing a clock does not change them; press **Refresh** after you
 generate. Its tables sort and resize like a spreadsheet — see its own help entry.
 
-## Spots and Jingles
+## Spots and Sweepers
 
 **Spots** is the full *Spots & Promos* manager — the same one on the main menu, hosted here so you
 can build a break without leaving the clock you are building it for. Spot categories are created,
 renamed and deleted here.
 
-**Jingles** is the same panel as the JINGLES push-up at the bottom of the screen, which remains its
+**Sweepers** is the same panel as the SWEEPERS push-up at the bottom of the screen, which remains its
 home. Use it here to see which music categories carry imaging while you look at the clock.
 
 ### Where spot categories moved, and what did not move
@@ -147,7 +147,7 @@ Schedule Manager is an additional door onto the same rooms — use whichever sui
 
 ## What it does NOT do
 
-- **It does not change what airs.** It edits the same shows, clocks, categories, spots and jingles
+- **It does not change what airs.** It edits the same shows, clocks, categories, spots and sweepers
   through the same write paths. Generation and playout are untouched.
 - **It does not report on itself.** The Rotation Analytics pane reads what already aired; editing a
   clock beside it does not change those numbers. Hit Refresh after you generate.
@@ -158,4 +158,4 @@ Schedule Manager is an additional door onto the same rooms — use whichever sui
 **Station Health → Rotation goals** — the same advisor, for every clock at once.
 **Rotation Analytics** — what the log actually did, after generation.
 **Spots & Promos** — the same manager the Spots pane hosts.
-**Jingles & Sweepers** — the same panel the Jingles pane hosts; the push-up is its home.
+**Sweepers & Sweepers** — the same panel the Sweepers pane hosts; the push-up is its home.

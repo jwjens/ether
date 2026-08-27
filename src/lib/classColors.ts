@@ -21,7 +21,7 @@ export const SWP_INDIGO_BORDER = "rgba(79,70,229,0.55)";
 // Map a content_class string → its canonical color, or null for MUSIC/unknown (neutral).
 export function classColor(contentClass?: string | null): string | null {
   const c = (contentClass || "").toUpperCase();
-  if (c === "JIN") return JIN_TEAL;
+  if (c === "JIN") return SWP_INDIGO;   // v52: a pre-v52 row still says JIN — colour it as the sweeper it is
   if (c === "SWP") return SWP_INDIGO;
   if (c === "SPOT") return SPOT_AMBER;
   return null;

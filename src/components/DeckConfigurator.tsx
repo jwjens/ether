@@ -39,8 +39,11 @@ export const SOURCE_KINDS: SourceKindMeta[] = [
     state: "Public request wall — patched and playing" },
   { kind: "announcement", label: "Announcement",         family: "file",
     state: "Patched. Announcement playout arrives in a later slice — nothing fires yet." },
-  { kind: "jingle",       label: "Jingle (hand-fired)",  family: "file",
-    state: "Patched for hand-fired imaging. Automated seam jingles stay on CART." },
+  { kind: "jingle",       label: "Sweeper (hand-fired)", family: "file",
+    // The `kind` VALUE stays "jingle": it is a persisted deck-config key, not a label. Zero live
+    // decks use it (deck_configs kinds are 49 blank, 2 announcement, 2 jukebox), so there is nothing
+    // to migrate — but changing a stored key for cosmetics is how a config silently stops matching.
+    state: "Patched for hand-fired imaging. Automated seam sweepers stay on CART." },
   { kind: "mic",          label: "Mic (device…)",        family: "stream",
     state: "Needs the engine capture path — Phase 2." },
   { kind: "network",      label: "Network (IP / Zephyr / AoIP)", family: "stream",
@@ -721,7 +724,7 @@ export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
 
   // ── CART LEVEL, on the cart panel itself ────────────────────────────────────────────────────────
   // Carts fire on the dedicated CART channel (BusState slot 6). Its only fader used to live on the
-  // mixer strip labelled "JINGLES" — so from any cart surface there was no way to see or set the level
+  // mixer strip labelled "SWEEPERS" — so from any cart surface there was no way to see or set the level
   // of the thing you were firing, and a cart could be inaudible with nothing on the cart panel to say
   // so. The VU sat next to it reading 0 (peaks are POST-fader, audio.rs:1051-1056) with no control to
   // explain why. This is that control, beside the meter, in every cart surface.

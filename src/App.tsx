@@ -49,7 +49,8 @@ import BroadcastCalendar from "./components/BroadcastCalendar";
 import ImportDialog from "./components/ImportDialog";
 import NexGenImport from "./components/NexGenImport";
 import SettingsPanel from "./components/SettingsPanel";
-import JinglesPanel from "./components/JinglesPanel";
+import SweepersPanel from "./components/SweepersPanel";
+import { ClassFilter, passesClassFilter } from "./lib/contentClass";
 import { StreamStatusProvider } from "./contexts/StreamStatusContext";
 import { AudioEngineProvider, useAudioEngine } from "./audio/AudioEngineContext";
 import { getEngine, getAllEngines } from "./audio/engine-registry";
@@ -2299,7 +2300,7 @@ export default function App() {
     const h = au.onJingle((m: any) => {
       if (!m || m.stationUuid !== stationUuid) return;
       if (m.state === "CLEARED" || m.state === "ARMED_CANCELLED") setJingleOverlay(null);
-      else setJingleOverlay({ deck: m.deck ?? null, state: m.state, title: m.title ?? null, contentClass: m.contentClass ?? "JIN", jinDurSec: m.jinDurSec ?? null });
+      else setJingleOverlay({ deck: m.deck ?? null, state: m.state, title: m.title ?? null, contentClass: m.contentClass ?? "SWP", jinDurSec: m.jinDurSec ?? null });
     });
     return () => { try { au.offJingle?.(h); } catch { /* ignore */ } };
   }, [stationUuid]);
@@ -2481,7 +2482,7 @@ export default function App() {
     { label: "SHOWS",      active: progPanel === "shows",      fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "shows" ? null : "shows"); } },
     { label: "CLOCKS",     active: progPanel === "clocks",     fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "clocks" ? null : "clocks"); } },
     { label: "CATEGORIES", active: progPanel === "categories", fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "categories" ? null : "categories"); } },
-    { label: "JINGLES",    active: progPanel === "jingles",    fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "jingles" ? null : "jingles"); } },
+    { label: "SWEEPERS",   active: progPanel === "jingles",    fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "jingles" ? null : "jingles"); } },
     { label: "SPOTS",      active: panel === "spots",          fn: () => { setShowCarts(false); setProgPanel(null); setPanel("spots"); } },
     { label: "LIBRARY",    active: progPanel === "library",    fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "library" ? null : "library"); } },
     { label: "CALENDAR",   active: progPanel === "calendar",   fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "calendar" ? null : "calendar"); } },
@@ -4438,7 +4439,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                     ? <PhoneDesk onClose={onCloseDock} />
                     : progPanel === "jingles"
                       // Imaging home: pools + assignments + reel splitter, all in one push-up.
-                      ? <JinglesPanel stationId={lpStationId} />
+                      ? <SweepersPanel stationId={lpStationId} />
                       : progPanel
                         ? <Scheduler defaultTab={progPanel} embedded />
                         : <BoutiqueCartWall deckSlot="C" variant="strip" />}
@@ -4852,6 +4853,18 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
+  // ELEMENT-TYPE FILTER. This grid reads `songs`, which holds music AND the 64 sweepers AND any
+  // spot-classed rows — all mixed together with nothing to tell them apart or filter them out.
+  // The Play Log already solved this exact problem, so this is its ClassFilter, unchanged: one
+  // control, one behaviour, no chance of the two screens disagreeing about what "Spots" means.
+  //
+  // Empty set = everything, which is the default and must never be read as "show nothing".
+  //
+  // NOTE the honest limit of this filter: it can only offer what is in `songs`. Announcements live
+  // in their own table and have never been in `songs`, so they cannot appear here. A library that
+  // shows every element type means reading `library_asset` instead — the unified-library rework,
+  // filed and not built.
+  const [classFilter, setClassFilter] = useState<Set<string>>(new Set());
   const [count, setCount] = useState(0);
   const [status, setStatus] = useState("");
   const [missingSongs, setMissingSongs] = useState<string[]>([]);
@@ -5186,7 +5199,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
 
   const load = async () => {
     try {
-      const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name, al.title as album_title, al.year as album_year, c.code as category_code, c.color as category_color FROM songs s LEFT JOIN artists a ON a.id = s.artist_id LEFT JOIN albums al ON al.id = s.album_id LEFT JOIN categories c ON c.id = s.category_id WHERE s.deleted_at IS NULL ORDER BY s.title LIMIT 500", [], stationId, { skipScoping: true });
+      const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name, al.title as album_title, al.year as album_year, c.code as category_code, c.color as category_color FROM songs s LEFT JOIN artists a ON a.id = s.artist_id LEFT JOIN albums al ON al.id = s.album_id LEFT JOIN categories c ON c.id = s.category_id WHERE s.deleted_at IS NULL ORDER BY s.title", [], stationId, { skipScoping: true });
       setSongs(rows);
       const [r] = await query<{ c: number }>("SELECT COUNT(*) as c FROM songs WHERE deleted_at IS NULL");
       setCount(r ? r.c : 0);
@@ -5315,7 +5328,8 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
       (s.artist_name||"").toLowerCase().includes(search.toLowerCase()) ||
       (s.cart_id||"").toLowerCase().includes(search.toLowerCase());
     const matchCat = !categoryFilter || (s.category_code || "") === categoryFilter;
-    return matchSearch && matchCat;
+    const matchClass = passesClassFilter((s as any).content_class, classFilter);
+    return matchSearch && matchCat && matchClass;
   });
 
   const S = {
@@ -5481,7 +5495,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Inter', sans-serif" }}>Song Library</h1>
           <span style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>
-            {count} tracks{(search || categoryFilter) ? ` · ${filtered.length} shown` : ""}
+            {count} tracks{(search || categoryFilter || classFilter.size > 0) ? ` · ${filtered.length} shown` : ""}
             {categoryFilter ? ` in ${categoryFilter}` : ""}
           </span>
         </div>
@@ -5534,6 +5548,11 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
         <input placeholder="Search title or artist…" value={search} onChange={e => setSearch(e.target.value)}
           style={{ flex: 1, maxWidth: 280, padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
         {/* Category filter */}
+        <ClassFilter selected={classFilter} onChange={setClassFilter}
+          counts={songs.reduce((m: any, s: any) => {
+            const k = String(s.content_class || "MUSIC").toUpperCase();
+            m[k] = (m[k] || 0) + 1; return m;
+          }, {})} />
         <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
           style={{ padding: "8px 12px", borderRadius: 0, fontSize: 12, background: categoryFilter ? "rgb(from var(--accent-blue) r g b / 0.1)" : "var(--bg-secondary)", border: `1px solid ${categoryFilter ? "rgb(from var(--accent-blue) r g b / 0.4)" : "var(--border-primary)"}`, color: categoryFilter ? "var(--accent-cyan)" : "var(--text-secondary)", outline: "none", cursor: "pointer" }}>
           <option value="">All Categories</option>
@@ -5592,8 +5611,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
         <div ref={ctxRef} style={{ position: "fixed", left: ctxMenu.x, top: ctxMenu.y, zIndex: 9999, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", boxShadow: "0 8px 24px rgba(0,0,0,0.4)", minWidth: 180, borderRadius: 0 }}>
           {[
             { label: "Edit Metadata", action: () => openEditMeta(ctxMenu.song) },
-            { label: ctxMenu.song.content_class === "JIN" ? "Unmark Jingle (→ Music)" : "Mark as Jingle (JIN)", action: async () => { const next = ctxMenu.song.content_class === "JIN" ? "MUSIC" : "JIN"; setCtxMenu(null); await (window as any).ether.songs.updateById(ctxMenu.song.id, { content_class: next }); load(); } },
-            { label: ctxMenu.song.content_class === "SWP" ? "Unmark Sweeper (→ Music)" : "Mark as Sweeper (SWP)", action: async () => { const next = ctxMenu.song.content_class === "SWP" ? "MUSIC" : "SWP"; setCtxMenu(null); await (window as any).ether.songs.updateById(ctxMenu.song.id, { content_class: next }); load(); } },
+            { label: ctxMenu.song.content_class === "SWP" ? "Unmark Sweeper (→ Music)" : "Mark as Sweeper", action: async () => { const next = ctxMenu.song.content_class === "SWP" ? "MUSIC" : "SWP"; setCtxMenu(null); await (window as any).ether.songs.updateById(ctxMenu.song.id, { content_class: next }); load(); } },
             { label: ctxMenu.song.content_class === "SPOT" ? "Unmark Spot (→ Music)" : "Mark as Spot (SPOT)", action: async () => {
               const song = ctxMenu.song; setCtxMenu(null);
               if (song.content_class === "SPOT") { await (window as any).ether.songs.updateById(song.id, { content_class: "MUSIC" }); load(); return; }
@@ -5845,7 +5863,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                       <span title={`Cart #${s.cart_id}`} style={{ marginRight: 6, padding: "1px 6px", fontSize: 11, fontWeight: 700, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "var(--accent-cyan)", background: "rgb(from var(--accent-cyan) r g b / 0.12)", border: "1px solid rgb(from var(--accent-cyan) r g b / 0.3)", borderRadius: 0, flexShrink: 0, letterSpacing: "0.04em" }}>{s.cart_id}</span>
                     )}
                     {s.content_class === "JIN" && (
-                      <span title="Jingle — excluded from music rotation & reporting" style={{ marginRight: 6, padding: "1px 6px", fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "#14e0c8", background: "rgba(20, 224, 200, 0.12)", border: "1px solid rgba(20, 224, 200, 0.35)", borderRadius: 0, flexShrink: 0, letterSpacing: "0.06em" }}>JIN</span>
+                      <span title="Sweeper (pre-v52 row) — excluded from music rotation & reporting" style={{ marginRight: 6, padding: "1px 6px", fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "#14e0c8", background: "rgba(20, 224, 200, 0.12)", border: "1px solid rgba(20, 224, 200, 0.35)", borderRadius: 0, flexShrink: 0, letterSpacing: "0.06em" }}>JIN</span>
                     )}
                     {s.content_class === "SWP" && (
                       <span title="Sweeper — excluded from music rotation & reporting" style={{ marginRight: 6, padding: "1px 6px", fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "#4f46e5", background: "rgba(79, 70, 229, 0.14)", border: "1px solid rgba(79, 70, 229, 0.4)", borderRadius: 0, flexShrink: 0, letterSpacing: "0.06em" }}>SWP</span>

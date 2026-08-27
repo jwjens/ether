@@ -2,7 +2,7 @@
 feature: channel-faders
 title: Channel Faders and Channel Cut (ON/OFF)
 summary: Your fader is your level and nothing moves it but your hand — not a track load, not a device change, not the ON/OFF switch. ON/OFF is a channel cut that silences the channel without touching where you set the fader.
-where: Live panel → the mixer strips (decks, JINGLES, guest, mic)
+where: Live panel → the mixer strips (decks, SWEEPERS, guest, mic)
 since: 4.4.146
 audience: operator
 tour: true
@@ -54,8 +54,8 @@ level ahead of time and it takes effect the moment you turn the channel back on.
 ## When to use the cut
 
 - **Kill a channel's audio without losing your level** — you'll want it back at the same setting.
-- **Run a clean segment with no imaging** — cut the JINGLES channel and jingles stay off air even though
-  they still fire on schedule. See **Jingles & Sweepers** for that channel specifically.
+- **Run a clean segment with no imaging** — cut the SWEEPERS channel and sweepers stay off air even though
+  they still fire on schedule. See **Sweepers & Sweepers** for that channel specifically.
 - **Silence a guest or mic channel** between segments.
 
 ## If a channel has gone silent
@@ -68,11 +68,11 @@ level ahead of time and it takes effect the moment you turn the channel back on.
 ## Not in this version (by design)
 
 - **The cut is not a fade.** OFF is immediate and ON is immediate — use the fader if you want to ride it.
-- **No per-channel cut memory except the JINGLES channel**, which is remembered per station. Deck, guest
+- **No per-channel cut memory except the SWEEPERS channel**, which is remembered per station. Deck, guest
   and mic cuts start every session ON.
 
 ## Related
 
 - **Starting a Deck — the ON button** — the deck ON button also starts and stops playout
-- **Jingles & Sweepers** — cutting the imaging channel, remembered per station
+- **Sweepers & Sweepers** — cutting the imaging channel, remembered per station
 - **Audio Processing** — station-wide loudness on the program bus, after all the faders

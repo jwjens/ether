@@ -1,32 +1,32 @@
 ---
 feature: reel-splitter
-title: Reel Splitter — cutting a jingle reel
-summary: Slice a long imaging reel (stacked jingles/sweepers) into individual, tagged, pooled library items in one screen.
-where: Bottom bar → JINGLES → “Add imaging — cut a reel” tab
+title: Reel Splitter — cutting a sweeper reel
+summary: Slice a long imaging reel (stacked sweepers/sweepers) into individual, tagged, pooled library items in one screen.
+where: Bottom bar → SWEEPERS → “Add imaging — cut a reel” tab
 since: 4.4.58
 audience: operator
 tour: true
 ---
 
-# Cutting a jingle reel
+# Cutting a sweeper reel
 
 > Built-in help corpus entry — plain language, step-by-step; the Iris tour layer reads it verbatim.
 
 ## What it is
 
-A **reel** is one long audio file with many jingles or sweepers stacked back to back, separated by silence —
+A **reel** is one long audio file with many sweepers or sweepers stacked back to back, separated by silence —
 the way imaging often arrives from a production house. The **Reel Splitter** is a single dedicated screen
 that slices that reel into individual cuts, lets you review them by ear, and adds them all to your library —
 **tagged and pooled in one step**. It is not a DAW: no tracks, no BPM, no sessions.
 
 ## When to use it
 
-Any time you get a bundle of imaging as one file. If your jingles are already separate files, just import
-them normally and tag them in **Jingles & Sweepers**.
+Any time you get a bundle of imaging as one file. If your sweepers are already separate files, just import
+them normally and tag them in **Sweepers & Sweepers**.
 
 ## Do it (one screen)
 
-1. **Open.** Bottom bar → **JINGLES** → the **“Add imaging — cut a reel”** tab. **Drag the
+1. **Open.** Bottom bar → **SWEEPERS** → the **“Add imaging — cut a reel”** tab. **Drag the
    reel onto the drop zone**, or click **Open reel…**.
 2. **Auto-cut.** The splitter finds the silent gaps and pre-slices the reel into **numbered regions** on the
    waveform. Too many / too few cuts? Drag the **Silence threshold** slider and hit **Re-cut** — lower
@@ -38,9 +38,9 @@ them normally and tag them in **Jingles & Sweepers**.
    - Drag a selected region's **left/right edge** on the waveform to fine-tune its boundaries.
    - Row buttons: **▶** audition · **⌥** split in half · **⌄** merge with the next · **✕** delete.
 4. **Name.** Each region is pre-named `<reel> 01`, `<reel> 02`… Edit any name inline in the list.
-5. **Commit.** Choose **Jingles** or **Sweepers**, optionally pick a **pool**, then **Commit N →**. Each
+5. **Commit.** Choose **Sweepers** or **Sweepers**, optionally pick a **pool**, then **Commit N →**. Each
    region is rendered to its own file and added to the Library, tagged JIN/SWP and assigned to the pool —
-   ready to assign to a music category in **Jingles & Sweepers**.
+   ready to assign to a music category in **Sweepers & Sweepers**.
 
 ## Where the cuts go
 
@@ -53,10 +53,10 @@ migration; today, like all imports, identity is the file path.)
 - **Regions merged / too coarse** — raise the threshold toward 0 dB and Re-cut, or use **⌥ split**.
 - **One giant region** — the reel had no clear silence gaps; split by hand with **⌥** and drag edges.
 - **A cut has silence on the ends** — drag its edges in tighter; the auto-cut keeps a small pad.
-- **Committed to the wrong class/pool** — the cuts are normal library items; retag in **Jingles &
+- **Committed to the wrong class/pool** — the cuts are normal library items; retag in **Sweepers &
   Sweepers** or the Library.
 
 ## Related
 
-- **Jingles & Sweepers** — assign these cuts to music categories (specific or rotating pool).
+- **Sweepers & Sweepers** — assign these cuts to music categories (specific or rotating pool).
 - **Library** — where every committed cut lands.

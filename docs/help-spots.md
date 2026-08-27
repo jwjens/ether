@@ -12,7 +12,7 @@ tour: true
 
 ## What it is
 
-**Spots** are your non-music, scheduled audio — **commercials, promos, PSAs, sponsorships**. Unlike a jingle
+**Spots** are your non-music, scheduled audio — **commercials, promos, PSAs, sponsorships**. Unlike a sweeper
 (which fires as an overlay on a song seam), a spot is a full element that plays in a **timed break** on your
 clock: "a stop set at :20 past the hour, three spots." Spots are kept **out of music rotation** and out of
 music reporting — they're their own content class (amber **SPOT** badge on a library track).
@@ -24,7 +24,7 @@ Top-of-Hour IDs), a **type** (commercial / promo / PSA / sponsorship), and optio
 ## When to use it
 
 Anything that's a scheduled commercial break. Short imaging that rides *over* the music (station IDs,
-stingers, sweepers) is **Jingles**, not this.
+stingers, sweepers) is **Sweepers**, not this.
 
 ## Two ways in
 
@@ -76,13 +76,13 @@ Spots don't rotate like music — they air in **timed breaks** you place on a cl
 ## How spots air (exclusive program, clean edges)
 
 - A spot is **exclusive program content** — it owns its slot like a song. At a break the spot plays **alone**:
-  clean start, clean end, **no music overlap in or out** and **no jingle over it** (imaging introduces music,
+  clean start, clean end, **no music overlap in or out** and **no sweeper over it** (imaging introduces music,
   never a commercial). The next song follows at the spot's natural end.
 - Spot length is read from the **actual audio file** on import / Mark-as-Spot (not a guessed default), so the
   log and the break timing are accurate. Existing spots self-repair their length the next time the panel loads.
 - **Amber deck flash:** while a deck is holding a spot — from the moment it loads until it finishes airing —
   that deck card pulses an amber/gold frame, readable across the room. Songs never flash; this is separate
-  from the jingle indicator (the white/yellow line under a deck).
+  from the sweeper indicator (the white/yellow line under a deck).
 
 ## Notes
 

@@ -13,7 +13,7 @@ tour: true
 ## What it is
 
 Audio Processing keeps your station at a **consistent loudness** and stops it from **clipping**. It works on
-the **program bus** — the single mix that feeds both your studio monitor and the stream — so every song, jingle
+the **program bus** — the single mix that feeds both your studio monitor and the stream — so every song, sweeper
 and spot lands at the same perceived level instead of some tracks sounding quiet and others jumping out.
 
 Two things happen, in order:
@@ -61,7 +61,7 @@ they say "waiting for audio…", nothing is playing yet.
 
 ## How it behaves on air
 
-- Processing runs on the program bus, so it covers **everything** — songs, jingles, sweepers, spots.
+- Processing runs on the program bus, so it covers **everything** — songs, sweepers, sweepers, spots.
 - It does **not** move any deck fader or change your mix; it only shapes the final program level.
 - Changing the target or a toggle applies on the fly; the ride eases in, it doesn't jump.
 
