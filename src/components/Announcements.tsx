@@ -457,9 +457,26 @@ export default function Announcements() {
   const [editing, setEditing] = useState<Partial<Announcement> | null>(null);
 
   // The ASSETS. Ordered by title now, not by trigger_time — an announcement no longer HAS one time.
+  // A FILTERED VIEW OVER THE ONE TYPED LIBRARY (docs/library-current-state.md, Option 1).
+  //
+  // `library_asset` is install-scoped and carries the global fields — title and file_path, the things
+  // that are the same wherever the file is used. `announcements` carries what belongs to THIS station:
+  // trigger time, days, duck settings. Joining them is what keeps the view station-scoped, and it is
+  // the same global-vs-station-specific split RCS uses.
+  //
+  // queryScoped injects a bare `station_id = ?`, which resolves unambiguously to `announcements`
+  // because library_asset deliberately has no such column.
+  //
+  // Filtering on la.deleted_at also fixes a quiet bug: the old query had no deleted_at test at all, so
+  // a soft-deleted announcement kept rendering here — the same defect Spots fixed in v4.4.83.
   const load = async () => {
     if (!isReady) return;
-    setList(await queryScoped<Announcement>("SELECT * FROM announcements ORDER BY title", [], stationId));
+    setList(await queryScoped<Announcement>(
+      `SELECT a.*, la.title AS title, la.file_path AS file_path
+         FROM library_asset la
+         JOIN announcements a ON a.uuid = la.uuid
+        WHERE la.type = 'ANNOUNCEMENT' AND la.deleted_at IS NULL AND a.deleted_at IS NULL
+        ORDER BY la.title`, [], stationId));
   };
 
   // THE SCHEDULE (v47). Every entry for this station, loaded once and split by scope where it is

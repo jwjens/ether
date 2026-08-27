@@ -48,7 +48,14 @@ export default function JinglesPanel({ stationId, onMutated }: { stationId: numb
     try { const r = await ether()?.jingleCategories?.list(stationId); setPools(((r?.rows || []) as Pool[])); } catch { setPools([]); }
     try { const r = await ether()?.categories?.list(stationId); setCats(((r?.rows || []) as MusicCat[]).sort((a, b) => (a.code || "").localeCompare(b.code || ""))); } catch { setCats([]); }
     try {
-      const rows = await query<OverlaySong>("SELECT s.id, s.title, a.name AS artist_name, s.content_class, s.jingle_category_id FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.content_class IN ('JIN','SWP') AND s.deleted_at IS NULL ORDER BY s.content_class, s.title");
+      // A FILTERED VIEW OVER THE ONE TYPED LIBRARY (docs/library-current-state.md, Option 1).
+      // library_asset type='SWEEPER' drives the list; the row still comes from `songs` because that is
+      // where a sweeper's JIN/SWP sub-kind and pool assignment live.
+      //
+      // The tab split deliberately still reads s.content_class. v50 mapped BOTH 'JIN' and 'SWP' to the
+      // single type SWEEPER, so filtering on type alone would collapse the two tabs into one — the
+      // distinction the operator uses to tell a jingle from a sweeper would simply vanish from the UI.
+      const rows = await query<OverlaySong>("SELECT s.id, la.title AS title, a.name AS artist_name, s.content_class, s.jingle_category_id FROM library_asset la JOIN songs s ON s.uuid = la.uuid LEFT JOIN artists a ON a.id = s.artist_id WHERE la.type = 'SWEEPER' AND la.deleted_at IS NULL AND s.deleted_at IS NULL ORDER BY s.content_class, la.title");
       setSongs(rows || []);
     } catch { setSongs([]); }
     try {

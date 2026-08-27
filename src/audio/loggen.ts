@@ -53,82 +53,6 @@ interface SepRules {
   song_sep_sec: number;
 }
 
-// ── THE ASSET JOIN (step 4a, docs/reader-flip-plan-2026-08-27.md) ──────────────────────────────
-//
-// The renderer twin of audiod/loggen.js. These two must agree query for query — a divergence means
-// the daemon and the renderer disagree about what is eligible, which is the hardest class of bug to
-// see. Keep them edited together; the fragment names are deliberately identical in both files.
-//
-// Asset fields come from library_asset. PROGRAMMING fields (category_id, rotation_status,
-// daypart_mask, no_repeat_hours) still come from `songs` — that is step 4b, BLOCKED until the v51
-// backfill, because station_programming holds 12 rows against 436 categorised songs and flipping it
-// today gives a zero-song pool on all four stations (scripts/prove-rotation-pool.js).
-//
-// Two fallbacks, both about never producing dead air: the TABLE may be absent (migrations are
-// fail-soft, so an install where v50 did not apply has no library_asset), and the ROW may be absent
-// (no importer writes library_asset yet, so anything imported after v50 has none). Hence a runtime
-// probe plus LEFT JOIN + COALESCE rather than a hard dependency.
-type AssetSql = {
-  JOIN: string; FILE_PATH: string; TITLE: string; DURATION_MS: string; ARTIST_ID: string;
-  INTRO_END: string; OUTRO_START: string; IS_EXPLICIT: string; LAST_PLAYED_AT: string;
-  BPM: string; ENERGY: string; IS_MUSIC: string;
-  SEP_JOIN: string; SEP_ARTIST: string; SEP_LAST_PLAYED: string;
-  GS_FILE_PATH: string; GS_DURATION: string;
-};
-
-const ASSET_ON: AssetSql = {
-  JOIN: `LEFT JOIN library_asset la ON la.uuid = s.uuid AND la.deleted_at IS NULL`,
-  FILE_PATH: `COALESCE(la.file_path, s.file_path)`,
-  TITLE: `COALESCE(la.title, s.title)`,
-  DURATION_MS: `COALESCE(la.duration_ms, s.duration_ms)`,
-  ARTIST_ID: `COALESCE(la.artist_id, s.artist_id)`,
-  INTRO_END: `COALESCE(la.intro_end, s.intro_end)`,
-  OUTRO_START: `COALESCE(la.outro_start, s.outro_start)`,
-  IS_EXPLICIT: `COALESCE(la.is_explicit, s.is_explicit)`,
-  LAST_PLAYED_AT: `COALESCE(la.last_played_at, s.last_played_at)`,
-  BPM: `COALESCE(la.bpm, s.bpm)`,
-  ENERGY: `COALESCE(la.energy, s.energy)`,
-  IS_MUSIC: `(CASE WHEN la.uuid IS NOT NULL THEN la.type = 'SONG'
-                   ELSE (s.content_class IS NULL OR s.content_class = 'MUSIC') END)`,
-  SEP_JOIN: `LEFT JOIN library_asset la2 ON la2.uuid = s2.uuid AND la2.deleted_at IS NULL`,
-  SEP_ARTIST: `COALESCE(la2.artist_id, s2.artist_id)`,
-  SEP_LAST_PLAYED: `COALESCE(la2.last_played_at, s2.last_played_at)`,
-  GS_FILE_PATH: `COALESCE(gs.file_path, la.file_path, s.file_path)`,
-  GS_DURATION: `COALESCE(la.duration_ms, s.duration_ms, gs.duration_s * 1000)`,
-};
-
-// The pre-flip SQL, verbatim — what runs when library_asset is absent.
-const ASSET_OFF: AssetSql = {
-  JOIN: ``, FILE_PATH: `s.file_path`, TITLE: `s.title`, DURATION_MS: `s.duration_ms`,
-  ARTIST_ID: `s.artist_id`, INTRO_END: `s.intro_end`, OUTRO_START: `s.outro_start`,
-  IS_EXPLICIT: `s.is_explicit`, LAST_PLAYED_AT: `s.last_played_at`,
-  BPM: `s.bpm`, ENERGY: `s.energy`,
-  IS_MUSIC: `(s.content_class IS NULL OR s.content_class = 'MUSIC')`,
-  SEP_JOIN: ``, SEP_ARTIST: `s2.artist_id`, SEP_LAST_PLAYED: `s2.last_played_at`,
-  GS_FILE_PATH: `COALESCE(gs.file_path, s.file_path)`,
-  GS_DURATION: `COALESCE(s.duration_ms, gs.duration_s * 1000)`,
-};
-
-let _assetSql: Promise<AssetSql> | null = null;
-function assetSql(): Promise<AssetSql> {
-  if (!_assetSql) {
-    _assetSql = (async () => {
-      try {
-        const t = await query<{ n: number }>(
-          "SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='library_asset'", []);
-        const u = await query<{ n: number }>(
-          "SELECT COUNT(*) n FROM pragma_table_info('songs') WHERE name='uuid'", []);
-        const ok = !!(t?.[0]?.n) && !!(u?.[0]?.n);
-        if (!ok) console.warn('[loggen] library_asset absent — reading pre-flip columns from `songs`');
-        return ok ? ASSET_ON : ASSET_OFF;
-      } catch {
-        return ASSET_OFF;   // never let a probe failure silence rotation
-      }
-    })();
-  }
-  return _assetSql;
-}
-
 // ── Cursor into generated_schedule — advances as tracks are queued ──
 // Tracks the last row id already loaded into the queue so refills
 // continue forward rather than re-queuing played songs.
@@ -225,10 +149,9 @@ async function sepWindowsMin(stationId: number): Promise<SepWin> {
 }
 
 async function buildRestMapsTwin(stationId: number): Promise<Pick<RestMaps, "restByFile" | "restByArtist" | "restByTitle">> {
-  const AS = await assetSql();   // asset fields when library_asset exists; pre-flip columns when it does not
   const restByFile = new Map<string, number>(), restByArtist = new Map<number, number>(), restByTitle = new Map<string, number>();
   try { for (const r of await query<{ file_path: string; m: number }>("SELECT file_path, MAX(played_at) m FROM play_log WHERE station_id=? AND deleted_at IS NULL AND file_path IS NOT NULL GROUP BY file_path", [stationId])) restByFile.set(r.file_path, r.m || 0); } catch { /* */ }
-  try { for (const r of await query<{ aid: number; m: number }>(`SELECT ${AS.ARTIST_ID} aid, MAX(pl.played_at) m FROM play_log pl JOIN songs s ON s.file_path=pl.file_path ${AS.JOIN} WHERE pl.station_id=? AND pl.deleted_at IS NULL AND ${AS.ARTIST_ID} IS NOT NULL GROUP BY ${AS.ARTIST_ID}`, [stationId])) restByArtist.set(r.aid, r.m || 0); } catch { /* */ }
+  try { for (const r of await query<{ aid: number; m: number }>("SELECT s.artist_id aid, MAX(pl.played_at) m FROM play_log pl JOIN songs s ON s.file_path=pl.file_path WHERE pl.station_id=? AND pl.deleted_at IS NULL AND s.artist_id IS NOT NULL GROUP BY s.artist_id", [stationId])) restByArtist.set(r.aid, r.m || 0); } catch { /* */ }
   try { for (const r of await query<{ tk: string; m: number }>("SELECT LOWER(TRIM(title)) tk, MAX(played_at) m FROM play_log WHERE station_id=? AND deleted_at IS NULL AND title IS NOT NULL AND (content_class IS NULL OR content_class = 'MUSIC') GROUP BY LOWER(TRIM(title))", [stationId])) restByTitle.set(r.tk, r.m || 0); } catch { /* */ }
   return { restByFile, restByArtist, restByTitle };
 }
@@ -237,7 +160,6 @@ async function buildRestMapsTwin(stationId: number): Promise<Pick<RestMaps, "res
 // shared pickEnforced. Returns Song[] in air order (rest-driven — NOT BPM-reordered). Empty ⇒ caller falls
 // through to the legacy ladder (never dead air). relaxedCount is logged loud.
 async function enforcedFill(count: number, stationId: number): Promise<Song[]> {
-  const AS = await assetSql();   // asset fields when library_asset exists; pre-flip columns when it does not
   const win = await sepWindowsMin(stationId);
   const rest = await buildRestMapsTwin(stationId);
   const maps: RestMaps = { ...rest, songLastTs: new Map(), artistLastTs: new Map(), titleLastTs: new Map() };
@@ -255,7 +177,7 @@ async function enforcedFill(count: number, stationId: number): Promise<Song[]> {
     let picked: any = null, guard = 0;
     while (!picked && guard++ < cats.length) {
       const cat = cats[ci++ % cats.length];
-      const cands = await query<Song>(`SELECT s.id, ${AS.TITLE} AS title, a.name AS artist_name, ${AS.ARTIST_ID} AS artist_id, ${AS.DURATION_MS} AS duration_ms, ${AS.FILE_PATH} AS file_path, ${AS.INTRO_END} AS intro_end, ${AS.OUTRO_START} AS outro_start, s.no_repeat_hours FROM songs s ${AS.JOIN} LEFT JOIN artists a ON a.id=${AS.ARTIST_ID} WHERE s.deleted_at IS NULL AND s.category_id=? AND ${AS.FILE_PATH} IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status!='inactive') AND ${AS.IS_MUSIC} AND (s.daypart_mask IS NULL OR ((s.daypart_mask>>?)&1)=1)`, [cat, new Date(cursorTs * 1000).getHours()]);
+      const cands = await query<Song>("SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.file_path, s.intro_end, s.outro_start, s.no_repeat_hours FROM songs s LEFT JOIN artists a ON a.id=s.artist_id WHERE s.deleted_at IS NULL AND s.category_id=? AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status!='inactive') AND (s.content_class IS NULL OR s.content_class='MUSIC') AND (s.daypart_mask IS NULL OR ((s.daypart_mask>>?)&1)=1)", [cat, new Date(cursorTs * 1000).getHours()]);
       if (!cands.length) continue;
       const r = pickEnforced(cands as any[], cursorTs, maps, win, used, null, 240);
       if (!r) continue;
@@ -292,14 +214,13 @@ function buildBaseConditions(
   sep: SepRules,
   blockExplicit: boolean,
   params: any[],
-  stationId: number,
-  AS: AssetSql = ASSET_OFF
+  stationId: number
 ): string {
   // NEVER PLAY A DELETED SONG. This was missing from every candidate query in all three generators
   // (2026-08-13): two songs deleted on 2026-07-20 still held 63 future slots, and across the library
   // 28 deleted songs held 729 future rows with 438 plays recorded after their own delete timestamps.
   // A soft delete the picker ignores is not a delete.
-  let cond = `s.deleted_at IS NULL AND ${AS.FILE_PATH} IS NOT NULL`;
+  let cond = "s.deleted_at IS NULL AND s.file_path IS NOT NULL";
 
   // Never auto-play songs marked inactive in rotation
   cond += " AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')";
@@ -311,7 +232,7 @@ function buildBaseConditions(
 
   // Explicit content block — controlled by ether_content_filter.blockExplicit
   if (blockExplicit) {
-    cond += ` AND ${AS.IS_EXPLICIT} = 0`;
+    cond += " AND s.is_explicit = 0";
     console.warn(`[loggen] RULE: explicit content blocked`);
   }
 
@@ -320,7 +241,7 @@ function buildBaseConditions(
   // no_repeat_hours is NULL for un-tuned songs; NULL*3600 = NULL makes the comparison NULL (falsy),
   // which would exclude a just-played song FOREVER once last_played_at is set. Coalesce to a 3h
   // default so this is a rolling separation window, not a permanent ban.
-  cond += ` AND (${AS.LAST_PLAYED_AT} IS NULL OR ${AS.LAST_PLAYED_AT} < (unixepoch() - COALESCE(s.no_repeat_hours, 3) * 3600))`;
+  cond += " AND (s.last_played_at IS NULL OR s.last_played_at < (unixepoch() - COALESCE(s.no_repeat_hours, 3) * 3600))";
 
   // Artist separation: exclude any artist whose songs were played recently.
   // Uses artist_separation_min from separation_rules DB table (converted to seconds).
@@ -332,9 +253,9 @@ function buildBaseConditions(
   // condition threw at runtime — silently collapsing every live-pick path (clock /
   // SmartRule / random) back to generated_schedule. The subquery is correctly NOT
   // station-scoped. (`stationId` is retained in the signature for parity / future use.)
-  cond += ` AND (${AS.ARTIST_ID} IS NULL OR ${AS.ARTIST_ID} NOT IN (
-    SELECT DISTINCT ${AS.SEP_ARTIST} FROM songs s2 ${AS.SEP_JOIN}
-    WHERE ${AS.SEP_ARTIST} IS NOT NULL AND ${AS.SEP_LAST_PLAYED} > (unixepoch() - ?)
+  cond += ` AND (s.artist_id IS NULL OR s.artist_id NOT IN (
+    SELECT DISTINCT s2.artist_id FROM songs s2
+    WHERE s2.artist_id IS NOT NULL AND s2.last_played_at > (unixepoch() - ?)
   ))`;
   params.push(sep.artist_sep_sec);
 
@@ -354,8 +275,7 @@ async function pickSongsForRule(
   const hour = new Date().getHours();
   const params: any[] = [];
 
-  const AS = await assetSql();
-  let conditions = buildBaseConditions(hour, sep, blockExplicit, params, stationId, AS);
+  let conditions = buildBaseConditions(hour, sep, blockExplicit, params, stationId);
 
   // Stay ON FORMAT: restrict to the rotation category universe (active clock's cats, or
   // the categories of active-show clocks) so a SmartRule top-up can't pull off-rotation
@@ -390,11 +310,10 @@ async function pickSongsForRule(
   params.push(count * 3); // fetch 3× and shuffle for variety
 
   const sql = `
-    SELECT s.id, ${AS.TITLE} AS title, a.name as artist_name, ${AS.FILE_PATH} AS file_path,
-           ${AS.DURATION_MS} AS duration_ms, ${AS.BPM} AS bpm, ${AS.ENERGY} AS energy,
-           ${AS.INTRO_END} AS intro_end, ${AS.OUTRO_START} AS outro_start
-    FROM songs s ${AS.JOIN}
-    LEFT JOIN artists a ON a.id = ${AS.ARTIST_ID}
+    SELECT s.id, s.title, a.name as artist_name, s.file_path,
+           s.duration_ms, s.bpm, s.energy, s.intro_end, s.outro_start
+    FROM songs s
+    LEFT JOIN artists a ON a.id = s.artist_id
     WHERE ${conditions}
     ORDER BY RANDOM()
     LIMIT ?
@@ -419,8 +338,7 @@ async function pickRandom(
 ): Promise<Song[]> {
   const hour = new Date().getHours();
   const params: any[] = [];
-  const AS = await assetSql();
-  let conditions = buildBaseConditions(hour, sep, blockExplicit, params, stationId, AS);
+  let conditions = buildBaseConditions(hour, sep, blockExplicit, params, stationId);
   // Stay ON FORMAT: when given a category set (the active clock's categories, or the
   // in-rotation categories), the last-resort random pull is restricted to them so
   // seasonal / off-rotation categories like Christmas never leak into the queue.
@@ -431,11 +349,10 @@ async function pickRandom(
   params.push(count);
 
   return query<Song>(
-    `SELECT s.id, ${AS.TITLE} AS title, a.name as artist_name, ${AS.FILE_PATH} AS file_path,
-            ${AS.DURATION_MS} AS duration_ms, ${AS.BPM} AS bpm, ${AS.ENERGY} AS energy,
-            ${AS.INTRO_END} AS intro_end, ${AS.OUTRO_START} AS outro_start
-     FROM songs s ${AS.JOIN}
-     LEFT JOIN artists a ON a.id = ${AS.ARTIST_ID}
+    `SELECT s.id, s.title, a.name as artist_name, s.file_path,
+            s.duration_ms, s.bpm, s.energy, s.intro_end, s.outro_start
+     FROM songs s
+     LEFT JOIN artists a ON a.id = s.artist_id
      WHERE ${conditions}
      ORDER BY RANDOM() LIMIT ?`,
     params
@@ -560,8 +477,7 @@ async function pickSongsFromClock(
     if (songs.length >= count) break;
 
     const params: any[] = [];
-    const AS = await assetSql();
-    let cond = buildBaseConditions(hour, sep, blockExplicit, params, stationId, AS);
+    let cond = buildBaseConditions(hour, sep, blockExplicit, params, stationId);
     cond += " AND s.category_id = ?";
     params.push(slot.category_id);
 
@@ -572,10 +488,9 @@ async function pickSongsFromClock(
     params.push(1); // LIMIT
 
     const rows = await query<Song>(
-      `SELECT s.id, ${AS.TITLE} AS title, a.name as artist_name, ${AS.FILE_PATH} AS file_path,
-              ${AS.DURATION_MS} AS duration_ms, ${AS.BPM} AS bpm, ${AS.ENERGY} AS energy,
-              ${AS.INTRO_END} AS intro_end, ${AS.OUTRO_START} AS outro_start
-       FROM songs s ${AS.JOIN} LEFT JOIN artists a ON a.id = ${AS.ARTIST_ID}
+      `SELECT s.id, s.title, a.name as artist_name, s.file_path,
+              s.duration_ms, s.bpm, s.energy, s.intro_end, s.outro_start
+       FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
        WHERE ${cond}
        ORDER BY RANDOM() LIMIT ?`,
       params
@@ -610,7 +525,6 @@ interface ScheduledTrack {
 interface ScheduledTrackRow extends ScheduledTrack { row_id: number; }
 
 async function readGeneratedSchedule(count: number, stationId: number): Promise<ScheduledTrack[]> {
-  const AS = await assetSql();   // asset fields when library_asset exists; pre-flip columns when it does not
   const nowTs = Math.floor(Date.now() / 1000);
   // Stay ON FORMAT even from a pre-generated log: skip any entry whose song is in an
   // off-rotation category (one no active show's clock uses — e.g. a stale Christmas entry
@@ -627,11 +541,10 @@ async function readGeneratedSchedule(count: number, stationId: number): Promise<
   const params = fmt.length ? [cursor, stationId, nowTs, ...fmt, count] : [cursor, stationId, nowTs, count];
   const rows = await query<ScheduledTrackRow>(
     `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, gs.file_key, gs.content_class,
-            ${AS.GS_FILE_PATH} AS file_path,
-            ${AS.INTRO_END} AS intro_end, ${AS.OUTRO_START} AS outro_start,
-            ${AS.GS_DURATION} AS duration_ms
+            COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start,
+            COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
      FROM generated_schedule gs
-     LEFT JOIN songs s ON s.id = gs.song_id ${AS.JOIN}
+     LEFT JOIN songs s ON s.id = gs.song_id
      WHERE gs.id > ? AND gs.station_id = ?
        AND gs.scheduled_at >= ? - 300
        AND gs.deleted_at IS NULL

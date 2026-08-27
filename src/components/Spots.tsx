@@ -67,12 +67,21 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
     // deleted_at IS NULL is FIRST and unconditional — a soft-deleted spot must never render here. Without it
     // the panel showed deleted rows (so Delete looked dead — the row never left the list — and the panel
     // misreported deleted spots as live). This is the truth-fix (v4.4.83).
-    const conds: string[] = ["deleted_at IS NULL"], params: any[] = [];
-    if (filter !== "all")    { conds.push("spot_type = ?"); params.push(filter); }
-    if (catFilter === "none") conds.push("spot_category_id IS NULL");
-    else if (catFilter !== "all") { conds.push("spot_category_id = ?"); params.push(catFilter); }
+    //
+    // A FILTERED VIEW OVER THE ONE TYPED LIBRARY (docs/library-current-state.md, Option 1). The list is
+    // driven by library_asset type='SPOT'; `spots` supplies this station's traffic terms, and the join
+    // is what keeps the view station-scoped — queryScoped's injected `station_id = ?` resolves to
+    // `spots`, since library_asset has no such column. Title and file_path come from the asset, which
+    // the writer keeps current.
+    const conds: string[] = ["s.deleted_at IS NULL", "la.deleted_at IS NULL", "la.type = 'SPOT'"], params: any[] = [];
+    if (filter !== "all")    { conds.push("s.spot_type = ?"); params.push(filter); }
+    if (catFilter === "none") conds.push("s.spot_category_id IS NULL");
+    else if (catFilter !== "all") { conds.push("s.spot_category_id = ?"); params.push(catFilter); }
     const where = " WHERE " + conds.join(" AND ");
-    const rows = await queryScoped<Spot>("SELECT * FROM spots" + where + " ORDER BY title", params, stationId);
+    const rows = await queryScoped<Spot>(
+      "SELECT s.*, la.title AS title, la.file_path AS file_path" +
+      " FROM library_asset la JOIN spots s ON s.uuid = la.uuid" + where + " ORDER BY la.title",
+      params, stationId);
     setSpots(rows);
     // Repair any fake/missing durations from the file, then re-load once to reflect them (the second pass
     // finds nothing to heal → terminates, no loop).

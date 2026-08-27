@@ -10,6 +10,7 @@
 
 const crypto = require('crypto');
 const { withMutation, serializePayload } = require('../mutation-writer');
+const libraryAsset = require('./library_asset');
 const { REGISTRY } = require('../synced-tables');
 // v47 — an announcement is the ASSET; WHEN it plays lives in announcement_schedule. Deleting the
 // asset has to take its entries with it.
@@ -50,6 +51,45 @@ function announcementsGet(db, uuid) {
   ).get(uuid) ?? null;
 }
 
+// ── THE LIBRARY MIRROR (step 5, docs/library-current-state.md — Option 1) ──────────────────────
+//
+// An announcement is an element in the ONE typed library, so every write here also writes its
+// `library_asset` row. The panels are filtered views over that library, and a view can only show
+// what the writer put there.
+//
+// TWO RULES THIS FOLLOWS, both learned the hard way:
+//
+//   READER AND WRITER LAND TOGETHER. Step 4a flipped a reader onto library_asset while nothing wrote
+//   it, which left rotation reading a snapshot frozen at v50. Reverted. The panel read in step 4 is
+//   only safe because this exists.
+//
+//   ONE ATOMIC UNIT. This runs INSIDE the caller's withMutation, so the announcement row and its
+//   asset row commit or roll back together — better-sqlite3 nests transactions as SAVEPOINTs, and
+//   mutation-writer pushes a context stack so the asset mutation is journalled as a child of the
+//   announcement's. They can never disagree, which is the whole failure mode being designed out.
+//
+// The uuid is SHARED with the announcement — the same contract v50 used for songs and spots, and
+// what makes `la.uuid = a.uuid` the join for every reader.
+function mirrorToLibrary(db, row, op) {
+  // A title is required by assetCreate, and an untitled announcement should still be findable in the
+  // library rather than rejected at the door.
+  const title = row.title || (row.file_path ? String(row.file_path).split(/[\\/]/).pop() : null) || 'Announcement';
+  const existing = db.prepare('SELECT uuid, deleted_at FROM library_asset WHERE uuid = ?').get(row.uuid);
+
+  if (op === 'delete') {
+    if (existing && !existing.deleted_at) libraryAsset.assetDelete(db, row.uuid);
+    return;
+  }
+  if (!existing) {
+    libraryAsset.assetCreate(db, {
+      uuid: row.uuid, type: 'ANNOUNCEMENT', title, file_path: row.file_path ?? null,
+    });
+    return;
+  }
+  // assetUpdate carries its own no-op guard, so an unchanged title/path journals nothing.
+  libraryAsset.assetUpdate(db, row.uuid, { title, file_path: row.file_path ?? null });
+}
+
 function announcementsCreate(db, payload) {
   validateScope();
   if (HAS_STATION_ID_COL && payload.station_id == null) {
@@ -77,6 +117,7 @@ function announcementsCreate(db, payload) {
     db.prepare(
       `INSERT INTO ${TABLE} (title, file_path, trigger_time, days, duck_music, resume_music, duck_level, is_active, last_played_at, created_at, station_id, uuid, updated_at, deleted_at, trigger_type, close_offset_min) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(row.title, row.file_path, row.trigger_time, row.days, row.duck_music, row.resume_music, row.duck_level, row.is_active, row.last_played_at, row.created_at, row.station_id, row.uuid, row.updated_at, row.deleted_at, row.trigger_type ?? 'absolute', row.close_offset_min ?? 0);
+    mirrorToLibrary(db, row, 'insert');
   });
   return announcementsGet(db, uuid);
 }
@@ -115,6 +156,7 @@ function announcementsUpdate(db, uuid, patch) {
     const sets = patchFields.map(k => `${k} = ?`).join(', ');
     const vals = patchFields.map(k => patch[k]);
     db.prepare(`UPDATE ${TABLE} SET ${sets}, updated_at = ? WHERE uuid = ?`).run(...vals, now, uuid);
+    mirrorToLibrary(db, updated, 'update');
   });
   return announcementsGet(db, uuid);
 }
@@ -139,6 +181,7 @@ function announcementsDelete(db, uuid, stationId) {
     db.prepare(
       `UPDATE ${TABLE} SET deleted_at = ?, updated_at = ? WHERE uuid = ?`
     ).run(now, now, uuid);
+    mirrorToLibrary(db, existing, 'delete');
   });
   // CASCADE, not a bridge: a deleted announcement must not leave live schedule entries pointing at
   // it. Referential cleanup the panel should never have to remember to do. Soft-deleted, so peers

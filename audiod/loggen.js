@@ -45,91 +45,14 @@ function sepWindows(db, stationId) {
   return { artistSepMin: g('artist_separation_min', 60), songRepeatMin: g('song_separation_min', 180), titleSepMin: g('title_separation_min', 120) };
 }
 
-// ── THE ASSET JOIN (step 4a, docs/reader-flip-plan-2026-08-27.md) ──────────────────────────────
-//
-// Asset fields — what the FILE is — come from library_asset. Programming fields — how THIS STATION
-// treats the file (category_id, rotation_status, daypart_mask, no_repeat_hours) — still come from
-// `songs`. That second half is step 4b and is BLOCKED: station_programming holds 12 rows against 436
-// categorised songs, so flipping it today yields a zero-song pool on all four stations. Measured,
-// not assumed — scripts/prove-rotation-pool.js.
-//
-// TWO FALLBACKS, both load-bearing, both about never producing dead air:
-//
-//  1. THE TABLE MAY NOT EXIST. Migrations are fail-soft (applyMigration is wrapped in try/catch), so
-//     an install where v50 did not apply has no library_asset. A hard reference would make every
-//     rotation query throw — and pickTier swallows SQL errors into an empty result, so the station
-//     would go silent with nothing in the log to say why. The table is therefore detected per
-//     database handle and the pre-flip SQL is kept verbatim as the fallback.
-//  2. THE ROW MAY NOT EXIST. No importer writes library_asset yet (only the sync handler does), so a
-//     song imported after v50 has no asset row. Hence LEFT JOIN + COALESCE rather than INNER JOIN and
-//     a bare la.column: the asset wins when present, `songs` answers when it is not.
-//
-// Both fallbacks are exercised by audiod/loggen-category-gate.test.js, whose fixture has neither the
-// table nor a uuid column — that test passing unmodified is the proof this degrades correctly.
-const ASSET_ON = Object.freeze({
-  JOIN:         `LEFT JOIN library_asset la ON la.uuid = s.uuid AND la.deleted_at IS NULL`,
-  FILE_PATH:    `COALESCE(la.file_path, s.file_path)`,
-  FILE_KEY:     `COALESCE(la.file_key, s.file_key)`,
-  TITLE:        `COALESCE(la.title, s.title)`,
-  DURATION_MS:  `COALESCE(la.duration_ms, s.duration_ms)`,
-  ARTIST_ID:    `COALESCE(la.artist_id, s.artist_id)`,
-  INTRO_END:    `COALESCE(la.intro_end, s.intro_end)`,
-  OUTRO_START:  `COALESCE(la.outro_start, s.outro_start)`,
-  // content_class='MUSIC' on `songs` is type='SONG' on library_asset. prove-asset-field-parity.js
-  // confirmed all 436 rotation-reachable songs map that way with zero exceptions.
-  IS_MUSIC:     `(CASE WHEN la.uuid IS NOT NULL THEN la.type = 'SONG'
-                       ELSE (s.content_class IS NULL OR s.content_class = 'MUSIC') END)`,
-  // The artist-separation lookup resolves what RECENTLY PLAYED back to an artist, so it joins too.
-  SEP_JOIN:     `LEFT JOIN library_asset la2 ON la2.uuid = s2.uuid AND la2.deleted_at IS NULL`,
-  SEP_ARTIST:   `COALESCE(la2.artist_id, s2.artist_id)`,
-  SEP_IS_MUSIC: `(CASE WHEN la2.uuid IS NOT NULL THEN la2.type = 'SONG'
-                       ELSE (s2.content_class IS NULL OR s2.content_class = 'MUSIC') END)`,
-  // generated_schedule keeps priority: it records what was actually scheduled. The asset slots in
-  // between the schedule row and `songs`.
-  GS_FILE_PATH: `COALESCE(gs.file_path, la.file_path, s.file_path)`,
-  GS_FILE_KEY:  `COALESCE(gs.file_key, la.file_key, s.file_key)`,
-  GS_DURATION:  `COALESCE(la.duration_ms, s.duration_ms, gs.duration_s * 1000)`,
-});
-
-// The pre-flip SQL, verbatim. This is what runs when library_asset is absent.
-const ASSET_OFF = Object.freeze({
-  JOIN: ``, FILE_PATH: `s.file_path`, FILE_KEY: `s.file_key`, TITLE: `s.title`,
-  DURATION_MS: `s.duration_ms`, ARTIST_ID: `s.artist_id`,
-  INTRO_END: `s.intro_end`, OUTRO_START: `s.outro_start`,
-  IS_MUSIC: `(s.content_class IS NULL OR s.content_class = 'MUSIC')`,
-  SEP_JOIN: ``, SEP_ARTIST: `s2.artist_id`,
-  SEP_IS_MUSIC: `(s2.content_class IS NULL OR s2.content_class = 'MUSIC')`,
-  GS_FILE_PATH: `COALESCE(gs.file_path, s.file_path)`,
-  GS_FILE_KEY:  `COALESCE(gs.file_key, s.file_key)`,
-  GS_DURATION:  `COALESCE(s.duration_ms, gs.duration_s * 1000)`,
-});
-
-// Detected once per database handle, not per query — this runs inside the fill path.
-const _assetMode = new WeakMap();
-function assetSql(db) {
-  if (!db) return ASSET_ON;
-  let m = _assetMode.get(db);
-  if (m) return m;
-  let ok = false;
-  try {
-    ok = !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='library_asset'").get()
-      && !!db.prepare("SELECT 1 FROM pragma_table_info('songs') WHERE name='uuid'").get();
-  } catch { ok = false; }
-  m = ok ? ASSET_ON : ASSET_OFF;
-  if (!ok) console.warn('[loggen] library_asset absent — rotation reading pre-flip columns from `songs`');
-  _assetMode.set(db, m);
-  return m;
-}
-
 // ── Base conditions. opts toggles each soft rule so the ladder can relax tier by tier ──
 //   opts.daypart      (default on)  — current-hour daypart mask
 //   opts.songSep      (bool)        — per-song no_repeat_hours, station-scoped via play_log
 //   opts.artistSepSec (seconds, >0) — artist separation, station-scoped via play_log
 // rotation_status='inactive' is ALWAYS excluded (that song is deliberately out of rotation), so the
 // "category has an active song" invariant is well-defined.
-function baseConditions(hour, params, stationId, opts, db) {
+function baseConditions(hour, params, stationId, opts) {
   opts = opts || {};
-  const AS = assetSql(db);
   // content_class gate: MUSIC only. Jingles (JIN) / spots (SPOT) NEVER fill a music slot. IS NULL covers a
   // pre-v29 / partially-migrated row (post-migration the column defaults to 'MUSIC'). (jingles design 1b)
   // category gate: a MUSIC song with no category can NEVER air — every on-format read derives its
@@ -144,23 +67,20 @@ function baseConditions(hour, params, stationId, opts, db) {
   // MUSIC ONLY, and that is the whole point: jingles and spots do not have categories and must not.
   // They are filed by jingle_category_id / spot_category_id, are selected by their own paths, and
   // never come through here — baseConditions is already MUSIC-gated on the line below.
-  // s.category_id / s.rotation_status stay on `songs` — programming fields, step 4b.
-  let c = `${AS.FILE_PATH} IS NOT NULL AND s.category_id IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND ${AS.IS_MUSIC}`;
+  let c = "s.file_path IS NOT NULL AND s.category_id IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND (s.content_class IS NULL OR s.content_class = 'MUSIC')";
   if (opts.daypart !== false) { c += " AND ((s.daypart_mask >> ?) & 1) = 1"; params.push(hour); }
   if (opts.songSep) {
-    // pl.file_path matches the ASSET's path; no_repeat_hours stays on `songs` (programming, 4b).
     c += ` AND NOT EXISTS (SELECT 1 FROM play_log pl
-             WHERE pl.file_path = ${AS.FILE_PATH} AND pl.station_id = ? AND pl.deleted_at IS NULL
+             WHERE pl.file_path = s.file_path AND pl.station_id = ? AND pl.deleted_at IS NULL
                AND pl.played_at > (unixepoch() - COALESCE(s.no_repeat_hours, 3) * 3600))`;
     params.push(stationId);
   }
   if (opts.artistSepSec && opts.artistSepSec > 0) {
-    c += ` AND (${AS.ARTIST_ID} IS NULL OR ${AS.ARTIST_ID} NOT IN (
-             SELECT ${AS.SEP_ARTIST} FROM play_log pl JOIN songs s2 ON s2.file_path = pl.file_path
-               ${AS.SEP_JOIN}
+    c += ` AND (s.artist_id IS NULL OR s.artist_id NOT IN (
+             SELECT s2.artist_id FROM play_log pl JOIN songs s2 ON s2.file_path = pl.file_path
              WHERE pl.station_id = ? AND pl.deleted_at IS NULL AND pl.played_at > (unixepoch() - ?)
-               AND ${AS.SEP_ARTIST} IS NOT NULL
-               AND ${AS.SEP_IS_MUSIC}))`;
+               AND s2.artist_id IS NOT NULL
+               AND (s2.content_class IS NULL OR s2.content_class = 'MUSIC')))`;
     params.push(stationId, opts.artistSepSec);
   }
   return c;
@@ -238,10 +158,8 @@ function getStationCategoryIds(db, stationId) {
   } catch { return []; }
 }
 
-const selectSql = (db) => { const AS = assetSql(db); return `SELECT s.id, ${AS.TITLE} AS title, a.name AS artist_name,
-    ${AS.FILE_PATH} AS file_path, ${AS.FILE_KEY} AS file_key, ${AS.DURATION_MS} AS duration_ms,
-    ${AS.INTRO_END} AS intro_end, ${AS.OUTRO_START} AS outro_start
-  FROM songs s ${AS.JOIN} LEFT JOIN artists a ON a.id = ${AS.ARTIST_ID}`; };
+const SELECT = `SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.file_key, s.duration_ms, s.intro_end, s.outro_start
+  FROM songs s LEFT JOIN artists a ON a.id = s.artist_id`;
 // NEVER PLAY A DELETED SONG (2026-08-13). Every candidate query in all three generators was missing
 // this; 28 deleted songs held 729 future rows and 438 plays logged after their own deletes. Applied
 // at each WHERE rather than folded into SELECT, because every caller supplies its own conditions.
@@ -255,11 +173,10 @@ const toItem = (r) => ({
 });
 
 // least-recently-played first: songs never aired on THIS station (MAX→NULL→0) come first, then oldest.
-function lrpOrder(params, stationId, db) {
+function lrpOrder(params, stationId) {
   params.push(stationId);
-  // Matches play_log on the ASSET's path — the same path the deck actually opened.
   return `ORDER BY COALESCE((SELECT MAX(pl.played_at) FROM play_log pl
-            WHERE pl.file_path = ${assetSql(db).FILE_PATH} AND pl.station_id = ? AND pl.deleted_at IS NULL), 0) ASC, RANDOM()`;
+            WHERE pl.file_path = s.file_path AND pl.station_id = ? AND pl.deleted_at IS NULL), 0) ASC, RANDOM()`;
 }
 
 // One tier of the ladder. order: "random" (Tier 1) or "lrp" (Tier 2/3). Returns [] on SQL error
@@ -267,12 +184,12 @@ function lrpOrder(params, stationId, db) {
 function pickTier(db, count, hour, stationId, formatCats, excludeIds, opts, order) {
   if (count <= 0) return [];
   const params = [];
-  let cond = baseConditions(hour, params, stationId, opts, db);
+  let cond = baseConditions(hour, params, stationId, opts);
   if (formatCats && formatCats.length) { cond += ` AND s.category_id IN (${formatCats.map(() => "?").join(",")})`; params.push(...formatCats); }
   if (excludeIds && excludeIds.length) { cond += ` AND s.id NOT IN (${excludeIds.map(() => "?").join(",")})`; params.push(...excludeIds); }
-  const orderSql = order === "lrp" ? lrpOrder(params, stationId, db) : "ORDER BY RANDOM()";
+  const orderSql = order === "lrp" ? lrpOrder(params, stationId) : "ORDER BY RANDOM()";
   params.push(count);
-  try { return db.prepare(`${selectSql(db)} WHERE ${NOT_DELETED} AND (${cond}) ${orderSql} LIMIT ?`).all(...params); }
+  try { return db.prepare(`${SELECT} WHERE ${NOT_DELETED} AND (${cond}) ${orderSql} LIMIT ?`).all(...params); }
   catch (e) { console.error("[loggen] pickTier failed:", e.message); return []; }
 }
 
@@ -309,7 +226,6 @@ let _schedCursor = 0;
 function resetScheduleCursor() { _schedCursor = 0; }
 
 function readGeneratedSchedule(db, count, stationId) {
-  const AS = assetSql(db);   // asset fields when library_asset exists; pre-flip columns when it does not
   const nowTs = Math.floor(Date.now() / 1000);
   const fmt = getFormatCategoryIds(db, stationId);
   const catClause = fmt.length ? `AND (s.id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
@@ -317,10 +233,10 @@ function readGeneratedSchedule(db, count, stationId) {
   let rows;
   try {
     rows = db.prepare(
-      `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, ${AS.GS_FILE_KEY} AS file_key,
-              ${AS.GS_FILE_PATH} AS file_path, ${AS.INTRO_END} AS intro_end, ${AS.OUTRO_START} AS outro_start,
-              gs.content_class, ${AS.GS_DURATION} AS duration_ms
-       FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id ${AS.JOIN}
+      `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, COALESCE(gs.file_key, s.file_key) AS file_key,
+              COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start, gs.content_class,
+              COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
+       FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
        WHERE gs.id > ? AND gs.station_id = ? AND gs.scheduled_at >= ? - 300 AND gs.deleted_at IS NULL
          AND (gs.content_class IS NULL OR gs.content_class != 'JIN') ${catClause}
        ORDER BY gs.scheduled_at LIMIT ?`).all(...params);
@@ -331,17 +247,16 @@ function readGeneratedSchedule(db, count, stationId) {
 
 // Top-of-hour: schedule anchored exactly at hourStartTs, no grace (daemon hard cut).
 function fillFromHour(db, stationId, hourStartTs, count = 20) {
-  const AS = assetSql(db);   // asset fields when library_asset exists; pre-flip columns when it does not
   const fmt = getFormatCategoryIds(db, stationId);
   const catClause = fmt.length ? `AND (s.id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
   const params = fmt.length ? [stationId, hourStartTs, ...fmt, count] : [stationId, hourStartTs, count];
   let rows;
   try {
     rows = db.prepare(
-      `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, ${AS.GS_FILE_KEY} AS file_key,
-              ${AS.GS_FILE_PATH} AS file_path, ${AS.INTRO_END} AS intro_end, ${AS.OUTRO_START} AS outro_start,
-              gs.content_class, ${AS.GS_DURATION} AS duration_ms
-       FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id ${AS.JOIN}
+      `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, COALESCE(gs.file_key, s.file_key) AS file_key,
+              COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start, gs.content_class,
+              COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
+       FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
        WHERE gs.station_id = ? AND gs.scheduled_at >= ? AND gs.deleted_at IS NULL
          AND (gs.content_class IS NULL OR gs.content_class != 'JIN') ${catClause}
        ORDER BY gs.scheduled_at LIMIT ?`).all(...params);
@@ -365,14 +280,13 @@ function fillFromHour(db, stationId, hourStartTs, count = 20) {
 // content_class guard (loggen.readGeneratedSchedule). driftSec = now − chosen row's scheduled_at
 // (positive = the chosen slot is in the past = running behind). Never throws.
 function selectRowForNow(db, stationId, nowTs, slackSec = 60) {
-  const AS = assetSql(db);   // asset fields when library_asset exists; pre-flip columns when it does not
   try {
     const fmt = getFormatCategoryIds(db, stationId);
     const catClause = fmt.length ? `AND (s.id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
-    const base = `FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id ${AS.JOIN}
+    const base = `FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
                   WHERE gs.station_id = ? AND gs.state = 'pending' AND gs.deleted_at IS NULL
                     AND (gs.content_class IS NULL OR gs.content_class NOT IN ('JIN','SWP')) ${catClause}`;
-    const cols = `gs.id AS row_id, gs.title, gs.scheduled_at, ${AS.GS_FILE_PATH} AS file_path`;
+    const cols = `gs.id AS row_id, gs.title, gs.scheduled_at, COALESCE(gs.file_path, s.file_path) AS file_path`;
     const fmtP = fmt.length ? fmt : [];
     // Current slot: the latest pending row whose scheduled_at has arrived (within slack).
     const playRow = db.prepare(
@@ -406,7 +320,6 @@ function selectRowForNow(db, stationId, nowTs, slackSec = 60) {
 // shape matches loggen.fillQueue (schedId carried) so the daemon's proven preload/rotate/loadToDeck path
 // consumes it unchanged. Never throws.
 function readLogAnchored(db, stationId, count = 20, slackSec = 60) {
-  const AS = assetSql(db);   // asset fields when library_asset exists; pre-flip columns when it does not
   const nowTs = Math.floor(Date.now() / 1000);
   const d = selectRowForNow(db, stationId, nowTs, slackSec);
   if (!d.playRow) return { items: [], mode: d.mode, missedRowIds: [], driftSec: 0, aheadBySec: 0 };
@@ -414,7 +327,7 @@ function readLogAnchored(db, stationId, count = 20, slackSec = 60) {
   const fmt = getFormatCategoryIds(db, stationId);
   const catClause = fmt.length ? `AND (s.id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
   const fmtP = fmt.length ? fmt : [];
-  const pendBase = `FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id ${AS.JOIN}
+  const pendBase = `FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
     WHERE gs.station_id = ? AND gs.state = 'pending' AND gs.deleted_at IS NULL
       AND (gs.content_class IS NULL OR gs.content_class NOT IN ('JIN','SWP')) ${catClause}`;
   // MISSED (day-bounded): still-pending on-format rows scheduled TODAY, before the anchor — the flip
@@ -557,7 +470,6 @@ function orderForNearestAnchor(items, seamTs, opts = {}) {
 const JINGLES_ENABLED = true;
 
 function readJingleForSeam(db, stationId, afterTs, beforeTs, excludeIds) {
-  const AS = assetSql(db);   // asset fields when library_asset exists; pre-flip columns when it does not
   if (!JINGLES_ENABLED) return null;   // kill-switch — see comment above
   if (afterTs == null || beforeTs == null || beforeTs <= afterTs) return null;
   const ex = Array.isArray(excludeIds) ? excludeIds.filter(n => Number.isFinite(n)) : [];
@@ -565,10 +477,10 @@ function readJingleForSeam(db, stationId, afterTs, beforeTs, excludeIds) {
   try {
     const row = db.prepare(
       `SELECT gs.id AS row_id, gs.scheduled_at, gs.title, gs.artist, gs.content_class,
-              ${AS.GS_FILE_PATH} AS file_path,
-              ${AS.GS_DURATION} AS duration_ms,
+              COALESCE(gs.file_path, s.file_path) AS file_path,
+              COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms,
               gs.lead_in_sec, gs.underlap_sec, gs.jingle_category_id
-         FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id ${AS.JOIN}
+         FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
         WHERE gs.station_id = ? AND gs.content_class IN ('JIN','SWP') AND gs.deleted_at IS NULL
           AND gs.scheduled_at > ? AND gs.scheduled_at <= ?${notIn}
         ORDER BY gs.scheduled_at ASC LIMIT 1`).get(stationId, afterTs, beforeTs, ...ex);
