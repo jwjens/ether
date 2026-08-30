@@ -9,7 +9,7 @@ name = "ha-setup"
 path = "src/main.rs"
 
 [dependencies]
-winreg = "0.52"
+winreg = "0.56"
 zeroize = "1"
 windows = { version = "0.58", features = [
     "Win32_Foundation",
