@@ -30,9 +30,9 @@ the one above: same wi-fi, or no page.
 
 ## Getting the link (read this — there is no button yet)
 
-**Today the link only appears in the studio machine's startup log.** There is no screen in EtherCast
-that shows it and no QR code to scan yet. That is a real gap, not a secret — it is written down in
-the backlog.
+**The URL is the whole access method — there is nothing to scan and nothing to install.** Today that
+URL appears only in the studio machine's startup log; there is no screen in EtherCast that shows it.
+That is a real gap, not a secret — it is written down in the backlog.
 
 On the studio machine, when Ether starts, the log prints one line per network the machine is on:
 

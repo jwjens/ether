@@ -32,7 +32,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const KEY_CLOSING = 'closing_time';        // station_config_kv — the JSON below
-const KEY_TOKEN   = 'ops_token';           // station_config_kv — the QR token
+const KEY_TOKEN   = 'ops_token';           // station_config_kv — the ?k= access token
 
 // ── the closing-time value ────────────────────────────────────────────────────
 // One KV row per station, holding this shape:
@@ -83,8 +83,9 @@ const minToHms = (n) => {
 // POST /api/transport/stop. That is pre-existing and out of scope here, but this page adds a WRITE,
 // so the write is gated rather than adding to the problem.
 //
-// One opaque token per station, minted on first use and shown by the desktop app as a QR code. The
-// operator scans it once; they never type anything. Reads stay open — the page is useless without a
+// One opaque token per station, minted on first use and carried in the URL as ?k=. The address is
+// printed in the [ops] startup log and shared as a link — there is no QR code and none is wanted;
+// the URL is the whole access method. Reads stay open — the page is useless without a
 // station on the same LAN, and gating reads would mean an operator whose phone lost the query string
 // sees an error instead of the closing time.
 function ensureToken(db, stationId) {
@@ -261,7 +262,7 @@ function installOpsRoutes({ getDb, audio, getActiveStationId, webRoot }) {
 
       if (req.method === 'PUT' && url.startsWith('/api/ops/closing-time')) {
         // The gate. Reads are open; the write is not.
-        if (!tokenOk) { json(403, { ok: false, error: 'This copy is view-only. Scan the QR code on the studio machine to make changes.' }); return true; }
+        if (!tokenOk) { json(403, { ok: false, error: 'This copy is view-only. Open the full Park Ops link — the one ending in ?k= — from the station startup log to make changes.' }); return true; }
         let body = '';
         req.on('data', d => { body += d; });
         req.on('end', () => {
