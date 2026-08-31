@@ -32,6 +32,9 @@ const STATION_SCOPED: ReadonlySet<string> = new Set([
   // (station_id, slot_number), so slot 3 is a different bite on every station. Firing it
   // license-wide would put one park's audio out of every station on the account.
   "cart:fire",
+  // Park Ops setting ONE station's closing time for one date. Station-scoped for the obvious reason:
+  // closing_time is per station, and a park's closing time is not the Christmas station's.
+  "ops:set-closing",
 ]);
 
 /** True if `cmd` acts on a single station (→ route by station_uuid). False for license-scoped commands

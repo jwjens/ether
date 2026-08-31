@@ -184,6 +184,9 @@ interface ScheduleEntry {
   close_offset_min: number;
   sort_order: number;
   last_played_at: number | null;
+  /** v53. Set when an offset row's computed time had already passed — the closing time moved out
+   *  from under it — so a skip is visible rather than silent. Cleared when the row fires. */
+  skipped_at: number | null;
 }
 
 /** One line of the schedule: WHICH announcement, and at WHAT TIME. That is the whole entry. */
@@ -252,6 +255,260 @@ function DraftRow({ line, assets, onPatch, onDelete }: {
   );
 }
 
+// ── BY MINUTES — announcements timed from closing ────────────────────────────────────────────────
+//
+// Jeff, 2026-08-31. Define the offsets ONCE and they fire correctly every night, because each row
+// resolves at fire time against THAT DAY'S closing time (electron/main.js dueTimeFor). The same
+// "-30" fires at 17:30 on an 18:00 Sunday and 21:30 on a 22:00 Saturday, with nothing rewritten in
+// between — that is the whole feature, and it is why these rows carry no clock time of their own.
+//
+// SAME TWO GESTURES AS MANUAL: pick the nights on the calendar, build the list, press APPLY. No new
+// recurrence concept — the multi-select IS the recurrence, exactly as it is for absolute entries, so
+// nothing v48 deliberately removed comes back.
+//
+// NEGATIVE IS BEFORE CLOSE. -30 means thirty minutes before; 0 is closing time itself.
+interface OffsetDraft { id: number; announcement_uuid: string; offset: number; }
+let _offsetSeq = 0;
+
+function ByMinutesBoard({ stationId, assets, entries, reload, closing }: {
+  stationId: number | null; assets: Announcement[]; entries: ScheduleEntry[]; reload: () => void;
+  closing: ClosingCfg;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [draft, setDraft]       = useState<OffsetDraft[]>([]);
+  const [dirty, setDirty]       = useState(false);
+  const [busy, setBusy]         = useState(false);
+  const [err, setErr]           = useState<string | null>(null);
+  const [msg, setMsg]           = useState<string | null>(null);
+  const api = () => (window as any).ether.announcements;
+
+  const linesFor = (d: string): OffsetDraft[] =>
+    entries.filter(e => e.date === d && e.trigger_type === "close_offset")
+      .sort((a, b) => (a.close_offset_min ?? 0) - (b.close_offset_min ?? 0))
+      .map(e => ({ id: ++_offsetSeq, announcement_uuid: e.announcement_uuid, offset: e.close_offset_min ?? 0 }));
+
+  const toggleDate = (d: string) => {
+    if (selected.size === 0) { setSelected(new Set([d])); setDraft(linesFor(d)); setDirty(false); return; }
+    const n = new Set(selected);
+    n.has(d) ? n.delete(d) : n.add(d);
+    setSelected(n);
+    if (n.size === 0) { setDraft([]); setDirty(false); }
+  };
+  const clearAll = () => { setSelected(new Set()); setDraft([]); setDirty(false); setErr(null); setMsg(null); };
+  const dates = [...selected].sort();
+
+  const addLine = () => {
+    if (!assets.length) { setErr("There are no announcements yet — upload one below first."); return; }
+    setDraft(d => [...d, { id: ++_offsetSeq, announcement_uuid: assets[0].uuid, offset: -30 }]);
+    setDirty(true); setMsg(null);
+  };
+  const patchLine  = (id: number, p: Partial<OffsetDraft>) => { setDraft(d => d.map(l => l.id === id ? { ...l, ...p } : l)); setDirty(true); setMsg(null); };
+  const removeLine = (id: number) => { setDraft(d => d.filter(l => l.id !== id)); setDirty(true); setMsg(null); };
+
+  // What a rule actually fires at on a given date. Shown per line for TWO different selected dates
+  // where they differ, because seeing one rule produce two times is what makes the model legible.
+  const dowOf = (ymd: string) => new Date(`${ymd}T12:00:00`).getDay();
+  const firesAt = (offset: number, date: string): string | null => {
+    const c = resolveClosingCfg(closing, date, dowOf(date));
+    if (!c) return null;
+    const m = /^(\d{1,2}):(\d{2})/.exec(c);
+    if (!m) return null;
+    const total = ((Number(m[1]) * 60 + Number(m[2]) + offset) % 1440 + 1440) % 1440;
+    const h = Math.floor(total / 60), mi = total % 60;
+    const ampm = h >= 12 ? "PM" : "AM";
+    return `${h % 12 === 0 ? 12 : h % 12}:${String(mi).padStart(2, "0")} ${ampm}`;
+  };
+  // Two example dates from the selection whose closing times differ — the pair worth showing.
+  const examples = (() => {
+    if (!dates.length) return [];
+    const seen = new Map<string, string>();
+    for (const d of dates) {
+      const c = resolveClosingCfg(closing, d, dowOf(d)) || "—";
+      if (!seen.has(c)) seen.set(c, d);
+      if (seen.size === 2) break;
+    }
+    return [...seen.values()];
+  })();
+
+  const apply = async () => {
+    if (stationId == null || !dates.length) return;
+    if (draft.some(l => !Number.isFinite(l.offset))) { setErr("Every line needs a number of minutes."); return; }
+    setBusy(true); setErr(null); setMsg(null);
+    try {
+      let created = 0, removed = 0, kept = 0;
+      for (const d of dates) {
+        // ONLY close_offset rows on this date are touched. The MANUAL tab's absolute entries for the
+        // same night are left exactly as they are — applying one tab must never silently wipe the
+        // other's work, which is the whole risk of two editors over one table.
+        const existing = entries.filter(e => e.date === d && e.trigger_type === "close_offset");
+        const key = (u: string, o: number) => `${u}|${o}`;
+        const want = new Map(draft.map(l => [key(l.announcement_uuid, l.offset), l]));
+        const have = new Map(existing.map(e => [key(e.announcement_uuid, e.close_offset_min ?? 0), e]));
+
+        // An unchanged line KEEPS its row, and therefore its last_played_at and its 120s guard.
+        // Delete-and-recreate would clear the stamp and let a row that already fired tonight fire
+        // again — the same rule the MANUAL tab's diffSchedule exists to protect.
+        for (const [k, e] of have) if (!want.has(k)) { await api().deleteEntry(e.uuid, stationId); removed++; }
+        for (const [k, l] of want) {
+          if (have.has(k)) { kept++; continue; }
+          const r = await api().createEntry({
+            station_id: stationId, announcement_uuid: l.announcement_uuid, scope: "date", date: d,
+            trigger_type: "close_offset", trigger_time: null, close_offset_min: l.offset, sort_order: 0,
+          });
+          if (!r?.ok) throw new Error(r?.error || "could not write an entry");
+          created++;
+        }
+      }
+      reload();
+      setMsg(`Applied to ${dates.length} date${dates.length === 1 ? "" : "s"} — ${created} added, ${removed} removed${kept ? `, ${kept} unchanged` : ""}.`);
+      setSelected(new Set()); setDraft([]); setDirty(false);
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+      reload();
+    } finally { setBusy(false); }
+  };
+
+  const box = { padding: "12px 14px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" };
+  const cap = { fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 8 };
+  const noClosing = !closing.default && Object.keys(closing.byWeekday).length === 0 && Object.keys(closing.byDate).length === 0;
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 330px) 1fr minmax(200px, 240px)", gap: 12, alignItems: "start" }}>
+      <div style={box}>
+        <div style={cap}>Dates</div>
+        <DatePicker selected={selected} onToggle={toggleDate} onClearAll={clearAll} entries={entries} />
+      </div>
+
+      <div style={box}>
+        <div style={cap}>Minutes before closing</div>
+
+        {/* An offset rule is meaningless without a closing time, and this says so BEFORE the operator
+            builds a list that could never fire. */}
+        {noClosing && (
+          <div style={{ fontSize: 11, color: "var(--accent-red, #ef4444)", lineHeight: 1.5, marginBottom: 10 }}>
+            No closing time is set. Announcements timed from closing cannot fire until one is —
+            set it on the right.
+          </div>
+        )}
+
+        {dates.length === 0 ? (
+          <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
+            Click a date to see and edit its timed-from-closing announcements. Click more dates to set
+            them all together. Nothing is written until you press <strong>Apply</strong>.
+          </div>
+        ) : (
+          <>
+            {draft.map(l => (
+              <div key={l.id} style={{ display: "grid", gridTemplateColumns: "92px 1fr 20px", gap: 6, alignItems: "center", marginBottom: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <input
+                    type="number" step={5} value={l.offset}
+                    onChange={e => patchLine(l.id, { offset: parseInt(e.target.value, 10) || 0 })}
+                    aria-label="Minutes relative to closing"
+                    style={{ width: 56, fontSize: 12, padding: "4px 6px", borderRadius: 6, background: "var(--bg-secondary)",
+                             color: "var(--text-primary)", border: "1px solid var(--border-primary)", fontVariantNumeric: "tabular-nums" }} />
+                  <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>min</span>
+                </div>
+                <div>
+                  <select
+                    value={l.announcement_uuid}
+                    onChange={e => patchLine(l.id, { announcement_uuid: e.target.value })}
+                    style={{ width: "100%", fontSize: 12, padding: "4px 6px", borderRadius: 6, background: "var(--bg-secondary)",
+                             color: "var(--text-primary)", border: "1px solid var(--border-primary)" }}>
+                    {assets.map(a => <option key={a.uuid} value={a.uuid}>{a.title}</option>)}
+                  </select>
+                  {/* The same rule, on two different nights. This is the feature made visible. */}
+                  <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 3, fontVariantNumeric: "tabular-nums" }}>
+                    {l.offset === 0 ? "at closing" : `${Math.abs(l.offset)} min ${l.offset < 0 ? "before" : "after"} close`}
+                    {examples.map(d => {
+                      const t = firesAt(l.offset, d);
+                      return t ? <span key={d}> · {d} → {t}</span> : null;
+                    })}
+                  </div>
+                </div>
+                <button onClick={() => removeLine(l.id)} title="Remove"
+                        style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, padding: 0 }}>×</button>
+              </div>
+            ))}
+
+            <button onClick={addLine} disabled={busy}
+                    style={{ fontSize: 11, fontWeight: 700, padding: "5px 10px", borderRadius: 6, cursor: "pointer", marginTop: 4,
+                             background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)" }}>
+              + Add Announcement
+            </button>
+
+            {draft.length === 0 && (
+              <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: "8px 0 0", lineHeight: 1.5 }}>
+                Empty. Applying now would clear the timed-from-closing announcements on {dates.length === 1 ? "this date" : "these dates"}.
+              </p>
+            )}
+
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
+              <button onClick={apply} disabled={busy || !dirty}
+                      style={{ fontSize: 12, fontWeight: 800, padding: "8px 14px", borderRadius: 6,
+                               cursor: busy || !dirty ? "default" : "pointer", opacity: busy || !dirty ? 0.5 : 1,
+                               background: "var(--accent-blue)", color: "#fff", border: "none" }}>
+                {busy ? "Applying…" : `APPLY to ${dates.length} date${dates.length === 1 ? "" : "s"}`}
+              </button>
+              <button onClick={clearAll} disabled={busy}
+                      style={{ fontSize: 12, padding: "8px 12px", borderRadius: 6, cursor: "pointer",
+                               background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)" }}>
+                Cancel
+              </button>
+            </div>
+            <p style={{ fontSize: 10, color: "var(--text-tertiary)", margin: "6px 0 0", lineHeight: 1.5 }}>
+              Apply replaces only the timed-from-closing announcements on the selected dates. Fixed-time
+              announcements on those dates are left alone.
+            </p>
+          </>
+        )}
+
+        {err && <div style={{ fontSize: 11, color: "var(--accent-red)", marginTop: 8 }}>{err}</div>}
+        {msg && <div style={{ fontSize: 11, color: "var(--accent-green)", marginTop: 8 }}>{msg}</div>}
+      </div>
+
+      <ClosingTimeField stationId={stationId} />
+    </div>
+  );
+}
+
+// ── CLOSING TIME: the shape, shared by the field and anything that resolves it ──────────────────
+// One station_config_kv row, key `closing_time`. Resolution is byDate -> byWeekday -> default, and
+// byWeekday is keyed 0-6 SUNDAY FIRST to match Date#getDay, electron/main.js and the Park Ops
+// backend. All four must agree or the station fires at an hour the phone never showed.
+export interface ClosingCfg {
+  default: string | null;
+  byWeekday: Record<string, string>;
+  byDate: Record<string, string>;
+}
+
+const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** Tolerant by design: a corrupt or half-written value reads as "nothing set", never as a partial
+ *  config that would resolve to a time nobody chose. */
+export function parseClosingCfg(raw: string | null | undefined): ClosingCfg {
+  const empty: ClosingCfg = { default: null, byWeekday: {}, byDate: {} };
+  if (!raw) return empty;
+  try {
+    const v = JSON.parse(raw);
+    if (!v || typeof v !== "object") return empty;
+    return {
+      default: typeof v.default === "string" && v.default ? v.default : null,
+      byWeekday: (v.byWeekday && typeof v.byWeekday === "object") ? v.byWeekday : {},
+      byDate: (v.byDate && typeof v.byDate === "object") ? v.byDate : {},
+    };
+  } catch { return empty; }
+}
+
+/** byDate -> byWeekday -> default. `dow` is 0-6, Sunday first. */
+export function resolveClosingCfg(cfg: ClosingCfg, dateStr: string, dow: number): string | null {
+  const d = cfg.byDate?.[dateStr];
+  if (typeof d === "string" && d) return d;
+  const w = cfg.byWeekday?.[String(dow)];
+  if (typeof w === "string" && w) return w;
+  return cfg.default || null;
+}
+
 // ── CLOSING TIME (2026-08-31) ────────────────────────────────────────────────────────────────────
 //
 // THIS REVERSES THE 2026-08-26 REMOVAL, deliberately and on a different design. What was removed
@@ -269,10 +526,10 @@ function DraftRow({ line, assets, onPatch, onDelete }: {
 // surfaces — this field and that page write the identical KV row through the identical sanctioned
 // writer, so they cannot disagree.
 function ClosingTimeField({ stationId }: { stationId: number | null }) {
-  const [saved, setSaved] = useState<string>("");      // what is in the database
-  const [draft, setDraft] = useState<string | null>(null);
+  const [cfg, setCfg] = useState<ClosingCfg>({ default: null, byWeekday: {}, byDate: {} });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [newDate, setNewDate] = useState("");
 
   const read = async () => {
     if (stationId == null) return;
@@ -280,69 +537,127 @@ function ClosingTimeField({ stationId }: { stationId: number | null }) {
       const r = await (window as any).ether.stationConfigKv.list(stationId);
       const rows: any[] = Array.isArray(r) ? r : (r?.rows ?? []);
       const raw = rows.find(x => x?.key === "closing_time" && !x?.deleted_at)?.value ?? null;
-      let v = "";
-      try { v = raw ? (JSON.parse(raw)?.default ?? "") : ""; } catch { v = ""; }
-      setSaved(v || "");
+      setCfg(parseClosingCfg(raw));
       setErr(null);
     } catch (e: any) { setErr(String(e?.message || e)); }
   };
   useEffect(() => { read(); }, [stationId]);
 
-  const commit = async () => {
-    if (stationId == null || draft == null) return;
-    const v = draft.trim();
-    if (v && !/^\d{1,2}:\d{2}$/.test(v)) { setDraft(null); return; }   // half-typed — discard, keep what is saved
-    if (v === saved) { setDraft(null); return; }
-    setBusy(true);
-    setErr(null);
+  // THE HARD RULE (Jeff, 2026-08-31), enforced in ONE place so no caller can get it wrong:
+  // "Changing a SINGLE day's closing time affects ONLY that day. It must NEVER touch the rest of the
+  // calendar, a following Sunday, the weekday pattern, or any other date."
+  //
+  // Every edit routes through here as a MUTATOR over the current config — read, apply one change,
+  // write back. The mutator may only touch the key it owns; scripts/smoke-closing-isolation.js pins
+  // that as a property (change one thing, assert exactly the intended dates moved).
+  //
+  // Read-modify-write against THIS install's own row, never a cached or mirrored copy, so a
+  // concurrent change from elsewhere cannot be carried back in a stale form.
+  const commit = async (mutate: (c: ClosingCfg) => ClosingCfg) => {
+    if (stationId == null) return;
+    setBusy(true); setErr(null);
     try {
-      // Read-modify-write, so byWeekday/byDate survive. Only `default` is ours to change.
       const r = await (window as any).ether.stationConfigKv.list(stationId);
       const rows: any[] = Array.isArray(r) ? r : (r?.rows ?? []);
       const raw = rows.find(x => x?.key === "closing_time" && !x?.deleted_at)?.value ?? null;
-      let cfg: any = { default: null, byWeekday: {}, byDate: {} };
-      try { if (raw) cfg = { ...cfg, ...JSON.parse(raw) }; } catch { /* corrupt value — replaced, not inherited */ }
-      cfg.default = v || null;
-      // The sanctioned writer, which carries the no-op guard: a write that changes nothing must not
-      // journal a mutation, or every peer keeps it forever.
-      await (window as any).ether.stationConfigKv.upsertByKey(stationId, "closing_time", JSON.stringify(cfg));
-      setSaved(v);
-      setDraft(null);
-      // Park Ops reads the mirrored copy, not this database. Without this push the operator's phone
-      // shows the old time for up to a minute after the studio changed it — and the two surfaces
-      // disagreeing about closing time is the one thing this feature cannot afford.
+      const next = mutate(parseClosingCfg(raw));
+      await (window as any).ether.stationConfigKv.upsertByKey(stationId, "closing_time", JSON.stringify(next));
+      setCfg(next);
+      // Park Ops reads the mirrored copy. Without this the operator's phone shows the old closing
+      // time for up to a minute — and the two surfaces disagreeing is what this feature cannot afford.
       window.dispatchEvent(new CustomEvent("ether:ops-push"));
-    } catch (e: any) {
-      setErr(String(e?.message || e));
-    } finally { setBusy(false); }
+    } catch (e: any) { setErr(String(e?.message || e)); }
+    finally { setBusy(false); }
   };
 
-  const value = draft ?? saved;
+  const setDefault = (t: string) => commit(c => ({ ...c, default: t || null }));
+  const setWeekday = (dow: number, t: string) => commit(c => {
+    const bw = { ...c.byWeekday };
+    if (t) bw[String(dow)] = t; else delete bw[String(dow)];   // cleared → falls back to default
+    return { ...c, byWeekday: bw };
+  });
+  const setDate = (date: string, t: string) => commit(c => {
+    const bd = { ...c.byDate };
+    if (t) bd[date] = t; else delete bd[date];                 // cleared → falls back to the pattern
+    return { ...c, byDate: bd };
+  });
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%", fontSize: 13, fontWeight: 600, padding: "4px 6px", borderRadius: 6,
+    background: "var(--bg-tertiary)", color: "var(--text-primary)",
+    border: "1px solid var(--border-primary)", fontVariantNumeric: "tabular-nums",
+  };
+  const rowStyle: React.CSSProperties = { display: "grid", gridTemplateColumns: "58px 1fr", gap: 6, alignItems: "center", marginBottom: 4 };
+  const dates = Object.keys(cfg.byDate).sort();
+
   return (
-    <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 10, padding: 14, minWidth: 220 }}>
+    <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 10, padding: 14 }}>
       <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 10 }}>
         Park closes
       </div>
-      <input
-        type="time"
-        value={value}
-        disabled={stationId == null || busy}
-        onChange={e => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-        aria-label="Park closing time"
-        style={{ width: "100%", fontSize: 20, fontWeight: 700, padding: "8px 10px", borderRadius: 8,
-                 background: "var(--bg-tertiary)", color: "var(--text-primary)",
-                 border: "1px solid var(--border-primary)", fontVariantNumeric: "tabular-nums" }}
-      />
-      {err && <p style={{ fontSize: 11, color: "var(--accent-red, #ef4444)", margin: "8px 0 0" }}>{err}</p>}
-      <p style={{ fontSize: 11, color: "var(--text-secondary)", margin: "8px 0 0", lineHeight: 1.5 }}>
-        The same closing time the Park Ops page shows. Announcements timed by minutes-before-close are
-        measured from this.
+
+      {/* Read top to bottom in the order it RESOLVES: a specific date wins, then the weekday, then
+          the default. The layout is the precedence, so there is nothing to memorise. */}
+      <div style={rowStyle}>
+        <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>Every day</span>
+        <input type="time" style={inputStyle} disabled={stationId == null || busy}
+               value={cfg.default ?? ""} onChange={e => setDefault(e.target.value)} aria-label="Default closing time" />
+      </div>
+
+      <div style={{ height: 1, background: "var(--border-primary)", margin: "10px 0" }} />
+
+      {DOW_LABELS.map((label, dow) => (
+        <div key={dow} style={rowStyle}>
+          <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>{label}</span>
+          <input type="time" style={inputStyle} disabled={stationId == null || busy}
+                 value={cfg.byWeekday[String(dow)] ?? ""} onChange={e => setWeekday(dow, e.target.value)}
+                 aria-label={`${label} closing time`}
+                 placeholder={cfg.default ?? ""} />
+        </div>
+      ))}
+      <p style={{ fontSize: 10, color: "var(--text-tertiary)", margin: "6px 0 0", lineHeight: 1.5 }}>
+        Blank means that day uses the every-day time.
       </p>
-      {!saved && (
+
+      <div style={{ height: 1, background: "var(--border-primary)", margin: "10px 0" }} />
+
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 6 }}>
+        One-off dates
+      </div>
+      {dates.length === 0 && (
+        <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: "0 0 6px", lineHeight: 1.5 }}>
+          None. A date set here overrides the pattern for that day only.
+        </p>
+      )}
+      {dates.map(d => (
+        <div key={d} style={{ display: "grid", gridTemplateColumns: "1fr 84px 20px", gap: 6, alignItems: "center", marginBottom: 4 }}>
+          <span style={{ fontSize: 11, color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>{d}</span>
+          <input type="time" style={inputStyle} disabled={busy}
+                 value={cfg.byDate[d] ?? ""} onChange={e => setDate(d, e.target.value)} aria-label={`Closing time for ${d}`} />
+          <button onClick={() => setDate(d, "")} disabled={busy} title="Remove this override"
+                  style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, padding: 0 }}>×</button>
+        </div>
+      ))}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6, marginTop: 6 }}>
+        <input type="date" style={inputStyle} disabled={busy} value={newDate}
+               onChange={e => setNewDate(e.target.value)} aria-label="Add a one-off closing date" />
+        <button
+          disabled={busy || !newDate || !!cfg.byDate[newDate]}
+          onClick={() => { setDate(newDate, cfg.default || "22:00"); setNewDate(""); }}
+          style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 6, cursor: "pointer",
+                   background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)" }}>
+          Add
+        </button>
+      </div>
+
+      {err && <p style={{ fontSize: 11, color: "var(--accent-red, #ef4444)", margin: "10px 0 0" }}>{err}</p>}
+      <p style={{ fontSize: 11, color: "var(--text-secondary)", margin: "10px 0 0", lineHeight: 1.5 }}>
+        The same closing time the Park Ops page shows. Announcements timed by minutes-before-close are
+        measured from whichever of these applies that day.
+      </p>
+      {!cfg.default && Object.keys(cfg.byWeekday).length === 0 && (
         <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: "6px 0 0", lineHeight: 1.5 }}>
-          Not set — nothing timed from closing can fire until it is.
+          Nothing set — announcements timed from closing cannot fire until one of these has a time.
         </p>
       )}
     </div>
@@ -587,6 +902,20 @@ export default function Announcements() {
   // from disagreeing with each other.
   const [entries, setEntries] = useState<ScheduleEntry[]>([]);
   const [schedErr, setSchedErr] = useState<string | null>(null);
+  // MANUAL is the existing absolute-time board; BY MINUTES times from closing. Two editors over one
+  // table, which is exactly why each APPLY only ever touches its own trigger_type.
+  const [tab, setTab] = useState<"manual" | "minutes">("manual");
+  // Read ONCE here and handed to the BY MINUTES board, so the fire-time previews and the field the
+  // operator is editing cannot disagree about what the closing time currently is.
+  const [closing, setClosing] = useState<ClosingCfg>({ default: null, byWeekday: {}, byDate: {} });
+  const loadClosing = async () => {
+    if (stationId == null) return;
+    try {
+      const r = await (window as any).ether.stationConfigKv.list(stationId);
+      const rows: any[] = Array.isArray(r) ? r : (r?.rows ?? []);
+      setClosing(parseClosingCfg(rows.find(x => x?.key === "closing_time" && !x?.deleted_at)?.value ?? null));
+    } catch { /* leave the last good value; the field itself reports its own errors */ }
+  };
   const loadEntries = async () => {
     if (stationId == null) return;
     try {
@@ -597,7 +926,14 @@ export default function Announcements() {
       else setSchedErr(r?.error || "the schedule could not be read");
     } catch (e: any) { setSchedErr(String(e?.message || e)); }
   };
-  useEffect(() => { load(); loadEntries(); }, [isReady, stationId]);
+  useEffect(() => { load(); loadEntries(); loadClosing(); }, [isReady, stationId]);
+  // The closing-time field pushes to Park Ops on save; the same event refreshes the previews here, so
+  // changing Sunday's close visibly moves every "-30" line without a reload.
+  useEffect(() => {
+    const h = () => loadClosing();
+    window.addEventListener("ether:ops-push", h);
+    return () => window.removeEventListener("ether:ops-push", h);
+  }, [stationId]);
 
   const addNew = async () => {
     const files = await open({ multiple: false, title: "Select announcement audio", filters: [{ name: "Audio", extensions: ["mp3","flac","ogg","wav","m4a","aac"] }] });
@@ -712,7 +1048,26 @@ export default function Announcements() {
                 </div>
               </div>
             ) : (
-              <ScheduleBoard stationId={stationId} assets={list} entries={entries} reload={loadEntries} />
+              <>
+                {/* Two ways to time an announcement, and the tab says which one you are building.
+                    MANUAL sets a clock time; BY MINUTES measures from that day's closing time. */}
+                <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
+                  {([["manual", "Manual"], ["minutes", "By minutes"]] as const).map(([id, label]) => (
+                    <button key={id} onClick={() => setTab(id)}
+                            style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase",
+                                     padding: "6px 12px", borderRadius: 6, cursor: "pointer",
+                                     background: tab === id ? "var(--accent-blue)" : "var(--bg-tertiary)",
+                                     color: tab === id ? "#fff" : "var(--text-secondary)",
+                                     border: "1px solid " + (tab === id ? "var(--accent-blue)" : "var(--border-primary)") }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {tab === "manual"
+                  ? <ScheduleBoard stationId={stationId} assets={list} entries={entries} reload={loadEntries} />
+                  : <ByMinutesBoard stationId={stationId} assets={list} entries={entries}
+                                    reload={() => { loadEntries(); loadClosing(); }} closing={closing} />}
+              </>
             )}
           </div>
         </div>
@@ -820,14 +1175,40 @@ export default function Announcements() {
                       const mine = entries.filter(e => e.announcement_uuid === a.uuid && e.date);
                       if (!mine.length) return <span style={{ color: "var(--accent-amber)" }}>not scheduled</span>;
                       const dates = [...new Set(mine.map(e => e.date))].sort();
-                      const times = [...new Set(mine.map(e => e.trigger_time || ""))].sort();
                       // The next date it plays plus how many in total — enough to know it is live and
                       // when it next matters, without turning a table cell into a calendar.
                       const today = ymd(new Date());
                       const next  = dates.find(d => (d as string) >= today) || dates[dates.length - 1];
-                      const when  = times.length === 1 && times[0] ? fmtTime(times[0]) : `${times.length} times`;
+
+                      // An offset entry has NO clock time of its own — its time is computed against
+                      // that day's closing time when it fires. Describing it by trigger_time would
+                      // read as blank, so it is described by the rule instead, which is also the
+                      // thing the operator actually set.
+                      const offs = mine.filter(e => e.trigger_type === "close_offset");
+                      const abso = mine.filter(e => e.trigger_type !== "close_offset");
+                      const parts: string[] = [];
+                      if (abso.length) {
+                        const times = [...new Set(abso.map(e => e.trigger_time || ""))].sort();
+                        parts.push(times.length === 1 && times[0] ? fmtTime(times[0]) : `${times.length} times`);
+                      }
+                      if (offs.length) {
+                        const os = [...new Set(offs.map(e => e.close_offset_min ?? 0))].sort((x, y) => x - y);
+                        parts.push(os.length === 1
+                          ? (os[0] === 0 ? "at closing" : `${Math.abs(os[0])} min ${os[0] < 0 ? "before" : "after"} close`)
+                          : `${os.length} timed from closing`);
+                      }
+                      // A SKIP IS LOUD (v53). A row whose computed time had already passed never
+                      // fired, and the operator has to see that here rather than discover it by
+                      // noticing silence. Amber, next to the schedule it failed to keep.
+                      const skipped = mine.filter(e => e.skipped_at).length;
                       return <span style={{ color: "var(--accent-cyan)", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
-                        {next} {when}{dates.length > 1 ? ` · ${dates.length} dates` : ""}
+                        {next} {parts.join(" + ")}{dates.length > 1 ? ` · ${dates.length} dates` : ""}
+                        {skipped > 0 && (
+                          <span style={{ color: "var(--accent-amber)" }}
+                                title="Its computed time had already passed when the closing time moved, so it did not play.">
+                            {" "}· {skipped} skipped
+                          </span>
+                        )}
                       </span>;
                     })()}
                   </td>

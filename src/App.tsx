@@ -1453,6 +1453,43 @@ export default function App() {
             }
             break;
           }
+          // ── PARK OPS: set ONE DAY's closing time ──────────────────────────────────────────────
+          // An INTENT, not a document. The backend sends WHICH DAY and WHAT TIME; the merge happens
+          // here, against this install's own authoritative row.
+          //
+          // It cannot be a db:apply carrying a whole closing_time value, and that distinction is the
+          // point of this case. The backend's copy of the config comes from the 60s mirror, so a
+          // weekday pattern changed in the studio moments earlier may not be in it yet. Shipping a
+          // whole document assembled from that copy would carry the stale pattern back and silently
+          // revert a change the phone never mentioned — a one-day edit undoing Sundays.
+          //
+          // THE HARD RULE (Jeff, 2026-08-31): a single day's change touches byDate[thatDate] and
+          // nothing else. default and byWeekday are read and written back untouched.
+          case "ops:set-closing": {
+            const date = String(data.date || "");
+            const time = String(data.time || "");
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{1,2}:\d{2}$/.test(time)) {
+              console.warn("[RemoteCmd] ops:set-closing — bad date or time", date, time); break;
+            }
+            if (targetId == null) { console.error("[RemoteCmd] ops:set-closing — no target station"); break; }
+            try {
+              const ether = (window as any).ether;
+              const res: any = await ether?.stationConfigKv?.list?.(targetId);
+              const kvRows: any[] = Array.isArray(res) ? res : (res?.rows ?? []);
+              const raw = kvRows.find(r => r?.key === "closing_time" && !r?.deleted_at)?.value ?? null;
+              let cfg: any = { default: null, byWeekday: {}, byDate: {} };
+              try { if (raw) cfg = { default: null, byWeekday: {}, byDate: {}, ...JSON.parse(raw) }; }
+              catch { /* corrupt value — replaced, never inherited half-parsed */ }
+              cfg.byDate = { ...(cfg.byDate || {}), [date]: time };
+              await ether.stationConfigKv.upsertByKey(targetId, "closing_time", JSON.stringify(cfg));
+              console.log(`[RemoteCmd] ops:set-closing ${date} → ${time} (station ${targetId})`);
+              // Reconcile up so the phone's optimistic copy is replaced by this install's truth.
+              window.dispatchEvent(new CustomEvent("ether:ops-push"));
+            } catch (e) {
+              console.error("[RemoteCmd] ops:set-closing failed:", e);
+            }
+            break;
+          }
           // ── PARK OPS: fire a cart from the phone ──────────────────────────────────────────────
           // The remote twin of clicking a tile on the desktop cart wall (DeckConfigurator.tsx
           // BoutiqueCartWall.fireCart). Same two moves, same channel, so a cart fired from the park

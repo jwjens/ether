@@ -476,10 +476,18 @@ const NS: Record<string, string> = {
   artists: "artists",
   albums: "albums",
   spots: "spots",   // mirrored for the advertiser affidavit (advertiser/isci/file_path)
-  // PARK OPS. Without this entry applyDbMutation hit `console.warn("unsupported table")` and
-  // RETURNED — so a closing time set from park.ether-cast.com reported success to the operator and
-  // changed nothing on the station. A save that lies is worse than a save that fails.
-  station_config_kv: "stationConfigKv",
+  // station_config_kv IS DELIBERATELY ABSENT, and was briefly here by mistake.
+  //
+  // It was added to fix a real bug — a remote closing-time write hit `unsupported table` and
+  // returned, reporting success while changing nothing. But db:apply's contract is "here is a row,
+  // write it", and closing_time is not a row: it is a document with MERGE semantics, whose parts
+  // (default, byWeekday, byDate) are owned by different surfaces. Sending a whole one assembled from
+  // the 60s mirror is how a phone setting tonight reverts a weekday pattern the studio changed
+  // moments ago — the exact isolation failure Jeff ruled out.
+  //
+  // The closing time now travels as an INTENT instead: `ops:set-closing` carries a date and a time,
+  // and the install merges against its own authoritative row (see App.tsx execCmd). Nothing that
+  // needs merge semantics belongs in this map.
 };
 
 // Edits to these tables change a song's row in the per-station library VIEW, so after
@@ -489,7 +497,7 @@ const LIBRARY_TABLES = new Set(["songs", "station_programming", "artists", "albu
 
 // Station-scoped tables whose remote create/delete must carry THIS install's local integer
 // station_id. (Install-scoped library tables — songs/artists/albums — ignore station_id.)
-const STATION_SCOPED = new Set(["categories", "clocks", "clock_slots", "shows", "station_programming", "spots", "station_config_kv"]);
+const STATION_SCOPED = new Set(["categories", "clocks", "clock_slots", "shows", "station_programming", "spots"]);
 
 // Resolve this install's LOCAL integer station_id from the station UUID the dashboard sends.
 // The dashboard knows the station only by UUID and cannot know the install's local integer id,
@@ -899,16 +907,7 @@ export async function applyDbMutation(
   }
 
   try {
-    // station_config_kv has no meaningful row uuid across installs — its identity is
-    // (station_id, key). The generic update-by-uuid path cannot address it, so it gets the
-    // sanctioned upsert instead. This is the write Park Ops' closing time rides.
-    if (data.table === "station_config_kv") {
-      const key = data.payload?.key;
-      if (!key) { console.warn("[db:apply] station_config_kv without a key"); return; }
-      if (localStationId == null) { console.error("[db:apply] station_config_kv needs a resolved station"); return; }
-      if (data.op === "delete") await ns.removeByKey(localStationId, key);
-      else await ns.upsertByKey(localStationId, key, String(data.payload?.value ?? ""));
-    } else if (data.op === "create") {
+    if (data.op === "create") {
       const payload = STATION_SCOPED.has(data.table) ? { ...data.payload, station_id: localStationId } : data.payload;
       await ns.create(payload);
     } else if (data.op === "update") {
