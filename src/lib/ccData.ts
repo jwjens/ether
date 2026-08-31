@@ -270,6 +270,31 @@ export async function pushOpsData(
     console.log(`[OPSPUSH] announcement_schedule: ${rows.length} rows for ${localDate}`);
     await pushCcData(licenseKey, stationUuid, "announcement_schedule", rows as unknown[]);
   } catch (e) { console.log("[OPSPUSH] announcement_schedule failed:", (e as any)?.message ?? e); }
+
+  // ── THE CART WALL ────────────────────────────────────────────────────────────────────────────
+  // cart_slots is already station-scoped by slot_number — a park station's carts are not the
+  // Christmas station's — so mirroring it needs no new concept, just the push.
+  //
+  // file_path IS DELIBERATELY NOT SENT. Park Ops is a public page; anyone with the link reads this.
+  // The page has no use for a path — it identifies a cart by slot_number, and the station resolves
+  // the slot to a file locally, the same way the desktop wall does. So the machine's filesystem
+  // layout never leaves the machine, and a caller can only ever name a slot the station itself
+  // assigned. Only slots with something in them are sent; an empty tile is not a cart.
+  try {
+    const cartRes = await ether.cartSlots.list(stationId);
+    const cartRows: any[] = Array.isArray(cartRes) ? cartRes : ((cartRes && cartRes.rows) || []);
+    const carts = cartRows
+      .filter(r => r && !r.deleted_at && r.file_path)
+      .map(r => ({
+        uuid: `slot-${Number(r.slot_number)}`,       // stable row key for the mirror
+        slot_number: Number(r.slot_number),
+        title: r.title || `Cart ${r.slot_number}`,
+        color: r.color || null,
+      }))
+      .sort((a, b) => a.slot_number - b.slot_number);
+    console.log(`[OPSPUSH] cart_slots: ${carts.length} loaded slots`);
+    await pushCcData(licenseKey, stationUuid, "cart_slots", carts as unknown[]);
+  } catch (e) { console.log("[OPSPUSH] cart_slots failed:", (e as any)?.message ?? e); }
 }
 
 // Push a per-station "library view" (Control Center 2d). songs/artists/albums are

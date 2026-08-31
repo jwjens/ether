@@ -1447,6 +1447,38 @@ export default function App() {
             }
             break;
           }
+          // ── PARK OPS: fire a cart from the phone ──────────────────────────────────────────────
+          // The remote twin of clicking a tile on the desktop cart wall (DeckConfigurator.tsx
+          // BoutiqueCartWall.fireCart). Same two moves, same channel, so a cart fired from the park
+          // and a cart fired from the studio are indistinguishable downstream.
+          //
+          // THE SLOT IS RESOLVED HERE, NOT SENT. The command carries a slot NUMBER; this looks up
+          // cart_slots for the target station and reads the file path locally. That is why the
+          // public page never needs — and never receives — a file path: the only thing a caller can
+          // name is a slot the station itself filled in.
+          //
+          // Carts always fire on the dedicated CART channel, never an assignable deck (A-F may be a
+          // mic, guest or video). It is summed to master, so it plays over the music regardless of
+          // how the decks are configured. Whether that reaches air is the board's business and the
+          // operator's — the same contract the desktop wall has. This fires the cart; it does not
+          // police the routing.
+          case "cart:fire": {
+            const slot = Number(data.slot);
+            if (!Number.isFinite(slot)) { console.warn("[RemoteCmd] cart:fire without a slot"); break; }
+            if (!isActive) { console.log("[RemoteCmd] cart:fire skipped — non-active station"); break; }
+            try {
+              const res: any = await (window as any).ether?.cartSlots?.list?.(targetId);
+              const rows: any[] = Array.isArray(res) ? res : (res?.rows ?? []);
+              const row = rows.find(r => Number(r?.slot_number) === slot && !r?.deleted_at);
+              if (!row?.file_path) { console.warn(`[RemoteCmd] cart:fire slot ${slot} is empty on this station`); break; }
+              await activeEngine.loadToDeck("CART", row.file_path, row.title || `Cart ${slot}`, "");
+              activeEngine.getDeck("CART")?.play();
+              console.log(`[RemoteCmd] cart:fire slot ${slot} → ${row.title || "(untitled)"}`);
+            } catch (e) {
+              console.error("[RemoteCmd] cart:fire failed:", e);
+            }
+            break;
+          }
           case "queue:enqueue": {
             if (!isActive) { console.log("[RemoteCmd] queue:enqueue skipped — non-active station (deferred)"); break; }
             const song = await resolveSong(data.song_id, data.file_key);

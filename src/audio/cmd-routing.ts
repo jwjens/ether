@@ -28,6 +28,10 @@ const STATION_SCOPED: ReadonlySet<string> = new Set([
   "deck:load", "deck:cue", "deck:crossfade", "deck:off",
   "queue:enqueue", "queue:reorder", "queue:remove", "queue:move", "queue:clear",
   "stream:start", "stream:stop",   // on-air: start/stop THIS machine as the station's Icecast source
+  // Park Ops' remote cart wall. Emphatically station-scoped: cart_slots is keyed by
+  // (station_id, slot_number), so slot 3 is a different bite on every station. Firing it
+  // license-wide would put one park's audio out of every station on the account.
+  "cart:fire",
 ]);
 
 /** True if `cmd` acts on a single station (→ route by station_uuid). False for license-scoped commands
