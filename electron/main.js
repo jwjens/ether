@@ -157,7 +157,7 @@ try {
 const path = require("path");
 const fs = require("fs");
 const semver = require("semver");
-const { ETHER_BACKEND_URL } = require('./lib/etherBackend');
+const { ETHER_BACKEND_URL, canWriteProduction } = require('./lib/etherBackend');
 // PROFILE-PER-ACCOUNT — the ONE place any Ether data path is built. Every data path in this file
 // resolves through it; nothing may re-derive %LOCALAPPDATA%\Ether by hand. See profile-paths.js for
 // the layout and the boot circularity the pointer file exists to break.
@@ -7094,8 +7094,23 @@ ipcMain.on("nowplaying:state", (evt, payload) => {
 // (position excluded — backend derives it from started_at) + 20s keepalive that used to
 // live in the renderer: skip only when content is unchanged AND we POSTed within 20s;
 // past that, re-POST to keep engine_heartbeat_at fresh (backend stamps it NOW() each report).
+let _devGuardSaid = false;
 setInterval(() => {
   if (!nowPlayingByUuid.size) return;
+  // THE DEV WRITE GUARD. This loop is the automatic publisher — every 3 seconds, straight onto the
+  // public listener page — so it is the one that most needs to be silent from a dev build. The other
+  // ETHER_BACKEND_URL calls in this file are operator-initiated (backups, seat management, station
+  // deletion) and stay open: those are someone pressing a button, not this machine publishing.
+  //
+  // Said ONCE. At a 3s cadence a per-tick line would bury the log, but saying nothing at all is how
+  // an hour gets spent wondering why the listener page went stale.
+  if (!canWriteProduction()) {
+    if (!_devGuardSaid) {
+      _devGuardSaid = true;
+      console.warn('[devguard] now-playing NOT posted — this is a dev build and will not write to production. Set ETHER_ALLOW_DEV_PUSH=1 to override.');
+    }
+    return;
+  }
   let licenseKey = null;
   try { licenseKey = accountLicenseKey(); } catch { /* db not ready */ }
   const nowMs = Date.now();

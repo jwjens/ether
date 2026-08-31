@@ -2,6 +2,9 @@ const { contextBridge, ipcRenderer } = require("electron");
 const handlers = require('./preload-handlers')(ipcRenderer);
 
 contextBridge.exposeInMainWorld("ether", {
+  // The dev write guard's override, read here because a runtime env var cannot otherwise reach a
+  // bundled renderer. See lib/etherBackend — the guard itself lives beside the URL it protects.
+  allowDevPush: process.env.ETHER_ALLOW_DEV_PUSH === "1",
   // Pop-out debug bridge. The main process tails every pop-out's console via 'console-message'
   // and re-emits it here, so the dashboard console shows the whole app's renderer output in one
   // place. Dev-gated in main; this side is a passive subscriber and does nothing on its own.

@@ -1,4 +1,4 @@
-import { ETHER_BACKEND_URL } from "./etherBackend";
+import { ETHER_BACKEND_URL, blockedByDevGuard } from "./etherBackend";
 import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { selectAttachedStationsToMaterialize, chooseActiveStation } from "./provisioning";
@@ -16,6 +16,9 @@ export async function pushCcData(
   rows: unknown[],
 ): Promise<void> {
   if (!licenseKey || !stationUuid) return;
+  // THE CHOKE POINT. Every mirror write — categories, library, ops, health frames — comes through
+  // here, so one check covers them all and a new caller inherits it without having to remember.
+  if (blockedByDevGuard(`${table} sync`)) return;
   try {
     const res = await fetch(`${ETHER_BACKEND_URL}/api/account/data/sync`, {
       method: "POST",
@@ -106,6 +109,7 @@ export async function pushJukeboxPool(
       uuid: r.uuid, title: r.title, artist: r.artist ?? null, duration_ms: r.duration_ms ?? null,
     }));
 
+    if (blockedByDevGuard("jukebox pool")) return;
     const res = await fetch(`${ETHER_BACKEND_URL}/api/account/jukebox/pool`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-license-key": licenseKey },
@@ -141,6 +145,7 @@ export async function pushJukeboxState(
   const s = String(slug ?? "").trim().toLowerCase();
   if (!licenseKey || !s) return;
   try {
+    if (blockedByDevGuard("jukebox state")) return;
     await fetch(`${ETHER_BACKEND_URL}/api/account/jukebox/state`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-license-key": licenseKey },
@@ -385,6 +390,9 @@ export async function pushPlayHistory(
         played_at: r.played_at, category_code: r.category_code, show_name: r.show_name,
         file_path: r.file_path ?? null,   // v19: affidavit join key
       }));
+      // What a station claims it aired feeds the advertiser affidavit. A dev instance's playback is
+      // not the station's broadcast and must never end up in that record.
+      if (blockedByDevGuard("play history")) return;
       const res = await fetch(`${ETHER_BACKEND_URL}/api/account/play-history`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-license-key": licenseKey },
@@ -566,6 +574,9 @@ export async function importStagedProgramming(licenseKey: string | null | undefi
       }
       if (applied.length > 0) {
         try {
+          // Deprecated pipeline, but still a WRITE: marking rows imported from a dev instance would
+          // tell the cloud they had landed, and the real install would then never apply them.
+          if (blockedByDevGuard("staged mark-imported")) break;
           await fetch(`${ETHER_BACKEND_URL}/api/account/station/${encodeURIComponent(st.uuid)}/staged/mark-imported`, {
             method: "POST",
             headers: { "x-license-key": licenseKey, "Content-Type": "application/json" },
