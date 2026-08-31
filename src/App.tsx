@@ -1054,6 +1054,12 @@ export default function App() {
       // not this push ever lands; without it the page simply shows its dark state.
       pushOpsData(apiKeyRef.current, stationUuid, stationId);
     };
+    // A closing time set in the studio must reach the operator's phone NOW, not on the next 60s
+    // tick. Park Ops reads the mirrored copy, and the two surfaces disagreeing about closing time
+    // is the one thing this feature cannot afford. Announcements.tsx fires this on save.
+    const onOpsPush = () => { pushOpsData(apiKeyRef.current, stationUuid, stationId); };
+    window.addEventListener("ether:ops-push", onOpsPush);
+
     // The address, once, so it exists somewhere an operator can be given it. This is NOT a door —
     // a link that lives only in a log is not discoverable, and Park Ops still owes a real affordance
     // in the UI. Logged rather than hidden so the gap is visible instead of silent.
@@ -1065,7 +1071,7 @@ export default function App() {
     // without the deprecated staged pipeline / sync_enabled push. Edits also push immediately on
     // db:apply (see execCmd); this catches desktop-local edits between command-bus applies.
     const id = setInterval(push, 60_000);
-    return () => clearInterval(id);
+    return () => { clearInterval(id); window.removeEventListener("ether:ops-push", onOpsPush); };
   }, [stationId, stationUuid, firstRunChecked, currentUser]);
 
   // ── FLEET HEALTH FRAMES — the web Health Monitor's feed ──────────────────────────────────────────

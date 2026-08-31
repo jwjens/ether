@@ -252,6 +252,103 @@ function DraftRow({ line, assets, onPatch, onDelete }: {
   );
 }
 
+// ── CLOSING TIME (2026-08-31) ────────────────────────────────────────────────────────────────────
+//
+// THIS REVERSES THE 2026-08-26 REMOVAL, deliberately and on a different design. What was removed
+// then was seven weekday closing times plus a per-date override calendar (v46), backed by its own
+// synced table — an exception layer nobody could reason about, whose last consumer went with the
+// weekday scope in v48. The table was dropped in v49 and is NOT coming back.
+//
+// What replaces it is one value: a single station_config_kv row, key `closing_time`, holding
+// { default, byWeekday, byDate } and resolved date -> weekday -> default. Only `default` is
+// editable, here and on Park Ops; the other two keys exist so the shape does not have to change if
+// scope is ever ruled on again.
+//
+// WHY IT IS BACK: Park Ops (park.ether-cast.com/<slug>) put the closing time in a park operator's
+// hand on their phone, and the studio needs to set the same value. It is ONE value with two
+// surfaces — this field and that page write the identical KV row through the identical sanctioned
+// writer, so they cannot disagree.
+function ClosingTimeField({ stationId }: { stationId: number | null }) {
+  const [saved, setSaved] = useState<string>("");      // what is in the database
+  const [draft, setDraft] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const read = async () => {
+    if (stationId == null) return;
+    try {
+      const r = await (window as any).ether.stationConfigKv.list(stationId);
+      const rows: any[] = Array.isArray(r) ? r : (r?.rows ?? []);
+      const raw = rows.find(x => x?.key === "closing_time" && !x?.deleted_at)?.value ?? null;
+      let v = "";
+      try { v = raw ? (JSON.parse(raw)?.default ?? "") : ""; } catch { v = ""; }
+      setSaved(v || "");
+      setErr(null);
+    } catch (e: any) { setErr(String(e?.message || e)); }
+  };
+  useEffect(() => { read(); }, [stationId]);
+
+  const commit = async () => {
+    if (stationId == null || draft == null) return;
+    const v = draft.trim();
+    if (v && !/^\d{1,2}:\d{2}$/.test(v)) { setDraft(null); return; }   // half-typed — discard, keep what is saved
+    if (v === saved) { setDraft(null); return; }
+    setBusy(true);
+    setErr(null);
+    try {
+      // Read-modify-write, so byWeekday/byDate survive. Only `default` is ours to change.
+      const r = await (window as any).ether.stationConfigKv.list(stationId);
+      const rows: any[] = Array.isArray(r) ? r : (r?.rows ?? []);
+      const raw = rows.find(x => x?.key === "closing_time" && !x?.deleted_at)?.value ?? null;
+      let cfg: any = { default: null, byWeekday: {}, byDate: {} };
+      try { if (raw) cfg = { ...cfg, ...JSON.parse(raw) }; } catch { /* corrupt value — replaced, not inherited */ }
+      cfg.default = v || null;
+      // The sanctioned writer, which carries the no-op guard: a write that changes nothing must not
+      // journal a mutation, or every peer keeps it forever.
+      await (window as any).ether.stationConfigKv.upsertByKey(stationId, "closing_time", JSON.stringify(cfg));
+      setSaved(v);
+      setDraft(null);
+      // Park Ops reads the mirrored copy, not this database. Without this push the operator's phone
+      // shows the old time for up to a minute after the studio changed it — and the two surfaces
+      // disagreeing about closing time is the one thing this feature cannot afford.
+      window.dispatchEvent(new CustomEvent("ether:ops-push"));
+    } catch (e: any) {
+      setErr(String(e?.message || e));
+    } finally { setBusy(false); }
+  };
+
+  const value = draft ?? saved;
+  return (
+    <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 10, padding: 14, minWidth: 220 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 10 }}>
+        Park closes
+      </div>
+      <input
+        type="time"
+        value={value}
+        disabled={stationId == null || busy}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+        aria-label="Park closing time"
+        style={{ width: "100%", fontSize: 20, fontWeight: 700, padding: "8px 10px", borderRadius: 8,
+                 background: "var(--bg-tertiary)", color: "var(--text-primary)",
+                 border: "1px solid var(--border-primary)", fontVariantNumeric: "tabular-nums" }}
+      />
+      {err && <p style={{ fontSize: 11, color: "var(--accent-red, #ef4444)", margin: "8px 0 0" }}>{err}</p>}
+      <p style={{ fontSize: 11, color: "var(--text-secondary)", margin: "8px 0 0", lineHeight: 1.5 }}>
+        The same closing time the Park Ops page shows. Announcements timed by minutes-before-close are
+        measured from this.
+      </p>
+      {!saved && (
+        <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: "6px 0 0", lineHeight: 1.5 }}>
+          Not set — nothing timed from closing can fire until it is.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ── THE SCHEDULE BOARD — select, edit, APPLY ─────────────────────────────────────────────────────
 //
 // SELECT the date(s) on the left, EDIT the list on the right, press APPLY. Nothing is written until
@@ -369,7 +466,11 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
     : `${dates.length} dates — ${dates[0]} to ${dates[dates.length - 1]}`;
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 330px) 1fr", gap: 12, alignItems: "start" }}>
+    // Three columns: dates, the schedule being edited, and the closing time. Closing time sits to the
+    // RIGHT of the schedule rather than inside it, because it is not part of any one date's list — it
+    // is a station-level value the whole board is measured against. Putting it in the editor would
+    // imply APPLY writes it; it does not, it saves on its own.
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 330px) 1fr minmax(200px, 240px)", gap: 12, alignItems: "start" }}>
       <div style={box}>
         <div style={cap}>Dates</div>
         <DatePicker selected={selected} onToggle={toggleDate} onClearAll={clearAll} entries={entries} />
@@ -436,6 +537,8 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
         {err && <div style={{ fontSize: 11, color: "var(--accent-red)", marginTop: 8 }}>{err}</div>}
         {msg && <div style={{ fontSize: 11, color: "var(--accent-green)", marginTop: 8 }}>{msg}</div>}
       </div>
+
+      <ClosingTimeField stationId={stationId} />
     </div>
   );
 }
@@ -592,10 +695,13 @@ export default function Announcements() {
               Pick the days (or a date) on the left; build that selection's list of announcements and
               times on the right.
 
-              THERE IS NO CLOSING-TIME UI HERE, deliberately (Jeff, 2026-08-26). The seven weekday
-              closing times and the closing-time calendar were removed outright, along with the
-              "before closing" trigger. One rule, nothing to reason about: an entry has a time, and
-              nothing scheduled means nothing plays. */}
+              CLOSING TIME IS BACK (Jeff, 2026-08-31), and this comment used to say the opposite —
+              so read the difference rather than assuming a reversal. What was removed on 2026-08-26
+              was SEVEN WEEKDAY closing times plus a per-date override calendar on its own synced
+              table (dropped in v49); that shape is not returning. What is here is ONE value in
+              station_config_kv, edited in one field, shared with the Park Ops page that a park
+              operator carries on their phone. The rule stays as simple as the removal intended:
+              an entry has a time, or it is measured from the one closing time. */}
           <div style={{ marginTop: 14 }}>
             {schedErr ? (
               <div style={{ padding: "12px 14px", background: "var(--bg-tertiary)", border: "1px solid var(--accent-red)", fontSize: 11, color: "var(--accent-red)", lineHeight: 1.5 }}>
