@@ -174,6 +174,104 @@ export async function pushCcTable(
   await pushCcData(licenseKey, stationUuid, table, rows);
 }
 
+// The Park Ops link. Asks the backend for this station's scoped closing-time token and returns the
+// address the operator opens. The token gates only the WRITE — the same URL without ?k= is the
+// read-only copy, safe to hand to anyone.
+//
+// Unlike the LAN version this replaced, the URL does not depend on this machine being awake: it is
+// hosted, and a station that is off simply shows as dark on a page that still loads.
+export const PARK_OPS_ORIGIN = "https://park.ether-cast.com";
+
+export async function fetchOpsLink(
+  licenseKey: string | null | undefined,
+  stationUuid: string | null | undefined,
+): Promise<{ url: string; readOnlyUrl: string; slug: string } | null> {
+  if (!licenseKey || !stationUuid) return null;
+  try {
+    const res = await fetch(`${ETHER_BACKEND_URL}/api/ops/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-license-key": licenseKey },
+      body: JSON.stringify({ station_uuid: stationUuid }),
+    });
+    if (!res.ok) { console.log(`[OPSLINK] token request → HTTP ${res.status}`); return null; }
+    const j = await res.json();
+    if (!j?.ok || !j.token) return null;
+    // No slug means the station has no public page configured yet, so there is no address to give.
+    // Say that rather than printing a URL that 404s.
+    if (!j.slug) { console.log("[OPSLINK] station has no public slug yet — Park Ops has no address until one is set"); return null; }
+    const base = `${PARK_OPS_ORIGIN}/${encodeURIComponent(j.slug)}`;
+    return { url: `${base}?k=${j.token}`, readOnlyUrl: base, slug: j.slug };
+  } catch (e) {
+    console.log("[OPSLINK] failed:", (e as any)?.message ?? e);
+    return null;
+  }
+}
+
+// ── PARK OPS mirror ───────────────────────────────────────────────────────────────────────────
+// Feeds park.ether-cast.com/<station-slug>. Pushed as two tables on the existing pushCcData rail:
+//
+//   ops_config              one row, uuid "ops" — the closing time, plus the station's LOCAL date.
+//                           The date travels because the backend runs on UTC: a park closing at
+//                           22:00 must not roll to tomorrow because Railway says it is already
+//                           midnight. The station is the only party that knows what day it is
+//                           where the park is.
+//   announcement_schedule   today's entries, joined to their announcement's title and duck flag,
+//                           which is the shape the page renders and the rails judge.
+//
+// Read-only, one way, best-effort — exactly like the now-playing push. If it does not get through,
+// the hosted page shows its dark state and says so; nothing on air is affected either way.
+export async function pushOpsData(
+  licenseKey: string | null | undefined,
+  stationUuid: string | null | undefined,
+  stationId: number,
+): Promise<void> {
+  if (!licenseKey || !stationUuid) return;
+  const ether = (window as any).ether;
+  const d = new Date();
+  const localDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  try {
+    const kvRes = await ether.stationConfigKv.list(stationId);
+    const kvRows: any[] = Array.isArray(kvRes) ? kvRes : ((kvRes && kvRes.rows) || []);
+    const closing = kvRows.find(r => r?.key === "closing_time")?.value ?? null;
+    await pushCcData(licenseKey, stationUuid, "ops_config", [
+      { uuid: "ops", closing, local_date: localDate },
+    ]);
+  } catch (e) { console.log("[OPSPUSH] ops_config failed:", (e as any)?.message ?? e); }
+
+  try {
+    const schedRes = await ether.announcements.listSchedule(stationId);
+    const sched: any[] = Array.isArray(schedRes) ? schedRes : ((schedRes && schedRes.rows) || []);
+    const annRes = await ether.announcements.list(stationId);
+    const anns: any[] = Array.isArray(annRes) ? annRes : ((annRes && annRes.rows) || []);
+    const byUuid = new Map(anns.map(a => [a.uuid, a]));
+
+    // Today only, and only date-scoped entries — the same filter the page applies. An inactive or
+    // deleted announcement drops out here rather than rendering as "(untitled)" on the operator's
+    // phone.
+    const rows = sched
+      .filter(r => r && r.scope === "date" && r.date === localDate && !r.deleted_at)
+      .map(r => {
+        const a = byUuid.get(r.announcement_uuid);
+        if (!a || a.deleted_at || a.is_active === 0) return null;
+        return {
+          uuid: r.uuid,
+          title: a.title || null,
+          date: r.date,
+          trigger_time: r.trigger_time,
+          trigger_type: r.trigger_type,
+          close_offset_min: r.close_offset_min,
+          sort_order: r.sort_order ?? 0,
+          last_played_at: r.last_played_at ?? null,
+          duck_music: a.duck_music,
+        };
+      })
+      .filter(Boolean);
+    console.log(`[OPSPUSH] announcement_schedule: ${rows.length} rows for ${localDate}`);
+    await pushCcData(licenseKey, stationUuid, "announcement_schedule", rows as unknown[]);
+  } catch (e) { console.log("[OPSPUSH] announcement_schedule failed:", (e as any)?.message ?? e); }
+}
+
 // Push a per-station "library view" (Control Center 2d). songs/artists/albums are
 // install-scoped (one shared library); the per-station treatment lives in
 // station_programming. So for each station we push ONE denormalized row per song:
@@ -353,6 +451,10 @@ const NS: Record<string, string> = {
   artists: "artists",
   albums: "albums",
   spots: "spots",   // mirrored for the advertiser affidavit (advertiser/isci/file_path)
+  // PARK OPS. Without this entry applyDbMutation hit `console.warn("unsupported table")` and
+  // RETURNED — so a closing time set from park.ether-cast.com reported success to the operator and
+  // changed nothing on the station. A save that lies is worse than a save that fails.
+  station_config_kv: "stationConfigKv",
 };
 
 // Edits to these tables change a song's row in the per-station library VIEW, so after
@@ -362,7 +464,7 @@ const LIBRARY_TABLES = new Set(["songs", "station_programming", "artists", "albu
 
 // Station-scoped tables whose remote create/delete must carry THIS install's local integer
 // station_id. (Install-scoped library tables — songs/artists/albums — ignore station_id.)
-const STATION_SCOPED = new Set(["categories", "clocks", "clock_slots", "shows", "station_programming", "spots"]);
+const STATION_SCOPED = new Set(["categories", "clocks", "clock_slots", "shows", "station_programming", "spots", "station_config_kv"]);
 
 // Resolve this install's LOCAL integer station_id from the station UUID the dashboard sends.
 // The dashboard knows the station only by UUID and cannot know the install's local integer id,
@@ -772,7 +874,16 @@ export async function applyDbMutation(
   }
 
   try {
-    if (data.op === "create") {
+    // station_config_kv has no meaningful row uuid across installs — its identity is
+    // (station_id, key). The generic update-by-uuid path cannot address it, so it gets the
+    // sanctioned upsert instead. This is the write Park Ops' closing time rides.
+    if (data.table === "station_config_kv") {
+      const key = data.payload?.key;
+      if (!key) { console.warn("[db:apply] station_config_kv without a key"); return; }
+      if (localStationId == null) { console.error("[db:apply] station_config_kv needs a resolved station"); return; }
+      if (data.op === "delete") await ns.removeByKey(localStationId, key);
+      else await ns.upsertByKey(localStationId, key, String(data.payload?.value ?? ""));
+    } else if (data.op === "create") {
       const payload = STATION_SCOPED.has(data.table) ? { ...data.payload, station_id: localStationId } : data.payload;
       await ns.create(payload);
     } else if (data.op === "update") {

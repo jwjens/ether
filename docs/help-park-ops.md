@@ -1,115 +1,117 @@
 ---
 feature: park-ops
-title: Park Ops — the closing time, from your phone
-summary: A phone page on the park's wi-fi showing what's on air, tonight's announcements, and the closing time — with the closing time editable from the floor.
-where: Any phone on the park wi-fi → http://<station-ip>:3400/ops/
-since: 4.4.231
+title: Park Ops — the closing time, from any phone
+summary: A web page for the person walking the park — what's on air, today's announcements, and the closing time, editable from the floor. Works from anywhere, on any connection.
+where: park.ether-cast.com/<your-station-slug>
+since: 4.4.232
 audience: operator
 tour: true
 ---
 
-# Park Ops — the closing time, from your phone
+# Park Ops — the closing time, from any phone
 
 ## What it is
 
-A single web page, served by the studio machine itself, that answers the three questions the person
-on the floor actually has at 9pm:
+A web page that answers the three questions the person on the floor actually has at 9pm:
 
 - **What's on air right now?**
 - **What is the park about to announce, and when?**
 - **What time are we closing tonight — and can I change it from here?**
 
-It runs in an ordinary phone browser. There is nothing to install and no login. You need to be on
-**the same wi-fi as the studio machine**, and that is the only requirement.
+It opens in an ordinary phone browser. Nothing to install, no login, no app.
 
-## Why it is served by the studio machine, not from the web
-
-Because on the night it matters, the park's internet is down. The page is served straight off the
-studio machine over the local network, so it keeps working when nothing else does. The trade-off is
-the one above: same wi-fi, or no page.
-
-## Getting the link (read this — there is no button yet)
-
-**The URL is the whole access method — there is nothing to scan and nothing to install.** Today that
-URL appears only in the studio machine's startup log; there is no screen in EtherCast that shows it.
-That is a real gap, not a secret — it is written down in the backlog.
-
-On the studio machine, when Ether starts, the log prints one line per network the machine is on:
+## The address
 
 ```
-[ops] Park Ops (editable): http://192.168.1.40:3400/ops/?k=a1b2c3d4e5f6...
+park.ether-cast.com/<your-station-slug>
 ```
 
-- Send that whole line to whoever needs to change the closing time. That is the **editable** link.
-- Drop the `?k=...` part and it becomes the **view-only** link — fine to share with anyone.
+For HalloVeen that is **park.ether-cast.com/halloween** — the same slug the public listener page uses
+at `listen.ether-cast.com/halloween`.
 
-If the machine is on wi-fi *and* ethernet you will see two lines. Use the one on the same network as
-the phone; the other will simply not load.
+**The page is hosted, so the address always works.** It does not matter whether the studio machine is
+switched on, whether Ether is running, or whether the station is on air. If the station is dark the
+page still loads and tells you so. You can bookmark the link, text it to staff, and it will not go
+stale.
+
+## Two versions of the link
+
+| Link | Who it's for | Can change the closing time |
+|---|---|---|
+| `park.ether-cast.com/halloween` | anyone — post it, share it freely | No |
+| `park.ether-cast.com/halloween?k=…` | whoever runs the park that night | **Yes** |
+
+The part after `?k=` is an access token. It unlocks the closing time and nothing else — it cannot
+touch the music, the log, or any other station. Reading is open on purpose: if someone's phone drops
+the query string they should still see the closing time, not an error.
+
+**Where to find your link:** the studio machine prints both versions in its log when Ether starts:
+
+```
+[ops] Park Ops (editable): https://park.ether-cast.com/halloween?k=…
+[ops] Park Ops (view-only): https://park.ether-cast.com/halloween
+```
+
+There is not yet a screen inside Ether that shows this link. That is a known gap, written down in the
+backlog — for now, copy it from the log.
 
 ## Using it
 
-1. **Open the link on the phone.** The page loads with the station name at the top.
-2. **Now playing** — the song currently on air, with how far through it is. If the audio engine is
-   not running, it honestly says nothing is playing rather than showing stale information.
-3. **Tonight's announcements** — every announcement scheduled for *today's date*, in the order they
-   are due, each with its time. One marked **already played** has fired today.
-4. **Closing time** — the big one. Tap it, set the time, save.
+1. **Open the link on the phone.** The station name is at the top.
+2. **Now playing** — what's on air. If the station isn't running it says so rather than showing
+   something stale.
+3. **Announcements · today** — everything scheduled for today, in order, each with its time. One
+   marked **already played** has fired.
+4. **Park closes** — tap it, set the time, save.
 
-## The sanity notes beside a row
+## The notes beside a row
 
-If something looks wrong, the page says so **in a sentence beside the row** — it never refuses your
+If something looks wrong the page says so **in a sentence beside the row** — it never refuses your
 change. You may know something the rule does not: a ride broke down, the fireworks ran late.
 
-You will see a note when:
+You'll see a note when:
 
-- An announcement is **more than six hours** from the closing time — usually the sign the closing
-  time itself is wrong.
+- An announcement is **more than six hours** from the closing time — usually a sign the closing time
+  itself is wrong.
 - An announcement with **"closing" in its name** is due while the park is open for a good while yet.
 - **Two announcements sit within a minute** of each other.
 
-Read it, then do what you were going to do. The note is information, not a gate.
-
-## What is view-only, and why
-
-**Reading is open to anyone on the wi-fi. Changing the closing time needs the `?k=` link.**
-
-That split is deliberate. If someone's phone loses the query string they should still see the
-closing time — not an error. But a change to what the park announces should not be one wrong tap
-from any phone on the guest network.
-
-If you try to save without the token, the page tells you it is view-only.
+Read it, then do what you were going to do.
 
 ## What this version does NOT do yet
 
 Be clear on this, because the page shows times that look live:
 
-- **Announcement times shown as a preview are a preview.** Where an announcement is set to fire
-  relative to closing ("20 minutes before close"), the page shows you what it *would* fire at under
-  the closing time you have set. **The playout engine is not yet driven by that offset** — it still
-  fires the fixed time stored on the announcement. Changing the closing time here does not yet move
-  when those announcements actually air.
+- **Times marked "preview" are previews.** Where an announcement is set relative to closing ("20
+  minutes before close"), the page shows what it *would* fire at under the closing time you've set.
+  **The station still fires the fixed time stored on the announcement.** Changing the closing time
+  here does not yet move when those announcements actually air.
 - **Changing the closing time sets the station default.** Per-date and per-weekday closing times
-  exist in the stored shape but are not editable from this page yet.
-- Nothing on this page starts, stops, or reorders audio. It cannot take the station off air.
+  exist in the stored data but aren't editable from this page yet.
+- Nothing here starts, stops, or reorders audio. It cannot take the station off air.
+
+## If the closing time is saved while the studio machine is off
+
+It still lands. The change is held and delivered to the station the moment it comes back online. The
+page shows the new time immediately either way.
 
 ## Troubleshooting
 
-**"This site can't be reached" / connection refused**
-Ether is not running on the studio machine, or the phone is on a different network (guest wi-fi is a
-common culprit). Check Ether is open, then re-read the `[ops]` line — the machine's IP may have
-changed.
+**"No park at this address"**
+The slug in the URL doesn't match a published station. Check the link, and check the station has a
+public page configured in Ether.
 
-**The page loads but says no station is active**
-The studio machine has no active station. Open Ether and select one.
+**"This station isn't reporting"**
+The page loaded fine, but Ether hasn't sent anything for this park yet — the studio machine hasn't
+run since Park Ops shipped, or isn't signed in. It fills in on its own once the machine is running.
 
-**"This copy is view-only"**
-You are using the link without the `?k=` token. Get the full line from the startup log.
+**"Can't reach Park Ops"**
+Your phone's connection, not the park's. The page keeps showing the last update underneath.
 
-**No `[ops]` line in the log at all**
-The line is only printed when a station is active at startup. Select a station and restart Ether.
-The page still serves read-only in the meantime.
+**"View only"**
+You're using the link without the `?k=` token. Get the full one from the studio machine's log.
 
 ## Related
 
-- Announcements and their schedule: **Announcements** panel in EtherCast.
-- Design and open rulings: `docs/operator-closing-screen-and-source-routing-2026-08-31.md`
+- Announcements and their schedule: the **Announcements** panel in EtherCast.
+- The public listener page for the same station: `listen.ether-cast.com/<slug>`.

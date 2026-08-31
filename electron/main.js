@@ -7008,23 +7008,6 @@ setInterval(() => { for (const res of sseClients) { try { res.write(": keepalive
 
 // HTTP: REST API on port 3400 — serves Iris commands + public API
 // Accessible by external systems for automation, traffic integration, and monitoring.
-// Park Ops routes — built once, mounted in the handler below. `webRoot` resolves inside the
-// asar in a packaged build and from the tree in dev; both are just a path to the built bundle.
-const opsRoutes = (() => {
-  try {
-    const { installOpsRoutes } = require('./ops-api');
-    return installOpsRoutes({
-      getDb: () => db,
-      audio,
-      getActiveStationId,
-      webRoot: path.join(__dirname, '..', 'web', 'ops'),
-    });
-  } catch (e) {
-    console.warn('[ops] routes unavailable:', e.message);
-    return null;
-  }
-})();
-
 const irisHttpServer = require('http').createServer((req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -7036,15 +7019,11 @@ const irisHttpServer = require('http').createServer((req, res) => {
   const url = req.url?.split("?")[0] || "/";
   const qs = Object.fromEntries(new URL("http://x" + (req.url || "/")).searchParams);
 
-  // ── PARK OPS (stage 1, 2026-08-31) ─────────────────────────────────────────────────────────
-  // docs/operator-closing-screen-and-source-routing-2026-08-31.md
-  //
-  // The page is built in the ether-park repo with the same Cloudflare tooling as every other web
-  // surface here, and the SAME build is shipped in `web/ops/` and served from this port. It is
-  // served by the station rather than fetched from Cloudflare because an HTTPS page cannot reach
-  // http://<lan-ip>:3400 — mixed content, unconditional — so only a station-served copy works when
-  // the park's internet is down, which is the night it matters. Read-only against the engine.
-  if (opsRoutes && opsRoutes(req, res, url, qs)) return;
+  // PARK OPS was served from this port until 2026-08-31 and is not any more. It is a hosted page
+  // now — park.ether-cast.com/<station-slug>, reachable whether or not this machine is running.
+  // A LAN-served page meant the URL died with the app, which is the wrong contract for a link an
+  // operator keeps on their phone. The logic moved to the backend (src/ops-core.js); nothing about
+  // it was thrown away.
 
   // ── Browser Remote Control ──
   if (req.method === 'GET' && (url === '/remote' || url === '/remote/')) {
@@ -7268,25 +7247,6 @@ irisHttpServer.on('error', (err) => {
 if (SMOKE_ISOLATED) console.log('[SMOKE] :3400 REST API NOT bound (isolated smoke — never contends with the live app).');
 if (!SMOKE_ISOLATED) irisHttpServer.listen(3400, '0.0.0.0', () => {
   console.log('[API] REST server listening on http://0.0.0.0:3400');
-  // PARK OPS — the one place the editable link exists. There is deliberately no UI for this: Park Ops
-  // is a standalone web page, not a dashboard panel. The token gates the WRITE (the closing time);
-  // the same address without ?k= opens the page read-only.
-  //
-  // Every LAN address is printed, not one guessed: a station can be on wi-fi and ethernet at once and
-  // the operator's phone can only reach the one on its own network.
-  try {
-    const sid = getActiveStationId();
-    if (db && sid) {
-      const { _test } = require('./ops-api');
-      const tok = _test.ensureToken(db, sid);
-      const nets = require('os').networkInterfaces();
-      const addrs = [];
-      for (const list of Object.values(nets || {}))
-        for (const ni of (list || [])) if (ni && ni.family === 'IPv4' && !ni.internal) addrs.push(ni.address);
-      for (const a of (addrs.length ? addrs : ['<this-machine-ip>']))
-        console.log(`[ops] Park Ops (editable): http://${a}:3400/ops/?k=${tok}`);
-    }
-  } catch (e) { console.warn('[ops] could not print the Park Ops link:', e.message); }
   // HA: /health can now answer, so a (re)spawned watchdog can adopt us instead of
   // racing into a fresh spawn. Run the --enable-ha/--disable-ha bootstrap here,
   // then begin mutual supervision (no-op unless launched under a watchdog).

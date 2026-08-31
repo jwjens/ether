@@ -9,7 +9,7 @@ import { startLicenseGuard } from "./lib/licenseGuard";
 import CloudInstallPrompt from "./components/CloudInstallPrompt";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import { pushInstallUsers } from "./lib/syncUsers";
-import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong, pushPlayHistory, reconcileAccountStations, importStagedProgramming, pushHealthFrames, pushJukeboxPool } from "./lib/ccData";
+import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong, pushPlayHistory, reconcileAccountStations, importStagedProgramming, pushHealthFrames, pushJukeboxPool, pushOpsData, fetchOpsLink } from "./lib/ccData";
 import etherMarkSvg from "./assets/ether-logo.svg";
 import VideoStudio from "./components/ShowPlus";
 import { UserContext, AppUser, useRole } from "./UserContext";
@@ -1048,7 +1048,18 @@ export default function App() {
       // adding a timer: the pool only changes when an operator re-ticks categories or the library
       // moves, and 60s is well inside "before the next guest scans the QR".
       pushJukeboxPool(apiKeyRef.current, stationUuid, stationId, null);
+      // PARK OPS. Feeds park.ether-cast.com/<station-slug>. Rides this refresh rather than adding a
+      // timer — the closing time and today's announcements change at operator pace, and 60s is well
+      // inside "before the operator reloads their phone". The hosted page is reachable whether or
+      // not this push ever lands; without it the page simply shows its dark state.
+      pushOpsData(apiKeyRef.current, stationUuid, stationId);
     };
+    // The address, once, so it exists somewhere an operator can be given it. This is NOT a door —
+    // a link that lives only in a log is not discoverable, and Park Ops still owes a real affordance
+    // in the UI. Logged rather than hidden so the gap is visible instead of silent.
+    fetchOpsLink(apiKeyRef.current, stationUuid).then(link => {
+      if (link) console.log(`[ops] Park Ops (editable): ${link.url}\n[ops] Park Ops (view-only): ${link.readOnlyUrl}`);
+    });
     push();
     // Light periodic refresh: keep the dashboard's license-keyed store (station_cc_data) current
     // without the deprecated staged pipeline / sync_enabled push. Edits also push immediately on
@@ -1509,6 +1520,17 @@ export default function App() {
                 const ccSid = ccStations.find(s => s.uuid === data.station_uuid)?.id;
                 if (ccSid != null) await pushCcTable(apiKeyRef.current, data.station_uuid, ccSid, data.table);
               } catch { /* best-effort; periodic refresh will catch up */ }
+            }
+            // Park Ops closing time: reconcile straight back up. The backend already wrote the
+            // mirrored copy so the phone reads the new time immediately, but this install is the
+            // authority — re-pushing closes the loop and makes the two agree from the source rather
+            // than from the write.
+            if (data?.table === "station_config_kv" && data?.payload?.key === "closing_time" && data.station_uuid) {
+              try {
+                const opsStations = await query<{ id: number; uuid: string | null }>("SELECT id, uuid FROM stations");
+                const opsSid = opsStations.find(s => s.uuid === data.station_uuid)?.id;
+                if (opsSid != null) await pushOpsData(apiKeyRef.current, data.station_uuid, opsSid);
+              } catch { /* best-effort; the 60s refresh backstops it */ }
             }
             break;
           case "library:addSong":
