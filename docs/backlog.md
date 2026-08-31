@@ -568,7 +568,19 @@ whatever loop is invoking one on a timer. Filed rather than chased, per the ruli
 
 ---
 
-## Unified library UI — the `library_asset`-backed grid (FILED 2026-08-27, not started)
+## Unified library UI — the `library_asset`-backed grid (FILED 2026-08-27 · **CLOSED 2026-08-31**)
+
+> **CLOSED by `b22b7ce`.** The Library grid now shows all four element types — `songs` for music,
+> spots-tagged songs and sweepers, unioned with `library_asset` for announcements and traffic spots.
+> Type chips filter it, station scoping is derived per row, and each station's real spot appears for
+> the first time. Jeff ruled Option (b): two sources underneath, one library on screen — NOT a
+> re-backfill of SONG rows, which would have re-created the staleness bug v51 removed.
+>
+> **What actually remains** is narrower than this entry describes, and is filed separately below as
+> *Type-aware library row actions*. The 1,300-line rework described here is not the remaining work.
+
+<details><summary>Original entry (superseded — kept for the reasoning)</summary>
+
 
 `docs/library-current-state.md` is the source of truth for this arc.
 
@@ -591,7 +603,20 @@ Making it read `library_asset` means a type-aware path for every row action (wha
 deck" mean for an announcement? what does the cue editor do with a spot?). This is a rework of that
 panel, not a filter bolted onto it. Ruled: file, do not build.
 
-## Deep sweeper rename — JIN→SWP (FILED 2026-08-27, not started)
+</details>
+
+## Deep sweeper rename — JIN→SWP (FILED 2026-08-27 · **DONE 2026-08-27**)
+
+> **DONE by `fb9332a`, the same day this was filed.** v52 migrated JIN→SWP across four tables —
+> `jingle_categories.type` (4), `songs.content_class` (64), `generated_schedule` (46,349),
+> `play_log` (16,390). Pools and songs moved atomically, because the overlay scheduler joins on the
+> pair and splitting them stops imaging airing. `JIN` survives as a READ for pre-v52 rows and
+> un-migrated peers, never as a write. One sweeper type, one panel, one timing default (5s/2s).
+>
+> The entry below listed this as too expensive to do. It was done — the cost was real but the
+> atomic-pairing constraint, not the row count, was the hard part.
+
+<details><summary>Original entry (superseded — kept for the reasoning)</summary>
 
 The operator-facing feature is now called **Sweepers** (bottom-bar button, MIDI fader label, panel
 header). What was deliberately NOT renamed, and why:
@@ -609,3 +634,63 @@ header). What was deliberately NOT renamed, and why:
 
 This belongs with the sweeper redesign (`docs/sweepers-rcs-model-design-2026-08-22.md`), not as a
 standalone rename.
+
+</details>
+
+---
+
+## Type-aware library row actions (filed 2026-08-31)
+
+The Library grid renders every element type (`b22b7ce`), but its row actions are **guarded, not
+type-aware**. `isSongRow(row)` withholds the song machinery — `ether.songs.*` writers, categories,
+rotation eligibility, the cue editor — from `library_asset`-sourced rows, because there is no `songs`
+row to write. Load-to-deck and queue work for everything, since every row is playable audio.
+
+**What remains is a product question before a code one:** what *should* the cue editor do with an
+announcement? What does category assignment mean for a spot? Guarding was the correct interim answer;
+the real one needs those rulings.
+
+Source of truth: `docs/library-current-state.md`.
+
+## The announcement scheduler ignores automation state (filed 2026-08-31, LIVE DEFECT)
+
+A scheduled announcement fires on wall-clock time and consults nothing about what the operator is
+doing. **Today, right now**, a scheduled announcement will fire over a hand-fired cart, over a jock
+talking, and over any manual sequence in progress.
+
+Surfaced while designing the operator closing screen
+(`docs/operator-closing-screen-and-source-routing-2026-08-31.md`), where the whole point is that the
+operator holds the automated flow and hand-fires closing carts as a crowd trickles out. It is
+independent of that work — the defect exists in the shipped product.
+
+**Fix shape:** the announcement tick checks a hold/inhibit state before firing. That state does not
+exist yet; it arrives with stage 2 (STOP) of the closing-screen arc, or sooner if this is fixed on its
+own. **Not investigated further.**
+
+## Pool lead-in / underlap never reach generation (filed 2026-08-31)
+
+`jingle_categories` stores `lead_in_sec` and `underlap_sec` per pool, the UI edits them, and they sync
+— but `electron/main.js` reads `SELECT type FROM jingle_categories` and nothing else (`main.js:7885`).
+Generation takes its timing from `SWEEPER_DEFAULT` or a category override instead, so **the pool's own
+values are ignored**.
+
+Live evidence: pool 2 ("Christmas", Magical Forest) is tuned to `10 / 13.5` — visibly deliberate, not a
+default — and has never had any effect.
+
+**Either** make generation read the pool's values (they are per-pool for a reason, and someone tuned
+them), **or** remove the fields and the UI that edits them. What must not persist is a control that
+looks live and is not. Pre-existing; predates the v52 work.
+
+## Sweeper channel `duck_enabled` stays settable (filed 2026-08-31)
+
+Today "a sweeper never ducks its own song" is impossible by construction: `SlotKind::Cart` cannot arm
+the ducker. Once sweepers move to a Source channel (A.8 reversed, 2026-08-31, stages 4–5), that
+protection becomes `duck_enabled = false` — a boolean in a config table, fanned out at boot, that
+anyone can set wrong.
+
+Jeff ruled **"duck stays off, nothing to enforce"** on 2026-08-31, so no guard is being built. This
+entry records the residual so it is a known trade rather than a forgotten one.
+
+**If it ever needs closing:** have the writer refuse it — `deck_configs` rejects `duck=1` where
+`kind='sweeper'`, and `armAllStationDuckers` (`main.js:4785`) refuses to arm it regardless of the row.
+That states the actual rule instead of relying on a coincidence of slot layout.
