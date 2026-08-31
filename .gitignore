@@ -68,3 +68,13 @@ dist-electron/
 !docs/push-state-*.txt
 !scripts/pre-migration-snapshot-kv.txt
 !scripts/post-migration-snapshot-kv.txt
+
+# Local-only bulk artifacts — never history.
+#
+# temp-extract/ is a 512 MB unpacked build (it carries its own node_modules), and
+# native/*.bak-* are 4 MB binary snapshots of the compiled addon taken before each
+# audio slice (aux device, aux monitor, def telemetry, post-fader, slice 1). Both are
+# scratch: recreatable, machine-local, and together ~533 MB. They are ignored rather
+# than deleted because the .bak- addons are the rollback path for the audio work.
+temp-extract/
+native/*.bak-*
