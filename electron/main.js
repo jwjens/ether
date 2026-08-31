@@ -4343,14 +4343,17 @@ function annStmts() {
     const SCHED_COLS =
       "SELECT s.uuid AS uuid, s.announcement_uuid AS announcement_uuid, s.trigger_type AS trigger_type, " +
       "s.trigger_time AS trigger_time, s.close_offset_min AS close_offset_min, " +
-      "s.last_played_at AS last_played_at, a.title AS title " +
+      "s.last_played_at AS last_played_at, s.skipped_at AS skipped_at, a.title AS title " +
       "FROM announcement_schedule s " +
       "JOIN announcements a ON a.uuid = s.announcement_uuid AND a.deleted_at IS NULL AND a.is_active = 1 " +
       "WHERE s.station_id = ? AND s.deleted_at IS NULL ";
     _annStmts.schedDate  = db.prepare(SCHED_COLS + "AND s.scope = 'date' AND s.date = ? ORDER BY s.sort_order, s.trigger_time");
-    _annStmts.schedStamp = db.prepare("UPDATE announcement_schedule SET last_played_at = ? WHERE uuid = ?");
+    // Firing CLEARS the skip: a row that fired tonight was not skipped tonight, and leaving a stale
+    // stamp would have the panel accusing the scheduler of dropping something it played.
+    _annStmts.schedStamp  = db.prepare("UPDATE announcement_schedule SET last_played_at = ?, skipped_at = NULL WHERE uuid = ?");
+    _annStmts.markSkipped = db.prepare("UPDATE announcement_schedule SET skipped_at = ? WHERE uuid = ?");
   } catch (e) {
-    _annStmts.schedDate = _annStmts.schedStamp = null;
+    _annStmts.schedDate = _annStmts.schedStamp = _annStmts.markSkipped = null;
     try { logStartup('[announce] announcement_schedule unavailable (' + e.message + ') — using the pre-v47 announcements schedule'); } catch {}
   }
   return _annStmts;
@@ -4367,14 +4370,115 @@ function hmsNormalize(t) {
   return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
 }
 
-/** The clock time this entry fires at, or null if it has none.
+// ── CLOSING TIME (2026-08-31) ────────────────────────────────────────────────────────────────────
+//
+// One station_config_kv row, key `closing_time`, holding:
+//
+//   { "default": "22:00", "byWeekday": { "0": "18:00" }, "byDate": { "2026-10-31": "23:30" } }
+//
+// Resolution is byDate -> byWeekday -> default. byWeekday keys are 0-6, SUNDAY FIRST, which is what
+// Date#getDay returns and what the Park Ops backend uses — the two must agree or the station fires at
+// an hour the phone never showed.
+//
+// THIS DUPLICATES ether-backend/src/ops-core.js ON PURPOSE, and the duplication is the risk worth
+// naming: the backend PREVIEWS these times on the operator's phone and this file FIRES them. If the
+// two drift, Park Ops shows one time and the station plays another. They are kept identical by the
+// same fixtures on both sides — scripts/smoke-closing-isolation.js here and
+// scripts/smoke-ops-core.js there. Change one, change both, or the smokes fail.
+//
+// Note this is a DIFFERENT SHAPE from what v46 stored and v49 dropped. That was seven weekday rows
+// plus a per-date override table of its own; this is one value nobody has to reason about.
+function parseClosingCfg(raw) {
+  const empty = { default: null, byWeekday: {}, byDate: {} };
+  if (!raw) return empty;
+  try {
+    const v = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (!v || typeof v !== 'object') return empty;
+    return {
+      default: typeof v.default === 'string' ? v.default : null,
+      byWeekday: (v.byWeekday && typeof v.byWeekday === 'object') ? v.byWeekday : {},
+      byDate: (v.byDate && typeof v.byDate === 'object') ? v.byDate : {},
+    };
+  } catch { return empty; }
+}
+
+/** byDate -> byWeekday -> default. `dateStr` is YYYY-MM-DD; `dow` is 0-6, Sunday first. */
+function resolveClosingCfg(cfg, dateStr, dow) {
+  const d = cfg.byDate && cfg.byDate[dateStr];
+  if (typeof d === 'string' && d) return d;
+  const w = cfg.byWeekday && cfg.byWeekday[String(dow)];
+  if (typeof w === 'string' && w) return w;
+  return cfg.default || null;
+}
+
+const hhmmToMinutes = (t) => {
+  if (!t || typeof t !== 'string') return null;
+  const m = /^(\d{1,2}):(\d{2})/.exec(t.trim());
+  if (!m) return null;
+  const h = Number(m[1]), mi = Number(m[2]);
+  if (h > 23 || mi > 59) return null;
+  return h * 60 + mi;
+};
+
+const minutesToHms = (n) => {
+  const w = ((n % 1440) + 1440) % 1440;   // wrap, so 15 minutes after a midnight close is 00:15
+  return String(Math.floor(w / 60)).padStart(2, '0') + ':' + String(w % 60).padStart(2, '0') + ':00';
+};
+
+// The tick runs every 250ms across every station, so the closing time cannot be read from SQLite per
+// row per tick. Cached with a short TTL, and INVALIDATED BY THE WRITERS — both of them — so an
+// operator's change takes effect on the next tick rather than at the end of a TTL. The TTL only
+// bounds the damage if an invalidation is ever missed: at worst 2 seconds stale, never wrong.
+const _closingCache = new Map();   // stationId -> { cfg, readAt }
+const CLOSING_TTL_MS = 2000;
+
+function closingCfgFor(stationId) {
+  const hit = _closingCache.get(stationId);
+  if (hit && (Date.now() - hit.readAt) < CLOSING_TTL_MS) return hit.cfg;
+  let cfg = { default: null, byWeekday: {}, byDate: {} };
+  try {
+    const row = db.prepare(
+      'SELECT value FROM station_config_kv WHERE station_id = ? AND key = ? AND deleted_at IS NULL'
+    ).get(stationId, 'closing_time');
+    cfg = parseClosingCfg(row ? row.value : null);
+  } catch { /* unreadable → no closing time, which means offset rows do not fire. Never a guess. */ }
+  _closingCache.set(stationId, { cfg, readAt: Date.now() });
+  return cfg;
+}
+
+/** Called by the KV writer the moment it commits, so a change is live on the next tick rather than
+ *  at the end of the TTL.
  *
- *  ABSOLUTE ONLY (v48). The close_offset branch went with the weekday scope and the closing-time
- *  UI: an entry carries a clock time, and an entry without one simply has no time — which the panel
- *  states rather than this function guessing. Guessing would put audio on air at an hour nobody
- *  chose. */
-function dueTimeFor(row) {
-  return hmsNormalize(row.trigger_time);
+ *  Published on globalThis because the writer is station_config_kv's IPC handler, in its own module,
+ *  and importing main.js from a sync handler would be a cycle. A one-line optional hook is the
+ *  smaller evil: if it is ever absent the cache still expires on its own, so the worst case stays
+ *  "2 seconds late", never "wrong". */
+function invalidateClosingCache(stationId) {
+  if (stationId == null) _closingCache.clear();
+  else _closingCache.delete(stationId);
+}
+globalThis.__etherInvalidateClosing = invalidateClosingCache;
+
+/** The clock time this entry fires at today, or null if it has none.
+ *
+ *  ABSOLUTE entries carry their own time and are unchanged — this is the same one-line function it
+ *  has always been for them.
+ *
+ *  CLOSE_OFFSET entries (2026-08-31, Jeff's ruling B: resolve-at-fire) have NO time of their own.
+ *  Theirs is computed here, against THAT DAY'S closing time, at the moment the tick asks — which is
+ *  what makes "change the closing time and every offset moves with it" literally true instead of a
+ *  fan-out of rewrites that can half-fail. The same "-30" rule fires at 17:30 on a 18:00 Sunday and
+ *  21:30 on a 22:00 Saturday, with nothing rewritten in between.
+ *
+ *  NO CLOSING TIME MEANS NO FIRE. Returning row.trigger_time as a fallback would be the worst
+ *  outcome available: an offset row carries a stale absolute time from before it was converted, so
+ *  the fallback would put audio on air at an hour nobody chose — the exact thing the v48 removal
+ *  note warned about. null is the honest answer, and the panel says the row cannot fire. */
+function dueTimeFor(row, closingHHMM) {
+  if (row.trigger_type !== 'close_offset') return hmsNormalize(row.trigger_time);
+  const base = hhmmToMinutes(closingHHMM);
+  if (base == null) return null;
+  return minutesToHms(base + (Number(row.close_offset_min) || 0));
 }
 
 // ── THE SCHEDULE RESOLVER (v48) — one date, one list ─────────────────────────────────────────────
@@ -4413,6 +4517,9 @@ function announceTick() {
                   String(now.getMonth() + 1).padStart(2, '0') + '-' +
                   String(now.getDate()).padStart(2, '0');
   const nowEpoch = Math.floor(Date.now() / 1000);
+  // 0-6, Sunday first — the key convention byWeekday uses, and what the Park Ops backend resolves
+  // against. Local, like dateStr above: a weekday is a property of the calendar date, not of UTC.
+  const nowDow = now.getDay();
 
   for (const stationId of stations) {
     // v47 — the tick iterates SCHEDULE ENTRIES, not announcements. What changed is WHAT IS WALKED;
@@ -4425,8 +4532,34 @@ function announceTick() {
     const rows = scheduleForDate(stationId, dateStr);
     if (rows === null) continue;
 
+    // TODAY'S closing time for THIS station, resolved byDate -> byWeekday -> default. Read once per
+    // station per tick from a 2s cache, never per row: this loop runs four times a second.
+    const closingToday = resolveClosingCfg(closingCfgFor(stationId), dateStr, nowDow);
+
     for (const row of rows) {
-      const due = dueTimeFor(row);
+      const due = dueTimeFor(row, closingToday);
+
+      // ── THE VISIBLE SKIP (2026-08-31, Jeff's ruling) ──────────────────────────────────────────
+      // An offset row's fire time moves when the closing time moves. Move closing EARLIER and a row
+      // can land in the past, where it will never match hhmmss and never fire — silently, looking
+      // scheduled the whole time. "Skip it tonight, but visibly. Never silently drop it."
+      //
+      // Only offset rows, only ones that have not fired today, and only inside a 10-minute
+      // look-back. The window is what separates "closing time moved out from under this row" from
+      // "this date was loaded after its times had already passed", which is a different thing and
+      // not a closing-time casualty. Stamped once — skipped_at is the guard as well as the record.
+      if (row.trigger_type === 'close_offset' && due && !row.skipped_at && !row.last_played_at) {
+        const dueMin = hhmmToMinutes(due);
+        const nowMin = now.getHours() * 60 + now.getMinutes();
+        if (dueMin != null && dueMin < nowMin && (nowMin - dueMin) <= 10) {
+          try {
+            annStmts().markSkipped.run(nowEpoch, row.uuid);
+            row.skipped_at = nowEpoch;
+            logStartup('[announce] SKIPPED station ' + stationId + ' "' + (row.title || '') + '" — its time (' + due + ') passed when the closing time moved');
+          } catch (e) { logStartup('[announce] could not record a skip: ' + (e && e.message)); }
+        }
+      }
+
       if (!due || due !== hhmmss) continue;
       // Fired already? The tick is 250ms and the match is to the second, so a matching second is hit
       // about four times — this guard is what makes that safe. Same 120s window it has always been.

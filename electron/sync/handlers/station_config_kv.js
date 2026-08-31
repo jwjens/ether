@@ -319,7 +319,17 @@ function installStationConfigKv(ipcMain, db) {
 
 
   ipcMain.handle('station_config_kv:upsert-by-key', (_, stationId, key, value) => {
-    try { return { ok: true, row: stationConfigKvUpsertByKey(getDb(), stationId, key, value) }; }
+    try {
+      const row = stationConfigKvUpsertByKey(getDb(), stationId, key, value);
+      // The announcement scheduler caches closing_time for 2s, because its tick runs four times a
+      // second across every station. Drop that cache the moment the value changes so an offset
+      // announcement moves on the NEXT tick, not at the end of the TTL. Optional by design — if the
+      // hook is absent the cache still expires on its own.
+      if (key === 'closing_time') {
+        try { globalThis.__etherInvalidateClosing?.(stationId); } catch { /* never block a write */ }
+      }
+      return { ok: true, row };
+    }
     catch (e) { return { ok: false, error: e.message }; }
   });
 

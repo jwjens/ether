@@ -20,7 +20,8 @@
     "verify:schema": "node scripts/verify-main-schema.js",
     "check:audio-isolation": "node scripts/check-no-global-audio-statics.js",
     "test:sync": "electron --no-sandbox scripts/run-sync-tests.js",
-    "test:designation": "cross-env ELECTRON_RUN_AS_NODE=1 electron electron/smoke-designation-write.js"
+    "test:designation": "cross-env ELECTRON_RUN_AS_NODE=1 electron electron/smoke-designation-write.js",
+    "test:closing": "node scripts/smoke-closing-isolation.js"
   },
   "dependencies": {
     "@picovoice/porcupine-react": "^4.0.0",
