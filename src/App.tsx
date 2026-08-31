@@ -140,8 +140,24 @@ interface SongRow {
   intro_end?: number | null; outro_start?: number | null; bpm?: number | null;
   gain_db?: number | null; play_count?: number | null;
   cart_id?: string | null;
-  content_class?: string | null;   // jingles design 1b — MUSIC/JIN/SPOT (teal treatment on JIN)
+  content_class?: string | null;   // MUSIC / SWP / SPOT / ANN — what the row IS (badge + filter)
+  /** Registry TYPE (SONG | SPOT | SWEEPER | ANNOUNCEMENT | …). Present on every row. */
+  asset_type?: string;
+  /** Which table this row came from. Actions branch on this, never on the id’s sign. */
+  source?: "songs" | "library_asset";
+  asset_uuid?: string | null;
 }
+
+// THE TWO VOCABULARIES, mapped once. `content_class` is what a row IS on the wire and in the log
+// (MUSIC/SPOT/SWP/ANN); `type` is the registry code (SONG/SPOT/SWEEPER/ANNOUNCEMENT). They are
+// deliberately different — MUSIC is not SONG and ANN is not ANNOUNCEMENT — so the translation lives
+// here rather than being re-guessed at each call site.
+const CLASS_FOR_TYPE: Record<string, string> = {
+  SONG: "MUSIC", SPOT: "SPOT", SWEEPER: "SWP", ANNOUNCEMENT: "ANN",
+};
+const TYPE_FOR_CLASS: Record<string, string> = {
+  MUSIC: "SONG", SPOT: "SPOT", SWP: "SWEEPER", ANN: "ANNOUNCEMENT", JIN: "SWEEPER",
+};
 
 const EXTS = [".mp3",".flac",".ogg",".wav",".m4a",".aac",".wma",".aiff"];
 function isAudio(n: string) { return EXTS.some(e => n.toLowerCase().endsWith(e)); }
@@ -4853,6 +4869,17 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
+  // TYPE-AWARE ACTIONS.
+  //
+  // Every row in this grid is playable audio, so load-to-deck and queue work for all of them. What
+  // does NOT apply to every row is the song machinery: `ether.songs.*` writers, categories, rotation
+  // eligibility and the cue editor all key off a row in `songs`, and a library_asset-sourced row has
+  // no such row to write.
+  //
+  // The test is the row's SOURCE, not the sign of its id. The negative id exists to keep keys and
+  // selection unique across two sources; reading intent from it would be inferring a fact from a
+  // workaround, and would break the moment ids are allocated differently.
+  const isSongRow = (row: { source?: string }) => row.source !== "library_asset";
   // ELEMENT-TYPE FILTER. This grid reads `songs`, which holds music AND the 64 sweepers AND any
   // spot-classed rows — all mixed together with nothing to tell them apart or filter them out.
   // The Play Log already solved this exact problem, so this is its ClassFilter, unchanged: one
@@ -5200,7 +5227,56 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
   const load = async () => {
     try {
       const rows = await queryScoped<SongRow>("SELECT s.*, a.name as artist_name, al.title as album_title, al.year as album_year, c.code as category_code, c.color as category_color FROM songs s LEFT JOIN artists a ON a.id = s.artist_id LEFT JOIN albums al ON al.id = s.album_id LEFT JOIN categories c ON c.id = s.category_id WHERE s.deleted_at IS NULL ORDER BY s.title", [], stationId, { skipScoping: true });
-      setSongs(rows);
+      // ── ONE LIBRARY ────────────────────────────────────────────────────────────────────────
+      // `songs` carries music, spots-tagged songs and sweepers (content_class MUSIC/SPOT/SWP).
+      // `library_asset` carries every element type that has no row in `songs` — announcements today,
+      // and whatever type is declared next.
+      //
+      // THE UNION RULE IS GENERAL, NOT PER-TYPE: take all of `songs`, then every library_asset row
+      // whose uuid is not already represented by a song. That single rule de-duplicates the 64
+      // sweepers (their assets are keyed by songs.uuid) without naming them, and a ninth type
+      // declared in shared/asset-types.json appears here with no code change. A per-type join would
+      // have needed a new branch for every type — which is the special-casing this is meant to end.
+      //
+      // STATION SCOPING is derived, not assumed: an asset backed by a station-scoped table
+      // (announcements, spots) shows only on its station; an install-scoped asset (station_id NULL)
+      // shows everywhere. skipScoping because the predicate is written explicitly — queryScoped's
+      // injected bare `station_id` would be ambiguous across the two LEFT JOINs.
+      let assetRows: SongRow[] = [];
+      try {
+        const assets = await queryScoped<any>(
+          `SELECT la.id, la.uuid, la.type, la.title, la.file_path, la.duration_ms,
+                  COALESCE(a.station_id, sp.station_id) AS station_id
+             FROM library_asset la
+             LEFT JOIN announcements a ON a.uuid = la.uuid AND a.deleted_at IS NULL
+             LEFT JOIN spots        sp ON sp.uuid = la.uuid AND sp.deleted_at IS NULL
+            WHERE la.deleted_at IS NULL
+              AND NOT EXISTS (SELECT 1 FROM songs s WHERE s.uuid = la.uuid AND s.deleted_at IS NULL)
+              AND (COALESCE(a.station_id, sp.station_id) IS NULL
+                   OR COALESCE(a.station_id, sp.station_id) = ?)
+            ORDER BY la.title`, [stationId], stationId, { skipScoping: true });
+        assetRows = (assets || []).map((a: any) => ({
+          // Negative, and stable: library_asset.id is unique, song ids are positive, so row keys and
+          // the selection Set can never collide between the two sources.
+          id: -Math.abs(a.id),
+          title: a.title || "(untitled)",
+          file_path: a.file_path ?? null,
+          artist_name: null, album_title: null, genre: null,
+          duration_ms: a.duration_ms ?? 0,
+          category_code: null, category_color: null,
+          content_class: CLASS_FOR_TYPE[String(a.type).toUpperCase()] ?? "MUSIC",
+          asset_type: String(a.type).toUpperCase(),
+          asset_uuid: a.uuid,
+          source: "library_asset" as const,
+        })) as SongRow[];
+      } catch (e) { console.error("[library] asset read failed:", e); }
+
+      const songRows: SongRow[] = (rows || []).map(r => ({
+        ...r,
+        asset_type: TYPE_FOR_CLASS[String(r.content_class || "MUSIC").toUpperCase()] ?? "SONG",
+        source: "songs" as const,
+      }));
+      setSongs([...songRows, ...assetRows]);
       const [r] = await query<{ c: number }>("SELECT COUNT(*) as c FROM songs WHERE deleted_at IS NULL");
       setCount(r ? r.c : 0);
       // station_id scoping: Strategy B — single table
@@ -5493,9 +5569,9 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div>
-          <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Inter', sans-serif" }}>Song Library</h1>
+          <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.04em", color: "var(--text-primary)", margin: 0, fontFamily: "'Inter', sans-serif" }}>Library</h1>
           <span style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>
-            {count} tracks{(search || categoryFilter || classFilter.size > 0) ? ` · ${filtered.length} shown` : ""}
+            {songs.length} items{(search || categoryFilter || classFilter.size > 0) ? ` · ${filtered.length} shown` : ""}
             {categoryFilter ? ` in ${categoryFilter}` : ""}
           </span>
         </div>
@@ -5567,8 +5643,10 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
           // Guard the exact bug that wiped categories: a code with no matching station category would
           // resolve to null and CLEAR the category on every shown song. Never mass-clear by accident.
           if (catId == null) { window.alert(`"${code}" isn't a category for this station — nothing was changed.`); return; }
-          if (!window.confirm(`Assign category "${cat?.name || code}" to all ${filtered.length} shown song${filtered.length === 1 ? "" : "s"}?\n\nThis OVERWRITES their current category for this station and can't be undone.`)) return;
-          for (const s of filtered) await (window as any).ether.songs.updateById(s.id, { category_id: catId });
+          const targets = filtered.filter(isSongRow).length;
+          if (targets === 0) { window.alert("No songs in view — categories apply to songs only."); return; }
+          if (!window.confirm(`Assign category "${cat?.name || code}" to all ${targets} shown song${targets === 1 ? "" : "s"}?\n\nThis OVERWRITES their current category for this station and can't be undone.`)) return;
+          for (const s of filtered.filter(isSongRow)) await (window as any).ether.songs.updateById(s.id, { category_id: catId });
           load();
         }}
           style={{ padding: "8px 12px", borderRadius: 0, fontSize: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", outline: "none", cursor: "pointer" }}>
@@ -5758,9 +5836,28 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
       ) : filtered.length === 0 ? (
         <div style={{ textAlign: "center" as any, padding: "64px 24px" }}>
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.4 }}><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-          <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>No music yet</div>
-          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 20 }}>Import a folder to get started</div>
-          <button onClick={() => setShowImport(true)} style={S.btn("var(--accent-blue)")}>Import Music Folder</button>
+          {/* Name what is actually missing. "No music yet / Import Music Folder" under the
+              Announcements chip named the wrong content and offered a button that would not have
+              helped. It also must not send the operator to another panel — this IS the library. */}
+          {(() => {
+            const only = classFilter.size === 1 ? [...classFilter][0] : null;
+            const noun = only === "ANN" ? "announcements" : only === "SWP" ? "sweepers"
+                       : only === "SPOT" ? "spots" : only === "MUSIC" ? "music" : "items";
+            const narrowed = !!(search || categoryFilter);
+            return (<>
+              <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>
+                {narrowed ? `No ${noun} match that search` : `No ${noun} yet`}
+              </div>
+              <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 20 }}>
+                {narrowed ? "Clear the search or category filter to see everything."
+                          : `Import audio to add ${noun} to the library.`}
+              </div>
+              <button onClick={() => setShowImport(true)} style={S.btn("var(--accent-blue)")}>
+                {only === "ANN" ? "Import Announcements" : only === "SWP" ? "Import Sweepers"
+                 : only === "SPOT" ? "Import Spots" : "Import Music"}
+              </button>
+            </>);
+          })()}
         </div>
       ) : (
         <div
@@ -5874,7 +5971,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                     <InlineNameEditor
                       value={s.title || ""}
                       readOnly={libraryBorrowed}
-                      onSave={async (next) => { await (window as any).ether.songs.updateById(s.id, { title: next }); load(); }}
+                      onSave={async (next) => { if (!isSongRow(s)) return; await (window as any).ether.songs.updateById(s.id, { title: next }); load(); }}
                     />
                   </div>
                 );
@@ -5931,7 +6028,9 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                       return (
                       <div key={id} role="gridcell" title={needsCategory ? "No category — this song can never air. Pick one here and it enters rotation." : undefined}
                         style={{ flex: `0 0 ${w}px`, padding: "8px 12px", display: "flex", alignItems: "center", gap: 6, borderRight: "1px solid var(--border-primary)" }}>
-                        <select value={s.category_code || ""} onChange={async e => { const catId = catList.find(c => c.code === e.target.value)?.id || null; await (window as any).ether.songs.updateById(s.id, { category_id: catId }); load(); }}
+                        <select value={s.category_code || ""} disabled={!isSongRow(s)}
+                          title={isSongRow(s) ? undefined : "Categories apply to songs — this is an announcement"}
+                          onChange={async e => { if (!isSongRow(s)) return; const catId = catList.find(c => c.code === e.target.value)?.id || null; await (window as any).ether.songs.updateById(s.id, { category_id: catId }); load(); }}
                           style={{ padding: "3px 6px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: `1px solid ${needsCategory ? "var(--accent-amber)" : "var(--border-primary)"}`, color: needsCategory ? "var(--accent-amber)" : "var(--text-secondary)", outline: "none", cursor: "pointer", maxWidth: "100%" }}>
                           <option value="">—</option>
                           {catList.map(c => <option key={c.id} value={c.code}>{c.code}</option>)}
