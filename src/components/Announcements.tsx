@@ -276,6 +276,18 @@ function ByMinutesBoard({ stationId, assets, entries, reload, closing }: {
 }) {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [draft, setDraft]       = useState<OffsetDraft[]>([]);
+  // THE CLOSING TIME IS PART OF THIS DRAFT, not a field that saves itself.
+  //
+  // It used to be a seven-row weekday grid in its own column — "all Sundays close at 6" — and that
+  // was the wrong model: a park's hours vary by date, not by a repeating weekday pattern. Jeff:
+  // "I need closing time set PER THE SPECIFIC DATE, in the settings of that day."
+  //
+  // It saves on APPLY with everything else, because this board's contract is that NOTHING is written
+  // until APPLY. A field that wrote itself instantly, sitting directly above lines that do not, is
+  // exactly the confusion this rearrangement exists to remove.
+  //
+  // null = untouched (show whatever the selected dates resolve to); a string = the operator typed it.
+  const [closeDraft, setCloseDraft] = useState<string | null>(null);
   const [dirty, setDirty]       = useState(false);
   const [busy, setBusy]         = useState(false);
   const [err, setErr]           = useState<string | null>(null);
@@ -288,14 +300,28 @@ function ByMinutesBoard({ stationId, assets, entries, reload, closing }: {
       .map(e => ({ id: ++_offsetSeq, announcement_uuid: e.announcement_uuid, offset: e.close_offset_min ?? 0 }));
 
   const toggleDate = (d: string) => {
-    if (selected.size === 0) { setSelected(new Set([d])); setDraft(linesFor(d)); setDirty(false); return; }
+    if (selected.size === 0) { setSelected(new Set([d])); setDraft(linesFor(d)); setCloseDraft(null); setDirty(false); return; }
     const n = new Set(selected);
     n.has(d) ? n.delete(d) : n.add(d);
     setSelected(n);
-    if (n.size === 0) { setDraft([]); setDirty(false); }
+    if (n.size === 0) { setDraft([]); setCloseDraft(null); setDirty(false); }
   };
-  const clearAll = () => { setSelected(new Set()); setDraft([]); setDirty(false); setErr(null); setMsg(null); };
+  const clearAll = () => { setSelected(new Set()); setDraft([]); setCloseDraft(null); setDirty(false); setErr(null); setMsg(null); };
   const dates = [...selected].sort();
+
+  const dowOf = (ymd: string) => new Date(`${ymd}T12:00:00`).getDay();
+
+  // What the selected dates close at TODAY, before any edit. One value if they agree; null if they
+  // differ — showing a single time for three dates that close at three different times would be a
+  // straightforward lie, so the field says so instead.
+  const storedClosing = (() => {
+    if (!dates.length) return null;
+    const vals = new Set(dates.map(d => resolveClosingCfg(closing, d, dowOf(d)) || ""));
+    return vals.size === 1 ? ([...vals][0] || null) : null;
+  })();
+  const mixed = dates.length > 1 && new Set(dates.map(d => resolveClosingCfg(closing, d, dowOf(d)) || "")).size > 1;
+  // What the previews and the APPLY use: the typed value if there is one, else what is stored.
+  const effectiveClosing = closeDraft ?? storedClosing;
 
   const addLine = () => {
     if (!assets.length) { setErr("There are no announcements yet — upload one below first."); return; }
@@ -307,9 +333,11 @@ function ByMinutesBoard({ stationId, assets, entries, reload, closing }: {
 
   // What a rule actually fires at on a given date. Shown per line for TWO different selected dates
   // where they differ, because seeing one rule produce two times is what makes the model legible.
-  const dowOf = (ymd: string) => new Date(`${ymd}T12:00:00`).getDay();
   const firesAt = (offset: number, date: string): string | null => {
-    const c = resolveClosingCfg(closing, date, dowOf(date));
+    // The DRAFT wins. Typing a closing time must visibly move every line before Apply is pressed —
+    // that is the whole model made legible, and resolving from the stored value would show the
+    // operator times that are about to be wrong.
+    const c = closeDraft ?? resolveClosingCfg(closing, date, dowOf(date));
     if (!c) return null;
     const m = /^(\d{1,2}):(\d{2})/.exec(c);
     if (!m) return null;
@@ -335,6 +363,36 @@ function ByMinutesBoard({ stationId, assets, entries, reload, closing }: {
     if (draft.some(l => !Number.isFinite(l.offset))) { setErr("Every line needs a number of minutes."); return; }
     setBusy(true); setErr(null); setMsg(null);
     try {
+      // ── THE CLOSING TIME, WRITTEN PER SELECTED DATE ─────────────────────────────────────────
+      //
+      // byDate[d] for each date, and NOTHING else in the value is touched — the hard rule, and the
+      // property scripts/smoke-closing-isolation.js pins: a one-day change never reaches another
+      // date, a weekday, or the default.
+      //
+      // WRITTEN EVEN WHEN UNTOUCHED, deliberately. The field shows what these dates resolve to, so
+      // applying stores exactly what the operator was looking at, and the date becomes
+      // self-contained: from then on nothing about a pattern elsewhere can move it. It also retires
+      // the legacy `default` by attrition — dates get explicit values as they are edited, instead of
+      // a hidden fallback quietly governing nights nobody set.
+      //
+      // ONE READ-MODIFY-WRITE for the whole batch, against this install's own row. Doing it per date
+      // in a loop would re-read a value this same loop had just written, which is how a batch ends up
+      // racing itself.
+      const closeToWrite = effectiveClosing;
+      if (closeToWrite && stationId != null) {
+        const kvRes = await (window as any).ether.stationConfigKv.list(stationId);
+        const kvRows: any[] = Array.isArray(kvRes) ? kvRes : (kvRes?.rows ?? []);
+        const raw = kvRows.find(x => x?.key === "closing_time" && !x?.deleted_at)?.value ?? null;
+        const cfg = parseClosingCfg(raw);
+        const bd = { ...cfg.byDate };
+        for (const d of dates) bd[d] = closeToWrite;
+        await (window as any).ether.stationConfigKv.upsertByKey(
+          stationId, "closing_time", JSON.stringify({ ...cfg, byDate: bd }));
+        // Park Ops reads the mirrored copy; without this the phone shows the old closing time for up
+        // to a minute, and the two surfaces disagreeing is what this feature cannot afford.
+        window.dispatchEvent(new CustomEvent("ether:ops-push"));
+      }
+
       let created = 0, removed = 0, kept = 0;
       for (const d of dates) {
         // ONLY close_offset rows on this date are touched. The MANUAL tab's absolute entries for the
@@ -361,7 +419,7 @@ function ByMinutesBoard({ stationId, assets, entries, reload, closing }: {
       }
       reload();
       setMsg(`Applied to ${dates.length} date${dates.length === 1 ? "" : "s"} — ${created} added, ${removed} removed${kept ? `, ${kept} unchanged` : ""}.`);
-      setSelected(new Set()); setDraft([]); setDirty(false);
+      setSelected(new Set()); setDraft([]); setCloseDraft(null); setDirty(false);
     } catch (e: any) {
       setErr(String(e?.message || e));
       reload();
@@ -370,10 +428,12 @@ function ByMinutesBoard({ stationId, assets, entries, reload, closing }: {
 
   const box = { padding: "12px 14px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" };
   const cap = { fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 8 };
-  const noClosing = !closing.default && Object.keys(closing.byWeekday).length === 0 && Object.keys(closing.byDate).length === 0;
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 330px) 1fr minmax(200px, 240px)", gap: 12, alignItems: "start" }}>
+    // TWO columns: the dates, and the offsets. PARK CLOSES was a third here and it is gone — a
+    // cramped side column of seven time boxes read as an unexplained form and squeezed the thing the
+    // tab is actually for (the minutes + track lines) into what was left.
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 330px) 1fr", gap: 12, alignItems: "start" }}>
       <div style={box}>
         <div style={cap}>Dates</div>
         <DatePicker selected={selected} onToggle={toggleDate} onClearAll={clearAll} entries={entries} />
@@ -382,15 +442,6 @@ function ByMinutesBoard({ stationId, assets, entries, reload, closing }: {
       <div style={box}>
         <div style={cap}>Minutes before closing</div>
 
-        {/* An offset rule is meaningless without a closing time, and this says so BEFORE the operator
-            builds a list that could never fire. */}
-        {noClosing && (
-          <div style={{ fontSize: 11, color: "var(--accent-red, #ef4444)", lineHeight: 1.5, marginBottom: 10 }}>
-            No closing time is set. Announcements timed from closing cannot fire until one is —
-            set it on the right.
-          </div>
-        )}
-
         {dates.length === 0 ? (
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
             Click a date to see and edit its timed-from-closing announcements. Click more dates to set
@@ -398,6 +449,36 @@ function ByMinutesBoard({ stationId, assets, entries, reload, closing }: {
           </div>
         ) : (
           <>
+            {/* THE CLOSING TIME FOR THE DATES BEING EDITED — first, because every line below is
+                measured from it. It belongs to these dates and no others: not "all Sundays", THIS
+                Sunday. */}
+            <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 8, alignItems: "center", marginBottom: 4 }}>
+              <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                {dates.length === 1 ? "This date closes at" : `These ${dates.length} dates close at`}
+              </span>
+              <input
+                type="time"
+                value={effectiveClosing ?? ""}
+                disabled={busy}
+                onChange={e => { setCloseDraft(e.target.value); setDirty(true); setMsg(null); }}
+                aria-label="Closing time for the selected dates"
+                style={{ width: 130, fontSize: 14, fontWeight: 700, padding: "6px 8px", borderRadius: 6,
+                         background: "var(--bg-secondary)", color: "var(--text-primary)",
+                         border: "1px solid " + (mixed && closeDraft == null ? "var(--accent-amber, #fbbf24)" : "var(--border-primary)"),
+                         fontVariantNumeric: "tabular-nums" }} />
+            </div>
+            <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: "0 0 10px", lineHeight: 1.5 }}>
+              {mixed && closeDraft == null
+                ? <span style={{ color: "var(--accent-amber, #fbbf24)" }}>
+                    These dates close at different times. Setting one here applies it to all {dates.length} when you press Apply.
+                  </span>
+                : !effectiveClosing
+                  ? <span style={{ color: "var(--accent-red, #ef4444)" }}>
+                      No closing time for {dates.length === 1 ? "this date" : "these dates"}. Announcements below cannot play until one is set.
+                    </span>
+                  : <>Saved with the announcements when you press Apply — for {dates.length === 1 ? "this date" : `these ${dates.length} dates`} only.</>}
+            </p>
+
             {draft.map(l => (
               <div key={l.id} style={{ display: "grid", gridTemplateColumns: "92px 1fr 20px", gap: 6, alignItems: "center", marginBottom: 6 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -466,8 +547,6 @@ function ByMinutesBoard({ stationId, assets, entries, reload, closing }: {
         {err && <div style={{ fontSize: 11, color: "var(--accent-red)", marginTop: 8 }}>{err}</div>}
         {msg && <div style={{ fontSize: 11, color: "var(--accent-green)", marginTop: 8 }}>{msg}</div>}
       </div>
-
-      <ClosingTimeField stationId={stationId} />
     </div>
   );
 }
@@ -482,7 +561,6 @@ export interface ClosingCfg {
   byDate: Record<string, string>;
 }
 
-const DOW_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 /** Tolerant by design: a corrupt or half-written value reads as "nothing set", never as a partial
  *  config that would resolve to a time nobody chose. */
@@ -507,161 +585,6 @@ export function resolveClosingCfg(cfg: ClosingCfg, dateStr: string, dow: number)
   const w = cfg.byWeekday?.[String(dow)];
   if (typeof w === "string" && w) return w;
   return cfg.default || null;
-}
-
-// ── CLOSING TIME (2026-08-31) ────────────────────────────────────────────────────────────────────
-//
-// THIS REVERSES THE 2026-08-26 REMOVAL, deliberately and on a different design. What was removed
-// then was seven weekday closing times plus a per-date override calendar (v46), backed by its own
-// synced table — an exception layer nobody could reason about, whose last consumer went with the
-// weekday scope in v48. The table was dropped in v49 and is NOT coming back.
-//
-// What replaces it is one value: a single station_config_kv row, key `closing_time`, holding
-// { default, byWeekday, byDate } and resolved date -> weekday -> default. Only `default` is
-// editable, here and on Park Ops; the other two keys exist so the shape does not have to change if
-// scope is ever ruled on again.
-//
-// WHY IT IS BACK: Park Ops (park.ether-cast.com/<slug>) put the closing time in a park operator's
-// hand on their phone, and the studio needs to set the same value. It is ONE value with two
-// surfaces — this field and that page write the identical KV row through the identical sanctioned
-// writer, so they cannot disagree.
-function ClosingTimeField({ stationId }: { stationId: number | null }) {
-  const [cfg, setCfg] = useState<ClosingCfg>({ default: null, byWeekday: {}, byDate: {} });
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [newDate, setNewDate] = useState("");
-
-  const read = async () => {
-    if (stationId == null) return;
-    try {
-      const r = await (window as any).ether.stationConfigKv.list(stationId);
-      const rows: any[] = Array.isArray(r) ? r : (r?.rows ?? []);
-      const raw = rows.find(x => x?.key === "closing_time" && !x?.deleted_at)?.value ?? null;
-      setCfg(parseClosingCfg(raw));
-      setErr(null);
-    } catch (e: any) { setErr(String(e?.message || e)); }
-  };
-  useEffect(() => { read(); }, [stationId]);
-
-  // THE HARD RULE (Jeff, 2026-08-31), enforced in ONE place so no caller can get it wrong:
-  // "Changing a SINGLE day's closing time affects ONLY that day. It must NEVER touch the rest of the
-  // calendar, a following Sunday, the weekday pattern, or any other date."
-  //
-  // Every edit routes through here as a MUTATOR over the current config — read, apply one change,
-  // write back. The mutator may only touch the key it owns; scripts/smoke-closing-isolation.js pins
-  // that as a property (change one thing, assert exactly the intended dates moved).
-  //
-  // Read-modify-write against THIS install's own row, never a cached or mirrored copy, so a
-  // concurrent change from elsewhere cannot be carried back in a stale form.
-  const commit = async (mutate: (c: ClosingCfg) => ClosingCfg) => {
-    if (stationId == null) return;
-    setBusy(true); setErr(null);
-    try {
-      const r = await (window as any).ether.stationConfigKv.list(stationId);
-      const rows: any[] = Array.isArray(r) ? r : (r?.rows ?? []);
-      const raw = rows.find(x => x?.key === "closing_time" && !x?.deleted_at)?.value ?? null;
-      const next = mutate(parseClosingCfg(raw));
-      await (window as any).ether.stationConfigKv.upsertByKey(stationId, "closing_time", JSON.stringify(next));
-      setCfg(next);
-      // Park Ops reads the mirrored copy. Without this the operator's phone shows the old closing
-      // time for up to a minute — and the two surfaces disagreeing is what this feature cannot afford.
-      window.dispatchEvent(new CustomEvent("ether:ops-push"));
-    } catch (e: any) { setErr(String(e?.message || e)); }
-    finally { setBusy(false); }
-  };
-
-  const setDefault = (t: string) => commit(c => ({ ...c, default: t || null }));
-  const setWeekday = (dow: number, t: string) => commit(c => {
-    const bw = { ...c.byWeekday };
-    if (t) bw[String(dow)] = t; else delete bw[String(dow)];   // cleared → falls back to default
-    return { ...c, byWeekday: bw };
-  });
-  const setDate = (date: string, t: string) => commit(c => {
-    const bd = { ...c.byDate };
-    if (t) bd[date] = t; else delete bd[date];                 // cleared → falls back to the pattern
-    return { ...c, byDate: bd };
-  });
-
-  const inputStyle: React.CSSProperties = {
-    width: "100%", fontSize: 13, fontWeight: 600, padding: "4px 6px", borderRadius: 6,
-    background: "var(--bg-tertiary)", color: "var(--text-primary)",
-    border: "1px solid var(--border-primary)", fontVariantNumeric: "tabular-nums",
-  };
-  const rowStyle: React.CSSProperties = { display: "grid", gridTemplateColumns: "58px 1fr", gap: 6, alignItems: "center", marginBottom: 4 };
-  const dates = Object.keys(cfg.byDate).sort();
-
-  return (
-    <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 10, padding: 14 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 10 }}>
-        Park closes
-      </div>
-
-      {/* Read top to bottom in the order it RESOLVES: a specific date wins, then the weekday, then
-          the default. The layout is the precedence, so there is nothing to memorise. */}
-      <div style={rowStyle}>
-        <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>Every day</span>
-        <input type="time" style={inputStyle} disabled={stationId == null || busy}
-               value={cfg.default ?? ""} onChange={e => setDefault(e.target.value)} aria-label="Default closing time" />
-      </div>
-
-      <div style={{ height: 1, background: "var(--border-primary)", margin: "10px 0" }} />
-
-      {DOW_LABELS.map((label, dow) => (
-        <div key={dow} style={rowStyle}>
-          <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>{label}</span>
-          <input type="time" style={inputStyle} disabled={stationId == null || busy}
-                 value={cfg.byWeekday[String(dow)] ?? ""} onChange={e => setWeekday(dow, e.target.value)}
-                 aria-label={`${label} closing time`}
-                 placeholder={cfg.default ?? ""} />
-        </div>
-      ))}
-      <p style={{ fontSize: 10, color: "var(--text-tertiary)", margin: "6px 0 0", lineHeight: 1.5 }}>
-        Blank means that day uses the every-day time.
-      </p>
-
-      <div style={{ height: 1, background: "var(--border-primary)", margin: "10px 0" }} />
-
-      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 6 }}>
-        One-off dates
-      </div>
-      {dates.length === 0 && (
-        <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: "0 0 6px", lineHeight: 1.5 }}>
-          None. A date set here overrides the pattern for that day only.
-        </p>
-      )}
-      {dates.map(d => (
-        <div key={d} style={{ display: "grid", gridTemplateColumns: "1fr 84px 20px", gap: 6, alignItems: "center", marginBottom: 4 }}>
-          <span style={{ fontSize: 11, color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>{d}</span>
-          <input type="time" style={inputStyle} disabled={busy}
-                 value={cfg.byDate[d] ?? ""} onChange={e => setDate(d, e.target.value)} aria-label={`Closing time for ${d}`} />
-          <button onClick={() => setDate(d, "")} disabled={busy} title="Remove this override"
-                  style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, padding: 0 }}>×</button>
-        </div>
-      ))}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6, marginTop: 6 }}>
-        <input type="date" style={inputStyle} disabled={busy} value={newDate}
-               onChange={e => setNewDate(e.target.value)} aria-label="Add a one-off closing date" />
-        <button
-          disabled={busy || !newDate || !!cfg.byDate[newDate]}
-          onClick={() => { setDate(newDate, cfg.default || "22:00"); setNewDate(""); }}
-          style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 6, cursor: "pointer",
-                   background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)" }}>
-          Add
-        </button>
-      </div>
-
-      {err && <p style={{ fontSize: 11, color: "var(--accent-red, #ef4444)", margin: "10px 0 0" }}>{err}</p>}
-      <p style={{ fontSize: 11, color: "var(--text-secondary)", margin: "10px 0 0", lineHeight: 1.5 }}>
-        The same closing time the Park Ops page shows. Announcements timed by minutes-before-close are
-        measured from whichever of these applies that day.
-      </p>
-      {!cfg.default && Object.keys(cfg.byWeekday).length === 0 && (
-        <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: "6px 0 0", lineHeight: 1.5 }}>
-          Nothing set — announcements timed from closing cannot fire until one of these has a time.
-        </p>
-      )}
-    </div>
-  );
 }
 
 // ── THE SCHEDULE BOARD — select, edit, APPLY ─────────────────────────────────────────────────────
@@ -785,7 +708,12 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
     // RIGHT of the schedule rather than inside it, because it is not part of any one date's list — it
     // is a station-level value the whole board is measured against. Putting it in the editor would
     // imply APPLY writes it; it does not, it saves on its own.
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 330px) 1fr minmax(200px, 240px)", gap: 12, alignItems: "start" }}>
+    // TWO columns, not three. PARK CLOSES used to sit here as a third, and it was worse than
+    // clutter: a fixed-time announcement does not consult the closing time at all (dueTimeFor
+    // returns the row's own trigger_time for absolute entries), so showing it here implied a
+    // relationship to the fire path that does not exist. It lives on the By minutes tab, which is
+    // the only place it is actually used.
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 330px) 1fr", gap: 12, alignItems: "start" }}>
       <div style={box}>
         <div style={cap}>Dates</div>
         <DatePicker selected={selected} onToggle={toggleDate} onClearAll={clearAll} entries={entries} />
@@ -852,8 +780,6 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
         {err && <div style={{ fontSize: 11, color: "var(--accent-red)", marginTop: 8 }}>{err}</div>}
         {msg && <div style={{ fontSize: 11, color: "var(--accent-green)", marginTop: 8 }}>{msg}</div>}
       </div>
-
-      <ClosingTimeField stationId={stationId} />
     </div>
   );
 }
@@ -1063,6 +989,14 @@ export default function Announcements() {
                     </button>
                   ))}
                 </div>
+                {/* WHAT THIS TAB IS FOR, in the operator's words. Nothing said this before: both
+                    tabs opened with "Click a date to see and edit its schedule", so the two read as
+                    the same screen twice and neither said what it was for. */}
+                <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: "0 0 10px", lineHeight: 1.5, maxWidth: 620 }}>
+                  {tab === "manual"
+                    ? <>Announcements that play at a <strong>time you set</strong> — &ldquo;parade at 7:00 PM&rdquo;. Pick the dates on the left, add each announcement with its time, then press Apply.</>
+                    : <>Announcements timed from <strong>when the park closes</strong> — &ldquo;30 minutes before close&rdquo;. Set the closing times on the right, then add each announcement with how many minutes. Change a closing time and these all move with it.</>}
+                </p>
                 {tab === "manual"
                   ? <ScheduleBoard stationId={stationId} assets={list} entries={entries} reload={loadEntries} />
                   : <ByMinutesBoard stationId={stationId} assets={list} entries={entries}

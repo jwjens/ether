@@ -139,6 +139,36 @@ console.log('\n── THE WRITE ITSELF: nothing outside the touched key may chan
     Object.fromEntries(Object.entries(BASE.byWeekday).filter(([k]) => k !== '0')));
 }
 
+console.log('\n-- MULTI-DATE APPLY: N dates selected writes exactly N keys --');
+// The By minutes board applies a closing time to every SELECTED date in ONE write. This is that
+// write's shape: one read-modify-write, one byDate key per selected date, and nothing else in the
+// value altered. Applying per date in a loop would re-read a value the same loop had just written,
+// which is how a batch ends up racing itself.
+{
+  const applySelection = (cfg, sel, t) => {
+    const bd = { ...cfg.byDate };
+    for (const d of sel) bd[d] = t;
+    return { ...cfg, byDate: bd };
+  };
+  const SEL = ['2026-10-02', '2026-10-09', '2026-10-16'];   // three Fridays
+  const before = resolveAll(BASE);
+  const after  = resolveAll(applySelection(BASE, SEL, '23:45'));
+  check('exactly the selected dates move', diff(before, after), SEL);
+  check('each selected date got the applied time', SEL.map(d => after[d]), ['23:45', '23:45', '23:45']);
+  check('an UNSELECTED Friday is untouched', after['2026-10-23'], before['2026-10-23']);
+
+  const w = applySelection(BASE, SEL, '23:45');
+  check('the weekday pattern is untouched', w.byWeekday, BASE.byWeekday);
+  check('the default is untouched', w.default, BASE.default);
+  check('pre-existing one-off dates are untouched',
+    Object.fromEntries(Object.entries(w.byDate).filter(([k]) => !SEL.includes(k))), BASE.byDate);
+
+  // Applying to a date that already carried its own value replaces THAT ONE and no other.
+  const over = applySelection(BASE, ['2026-10-31'], '22:00');
+  check('overwriting one exception leaves the other alone', over.byDate['2026-11-08'], '19:00');
+  check('and moves only that date', diff(resolveAll(BASE), resolveAll(over)), ['2026-10-31']);
+}
+
 console.log('\n── offset resolution against whatever that day closes at ──');
 // The point of resolve-at-fire: one rule, different times, no rewrites.
 const hhmmToMinutes = (t) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(t || '').trim()); if (!m) return null;
