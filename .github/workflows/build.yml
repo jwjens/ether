@@ -163,8 +163,40 @@ jobs:
           VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
           VITE_APP_VERSION: ${{ github.ref_name }}
 
-      - name: Build and publish (Windows)
-        if: matrix.platform == 'win'
+      # ── WINDOWS: SIGNING IS GATED TWICE, AND BOTH GATES MUST OPEN ────────────────
+      # 1. CONFIG — `azureSignOptions` lives ONLY in electron-builder.signed.json, which
+      #    `extends: file:electron-builder.json`. The base config carries no Azure block, so a
+      #    build that does not pass `--config electron-builder.signed.json` CANNOT sign, whatever
+      #    is in the environment.
+      # 2. ENV — the AZURE_* secrets are set on this step and nowhere else.
+      #
+      # WHY BOTH, and not just the env: azureSignOptions is NOT inert without credentials.
+      # WindowsSignAzureManager.initialize() THROWS on a missing AZURE_TENANT_ID/AZURE_CLIENT_ID
+      # (app-builder-lib/out/codeSign/windowsSignAzureManager.js), and it is reached for every
+      # file signed — plus earlier still on non-CI runs at winPackager.js:160. Had the Azure block
+      # sat in the base config, gating only the env would turn every UNSIGNED build into a hard
+      # failure instead: a branch workflow_dispatch here, and `npm run electron:build:win` on
+      # Jeff's machine — the documented final step of every release. The config gate is what keeps
+      # those buildable.
+      #
+      # `signExts: [".node", ".dll"]` stays in the BASE config: it only selects which files get
+      # signed (.exe stays covered by shouldSignFile's backward-compatibility fallback), and with
+      # no signing configured at all it is a no-op.
+      - name: Build and publish (Windows, SIGNED — v* tag push only)
+        if: matrix.platform == 'win' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: npx electron-builder --win --config electron-builder.signed.json --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EP_DRAFT: false
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+      # Anything that is not a v* tag push — a workflow_dispatch off a branch — builds UNSIGNED,
+      # with the base config and no Azure credentials in the environment. Publish behaviour is
+      # deliberately unchanged from before signing existed.
+      - name: Build and publish (Windows, UNSIGNED — non-tag runs)
+        if: matrix.platform == 'win' && !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
         run: npx electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

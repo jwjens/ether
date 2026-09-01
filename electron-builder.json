@@ -44,6 +44,7 @@
       { "target": "nsis", "arch": ["x64"] }
     ],
     "icon": "build-resources/icon.ico",
+    "signExts": [".node", ".dll"],
     "extraFiles": [
       {
         "from": "build-resources/Reset Ether Data.bat",

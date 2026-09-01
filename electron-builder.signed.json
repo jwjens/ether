@@ -1,0 +1,11 @@
+{
+  "extends": "file:electron-builder.json",
+  "win": {
+    "azureSignOptions": {
+      "endpoint": "https://eus.codesigning.azure.net",
+      "codeSigningAccountName": "ethercast",
+      "certificateProfileName": "ethercast-release",
+      "publisherName": "Jeffrey Jens"
+    }
+  }
+}
