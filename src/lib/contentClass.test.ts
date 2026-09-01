@@ -10,7 +10,15 @@ describe("normalizeClass", () => {
   });
 
   it("recognises every class the schema writes", () => {
-    for (const c of ["MUSIC", "JIN", "SWP", "SPOT", "ANN"]) expect(normalizeClass(c)).toBe(c);
+    for (const c of ["MUSIC", "SWP", "SPOT", "ANN"]) expect(normalizeClass(c)).toBe(c);
+  });
+
+  it("folds the retired JIN into SWP — a pre-v52 row stays a sweeper, never becomes music", () => {
+    // v52 (fb9332a, 2026-08-27) retired JIN: there is ONE imaging class, SWP. Rows written before
+    // it, and peers that have not run it yet, still say JIN. Falling back to MUSIC would drop them
+    // out of the Sweepers filter and bury them in the music list — data loss on screen.
+    expect(normalizeClass("JIN")).toBe("SWP");
+    expect(normalizeClass("jin")).toBe("SWP");
   });
 
   it("is case-insensitive", () => {
@@ -32,16 +40,17 @@ describe("classMeta", () => {
     expect(classMeta(null).bg).toBe("transparent");
   });
 
-  it("keeps the audited tokens: JIN teal, SWP indigo, SPOT amber", () => {
-    expect(classMeta("JIN").fg).toBe("#14e0c8");
+  it("keeps the audited tokens: SWP indigo, SPOT amber — and JIN borrows the sweeper's", () => {
     expect(classMeta("SWP").fg).toBe("#4f46e5");
     expect(classMeta("SPOT").fg).toBe("#f59e0b");
+    expect(classMeta("JIN").fg).toBe("#4f46e5");
   });
 
   it("labels each class the way an operator says it", () => {
     expect(classMeta("ANN").label).toBe("Announcements");
     expect(classMeta("SPOT").label).toBe("Spots");
-    expect(classMeta("JIN").label).toBe("Jingles");
+    expect(classMeta("SWP").label).toBe("Sweepers");
+    expect(classMeta("JIN").label).toBe("Sweepers");   // never "Jingles" again
   });
 });
 
@@ -74,6 +83,12 @@ describe("passesClassFilter — the default must be COMPLETE", () => {
     expect(passesClassFilter("SPOT", sel)).toBe(true);
     expect(passesClassFilter("ANN", sel)).toBe(true);
     expect(passesClassFilter("JIN", sel)).toBe(false);
+  });
+
+  it("the Sweepers chip catches a legacy JIN row — it is never buried in music", () => {
+    // The guarantee that matters to an operator: filtering to Sweepers shows the pre-v52 rows too.
+    expect(passesClassFilter("JIN", new Set(["SWP"]))).toBe(true);
+    expect(passesClassFilter("JIN", new Set(["MUSIC"]))).toBe(false);
   });
 
   it("an unknown class is filtered as MUSIC, matching how it is displayed", () => {
