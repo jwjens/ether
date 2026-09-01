@@ -162,7 +162,7 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
       content = <HealthMonitor onClose={() => window.close()} />;
       break;
     case "carts":
-      content = <BoutiqueCartWall deckSlot="C" />;
+      content = <BoutiqueCartWall />;
       break;
     case "shows":
       content = <Scheduler defaultTab="shows" embedded />;

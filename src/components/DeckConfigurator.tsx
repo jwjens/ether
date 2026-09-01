@@ -23,7 +23,7 @@ export type DeckType = "music" | "mic" | "guest" | "cart" | "desk" | "video" | "
 //               does not have. Mic and network are ONE build, and that build is Phase 2.
 // Phase 2 entries are shown DISABLED rather than hidden: a door that says "not yet" beats a door
 // that is not there.
-export type SourceKind = "jukebox" | "announcement" | "jingle" | "mic" | "network";
+export type SourceKind = "jukebox" | "announcement" | "jingle" | "cart" | "mic" | "network";
 
 export interface SourceKindMeta {
   kind: SourceKind;
@@ -44,6 +44,19 @@ export const SOURCE_KINDS: SourceKindMeta[] = [
     // decks use it (deck_configs kinds are 49 blank, 2 announcement, 2 jukebox), so there is nothing
     // to migrate — but changing a stored key for cosmetics is how a config silently stops matching.
     state: "Patched for hand-fired imaging. Automated seam sweepers stay on CART." },
+  // CARTS ARE NOT SWEEPERS, and this entry is what finally separates them (Jeff, 2026-09-01).
+  //
+  //   A SWEEPER is programmed to play DURING ROTATION — armed and fired automatically at a song
+  //   seam by the daemon's _jingleTick, bridging the crossfade. It is part of the log.
+  //   A CART is a SOUND-EFFECTS RACK — hand-fired, punch-through, never scheduled, never in
+  //   rotation.
+  //
+  // Both used to drive the one native "CART" channel, so a cart fired while a sweeper was bridging
+  // a seam clobbered it — the daemon _stop()s and _load()s that channel as part of its bridge
+  // lifecycle, and neither side knew about the other. Patching carts onto an ordinary aux deck is
+  // what ends that: the sweeper keeps the overlay bus it is built around, and carts move off it.
+  { kind: "cart",         label: "Cart / SFX rack",      family: "file",
+    state: "Hand-fired sound effects, on this channel instead of the sweeper's overlay bus." },
   { kind: "mic",          label: "Mic (device…)",        family: "stream",
     state: "Needs the engine capture path — Phase 2." },
   { kind: "network",      label: "Network (IP / Zephyr / AoIP)", family: "stream",
@@ -653,19 +666,39 @@ function defaultCarts(): CartSlot[] {
 }
 
 interface CartProps {
-  deckSlot: string;
+  // NO deckSlot. It used to be here and it was a trap: callers passed one (the popout passed "C", a
+  // MUSIC deck), the wall ignored it for audio and fired into the hardcoded "CART" channel, and the
+  // prop's existence implied a routing that did not happen. The wall resolves its own channel from
+  // the patched deck config now, so there is nothing for a caller to get wrong.
   compact?: boolean;
   variant?: "grid" | "strip"; // "strip" = single row of 8 square carts + side VU
 }
 
-export function BoutiqueCartWall({ deckSlot, compact, variant }: CartProps) {
+export function BoutiqueCartWall({ compact, variant }: CartProps) {
   const engine = useAudioEngine();
-  // Carts ALWAYS fire on the dedicated cart channel (native mixer slot "CART") — never
-  // an assignable deck (A–F may be a mic/guest/video). It's summed to master, so carts
-  // play out over the music regardless of how the decks are configured. deckSlot is now
-  // only a label/positioning hint.
-  const CART_CHANNEL = "CART";
   const { stationId } = useActiveStation();
+  const { configs: deckCfgs } = useDeckConfig();
+
+  // ── WHERE A CART ACTUALLY SOUNDS ───────────────────────────────────────────────────────────────
+  //
+  // The wall took a `deckSlot` prop and then ignored it for audio, firing into the hardcoded "CART"
+  // channel instead — the one the seam sweeper also drives. So a deck could be configured as a cart
+  // channel on any slot and the audio still came out somewhere else, and a hand-fired cart could cut
+  // off a sweeper mid-seam. The config was honoured everywhere except where the sound went.
+  //
+  // Now it resolves the slot the operator patched: an enabled SOURCE channel with kind "cart", or a
+  // deck typed "cart". First match by slot order, so the choice is stable rather than whichever row
+  // the query happened to return.
+  //
+  // FALLBACK TO "CART" when nothing is patched, deliberately (Jeff's ruling). The bottom-bar CARTS
+  // panel and the popout open a wall whether or not anyone has configured a cart channel, and a rack
+  // that silently does nothing is worse than one on the legacy bus. This keeps the change
+  // non-breaking for every install that never patches one.
+  const CART_CHANNEL = useMemo(() => {
+    const patched = deckCfgs.find(c => c.enabled && c.type === "source" && c.kind === "cart")
+                 || deckCfgs.find(c => c.enabled && c.type === "cart");
+    return patched ? patched.slot : "CART";
+  }, [deckCfgs]);
   const [carts, setCarts] = useState<CartSlot[]>(defaultCarts);
 
   // ── PERSISTENCE (2026-07-31) ────────────────────────────────────────────────────────────────────

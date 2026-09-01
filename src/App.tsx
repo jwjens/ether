@@ -4369,7 +4369,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
               return <div key={slot} style={{ flex: 2, minWidth: 280 }}><VideoStudio embedded /></div>;
             }
             if (deckType === "cart") {
-              return <div key={slot} style={{ flex: 1, minWidth: 120 }}><div style={{ height: "100%", background: "var(--bg-secondary)", overflow: "hidden" }}><BoutiqueCartWall deckSlot={slot} /></div></div>;
+              return <div key={slot} style={{ flex: 1, minWidth: 120 }}><div style={{ height: "100%", background: "var(--bg-secondary)", overflow: "hidden" }}><BoutiqueCartWall /></div></div>;
             }
             if (deckType === "desk") {
               return <div key={slot} style={{ flex: 1, minWidth: 220 }}><InlineProducerDesk episodeTitle={undefined} nowPlaying={nowPlaying} /></div>;
@@ -4555,7 +4555,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                       ? <SweepersPanel stationId={lpStationId} />
                       : progPanel
                         ? <Scheduler defaultTab={progPanel} embedded />
-                        : <BoutiqueCartWall deckSlot="C" variant="strip" />}
+                        : <BoutiqueCartWall variant="strip" />}
             </div>
           </>
         );
