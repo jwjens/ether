@@ -1514,9 +1514,23 @@ export default function App() {
               const rows: any[] = Array.isArray(res) ? res : (res?.rows ?? []);
               const row = rows.find(r => Number(r?.slot_number) === slot && !r?.deleted_at);
               if (!row?.file_path) { console.warn(`[RemoteCmd] cart:fire slot ${slot} is empty on this station`); break; }
-              await activeEngine.loadToDeck("CART", row.file_path, row.title || `Cart ${slot}`, "");
-              activeEngine.getDeck("CART")?.play();
-              console.log(`[RemoteCmd] cart:fire slot ${slot} → ${row.title || "(untitled)"}`);
+              // THE SAME CHANNEL THE LOCAL WALL USES. This hardcoded "CART" while the wall resolved
+              // its patched deck, so one cart button had two destinations depending on whether the
+              // thumb was in the studio or in the park — and the remote one landed on the sweeper's
+              // overlay bus, the very collision the cart move exists to end. Resolved identically:
+              // an enabled SOURCE channel with kind "cart", else a deck typed "cart", else the
+              // legacy bus for an install that has patched neither.
+              let cartCh = "CART";
+              try {
+                const dcs = await query<{ slot: string; type: string; kind: string | null; enabled: number }>(
+                  "SELECT slot, type, COALESCE(kind,'') AS kind, enabled FROM deck_configs WHERE station_id = ? ORDER BY slot", [targetId]);
+                const patched = dcs.find(c => c.enabled === 1 && c.type === "source" && c.kind === "cart")
+                             || dcs.find(c => c.enabled === 1 && c.type === "cart");
+                if (patched) cartCh = patched.slot;
+              } catch { /* unreadable config → the legacy bus, never a silent no-fire */ }
+              await activeEngine.loadToDeck(cartCh, row.file_path, row.title || `Cart ${slot}`, "");
+              activeEngine.getDeck(cartCh)?.play();
+              console.log(`[RemoteCmd] cart:fire slot ${slot} → ${row.title || "(untitled)"} on ${cartCh}`);
             } catch (e) {
               console.error("[RemoteCmd] cart:fire failed:", e);
             }
@@ -4470,16 +4484,23 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
               CUT for the CART bus, and removing it would leave a station airing imaging it could
               neither ride nor take off air.
 
-              LABELLED "CART" BECAUSE THAT IS HONESTLY WHAT IT IS TODAY. It currently carries two
-              different things: hand-fired carts/drops, AND automated sweepers, which wrongly divert
-              to this overlay instead of playing on the normal playout path. The sweeper arc
-              (docs/sweepers-rcs-model-design-2026-08-22.md) moves automated sweepers onto dedicated
-              sweeper decks and leaves CART as the hand-fired bus — at which point this strip gets its
-              final name. Calling it "JINGLES" was wrong twice over: wrong word (Jeff asked for
-              SWEEPERS from the start) and wrong architecture. */}
+              LABELLED "SWEEPERS" SINCE 2026-09-01, BECAUSE THAT IS NOW ALL IT CARRIES.
+              This strip used to carry two different things — hand-fired carts AND automated sweepers
+              — and the note here predicted the sweeper arc would move sweepers off, leaving CART as
+              the hand-fired bus. It resolved the OTHER way round: carts became a patchable source
+              kind and moved onto ordinary aux decks, and the sweeper kept this overlay. Same
+              separation, reached from the opposite side.
+              (Carts: DeckConfigurator BoutiqueCartWall, which resolves its own patched slot.)
+
+              SO IT IS NOT DELETED, and must not be. The channel underneath is still the seam
+              sweeper's — audiod/engine.js _jingleTick loads and stops "CART" as part of the bridge —
+              and this remains its ONLY on-screen level control and its ONLY cut. Removing it would
+              leave a station airing imaging it could neither ride nor take off air, which is the
+              failure the original note warned about. What changed is the name, because the name was
+              describing an occupant that has moved out. */}
           <div style={{ flex: 1, minWidth: 0, maxWidth: 140, display: "flex", position: "relative" }}>
             <ConsoleStrip
-              label="CART"
+              label="SWEEPERS"
               color="#14e0c8"
               volume={jingleVol}
               deckId="CART"

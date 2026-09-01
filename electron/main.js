@@ -4330,31 +4330,80 @@ let _announceTimer = null;
 // at one tick per 15s and is not at one per second on the process that also carries the audio
 // command path. Same statements, same results — only the compilation is hoisted.
 let _annStmts = null;
+let _annSkipWarned = false;    // degraded-but-firing, said once
+let _annTableWarned = false;   // cannot read the schedule at all, said once
 function annStmts() {
   if (!_annStmts) _annStmts = {
     stations: db.prepare('SELECT id FROM stations WHERE deleted_at IS NULL'),
   };
-  // v47 — THE SCHEDULE ENTRIES the tick now iterates. Both JOIN announcements, so an asset that is
+  // v47 — THE SCHEDULE ENTRIES the tick iterates. Both JOIN announcements, so an asset that is
   // deleted or switched off takes its entries out of the plan in ONE place rather than in the loop.
-  // Prepared DEFENSIVELY: on a DB the v47 migration has not reached, a bare prepare would throw and
-  // take the whole announcement scheduler down with it. Absent here means the tick
-  // falls back to the pre-v47 announcements path, so announcements keep firing either way.
+  //
+  // ── A COLUMN MUST NEVER BE ABLE TO SILENCE PLAYOUT (2026-09-01) ─────────────────────────────
+  //
+  // THIS EXACT CODE STOPPED EVERY ANNOUNCEMENT FIRING. `s.skipped_at` was added to this SELECT the
+  // same day migration v53 introduced the column. On a database still at v52 the prepare threw, the
+  // catch nulled schedDate, scheduleForDate returned null, and announceTick's `if (rows === null)
+  // continue` skipped the station entirely — absolute rows and offset rows alike, on every station,
+  // four times a second, in silence. A running install never sees a migration written after it
+  // launched, so the window is not theoretical: it is exactly the machine that was already open.
+  //
+  // The comment that used to sit here claimed the tick "falls back to the pre-v47 announcements
+  // path, so announcements keep firing either way". IT DOES NOT. v48 removed that path and the
+  // comment was never updated, so the code advertised a safety net that had been deleted — which is
+  // why a missing column read as total silence instead of a degraded mode.
+  //
+  // So the statement is now prepared in DESCENDING ORDER OF AMBITION: the full shape first, and if
+  // one optional column is not there yet, a narrower shape that still fires everything. Losing
+  // skip-tracking is a cosmetic loss. Losing playout is not, and the two must never be the same
+  // failure.
+  const SCHED_CORE =
+    "SELECT s.uuid AS uuid, s.announcement_uuid AS announcement_uuid, s.trigger_type AS trigger_type, " +
+    "s.trigger_time AS trigger_time, s.close_offset_min AS close_offset_min, " +
+    "s.last_played_at AS last_played_at, ";
+  const SCHED_TAIL =
+    "a.title AS title " +
+    "FROM announcement_schedule s " +
+    "JOIN announcements a ON a.uuid = s.announcement_uuid AND a.deleted_at IS NULL AND a.is_active = 1 " +
+    "WHERE s.station_id = ? AND s.deleted_at IS NULL " +
+    "AND s.scope = 'date' AND s.date = ? ORDER BY s.sort_order, s.trigger_time";
   try {
-    const SCHED_COLS =
-      "SELECT s.uuid AS uuid, s.announcement_uuid AS announcement_uuid, s.trigger_type AS trigger_type, " +
-      "s.trigger_time AS trigger_time, s.close_offset_min AS close_offset_min, " +
-      "s.last_played_at AS last_played_at, s.skipped_at AS skipped_at, a.title AS title " +
-      "FROM announcement_schedule s " +
-      "JOIN announcements a ON a.uuid = s.announcement_uuid AND a.deleted_at IS NULL AND a.is_active = 1 " +
-      "WHERE s.station_id = ? AND s.deleted_at IS NULL ";
-    _annStmts.schedDate  = db.prepare(SCHED_COLS + "AND s.scope = 'date' AND s.date = ? ORDER BY s.sort_order, s.trigger_time");
+    _annStmts.schedDate = db.prepare(SCHED_CORE + "s.skipped_at AS skipped_at, " + SCHED_TAIL);
+    _annStmts.hasSkipped = true;
+  } catch (e) {
+    // The column is not there yet. Fire everything anyway; report the degradation ONCE.
+    try { _annStmts.schedDate = db.prepare(SCHED_CORE + "NULL AS skipped_at, " + SCHED_TAIL); }
+    catch (e2) { _annStmts.schedDate = null; }
+    _annStmts.hasSkipped = false;
+    if (_annStmts.schedDate && !_annSkipWarned) {
+      _annSkipWarned = true;
+      const msg = 'announcement_schedule.skipped_at is missing (migration v53 has not applied on this database yet). Announcements ARE firing; a skipped offset row simply will not be recorded until the next relaunch applies it.';
+      try { logStartup('[announce] ' + msg); } catch {}
+      console.warn('[announce] ' + msg);
+      try { _healthEvent('announce-degraded', { reason: 'skipped_at missing', detail: e && e.message }); } catch {}
+    }
+  }
+  try {
     // Firing CLEARS the skip: a row that fired tonight was not skipped tonight, and leaving a stale
     // stamp would have the panel accusing the scheduler of dropping something it played.
-    _annStmts.schedStamp  = db.prepare("UPDATE announcement_schedule SET last_played_at = ?, skipped_at = NULL WHERE uuid = ?");
-    _annStmts.markSkipped = db.prepare("UPDATE announcement_schedule SET skipped_at = ? WHERE uuid = ?");
+    _annStmts.schedStamp = _annStmts.hasSkipped
+      ? db.prepare("UPDATE announcement_schedule SET last_played_at = ?, skipped_at = NULL WHERE uuid = ?")
+      : db.prepare("UPDATE announcement_schedule SET last_played_at = ? WHERE uuid = ?");
+    _annStmts.markSkipped = _annStmts.hasSkipped
+      ? db.prepare("UPDATE announcement_schedule SET skipped_at = ? WHERE uuid = ?")
+      : null;
   } catch (e) {
-    _annStmts.schedDate = _annStmts.schedStamp = _annStmts.markSkipped = null;
-    try { logStartup('[announce] announcement_schedule unavailable (' + e.message + ') — using the pre-v47 announcements schedule'); } catch {}
+    _annStmts.schedStamp = _annStmts.markSkipped = null;
+  }
+  // THE ONLY TOTAL FAILURE LEFT is the table itself being absent, and it is now LOUD rather than one
+  // startup line nobody has open at 9pm. A station that cannot read its schedule is not firing
+  // announcements, and the operator has to learn that from the app, not from the silence.
+  if (!_annStmts.schedDate && !_annTableWarned) {
+    _annTableWarned = true;
+    const msg = 'announcement_schedule cannot be read — NO announcements will fire on any station until this is resolved. The migration chain retries on every launch, so a relaunch is the fix.';
+    try { logStartup('[announce] ' + msg); } catch {}
+    console.error('[announce] ' + msg);
+    try { _healthEvent('announce-unavailable', { reason: 'announcement_schedule unreadable' }); } catch {}
   }
   return _annStmts;
 }
@@ -4553,7 +4602,9 @@ function announceTick() {
         const nowMin = now.getHours() * 60 + now.getMinutes();
         if (dueMin != null && dueMin < nowMin && (nowMin - dueMin) <= 10) {
           try {
-            annStmts().markSkipped.run(nowEpoch, row.uuid);
+            // Null on a database without the column. The row is still skipped — it simply is not
+            // recorded, which is the cosmetic half of this feature, not the firing half.
+            annStmts().markSkipped?.run(nowEpoch, row.uuid);
             row.skipped_at = nowEpoch;
             logStartup('[announce] SKIPPED station ' + stationId + ' "' + (row.title || '') + '" — its time (' + due + ') passed when the closing time moved');
           } catch (e) { logStartup('[announce] could not record a skip: ' + (e && e.message)); }

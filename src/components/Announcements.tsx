@@ -74,11 +74,61 @@ function ymd(d: Date): string {
  *  stay selected, so a whole season can be picked one date at a time and given one schedule.
  *  ‹ › move across months and the selection survives — the dates you picked in October are still
  *  selected when you page into November. */
-function DatePicker({ selected, onToggle, onClearAll, entries }: {
+// ── APPLY CONFIRMATION ───────────────────────────────────────────────────────────────────────────
+//
+// Shown only when APPLY would actually REPLACE something. Applying to empty dates stays one click —
+// a dialogue that fires every time is one people learn to dismiss without reading, which is worse
+// than none.
+//
+// It names what is NOT affected, and that half is the point. Manual and By minutes now coexist on a
+// day, each APPLY replacing only its own kind; without saying so, an operator who has just watched
+// one tab rewrite a day has no reason to believe the other tab's work survived. (It did not, until
+// today: Manual's diff was deleting every offset row on the date.)
+//
+// INLINE, NOT window.confirm — that silently no-ops in this packaged build (Electron 41, see
+// electron/main.js), so a confirmation built on it would either never appear or never return.
+function ApplyConfirm({ replacing, mineLabel, otherLabel, onConfirm, onCancel }: {
+  replacing: number; mineLabel: string; otherLabel: string;
+  onConfirm: () => void; onCancel: () => void;
+}) {
+  return (
+    <div style={{ marginTop: 10, padding: "10px 12px", background: "var(--bg-secondary)",
+                  border: "1px solid var(--accent-amber, #fbbf24)", borderRadius: 6 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>
+        {replacing === 1
+          ? `This replaces the ${mineLabel} announcements on 1 date.`
+          : `This replaces the ${mineLabel} announcements on ${replacing} dates.`}
+      </div>
+      <div style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.5, marginBottom: 8 }}>
+        {otherLabel} announcements on {replacing === 1 ? "that date" : "those dates"} are not affected.
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={onConfirm}
+                style={{ fontSize: 12, fontWeight: 800, padding: "6px 12px", borderRadius: 6, cursor: "pointer",
+                         background: "var(--accent-amber, #fbbf24)", color: "#111", border: "none" }}>
+          Replace
+        </button>
+        <button onClick={onCancel}
+                style={{ fontSize: 12, padding: "6px 12px", borderRadius: 6, cursor: "pointer",
+                         background: "var(--bg-tertiary)", color: "var(--text-secondary)",
+                         border: "1px solid var(--border-primary)" }}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DatePicker({ selected, onToggle, onClearAll, entries, editing }: {
   selected: Set<string>;
   onToggle: (d: string) => void;
   onClearAll: () => void;
   entries: ScheduleEntry[];
+  /** Which KIND of announcement the surrounding tab edits. The calendar marks a date that has ANY
+   *  programming either way — the day genuinely has entries and both tabs must agree about that —
+   *  but the count the tab does not own is dimmed, so "some of this is not mine to touch" is visible
+   *  without having to switch tabs to find out. */
+  editing: "absolute" | "close_offset";
 }) {
   const today = new Date();
   const [month, setMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
@@ -121,11 +171,25 @@ function DatePicker({ selected, onToggle, onClearAll, entries }: {
         {cells.map((d, i) => {
           if (d == null) return <div key={"b" + i} />;
           const key   = ymd(new Date(month.getFullYear(), month.getMonth(), d));
-          const n     = entries.filter(e => e.date === key).length;
+          const mine  = entries.filter(e => e.date === key);
+          // ANY programming marks the date — that is the combined state, identical in both tabs.
+          // The split below only changes how it is DESCRIBED, never whether it is marked.
+          const nFix  = mine.filter(e => e.trigger_type !== "close_offset").length;
+          const nOff  = mine.length - nFix;
+          const n     = mine.length;
           const isSel = selected.has(key);
+          const dimFix = editing !== "absolute";
+          const dimOff = editing !== "close_offset";
+          const titleFor = () => {
+            if (!n) return "Nothing scheduled on this date";
+            const bits = [];
+            if (nFix) bits.push(`${nFix} at a set time`);
+            if (nOff) bits.push(`${nOff} timed from closing`);
+            return bits.join(" · ");
+          };
           return (
             <button key={key} onClick={() => onToggle(key)}
-              title={n ? `${n} announcement${n === 1 ? "" : "s"} on this date` : "Nothing scheduled on this date"}
+              title={titleFor()}
               style={{
                 padding: "3px 2px", minHeight: 32, cursor: "pointer", fontSize: 11, lineHeight: 1.1,
                 background: isSel ? "var(--accent-blue)" : n ? "var(--bg-secondary)" : "transparent",
@@ -135,7 +199,20 @@ function DatePicker({ selected, onToggle, onClearAll, entries }: {
               }}>
               <span style={{ fontWeight: key === ymd(today) ? 800 : 500 }}>{d}</span>
               {n > 0 && (
-                <span style={{ fontSize: 8, fontWeight: 700, color: isSel ? "#fff" : "var(--accent-green)" }}>♪{n}</span>
+                <span style={{ display: "flex", gap: 3, fontSize: 8, fontWeight: 700, lineHeight: 1 }}>
+                  {/* One glyph per KIND, and only for kinds actually present — a date with a single
+                      type does not get busier than it was. The count the current tab does not edit is
+                      dimmed rather than hidden: hiding it would make a date look emptier than it is,
+                      which is how an APPLY surprises someone. */}
+                  {nFix > 0 && (
+                    <span title={`${nFix} at a set time`}
+                          style={{ color: isSel ? "#fff" : "var(--accent-green)", opacity: dimFix ? 0.4 : 1 }}>⏱{nFix}</span>
+                  )}
+                  {nOff > 0 && (
+                    <span title={`${nOff} timed from closing`}
+                          style={{ color: isSel ? "#fff" : "var(--accent-cyan)", opacity: dimOff ? 0.4 : 1 }}>⤶{nOff}</span>
+                  )}
+                </span>
               )}
             </button>
           );
@@ -288,6 +365,7 @@ function ByMinutesBoard({ stationId, assets, entries, reload, closing }: {
   //
   // null = untouched (show whatever the selected dates resolve to); a string = the operator typed it.
   const [closeDraft, setCloseDraft] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const [dirty, setDirty]       = useState(false);
   const [busy, setBusy]         = useState(false);
   const [err, setErr]           = useState<string | null>(null);
@@ -306,7 +384,7 @@ function ByMinutesBoard({ stationId, assets, entries, reload, closing }: {
     setSelected(n);
     if (n.size === 0) { setDraft([]); setCloseDraft(null); setDirty(false); }
   };
-  const clearAll = () => { setSelected(new Set()); setDraft([]); setCloseDraft(null); setDirty(false); setErr(null); setMsg(null); };
+  const clearAll = () => { setSelected(new Set()); setDraft([]); setCloseDraft(null); setDirty(false); setErr(null); setMsg(null); setConfirming(false); };
   const dates = [...selected].sort();
 
   const dowOf = (ymd: string) => new Date(`${ymd}T12:00:00`).getDay();
@@ -358,9 +436,16 @@ function ByMinutesBoard({ stationId, assets, entries, reload, closing }: {
     return [...seen.values()];
   })();
 
+  // How many of the selected dates already hold rows THIS tab would replace. Only these warrant a
+  // confirmation; the rest are additions and go straight through.
+  const replacingCount = dates.filter(d =>
+    entries.some(e => e.date === d && e.trigger_type === "close_offset")).length;
+
   const apply = async () => {
     if (stationId == null || !dates.length) return;
     if (draft.some(l => !Number.isFinite(l.offset))) { setErr("Every line needs a number of minutes."); return; }
+    if (replacingCount > 0 && !confirming) { setConfirming(true); return; }
+    setConfirming(false);
     setBusy(true); setErr(null); setMsg(null);
     try {
       // ── THE CLOSING TIME, WRITTEN PER SELECTED DATE ─────────────────────────────────────────
@@ -419,7 +504,7 @@ function ByMinutesBoard({ stationId, assets, entries, reload, closing }: {
       }
       reload();
       setMsg(`Applied to ${dates.length} date${dates.length === 1 ? "" : "s"} — ${created} added, ${removed} removed${kept ? `, ${kept} unchanged` : ""}.`);
-      setSelected(new Set()); setDraft([]); setCloseDraft(null); setDirty(false);
+      setSelected(new Set()); setDraft([]); setCloseDraft(null); setDirty(false); setConfirming(false);
     } catch (e: any) {
       setErr(String(e?.message || e));
       reload();
@@ -436,7 +521,7 @@ function ByMinutesBoard({ stationId, assets, entries, reload, closing }: {
     <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 330px) 1fr", gap: 12, alignItems: "start" }}>
       <div style={box}>
         <div style={cap}>Dates</div>
-        <DatePicker selected={selected} onToggle={toggleDate} onClearAll={clearAll} entries={entries} />
+        <DatePicker selected={selected} onToggle={toggleDate} onClearAll={clearAll} entries={entries} editing="close_offset" />
       </div>
 
       <div style={box}>
@@ -541,6 +626,16 @@ function ByMinutesBoard({ stationId, assets, entries, reload, closing }: {
               Apply replaces only the timed-from-closing announcements on the selected dates. Fixed-time
               announcements on those dates are left alone.
             </p>
+
+            {confirming && (
+              <ApplyConfirm
+                replacing={replacingCount}
+                mineLabel="timed-from-closing"
+                otherLabel="Fixed-time"
+                onConfirm={apply}
+                onCancel={() => setConfirming(false)}
+              />
+            )}
           </>
         )}
 
@@ -615,10 +710,15 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
   const [busy, setBusy]         = useState(false);
   const [err, setErr]           = useState<string | null>(null);
   const [msg, setMsg]           = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const api = () => (window as any).ether.announcements;
 
+  // ABSOLUTE ROWS ONLY, the same rule the diff uses. Loading offset rows here would show them as
+  // lines with a BLANK time — the operator would either type one (converting a from-closing
+  // announcement into a fixed one without meaning to) or hit "Every line needs a time" on a row this
+  // tab does not own.
   const linesFor = (d: string): Draft[] =>
-    entries.filter(e => e.date === d)
+    entries.filter(e => e.date === d && e.trigger_type !== "close_offset")
       .slice()
       .sort((a, b) => (a.trigger_time || "").localeCompare(b.trigger_time || ""))
       .map(e => ({ id: ++_draftSeq, announcement_uuid: e.announcement_uuid, trigger_time: e.trigger_time || "" }));
@@ -643,7 +743,7 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
     if (n.size === 0) { setDraft([]); setDirty(false); }
   };
 
-  const clearAll = () => { setSelected(new Set()); setDraft([]); setDirty(false); setErr(null); setMsg(null); };
+  const clearAll = () => { setSelected(new Set()); setDraft([]); setDirty(false); setErr(null); setMsg(null); setConfirming(false); };
 
   const dates = [...selected].sort();
 
@@ -659,10 +759,16 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
   // Per date, a DIFF and not a wipe-and-rewrite. A line that is already on the date keeps its row —
   // and therefore its last_played_at, which is the 120s double-fire guard. Recreating every row on
   // every apply would reset that guard and let something re-fire inside its own window.
+  // How many selected dates already hold FIXED-TIME rows — the only ones this tab replaces.
+  const replacingCount = dates.filter(d =>
+    entries.some(e => e.date === d && e.trigger_type !== "close_offset")).length;
+
   const apply = async () => {
     if (stationId == null || !dates.length) return;
     const bad = draft.filter(l => !toHms(l.trigger_time));
     if (bad.length) { setErr("Every line needs a time before this can be applied."); return; }
+    if (replacingCount > 0 && !confirming) { setConfirming(true); return; }
+    setConfirming(false);
     setBusy(true); setErr(null); setMsg(null);
     try {
       let created = 0, removed = 0, kept = 0;
@@ -671,7 +777,14 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
         // diffSchedule is in src/lib and has its own tests — the rule that an unchanged line keeps
         // its row (and therefore its 120s guard) is load-bearing enough to be tested, not asserted
         // in a comment.
-        const { remove, create, keep } = diffSchedule(entries.filter(e => e.date === d), want);
+        // ABSOLUTE ROWS ONLY. This filter used to be `e.date === d` with no type test, so every
+        // close_offset row on the day landed in the diff's `existing` pool — and since an offset row
+        // has no trigger_time it could never match an absolute draft line, so it fell straight into
+        // `remove` and was DELETED. Applying Manual silently wiped that day's By minutes
+        // announcements. The mirror-image guard was written on the new tab and missed here, on the
+        // old one.
+        const { remove, create, keep } = diffSchedule(
+          entries.filter(e => e.date === d && e.trigger_type !== "close_offset"), want);
         kept += keep.length;
         for (const e of remove) { await api().deleteEntry(e.uuid, stationId); removed++; }
         for (const l of create) {
@@ -685,7 +798,7 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
       }
       reload();
       setMsg(`Applied to ${dates.length} date${dates.length === 1 ? "" : "s"} — ${created} added, ${removed} removed${kept ? `, ${kept} unchanged` : ""}.`);
-      setSelected(new Set()); setDraft([]); setDirty(false);
+      setSelected(new Set()); setDraft([]); setDirty(false); setConfirming(false);
     } catch (e: any) {
       setErr(String(e?.message || e));
       reload();                                  // show whatever did land, rather than a stale editor
@@ -716,7 +829,7 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
     <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 330px) 1fr", gap: 12, alignItems: "start" }}>
       <div style={box}>
         <div style={cap}>Dates</div>
-        <DatePicker selected={selected} onToggle={toggleDate} onClearAll={clearAll} entries={entries} />
+        <DatePicker selected={selected} onToggle={toggleDate} onClearAll={clearAll} entries={entries} editing="absolute" />
       </div>
 
       <div style={box}>
@@ -765,15 +878,27 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
               {dirty && <span style={{ fontSize: 10, color: "var(--accent-amber)" }}>unapplied changes</span>}
             </div>
 
-            {/* Said BEFORE the press. Apply sets each selected date's schedule to exactly this list,
-                so a date that already had something loses whatever is not in the editor. */}
+            {/* Said BEFORE the press. Apply sets each selected date's FIXED-TIME schedule to exactly
+                this list — timed-from-closing announcements on the same dates are a separate list,
+                owned by the other tab, and are not touched. */}
             <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1.45 }}>
-              Apply replaces the schedule on {dates.length === 1 ? "the selected date" : `all ${dates.length} selected dates`} with
+              Apply replaces the fixed-time announcements on {dates.length === 1 ? "the selected date" : `all ${dates.length} selected dates`} with
               exactly {draft.length === 0 ? "nothing" : `these ${draft.length} line${draft.length === 1 ? "" : "s"}`}.
+              Timed-from-closing announcements on those dates are left alone.
               {willReplace > 0 && dates.length > 1 && (
                 <span style={{ color: "var(--accent-amber)" }}> {willReplace} of them already {willReplace === 1 ? "has" : "have"} entries, which will be replaced.</span>
               )}
             </div>
+
+            {confirming && (
+              <ApplyConfirm
+                replacing={replacingCount}
+                mineLabel="fixed-time"
+                otherLabel="Timed-from-closing"
+                onConfirm={apply}
+                onCancel={() => setConfirming(false)}
+              />
+            )}
           </>
         )}
 
