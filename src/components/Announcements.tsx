@@ -77,30 +77,25 @@ function ymd(d: Date): string {
 // ── APPLY CONFIRMATION ───────────────────────────────────────────────────────────────────────────
 //
 // Shown only when APPLY would actually REPLACE something. Applying to empty dates stays one click —
-// a dialogue that fires every time is one people learn to dismiss without reading, which is worse
-// than none.
+// a dialogue that fires every time is one people learn to dismiss without reading.
 //
-// It names what is NOT affected, and that half is the point. Manual and By minutes now coexist on a
-// day, each APPLY replacing only its own kind; without saying so, an operator who has just watched
-// one tab rewrite a day has no reason to believe the other tab's work survived. (It did not, until
-// today: Manual's diff was deleting every offset row on the date.)
+// It used to carry a second sentence naming what was NOT affected ("fixed-time announcements on
+// those dates are left alone"), because two tabs each owned a slice of one day and an operator had
+// no reason to believe the other slice survived. There is one list now, so there is no other slice
+// and nothing to reassure about — the reassurance went with the thing that made it necessary.
 //
 // INLINE, NOT window.confirm — that silently no-ops in this packaged build (Electron 41, see
 // electron/main.js), so a confirmation built on it would either never appear or never return.
-function ApplyConfirm({ replacing, mineLabel, otherLabel, onConfirm, onCancel }: {
-  replacing: number; mineLabel: string; otherLabel: string;
-  onConfirm: () => void; onCancel: () => void;
+function ApplyConfirm({ replacing, onConfirm, onCancel }: {
+  replacing: number; onConfirm: () => void; onCancel: () => void;
 }) {
   return (
     <div style={{ marginTop: 10, padding: "10px 12px", background: "var(--bg-secondary)",
                   border: "1px solid var(--accent-amber, #fbbf24)", borderRadius: 6 }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)", marginBottom: 8 }}>
         {replacing === 1
-          ? `This replaces the ${mineLabel} announcements on 1 date.`
-          : `This replaces the ${mineLabel} announcements on ${replacing} dates.`}
-      </div>
-      <div style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.5, marginBottom: 8 }}>
-        {otherLabel} announcements on {replacing === 1 ? "that date" : "those dates"} are not affected.
+          ? "This replaces the announcements already on that date."
+          : `This replaces the announcements already on ${replacing} of the selected dates.`}
       </div>
       <div style={{ display: "flex", gap: 8 }}>
         <button onClick={onConfirm}
@@ -119,16 +114,11 @@ function ApplyConfirm({ replacing, mineLabel, otherLabel, onConfirm, onCancel }:
   );
 }
 
-function DatePicker({ selected, onToggle, onClearAll, entries, editing }: {
+function DatePicker({ selected, onToggle, onClearAll, entries }: {
   selected: Set<string>;
   onToggle: (d: string) => void;
   onClearAll: () => void;
   entries: ScheduleEntry[];
-  /** Which KIND of announcement the surrounding tab edits. The calendar marks a date that has ANY
-   *  programming either way — the day genuinely has entries and both tabs must agree about that —
-   *  but the count the tab does not own is dimmed, so "some of this is not mine to touch" is visible
-   *  without having to switch tabs to find out. */
-  editing: "absolute" | "close_offset";
 }) {
   const today = new Date();
   const [month, setMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
@@ -172,14 +162,14 @@ function DatePicker({ selected, onToggle, onClearAll, entries, editing }: {
           if (d == null) return <div key={"b" + i} />;
           const key   = ymd(new Date(month.getFullYear(), month.getMonth(), d));
           const mine  = entries.filter(e => e.date === key);
-          // ANY programming marks the date — that is the combined state, identical in both tabs.
-          // The split below only changes how it is DESCRIBED, never whether it is marked.
-          const nFix  = mine.filter(e => e.trigger_type !== "close_offset").length;
-          const nOff  = mine.length - nFix;
           const n     = mine.length;
           const isSel = selected.has(key);
-          const dimFix = editing !== "absolute";
-          const dimOff = editing !== "close_offset";
+          // ONE COUNT. It was briefly split into a fixed-time glyph and a from-closing glyph, with
+          // the type the current tab did not edit dimmed — a way of showing, across two tabs, that
+          // part of a day was not yours to touch. One list per day makes that unnecessary: the count
+          // is the day, and opening it shows the composition in full.
+          const nFix  = mine.filter(e => e.trigger_type !== "close_offset").length;
+          const nOff  = n - nFix;
           const titleFor = () => {
             if (!n) return "Nothing scheduled on this date";
             const bits = [];
@@ -199,20 +189,7 @@ function DatePicker({ selected, onToggle, onClearAll, entries, editing }: {
               }}>
               <span style={{ fontWeight: key === ymd(today) ? 800 : 500 }}>{d}</span>
               {n > 0 && (
-                <span style={{ display: "flex", gap: 3, fontSize: 8, fontWeight: 700, lineHeight: 1 }}>
-                  {/* One glyph per KIND, and only for kinds actually present — a date with a single
-                      type does not get busier than it was. The count the current tab does not edit is
-                      dimmed rather than hidden: hiding it would make a date look emptier than it is,
-                      which is how an APPLY surprises someone. */}
-                  {nFix > 0 && (
-                    <span title={`${nFix} at a set time`}
-                          style={{ color: isSel ? "#fff" : "var(--accent-green)", opacity: dimFix ? 0.4 : 1 }}>⏱{nFix}</span>
-                  )}
-                  {nOff > 0 && (
-                    <span title={`${nOff} timed from closing`}
-                          style={{ color: isSel ? "#fff" : "var(--accent-cyan)", opacity: dimOff ? 0.4 : 1 }}>⤶{nOff}</span>
-                  )}
-                </span>
+                <span style={{ fontSize: 8, fontWeight: 700, color: isSel ? "#fff" : "var(--accent-green)" }}>♪{n}</span>
               )}
             </button>
           );
@@ -278,14 +255,39 @@ function toHms(v: string): string {
 
 /** A line in the EDITOR. Nothing here exists in the database until APPLY — `id` is a local handle so
  *  React can key rows that have no uuid yet. */
-interface Draft { id: number; announcement_uuid: string; trigger_time: string; }
+// ── ONE LINE, ONE DAY, ONE LIST ─────────────────────────────────────────────────────────────────
+//
+// Jeff, 2026-09-01: "one calendar no tabs — when you click a day you pick if you're going to use
+// specific times or by minutes."
+//
+// THE MODE BELONGS TO THE LINE, and that is what kills the bug this replaced. announcement_schedule
+// rows have ALWAYS carried trigger_type per row; the two-tab UI invented a split the data never had,
+// and the same announcement could sit in both halves of it — invisible from either tab, and firing
+// twice. HALLOVEEN 30 MIN was programmed at 4:00:12 PM in one tab and 30-before-close in the other,
+// and both were live. In one list that is four obvious twins you delete; across two tabs it was
+// nothing at all.
+//
+// Per LINE rather than per DAY, so a parade at 7:00 PM can still sit beside a closing sequence timed
+// from close. A day is not one mode; an announcement is.
+type LineMode = "absolute" | "close_offset";
+interface Draft {
+  id: number;
+  announcement_uuid: string;
+  mode: LineMode;
+  /** "HH:MM:SS" when mode is absolute. Ignored otherwise. */
+  trigger_time: string;
+  /** Minutes relative to closing when mode is close_offset. NEGATIVE IS BEFORE. Ignored otherwise. */
+  offset: number;
+}
 let _draftSeq = 0;
 
-function DraftRow({ line, assets, onPatch, onDelete }: {
+function DraftRow({ line, assets, onPatch, onDelete, firesAt }: {
   line: Draft;
   assets: Announcement[];
   onPatch: (patch: Partial<Draft>) => void;
   onDelete: () => void;
+  /** What this line actually fires at tonight, already resolved. null when it cannot be known. */
+  firesAt: string | null;
 }) {
   const fld = {
     padding: "7px 9px", fontSize: 12, background: "var(--bg-secondary)",
@@ -317,13 +319,38 @@ function DraftRow({ line, assets, onPatch, onDelete }: {
         {assets.map(a => <option key={a.uuid} value={a.uuid}>{a.title}</option>)}
       </select>
 
-      <input type="time" step={1}
-        value={draft}
-        onFocus={() => setTyping(true)}
-        onChange={e => setDraft(e.target.value)}
-        onBlur={commit}
-        onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-        style={{ ...fld, width: 124, borderColor: draft ? "var(--border-primary)" : "var(--accent-amber)" }} />
+      {/* HOW this line's time is decided. The whole tab strip collapsed into this control. */}
+      <select value={line.mode} onChange={e => onPatch({ mode: e.target.value as LineMode })}
+        style={{ ...fld, width: 132 }} aria-label="How this announcement is timed">
+        <option value="absolute">at a set time</option>
+        <option value="close_offset">before closing</option>
+      </select>
+
+      {line.mode === "absolute" ? (
+        <input type="time" step={1}
+          value={draft}
+          onFocus={() => setTyping(true)}
+          onChange={e => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+          style={{ ...fld, width: 124, borderColor: draft ? "var(--border-primary)" : "var(--accent-amber)" }} />
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: 4, width: 124 }}>
+          <input type="number" step={5}
+            value={line.offset}
+            onChange={e => onPatch({ offset: parseInt(e.target.value, 10) || 0 })}
+            aria-label="Minutes relative to closing"
+            style={{ ...fld, width: 64 }} />
+          <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>min</span>
+        </div>
+      )}
+
+      {/* WHAT IT ACTUALLY DOES TONIGHT, on every line regardless of mode — so a mixed list can be
+          read straight down as the evening, without working out which rows are relative. */}
+      <span style={{ width: 78, fontSize: 11, fontVariantNumeric: "tabular-nums",
+                     color: firesAt ? "var(--accent-cyan)" : "var(--accent-red)", textAlign: "right" as const }}>
+        {firesAt ?? "no time"}
+      </span>
 
       <button onClick={onDelete} title="Remove this line"
         style={{ padding: "7px 9px", fontSize: 12, background: "var(--bg-secondary)", color: "var(--accent-red)",
@@ -344,308 +371,6 @@ function DraftRow({ line, assets, onPatch, onDelete }: {
 // nothing v48 deliberately removed comes back.
 //
 // NEGATIVE IS BEFORE CLOSE. -30 means thirty minutes before; 0 is closing time itself.
-interface OffsetDraft { id: number; announcement_uuid: string; offset: number; }
-let _offsetSeq = 0;
-
-function ByMinutesBoard({ stationId, assets, entries, reload, closing }: {
-  stationId: number | null; assets: Announcement[]; entries: ScheduleEntry[]; reload: () => void;
-  closing: ClosingCfg;
-}) {
-  const [selected, setSelected] = useState<Set<string>>(() => new Set());
-  const [draft, setDraft]       = useState<OffsetDraft[]>([]);
-  // THE CLOSING TIME IS PART OF THIS DRAFT, not a field that saves itself.
-  //
-  // It used to be a seven-row weekday grid in its own column — "all Sundays close at 6" — and that
-  // was the wrong model: a park's hours vary by date, not by a repeating weekday pattern. Jeff:
-  // "I need closing time set PER THE SPECIFIC DATE, in the settings of that day."
-  //
-  // It saves on APPLY with everything else, because this board's contract is that NOTHING is written
-  // until APPLY. A field that wrote itself instantly, sitting directly above lines that do not, is
-  // exactly the confusion this rearrangement exists to remove.
-  //
-  // null = untouched (show whatever the selected dates resolve to); a string = the operator typed it.
-  const [closeDraft, setCloseDraft] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState(false);
-  const [dirty, setDirty]       = useState(false);
-  const [busy, setBusy]         = useState(false);
-  const [err, setErr]           = useState<string | null>(null);
-  const [msg, setMsg]           = useState<string | null>(null);
-  const api = () => (window as any).ether.announcements;
-
-  const linesFor = (d: string): OffsetDraft[] =>
-    entries.filter(e => e.date === d && e.trigger_type === "close_offset")
-      .sort((a, b) => (a.close_offset_min ?? 0) - (b.close_offset_min ?? 0))
-      .map(e => ({ id: ++_offsetSeq, announcement_uuid: e.announcement_uuid, offset: e.close_offset_min ?? 0 }));
-
-  const toggleDate = (d: string) => {
-    if (selected.size === 0) { setSelected(new Set([d])); setDraft(linesFor(d)); setCloseDraft(null); setDirty(false); return; }
-    const n = new Set(selected);
-    n.has(d) ? n.delete(d) : n.add(d);
-    setSelected(n);
-    if (n.size === 0) { setDraft([]); setCloseDraft(null); setDirty(false); }
-  };
-  const clearAll = () => { setSelected(new Set()); setDraft([]); setCloseDraft(null); setDirty(false); setErr(null); setMsg(null); setConfirming(false); };
-  const dates = [...selected].sort();
-
-  const dowOf = (ymd: string) => new Date(`${ymd}T12:00:00`).getDay();
-
-  // What the selected dates close at TODAY, before any edit. One value if they agree; null if they
-  // differ — showing a single time for three dates that close at three different times would be a
-  // straightforward lie, so the field says so instead.
-  const storedClosing = (() => {
-    if (!dates.length) return null;
-    const vals = new Set(dates.map(d => resolveClosingCfg(closing, d, dowOf(d)) || ""));
-    return vals.size === 1 ? ([...vals][0] || null) : null;
-  })();
-  const mixed = dates.length > 1 && new Set(dates.map(d => resolveClosingCfg(closing, d, dowOf(d)) || "")).size > 1;
-  // What the previews and the APPLY use: the typed value if there is one, else what is stored.
-  const effectiveClosing = closeDraft ?? storedClosing;
-
-  const addLine = () => {
-    if (!assets.length) { setErr("There are no announcements yet — upload one below first."); return; }
-    setDraft(d => [...d, { id: ++_offsetSeq, announcement_uuid: assets[0].uuid, offset: -30 }]);
-    setDirty(true); setMsg(null);
-  };
-  const patchLine  = (id: number, p: Partial<OffsetDraft>) => { setDraft(d => d.map(l => l.id === id ? { ...l, ...p } : l)); setDirty(true); setMsg(null); };
-  const removeLine = (id: number) => { setDraft(d => d.filter(l => l.id !== id)); setDirty(true); setMsg(null); };
-
-  // What a rule actually fires at on a given date. Shown per line for TWO different selected dates
-  // where they differ, because seeing one rule produce two times is what makes the model legible.
-  const firesAt = (offset: number, date: string): string | null => {
-    // The DRAFT wins. Typing a closing time must visibly move every line before Apply is pressed —
-    // that is the whole model made legible, and resolving from the stored value would show the
-    // operator times that are about to be wrong.
-    const c = closeDraft ?? resolveClosingCfg(closing, date, dowOf(date));
-    if (!c) return null;
-    const m = /^(\d{1,2}):(\d{2})/.exec(c);
-    if (!m) return null;
-    const total = ((Number(m[1]) * 60 + Number(m[2]) + offset) % 1440 + 1440) % 1440;
-    const h = Math.floor(total / 60), mi = total % 60;
-    const ampm = h >= 12 ? "PM" : "AM";
-    return `${h % 12 === 0 ? 12 : h % 12}:${String(mi).padStart(2, "0")} ${ampm}`;
-  };
-  // Two example dates from the selection whose closing times differ — the pair worth showing.
-  const examples = (() => {
-    if (!dates.length) return [];
-    const seen = new Map<string, string>();
-    for (const d of dates) {
-      const c = resolveClosingCfg(closing, d, dowOf(d)) || "—";
-      if (!seen.has(c)) seen.set(c, d);
-      if (seen.size === 2) break;
-    }
-    return [...seen.values()];
-  })();
-
-  // How many of the selected dates already hold rows THIS tab would replace. Only these warrant a
-  // confirmation; the rest are additions and go straight through.
-  const replacingCount = dates.filter(d =>
-    entries.some(e => e.date === d && e.trigger_type === "close_offset")).length;
-
-  const apply = async () => {
-    if (stationId == null || !dates.length) return;
-    if (draft.some(l => !Number.isFinite(l.offset))) { setErr("Every line needs a number of minutes."); return; }
-    if (replacingCount > 0 && !confirming) { setConfirming(true); return; }
-    setConfirming(false);
-    setBusy(true); setErr(null); setMsg(null);
-    try {
-      // ── THE CLOSING TIME, WRITTEN PER SELECTED DATE ─────────────────────────────────────────
-      //
-      // byDate[d] for each date, and NOTHING else in the value is touched — the hard rule, and the
-      // property scripts/smoke-closing-isolation.js pins: a one-day change never reaches another
-      // date, a weekday, or the default.
-      //
-      // WRITTEN EVEN WHEN UNTOUCHED, deliberately. The field shows what these dates resolve to, so
-      // applying stores exactly what the operator was looking at, and the date becomes
-      // self-contained: from then on nothing about a pattern elsewhere can move it. It also retires
-      // the legacy `default` by attrition — dates get explicit values as they are edited, instead of
-      // a hidden fallback quietly governing nights nobody set.
-      //
-      // ONE READ-MODIFY-WRITE for the whole batch, against this install's own row. Doing it per date
-      // in a loop would re-read a value this same loop had just written, which is how a batch ends up
-      // racing itself.
-      const closeToWrite = effectiveClosing;
-      if (closeToWrite && stationId != null) {
-        const kvRes = await (window as any).ether.stationConfigKv.list(stationId);
-        const kvRows: any[] = Array.isArray(kvRes) ? kvRes : (kvRes?.rows ?? []);
-        const raw = kvRows.find(x => x?.key === "closing_time" && !x?.deleted_at)?.value ?? null;
-        const cfg = parseClosingCfg(raw);
-        const bd = { ...cfg.byDate };
-        for (const d of dates) bd[d] = closeToWrite;
-        await (window as any).ether.stationConfigKv.upsertByKey(
-          stationId, "closing_time", JSON.stringify({ ...cfg, byDate: bd }));
-        // Park Ops reads the mirrored copy; without this the phone shows the old closing time for up
-        // to a minute, and the two surfaces disagreeing is what this feature cannot afford.
-        window.dispatchEvent(new CustomEvent("ether:ops-push"));
-      }
-
-      let created = 0, removed = 0, kept = 0;
-      for (const d of dates) {
-        // ONLY close_offset rows on this date are touched. The MANUAL tab's absolute entries for the
-        // same night are left exactly as they are — applying one tab must never silently wipe the
-        // other's work, which is the whole risk of two editors over one table.
-        const existing = entries.filter(e => e.date === d && e.trigger_type === "close_offset");
-        const key = (u: string, o: number) => `${u}|${o}`;
-        const want = new Map(draft.map(l => [key(l.announcement_uuid, l.offset), l]));
-        const have = new Map(existing.map(e => [key(e.announcement_uuid, e.close_offset_min ?? 0), e]));
-
-        // An unchanged line KEEPS its row, and therefore its last_played_at and its 120s guard.
-        // Delete-and-recreate would clear the stamp and let a row that already fired tonight fire
-        // again — the same rule the MANUAL tab's diffSchedule exists to protect.
-        for (const [k, e] of have) if (!want.has(k)) { await api().deleteEntry(e.uuid, stationId); removed++; }
-        for (const [k, l] of want) {
-          if (have.has(k)) { kept++; continue; }
-          const r = await api().createEntry({
-            station_id: stationId, announcement_uuid: l.announcement_uuid, scope: "date", date: d,
-            trigger_type: "close_offset", trigger_time: null, close_offset_min: l.offset, sort_order: 0,
-          });
-          if (!r?.ok) throw new Error(r?.error || "could not write an entry");
-          created++;
-        }
-      }
-      reload();
-      setMsg(`Applied to ${dates.length} date${dates.length === 1 ? "" : "s"} — ${created} added, ${removed} removed${kept ? `, ${kept} unchanged` : ""}.`);
-      setSelected(new Set()); setDraft([]); setCloseDraft(null); setDirty(false); setConfirming(false);
-    } catch (e: any) {
-      setErr(String(e?.message || e));
-      reload();
-    } finally { setBusy(false); }
-  };
-
-  const box = { padding: "12px 14px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" };
-  const cap = { fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 8 };
-
-  return (
-    // TWO columns: the dates, and the offsets. PARK CLOSES was a third here and it is gone — a
-    // cramped side column of seven time boxes read as an unexplained form and squeezed the thing the
-    // tab is actually for (the minutes + track lines) into what was left.
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 330px) 1fr", gap: 12, alignItems: "start" }}>
-      <div style={box}>
-        <div style={cap}>Dates</div>
-        <DatePicker selected={selected} onToggle={toggleDate} onClearAll={clearAll} entries={entries} editing="close_offset" />
-      </div>
-
-      <div style={box}>
-        <div style={cap}>Minutes before closing</div>
-
-        {dates.length === 0 ? (
-          <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
-            Click a date to see and edit its timed-from-closing announcements. Click more dates to set
-            them all together. Nothing is written until you press <strong>Apply</strong>.
-          </div>
-        ) : (
-          <>
-            {/* THE CLOSING TIME FOR THE DATES BEING EDITED — first, because every line below is
-                measured from it. It belongs to these dates and no others: not "all Sundays", THIS
-                Sunday. */}
-            <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 8, alignItems: "center", marginBottom: 4 }}>
-              <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-                {dates.length === 1 ? "This date closes at" : `These ${dates.length} dates close at`}
-              </span>
-              <input
-                type="time"
-                value={effectiveClosing ?? ""}
-                disabled={busy}
-                onChange={e => { setCloseDraft(e.target.value); setDirty(true); setMsg(null); }}
-                aria-label="Closing time for the selected dates"
-                style={{ width: 130, fontSize: 14, fontWeight: 700, padding: "6px 8px", borderRadius: 6,
-                         background: "var(--bg-secondary)", color: "var(--text-primary)",
-                         border: "1px solid " + (mixed && closeDraft == null ? "var(--accent-amber, #fbbf24)" : "var(--border-primary)"),
-                         fontVariantNumeric: "tabular-nums" }} />
-            </div>
-            <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: "0 0 10px", lineHeight: 1.5 }}>
-              {mixed && closeDraft == null
-                ? <span style={{ color: "var(--accent-amber, #fbbf24)" }}>
-                    These dates close at different times. Setting one here applies it to all {dates.length} when you press Apply.
-                  </span>
-                : !effectiveClosing
-                  ? <span style={{ color: "var(--accent-red, #ef4444)" }}>
-                      No closing time for {dates.length === 1 ? "this date" : "these dates"}. Announcements below cannot play until one is set.
-                    </span>
-                  : <>Saved with the announcements when you press Apply — for {dates.length === 1 ? "this date" : `these ${dates.length} dates`} only.</>}
-            </p>
-
-            {draft.map(l => (
-              <div key={l.id} style={{ display: "grid", gridTemplateColumns: "92px 1fr 20px", gap: 6, alignItems: "center", marginBottom: 6 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <input
-                    type="number" step={5} value={l.offset}
-                    onChange={e => patchLine(l.id, { offset: parseInt(e.target.value, 10) || 0 })}
-                    aria-label="Minutes relative to closing"
-                    style={{ width: 56, fontSize: 12, padding: "4px 6px", borderRadius: 6, background: "var(--bg-secondary)",
-                             color: "var(--text-primary)", border: "1px solid var(--border-primary)", fontVariantNumeric: "tabular-nums" }} />
-                  <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>min</span>
-                </div>
-                <div>
-                  <select
-                    value={l.announcement_uuid}
-                    onChange={e => patchLine(l.id, { announcement_uuid: e.target.value })}
-                    style={{ width: "100%", fontSize: 12, padding: "4px 6px", borderRadius: 6, background: "var(--bg-secondary)",
-                             color: "var(--text-primary)", border: "1px solid var(--border-primary)" }}>
-                    {assets.map(a => <option key={a.uuid} value={a.uuid}>{a.title}</option>)}
-                  </select>
-                  {/* The same rule, on two different nights. This is the feature made visible. */}
-                  <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 3, fontVariantNumeric: "tabular-nums" }}>
-                    {l.offset === 0 ? "at closing" : `${Math.abs(l.offset)} min ${l.offset < 0 ? "before" : "after"} close`}
-                    {examples.map(d => {
-                      const t = firesAt(l.offset, d);
-                      return t ? <span key={d}> · {d} → {t}</span> : null;
-                    })}
-                  </div>
-                </div>
-                <button onClick={() => removeLine(l.id)} title="Remove"
-                        style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 14, padding: 0 }}>×</button>
-              </div>
-            ))}
-
-            <button onClick={addLine} disabled={busy}
-                    style={{ fontSize: 11, fontWeight: 700, padding: "5px 10px", borderRadius: 6, cursor: "pointer", marginTop: 4,
-                             background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)" }}>
-              + Add Announcement
-            </button>
-
-            {draft.length === 0 && (
-              <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: "8px 0 0", lineHeight: 1.5 }}>
-                Empty. Applying now would clear the timed-from-closing announcements on {dates.length === 1 ? "this date" : "these dates"}.
-              </p>
-            )}
-
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
-              <button onClick={apply} disabled={busy || !dirty}
-                      style={{ fontSize: 12, fontWeight: 800, padding: "8px 14px", borderRadius: 6,
-                               cursor: busy || !dirty ? "default" : "pointer", opacity: busy || !dirty ? 0.5 : 1,
-                               background: "var(--accent-blue)", color: "#fff", border: "none" }}>
-                {busy ? "Applying…" : `APPLY to ${dates.length} date${dates.length === 1 ? "" : "s"}`}
-              </button>
-              <button onClick={clearAll} disabled={busy}
-                      style={{ fontSize: 12, padding: "8px 12px", borderRadius: 6, cursor: "pointer",
-                               background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)" }}>
-                Cancel
-              </button>
-            </div>
-            <p style={{ fontSize: 10, color: "var(--text-tertiary)", margin: "6px 0 0", lineHeight: 1.5 }}>
-              Apply replaces only the timed-from-closing announcements on the selected dates. Fixed-time
-              announcements on those dates are left alone.
-            </p>
-
-            {confirming && (
-              <ApplyConfirm
-                replacing={replacingCount}
-                mineLabel="timed-from-closing"
-                otherLabel="Fixed-time"
-                onConfirm={apply}
-                onCancel={() => setConfirming(false)}
-              />
-            )}
-          </>
-        )}
-
-        {err && <div style={{ fontSize: 11, color: "var(--accent-red)", marginTop: 8 }}>{err}</div>}
-        {msg && <div style={{ fontSize: 11, color: "var(--accent-green)", marginTop: 8 }}>{msg}</div>}
-      </div>
-    </div>
-  );
-}
-
 // ── CLOSING TIME: the shape, shared by the field and anything that resolves it ──────────────────
 // One station_config_kv row, key `closing_time`. Resolution is byDate -> byWeekday -> default, and
 // byWeekday is keyed 0-6 SUNDAY FIRST to match Date#getDay, electron/main.js and the Park Ops
@@ -701,11 +426,41 @@ export function resolveClosingCfg(cfg: ClosingCfg, dateStr: string, dow: number)
 //   • APPLY or Clear                                  → selection and editor both empty
 // So "click one date and edit it" and "build a batch for many dates" are the same two gestures, and
 // loading a day then adding dates is how a day gets copied onto others.
-function ScheduleBoard({ stationId, assets, entries, reload }: {
+
+// ── THE SCHEDULE BOARD — one calendar, one list per day ─────────────────────────────────────────
+//
+// SELECT the date(s) on the left, EDIT the day's list on the right, press APPLY. Nothing is written
+// until APPLY, and APPLY makes each selected date's schedule EXACTLY what is in the editor.
+//
+// ONE LIST, NOT TWO TABS (Jeff, 2026-09-01). There was a MANUAL tab and a BY MINUTES tab, and they
+// were a UI split imposed on data that never had one: announcement_schedule rows have always carried
+// trigger_type per row. The split let the SAME announcement live in both halves of the same day,
+// invisible from either tab, and fire twice — HALLOVEEN 30 MIN at 4:00:12 PM from one and
+// 30-before-close from the other, both live, with nothing on screen to say so. An operator walking
+// up could not tell which the station was obeying. The answer was "both".
+//
+// In one list that is four obvious twins you delete. The bug is not warned about, it is unbuildable.
+//
+// Each LINE picks how its time is decided, so a parade at 7:00 PM still sits beside a closing
+// sequence timed from close. A day is not one mode; an announcement is.
+//
+// SORTED BY WHAT IT ACTUALLY FIRES AT, not by insertion — the list reads as the evening, in order,
+// and an offset line MOVES when the closing time changes. That movement is the feature being visible:
+// the operator sees tonight, not a data-entry order that means nothing at 4pm.
+//
+// LOADING RULE, so the editor is never silently replaced under a half-finished edit:
+//   • start from an empty selection and click a date  → the editor LOADS that date's schedule
+//   • click more dates                                → the editor is left alone; APPLY writes it to all
+//   • deselect a date                                 → the editor is left alone
+//   • APPLY or Clear                                  → selection and editor both empty
+function ScheduleBoard({ stationId, assets, entries, reload, closing }: {
   stationId: number | null; assets: Announcement[]; entries: ScheduleEntry[]; reload: () => void;
+  closing: ClosingCfg;
 }) {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [draft, setDraft]       = useState<Draft[]>([]);
+  // The closing time for the selected dates, drafted alongside the lines and saved with them.
+  const [closeDraft, setCloseDraft] = useState<string | null>(null);
   const [dirty, setDirty]       = useState(false);
   const [busy, setBusy]         = useState(false);
   const [err, setErr]           = useState<string | null>(null);
@@ -713,84 +468,136 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
   const [confirming, setConfirming] = useState(false);
   const api = () => (window as any).ether.announcements;
 
-  // ABSOLUTE ROWS ONLY, the same rule the diff uses. Loading offset rows here would show them as
-  // lines with a BLANK time — the operator would either type one (converting a from-closing
-  // announcement into a fixed one without meaning to) or hit "Every line needs a time" on a row this
-  // tab does not own.
   const linesFor = (d: string): Draft[] =>
-    entries.filter(e => e.date === d && e.trigger_type !== "close_offset")
-      .slice()
-      .sort((a, b) => (a.trigger_time || "").localeCompare(b.trigger_time || ""))
-      .map(e => ({ id: ++_draftSeq, announcement_uuid: e.announcement_uuid, trigger_time: e.trigger_time || "" }));
+    entries.filter(e => e.date === d).map(e => ({
+      id: ++_draftSeq,
+      announcement_uuid: e.announcement_uuid,
+      mode: (e.trigger_type === "close_offset" ? "close_offset" : "absolute") as LineMode,
+      trigger_time: e.trigger_time || "",
+      offset: e.close_offset_min ?? 0,
+    }));
 
-  // Computed OUTSIDE the state updater, deliberately. React double-invokes updaters in development,
-  // so seeding the editor from inside one would run linesFor twice and could load a stale list over
-  // a fresh click. The updater stays pure; the editor is set alongside it.
   const toggleDate = (d: string) => {
-    setErr(null); setMsg(null);
-    if (selected.size === 0) {
-      // Starting a fresh selection LOADS that date's schedule — this is the "click one day and edit
-      // it" gesture. Once a selection exists the editor is the operator's; adding or removing dates
-      // never reaches in and rewrites it under a half-finished edit.
-      setSelected(new Set([d]));
-      setDraft(linesFor(d));
-      setDirty(false);
-      return;
-    }
+    if (selected.size === 0) { setSelected(new Set([d])); setDraft(linesFor(d)); setCloseDraft(null); setDirty(false); return; }
     const n = new Set(selected);
     n.has(d) ? n.delete(d) : n.add(d);
     setSelected(n);
-    if (n.size === 0) { setDraft([]); setDirty(false); }
+    if (n.size === 0) { setDraft([]); setCloseDraft(null); setDirty(false); }
+  };
+  const clearAll = () => { setSelected(new Set()); setDraft([]); setCloseDraft(null); setDirty(false); setErr(null); setMsg(null); setConfirming(false); };
+  const dates = [...selected].sort();
+
+  const dowOf = (ymdStr: string) => new Date(`${ymdStr}T12:00:00`).getDay();
+
+  // What the selected dates close at before any edit. One value if they agree; null if they differ —
+  // showing a single time for three dates that close at three different times would be a plain lie.
+  const storedClosing = (() => {
+    if (!dates.length) return null;
+    const vals = new Set(dates.map(d => resolveClosingCfg(closing, d, dowOf(d)) || ""));
+    return vals.size === 1 ? ([...vals][0] || null) : null;
+  })();
+  const mixed = dates.length > 1 && new Set(dates.map(d => resolveClosingCfg(closing, d, dowOf(d)) || "")).size > 1;
+  const effectiveClosing = closeDraft ?? storedClosing;
+  const anyOffset = draft.some(l => l.mode === "close_offset");
+
+  // ── RESOLVED TIME: the one function the sort, the previews and the validation all use ──────────
+  // Mirrors electron/main.js dueTimeFor, against the DRAFT closing time so typing a new one visibly
+  // reorders the list before Apply is pressed.
+  const resolvedMinutes = (l: Draft): number | null => {
+    if (l.mode === "absolute") {
+      const m = /^(\d{1,2}):(\d{2})/.exec(l.trigger_time || "");
+      return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+    }
+    const c = /^(\d{1,2}):(\d{2})/.exec(effectiveClosing || "");
+    if (!c) return null;
+    return ((Number(c[1]) * 60 + Number(c[2]) + l.offset) % 1440 + 1440) % 1440;
+  };
+  const fmtMin = (n: number | null): string | null => {
+    if (n == null) return null;
+    const h = Math.floor(n / 60), mi = n % 60;
+    return `${h % 12 === 0 ? 12 : h % 12}:${String(mi).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
   };
 
-  const clearAll = () => { setSelected(new Set()); setDraft([]); setDirty(false); setErr(null); setMsg(null); setConfirming(false); };
+  // A line with no resolvable time sorts LAST rather than being hidden or dropped — it is a real
+  // state the operator has to see and fix, not one the list should quietly tidy away.
+  const ordered = [...draft].sort((a, b) => {
+    const x = resolvedMinutes(a), y = resolvedMinutes(b);
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;
+    if (y == null) return -1;
+    return x - y;
+  });
 
-  const dates = [...selected].sort();
+  // The same announcement twice on one day fires twice. In one list that is visible — say it anyway,
+  // because "visible" and "noticed at 4pm" are different things.
+  const dupes = (() => {
+    const seen = new Map<string, number>();
+    for (const l of draft) seen.set(l.announcement_uuid, (seen.get(l.announcement_uuid) ?? 0) + 1);
+    return [...seen.entries()].filter(([, n]) => n > 1)
+      .map(([u]) => assets.find(a => a.uuid === u)?.title || "an announcement");
+  })();
 
   const addLine = () => {
     if (!assets.length) { setErr("There are no announcements yet — upload one below first."); return; }
-    setDraft(d => [...d, { id: ++_draftSeq, announcement_uuid: assets[0].uuid, trigger_time: "17:30:00" }]);
+    setDraft(d => [...d, { id: ++_draftSeq, announcement_uuid: assets[0].uuid, mode: "absolute", trigger_time: "17:30:00", offset: -30 }]);
     setDirty(true); setMsg(null);
   };
   const patchLine  = (id: number, p: Partial<Draft>) => { setDraft(d => d.map(l => l.id === id ? { ...l, ...p } : l)); setDirty(true); setMsg(null); };
   const removeLine = (id: number) => { setDraft(d => d.filter(l => l.id !== id)); setDirty(true); setMsg(null); };
 
-  // ── APPLY ──────────────────────────────────────────────────────────────────────────────────────
-  // Per date, a DIFF and not a wipe-and-rewrite. A line that is already on the date keeps its row —
-  // and therefore its last_played_at, which is the 120s double-fire guard. Recreating every row on
-  // every apply would reset that guard and let something re-fire inside its own window.
-  // How many selected dates already hold FIXED-TIME rows — the only ones this tab replaces.
-  const replacingCount = dates.filter(d =>
-    entries.some(e => e.date === d && e.trigger_type !== "close_offset")).length;
+  const replacingCount = dates.filter(d => entries.some(e => e.date === d)).length;
 
   const apply = async () => {
     if (stationId == null || !dates.length) return;
-    const bad = draft.filter(l => !toHms(l.trigger_time));
-    if (bad.length) { setErr("Every line needs a time before this can be applied."); return; }
+    const noTime = draft.filter(l => resolvedMinutes(l) == null);
+    if (noTime.length) {
+      setErr(anyOffset && !effectiveClosing
+        ? "Set a closing time — the lines timed from closing have no time without it."
+        : "Every line needs a time before this can be applied.");
+      return;
+    }
     if (replacingCount > 0 && !confirming) { setConfirming(true); return; }
     setConfirming(false);
     setBusy(true); setErr(null); setMsg(null);
     try {
+      // THE CLOSING TIME, per selected date. byDate[d] and nothing else — the hard rule, pinned by
+      // scripts/smoke-closing-isolation.js. One read-modify-write for the batch: per date in a loop
+      // would re-read a value the same loop had just written.
+      if (effectiveClosing && anyOffset) {
+        const kvRes = await (window as any).ether.stationConfigKv.list(stationId);
+        const kvRows: any[] = Array.isArray(kvRes) ? kvRes : (kvRes?.rows ?? []);
+        const raw = kvRows.find(x => x?.key === "closing_time" && !x?.deleted_at)?.value ?? null;
+        const cfg = parseClosingCfg(raw);
+        const bd = { ...cfg.byDate };
+        for (const d of dates) bd[d] = effectiveClosing;
+        await (window as any).ether.stationConfigKv.upsertByKey(stationId, "closing_time", JSON.stringify({ ...cfg, byDate: bd }));
+        window.dispatchEvent(new CustomEvent("ether:ops-push"));
+      }
+
       let created = 0, removed = 0, kept = 0;
-      const want = draft.map(l => ({ ...l, trigger_time: toHms(l.trigger_time) }));
       for (const d of dates) {
-        // diffSchedule is in src/lib and has its own tests — the rule that an unchanged line keeps
-        // its row (and therefore its 120s guard) is load-bearing enough to be tested, not asserted
-        // in a comment.
-        // ABSOLUTE ROWS ONLY. This filter used to be `e.date === d` with no type test, so every
-        // close_offset row on the day landed in the diff's `existing` pool — and since an offset row
-        // has no trigger_time it could never match an absolute draft line, so it fell straight into
-        // `remove` and was DELETED. Applying Manual silently wiped that day's By minutes
-        // announcements. The mirror-image guard was written on the new tab and missed here, on the
-        // old one.
-        const { remove, create, keep } = diffSchedule(
-          entries.filter(e => e.date === d && e.trigger_type !== "close_offset"), want);
-        kept += keep.length;
-        for (const e of remove) { await api().deleteEntry(e.uuid, stationId); removed++; }
-        for (const l of create) {
+        // ONE LIST, ONE TRUTH. Every row on the date is in scope — there is no other tab owning a
+        // slice of it any more, so there is nothing to filter and nothing to spare.
+        //
+        // An unchanged line KEEPS its row, and therefore its last_played_at and its 120s guard.
+        // Delete-and-recreate would clear the stamp and let a row that already fired tonight fire
+        // again. Identity is (announcement, mode, and whichever of time/offset that mode uses).
+        const key = (u: string, m: string, t: string, o: number) => m === "close_offset" ? `${u}|off|${o}` : `${u}|abs|${t}`;
+        const existing = entries.filter(e => e.date === d);
+        const have = new Map(existing.map(e => [
+          key(e.announcement_uuid, e.trigger_type === "close_offset" ? "close_offset" : "absolute",
+              e.trigger_time || "", e.close_offset_min ?? 0), e]));
+        const want = new Map(draft.map(l => [key(l.announcement_uuid, l.mode, toHms(l.trigger_time), l.offset), l]));
+
+        for (const [k, e] of have) if (!want.has(k)) { await api().deleteEntry(e.uuid, stationId); removed++; }
+        for (const [k, l] of want) {
+          if (have.has(k)) { kept++; continue; }
           const r = await api().createEntry({
             station_id: stationId, announcement_uuid: l.announcement_uuid, scope: "date", date: d,
-            trigger_type: "absolute", trigger_time: l.trigger_time, close_offset_min: 0, sort_order: 0,
+            trigger_type: l.mode,
+            trigger_time: l.mode === "absolute" ? toHms(l.trigger_time) : null,
+            close_offset_min: l.mode === "close_offset" ? l.offset : 0,
+            sort_order: 0,
           });
           if (!r?.ok) throw new Error(r?.error || "could not write an entry");
           created++;
@@ -798,38 +605,24 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
       }
       reload();
       setMsg(`Applied to ${dates.length} date${dates.length === 1 ? "" : "s"} — ${created} added, ${removed} removed${kept ? `, ${kept} unchanged` : ""}.`);
-      setSelected(new Set()); setDraft([]); setDirty(false); setConfirming(false);
+      setSelected(new Set()); setDraft([]); setCloseDraft(null); setDirty(false); setConfirming(false);
     } catch (e: any) {
       setErr(String(e?.message || e));
       reload();                                  // show whatever did land, rather than a stale editor
     } finally { setBusy(false); }
   };
 
-  // What APPLY is about to overwrite. Stated before the press, never discovered after it.
-  const willReplace = dates.filter(d => entries.some(e => e.date === d)).length;
-
   const box = { padding: "12px 14px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" };
   const cap = { fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.1em", textTransform: "uppercase" as any, marginBottom: 8 };
-
-  const label = dates.length === 0 ? ""
-    : dates.length === 1 ? new Date(Number(dates[0].slice(0, 4)), Number(dates[0].slice(5, 7)) - 1, Number(dates[0].slice(8, 10)))
-        .toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
-    : `${dates.length} dates — ${dates[0]} to ${dates[dates.length - 1]}`;
+  const editingLabel = dates.length === 0 ? "" :
+    dates.length === 1 ? `Editing ${new Date(`${dates[0]}T12:00:00`).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}`
+                       : `Editing ${dates.length} dates`;
 
   return (
-    // Three columns: dates, the schedule being edited, and the closing time. Closing time sits to the
-    // RIGHT of the schedule rather than inside it, because it is not part of any one date's list — it
-    // is a station-level value the whole board is measured against. Putting it in the editor would
-    // imply APPLY writes it; it does not, it saves on its own.
-    // TWO columns, not three. PARK CLOSES used to sit here as a third, and it was worse than
-    // clutter: a fixed-time announcement does not consult the closing time at all (dueTimeFor
-    // returns the row's own trigger_time for absolute entries), so showing it here implied a
-    // relationship to the fire path that does not exist. It lives on the By minutes tab, which is
-    // the only place it is actually used.
     <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 330px) 1fr", gap: 12, alignItems: "start" }}>
       <div style={box}>
         <div style={cap}>Dates</div>
-        <DatePicker selected={selected} onToggle={toggleDate} onClearAll={clearAll} entries={entries} editing="absolute" />
+        <DatePicker selected={selected} onToggle={toggleDate} onClearAll={clearAll} entries={entries} />
       </div>
 
       <div style={box}>
@@ -837,18 +630,46 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
 
         {dates.length === 0 ? (
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
-            Click a date to see and edit its schedule. Click more dates to set them all together.
+            Click a date to see and edit its announcements. Click more dates to set them all together.
             Nothing is written until you press <strong>Apply</strong>.
           </div>
         ) : (
           <>
-            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 10, lineHeight: 1.45 }}>
-              Editing <strong style={{ color: "var(--text-primary)" }}>{label}</strong>
-            </div>
+            <div style={{ fontSize: 12, color: "var(--text-primary)", marginBottom: 10 }}>{editingLabel}</div>
 
-            <button onClick={addLine}
-              style={{ padding: "7px 13px", fontSize: 11, fontWeight: 700, background: "var(--bg-secondary)",
-                       color: "var(--accent-blue)", border: "1px solid var(--border-primary)", cursor: "pointer", marginBottom: 10 }}>
+            {/* Shown only when a line is actually timed from closing — otherwise it is a setting with
+                nothing depending on it, which is what made it clutter on the old fixed-time tab. */}
+            {anyOffset && (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 8, alignItems: "center", marginBottom: 4 }}>
+                  <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                    {dates.length === 1 ? "This date closes at" : `These ${dates.length} dates close at`}
+                  </span>
+                  <input type="time" value={effectiveClosing ?? ""} disabled={busy}
+                    onChange={e => { setCloseDraft(e.target.value); setDirty(true); setMsg(null); }}
+                    aria-label="Closing time for the selected dates"
+                    style={{ width: 130, fontSize: 14, fontWeight: 700, padding: "6px 8px", borderRadius: 6,
+                             background: "var(--bg-secondary)", color: "var(--text-primary)",
+                             border: "1px solid " + (mixed && closeDraft == null ? "var(--accent-amber, #fbbf24)" : "var(--border-primary)"),
+                             fontVariantNumeric: "tabular-nums" }} />
+                </div>
+                <p style={{ fontSize: 11, color: "var(--text-tertiary)", margin: "0 0 12px", lineHeight: 1.5 }}>
+                  {mixed && closeDraft == null
+                    ? <span style={{ color: "var(--accent-amber, #fbbf24)" }}>
+                        These dates close at different times. Setting one here applies it to all {dates.length} when you press Apply.
+                      </span>
+                    : !effectiveClosing
+                      ? <span style={{ color: "var(--accent-red, #ef4444)" }}>
+                          No closing time set. The lines below timed from closing cannot play until there is one.
+                        </span>
+                      : <>Saved with the announcements when you press Apply — for {dates.length === 1 ? "this date" : `these ${dates.length} dates`} only.</>}
+                </p>
+              </>
+            )}
+
+            <button onClick={addLine} disabled={busy}
+              style={{ fontSize: 11, fontWeight: 700, padding: "6px 11px", marginBottom: 10, cursor: "pointer",
+                       background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)" }}>
               ＋ Add Announcement
             </button>
 
@@ -857,47 +678,42 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
                 Empty. Applying now would clear {dates.length === 1 ? "this date" : "these dates"} — nothing would play.
               </div>
             ) : (
-              draft.map(l => (
+              ordered.map(l => (
                 <DraftRow key={l.id} line={l} assets={assets}
+                  firesAt={fmtMin(resolvedMinutes(l))}
                   onPatch={pp => patchLine(l.id, pp)} onDelete={() => removeLine(l.id)} />
               ))
             )}
 
+            {dupes.length > 0 && (
+              <div style={{ fontSize: 11, color: "var(--accent-amber, #fbbf24)", margin: "2px 0 8px", lineHeight: 1.5 }}>
+                {dupes.join(", ")} {dupes.length === 1 ? "is" : "are"} listed more than once — it will play more than once.
+              </div>
+            )}
+
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border-primary)" }}>
-              <button onClick={apply} disabled={busy}
-                style={{ padding: "9px 20px", fontSize: 12, fontWeight: 800, letterSpacing: "0.04em",
-                         background: busy ? "var(--bg-secondary)" : "var(--accent-blue)", color: busy ? "var(--text-tertiary)" : "#fff",
-                         border: "none", cursor: busy ? "wait" : "pointer" }}>
+              <button onClick={apply} disabled={busy || !dirty}
+                style={{ padding: "9px 16px", fontSize: 12, fontWeight: 800, letterSpacing: "0.04em",
+                         background: busy || !dirty ? "var(--bg-secondary)" : "var(--accent-blue)",
+                         color: busy || !dirty ? "var(--text-tertiary)" : "#fff",
+                         border: "none", cursor: busy || !dirty ? "default" : "pointer" }}>
                 {busy ? "Applying…" : `APPLY to ${dates.length} date${dates.length === 1 ? "" : "s"}`}
               </button>
               <button onClick={clearAll} disabled={busy}
-                style={{ padding: "9px 14px", fontSize: 11, background: "var(--bg-secondary)", color: "var(--text-secondary)",
+                style={{ padding: "9px 14px", fontSize: 12, background: "var(--bg-secondary)", color: "var(--text-secondary)",
                          border: "1px solid var(--border-primary)", cursor: "pointer" }}>
                 Cancel
               </button>
               {dirty && <span style={{ fontSize: 10, color: "var(--accent-amber)" }}>unapplied changes</span>}
             </div>
 
-            {/* Said BEFORE the press. Apply sets each selected date's FIXED-TIME schedule to exactly
-                this list — timed-from-closing announcements on the same dates are a separate list,
-                owned by the other tab, and are not touched. */}
             <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1.45 }}>
-              Apply replaces the fixed-time announcements on {dates.length === 1 ? "the selected date" : `all ${dates.length} selected dates`} with
+              Apply replaces the announcements on {dates.length === 1 ? "the selected date" : `all ${dates.length} selected dates`} with
               exactly {draft.length === 0 ? "nothing" : `these ${draft.length} line${draft.length === 1 ? "" : "s"}`}.
-              Timed-from-closing announcements on those dates are left alone.
-              {willReplace > 0 && dates.length > 1 && (
-                <span style={{ color: "var(--accent-amber)" }}> {willReplace} of them already {willReplace === 1 ? "has" : "have"} entries, which will be replaced.</span>
-              )}
             </div>
 
             {confirming && (
-              <ApplyConfirm
-                replacing={replacingCount}
-                mineLabel="fixed-time"
-                otherLabel="Timed-from-closing"
-                onConfirm={apply}
-                onCancel={() => setConfirming(false)}
-              />
+              <ApplyConfirm replacing={replacingCount} onConfirm={apply} onCancel={() => setConfirming(false)} />
             )}
           </>
         )}
@@ -908,6 +724,7 @@ function ScheduleBoard({ stationId, assets, entries, reload }: {
     </div>
   );
 }
+
 
 function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
@@ -953,9 +770,6 @@ export default function Announcements() {
   // from disagreeing with each other.
   const [entries, setEntries] = useState<ScheduleEntry[]>([]);
   const [schedErr, setSchedErr] = useState<string | null>(null);
-  // MANUAL is the existing absolute-time board; BY MINUTES times from closing. Two editors over one
-  // table, which is exactly why each APPLY only ever touches its own trigger_type.
-  const [tab, setTab] = useState<"manual" | "minutes">("manual");
   // Read ONCE here and handed to the BY MINUTES board, so the fire-time previews and the field the
   // operator is editing cannot disagree about what the closing time currently is.
   const [closing, setClosing] = useState<ClosingCfg>({ default: null, byWeekday: {}, byDate: {} });
@@ -1100,32 +914,18 @@ export default function Announcements() {
               </div>
             ) : (
               <>
-                {/* Two ways to time an announcement, and the tab says which one you are building.
-                    MANUAL sets a clock time; BY MINUTES measures from that day's closing time. */}
-                <div style={{ display: "flex", gap: 4, marginBottom: 10 }}>
-                  {([["manual", "Manual"], ["minutes", "By minutes"]] as const).map(([id, label]) => (
-                    <button key={id} onClick={() => setTab(id)}
-                            style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase",
-                                     padding: "6px 12px", borderRadius: 6, cursor: "pointer",
-                                     background: tab === id ? "var(--accent-blue)" : "var(--bg-tertiary)",
-                                     color: tab === id ? "#fff" : "var(--text-secondary)",
-                                     border: "1px solid " + (tab === id ? "var(--accent-blue)" : "var(--border-primary)") }}>
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                {/* WHAT THIS TAB IS FOR, in the operator's words. Nothing said this before: both
-                    tabs opened with "Click a date to see and edit its schedule", so the two read as
-                    the same screen twice and neither said what it was for. */}
+                {/* ONE LIST PER DAY. There was a MANUAL tab and a BY MINUTES tab here, and they were
+                    a UI split imposed on data that never had one — announcement_schedule rows carry
+                    trigger_type per row. The split let the same announcement live in both halves of
+                    one day, invisible from either tab, and fire twice. Each LINE picks how it is
+                    timed now, so the day is one list read in the order it will air. */}
                 <p style={{ fontSize: 12, color: "var(--text-secondary)", margin: "0 0 10px", lineHeight: 1.5, maxWidth: 620 }}>
-                  {tab === "manual"
-                    ? <>Announcements that play at a <strong>time you set</strong> — &ldquo;parade at 7:00 PM&rdquo;. Pick the dates on the left, add each announcement with its time, then press Apply.</>
-                    : <>Announcements timed from <strong>when the park closes</strong> — &ldquo;30 minutes before close&rdquo;. Set the closing times on the right, then add each announcement with how many minutes. Change a closing time and these all move with it.</>}
+                  Pick the dates on the left, then build that day&rsquo;s list. Each announcement plays either
+                  at <strong>a time you set</strong> — &ldquo;parade at 7:00 PM&rdquo; — or a number of
+                  minutes <strong>before the park closes</strong>, which moves with the closing time.
                 </p>
-                {tab === "manual"
-                  ? <ScheduleBoard stationId={stationId} assets={list} entries={entries} reload={loadEntries} />
-                  : <ByMinutesBoard stationId={stationId} assets={list} entries={entries}
-                                    reload={() => { loadEntries(); loadClosing(); }} closing={closing} />}
+                <ScheduleBoard stationId={stationId} assets={list} entries={entries}
+                               reload={() => { loadEntries(); loadClosing(); }} closing={closing} />
               </>
             )}
           </div>

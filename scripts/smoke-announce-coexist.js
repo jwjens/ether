@@ -1,20 +1,23 @@
 'use strict';
-// scripts/smoke-announce-coexist.js — a fixed-time and a from-closing announcement on the same day.
+// scripts/smoke-announce-coexist.js — one list per day, each line timed its own way.
 //
-// Jeff, 2026-09-01: "MANUAL and BY MINUTES coexist on a day (each APPLY only replaces its own type)."
+// Jeff, 2026-09-01: "one calendar no tabs — when you click a day you pick if you're going to use
+// specific times or by minutes."
 //
-// THIS EXISTS BECAUSE BOTH HALVES BROKE ON THE SAME DAY, in different ways:
+// WHAT THIS REPLACED, and why the shape of the test changed with it. There were two tabs, MANUAL and
+// BY MINUTES, and they were a UI split imposed on data that never had one: announcement_schedule
+// rows have always carried trigger_type per row. The split let the SAME announcement live in both
+// halves of one day — invisible from either tab — and fire twice. HALLOVEEN 30 MIN was programmed at
+// 4:00:12 PM in one and 30-before-close in the other, both live, and an operator walking up could not
+// tell which the station was obeying. The answer was "both".
 //
-//   1. Manual's APPLY DELETED the offsets. Its diff took every row on the date, and since an offset
-//      row has no trigger_time it could never match an absolute draft line — so it fell into
-//      `remove`. Programming one tab silently destroyed the other's work.
-//   2. NOTHING FIRED AT ALL. `s.skipped_at` was added to the scheduler's hot SELECT the same day the
-//      column's migration was written; on a database still at v52 the prepare threw and the tick
-//      skipped every station. Absolute rows died alongside offset ones.
+// The earlier version of this file tested that each tab's APPLY spared the other's rows. That
+// property is GONE because the thing needing it is gone: there is one list, so there is no other
+// slice to spare. What replaces it is the property that made the bug unbuildable — a day's list is
+// the day's truth, in the order it will air.
 //
-// Neither was caught by the existing smokes: one tested the pure resolver (which was correct
-// throughout) and the other tested closing-time isolation. Both bugs lived in the seams between
-// pieces that were individually fine.
+// The fire path is unchanged and still pinned here: dueTimeFor's behaviour is what the editor's
+// preview and sort must agree with, or the operator reads one evening and the station plays another.
 //
 //   node scripts/smoke-announce-coexist.js
 
@@ -53,126 +56,165 @@ function dueTimeFor(row, closingHHMM) {
   return minutesToHms(base + (Number(row.close_offset_min) || 0));
 }
 
-// ── the editor diff, as src/lib/scheduleDiff.ts implements it ─────────────────────────────────
-function diffSchedule(existing, draft) {
-  const pool = existing.slice();
-  const keep = [], create = [];
-  for (const line of draft) {
-    const t = line.trigger_time || '';
-    const i = pool.findIndex(e => e != null && e.announcement_uuid === line.announcement_uuid && (e.trigger_time || '') === t);
-    if (i >= 0) { keep.push(pool[i]); pool[i] = null; } else create.push(line);
+// ── the editor's own resolver + sort, as ScheduleBoard implements them ────────────────────────
+// The editor resolves to MINUTES (it sorts and previews); the engine resolves to "HH:MM:SS" (it
+// matches a clock). Same arithmetic, two shapes — so both are exercised against the same fixtures.
+const resolvedMinutes = (l, closing) => {
+  if (l.mode === 'absolute') {
+    const m = /^(\d{1,2}):(\d{2})/.exec(l.trigger_time || '');
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
   }
-  return { keep, remove: pool.filter(e => e != null), create };
-}
+  const c = hhmmToMinutes(closing);
+  return c == null ? null : ((c + l.offset) % 1440 + 1440) % 1440;
+};
+const orderList = (draft, closing) => [...draft].sort((a, b) => {
+  const x = resolvedMinutes(a, closing), y = resolvedMinutes(b, closing);
+  if (x == null && y == null) return 0;
+  if (x == null) return 1;      // a line with no time sorts LAST — visible, never hidden
+  if (y == null) return -1;
+  return x - y;
+});
+const asRow = (l) => ({
+  trigger_type: l.mode,
+  trigger_time: l.mode === 'absolute' ? l.trigger_time : null,
+  close_offset_min: l.mode === 'close_offset' ? l.offset : 0,
+});
 
-const DATE = '2026-10-31';
-const day = () => ([
-  { uuid: 'abs-1', announcement_uuid: 'a-parade', date: DATE, trigger_type: 'absolute',     trigger_time: '19:00:00', close_offset_min: 0 },
-  { uuid: 'off-1', announcement_uuid: 'a-30min',  date: DATE, trigger_type: 'close_offset', trigger_time: null,       close_offset_min: -30 },
-]);
+const line = (id, mode, v) => mode === 'absolute'
+  ? { id, announcement_uuid: id, mode, trigger_time: v, offset: 0 }
+  : { id, announcement_uuid: id, mode, trigger_time: '', offset: v };
 
-console.log('\n-- BOTH TYPES RESOLVE A TIME ON THE SAME DAY --');
+console.log('\n-- ONE LIST, MIXED MODES, BOTH RESOLVE --');
 {
-  const rows = day();
   const closing = '22:00';
-  check('the fixed-time row fires at the time it was given', dueTimeFor(rows[0], closing), '19:00:00');
-  check('the from-closing row fires 30 minutes before close', dueTimeFor(rows[1], closing), '21:30:00');
-  check('they are DIFFERENT times — neither shadows the other',
-    dueTimeFor(rows[0], closing) !== dueTimeFor(rows[1], closing), true);
+  const parade = line('parade', 'absolute', '19:00:00');
+  const thirty = line('30min', 'close_offset', -30);
+  check('the fixed line fires at the time it was given', dueTimeFor(asRow(parade), closing), '19:00:00');
+  check('the from-closing line fires 30 before close',   dueTimeFor(asRow(thirty), closing), '21:30:00');
+  check('a parade and a closing sequence coexist on one day — different times, neither shadowed',
+    dueTimeFor(asRow(parade), closing) !== dueTimeFor(asRow(thirty), closing), true);
 }
 
-console.log('\n-- THE FIXED-TIME ROW DOES NOT DEPEND ON A CLOSING TIME --');
-// The regression Jeff suspected. It was not the cause, and this keeps it from ever becoming one:
-// dueTimeFor returns on the trigger_type test before the closing-time guard can reach an absolute row.
+console.log('\n-- SORTED BY WHAT IT ACTUALLY FIRES AT, NOT BY INSERTION --');
 {
-  const abs = day()[0];
-  check('no closing time set: it still fires', dueTimeFor(abs, null), '19:00:00');
-  check('empty closing time: it still fires',  dueTimeFor(abs, ''), '19:00:00');
-  check('nonsense closing time: it still fires', dueTimeFor(abs, 'not a time'), '19:00:00');
-  const off = day()[1];
-  check('the OFFSET row, by contrast, cannot fire without one', dueTimeFor(off, null), null);
-  // A row CONVERTED from fixed-time to from-closing still carries whatever absolute time it had.
-  // Falling back to it would put audio on air at an hour nobody chose — the failure the v48 removal
-  // note warned about — so the stale value must be ignored, not used. A trigger_time of null cannot
-  // demonstrate that, which is why this fixture carries a real one.
+  const closing = '22:00';
+  // Entered deliberately out of order, and mixing modes.
+  const draft = [
+    line('closed',  'close_offset', 0),        // 22:00
+    line('parade',  'absolute', '19:00:00'),   // 19:00
+    line('fifteen', 'close_offset', -15),      // 21:45
+    line('thirty',  'close_offset', -30),      // 21:30
+    line('gates',   'absolute', '20:00:00'),   // 20:00
+  ];
+  check('the list reads as the evening, in order',
+    orderList(draft, closing).map(l => l.id), ['parade', 'gates', 'thirty', 'fifteen', 'closed']);
+}
+
+console.log('\n-- AN OFFSET LINE MOVES WHEN THE CLOSING TIME CHANGES --');
+// The feature made visible: the same list, two closing times, two different running orders.
+{
+  const draft = [
+    line('parade', 'absolute', '19:00:00'),
+    line('thirty', 'close_offset', -30),
+  ];
+  check('closing at 22:00 — the parade is first',
+    orderList(draft, '22:00').map(l => l.id), ['parade', 'thirty']);
+  check('closing at 19:00 — the same list now runs the other way round',
+    orderList(draft, '19:00').map(l => l.id), ['thirty', 'parade']);
+  check('and the fixed line has not moved an inch',
+    resolvedMinutes(draft[0], '19:00'), resolvedMinutes(draft[0], '22:00'));
+}
+
+console.log('\n-- A FIXED LINE NEVER DEPENDS ON A CLOSING TIME --');
+// The regression Jeff suspected when announcements stopped firing. It was not the cause, and these
+// keep it from becoming one: dueTimeFor returns on the trigger_type test before the closing guard.
+{
+  const abs = asRow(line('parade', 'absolute', '19:00:00'));
+  check('no closing time: still fires',       dueTimeFor(abs, null), '19:00:00');
+  check('empty closing time: still fires',    dueTimeFor(abs, ''), '19:00:00');
+  check('nonsense closing time: still fires', dueTimeFor(abs, 'not a time'), '19:00:00');
+}
+
+console.log('\n-- A FROM-CLOSING LINE WITH NO CLOSING TIME FIRES NOTHING --');
+// And never falls back to a stale absolute time. A row converted from fixed to from-closing still
+// carries whatever time it had; using it would put audio on air at an hour nobody chose.
+{
   const stale = { trigger_type: 'close_offset', close_offset_min: -30, trigger_time: '09:00:00' };
   check('a converted row still carries its old absolute time', stale.trigger_time, '09:00:00');
-  check('and with no closing time it fires NOTHING, not that time', dueTimeFor(stale, null), null);
-  check('given a closing time it uses the OFFSET, never the stale value', dueTimeFor(stale, '22:00'), '21:30:00');
+  check('with no closing time it fires NOTHING, not that time', dueTimeFor(stale, null), null);
+  check('given one, it uses the OFFSET and never the stale value', dueTimeFor(stale, '22:00'), '21:30:00');
+  check('the editor agrees — no time to show, and it sorts last',
+    resolvedMinutes(line('x', 'close_offset', -30), null), null);
+  const draft = [line('offset', 'close_offset', -30), line('parade', 'absolute', '19:00:00')];
+  check('a line with no resolvable time sorts LAST, never hidden',
+    orderList(draft, null).map(l => l.id), ['parade', 'offset']);
 }
 
-console.log('\n-- MANUAL APPLY REPLACES ONLY FIXED-TIME ROWS --');
+console.log('\n-- THE EDITOR AND THE ENGINE AGREE, ON EVERY MODE --');
+// If these ever diverge the operator reads one evening and the station plays another.
 {
-  const rows = day();
-  const manualWant = [{ announcement_uuid: 'a-parade', trigger_time: '20:00:00' }];   // moved
-  // THE FIX: the board filters `existing` to absolute before diffing.
-  const existing = rows.filter(e => e.date === DATE && e.trigger_type !== 'close_offset');
-  const { remove, create, keep } = diffSchedule(existing, manualWant);
-  check('the offset row is not even considered', existing.map(e => e.uuid), ['abs-1']);
-  check('the moved fixed-time row is replaced', remove.map(e => e.uuid), ['abs-1']);
-  check('and one new fixed-time row is created', create.length, 1);
-  check('nothing is kept, since the time changed', keep.length, 0);
-  check('THE OFFSET ROW SURVIVES — the bug this file exists for',
-    rows.filter(e => e.trigger_type === 'close_offset' && !remove.includes(e)).map(e => e.uuid), ['off-1']);
+  const closing = '22:00';
+  for (const l of [line('a', 'absolute', '19:00:00'), line('b', 'close_offset', -30),
+                   line('c', 'close_offset', 0), line('d', 'close_offset', 25)]) {
+    const engine = dueTimeFor(asRow(l), closing);
+    const editor = resolvedMinutes(l, closing);
+    check(`${l.id}: editor and engine resolve the same time`,
+      minutesToHms(editor), engine);
+  }
+  check('past midnight wraps the same way in both',
+    minutesToHms(resolvedMinutes(line('e', 'close_offset', 25), '23:50')),
+    dueTimeFor({ trigger_type: 'close_offset', close_offset_min: 25 }, '23:50'));
 }
 
-console.log('\n-- and the UNFILTERED diff is what used to destroy it --');
-// Kept as a regression witness: this is the exact call the board made before the fix.
+console.log('\n-- ONE LIST IS THE DAY: APPLY REPLACES ALL OF IT --');
+// No per-type filtering any more. The day's rows ARE the draft, whatever mode each line is in — and
+// an unchanged line keeps its row, and therefore its last_played_at and its 120s guard.
 {
-  const rows = day();
-  const { remove } = diffSchedule(rows.filter(e => e.date === DATE), [{ announcement_uuid: 'a-parade', trigger_time: '20:00:00' }]);
-  check('the old shape removed the offset row too', remove.map(e => e.uuid).sort(), ['abs-1', 'off-1']);
-}
-
-console.log('\n-- BY MINUTES APPLY REPLACES ONLY OFFSET ROWS --');
-{
-  const rows = day();
-  const existing = rows.filter(e => e.date === DATE && e.trigger_type === 'close_offset');
-  check('the fixed-time row is not even considered', existing.map(e => e.uuid), ['off-1']);
-  // Its diff matches on (announcement_uuid, offset) rather than trigger_time.
-  const key = (u, o) => `${u}|${o}`;
-  const want = new Map([[key('a-30min', -15), { announcement_uuid: 'a-30min', offset: -15 }]]);
-  const have = new Map(existing.map(e => [key(e.announcement_uuid, e.close_offset_min ?? 0), e]));
+  const key = (u, m, t, o) => m === 'close_offset' ? `${u}|off|${o}` : `${u}|abs|${t}`;
+  const existing = [
+    { uuid: 'r1', announcement_uuid: 'parade', trigger_type: 'absolute',     trigger_time: '19:00:00', close_offset_min: 0 },
+    { uuid: 'r2', announcement_uuid: '30min',  trigger_type: 'close_offset', trigger_time: null,       close_offset_min: -30 },
+  ];
+  const draft = [line('parade', 'absolute', '19:00:00'), line('30min', 'close_offset', -15)];
+  const have = new Map(existing.map(e => [key(e.announcement_uuid, e.trigger_type, e.trigger_time || '', e.close_offset_min), e]));
+  const want = new Map(draft.map(l => [key(l.announcement_uuid, l.mode, l.trigger_time, l.offset), l]));
   const removed = [...have].filter(([k]) => !want.has(k)).map(([, e]) => e.uuid);
   const created = [...want].filter(([k]) => !have.has(k)).length;
-  check('the changed offset is replaced', removed, ['off-1']);
-  check('and one new offset row is created', created, 1);
-  check('THE FIXED-TIME ROW SURVIVES',
-    rows.filter(e => e.trigger_type !== 'close_offset' && !removed.includes(e.uuid)).map(e => e.uuid), ['abs-1']);
+  const kept    = [...want].filter(([k]) => have.has(k)).length;
+  check('the changed offset row is replaced', removed, ['r2']);
+  check('one new row is created',             created, 1);
+  check('the UNCHANGED fixed line keeps its row, and its 120s guard', kept, 1);
 }
 
-console.log('\n-- AN UNCHANGED LINE KEEPS ITS ROW, AND THEREFORE ITS 120s GUARD --');
-// Delete-and-recreate would clear last_played_at and let a row that already fired tonight fire again.
+console.log('\n-- THE SAME ANNOUNCEMENT TWICE IS VISIBLE, AND CALLED OUT --');
+// The bug this whole redesign removes. Across two tabs it was undetectable; in one list it is two
+// adjacent rows — and the editor says so rather than trusting anyone to notice.
 {
-  const existing = day().filter(e => e.trigger_type !== 'close_offset');
-  const { keep, remove, create } = diffSchedule(existing, [{ announcement_uuid: 'a-parade', trigger_time: '19:00:00' }]);
-  check('kept, not recreated', keep.map(e => e.uuid), ['abs-1']);
-  check('nothing removed', remove.length, 0);
-  check('nothing created', create.length, 0);
+  const draft = [
+    line('30min', 'absolute', '16:00:12'),
+    { id: 'dup', announcement_uuid: '30min', mode: 'close_offset', trigger_time: '', offset: -30 },
+    line('parade', 'absolute', '19:00:00'),
+  ];
+  const seen = new Map();
+  for (const l of draft) seen.set(l.announcement_uuid, (seen.get(l.announcement_uuid) ?? 0) + 1);
+  const dupes = [...seen.entries()].filter(([, n]) => n > 1).map(([u]) => u);
+  check('the duplicate is detected', dupes, ['30min']);
+  check('and it really would fire twice — two different times, both live',
+    [dueTimeFor(asRow(draft[0]), '22:00'), dueTimeFor(asRow(draft[1]), '22:00')],
+    ['16:00:12', '21:30:00']);
+  check('a clean list reports no duplicates',
+    (() => { const m = new Map();
+      for (const l of [line('a', 'absolute', '19:00:00'), line('b', 'close_offset', -30)]) m.set(l.announcement_uuid, (m.get(l.announcement_uuid) ?? 0) + 1);
+      return [...m.values()].filter(n => n > 1).length; })(), 0);
 }
 
-console.log('\n-- THE CALENDAR COUNTS BOTH TYPES --');
-// Any programming marks the date, in BOTH tabs; the split only changes how it is described.
+console.log('\n-- THE CALENDAR COUNTS THE WHOLE DAY --');
 {
-  const rows = day();
-  const onDate = rows.filter(e => e.date === DATE);
-  const nFix = onDate.filter(e => e.trigger_type !== 'close_offset').length;
-  const nOff = onDate.length - nFix;
-  check('the date is marked at all', onDate.length > 0, true);
-  check('one of each is counted separately', [nFix, nOff], [1, 1]);
-  check('and the combined total is what marks the day', nFix + nOff, 2);
-}
-
-console.log('\n-- THE APPLY CONFIRMATION FIRES ONLY WHEN SOMETHING WOULD BE REPLACED --');
-{
-  const rows = day();
-  const replacingManual = [DATE].filter(d => rows.some(e => e.date === d && e.trigger_type !== 'close_offset')).length;
-  const replacingOffset = [DATE].filter(d => rows.some(e => e.date === d && e.trigger_type === 'close_offset')).length;
-  check('Manual warns: the date holds a fixed-time row', replacingManual, 1);
-  check('By minutes warns: the date holds an offset row', replacingOffset, 1);
-  const empty = [];
-  check('an empty date warns for neither',
-    [ [ '2026-12-25' ].filter(d => empty.some(e => e.date === d)).length ], [0]);
+  const onDate = [
+    { trigger_type: 'absolute' }, { trigger_type: 'close_offset' }, { trigger_type: 'close_offset' },
+  ];
+  check('one count, both modes, marks the day', onDate.length, 3);
+  check('an empty day is not marked', [].length > 0, false);
 }
 
 console.log('\n------------------------------');
