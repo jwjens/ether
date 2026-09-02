@@ -39,6 +39,7 @@
       "to": "ha-setup.exe"
     }
   ],
+  "npmRebuild": false,
   "win": {
     "target": [
       { "target": "nsis", "arch": ["x64"] }
