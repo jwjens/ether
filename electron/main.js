@@ -2501,9 +2501,16 @@ function createSplash() {
 
   splashWindow.loadFile(path.join(__dirname, "splash.html"));
   splashWindow.once("ready-to-show", () => {
+    // ready-to-show is a deferred task: if the splash was closed before it fires (fast boot, or the
+    // 15s fallback closing it early) this would centre and show a destroyed window.
+    if (!splashWindow || splashWindow.isDestroyed()) return;
     splashWindow.center();
     splashWindow.show();
   });
+  // Drop our reference the moment the native window is gone, so nothing downstream can reach a
+  // destroyed object through it. isDestroyed() guards elsewhere still stand; this removes the
+  // stale wrapper the module held for the rest of the process lifetime.
+  splashWindow.once("closed", () => { splashWindow = null; });
 }
 
 function createWindow() {
@@ -2742,7 +2749,7 @@ function buildMenu() {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     try { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); }
     catch { /* window is mid-teardown; the message below is still worth attempting */ }
-    mainWindow.webContents.send("menu-action", cmd);
+    sendToMainWindow("menu-action", cmd);
   };
 
   // ── Where a menu click lands depends on WHERE IT WAS CLICKED (Jeff, 2026-08-17) ─────────────────
@@ -3117,7 +3124,7 @@ app.whenReady().then(() => {
     installGpioEngine(ipcMain, getDb, {   // getDb (function) → resolves the live handle after a reopen
       onGpiEvent: (actionType, actionValue, info) => {
         console.log(`[GPIO] action: ${actionType} = ${actionValue}`, info);
-        if (mainWindow) mainWindow.webContents.send("gpio:event", { actionType, actionValue, ...info });
+        sendToMainWindow("gpio:event", { actionType, actionValue, ...info });
       },
     });
   } catch (e) {
@@ -3401,7 +3408,11 @@ app.whenReady().then(() => {
       // Step 2 — close splash
       if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
 
-      // Step 3 — fade main window in: start at opacity 0, ramp to 1 over 500ms
+      // Step 3 — fade main window in: start at opacity 0, ramp to 1 over 500ms.
+      // Every touch of mainWindow here is guarded. This runs from a setTimeout behind an
+      // executeJavaScript promise, so the window can be gone by the time it fires — and a use-
+      // after-destroy here is a Chromium CHECK abort (STATUS_BREAKPOINT), not a catchable throw.
+      if (!mainWindow || mainWindow.isDestroyed()) return;
       mainWindow.setOpacity(0);
       mainWindow.show();
 
@@ -3410,8 +3421,11 @@ app.whenReady().then(() => {
       const STEP_AMT = 1 / STEPS;
 
       const fadeIn = setInterval(() => {
+        // Stop the timer when the window goes away. Previously the interval kept ticking against a
+        // destroyed window and then called focus() on it unguarded.
+        if (!mainWindow || mainWindow.isDestroyed()) { clearInterval(fadeIn); return; }
         opacity = Math.min(1, opacity + STEP_AMT);
-        if (!mainWindow.isDestroyed()) mainWindow.setOpacity(opacity);
+        mainWindow.setOpacity(opacity);
         if (opacity >= 1) {
           clearInterval(fadeIn);
           mainWindow.focus();        // Step 4 — focus; login appears inside the app
@@ -5911,24 +5925,19 @@ ipcMain.handle("open_desk_window", async () => {
 // ── Event relay: ether.emit() in renderer → broadcast to all windows ──
 // Relay now-playing-request to main window so it responds with current state
 ipcMain.on("now-playing-request", (event) => {
-  const sender = event.sender;
-  BrowserWindow.getAllWindows().forEach(w => {
-    if (w.webContents.id !== sender.id) {
-      w.webContents.send("now-playing-request", {});
-    }
-  });
+  sendToAllWindowsExcept(event.sender.id, "now-playing-request", {});
 });
 
 ipcMain.on("now-playing-update", (_, payload) => {
-  BrowserWindow.getAllWindows().forEach(w => w.webContents.send("now-playing-update", payload));
+  sendToAllWindows("now-playing-update", payload);
 });
 ipcMain.handle("set_now_playing", (_, args) => {
-  BrowserWindow.getAllWindows().forEach(w => w.webContents.send("now-playing-update", args));
+  sendToAllWindows("now-playing-update", args);
   return true;
 });
 
 ipcMain.on("desk-send-to-queue", (_, payload) => {
-  BrowserWindow.getAllWindows().forEach(w => w.webContents.send("desk-send-to-queue", payload));
+  sendToAllWindows("desk-send-to-queue", payload);
 });
 
 // ── Relaunch ──────────────────────────────────────────────────
@@ -6109,7 +6118,7 @@ function openPopoutWindow(panel) {
     win.on("close", (e) => {
       if (win._forceClose || !win._studioDirty) return;
       e.preventDefault();
-      try { win.webContents.send("studio:confirm-close"); } catch { /* window gone */ }
+      try { if (!win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) win.webContents.send("studio:confirm-close"); } catch { /* window gone */ }
     });
   }
 
@@ -6247,7 +6256,14 @@ ipcMain.on("studio:force-close", (evt) => {
 ipcMain.handle("studio:push-track", (_evt, track) => {
   const win = openPopoutWindow("studiopro");
   if (!win) return;
-  const deliver = () => { try { win.webContents.send("studio:load-track", track); } catch { /* window gone */ } };
+  // did-finish-load can fire after the window has begun teardown; isDestroyed() is the real guard
+  // (a Chromium CHECK on a dangling pointer aborts the process — no JS catch can intercept it).
+  const deliver = () => {
+    try {
+      if (win.isDestroyed() || !win.webContents || win.webContents.isDestroyed()) return;
+      win.webContents.send("studio:load-track", track);
+    } catch { /* window gone */ }
+  };
   if (win.webContents.isLoading()) win.webContents.once("did-finish-load", deliver);
   else deliver();
 });
@@ -6291,11 +6307,7 @@ ipcMain.handle("window:guesteditor", async () => {
 // Renderer: ether.emit("ether:broadcast", { channel, data })
 // All other windows receive: ether.on(channel, cb)
 ipcMain.on("ether:broadcast", (event, { channel, data }) => {
-  BrowserWindow.getAllWindows().forEach(win => {
-    if (win.webContents.id !== event.sender.id) {
-      win.webContents.send(channel, data);
-    }
-  });
+  sendToAllWindowsExcept(event.sender.id, channel, data);
 });
 
 ipcMain.handle("open_nowplaying_window", async () => {
@@ -6375,7 +6387,7 @@ ipcMain.handle("updater:check", async () => {
 ipcMain.handle("updater:download", async () => {
   if (!autoUpdater) return;
   autoUpdater.on("download-progress", (progress) => {
-    BrowserWindow.getAllWindows().forEach(w => w.webContents.send("updater:progress", progress));
+    sendToAllWindows("updater:progress", progress);
   });
   await autoUpdater.downloadUpdate();
 });
@@ -6801,7 +6813,7 @@ ipcMain.handle("studio:rtmp:start", (_, { url, key }) => {
       _rtmpStreamStatus.errorMsg    = e.message;
       _emitDestStatus('rtmp:video', _rtmpStreamStatus);
       _emitGlobal();
-      mainWindow?.webContents.send("studio:rtmp:stopped", { error: e.message });
+      sendToMainWindow("studio:rtmp:stopped", { error: e.message });
     });
     _rtmpProcess.on("exit", (code) => {
       console.log("[STUDIO] ffmpeg exit:", code);
@@ -6811,7 +6823,7 @@ ipcMain.handle("studio:rtmp:start", (_, { url, key }) => {
       _rtmpStreamStatus.bitrate     = null;
       _emitDestStatus('rtmp:video', _rtmpStreamStatus);
       _emitGlobal();
-      mainWindow?.webContents.send("studio:rtmp:stopped", { code });
+      sendToMainWindow("studio:rtmp:stopped", { code });
     });
     return { ok: true };
   } catch (e) {
@@ -6899,6 +6911,31 @@ function sendToAllWindows(channel, payload) {
     } catch (e) {
       // Window or render frame was disposed mid-send — skip silently
     }
+  });
+}
+
+// Guarded single-window send. Same contract as sendToAllWindows: a window that is closing is
+// still returned by BrowserWindow.getAllWindows() and still referenced by mainWindow, and touching
+// .webContents on one that has begun teardown is a use-after-destroy. A JS try/catch does NOT save
+// us there — a dangling raw_ptr trips a Chromium CHECK, which aborts the process with
+// STATUS_BREAKPOINT (0x80000003) before any JS handler runs. The isDestroyed() checks are the fix;
+// the catch only covers the narrower "Object has been destroyed" JS throw.
+function sendToMainWindow(channel, payload) {
+  try {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send(channel, payload);
+    }
+  } catch { /* main window disposed mid-send */ }
+}
+
+// Guarded broadcast that skips one sender (used by the now-playing relay).
+function sendToAllWindowsExcept(senderId, channel, payload) {
+  BrowserWindow.getAllWindows().forEach(w => {
+    try {
+      if (w.isDestroyed() || !w.webContents || w.webContents.isDestroyed()) return;
+      if (w.webContents.id === senderId) return;
+      w.webContents.send(channel, payload);
+    } catch { /* window disposed mid-send */ }
   });
 }
 
@@ -8263,7 +8300,7 @@ function _hourRanges(hourSet) {
 // it and yielding between hours is the surgical fix: identical picks, live event loop.
 let _genCancel = false;
 function _genEmit(payload) {
-  try { BrowserWindow.getAllWindows().forEach(w => { try { w.webContents.send("schedule:generate-progress", payload); } catch {} }); } catch {}
+  try { sendToAllWindows("schedule:generate-progress", payload); } catch {}
 }
 // Persist the hour-slice distribution to the honest ledger.
 //
@@ -9625,7 +9662,7 @@ function _emitGlobal() {
     if (st.statusState === 'live') liveCount++;
   }
   if (_rtmpStreamStatus.statusState === 'live') liveCount++;
-  mainWindow.webContents.send('stream:status:global', { anyLive: liveCount > 0, liveCount });
+  sendToMainWindow('stream:status:global', { anyLive: liveCount > 0, liveCount });
   _persistOnAir(liveCount > 0);
   sseAirstate(liveCount > 0, liveCount);
 }
