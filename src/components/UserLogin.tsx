@@ -58,6 +58,18 @@ export default function UserLogin({ onLogin }: Props) {
         setStationId(sid);
         // Install-level: show ALL profiles, not just the active station's (see note above).
         const rows = await query<AppUser>("SELECT * FROM users ORDER BY id");
+        // TEST-ONLY auto-login (double-gated in main: env var AND profile marker; never true on a
+        // real launch). Deliberately routed through the SAME onLogin callback a human click takes,
+        // so "AUTH COMPLETE — account signed in + PIN accepted" is still emitted exactly once, from
+        // the same place. An automated repro must measure the same line a human run does.
+        if (rows.length > 0) {
+          // Delayed, not instant: the picker still renders and the login lands after the configured
+          // pause, so an automated run reaches AUTH COMPLETE at roughly the same offset a human run
+          // does. Instant would remove the very timing a race depends on.
+          let cfg: any = null;
+          try { cfg = await (window as any).ether?.users?.testAutoLogin?.(); } catch {}
+          if (cfg?.armed) { setUsers(rows); setTimeout(() => onLogin(rows[0]), cfg.delayMs ?? 30000); return; }
+        }
         if (rows.length > 0) setUsers(rows);
         else setSetupMode(true);
       } catch {} finally { setLoading(false); }

@@ -965,6 +965,22 @@ export default function App() {
   // Experience mode — controls deck visibility
   const [shiftStarted, setShiftStarted] = useState(false);
 
+  // TEST-ONLY: skip the shift-start screen as well, so an automated repro reaches the main UI with
+  // no human at the keyboard. Same double-gated flag as the user-login bypass (ETHER_TEST_AUTOLOGIN
+  // AND a .ether-test-autologin marker in the active profile, both enforced in main). On a normal
+  // launch testAutoLogin() returns false and this effect does nothing.
+  useEffect(() => {
+    if (!currentUser || shiftStarted) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const cfg: any = await (window as any).ether?.users?.testAutoLogin?.();
+        if (!cancelled && cfg?.armed) setShiftStarted(true);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [currentUser, shiftStarted]);
+
   // Visible decks = whatever the user enabled in Configure Decks. No
   // separate "Experience Mode" — the deck configuration IS the mode.
   // 1 music deck enabled → solo. 2 → standard. 3 → full radio. Etc.

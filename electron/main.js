@@ -5310,6 +5310,33 @@ ipcMain.handle("system:getAppDataDir", () => P.profileDir(P.activeKey()));
 ipcMain.handle("system:getPlatform", () => process.platform);
 ipcMain.handle("system:getVersion", () => app.getVersion());
 
+// ── TEST-ONLY: auto-login bypass ────────────────────────────────────────────────────────────────
+// Skips the USER LOGIN (profile + PIN) and the shift-start screen so an automated repro can launch
+// the app N times unattended. It does NOT touch account sign-in — that gate is untouched and still
+// absolute (CLAUDE.md: the account is the root of everything).
+//
+// DOUBLE-GATED, deliberately, on the SMOKE_ISOLATED pattern: BOTH an env var AND a marker file in
+// the active profile. A stray ETHER_TEST_AUTOLOGIN on a real box does nothing without the file; a
+// leftover file does nothing without the env var. Neither is ever written by the app, the installer,
+// or CI. It is also LOUD — it announces itself in the startup log on every armed launch, so a build
+// that somehow shipped with it armed is obvious in the first log anyone reads.
+function _testAutoLoginArmed() {
+  try {
+    if (process.env.ETHER_TEST_AUTOLOGIN !== "1") return false;
+    return fs.existsSync(_profileData(".ether-test-autologin"));
+  } catch { return false; }
+}
+ipcMain.handle("test:auto-login", () => {
+  if (!_testAutoLoginArmed()) return { armed: false, delayMs: 0 };
+  // THE DELAY MATTERS. Real crash runs reached AUTH COMPLETE at +32s and +40s because a human was
+  // reading the screen. Logging in instantly would change the very timing a race depends on, so the
+  // bypass REPRODUCES the human pause rather than removing it. Default 30s; override to sweep it.
+  const raw = Number(process.env.ETHER_TEST_AUTOLOGIN_DELAY_MS);
+  const delayMs = Number.isFinite(raw) && raw >= 0 ? raw : 30000;
+  try { logStartup("[TEST] AUTO-LOGIN ARMED — user login + shift start bypassed after " + delayMs + "ms (ETHER_TEST_AUTOLOGIN=1 AND .ether-test-autologin present). THIS IS NOT A NORMAL LAUNCH."); } catch {}
+  return { armed: true, delayMs };
+});
+
 // ── User / PIN security ──────────────────────────────────────
 const crypto = require("crypto");
 ipcMain.handle("user:hash-pin", (_evt, pin) => {

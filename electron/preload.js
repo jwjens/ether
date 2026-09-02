@@ -287,6 +287,8 @@ contextBridge.exposeInMainWorld("ether", {
   users: {
     hashPin:   (pin) => ipcRenderer.invoke("user:hash-pin", pin),
     verifyPin: (pin, stored) => ipcRenderer.invoke("user:verify-pin", pin, stored),
+    // TEST-ONLY, double-gated in main (env var AND profile marker). Never true on a real launch.
+    testAutoLogin: () => ipcRenderer.invoke("test:auto-login"),
   },
   // ── AI Voice Studio (TTS generation + segment library) ─────
   ai: {
