@@ -45,6 +45,10 @@
     ],
     "icon": "build-resources/icon.ico",
     "signExts": [".node", ".dll"],
+    "files": [
+      "!node_modules/onnxruntime-node/bin/napi-v3/linux/**",
+      "!node_modules/onnxruntime-node/bin/napi-v3/darwin/**"
+    ],
     "extraFiles": [
       {
         "from": "build-resources/Reset Ether Data.bat",
