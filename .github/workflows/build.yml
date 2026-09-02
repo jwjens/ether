@@ -33,8 +33,30 @@ jobs:
           node-version: 22
           cache: "npm"
 
+      # WHY NOT A PLAIN `npm install`: better-sqlite3 13 ships N-API prebuilds for all eight
+      # platforms, but it ALSO ships binding.gyp with no install script — so npm falls back to its
+      # implicit default and runs `node-gyp rebuild`, compiling a binary we already have. On
+      # windows-latest that does not merely waste time, it fails the build outright:
+      #
+      #   gyp ERR! find VS unknown version "undefined" found at
+      #                    "C:\Program Files\Microsoft Visual Studio\18\Enterprise"
+      #   gyp ERR! find VS could not use PowerShell to find Visual Studio 2017 or newer
+      #   gyp ERR! find VS Failure details: RangeError [ERR_CHILD_PROCESS_STDIO_MAXBUFFER]
+      #
+      # Visual Studio IS on the runner — node-gyp 11.5 simply cannot parse VS 18, and its
+      # PowerShell probe overflows its own stdio buffer. Chasing that means installing a second
+      # toolchain to compile something we already ship. better-sqlite3 12 never hit it because
+      # prebuild-install DOWNLOADED the binary; v13 dropped prebuild-install, so npm compiles.
+      #
+      # So: install without scripts, then run only the scripts that genuinely fetch a binary.
+      # better-sqlite3 is deliberately absent from that list — prebuilds/ is what ships and what
+      # the app loads (lib/binding.js falls back to prebuilds/<target>.node when build/Release is
+      # missing, which is exactly the state a working local build runs in).
       - name: Install Node dependencies
-        run: npm install
+        shell: bash
+        run: |
+          npm install --ignore-scripts
+          npm rebuild sharp esbuild ffmpeg-static protobufjs electron-winstaller
 
       # vite/esbuild STRIP types and never typecheck, so this is the only gate that catches a
       # prop-type or "not defined" crash before it ships. It ran on zero accepted errors as of
@@ -151,11 +173,35 @@ jobs:
           cp native/target/release/libether_audio.so native/ether-audio.node 2>/dev/null || true
         shell: bash
 
+      # WHY NOT A PLAIN `npm install`: better-sqlite3 13 ships N-API prebuilds for all eight
+      # platforms, but it ALSO ships binding.gyp with no install script — so npm falls back to its
+      # implicit default and runs `node-gyp rebuild`, compiling a binary we already have. On
+      # windows-latest that does not merely waste time, it fails the build outright:
+      #
+      #   gyp ERR! find VS unknown version "undefined" found at
+      #                    "C:\Program Files\Microsoft Visual Studio\18\Enterprise"
+      #   gyp ERR! find VS could not use PowerShell to find Visual Studio 2017 or newer
+      #   gyp ERR! find VS Failure details: RangeError [ERR_CHILD_PROCESS_STDIO_MAXBUFFER]
+      #
+      # Visual Studio IS on the runner — node-gyp 11.5 simply cannot parse VS 18, and its
+      # PowerShell probe overflows its own stdio buffer. Chasing that means installing a second
+      # toolchain to compile something we already ship. better-sqlite3 12 never hit it because
+      # prebuild-install DOWNLOADED the binary; v13 dropped prebuild-install, so npm compiles.
+      #
+      # So: install without scripts, then run only the scripts that genuinely fetch a binary.
+      # better-sqlite3 is deliberately absent from that list — prebuilds/ is what ships and what
+      # the app loads (lib/binding.js falls back to prebuilds/<target>.node when build/Release is
+      # missing, which is exactly the state a working local build runs in).
       - name: Install Node dependencies
-        run: npm install
+        shell: bash
+        run: |
+          npm install --ignore-scripts
+          npm rebuild sharp esbuild ffmpeg-static protobufjs electron-winstaller
 
-      - name: Rebuild native Node modules for Electron
-        run: npx electron-rebuild -f -w better-sqlite3
+      # NO electron-rebuild step. better-sqlite3 13 is N-API, so one binary serves both Node and
+      # Electron and there is nothing to rebuild per Electron version. Keeping `electron-rebuild -f`
+      # would FORCE a source build of a module that needs none — reintroducing the node-gyp/VS
+      # failure above in a second place. (This is also why the next Electron bump is free.)
 
       - name: Build Vite
         run: npm run build
