@@ -1,46 +1,61 @@
-// AuxMonitorSlots — three fixed AUX slots in the Station Monitors area, each able to monitor one of
-// the aux decks (D/E/F). Jeff's design, 2026-08-18.
+// AuxMonitorSlots — the local listening path for every aux deck. Jeff's design, 2026-08-18;
+// rebuilt 2026-09-02 from three fixed slots to one row per deck.
 //
-// WHAT A SLOT IS — THE LISTENING PATH. Decks D/E/F are excluded from the station's local speaker
-// output entirely; a slot is the ONLY way they are heard in the room, at that slot's own level. Pick
-// "(none)" and that deck is silent here, whatever the board is doing. Jeff's ruling, 2026-08-18:
+// WHAT CHANGED AND WHY. It used to be THREE slots, each a dropdown that picked one of D/E/F. Decks
+// are dynamic — added and removed at any time, and stations already run up to nine — so every deck
+// past F was unmonitorable: there was no slot to put it in and no dropdown entry to pick it. The
+// slot was an artefact of a three-deck world, not a thing an operator wants. So there are no slots
+// now: every aux deck gets a row, rows appear when a deck is added and vanish when it is removed,
+// and the row IS the monitor.
 //
-//     SLOT = ROOM.   BOARD = AIR.   Two gates, two destinations.
+// THE INVARIANT, UNCHANGED AND RE-AUDITED AT THE MIXER (native/src/audio.rs, the per-deck mix):
 //
-// Air is untouched by this panel: channel ON + fader up puts a deck on the programme bus and the
-// stream, exactly as before (docs/jukebox-board-gate-2026-08-18.md). Cutting a channel silences it on
-// air and does NOT silence it here — that is a true PFL, and it is what makes the two gates
-// independent rather than one gate wearing two labels.
+//     mix_l[f] += lv;                      // AIR — every slot, unchanged. `lv` is fader x cut.
+//     if !is_aux { core_l[f] += lv; ... }   // ROOM base — aux decks excluded
+//     let mon = if is_aux { aux_gain[i] } else { 0.0 };   // the MONITOR level: ROOM only
 //
-// WHY D/E/F ONLY: station automation enumerates ["A","B","C"] and never touches D/E/F
-// (audiod/engine.js), so those are the aux decks — the jukebox, a guest feed, anything patched in.
-// A/B/C already have their own strips on the board, and their local monitoring is unchanged.
+// `mon` never enters mix_* . The monitor level cannot put a deck on air and cannot take it off:
+// air is the board's channel switch and fader, full stop. What this panel decides is whether, and
+// how loudly, an aux deck is heard IN THE ROOM.
+//
+//     ROW = ROOM.   BOARD = AIR.   Two gates, two destinations.
+//
+// The engine already stores monitor gain PER DECK INDEX (bus.aux_monitor_gain[idx], audio.rs:1726),
+// so one row per deck is what the engine was always shaped for — this is the UI catching up.
+//
+// LEVELS PERSIST PER DECK ID, never per row position. The old format was a positional array under
+// aux_monitor_levels, so removing a deck shifted every level below it onto the wrong deck. It is a
+// map now, keyed by slot id, and the old array is migrated through the old slots array (which said
+// which deck each position held) so nobody's levels move on upgrade.
 //
 // ── WHERE THE NUMBERS AND THE AUDIO COME FROM (all real, none synthesised) ───────────────────────
 //   • the ROOM feed  ← native aux monitor bus: the mixer builds the room from the non-aux slots plus
-//                      Σ(aux deck x its slot level), taken PRE-CUT and PRE-FADER
+//                      Σ(aux deck x its monitor level), POST-FADER and POST-CUT
 //                      (native/src/audio.rs; design: docs/aux-monitor-bus-design-2026-08-18.md)
 //   • MONITOR level  → audio_set_aux_monitor(stationId, deck, gain); 0 = silent in the room
 //   • VU             ← decks[].peak on the existing `audio:levels` broadcast
 //   • position       ← decks[].frames_played / 44100 (the sample clock, not a wall-clock guess)
 //   • title/status   ← ether.audio.getState(stationId), polled
+//   • which decks    ← deck_configs for the active station, polled so add/remove needs no restart
 //
-// STILL NOT BUILT, deliberately: a per-slot OUTPUT DEVICE. Rust runs one output stream per station,
-// so a slot cannot send its deck to a different device than the station's own. The room is one room.
+// STILL NOT BUILT, deliberately: a per-deck OUTPUT DEVICE. Rust runs one output stream per station,
+// so a deck cannot be sent to a different device than the station's own. The room is one room, and
+// the single OUTPUT selector at the top is the whole aux path's device.
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { matchesStation } from "../lib/levelsScope";
+import { deckLetter, sourceKindMeta } from "./DeckConfigurator";
 
-const AUX_DECKS = ["D", "E", "F"] as const;
-const SLOT_COUNT = 3;
-const KEY = "aux_monitor_slots";
+const MAIN_DECKS = ["A", "B", "C"];        // the main faders — they have their own strips and monitoring
+const KEY = "aux_monitor_slots";            // legacy positional slot->deck map; read once, to migrate
 const LVL_KEY = "aux_monitor_levels";
 const DEV_KEY = "aux_monitor_device";
 const DEFAULT_LEVEL = 0.8;
 const PROGRAM_RATE = 44100;   // DeckTel.frames_played is in PROGRAM_RATE frames (native/src/audio.rs)
 
 interface DeckTel { id: string; source_present: boolean; active: boolean; paused: boolean; volume: number; peak?: number; frames_played?: number; }
+interface AuxDeck { slot: string; letter: string; source: string; }
 
 const fmtPos = (frames: number) => {
   const s = Math.max(0, Math.floor(frames / PROGRAM_RATE));
@@ -55,76 +70,112 @@ const selectStyle: React.CSSProperties = {
 
 export default function AuxMonitorSlots() {
   const { stationId, stationUuid } = useActiveStation();
-  const [slots, setSlots] = useState<string[]>(["", "", ""]);
-  const [levels, setLevels] = useState<number[]>([DEFAULT_LEVEL, DEFAULT_LEVEL, DEFAULT_LEVEL]);
+  const [auxDecks, setAuxDecks] = useState<AuxDeck[]>([]);
+  const [levels, setLevels] = useState<Record<string, number>>({});
   const [devices, setDevices] = useState<string[]>([]);
   const [device, setDevice] = useState<string>("");   // "" = none = the aux bus is silent
   const [tel, setTel] = useState<Record<string, DeckTel>>({});
   const [info, setInfo] = useState<Record<string, any>>({});
   const uuidRef = useRef(stationUuid);
   uuidRef.current = stationUuid;
+  const levelsRef = useRef(levels);
+  levelsRef.current = levels;
+  const appliedRef = useRef<Set<string>>(new Set());   // decks whose gain we have asserted this mount
 
-  // ── Selections: load, and persist per station ──────────────────────────────────────────────────
-  useEffect(() => {
-    if (stationId == null) return;
-    let stop = false;
-    (async () => {
-      try {
-        const r: any = await (window as any).ether.stationConfigKv.list(stationId);
-        const raw = ((r && r.rows) || []).find((x: any) => x.key === KEY)?.value;
-        const parsed = raw ? JSON.parse(raw) : [];
-        const next = Array.from({ length: SLOT_COUNT }, (_, i) =>
-          (AUX_DECKS as readonly string[]).includes(parsed?.[i]) ? parsed[i] : "");
-        const rawLvl = ((r && r.rows) || []).find((x: any) => x.key === LVL_KEY)?.value;
-        let lv: number[] = [];
-        try { const pl = rawLvl ? JSON.parse(rawLvl) : []; lv = Array.from({ length: SLOT_COUNT }, (_, i) => {
-          const v = parseFloat(pl?.[i]); return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : DEFAULT_LEVEL; }); }
-        catch { lv = [DEFAULT_LEVEL, DEFAULT_LEVEL, DEFAULT_LEVEL]; }
-        if (stop) return;
-        setSlots(next); setLevels(lv);
-        // ASSERT DOWNWARD. The engine boots with every aux gain at 0 and the panel states the
-        // operator's saved position rather than assuming it — the same rule the channel cut follows.
-        // Every aux deck is addressed, so a deck NOT in a slot is explicitly silenced in the room.
-        for (const d of AUX_DECKS) {
-          const idx = next.indexOf(d);
-          void applyGain(d, idx >= 0 ? lv[idx] : 0);
-        }
-        // The OUTPUT DEVICE, asserted downward the same way. The engine opens no aux stream until it
-        // is told which device, so an empty saved value means silence — deliberately.
-        const dev = String(((r && r.rows) || []).find((x: any) => x.key === DEV_KEY)?.value ?? "");
-        setDevice(dev);
-        try { await (window as any).ether.audio.setAuxDevice(stationId, dev); } catch { /* engine not up */ }
-        try {
-          const list = await (window as any).ether.audio.listOutputDevices();
-          if (!stop && Array.isArray(list)) setDevices(list);
-        } catch { /* device list unavailable */ }
-      } catch { if (!stop) setSlots(["", "", ""]); }
-    })();
-    return () => { stop = true; };
-  }, [stationId]);
-
-  /** The ROOM level for one aux deck. 0 = not selected = silent on the local speakers. Never air. */
+  /** The ROOM level for one aux deck. 0 = silent on the local speakers. Never air. */
   const applyGain = useCallback(async (deck: string, gain: number) => {
     if (stationId == null) return;
     try { await (window as any).ether.audio.setAuxMonitor(stationId, deck, gain); }
     catch { /* engine not up yet — the level is persisted and asserted on the next mount */ }
   }, [stationId]);
 
-  const choose = useCallback((idx: number, deck: string) => {
-    setSlots(prev => {
-      const next = [...prev];
-      const was = next[idx];
-      next[idx] = deck;
-      // Silence the deck this slot was holding, unless another slot still holds it.
-      if (was && was !== deck && !next.includes(was)) void applyGain(was, 0);
-      if (deck) void applyGain(deck, levels[idx]);
-      if (stationId != null) {
-        try { (window as any).ether.stationConfigKv.upsertByKey(stationId, KEY, JSON.stringify(next)); }
-        catch { /* non-fatal — the choice still applies for this session */ }
-      }
-      return next;
-    });
-  }, [stationId, levels, applyGain]);
+  // ── WHICH DECKS. Derived live from deck_configs: every enabled deck that is not a main fader.
+  // Polled rather than event-driven so adding or removing a deck needs no restart and no new IPC
+  // channel; this is a monitor panel, not the playout path, so a 2s beat is the right cost.
+  useEffect(() => {
+    if (stationId == null) { setAuxDecks([]); return; }
+    let stop = false;
+    const pull = async () => {
+      try {
+        const r: any = await (window as any).ether.deckConfigs.list(stationId);
+        const rows: any[] = (r && r.rows) || [];
+        const next: AuxDeck[] = rows
+          .filter(c => c && c.slot && c.enabled !== 0 && c.enabled !== false && !MAIN_DECKS.includes(String(c.slot)))
+          .map(c => {
+            const slot = String(c.slot);
+            // The name the operator gave it wins; otherwise what is patched in; otherwise the type.
+            const kindLabel = c.kind ? (sourceKindMeta(c.kind)?.label || String(c.kind)) : "";
+            return { slot, letter: deckLetter(slot), source: String(c.label || kindLabel || c.type || "unpatched") };
+          })
+          .sort((a, b) => a.letter.localeCompare(b.letter));
+        if (!stop) setAuxDecks(next);
+      } catch { /* deck configs unreadable — the panel shows its empty state */ }
+    };
+    void pull();
+    const t = setInterval(pull, 2000);
+    return () => { stop = true; clearInterval(t); };
+  }, [stationId]);
+
+  // ── Levels + output device: load, migrate, and assert downward ───────────────────────────────
+  useEffect(() => {
+    if (stationId == null) return;
+    let stop = false;
+    (async () => {
+      try {
+        const r: any = await (window as any).ether.stationConfigKv.list(stationId);
+        const rows = (r && r.rows) || [];
+        const rawLvl = rows.find((x: any) => x.key === LVL_KEY)?.value;
+        let map: Record<string, number> = {};
+        try {
+          const parsed = rawLvl ? JSON.parse(rawLvl) : null;
+          if (parsed && !Array.isArray(parsed) && typeof parsed === "object") {
+            // Current format — a map keyed by deck slot id.
+            for (const [k, v] of Object.entries(parsed)) {
+              const n = parseFloat(String(v));
+              if (Number.isFinite(n)) map[k] = Math.max(0, Math.min(1, n));
+            }
+          } else if (Array.isArray(parsed)) {
+            // LEGACY positional array. The old slots array says which deck held each position, so the
+            // migration is exact: nobody's level moves. A deck that was in NO slot was silent in the
+            // room, and stays silent (0) rather than being switched on by an upgrade.
+            const rawSlots = rows.find((x: any) => x.key === KEY)?.value;
+            const oldSlots: string[] = rawSlots ? (JSON.parse(rawSlots) || []) : [];
+            oldSlots.forEach((deck: string, i: number) => {
+              if (!deck) return;
+              const n = parseFloat(String(parsed[i]));
+              map[deck] = Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : DEFAULT_LEVEL;
+            });
+          }
+        } catch { map = {}; }
+        if (stop) return;
+        setLevels(map);
+
+        const dev = String(rows.find((x: any) => x.key === DEV_KEY)?.value ?? "");
+        setDevice(dev);
+        try { await (window as any).ether.audio.setAuxDevice(stationId, dev); } catch { /* engine not up */ }
+        try {
+          const list = await (window as any).ether.audio.listOutputDevices();
+          if (!stop && Array.isArray(list)) setDevices(list);
+        } catch { /* device list unavailable */ }
+      } catch { /* config unreadable — defaults stand */ }
+    })();
+    return () => { stop = true; };
+  }, [stationId]);
+
+  // ASSERT DOWNWARD, per deck, once each. The engine boots with every aux gain at 0, so the panel
+  // states the operator's saved position rather than assuming the engine already has it. A deck with
+  // no saved level is asserted at 0 — silence is never something an upgrade decides for you; the
+  // row's slider is right there.
+  useEffect(() => {
+    if (stationId == null) return;
+    for (const d of auxDecks) {
+      if (appliedRef.current.has(d.slot)) continue;
+      appliedRef.current.add(d.slot);
+      void applyGain(d.slot, levelsRef.current[d.slot] ?? 0);
+    }
+  }, [auxDecks, stationId, applyGain]);
+  // A station switch re-asserts everything.
+  useEffect(() => { appliedRef.current = new Set(); }, [stationId]);
 
   const chooseDevice = useCallback((dev: string) => {
     setDevice(dev);
@@ -135,40 +186,43 @@ export default function AuxMonitorSlots() {
     try { (window as any).ether.stationConfigKv.upsertByKey(stationId, DEV_KEY, dev); } catch { /* non-fatal */ }
   }, [stationId]);
 
-  const setLevel = useCallback((idx: number, v: number) => {
+  const setLevel = useCallback((slot: string, v: number) => {
     setLevels(prev => {
-      const next = [...prev];
-      next[idx] = v;
-      const deck = slots[idx];
-      if (deck) void applyGain(deck, v);
+      const next = { ...prev, [slot]: v };
+      void applyGain(slot, v);
       if (stationId != null) {
+        // Keyed by deck id, so adding, removing or reordering decks never moves another deck's level.
         try { (window as any).ether.stationConfigKv.upsertByKey(stationId, LVL_KEY, JSON.stringify(next)); }
         catch { /* non-fatal */ }
       }
       return next;
     });
-  }, [stationId, slots, applyGain]);
+  }, [stationId, applyGain]);
 
   // ── VU + position: the existing levels broadcast, station-scoped like every other strip ─────────
+  const auxSlots = useMemo(() => auxDecks.map(d => d.slot), [auxDecks]);
+  const auxSlotsRef = useRef(auxSlots);
+  auxSlotsRef.current = auxSlots;
   useEffect(() => {
     const ether = (window as any).ether;
     if (!ether?.audio?.onLevels) return;
     const h = ether.audio.onLevels((lvl: any) => {
       // The WHOLE frame, not lvl.stationUuid — matchesStation reads `.stationUuid` off its first
       // argument, so passing the string makes it undefined, which returns true for every frame and
-      // silently disables station scoping (this strip would meter another station's audio).
+      // silently disables station scoping (this panel would meter another station's audio).
       if (!matchesStation(lvl, uuidRef.current)) return;
       const decks: DeckTel[] = Array.isArray(lvl?.decks) ? lvl.decks : [];
       if (!decks.length) return;
+      const want = auxSlotsRef.current;
       const next: Record<string, DeckTel> = {};
-      for (const d of decks) if ((AUX_DECKS as readonly string[]).includes(d.id)) next[d.id] = d;
+      for (const d of decks) if (want.includes(d.id)) next[d.id] = d;
       setTel(next);
     });
     return () => ether.audio.offLevels?.(h);
   }, []);
 
   // ── What is loaded on each aux deck. Polled: this is a monitor panel, not the playout path. ─────
-  const watched = slots.filter(Boolean).join(",");
+  const watched = auxSlots.join(",");
   useEffect(() => {
     if (stationId == null || !watched) { setInfo({}); return; }
     let stop = false;
@@ -179,14 +233,12 @@ export default function AuxMonitorSlots() {
         const next: Record<string, any> = {};
         for (const d of watched.split(",")) next[d] = st[`deck${d}`] || null;
         setInfo(next);
-      } catch { /* engine not up — the slot shows its idle state */ }
+      } catch { /* engine not up — the row shows its idle state */ }
     };
     void pull();
     const t = setInterval(pull, 1000);
     return () => { stop = true; clearInterval(t); };
   }, [stationId, watched]);
-
-  const taken = slots.filter(Boolean);
 
   return (
     <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border-primary)" }}>
@@ -194,12 +246,15 @@ export default function AuxMonitorSlots() {
         <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", color: "var(--text-secondary)", textTransform: "uppercase" }}>
           Aux Monitors
         </span>
-        <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>decks D–F</span>
+        <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>
+          {auxDecks.length ? `${auxDecks.length} deck${auxDecks.length === 1 ? "" : "s"}` : "no aux decks"}
+        </span>
       </div>
 
-      {/* OUTPUT — where the aux bus is heard. Same grammar as each station monitor's OUTPUT picker.
-          Nothing selected = the engine opens no aux stream at all = silence. A device is never
-          chosen for the operator; on a broadcast machine the "default" could be anything. */}
+      {/* OUTPUT — where the aux bus is heard, for the WHOLE aux path. Same grammar as each station
+          monitor's OUTPUT picker. Nothing selected = the engine opens no aux stream at all =
+          silence. A device is never chosen for the operator; on a broadcast machine the "default"
+          could be anything. */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
         <span style={{ fontSize: 9, color: "var(--text-tertiary)", letterSpacing: "0.08em", width: 44 }}>OUTPUT</span>
         <select value={device} onChange={e => chooseDevice(e.target.value)} style={{ ...selectStyle, flex: 1 }}>
@@ -208,105 +263,92 @@ export default function AuxMonitorSlots() {
           {device && !devices.includes(device) && <option value={device}>{device} (not connected)</option>}
         </select>
       </div>
-      {!device && (
+      {!device && auxDecks.length > 0 && (
         <div style={{ fontSize: 10, color: "#a06030", marginBottom: 8, lineHeight: 1.5 }}>
           No output selected — the aux decks are silent everywhere. Pick the speakers or headphones you
           monitor on.
         </div>
       )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {Array.from({ length: SLOT_COUNT }, (_, i) => {
-          const deck = slots[i];
-          const t = deck ? tel[deck] : null;
-          const nfo = deck ? info[deck] : null;
-          const playing = nfo?.status === "playing";
-          const peak = Math.max(0, Math.min(1, t?.peak ?? 0));
+      {auxDecks.length === 0 ? (
+        <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5, padding: "2px 0 6px" }}>
+          This station has no aux decks. Add one in DECKS and it appears here — a row per deck, no
+          restart.
+        </div>
+      ) : (
+        // Many decks must fit: rows are compact and the list scrolls inside the sidebar.
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 320, overflowY: "auto", overflowX: "hidden" }}>
+          {auxDecks.map(d => {
+            const t = tel[d.slot];
+            const nfo = info[d.slot];
+            const playing = nfo?.status === "playing";
+            const peak = Math.max(0, Math.min(1, t?.peak ?? 0));
+            const lvl = levels[d.slot] ?? 0;
 
-          return (
-            <div key={i} style={{
-              border: "1px solid var(--border-primary)",
-              background: deck ? "var(--bg-secondary)" : "transparent",
-              padding: "6px 8px", opacity: deck ? 1 : 0.55,
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={{ fontSize: 10, fontWeight: 800, color: "var(--text-tertiary)", width: 34, letterSpacing: "0.08em" }}>
-                  AUX {i + 1}
-                </span>
-                <select
-                  value={deck}
-                  onChange={e => choose(i, e.target.value)}
-                  style={{ ...selectStyle, width: 110 }}
-                >
-                  <option value="">(none)</option>
-                  {AUX_DECKS.map(d => (
-                    // A deck already watched in another slot is still selectable — two slots on one
-                    // deck is harmless (both just observe), and silently hiding it would be worse.
-                    <option key={d} value={d}>Deck {d}{taken.filter(x => x === d).length > 1 && deck !== d ? " (in use)" : ""}</option>
-                  ))}
-                </select>
-
-                {deck ? (
-                  <>
-                    <span style={{
-                      fontSize: 9, fontWeight: 900, letterSpacing: "0.1em", padding: "1px 5px",
-                      color: playing ? "#4ade80" : "var(--text-tertiary)",
-                      border: `1px solid ${playing ? "#4ade8055" : "var(--border-primary)"}`,
-                    }}>{playing ? "PLAYING" : (nfo?.status || "idle").toUpperCase()}</span>
-                    <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontVariantNumeric: "tabular-nums" }}>
-                      {fmtPos(t?.frames_played ?? 0)}
-                    </span>
-                  </>
-                ) : (
-                  <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>empty</span>
-                )}
-              </div>
-
-              {deck && (
-                <>
-                  <div style={{
-                    fontSize: 11.5, color: "var(--text-primary)", marginTop: 5,
+            return (
+              <div key={d.slot} style={{
+                border: "1px solid var(--border-primary)", background: "var(--bg-secondary)", padding: "5px 7px",
+              }}>
+                {/* Line 1 — who this is, what state it is in, how far through. */}
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: "var(--text-primary)", letterSpacing: "0.06em" }}>
+                    {d.letter}
+                  </span>
+                  <span style={{
+                    fontSize: 10, color: "var(--text-tertiary)", flex: 1, minWidth: 0,
                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                  }}>
-                    {nfo?.title || <span style={{ color: "var(--text-tertiary)" }}>nothing loaded</span>}
-                    {nfo?.artist ? <span style={{ color: "var(--text-tertiary)" }}> — {nfo.artist}</span> : null}
-                  </div>
+                  }}>· {d.source}</span>
+                  <span style={{
+                    fontSize: 9, fontWeight: 900, letterSpacing: "0.1em", padding: "1px 4px",
+                    color: playing ? "#4ade80" : "var(--text-tertiary)",
+                    border: `1px solid ${playing ? "#4ade8055" : "var(--border-primary)"}`,
+                  }}>{playing ? "PLAYING" : (nfo?.status || "idle").toUpperCase()}</span>
+                  <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontVariantNumeric: "tabular-nums" }}>
+                    {fmtPos(t?.frames_played ?? 0)}
+                  </span>
+                </div>
 
-                  {/* VU — decks[].peak, the same post-fader number the A/B/C meters use. */}
-                  <div style={{ height: 6, background: "var(--bg-primary)", border: "1px solid var(--border-primary)", marginTop: 5, overflow: "hidden" }}>
-                    <div style={{
-                      height: "100%", width: `${Math.round(peak * 100)}%`,
-                      background: peak > 0.89 ? "#ef4444" : peak > 0.7 ? "#fbbf24" : "#4ade80",
-                      transition: "width 80ms linear",
-                    }} />
-                  </div>
+                {/* Line 2 — what is on it. */}
+                <div style={{
+                  fontSize: 11, color: "var(--text-primary)", marginTop: 3,
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                }}>
+                  {nfo?.title || <span style={{ color: "var(--text-tertiary)" }}>nothing loaded</span>}
+                  {nfo?.artist ? <span style={{ color: "var(--text-tertiary)" }}> — {nfo.artist}</span> : null}
+                </div>
 
-                  {/* MONITOR level — the ROOM, not air. This slot is the only path by which this deck
-                      reaches the local speakers; the board's channel and fader decide the stream. */}
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-                    <span style={{ fontSize: 9, color: "#8868D8", letterSpacing: "0.08em", width: 62, fontWeight: 700 }}>MONITOR</span>
-                    <input
-                      type="range" min={0} max={1} step={0.01}
-                      value={levels[i]}
-                      onChange={e => setLevel(i, parseFloat(e.target.value))}
-                      style={{ flex: 1, accentColor: "#8868D8" }}
-                    />
-                    <span style={{ fontSize: 10, color: "var(--text-tertiary)", width: 30, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                      {Math.round(levels[i] * 100)}
-                    </span>
-                  </div>
-                </>
-              )}
-            </div>
-          );
-        })}
-      </div>
+                {/* VU — decks[].peak, the same post-fader number the A/B/C meters use. */}
+                <div style={{ height: 5, background: "var(--bg-primary)", border: "1px solid var(--border-primary)", marginTop: 4, overflow: "hidden" }}>
+                  <div style={{
+                    height: "100%", width: `${Math.round(peak * 100)}%`,
+                    background: peak > 0.89 ? "#ef4444" : peak > 0.7 ? "#fbbf24" : "#4ade80",
+                    transition: "width 80ms linear",
+                  }} />
+                </div>
 
-      {/* Honest about the half that is not built, where an operator will look for it. */}
+                {/* Line 3 — MONITOR level: the ROOM, not air. */}
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                  <span style={{ fontSize: 9, color: "#8868D8", letterSpacing: "0.08em", width: 52, fontWeight: 700 }}>MONITOR</span>
+                  <input
+                    type="range" min={0} max={1} step={0.01}
+                    value={lvl}
+                    onChange={e => setLevel(d.slot, parseFloat(e.target.value))}
+                    style={{ flex: 1, accentColor: "#8868D8" }}
+                  />
+                  <span style={{ fontSize: 10, color: "var(--text-tertiary)", width: 26, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                    {Math.round(lvl * 100)}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1.5 }}>
-        A slot is the listening path: decks D–F are heard <strong>only</strong> through a slot, at that
-        slot's level, on the OUTPUT device chosen above. Nothing selected = silent. The board's channel
-        and fader decide what airs — they never affect this, and this never affects air.
+        One row per aux deck. A deck is heard in the room <strong>only</strong> through its row, at
+        that row's MONITOR level, on the OUTPUT device chosen above — 0 is silent. The board's channel
+        and fader decide what airs; they never affect this, and this never affects air.
       </div>
     </div>
   );
