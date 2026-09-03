@@ -13,9 +13,9 @@
 // let the operator infer it from silence, the strip SAYS which it is, underneath the dropdown.
 // A control that looks live and is not is the defect this project keeps paying for.
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import ConsoleStrip from "./ConsoleStrip";
-import { SOURCE_KINDS, sourceKindMeta, type SourceKind, type DeckConfig } from "./DeckConfigurator";
+import { SOURCE_KINDS, sourceKindMeta, deckLetter, type SourceKind, type DeckConfig } from "./DeckConfigurator";
 import { canHostJukebox } from "./DeckConfigurator";
 
 interface Props {
@@ -49,6 +49,103 @@ export default function SourceChannelStrip({
 }: Props) {
   const meta = sourceKindMeta(config.kind);
 
+  // ── INPUT DEVICES IN THE SOURCE LIST ──────────────────────────────────────────────────────────
+  // Jeff, 2026-09-02: "all device inputs discoverable should be in the one dropdown source list".
+  // So the dropdown does NOT offer an abstract "Mic" that then makes you pick a device on a second
+  // control — it offers the DEVICES THEMSELVES, by their real names (Realtek, Communications, a
+  // Focusrite, a Behringer). Picking one patches this channel to that input. The dropdown stays put,
+  // so the channel can be patched back to Announcement or a cart at any time: the first attempt at
+  // this replaced the whole strip with a mic panel and stranded the operator with no way back.
+  const MIC_PREFIX = "mic:";
+  const deviceKey = `ether_mic_device_${config.slot}`;
+  const [micDeviceId, setMicDeviceId] = useState<string>(() => {
+    try { return localStorage.getItem(deviceKey) || ""; } catch { return ""; }
+  });
+  const [inputs, setInputs] = useState<MediaDeviceInfo[]>([]);
+  // PRE-FADER level for a patched input. It cannot come from the audio:levels IPC like every other
+  // channel: a Web Audio capture never reaches the Rust engine, so the engine has no slot to report.
+  // Measured here from the stream itself, and fed to ConsoleStrip as its `level` prop.
+  const [micLevel, setMicLevel] = useState(0);
+
+  // enumerateDevices() returns EMPTY LABELS until the page has been granted capture once — the list
+  // would read "Input 1 / Input 2" instead of the device names, which is the whole point here. One
+  // throwaway getUserMedia unlocks the labels, then it is stopped immediately (AudioDevices.tsx does
+  // the same). Re-runs on devicechange so plugging in an interface shows up without a restart.
+  useEffect(() => {
+    let stop = false;
+    const load = async () => {
+      try {
+        let ds = await navigator.mediaDevices.enumerateDevices();
+        if (ds.some(d => d.kind === "audioinput" && !d.label)) {
+          try {
+            const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+            s.getTracks().forEach(tr => tr.stop());
+            ds = await navigator.mediaDevices.enumerateDevices();
+          } catch { /* denied — fall through with whatever labels exist */ }
+        }
+        if (!stop) setInputs(ds.filter(d => d.kind === "audioinput" && d.deviceId));
+      } catch { /* no device API — the file sources still work */ }
+    };
+    load();
+    navigator.mediaDevices?.addEventListener?.("devicechange", load);
+    return () => { stop = true; navigator.mediaDevices?.removeEventListener?.("devicechange", load); };
+  }, []);
+
+  // Capture — the same path MicChannel has used since 52d33bb: own stream, own AudioContext, browser
+  // DSP off (AEC/AGC/NS), output through a gain node the channel's ON and fader drive. Runs only
+  // while this channel is patched to an input, and is torn down on unpatch or device change.
+  const streamRef = useRef<MediaStream | null>(null);
+  const ctxRef    = useRef<AudioContext | null>(null);
+  const gainRef   = useRef<GainNode | null>(null);
+  const rafRef    = useRef(0);
+  const isOnRef   = useRef(isOn);
+  const volRef    = useRef(volume);
+  useEffect(() => { isOnRef.current = isOn; }, [isOn]);
+  useEffect(() => { volRef.current = volume; }, [volume]);
+
+  useEffect(() => {
+    if (config.kind !== "mic" || !micDeviceId) return;
+    let cancelled = false;
+    navigator.mediaDevices.getUserMedia({
+      audio: { deviceId: { exact: micDeviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    }).then(stream => {
+      if (cancelled) { stream.getTracks().forEach(tr => tr.stop()); return; }
+      streamRef.current = stream;
+      const ctx = new AudioContext(); ctxRef.current = ctx;
+      const src  = ctx.createMediaStreamSource(stream);
+      const gain = ctx.createGain(); gainRef.current = gain;
+      gain.gain.value = isOnRef.current ? volRef.current : 0;
+      // PRE-FADER tap: the analyser hangs off the SOURCE, not off the gain, so the meter shows the
+      // mic even with the channel off or the fader down — which is what a pre-fader meter is for
+      // (you set gain before you open the channel). Same placement MicChannel uses.
+      const analyser = ctx.createAnalyser(); analyser.fftSize = 256;
+      src.connect(analyser);
+      src.connect(gain);
+      gain.connect(ctx.destination);
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      const tick = () => {
+        analyser.getByteFrequencyData(data);
+        const avg = data.reduce((s, v) => s + v, 0) / data.length / 255;
+        setMicLevel(Math.min(1, avg * 3));
+        rafRef.current = requestAnimationFrame(tick);
+      };
+      rafRef.current = requestAnimationFrame(tick);
+    }).catch(e => console.error(`[source ${config.slot}] input capture failed:`, e));
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafRef.current);
+      streamRef.current?.getTracks().forEach(tr => tr.stop()); streamRef.current = null;
+      ctxRef.current?.close().catch(() => {}); ctxRef.current = null; gainRef.current = null;
+      setMicLevel(0);
+    };
+  }, [config.kind, micDeviceId, config.slot]);
+
+  // ON + fader drive the output gate, exactly as they do for any other channel.
+  useEffect(() => { if (gainRef.current) gainRef.current.gain.value = isOn ? volume : 0; }, [isOn, volume]);
+
+  const micDeviceLabel = inputs.find(d => d.deviceId === micDeviceId)?.label || "";
+
+
   // Jukebox is offerable only where it can actually be routed. Automation enumerates A/B/C and
   // nothing else, so the jukebox has always been restricted to the aux slots; the new engine slots
   // (S1..) are not wired to it yet. Offering it where it cannot play would be exactly the decorative
@@ -57,13 +154,21 @@ export default function SourceChannelStrip({
     if (k.kind === "jukebox" && !canHostJukebox(config.slot)) {
       return { ...k, disabled: true, why: `Jukebox routes on D/E/F only — not ${config.slot}` };
     }
-    if (k.family === "stream") {
+    // MIC IS NOT PHASE 2. Its capture path already exists and always has — MicChannel does
+    // getUserMedia + Web Audio per slot (own device, meter), built by 52d33bb and
+    // still rendered from App for decks typed "mic". What was missing was the DOOR: board slice 2
+    // made SOURCE the way to patch a channel, and this gate gr(e)yed mic out with everything else in
+    // the stream family, so an operator who patched by SOURCE could no longer reach a mic that works.
+    // Network stays disabled — it genuinely has no path.
+    if (k.family === "stream" && k.kind !== "mic") {
       return { ...k, disabled: true, why: "Phase 2 — needs the engine capture path" };
     }
     return { ...k, disabled: false, why: "" };
   }), [config.slot]);
 
-  const label = meta ? meta.label : `SOURCE ${config.slot}`;
+  // A patched input names itself on the channel — "Focusrite", not "Mic".
+  const label = (config.kind === "mic" && micDeviceLabel) ? micDeviceLabel
+    : meta ? meta.label : `SOURCE ${deckLetter(config.slot)}`;
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
@@ -74,7 +179,7 @@ export default function SourceChannelStrip({
             fontSize: 8, fontWeight: 700, letterSpacing: "0.12em",
             color: "var(--text-tertiary)", flex: 1, minWidth: 0,
           }}>
-            SOURCE {config.slot}
+            SOURCE {deckLetter(config.slot)}
           </span>
           <button
             onClick={onRemove}
@@ -89,9 +194,19 @@ export default function SourceChannelStrip({
         </div>
 
         <select
-          value={config.kind || ""}
-          onChange={e => onKindChange(e.target.value as SourceKind | "")}
-          aria-label={`Source for channel ${config.slot}`}
+          value={config.kind === "mic" && micDeviceId ? MIC_PREFIX + micDeviceId : (config.kind || "")}
+          onChange={e => {
+            const v = e.target.value;
+            if (v.startsWith(MIC_PREFIX)) {
+              const id = v.slice(MIC_PREFIX.length);
+              setMicDeviceId(id);
+              try { localStorage.setItem(deviceKey, id); } catch { /* ignore */ }
+              if (config.kind !== "mic") onKindChange("mic");
+              return;
+            }
+            onKindChange(v as SourceKind | "");
+          }}
+          aria-label={`Source for channel ${deckLetter(config.slot)}`}
           style={{
             width: "100%", fontSize: 10, padding: "3px 4px", borderRadius: 2,
             background: "var(--bg-tertiary)", color: "var(--text-primary)",
@@ -99,11 +214,21 @@ export default function SourceChannelStrip({
           }}
         >
           <option value="">— no source —</option>
-          {options.map(o => (
+          {/* The abstract "Mic (device…)" entry is gone — the devices below ARE the mic entries. */}
+          {options.filter(o => o.kind !== "mic").map(o => (
             <option key={o.kind} value={o.kind} disabled={o.disabled}>
               {o.label}{o.disabled ? " ·  not yet" : ""}
             </option>
           ))}
+          {inputs.length > 0 && (
+            <optgroup label="INPUT DEVICES">
+              {inputs.map(d => (
+                <option key={d.deviceId} value={MIC_PREFIX + d.deviceId}>
+                  {d.label || "Audio input"}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </select>
 
         {/* DUCK — the one control §B.6 exposes today. Threshold, attack, hold, release and depth
@@ -143,7 +268,12 @@ export default function SourceChannelStrip({
           label={label}
           color="#8868D8"
           volume={volume}
-          deckId={config.slot}
+          // deckId makes ConsoleStrip drive its meter from the audio:levels IPC and explicitly hide
+          // the level-prop meter (ConsoleStrip.tsx:425, display: deckId ? "none" : ...). A patched
+          // input has no engine slot to report, so for mic we withhold deckId and feed `level`
+          // instead. Every other source kind keeps the IPC meter exactly as before.
+          deckId={config.kind === "mic" ? undefined : config.slot}
+          level={config.kind === "mic" ? micLevel : undefined}
           // Read this slot's OWN level, on any slot letter — D/E/F today, S1..S5 once the pool fills.
           sourceChannel
           // ON COLOUR — the same two colours every other channel uses, via the same code path.

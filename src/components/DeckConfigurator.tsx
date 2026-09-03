@@ -57,11 +57,28 @@ export const SOURCE_KINDS: SourceKindMeta[] = [
   // what ends that: the sweeper keeps the overlay bus it is built around, and carts move off it.
   { kind: "cart",         label: "Cart / SFX rack",      family: "file",
     state: "Hand-fired sound effects, on this channel instead of the sweeper's overlay bus." },
+  // Mic is a STREAM source but is NOT Phase 2: MicChannel has done getUserMedia + Web Audio per slot
+  // since 52d33bb (own device, meter, cue). SourceChannelStrip enables it explicitly; only Network
+  // below is still gated on the engine capture path.
   { kind: "mic",          label: "Mic (device…)",        family: "stream",
-    state: "Needs the engine capture path — Phase 2." },
+    state: "Live microphone on this channel — pick the device on the strip." },
   { kind: "network",      label: "Network (IP / Zephyr / AoIP)", family: "stream",
     state: "Needs the engine capture path — Phase 2." },
 ];
+
+// ONE ALPHABET. Storage and the Rust engine still say "S1".."S5" for the slots added by slice 1
+// (native/src/audio.rs:632 "S1" => Some(7), SOURCE_IDS, and the deck_configs PK (station_id, slot)),
+// but an operator should never meet a second naming series: decks are A, B, C, D, E, F, G, H, I...
+// This maps the stored id to the letter shown EVERYWHERE — board strip and aux monitor row — so a
+// deck is called the same thing in both places. Renaming the stored ids is a separate change: it
+// needs a Rust constant change plus a deck_configs migration, and is not worth risking inside a UI
+// pass. S1 -> G because F is the last of the original letters.
+export const deckLetter = (slot: string): string => {
+  const m = /^S(\d+)$/.exec(String(slot || ""));
+  if (!m) return String(slot || "");
+  const n = Number(m[1]);
+  return n >= 1 ? String.fromCharCode("F".charCodeAt(0) + n) : String(slot);
+};
 
 export const sourceKindMeta = (k?: string | null) =>
   SOURCE_KINDS.find(s => s.kind === k) || null;
