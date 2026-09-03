@@ -830,9 +830,31 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [carts]);
 
+  // FIRE / STOP TOGGLE. Click a loaded cart to fire it; click it again while it is playing and it
+  // stops immediately. A cart could previously be started and not stopped, which on a live board is
+  // the wrong half of a control: the operator who fires a 30-second bed by mistake had no way to end
+  // it except waiting for it.
+  //
+  // Stop goes through the engine's ORDINARY stop path for the cart channel — engine.getDeck(...).stop()
+  // → audio_stop — so there is no fade, no crossfade, and nothing else on the board is touched. The
+  // next fire calls loadToDeck again, so it always starts from the top; stopping cannot leave the
+  // cart parked halfway through.
+  //
+  // EVERY LOCAL TRIGGER SHARES THIS. The tile click (all three cart layouts) and the keyboard letter
+  // both call fireCart, so a cart behaves identically however it is triggered — the toggle lives in
+  // the one function rather than being re-implemented per surface.
   const fireCart = async (key: string) => {
     const cart = carts.find(c => c.key === key);
     if (!cart?.filePath) return;
+    // Already playing THIS cart → stop it. Read the deck rather than trusting the flag: the poll
+    // effect clears playing state on its own beat, so the deck is the authority on what is audible.
+    if (playingKeyRef.current === key) {
+      try { engine.getDeck(CART_CHANNEL)?.stop(); } catch {}
+      playingKeyRef.current = null;
+      setRemainingMs(0);
+      setCarts(p => p.map(c => (c.playing ? { ...c, playing: false } : c)));
+      return;
+    }
     try {
       await engine.loadToDeck(CART_CHANNEL, cart.filePath, cart.label, "");
       engine.getDeck(CART_CHANNEL)?.play();
@@ -840,6 +862,34 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
       setCarts(p => p.map(c => ({ ...c, playing: c.key === key }))); // flash clears when the deck stops (effect)
     } catch {}
   };
+
+  // ── RIGHT-CLICK → DELETE ────────────────────────────────────────────────────────────────────
+  // Clearing a slot had no route at all: a cart could be assigned and relabelled but never emptied.
+  // No confirmation — re-adding a file is a click, and a confirm on a cheap reversible action is
+  // just another thing to dismiss. It empties the SLOT only; the file on disk is untouched.
+  const [cartMenu, setCartMenu] = useState<{ key: string; x: number; y: number } | null>(null);
+
+  const deleteCart = (key: string) => {
+    // If the slot being cleared is the one playing, stop it first — otherwise the cart keeps
+    // sounding with no tile left to stop it from.
+    if (playingKeyRef.current === key) {
+      try { engine.getDeck(CART_CHANNEL)?.stop(); } catch {}
+      playingKeyRef.current = null;
+      setRemainingMs(0);
+    }
+    updateSlot(key, { filePath: "", label: "", playing: false } as any);   // persisted
+    setCartMenu(null);
+  };
+
+  // Dismiss on Escape or any click outside the popup.
+  useEffect(() => {
+    if (!cartMenu) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setCartMenu(null); };
+    const onDown = () => setCartMenu(null);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onDown);
+    return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("mousedown", onDown); };
+  }, [cartMenu]);
 
   const handleDrop = (e: React.DragEvent, key: string) => {
     e.preventDefault();
@@ -906,11 +956,12 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
           <div
             key={cart.key}
             onClick={() => { if (cart.filePath) fireCart(cart.key); else assignCart(cart.key); }}
+            onContextMenu={e => { if (!cart.filePath) return; e.preventDefault(); e.stopPropagation(); setCartMenu({ key: cart.key, x: e.clientX, y: e.clientY }); }}
             onDoubleClick={() => editLabel(cart.key)}
             onDragOver={e => { e.preventDefault(); setDragOver(cart.key); }}
             onDragLeave={() => setDragOver(null)}
             onDrop={e => handleDrop(e, cart.key)}
-            title={cart.filePath ? cart.label : "Empty — click to assign"}
+            title={cart.filePath ? (cart.playing ? cart.label + " — click to STOP" : cart.label + " — click to fire, right-click to delete") : "Empty — click to assign"}
             style={{
               // No aspectRatio: the grid's row height IS the column width (gridAutoRows), so the tile
               // is square by construction and stretch fills a square cell.
@@ -926,6 +977,16 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
               textAlign: "center" as const, padding: 4, gap: 3,
             }}
           >
+            {/* STOP GLYPH — a playing tile says how to END it, not just that it is running.
+                Absolute so it never reflows the label; pointerEvents none so the whole tile stays
+                one click target. */}
+            {cart.playing && (
+              <span aria-hidden style={{
+                position: "absolute", top: 3, right: 4, zIndex: 2, pointerEvents: "none",
+                fontSize: 9, lineHeight: 1, color: cart.color, opacity: 0.95,
+                textShadow: "0 0 4px rgba(0,0,0,0.6)",
+              }}>■</span>
+            )}
             <span style={{ fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: cart.playing || cart.filePath ? cart.color : "var(--text-tertiary)" }}>{cart.key}</span>
             <span style={{
               fontSize: 9, fontWeight: cart.filePath ? 700 : 400, lineHeight: 1.2,
@@ -982,6 +1043,7 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
             <div
               key={cart.key}
               onClick={() => { if (cart.filePath) { fireCart(cart.key); } else { assignCart(cart.key); } }}
+              onContextMenu={e => { if (!cart.filePath) return; e.preventDefault(); e.stopPropagation(); setCartMenu({ key: cart.key, x: e.clientX, y: e.clientY }); }}
               onDoubleClick={() => editLabel(cart.key)}
               onDragOver={e => { e.preventDefault(); setDragOver(cart.key); }}
               onDragLeave={() => setDragOver(null)}
@@ -996,6 +1058,8 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
                 display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
               }}
             >
+              {/* STOP GLYPH — inline here: this tile is a flex row, not a positioned box. */}
+              {cart.playing && <span aria-hidden style={{ fontSize: 8, lineHeight: 1, color: "#000", flexShrink: 0 }}>■</span>}
               <span style={{ fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono',monospace", color: cart.playing ? "#000" : cart.color, minWidth: 12 }}>{cart.key}</span>
               <span style={{ fontSize: 9, fontWeight: cart.filePath ? 700 : 400, color: cart.playing ? "#000" : cart.filePath ? "var(--text-primary)" : "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1, fontStyle: cart.filePath ? "normal" : "italic" }}>
                 {cart.filePath ? cart.label : "Empty"}
@@ -1021,6 +1085,7 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
           <div
             key={cart.key}
             onClick={() => { if (cart.filePath) { fireCart(cart.key); } else { assignCart(cart.key); } }}
+            onContextMenu={e => { if (!cart.filePath) return; e.preventDefault(); e.stopPropagation(); setCartMenu({ key: cart.key, x: e.clientX, y: e.clientY }); }}
             onDoubleClick={() => editLabel(cart.key)}
             onDragOver={e => { e.preventDefault(); setDragOver(cart.key); }}
             onDragLeave={() => setDragOver(null)}
@@ -1043,6 +1108,14 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
             }}
           >
             {/* 4px color strip */}
+            {/* STOP GLYPH — see the square-tile layout above. */}
+            {cart.playing && (
+              <span aria-hidden style={{
+                position: "absolute", top: 4, right: 5, zIndex: 2, pointerEvents: "none",
+                fontSize: 10, lineHeight: 1, color: cart.color, opacity: 0.95,
+                textShadow: "0 0 4px rgba(0,0,0,0.6)",
+              }}>■</span>
+            )}
             <div style={{ height: 4, background: cart.filePath ? cart.color : "var(--border-primary)", flexShrink: 0, opacity: cart.playing ? 1 : 0.7 }} />
 
             {/* Name row */}
@@ -1101,6 +1174,36 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
           </div>
         </div>
       </div>
+      )}
+
+      {/* DELETE popup — anchored to the cart that was right-clicked. Fixed-position so it is not
+          clipped by the wall's own scroll container. mousedown on the window dismisses it, so the
+          popup stops propagation on its own mousedown to survive its own click. */}
+      {cartMenu && (
+        <div
+          onMouseDown={e => e.stopPropagation()}
+          onClick={e => e.stopPropagation()}
+          style={{
+            position: "fixed", left: cartMenu.x, top: cartMenu.y, zIndex: 4000,
+            background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
+            boxShadow: "0 6px 20px rgba(0,0,0,0.5)", padding: 4, minWidth: 120,
+          }}
+        >
+          <div style={{ fontSize: 9, color: "var(--text-tertiary)", padding: "2px 6px 4px", letterSpacing: "0.06em",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>
+            {carts.find(c => c.key === cartMenu.key)?.label || cartMenu.key}
+          </div>
+          <button
+            onClick={() => deleteCart(cartMenu.key)}
+            style={{
+              width: "100%", textAlign: "left", padding: "5px 8px", cursor: "pointer",
+              background: "transparent", border: "1px solid transparent", color: "#ef4444",
+              fontSize: 11, fontWeight: 700, letterSpacing: "0.06em",
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "#ef444414"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+          >DELETE</button>
+        </div>
       )}
     </div>
   );
