@@ -85,7 +85,11 @@ import MacrosPanel, { useMacroHotkeys, useMacroClock } from "./components/MacroE
 import MidiSettingsPanel, { MidiProvider } from "./components/MidiEngine";
 import ConsoleStrip from "./components/ConsoleStrip";
 import SourceChannelStrip from "./components/SourceChannelStrip";
-import { SOURCE_SLOTS, type SourceKind } from "./components/DeckConfigurator";
+import { SOURCE_SLOTS, type SourceKind, type DeckType } from "./components/DeckConfigurator";
+// The board scopes the levels stream to its own station, like every other consumer of it.
+import { matchesStation } from "./lib/levelsScope";
+// A slot the engine is carrying is always on the board — the invariant, with its test.
+import { boardSlots } from "./lib/boardSlots";
 import MicChannel from "./components/MicChannel";
 import RulesEditor from "./components/RulesEditor";
 import ProcessingPanel from "./components/ProcessingPanel";
@@ -3815,7 +3819,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   onCloseDock: () => void;
 }) {
   const engine = useAudioEngine();
-  const { stationId: lpStationId } = useActiveStation();   // for the JINGLES push-up (imaging home)
+  const { stationId: lpStationId, stationUuid: lpStationUuid } = useActiveStation();   // for the JINGLES push-up (imaging home)
   const vp = visiblePanels || { queue: true, deckA: true, deckB: true, deckC: true, mic: true };
   const lpViewport = useViewport();
   // Resizable bottom dock (carts / programming panels): drag the divider against the
@@ -3959,6 +3963,36 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   // state (station_config_kv, default OFF) because it faces the public; a jingle or announcement
   // channel is ordinary board furniture and starts ON like every other deck.
   const [srcChannelOn, setSrcChannelOn] = useState<Record<string, boolean>>({});
+
+  // ── ASSERT THE CHANNEL CUT DOWNWARD ────────────────────────────────────────────────────────────
+  //
+  // The ON lamp was a CLAIM, not a reading. `srcChannelOn` starts as {} and every strip renders ON
+  // by default (`?? true`), while the only code that ever sent setMuted for a source channel was a
+  // press of that button. So a channel nobody had pressed showed ON with the engine never told —
+  // and a cart re-dialled onto it played into a slot whose cut had never been asserted. Pressing
+  // OFF then ON "fixed" it because the second press was the first time the engine heard anything.
+  // The operator was performing an assertion the app should have made for them.
+  //
+  // This is the pattern the jukebox channel already uses ("Assert BOTH downward every time: the
+  // engine boots un-muted and at its own level", App.tsx:3977) and the one the duck toggle already
+  // uses for these same channels (App.tsx:949). Mute was simply omitted from it.
+  //
+  // Runs whenever the channel list or a lamp changes, which covers boot, a station switch, a channel
+  // newly enabled with +, and a re-dial of an existing one.
+  //
+  // THE JUKEBOX IS EXCLUDED, deliberately: its cut is persisted in station_config_kv and DEFAULTS
+  // OFF ("a public jukebox must not become audible because someone assigned a deck"), and its own
+  // effect owns it. Asserting the generic lamp's `?? true` over that would re-open a channel the
+  // operator deliberately left closed.
+  useEffect(() => {
+    if (!deckConfigs || !deckConfigs.length) return;
+    for (const c of deckConfigs) {
+      if (c.type !== "source" || !c.enabled) continue;
+      if (c.kind === "jukebox") continue;
+      const on = srcChannelOn[c.slot] ?? true;
+      try { engine.getDeck(c.slot)?.setMuted(!on); } catch { /* engine not up yet — re-asserted on the next change */ }
+    }
+  }, [deckConfigs, srcChannelOn, engine]);
   // Fader position for the jukebox channel. Asserted downward on mount with the cut, for the same
   // reason: the engine boots at its own defaults and the board must state the operator's position.
   const [jukeboxVol, setJukeboxVol] = useState(1);
@@ -4094,11 +4128,46 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   // specific letters made a new slot a COMPILE ERROR, which is the opposite of "adding a
   // deck is a plain insert". (Note the union did not even include D/E/F.)
   type DeckSlot = string;
-  // Always derive deck order directly from deckConfigs — no separate state needed
   const DEFAULT_DECK_ORDER: DeckSlot[] = ["A", "B", "C", "mic"];
-  const rawDeckOrder: DeckSlot[] = deckConfigs && deckConfigs.length > 0
+
+  // ── THE ENGINE'S SLOT LIST — what is actually on air ────────────────────────────────────────────
+  //
+  // There were two answers to "what channels exist" and nothing reconciled them: bus.decks[] in the
+  // engine (membership = summed into master) and deck_configs in the database (membership = visible
+  // and controllable). Slot 6 is in the first and not the second, which is the whole of "on air but
+  // invisible" — not a forgotten wire, but a slot the UI's enumeration never looked at.
+  //
+  // The levels broadcast already carries one DeckTel per engine slot, each with its own post-fader
+  // `peak`. So the authoritative list is already arriving 
+  // — this reads it instead of inferring the board from configuration.
+  const [engineSlots, setEngineSlots] = useState<string[]>([]);
+  const lpUuidRef = useRef(lpStationUuid);
+  lpUuidRef.current = lpStationUuid;
+  useEffect(() => {
+    const ether = (window as any).ether;
+    if (!ether?.audio?.onLevels) return;
+    const h = ether.audio.onLevels((lvl: any) => {
+      if (!matchesStation(lvl, lpUuidRef.current)) return;
+      const decks: any[] = Array.isArray(lvl?.decks) ? lvl.decks : [];
+      // A slot EARNS a strip by carrying audio: a decoder loaded, or the mixer pulling it. An idle
+      // slot nobody has configured stays off the board — this closes "on air with no face", it does
+      // not put twelve empty strips on the console.
+      const live = decks.filter(d => d && (d.source_present || d.active)).map(d => String(d.id));
+      setEngineSlots(prev => (prev.length === live.length && prev.every((x, i) => x === live[i]) ? prev : live));
+    });
+    return () => ether.audio.offLevels?.(h);
+  }, []);
+
+  const configuredOrder: DeckSlot[] = deckConfigs && deckConfigs.length > 0
     ? deckConfigs.filter(c => c.enabled).map(c => c.slot as DeckSlot)
     : DEFAULT_DECK_ORDER;
+  // Configuration decides ORDER and LABEL. The engine decides EXISTENCE: anything it is carrying and
+  // the config does not mention is appended, so it cannot be on air without a strip, a fader, a cut
+  // and a meter.
+  // The rule itself lives in src/lib/boardSlots.ts so it can be a TEST rather than a habit.
+  const rawDeckOrder: DeckSlot[] = useMemo(
+    () => boardSlots(configuredOrder, engineSlots),
+    [JSON.stringify(configuredOrder), JSON.stringify(engineSlots)]);
   // Auto-hide the mic deck below 950px when no guest decks are configured.
   // Guests in conversation always keep the mic visible, otherwise it drops out
   // to give the music decks room to breathe on tablets/phones.
@@ -4293,7 +4362,17 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
            Uses activeDeckOrder from the deck configurator so all 6 slots work. ── */
         <div style={{ display: "flex", gap: 0, flex: 1, minHeight: 0, overflow: "hidden" }}>
           {activeDeckOrder.map((slot) => {
-            const config = deckConfigs?.find(d => d.slot === slot);
+            const stored = deckConfigs?.find(d => d.slot === slot);
+            // A slot the engine is carrying with no config row is still a CHANNEL. It renders as the
+            // generic source strip — selector, fader, ON/PFL, meter — rather than defaulting to a
+            // music deck, because "what you dial in is the source; the channel itself is generic".
+            // Its patch point cannot be persisted until it has a row (that is the next step in
+            // docs/on-air-but-invisible-slot-enumeration-2026-09-03.md); until then it is visible and
+            // controllable, which is the state this step exists to guarantee.
+            const config = stored || (slot === "mic" ? undefined : {
+              slot, type: "source" as DeckType, kind: "" as any, label: slot,
+              color: "#8868D8", enabled: true, purpose: "", address: null, duck: false,
+            } as DeckConfig);
             const deckType = config?.type || (slot === "mic" ? "mic" : "music");
             const deckMap: Record<string, any> = { A: deckA, B: deckB, C: deckC };
             const deck = deckMap[slot as string];

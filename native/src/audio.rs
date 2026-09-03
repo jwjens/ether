@@ -107,6 +107,15 @@ pub struct DeckTel {
     pub source_present: bool,  // deck.source.is_some() — a decoder is loaded
     pub active: bool,          // deck.active — mixer is pulling this deck
     pub paused: bool,          // deck.paused
+    /// CHANNEL CUT — does the ENGINE have this slot cut?
+    ///
+    /// Observed, never inferred, exactly like `duck` below. The board's ON lamp had nothing to read,
+    /// so it rendered `srcChannelOn[slot] ?? true` — a CLAIM. A channel nobody had pressed showed ON
+    /// while the engine was never told, and audio fired into it went nowhere until the operator
+    /// toggled OFF/ON, whose second press was the first setMuted the engine ever heard. With this
+    /// field the lamp is a READING of the cut, and that state stops being expressible.
+    #[serde(default)]
+    pub muted: bool,
     pub volume: f32,           // linear fader (post-gain)
     pub gain_db: f32,          // per-deck trim in dB
     /// SAMPLE CLOCK — per-deck monotonic PROGRAM_RATE frame count (DeckSlot.frames_played).
@@ -1793,6 +1802,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                             source_present: present,
                                             active: d.active,
                                             paused: d.paused,
+                                            muted: d.muted,
                                             volume: d.volume,
                                             gain_db: d.gain_db,
                                             frames_played: d.frames_played,
