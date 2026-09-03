@@ -542,7 +542,7 @@ class DaemonEngine {
     if (order.some(d => this._deckState(d).status === "playing")) return "live";
     // A confirmed-FIRING jingle bridging the seam IS live audio (over master), even with all A/B/C idle
     // for the underlap window. Observed, not claimed: only counts when samples are actually flowing on CART.
-    if (this._jingle && this._jingle.firingConfirmedAt && this._cartFlowing()) return "live";
+    if (this._jingle && this._jingle.firingConfirmedAt && this._cartFlowing(this._jingle.channels)) return "live";
     // Nobody playing under automation. Ride out only a brief handoff out of a live state; anything
     // longer than the watchdog's stall window — or any non-live origin — is an honest stall.
     if (this._engineState === "live" && (Date.now() - this._lastPlayingAt) < STALL_MS) return "live";
@@ -1793,15 +1793,29 @@ class DaemonEngine {
     return false;
   }
 
-  // Are samples actually flowing on the CART overlay bus RIGHT NOW? Observed truth, never a claim.
-  _cartFlowing() {
+  // What is the CART overlay bus actually doing RIGHT NOW — the number, and how we know it.
+  //
+  // The old form returned a bare `true` from EITHER real signal OR `source_present && active &&
+  // !paused`, and the caller logged the word "samples flowing" for both. The second is a decoder
+  // being loaded, which is not signal — so the log asserted flow on a day the operator's meter
+  // showed nothing, and cost hours. Same answer, but it now says which of the two it saw and at what
+  // peak. Behaviour is unchanged: `flowing` is the same boolean as before.
+  _cartObserve(channels) {
+    const chans = (channels && channels.length) ? channels : ["CART"];
+    const find = (lv, ch) => (lv.decks || []).find(d => d && (d.id === ch || (ch === "CART" && d.id === 6)));
     try {
       const lv = JSON.parse(A.audioGetLevels(this.stationId));
-      if ((lv.cart || lv.level_cart || 0) > 0.0001) return true;
-      const cd = (lv.decks || []).find(d => d && (d.id === "CART" || d.id === 6));
-      return !!(cd && cd.source_present && cd.active && !cd.paused);
-    } catch { return false; }
+      let peak = 0;
+      for (const ch of chans) { const d = find(lv, ch); if (d && (d.peak || 0) > peak) peak = d.peak || 0; }
+      // level_cart is bus.peaks[6] under a named field, so it speaks only for the fallback slot.
+      if (chans.includes("CART")) { const legacy = lv.cart || lv.level_cart || 0; if (legacy > peak) peak = legacy; }
+      if (peak > 0.0001) return { flowing: true, peak, how: "signal" };
+      const loaded = chans.some(ch => { const d = find(lv, ch); return !!(d && d.source_present && d.active && !d.paused); });
+      return { flowing: loaded, peak, how: loaded ? "loaded-and-active (NOT signal)" : "nothing" };
+    } catch { return { flowing: false, peak: 0, how: "levels-unreadable" }; }
   }
+  // Unchanged contract for every existing caller.
+  _cartFlowing(channels) { return this._cartObserve(channels).flowing; }
 
   // Supersession (Bug-A immunity) — only meaningful while ARMED (pre-fire). A firing jingle is real audio
   // already on air; we never cancel it mid-play.
@@ -1836,7 +1850,8 @@ class DaemonEngine {
   // Cancel an ARMED (or fired-but-silent) jingle: emit ARMED_CANCELLED, stop CART defensively, NO play-log.
   _cancelJingle(reason) {
     const j = this._jingle; if (!j) return;
-    if (j.firedAt) { this._stop("CART"); }
+    // Stop what it was FIRED on, not a fixed name - the selector may have moved since.
+    if (j.firedAt) { for (const ch of (j.channels || ["CART"])) this._stop(ch); }
     this._log(`jingle ARMED_CANCELLED (${reason}) — "${j.title}"`);
     this._emitJingle("ARMED_CANCELLED", j);
     this._jingle = null;
@@ -1852,7 +1867,7 @@ class DaemonEngine {
   // isolation excludes it from music math / affidavit. deck="CART" (overlay, not a rotation deck).
   _logJinglePlay(j) {
     try {
-      playlog.logPlay(this.db, { stationId: this.stationId, title: j.title, artist: j.artist, deck: "CART",
+      playlog.logPlay(this.db, { stationId: this.stationId, title: j.title, artist: j.artist, deck: (j.channels && j.channels[0]) || "CART",
         durationMs: Math.round((j.jinDur || 0) * 1000), sessionId: SESSION, filePath: j.filePath, contentClass: j.contentClass || "JIN" });
     } catch {}
   }
@@ -2021,10 +2036,13 @@ class DaemonEngine {
           return;
         }
         // firing / bridging
-        const flowing = this._cartFlowing();
-        if (flowing) {
+        const obs = this._cartObserve(j.channels);
+        if (obs.flowing) {
           this._lastPlayingAt = now;                        // watchdog: the bridge is NOT a stall
-          if (!j.firingConfirmedAt) { j.firingConfirmedAt = now; this._emitJingle("FIRING", j); this._logJinglePlay(j); this._log(`jingle FIRING (samples flowing) — "${j.title}"`); }
+          if (!j.firingConfirmedAt) {
+            j.firingConfirmedAt = now; this._emitJingle("FIRING", j); this._logJinglePlay(j);
+            this._log("jingle FIRING on " + (j.channels || ["CART"]).join("+") + " peak=" + obs.peak.toFixed(4) + " via " + obs.how + " - \"" + j.title + "\"");
+          }
         }
         // If we NEVER observe flow, we simply never confirm FIRING: no health/log stamp (observed-only) and
         // no seam bridge (_jingleShouldBridge requires firingConfirmedAt) → the NORMAL rotation proceeds and
@@ -2111,21 +2129,60 @@ class DaemonEngine {
     this._emitJingle("CLEARED", had);
   }
 
-  // Fire the armed jingle on CART — serialized on the advance chain (no naked timer), re-validated inside.
+  // -- WHERE SWEEPERS ARE DIALLED, READ FRESH ----------------------------------------------------
+  //
+  // Channels are assignable, so a sweeper's destination is whatever the operator dialled - not a
+  // fixed address. This was the literal string "CART" in four places, so dialling a channel to
+  // Sweeper could not move the audio: the fire path never consulted deck_configs at all.
+  //
+  // Read on EVERY fire, so changing the channel takes effect on the very next seam with no restart
+  // and no toggle. EVERY channel dialled to a sweeper source, not the first - if the operator dials
+  // three, all three carry it. Nothing here picks one on their behalf.
+  //
+  // BOTH kind values: 'jingle' is the stored key behind the "Sweeper" entry and predates 'sweeper',
+  // so matching both means an existing install works with no re-dial and no migration. The stored
+  // key is deliberately NOT renamed - changing a persisted value for cosmetics is how a config
+  // silently stops matching.
+  //
+  // Falls back to "CART" when nothing is dialled: a seam must never go silent because a channel was
+  // not configured.
+  _sweeperChannels() {
+    try {
+      const rows = this.db.prepare(
+        "SELECT slot FROM deck_configs WHERE station_id = ? AND enabled = 1 AND type = 'source' " +
+        "AND kind IN ('sweeper','jingle') ORDER BY slot").all(this.stationId);
+      const slots = rows.map(r => String(r.slot || "")).filter(Boolean);
+      if (slots.length) return slots;
+    } catch (e) { this._log("sweeper channel resolve failed (falling back to CART): " + String(e)); }
+    return ["CART"];
+  }
+
+  // Fire the armed jingle on the dialled sweeper channel(s) - serialized on the advance chain.
   _fireJingle(j) {
     this._advance("jingle-fire", async () => {
       if (this._jingle !== j || j.phase !== "armed") return;         // superseded/cleared while queued
       if (this._jingleSuperseded(j)) { this._cancelJingle("superseded-at-fire"); return; }
-      let ok;
-      try { ok = this._load("CART", j.filePath, j.title, j.artist, 0); }
-      catch (e) { this._cancelJingle("load-error"); return; }
-      if (ok === false) { this._cancelJingle("load-failed"); return; }
-      this._play("CART");
+      // A failure on ONE channel is reported and the others still fire; only a total failure cancels.
+      // Both answers are checked - audioLoad and audioPlay each return false on refusal, and walking
+      // past either claimed a fire that never happened ("spoke, therefore played").
+      const chans = this._sweeperChannels();
+      const firedOn = [];
+      for (const ch of chans) {
+        let ok;
+        try { ok = this._load(ch, j.filePath, j.title, j.artist, 0); }
+        catch (e) { this._log("jingle load ERROR on " + ch + ": " + String(e)); continue; }
+        if (ok === false) { this._log("jingle load REFUSED on " + ch); continue; }
+        const played = this._play(ch);
+        if (played === false) { this._log("jingle play REFUSED by the engine on " + ch); continue; }
+        firedOn.push(ch);
+      }
+      if (!firedOn.length) { this._cancelJingle("no-channel-accepted"); return; }
+      j.channels = firedOn;                                    // stop and observe address THESE
       const d = this._dur(j.filePath); if (d > 0) j.jinDur = d;
       j.firedAt = Date.now();
       j.phase = "firing";
       this._jingleCartGen++;
-      this._log(`jingle FIRE issued — "${j.title}" on CART (dur=${(j.jinDur || 0).toFixed(1)}s); confirming samples…`);
+      this._log("jingle FIRE issued - \"" + j.title + "\" on " + firedOn.join("+") + " (dur=" + (j.jinDur || 0).toFixed(1) + "s); confirming samples...");
     });
   }
 

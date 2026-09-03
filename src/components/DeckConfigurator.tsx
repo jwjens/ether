@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
+// The on-screen Console is where an operator looks when something did not go where they expected.
+import { consoleLog } from "./MasterOutput";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -39,11 +41,16 @@ export const SOURCE_KINDS: SourceKindMeta[] = [
     state: "Public request wall — patched and playing" },
   { kind: "announcement", label: "Announcement",         family: "file",
     state: "Patched. Announcement playout arrives in a later slice — nothing fires yet." },
-  { kind: "jingle",       label: "Sweeper (hand-fired)", family: "file",
-    // The `kind` VALUE stays "jingle": it is a persisted deck-config key, not a label. Zero live
-    // decks use it (deck_configs kinds are 49 blank, 2 announcement, 2 jukebox), so there is nothing
-    // to migrate — but changing a stored key for cosmetics is how a config silently stops matching.
-    state: "Patched for hand-fired imaging. Automated seam sweepers stay on CART." },
+  { kind: "jingle",       label: "Sweeper",              family: "file",
+    // The `kind` VALUE stays "jingle": it is a persisted deck-config key, not a label. Changing a
+    // stored key for cosmetics is how a config silently stops matching, and the daemon's channel
+    // resolver accepts both 'jingle' and 'sweeper' so an existing install needs no re-dial.
+    //
+    // NO LONGER "(hand-fired)". Until 2026-09-03 the automated seam sweeper was hardcoded to the
+    // literal "CART" slot and never read deck_configs, so this entry genuinely could not carry the
+    // log's sweepers — and the state line said so. The fire path now resolves the dialled
+    // channel(s) on every fire, so the qualifier and that sentence would both be false.
+    state: "Sweepers air on this channel — the log's seam sweepers and hand-fired imaging alike." },
   // CARTS ARE NOT SWEEPERS, and this entry is what finally separates them (Jeff, 2026-09-01).
   //
   //   A SWEEPER is programmed to play DURING ROTATION — armed and fired automatically at a song
@@ -716,6 +723,38 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
                  || deckCfgs.find(c => c.enabled && c.type === "cart");
     return patched ? patched.slot : "CART";
   }, [deckCfgs]);
+  // ── RESOLVED AT EVERY FIRE, NEVER CACHED ───────────────────────────────────────────────────────
+  //
+  // CART_CHANNEL above is a useMemo over the deck configs this component read WHEN IT MOUNTED, and
+  // useDeckConfig reads deck_configs once per station and never re-reads. So moving the input
+  // selector did not reach the wall: carts kept firing at whichever deck was dialled to Cart at
+  // mount. It works, then the operator re-dials and it goes silent — with nothing to say why.
+  //
+  // The deck is read FRESH on every click. It is a button press, not an audio-thread path: one small
+  // station-scoped query costs nothing next to being wrong about where a cart sounds. EVERY channel
+  // dialled to Cart, not the first — how many the operator uses is their choice, not this function's.
+  const resolveFireChannels = useCallback(async (): Promise<string[]> => {
+    try {
+      const r: any = await (window as any).ether?.deckConfigs?.list?.(stationId);
+      const rows: any[] = (r && r.rows) || (Array.isArray(r) ? r : []);
+      const dialed = rows
+        .filter(c => c && c.enabled && String(c.type) === "source" && String(c.kind || "") === "cart")
+        .map(c => String(c.slot));
+      if (dialed.length) return dialed;
+      // Dialled nowhere. Falling back keeps the rack audible, but the operator must be told that the
+      // audio did NOT go where the board says — silence-by-configuration they cannot see is the
+      // defect this whole path keeps producing.
+      consoleLog("error", `[CART] no channel is dialled to Cart / SFX rack — firing on ${CART_CHANNEL}. Set a deck's input to Cart / SFX rack.`);
+    } catch (e) {
+      consoleLog("error", `[CART] could not read the deck config (${(e as any)?.message || e}) — firing on ${CART_CHANNEL}`);
+    }
+    return [CART_CHANNEL];
+  }, [stationId, CART_CHANNEL]);
+
+  // Where the cart currently playing actually went. Stop addresses THAT, not whatever the selector
+  // says a moment later — otherwise moving a selector mid-cart strands it with no tile to stop it.
+  const playingChannelsRef = useRef<string[]>([]);
+
   const [carts, setCarts] = useState<CartSlot[]>(defaultCarts);
 
   // ── PERSISTENCE (2026-07-31) ────────────────────────────────────────────────────────────────────
@@ -800,11 +839,18 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
     });
     const id = setInterval(() => {
       if (!playingKeyRef.current) return;
-      const st = engine.getDeck(CART_CHANNEL)?.getState();
-      if (st?.status === "playing") {
-        setRemainingMs(Math.max(0, ((st.durationSec || 0) - (st.positionSec || 0)) * 1000));
+      // THE DECK IT WAS FIRED ON. Watching the mount-time memo meant polling a deck the cart was not
+      // on: it read idle, cleared playingKeyRef, and the next press fired again instead of stopping.
+      // The cart is still playing while ANY channel it fired on is; the countdown follows the longest.
+      const chans = playingChannelsRef.current.length ? playingChannelsRef.current : [CART_CHANNEL];
+      const live = chans
+        .map(ch => engine.getDeck(ch)?.getState())
+        .filter(st => st && st.status === "playing") as any[];
+      if (live.length) {
+        setRemainingMs(Math.max(0, ...live.map(st => ((st.durationSec || 0) - (st.positionSec || 0)) * 1000)));
       } else {
         playingKeyRef.current = null;
+        playingChannelsRef.current = [];
         setRemainingMs(0);
         setCarts(p => p.map(c => c.playing ? { ...c, playing: false } : c));
       }
@@ -849,18 +895,38 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
     // Already playing THIS cart → stop it. Read the deck rather than trusting the flag: the poll
     // effect clears playing state on its own beat, so the deck is the authority on what is audible.
     if (playingKeyRef.current === key) {
-      try { engine.getDeck(CART_CHANNEL)?.stop(); } catch {}
+      // PAUSE, NOT STOP. The cart button plays a file and silences a file — it must never touch the
+      // channel. `stop()` is audio_stop, whose Rust arm empties the slot outright (`source = None`,
+      // `path = ""`, `active = false`, `frames_played = 0`), so pressing a cart a second time was
+      // tearing down the operator's deck. Pause only sets `paused = true`: the mixer skips the slot
+      // so the file goes quiet immediately, and the channel — its patch, its fader, its ON — is left
+      // exactly as the operator set it. The next fire reloads from the top anyway, so nothing is
+      // resumed mid-file.
+      for (const ch of playingChannelsRef.current) {
+        try { engine.getDeck(ch)?.pause(); } catch (e) { console.error(`[cart] pause failed on ${ch}:`, e); }
+      }
       playingKeyRef.current = null;
+      playingChannelsRef.current = [];
       setRemainingMs(0);
       setCarts(p => p.map(c => (c.playing ? { ...c, playing: false } : c)));
       return;
     }
-    try {
-      await engine.loadToDeck(CART_CHANNEL, cart.filePath, cart.label, "");
-      engine.getDeck(CART_CHANNEL)?.play();
-      playingKeyRef.current = key;
-      setCarts(p => p.map(c => ({ ...c, playing: c.key === key }))); // flash clears when the deck stops (effect)
-    } catch {}
+    // The operator pressed it, so it fires. A failure on one channel is REPORTED and the rest still
+    // fire — this whole block used to sit in `catch {}`, which produced the load line in the console
+    // and then absolute silence: no error, no refusal, no clue.
+    const chans = await resolveFireChannels();
+    consoleLog("audio", `[CART] "${cart.label}" → ${chans.join("+")}`);
+    for (const ch of chans) {
+      try {
+        await engine.loadToDeck(ch, cart.filePath, cart.label, "");
+        await engine.getDeck(ch)?.play();
+      } catch (e) {
+        console.error(`[cart] "${cart.label}" on ${ch}:`, e);
+      }
+    }
+    playingChannelsRef.current = chans;
+    playingKeyRef.current = key;
+    setCarts(p => p.map(c => ({ ...c, playing: c.key === key }))); // flash clears when the deck stops (effect)
   };
 
   // ── RIGHT-CLICK → DELETE ────────────────────────────────────────────────────────────────────
@@ -873,8 +939,12 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
     // If the slot being cleared is the one playing, stop it first — otherwise the cart keeps
     // sounding with no tile left to stop it from.
     if (playingKeyRef.current === key) {
-      try { engine.getDeck(CART_CHANNEL)?.stop(); } catch {}
+      // Same rule when the slot being cleared is the one sounding: silence the file, leave the deck.
+      for (const ch of playingChannelsRef.current) {
+        try { engine.getDeck(ch)?.pause(); } catch (e) { console.error(`[cart] pause failed on ${ch}:`, e); }
+      }
       playingKeyRef.current = null;
+      playingChannelsRef.current = [];
       setRemainingMs(0);
     }
     updateSlot(key, { filePath: "", label: "", playing: false } as any);   // persisted
@@ -987,9 +1057,11 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
                 textShadow: "0 0 4px rgba(0,0,0,0.6)",
               }}>■</span>
             )}
-            <span style={{ fontSize: 12, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: cart.playing || cart.filePath ? cart.color : "var(--text-tertiary)" }}>{cart.key}</span>
+            {/* NO HOTKEY GLYPH. The number was the biggest thing on a tile and it is not what the
+                operator is looking for — the NAME is. The key still fires the cart from the
+                keyboard; it just stops competing with the label for the space. */}
             <span style={{
-              fontSize: 9, fontWeight: cart.filePath ? 700 : 400, lineHeight: 1.2,
+              fontSize: 13, fontWeight: cart.filePath ? 800 : 400, lineHeight: 1.2,
               color: cart.playing ? cart.color : cart.filePath ? "var(--text-primary)" : "var(--text-tertiary)",
               overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const,
               fontStyle: cart.filePath ? "normal" : "italic", wordBreak: "break-word" as const, maxWidth: "100%",
@@ -1060,8 +1132,7 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
             >
               {/* STOP GLYPH — inline here: this tile is a flex row, not a positioned box. */}
               {cart.playing && <span aria-hidden style={{ fontSize: 8, lineHeight: 1, color: "#000", flexShrink: 0 }}>■</span>}
-              <span style={{ fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono',monospace", color: cart.playing ? "#000" : cart.color, minWidth: 12 }}>{cart.key}</span>
-              <span style={{ fontSize: 9, fontWeight: cart.filePath ? 700 : 400, color: cart.playing ? "#000" : cart.filePath ? "var(--text-primary)" : "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1, fontStyle: cart.filePath ? "normal" : "italic" }}>
+              <span style={{ fontSize: 12, fontWeight: cart.filePath ? 800 : 400, color: cart.playing ? "#000" : cart.filePath ? "var(--text-primary)" : "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1, fontStyle: cart.filePath ? "normal" : "italic" }}>
                 {cart.filePath ? cart.label : "Empty"}
               </span>
             </div>
@@ -1123,7 +1194,7 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
                 full tile width. */}
             <div style={{ flex: 1, display: "flex", alignItems: "center", padding: "2px 6px", minWidth: 0 }}>
               <span style={{
-                fontSize: 12, fontWeight: cart.filePath ? 700 : 400, lineHeight: 1.3,
+                fontSize: 16, fontWeight: cart.filePath ? 800 : 400, lineHeight: 1.25,
                 color: cart.playing ? cart.color : cart.filePath ? "var(--text-primary)" : "var(--text-tertiary)",
                 overflow: "hidden",
                 display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" as const,
@@ -1193,6 +1264,33 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>
             {carts.find(c => c.key === cartMenu.key)?.label || cartMenu.key}
           </div>
+          {/* RENAME — the same editor double-click opens. It was reachable ONLY by double-click,
+              which is not a discoverable gesture on a button that also fires audio: an operator who
+              tried it heard the cart play. The right-click menu is where a tile's edit actions
+              belong, so both live here and double-click keeps working for anyone used to it. */}
+          <button
+            onClick={() => { const k = cartMenu.key; setCartMenu(null); editLabel(k); }}
+            style={{
+              width: "100%", textAlign: "left", padding: "5px 8px", cursor: "pointer",
+              background: "transparent", border: "1px solid transparent", color: "var(--text-primary)",
+              fontSize: 11, fontWeight: 700, letterSpacing: "0.06em",
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-tertiary)"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+          >RENAME…</button>
+          {/* REPLACE — delete-then-click works, but replacing the audio is the thing an operator
+              actually wants and it should not take two gestures and an empty tile in between. */}
+          <button
+            onClick={() => { const k = cartMenu.key; setCartMenu(null); void assignCart(k); }}
+            style={{
+              width: "100%", textAlign: "left", padding: "5px 8px", cursor: "pointer",
+              background: "transparent", border: "1px solid transparent", color: "var(--text-primary)",
+              fontSize: 11, fontWeight: 700, letterSpacing: "0.06em",
+            }}
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-tertiary)"; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+          >REPLACE FILE…</button>
+          <div style={{ height: 1, background: "var(--border-primary)", margin: "3px 0" }} />
           <button
             onClick={() => deleteCart(cartMenu.key)}
             style={{

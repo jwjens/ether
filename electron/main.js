@@ -4562,7 +4562,7 @@ function scheduleForDate(stationId, dateStr) {
   catch { return null; }
 }
 
-function announceTick() {
+async function announceTick() {
   let stations = [];
   // A cached statement must never become a PERMANENT failure. If the handle it was compiled against
   // ever goes away, drop the cache so the next tick re-prepares — the scheduler heals itself instead
@@ -4638,7 +4638,9 @@ function announceTick() {
       try {
         // WHAT plays is the announcement uuid; WHICH ENTRY fired is row.uuid, and they are different
         // things now. Passing the entry uuid here would look up an announcement that does not exist.
-        const r = fireAnnouncement(stationId, row.announcement_uuid, row.uuid);
+        // AWAITED: without this `r` is a Promise, `r.ok` is undefined, and every fire — including a
+        // failed one — logged as a success while the failure vanished into an unhandled rejection.
+        const r = await fireAnnouncement(stationId, row.announcement_uuid, row.uuid);
         if (!r.ok) logStartup('[announce] scheduled fire FAILED station ' + stationId + ' "' + (row.title || '') + '": ' + r.error);
         else logStartup('[announce] scheduled fire station ' + stationId + ' "' + (row.title || '') + '" at ' + due + ' (' + row.trigger_type + ')');
       } catch (e) { logStartup('[announce] scheduled fire threw: ' + (e && e.message)); }
@@ -4650,7 +4652,13 @@ function startAnnouncementScheduler() {
   if (_announceTimer) return;
   // Never let a scheduling fault reach playout: the tick is wrapped, and a throw inside one station
   // must not stop the others or kill the timer.
-  _announceTimer = setInterval(() => { try { announceTick(); } catch (e) { console.error('[announce] tick:', e && e.message); } }, ANNOUNCE_TICK_MS);
+  // announceTick is async now, so a rejection would sail past a synchronous try/catch and become an
+  // unhandled rejection — the exact failure mode that let a dead engine link look like a clean fire.
+  // Both shapes are caught: a synchronous throw AND a rejected promise.
+  _announceTimer = setInterval(() => {
+    try { Promise.resolve(announceTick()).catch(e => console.error('[announce] tick:', e && e.message)); }
+    catch (e) { console.error('[announce] tick:', e && e.message); }
+  }, ANNOUNCE_TICK_MS);
   console.log('[announce] scheduler started (every ' + ANNOUNCE_TICK_MS + 'ms, matching to the second, all stations)');
 }
 
@@ -4683,15 +4691,20 @@ function startAnnouncementScheduler() {
 // it and guards on it; a hand-fire from the panel has no entry and passes nothing. Both stamps are
 // written: the asset stamp stays because "when did this audio last play" is a real thing the list
 // shows and the hand-fire path has nothing else to record.
-function fireAnnouncement(stationId, uuid, entryUuid) {
-  // 1. WHERE does it play? A source channel patched to Announcement, on THIS station.
-  let slot = null;
+async function fireAnnouncement(stationId, uuid, entryUuid) {
+  // 1. WHERE does it play? EVERY source channel dialled to Announcement on THIS station — read
+  //    fresh on every fire, so moving the selector takes effect on the very next announcement with
+  //    no restart. `LIMIT 1` used to cap this at the lowest-lettered channel: dial two and only one
+  //    ever fired, silently. How many channels carry a source is the operator's choice, not this
+  //    function's.
+  let slots = [];
   try {
-    slot = db.prepare(
+    slots = db.prepare(
       "SELECT slot FROM deck_configs WHERE station_id = ? AND enabled = 1 " +
-      "AND type = 'source' AND kind = 'announcement' AND deleted_at IS NULL ORDER BY slot LIMIT 1"
-    ).get(stationId)?.slot ?? null;
+      "AND type = 'source' AND kind = 'announcement' AND deleted_at IS NULL ORDER BY slot"
+    ).all(stationId).map(r => String(r.slot || "")).filter(Boolean);
   } catch (e) { return { ok: false, error: 'deck lookup failed: ' + e.message }; }
+  const slot = slots[0] || null;
   if (!slot) {
     // Honest, and actionable: this is a patching problem, not a broken announcement.
     return { ok: false, error: 'No source channel is patched to Announcement on this station. Press + on the board and choose Announcement.' };
@@ -4716,16 +4729,37 @@ function fireAnnouncement(stationId, uuid, entryUuid) {
     }
   } catch (e) { return { ok: false, error: 'file check failed: ' + e.message }; }
 
-  // 4. Load and play on the real engine — whichever one owns the audio.
-  try {
-    if (AUDIO_DAEMON) {
-      audiodClient.cmd('load', { deck: slot, filePath: row.file_path, title: row.title || 'Announcement', artist: '', gainDb: 0, stationId, contentClass: 'ANN' });
-      audiodClient.cmd('play', { deck: slot, stationId });
-    } else {
-      audio.audioLoad(slot, row.file_path, row.title || 'Announcement', '', 0, stationId);
-      audio.audioPlay(slot, stationId);
-    }
-  } catch (e) { return { ok: false, error: 'engine refused the announcement: ' + e.message }; }
+  // 4. Load and play on the real engine — whichever one owns the audio, AND WAIT FOR ITS ANSWER.
+  //
+  //    These two calls used to be fire-and-forget. `audiodClient.cmd()` returns a PROMISE and rejects
+  //    on "daemon not connected", on a socket write error, and on a 5s timeout — none of which a
+  //    synchronous try/catch can see. So a rejected load became an unhandled rejection, execution
+  //    walked straight into the stamps below, and the announcement was recorded as played while the
+  //    deck never received it: play_log and last_played_at both populated, nothing on the channel,
+  //    nothing audible. "Told the engine" is not "the engine played it", and only one of those two
+  //    is a fact worth writing into the as-run log.
+  //    A failure on one channel is reported and the others still fire; only a total failure fails
+  //    the announcement.
+  const firedOn = [];
+  const failures = [];
+  for (const ch of slots) {
+    try {
+      if (AUDIO_DAEMON) {
+        const loaded = await audiodClient.cmd('load', { deck: ch, filePath: row.file_path, title: row.title || 'Announcement', artist: '', gainDb: 0, stationId, contentClass: 'ANN' });
+        if (loaded === false) { failures.push(ch + ': load refused'); continue; }
+        const played = await audiodClient.cmd('play', { deck: ch, stationId });
+        if (played === false) { failures.push(ch + ': play refused (nothing loaded)'); continue; }
+      } else {
+        const loaded = audio.audioLoad(ch, row.file_path, row.title || 'Announcement', '', 0, stationId);
+        if (loaded === false) { failures.push(ch + ': load refused'); continue; }
+        const played = audio.audioPlay(ch, stationId);
+        if (played === false) { failures.push(ch + ': play refused (nothing loaded)'); continue; }
+      }
+      firedOn.push(ch);
+    } catch (e) { failures.push(ch + ': ' + (e && e.message || e)); }
+  }
+  if (failures.length) { try { logStartup('[announce] channel failures: ' + failures.join('; ')); } catch {} }
+  if (!firedOn.length) return { ok: false, error: 'engine refused the announcement: ' + (failures.join('; ') || 'no channel accepted it') };
 
   // 5. Stamp it ONLY once the engine has been told — an announcement that never played must not
   //    look like it did.
@@ -4756,18 +4790,18 @@ function fireAnnouncement(stationId, uuid, entryUuid) {
     let _durMs = 0;
     try { _durMs = Math.round((audio.getFileDuration(row.file_path) || 0) * 1000); } catch { _durMs = 0; }
     require('../audiod/playlog').logPlay(db, {
-      stationId, title: row.title || 'Announcement', artist: '', deck: slot,
+      stationId, title: row.title || 'Announcement', artist: '', deck: firedOn[0],
       durationMs: _durMs, sessionId: null, filePath: row.file_path,
       contentClass: 'ANN', source: 'announcement',
     });
   } catch (e) { try { logStartup('[announce] play_log write failed: ' + (e && e.message)); } catch {} }
 
-  try { logStartup('[announce] fired "' + (row.title || '') + '" on ' + slot + ' (station ' + stationId + ')'); } catch {}
-  return { ok: true, slot, title: row.title || '' };
+  try { logStartup('[announce] fired "' + (row.title || '') + '" on ' + firedOn.join('+') + ' (station ' + stationId + ')'); } catch {}
+  return { ok: true, slot: firedOn[0], slots: firedOn, title: row.title || '' };
 }
 
-ipcMain.handle('announcements:fire', (_, stationId, uuid) => {
-  try { return fireAnnouncement(stationId, uuid); }
+ipcMain.handle('announcements:fire', async (_, stationId, uuid) => {
+  try { return await fireAnnouncement(stationId, uuid); }
   catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 });
 
@@ -4775,11 +4809,11 @@ ipcMain.handle('announcements:fire', (_, stationId, uuid) => {
 // button is disabled instead of failing at the moment someone presses it.
 ipcMain.handle('announcements:can-fire', (_, stationId) => {
   try {
-    const slot = db.prepare(
+    const slots = db.prepare(
       "SELECT slot FROM deck_configs WHERE station_id = ? AND enabled = 1 " +
-      "AND type = 'source' AND kind = 'announcement' AND deleted_at IS NULL ORDER BY slot LIMIT 1"
-    ).get(stationId)?.slot ?? null;
-    return { ok: true, slot, ready: !!slot };
+      "AND type = 'source' AND kind = 'announcement' AND deleted_at IS NULL ORDER BY slot"
+    ).all(stationId).map(r => String(r.slot || "")).filter(Boolean);
+    return { ok: true, slot: slots[0] ?? null, slots, ready: slots.length > 0 };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 ipcMain.handle("audio:set-duckable", (_, stationId, deck, duckable) =>
