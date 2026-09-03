@@ -4491,67 +4491,6 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
               >+</button>
             </div>
           )}
-          {/* CART — the overlay bus (slot 6), teal.
-              Rides the overlay bus gain via audio_set_volume("CART"); each item's gain_db (trim) stays
-              independent. Always shown alongside Master since it is a station-wide overlay.
-
-              KEPT — deliberately — when the static Jukebox strip was retired (2026-08-22). It is NOT
-              redundant with a source channel: this is the only on-screen level control and the only
-              CUT for the CART bus, and removing it would leave a station airing imaging it could
-              neither ride nor take off air.
-
-              LABELLED "SWEEPERS" SINCE 2026-09-01, BECAUSE THAT IS NOW ALL IT CARRIES.
-              This strip used to carry two different things — hand-fired carts AND automated sweepers
-              — and the note here predicted the sweeper arc would move sweepers off, leaving CART as
-              the hand-fired bus. It resolved the OTHER way round: carts became a patchable source
-              kind and moved onto ordinary aux decks, and the sweeper kept this overlay. Same
-              separation, reached from the opposite side.
-              (Carts: DeckConfigurator BoutiqueCartWall, which resolves its own patched slot.)
-
-              SO IT IS NOT DELETED, and must not be. The channel underneath is still the seam
-              sweeper's — audiod/engine.js _jingleTick loads and stops "CART" as part of the bridge —
-              and this remains its ONLY on-screen level control and its ONLY cut. Removing it would
-              leave a station airing imaging it could neither ride nor take off air, which is the
-              failure the original note warned about. What changed is the name, because the name was
-              describing an occupant that has moved out. */}
-          <div style={{ flex: 1, minWidth: 0, maxWidth: 140, display: "flex", position: "relative" }}>
-            <ConsoleStrip
-              label="SWEEPERS"
-              color="#14e0c8"
-              volume={jingleVol}
-              deckId="CART"
-              // ON = THIS CHANNEL'S CUT: cut means nothing from this channel reaches air, enforced in
-              // the mixer and surviving every Load.
-              //
-              // Expressed through the STOCK ConsoleStrip props — the component is untouched, exactly as
-              // the decks have always used it. isOn={true} is what every deck passes, which is what keeps
-              // this strip off the greyed/disabled branch entirely (that branch is unreachable for decks,
-              // and it must stay unreachable here). isPlaying carries the switch, so the ON button glows
-              // bright blue while the channel is engaged and sits normal blue when cut — the same two
-              // colours a deck's ON button already uses, via the same code path. No new prop, no mode
-              // flag, no special case in the shared component.
-              isPlaying={cartOn}
-              isOn={true}
-              onVolumeChange={v => { setJingleVol(v); (engine.getDeck("CART" as any) as any)?.setVolume(v); }}
-              // Cuts/restores the channel. It is deliberately NOT transport: the old handler called
-              // pause()/play() on the CART deck, which is empty between carts (so it appeared to do
-              // nothing) and could not stop the NEXT jingle anyway, since firing one issues its own
-              // load+play. A channel switch has to gate the bus, not poke the deck.
-              onToggleOn={toggleCartChannel}
-            />
-            {/* Discoverability (4.4.56): unconfigured → a subtle deep-link to Settings → Programming → Jingles. */}
-            {!hasJinglePool && (
-              <button onClick={onOpenJingleSettings} title="No jingle pool yet — click to set up jingles"
-                style={{
-                  position: "absolute", left: 4, right: 4, bottom: 4, padding: "4px 2px",
-                  background: "rgba(20,224,200,0.10)", border: "1px solid rgba(20,224,200,0.45)", borderRadius: 4,
-                  color: "#14e0c8", fontSize: 9, fontWeight: 700, letterSpacing: "0.04em", lineHeight: 1.2,
-                  cursor: "pointer", textAlign: "center",
-                }}>
-                Set up jingles →
-              </button>
-            )}
-          </div>
           {/* Master Output — owns its own audio:levels subscription */}
           <MasterOutput
             expanded={!showCarts && !masterCollapsed}
