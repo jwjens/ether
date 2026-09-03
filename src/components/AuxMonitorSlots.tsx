@@ -280,7 +280,19 @@ export default function AuxMonitorSlots() {
         <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 320, overflowY: "auto", overflowX: "hidden" }}>
           {auxDecks.map(d => {
             const t = tel[d.slot];
-            const nfo = info[d.slot];
+            // A FINISHED ITEM IS NOT WHAT IS ON THE CHANNEL.
+            //
+            // The engine keeps the last title on a slot after it ends, so a row went on naming an
+            // announcement that had finished — and kept naming it after the operator dialled that
+            // channel to Cart or Sweeper. The row then described a source the channel no longer
+            // carries, which is the opposite of what a monitor is for.
+            //
+            // `ended` means the item is history: the channel is carrying nothing. One rule for every
+            // source deck, no per-kind special case — the row reports the channel, whatever is
+            // dialled into it.
+            const raw = info[d.slot];
+            const finished = raw?.status === "ended";
+            const nfo = finished ? null : raw;
             const playing = nfo?.status === "playing";
             const peak = Math.max(0, Math.min(1, t?.peak ?? 0));
             const lvl = levels[d.slot] ?? 0;
@@ -304,7 +316,7 @@ export default function AuxMonitorSlots() {
                     border: `1px solid ${playing ? "#4ade8055" : "var(--border-primary)"}`,
                   }}>{playing ? "PLAYING" : (nfo?.status || "idle").toUpperCase()}</span>
                   <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontVariantNumeric: "tabular-nums" }}>
-                    {fmtPos(t?.frames_played ?? 0)}
+                    {fmtPos(finished ? 0 : (t?.frames_played ?? 0))}
                   </span>
                 </div>
 

@@ -90,6 +90,24 @@ export class AudioEngine {
   // Dedicated cart channel (native slot "CART") — fires out of master, over the music.
   // Tracked only for the cart UI's countdown/VU; never participates in queue advance.
   private stateCart: DeckState = makeState("C", {});
+  // ── EVERY OTHER SLOT REPORTS ITSELF ─────────────────────────────────────────────────────────────
+  //
+  // getDeck(id).getState() used to end its chain with `: this.stateC`, so ANY id that was not A, B or
+  // CART — every source channel — was handed DECK C's state. A cart fired on D then asked deck C
+  // whether it was still playing; C is a rotation deck, so the 200ms poll cleared the cart's playing
+  // flag on C's beat and the second press re-fired instead of stopping. The commands were addressed
+  // correctly all along; the STATE was not, and a channel that cannot report itself cannot be
+  // toggled. Slots are created on first use.
+  private stateSource: Record<string, DeckState> = {};
+  private srcState(id: string): DeckState {
+    if (!this.stateSource[id]) this.stateSource[id] = { ...makeState("C", {}), id: id as DeckId };
+    return this.stateSource[id];
+  }
+  private setSrcState(id: string, patch: Partial<DeckState>) {
+    this.stateSource[id] = { ...this.srcState(id), ...patch, id: id as DeckId };
+    return this.stateSource[id];
+  }
+  private isSourceSlot(id: string): boolean { return id !== "A" && id !== "B" && id !== "C" && id !== "CART"; }
 
   private pollTimer: any = null;
   private lastPollTime = Date.now();
@@ -753,6 +771,17 @@ export class AudioEngine {
         this.stateCart = { ...makeState("C", s.deckCart), durationSec: durCart, positionSec: posCart };
       }
 
+      // Source channels — the same treatment as the cart channel, for every slot we track. NOT run
+      // through checkEndByPosition: a finished source must never advance the music queue.
+      for (const sid of Object.keys(this.stateSource)) {
+        const raw = (s as any)[`deck${sid}`];
+        if (!raw) continue;
+        const prev = this.stateSource[sid];
+        const dur = prev.durationSec;
+        const pos = prev.status === "playing" ? Math.min(prev.positionSec + elapsed, dur || 9999) : prev.positionSec;
+        this.stateSource[sid] = { ...makeState(sid as DeckId, raw), durationSec: dur, positionSec: pos, id: sid as DeckId };
+      }
+
     } catch (e) {
       console.error("[ENGINE] Poll error:", e);
     }
@@ -932,7 +961,11 @@ export class AudioEngine {
   getDeck(id: DeckId | string) {
     const deckId = id as DeckId;
     const isCart = id === "CART";
-    const getState = () => isCart ? this.stateCart : deckId === "A" ? this.stateA : deckId === "B" ? this.stateB : this.stateC;
+    const isSource = this.isSourceSlot(String(id));
+    // NO FALL-THROUGH TO DECK C. A source slot reports ITSELF; only C reports C.
+    const getState = (): DeckState => isCart ? this.stateCart
+      : isSource ? this.srcState(String(id))
+      : deckId === "A" ? this.stateA : deckId === "B" ? this.stateB : this.stateC;
     return {
       getState,
       // NEVER CLAIM PLAYING UNCONFIRMED (2026-07-31). This used to mark the deck "playing" BEFORE the
@@ -949,15 +982,26 @@ export class AudioEngine {
           return false;
         }
         if (isCart) this.stateCart = { ...this.stateCart, status: "playing" };
+        else if (isSource) this.setSrcState(String(id), { status: "playing" });
         else if (deckId === "A") this.stateA = { ...this.stateA, status: "playing" };
         else if (deckId === "B") this.stateB = { ...this.stateB, status: "playing" };
         else if (deckId === "C") this.stateC = { ...this.stateC, status: "playing" };
         this.listeners.forEach(l => l(deckId, getState()));
         return ok;
       },
-      pause: () => invoke("audio_pause", { deck: deckId, stationId: this.stationId }),
+      pause: () => {
+        // Pause silences the file without emptying the slot — the deck keeps its source, path and
+        // position. Mirror it locally so a caller polling this slot sees it stop on the same tick.
+        if (isSource) this.setSrcState(String(id), { status: "paused" });
+        return invoke("audio_pause", { deck: deckId, stationId: this.stationId });
+      },
       resume: () => invoke("audio_play", { deck: deckId, stationId: this.stationId }),
-      stop: () => { this.endTriggered.delete(deckId); return invoke("audio_stop", { deck: deckId, stationId: this.stationId }); },
+      stop: () => {
+        this.endTriggered.delete(deckId);
+        // The slot's own state follows its own stop, so a stopped channel stops reporting "playing".
+        if (isSource) this.setSrcState(String(id), { status: "idle", positionSec: 0 });
+        return invoke("audio_stop", { deck: deckId, stationId: this.stationId });
+      },
       setVolume: (v: number) => invoke("audio_set_volume", { deck: deckId, volume: v, stationId: this.stationId }),
       /** Console channel on/off — cuts this channel to the program bus entirely. Survives Load, so a
        *  cart fired into a cut channel never reaches air. Not a fader move, not a transport state. */
@@ -991,6 +1035,7 @@ export class AudioEngine {
     if (id === "B") { this.stateB = { ...this.stateB, ...newState, id: "B" }; this.listeners.forEach(l => l("B", this.stateB)); }
     if (id === "C") { this.stateC = { ...this.stateC, ...newState, id: "C" }; this.listeners.forEach(l => l("C", this.stateC)); }
     if (id === "CART") { this.stateCart = { ...this.stateCart, ...newState }; }
+    if (this.isSourceSlot(String(id))) this.setSrcState(String(id), newState);
     this.endTriggered.delete(id as DeckId);
     invoke("get_file_duration", { filePath }).then((dur: number) => {
       if (dur > 0) {
@@ -998,6 +1043,7 @@ export class AudioEngine {
         if (id === "B") { this.stateB = { ...this.stateB, durationSec: dur }; this.listeners.forEach(l => l("B", this.stateB)); }
         if (id === "C") { this.stateC = { ...this.stateC, durationSec: dur }; this.listeners.forEach(l => l("C", this.stateC)); }
         if (id === "CART") { this.stateCart = { ...this.stateCart, durationSec: dur }; }
+        if (this.isSourceSlot(String(id))) this.setSrcState(String(id), { durationSec: dur });
       }
     }).catch((e: unknown) => { console.warn('[ENGINE] get_file_duration failed', id, filePath, e); });
     // NOTE: playStartCallbacks are NOT fired here — loadToDeck is also used for
