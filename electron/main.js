@@ -5345,7 +5345,20 @@ ipcMain.handle("system:openUrl", (_, url) => shell.openExternal(url));
 ipcMain.handle("system:openSoundSettings", () => audio.openSoundSettings());
 ipcMain.handle("system:getAppDataDir", () => P.profileDir(P.activeKey()));
 ipcMain.handle("system:getPlatform", () => process.platform);
-ipcMain.handle("system:getVersion", () => app.getVersion());
+ipcMain.handle("system:getVersion", () => {
+  // IN DEV, app.getVersion() RETURNS ELECTRON'S VERSION, NOT ETHER'S.
+  //
+  // `electron:dev` runs `electron electron/main.js` — a FILE, not a directory — so Electron falls
+  // back to its own default app package and reports its own version (v43.5.1 in the About dialog,
+  // where 4.4.237 belongs). Packaged builds are unaffected: the app path is the asar carrying this
+  // repo's package.json, so app.getVersion() is already right there.
+  //
+  // It is worth fixing rather than explaining away, because "check Help → About" is the FIRST step
+  // on every bug report in this project. A version display that lies in dev sends every diagnosis
+  // to the wrong build.
+  if (app.isPackaged) return app.getVersion();
+  try { return require("../package.json").version; } catch { return app.getVersion(); }
+});
 
 // ── TEST-ONLY: auto-login bypass ────────────────────────────────────────────────────────────────
 // Skips the USER LOGIN (profile + PIN) and the shift-start screen so an automated repro can launch
