@@ -26,6 +26,9 @@ contextBridge.exposeInMainWorld("ether", {
     getLevels: (stationId) => ipcRenderer.invoke("audio:getLevels", stationId),
     setAuxMonitor: (stationId, deck, gain) => ipcRenderer.invoke("audio:set-aux-monitor", stationId, deck, gain),
     setDuck: (stationId, deck, enabled) => ipcRenderer.invoke("audio:set-duck", stationId, deck, enabled),
+    // WHICH BUS a slot joins — "sweeper" sums with the music, anything else is an aux/source
+    // channel. The BUS, not the content: what plays on the slot is the source dropdown.
+    setSlotKind: (stationId, deck, kind) => ipcRenderer.invoke("audio:set-slot-kind", stationId, deck, kind),
     setDuckParams: (stationId, params) => ipcRenderer.invoke("audio:set-duck-params", stationId, params),
     setDuckable: (stationId, deck, duckable) => ipcRenderer.invoke("audio:set-duckable", stationId, deck, duckable),
     setAuxDevice:  (stationId, device)      => ipcRenderer.invoke("audio:set-aux-device", stationId, device),

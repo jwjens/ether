@@ -16,7 +16,7 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import ConsoleStrip from "./ConsoleStrip";
 import { SOURCE_KINDS, sourceKindMeta, deckLetter, type SourceKind, type DeckConfig } from "./DeckConfigurator";
-import { canHostJukebox } from "./DeckConfigurator";
+import { canHostJukebox, isSweeperKind } from "./DeckConfigurator";
 
 interface Props {
   config: DeckConfig;
@@ -235,6 +235,20 @@ export default function SourceChannelStrip({
             are implemented with the design's defaults but have no tuning UI yet, so this says ON/OFF
             and nothing more. A control that implied tunability it does not have would be the same
             defect as the AUTO-DUCK button this replaces. */}
+        {/* NO DUCK CONTROL ON A SWEEPER CHANNEL. A sweeper joins the programme bus, and only a
+            SOURCE-bus slot can arm the ducker (native/src/audio.rs, the arming branch is gated on
+            the slot's kind). That is A.8's guarantee — a sweeper must never duck the song it is
+            sweeping into — and it is structural, not a setting. Rendering a toggle that the engine
+            will never honour is the honest-UI defect this project treats as a bug. */}
+        {isSweeperKind(config.kind) ? (
+          <div style={{
+            fontSize: 8, lineHeight: 1.25, color: "var(--text-tertiary)",
+            border: "1px solid var(--border-primary)", padding: "3px 4px", borderRadius: 2,
+            textAlign: "center" as const,
+          }}>
+            SWEEPERS RIDE WITH THE MUSIC — never duck it
+          </div>
+        ) : (
         <button
           onClick={() => onDuckChange(!duck)}
           role="switch"
@@ -252,14 +266,8 @@ export default function SourceChannelStrip({
         >
           {duck ? "DUCK ON" : "DUCK OFF"}
         </button>
+        )}
 
-        {/* The honest state line. Never claims audio that cannot happen. */}
-        <div style={{
-          fontSize: 8, lineHeight: 1.25, minHeight: 20,
-          color: meta ? "var(--text-tertiary)" : "var(--text-quaternary, var(--text-tertiary))",
-        }}>
-          {meta ? meta.state : "Nothing patched — pick a source."}
-        </div>
       </div>
 
       {/* ── the channel itself ──────────────────────────────────────────────────────────────── */}

@@ -85,7 +85,7 @@ import MacrosPanel, { useMacroHotkeys, useMacroClock } from "./components/MacroE
 import MidiSettingsPanel, { MidiProvider } from "./components/MidiEngine";
 import ConsoleStrip from "./components/ConsoleStrip";
 import SourceChannelStrip from "./components/SourceChannelStrip";
-import { SOURCE_SLOTS, type SourceKind, type DeckType } from "./components/DeckConfigurator";
+import { SOURCE_SLOTS, isSweeperKind, type SourceKind, type DeckType } from "./components/DeckConfigurator";
 // The board scopes the levels stream to its own station, like every other consumer of it.
 import { matchesStation } from "./lib/levelsScope";
 // A slot the engine is carrying is always on the board — the invariant, with its test.
@@ -960,6 +960,29 @@ export default function App() {
     }
   }, [deckConfigs, stationId]);
 
+  // ── WHICH BUS EACH SOURCE CHANNEL JOINS ────────────────────────────────────────────────────────
+  //
+  // A sweeper belongs in the programme WITH THE MUSIC — same sum, same fader law, same processor,
+  // ducked with it, heard on the station monitor. That is what slot 6 always did, and moving
+  // sweepers to a dialled channel moved them onto the aux bus instead: a different fader, a separate
+  // loudness ride, a separate output device. Every audio complaint since came from that.
+  //
+  // The engine's slot kind was write-once until now, which is exactly why a sweeper could only ever
+  // be slot 6 — its behaviour was welded to its address. This asserts the kind downward from
+  // deck_configs so the ADDRESS moves and nothing else does. Same shape as the duck assert above,
+  // and for the same reason: the engine boots with defaults and must be TOLD what the operator set.
+  //
+  // Carts are NOT sweepers and stay on the aux bus, where a hand-fired rack belongs.
+  useEffect(() => {
+    if (!deckConfigs || !deckConfigs.length || stationId == null) return;
+    for (const c of deckConfigs) {
+      if (c.type !== "source" || !c.enabled) continue;
+      const bus = isSweeperKind(c.kind) ? "sweeper" : "source";
+      try { (window as any).ether?.audio?.setSlotKind?.(stationId, c.slot, bus); }
+      catch { /* engine not up yet — re-asserted whenever the configs change */ }
+    }
+  }, [deckConfigs, stationId]);
+
   const removeSourceChannel = useCallback(async (slot: string) => {
     const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, enabled: false } : c));
     try { await saveDeckConfigs(merged); }
@@ -993,6 +1016,29 @@ export default function App() {
   const [outputDevice, setOutputDevice] = useState("");
   const [inputDevice, setInputDevice] = useState("");
   const [editSong, setEditSong] = useState<any>(null);
+
+  // ── THE SONG ACTIONS, PERFORMED IN ONE PLACE ───────────────────────────────────────────────────
+  //
+  // A song's own actions travel with the song: right-click it in the queue, on a deck, in the log or
+  // on the calendar and you get the same set. src/lib/songActions.tsx DEFINES them; this listener
+  // PERFORMS them, using the handlers that already existed for LibraryPanel's onEdit and
+  // onSendToStudio. Reimplementing "edit this song" per surface is how a dozen menus end up
+  // disagreeing about what a track can do.
+  useEffect(() => {
+    const onSongAction = (e: Event) => {
+      const { action, song } = (e as CustomEvent).detail || {};
+      if (!song) return;
+      if (action === "edit") { setEditSong(song); setPanel("trackedit"); return; }
+      if (action === "showplus") {
+        try { (window as any).ether.invoke("studio:push-track", { filePath: song.file_path, title: song.title, artist: song.artist_name || "", duration_ms: song.duration_ms }); }
+        catch { /* not in electron */ }
+        return;
+      }
+      if (action === "library") { setGlobalSearch(song.title || ""); setPanel("library"); return; }
+    };
+    window.addEventListener("ether:song-action", onSongAction);
+    return () => window.removeEventListener("ether:song-action", onSongAction);
+  }, []);
 
   // Check if first run is complete
   useEffect(() => {

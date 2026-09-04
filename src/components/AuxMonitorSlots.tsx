@@ -45,7 +45,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { matchesStation } from "../lib/levelsScope";
-import { deckLetter, sourceKindMeta } from "./DeckConfigurator";
+import { deckLetter, sourceKindMeta, isSweeperKind } from "./DeckConfigurator";
 
 const MAIN_DECKS = ["A", "B", "C"];        // the main faders — they have their own strips and monitoring
 const KEY = "aux_monitor_slots";            // legacy positional slot->deck map; read once, to migrate
@@ -55,7 +55,7 @@ const DEFAULT_LEVEL = 0.8;
 const PROGRAM_RATE = 44100;   // DeckTel.frames_played is in PROGRAM_RATE frames (native/src/audio.rs)
 
 interface DeckTel { id: string; source_present: boolean; active: boolean; paused: boolean; volume: number; peak?: number; frames_played?: number; }
-interface AuxDeck { slot: string; letter: string; source: string; }
+interface AuxDeck { slot: string; letter: string; source: string; kind: string; }
 
 const fmtPos = (frames: number) => {
   const s = Math.max(0, Math.floor(frames / PROGRAM_RATE));
@@ -100,12 +100,16 @@ export default function AuxMonitorSlots() {
         const r: any = await (window as any).ether.deckConfigs.list(stationId);
         const rows: any[] = (r && r.rows) || [];
         const next: AuxDeck[] = rows
+          // EVERY AUX DECK GETS A ROW. One row per deck, whatever is dialled into it — including
+          // nothing. A row that disappears when a source is selected is not "treated the same"; it
+          // is the panel changing shape under the operator (Jeff, 2026-09-03).
           .filter(c => c && c.slot && c.enabled !== 0 && c.enabled !== false && !MAIN_DECKS.includes(String(c.slot)))
           .map(c => {
             const slot = String(c.slot);
             // The name the operator gave it wins; otherwise what is patched in; otherwise the type.
             const kindLabel = c.kind ? (sourceKindMeta(c.kind)?.label || String(c.kind)) : "";
-            return { slot, letter: deckLetter(slot), source: String(c.label || kindLabel || c.type || "unpatched") };
+            return { slot, letter: deckLetter(slot), kind: String(c.kind || ""),
+                     source: String(c.label || kindLabel || c.type || "unpatched") };
           })
           .sort((a, b) => a.letter.localeCompare(b.letter));
         if (!stop) setAuxDecks(next);
@@ -280,19 +284,7 @@ export default function AuxMonitorSlots() {
         <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 320, overflowY: "auto", overflowX: "hidden" }}>
           {auxDecks.map(d => {
             const t = tel[d.slot];
-            // A FINISHED ITEM IS NOT WHAT IS ON THE CHANNEL.
-            //
-            // The engine keeps the last title on a slot after it ends, so a row went on naming an
-            // announcement that had finished — and kept naming it after the operator dialled that
-            // channel to Cart or Sweeper. The row then described a source the channel no longer
-            // carries, which is the opposite of what a monitor is for.
-            //
-            // `ended` means the item is history: the channel is carrying nothing. One rule for every
-            // source deck, no per-kind special case — the row reports the channel, whatever is
-            // dialled into it.
-            const raw = info[d.slot];
-            const finished = raw?.status === "ended";
-            const nfo = finished ? null : raw;
+            const nfo = info[d.slot];
             const playing = nfo?.status === "playing";
             const peak = Math.max(0, Math.min(1, t?.peak ?? 0));
             const lvl = levels[d.slot] ?? 0;
@@ -316,7 +308,7 @@ export default function AuxMonitorSlots() {
                     border: `1px solid ${playing ? "#4ade8055" : "var(--border-primary)"}`,
                   }}>{playing ? "PLAYING" : (nfo?.status || "idle").toUpperCase()}</span>
                   <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontVariantNumeric: "tabular-nums" }}>
-                    {fmtPos(finished ? 0 : (t?.frames_played ?? 0))}
+                    {fmtPos(t?.frames_played ?? 0)}
                   </span>
                 </div>
 

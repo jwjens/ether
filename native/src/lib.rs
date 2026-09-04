@@ -154,6 +154,18 @@ pub fn audio_set_duck(station_id: u32, deck: String, enabled: bool) -> bool {
     audio.sender.send(AudioCmd::SetDuck { deck, enabled }).is_ok()
 }
 
+/// WHICH BUS a slot joins — set from deck_configs, so a sweeper channel's behaviour follows the
+/// channel it is dialled to instead of being welded to slot 6. "sweeper" sums into the programme
+/// with the music (ducked with it, cannot arm the duck, no aux tap, heard on the station monitor);
+/// anything else is an ordinary aux/source channel. Carts never go on the sweeper bus — a cart is a
+/// hand-fired rack on an aux channel, which is a different thing entirely.
+#[napi]
+pub fn audio_set_slot_kind(station_id: u32, deck: String, kind: String) -> bool {
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetSlotKind { deck, kind }).is_ok()
+}
+
 /// RECEIVER SIDE — does this deck step back when a source ducks? Per station, per deck, operator's
 /// choice. A source slot is never ducked regardless: that is structural, from the slot's kind.
 #[napi]

@@ -314,6 +314,16 @@ pub enum AudioCmd {
     /// DUCKER (slice 3) — arm or disarm one channel's duck. A preference on the channel; whether it
     /// can duck at all is decided by the slot's KIND, which this cannot override.
     SetDuck { deck: String, enabled: bool },
+    /// WHICH BUS a slot joins, set at runtime from deck_configs rather than fixed at construction.
+    ///
+    /// `kind` was write-once (`default_kind_for` at BusState::new), which is why a sweeper could
+    /// only ever be slot 6: its behaviour was welded to its address. Dialling a channel to a sweeper
+    /// source now sets this, and every `is_aux` branch answers exactly as it did for slot 6.
+    ///
+    /// "sweeper" => Sweeper (sums with the music), anything else => Source. Rotation decks A/B/C
+    /// are never re-kinded. The STRING is the bus, not the content: what plays on the slot — cart,
+    /// sweeper, announcement — is the operator's dropdown, and is a separate question.
+    SetSlotKind { deck: String, kind: String },
     /// Receiver side — does this deck step back when a source ducks?
     SetDuckable { deck: String, duckable: bool },
     /// DUCKER tuning, per STATION — there is ONE duck envelope per bus, so every one of these is
@@ -476,6 +486,19 @@ pub struct BusState {
     // Per-slot ROOM level. 0.0 = not selected by any slot = SILENT IN THE ROOM, which is the ruling.
     // Only indices 3/4/5 are ever non-zero; SetAuxMonitor refuses every other slot.
     pub aux_monitor_gain: [f32; SLOT_COUNT],
+    /// PER-SLOT ROOM LEVEL — what the STUDIO hears from this slot, never what airs.
+    ///
+    /// The room had exactly one level for everything in it (monitor_vol at the device stage), so a
+    /// slot summing into the programme could not be turned down in the room without taking it off
+    /// air. The operational case that forces this: an interview needs the studio quiet, and a
+    /// sweeper channel with no monitor control keeps blasting into the room while everything else
+    /// is down (Jeff, 2026-09-03). A monitor exists to control the room INDEPENDENTLY of air.
+    ///
+    /// DEFAULT 1.0, deliberately, and NOT shared with aux_monitor_gain above. That one starts at 0.0
+    /// because for an aux deck "no slot selected = silence" is the safe direction; on the room side
+    /// the same default would mute the studio monitors at boot. Rotation decks never receive a value
+    /// here and stay pinned at unity, so A/B/C behave exactly as they always have.
+    pub room_gain: [f32; SLOT_COUNT],
 
     // ── THE DUCKER (slice 3, 2026-08-22) ─────────────────────────────────────────────────────────
     // docs/aux-channel-ducker-announcements-design-2026-08-21.md §B.3/§B.3a/§B.6.
@@ -594,6 +617,7 @@ impl BusState {
             proc_target_lufs: -14.0,
             processor:   Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
             aux_monitor_gain: [0.0; SLOT_COUNT],   // nothing selected → aux decks silent in the room
+            room_gain: [1.0; SLOT_COUNT],          // unity until an operator says otherwise — never silent by default
             // Ducker: OFF everywhere until asked for. Defaults are §B.6's.
             duck_enabled: [false; SLOT_COUNT],
             duck_duckable: [true; SLOT_COUNT],   // every deck ducks until an operator says otherwise
@@ -838,6 +862,9 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             // so the aux monitor level is simply not applicable here. The live mixer
                             // path (below) is the one that owns bus.aux_monitor_gain.
                             AudioCmd::SetAuxMonitor { .. } => {}
+                            // Same no-device context: this legacy path has no BusState to re-kind,
+                            // and the slot's bus only means anything to the live mixer below.
+                            AudioCmd::SetSlotKind { .. } => {}
                             AudioCmd::SetDuck { .. } => {}
                             AudioCmd::SetDuckable { .. } => {}
                             AudioCmd::SetDuckParams { .. } => {}
@@ -913,8 +940,24 @@ const SOURCE_IDS: [&str; 5] = ["S1", "S2", "S3", "S4", "S5"];
 pub enum SlotKind {
     /// A/B/C — automation's rotation decks.
     Rotation,
-    /// CART — the jingle/cart overlay. NEVER duck-eligible (a sweeper must not duck its own song).
-    Cart,
+    /// SWEEPER — programmed imaging that sums into the programme WITH THE MUSIC.
+    ///
+    /// It was called `Cart`, and that was wrong twice over: it named an ADDRESS (slot 6) rather than
+    /// a behaviour, and it named the wrong content. CARTS ARE NOT SWEEPERS. A cart is a hand-fired
+    /// sound-effects rack that punches through on an aux channel; a sweeper is programmed imaging
+    /// that bridges a song seam and belongs in the programme with the music. Carts never go on this
+    /// bus, so the name is accurate (Jeff, 2026-09-03).
+    ///
+    /// A slot with this kind is, in every branch of the mixer callback, exactly what slot 6 was:
+    ///   • summed into `core` with the rotation decks — one bus, one fader law, one processor;
+    ///   • DUCKED with the music, because `core` is what the duck attenuates;
+    ///   • never able to ARM the ducker (a sweeper must not duck the song it is sweeping into);
+    ///   • no aux monitor tap, and it does not set `aux_present`;
+    ///   • therefore heard through the room chain and the station monitor fader, on the main device.
+    ///
+    /// Assignable since 2026-09-03: a slot the operator dials to a sweeper source reports this, so
+    /// the ADDRESS moves and nothing else does.
+    Sweeper,
     /// D/E/F and the new 7.. channels — operator sources: jukebox, announcement, hand-fired jingle.
     Source,
 }
@@ -923,7 +966,7 @@ pub enum SlotKind {
 pub fn default_kind_for(i: usize) -> SlotKind {
     match i {
         0..=2 => SlotKind::Rotation,
-        6     => SlotKind::Cart,
+        6     => SlotKind::Sweeper,
         _     => SlotKind::Source,
     }
 }
@@ -1012,6 +1055,62 @@ mod slice1_regression {
             out.extend_from_slice(&data);
         }
         checksum(&out)
+    }
+
+    /// THE ROOM PATH — the check IT never had, written BEFORE the room gain split (Jeff's ruling,
+    /// 2026-09-03: "write the golden test for the room path BEFORE touching it, not after").
+    ///
+    /// The slice-1 golden above drives A/B/C/CART with NO aux deck, so `aux_present` is false, the
+    /// `room_owned` block is skipped entirely and the device buffer it checksums is the AIR path.
+    /// The room chain — core → eq_room → master_vol → processor_room → device × monitor gains — has
+    /// never had a golden at all. Splitting core into separate air and room accumulators is a change
+    /// to exactly that untested path, so the baseline goes in first, on the CURRENT code, and the
+    /// split then has to leave it alone.
+    ///
+    /// An aux deck is up so `aux_present` is true and the room chain actually runs. Slot 6 carries a
+    /// sweeper, which is the slot whose room level is about to become per-slot: if the split changes
+    /// what the room hears when every gain is at its default, this fails.
+    fn run_room_chain() -> u64 {
+        let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
+        let (prod, _cons) = rb.split();
+        let eq = crate::eq::new_shared_eq(44100.0);
+        let bus = Arc::new(Mutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
+        {
+            let mut b = bus.lock().unwrap();
+            // A/B on the programme, slot 6 as the sweeper, and D as an aux deck so the ROOM chain
+            // is the one feeding the device rather than the air path.
+            for (i, seed) in [(0usize, 11u64), (1usize, 22u64), (6usize, 66u64), (3usize, 44u64)] {
+                b.decks[i].source = Some(Box::new(Det(seed)));
+                b.decks[i].active = true;
+                b.decks[i].paused = false;
+                b.decks[i].volume = 0.8;
+            }
+            // The aux deck audibly in the room, so the aux tap is exercised too.
+            b.aux_monitor_gain[3] = 0.7;
+            // A monitor level that is NOT unity, so the device-stage gains are in the checksum.
+            b.monitor_vol = 0.6;
+        }
+        let fin = FinishedFlags::new();
+        let playing = Arc::new(Mutex::new(true));
+        let mut out: Vec<f32> = Vec::new();
+        for _ in 0..8 {
+            let mut data = vec![0f32; 480 * 2];
+            mixer_callback(&mut data, 2, &bus, &fin, &playing);
+            out.extend_from_slice(&data);
+        }
+        checksum(&out)
+    }
+
+    /// Captured on the pre-split build. The room split must not move it.
+    const GOLDEN_ROOM: u64 = 0x650c27d6971a17b3;
+
+    #[test]
+    fn room_chain_bit_identical_across_the_room_gain_split() {
+        let sum = run_room_chain();
+        println!("[room] room-chain checksum = {:#018x}", sum);
+        assert_eq!(sum, GOLDEN_ROOM,
+            "the ROOM path changed — air is unaffected by a monitor by design, so if this moves while \
+             GOLDEN_7_SLOT holds, the room gain split has altered what the studio hears at default gains");
     }
 
     /// AUX MONITOR PATH — the check this path never had.
@@ -1275,7 +1374,7 @@ mod duck_regression {
                 b.duck_enabled[i] = true;                // armed, and still must not duck
             }
             assert_eq!(b.decks[0].kind, SlotKind::Rotation);
-            assert_eq!(b.decks[6].kind, SlotKind::Cart);
+            assert_eq!(b.decks[6].kind, SlotKind::Sweeper);
         }
         run(&bus, 40);
         assert!(duck_gain(&bus) > 0.999,
@@ -1697,6 +1796,21 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 // Empty = none = it closes the stream and clears the ring producer.
                                 if let Ok(mut r) = aux_req.lock() { *r = name; }
                             }
+                            AudioCmd::SetSlotKind { deck, kind } => {
+                                let Some(idx) = deck_index(&deck) else { continue };
+                                if let Ok(mut bus) = bus_cmd.lock() {
+                                    // A/B/C are automation's decks and are never re-kinded: putting a
+                                    // rotation deck on another bus is not something an operator can
+                                    // ask for by dialling a dropdown.
+                                    if bus.decks[idx].kind != SlotKind::Rotation {
+                                        bus.decks[idx].kind = if kind == "sweeper" {
+                                            SlotKind::Sweeper
+                                        } else {
+                                            SlotKind::Source
+                                        };
+                                    }
+                                }
+                            }
                             AudioCmd::SetDuck { deck, enabled } => {
                                 // Accepted for ANY slot and stored as given. The rule that only a
                                 // SOURCE slot can actually duck lives in the mixer callback, which
@@ -1733,6 +1847,14 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 if !(3..=5).contains(&idx) { continue; }
                                 if let Ok(mut bus) = bus_cmd.lock() {
                                     bus.aux_monitor_gain[idx] = gain.clamp(0.0, 4.0);
+                                    // The SAME row drives both, because it is one control: "how loud
+                                    // is this deck in the room". Which buffer it reaches depends on
+                                    // the slot's bus — an aux deck through the aux tap, a sweeper
+                                    // through the room sum — and the operator should not have to know
+                                    // which. Rotation decks never get here, so they keep unity.
+                                    if bus.decks[idx].kind != SlotKind::Rotation {
+                                        bus.room_gain[idx] = gain.clamp(0.0, 4.0);
+                                    }
                                 }
                             }
                             AudioCmd::GetLevel => {
@@ -2007,6 +2129,14 @@ fn mixer_callback(
     // mix_*  = everything, unchanged — this is what airs.
     // Copied out before the &mut borrow of bus.decks below.
     let aux_gain = bus.aux_monitor_gain;
+    let room_gain = bus.room_gain;
+    // AIR and ROOM are accumulated separately from here. `core_*` is what airs and is NEVER scaled
+    // by a monitor; `room_*` is the same slots at their per-slot room level. mix = core + src is
+    // untouched, which is the property that keeps a monitor fader from ever reaching a listener.
+    let mut room_l = vec![0f32; prog_frames];
+    let mut room_r = vec![0f32; prog_frames];
+    let mut imm_room_l = vec![0f32; prog_frames];
+    let mut imm_room_r = vec![0f32; prog_frames];
     let mut core_l = vec![0f32; prog_frames];
     let mut core_r = vec![0f32; prog_frames];
     let mut aux_l  = vec![0f32; prog_frames];
@@ -2083,6 +2213,9 @@ fn mixer_callback(
         // level, with nothing on the board able to stop it. The slot decides WHERE a deck is heard
         // locally and at what level; it never resurrects audio the board has killed.
         let mon = if is_aux { aux_gain[i] } else { 0.0 };
+        // This slot's ROOM level. Rotation decks are pinned at unity by construction (nothing ever
+        // writes room_gain for them), so A/B/C are bit-identical to before the split.
+        let rg = room_gain[i];
         if is_aux { aux_present = true; }
         if is_aux && duck_enabled[i] { duck_armed = true; }
         let mut pk = 0.0f32;
@@ -2096,11 +2229,18 @@ fn mixer_callback(
                     let rv = r * vol;
                     mix_l[f] += lv;                       // AIR — every slot, unchanged
                     mix_r[f] += rv;
-                    if !is_aux {                          // ROOM base — aux decks excluded entirely
-                        core_l[f] += lv;
+                    if !is_aux {                          // programme base — aux decks excluded entirely
+                        core_l[f] += lv;                  // AIR: never scaled by a monitor
                         core_r[f] += rv;
-                        // ...and, of that, the part the duck may NOT touch.
-                        if !duck_duckable[i] { imm_l[f] += lv; imm_r[f] += rv; }
+                        // ROOM: the same slot at its own room level. Unity for rotation decks, the
+                        // operator's monitor row for a sweeper channel.
+                        room_l[f] += lv * rg;
+                        room_r[f] += rv * rg;
+                        // ...and, of each, the part the duck may NOT touch.
+                        if !duck_duckable[i] {
+                            imm_l[f] += lv; imm_r[f] += rv;
+                            imm_room_l[f] += lv * rg; imm_room_r[f] += rv * rg;
+                        }
                     }
                     if is_aux {
                         // AIR-level source sum for the ducker (distinct from the room's aux_*).
@@ -2222,6 +2362,10 @@ fn mixer_callback(
             // attenuated even for a sample.
             core_l[f] = core_l[f] * gc + imm_l[f] * (1.0 - gc);
             core_r[f] = core_r[f] * gc + imm_r[f] * (1.0 - gc);
+            // The SAME duck on the room sum. If only one buffer were ducked, the studio and the
+            // listener would disagree about whether the music stepped back — which is its own bug.
+            room_l[f] = room_l[f] * gc + imm_room_l[f] * (1.0 - gc);
+            room_r[f] = room_r[f] * gc + imm_room_r[f] * (1.0 - gc);
             mix_l[f] = core_l[f] + src_l[f];
             mix_r[f] = core_r[f] + src_r[f];
         }
@@ -2241,20 +2385,39 @@ fn mixer_callback(
         false
     };
 
+    // ── THE AIR BUS IS BUILT UNCLAMPED ───────────────────────────────────────────────────────────
+    //
+    // These two lines used to be `.clamp(-1.0, 1.0)`, and a hard clamp IS A CLIPPER: the instant the
+    // sum passed full scale it squared the waveform off and produced exactly the distortion it was
+    // meant to prevent. Worse, it sat UPSTREAM of the processor, so the -1 dBTP limiter never saw the
+    // real signal — it inherited an already-clipped one and could not undo it. Operator's receipt
+    // (2026-09-03): audible clipping whenever the meter topped out, with the limiter reporting gain
+    // reduction at the same moment — it was catching what was left after the clamp had flattened it.
+    //
+    // This is the treatment the AUX bus already had, and its comment states the rule: "Peak control
+    // on this bus belongs to the program processor — the same -1 dBTP limiter the rest of the
+    // product uses. One system, one place that controls peaks."
+    //
+    // The clamp is NOT gone; it MOVED to the clean tap's points of use below. With both processing
+    // toggles off there is no limiter in this path at all, so something must still stop over-range
+    // samples reaching the device and the encoder — but that is a fallback for an unprocessed
+    // station, not a stage the processor has to listen through.
+    //
+    // (The ROOM chain further down still clamps the same way. Same defect, deliberately left alone
+    // here: it is a separate path and a separate decision.)
     let (out_l, out_r): (Vec<f32>, Vec<f32>) = if let Ok(mut eq) = bus.eq.try_lock() {
         let mut ol = Vec::with_capacity(prog_frames);
         let mut or_ = Vec::with_capacity(prog_frames);
         for f in 0..prog_frames {
             let (l, r) = eq.process_stereo(mix_l[f], mix_r[f]);
-            ol.push(l.clamp(-1.0, 1.0));
-            or_.push(r.clamp(-1.0, 1.0));
+            ol.push(l);
+            or_.push(r);
         }
         // Snapshot the analyzer spectrum while we hold the lock; published to bus below.
         eq_spectrum = Some(eq.spectrum());
         (ol, or_)
     } else {
-        (mix_l.iter().map(|&s| s.clamp(-1.0, 1.0)).collect(),
-         mix_r.iter().map(|&s| s.clamp(-1.0, 1.0)).collect())
+        (mix_l.clone(), mix_r.clone())
     };
 
     // Publish the EQ analyzer spectrum (lock already released) for GetLevel → AudioLevels.
@@ -2325,7 +2488,15 @@ fn mixer_callback(
         // Stream drain taps PROCESSED when "Process stream" is on and the processed buffer exists, else clean.
         let use_proc = bus.proc_stream && proc_l.is_some();
         for f in 0..prog_frames {
-            let (l, r) = if use_proc { (proc_l.as_ref().unwrap()[f], proc_r.as_ref().unwrap()[f]) } else { (out_l[f], out_r[f]) };
+            // PROCESSED audio is already ceiling-controlled by the -1 dBTP limiter and passes through
+            // untouched. The CLEAN tap has no limiter in front of it, so it is clamped HERE — at the
+            // point of use, for an unprocessed station only, instead of on the way in where it also
+            // clipped the processor's input.
+            let (l, r) = if use_proc {
+                (proc_l.as_ref().unwrap()[f], proc_r.as_ref().unwrap()[f])
+            } else {
+                (out_l[f].clamp(-1.0, 1.0), out_r[f].clamp(-1.0, 1.0))
+            };
             let _ = bus.ring_prod.try_push(l);
             let _ = bus.ring_prod.try_push(r);
         }
@@ -2352,15 +2523,15 @@ fn mixer_callback(
             let mut a = Vec::with_capacity(prog_frames);
             let mut b = Vec::with_capacity(prog_frames);
             for f in 0..prog_frames {
-                let (l, r) = eqr.process_stereo(core_l[f], core_r[f]);
+                let (l, r) = eqr.process_stereo(room_l[f], room_r[f]);
                 a.push(l.clamp(-1.0, 1.0));
                 b.push(r.clamp(-1.0, 1.0));
             }
             (a, b)
         } else {
             // Never block the audio thread for EQ — fall back to clean, exactly as the air chain does.
-            (core_l.iter().map(|&s| s.clamp(-1.0, 1.0)).collect(),
-             core_r.iter().map(|&s| s.clamp(-1.0, 1.0)).collect())
+            (room_l.iter().map(|&s| s.clamp(-1.0, 1.0)).collect(),
+             room_r.iter().map(|&s| s.clamp(-1.0, 1.0)).collect())
         };
         if master_vol != 1.0 {
             for f in 0..prog_frames { rl[f] *= master_vol; rr[f] *= master_vol; }
@@ -2385,11 +2556,23 @@ fn mixer_callback(
         Some((rl, rr))
     } else { None };
 
+    // Holds the clamped clean buffers when the device takes that tap, so the borrow below outlives
+    // the `if`. None whenever the room chain or the processed buffers are feeding the device.
+    let clean_dev: Option<(Vec<f32>, Vec<f32>)>;
     let (dl, dr): (&[f32], &[f32]) = if let Some((ref rl, ref rr)) = room_owned {
+        clean_dev = None;
         (rl, rr)
     } else if bus.proc_local && proc_l.is_some() {
+        clean_dev = None;
         (proc_l.as_ref().unwrap(), proc_r.as_ref().unwrap())
-    } else { (&out_l, &out_r) };
+    } else {
+        // Clean tap to the device — no limiter in this path, so the ceiling is enforced here. Built
+        // once rather than clamped per sample in the two write loops below, which are the hot ones.
+        clean_dev = Some((out_l.iter().map(|&s| s.clamp(-1.0, 1.0)).collect::<Vec<f32>>(),
+                          out_r.iter().map(|&s| s.clamp(-1.0, 1.0)).collect::<Vec<f32>>()));
+        let (ref cl, ref cr) = clean_dev.as_ref().unwrap();
+        (cl, cr)
+    };
     // ── (REMOVED 2026-08-22) A SECOND, EARLIER AUX PROCESSING BLOCK STOOD HERE ───────────────────
     // It ran `if bus.proc_local { processor_aux.process_planar(&mut aux_l, &mut aux_r) }` — the same
     // stateful ride + -1 dBTP limiter the block below runs, over the SAME buffer. With processing on
