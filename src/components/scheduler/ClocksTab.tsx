@@ -3,6 +3,7 @@
 // NO LOGIC CHANGED. Scheduler.tsx re-exports this so the tabbed panel, the three popouts
 // (PopoutRenderer.tsx) and the embedded programming panel (App.tsx) behave identically.
 // docs/schedule-manager-design-2026-08-10.md §8 Phase A
+import { askText } from "../../lib/askText";
 import { useState, useEffect, useRef } from "react";
 import { queryScoped } from "../../db/stationScoped";
 import { useActiveStation } from "../../hooks/useActiveStation";
@@ -445,7 +446,8 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
   // places that exact song/jingle/talk break here instead of a random category pick.
   const pinSlotByCart = async (id: number) => {
     const cur = slots.find(s => s.id === id);
-    const input = window.prompt("Pin this slot to a Cart # (blank to clear):", cur?.cart_id || "");
+    // allowEmpty: blank is a real answer here — it CLEARS the pin — so it must not read as cancel.
+    const input = await askText("Pin this slot to a Cart # (blank to clear):", cur?.cart_id || "", { allowEmpty: true });
     if (input === null) return;
     const cart = input.trim();
     if (!cart) {

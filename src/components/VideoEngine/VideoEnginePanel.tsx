@@ -7,6 +7,7 @@
 // Recording path + Start/Stop
 // Status
 
+import { askText } from "../../lib/askText";
 import React, { useState } from "react";
 import {
   useVideoEngine, SceneLayer, RtmpDestination, EncoderConfig, VideoSource,
@@ -130,7 +131,9 @@ export default function VideoEnginePanel({ view = "engine" }: { view?: "engine" 
       const path = typeof res === "string" ? res : (res?.filePath || res?.path || "");
       if (path) setRecordPath(path);
     } catch {
-      const p = prompt("Recording file path:");
+      // The native save dialog failed; this is the fallback, and it has to actually open —
+      // prompt() returned nothing in Electron, so the fallback path was a dead end.
+      const p = await askText("Recording file path:");
       if (p) setRecordPath(p);
     }
   };

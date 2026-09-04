@@ -1,3 +1,4 @@
+import { askText } from "../lib/askText";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { queryScoped } from "../db/stationScoped";
 import { CART_SLOT_COUNT } from "./DeckConfigurator";
@@ -306,8 +307,8 @@ export default function ProducerDesk({ onClose, episodeTitle, nowPlaying, nowPla
     } catch {}
   };
 
-  const addLink = () => {
-    const url = prompt("Paste a URL:");
+  const addLink = async () => {
+    const url = await askText("Paste a URL:");
     if (!url) return;
     const id = Date.now().toString();
     setItemsAndSave(p => [...p, {

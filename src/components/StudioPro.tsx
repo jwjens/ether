@@ -30,6 +30,7 @@
 //   actual AudioParam via linearRampToValueAtTime — sample-accurate, no
 //   per-frame JS work.
 
+import { askText } from "../lib/askText";
 import React, {
   useCallback, useEffect, useMemo, useReducer, useRef, useState,
 } from "react";
@@ -1782,8 +1783,9 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       // Markers: M drops a marker at the playhead
       if (k === "m") {
         e.preventDefault(); e.stopImmediatePropagation();
-        const label = prompt("Marker label:") || "Marker";
-        dispatch({ type: "ADD_MARKER", marker: { id: uuid(), timeMs: playheadMs, label, color: "#fde047" } });
+        void askText("Marker label:").then(v => {
+          dispatch({ type: "ADD_MARKER", marker: { id: uuid(), timeMs: playheadMs, label: v || "Marker", color: "#fde047" } });
+        });
         return;
       }
       // Help overlay (? or shift+/)
@@ -3576,7 +3578,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       // Determine label
       let label = labelArg;
       if (!label && !isAutosave) {
-        const input = prompt("Name this version:", `Version ${(versions.length + 1)}`);
+        const input = await askText("Name this version:", `Version ${(versions.length + 1)}`);
         if (input === null) return; // cancelled
         label = input || `Version ${versions.length + 1}`;
       }
@@ -3695,8 +3697,8 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
 
   // ── Snapshots ─────────────────────────────────────────────────
 
-  const takeSnapshot = useCallback(() => {
-    const name = prompt("Snapshot name:", `Snapshot ${snapshots.length + 1}`);
+  const takeSnapshot = useCallback(async () => {
+    const name = await askText("Snapshot name:", `Snapshot ${snapshots.length + 1}`);
     if (!name) return;
     const snap: MixerSnapshot = {
       id: uuid(), name, takenAt: Date.now(),
@@ -4151,8 +4153,9 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
                     x: e.clientX, y: e.clientY,
                     items: [
                       { label: "Rename...", onClick: () => {
-                        const v = prompt("Marker label:", m.label);
-                        if (v && v.trim()) dispatch({ type: "RENAME_MARKER", id: m.id, label: v.trim() });
+                        void askText("Marker label:", m.label).then(v => {
+                          if (v && v.trim()) dispatch({ type: "RENAME_MARKER", id: m.id, label: v.trim() });
+                        });
                       } },
                       { label: "Jump here", onClick: () => setPlayheadMs(m.timeMs) },
                       { label: "", onClick: () => {}, separator: true },
@@ -6791,8 +6794,9 @@ function PresetMenu<T>({ store, current, onApply, label }: {
           ))}
           <div style={{ borderTop: "1px solid var(--border-primary)", padding: 4 }}>
             <button onClick={() => {
-              const name = prompt("Save current settings as preset:");
-              if (name && name.trim()) { store.save(name.trim(), current); setOpen(false); }
+              void askText("Save current settings as preset:").then(name => {
+                if (name && name.trim()) { store.save(name.trim(), current); setOpen(false); }
+              });
             }}
               style={{ width: "100%", padding: "4px", background: "#1e293b", color: "var(--accent-blue)", border: "1px solid #334155", fontSize: "var(--t-micro)", cursor: "pointer", borderRadius: 0 }}
             >+ Save current as preset</button>

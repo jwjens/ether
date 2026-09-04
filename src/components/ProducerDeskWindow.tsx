@@ -3,6 +3,7 @@
 // Fills the entire OS window — no floating panel chrome needed
 // since the OS window itself handles drag/resize/minimize.
 
+import { askText } from "../lib/askText";
 import { useState, useEffect, useRef, useCallback } from "react";
 const getCurrentWindow = () => ({ setTitle: (t: string) => document.title = t, close: () => window.close() });
 const emit = (e: string, p?: any): Promise<void> => Promise.resolve((window as any).ether.emit(e, p));
@@ -232,10 +233,10 @@ export default function ProducerDeskWindow() {
     setSelectedNote(id);
   };
 
-  const addSongCard = () => {
-    const songTitle = prompt("Song title:");
+  const addSongCard = async () => {
+    const songTitle = await askText("Song title:");
     if (!songTitle) return;
-    const artist = prompt("Artist:") || "Unknown Artist";
+    const artist = (await askText("Artist:")) || "Unknown Artist";
     const id = Date.now().toString();
     setItemsAndSave(p => [...p, {
       id, type: "note" as const,
@@ -249,8 +250,8 @@ export default function ProducerDeskWindow() {
     setSelectedNote(id);
   };
 
-  const addLink = () => {
-    const url = prompt("Paste a URL:");
+  const addLink = async () => {
+    const url = await askText("Paste a URL:");
     if (!url) return;
     setItemsAndSave(p => [...p, { id:Date.now().toString(), type:"link", x:40+Math.random()*200, y:80+Math.random()*100, w:240, h:80, url, title:url.replace(/^https?:\/\//, "").split("/")[0] }]);
   };
