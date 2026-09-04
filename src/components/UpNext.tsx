@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { useSongMenu } from "../lib/songActions";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
@@ -66,7 +67,6 @@ const CATEGORY_COLORS: Record<string, string> = {
 export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }: Props) {
   const engine = useAudioEngine();
   const { stationId, isReady } = useActiveStation();
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; idx: number } | null>(null);
   const [categories, setCategories]   = useState<CategoryInfo[]>([]);
   const [artUrls, setArtUrls]         = useState<Record<string, string>>({});
 
@@ -384,8 +384,23 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
     window.addEventListener("mouseup", onUp);
   };
 
-  const handleContext = (e: React.MouseEvent, idx: number) => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, idx }); };
-  const closeContext = () => setContextMenu(null);
+  // THE SONG'S OWN ACTIONS TRAVEL WITH THE SONG. Ordering is what the QUEUE can do to an item and
+  // stays here as surface-specific extras; edit / Show+ / show-in-library / mark-as come from the
+  // one shared set so a track offers the same things here as on a deck or in the library.
+  const songMenu = useSongMenu();
+  const handleContext = (e: React.MouseEvent, idx: number) => {
+    const it: any = queue[idx] || {};
+    songMenu.open(e, { title: it.title, artist: it.artist, filePath: it.filePath }, [
+      { label: "Play Next",      run: () => moveToTop(idx) },
+      { label: "Move Up",        run: () => moveUp(idx) },
+      { label: "Move Down",      run: () => moveDown(idx) },
+      { label: "Move to Bottom", run: () => moveToBottom(idx) },
+      { label: "Remove",         run: () => removeItem(idx), danger: true },
+    ]);
+  };
+  // The shared song menu owns its own dismissal now; the ordering actions still close it when
+  // they run, through the one function they already all called.
+  const closeContext = () => songMenu.close();
   // Stage 2a: in daemon mode every queue edit becomes an id-addressed intent to the daemon (the
   // single source of truth) — never a local splice + replaceQueue clobber. The qid is read from the
   // mirror at the clicked engine-index; the daemon's queue event reconciles the UI. In-process mode
@@ -696,30 +711,7 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
       </div>
 
       {/* Context menu */}
-      {contextMenu && (
-        <div
-          style={{ position: "fixed" as any, zIndex: 50, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", padding: "4px 0", minWidth: 180, left: contextMenu.x, top: contextMenu.y }}
-          onClick={e => e.stopPropagation()}
-        >
-          <div style={{ padding: "4px 12px", fontSize: 9, color: "var(--text-tertiary)", borderBottom: "1px solid var(--border-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, fontFamily: "'DM Mono', monospace" }}>{queue[contextMenu.idx]?.title}</div>
-          {[
-            { label: "Play Next", fn: () => moveToTop(contextMenu.idx) },
-            { label: "Move Up",   fn: () => moveUp(contextMenu.idx) },
-            { label: "Move Down", fn: () => moveDown(contextMenu.idx) },
-            { label: "Move to Bottom", fn: () => moveToBottom(contextMenu.idx) },
-          ].map(item => (
-            <button key={item.label} onClick={item.fn} style={{ width: "100%", padding: "6px 12px", textAlign: "left" as any, fontSize: 11, color: "var(--text-secondary)", background: "none", border: "none", cursor: "pointer" }}
-              onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"}
-              onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "none"}
-            >{item.label}</button>
-          ))}
-          <div style={{ borderTop: "1px solid var(--border-primary)" }} />
-          <button onClick={() => removeItem(contextMenu.idx)} style={{ width: "100%", padding: "6px 12px", textAlign: "left" as any, fontSize: 11, color: "#ef4444", background: "none", border: "none", cursor: "pointer" }}
-            onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"}
-            onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "none"}
-          >Remove</button>
-        </div>
-      )}
+      {songMenu.node}
     </div>
   );
 }

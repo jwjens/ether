@@ -87,6 +87,18 @@ export const deckLetter = (slot: string): string => {
   return n >= 1 ? String.fromCharCode("F".charCodeAt(0) + n) : String(slot);
 };
 
+/** Is this channel dialled to sweepers?
+ *
+ *  Both stored values: 'jingle' is the key the Sweeper entry has always persisted and predates
+ *  'sweeper', so an existing install matches with no re-dial and no migration. Renaming a stored key
+ *  for cosmetics is how a config silently stops matching.
+ *
+ *  A sweeper channel is the ONE source kind that joins the programme bus rather than the aux bus —
+ *  it sums with the music, is ducked with it, and is heard on the station monitor, exactly as slot 6
+ *  always was. Carts are NOT sweepers and never take this path: a cart is a hand-fired rack on an
+ *  aux channel. */
+export const isSweeperKind = (k?: string | null) => k === "sweeper" || k === "jingle";
+
 export const sourceKindMeta = (k?: string | null) =>
   SOURCE_KINDS.find(s => s.kind === k) || null;
 
@@ -969,11 +981,65 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
     setDragOver(null);
   };
 
+  // ── RENAMING A CART — inline on the tile ───────────────────────────────────────────────────────
+  //
+  // This was `prompt("Cart label:")`, which ELECTRON DOES NOT IMPLEMENT: Chromium's prompt is
+  // removed, it returns nothing, the `if` never fired and the function did nothing at all. No error,
+  // no dialog — the click simply looked ignored. So renaming a cart had never worked, on any layout,
+  // by any gesture: the right-click item and the double-click both landed on the same dead call.
+  // (The same dead call is in nine other places — see docs/backlog.md.)
+  //
+  // The label edits in place instead: Enter commits, Escape cancels, blur commits. It writes through
+  // the same updateSlot every other cart editor uses, so it persists by the one path, and it is
+  // rendered from ONE helper so all three tile layouts get it rather than three copies drifting.
+  //
+  // The label ONLY. Nothing here touches filePath — renaming a cart never renames or moves audio.
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+
   const editLabel = (key: string) => {
     const cart = carts.find(c => c.key === key);
-    const newLabel = prompt("Cart label:", cart?.label);
-    if (newLabel) updateSlot(key, { label: newLabel });   // persisted
+    setEditDraft(cart?.label || "");
+    setEditingKey(key);
   };
+  const commitEdit = useCallback(() => {
+    setEditingKey(prev => {
+      if (prev) {
+        const v = editDraft.trim();
+        // An empty box is a cancel, not a way to erase the name — a nameless tile is unreadable.
+        if (v) updateSlot(prev, { label: v });   // persisted
+      }
+      return null;
+    });
+  }, [editDraft, updateSlot]);
+
+  /** The tile's label, or its editor. One implementation, used by every layout. */
+  const cartLabelContent = (cart: CartSlot) => editingKey !== cart.key
+    ? (cart.filePath ? cart.label : "Empty")
+    : (
+      <input
+        autoFocus
+        value={editDraft}
+        onChange={e => setEditDraft(e.target.value)}
+        onKeyDown={e => {
+          e.stopPropagation();
+          if (e.key === "Enter") { e.preventDefault(); commitEdit(); }
+          else if (e.key === "Escape") { e.preventDefault(); setEditingKey(null); }
+        }}
+        onBlur={commitEdit}
+        // The tile itself fires the cart on click and opens the menu on right-click; while the
+        // editor is open those gestures belong to the text box.
+        onClick={e => e.stopPropagation()}
+        onDoubleClick={e => e.stopPropagation()}
+        onContextMenu={e => e.stopPropagation()}
+        onMouseDown={e => e.stopPropagation()}
+        style={{
+          font: "inherit", color: "var(--text-primary)", width: "100%", minWidth: 0,
+          background: "var(--bg-primary)", border: "1px solid var(--accent-teal)",
+          borderRadius: 2, padding: "1px 3px", outline: "none", textAlign: "inherit" as const,
+        }}
+      />
+    );
 
   const assignCart = async (key: string) => {
     const f = await (window as any).ether.dialog.openFile({ multiple: false, title: "Select audio", filters: [{ name: "Audio", extensions: ["mp3","flac","ogg","wav","m4a","aac"] }] });
@@ -1008,6 +1074,67 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
   // Was `carts.slice(0, CART_ROW)` in a single flex row, so the push-up could only ever reach the
   // first 8 of a 64-slot wall and the other 56 were unreachable from the main window. Now it renders
   // the SAME carts as the full wall in the same 8-across grid; the extra rows sit below and scroll.
+  // ── ONE MENU, RENDERED BY EVERY LAYOUT ─────────────────────────────────────────────────────────
+  //
+  // This lived inside the full-wall return only, while the tiles in ALL THREE layouts set cartMenu.
+  // So right-clicking a tile in the CARTS push-up (variant="strip") fired the handler, set the
+  // state, and rendered nothing — the menu existed in one layout and not another, which is the same
+  // "two lists that disagree" shape as the board enumeration. Built once here and rendered by each
+  // return, so a layout cannot have tiles without their menu.
+  const cartMenuNode = !cartMenu ? null : (
+      <div
+        onMouseDown={e => e.stopPropagation()}
+        onClick={e => e.stopPropagation()}
+        style={{
+          position: "fixed", left: cartMenu.x, top: cartMenu.y, zIndex: 4000,
+          background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
+          boxShadow: "0 6px 20px rgba(0,0,0,0.5)", padding: 4, minWidth: 120,
+        }}
+      >
+        <div style={{ fontSize: 9, color: "var(--text-tertiary)", padding: "2px 6px 4px", letterSpacing: "0.06em",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>
+          {carts.find(c => c.key === cartMenu.key)?.label || cartMenu.key}
+        </div>
+        {/* RENAME — the same editor double-click opens. It was reachable ONLY by double-click,
+            which is not a discoverable gesture on a button that also fires audio: an operator who
+            tried it heard the cart play. The right-click menu is where a tile's edit actions
+            belong, so both live here and double-click keeps working for anyone used to it. */}
+        <button
+          onClick={() => { const k = cartMenu.key; setCartMenu(null); editLabel(k); }}
+          style={{
+            width: "100%", textAlign: "left", padding: "5px 8px", cursor: "pointer",
+            background: "transparent", border: "1px solid transparent", color: "var(--text-primary)",
+            fontSize: 11, fontWeight: 700, letterSpacing: "0.06em",
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-tertiary)"; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+        >RENAME…</button>
+        {/* REPLACE — delete-then-click works, but replacing the audio is the thing an operator
+            actually wants and it should not take two gestures and an empty tile in between. */}
+        <button
+          onClick={() => { const k = cartMenu.key; setCartMenu(null); void assignCart(k); }}
+          style={{
+            width: "100%", textAlign: "left", padding: "5px 8px", cursor: "pointer",
+            background: "transparent", border: "1px solid transparent", color: "var(--text-primary)",
+            fontSize: 11, fontWeight: 700, letterSpacing: "0.06em",
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-tertiary)"; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+        >REPLACE FILE…</button>
+        <div style={{ height: 1, background: "var(--border-primary)", margin: "3px 0" }} />
+        <button
+          onClick={() => deleteCart(cartMenu.key)}
+          style={{
+            width: "100%", textAlign: "left", padding: "5px 8px", cursor: "pointer",
+            background: "transparent", border: "1px solid transparent", color: "#ef4444",
+            fontSize: 11, fontWeight: 700, letterSpacing: "0.06em",
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "#ef444414"; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+        >DELETE</button>
+      </div>
+  );
+
   if (variant === "strip") {
     return (
       <div style={{ height: "100%", display: "flex", alignItems: "stretch", gap: 6, padding: "8px 10px", fontFamily: "'Inter', system-ui, sans-serif" }}>
@@ -1065,7 +1192,7 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
               color: cart.playing ? cart.color : cart.filePath ? "var(--text-primary)" : "var(--text-tertiary)",
               overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const,
               fontStyle: cart.filePath ? "normal" : "italic", wordBreak: "break-word" as const, maxWidth: "100%",
-            }}>{cart.filePath ? cart.label : "Empty"}</span>
+            }}>{cartLabelContent(cart)}</span>
             {cart.playing && remainingMs > 0 && (
               <span style={{ position: "absolute" as const, bottom: 3, fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: cart.color }}>{fmtRemain(remainingMs)}</span>
             )}
@@ -1085,6 +1212,7 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
             </div>
           </div>
         </div>
+        {cartMenuNode}
       </div>
     );
   }
@@ -1133,7 +1261,7 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
               {/* STOP GLYPH — inline here: this tile is a flex row, not a positioned box. */}
               {cart.playing && <span aria-hidden style={{ fontSize: 8, lineHeight: 1, color: "#000", flexShrink: 0 }}>■</span>}
               <span style={{ fontSize: 12, fontWeight: cart.filePath ? 800 : 400, color: cart.playing ? "#000" : cart.filePath ? "var(--text-primary)" : "var(--text-tertiary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1, fontStyle: cart.filePath ? "normal" : "italic" }}>
-                {cart.filePath ? cart.label : "Empty"}
+                {cartLabelContent(cart)}
               </span>
             </div>
           ))}
@@ -1201,7 +1329,7 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
                 fontStyle: cart.filePath ? "normal" : "italic",
                 wordBreak: "break-word" as const,
               }}>
-                {cart.filePath ? cart.label : "Empty"}
+                {cartLabelContent(cart)}
               </span>
             </div>
 
@@ -1250,59 +1378,7 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
       {/* DELETE popup — anchored to the cart that was right-clicked. Fixed-position so it is not
           clipped by the wall's own scroll container. mousedown on the window dismisses it, so the
           popup stops propagation on its own mousedown to survive its own click. */}
-      {cartMenu && (
-        <div
-          onMouseDown={e => e.stopPropagation()}
-          onClick={e => e.stopPropagation()}
-          style={{
-            position: "fixed", left: cartMenu.x, top: cartMenu.y, zIndex: 4000,
-            background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
-            boxShadow: "0 6px 20px rgba(0,0,0,0.5)", padding: 4, minWidth: 120,
-          }}
-        >
-          <div style={{ fontSize: 9, color: "var(--text-tertiary)", padding: "2px 6px 4px", letterSpacing: "0.06em",
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>
-            {carts.find(c => c.key === cartMenu.key)?.label || cartMenu.key}
-          </div>
-          {/* RENAME — the same editor double-click opens. It was reachable ONLY by double-click,
-              which is not a discoverable gesture on a button that also fires audio: an operator who
-              tried it heard the cart play. The right-click menu is where a tile's edit actions
-              belong, so both live here and double-click keeps working for anyone used to it. */}
-          <button
-            onClick={() => { const k = cartMenu.key; setCartMenu(null); editLabel(k); }}
-            style={{
-              width: "100%", textAlign: "left", padding: "5px 8px", cursor: "pointer",
-              background: "transparent", border: "1px solid transparent", color: "var(--text-primary)",
-              fontSize: 11, fontWeight: 700, letterSpacing: "0.06em",
-            }}
-            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-tertiary)"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
-          >RENAME…</button>
-          {/* REPLACE — delete-then-click works, but replacing the audio is the thing an operator
-              actually wants and it should not take two gestures and an empty tile in between. */}
-          <button
-            onClick={() => { const k = cartMenu.key; setCartMenu(null); void assignCart(k); }}
-            style={{
-              width: "100%", textAlign: "left", padding: "5px 8px", cursor: "pointer",
-              background: "transparent", border: "1px solid transparent", color: "var(--text-primary)",
-              fontSize: 11, fontWeight: 700, letterSpacing: "0.06em",
-            }}
-            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-tertiary)"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
-          >REPLACE FILE…</button>
-          <div style={{ height: 1, background: "var(--border-primary)", margin: "3px 0" }} />
-          <button
-            onClick={() => deleteCart(cartMenu.key)}
-            style={{
-              width: "100%", textAlign: "left", padding: "5px 8px", cursor: "pointer",
-              background: "transparent", border: "1px solid transparent", color: "#ef4444",
-              fontSize: 11, fontWeight: 700, letterSpacing: "0.06em",
-            }}
-            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "#ef444414"; }}
-            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
-          >DELETE</button>
-        </div>
-      )}
+      {cartMenuNode}
     </div>
   );
 }

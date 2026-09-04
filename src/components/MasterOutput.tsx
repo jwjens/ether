@@ -46,9 +46,79 @@ const TYPE_COLOR: Record<ConsoleEventType, string> = {
   info:     "#606070",
 };
 
+// ── LimiterGR — the gain-reduction readout, beside the meter it explains ─────────────────────────
+//
+// This is the one number that says the limiter is working. It existed, then moved into the Health
+// Monitor's Audio Processing panel on 2026-08-26 — for a good reason, recorded there: the
+// `audio:proc-meters` frame arrives at ~15Hz and the handler builds a NEW OBJECT every frame, so a
+// subscription at a panel ROOT repainted the whole tree at meter rate. The receipt was a boot trace
+// driven to 211,951 identical lines and a 341 MB log. But moving it also buried it: an operator
+// should not have to open a panel to see whether the programme is being limited.
+//
+// So it comes back HERE, next to the master VU, under the rule that fixed it: a LEAF component with
+// its OWN subscription, writing to the DOM through a ref. Nothing above it re-renders — this file's
+// own MasterVU already works exactly this way, and HealthMeters.tsx states the rule one layer up
+// ("THE LEVELS CHANNEL NEVER TOUCHES REACT STATE"). No setState per frame, at all.
+//
+// Station-scoped like every other meter, and it goes to "—" when frames stop rather than freezing on
+// the last value: a stuck number reading "−4.2 dB" on a dead feed is worse than no number.
+function LimiterGR() {
+  const grRef   = useRef<HTMLSpanElement>(null);
+  const barRef  = useRef<HTMLDivElement>(null);
+  const { stationUuid } = useActiveStation();
+  const uuidRef = useRef(stationUuid);
+  uuidRef.current = stationUuid;
+
+  useEffect(() => {
+    const audio = (window as any).ether?.audio;
+    if (!audio?.onProcMeters) return;
+    let stale: ReturnType<typeof setTimeout> | null = null;
+    const paint = (gr: number | null) => {
+      const el = grRef.current, bar = barRef.current;
+      if (!el || !bar) return;
+      if (gr == null) { el.textContent = "—"; el.style.color = "var(--text-tertiary)"; bar.style.width = "0%"; return; }
+      const g = Math.abs(gr);
+      // Idle is a real state and says so, rather than showing a confident "0.0".
+      el.textContent = g > 0.1 ? `−${g.toFixed(1)} dB` : "idle";
+      el.style.color = g > 0.1 ? "var(--accent-amber, #c07820)" : "var(--text-tertiary)";
+      // 6 dB of reduction fills the bar — the same scale the Health Monitor's limiter meter uses.
+      bar.style.width = `${Math.min(100, (g / 6) * 100)}%`;
+    };
+    const h = audio.onProcMeters((m: any) => {
+      if (!m) return;
+      if (uuidRef.current && m.stationUuid != null && m.stationUuid !== uuidRef.current) return;
+      paint(typeof m.grDb === "number" ? m.grDb : 0);
+      if (stale) clearTimeout(stale);
+      stale = setTimeout(() => paint(null), 1500);   // frames stopped → say so, never freeze
+    });
+    return () => { try { audio.offProcMeters?.(h); } catch { /* ignore */ } if (stale) clearTimeout(stale); };
+  }, []);
+
+  return (
+    <div title="Limiter gain reduction — how hard the −1 dBTP limiter is working on the programme bus"
+         style={{ display: "flex", alignItems: "center", gap: 5, padding: "2px 6px 3px" }}>
+      <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-tertiary)" }}>LIM</span>
+      <div style={{ flex: 1, height: 3, background: "var(--bg-primary)", border: "1px solid var(--border-primary)", overflow: "hidden" }}>
+        <div ref={barRef} style={{ height: "100%", width: "0%", background: "var(--accent-amber, #c07820)", transition: "width 90ms linear" }} />
+      </div>
+      <span ref={grRef} style={{
+        fontSize: 9, fontWeight: 700, minWidth: 46, textAlign: "right",
+        fontFamily: "'DM Mono', monospace", fontVariantNumeric: "tabular-nums",
+        color: "var(--text-tertiary)",
+      }}>—</span>
+    </div>
+  );
+}
+
 // ── MasterVU — two-bar L/R canvas meter ──────────────────────
 // Subscribes directly to audio:levels IPC — no prop needed.
-function MasterVU() {
+/** `fill` — stretch to the container instead of the fixed 110px.
+ *
+ *  The expanded panel stacks the meter among other sections, so a fixed height is right there. The
+ *  COLLAPSED rail is the opposite case: the operator gave up the whole panel to keep the level in
+ *  view, and a 110px meter in a full-height strip left most of the rail empty with a small meter at
+ *  the top — the collapse bought nothing. */
+function MasterVU({ fill = false }: { fill?: boolean }) {
   const canvasRef  = useRef<HTMLCanvasElement>(null);
   const levelL     = useRef(0);
   const levelR     = useRef(0);
@@ -211,7 +281,16 @@ function MasterVU() {
   }, []);
 
   return (
-    <div style={{ width: "100%", height: 110, flexShrink: 0, background: "var(--recess-bg, var(--vu-bg-master))", boxShadow: "var(--recess-inner-shadow, none)", border: "var(--recess-border, none)", borderRadius: "var(--recess-radius, 0px)" }}>
+    <div style={{
+      width: "100%",
+      // Fill the rail when collapsed; keep the fixed block in the stacked panel.
+      height: fill ? "100%" : 110,
+      flex: fill ? 1 : undefined,
+      minHeight: 0,
+      flexShrink: 0,
+      background: "var(--recess-bg, var(--vu-bg-master))", boxShadow: "var(--recess-inner-shadow, none)",
+      border: "var(--recess-border, none)", borderRadius: "var(--recess-radius, 0px)",
+    }}>
       <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
     </div>
   );
@@ -740,8 +819,13 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
             <polyline points="15 18 9 12 15 6"/>
           </svg>
         </button>
-        <div style={{ flex: 1, minHeight: 0, padding: "8px 6px", display: "flex" }}>
-          <MasterVU />
+        {/* THE METER IS THE POINT OF THE COLLAPSED RAIL. It fills the whole height — that is what a
+            collapsed panel is for: the operator gave up the panel and kept the level. LimiterGR is
+            deliberately NOT here: at 36px wide its label, bar and readout squeezed the VU to a
+            sliver, which is the opposite of collapsing for a bigger meter. It lives in the expanded
+            panel beside the meter it explains. */}
+        <div style={{ flex: 1, minHeight: 0, padding: "6px 5px", display: "flex", alignItems: "stretch" }}>
+          <MasterVU fill />
         </div>
         <div style={{ padding: "6px 4px", borderTop: "1px solid var(--border-primary)", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
           <div title={onAir ? "ON AIR" : "STANDBY"} style={{ width: 8, height: 8, borderRadius: "50%", background: onAir ? "var(--status-live)" : "var(--status-offline)", boxShadow: onAir ? "0 0 6px var(--status-live)" : "none" }} />
@@ -811,6 +895,7 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
       <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
         <div style={{ fontSize: 11, color: "var(--text-secondary)", letterSpacing: "0.02em", marginBottom: 6, opacity: 0.5 }}>Output level</div>
         <MasterVU />
+        <LimiterGR />
       </div>
 
       {/* Faders */}

@@ -12,6 +12,7 @@ import { playClick } from "../lib/uiSound";
 import { vuHeight, vuColor as vuZoneColor } from "../lib/vuMeter";
 import { matchesStation } from "../lib/levelsScope";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { useSongMenu } from "../lib/songActions";
 
 interface Props {
   label: string;
@@ -62,6 +63,15 @@ export default function ConsoleStrip({
 }: Props) {
   const engine = useAudioEngine();
   const midi = useMidiState();
+  // A DECK'S SONG IS AN OBJECT YOU CAN ACT ON. It was the most prominent track on screen and the
+  // least actionable — no menu, no gesture, nothing. Same shared set as the queue and the library.
+  const songMenu = useSongMenu();
+  const openSongMenu = (e: React.MouseEvent) => {
+    if (!deckId) return;
+    const st: any = engine.getDeck(deckId)?.getState?.();
+    if (!st?.filePath) return;          // nothing loaded — no menu, rather than an empty one
+    songMenu.open(e, { title: st.title, artist: st.artist, filePath: st.filePath });
+  };
   // Station scope — this strip's VU renders only its own station's levels frames (ref → no re-subscribe).
   const { stationUuid } = useActiveStation();
   const myUuidRef = useRef(stationUuid);
@@ -269,7 +279,8 @@ export default function ConsoleStrip({
   void jingle; void jingleClass;
 
   return (
-    <div style={{
+    <div
+      onContextMenu={openSongMenu} style={{
       width: "100%", height: "100%", display: "flex", flexDirection: "column",
       backgroundColor: "var(--panel-bg, #0e0e13)",
       borderRight: "var(--panel-border, 1px solid rgba(255,255,255,0.05))",
@@ -460,6 +471,7 @@ export default function ConsoleStrip({
         </button>
 
       </div>
+      {songMenu.node}
     </div>
   );
 }
