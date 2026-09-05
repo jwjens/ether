@@ -19,6 +19,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { buildIndex, findInIndex, AUDIO_TABLES } = require('./audio-library-index');
 
 // Module-level bridge: lets code OUTSIDE this factory (the songs delete path) emit a health event
 // without threading the instance through every caller. Wired when the factory is constructed; a no-op
@@ -43,6 +44,168 @@ function createLibraryHealth(opts) {
   const exists = (fp) => { try { return !!fp && fs.existsSync(fp); } catch { return false; } };
   const appendJsonl = (rec) => { try { fs.appendFileSync(jsonlPath, JSON.stringify({ t: new Date().toISOString(), ...rec }) + '\n'); } catch { /* best-effort */ } };
   _appendEvent = appendJsonl;          // wire the module-level bridge (see noteEvent above)
+
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+  // FOREIGN-PATH CLASSIFICATION (2026-09-04) — does a row I RECEIVED actually resolve HERE?
+  // ═══════════════════════════════════════════════════════════════════════════════════════════
+  //
+  // WHY THIS REPLACES THE OLD TWO-BRANCH TEST. The previous classifier was:
+  //
+  //     if (local) { resolvable++; localOnly++; }
+  //     else if (s.file_key) { resolvable++; r2Only++; }
+  //     else dead++;
+  //
+  // A row carrying ANOTHER MACHINE'S absolute path plus a file_key fell into branch two and was
+  // reported `resolvable`, labelled `r2Only`, and rated yellow. Three lies in one branch: it could
+  // not air, the bytes were already on this disk under the right name, and an entire station's
+  // library was unairable while the panel looked fine. On OV (2026-09-04) that read
+  // `r2Only: 163/163` — see docs/design-machine-local-paths-2026-09-04.md §2.
+  //
+  // TWO ORTHOGONAL QUESTIONS, deliberately not collapsed into one enum — collapsing them is what
+  // produced the defect:
+  //
+  //   (a) CAN IT AIR?  resolves | resolvesElsewhere | r2Only | dead
+  //   (b) IS THE PATH FROM ANOTHER MACHINE?  `foreign`, reported SEPARATELY
+  //
+  // A row can be BOTH foreign AND resolvesElsewhere — that is precisely the healthy post-resolver
+  // state. Folding them together would hide the repair working.
+
+  // Per-sweep caches. Reset at the top of computeAll() so a file that appears between sweeps is
+  // seen on the next one rather than cached as absent for the life of the process.
+  let _sweepBasenames = null;      // the audio library index for this sweep (see libraryIndex)
+  let _sweepDirs = new Map();      // dirname -> exists (each distinct dir stat'd ONCE, not per row)
+
+  function resetSweepCaches() { _sweepBasenames = null; _sweepDirs = new Map(); }
+
+  /**
+   * The audio library index for THIS sweep — one walk, both indexes, shared with Re-sync.
+   *
+   * This used to build its own Set of exact basenames while library-folders.js built a separate
+   * tolerant index. Two definitions of "the same file" meant this classifier could report a row
+   * `dead` that Re-sync would have relinked. Now both ask one index (audio-library-index.js), and
+   * `findInIndex` answers the exact question first and the tolerant one second — so what this sense
+   * calls resolvable is exactly what the relinker can actually resolve.
+   */
+  function libraryIndex() {
+    if (_sweepBasenames) return _sweepBasenames;
+    const root = (typeof musicDirFn === 'function') ? musicDirFn() : null;
+    _sweepBasenames = buildIndex(root);
+    return _sweepBasenames;
+  }
+
+  /** Does this directory exist on this machine? Memoised per sweep — a few distinct dirs, not one per row. */
+  function dirExists(dir) {
+    if (!dir) return false;
+    if (_sweepDirs.has(dir)) return _sweepDirs.get(dir);
+    let ok = false;
+    try { ok = fs.existsSync(dir); } catch { ok = false; }
+    _sweepDirs.set(dir, ok);
+    return ok;
+  }
+
+  /**
+   * Classify one file-backed row.
+   * @param row {{file_path, file_key}}
+   * @param opts {{ neverForeign?: boolean }}  cart_slots opts out of `foreign` — see below.
+   * @returns {{ cls: 'resolves'|'resolvesElsewhere'|'r2Only'|'dead', foreign: boolean }}
+   */
+  function classifyRow(row, opts = {}) {
+    const fp = row && row.file_path;
+    if (exists(fp)) return { cls: 'resolves', foreign: false };
+
+    // FOREIGN = the stored path names a directory this machine does not have. Tested on the
+    // DIRECTORY, not the file: a deleted file in a real local folder is a local problem, not a
+    // synced-path problem, and conflating them would cry wolf on ordinary housekeeping.
+    //
+    // cart_slots opts out. Cart audio legitimately lives outside the library — measured on this dev
+    // machine, 10 of 10 carts point at Downloads/Music and none at the library folder — so a cart
+    // with a missing file is `dead`, never `foreign`, and must never be rebased into the library
+    // (design doc T-new-4).
+    const foreign = !opts.neverForeign && !!fp && !dirExists(path.dirname(String(fp)));
+
+    // The resolver tier (design doc option C) will find it by basename in this machine's library.
+    // Counting it here is what turns "mysteriously silent" into "airing on a fallback".
+    if (fp && findInIndex(libraryIndex(), fp)) {
+      return { cls: 'resolvesElsewhere', foreign };
+    }
+    // Genuinely fetchable: no local copy by either route, but the cloud knows it by key.
+    if (row && row.file_key) return { cls: 'r2Only', foreign };
+    return { cls: 'dead', foreign };
+  }
+
+  // Every audio-bearing table. The OV incident spanned SEVEN — a signal that watched only `songs`
+  // would have reported green while announcements, spots and carts were all unairable.
+  // `neverForeign` is the cart_slots carve-out explained in classifyRow.
+  // The audio-bearing table list — and the `neverForeign` flag — now come from
+  // electron/audio-library-index.js. This module used to declare its own copy, which is exactly the
+  // two-lists-that-can-disagree problem the index module exists to end.
+
+  /** Column presence, read once per sweep — schemas vary by build and by migration state. */
+  const _colCache = new Map();
+  function colsOf(db, table) {
+    if (_colCache.has(table)) return _colCache.get(table);
+    let set = new Set();
+    try { for (const c of db.prepare(`PRAGMA table_info(${table})`).all()) set.add(c.name); } catch { /* absent */ }
+    _colCache.set(table, set);
+    return set;
+  }
+
+  /**
+   * Classify every file-backed row in every audio table, for one station.
+   * Station-scoped where the table carries station_id; account-scoped where it does not, which is
+   * stated in the result rather than silently mixed.
+   */
+  function classifyAll(db, sid) {
+    const totals = { resolves: 0, resolvesElsewhere: 0, r2Only: 0, dead: 0, foreign: 0, rows: 0 };
+    const byTable = {};
+    const sample = [];
+    for (const spec of AUDIO_TABLES) {
+      const cols = colsOf(db, spec.table);
+      if (!cols.has('file_path')) continue;              // table absent, or has no audio column
+      const hasKey = cols.has('file_key');
+      const hasStation = cols.has('station_id');
+      const hasDeleted = cols.has('deleted_at');
+      const idCol = cols.has('id') ? 'id' : (cols.has('uuid') ? 'uuid' : null);
+      const titleCol = cols.has('title') ? 'title' : (cols.has('name') ? 'name' : null);
+      const sel = [
+        'file_path',
+        hasKey ? 'file_key' : "NULL AS file_key",
+        idCol ? `${idCol} AS _id` : 'NULL AS _id',
+        titleCol ? `${titleCol} AS _title` : 'NULL AS _title',
+      ].join(', ');
+      const where = [
+        "file_path IS NOT NULL", "file_path != ''",
+        hasDeleted ? 'deleted_at IS NULL' : null,
+        hasStation ? 'station_id = ?' : null,
+      ].filter(Boolean).join(' AND ');
+      let rows = [];
+      try {
+        const st = db.prepare(`SELECT ${sel} FROM ${spec.table} WHERE ${where}`);
+        rows = hasStation ? st.all(sid) : st.all();
+      } catch { continue; }
+
+      const t = { resolves: 0, resolvesElsewhere: 0, r2Only: 0, dead: 0, foreign: 0,
+                  rows: rows.length, scope: hasStation ? 'station' : 'account',
+                  canFetch: hasKey };
+      for (const r of rows) {
+        const { cls, foreign } = classifyRow(r, spec);
+        t[cls]++; totals[cls]++;
+        if (foreign) {
+          t.foreign++; totals.foreign++;
+          // A number is not an explanation. Five real paths make the cause obvious at a glance:
+          // "C:\Users\jensj\Music\..." on a machine that is not jensj's needs no further analysis.
+          if (sample.length < 5) sample.push({ table: spec.table, id: r._id, title: r._title, file_path: r.file_path });
+        }
+      }
+      totals.rows += rows.length;
+      byTable[spec.table] = t;
+    }
+    return { totals, byTable, foreignSample: sample };
+  }
+
+  // Edge-triggered, NOT per sweep. The prefetch defect wrote 2,443 identical lines in two days
+  // (see THE PATH RULE below); an alarm that repeats itself hourly is one an operator learns to skip.
+  const _lastForeign = new Map();   // stationId -> last reported foreign count
 
   function stationIds(db) {
     try { return db.prepare("SELECT id FROM stations WHERE deleted_at IS NULL ORDER BY id").all().map(r => r.id); } catch { return []; }
@@ -352,13 +515,18 @@ function createLibraryHealth(opts) {
     const songs = db.prepare(
       `SELECT s.file_path, s.file_key FROM songs s WHERE s.category_id IN ${inCats} AND s.deleted_at IS NULL`).all();
     const total = songs.length;
-    let resolvable = 0, localOnly = 0, r2Only = 0, dead = 0;
+    // The rotation-pool figures keep reading `songs` in this station's categories, unchanged.
+    let resolvable = 0, localOnly = 0, r2Only = 0, dead = 0, resolvesElsewhere = 0, foreignSongs = 0;
     for (const s of songs) {
-      const local = exists(s.file_path);
-      if (local) { resolvable++; localOnly++; }
-      else if (s.file_key) { resolvable++; r2Only++; }
+      const { cls, foreign } = classifyRow(s);
+      if (foreign) foreignSongs++;
+      if (cls === 'resolves') { resolvable++; localOnly++; }
+      else if (cls === 'resolvesElsewhere') { resolvable++; resolvesElsewhere++; }
+      else if (cls === 'r2Only') { resolvable++; r2Only++; }
       else dead++;
     }
+    // ...and the FOREIGN-PATH sense spans every audio-bearing table, not just songs.
+    const audio = classifyAll(db, sid);
     // (2) pool — spins in the last 24h.
     const dayAgo = nowSec() - 86400;
     const spin = db.prepare(
@@ -387,8 +555,37 @@ function createLibraryHealth(opts) {
     const runway = runwayOf(db, sid);
     const name = (db.prepare("SELECT name FROM stations WHERE id=?").get(sid) || {}).name || String(sid);
     // Levels: yellow if any unresolvable / pool shrunk; red if skips climbing.
-    const materialization = { resolvable, total, r2Only, dead };
-    const materialLevel = dead > 0 ? 'red' : (r2Only > 0 ? 'yellow' : 'green');   // dead = truly unplayable
+    // ADDITIVE: resolvable/total/r2Only/dead keep their names and meaning for the existing readers
+    // (HealthMonitor.tsx, ScheduleManager.tsx). What CHANGED is that a foreign row with a local
+    // basename is no longer miscounted as r2Only — it is `resolvesElsewhere`, and `foreign` is now
+    // reported. On OV this turns "r2Only 163/163, yellow" into "resolvesElsewhere 163, foreign 163,
+    // RED". That is a correction, not a regression (Jeff, 2026-09-04).
+    const materialization = {
+      resolvable, total, r2Only, dead,
+      resolvesElsewhere,
+      foreign: audio.totals.foreign,
+      songsForeign: foreignSongs,
+      byTable: audio.byTable,
+      foreignSample: audio.foreignSample,
+      audioRows: audio.totals.rows,
+    };
+    // FOREIGN IS RED, AND IT NEVER BLOCKS (Jeff's ruling, 2026-09-04): "the OV machine kept playing
+    // 133 songs while 382 were foreign, and I'd rather have that than silence." Loud, not fatal.
+    // resolvesElsewhere is YELLOW rather than green on purpose — it means the station is airing on a
+    // fallback, and an operator is entitled to know the resolver is carrying it.
+    const materialLevel = (dead > 0 || audio.totals.foreign > 0) ? 'red'
+                        : (r2Only > 0 || resolvesElsewhere > 0) ? 'yellow' : 'green';
+    // Edge-triggered health event: only when the count CHANGES, never once per sweep.
+    const _prevForeign = _lastForeign.get(sid);
+    if (_prevForeign !== audio.totals.foreign) {
+      _lastForeign.set(sid, audio.totals.foreign);
+      if (audio.totals.foreign > 0 || _prevForeign > 0) {
+        appendJsonl({ kind: 'foreign-paths', stationId: sid, foreign: audio.totals.foreign,
+                      was: _prevForeign ?? null,
+                      byTable: Object.fromEntries(Object.entries(audio.byTable).map(([k, v]) => [k, v.foreign])),
+                      sample: audio.foreignSample.slice(0, 3) });
+      }
+    }
     const poolLevel = (total > 0 && spun.length / total < 0.7) ? 'yellow' : 'green';
     const skipLevel = skipped > 0 ? 'red' : 'green';
     // A station about to run out of log is the most urgent thing this monitor can report — a dry log
@@ -452,7 +649,10 @@ function createLibraryHealth(opts) {
 
   const _lintSeen = new Set();   // rowIds already event-logged, so a violation is reported once
   function computeAll() {
-    const _sweepStart = Date.now();   // (2026-07-22) observe the sweep cost — a slow sweep freezes main
+    const _sweepStart = Date.now();
+    // One directory walk and one stat per distinct directory for the WHOLE sweep, then thrown away.
+    // Without this the foreign/basename tests would add a syscall per row per station.
+    resetSweepCaches();   // (2026-07-22) observe the sweep cost — a slow sweep freezes main
     const db = getDb();
     const snap = { t: new Date().toISOString(), stations: [], lint: {} };
     for (const sid of stationIds(db)) {
@@ -620,6 +820,11 @@ function createLibraryHealth(opts) {
 
   // ── public ──
   return {
+    // Exposed for the bench (scripts/test-library-health-foreign.js), on the same footing as
+    // goalCheck below: pure with respect to this closure apart from the per-sweep caches, which
+    // resetSweepCaches clears. Testing the classifier through a full sweep would need stations,
+    // categories, clocks and a log — none of which the classification depends on.
+    classifyRow, classifyAll, resetSweepCaches,
     // Exposed for the bench (scripts/smoke-goal-advisor.js). Pure with respect to this closure — it
     // reads only (db, stationId) — so it can be exercised against a synthetic DB without a station,
     // a daemon or a sweep. The mismatch branch is otherwise untestable on real data today: no

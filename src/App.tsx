@@ -113,7 +113,8 @@ import { useCanvasEngine } from "./canvas/CanvasEngine";
 import AutoCue from "./components/AutoCue";
 import { useUpdater, UpdateBanner } from "./components/Updater";
 import DaemonVersionBanner from "./components/DaemonVersionBanner";
-import { EtherErrorBoundary, SessionRestoreToast, HealthMonitor, HealthStatusDot } from "./components/HealthMonitor";
+import { EtherErrorBoundary, SessionRestoreToast, HealthMonitor, HealthStatusDot, ContentStatusDot } from "./components/HealthMonitor";
+import { importIntoAudioLibrary, fileLocationItem, changeFileLocationItem, checkFilePresence, type FilePresence } from "./lib/fileLocation";
 import WidgetCanvas from "./canvas/WidgetCanvas";
 import MicDeck from "./components/MicDeck";
 import TrackEditor from "./components/TrackEditor";
@@ -3307,8 +3308,13 @@ export default function App() {
         {/* Station switcher — moved here from the header */}
         <ActiveStationBadge onManage={() => setPanel("stationmanager")} onSwitch={handleStationSwitch} />
         <div style={{ width: 1, height: 24, background: "var(--border-primary)", margin: "0 8px" }} />
-        {/* NOMINAL health indicator — same height as tabs */}
+        {/* SYSTEM health — is Ether working (DB + HA). Unchanged, and deliberately NOT told about
+            content: a song that needs re-importing must never read as a system error. */}
         <HealthStatusDot onClick={() => setPanel("health")} height={36} />
+        {/* CONTENT health — can Ether air what it has been given. The alarm that did not exist when
+            OV received 382 rows naming a directory it could not open (2026-09-04). Loud, never
+            blocking. */}
+        <ContentStatusDot onClick={() => setPanel("health")} height={36} />
         {/* CLEAR — two honest verbs (Log-Reader Flip §3.2): Reset to schedule (re-sync + re-cue idle
             decks from the log) / Clear & regenerate (rewrite forward rows; the in-progress hour is
             spared). Never a silent clock-refill. */}
@@ -3574,7 +3580,12 @@ function CartWallPanel({ onClose }: { onClose: () => void }) {
   const assignCart = async (key: string) => {
     const f = await (window as any).ether.dialog.openFile({ multiple: false, title: "Select audio", filters: [{ name: "Audio", extensions: ["mp3","flac","ogg","wav","m4a","aac"] }] });
     if (!f) return;
-    const fp = Array.isArray(f) ? f[0] : f;
+    // COPY-ON-IMPORT. This wall persists to localStorage rather than the DB, but persisted is
+    // persisted: a path stored here survives restarts and points outside the library just the same.
+    // (NOTE: this is a SECOND cart-wall implementation, separate from DeckConfigurator's
+    // BoutiqueCartWall which stores to cart_slots. Flagged, not consolidated here.)
+    const fp = await importIntoAudioLibrary(Array.isArray(f) ? f[0] : f);
+    if (!fp) return;
     save(carts.map(c => c.key === key ? { ...c, filePath: fp, label: titleFromFile(fp) } : c));
   };
 
@@ -5167,6 +5178,9 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
 
   // ── Right-click context menu ───────────────────────────────
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; song: SongRow } | null>(null);
+  // Whether the right-clicked song's file is actually on this machine. Re-read on every open, so a
+  // row repointed a moment ago is not judged by a stale answer.
+  const [ctxPresence, setCtxPresence] = useState<FilePresence>("checking");
   const ctxRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -5901,6 +5915,20 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
             { label: "Edit Cue Points", action: () => { onEdit(ctxMenu.song); setCtxMenu(null); } },
             { label: "Send to Studio", action: () => { onSendToStudio(ctxMenu.song); setCtxMenu(null); } },
             null,
+            // ── The two FILE actions, from the shared set (src/lib/fileLocation.tsx) ──────────
+            // The Library already had a right-click menu; what it lacked were these. They use the
+            // same implementations as the deck, queue, cart, spot, announcement and sweeper menus,
+            // so the wording, the disabled reasons and the "found it already in your library"
+            // suggestion are identical everywhere. `fileLocationItem` needs presence, which is
+            // resolved when the menu opens (ctxPresence below).
+            { label: fileLocationItem(ctxMenu.song.file_path, ctxPresence).label,
+              disabled: fileLocationItem(ctxMenu.song.file_path, ctxPresence).disabled,
+              action: () => { const it = fileLocationItem(ctxMenu.song.file_path, ctxPresence);
+                              if (it.disabled) return; setCtxMenu(null); void it.run?.(); } },
+            { label: "Change File Location…",
+              action: () => { const song = ctxMenu.song; setCtxMenu(null);
+                              void changeFileLocationItem({ table: "songs", id: song.id }, song.file_path, load).run?.(); } },
+            null,
             { label: "Delete", action: async () => { setCtxMenu(null); if (confirm("Delete " + ctxMenu.song.title + "?")) { await (window as any).ether.songs.deleteById(ctxMenu.song.id); load(); } }, danger: true },
           ].map((item, idx) => item === null
             ? <div key={idx} style={{ height: 1, background: "var(--border-primary)", margin: "2px 0" }} />
@@ -6131,7 +6159,12 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
               role="row"
               className="ether-lib-row"
               style={{ borderBottom: i < sorted.length - 1 ? "1px solid var(--border-primary)" : "none" }}
-              onContextMenu={e => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, song: s }); }}
+              onContextMenu={e => {
+                e.preventDefault();
+                setCtxMenu({ x: e.clientX, y: e.clientY, song: s });
+                setCtxPresence("checking");
+                void checkFilePresence(s.file_path).then(setCtxPresence);
+              }}
               onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-hover)"; }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ""; }}
             >

@@ -22,7 +22,15 @@
     "test:sync": "electron --no-sandbox scripts/run-sync-tests.js",
     "test:designation": "cross-env ELECTRON_RUN_AS_NODE=1 electron electron/smoke-designation-write.js",
     "test:closing": "node scripts/smoke-closing-isolation.js",
-    "test:announce": "node scripts/smoke-announce-coexist.js"
+    "test:announce": "node scripts/smoke-announce-coexist.js",
+    "test:iris-phrases": "node scripts/test-iris-transport-phrases.js",
+    "test:library-foreign": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-library-health-foreign.js",
+    "test:relink": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-relink-no-mutation.js",
+    "test:audio-library": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-audio-library-migrate.js",
+    "test:resolver": "node scripts/test-resolver-tier.js",
+    "test:audio-library-r2": "node scripts/test-audio-library-r2.js",
+    "diag:duplicates": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/diag-duplicate-audio.js",
+    "diag:duplicates:catalogue": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/diag-duplicate-audio.js --referenced-only"
   },
   "dependencies": {
     "@picovoice/porcupine-react": "^4.0.0",
@@ -75,5 +83,5 @@
     "email": "jensj@ov.org",
     "name": "Jeffrey Jens"
   },
-  "version": "4.5.0"
+  "version": "4.6.0"
 }

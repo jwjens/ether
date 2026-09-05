@@ -27,6 +27,23 @@ import { useActiveStation } from "../hooks/useActiveStation";
 const readFile = (p: string) => (window as any).ether.fs.readFile(p);
 const writeFile = (p: string, data: any) => (window as any).ether.fs.writeFile(p, data);
 const openDialog = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
+
+/**
+ * Where exported audio must land: this machine's audio library.
+ *
+ * THE RULE (2026-09-04): every audio file that enters Ether lives in the audio library. Exporting a
+ * clip creates a `voice_tracks` row, so it is audio entering Ether like any other.
+ *
+ * What this replaced: the export wrote the new .wav beside the SOURCE track — wherever that happened
+ * to be — and fell back to `"."`, the process working directory, when the source had no folder.
+ * Either way the row named a file outside the library, which no other machine can resolve.
+ *
+ * Falls back to the old behaviour only if the library cannot be resolved, so an export never fails
+ * outright over a missing setting.
+ */
+async function audioLibraryDir(): Promise<string | null> {
+  try { const r = await (window as any).ether?.music?.getDir(); return r?.dir || null; } catch { return null; }
+}
 const save = (opts?: any) => (window as any).ether.dialog.saveFile(opts);
 const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 import TrackEditor from "./TrackEditor";
@@ -1290,7 +1307,8 @@ export default function BroadcastEditor({
       const wavBytes  = encodeWav(rendered);
 
       // Save to temp folder next to source file
-      const basePath  = track.filePath?.replace(/[\\/][^\\/]+$/, "") || ".";
+      // Exported audio lands in the AUDIO LIBRARY, not beside the source (see audioLibraryDir).
+      const basePath  = (await audioLibraryDir()) || track.filePath?.replace(/[\\/][^\\/]+$/, "") || ".";
       const clipName  = `${track.fileName.replace(/\.[^.]+$/, "")}_clip_${Date.now()}.wav`;
       const outPath   = `${basePath}/${clipName}`;
 
@@ -1338,7 +1356,8 @@ export default function BroadcastEditor({
       const rendered = await ctx.startRendering();
       const wavBytes = encodeWav(rendered);
 
-      const basePath = track.filePath?.replace(/[\\/][^\\/]+$/, "") || ".";
+      // Exported audio lands in the AUDIO LIBRARY, not beside the source (see audioLibraryDir).
+      const basePath = (await audioLibraryDir()) || track.filePath?.replace(/[\\/][^\\/]+$/, "") || ".";
       const clipName = `ether_deck${deck}_${Date.now()}.wav`;
       const outPath  = `${basePath}/${clipName}`;
 

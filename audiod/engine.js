@@ -1129,9 +1129,13 @@ class DaemonEngine {
     const seen = new Set(boundSchedIds); const kept = [];
     for (const it of r.items) {
       if (it.schedId != null && seen.has(it.schedId)) continue;
-      if (!this._fileOk(it.filePath)) { if (!it.fileKey) this._noteLoadSkip(it.title, "unresolvable — no local file, no file_key"); continue; }
+      // Resolve rather than merely test: a row from another install names a folder we do not have,
+      // and the library tier finds it by basename. Keep the RESOLVED path or the deck loads the one
+      // that does not exist.
+      const rp = this._resolveLocal(it.filePath);
+      if (!rp) { if (!it.fileKey) this._noteLoadSkip(it.title, "unresolvable — no local file, no file_key"); continue; }
       if (it.schedId != null) seen.add(it.schedId);
-      kept.push(it);
+      kept.push(rp === it.filePath ? it : { ...it, filePath: rp });
     }
     // NEAREST-ANCHOR SEAM SELECTION — order the pending region so the next seam lands a due spot as close
     // to its anchor as possible (early or late; closest wins). Pure reorder of rows that were already
@@ -1383,12 +1387,80 @@ class DaemonEngine {
   // catches both missing files (scheduled-then-deleted) and corrupt/unsupported ones — the addon's
   // audioLoad does NOT reliably report those (it logs "reload failed — skipping" but still returns
   // success), so a dead deck would otherwise get stuck "playing" a non-existent source = dead air.
-  _fileOk(fp) {
-    if (!fp) return false;
-    if (/^[a-z]+:\/\//i.test(fp)) return true;
-    return fs.existsSync(fp) && this._dur(fp) > 0;
+  // ── THE AUDIO LIBRARY TIER (2026-09-04) ──────────────────────────────────────────────────────
+  //
+  // The daemon half of the resolver. main.js has the same tier in resolveLocalAudioPath, and BOTH
+  // are required: fixing one alone gets announcements onto decks while nothing airs, or the reverse
+  // (Jeff, 2026-09-04). The app resolves what an operator loads; this resolves what automation airs.
+  //
+  // WHY: `file_path` is a synced blob-ref that in v0 ships the literal absolute path, so a row from
+  // another install names a folder this machine does not have. On OV that silenced every sweeper,
+  // announcement and cart while the bytes sat in the audio library under the right name. Under the
+  // one-library rule the basename plus THIS machine's library is what travels.
+  //
+  // Rebuilt at most every 30s — a log refill resolves dozens of rows in a burst, and walking the
+  // folder per row would be pathological on the audio thread's doorstep.
+  _libraryDir() {
+    if (this.__libDir !== undefined) return this.__libDir;
+    let dir = null;
+    try {
+      const prof = process.env.ETHER_PROFILE_DIR;
+      if (prof) dir = fs.readFileSync(path.join(prof, 'music-dir.txt'), 'utf8').trim() || null;
+    } catch { /* not set — fall through to the default */ }
+    if (!dir) {
+      // Same default as the app's defaultLibraryDir(): <Music>/ether music library.
+      try { dir = path.join(require('os').homedir(), 'Music', 'ether music library'); } catch { dir = null; }
+    }
+    this.__libDir = dir;
+    return dir;
   }
-  _playable(items) { return (items || []).filter(it => it && this._fileOk(it.filePath)); }
+  _libIndex() {
+    const now = Date.now();
+    if (!this.__libIdx || now - (this.__libIdxAt || 0) > 30000) {
+      try { this.__libIdx = require('../electron/audio-library-index').buildIndex(this._libraryDir()); }
+      catch (e) { this.__libIdx = { byBasename: new Map(), byNorm: new Map(), files: 0 }; }
+      this.__libIdxAt = now;
+    }
+    return this.__libIdx;
+  }
+
+  /**
+   * Resolve a stored path to something this machine can actually play.
+   * @returns an absolute path, or null.
+   *
+   * THIS RETURNS A PATH, NOT A BOOLEAN, and that distinction is the whole fix. `_fileOk` only ever
+   * answered "is this playable?" — so a row whose file lived in the library under a different
+   * directory could pass the gate and then be loaded from the path that does not exist. Callers
+   * must use what comes back here.
+   */
+  _resolveLocal(fp) {
+    if (!fp) return null;
+    if (/^[a-z]+:\/\//i.test(fp)) return fp;                 // a URL is the daemon's to stream, not to stat
+    if (fs.existsSync(fp) && this._dur(fp) > 0) return fp;    // fast path — the stored path is right
+    try {
+      const hit = require('../electron/audio-library-index').findInIndex(this._libIndex(), fp);
+      if (hit && fs.existsSync(hit) && this._dur(hit) > 0) {
+        this._log(`resolved from audio library: ${path.basename(fp)} -> ${hit}`);
+        return hit;
+      }
+    } catch { /* index unavailable — fall through to unresolvable */ }
+    return null;
+  }
+
+  // Kept as the boolean gate every existing call site expects, now backed by the resolver so the
+  // two can never disagree about what "playable" means.
+  _fileOk(fp) { return !!this._resolveLocal(fp); }
+
+  // REWRITES filePath to whatever actually resolves, rather than only filtering. An item that
+  // survives this is one the deck can load from the path it carries.
+  _playable(items) {
+    return (items || []).reduce((out, it) => {
+      if (!it) return out;
+      const r = this._resolveLocal(it.filePath);
+      if (r) out.push(r === it.filePath ? it : { ...it, filePath: r });
+      return out;
+    }, []);
+  }
   // Stage 0: stamp a stable per-QUEUE-ENTRY id (qid) on each item as it enters the queue. The same
   // song can appear twice, so this is NOT the song's id — it's the identity of THIS queue slot, so
   // the renderer + future intent commands (remove/reorder) can address an exact entry. Preserves an

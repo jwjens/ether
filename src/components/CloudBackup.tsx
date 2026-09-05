@@ -199,7 +199,7 @@ export default function CloudBackup() {
     setR2Running(false);
   };
 
-  // ── Song library (audio files) → R2, via the existing libraryR2.upload pipeline ──
+  // ── The AUDIO LIBRARY (every audio file in the folder) → R2 ──
   const [libUploading, setLibUploading] = useState(false);
   const [libProgress, setLibProgress]   = useState<{ done: number; total: number }>({ done: 0, total: 0 });
   const uploadLibrary = async () => {
@@ -217,7 +217,7 @@ export default function CloudBackup() {
   const [installing, setInstalling] = useState(false);
   const [installMsg, setInstallMsg] = useState("");
   const installFromCloud = async () => {
-    if (!confirm("Install this account's station from the cloud?\n\nThis replaces the local database with the latest cloud backup, then downloads the audio library. Intended for a fresh install.")) return;
+    if (!confirm("Install this account's station from the cloud?\n\nThis replaces the local database with the latest cloud backup, then downloads the catalogue. Intended for a fresh install.")) return;
     setInstalling(true); setInstallMsg("Downloading database…");
     try {
       let r = await (window as any).ether.invoke("station:install-from-cloud", {});
@@ -474,19 +474,25 @@ export default function CloudBackup() {
             </button>
           </div>
 
-          {/* Song library (audio files) → cloud — restored upload button */}
+          {/* The AUDIO LIBRARY → cloud.
+              The label used to say "Song Library", and that was the honest name for what it did: the
+              upload enumerated the `songs` table, so carts, spots, announcements, sweepers and voice
+              tracks were never backed up — which is how OV ended up with rows and no audio. It is now
+              folder-driven, so the words have to change with it. */}
           <div style={{ marginTop: 14, borderTop: "1px solid var(--border-primary)", paddingTop: 12 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 3 }}>Song Library → Cloud</div>
+            <div style={{ fontSize: 11, fontWeight: 700, marginBottom: 3 }}>Catalogue → Cloud</div>
             <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 8, lineHeight: 1.5 }}>
-              Upload your audio files to your R2 bucket so a new install can sync the whole library down after sign-in.
+              Backs up <b>every audio file in your catalogue folder</b> — songs, carts, spots,
+              announcements, sweepers and voice tracks — so a new install can pull the whole library
+              down after sign-in. Files already in the cloud are skipped.
             </div>
             <button onClick={uploadLibrary} disabled={libUploading}
               style={{ padding: "8px 18px", borderRadius: 0, fontSize: 11, fontWeight: 700,
                 background: libUploading ? "var(--bg-tertiary)" : "#f97316", color: libUploading ? "var(--text-tertiary)" : "#000",
                 border: "none", cursor: libUploading ? "default" : "pointer" }}>
               {libUploading
-                ? `⏳ Uploading library… ${libProgress.done}${libProgress.total ? ` / ${libProgress.total}` : ""}`
-                : "▲ Back Up Song Library to Cloud"}
+                ? `⏳ Uploading audio… ${libProgress.done}${libProgress.total ? ` / ${libProgress.total}` : ""}`
+                : "▲ Back Up Catalogue to Cloud"}
             </button>
           </div>
 

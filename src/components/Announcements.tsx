@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStation";
 const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
+import { importIntoAudioLibrary } from "../lib/fileLocation";
+import { useFileMenu } from "../lib/fileLocation";
 const readFile = (p: string) => (window as any).ether.fs.readFile(p);
 import { getEngine } from "../audio/engine-registry";
 import { diffSchedule } from "../lib/scheduleDiff";
@@ -336,7 +338,12 @@ function DraftRow({ line, assets, onPatch, onDelete, firesAt }: {
           style={{ ...fld, width: 124, borderColor: draft ? "var(--border-primary)" : "var(--accent-amber)" }} />
       ) : (
         <div style={{ display: "flex", alignItems: "center", gap: 4, width: 124 }}>
-          <input type="number" step={5}
+          {/* step={1}, not 5 (2026-09-05). With no `min` set, step={5} made the browser validate
+              against multiples of 5 — so a typed -28 was refused by the control itself, not just
+              absent from the spinner. Production timing is per-minute; the scheduler already
+              resolves at that precision (main.js dueTimeFor → minutesToHms, plain integer minutes,
+              no rounding anywhere downstream). Range is deliberately untouched. */}
+          <input type="number" step={1}
             value={line.offset}
             onChange={e => onPatch({ offset: parseInt(e.target.value, 10) || 0 })}
             aria-label="Minutes relative to closing"
@@ -738,6 +745,8 @@ function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: bool
 }
 
 export default function Announcements() {
+  // Right-click on any file-backed row: Open / Change File Location, from the shared set.
+  const fileMenu = useFileMenu();
   const { stationId, isReady } = useActiveStation();
   const [list, setList] = useState<Announcement[]>([]);
   const [editing, setEditing] = useState<Partial<Announcement> | null>(null);
@@ -803,7 +812,10 @@ export default function Announcements() {
   const addNew = async () => {
     const files = await open({ multiple: false, title: "Select announcement audio", filters: [{ name: "Audio", extensions: ["mp3","flac","ogg","wav","m4a","aac"] }] });
     if (!files) return;
-    const filePath = Array.isArray(files) ? files[0] : files;
+    const picked = Array.isArray(files) ? files[0] : files;
+    // COPY-ON-IMPORT: the announcement stores the LIBRARY path. A refusal writes nothing.
+    const filePath = await importIntoAudioLibrary(picked);
+    if (!filePath) return;
     const title = (filePath.split(/[\\/]/).pop() || "").replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
     // No time, no days: an announcement is an ASSET now. When it plays is set in the Schedule below.
     setEditing({ title, file_path: filePath, duck_music: 1, resume_music: 1, duck_level: 0.1, is_active: 1 });
@@ -1021,6 +1033,7 @@ export default function Announcements() {
             <tbody>
               {list.map((a, i) => (
                 <tr key={a.id}
+                  onContextMenu={e => fileMenu.open(e, { table: "announcements", id: a.id, filePath: (a as any).file_path, title: a.title }, load)}
                   style={{ borderBottom: i < list.length - 1 ? "1px solid var(--border-primary)" : "none", opacity: a.is_active ? 1 : 0.5 }}
                   onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
                   onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
@@ -1127,6 +1140,7 @@ export default function Announcements() {
           ))}
         </div>
       </div>
+      {fileMenu.node}
     </div>
   );
 }

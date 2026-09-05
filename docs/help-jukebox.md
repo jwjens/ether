@@ -119,7 +119,7 @@ can tell a public pick from rotation.
 - **"No station selected"** — this install has no active station. Sign in and pick a station in the
   main window, then reopen the jukebox. The jukebox will never guess a station for you.
 - **The wall is empty but categories are ticked** — the ticked categories have no songs with playable
-  files on this machine. Check Settings → Music Folder & Sync.
+  files on this machine. Check Settings → Catalogue Folder & Sync.
 - **"The queue is full right now"** — the number of waiting requests hit the cap. It clears as songs
   play.
 - **"Not routed to a deck"** — no deck has Jukebox as its source. Set deck D, E or F to Jukebox.

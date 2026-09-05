@@ -20,6 +20,7 @@ import { query } from "../db/client";
 import { SWP_INDIGO } from "../lib/classColors";
 import ReelSplitter from "./ReelSplitter";
 import InlineNameEditor from "./InlineNameEditor";
+import { useFileMenu } from "../lib/fileLocation";
 
 interface Pool { id: number; uuid: string; name: string; color: string | null; type: string; lead_in_sec: number; underlap_sec: number; sort_order: number; }
 interface OverlaySong { id: number; title: string; artist_name: string | null; content_class: string; jingle_category_id: number | null; }
@@ -45,6 +46,8 @@ const hhLabel = (h: number) => `${((h % 12) || 12)}${h < 12 ? "a" : "p"}`;
 // which the hub also owns; onMutated is how the Categories pane learns an assignment changed.
 // Optional, so the SWEEPERS push-up (its canonical home) is unchanged.
 export default function SweepersPanel({ stationId, onMutated }: { stationId: number; onMutated?: (tables?: string[]) => void }) {
+  // Right-click on any file-backed row: Open / Change File Location, from the shared set.
+  const fileMenu = useFileMenu();
   const [pools, setPools] = useState<Pool[]>([]);
   const [songs, setSongs] = useState<OverlaySong[]>([]);
   const [cats, setCats] = useState<MusicCat[]>([]);
@@ -223,7 +226,10 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {tabSongs.map(s => (
-            <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 8px", background: "var(--bg-secondary)", borderRadius: "var(--r-0)" }}>
+            <div key={s.id}
+              // Sweepers are `songs` rows (content_class SWP/JIN), so the table is songs.
+              onContextMenu={e => fileMenu.open(e, { table: "songs", id: s.id, filePath: (s as any).file_path, title: s.title }, reload)}
+              style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 8px", background: "var(--bg-secondary)", borderRadius: "var(--r-0)" }}>
               <span style={{ width: 6, height: 6, borderRadius: "50%", background: accent, flexShrink: 0 }} />
               <InlineNameEditor
                 value={s.title}
@@ -240,6 +246,7 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
       )}
       </div>
       )}
+      {fileMenu.node}
     </div>
   );
 }

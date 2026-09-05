@@ -21,6 +21,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import { query } from "../db/client";
+import { checkFilePresence, fileLocationItem, changeFileLocationItem, type FilePresence } from "./fileLocation";
 
 /** What a surface knows about a song it is displaying. */
 export interface SongRef {
@@ -80,7 +81,8 @@ const ITEM_BTN: React.CSSProperties = {
  */
 export function useSongMenu() {
   const [menu, setMenu] = useState<
-    { x: number; y: number; ref: SongRef; extras: SongMenuItem[]; resolved: ResolvedSong | null; resolving: boolean } | null
+    { x: number; y: number; ref: SongRef; extras: SongMenuItem[]; resolved: ResolvedSong | null;
+      resolving: boolean; presence: FilePresence } | null
   >(null);
 
   const close = useCallback(() => setMenu(null), []);
@@ -88,9 +90,14 @@ export function useSongMenu() {
   const open = useCallback((e: React.MouseEvent, ref: SongRef, extras: SongMenuItem[] = []) => {
     e.preventDefault();
     e.stopPropagation();
-    setMenu({ x: e.clientX, y: e.clientY, ref, extras, resolved: null, resolving: true });
+    setMenu({ x: e.clientX, y: e.clientY, ref, extras, resolved: null, resolving: true, presence: "checking" });
     void resolveSongByPath(ref.filePath).then(r =>
       setMenu(m => (m ? { ...m, resolved: r, resolving: false } : m)));
+    // Independent of the library lookup on purpose: "is this file on disk" is a different question
+    // from "is this track in the library", and an item can be either without being the other — a
+    // cart file is on disk with no library row, and an R2-only track has a row with no local file.
+    void checkFilePresence(ref.filePath).then(p =>
+      setMenu(m => (m ? { ...m, presence: p } : m)));
   }, []);
 
   // Dismiss on Escape or a click anywhere outside.
@@ -126,6 +133,14 @@ export function useSongMenu() {
         run: () => setClass(cls === "SWP" ? "MUSIC" : "SWP"), disabled: song ? undefined : why },
       { label: cls === "SPOT" ? "Unmark Spot (→ Music)" : "Mark as Spot",
         run: () => setClass(cls === "SPOT" ? "MUSIC" : "SPOT"), disabled: song ? undefined : why },
+      { divider: true, label: "" },
+      // Deliberately NOT gated on the library row. This one needs only a file path, so it works for
+      // the cart file and the one-off import that every action above is correctly disabled for.
+      fileLocationItem(menu.ref.filePath, menu.presence),
+      // Needs the library row for its id — a queue/deck item with no `songs` row cannot be repointed,
+      // and says so rather than opening a picker that would write nowhere.
+      song ? changeFileLocationItem({ table: "songs", id: song.id }, menu.ref.filePath)
+           : { label: "Change File Location…", disabled: why },
     ];
 
     const items = menu.extras.length

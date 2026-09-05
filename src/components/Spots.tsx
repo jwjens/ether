@@ -3,6 +3,8 @@ import { queryScoped } from "../db/stationScoped";
 import { query } from "../db/client";
 import { useActiveStation } from "../hooks/useActiveStation";
 const open = (opts?: any) => opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
+import { importIntoAudioLibrary } from "../lib/fileLocation";
+import { useFileMenu } from "../lib/fileLocation";
 const readDir = (p: string) => (window as any).ether.fs.readDir(p);
 // Path → fetchable URL (Windows backslashes → forward slashes, three-slash file URL). Matches StudioPro.
 const toFileUrl = (p: string) => p.startsWith("http") || p.startsWith("blob:") ? p : `file:///${p.replace(/\\/g, "/")}`;
@@ -41,6 +43,8 @@ const TYPE_COLORS: Record<string, string> = {
 // onMutated tells the hub a spot category moved, which is what refreshes the Clocks pane's segment
 // picker and break rows — they read categories from the store, not from here.
 export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) => void } = {}) {
+  // Right-click on any file-backed row: Open / Change File Location, from the shared set.
+  const fileMenu = useFileMenu();
   const engine = useAudioEngine();
   const { stationId, isReady } = useActiveStation();
   const [spots, setSpots] = useState<Spot[]>([]);
@@ -198,8 +202,12 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
       for (const fp of fileList) {
         // deleted_at IS NULL: a soft-deleted spot must NOT block re-import (that was the halloVeen silent
         // failure — its two deleted rows shared this file, so dedup matched and skipped). Only a LIVE dup skips.
-        const ex = (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE file_path = ? AND deleted_at IS NULL", [fp], stationId))[0] ?? null;
-        if (!ex) { await (window as any).ether.spots.create({ station_id: stationId, title: titleFromFile(fp), file_path: fp, spot_type: "promo", length_sec: await probeLen(fp) }); n++; }
+        // COPY-ON-IMPORT before the row exists — a spot that names a file outside the library is a
+        // spot no other machine can air.
+        const lib = await importIntoAudioLibrary(fp);
+        if (!lib) continue;
+        const ex = (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE file_path = ? AND deleted_at IS NULL", [lib], stationId))[0] ?? null;
+        if (!ex) { await (window as any).ether.spots.create({ station_id: stationId, title: titleFromFile(lib), file_path: lib, spot_type: "promo", length_sec: await probeLen(lib) }); n++; }
         else skipped++;
       }
       setStatus(`Imported ${n} spot${n === 1 ? "" : "s"}${skipped ? ` · ${skipped} already in the library (skipped)` : ""}.`); setTimeout(() => setStatus(""), 4000);
@@ -217,7 +225,10 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
       for (const e of entries) {
         if (e.name && isAudio(e.name)) {
           const sep = (folder as string).includes("/") ? "/" : "\\";
-          const fp = (folder as string) + sep + e.name;
+          const browsed = (folder as string) + sep + e.name;
+          // COPY-ON-IMPORT: importing a FOLDER of spots must still land the audio in the library.
+          const fp = await importIntoAudioLibrary(browsed);
+          if (!fp) { skipped++; continue; }
           const ex = (await queryScoped<{ id: number }>("SELECT id FROM spots WHERE file_path = ? AND deleted_at IS NULL", [fp], stationId))[0] ?? null;
           if (!ex) { await (window as any).ether.spots.create({ station_id: stationId, title: titleFromFile(fp), file_path: fp, spot_type: "promo", length_sec: await probeLen(fp) }); n++; }
           else skipped++;
@@ -595,6 +606,9 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
                 const typeColor = TYPE_COLORS[s.spot_type] || "var(--text-tertiary)";
                 return (
                   <tr key={s.id}
+                    // Right-click, like any normal program. A spot is a file-backed item, so it gets
+                    // the same two actions as every other one — same wording, same disabled reasons.
+                    onContextMenu={e => fileMenu.open(e, { table: "spots", id: s.id, filePath: s.file_path, title: s.title }, load)}
                     style={{ borderBottom: i < spots.length - 1 ? "1px solid var(--border-primary)" : "none", opacity: s.is_active ? 1 : 0.45 }}
                     onMouseEnter={e => (e.currentTarget.style.background = "var(--bg-hover)")}
                     onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
@@ -636,6 +650,7 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
           </table>
         </div>
       )}
+      {fileMenu.node}
     </div>
   );
 }

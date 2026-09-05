@@ -5,6 +5,7 @@ const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any)
 // Path → fetchable URL (Windows backslashes → forward slashes, three-slash file URL). Matches StudioPro.
 const toFileUrl = (p: string) => p.startsWith("http") || p.startsWith("blob:") ? p : `file:///${p.replace(/\\/g, "/")}`;
 import WaveformGL from "./WaveformGL";
+import { importIntoAudioLibrary } from "../lib/fileLocation";
 
 interface Song {
   id: number;
@@ -59,8 +60,13 @@ function ImportPanel({ onImported }: ImportPanelProps) {
   const [imported, setImported] = useState<Song[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const importFile = async (filePath: string): Promise<Song | null> => {
+  const importFile = async (browsedPath: string): Promise<Song | null> => {
     try {
+      // COPY-ON-IMPORT. This is the THIRD path that creates `songs` rows (with ImportDialog and
+      // GSelector import), and it stored the browsed path like the others did. The row must name a
+      // file inside the audio library or no other machine can ever air it.
+      const filePath = await importIntoAudioLibrary(browsedPath);
+      if (!filePath) return null;
       let title = filePath.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "Unknown";
       let artistName = "Unknown Artist";
       let durationMs = 0;

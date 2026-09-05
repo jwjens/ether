@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { queryScoped } from "../db/stationScoped";
+import { checkFilePresence, fileLocationReason, changeFileLocationItem, importIntoAudioLibrary, type FilePresence } from "../lib/fileLocation";
 import { useActiveStation } from "../hooks/useActiveStation";
 // The on-screen Console is where an operator looks when something did not go where they expected.
 import { consoleLog } from "./MasterOutput";
@@ -946,6 +947,10 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
   // No confirmation — re-adding a file is a click, and a confirm on a cheap reversible action is
   // just another thing to dismiss. It empties the SLOT only; the file on disk is untouched.
   const [cartMenu, setCartMenu] = useState<{ key: string; x: number; y: number } | null>(null);
+  // Whether the cart's audio is actually on this machine, resolved when the menu opens. A cart row
+  // can hold a path to a file that has since been moved or was never materialised locally, and
+  // offering "Open File Location" for it would open a folder that does not contain it.
+  const [cartPresence, setCartPresence] = useState<FilePresence>("checking");
 
   const deleteCart = (key: string) => {
     // If the slot being cleared is the one playing, stop it first — otherwise the cart keeps
@@ -964,6 +969,15 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
   };
 
   // Dismiss on Escape or any click outside the popup.
+  // Re-checked on every open rather than cached: the file may have been moved or re-imported since
+  // the last time this tile's menu was shown.
+  useEffect(() => {
+    if (!cartMenu) { setCartPresence("checking"); return; }
+    setCartPresence("checking");
+    const fp = carts.find(c => c.key === cartMenu.key)?.filePath;
+    void checkFilePresence(fp).then(setCartPresence);
+  }, [cartMenu, carts]);
+
   useEffect(() => {
     if (!cartMenu) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setCartMenu(null); };
@@ -1044,7 +1058,13 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
   const assignCart = async (key: string) => {
     const f = await (window as any).ether.dialog.openFile({ multiple: false, title: "Select audio", filters: [{ name: "Audio", extensions: ["mp3","flac","ogg","wav","m4a","aac"] }] });
     if (!f) return;
-    const fp = Array.isArray(f) ? f[0] : f;
+    const picked = Array.isArray(f) ? f[0] : f;
+    // COPY-ON-IMPORT. The cart stores the LIBRARY path, never the browsed one — this is the exact
+    // path that put ten carts in Downloads, where they played here and were silent everywhere else.
+    // A refusal returns null and we write nothing, rather than saving a slot that points at a file
+    // the library does not have.
+    const fp = await importIntoAudioLibrary(picked);
+    if (!fp) return;
     const label = (fp.split(/[\\/]/).pop() || fp).replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
     updateSlot(key, { label, filePath: fp });   // persisted
   };
@@ -1121,6 +1141,64 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
           onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-tertiary)"; }}
           onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
         >REPLACE FILE…</button>
+        {/* OPEN FILE LOCATION — the same action the song menu carries, from the same module, so the
+            wording and the disabled reason are identical wherever a file-backed item is right-clicked.
+            Greyed with a reason when the audio is not on this machine rather than opening a folder
+            that does not contain it. */}
+        {(() => {
+          const fp = carts.find(c => c.key === cartMenu.key)?.filePath;
+          const why = fileLocationReason(cartPresence);
+          return (
+            <button
+              title={why || undefined}
+              disabled={!!why}
+              onClick={() => {
+                if (why || !fp) return;
+                setCartMenu(null);
+                void (window as any).ether?.system?.revealFile(fp);
+              }}
+              style={{
+                width: "100%", textAlign: "left", padding: "5px 8px",
+                cursor: why ? "default" : "pointer", opacity: why ? 0.45 : 1,
+                background: "transparent", border: "1px solid transparent",
+                color: why ? "var(--text-tertiary)" : "var(--text-primary)",
+                fontSize: 11, fontWeight: 700, letterSpacing: "0.06em",
+              }}
+              onMouseEnter={e => { if (!why) (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-tertiary)"; }}
+              onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+            >OPEN FILE LOCATION</button>
+          );
+        })()}
+        {/* CHANGE FILE LOCATION — the one that clears the "points outside the library" state.
+            Carts are addressed by slot_number in this component, so the row id is resolved here
+            rather than carried in state; the repoint itself is local-only (see fileLocation.tsx). */}
+        <button
+          onClick={async () => {
+            const k = cartMenu.key;
+            const c = carts.find(x => x.key === k);
+            setCartMenu(null);
+            if (!c) return;
+            let rowId: number | null = null;
+            try {
+              const rows = await queryScoped<{ id: number }>(
+                "SELECT id FROM cart_slots WHERE station_id = ? AND slot_number = ? AND deleted_at IS NULL LIMIT 1",
+                [stationId, c.slot], stationId);
+              rowId = rows[0]?.id ?? null;
+            } catch { /* fall through to the honest refusal below */ }
+            if (rowId == null) { window.alert("This cart has no saved row yet — assign a file to it first."); return; }
+            await changeFileLocationItem({ table: "cart_slots", id: rowId }, c.filePath, () => {
+              // Re-read presence so the menu's disabled states reflect the repoint immediately.
+              void checkFilePresence(c.filePath).then(setCartPresence);
+            }).run?.();
+          }}
+          style={{
+            width: "100%", textAlign: "left", padding: "5px 8px", cursor: "pointer",
+            background: "transparent", border: "1px solid transparent", color: "var(--text-primary)",
+            fontSize: 11, fontWeight: 700, letterSpacing: "0.06em",
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-tertiary)"; }}
+          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+        >CHANGE FILE LOCATION…</button>
         <div style={{ height: 1, background: "var(--border-primary)", margin: "3px 0" }} />
         <button
           onClick={() => deleteCart(cartMenu.key)}

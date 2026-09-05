@@ -48,7 +48,19 @@ const PATCHABLE          = ["value","updated_at"];
 // record the other machine has never seen. It is written through the ordinary (synced) path.
 // sweep_last_run: when this machine last ran the R2 deletion sweep. LOCAL because it describes THIS
 // machine's schedule — syncing it would let one install suppress another's sweep.
-const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_designation', 'schedule_layout_v1', 'sweep_last_run']);
+// `music_dir` (2026-09-04) — THE LIBRARY ROOT MUST NEVER CROSS MACHINES.
+//
+// It was a synced key, written by station-folder:choose and by Relocate. So an operator pressing
+// Relocate right after moving their library broadcast `C:\Users\<them>\Music\...` to every peer —
+// not a path to one file, but the ROOT every path on that machine is built from. A peer applying it
+// then relinks against a directory it does not have, and everything it relinks is unairable. This is
+// the most direct form of the defect behind the OV incident of 2026-09-04.
+//
+// A library location is per-machine state, exactly like is_active and stream_key above it in spirit.
+// The per-machine value lives in the profile's music-dir.txt (main.js MUSIC_DIR_FILE); the per-station
+// key is now read-through-only and will be retired by migration once peers have stopped carrying it.
+// See docs/audio-library-one-folder-rule-2026-09-04.md §8.1.
+const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_designation', 'schedule_layout_v1', 'sweep_last_run', 'music_dir']);
 
 // Prefixes, for families of per-machine keys. `grid_widths_<pane>` is one key per grid, so it cannot
 // be enumerated — column widths had been written and refused on every resize since 4.4.177.

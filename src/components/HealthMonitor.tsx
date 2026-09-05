@@ -1420,6 +1420,9 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         {/* ── LIBRARY & ROTATION (Slice C) — per station: materialization, pool, skips, prefetch lag ── */}
         {libHealth?.stations?.length > 0 && (
           <HealthPanel id="library-rotation" title="Library &amp; Rotation">
+            {/* Machine-wide, so it sits above the per-station cards: one audio library per machine,
+                shared by every station on it. */}
+            <AudioLibraryFixer />
             {libHealth.stations.map((st: any) => {
               const dotCol = st.level === "red" ? "#f87171" : st.level === "yellow" ? "#fbbf24" : "#22c55e";
               const lvl = (l: string) => (l === "red" ? "error" : l === "yellow" ? "warn" : "ok");
@@ -1459,7 +1462,15 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                     label="Materialization"
                     value={`${st.materialization.resolvable}/${st.materialization.total} resolvable`}
                     status={lvl(st.materialization.level) as any}
-                    sub={st.materialization.dead > 0 ? `${st.materialization.dead} unresolvable — needs re-import` : st.materialization.r2Only > 0 ? `${st.materialization.r2Only} cloud-only (prefetching)` : "all local"}
+                    sub={
+                      /* FOREIGN leads. It is the condition that made OV silent while this row read
+                         "163/163 resolvable" in yellow, and it is the one an operator can act on. */
+                      st.materialization.foreign > 0
+                        ? `${st.materialization.foreign} not on this machine — use Scan catalogue above`
+                      : st.materialization.dead > 0 ? `${st.materialization.dead} unresolvable — needs re-import`
+                      : st.materialization.resolvesElsewhere > 0 ? `${st.materialization.resolvesElsewhere} airing from the library rather than their stored path`
+                      : st.materialization.r2Only > 0 ? `${st.materialization.r2Only} cloud-only (prefetching)`
+                      : "all local"}
                   />
                   {st.materialization.dead > 0 && (
                     <button onClick={() => showUnresolvable(st.stationId)} style={{ fontSize: 11, color: "var(--accent-red)", background: "none", border: "none", cursor: "pointer", padding: "2px 0 0 0", textDecoration: "underline" }}>
@@ -1761,6 +1772,234 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
 // ═══════════════════════════════════════════════════════════════
 // 4. HEALTH STATUS BAR INDICATOR (for footer)
 // ═══════════════════════════════════════════════════════════════
+
+// ── AudioLibraryFixer — THE DOOR for the one-library rule ──────────────────────────────────────
+//
+// The migration shipped as IPC only, and "it's in the code" is not shipped: a feature without an
+// obvious door does not exist to users, and they conclude the product is broken. This is that door,
+// and it sits where the red content dot lands you — so the alarm and the remedy are one click apart
+// rather than in different rooms.
+//
+// SCAN IS A DRY RUN and says so. Nothing moves until the operator presses the second button, and the
+// second button names what it will do. A repair tool that acts on the first click is a repair tool
+// operators stop pressing.
+function AudioLibraryFixer() {
+  const [plan, setPlan] = useState<any>(null);
+  const [result, setResult] = useState<any>(null);
+  const [busy, setBusy] = useState<null | "scan" | "fix">(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  // SCAN IS A DRY RUN and the button says so — nothing moves until FIX is pressed, and FIX names the
+  // count. A repair tool that acts on the first click is one operators stop pressing.
+  const scan = async () => {
+    setBusy("scan"); setErr(null); setResult(null);
+    try {
+      const r = await (window as any).ether?.audioLibrary?.plan();
+      if (!r || r.ok === false) setErr(r?.error || "scan failed");
+      else setPlan(r);
+    } catch (e: any) { setErr(e?.message || String(e)); }
+    finally { setBusy(null); }
+  };
+
+  const fix = async () => {
+    setBusy("fix"); setErr(null);
+    try {
+      const r = await (window as any).ether?.audioLibrary?.migrate();
+      if (!r || r.ok === false) setErr(r?.error || "migrate failed");
+      else { setResult(r); setPlan(null); }
+    } catch (e: any) { setErr(e?.message || String(e)); }
+    finally { setBusy(null); }
+  };
+
+  const c = plan?.counts || {};
+  const todo = (c.REPOINT || 0) + (c.COPY || 0);
+  const btn: React.CSSProperties = {
+    fontSize: 11, fontWeight: 800, letterSpacing: "0.06em", padding: "5px 10px",
+    background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
+    color: "var(--text-primary)", cursor: "pointer",
+  };
+
+  return (
+    <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", padding: "10px 12px", marginBottom: 8 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-secondary)", marginBottom: 2 }}>Catalogue</div>
+      <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.5, marginBottom: 8 }}>
+        Every audio file belongs in your catalogue folder. Items pointing somewhere else can't be
+        found by another machine — and are why a file that plays here can be silent there. Scanning
+        changes nothing.
+      </div>
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button style={btn} onClick={scan} disabled={busy !== null}>
+          {busy === "scan" ? "SCANNING…" : "SCAN CATALOGUE"}
+        </button>
+        {plan && todo > 0 && (
+          <button style={{ ...btn, borderColor: "var(--accent-amber, #c07820)", color: "var(--accent-amber, #c07820)" }}
+                  onClick={fix} disabled={busy !== null}>
+            {busy === "fix" ? "FIXING…" : `FIX ${todo} ITEM${todo === 1 ? "" : "S"}`}
+          </button>
+        )}
+      </div>
+
+      {err && <div style={{ marginTop: 6, fontSize: 11, color: "#f87171" }}>✗ {err}</div>}
+
+      {plan && (
+        <div style={{ marginTop: 8, fontSize: 11, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", lineHeight: 1.6 }}>
+          <div>{plan.indexed?.toLocaleString()} files in {plan.root}</div>
+          <div><b style={{ color: "var(--text-secondary)" }}>{c.ALREADY_INSIDE || 0}</b> already in the library</div>
+          {/* Named separately because they cost different things: a repoint is instant and creates
+              nothing, a copy uses disk. An operator deciding whether to press FIX deserves both. */}
+          <div><b style={{ color: "var(--accent-amber, #c07820)" }}>{c.REPOINT || 0}</b> can be repointed (the file is already in the library — nothing is copied)</div>
+          <div><b style={{ color: "var(--accent-amber, #c07820)" }}>{c.COPY || 0}</b> will be copied in, then repointed</div>
+          {c.GONE > 0 && <div><b style={{ color: "#f87171" }}>{c.GONE}</b> can't be found on this machine — these need re-importing and are left alone</div>}
+          {todo === 0 && <div style={{ color: "#22c55e" }}>Nothing to do — every item is already in the library.</div>}
+        </div>
+      )}
+
+      {result && (
+        <div style={{ marginTop: 8, fontSize: 11, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", lineHeight: 1.6 }}>
+          <div style={{ color: "#22c55e" }}>✓ repointed {result.repointed} (copied {result.copied}) · {result.skipped} already inside</div>
+          {result.failed?.length > 0 && (
+            <>
+              <div style={{ color: "#f87171", marginTop: 4 }}>{result.failed.length} could not be fixed:</div>
+              <div style={{ maxHeight: 120, overflowY: "auto" as const, marginTop: 2 }}>
+                {result.failed.slice(0, 40).map((f: any, i: number) => (
+                  <div key={i} style={{ color: "rgba(248,113,113,0.85)" }}>{f.table} “{f.title}” — {f.reason}</div>
+                ))}
+              </div>
+            </>
+          )}
+          <div style={{ marginTop: 4 }}>The health figures refresh on the next sweep.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── ContentStatusDot — "can Ether air what it has been given?" ──────────────────────────────────
+//
+// A SECOND indicator, deliberately not folded into HealthStatusDot below.
+//
+// That dot reports SYSTEM health (DB reachable, HA not crash-looping) and its own comment forbids
+// rolling content into it: "a content issue (e.g. a song that needs re-import) must never show a
+// global system ERROR". That rule is right and stays. "The database is unreachable" and "twelve
+// carts need re-importing" want different responses, and one dot that reds for both is a dot an
+// operator learns to ignore.
+//
+// But the OV incident of 2026-09-04 was invisible for exactly the opposite reason: 382 received rows
+// named a directory that machine cannot open, every announcement and sweeper was silent, and the
+// only surface that knew lived behind a panel door. Jeff's ruling: a non-zero foreign count REPORTS
+// LOUDLY and never blocks — "the OV machine kept playing 133 songs while 382 were foreign, and I'd
+// rather have that than silence" — but it must be impossible to miss.
+//
+// So: two dots, two questions, side by side. System stays system; content becomes visible.
+// See docs/sync-health-foreign-paths-plan-2026-09-04.md §4.
+export function ContentStatusDot({ onClick, compact = false, height }: { onClick: () => void; compact?: boolean; height?: number }) {
+  const [state, setState] = useState<{ foreign: number; dead: number; elsewhere: number; sample: any[]; known: boolean }>(
+    { foreign: 0, dead: 0, elsewhere: 0, sample: [], known: false });
+
+  useEffect(() => {
+    let stop = false;
+    const read = async () => {
+      try {
+        const snap = await (window as any).ether?.invoke?.("library-health:get");
+        if (stop || !snap || !Array.isArray(snap.stations)) return;
+        // ── COUNT EACH FILE ONCE, NOT ONCE PER STATION ──────────────────────────────────────────
+        //
+        // The operator has one machine, and a file is missing from THE MACHINE regardless of which
+        // station's row noticed. But `songs` and `library_asset` are ACCOUNT-scoped — the same rows
+        // are returned for every station — so a naive sum multiplies them by the station count.
+        // Measured on this machine (2026-09-04): 153 genuinely foreign rows reported as 612, because
+        // there are four stations. A number an operator can disprove by counting is worse than none.
+        //
+        // So: station-scoped tables sum across stations; account-scoped tables are counted once.
+        // `classifyAll` already labels each table with its scope for exactly this reason, the same
+        // way uncategorisedMusic carries scope:'account' so a reader is not sent hunting for a
+        // per-station cause.
+        const perTable = new Map<string, { foreign: number; dead: number; elsewhere: number }>();
+        let sample: any[] = [];
+        for (const st of snap.stations) {
+          const m = st && st.materialization;
+          if (!m || !m.byTable) continue;
+          for (const [table, t] of Object.entries<any>(m.byTable)) {
+            const prev = perTable.get(table);
+            const next = { foreign: t.foreign || 0, dead: t.dead || 0, elsewhere: t.resolvesElsewhere || 0 };
+            if (!prev) { perTable.set(table, next); continue; }
+            if (t.scope === 'account') continue;      // same rows every station — already counted
+            perTable.set(table, {
+              foreign: prev.foreign + next.foreign,
+              dead: prev.dead + next.dead,
+              elsewhere: prev.elsewhere + next.elsewhere,
+            });
+          }
+          if (sample.length < 3 && Array.isArray(m.foreignSample)) {
+            // De-duplicated: the account-scoped sample repeats verbatim on every station.
+            for (const x of m.foreignSample) {
+              if (sample.length >= 3) break;
+              if (!sample.some(y => y.file_path === x.file_path)) sample.push(x);
+            }
+          }
+        }
+        let foreign = 0, dead = 0, elsewhere = 0;
+        for (const t of perTable.values()) { foreign += t.foreign; dead += t.dead; elsewhere += t.elsewhere; }
+        setState({ foreign, dead, elsewhere, sample, known: true });
+      } catch { /* IPC absent (older main) — stay unknown rather than claim green */ }
+    };
+    read();
+    // The snapshot is refreshed hourly in main; a 60s read is more than enough to catch a change and
+    // costs one IPC. This is NOT a levels-rate channel.
+    const id = setInterval(read, 60000);
+    return () => { stop = true; clearInterval(id); };
+  }, []);
+
+  const { foreign, dead, elsewhere, sample, known } = state;
+  // UNKNOWN IS NOT GREEN. Before the first snapshot lands, say so rather than assert health — a dot
+  // that claims "ok" while it has read nothing is the same lie this whole indicator exists to end.
+  const level = !known ? "unknown" : (foreign > 0 || dead > 0) ? "alarm" : elsewhere > 0 ? "warn" : "ok";
+  const color = level === "alarm" ? "var(--accent-red)"
+              : level === "warn" ? "var(--accent-amber)"
+              : level === "ok" ? "var(--accent-green)" : "var(--text-tertiary)";
+
+  const shortLabel = level === "unknown" ? "CATALOGUE —"
+    : level === "alarm" ? `${(foreign || dead).toLocaleString()} MISSING`
+    : level === "warn" ? `${elsewhere.toLocaleString()} RELINKED`
+    : "CATALOGUE OK";
+
+  // The tooltip is where the CAUSE lives. A count is a number; a real path on a machine that is not
+  // that user's is an explanation, and it ends the diagnosis in one glance.
+  const title = level === "unknown" ? "Catalogue: still checking"
+    : level === "alarm"
+      ? `${foreign.toLocaleString()} file${foreign === 1 ? "" : "s"} are not on this machine`
+        + (dead ? ` · ${dead.toLocaleString()} cannot be recovered automatically` : "")
+        + (sample.length ? "\n\n" + sample.map((x: any) => `${x.table}: ${x.file_path}`).join("\n") : "")
+        + "\n\nClick to open the Health Monitor."
+    : level === "warn"
+      ? `${elsewhere.toLocaleString()} file${elsewhere === 1 ? "" : "s"} are airing from the catalogue rather than their stored location.`
+      : "Every file in the catalogue resolves on this machine";
+
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      style={{
+        display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
+        background: "none", border: "none", cursor: "pointer",
+        padding: "0 10px", height: height ?? 44, minWidth: 44,
+      }}
+    >
+      <div style={{
+        width: compact ? 9 : 8, height: compact ? 9 : 8, borderRadius: "50%", background: color,
+        // Only the alarm pulses. A quiet dot is the point of a quiet dot.
+        animation: level === "alarm" ? "onair-pulse 1s ease-in-out infinite" : "none",
+      }} />
+      {!compact && (
+        <span style={{
+          fontSize: 13, fontWeight: 800, letterSpacing: "0.1em",
+          color: level === "alarm" ? "var(--accent-red)" : "var(--text-tertiary)",
+        }}>{shortLabel}</span>
+      )}
+    </button>
+  );
+}
 
 export function HealthStatusDot({ onClick, compact = false, height }: { onClick: () => void; compact?: boolean; height?: number }) {
   const [status, setStatus] = useState<"ok" | "warn" | "error">("ok");

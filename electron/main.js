@@ -4151,10 +4151,48 @@ ipcMain.handle('sync:getStats', () => {
 // inline (Phase 1.3k). Extracted so playback (audio:load) and the cue editor (audio:resolve-local-path)
 // resolve identically and can never drift. Returns { ok:true, filePath } (a locally-loadable path) or
 // { ok:false, error }. Never throws.
+// The audio-library index for the resolver tier, rebuilt at most every 30s. A log refill resolves
+// dozens of rows in a burst; walking the folder for each would be pathological. 30s is short enough
+// that a file just imported is found on the next attempt, and the fast path above means an already
+// correct row never consults this at all.
+let _libIndexAt = 0, _libIndexVal = null;
+function _libIndexCached() {
+  const now = Date.now();
+  if (!_libIndexVal || now - _libIndexAt > 30000) {
+    _libIndexVal = require('./audio-library-index').buildIndex(getMusicDir());
+    _libIndexAt = now;
+  }
+  return _libIndexVal;
+}
+
 async function resolveLocalAudioPath(filePath) {
   // (1) Fast path — file exists locally.
   if (filePath && fs.existsSync(filePath)) {
     return { ok: true, filePath };
+  }
+  // ── (1b) THE AUDIO LIBRARY TIER (2026-09-04) ─────────────────────────────────────────────────
+  //
+  // A stored path is a CLAIM about a machine, and `file_path` is a synced `blob-ref` column that in
+  // v0 ships the literal absolute path — so a row that arrived from another install names a folder
+  // this machine does not have. On OV that was 382 rows, and every announcement, sweeper and cart
+  // on the station was silent while the bytes sat in the audio library under the right name.
+  //
+  // Under the one-library rule every audio file lives in the audio library, so THE BASENAME PLUS
+  // THIS MACHINE'S LIBRARY IS THE THING THAT TRAVELS. Try it before reaching for the network: it is
+  // one stat in the common case, it needs no `file_key`, and it works for announcements, spots and
+  // carts — none of which HAVE a file_key column, and all of which the R2 tier below can therefore
+  // never help.
+  //
+  // Deliberately BEFORE R2: fetching bytes we already have is slower, costs money, and produced 375
+  // duplicate files on OV when the cache path disagreed with the real name.
+  if (filePath) {
+    try {
+      const hit = require('./audio-library-index').findInIndex(_libIndexCached(), filePath);
+      if (hit) {
+        console.log(`[resolveLocalAudioPath] library hit for ${path.basename(filePath)} → ${hit}`);
+        return { ok: true, filePath: hit, resolvedBy: 'audio-library' };
+      }
+    } catch (e) { console.warn('[resolveLocalAudioPath] library tier failed:', e.message); }
   }
   // (2) Local miss — look up file_key for this exact file_path (matches the synced songs row).
   let fileKey = null;
@@ -5342,6 +5380,28 @@ ipcMain.handle("watermark:verify", async (_, { filePath }) => {
 // System
 ipcMain.handle("system:getLocalIp", () => audio.getLocalIp());
 ipcMain.handle("system:openUrl", (_, url) => shell.openExternal(url));
+
+// Reveal a file in Explorer/Finder with the file itself SELECTED.
+//
+// Existence is checked here rather than trusted from the renderer, because showItemInFolder on a
+// path that does not exist silently opens the containing folder with nothing selected — or nothing
+// at all — which reads to an operator as "the app is broken" rather than "that track is not on this
+// machine". The renderer greys the menu row ahead of the click; this is the same answer enforced at
+// the point of action, for the case where the file vanishes in between.
+//
+// The path is resolved to an absolute one first: showItemInFolder requires it, and a relative
+// file_path (older imports carry them) would otherwise resolve against the process cwd.
+ipcMain.handle("system:revealFile", (_, filePath) => {
+  if (!filePath) return { ok: false, error: "no_file_path" };
+  try {
+    const abs = path.resolve(filePath);
+    if (!fs.existsSync(abs)) return { ok: false, error: "file_missing" };
+    shell.showItemInFolder(abs);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
 ipcMain.handle("system:openSoundSettings", () => audio.openSoundSettings());
 ipcMain.handle("system:getAppDataDir", () => P.profileDir(P.activeKey()));
 ipcMain.handle("system:getPlatform", () => process.platform);
@@ -7024,10 +7084,26 @@ function sendToAllWindowsExcept(senderId, channel, payload) {
 //    Iris's own reasoning, watchman logic, or any autonomous loop. Her judgment moves the fader at the
 //    planning layer; only the operator's moves it at the air layer. The deterministic floor stays fully
 //    Iris-independent regardless.
+// HELD (2026-09-05) — THE IRIS TRANSPORT GATE IS NOT IN THIS BUILD.
+//
+// Built 2026-09-04: an unforgeable operator capability token minted by Ether from the operator's own
+// raw text (electron/iris-operator-tokens.js + iris-transport-phrases.js, 332 tests passing), which
+// would replace the `cmd.source` check below — a caller-supplied string that anything reaching :3400
+// can set, proved with curl. It also closed the second door: /api/transport/:action reaching
+// audio.* directly without passing this gate at all.
+//
+// Held at Jeff's instruction: it changes WHO CAN DRIVE TRANSPORT, and that does not belong in a
+// build which already touches audio and imports on a machine airing tonight. It gets its own
+// release. Until then this file behaves exactly as 4.5.0 did — Iris's transport path is unchanged,
+// including the second door, which is a known and pre-existing condition, not a regression.
+// See docs/iris-transport-provenance-2026-09-04.md and docs/iris-transport-gate-build-2026-09-04.md.
 const IRIS_TRANSPORT_VERBS = new Set(['play', 'stop', 'skip', 'next', 'auto-on', 'auto-off']);
 
 async function routeIrisCommand(cmd) {
   const { action, payload = {} } = cmd;
+
+  // ── COMMAND-EXECUTED GATE ────────────────────────────────────────────────────────────────────
+  //
   // Command-executed gate: a transport verb is honored ONLY with explicit operator provenance
   // (cmd.source === 'operator' = a verbatim relay of the operator's voice/chat instruction). Iris-
   // initiated transport (autonomous / watchman) is refused at the air layer, by contract.
@@ -7035,6 +7111,7 @@ async function routeIrisCommand(cmd) {
     console.warn(`[iris] TRANSPORT '${action}' REFUSED — not operator-commanded (Iris may not initiate transport)`);
     return { ok: false, error: 'transport_requires_operator_command', action };
   }
+
   switch (action) {
     case 'play':
       audio.audioPlay('A');
@@ -7307,7 +7384,9 @@ setInterval(() => {
 // event. Reply + speaking UP: Iris POSTs /iris/reply and /iris/speaking (in the HTTP server below) →
 // relayed to the renderer. Keeps Iris a pure client (no inbound port on her side).
 ipcMain.on("iris:chat-send", (_evt, msg) => {
-  sseBroadcast("chat", { id: (msg && msg.id) || null, text: (msg && msg.text) || "" });
+  const text = (msg && msg.text) || "";
+  const id = (msg && msg.id) || null;
+  sseBroadcast("chat", { id, text });
 });
 // Presence: flip the badge online/offline from the :3400 heartbeat freshness (ping / any POST refreshes
 // irisLastSeen). Emitted to the renderer only on change so the badge has a definite state at all times.
@@ -7418,6 +7497,16 @@ const irisHttpServer = require('http').createServer((req, res) => {
     })); return;
   }
 
+  // HELD (2026-09-05) — this route reaches audio.* directly, as it has in every release, and does
+  // NOT pass through routeIrisCommand's gate. That is a known, pre-existing condition, measured and
+  // written up on 2026-09-04 (docs/iris-transport-provenance-2026-09-04.md §1.1): two doors into
+  // transport, one guarded, and this is the unguarded one.
+  //
+  // Closing it is built and tested, and is held WITH the operator-token gate rather than separately
+  // — deliberately. Routing this door through the gate while the gate still checks the old
+  // caller-supplied `cmd.source` would refuse every call Iris makes, since she does not send one:
+  // her transport would stop working entirely. Half of that change is worse than neither half, so
+  // both ship together in the Iris release or neither ships.
   if (req.method === 'POST' && url.startsWith('/api/transport/')) {
     const action = url.replace('/api/transport/', '');
     const deck = qs.deck || 'A';
@@ -7975,6 +8064,11 @@ const MUSIC_DIR_FILE  = _profileData('music-dir.txt');
 // the same relative location on every machine without hardcoding a username) — this is where cloud
 // downloads materialize AND where the uploader consolidates, so the folder is the single source of
 // truth. An operator-chosen folder (music-dir.txt) overrides it; R2_CACHE_DIR is the last resort.
+// HELD (2026-09-05). A version of this returns a DEDICATED folder under %LOCALAPPDATA%\Ether\catalogue
+// for new installs, so a fresh machine never inherits the ambiguity of pointing at the operator's own
+// music folder. It is held with the rest of the dedicated-folder arc — see
+// docs/dedicated-catalogue-folder-plan-2026-09-04.md — because it is untested at runtime and belongs
+// with the move, not ahead of it.
 function defaultLibraryDir() {
   try { const m = app.getPath('music'); if (m) return path.join(m, 'ether music library'); } catch {}
   return R2_CACHE_DIR;
@@ -7993,16 +8087,99 @@ function setMusicDir(dir) {
 }
 fs.mkdirSync(R2_CACHE_DIR, { recursive: true });
 ipcMain.handle('music:get-dir', () => ({ ok: true, dir: getMusicDir(), default: R2_CACHE_DIR }));
+
+// ── THE AUDIO LIBRARY RULE — bring existing rows inside it ─────────────────────────────────────
+//
+// Every write below is LOCAL-ONLY (electron/audio-library-migrate.js): file_path is a blob-ref
+// column, so routing a repoint through the sync-logged writer would broadcast this machine's paths
+// to every peer, which is the OV incident produced by a repair tool.
+const _audioMigrate = require('./audio-library-migrate');
+
+// DRY RUN. Pure read — safe on a live, on-air install. Returns what WOULD happen, per row.
+ipcMain.handle('audio-library:plan', (_e, targetDir) => {
+  // targetDir is accepted but unused by the shipped UI — it exists for the held dedicated-folder
+  // move, which plans against a different root. Null means "tidy the current folder", which is what
+  // the SCAN CATALOGUE button does.
+  try { return { ok: true, ...(_audioMigrate.planMigration(db, targetDir || getMusicDir())) }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
+// APPLY. Copies first, verifies, then writes the row — never the reverse. Rows whose source is gone
+// are REPORTED and left alone; a blanked row is lost work.
+//
+// RESTORED 2026-09-05. Holding the dedicated-folder arc removed a span of handlers, and this one sat
+// between two of them — so the Catalogue door's FIX button called a channel with no handler and
+// failed at runtime. It is shipped, approved functionality and was never part of the hold.
+ipcMain.handle('audio-library:migrate', () => {
+  try {
+    const plan = _audioMigrate.planMigration(db, getMusicDir());
+    const done = _audioMigrate.applyMigration(db, plan);
+    console.log(`[audio-library] migrate: repointed ${done.repointed} (copied ${done.copied}), `
+              + `already inside ${done.skipped}, failed ${done.failed.length}`);
+    for (const f of done.failed) console.warn(`[audio-library] ${f.table}#${f.id} "${f.title}": ${f.reason}`);
+    return { ok: true, ...done, planned: plan.counts };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// HELD with the dedicated-folder arc: `audio-library:suggest-folder` and `audio-library:move-to`
+// (copy every referenced file into a folder Ether owns, repoint, then flip music_dir last). Built
+// and dry-run on 2026-09-04 — 484 files / 3.14 GB — but held out of this release because the move
+// has not been run and folder-driven backup is only correct after it.
+
+// COPY-ON-IMPORT. Every picker in the renderer routes its chosen file through here BEFORE writing a
+// row, and writes the returned path — never the browsed one. Returns a reason a person can act on,
+// so a refusal is visible at the door rather than discovered on air.
+//
+// RESTORED 2026-09-05, alongside audio-library:migrate. The dedicated-folder hold deleted a span of
+// handlers and took this one with it. It is the more serious of the two: `invoke` on a channel with
+// no handler REJECTS, so importIntoAudioLibrary() hit its catch, alerted "That file was not added",
+// and returned null — and every caller correctly writes no row on null. Copy-on-import was not
+// degraded, it was BLOCKING every import across carts, songs, announcements and spots.
+ipcMain.handle('audio-library:import', (_e, srcPath) => {
+  try {
+    const r = _audioMigrate.importIntoLibrary(getMusicDir(), srcPath);
+    if (!r.ok) console.warn(`[audio-library] import REFUSED (${r.code}): ${srcPath} — ${r.error}`);
+    else if (r.action === 'copied') console.log(`[audio-library] imported -> ${r.path}`);
+    return r;
+  } catch (e) { return { ok: false, code: 'exception', error: e.message }; }
+});
+
+// CHANGE FILE LOCATION — the obvious candidate first: same basename, already in the library.
+ipcMain.handle('audio-library:suggest', (_e, storedPath) => {
+  try { return { ok: true, suggestion: _audioMigrate.suggestFor(getMusicDir(), storedPath) }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
+// CHANGE FILE LOCATION — repoint ONE row. Narrow on purpose (one table, one id, one column) so it
+// cannot become a general way around the mutation log.
+ipcMain.handle('audio-library:repoint', (_e, table, id, filePath) => {
+  try {
+    const r = _audioMigrate.repointOne(db, table, id, filePath);
+    if (r.ok) {
+      // The findable record of every hand repair on this machine (Jeff, 2026-09-04): file_path can
+      // still leak on a LATER ordinary edit until the protocol amendment lands, so the operator
+      // needs to be able to look up which rows they fixed by hand.
+      try { require('./library-health').noteEvent('manual-repoint', { table, id, filePath }); } catch { /* health absent */ }
+      console.log(`[audio-library] manual repoint ${table}#${id} -> ${filePath}`);
+    }
+    return r;
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 ipcMain.handle('music:set-dir', (_, dir) => setMusicDir(dir));
 
 // Per-station music folders + Test-sync / Re-sync / Relocate (DESIGN-TRUTH §2 — stations independent).
 try {
-  const { songsUpdateById } = require('./sync/handlers/songs');
-  const { stationConfigKvUpsertByKey } = require('./sync/handlers/station_config_kv');
+  // Neither sync-logged writer is imported: see the comment inside register() below.
   require('./library-folders').register({
     ipcMain, dialog, getDb, getActiveStationId,
     getMainWindow: () => mainWindow,
-    songsUpdateById, stationConfigKvUpsertByKey,
+    // NEITHER songsUpdateById NOR stationConfigKvUpsertByKey is passed (2026-09-04), and that is
+    // the point. Both of this module's writes — a song's file_path and the library location — are
+    // PER-MACHINE facts, and routing either through the mutation log is what put another machine's
+    // absolute paths on OV. Withholding both writers makes it structural: the module cannot log a
+    // mutation because it has no way to, which beats a rule someone has to remember.
+    getMachineMusicDir: getMusicDir,
+    setMachineMusicDir: (dir) => setMusicDir(dir),
   });
 } catch (e) { console.error('[library-folders] register failed:', e && e.message); }
 
@@ -10576,7 +10753,18 @@ ipcMain.handle('library:sync-r2:upload', async (_evt, opts = {}) => {
       }
     }
 
-    // ── Phase 2: UPLOAD — push files not yet in the cloud (or all, when force). ──
+    // ── Phase 2: UPLOAD — songs that name a file ────────────────────────────────────────────
+    //
+    // HELD, NOT ABANDONED (2026-09-05). A folder-driven version of this exists, is tested, and is
+    // the right end state — but it is correct only once the catalogue folder is one ETHER OWNS.
+    // Today it is the operator's shared music folder: 1,880 files / 13.15 GB on the dev machine, of
+    // which Ether references 486 files / 3.15 GB. Shipping folder-driven now would upload ~10 GB of
+    // the operator's personal music to their R2 bucket, and would do it on OV too.
+    //
+    // So this stays songs-driven for the release. The known consequence is stated rather than
+    // hidden: carts, spots, announcements, sweepers and voice tracks are NOT in the cloud backup.
+    // See docs/dedicated-catalogue-folder-plan-2026-09-04.md — the folder move lands first, then
+    // this flips to electron/audio-library-r2.js.
     const toUpload = db.prepare(
       `SELECT id, file_path FROM songs
        WHERE deleted_at IS NULL
@@ -10591,11 +10779,9 @@ ipcMain.handle('library:sync-r2:upload', async (_evt, opts = {}) => {
     async function uploadOne(song) {
       if (_libSyncAbort) return;
       const fileKey = path.basename(song.file_path);
-      // Retry transient signing/PUT failures so a single run never leaves stragglers — rapid-fire
-      // concurrent uploads occasionally drop one to a network/rate-limit blip; the file is fine.
       const MAX_TRIES = 3;
       let lastErr = null;
-      for (let attempt = 1; attempt <= MAX_TRIES && !_libSyncAbort; attempt++) {
+      for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
         try {
           const urlRes = await fetch(`${ETHER_BACKEND_URL}/audio/upload-url`, {
             method:  'POST',
@@ -10603,14 +10789,11 @@ ipcMain.handle('library:sync-r2:upload', async (_evt, opts = {}) => {
             body:    JSON.stringify({ license_key: licenseKey, file_key: fileKey }),
           });
           const urlData = await urlRes.json().catch(() => ({}));
-          if (!urlRes.ok || !urlData.signed_url) {
-            throw new Error(urlData.error || urlData.detail || `signing failed (HTTP ${urlRes.status})`);
-          }
-          const data = fs.readFileSync(song.file_path);
+          if (!urlRes.ok || !urlData.signed_url) throw new Error(urlData.error || `upload-url HTTP ${urlRes.status}`);
           const putRes = await fetch(urlData.signed_url, {
             method:  'PUT',
-            headers: { 'Content-Type': contentType(song.file_path), 'Content-Length': String(data.length) },
-            body: data,
+            headers: { 'Content-Type': 'audio/mpeg' },
+            body:    fs.readFileSync(song.file_path),
           });
           if (!putRes.ok) {
             const text = await putRes.text().catch(() => '');
@@ -10634,7 +10817,7 @@ ipcMain.handle('library:sync-r2:upload', async (_evt, opts = {}) => {
       done++;
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('library:sync-r2:upload:progress', {
-          phase: 'upload', done, total: toUpload.length, errors, current: fileKey,
+          phase: 'upload', done, total: toUpload.length, errors, current: path.basename(song.file_path),
         });
       }
     }
@@ -10696,11 +10879,12 @@ ipcMain.handle('library:sync-r2:upload:cancel', () => {
 // play time. Writing file_path back would generate sync-log churn for every
 // song downloaded — same reasoning as Option B in 1.3k.
 ipcMain.handle('library:sync-r2:download', async (_evt, opts) => {
-  // 2d-4: when materialize=true, write file_path back on each success so a cloud song
-  // becomes a first-class LOCAL track (the automation picker requires file_path — see
-  // loggen.ts). Default false preserves the onboarding pre-warm behavior (cache only,
-  // no sync-log churn).
-  const materialize = !!(opts && opts.materialize);
+  // `materialize` is accepted and IGNORED as of 2026-09-04. It used to mean "write file_path back
+  // on each success"; that write went through the sync-logged writer and broadcast this machine's
+  // paths to every peer. The bulk download no longer writes rows at all — files land in the audio
+  // library and the resolver tier finds them by basename — so there is nothing left for the flag to
+  // switch. Kept in the signature so existing callers (onboarding pre-warm) do not break.
+  void (opts && opts.materialize);
   const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
 
   // Tier gate — Network+ only (duplicates fetchR2Track's gate for fast-bail)
@@ -10724,21 +10908,18 @@ ipcMain.handle('library:sync-r2:download', async (_evt, opts) => {
   }
 
   _libDownloadAbort = false;
-
-  // SYNCHRONOUS state snapshot — set BEFORE the IIFE so getState() called
-  // between handler-return and first progress event returns in_progress=true.
   _libDownloadState = {
-    in_progress: true,
-    done:        0,
-    total:       songs.length,
-    errors:      0,
-    started_at:  Date.now(),
+    in_progress: true, done: 0, total: songs.length, errors: 0, started_at: Date.now(),
   };
 
-  // Fire-and-forget — returns immediately so the renderer isn't blocked
   (async () => {
     const CONCURRENCY = 3;
-    const { songsUpdateById } = require('./sync/handlers/songs');
+    // NO SYNC-LOGGED WRITER IS IMPORTED HERE, and that is the fix that stays (2026-09-05).
+    // This loop used to call songsUpdateById(db, id, { file_path }) — the mutation-logged writer —
+    // so every restore broadcast THIS machine's absolute paths to every peer: a fresh install
+    // pulling a 510-song library emitted 510 of them. That is the likeliest route by which
+    // C:\Users\projector\... reached the dev machine and C:\Users\jensj\... reached OV.
+    // A file's location on a disk is per-machine state; the write below is local-only.
     let done = 0;
     let errors = 0;
 
@@ -10748,16 +10929,13 @@ ipcMain.handle('library:sync-r2:download', async (_evt, opts) => {
       if (!res.ok) {
         errors++;
         console.warn(`[library:sync-r2] download SKIP ${song.file_key}: ${res.error}`);
-      } else if (materialize && res.filePath) {
-        // Write file_path (mutation-logged) so the automation picker treats this cloud
-        // song as a rotation-eligible local track.
-        try { songsUpdateById(db, song.id, { file_path: res.filePath }); }
+      } else if (res.filePath) {
+        // LOCAL-ONLY. See above.
+        try { db.prepare("UPDATE songs SET file_path = ? WHERE id = ?").run(res.filePath, song.id); }
         catch (e) { console.warn(`[library:sync-r2] materialize file_path failed ${song.file_key}: ${e.message}`); }
       }
       done++;
-      // Mirror local counters to the module-level snapshot for getState() (B.4).
-      _libDownloadState.done   = done;
-      _libDownloadState.errors = errors;
+      _libDownloadState = { ..._libDownloadState, done, errors };
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('library:sync-r2:download:progress', {
           done, total: songs.length, errors, current: song.file_key,
@@ -10765,7 +10943,6 @@ ipcMain.handle('library:sync-r2:download', async (_evt, opts) => {
       }
     }
 
-    // Download in batches of CONCURRENCY
     for (let i = 0; i < songs.length; i += CONCURRENCY) {
       if (_libDownloadAbort) break;
       await Promise.all(songs.slice(i, i + CONCURRENCY).map(downloadOne));
@@ -10773,19 +10950,16 @@ ipcMain.handle('library:sync-r2:download', async (_evt, opts) => {
 
     const aborted = _libDownloadAbort;
     _libDownloadAbort = false;
-    _libDownloadState.in_progress = false;
+    _libDownloadState = { ..._libDownloadState, in_progress: false };
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('library:sync-r2:download:done', {
         done, total: songs.length, errors, aborted,
       });
     }
-    console.log(`[library:sync-r2] download ${aborted ? 'Cancelled' : 'Done'} — ${done}/${songs.length} fetched, ${errors} errors`);
+    console.log(`[library:sync-r2] download ${aborted ? 'cancelled' : 'done'} — ${done}/${songs.length}, ${errors} errors`);
   })().catch(e => {
+    _libDownloadState = { ..._libDownloadState, in_progress: false };
     console.error('[library:sync-r2] download fatal:', e.message);
-    _libDownloadState.in_progress = false;
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('library:sync-r2:download:done', { done: 0, total: songs.length, errors: 1, aborted: false });
-    }
   });
 
   return { ok: true, total: songs.length };

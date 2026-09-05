@@ -12,13 +12,15 @@
     "audiod/**",
     "native/**/*.node",
     "electron/sync/mutation-writer.js",
-    "electron/sync/synced-tables.js"
+    "electron/sync/synced-tables.js",
+    "electron/audio-library-index.js"
   ],
   "files": [
     "dist/**/*",
     "electron/**/*",
     "audiod/**/*",
     "scripts/**/*.js",
+    "!scripts/diag-*.js",
     "native/**/*.node",
     "watchdog/**/*",
     "!watchdog/test/**",

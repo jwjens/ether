@@ -162,6 +162,17 @@ contextBridge.exposeInMainWorld("ether", {
     getDir: ()    => ipcRenderer.invoke("music:get-dir"),
     setDir: (dir) => ipcRenderer.invoke("music:set-dir", dir),
   },
+  // The AUDIO LIBRARY rule: every audio file lives in one folder. plan() is a dry run and is safe on
+  // air; migrate() copies-then-repoints; suggest()/repoint() back CHANGE FILE LOCATION. All writes
+  // are local-only — a file location never crosses machines.
+  audioLibrary: {
+    plan:    (targetDir)           => ipcRenderer.invoke("audio-library:plan", targetDir || null),
+    migrate: ()                    => ipcRenderer.invoke("audio-library:migrate"),
+    suggest: (storedPath)          => ipcRenderer.invoke("audio-library:suggest", storedPath),
+    // COPY-ON-IMPORT: hand it the browsed path, write the path it returns. Never the browsed one.
+    import:  (srcPath)             => ipcRenderer.invoke("audio-library:import", srcPath),
+    repoint: (table, id, filePath) => ipcRenderer.invoke("audio-library:repoint", table, id, filePath),
+  },
   // Per-station audio folder + Test-sync / Re-sync / Relocate (DESIGN-TRUTH §2 — stations independent).
   stationFolders: {
     get:      (stationId) => ipcRenderer.invoke("station-folder:get", stationId),
@@ -198,6 +209,9 @@ contextBridge.exposeInMainWorld("ether", {
   system: {
     getLocalIp: () => ipcRenderer.invoke("system:getLocalIp"),
     openUrl: (u) => ipcRenderer.invoke("system:openUrl", u),
+    // Opens the containing folder with the file selected. Returns {ok:false,error:"file_missing"}
+    // rather than opening an empty folder when the audio is not on this machine.
+    revealFile: (fp) => ipcRenderer.invoke("system:revealFile", fp),
     openSoundSettings: () => ipcRenderer.invoke("system:openSoundSettings"),
     getAppDataDir: () => ipcRenderer.invoke("system:getAppDataDir"),
     getPlatform: () => ipcRenderer.invoke("system:getPlatform"),

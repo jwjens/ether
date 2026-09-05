@@ -181,6 +181,11 @@ function getDb() {
   // Read-WRITE: the daemon reads the library (loggen) AND writes the play log (Step 4).
   // WAL + busy_timeout makes cross-process contention with the app's better-sqlite3 a
   // microsecond wait, not a failure (proven by spike-write-contention.js).
+  // The engine's resolver tier needs this machine's audio library, and the profile folder is where
+  // music-dir.txt lives — the same per-machine file the app reads. Published as an env var rather
+  // than threaded through the Engine constructor so it cannot go missing on one of the two call
+  // sites that build engines.
+  try { process.env.ETHER_PROFILE_DIR = path.dirname(dbPath); } catch {}
   _db = new DatabaseSync(dbPath, { readOnly: false });
   try { _db.exec("PRAGMA journal_mode = WAL"); _db.exec("PRAGMA busy_timeout = 5000"); _db.exec("PRAGMA foreign_keys = ON"); } catch {}
   log("opened library (read-write): " + dbPath);

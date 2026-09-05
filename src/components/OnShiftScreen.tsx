@@ -104,8 +104,19 @@ export default function OnShiftScreen({ onStart }: Props) {
         const modeRow = await queryOne<{ value: string }>("SELECT value FROM station_config_kv WHERE key = 'experience_mode'");
         if (modeRow) setMode(modeRow.value as ExperienceMode);
 
-        // Song count
-        const sc = await queryOne<{ n: number }>("SELECT COUNT(*) as n FROM songs WHERE file_path IS NOT NULL");
+        // Song count.
+        //
+        // `AND deleted_at IS NULL` was missing, and this is the FIRST number an operator sees when
+        // they open Ether. Deleted songs keep their file_path — the row is retained for play history
+        // — so they passed the filter and were counted. Measured on the dev machine 2026-09-05: it
+        // read 542 where the truth was 510, overstating the library by 32 tracks that can never air.
+        //
+        // Counts SONGS only, account-wide (`songs` has no station_id — the library is shared by
+        // every station on the install). The Library panel's "N items" is a different and broader
+        // figure: songs PLUS library_asset rows with no song row. Both are honest; they answer
+        // different questions, and this one is a readiness check — "do I have music to put to air".
+        const sc = await queryOne<{ n: number }>(
+          "SELECT COUNT(*) as n FROM songs WHERE file_path IS NOT NULL AND deleted_at IS NULL");
         setSongCount(sc?.n ?? 0);
 
         // Rotation rules

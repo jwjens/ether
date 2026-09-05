@@ -20,6 +20,7 @@
 import { useState } from "react";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { importIntoAudioLibrary } from "../lib/fileLocation";
 
 interface ParsedSong {
   title: string;
@@ -205,11 +206,18 @@ export default function GSelectorImport({ onClose }: { onClose?: () => void }) {
 
           // Insert song — use INSERT OR IGNORE on title+artist to avoid dupes
           try {
+            // COPY-ON-IMPORT, conditionally. These paths come from GSelector's EXPORT FILE, not
+            // from a picker — they describe where the audio lived on the machine that produced the
+            // export, and it may not be on this one at all. So: copy it in when it IS here, and
+            // otherwise keep the path unchanged so the row still carries its identity and the
+            // health signal reports it as needing re-import. Refusing outright would throw away a
+            // whole library's metadata over missing audio.
+            const gsPath = s.filepath ? (await importIntoAudioLibrary(s.filepath)) || s.filepath : null;
             await (window as any).ether.songs.create({
               title:       s.title,
               artist_id:   artistId,
               category_id: catId,
-              file_path:   s.filepath || null,
+              file_path:   gsPath,
               duration_ms: s.duration_ms || 0,
               intro_end:   s.intro_ms || null,
               outro_start: s.outro_ms || null,

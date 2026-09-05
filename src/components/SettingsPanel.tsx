@@ -2236,7 +2236,7 @@ function MusicFolderSection() {
   };
   const btn: React.CSSProperties = { padding: "7px 14px", fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer" };
   return (
-    <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>} title="Music Folder & Sync" description="Where THIS station's audio files live. Each station has its own folder — pick it, Test sync to check the files are there, and Re-sync to relink them (missing songs are listed and skipped so they can't cause dead air).">
+    <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>} title="Catalogue Folder & Sync" description="Where this machine's audio files live. ONE folder, shared by every station on this computer — pick it, Test sync to check the files are there, and Re-sync to relink them (anything missing is listed and skipped so it can't cause dead air).">
       <div style={{ display: "flex", flexDirection: "column" as any, gap: 10 }}>
         <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Folder for this station:</div>
         <div style={{ fontSize: 13, wordBreak: "break-all", padding: "6px 8px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>{folder || "(not set)"}</div>
@@ -2991,7 +2991,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, seg
         )}
       </Section>
 
-      {/* ── Per-station Music Folder & Sync ── */}
+      {/* ── The machine's Catalogue Folder & Sync ── */}
       <MusicFolderSection />
 
       {/* ── Jukebox — the public request wall's song pool ── */}

@@ -694,3 +694,101 @@ entry records the residual so it is a known trade rather than a forgotten one.
 **If it ever needs closing:** have the writer refuse it — `deck_configs` rejects `duck=1` where
 `kind='sweeper'`, and `armAllStationDuckers` (`main.js:4785`) refuses to arm it regardless of the row.
 That states the actual rule instead of relying on a coincidence of slot layout.
+
+---
+
+## Success-shaped guards in `station_config_kv` (2026-09-04) — FILED, NOT FIXED
+
+Jeff's instruction: file as the same class, don't fix now.
+
+`stationConfigKvUpsertByKey` returning `{ ok: true, skippedLocalOnly: true }` for a local-only key
+(`electron/sync/handlers/station_config_kv.js:220`) nearly shipped a silent regression: adding
+`music_dir` to `LOCAL_ONLY_KEYS` on its own would have made Relocate and `station-folder:choose`
+**stop saving the operator's folder while still reporting success**. Caught before landing; the two
+changes went together instead.
+
+**Two more early-returns share the pattern and are UNREVIEWED:**
+
+- `:120` — `if (isLocalOnlyKey(payload && payload.key)) return { ok: true, skippedLocalOnly: true };`
+- `:156` — `if (isLocalOnlyKey(existing.key)) return stationConfigKvGet(db, uuid);`
+
+**The class:** *a guard that returns a success shape converts a refusal into a lie.* Three instances
+were found in one week — this one, the Iris ledger's `{id:null,...evt}` persist catch (fixed
+2026-09-04), and the R2 prefetch's silent defer (`library-health.js`). A caller that does not inspect
+a bespoke field cannot tell "done" from "declined", and 4.4.183/184 already proved a caller will
+forget to look.
+
+**If it needs closing:** these should return a distinguishable verdict (`{ ok: false, reason: … }`,
+or `{ ok: true, applied: false, reason: … }`) and every call site should be checked for whether it
+reads the verdict at all. Small, but it touches inbound apply — worth its own pass, not a drive-by.
+
+**Teardown note:** none — this is a code finding, not tooling.
+
+---
+
+## Two cart walls with different storage (2026-09-04) — FILED, NOT FIXED
+
+Jeff's instruction: backlog as a consolidation task, don't chase.
+
+There are **two cart-wall implementations, persisting to different places**:
+
+- `src/components/DeckConfigurator.tsx` — `BoutiqueCartWall`, persists to the **`cart_slots` table**
+  via `cartSlots.upsertBySlotNumber`.
+- `src/App.tsx:3560` — `CartWallPanel`, persists to **`localStorage` key `ether_carts_v1`**.
+
+**Why it matters, in Jeff's words:** *"Two implementations of the same thing with different storage
+is its own defect and it's how a cart ends up invisible to everything that enumerates cart_slots."*
+
+Concretely, a cart assigned through `CartWallPanel` is invisible to: the sync layer, the audio-library
+migration and its health classifier (both walk `cart_slots`), Re-sync, backup/restore, and every
+diagnostic written this week. It also cannot travel to another machine at all.
+
+Both were given copy-on-import on 2026-09-04 so neither can store a path outside the audio library —
+that is a containment fix, not the consolidation.
+
+**If it needs closing:** one wall, one store (`cart_slots`), with a one-time read of
+`ether_carts_v1` to carry any localStorage-only assignments across before the key is dropped.
+
+**Teardown note:** none — a code finding, not tooling.
+
+---
+
+## Fuzzy filename match can bind a row to the WRONG file (2026-09-05) — FILED, NOT FIXED
+
+Jeff's instruction: file with the example, don't fix in this build.
+
+`findInIndex` (`electron/audio-library-index.js`) tries the exact basename first and then the
+tolerant `norm()` key. `norm()` lower-cases, strips punctuation **and strips `_spotdown.org`** — so a
+short stem can collide with an unrelated track:
+
+```
+stored path : C:\nope\gone.mp3                    norm stem = "gone"
+resolves to : C:\Users\jensj\Music\ether music library\Gone_spotdown.org.mp3
+```
+
+Measured on the dev machine while verifying the Re-sync matcher fix.
+
+**Why it matters more than it used to.** That fallback used to live only in Re-sync. As of 2026-09-04
+it is also in the PLAYBACK resolver — `resolveLocalAudioPath` (main.js) and `_resolveLocal`
+(audiod/engine.js). So the failure mode is no longer "Re-sync relinks the wrong row", it is **a deck
+airing the wrong track**.
+
+**Bounded, but real.** It can only fire when the stored path is already dead, so a healthy row is
+never affected. The consequence when it does fire is playing the wrong audio rather than nothing,
+which is worse than silence on air.
+
+**Proposed fix — the same one that closed the identical bug in the migration:** do not accept a
+tolerant match on name alone. `planMigration` already refuses this (`audio-library-migrate.js`, the
+`REPOINT` branch): where the source is readable it requires **name + size** to agree before calling
+two files the same, and falls through when they differ. `findInIndex` should take the same
+corroboration where anything is available to corroborate with —
+
+- prefer the exact basename match, as now;
+- accept a tolerant match only when a stored `duration_ms`/size agrees, or when the stem is long
+  enough to be distinctive (the collision above is a four-character stem);
+- otherwise report unresolved and let the row read as needing re-import, which is the honest answer.
+
+**Not a regression from the resolver tier** — the tolerant match predates it — but the resolver tier
+widened its blast radius from a repair tool to the air chain.
+
+**Teardown note:** none — a code finding, not tooling.

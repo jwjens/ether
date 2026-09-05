@@ -5,6 +5,7 @@ import { useActiveStation } from "../hooks/useActiveStation";
 const open = (opts?: { directory?: boolean; title?: string }) =>
   opts?.directory ? (window as any).ether.dialog.openDirectory() : (window as any).ether.dialog.openFile(opts);
 const readDir = (path: string) => (window as any).ether.fs.readDir(path);
+import { importIntoAudioLibrary } from "../lib/fileLocation";
 import { readID3 } from "../audio/id3";
 import { analyzeAndSave } from "../audio/songAnalysis";
 
@@ -28,6 +29,8 @@ export default function ImportDialog({ onDone }: Props) {
   const [step, setStep] = useState<"pick" | "importing" | "done">("pick");
   const [progress, setProgress] = useState({ done: 0, total: 0, current: "" });
   const [imported, setImported] = useState(0);
+  // Files the catalogue refused (disk full, permissions, a name that could not be placed).
+  const [refusedFiles, setRefusedFiles] = useState<string[]>([]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -58,8 +61,17 @@ export default function ImportDialog({ onDone }: Props) {
     setProgress({ done: 0, total: files.length, current: "Importing..." });
 
     let count = 0;
-    for (const filePath of files) {
+    const refused: string[] = [];
+    for (const browsedPath of files) {
       try {
+        // ── COPY-ON-IMPORT ────────────────────────────────────────────────────────────────────
+        // The song row stores the CATALOGUE path, never the browsed one. Import used to write the
+        // path the operator picked, which is why 1,113 files ended up in the catalogue folder with
+        // no row and rows ended up pointing at folders other machines cannot open.
+        // A refusal is COLLECTED and shown at the end — never a silent skip, and never a row.
+        const filePath = await importIntoAudioLibrary(browsedPath);
+        if (!filePath) { refused.push(browsedPath.split(/[\/]/).pop() || browsedPath); continue; }
+
         // Check if already imported
         const existing = await (query<{ id: number }>("SELECT id FROM songs WHERE file_path = ?", [filePath]).then(r => r[0] ?? null));
         if (existing) {
@@ -108,6 +120,10 @@ export default function ImportDialog({ onDone }: Props) {
     }
 
     setImported(count);
+    // A partial success must SAY which files did not make it, and the list has to stay on screen.
+    // A refusal the operator never sees is the same as no refusal at all — they find out later, when
+    // the track is due to air.
+    setRefusedFiles(refused);
     setStep("done");
   };
 
@@ -289,6 +305,23 @@ export default function ImportDialog({ onDone }: Props) {
         <div>
           <h3 style={{ fontSize: 14, fontWeight: 600, color: "var(--accent-green)", marginBottom: 8 }}>Import Complete</h3>
           <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 12 }}>{imported} songs imported{selectedCat ? " to " + (categories.find(c => c.id === selectedCat)?.name || "category") : ""}.</div>
+          {/* Files the catalogue refused. Shown on the SAME screen as the success, and kept
+              there: "Import Complete" over a silent partial failure is how an operator finds out at
+              4pm that a track they added this morning was never really added. */}
+          {refusedFiles.length > 0 && (
+            <div style={{ marginBottom: 12, padding: "8px 10px", background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.3)" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "#f87171", marginBottom: 4 }}>
+                {refusedFiles.length} file{refusedFiles.length === 1 ? " was" : "s were"} NOT added
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 6 }}>
+                They could not be copied into your catalogue, so no entry was created for them.
+                The reason for each was shown as it happened.
+              </div>
+              <div style={{ maxHeight: 120, overflowY: "auto", fontSize: 11, fontFamily: "'DM Mono', monospace", color: "rgba(248,113,113,0.85)" }}>
+                {refusedFiles.map((f, i) => <div key={i}>{f}</div>)}
+              </div>
+            </div>
+          )}
           <button
             onClick={onDone}
             style={{
