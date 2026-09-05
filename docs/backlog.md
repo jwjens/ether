@@ -792,3 +792,78 @@ corroboration where anything is available to corroborate with —
 widened its blast radius from a repair tool to the air chain.
 
 **Teardown note:** none — a code finding, not tooling.
+
+---
+
+## `win.files` REPLACES the top-level `files` list — every top-level exclusion has never applied (2026-09-05)
+
+Jeff's instruction: file it; the full fix gets its own release.
+
+`electron-builder.json` has a top-level `files` array AND a `win.files` array. **On Windows the
+platform list replaces the top-level one**, so every pattern up top — inclusions and exclusions
+alike — has never been applied to a Windows build. The only patterns Windows has ever honoured are
+the five `!node_modules/...` lines inside `win.files`.
+
+**Proof, measured by unpacking the packaged `app.asar` (not inferred from the config):**
+
+| what | top-level says | in the shipped asar |
+|---|---|---|
+| `docs/` | not listed ⇒ should be absent | **377 entries** |
+| `src/` | not listed ⇒ should be absent | **276 entries** |
+| `electron/**/*.test.js` | explicitly `"!"`-negated | **19 entries** |
+| `scripts/` | `scripts/**/*.js` | 382 entries |
+| `electron/` | `electron/**/*` | 139 entries |
+
+`docs/` and `src/` being present is the decisive evidence: neither appears in the top-level list at
+all, so if that list governed, both would be absent.
+
+**How it was found:** two attempts to exclude `scripts/diag-*.js` via the top-level array had no
+effect on the package — `!scripts/diag-*.js`, then `!**/scripts/diag-*.js`. Both patterns were
+correct; the array they were in is ignored on Windows.
+
+**Shipped for 4.6.0 (Jeff's option 3, minimal):** `"!**/scripts/diag-*.js"` and `"!docs/**"` added to
+`win.files` only. That removes the ~110 diagnostics and the docs tree — which included this week's
+duplicate-audio reports carrying absolute paths from the dev machine.
+
+⚠ **The top-level `"!**/scripts/diag-*.js"` was left in place and is INERT on Windows.** It is
+retained only because the release was mid-flight; it should go with the full fix, or it will read as
+working to whoever looks next.
+
+**The full fix — its own release, not a drive-by:** move the exclusions into `win.files` (or drop
+`win.files` and merge its five negations into the top-level array). That would remove roughly 700
+files — `src/`, the rest of `docs/`, the test trees — from the package for the first time in the
+product's history. It changes what ships, so it needs its own build and a walk, and the mac/linux
+targets need checking for the same override shape.
+
+**NOT audited:** whether anything in the previously-shipped `docs/` or `src/` contained credentials,
+keys, tokens, customer names or account emails. Jeff stopped that audit to get the release out. It
+is the first question to answer when this is picked up, because those builds are already installed
+on customer machines.
+
+**Teardown note:** none — a packaging finding, not tooling.
+
+### Platform scope of the 4.6.0 fix — and a correction
+
+The two working exclusions live in `win.files`, so they are **Windows-only**. The obvious inference
+is that mac and linux still ship `docs/`. **They almost certainly do not, and the reason is the same
+override:**
+
+```
+win    files key: PRESENT -> overrides the top-level list
+mac    files key: absent  -> the top-level list applies
+linux  files key: absent  -> the top-level list applies
+
+top-level files includes docs/ ?  NO
+```
+
+`docs/` was never in the top-level include list, so on mac and linux — where that list actually
+governs — it has never been packaged. Windows was the outlier precisely because `win.files` replaced
+the list that would have excluded it. For the same reason, the top-level `"!**/scripts/diag-*.js"`
+is inert on Windows but **does** apply on mac and linux.
+
+**UNVERIFIED**: no mac or linux artifact was built or unpacked. This is read from the config, and the
+config is what the Windows evidence proved the semantics of — it is not a measurement. Confirm by
+unpacking a mac build before relying on it.
+
+**What this does mean:** the exclusions are now expressed in two places with different scopes, which
+is its own trap. The full fix (one list, one scope) still stands as its own release.

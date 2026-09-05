@@ -20,7 +20,7 @@
     "electron/**/*",
     "audiod/**/*",
     "scripts/**/*.js",
-    "!scripts/diag-*.js",
+    "!**/scripts/diag-*.js",
     "native/**/*.node",
     "watchdog/**/*",
     "!watchdog/test/**",
@@ -49,6 +49,8 @@
     "icon": "build-resources/icon.ico",
     "signExts": [".node", ".dll"],
     "files": [
+      "!**/scripts/diag-*.js",
+      "!docs/**",
       "!node_modules/onnxruntime-node/bin/napi-v3/linux/**",
       "!node_modules/onnxruntime-node/bin/napi-v3/darwin/**",
       "!node_modules/better-sqlite3/prebuilds/darwin-*",
