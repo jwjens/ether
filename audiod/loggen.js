@@ -479,7 +479,7 @@ function readJingleForSeam(db, stationId, afterTs, beforeTs, excludeIds) {
       `SELECT gs.id AS row_id, gs.scheduled_at, gs.title, gs.artist, gs.content_class,
               COALESCE(gs.file_path, s.file_path) AS file_path,
               COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms,
-              gs.lead_in_sec, gs.underlap_sec, gs.jingle_category_id
+              gs.lead_in_sec, gs.jingle_category_id
          FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
         WHERE gs.station_id = ? AND gs.content_class IN ('JIN','SWP') AND gs.deleted_at IS NULL
           AND gs.scheduled_at > ? AND gs.scheduled_at <= ?${notIn}
@@ -489,8 +489,10 @@ function readJingleForSeam(db, stationId, afterTs, beforeTs, excludeIds) {
     return {
       rowId: row.row_id, filePath: row.file_path, title: row.title || "", artist: row.artist || "",
       durationMs: row.duration_ms || 0, scheduledAt: row.scheduled_at, contentClass: cls,
-      leadInSec: row.lead_in_sec != null ? row.lead_in_sec : (cls === 'SWP' ? 2 : 5),
-      underlapSec: row.underlap_sec != null ? row.underlap_sec : (cls === 'SWP' ? 1 : 2),
+      // Fallback only — lead_in_sec is written per row by _placeJingles from the category's LEAD
+      // setting. One number, no class fork: SWP and JIN forked 2-vs-5, so the same seam timed
+      // differently depending on a label. Must match SWEEPER_DEFAULT in electron/main.js.
+      leadInSec: row.lead_in_sec != null ? row.lead_in_sec : 2,
       jingleCategoryId: row.jingle_category_id ?? null,
     };
   } catch { return null; }

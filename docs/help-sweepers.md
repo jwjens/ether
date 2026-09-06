@@ -38,19 +38,41 @@ you here.
    **"Mark as Sweeper (SWP)"**. Tagged items appear in this panel.
 2. **Build pools (optional but recommended).** On the **SWEEPERS / SWEEPERS** tabs, add a pool (e.g. "Station
    IDs") and drop several tagged cuts into it. A pool **rotates least-recently-played**, so the same cut
-   doesn't repeat too soon — that's your burnout protection. Give each pool a **lead-in** and **underlap**.
+   doesn't repeat too soon — that's your burnout protection. Cuts of different lengths can share a pool
+   freely; length is never an input to the seam.
 3. **Assign per category — the core.** In **Category assignments**, each music category has an **Overlay**
-   dropdown: pick **None**, a **specific** sweeper/sweeper, or a **pool**. Set **Active hours** (default
-   Always) to keep imaging out of hours where it doesn't belong.
+   dropdown: pick **None**, a **specific** sweeper/sweeper, or a **pool**. Set **LEAD** for that category
+   (see below) and **Active hours** (default Always) to keep imaging out of hours where it doesn't belong.
 4. **Generate.** Sweepers/sweepers are placed on the song seams when you Generate the schedule (Calendar →
    Generate). On air they fire automatically.
 
-## The two timing numbers
+## LEAD — the one number
 
-- **Lead-in (seconds)** — how far *before* the outgoing song ends the overlay starts. Default: sweeper **5s**,
-  sweeper **2s**.
-- **Underlap (seconds)** — how far *before* the overlay ends the next song starts. Default: sweeper **2s**,
-  sweeper **1s**.
+Every category row has a **LEAD (s)** box: **how many seconds before the outgoing song ends that this
+category's sweeper fires.** That is the only timing decision the engine takes from you, and it is the only
+one it needs.
+
+Everything else follows from it. The next song starts at the outgoing song's natural end — exactly as it
+would with no sweeper on the seam at all. The sweeper plays on over it and **ends when it ends**. Where it
+lands in the next song is arithmetic, not a setting:
+
+> A 3:34 song with LEAD 3. The sweeper fires at 3:31. If that sweeper runs 6 seconds, it ends 3 seconds into
+> the next song. A 10-second sweeper on the same seam ends 7 seconds in. Nothing is configured for that —
+> it just follows from the sweeper's own length.
+
+So sweepers of every length live happily in the same pool. How a cut sounds over the tail is an imaging
+decision — yours and your imaging director's — not something the engine second-guesses.
+
+**A greyed box is the station default, not an empty box.** When a category has no setting of its own, the
+box still shows the number that is actually airing (2) in grey, so you can always see what is running. Type
+over it and the box brightens: that category now has its own number. Clear the box and it goes back to grey
+and follows the station default again.
+
+Changes take effect on the **next Generate** — the number is written onto each placement when the schedule
+is built, so a song already scheduled keeps the LEAD it was scheduled with.
+
+One practical floor: the engine checks the deck four times a second, so a LEAD under about **1s** can be
+missed. Above that, use whatever suits the imaging.
 
 ## Fallback (optional)
 
@@ -102,6 +124,9 @@ channel strip.
 - **Did you Generate?** Placements happen at Generate time. Regenerate after changing an assignment.
 - If an overlay is armed but the song is skipped or the hour hard-cuts at :00, it cancels cleanly and re-arms
   for the next seam — that's expected.
+- **Next to a commercial?** It fires. The engine used to suppress imaging on any seam touching a spot; it no
+  longer makes that judgement. If you don't want imaging around a break, that's what **Active hours** and the
+  category's **Overlay = None** are for.
 
 ## Not in this version (by design)
 

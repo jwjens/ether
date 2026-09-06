@@ -541,7 +541,7 @@ class DaemonEngine {
     const order = ["A", "B", "C"];
     if (order.some(d => this._deckState(d).status === "playing")) return "live";
     // A confirmed-FIRING jingle bridging the seam IS live audio (over master), even with all A/B/C idle
-    // for the underlap window. Observed, not claimed: only counts when samples are actually flowing on CART.
+    // while the seam bridges. Observed, not claimed: only counts when samples are actually flowing on CART.
     if (this._jingle && this._jingle.firingConfirmedAt && this._cartFlowing(this._jingle.channels)) return "live";
     // Nobody playing under automation. Ride out only a brief handoff out of a live state; anything
     // longer than the watchdog's stall window — or any non-live origin — is an honest stall.
@@ -798,7 +798,7 @@ class DaemonEngine {
 
       // JINGLES v1 seam bridge: if a CONFIRMED-FIRING jingle governs this deck's seam AND the incoming
       // song should start AFTER this deck ends (jingle long enough to bridge the gap), DEFER the rotation
-      // — _jingleTick starts the incoming deck at the underlap point (before the jingle ends). Defers ONLY
+      // — _jingleTick starts the incoming deck at this deck's natural end. Defers ONLY
       // on OBSERVED firing (samples flowing), so a non-firing / failed jingle can never cause a bridge or
       // dead air; the normal rotation below proceeds unchanged in every other case.
       // If the segue overlap already started the incoming early (segueTriggered), it owns this seam — the
@@ -1841,7 +1841,7 @@ class DaemonEngine {
   // Poll-driven, no naked timers, generation-guarded (mirrors the 4.4.48 deckGen Bug-A fix). Lifecycle:
   //   ARMED   — a JIN placement is identified for the upcoming seam; captured on-air + deck generation.
   //   FIRING  — CART audioPlay issued AND samples observed flowing (level_cart); play-log stamped HERE.
-  //   BRIDGING— outgoing deck ended; incoming deferred until (jingle end − underlap); jingle bridges.
+  //   BRIDGING— outgoing deck ended; incoming starts at that end; the jingle plays on over both.
   //   CLEARED — incoming deck live again.  ARMED_CANCELLED — superseded/failed before firing (no log row).
   static get _ARM_WINDOW_S() { return 30; }       // only look for a seam jingle within this of the end
   static get _FIRE_CONFIRM_MS() { return 900; }    // fired but no samples within this → failed, cancel
@@ -1849,7 +1849,7 @@ class DaemonEngine {
   _emitJingle(state, j) {
     try { this.emit("jingle", { stationId: this.stationId, state, deck: j ? j.deck : null,
       title: j ? j.title : null, categoryId: j ? j.categoryId : null, contentClass: j ? j.contentClass : null,
-      leadInSec: j ? j.leadIn : null, underlapSec: j ? j.underlap : null, jinDurSec: j ? (j.jinDur || 0) : null, ts: Date.now() }); } catch {}
+      leadInSec: j ? j.leadIn : null, jinDurSec: j ? (j.jinDur || 0) : null, ts: Date.now() }); } catch {}
   }
   _noteFiredRow(rowId) { if (rowId == null) return; this._firedJinRows.push(rowId); if (this._firedJinRows.length > 300) this._firedJinRows.splice(0, this._firedJinRows.length - 300); }
 
@@ -1909,13 +1909,16 @@ class DaemonEngine {
   _armJingle(jin, deck) {
     this._jingle = {
       phase: "armed", rowId: jin.rowId, filePath: jin.filePath, title: jin.title, artist: jin.artist,
-      jinDur: (jin.durationMs || 0) / 1000, leadIn: jin.leadInSec, underlap: jin.underlapSec,
+      jinDur: (jin.durationMs || 0) / 1000, leadIn: jin.leadInSec,
       categoryId: jin.jingleCategoryId, contentClass: 'SWP',   // v52: one imaging class
       deck, airGen: this._airGen, deckGen: this.deckGen[deck],
       firedAt: 0, firingConfirmedAt: 0, nextStart: 0, outgoingEndedAt: 0,
     };
-    this._noteFiredRow(jin.rowId);   // consume the placement so we don't re-arm it if the seam recomputes
-    this._log(`${this._jingle.contentClass} ARMED — "${jin.title}" over deck ${deck} seam (lead_in=${jin.leadInSec}s underlap=${jin.underlapSec}s)`);
+    // NOT consumed here. Arming is not airing: a row marked fired at arm time was gone forever even
+    // when it was superseded or refused, so an unaired sweeper counted as aired. _fireJingle consumes it
+    // once a channel has actually accepted it. While armed, _jingleTick returns early and never re-queries,
+    // so nothing can double-arm in the gap; a cancel legitimately puts the row back in play for this seam.
+    this._log(`${this._jingle.contentClass} ARMED — "${jin.title}" over deck ${deck} seam (lead_in=${jin.leadInSec}s)`);
     this._emitJingle("ARMED", this._jingle);
   }
 
@@ -1945,7 +1948,7 @@ class DaemonEngine {
   }
 
   // Should this deck's end DEFER to a bridging jingle? Only if the jingle is confirmed firing on THIS
-  // deck's seam and the incoming start (jingle end − underlap) lands AFTER this deck ends (now).
+  // deck's seam and there is still jingle audio left to play on over the incoming.
   _jingleShouldBridge(deckId) {
     const j = this._jingle;
     if (!j || j.deck !== deckId || !j.firingConfirmedAt || !j.firedAt) return false;
@@ -1955,9 +1958,9 @@ class DaemonEngine {
   _jingleBeginBridge(deckId) {
     const j = this._jingle; if (!j) return;
     const now = Date.now();
-    // Continuous weave (music never stops): automation NEVER fades a deck — the outgoing rides its own
-    // mastered tail to its natural end under the jingle, and the instant it ends the incoming enters at
-    // full UNDER the jingle's remaining tail. No jingle-alone gap — outgoing-tail · jingle · incoming-head.
+    // The incoming starts at the outgoing's NATURAL END — the same moment it would start with no sweeper
+    // on the seam at all. The sweeper's length is not an input: it plays on over the incoming and ends
+    // when it ends. Automation NEVER fades a deck; the outgoing rides its own mastered tail out.
     j.nextStart = now;
     j.outgoingEndedAt = now;
     j.phase = "bridging";
@@ -2122,7 +2125,7 @@ class DaemonEngine {
         // that would truncate a jingle whose flow our conservative detector merely missed. The entry clears
         // at jingleDoneMs below.
         if (j.phase === "bridging" && now >= j.nextStart) {
-          // Start the incoming deck now (underlap before the jingle ends). Reuse the proven rotate paths.
+          // Start the incoming deck at the outgoing's natural end. Reuse the proven rotate paths.
           const to = this._nextRotateDeck(j.deck);
           if (to) this.handleRotate(j.deck, to); else this.handleLoadNext(order[(order.indexOf(j.deck) + 1) % 3]);
           j.phase = "closing";
@@ -2143,9 +2146,10 @@ class DaemonEngine {
       const afterTs = this.deckSched[P];
       if (!(remaining > 0) || afterTs == null) { this._clearScheduled("unscheduled"); return; }  // non-scheduled row → no seam
       const nextDeck = this._nextRotateDeck(P);
-      // NO IMAGING OVER A COMMERCIAL: a jingle introduces MUSIC, never a SPOT. If the outgoing (playing) OR
-      // the incoming deck is a spot, suppress the seam entirely — a spot gets clean edges under any policy.
-      if (this.deckContentClass[P] === 'SPOT' || (nextDeck && this.deckContentClass[nextDeck] === 'SPOT')) { this._clearScheduled("spot-seam"); return; }
+      // A SCHEDULED SWEEPER FIRES. The engine used to suppress the seam whenever the outgoing or incoming
+      // deck was a SPOT — an editorial judgement ("imaging doesn't belong next to a commercial") made in
+      // code, silently dropping placements the operator scheduled. Whether a sweeper suits a seam is the
+      // operator's call, not the engine's; the only condition that may cancel one is preventing dead air.
       const beforeTs = (nextDeck && this.deckSched[nextDeck] != null)
         ? this.deckSched[nextDeck]
         : (afterTs + Math.ceil(remaining) + 2);
@@ -2181,7 +2185,7 @@ class DaemonEngine {
     this._scheduled = {
       rowId: jin.rowId, deck, title: jin.title, artist: jin.artist,
       contentClass: "SWP",                                   // v52: one imaging class
-      categoryId: jin.jingleCategoryId, leadIn: jin.leadInSec, underlap: jin.underlapSec,
+      categoryId: jin.jingleCategoryId, leadIn: jin.leadInSec,
       jinDur: (jin.durationMs || 0) / 1000,
     };
     this._log(`${this._scheduled.contentClass} SCHEDULED — "${jin.title}" for deck ${deck}'s upcoming seam (read-ahead)`);
@@ -2249,6 +2253,7 @@ class DaemonEngine {
         firedOn.push(ch);
       }
       if (!firedOn.length) { this._cancelJingle("no-channel-accepted"); return; }
+      this._noteFiredRow(j.rowId);   // a channel accepted it — NOW the placement is consumed (see _armJingle)
       j.channels = firedOn;                                    // stop and observe address THESE
       const d = this._dur(j.filePath); if (d > 0) j.jinDur = d;
       j.firedAt = Date.now();

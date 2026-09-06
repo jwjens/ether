@@ -867,3 +867,24 @@ unpacking a mac build before relying on it.
 
 **What this does mean:** the exclusions are now expressed in two places with different scopes, which
 is its own trap. The full fix (one list, one scope) still stands as its own release.
+
+## segueOverlap = 3 is a hardcoded number that shapes every music-to-music seam (2026-09-06)
+
+`audiod/engine.js:120` sets `this.segueOverlap = 3` in the constructor. `_segueTick` (`:2073-2094`)
+rotates the incoming deck in early whenever the outgoing has <= that many seconds left, so **the next
+song starts 3s before the natural end on every music->music seam** — sweeper or no sweeper. No operator
+set that number and nothing surfaces it. Same defect class as the sweeper LEAD: a value that shapes what
+goes to air, chosen in code.
+
+Becomes a setting. Proposal in the 2026-09-06 report; nothing built.
+
+RELATED, same class, found while stripping underlap: `jingle_categories.lead_in_sec` /
+`underlap_sec` are edited in the Sweepers panel pool rows but **nothing reads them** — `_placeJingles`
+takes its lead from `categories.overlay_lead_in_sec` only. The pool LEAD box is decorative. The pool
+underlap box was removed with the rest of underlap; the pool LEAD box was left in place pending a
+decision on whether pool-level timing should exist at all.
+
+Underlap itself: **stripped 2026-09-06** (it was carried through five files and read by nothing). The
+three DB columns `categories.overlay_underlap_sec`, `generated_schedule.underlap_sec` and
+`jingle_categories.underlap_sec` were deliberately LEFT IN PLACE — they are synced scalars and dropping
+one is a schema migration older peers would keep writing to.

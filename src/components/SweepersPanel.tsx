@@ -9,7 +9,7 @@
 // (Superseded note, kept for the reader: the old text here said renaming meant rewriting ~63k
 // generated_schedule and play_log rows, which is a separate filed project tied to the sweeper
 // redesign, not a label change.
-//   1) Sweeper pools — rotating pools with lead-in/underlap. Burnout protection.
+//   1) Sweeper pools — rotating pools. Burnout protection.
 //   2) Assign sweepers (marked in the Library) to pools.
 //   3) The CORE: per-music-category ASSIGNMENT — each category names a SPECIFIC overlay item OR a pool,
 //      with active hours + optional timing override. This is what Generate reads to place overlays.
@@ -22,7 +22,7 @@ import ReelSplitter from "./ReelSplitter";
 import InlineNameEditor from "./InlineNameEditor";
 import { useFileMenu } from "../lib/fileLocation";
 
-interface Pool { id: number; uuid: string; name: string; color: string | null; type: string; lead_in_sec: number; underlap_sec: number; sort_order: number; }
+interface Pool { id: number; uuid: string; name: string; color: string | null; type: string; lead_in_sec: number; sort_order: number; }
 interface OverlaySong { id: number; title: string; artist_name: string | null; content_class: string; jingle_category_id: number | null; }
 interface MusicCat {
   id: number; code: string; name: string; color: string | null;
@@ -32,6 +32,11 @@ interface MusicCat {
 
 const ether = () => (window as any).ether;
 const ALWAYS = 16777215;
+// The station default LEAD. NOT a private constant: when a category sets no override this is the number
+// that airs, so the LEAD column renders it in the box (greyed) as the current value — the operator can
+// always see what is running and type over it. Must match SWEEPER_DEFAULT in electron/main.js and the
+// fallback in audiod/loggen.js — three places, one number.
+const DEF_LEAD = 2;
 const maskFromRange = (from: number, to: number) => { let m = 0; for (let h = from; h <= to; h++) m |= (1 << h); return m >>> 0; };
 const rangeFromMask = (mask: number) => {
   if (mask == null || mask === ALWAYS) return null;
@@ -55,6 +60,9 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
   const [newName, setNewName] = useState("");
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<"manage" | "create">("manage");   // push-up: Manage vs Add imaging (reel splitter)
+  // Typing buffer for the TIMING boxes, keyed "<catId>:lead|under". Committed on blur/Enter so a
+  // three-digit entry is one write, not one per keystroke; cleared on commit so the DB value shows again.
+  const [timingDraft, setTimingDraft] = useState<Record<string, string>>({});
 
   const reload = useCallback(async () => {
     try { const r = await ether()?.jingleCategories?.list(stationId); setPools(((r?.rows || []) as Pool[])); } catch { setPools([]); }
@@ -85,10 +93,10 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
   const createPool = async () => {
     const name = newName.trim(); if (!name || busy) return; setBusy(true);
     try {
-      // 5s / 2s matches SWEEPER_DEFAULT in electron/main.js — one type, one default, one place to
-      // change it. The old 2s/1s belonged to the retired second class.
+      // Seeded from the same station default the LEAD column shows. underlap_sec is not passed: the
+      // column is NOT NULL and the handler supplies its own storage value for a field nothing reads.
       await ether()?.jingleCategories?.create({ station_id: stationId, name, color: accent, type: "SWP",
-        lead_in_sec: 5, underlap_sec: 2, sort_order: tabPools.length });
+        lead_in_sec: DEF_LEAD, sort_order: tabPools.length });
       setNewName(""); await reload();
     } finally { setBusy(false); }
   };
@@ -106,6 +114,24 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
   };
   const catValue = (c: MusicCat) => c.overlay_kind === "item" && c.overlay_song_id != null ? `item:${c.overlay_song_id}` : c.overlay_kind === "pool" && c.overlay_category_id != null ? `pool:${c.overlay_category_id}` : "";
   const setHours = async (c: MusicCat, mask: number) => { try { await ether()?.categories?.updateById(c.id, { overlay_active_hours: mask }); await reload(); onMutated?.(["categories"]); } catch {} };
+
+  // LEAD commit. Blank clears the override so the category falls back to the station default (and the
+  // box greys to show it). Written through the same categories.updateById path as ACTIVE HOURS, so it
+  // syncs and reaches _placeJingles on the next Generate exactly like every other overlay field.
+  const commitLead = async (c: MusicCat) => {
+    const dk = String(c.id);
+    const raw = timingDraft[dk];
+    setTimingDraft(d => { const n = { ...d }; delete n[dk]; return n; });
+    if (raw === undefined) return;
+    let next: number | null = null;
+    if (raw.trim() !== "") {
+      const n = Number(raw);
+      if (!Number.isFinite(n)) return;                     // gibberish → leave the stored value alone
+      next = Math.max(0, Math.round(n));
+    }
+    if (next === c.overlay_lead_in_sec) return;
+    try { await ether()?.categories?.updateById(c.id, { overlay_lead_in_sec: next }); await reload(); onMutated?.(["categories"]); } catch {}
+  };
 
   const inp: React.CSSProperties = { width: 46, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", borderRadius: "var(--r-0)", padding: "2px 4px", fontSize: "var(--t-body)", fontFamily: "'DM Mono', monospace" };
   const sel: React.CSSProperties = { background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", borderRadius: "var(--r-0)", padding: "3px 6px", fontSize: "var(--t-body)" };
@@ -139,9 +165,10 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
       {cats.length === 0 ? (
         <div style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", fontStyle: "italic", marginBottom: 20 }}>No music categories yet.</div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "150px 1fr auto", gap: "6px 14px", alignItems: "center", marginBottom: 14 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "150px 1fr auto auto", gap: "6px 14px", alignItems: "center", marginBottom: 14 }}>
           <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>CATEGORY</div>
           <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>OVERLAY</div>
+          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }} title="Seconds before the end of the outgoing song that this category's sweeper fires. The next song starts at the outgoing's natural end either way; the sweeper plays on over it and ends when it ends. A greyed box is the station default; type over it to set this category's own.">LEAD (s)</div>
           <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>ACTIVE HOURS</div>
           {cats.map(c => {
             const rng = rangeFromMask(c.overlay_active_hours ?? ALWAYS);
@@ -158,6 +185,28 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
 
                   {swpPools.length > 0 && <optgroup label="Sweeper pool (rotates)">{swpPools.map(p => <option key={"p" + p.id} value={`pool:${p.id}`}>◆ {p.name}</option>)}</optgroup>}
                 </select>
+                {(() => {
+                  const dk = String(c.id);
+                  const draft = timingDraft[dk];
+                  const isDefault = c.overlay_lead_in_sec == null && draft === undefined;   // the station default, not a set value
+                  return (
+                    <div key={c.id + "t"} style={{ display: "flex", alignItems: "center", gap: 4 }}
+                      title={isDefault
+                        ? `${c.code} fires its sweeper ${DEF_LEAD}s before the outgoing song ends — the station default. Type a number to give ${c.code} its own.`
+                        : `${c.code} fires its sweeper ${c.overlay_lead_in_sec}s before the outgoing song ends. Clear the box to go back to the station default.`}>
+                      <input type="number" min={0} step={1}
+                        value={draft ?? String(c.overlay_lead_in_sec ?? DEF_LEAD)}
+                        onChange={e => setTimingDraft(d => ({ ...d, [dk]: e.target.value }))}
+                        onBlur={() => commitLead(c)}
+                        onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                        style={{ ...inp, width: 52, textAlign: "right",
+                          opacity: isDefault ? 0.5 : 1,
+                          borderColor: isDefault ? "var(--border-primary)" : accent,
+                          color: isDefault ? "var(--text-tertiary)" : "var(--text-primary)" }} />
+                      <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>s</span>
+                    </div>
+                  );
+                })()}
                 <div key={c.id + "h"} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "var(--t-small)", color: "var(--text-secondary)", cursor: "pointer" }}>
                     <input type="checkbox" checked={always} onChange={e => setHours(c, e.target.checked ? ALWAYS : maskFromRange(6, 19))} /> Always
@@ -213,7 +262,6 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
                 <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>{tabSongs.filter(s => s.jingle_category_id === p.id).length} in pool</span>
               </div>
               <input key={p.id + "l"} type="number" min={0} step={0.5} defaultValue={p.lead_in_sec} onBlur={e => patchPool(p, { lead_in_sec: Math.max(0, parseFloat(e.target.value) || p.lead_in_sec) })} style={inp} />
-              <input key={p.id + "u"} type="number" min={0} step={0.5} defaultValue={p.underlap_sec} onBlur={e => patchPool(p, { underlap_sec: Math.max(0, parseFloat(e.target.value) || p.underlap_sec) })} style={inp} />
               <button key={p.id + "d"} onClick={() => delPool(p)} title="Delete pool" style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-lead)" }}>✕</button>
             </Fragment>
           ))}

@@ -955,7 +955,7 @@ if (AUDIO_DAEMON_DESIRED) {
         // JINGLES overlay v1: daemon ARMED/FIRING/ARMED_CANCELLED/CLEARED → renderer (deck indicators +
         // seam chip) + the Health Monitor (jingle cell + ledger event). Observed states only.
         const _jingleUuid = _stationUuidById(m.stationId);
-        sendToAllWindows("audio:daemon-jingle", { stationUuid: _jingleUuid, state: m.state, deck: m.deck, title: m.title, categoryId: m.categoryId, contentClass: m.contentClass, leadInSec: m.leadInSec, underlapSec: m.underlapSec, jinDurSec: m.jinDurSec, ts: m.ts });
+        sendToAllWindows("audio:daemon-jingle", { stationUuid: _jingleUuid, state: m.state, deck: m.deck, title: m.title, categoryId: m.categoryId, contentClass: m.contentClass, leadInSec: m.leadInSec, jinDurSec: m.jinDurSec, ts: m.ts });
         try { _health.noteJingle(m.stationId, m); } catch {}
       }
     } catch {}
@@ -8358,11 +8358,11 @@ const { buildScheduleCtx, generateDayRows, resetGenSlice } = require('./generate
 
 // JINGLES/SWEEPERS v2 (D1=A′ — SELECTION lives in the ONE scheduler; scheduler-rework #4 / ether-v2 §26).
 // v2 supersedes v1 cadence with per-MUSIC-CATEGORY ASSIGNMENT: each music category names EITHER a specific
-// overlay item OR a rotating pool, with its own lead-in/underlap + active hours. This runs AFTER the
+// overlay item OR a rotating pool, with its own lead-in + active hours. This runs AFTER the
 // music/spot rows are laid down. v2 is LEADING imaging — the overlay introduces the song being placed, so
 // the assignment is keyed on the INCOMING song's category and the placement's scheduled_at is that song's
 // seam (unchanged placement-row shape). A placement carries content_class ('JIN'|'SWP') + channel='CART' +
-// lead_in/underlap + jingle_category_id (the pool, or null for a specific item) + song_id. The daemon only
+// lead_in + jingle_category_id (the pool, or null for a specific item) + song_id. The daemon only
 // READS these — no in-daemon selection. Fail-safe: pre-v32 DB / no assignment + no fallback → no placement
 // (a clean dead segue is a deliberate programming choice, NEVER an error). Never throws into Generate.
 function _placeJingles(db, stationId, rows) {
@@ -8376,7 +8376,7 @@ function _placeJingles(db, stationId, rows) {
   // Prepared reads (defensive — a pre-v32 DB lacks the overlay columns → skip, byte-identical prior behavior).
   let stmtAssign, stmtItem, stmtPoolType, stmtPool;
   try {
-    stmtAssign = db.prepare("SELECT overlay_kind, overlay_song_id, overlay_category_id, overlay_lead_in_sec, overlay_underlap_sec, overlay_active_hours FROM categories WHERE id = ?");
+    stmtAssign = db.prepare("SELECT overlay_kind, overlay_song_id, overlay_category_id, overlay_lead_in_sec, overlay_active_hours FROM categories WHERE id = ?");
     stmtItem = db.prepare("SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.duration_ms, s.content_class FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ? AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND s.content_class IN ('SWP','JIN')");   // JIN read-only: a pre-v52 row from an un-migrated peer
     stmtPoolType = db.prepare("SELECT type FROM jingle_categories WHERE id = ? AND deleted_at IS NULL");
     stmtPool = db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.duration_ms, s.content_class
@@ -8391,11 +8391,14 @@ function _placeJingles(db, stationId, rows) {
   if (!music.length) return;
   const usedByPool = new Map();            // poolId → Set of overlay-song ids used this run (LRP anti-repeat)
   // ONE sweeper type, so ONE default (v52). This was { JIN: 5/2, SWP: 2/1 } and the class picked
-  // between them — which meant retiring JIN would silently have moved every new overlay from a 5s
-  // lead-in to 2s. No category sets an override (overlay_lead_in_sec is null on all 15), so the
-  // default IS what airs. 5/2 is kept deliberately: it is what has been on air, and a rename must
-  // not change the sound.
-  const SWEEPER_DEFAULT = { lead: 5, under: 2 };
+  // between them. There is ONE number at a sweeper seam: LEAD — how far before the outgoing song ends
+  // the sweeper fires. The next song starts at the outgoing's natural end regardless, and the sweeper
+  // plays on over it and ends when it ends; its length is never an input. (underlap was a second number
+  // that nothing in the engine ever read — stripped 2026-09-06, columns left in place.)
+  // This is the value that airs when a category sets no override, so it is not a private constant — it
+  // is the CURRENT VALUE of the LEAD setting in the Sweepers panel TIMING column, shown greyed in the
+  // box. Keep it identical to loggen.js readJingleForSeam — two places must never disagree.
+  const SWEEPER_DEFAULT = { lead: 2 };
   // THE GENERATE FREEZE (2026-08-06, 4.4.153). A CPU profile of the LIVE frozen main process put
   // 99.2% of 30s inside one native better-sqlite3 `.all()` under resolvePool. This query re-ran for
   // EVERY music row, and its correlated MAX(played_at) subquery scanned all ~36,900 play_log rows per
@@ -8433,11 +8436,10 @@ function _placeJingles(db, stationId, rows) {
       let poolId = a ? a.overlay_category_id : null;
       const itemId = a ? a.overlay_song_id : null;
       let leadOverride = a ? a.overlay_lead_in_sec : null;
-      let underOverride = a ? a.overlay_underlap_sec : null;
       let activeHours = (a && a.overlay_active_hours != null) ? a.overlay_active_hours : 16777215;
       // Unassigned → station fallback pool (no hours gate), else a clean dead segue (deliberate, not an error).
       if (!kind) {
-        if (fallbackCatId) { kind = 'pool'; poolId = fallbackCatId; leadOverride = null; underOverride = null; activeHours = 16777215; }
+        if (fallbackCatId) { kind = 'pool'; poolId = fallbackCatId; leadOverride = null; activeHours = 16777215; }
         else continue;
       }
       // Active-hours gate — the seam's LOCAL hour must be enabled (keeps imaging out of hours it shouldn't be in).
@@ -8461,7 +8463,6 @@ function _placeJingles(db, stationId, rows) {
         category_id: null, clock_id: incoming.clock_id ?? null,
         content_class: cls, channel: 'CART',
         lead_in_sec: leadOverride != null ? leadOverride : def.lead,
-        underlap_sec: underOverride != null ? underOverride : def.under,
         jingle_category_id: kind === 'pool' ? poolId : null,
       });
     }

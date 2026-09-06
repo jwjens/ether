@@ -181,7 +181,7 @@ function createHealthMonitor(opts) {
       else r.jingle = { state, title: (m.title || null), categoryId: (m.categoryId ?? null), contentClass: (m.contentClass || "JIN"), since: t };
       const ev = { ts: iso(t), type: "jingle", stationUuid: r.uuid, stationName: r.name, state,
         deck: (m.deck || null), title: (m.title || null), categoryId: (m.categoryId ?? null), contentClass: (m.contentClass || "JIN"),
-        leadInSec: (m.leadInSec ?? null), underlapSec: (m.underlapSec ?? null) };
+        leadInSec: (m.leadInSec ?? null) };
       try { if (jsonlPath) fs.appendFileSync(jsonlPath, JSON.stringify(ev) + "\n"); } catch {}
     } catch {}
   }
