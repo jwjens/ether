@@ -48,17 +48,21 @@ you here.
 
 ## LEAD — the one number
 
-Every category row has a **LEAD (s)** box: **how many seconds before the outgoing song ends that this
+Every category row has a **LEAD (s)** box: **how many seconds before the next song starts that this
 category's sweeper fires.** That is the only timing decision the engine takes from you, and it is the only
 one it needs.
 
-Everything else follows from it. The next song starts at the outgoing song's natural end — exactly as it
-would with no sweeper on the seam at all. The sweeper plays on over it and **ends when it ends**. Where it
-lands in the next song is arithmetic, not a setting:
+**The sweeper belongs to the song it introduces, not the one it follows.** You assign it to a category, and
+it plays ahead of every song in that category — over the tail of whatever happened to come before. That is
+what makes the copy mean something: "new music next" is about the record that's starting.
 
-> A 3:34 song with LEAD 3. The sweeper fires at 3:31. If that sweeper runs 6 seconds, it ends 3 seconds into
-> the next song. A 10-second sweeper on the same seam ends 7 seconds in. Nothing is configured for that —
-> it just follows from the sweeper's own length.
+Everything else follows from LEAD. The next song starts exactly when it would with no sweeper on the seam at
+all. The sweeper plays on over its opening and **ends when it ends**. Where it lands in the song is
+arithmetic, not a setting:
+
+> A song with LEAD 3. The sweeper starts 3 seconds before that song does. If the sweeper runs 6 seconds, it
+> ends 3 seconds into the record. A 10-second sweeper on the same seam ends 7 seconds in. Nothing is
+> configured for that — it just follows from the sweeper's own length.
 
 So sweepers of every length live happily in the same pool. How a cut sounds over the tail is an imaging
 decision — yours and your imaging director's — not something the engine second-guesses.

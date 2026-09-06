@@ -2079,7 +2079,11 @@ class DaemonEngine {
       const remaining = (st.durationSec || 0) - (st.positionSec || 0);
       if (!(remaining > 0 && remaining <= this.segueOverlap)) return;
       if (this.segueTriggered.has(P)) return;
-      if (this._jingle && this._jingle.deck === P && this._jingle.phase === "armed") return; // let it fire first
+      // (Removed 2026-09-06: a guard that deferred this segue while a sweeper was ARMED, so it would "fire
+      // first". Unreachable now — poll() runs _jingleTick before _segueTick, and the sweeper fires at
+      // leadIn + segueOverlap, strictly earlier than this point for any LEAD > 0; at LEAD 0 they coincide
+      // and _jingleTick still runs first. It also cost real time: while it held, the incoming started late,
+      // so every sweepered seam overlapped by ~leadIn instead of the operator's segueOverlap.)
       const nextDeck = this._nextRotateDeck(P);
       if (!(nextDeck && this.deckReady.has(nextDeck))) return;
       // CLEAN SPOT EDGES: a SPOT is exclusive PROGRAM content — never overlap the incoming over a spot's
@@ -2107,7 +2111,15 @@ class DaemonEngine {
           if (this._jingleSuperseded(j)) { this._cancelJingle("superseded"); return; }
           const st = this._deckState(j.deck);
           const remaining = (st.durationSec || 0) - (st.positionSec || 0);
-          if (remaining <= j.leadIn) this._fireJingle(j);   // FIRE on the advance chain
+          // THE SWEEPER BELONGS TO THE SONG IT INTRODUCES. LEAD is measured forward from the moment the
+          // INCOMING song begins, not backward from the outgoing song's end — so LEAD 3 puts three seconds
+          // of sweeper over the tail of whatever came before it, every time, whatever that was. The copy is
+          // about the record starting, so it has to land ahead of that record, not on top of it.
+          // The incoming begins when the outgoing has segueOverlap left (_segueTick, :2080); that is the
+          // definition of its start, not a correction. Both terms read the same live deck position, so this
+          // cannot drift — generated_schedule.scheduled_at is a plan, not a clock (measured 2026-09-06:
+          // only ~10% of plays land within 1s of their scheduled time).
+          if (remaining <= j.leadIn + this.segueOverlap) this._fireJingle(j);   // FIRE on the advance chain
           return;
         }
         // firing / bridging

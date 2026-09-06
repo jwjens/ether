@@ -172,3 +172,46 @@ current value, not hidden as a default. Nothing in the engine, the panel or the 
 `audiod/engine.js:120` — `this.segueOverlap = 3`. Same defect class, bigger blast radius: it governs
 **every** music-to-music seam, not just seams with imaging. Proposal is in the 2026-09-06 report and filed
 in `backlog.md`. Nothing built.
+
+---
+
+## Part 5 — the anchor: LEAD belongs to the song being introduced
+
+The model was already right at placement and wrong at fire time.
+
+**Placement was never inverted.** `_placeJingles` keys on the INCOMING song's category
+(`electron/main.js:8431`, stamped `scheduled_at: incoming.scheduled_at` at `:8459`; the header comment at
+`:8362-8363` already said so), and `readJingleForSeam` picks it up with an INCLUSIVE upper bound
+(`audiod/loggen.js:483-486`), so the row that fires is the one belonging to the song about to play.
+Measured over 22,215 placements: **21,889 stamped at a MUSIC row's time, 0 at a SPOT's.** A sweeper can
+never introduce a commercial — the `music` filter at `main.js:8390` excludes spots from placement entirely,
+which means the deleted suppression's "incoming is a SPOT" test was guarding an impossibility.
+
+**Fire time was inverted.** `remaining <= j.leadIn` measured LEAD backwards from the OUTGOING song's end.
+With `segueOverlap = 3` the incoming actually starts 3s before that, and a guard in `_segueTick` deferred
+the segue while a sweeper was armed — so the sweeper fired at 2s remaining and the incoming started on the
+next 250 ms tick. **The sweeper led the record it introduced by about a quarter of a second**, landing on
+the front of the new record instead of over the tail of the old one.
+
+Fixed, two hunks:
+
+1. `if (remaining <= j.leadIn + this.segueOverlap)` — LEAD is now measured forward from the moment the
+   incoming song begins. The incoming begins when the outgoing has `segueOverlap` left (`_segueTick`,
+   `:2080`); that is the definition of its start. Both terms read the same live deck position, so the
+   trigger cannot drift.
+2. The armed guard in `_segueTick` is removed. `poll()` runs `_jingleTick` (`:521`) before `_segueTick`
+   (`:524`), and the sweeper now fires strictly earlier than the segue point for any LEAD > 0, so the guard
+   is unreachable. Its removal also restores the operator's full segue overlap on sweepered seams, which the
+   deferral had been shortening to ~LEAD.
+
+**Why not the scheduled start.** Anchoring to `generated_schedule.scheduled_at` was rejected on two grounds.
+It is a plan, not a clock — measured 2026-09-06 over 3 days, only **10.1%** of plays landed within 1s of
+their scheduled time (p05/p95: −260s/+404s; the match is crude, 358 of 1622 rows, but the spread is not in
+doubt, and the time-anchored playhead is Phase 3+ of the log-reader flip with the flag off). And even at
+zero drift it cannot express the requirement: the incoming starts `segueOverlap` BEFORE its own
+`scheduled_at`, so LEAD 3 against a 3s overlap would yield zero lead.
+
+**The spot-tail case is not the engine's.** 14.8% of sweepers (3,292 of 22,215) currently follow a spot, and
+those spots end at the same second the sweeper's slot begins — so a sweeper would cover the last 2s of an
+11s commercial. Ruled: that seam is prevented in the clock, which is a programming decision. **No clamp and
+no suppression were built.**

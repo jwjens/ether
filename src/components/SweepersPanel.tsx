@@ -168,7 +168,7 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
         <div style={{ display: "grid", gridTemplateColumns: "150px 1fr auto auto", gap: "6px 14px", alignItems: "center", marginBottom: 14 }}>
           <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>CATEGORY</div>
           <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>OVERLAY</div>
-          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }} title="Seconds before the end of the outgoing song that this category's sweeper fires. The next song starts at the outgoing's natural end either way; the sweeper plays on over it and ends when it ends. A greyed box is the station default; type over it to set this category's own.">LEAD (s)</div>
+          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }} title="Seconds before the NEXT song starts that this category's sweeper fires — so it plays over the tail of whatever came before it. The sweeper introduces the song it is assigned to, plays on over its opening and ends when it ends; its length is never an input. A greyed box is the station default; type over it to set this category's own.">LEAD (s)</div>
           <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>ACTIVE HOURS</div>
           {cats.map(c => {
             const rng = rangeFromMask(c.overlay_active_hours ?? ALWAYS);
@@ -192,8 +192,8 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
                   return (
                     <div key={c.id + "t"} style={{ display: "flex", alignItems: "center", gap: 4 }}
                       title={isDefault
-                        ? `${c.code} fires its sweeper ${DEF_LEAD}s before the outgoing song ends — the station default. Type a number to give ${c.code} its own.`
-                        : `${c.code} fires its sweeper ${c.overlay_lead_in_sec}s before the outgoing song ends. Clear the box to go back to the station default.`}>
+                        ? `A ${c.code} song starts with its sweeper already ${DEF_LEAD}s in — the station default. Type a number to give ${c.code} its own.`
+                        : `A ${c.code} song starts with its sweeper already ${c.overlay_lead_in_sec}s in. Clear the box to go back to the station default.`}>
                       <input type="number" min={0} step={1}
                         value={draft ?? String(c.overlay_lead_in_sec ?? DEF_LEAD)}
                         onChange={e => setTimingDraft(d => ({ ...d, [dk]: e.target.value }))}
