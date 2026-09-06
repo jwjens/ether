@@ -2976,7 +2976,7 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, seg
           </SettingRow>
         )}
         {setSegueOverlap && (
-          <SettingRow label="Segue overlap (auto)" hint="How many seconds the next song starts before the current one ends — both play over the outgoing's own tail, so there's no dead air. 0 = wait for the end. No fades (songs carry their own mastered fade-outs).">
+          <SettingRow label="Segue overlap (auto)" hint="How many seconds the next song starts before the current one ends — both play over the outgoing's own tail, so there's no dead air. The outgoing song always plays to its natural end; nothing cuts it short. 0 = wait for the end. No fades (songs carry their own mastered fade-outs). Saved with this station, so it follows your account to any machine.">
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <input
                 type="range" min={0} max={10} step={1} value={segueOverlap}

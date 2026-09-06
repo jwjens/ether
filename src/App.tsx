@@ -1866,16 +1866,43 @@ export default function App() {
   };
   // Routine segue overlap (auto song→song) — seconds the next song starts before the current ends
   // (0 = wait for the end). Distinct from the manual X-key crossfade above. No fades.
-  const [segueOverlap, setSegueOverlapState] = useState(() => {
-    try { const v = parseInt(localStorage.getItem("ether_segue_overlap") ?? "3"); return isNaN(v) ? 3 : Math.min(10, Math.max(0, v)); } catch { return 3; }
-  });
+  //
+  // STORED WITH THE STATION, not the machine. This lived in localStorage, which made a number that
+  // decides when the next song starts per-box and invisible: sign in on another machine and the seam
+  // changed, with nothing on screen saying so. It is a programming decision, so it belongs to the station
+  // and travels with the account (station_config_kv, synced — not in LOCAL_ONLY_KEYS, unlike music_dir,
+  // which really is about this machine).
+  const [segueOverlap, setSegueOverlapState] = useState(3);
   const setSegueOverlap = (v: number) => {
     setSegueOverlapState(v);
-    localStorage.setItem("ether_segue_overlap", String(v));
+    try { (window as any).ether?.stationConfigKv?.upsertByKey(stationId, "segue_overlap_sec", String(v)); } catch { /* the daemon re-reads the KV either way */ }
     (engine as any).setSegueOverlap?.(v);
   };
-  // Push the persisted segue setting into the engine on mount (and thus to the daemon once connected).
-  useEffect(() => { (engine as any).setSegueOverlap?.(segueOverlap); }, [engine]);
+  // Load the ACTIVE station's value, and migrate this machine's old localStorage number ONCE if that
+  // station has none yet — nobody's seam changes silently on upgrade. Re-runs on station switch, because
+  // each station carries its own.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      let v = 3;
+      try {
+        const r = await (window as any).ether?.stationConfigKv?.list(stationId);
+        const row = ((r?.rows || []) as { key: string; value: string }[]).find(x => x.key === "segue_overlap_sec");
+        const stored = row && row.value !== "" ? parseInt(row.value, 10) : NaN;
+        if (!isNaN(stored)) {
+          v = Math.min(10, Math.max(0, stored));
+        } else {
+          const legacy = parseInt(localStorage.getItem("ether_segue_overlap") ?? "3", 10);
+          v = isNaN(legacy) ? 3 : Math.min(10, Math.max(0, legacy));
+          try { await (window as any).ether?.stationConfigKv?.upsertByKey(stationId, "segue_overlap_sec", String(v)); } catch { /* best effort */ }
+        }
+      } catch { /* fall through with the default; the daemon reads the KV itself */ }
+      if (!alive) return;
+      setSegueOverlapState(v);
+      (engine as any).setSegueOverlap?.(v);
+    })();
+    return () => { alive = false; };
+  }, [stationId, engine]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {

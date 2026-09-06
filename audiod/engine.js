@@ -117,8 +117,17 @@ class DaemonEngine {
     // the outgoing ends on its own. NO fades: automation NEVER moves a deck fader (those are operator
     // controls). Songs carry their own mastered fade-outs. 0 = wait for the natural end (legacy hard
     // cut). Delivered from the app via setSegueOverlap; the daemon default matches the app default.
-    this.segueOverlap = 3;
+    // NO LITERAL. The number that decides when the next song starts is the operator's. It is stored with
+    // the STATION (station_config_kv 'segue_overlap_sec', synced) and delivered by
+    // _applySegueOverlapFromKv on the poll — the same pattern the processing settings use — and by the
+    // app's setSegueOverlap command. Until the operator's number arrives this is 0, which means "no early
+    // rotate": every song simply plays to its natural end. That is the fail-safe direction. A literal here
+    // would be a number that shapes what goes to air, chosen in code, where nobody could see it.
+    this.segueOverlap = 0;
     this.segueTriggered = new Set();     // decks whose early overlap-rotate has begun (double-trigger guard)
+    // Decks awaiting retirement after a rotate. A deck leaves this map ONLY by draining — never by elapsed
+    // time. See _retireTick: nothing in this engine can shorten a song.
+    this._retiring = new Map();
     // ── liveDeck OBSERVER (2026-07-29, observation-only) ─────────────────────────────────────────
     // The deck the engine ACTUALLY put on air, set by _play(). This exists because every consumer
     // today derives "the playing deck" by ALPHABETICAL SCAN — `["A","B","C"].find(playing)` in
@@ -471,6 +480,7 @@ class DaemonEngine {
     const lv = this._readLevels(now);
     this._mixHeartbeat(now, s, lv);   // v4.4.46: diagnostic [mix sN] line every 5s while playing (no-op otherwise)
     this._applyProcessingFromKv(now);   // Audio Processing v1: deliver proc_local/proc_stream/target from KV (segue pattern)
+    this._applySegueOverlapFromKv(now); // the operator's segue overlap, stored with the station
 
     const prev = { A: this.stateA.status, B: this.stateB.status, C: this.stateC.status };
     // ── IDENTITY-KEYED CARRY (2026-08-02) ───────────────────────────────────────────────────────────
@@ -505,6 +515,10 @@ class DaemonEngine {
     // never skip it — the 2026-07-30 incidents ran ~50s each with nothing else able to end them. It
     // reads the freshest state and does its stop on the advance chain, never inline.
     this._liveDeckObserverTick(now);
+
+    // Retire drained decks. Sits here, on the freshest deck state and before any decision work, for the
+    // same reason the guard above does. It can only ever stop a deck that has already finished.
+    this._retireTick(now);
 
     for (const id of ["A", "B", "C"]) this._maybeEmitDeck(id);
 
@@ -852,9 +866,61 @@ class DaemonEngine {
     return "stop";
   }
 
-  // The outgoing deck's stop delay for an OPERATOR safety skip. The routine musical segue keeps
-  // crossfadeDuration (3s of overlap); a panic press must not leave the offending audio up that long.
-  // (docs/auto-xfade-contract-trace-2026-08-02.md clause 1)
+  /** Retire decks that have finished after a rotate. Poll-driven, and the ONLY automatic path that stops
+   *  a rotation deck. THE CONTRACT: a deck that reports playing is never stopped, for any elapsed time.
+   *  A deck leaves _retiring by draining, by being re-loaded (deckGen), or by becoming the target.
+   *
+   *  A deck that never drains is a real fault, not something to cut short: it is reported once as a
+   *  health event and left alone. The liveDeck guard owns that case — it stops a foreign deck past its
+   *  grace, conditionally and loudly, which is where "a deck holding audio it shouldn't" belongs. */
+  _retireTick(now) {
+    if (!this._retiring.size) return;
+    for (const [deck, r] of [...this._retiring]) {
+      if (this._outgoingStopAction(deck, r.gen, r.toId) !== "stop") { this._retiring.delete(deck); continue; }
+      if (this._deckState(deck).status === "playing") {
+        // STILL HAS AUDIO — leave it alone. Say so once if it is abnormally long, so a deck that never
+        // drains is visible rather than silent (observed, never assumed).
+        if (!r.warned && now - r.since > this._foreignGraceMs()) {
+          r.warned = true;
+          this._log(`retire ${deck}: still playing ${((now - r.since) / 1000).toFixed(1)}s after the rotate — NOT stopping it (the song owns its tail)`);
+          try { this.emit("error", { stationId: this.stationId, where: "deck-retire-slow", deck, error: `deck ${deck} still playing ${Math.round((now - r.since) / 1000)}s after its rotate — not stopped` }); } catch {}
+        }
+        continue;
+      }
+      this._retiring.delete(deck);
+      this._advance("stop:" + deck, async () => this._retireDeck(deck, "drained"));
+    }
+  }
+
+  /** The stop itself — bookkeeping only, never a truncation. Tells Rust the slot is idle and clears the
+   *  readiness flags, exactly as the Bug-A deferred stop did. */
+  _retireDeck(deck, why) {
+    this._stop(deck);
+    this.deckReady.delete(deck);
+    this.endTriggered.delete(deck);
+    this._log(`retire ${deck} (${why})`);
+  }
+
+  /** The operator's segue overlap, read from the station. Same delivery pattern as the processing
+   *  settings: cheap, poll-driven, and it never disturbs playout if the KV is unreadable. The app also
+   *  pushes it live via setSegueOverlap; this is what makes the daemon correct on its own. */
+  _applySegueOverlapFromKv(now) {
+    if (now - (this._segueKvAt || 0) < 3000) return;
+    this._segueKvAt = now;
+    try {
+      const row = this.db.prepare(
+        "SELECT value FROM station_config_kv WHERE station_id=? AND key='segue_overlap_sec' AND deleted_at IS NULL"
+      ).get(this.stationId);
+      if (!row || row.value == null || row.value === "") return;   // unset → leave what we have
+      const v = parseInt(row.value, 10);
+      if (isNaN(v)) return;
+      const next = Math.max(0, Math.min(10, v));
+      if (next === this.segueOverlap) return;
+      this.segueOverlap = next;
+      this._log(`segue overlap = ${next}s (from the station's settings)`);
+    } catch { /* KV unreadable → keep the last value; never disturb playout */ }
+  }
+
   handleRotate(fromId, toId, opts) {
     this._advance("handleRotate", async () => { await this._rotateBody(fromId, toId, opts); });
   }
@@ -883,25 +949,38 @@ class DaemonEngine {
           return false;
         }
         this._play(toId);
+        // THE OUTGOING SONG ALWAYS PLAYS TO ITS NATURAL END. Nothing here stops a deck that still has
+        // audio. The incoming plays OVER it.
+        //
+        // WHAT THIS REPLACES, AND WHY. This was a setTimeout at crossfadeDuration*1000 + 500 that stopped
+        // the outgoing deck on a clock, explicitly forcing the stop even while the deck reported playing.
+        // That delay was calibrated in 7d2d159 (2026-05-05) for a rotate that happened at the deck's
+        // NATURAL END, and its purpose was never to end audio — it was to clear a stale Rust "playing"
+        // status AFTER the audio had drained. Its own words: "The natural tail still plays out, then Rust
+        // is told the deck is idle." segueOverlap later moved the rotate N seconds BEFORE the end and
+        // nobody revisited the delay, so with an overlap of 5 it cut 1.5s off the end of every segued
+        // song. The stale-status problem it was invented for is separately closed: audio_get_state
+        // persists status='ended' onto the deck when it consumes the finished flag (lib.rs:243-249), so
+        // "still playing" is now a truthful reading and can be trusted as the condition.
+        //
+        // Bug A is untouched. The retire still runs on the _advance chain (serialized with preload), still
+        // carries the deckGen guard via _outgoingStopAction, and still clears deckReady/endTriggered when
+        // it fires so a nulled Rust source is never left marked "ready". ONLY THE TRIGGER CHANGED — from a
+        // clock to the deck's own drained state.
+        // PRELOAD CADENCE ONLY — how soon _armAfterRotate cues the two standby decks. This is NOT a stop
+        // delay: nothing in this engine stops a deck on a clock any more.
         const cfMs = Number.isFinite(opts && opts.cutMs) ? opts.cutMs : this.crossfadeDuration * 1000;
-        // Bug A (source-wipe race): run the outgoing deck's post-crossfade stop ON the advance chain
-        // (serialized with preload) and GUARD it — skip if the deck was re-loaded since (deckGen changed)
-        // or went live again; when it does stop, clear deckReady/endTriggered so a nulled Rust source can
-        // never be left marked "ready" (the stale-ready → silent source=None play). Replaces the old
-        // floating off-chain setTimeout(_stop) that could land after a re-preload and wipe a fresh source.
         const fromGen = this.deckGen[fromId];
-        setTimeout(() => this._advance("stop:" + fromId, async () => {
-          const act = this._outgoingStopAction(fromId, fromGen, toId);
-          if (act !== "stop") return;
-          // Bug-A hardening (2026-07-22): the OLD outgoing source is still on this deck (deckGen unchanged)
-          // and it isn't the deck we rotated INTO — so it MUST stop. Do NOT skip merely because it still
-          // reports "playing": a still-playing outgoing deck past the crossfade grace IS the leaked/overlap
-          // deck this deferred stop exists to clear (the 2026-07-21 OF two-decks incident). Force the stop.
-          if (this._deckState(fromId).status === "playing") this._log("stop:" + fromId + " — outgoing still playing past grace (same source) → FORCE stop (Bug-A guard)");
-          this._stop(fromId);
-          this.deckReady.delete(fromId);
-          this.endTriggered.delete(fromId);
-        }), cfMs + 500);
+        if (Number.isFinite(opts && opts.cutMs)) {
+          // An OPERATOR safety cut (take-over) is a deliberate hard stop and keeps its timer: a person
+          // asked for that audio to come off now. Automation never takes this branch.
+          setTimeout(() => this._advance("stop:" + fromId, async () => {
+            if (this._outgoingStopAction(fromId, fromGen, toId) !== "stop") return;
+            this._retireDeck(fromId, "operator-cut");
+          }), opts.cutMs);
+        } else {
+          this._retiring.set(fromId, { gen: fromGen, toId, since: Date.now(), warned: false });
+        }
         this._setDeck(toId, { status: "playing", positionSec: 0 });
         this._fireStart(toId);
         this._log("segue: deck " + toId + " LIVE — " + (this._deckState(toId).title || "(untitled)"));
@@ -1983,7 +2062,7 @@ class DaemonEngine {
   // legitimate overlap so it tracks them instead of hardcoding: the incoming starts segueOverlap early
   // and the outgoing's deferred stop lands at crossfadeDuration + 500ms after the rotate, so a NORMAL
   // overlap clears well inside this. Nothing about playout reads this — it is a reporting threshold.
-  _foreignGraceMs() { return (this.segueOverlap + this.crossfadeDuration) * 1000 + 1500; }
+  _foreignGraceMs() { return ((this.segueOverlap || 0) + this.crossfadeDuration) * 1000 + 1500; }
 
   // Poll-driven ENFORCEMENT (2026-07-30, was observation-only in 4.4.105). A rotation deck that is
   // playing but is NOT the deck this engine put on air is stopped once it has held past the grace.

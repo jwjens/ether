@@ -1,6 +1,20 @@
-// Bench for the Bug-A deck-stop guard (2026-07-22 OF two-decks incident fix). Exercises the REAL
-// DaemonEngine._outgoingStopAction — the deferred post-crossfade stop decision — with NO audio/DB/pipe,
-// so it is safe to run anytime. The invariant: a delayed stop can NEVER leak a decoding deck.
+// Bench for the deck-retire contract and the liveDeck guard. Exercises the REAL DaemonEngine methods
+// with NO audio/DB/pipe, so it is safe to run anytime.
+//
+// THE INVARIANT, and it is the whole point of this file:
+//
+//     THE OUTGOING SONG ALWAYS PLAYS TO ITS NATURAL END.
+//     A DECK THAT REPORTS PLAYING IS NEVER STOPPED, FOR ANY ELAPSED TIME.
+//
+// This suite previously asserted the opposite. It was built around a timed post-crossfade stop that
+// FORCE-stopped a deck even while it reported playing — a delay calibrated in 7d2d159 (2026-05-05) for a
+// rotate that happened at the deck's natural end, never revisited when segueOverlap moved the rotate
+// earlier. With an overlap of 5 it cut 1.5s off the end of every segued song. The tests passed the whole
+// time, which is why a suite asserting a retired contract is worse than no suite.
+//
+// What is UNCHANGED and still tested here: Bug A (a stop must never wipe a freshly re-loaded source, and
+// must never touch the incoming deck), and the liveDeck guard (a deck the engine did not put on air is
+// stopped past a grace — the 2026-07-30 two-decks incident).
 // Run:  node audiod/smoke-seam-stop.js   (exit 0 = pass)
 "use strict";
 const path = require("path");
@@ -13,15 +27,17 @@ function check(name, got, want) {
   ok ? pass++ : fail++;
 }
 
-console.log("── deck-stop guard (real DaemonEngine._outgoingStopAction; no audio/DB) ──");
+console.log("── retire OWNERSHIP (real DaemonEngine._outgoingStopAction; no audio/DB) ──");
+// _outgoingStopAction answers ONE question: does this deck still belong to the rotate that queued its
+// retire? It is an ownership test, NOT a stop order — _retireTick decides whether the deck has drained,
+// and that is where the "never stop audio" contract lives (next section).
 const e = new DaemonEngine(99, {}, () => {});
 e.deckGen = { A: 5, B: 2, C: 0 };
 
-// 1) THE LEAK CASE: outgoing deck A, same source since the rotate (deckGen 5==5), NOT the incoming (toId=B),
-//    and still reports "playing" past the crossfade grace → MUST return 'stop' (force). The old code
-//    returned early on status==="playing" and leaked the decoding deck (the two-decks overlap).
+// 1) the outgoing deck, same source since the rotate (deckGen 5==5), not the incoming (toId=B) → it is
+//    still ours to retire. Play status is irrelevant to OWNERSHIP.
 e._deckState = () => ({ status: "playing" });
-check("leak case: outgoing still playing, same source, not target → force STOP", e._outgoingStopAction("A", 5, "B"), "stop");
+check("same source, not the target → still ours to retire", e._outgoingStopAction("A", 5, "B"), "stop");
 
 // 2) a FRESH source was loaded onto A since the rotate (deckGen bumped 5→ was 4) → never wipe it.
 check("reloaded since rotate (deckGen changed) → skip-reloaded", e._outgoingStopAction("A", 4, "B"), "skip-reloaded");
@@ -33,11 +49,118 @@ check("is the incoming deck (fromId===toId) → skip-target", e._outgoingStopAct
 e._deckState = () => ({ status: "ended" });
 check("normal: outgoing ended, same source → stop", e._outgoingStopAction("A", 5, "B"), "stop");
 
-// 5) REGRESSION INTENT: the decision must NOT depend on the outgoing deck's play status (that dependency
-//    was the leak escape). Same inputs, "playing" vs "ended" → identical 'stop'.
+// 5) OWNERSHIP is independent of play status — deliberately. The two questions are separate: this one
+//    asks "is this deck still ours", _retireTick asks "has it finished". Conflating them is what let a
+//    clock stop a playing deck.
 e._deckState = () => ({ status: "playing" }); const whilePlaying = e._outgoingStopAction("A", 5, "B");
 e._deckState = () => ({ status: "ended" });   const whileEnded   = e._outgoingStopAction("A", 5, "B");
-check("decision independent of outgoing play-status (no 'playing' escape)", whilePlaying === "stop" && whileEnded === "stop", true);
+check("ownership is independent of play-status (the two questions stay separate)", whilePlaying === "stop" && whileEnded === "stop", true);
+
+// ── THE CONTRACT: a deck with audio is never stopped ─────────────────────────────────────────────
+console.log("\n── retire CONTRACT (real DaemonEngine._retireTick) ──");
+const mk = (status) => {
+  const acted = [];
+  const r = new DaemonEngine(99, {}, () => {});
+  r._log = (...a) => acted.push(["LOG", a.join(" ")]);
+  r._stop = (d) => acted.push(["STOP", d]);
+  r._play = (d) => acted.push(["PLAY", d]);
+  r._load = (d) => acted.push(["LOAD", d]);
+  r.handleRotate = (f, t) => acted.push(["ROTATE", f, t]);
+  r._advance = (where, fn) => { acted.push(["ADVANCE", where]); return fn(); };
+  r.emit = (...a) => acted.push(["EMIT", a[1] && a[1].where]);
+  r.deckGen = { A: 5, B: 2, C: 0 };
+  r._deckState = () => ({ status });
+  r._retiring.set("A", { gen: 5, toId: "B", since: 1000, warned: false });
+  return { r, acted };
+};
+
+// 15) THE ONE THAT MATTERS. A playing deck is not stopped one second after the rotate, nor ten, nor ten
+//     minutes. There is no elapsed time at which the engine takes a song off.
+{
+  const { r, acted } = mk("playing");
+  for (const t of [1001, 2000, 4500, 10000, 60000, 600000]) r._retireTick(t);
+  check("a PLAYING deck is never stopped, at any elapsed time", acted.some(a => a[0] === "STOP"), false);
+  check("  …and it stays queued for retirement", r._retiring.has("A"), true);
+}
+
+// 16) the old behaviour, pinned so it cannot come back: at the moment the retired timer would have fired
+//     (crossfadeDuration*1000 + 500 = 3500ms), a playing deck is still untouched.
+{
+  const { r, acted } = mk("playing");
+  r._retireTick(1000 + r.crossfadeDuration * 1000 + 500);
+  check("at the retired timer's moment (cf+500ms): still playing, still untouched", acted.filter(a => a[0] === "STOP").length, 0);
+}
+
+// 17) once it has actually drained, it IS retired — on the chain, with the bookkeeping.
+{
+  const { r, acted } = mk("ended");
+  r.deckReady.add("A"); r.endTriggered.add("A");
+  r._retireTick(1200);
+  check("a DRAINED deck is retired", acted.filter(a => a[0] === "STOP").map(a => a[1]), ["A"]);
+  check("  …on the advance chain", acted.some(a => a[0] === "ADVANCE" && a[1] === "stop:A"), true);
+  check("  …deckReady cleared (Bug A: never leave a nulled source marked ready)", r.deckReady.has("A"), false);
+  check("  …endTriggered cleared", r.endTriggered.has("A"), false);
+  check("  …and it leaves the retire map", r._retiring.has("A"), false);
+}
+
+// 18) BUG A, unchanged: a deck re-loaded since the rotate is never stopped, drained or not.
+{
+  const { r, acted } = mk("ended");
+  r.deckGen.A = 6;                                   // a fresh source landed since the rotate
+  r._retireTick(9999);
+  check("Bug A: a re-loaded deck is never stopped", acted.some(a => a[0] === "STOP"), false);
+  check("  …and it is dropped from the retire map", r._retiring.has("A"), false);
+}
+
+// 19) never the incoming deck.
+{
+  const { r, acted } = mk("ended");
+  r._retiring.set("A", { gen: 5, toId: "A", since: 1000, warned: false });
+  r._retireTick(9999);
+  check("the deck we rotated INTO is never stopped", acted.some(a => a[0] === "STOP"), false);
+}
+
+// 20) a deck that never drains is REPORTED, once, and still not stopped.
+{
+  const { r, acted } = mk("playing");
+  r._retireTick(1000 + r._foreignGraceMs() + 1);
+  r._retireTick(1000 + r._foreignGraceMs() + 5000);
+  check("a deck that will not drain is reported exactly once", acted.filter(a => a[0] === "LOG").length, 1);
+  check("  …the line says it is NOT being stopped", /NOT stopping it/.test((acted.find(a => a[0] === "LOG") || [])[1] || ""), true);
+  check("  …a health event is emitted", acted.some(a => a[0] === "EMIT" && a[1] === "deck-retire-slow"), true);
+  check("  …and it is STILL not stopped", acted.some(a => a[0] === "STOP"), false);
+}
+
+// 21) the retire is not an actuator for anything else.
+{
+  const { r, acted } = mk("ended");
+  r._retireTick(9999);
+  check("retire never plays a deck", acted.some(a => a[0] === "PLAY"), false);
+  check("retire never loads a deck", acted.some(a => a[0] === "LOAD"), false);
+  check("retire never issues a rotate", acted.some(a => a[0] === "ROTATE"), false);
+}
+
+// 22) an OPERATOR cut is still a hard stop — a person asked for that audio to come off now.
+{
+  const { r, acted } = mk("playing");
+  r._retireDeck("A", "operator-cut");
+  check("an operator cut still stops a playing deck", acted.filter(a => a[0] === "STOP").map(a => a[1]), ["A"]);
+}
+
+// 23) empty map is free, and the tick never throws into playout.
+{
+  const { r } = mk("ended");
+  r._retiring.clear();
+  let threw = false; try { r._retireTick(1); } catch { threw = true; }
+  check("empty retire map: no work, no throw", threw, false);
+}
+
+// 24) SEGUE OVERLAP IS THE OPERATOR'S — no literal in the engine. A fresh engine starts at 0, which
+//     means "no early rotate" until the station's number arrives: the fail-safe direction.
+{
+  const fresh = new DaemonEngine(99, {}, () => {});
+  check("no hardcoded segue overlap — a fresh engine starts at 0 (no early rotate)", fresh.segueOverlap, 0);
+}
 
 // ── liveDeck OBSERVER (2026-07-29, observation-only) ──────────────────────────────────────────────
 // Covers DaemonEngine._foreignPlayingDecks + _foreignGraceMs + _liveDeckObserverTick. The invariant
@@ -63,12 +186,12 @@ check("two foreign decks → both reported",
 // 9) liveDeck unknown (fresh engine, nothing rotated yet) → never report what we cannot attribute.
 check("liveDeck unknown → no anomaly claimed", o._foreignPlayingDecks(null, { A: "playing", B: "playing", C: "ended" }), []);
 
-// 10) a legitimate segue overlap must NOT be reportable: the grace exceeds the window in which the
-//     outgoing deck is normally still playing (deferred stop lands at crossfadeDuration + 500ms).
-check("grace outlasts a normal segue overlap (cf 3s + 500ms)", o._foreignGraceMs() > o.crossfadeDuration * 1000 + 500, true);
+// 10) a legitimate segue overlap must NOT be reportable: the grace has to outlast the window in which
+//     the outgoing deck is normally still playing its own tail.
+check("grace outlasts a normal segue overlap", o._foreignGraceMs() > o.crossfadeDuration * 1000 + 500, true);
 o.segueOverlap = 6; o.crossfadeDuration = 5;
 check("grace is DERIVED from the settings, not hardcoded", o._foreignGraceMs(), (6 + 5) * 1000 + 1500);
-o.segueOverlap = 3; o.crossfadeDuration = 3;
+o.segueOverlap = 3; o.crossfadeDuration = 3;   // set explicitly: the engine no longer carries a default
 
 // 11) _play records the deck the engine put on air — for MUSIC decks only. CART (the jingle overlay)
 //     is not a rotation deck and must never become liveDeck. Tested through the real predicate _play
@@ -103,9 +226,10 @@ const t0 = 1_000_000;
 obs._liveDeckObserverTick(t0);
 check("inside grace: nothing logged (a normal overlap is not an anomaly)", acted.length, 0);
 check("inside grace: the overlapping deck is NOT stopped", acted.some(a => a[0] === "STOP"), false);
-// Hold it across the whole window a real overlap occupies (deferred stop lands at cf+500ms = 3500ms).
+// Hold it across the whole window a real overlap occupies, including the moment the retired timed stop
+// used to fire (cf+500ms = 3500ms) — the guard must not have inherited that clock either.
 obs._liveDeckObserverTick(t0 + 3500);
-check("at the deferred-stop moment (cf+500ms): still untouched", acted.length, 0);
+check("at the retired timer's moment (cf+500ms): still untouched", acted.length, 0);
 obs._liveDeckObserverTick(t0 + obs._foreignGraceMs() - 1);
 check("one tick before the grace expires: still untouched", acted.length, 0);
 
