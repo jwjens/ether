@@ -356,6 +356,81 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
 /// rack's live FFT display. Mirrors audio_get_levels: nudges the audio thread to
 /// refresh AudioLevels (GetLevel also copies the latest bus spectrum) then reads it.
 /// Returns a JSON array of 10 floats, e.g. "[0.12,0.34,...]".
+/// C5, MEASURED ON THE SHIPPED MODULE — one ProgramProcessor instance versus two.
+///
+/// The bench in program_processor.rs answers this too, but it is a different binary: the cargo test
+/// harness, compiled separately from the cdylib this ships. Jeff's condition for the local/stream
+/// split was the number "on the BUILT artifact, not the bench", and this is the only way to get it —
+/// the same crate, the same release profile, the same code the audio callback runs, reached across the
+/// NAPI boundary from the .node that is actually packaged.
+///
+/// Inert unless called. It allocates and runs for `seconds` of signal, so it must never be invoked
+/// from the audio thread or while a station is airing — it is a diagnostic entry point, called by
+/// scripts/diag-c5-artifact.js.
+///
+/// Returns JSON: median/mean/worst ms per 10 ms block for one and two instances, and the ratio.
+#[napi]
+pub fn audio_bench_processor(seconds: f64, seed: u32) -> String {
+    use crate::program_processor::ProgramProcessor;
+    const FS: f32 = 48_000.0;
+
+    // Same signal shape as the bench: a deterministic PRNG at 0.8 amplitude, so the number is
+    // comparable run to run and machine to machine.
+    let n = (FS * seconds as f32) as usize;
+    let mut state = seed as u64 | 1;
+    let mut sig: Vec<f32> = Vec::with_capacity(n * 2);
+    for _ in 0..n {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let s = (((state >> 33) as f32 / (1u64 << 31) as f32) - 1.0) * 0.8;
+        sig.push(s); sig.push(s * 0.98);
+    }
+
+    let block = 480 * 2;
+    let stat = |v: &mut Vec<u128>| {
+        v.sort();
+        (v[v.len() / 2] as f64 / 1e6, v.iter().sum::<u128>() as f64 / v.len() as f64 / 1e6)
+    };
+
+    let mut one = ProgramProcessor::new(FS, -14.0);
+    let mut a = sig.clone();
+    let (mut worst1, mut all1) = (0u128, Vec::new());
+    let mut i = 0;
+    while i < a.len() {
+        let end = (i + block).min(a.len());
+        let t0 = std::time::Instant::now();
+        one.process_block(&mut a[i..end]);
+        let e = t0.elapsed().as_nanos(); worst1 = worst1.max(e); all1.push(e);
+        i = end;
+    }
+
+    // Two instances with DIFFERENT targets, which is what a local/stream split actually is.
+    let mut p_local  = ProgramProcessor::new(FS, -14.0);
+    let mut p_stream = ProgramProcessor::new(FS, -16.0);
+    let mut bl = sig.clone();
+    let mut bs = sig;
+    let (mut worst2, mut all2) = (0u128, Vec::new());
+    let mut j = 0;
+    while j < bl.len() {
+        let end = (j + block).min(bl.len());
+        let t0 = std::time::Instant::now();
+        p_local.process_block(&mut bl[j..end]);
+        p_stream.process_block(&mut bs[j..end]);
+        let e = t0.elapsed().as_nanos(); worst2 = worst2.max(e); all2.push(e);
+        j = end;
+    }
+
+    let (med1, mean1) = stat(&mut all1);
+    let (med2, mean2) = stat(&mut all2);
+    serde_json::json!({
+        "blocks": all1.len(), "block_ms": 10.0, "seconds": seconds,
+        "one":  { "median_ms": med1, "mean_ms": mean1, "worst_ms": worst1 as f64 / 1e6 },
+        "two":  { "median_ms": med2, "mean_ms": mean2, "worst_ms": worst2 as f64 / 1e6 },
+        "ratio_median": med2 / med1,
+        "budget_share_one_pct": med1 / 10.0 * 100.0,
+        "budget_share_two_pct": med2 / 10.0 * 100.0
+    }).to_string()
+}
+
 #[napi]
 pub fn audio_get_spectrum(station_id: Option<u32>) -> String {
     let levels_arc = {
