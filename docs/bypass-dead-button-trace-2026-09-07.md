@@ -187,3 +187,43 @@ behaviour change on the automation path and Jeff's call, not mine.
 
 `lv.cart` is also unwritten but is tolerated with a stated reason: it is read as
 `lv.cart || lv.level_cart || 0`, so the fallback is the real field.
+
+---
+
+## The fix stopped one hop short — found by the audit sweep, 2026-09-07
+
+`native/src/lib.rs` `audio_get_levels` does **not** serialize `AudioLevels`. It hand-builds its JSON
+with `serde_json::json!` from an explicit key list. **A field assigned to `lvl.` and not named in that
+list never crosses the NAPI boundary.** So the six echo assignments added earlier today were still
+invisible to JS: `lv.proc_ride_bypass` was `undefined`, `!!undefined` fabricated `false`, and the
+button stayed dead.
+
+lib.rs carries a comment warning about precisely this, written on 2026-07-31 after the SAME mistake
+lost the proc_* meters. I read that comment while adding the fields and still stopped at the struct.
+
+**Receipt, from the packaged 4.6.10 artifact** (`412f5d83…`, the build Jeff was running):
+
+```
+{"a":0.0,…,"proc_gr_db":0.0,"proc_in_lufs":0.0,…,"proc_ride_gain_db":0.0,…}
+  ABSENT  proc_ceiling_dbtp / proc_release_ms / proc_ride_rate
+  ABSENT  proc_ride_clamp / proc_ride_bypass / proc_limiter_bypass
+6 OF 6 MISSING FROM THE WIRE
+```
+
+### The contract test was aimed at the wrong seam
+
+It checked for `lvl.<field> =` assignments in audio.rs. **It passed green on this defect** — and it
+fabricated a failure on `lv.master`, which IS emitted, as the key `"master"` mapped from
+`level_master`. I reported that to Jeff as a live bug in `_isAudiblyOnAir()`. **It is not a bug.**
+`_isAudiblyOnAir()` works; the silent-while-playing guard is intact.
+
+Re-aimed at the `json!` key list — the actual wire — the test now catches both the real defect and
+nothing else. `lv.level_cart` is tolerated with a stated reason: it is the dead half of
+`lv.cart || lv.level_cart || 0`, and the primary key IS emitted.
+
+### One more trap worth recording
+
+`audio_get_levels` sends a `GetLevel` nudge and returns the snapshot the PREVIOUS nudge produced, so a
+single call reports one poll behind. The daemon polls at ~15 Hz, so it is ~66 ms there and invisible —
+but a one-shot diagnostic must prime (read once, discard, read again). Without that, a working toggle
+reads as broken. Same family as the `audio_get_state` position/duration trap.
