@@ -2884,6 +2884,7 @@ function buildMenu() {
         { type: "separator" },
         { label: "Mic",            click: () => popout("mic") },
         { label: "Master Output",  click: () => popout("master") },
+        { label: "Processor",      click: () => popout("processor") },
         { label: "Phone Desk",     click: () => popout("phone") },
         { label: "Voice Tracker",  click: () => popout("voicetrack") },
       ]},
@@ -6097,6 +6098,9 @@ const POPOUT_SIZES = {
   "decks":       { width: 1320, height: 460 },  // all visible decks in a row
   "mic":         { width: 400,  height: 300 },
   "master":      { width: 800,  height: 600 },
+  // The processor rack: two stage cards side by side plus a meter row. Tall and narrow — it is meant to
+  // live on a second monitor beside the decks while you listen.
+  "processor":   { width: 620,  height: 560 },
   "upnext":      { width: 480,  height: 640 },
   "phone":       { width: 720,  height: 520 },
   "voicetrack":  { width: 860,  height: 540 },
@@ -6125,6 +6129,7 @@ const POPOUT_SIZES = {
 // A panel with no entry falls back to its key, so a new pop-out is never nameless.
 const POPOUT_LABELS = {
   "decks":       "Decks",
+  "processor":   "Processor",
   "mic":         "Mic",
   "master":      "Master Output",
   "upnext":      "Queue / Up Next",

@@ -1,6 +1,11 @@
 // src/components/ProcessorRack.tsx
-// The program processor, as an instrument you can play. Opened from Master Out beside the EQ rack and
-// rendered in the same FloatingWindow chrome, because that shape already works here.
+// The program processor, as an instrument you can play. Opened from Master Out beside the EQ rack —
+// as a REAL POP-OUT (its own BrowserWindow via openPopoutWindow, #popout/processor), so it can be
+// dragged onto a second monitor and left open beside the decks. It renders bare: PopoutShell supplies
+// the titlebar and close button, the same as every other pop-out panel.
+//
+// Its state comes from useProcessorParams(stationId) — shared with the PROCESSOR row on Master Out so
+// the two cannot disagree. See that hook for the bypass honesty rule.
 //
 // WHAT THIS REPLACES: eight numbers compiled into Rust and one target field in Settings. The chain
 // (loudness ride → −1 dBTP true-peak limiter) has always run; nothing about it could be seen or changed.
@@ -15,7 +20,6 @@
 //     first three would change the delay-line size or let peaks past the ceiling; the last is a
 //     CPU/quality tradeoff, not a sound anyone chooses. They are shown read-only so the chain is legible.
 import { useEffect, useRef, useState } from "react";
-import FloatingWindow from "./FloatingWindow";
 
 // THE SHIPPED CHAIN. These are the values ProgramProcessor::new uses, mirrored here so an unstored
 // setting can render its real current value. Keep in step with native/src/program_processor.rs and the
@@ -53,7 +57,9 @@ interface Props {
   rideBypass: boolean; limiterBypass: boolean;
   onBypass: (which: "ride" | "limiter", on: boolean) => void;
   meters: Meters;
-  onClose: () => void;
+  /** What the ride WOULD apply, derived from the observed input and the operator's target/clamp.
+   *  Rendered greyed and labelled as a projection — never in the place the applied gain goes. */
+  wouldRideDb: number | null;
 }
 
 const LABEL: React.CSSProperties = { fontSize: 11, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -114,8 +120,7 @@ export default function ProcessorRack(p: Props) {
   }, [p.meters]);
 
   return (
-    <FloatingWindow id="processor-rack" title="Processor" subtitle="loudness ride → true-peak limiter" onClose={p.onClose} defaultWidth={660} defaultHeight={450} accentColor="#8868D8">
-      <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 12, height: "100%", boxSizing: "border-box" }}>
+    <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 12, height: "100%", boxSizing: "border-box", overflowY: "auto" }}>
 
         {/* Preset bar */}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -184,7 +189,19 @@ export default function ProcessorRack(p: Props) {
         <div style={{ ...CARD, flex: "0 0 auto" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 16, fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontSize: 12 }}>
             <span><span style={LABEL}>IN </span>{p.meters ? p.meters.inLufs.toFixed(1) : "—"}</span>
-            <span><span style={LABEL}>RIDE </span>{p.meters ? (p.meters.rideGainDb >= 0 ? "+" : "") + p.meters.rideGainDb.toFixed(1) : "—"} dB</span>
+            {/* APPLIED gain, always — the engine pins it at 0 while the ride is bypassed, so this
+                number can never describe a correction that is not happening. The projection beside it
+                is greyed and says "would", because it is a different kind of fact. */}
+            <span>
+              <span style={LABEL}>RIDE </span>
+              {p.meters ? (p.meters.rideGainDb >= 0 ? "+" : "") + p.meters.rideGainDb.toFixed(1) : "—"} dB
+              {p.rideBypass && p.wouldRideDb != null && (
+                <span style={{ color: "var(--text-tertiary)", marginLeft: 7 }}
+                      title="What the ride would apply at this input loudness if it were not bypassed. A projection from the target and clamp — not a measurement of anything happening.">
+                  (would ride {p.wouldRideDb >= 0 ? "+" : ""}{p.wouldRideDb.toFixed(1)} dB)
+                </span>
+              )}
+            </span>
             <span style={{ flex: 1, display: "flex", alignItems: "center", gap: 7 }}>
               <span style={LABEL}>GR</span>
               <span style={{ flex: 1, height: 9, background: "var(--bg-tertiary)", position: "relative", minWidth: 70 }}>
@@ -199,8 +216,7 @@ export default function ProcessorRack(p: Props) {
             <span><span style={LABEL}>OUT </span>{p.meters ? p.meters.outLufs.toFixed(1) : "—"}</span>
           </div>
           {!p.meters && <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 6 }}>waiting for audio — meters run only while processing is on</div>}
-        </div>
       </div>
-    </FloatingWindow>
+    </div>
   );
 }

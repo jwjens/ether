@@ -3,6 +3,8 @@
 
 import React, { useState, useEffect } from "react";
 import PopoutShell from "./PopoutShell";
+import ProcessorRack from "./ProcessorRack";
+import { useProcessorParams } from "../hooks/useProcessorParams";
 import StandaloneDecksPanel from "./StandaloneDecksPanel";
 import MasterOutput from "./MasterOutput";
 import MicDeck from "./MicDeck";
@@ -90,6 +92,7 @@ const TITLES: Record<string, string> = {
   "analytics":    "Listener Analytics",
   "cloudbackup":  "Cloud Log Backup",
   "multioutput":  "Audio Routing",
+  "processor":    "Processor",
   "importlibrary":"Import Library",
 };
 
@@ -103,6 +106,43 @@ function StudioProPopout() {
       deckAPath={null} deckATitle={undefined}
       deckBPath={null} deckBTitle={undefined}
       stationId={stationId ?? 1}
+    />
+  );
+}
+
+// THE PROCESSOR RACK in its own window. It REFUSES TO GUESS A STATION: every control here changes what
+// goes to air, and defaulting to station 1 would let an operator set one station's ceiling while
+// listening to another. Until the active station resolves, this window says so and renders no controls.
+// (Same rule the Jukebox pop-out follows — see its header.)
+function ProcessorPopout() {
+  const { stationId, isReady } = useActiveStation();
+  const proc = useProcessorParams(stationId ?? null);
+
+  if (!isReady || stationId == null) {
+    return (
+      <div style={{ padding: 24, color: "var(--text-tertiary)", fontSize: 13, lineHeight: 1.7 }}>
+        Resolving the active station…
+        <div style={{ fontSize: 11, marginTop: 8, opacity: 0.8 }}>
+          The processor stays closed until it knows which station it is adjusting. These controls change
+          what goes to air, and the wrong station is worse than no controls.
+        </div>
+      </div>
+    );
+  }
+  return (
+    <ProcessorRack
+      params={proc.params}
+      stored={proc.stored}
+      onChange={proc.patch}
+      presets={proc.presets}
+      activePreset={proc.activePreset}
+      onSelectPreset={proc.selectPreset}
+      onSavePreset={proc.savePreset}
+      rideBypass={proc.rideBypass}
+      limiterBypass={proc.limiterBypass}
+      onBypass={proc.setBypass}
+      meters={proc.meters}
+      wouldRideDb={proc.wouldRideDb}
     />
   );
 }
@@ -145,6 +185,9 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
     case "master":
       // The full master section (fader + EQ + meters) — the EQ pop-out the panel button opens.
       content = <MasterOutput expanded collapsed={false} onToggleCollapsed={() => {}} />;
+      break;
+    case "processor":
+      content = <ProcessorPopout />;
       break;
     case "mic":
       content = <MicDeck />;

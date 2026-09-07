@@ -769,7 +769,7 @@ function AudioProcessingSection() {
   // Live processing meters — the daemon's dedicated ~15Hz "audio:proc-meters" feed (emitted ONLY while a
   // toggle is on). Observed at the taps: IN/OUT LUFS, gain-reduction, IN/OUT peak (dBFS). Null until a
   // frame arrives (processing on + audio flowing). Auto-stales to null after 1s of no frames.
-  const [meters, setMeters] = useState<null | { inLufs: number; outLufs: number; grDb: number; rideGainDb: number; inPeakDb: number; outPeakDb: number }>(null);
+  const [meters, setMeters] = useState<null | { inLufs: number; outLufs: number; grDb: number; rideGainDb: number; inPeakDb: number; outPeakDb: number; rideBypass?: boolean; limiterBypass?: boolean; ceilingDbtp?: number }>(null);
   useEffect(() => {
     const audio = (window as any).ether?.audio;
     if (!audio?.onProcMeters || !stationId) return;
@@ -779,7 +779,8 @@ function AudioProcessingSection() {
       // Untagged frames still render (boot/edge) so the meters never go dark waiting for an id.
       if (!m) return;
       if (stationUuid && m.stationUuid != null && m.stationUuid !== stationUuid) return;
-      setMeters({ inLufs: m.inLufs, outLufs: m.outLufs, grDb: m.grDb, rideGainDb: m.rideGainDb ?? 0, inPeakDb: m.inPeakDb, outPeakDb: m.outPeakDb });
+      setMeters({ inLufs: m.inLufs, outLufs: m.outLufs, grDb: m.grDb, rideGainDb: m.rideGainDb ?? 0, inPeakDb: m.inPeakDb, outPeakDb: m.outPeakDb,
+                  rideBypass: m.rideBypass, limiterBypass: m.limiterBypass, ceilingDbtp: m.ceilingDbtp });
       if (staleTimer) clearTimeout(staleTimer);
       staleTimer = setTimeout(() => setMeters(null), 1000);   // no frames for 1s → meters idle
     });
@@ -822,9 +823,22 @@ function AudioProcessingSection() {
             Live meters {meters ? "" : "· waiting for audio…"}
           </div>
           <ProcessingTrio meters={meters} />
+          {/* OBSERVED, not asserted. This line used to read "limiter holds −1 dBTP" as a literal — which
+              stopped being true the moment the ceiling became a control, and was already false whenever a
+              stage was bypassed from the rack. Both facts now come off the meter frame. */}
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 8 }}>
-            Riding to {target} LUFS · limiter holds −1 dBTP · {local && stream ? "monitor + stream" : local ? "monitor only" : "stream only"}.
+            {meters?.rideBypass ? <b style={{ color: "#f59e0b" }}>Ride BYPASSED</b> : <>Riding to {target} LUFS</>}
+            {" · "}
+            {meters?.limiterBypass
+              ? <b style={{ color: "#f59e0b" }}>limiter BYPASSED — nothing is holding the ceiling</b>
+              : <>limiter holds {(meters?.ceilingDbtp ?? -1).toFixed(1)} dBTP</>}
+            {" · "}{local && stream ? "monitor + stream" : local ? "monitor only" : "stream only"}.
           </div>
+          {(meters?.rideBypass || meters?.limiterBypass) && (
+            <div style={{ fontSize: 11, color: "#f59e0b", marginTop: 4 }}>
+              Bypass is a test tool from the Processor rack — it is not saved and clears when Ether restarts.
+            </div>
+          )}
         </div>
       ) : (
         <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8 }}>

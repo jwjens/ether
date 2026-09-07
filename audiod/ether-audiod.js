@@ -538,6 +538,12 @@ const eventTimer = setInterval(() => {
           inLufs: lv.proc_in_lufs ?? -70, outLufs: lv.proc_out_lufs ?? -70,
           grDb: lv.proc_gr_db ?? 0,
           rideGainDb: lv.proc_ride_gain_db ?? 0,
+          // OBSERVED BYPASS. Echoed back from the bus so every window renders the engine's actual state
+          // rather than its own copy: the rack lives in a pop-out (a separate renderer) and the banner on
+          // the Master Out row lives in the main window, so a UI-local flag would let the two disagree.
+          // State is read, never assumed.
+          rideBypass: !!lv.proc_ride_bypass, limiterBypass: !!lv.proc_limiter_bypass,
+          ceilingDbtp: lv.proc_ceiling_dbtp ?? -1.0,
           inPeakDb: dbfs(lv.proc_in_peak ?? 0), outPeakDb: dbfs(lv.proc_out_peak ?? 0),
           // The aux (deck) chain rides the same frame — see the Health Monitor's deck row.
           aux: (lv.aux_peak ?? 0) > 0 || (lv.aux_proc_out_lufs ?? -70) > -69 ? {

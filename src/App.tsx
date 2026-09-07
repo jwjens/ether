@@ -3034,6 +3034,7 @@ export default function App() {
                   { key: "po-videostudio",label: "Show+",      panel: "videostudio" },
                   { key: "po-studiopro",  label: "Show+ DAW",  panel: "studiopro" },
                   { key: "po-decks",      label: "Decks",      panel: "decks" },
+                  { key: "po-processor",  label: "Processor",  panel: "processor" },
                   { key: "po-carts",      label: "Carts",      panel: "carts" },
                   { key: "po-shows",      label: "Shows",      panel: "shows" },
                   { key: "po-clocks",     label: "Clocks",     panel: "clocks" },

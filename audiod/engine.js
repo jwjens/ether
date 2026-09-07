@@ -358,6 +358,14 @@ class DaemonEngine {
         // This is what the meter bars show — grDb is the LIMITER's reduction and sits at 0 at steady
         // state by design, which made a bar bound to it look permanently broken (2026-08-01).
         rideGainDb: lv.proc_ride_gain_db ?? 0,
+        // OBSERVED BYPASS. Echoed back from the bus so every window renders the engine's actual state
+        // rather than its own copy: the rack lives in a pop-out (a separate renderer) and the banner on
+        // the Master Out row lives in the main window, so a UI-local flag would let the two disagree.
+        // State is read, never assumed.
+        rideBypass: !!lv.proc_ride_bypass, limiterBypass: !!lv.proc_limiter_bypass,
+        // The ceiling the limiter is ACTUALLY holding. Carried here so a panel never has to print a
+        // literal "-1 dBTP" that stops being true the moment the operator moves the control.
+        ceilingDbtp: lv.proc_ceiling_dbtp ?? -1.0,
         inPeakDb: dbfs(lv.proc_in_peak ?? 0), outPeakDb: dbfs(lv.proc_out_peak ?? 0),
         // DECK (aux) PROCESSING — the same four measurements, from the aux bus's own instance of the
         // same processor, on THIS frame rather than a second channel. The Health Monitor renders it

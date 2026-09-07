@@ -208,7 +208,9 @@ struct LoudnessRide {
     /// one — only the corrective gain is frozen.
     hold: bool,
     /// BYPASS — a test tool, never persisted (see TruePeakLimiter::bypass). The meter keeps running so
-    /// in_lufs stays honest while the corrective gain is forced to unity.
+    /// in_lufs stays honest; the corrective gain is PINNED AT ZERO (not merely unapplied) so that
+    /// gain_db and out_lufs_est, which both feed meters, cannot report a correction that is not
+    /// happening. See the bypass branch in update().
     bypass: bool,
 }
 impl LoudnessRide {
@@ -233,15 +235,35 @@ impl LoudnessRide {
             if let Ok(m) = self.meter.loudness_momentary() {
                 if m.is_finite() && m > -70.0 {
                     self.in_lufs = m as f32;
-                    // HELD: the meter above still ran, so in_lufs is current — but the corrective
-                    // gain stays exactly where the duck found it. Nothing to claw back with.
-                    if !self.hold {
-                        let desired = self.target - self.in_lufs;          // gain that would hit target
-                        let max_step = self.rate_db_per_s * 0.100;         // per eval tick
-                        let delta = (desired - self.gain_db).clamp(-max_step, max_step);
-                        self.gain_db = (self.gain_db + delta).clamp(-self.clamp_db, self.clamp_db);
+                    if self.bypass {
+                        // BYPASSED — THE LIMITER'S RULE (see TruePeakLimiter::process, which zeroes
+                        // gr_db and returns early). A stage that is not acting reports that it is not
+                        // acting. Before this, `gain_db` kept integrating while bypassed and the rack
+                        // showed a live "would apply" number where the operator reads "is applying" —
+                        // a meter that lies. Jeff, 2026-09-07.
+                        //
+                        // PINNED AT ZERO, not frozen: disengaging bypass then ramps the gain in from
+                        // unity at rate_db_per_s, instead of stepping instantly to whatever the
+                        // integrator had wound up to. An A/B has no click.
+                        //
+                        // The METER above still ran, so in_lufs stays observed — only the corrective
+                        // gain and everything derived from it are suppressed. The panel's greyed
+                        // "would ride" projection is recomputed there from target - in_lufs; it is
+                        // deliberately NOT carried on this field, so nothing downstream can mistake a
+                        // projection for an applied gain.
+                        self.gain_db = 0.0;
+                        self.out_lufs_est = self.in_lufs;   // the output IS the input
+                    } else {
+                        // HELD: the meter above still ran, so in_lufs is current — but the corrective
+                        // gain stays exactly where the duck found it. Nothing to claw back with.
+                        if !self.hold {
+                            let desired = self.target - self.in_lufs;          // gain that would hit target
+                            let max_step = self.rate_db_per_s * 0.100;         // per eval tick
+                            let delta = (desired - self.gain_db).clamp(-max_step, max_step);
+                            self.gain_db = (self.gain_db + delta).clamp(-self.clamp_db, self.clamp_db);
+                        }
+                        self.out_lufs_est = self.in_lufs + self.gain_db;
                     }
-                    self.out_lufs_est = self.in_lufs + self.gain_db;
                 }
             }
         }
@@ -287,8 +309,10 @@ impl ProgramProcessor {
         self.ride.rate_db_per_s = ride_rate_db_s.clamp(0.1, 12.0);
         self.ride.clamp_db      = ride_clamp_db.clamp(0.0, 24.0);
         self.ride.bypass        = ride_bypass;
-        // A bypassed ride must not hold a stale corrective gain: unity in, unity out.
-        if ride_bypass { self.ride.gain_db = 0.0; }
+        // A bypassed ride must not hold a stale corrective gain: unity in, unity out. update() also
+        // pins it at zero, but only on an eval tick (~100 ms) — this makes the meter honest on the
+        // same buffer the operator clicks BYPASS, with no visible decay.
+        if ride_bypass { self.ride.gain_db = 0.0; self.ride.out_lufs_est = self.ride.in_lufs; }
     }
 
     // Observed parameter readback — so the panel can show what the ENGINE is running, not what the UI
@@ -487,6 +511,36 @@ mod bench {
         let mut out = sig.clone();
         p.process_block(&mut out);
         println!("[C6] limiter bypassed -> OUT true-peak {:.2} dBTP (ceiling NOT held, by design)", max_true_peak_dbtp(&out));
+
+        // (d) A BYPASSED RIDE REPORTS NOTHING. Both meter fields it feeds must say "not acting":
+        //     gain 0.00 dB, and out_lufs == in_lufs. The control is that the SAME signal through an
+        //     un-bypassed ride winds up a large correction — so this pins the fix, not the silence.
+        //     Fed in REAL BLOCKS: the ride evaluates once per update() call, so one giant block would
+        //     grant the acting ride a single 0.6 dB step and prove nothing.
+        let blk = 480 * 2;
+        let run = |bypass: bool| {
+            let mut p = ProgramProcessor::new(FS, -14.0);
+            p.set_params(-1.0, 120.0, 6.0, 18.0, bypass, false);
+            let mut buf = sig.clone();
+            let mut i = 0;
+            while i < buf.len() {
+                let end = (i + blk).min(buf.len());
+                p.process_block(&mut buf[i..end]);
+                i = end;
+            }
+            p
+        };
+        let acting = run(false);
+        let byp = run(true);
+
+        println!("[C6] ride acting  -> gain {:>6.2} dB   in {:>6.1} out {:>6.1} LUFS",
+                 acting.ride_gain_db(), acting.in_lufs(), acting.out_lufs());
+        println!("[C6] ride bypassed-> gain {:>6.2} dB   in {:>6.1} out {:>6.1} LUFS",
+                 byp.ride_gain_db(), byp.in_lufs(), byp.out_lufs());
+        assert!(acting.ride_gain_db().abs() > 1.0,
+                "control failed: an acting ride applied no correction, so (d) proves nothing");
+        assert_eq!(byp.ride_gain_db(), 0.0, "a bypassed ride reported a corrective gain");
+        assert_eq!(byp.out_lufs(), byp.in_lufs(), "a bypassed ride reported a ridden output level");
     }
 
     #[test]
