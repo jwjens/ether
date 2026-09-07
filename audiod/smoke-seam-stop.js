@@ -155,6 +155,25 @@ const mk = (status) => {
   check("empty retire map: no work, no throw", threw, false);
 }
 
+// 23b) THE ARM WINDOW IS NOT A LEAD CEILING. A sweeper cannot fire before it arms, so the largest lead
+//      the engine can honour is (_ARM_WINDOW_S - segueOverlap). Before 2026-09-07 the window was 30 and
+//      the Sweepers panel accepted any number, so a LEAD of 40 fired at 29.75s remaining and gave 24.75s
+//      of lead while the log printed "lead_in=40s". This pins the relationship so the constant and the
+//      UI bound cannot drift apart again.
+{
+  const W = DaemonEngine._ARM_WINDOW_S;
+  check("the arm window is wide enough not to be a practical lead ceiling", W >= 90, true);
+  const e2 = new DaemonEngine(99, {}, () => {});
+  e2.segueOverlap = 5;
+  check("effectiveLeadCeiling = window - overlap", e2.effectiveLeadCeiling(), W - 5);
+  e2.segueOverlap = 0;
+  check("  ...and tracks the operator's overlap", e2.effectiveLeadCeiling(), W);
+  // The panel's mirrored constant must match; if this fails, one of the two moved alone.
+  const panel = require("fs").readFileSync(require("path").join(__dirname, "..", "src", "components", "SweepersPanel.tsx"), "utf8");
+  const m = panel.match(/const ARM_WINDOW_S = (\d+);/);
+  check("the Sweepers panel mirrors the same window", m ? Number(m[1]) : null, W);
+}
+
 // 24) SEGUE OVERLAP IS THE OPERATOR'S — no literal in the engine. A fresh engine starts at 0, which
 //     means "no early rotate" until the station's number arrives: the fail-safe direction.
 {

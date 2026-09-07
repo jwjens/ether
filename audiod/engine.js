@@ -1922,7 +1922,27 @@ class DaemonEngine {
   //   FIRING  — CART audioPlay issued AND samples observed flowing (level_cart); play-log stamped HERE.
   //   BRIDGING— outgoing deck ended; incoming starts at that end; the jingle plays on over both.
   //   CLEARED — incoming deck live again.  ARMED_CANCELLED — superseded/failed before firing (no log row).
-  static get _ARM_WINDOW_S() { return 30; }       // only look for a seam jingle within this of the end
+  // THE ARM WINDOW IS NOT A LEAD-IN CEILING. It gates promotion from SCHEDULED to ARMED, and nothing
+  // else — the read-ahead already queries the seam OUTSIDE it, cached per seam, so a wider window costs
+  // no extra database work. Its only real cost is exposure: an ARMED sweeper is cancelled by
+  // _jingleSuperseded on a skip, a manual load or a top-of-hour cut, so arming earlier means more
+  // chances to be superseded.
+  //
+  // It was 30 from 48c7f1a (2026-07-14, JINGLES overlay v1) and never revisited. Nothing in that commit,
+  // in either design doc, or anywhere in the history says why — and at the time the lead defaults were
+  // 5 and 2, so 30 was six times the largest reachable value and could not bite.
+  //
+  // It became a SILENT CEILING on 2026-09-06, when LEAD became an operator control. Observed on the real
+  // _jingleTick: at LEAD 40 / overlap 5 the sweeper armed at 30s remaining and fired at 29.75s, giving
+  // 24.75s of lead instead of 40 — and the clamp starts at LEAD 26, not 30. The effective ceiling is
+  // (_ARM_WINDOW_S - segueOverlap).
+  //
+  // 90 is chosen so it is not a practical limit for any imaging placed on a seam. The Sweepers panel
+  // bounds its LEAD input at (90 - segueOverlap) so the UI can never offer a number this will not
+  // honour — keep the two in step.
+  static get _ARM_WINDOW_S() { return 90; }
+  /** The largest LEAD this engine can actually honour at the current overlap. The UI mirrors it. */
+  effectiveLeadCeiling() { return Math.max(0, DaemonEngine._ARM_WINDOW_S - (this.segueOverlap || 0)); }
   static get _FIRE_CONFIRM_MS() { return 900; }    // fired but no samples within this → failed, cancel
 
   _emitJingle(state, j) {
@@ -1997,7 +2017,25 @@ class DaemonEngine {
     // when it was superseded or refused, so an unaired sweeper counted as aired. _fireJingle consumes it
     // once a channel has actually accepted it. While armed, _jingleTick returns early and never re-queries,
     // so nothing can double-arm in the gap; a cancel legitimately puts the row back in play for this seam.
-    this._log(`${this._jingle.contentClass} ARMED — "${jin.title}" over deck ${deck} seam (lead_in=${jin.leadInSec}s)`);
+    // NEVER ASSERT A NUMBER THE ENGINE DID NOT HONOUR. The old line printed the requested lead and
+    // stopped there, so a LEAD of 40 logged "lead_in=40s" while the sweeper actually got 24.75s. A log
+    // that repeats the operator's number back at them is not evidence — it is the same defect as the
+    // control that swallowed it.
+    const ceiling = this.effectiveLeadCeiling();
+    const effective = Math.min(jin.leadInSec, ceiling);
+    this._jingle.leadInRequested = jin.leadInSec;
+    this._jingle.leadInEffective = effective;
+    if (effective < jin.leadInSec) {
+      this._log(`${this._jingle.contentClass} ARMED — "${jin.title}" over deck ${deck} seam (lead_in ${jin.leadInSec}s REQUESTED but ${effective}s EFFECTIVE — the arm window caps it at ${DaemonEngine._ARM_WINDOW_S}s minus a ${this.segueOverlap}s overlap)`);
+      try {
+        this.emit("error", { stationId: this.stationId, where: "sweeper-lead-clamped",
+          error: `sweeper "${jin.title}" asked for a ${jin.leadInSec}s lead; the arm window allows ${ceiling}s, so it fires ${effective}s ahead`,
+          requestedSec: jin.leadInSec, effectiveSec: effective, ceilingSec: ceiling,
+          armWindowSec: DaemonEngine._ARM_WINDOW_S, segueOverlapSec: this.segueOverlap });
+      } catch {}
+    } else {
+      this._log(`${this._jingle.contentClass} ARMED — "${jin.title}" over deck ${deck} seam (lead_in=${jin.leadInSec}s)`);
+    }
     this._emitJingle("ARMED", this._jingle);
   }
 

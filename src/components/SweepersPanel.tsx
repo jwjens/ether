@@ -37,6 +37,15 @@ const ALWAYS = 16777215;
 // always see what is running and type over it. Must match SWEEPER_DEFAULT in electron/main.js and the
 // fallback in audiod/loggen.js — three places, one number.
 const DEF_LEAD = 2;
+// THE ENGINE'S ARM WINDOW, MIRRORED. A sweeper is only promoted from SCHEDULED to ARMED inside this many
+// seconds of the outgoing song's end (audiod/engine.js _ARM_WINDOW_S), and it cannot fire before it arms.
+// So the largest lead the engine can honour is (ARM_WINDOW_S - segue overlap), and the input below is
+// bounded there — the UI must never offer a number the engine will silently reduce.
+//
+// Observed on the real _jingleTick before this bound existed: LEAD 40 at overlap 5 armed at 30s remaining
+// and fired at 29.75s, giving 24.75s of lead. The control accepted 40, the log printed 40, and the seam
+// got 25. KEEP THIS IN STEP WITH engine.js.
+const ARM_WINDOW_S = 90;
 const maskFromRange = (from: number, to: number) => { let m = 0; for (let h = from; h <= to; h++) m |= (1 << h); return m >>> 0; };
 const rangeFromMask = (mask: number) => {
   if (mask == null || mask === ALWAYS) return null;
@@ -63,6 +72,10 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
   // Typing buffer for the TIMING boxes, keyed "<catId>:lead|under". Committed on blur/Enter so a
   // three-digit entry is one write, not one per keystroke; cleared on commit so the DB value shows again.
   const [timingDraft, setTimingDraft] = useState<Record<string, string>>({});
+  // The station's segue overlap, read from the same KV the daemon reads. It sets the LEAD ceiling, so the
+  // bound moves with the operator's own setting rather than assuming one.
+  const [segueOverlap, setSegueOverlap] = useState(0);
+  const maxLead = Math.max(1, ARM_WINDOW_S - segueOverlap);
 
   const reload = useCallback(async () => {
     try { const r = await ether()?.jingleCategories?.list(stationId); setPools(((r?.rows || []) as Pool[])); } catch { setPools([]); }
@@ -79,8 +92,11 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
     } catch { setSongs([]); }
     try {
       const r = await ether()?.stationConfigKv?.list(stationId);
-      const v = ((r?.rows || []) as { key: string; value: string }[]).find(x => x.key === "overlay_fallback_category_id")?.value;
+      const rows = (r?.rows || []) as { key: string; value: string }[];
+      const v = rows.find(x => x.key === "overlay_fallback_category_id")?.value;
       setFallbackId(v ? (parseInt(v, 10) || null) : null);
+      const so = parseInt(rows.find(x => x.key === "segue_overlap_sec")?.value ?? "", 10);
+      setSegueOverlap(isNaN(so) ? 0 : Math.max(0, Math.min(10, so)));
     } catch { setFallbackId(null); }
   }, [stationId]);
   useEffect(() => { reload(); }, [reload]);
@@ -127,7 +143,9 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
     if (raw.trim() !== "") {
       const n = Number(raw);
       if (!Number.isFinite(n)) return;                     // gibberish → leave the stored value alone
-      next = Math.max(0, Math.round(n));
+      // BOUNDED AT WHAT THE ENGINE WILL HONOUR. Above (ARM_WINDOW_S - overlap) the sweeper cannot arm in
+      // time, so the excess was silently discarded — the control accepted a number the seam never got.
+      next = Math.max(0, Math.min(maxLead, Math.round(n)));
     }
     if (next === c.overlay_lead_in_sec) return;
     try { await ether()?.categories?.updateById(c.id, { overlay_lead_in_sec: next }); await reload(); onMutated?.(["categories"]); } catch {}
@@ -168,7 +186,7 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
         <div style={{ display: "grid", gridTemplateColumns: "150px 1fr auto auto", gap: "6px 14px", alignItems: "center", marginBottom: 14 }}>
           <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>CATEGORY</div>
           <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>OVERLAY</div>
-          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }} title="Seconds before the NEXT song starts that this category's sweeper fires — so it plays over the tail of whatever came before it. The sweeper introduces the song it is assigned to, plays on over its opening and ends when it ends; its length is never an input. A greyed box is the station default; type over it to set this category's own.">LEAD (s)</div>
+          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }} title={`Maximum ${maxLead}s. ` + "Seconds before the NEXT song starts that this category's sweeper fires — so it plays over the tail of whatever came before it. The sweeper introduces the song it is assigned to, plays on over its opening and ends when it ends; its length is never an input. A greyed box is the station default; type over it to set this category's own."}>LEAD (s)</div>
           <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>ACTIVE HOURS</div>
           {cats.map(c => {
             const rng = rangeFromMask(c.overlay_active_hours ?? ALWAYS);
@@ -191,10 +209,11 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
                   const isDefault = c.overlay_lead_in_sec == null && draft === undefined;   // the station default, not a set value
                   return (
                     <div key={c.id + "t"} style={{ display: "flex", alignItems: "center", gap: 4 }}
-                      title={isDefault
+                      title={(isDefault
                         ? `A ${c.code} song starts with its sweeper already ${DEF_LEAD}s in — the station default. Type a number to give ${c.code} its own.`
-                        : `A ${c.code} song starts with its sweeper already ${c.overlay_lead_in_sec}s in. Clear the box to go back to the station default.`}>
-                      <input type="number" min={0} step={1}
+                        : `A ${c.code} song starts with its sweeper already ${c.overlay_lead_in_sec}s in. Clear the box to go back to the station default.`)
+                        + ` Maximum ${maxLead}s: the engine arms a sweeper ${ARM_WINDOW_S}s before the end and your segue overlap is ${segueOverlap}s, so it cannot honour more.`}>
+                      <input type="number" min={0} max={maxLead} step={1}
                         value={draft ?? String(c.overlay_lead_in_sec ?? DEF_LEAD)}
                         onChange={e => setTimingDraft(d => ({ ...d, [dk]: e.target.value }))}
                         onBlur={() => commitLead(c)}
@@ -261,7 +280,11 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
                   style={{ flex: 1, background: "transparent", color: "var(--text-primary)", border: "1px solid transparent", borderRadius: "var(--r-0)", padding: "2px 4px", fontSize: "var(--t-lead)", fontWeight: 600 }} />
                 <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>{tabSongs.filter(s => s.jingle_category_id === p.id).length} in pool</span>
               </div>
-              <input key={p.id + "l"} type="number" min={0} step={0.5} defaultValue={p.lead_in_sec} onBlur={e => patchPool(p, { lead_in_sec: Math.max(0, parseFloat(e.target.value) || p.lead_in_sec) })} style={inp} />
+              {/* Bounded at the same ceiling as the category LEAD. Nothing reads jingle_categories.lead_in_sec
+                  today — _placeJingles takes its lead from categories.overlay_lead_in_sec only, and that is
+                  filed separately — but an unbounded input is a control that lies whether or not anything
+                  is listening. */}
+              <input key={p.id + "l"} type="number" min={0} max={maxLead} step={0.5} title={`Maximum ${maxLead}s — the engine cannot honour a longer lead.`} defaultValue={p.lead_in_sec} onBlur={e => patchPool(p, { lead_in_sec: Math.max(0, Math.min(maxLead, parseFloat(e.target.value) || p.lead_in_sec)) })} style={inp} />
               <button key={p.id + "d"} onClick={() => delPool(p)} title="Delete pool" style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-lead)" }}>✕</button>
             </Fragment>
           ))}
