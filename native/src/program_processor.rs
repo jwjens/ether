@@ -87,6 +87,22 @@ struct TruePeakLimiter {
     atk: f32, rel: f32,    // per-sample smoothing coeffs (attack completes within `la`)
     os: Oversampler4x,
     gr_db: f32,            // metering: current gain reduction (dB, >= 0)
+    // ── SLIDING-WINDOW MINIMUM (monotonic deque) ─────────────────────────────────────────────────
+    // The look-ahead target is min(req) over the window. That was a full scan of req_ring EVERY
+    // SAMPLE — 72 comparisons per sample at 48 kHz, ~34,560 per 10 ms block, roughly half the
+    // limiter's inner-loop work and O(la) in a parameter we may later want to raise.
+    //
+    // This is the standard monotonic-deque sliding-window minimum: indices kept in increasing order
+    // of value, so the front is always the window's minimum. Each sample pushes once and pops at most
+    // amortised once — O(1) instead of O(la), and it returns exactly the same number, which is what
+    // makes it a pure speed change rather than a sound change.
+    //
+    // Preallocated to `la` and never resized: the hot-path rule in this file's header (no allocation
+    // in process()) applies to this exactly as it does to the delay lines.
+    dq_idx: Vec<usize>,    // ring of sample indices, monotonically increasing in req value
+    dq_head: usize,        // front slot (the window minimum)
+    dq_len: usize,         // occupied slots
+    n: u64,                // absolute sample counter, for window expiry
 }
 impl TruePeakLimiter {
     fn new(sample_rate: f32) -> Self {
@@ -98,6 +114,7 @@ impl TruePeakLimiter {
             ceiling: db_to_lin(CEILING_DBTP), la,
             delay_l: vec![0.0; la], delay_r: vec![0.0; la], req_ring: vec![1.0; la],
             dpos: 0, gain: 1.0, atk, rel, os: Oversampler4x::new(), gr_db: 0.0,
+            dq_idx: vec![0; la], dq_head: 0, dq_len: 0, n: 0,
         }
     }
     #[inline]
@@ -106,9 +123,27 @@ impl TruePeakLimiter {
         let tp = self.os.push_peak(l, r) * 1.15; // detection headroom: hold the ceiling vs a full BS.1770 true-peak measurement
         let req = if tp > self.ceiling { self.ceiling / tp } else { 1.0 };
         // 2) Look-ahead target = min required-gain across the window (duck BEFORE the peak arrives).
+        //    Sliding-window minimum via the monotonic deque — same answer as the old full scan of
+        //    req_ring, in O(1) amortised instead of O(la). See the struct note.
         self.req_ring[self.dpos] = req;
-        let mut target = 1.0f32;
-        for &g in self.req_ring.iter() { if g < target { target = g; } }
+        let cap = self.la;
+        // Drop the front once it has fallen out of the look-ahead window.
+        if self.dq_len > 0 {
+            let oldest = self.n.wrapping_sub(cap as u64);
+            if (self.dq_idx[self.dq_head] as u64) <= oldest && self.n >= cap as u64 {
+                self.dq_head = (self.dq_head + 1) % cap;
+                self.dq_len -= 1;
+            }
+        }
+        // Pop every tail entry this sample undercuts — they can never be the minimum again.
+        while self.dq_len > 0 {
+            let tail = (self.dq_head + self.dq_len - 1) % cap;
+            if self.req_ring[self.dq_idx[tail] % cap] >= req { self.dq_len -= 1; } else { break; }
+        }
+        let tail_slot = (self.dq_head + self.dq_len) % cap;
+        self.dq_idx[tail_slot] = self.n as usize;   // absolute index; req_ring slot is idx % cap == dpos
+        self.dq_len += 1;
+        let target = self.req_ring[self.dq_idx[self.dq_head] % cap];
         // 3) Smooth: fast attack (down) within look-ahead, slow release (up).
         if target < self.gain { self.gain = self.atk * self.gain + (1.0 - self.atk) * target; }
         else { self.gain = self.rel * self.gain + (1.0 - self.rel) * target; }
@@ -118,6 +153,7 @@ impl TruePeakLimiter {
         self.delay_l[self.dpos] = l;
         self.delay_r[self.dpos] = r;
         self.dpos = (self.dpos + 1) % self.la;
+        self.n = self.n.wrapping_add(1);
         self.gr_db = -lin_to_db(self.gain); // >= 0
         (ol, or)
     }
@@ -350,6 +386,62 @@ mod bench {
         println!("[C3] worst 10ms-block process time = {:.3} ms  (budget 10.000 ms)", worst_ns as f64 / 1e6);
         println!("[C3] fixed on-path look-ahead latency = {} samples ({:.2} ms); OFF branch = 0", p.latency_samples(), p.latency_samples() as f32 / FS * 1000.0);
         assert!(worst_ns < budget_ns / 2, "block time too close to callback budget: {} ns", worst_ns);
+    }
+
+    // C5 — ONE INSTANCE vs TWO, measured rather than doubled on paper. The local/stream split needs a
+    // second ProgramProcessor per station; they share no state (own oversampler history, delay lines,
+    // deque and ebur128 meter), so the cost should compose — but "should compose" is arithmetic, and
+    // this runs on the audio callback thread where being wrong is a wedge, not a slowdown.
+    #[test]
+    fn criterion_5_one_instance_vs_two() {
+        let sig = gen(30.0, 0.8, false, 4);
+        let block = 480 * 2;
+
+        let mut one = ProgramProcessor::new(FS, -14.0);
+        let mut a = sig.clone();
+        let mut worst1 = 0u128;
+        let mut all1: Vec<u128> = Vec::new();
+        let mut i = 0;
+        while i < a.len() {
+            let end = (i + block).min(a.len());
+            let t0 = std::time::Instant::now();
+            one.process_block(&mut a[i..end]);
+            let e = t0.elapsed().as_nanos(); worst1 = worst1.max(e); all1.push(e);
+            i = end;
+        }
+
+        let mut p_local = ProgramProcessor::new(FS, -14.0);
+        let mut p_stream = ProgramProcessor::new(FS, -16.0);   // different targets, as a real split would be
+        let mut bl = sig.clone();
+        let mut bs = sig.clone();
+        let mut worst2 = 0u128;
+        let mut all2: Vec<u128> = Vec::new();
+        let mut j = 0;
+        while j < bl.len() {
+            let end = (j + block).min(bl.len());
+            let t0 = std::time::Instant::now();
+            p_local.process_block(&mut bl[j..end]);
+            p_stream.process_block(&mut bs[j..end]);
+            let e = t0.elapsed().as_nanos(); worst2 = worst2.max(e); all2.push(e);
+            j = end;
+        }
+
+        // WORST-BLOCK IS THE WRONG HEADLINE ON A LOADED MACHINE. On a box airing a station, the worst
+        // 10 ms block is an OS scheduling hiccup, not DSP — it moved 0.702 -> 1.350 ms between two runs
+        // of identical code. The MEDIAN is the cost of the work; the worst is the xrun-safety check.
+        let stat = |v: &mut Vec<u128>| { v.sort(); (v[v.len()/2] as f64 / 1e6, v.iter().sum::<u128>() as f64 / v.len() as f64 / 1e6) };
+        let (med1, mean1) = stat(&mut all1);
+        let (med2, mean2) = stat(&mut all2);
+        println!("[C5] ONE instance : median {:.4} ms  mean {:.4} ms  worst {:.3} ms", med1, mean1, worst1 as f64 / 1e6);
+        println!("[C5] TWO instances: median {:.4} ms  mean {:.4} ms  worst {:.3} ms", med2, mean2, worst2 as f64 / 1e6);
+        println!("[C5] two-instance cost = {:.2}x the median of one", med2 / med1);
+        println!("[C5] median share of the 10 ms callback budget: one {:.1}%  two {:.1}%", med1 / 10.0 * 100.0, med2 / 10.0 * 100.0);
+        // GATE ON THE MEDIAN, NOT THE WORST. A worst-block assert fails randomly on a machine that is
+        // actually airing: run 3 of this bench on 2026-09-06 recorded a 10.718 ms worst block from an OS
+        // scheduling stall while the median was 0.0903 ms. A test that fails on someone else's CPU load
+        // is worse than no test. 1 ms of median for two instances is ~10% of the callback budget and
+        // still an order of magnitude above what the work costs.
+        assert!(med2 < 1.0, "two instances cost too much per block: median {:.4} ms", med2);
     }
 
     #[test]
