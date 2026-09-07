@@ -9,7 +9,7 @@ import { startLicenseGuard } from "./lib/licenseGuard";
 import CloudInstallPrompt from "./components/CloudInstallPrompt";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import { pushInstallUsers } from "./lib/syncUsers";
-import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong, pushPlayHistory, reconcileAccountStations, importStagedProgramming, pushHealthFrames, pushJukeboxPool, pushOpsData, fetchOpsLink } from "./lib/ccData";
+import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong, pushPlayHistory, notePlayHistoryState, reconcileAccountStations, importStagedProgramming, pushHealthFrames, pushJukeboxPool, pushOpsData, fetchOpsLink } from "./lib/ccData";
 import etherMarkSvg from "./assets/ether-logo.svg";
 import VideoStudio from "./components/ShowPlus";
 import { UserContext, AppUser, useRole } from "./UserContext";
@@ -1200,7 +1200,17 @@ export default function App() {
   // Push play history for analytics (Phase 3a): catch up on boot, then every 3 min so
   // the dashboard's Analytics view stays current. Incremental + deduped server-side.
   useEffect(() => {
-    if (!firstRunChecked || !apiKeyRef.current || !stationUuid || !currentUser) return;
+    // THE FIFTH SILENT EXIT. Four conditions, any of which stopped the push with nothing said — so an
+    // install with no user profile selected, or one still booting, looked exactly like an install with
+    // nothing to send. It now records WHICH condition held.
+    if (!firstRunChecked || !apiKeyRef.current || !stationUuid || !currentUser) {
+      const reason = !firstRunChecked ? "app still initialising"
+                   : !apiKeyRef.current ? "no license key yet"
+                   : !stationUuid ? "station has no uuid"
+                   : "no user profile selected";
+      notePlayHistoryState(stationId, "idle", { reason });
+      return;
+    }
     const push = () => pushPlayHistory(apiKeyRef.current, stationUuid, stationId);
     push();
     const id = setInterval(push, 3 * 60 * 1000);

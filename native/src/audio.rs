@@ -188,6 +188,14 @@ pub struct AudioLevels {
     #[serde(default)] pub proc_local:  bool,
     #[serde(default)] pub proc_stream: bool,
     #[serde(default)] pub proc_target_lufs: f32,
+    // The operator's live processor parameters, echoed back so the panel shows what the ENGINE is
+    // running rather than what the UI last sent — the same observed-not-claimed rule as the meters.
+    #[serde(default)] pub proc_ceiling_dbtp:   f32,
+    #[serde(default)] pub proc_release_ms:     f32,
+    #[serde(default)] pub proc_ride_rate:      f32,
+    #[serde(default)] pub proc_ride_clamp:     f32,
+    #[serde(default)] pub proc_ride_bypass:    bool,
+    #[serde(default)] pub proc_limiter_bypass: bool,
     #[serde(default)] pub proc_in_lufs:  f32,
     #[serde(default)] pub proc_out_lufs: f32,
     #[serde(default)] pub proc_gr_db:    f32,
@@ -329,6 +337,12 @@ pub enum AudioCmd {
     /// DUCKER tuning, per STATION — there is ONE duck envelope per bus, so every one of these is
     /// station-wide by construction, never per channel. Dialled by ear from Preferences.
     SetDuckParams { depth_db: f32, threshold_db: f32, attack_ms: f32, hold_ms: f32, release_ms: f32 },
+    /// The program processor's operator-settable parameters. SEPARATE from SetProcessing (which carries
+    /// the two on/off toggles and the loudness target) so a station that never sends this is
+    /// bit-identical to before — the defaults live in ProgramProcessor::new and nothing overwrites them.
+    /// The two bypasses ride this command and are never stored, so they cannot survive a restart.
+    SetProcessorParams { ceiling_dbtp: f32, release_ms: f32, ride_rate_db_s: f32, ride_clamp_db: f32,
+                         ride_bypass: bool, limiter_bypass: bool },
     /// Choose the output device for the AUX monitor bus. Empty string = none = the aux stream is
     /// closed and the bus is silent.
     SetAuxDevice(String),
@@ -475,6 +489,15 @@ pub struct BusState {
     pub proc_local:  bool,
     pub proc_stream: bool,
     pub proc_target_lufs: f32,
+    /// Operator processor parameters, applied to the processor each buffer alongside the target. Held
+    /// here (not in the processor) for the same reason proc_target_lufs is: the callback already holds
+    /// this lock, and the processor has its own.
+    pub proc_ceiling_dbtp: f32,
+    pub proc_release_ms: f32,
+    pub proc_ride_rate: f32,
+    pub proc_ride_clamp: f32,
+    pub proc_ride_bypass: bool,
+    pub proc_limiter_bypass: bool,
     pub processor:   Arc<Mutex<crate::program_processor::ProgramProcessor>>,
 
     // ── AUX MONITOR BUS (2026-08-18) — "slot = room, board = air" ────────────────────────────────
@@ -615,6 +638,16 @@ impl BusState {
             proc_local:  false,   // OFF on every station on every install — opt-in per station
             proc_stream: false,
             proc_target_lufs: -14.0,
+            // THE SHIPPED CHAIN, and the values "Ether v1" captures. A station that never sends
+            // SetProcessorParams runs exactly these, which is what makes the new command additive.
+            proc_ceiling_dbtp: -1.0,
+            proc_release_ms: 120.0,
+            proc_ride_rate: 1.5,
+            proc_ride_clamp: 12.0,
+            // Bypass defaults FALSE and is never restored from anywhere — a restart always holds the
+            // ceiling. This is the structural half of "bypass must not persist".
+            proc_ride_bypass: false,
+            proc_limiter_bypass: false,
             processor:   Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
             aux_monitor_gain: [0.0; SLOT_COUNT],   // nothing selected → aux decks silent in the room
             room_gain: [1.0; SLOT_COUNT],          // unity until an operator says otherwise — never silent by default
@@ -840,6 +873,11 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                                 }
                             }
                             AudioCmd::Ping => {}
+                            // The legacy no-device path has no program bus, so there is no processor to
+                            // configure. Named explicitly rather than swept into a catch-all: the
+                            // compiler catching this arm is what makes adding a command safe, and a `_ =>`
+                            // here would silently swallow the next one.
+                            AudioCmd::SetProcessorParams { .. } => {}
                             AudioCmd::StartStream { server, port, mount, station_name, .. } => {
                                 eprintln!("Stream: {}:{}{} ({})", server, port, mount, station_name);
                             }
@@ -1971,6 +2009,20 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::SetMasterMonitorVolume(v) => {
                                 if let Ok(mut bus) = bus_cmd.lock() { bus.master_monitor_vol = v.clamp(0.0, 1.0); }
                             }
+                            AudioCmd::SetProcessorParams { ceiling_dbtp, release_ms, ride_rate_db_s, ride_clamp_db, ride_bypass, limiter_bypass } => {
+                                if let Ok(mut bus) = bus_cmd.lock() {
+                                    // Clamped at the edges only, as the ducker's params are: every value
+                                    // between is a legitimate operator choice. The ceiling is never
+                                    // allowed to reach 0 dBTP — above about -0.3 the stream's encoder
+                                    // produces inter-sample overs that clip on the listener's decoder.
+                                    bus.proc_ceiling_dbtp   = ceiling_dbtp.clamp(-12.0, -0.1);
+                                    bus.proc_release_ms     = release_ms.clamp(5.0, 2000.0);
+                                    bus.proc_ride_rate      = ride_rate_db_s.clamp(0.1, 12.0);
+                                    bus.proc_ride_clamp     = ride_clamp_db.clamp(0.0, 24.0);
+                                    bus.proc_ride_bypass    = ride_bypass;
+                                    bus.proc_limiter_bypass = limiter_bypass;
+                                }
+                            }
                             AudioCmd::SetProcessing { local, stream, target_lufs } => {
                                 if let Ok(mut bus) = bus_cmd.lock() {
                                     bus.proc_local  = local;
@@ -2461,6 +2513,10 @@ fn mixer_callback(
         let mut pr = out_r.clone();
         let meters = if let Ok(mut p) = bus.processor.try_lock() {
             p.set_target(target);
+            // The operator's parameters, applied every buffer beside the target. All three processor
+            // instances (program, aux, room) get the same chain — one station, one sound.
+            p.set_params(bus.proc_ceiling_dbtp, bus.proc_release_ms, bus.proc_ride_rate,
+                         bus.proc_ride_clamp, bus.proc_ride_bypass, bus.proc_limiter_bypass);
             // §B.3a — freeze the loudness ride while the duck has the music down, so the two
             // features cannot fight. The meter still runs; only the corrective gain is held.
             p.set_ride_hold(duck_active);
@@ -2541,6 +2597,10 @@ fn mixer_callback(
             let target = bus.proc_target_lufs;
             if let Ok(mut p) = bus.processor_room.try_lock() {
                 p.set_target(target);
+            // The operator's parameters, applied every buffer beside the target. All three processor
+            // instances (program, aux, room) get the same chain — one station, one sound.
+            p.set_params(bus.proc_ceiling_dbtp, bus.proc_release_ms, bus.proc_ride_rate,
+                         bus.proc_ride_clamp, bus.proc_ride_bypass, bus.proc_limiter_bypass);
                 p.process_planar(&mut rl, &mut rr);
             }
         }
@@ -2607,6 +2667,10 @@ fn mixer_callback(
         // the taps, never claimed.
         let meters = if let Ok(mut p) = bus.processor_aux.try_lock() {
             p.set_target(target);
+            // The operator's parameters, applied every buffer beside the target. All three processor
+            // instances (program, aux, room) get the same chain — one station, one sound.
+            p.set_params(bus.proc_ceiling_dbtp, bus.proc_release_ms, bus.proc_ride_rate,
+                         bus.proc_ride_clamp, bus.proc_ride_bypass, bus.proc_limiter_bypass);
             p.process_planar(&mut aux_l, &mut aux_r);
             Some((p.in_lufs(), p.out_lufs(), p.gain_reduction_db(), p.ride_gain_db()))
         } else { None };

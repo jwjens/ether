@@ -296,25 +296,42 @@ class DaemonEngine {
     if (now - (this._procCheckedAt || 0) < 3000) return;
     this._procCheckedAt = now;
     let local = false, stream = false, target = -14.0;
+    // The operator's processor numbers. Defaults are THE SHIPPED CHAIN — the same values
+    // ProgramProcessor::new uses — so a station with no rows runs exactly what it ran before, and the
+    // panel shows these greyed as the current value rather than a blank box.
+    // The two bypasses are deliberately absent: they are a live test tool and are never persisted.
+    let ceiling = -1.0, release = 120.0, rideRate = 1.5, rideClamp = 12.0;
     try {
       const rows = this.db.prepare(
-        "SELECT key, value FROM station_config_kv WHERE station_id=? AND key IN ('proc_local','proc_stream','proc_target_lufs') AND deleted_at IS NULL"
+        "SELECT key, value FROM station_config_kv WHERE station_id=? AND key IN ('proc_local','proc_stream','proc_target_lufs','proc_ceiling_dbtp','proc_release_ms','proc_ride_rate','proc_ride_clamp') AND deleted_at IS NULL"
       ).all(this.stationId);
       for (const r of rows) {
         if (r.key === "proc_local") local = (r.value === "1" || r.value === "true");
         else if (r.key === "proc_stream") stream = (r.value === "1" || r.value === "true");
         else if (r.key === "proc_target_lufs") { const t = parseFloat(r.value); if (!isNaN(t)) target = Math.max(-30, Math.min(-6, t)); }
+        else if (r.key === "proc_ceiling_dbtp") { const v = parseFloat(r.value); if (!isNaN(v)) ceiling  = Math.max(-12, Math.min(-0.1, v)); }
+        else if (r.key === "proc_release_ms")   { const v = parseFloat(r.value); if (!isNaN(v)) release  = Math.max(5, Math.min(2000, v)); }
+        else if (r.key === "proc_ride_rate")    { const v = parseFloat(r.value); if (!isNaN(v)) rideRate = Math.max(0.1, Math.min(12, v)); }
+        else if (r.key === "proc_ride_clamp")   { const v = parseFloat(r.value); if (!isNaN(v)) rideClamp= Math.max(0, Math.min(24, v)); }
       }
     } catch { return; }   // KV unreadable → leave the last-applied state untouched; never disturb playout
     const prev = this._procApplied;
-    const changed = !prev || prev.local !== local || prev.stream !== stream || prev.target !== target;
+    const changed = !prev || prev.local !== local || prev.stream !== stream || prev.target !== target
+      || prev.ceiling !== ceiling || prev.release !== release || prev.rideRate !== rideRate || prev.rideClamp !== rideClamp;
     const reassert = (local || stream) && (now - (this._procAssertedAt || 0) > 15000);
     if (!changed && !reassert) return;
-    this._procApplied = { local, stream, target };
+    this._procApplied = { local, stream, target, ceiling, release, rideRate, rideClamp };
     this._procOn = local || stream;
     this._procAssertedAt = now;
-    try { A.audioSetProcessing(this.stationId, local, stream, target); if (changed) this._log("processing", `local=${local} stream=${stream} target=${target}`); }
-    catch (e) { this._log("processing apply ✗", String(e)); }
+    try {
+      A.audioSetProcessing(this.stationId, local, stream, target);
+      // The NUMBERS only. Bypass is not read from anywhere here by design — it arrives live via the
+      // setProcessorParams command and dies with the process, so a restart cannot leave the ceiling off.
+      if (typeof A.audioSetProcessorParams === "function") {
+        A.audioSetProcessorParams(this.stationId, ceiling, release, rideRate, rideClamp, false, false);
+      }
+      if (changed) this._log("processing", `local=${local} stream=${stream} target=${target} ceiling=${ceiling} release=${release} rideRate=${rideRate} rideClamp=${rideClamp}`);
+    } catch (e) { this._log("processing apply ✗", String(e)); }
   }
 
   // Dedicated processing-meters emit (~15Hz). Its OWN event ("procmeters"), NOT the levels channel —

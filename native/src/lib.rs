@@ -228,6 +228,28 @@ pub fn audio_set_processing(station_id: u32, process_local: bool, process_stream
     audio.sender.send(AudioCmd::SetProcessing { local: process_local, stream: process_stream, target_lufs: target_lufs as f32 }).is_ok()
 }
 
+/// The program processor's operator-settable parameters. Separate from audio_set_processing (toggles +
+/// target) so an install that never calls this runs the shipped chain unchanged.
+///
+/// ride_bypass / limiter_bypass are TEST TOOLS: they reach the engine only through this call, are never
+/// written to any settings store, and reset to false on construction — so a restart always ends with the
+/// ceiling held (Jeff's ruling, 2026-09-07).
+#[napi]
+#[allow(clippy::too_many_arguments)]
+pub fn audio_set_processor_params(station_id: u32, ceiling_dbtp: f64, release_ms: f64,
+                                  ride_rate_db_s: f64, ride_clamp_db: f64,
+                                  ride_bypass: bool, limiter_bypass: bool) -> bool {
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetProcessorParams {
+        ceiling_dbtp: ceiling_dbtp as f32,
+        release_ms: release_ms as f32,
+        ride_rate_db_s: ride_rate_db_s as f32,
+        ride_clamp_db: ride_clamp_db as f32,
+        ride_bypass, limiter_bypass,
+    }).is_ok()
+}
+
 #[napi]
 pub fn audio_get_state(station_id: Option<u32>) -> String {
     let engine = get_or_create_engine(station_id.unwrap_or(1), None);

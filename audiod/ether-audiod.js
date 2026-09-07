@@ -295,6 +295,10 @@ const handlers = {
   // Receiver side — which decks step back when a source ducks.
   setDuckable:        (m) => A.audioSetDuckable(m.stationId, m.deck, !!m.duckable),
   // Ducker tuning, dialled by ear in that station's Preferences. Station-wide: one envelope per bus.
+  // The processor's operator parameters. The four NUMBERS also live in station_config_kv and are
+  // re-read by the engine poll, so they survive a restart; the two BYPASSES arrive only here and die
+  // with the process, which is what makes them a test tool rather than a setting.
+  setProcessorParams: (m) => { A.audioSetProcessorParams(m.stationId, m.ceilingDbtp, m.releaseMs, m.rideRate, m.rideClamp, !!m.rideBypass, !!m.limiterBypass); return true; },
   setDuckParams:      (m) => A.audioSetDuckParams(m.stationId, m.depthDb, m.thresholdDb, m.attackMs, m.holdMs, m.releaseMs),
   // AUX MONITOR (room) level for one aux deck — D/E/F only, enforced in Rust. 0 = silent locally.
   setAuxMonitor:      (m) => A.audioSetAuxMonitor(m.stationId, m.deck, m.gain),

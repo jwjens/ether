@@ -796,7 +796,14 @@ function AudioProcessingSection() {
       <SettingRow label="Process stream" hint="Apply processing to the Icecast stream — what listeners hear.">
         <ProcToggle on={stream} onClick={() => { const v = !stream; setStream(v); save("proc_stream", v ? "1" : "0"); }} />
       </SettingRow>
-      <SettingRow label="Target loudness" hint="EBU R128 program target. −14 LUFS is the streaming standard; the limiter holds −1 dBTP.">
+      {/* The toggles stay here; the CHAIN lives in one place — the Processor rack in Master Out. A second
+          copy of the controls would be two panels able to disagree about what is running. */}
+      <SettingRow label="The chain" hint="Ceiling, release, ride rate and clamp, presets, gain-reduction metering and the two bypasses all live in the Processor rack, opened from Master Out.">
+        <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+          Master Out → <b style={{ color: "#8868D8" }}>PROCESSOR</b> → OPEN
+        </span>
+      </SettingRow>
+      <SettingRow label="Target loudness" hint="EBU R128 program target. −14 LUFS is the streaming standard; the limiter holds −1 dBTP. Also adjustable in the Processor rack.">
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <input type="number" min={-30} max={-6} step={1} value={target ?? PROC_TARGET_EFFECTIVE}
             onChange={e => { const t = parseFloat(e.target.value); if (!isNaN(t)) { const c = Math.max(-30, Math.min(-6, t)); setTarget(c); setTargetStored(true); save("proc_target_lufs", String(c)); } }}

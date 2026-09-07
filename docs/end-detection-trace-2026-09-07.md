@@ -2,6 +2,14 @@
 
 **Date:** 2026-09-07 · **READ-ONLY.** Nothing changed, nothing built.
 
+> **⚠ SAMPLE CAVEAT (added 2026-09-07, Jeff's ruling).** Every airplay figure in this document comes from
+> `play_log` **on this dev/beta machine**, which has never run continuously. Audio is switched on only for
+> testing, so the log holds **a few hours of intermittent test playout, not station history**. Rates
+> derived from it — aired-vs-scheduled percentages, per-bucket miss rates, anything expressed as a share —
+> **cannot be supported by this sample and must not be quoted.** Counts and attributions (which deck a
+> play landed on, which class it was) remain useful as existence evidence for what did air; rates do not.
+
+
 `audiod/engine.js:799-800`:
 
 ```js
@@ -48,15 +56,20 @@ never gets a turn. It only matters when the position clock stops telling the tru
 In `generated_schedule`, rows under 5 s: **6,715, all SWP.** Announcements: none with a duration at all.
 Your shortest spot is 11 s.
 
-**So nothing under 5 s currently reaches a rotation deck** — and that is confirmed in the airplay record,
-not assumed. Seven days of `play_log`:
+**Nothing under 5 s currently reaches a rotation deck.** The schedule side of that is solid — the counts
+above are from `generated_schedule` and `songs`, which do not depend on how much the machine aired.
+
+The airplay side is weaker than it looks. What `play_log` holds for the nominal seven-day window:
 
 ```
 SWP    deck E  194        ← the sweeper channel
 MUSIC  deck A 64 · B 63 · C 60
 ```
 
-**194 sweeper plays, all on deck E. Zero on A/B/C.**
+**Every sweeper play landed on deck E; none on A/B/C.** That is a useful ATTRIBUTION — of the plays that
+did happen, none put a sweeper on a rotation deck — but it is **not** evidence about a seven-day period.
+This machine is dev/beta and audio is on only for testing, so those 194 plays are a few hours of
+intermittent test playout. Absence over such a sample is not absence over a week.
 
 ### How a short item WOULD end, if one ever landed on a deck
 
@@ -97,9 +110,10 @@ one that excludes a class no longer in use. **On an hour with no clock, sweepers
 music queue**, and 6,715 of them are under 5 s, which is exactly the case §2 shows has no position-based
 end detection.
 
-This is read from source, not observed: I have not seen a sweeper on a rotation deck, and the play_log
-says it has not happened in seven days. It is a latent path, not a live defect. **Filing it here because
-it is the reason `dur > 5` is worth caring about at all.**
+This is read from source, not observed: I have not seen a sweeper on a rotation deck, and the plays that
+exist in `play_log` do not include one. That sample is a few hours of intermittent testing, so it cannot
+establish that the path has never been taken — only that it was not taken during the little that aired.
+**Filing it here because it is the reason `dur > 5` is worth caring about at all.**
 
 ## 3 · The 0.3 s threshold — late clock, or cut song?
 
@@ -145,7 +159,8 @@ invites.
 
 ### A · Do nothing
 
-- **Cost:** none today. Nothing under 5 s reaches a rotation deck; the airplay record confirms it.
+- **Cost:** none today, on the schedule evidence — nothing under 5 s is placed for a rotation deck. The
+  airplay record is too thin a sample to confirm or deny anything on its own.
 - **Risk:** the latent path in §2. If an hour ever runs without a clock, a 2-second sweeper can be queued
   to a deck with no position-based end detection behind it.
 

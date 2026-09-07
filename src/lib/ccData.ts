@@ -356,6 +356,42 @@ export async function pushLibrary(
   await pushCcData(licenseKey, stationUuid, "library", rows);
 }
 
+// ── THE PLAY-HISTORY PUSH SENSE ──────────────────────────────────────────────────────────────────
+//
+// WHY THIS EXISTS. On 2026-09-07 three of OV's four live stations had not reached Railway for THREE
+// DAYS and nothing told anyone. Every exit in this function returned silently or logged to a renderer
+// console, so "the push failed", "the push was skipped" and "there was nothing to send" were
+// indistinguishable from outside — and in the cloud, a station that stopped pushing looks exactly like
+// a station that went off the air.
+//
+// So: every exit says something, and SUCCESS says something too. Without a success signal, silence
+// stays ambiguous — a station that pushed 0 rows because it aired nothing must be distinguishable from
+// one whose push never ran.
+//
+// TRANSITION-ONLY, with an hourly heartbeat. A 3-minute timer across four stations would write ~1,920
+// events a day against a persistent failure, which is how an alarm becomes noise. The signature
+// deliberately excludes row counts, so consecutive healthy runs do not each emit.
+type PhState = "ok" | "failed" | "skipped" | "idle";
+const _phLast = new Map<number, { sig: string; at: number }>();
+const PH_HEARTBEAT_MS = 60 * 60 * 1000;
+
+export function notePlayHistoryState(stationId: number, state: PhState, data: Record<string, unknown> = {}): void {
+  const sig = `${state}|${data.reason ?? data.status ?? data.error ?? ""}`;
+  const prev = _phLast.get(stationId);
+  const changed = !prev || prev.sig !== sig;
+  const heartbeatDue = !!prev && Date.now() - prev.at >= PH_HEARTBEAT_MS;
+  if (!changed && !heartbeatDue) return;
+  _phLast.set(stationId, { sig, at: Date.now() });
+  const kind = state === "ok" ? "ph-push-ok"
+             : state === "failed" ? "ph-push-failed"
+             : state === "skipped" ? "ph-push-skipped" : "ph-push-idle";
+  try {
+    (window as any).ether?.emit?.("health:event", {
+      kind, data: { stationId, ...data, transition: changed, heartbeat: !changed },
+    });
+  } catch { /* never let a sense break the push */ }
+}
+
 // Push new play_log rows for analytics (Phase 3a). Append-only + incremental: a
 // per-station localStorage cursor tracks the highest play_log id already pushed from
 // THIS machine; the backend dedupes by row_uuid. Batched so a first-run backfill of a
@@ -365,10 +401,15 @@ export async function pushPlayHistory(
   stationUuid: string | null | undefined,
   stationId: number,
 ): Promise<void> {
-  if (!licenseKey || !stationUuid) return;
+  if (!licenseKey || !stationUuid) {
+    notePlayHistoryState(stationId, "skipped", { reason: !licenseKey ? "no license key" : "no station uuid" });
+    return;
+  }
   const cursorKey = `ether_ph_cursor_${stationId}`;
   const BATCH = 1000;
   const MAX_BATCHES = 60; // safety cap per run (~60k rows)
+  let pushed = 0;
+  let failed = false;
   try {
     for (let b = 0; b < MAX_BATCHES; b++) {
       const cursor = Number(localStorage.getItem(cursorKey) || "0");
@@ -392,19 +433,45 @@ export async function pushPlayHistory(
       }));
       // What a station claims it aired feeds the advertiser affidavit. A dev instance's playback is
       // not the station's broadcast and must never end up in that record.
-      if (blockedByDevGuard("play history")) return;
+      if (blockedByDevGuard("play history")) {
+        // Correct behaviour — a dev instance's playback is not the station's broadcast — but it must be
+        // STATED. An unexplained absence of rows is what cost three days.
+        notePlayHistoryState(stationId, "skipped", { reason: "dev build", rowsPending: rows.length });
+        return;
+      }
       const res = await fetch(`${ETHER_BACKEND_URL}/api/account/play-history`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-license-key": licenseKey },
         body: JSON.stringify({ station_uuid: stationUuid, rows: payload }),
       });
-      if (!res.ok) { console.log(`[PHPUSH] HTTP ${res.status} — stopping`); break; }
+      if (!res.ok) {
+        // THE ONE THAT HID A 403. This break used to reach only the renderer console.
+        let body = "";
+        try { body = (await res.text()).slice(0, 200); } catch { /* body is a nicety */ }
+        console.log(`[PHPUSH] HTTP ${res.status} — stopping`);
+        notePlayHistoryState(stationId, "failed", { status: res.status, body, rowsPending: rows.length, rowsPushedThisRun: pushed });
+        failed = true;
+        break;
+      }
       const maxId = rows[rows.length - 1].id;
+      pushed += rows.length;
       localStorage.setItem(cursorKey, String(maxId));
       console.log(`[PHPUSH] pushed ${rows.length} rows (through id ${maxId})`);
       if (rows.length < BATCH) break; // caught up
     }
-  } catch (e) { console.log("[PHPUSH] error:", (e as any)?.message ?? e); }
+  } catch (e) {
+    console.log("[PHPUSH] error:", (e as any)?.message ?? e);
+    notePlayHistoryState(stationId, "failed", { error: String((e as any)?.message ?? e), rowsPushedThisRun: pushed });
+    failed = true;
+  }
+  // SUCCESS IS A SIGNAL TOO. A run that pushed nothing because the station aired nothing must be
+  // distinguishable from a run that never happened — that ambiguity is the whole defect.
+  if (!failed) {
+    notePlayHistoryState(stationId, "ok", {
+      rowsPushed: pushed,
+      cursor: Number(localStorage.getItem(cursorKey) || "0"),
+    });
+  }
 }
 
 // Control Center 2d-3 — create a song from a dashboard upload. The audio is already in

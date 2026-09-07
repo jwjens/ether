@@ -2,6 +2,14 @@
 
 2026-09-06 · branch `log-reader-flip` · local, uncommitted
 
+> **⚠ SAMPLE CAVEAT (added 2026-09-07, Jeff's ruling).** Every airplay figure in this document comes from
+> `play_log` **on this dev/beta machine**, which has never run continuously. Audio is switched on only for
+> testing, so the log holds **a few hours of intermittent test playout, not station history**. Rates
+> derived from it — aired-vs-scheduled percentages, per-bucket miss rates, anything expressed as a share —
+> **cannot be supported by this sample and must not be quoted.** Counts and attributions (which deck a
+> play landed on, which class it was) remain useful as existence evidence for what did air; rates do not.
+
+
 Two things in one pass: the four approved changes to the sweeper fire path, and the read-only answer to
 "when a sweeper fires, does the outgoing song keep playing underneath it, or does it duck, stop, or get cut?"
 
@@ -130,9 +138,12 @@ three, and until then the running engine keeps the old suppression and the old a
 
 - `npx tsc --noEmit` — **0 errors**.
 - `node --check` on `audiod/engine.js`, `audiod/loggen.js`, `electron/main.js` — all pass.
-- On-air effect is **UNVERIFIED** until a restart and a run: the check that settles it is
-  scheduled-vs-aired sweepers over a window (`scratchpad/swp-aired.js`), which measured **70 scheduled /
-  40 aired = 57%** before this change.
+- On-air effect is **UNVERIFIED**, and the measurement that was quoted here has been WITHDRAWN.
+  It read "70 scheduled / 40 aired = 57% before this change", derived from `play_log` on this machine.
+  **That figure is not supportable** (Jeff, 2026-09-07): this is a dev/beta box that has never run
+  continuously, so `play_log` holds a few hours of intermittent test playout rather than station history.
+  A scheduled-vs-aired rate needs continuous air over a known window, and no such sample exists here.
+  Any future rate must state the window AND how many hours the station was actually up.
 
 ---
 

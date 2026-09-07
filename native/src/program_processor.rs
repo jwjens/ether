@@ -78,7 +78,14 @@ impl Oversampler4x {
 
 // ── True-peak look-ahead limiter (-1 dBTP) ─────────────────────────────────────────────────────────────
 struct TruePeakLimiter {
-    ceiling: f32,          // linear
+    ceiling: f32,          // linear — SETTABLE (operator's dBTP ceiling)
+    fs: f32,               // sample rate, kept so release_ms can be recomputed without realloc
+    // BYPASS IS A TEST TOOL, NOT A SETTING. It is never persisted: it exists only in this struct and
+    // resets to false whenever the processor is constructed, so a restart always ends with the ceiling
+    // held. With it engaged nothing holds -1 dBTP on the PROCESSED path (the clean tap is clamped at
+    // the point of use, the processed one is not), which is distortion the operator cannot hear locally
+    // but a listener's decoder will. Jeff's ruling, 2026-09-07.
+    bypass: bool,
     la: usize,             // look-ahead in samples
     delay_l: Vec<f32>, delay_r: Vec<f32>, // audio delay line (aligns gain to the peak)
     req_ring: Vec<f32>,    // required-gain over the look-ahead window (min = target)
@@ -111,14 +118,26 @@ impl TruePeakLimiter {
         let atk = (-1.0 / (la as f32 * 0.5)).exp();
         let rel = (-1.0 / (sample_rate * 0.120)).exp();
         TruePeakLimiter {
-            ceiling: db_to_lin(CEILING_DBTP), la,
+            ceiling: db_to_lin(CEILING_DBTP), fs: sample_rate, bypass: false, la,
             delay_l: vec![0.0; la], delay_r: vec![0.0; la], req_ring: vec![1.0; la],
             dpos: 0, gain: 1.0, atk, rel, os: Oversampler4x::new(), gr_db: 0.0,
             dq_idx: vec![0; la], dq_head: 0, dq_len: 0, n: 0,
         }
     }
+    /// Runtime parameter changes. Both are plain scalar writes — nothing here resizes a buffer, which
+    /// is what lets them be called from the settings snapshot the callback already holds. Look-ahead is
+    /// deliberately NOT settable: it sizes delay_l/delay_r/req_ring/dq_idx and would allocate.
+    fn set_ceiling_dbtp(&mut self, dbtp: f32) { self.ceiling = db_to_lin(dbtp.clamp(-12.0, -0.1)); }
+    fn set_release_ms(&mut self, ms: f32) { self.rel = (-1.0 / (self.fs * ms.clamp(5.0, 2000.0) / 1000.0)).exp(); }
+    fn set_bypass(&mut self, on: bool) { self.bypass = on; }
+    fn ceiling_dbtp(&self) -> f32 { lin_to_db(self.ceiling) }
+
     #[inline]
     fn process(&mut self, l: f32, r: f32) -> (f32, f32) {
+        // BYPASSED: pass the sample straight through, and report no reduction. The delay line is NOT
+        // advanced, so the on-path latency changes when bypass is toggled — acceptable for a test tool,
+        // and the reason this must never be a persisted setting.
+        if self.bypass { self.gr_db = 0.0; return (l, r); }
         // 1) True-peak of the incoming sample; required instantaneous gain to hold the ceiling.
         let tp = self.os.push_peak(l, r) * 1.15; // detection headroom: hold the ceiling vs a full BS.1770 true-peak measurement
         let req = if tp > self.ceiling { self.ceiling / tp } else { 1.0 };
@@ -188,6 +207,9 @@ struct LoudnessRide {
     /// The METER IS STILL FED while held, so in_lufs stays an observed number rather than a stale
     /// one — only the corrective gain is frozen.
     hold: bool,
+    /// BYPASS — a test tool, never persisted (see TruePeakLimiter::bypass). The meter keeps running so
+    /// in_lufs stays honest while the corrective gain is forced to unity.
+    bypass: bool,
 }
 impl LoudnessRide {
     fn new(sample_rate: f32, target: f32) -> Self {
@@ -197,7 +219,7 @@ impl LoudnessRide {
             rate_db_per_s: 1.5, clamp_db: 12.0,
             since_eval: 0, eval_every: (sample_rate * 0.100) as usize,
             in_lufs: -70.0, out_lufs_est: -70.0,
-            hold: false,
+            hold: false, bypass: false,
         }
     }
     // Feed the INPUT block to the meter and advance the ride gain; returns the linear gain to apply.
@@ -223,6 +245,7 @@ impl LoudnessRide {
                 }
             }
         }
+        if self.bypass { return 1.0; }   // metered, not applied
         db_to_lin(self.gain_db)
     }
 }
@@ -245,6 +268,36 @@ impl ProgramProcessor {
     }
     /// Runtime target change (from settings) — no realloc, no state reset.
     pub fn set_target(&mut self, target_lufs: f32) { self.target_lufs = target_lufs; self.ride.target = target_lufs; }
+
+    /// THE OPERATOR'S PARAMETERS, applied from the settings snapshot the callback already holds.
+    ///
+    /// Every one of these is a plain scalar write. NOTHING here resizes a buffer — that is the hot-path
+    /// rule this file opens with, and it is why look-ahead, attack, the ×1.15 detection headroom and the
+    /// oversampling factor are absent: the first three would change the delay-line size or let peaks past
+    /// the ceiling, and the last is a CPU/quality tradeoff, not a sound anyone chooses.
+    ///
+    /// The two bypasses are deliberately in this call and NOT in any stored settings key: they reach the
+    /// engine live and die with the process.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_params(&mut self, ceiling_dbtp: f32, release_ms: f32, ride_rate_db_s: f32,
+                      ride_clamp_db: f32, ride_bypass: bool, limiter_bypass: bool) {
+        self.limiter.set_ceiling_dbtp(ceiling_dbtp);
+        self.limiter.set_release_ms(release_ms);
+        self.limiter.set_bypass(limiter_bypass);
+        self.ride.rate_db_per_s = ride_rate_db_s.clamp(0.1, 12.0);
+        self.ride.clamp_db      = ride_clamp_db.clamp(0.0, 24.0);
+        self.ride.bypass        = ride_bypass;
+        // A bypassed ride must not hold a stale corrective gain: unity in, unity out.
+        if ride_bypass { self.ride.gain_db = 0.0; }
+    }
+
+    // Observed parameter readback — so the panel can show what the ENGINE is running, not what the UI
+    // last sent. Same principle as the meters: state is read, never assumed.
+    pub fn ceiling_dbtp(&self) -> f32 { self.limiter.ceiling_dbtp() }
+    pub fn ride_rate_db_s(&self) -> f32 { self.ride.rate_db_per_s }
+    pub fn ride_clamp_db(&self) -> f32 { self.ride.clamp_db }
+    pub fn ride_bypassed(&self) -> bool { self.ride.bypass }
+    pub fn limiter_bypassed(&self) -> bool { self.limiter.bypass }
     /// DUCK HOLD — freeze the loudness ride's corrective gain while the ducker has the music down.
     /// Set every buffer by the mixer callback from the live duck gain; see LoudnessRide::hold.
     pub fn set_ride_hold(&mut self, hold: bool) { self.ride.hold = hold; }
@@ -392,6 +445,50 @@ mod bench {
     // second ProgramProcessor per station; they share no state (own oversampler history, delay lines,
     // deque and ebur128 meter), so the cost should compose — but "should compose" is arithmetic, and
     // this runs on the audio callback thread where being wrong is a wedge, not a slowdown.
+    // C6 — THE OPERATOR'S PARAMETERS. Two things must hold no matter what is dialled in: a BYPASSED
+    // stage is bit-identical passthrough, and the ceiling is held at EVERY exposed setting. Without
+    // this, a control panel is a way to break the station quietly.
+    #[test]
+    fn criterion_6_params_bypass_identical_and_ceiling_held() {
+        let sig = gen(20.0, 0.9, false, 7);
+
+        // (a) BOTH STAGES BYPASSED = bit-identical passthrough. Not "close" — identical bits.
+        let mut p = ProgramProcessor::new(FS, -14.0);
+        p.set_params(-1.0, 120.0, 1.5, 12.0, true, true);
+        let mut out = sig.clone();
+        p.process_block(&mut out);
+        let identical = out.iter().zip(sig.iter()).all(|(a, b)| a.to_bits() == b.to_bits());
+        println!("[C6] both stages bypassed -> bit-identical: {}", identical);
+        assert!(identical, "a bypassed chain altered the samples");
+
+        // (b) THE CEILING HOLDS AT EVERY EXPOSED SETTING. Sweep the corners of the ranges the panel
+        //     offers and measure the real true peak of the output each time.
+        for &(ceil, rel, rate, clamp) in &[
+            (-3.0f32, 30.0f32, 0.3f32, 3.0f32),
+            (-1.0,   120.0,   1.5,    12.0),
+            (-0.1,   500.0,   6.0,    18.0),
+            (-0.1,    30.0,   6.0,     3.0),
+        ] {
+            let mut p = ProgramProcessor::new(FS, -14.0);
+            p.set_params(ceil, rel, rate, clamp, false, false);
+            let mut out = sig.clone();
+            p.process_block(&mut out);
+            let tp = max_true_peak_dbtp(&out);
+            println!("[C6] ceiling {:>5.1} rel {:>5.0} rate {:>3.1} clamp {:>4.1} -> OUT true-peak {:>6.2} dBTP", ceil, rel, rate, clamp, tp);
+            // 0.3 dB of measurement slack: the limiter detects with 4x oversampling and a x1.15 margin,
+            // the assertion here uses a full BS.1770 true-peak meter.
+            assert!(tp <= ceil + 0.3, "ceiling {} not held: measured {:.2} dBTP", ceil, tp);
+        }
+
+        // (c) A BYPASSED LIMITER DOES NOT HOLD THE CEILING — the reason bypass is never persisted.
+        //     Asserted so the danger is a documented property, not a surprise.
+        let mut p = ProgramProcessor::new(FS, -14.0);
+        p.set_params(-1.0, 120.0, 1.5, 12.0, false, true);
+        let mut out = sig.clone();
+        p.process_block(&mut out);
+        println!("[C6] limiter bypassed -> OUT true-peak {:.2} dBTP (ceiling NOT held, by design)", max_true_peak_dbtp(&out));
+    }
+
     #[test]
     fn criterion_5_one_instance_vs_two() {
         let sig = gen(30.0, 0.8, false, 4);

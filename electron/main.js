@@ -4870,6 +4870,13 @@ ipcMain.handle("audio:set-duck-params", (_, stationId, p) =>
     ? audiodClient.cmd("setDuckParams", { stationId, depthDb: p.depthDb, thresholdDb: p.thresholdDb, attackMs: p.attackMs, holdMs: p.holdMs, releaseMs: p.releaseMs })
     : (audio && typeof audio.audioSetDuckParams === "function"
          ? audio.audioSetDuckParams(stationId, p.depthDb, p.thresholdDb, p.attackMs, p.holdMs, p.releaseMs) : false));
+// The program processor's operator parameters. Routed exactly like set-duck-params so it reaches
+// whichever engine owns the audio. The two bypasses ride this call and are never stored anywhere.
+ipcMain.handle("audio:set-processor-params", (_, stationId, p) =>
+  AUDIO_DAEMON
+    ? audiodClient.cmd("setProcessorParams", { stationId, ceilingDbtp: p.ceilingDbtp, releaseMs: p.releaseMs, rideRate: p.rideRate, rideClamp: p.rideClamp, rideBypass: !!p.rideBypass, limiterBypass: !!p.limiterBypass })
+    : (audio && typeof audio.audioSetProcessorParams === "function"
+         ? audio.audioSetProcessorParams(stationId, p.ceilingDbtp, p.releaseMs, p.rideRate, p.rideClamp, !!p.rideBypass, !!p.limiterBypass) : false));
 ipcMain.handle("audio:set-aux-monitor", (_, stationId, deck, gain) =>
   AUDIO_DAEMON ? audiodClient.cmd("setAuxMonitor", { stationId, deck, gain })
                : audio.audioSetAuxMonitor(stationId, deck, gain));
@@ -9914,6 +9921,21 @@ ipcMain.handle('schedule:playhead-view', (_e, stationId, limit) => {
 // Log-Reader Flip Phase 2: divergence ledger. The renderer shadow-compares the log-derived up-next
 // against the live engine queue and reports mismatches here; we append them to an honest JSONL sense
 // (userData/playhead-divergence.jsonl) so the read-path burn-in that gates Phase 3 is greppable.
+// GENERIC RENDERER -> HEALTH LEDGER. The renderer had no way to record a sense: the only channel was
+// health:playhead-divergence, bespoke and writing to its own file. So renderer-side failures — the
+// play-history push among them — could only reach a console that does not exist in a packaged app.
+// One channel, same ledger the main process writes, so the Health Monitor sees them all.
+//
+// Guarded, not trusting: `kind` must be a short string, and the payload is spread as data only. A
+// renderer cannot choose the timestamp or overwrite `kind`.
+ipcMain.on('health:event', (_e, msg) => {
+  try {
+    const kind = msg && typeof msg.kind === 'string' ? msg.kind.slice(0, 64) : null;
+    if (!kind) return;
+    _healthEvent(kind, (msg && typeof msg.data === 'object' && msg.data) ? msg.data : {});
+  } catch { /* a lost sense line must never break the renderer */ }
+});
+
 ipcMain.on('health:playhead-divergence', (_e, record) => {
   try {
     const line = JSON.stringify({ t: new Date().toISOString(), ...(record || {}) }) + "\n";

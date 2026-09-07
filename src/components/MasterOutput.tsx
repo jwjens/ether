@@ -8,6 +8,7 @@ import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { matchesStation } from "../lib/levelsScope";
 import MasterEQRack from "./MasterEQRack";
+import ProcessorRack, { SHIPPED, ETHER_V1, paramsEqual, type ProcParams, type Preset } from "./ProcessorRack";
 import { useAudioHealth, HealthDot, HealthStyles, HealthModeBanner, rateLabel, peakLabel, LEVEL_COLOR } from "../audio/health";
 import { EQ_DEFAULT } from "./GraphicEQ";
 import StationMonitorMixer from "./StationMonitorMixer";
@@ -667,6 +668,89 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
     return () => clearInterval(id);
   }, [expanded]);
 
+  // ── Program processor ────────────────────────────────────────
+  // The four NUMBERS live in station_config_kv (synced, per station) and default to the shipped chain,
+  // so a station with nothing stored shows what it is actually running. The two BYPASSES are session
+  // state only — never read from or written to storage — so a restart always holds the ceiling.
+  const [procOpen, setProcOpen] = useState(false);
+  const [procParams, setProcParams] = useState<ProcParams>({ ...SHIPPED });
+  const [procStored, setProcStored] = useState<Partial<Record<keyof ProcParams, boolean>>>({});
+  const [presets, setPresets] = useState<Preset[]>([ETHER_V1]);
+  const [activePreset, setActivePreset] = useState<string | null>(ETHER_V1.name);
+  const [rideBypass, setRideBypass] = useState(false);
+  const [limiterBypass, setLimiterBypass] = useState(false);
+  const [procMeters, setProcMeters] = useState<any>(null);
+
+  const PROC_KEYS: Record<keyof ProcParams, string> = {
+    targetLufs: "proc_target_lufs", ceilingDbtp: "proc_ceiling_dbtp",
+    releaseMs: "proc_release_ms", rideRate: "proc_ride_rate", rideClamp: "proc_ride_clamp",
+  };
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await (window as any).ether?.stationConfigKv?.list(stationId);
+        const rows = ((r?.rows || []) as { key: string; value: string }[]);
+        const get = (k: string) => rows.find(x => x.key === k)?.value;
+        const next = { ...SHIPPED } as ProcParams;
+        const stored: Partial<Record<keyof ProcParams, boolean>> = {};
+        (Object.keys(PROC_KEYS) as (keyof ProcParams)[]).forEach(k => {
+          const v = parseFloat(get(PROC_KEYS[k]) ?? "");
+          if (!isNaN(v)) { next[k] = v; stored[k] = true; }
+        });
+        let ps: Preset[] = [ETHER_V1];
+        try {
+          const raw = get("proc_presets");
+          if (raw) ps = [ETHER_V1, ...(JSON.parse(raw) as Preset[]).filter(x => x && x.name && !x.builtIn)];
+        } catch { /* a malformed preset blob must not cost the panel */ }
+        if (!alive) return;
+        setProcParams(next); setProcStored(stored); setPresets(ps);
+        setActivePreset(get("proc_preset_active") || (ps.find(x => paramsEqual(x.params, next))?.name ?? ETHER_V1.name));
+      } catch { /* leave the shipped chain showing */ }
+    })();
+    return () => { alive = false; };
+  }, [stationId]);
+
+  // Live meters — the same ~15Hz feed the Settings section uses. Kept in its own state so only the
+  // meter row re-renders at frame rate.
+  useEffect(() => {
+    const audio = (window as any).ether?.audio;
+    if (!audio?.onProcMeters) return;
+    let stale: any = null;
+    const h = audio.onProcMeters((m: any) => {
+      if (!m) return;
+      setProcMeters({ inLufs: m.inLufs, outLufs: m.outLufs, grDb: m.grDb, rideGainDb: m.rideGainDb ?? 0, inPeakDb: m.inPeakDb, outPeakDb: m.outPeakDb });
+      if (stale) clearTimeout(stale);
+      stale = setTimeout(() => setProcMeters(null), 1000);
+    });
+    return () => { try { audio.offProcMeters?.(h); } catch {} if (stale) clearTimeout(stale); };
+  }, [stationId]);
+
+  /** Deliver the live parameters to the engine. Bypass rides this call and nothing else. */
+  const sendProc = useCallback((prm: ProcParams, rb: boolean, lb: boolean) => {
+    try {
+      (window as any).ether?.audio?.setProcessorParams?.(stationId, {
+        ceilingDbtp: prm.ceilingDbtp, releaseMs: prm.releaseMs,
+        rideRate: prm.rideRate, rideClamp: prm.rideClamp,
+        rideBypass: rb, limiterBypass: lb,
+      });
+    } catch { /* engine not up yet; the poll re-reads the KV anyway */ }
+  }, [stationId]);
+
+  const patchProc = useCallback((patch: Partial<ProcParams>) => {
+    setProcParams(prev => {
+      const next = { ...prev, ...patch };
+      const kv = (window as any).ether?.stationConfigKv;
+      (Object.keys(patch) as (keyof ProcParams)[]).forEach(k => {
+        try { kv?.upsertByKey(stationId, PROC_KEYS[k], String(next[k])); } catch {}
+        setProcStored(st => ({ ...st, [k]: true }));
+      });
+      sendProc(next, rideBypass, limiterBypass);
+      return next;
+    });
+  }, [stationId, sendProc, rideBypass, limiterBypass]);
+
   // ── Master EQ ────────────────────────────────────────────────
   const [eqOpen,  setEqOpen]  = useState(false);
   const [eqBands, setEqBands] = useState<number[]>(EQ_DEFAULT);
@@ -936,11 +1020,62 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
         >{eqOpen ? "CLOSE" : "OPEN"}</button>
       </div>
 
+      {/* PROCESSOR — beside the EQ, same chrome. The chain has always run; this is the door to it. */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 12px", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: (rideBypass || limiterBypass) ? "#f59e0b" : "#8868D8" }} />
+          <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase" as const }}>Processor</span>
+          {(rideBypass || limiterBypass) && <span style={{ fontSize: 10, fontWeight: 800, color: "#f59e0b" }}>BYPASSED</span>}
+        </div>
+        <button onClick={() => setProcOpen(o => !o)} title="Loudness ride and true-peak limiter — the program chain"
+          style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.1em", padding: "4px 14px", borderRadius: 4,
+            background: procOpen ? "rgba(136,104,216,0.2)" : "rgba(136,104,216,0.1)",
+            border: "1px solid rgba(136,104,216,0.45)", color: "#8868D8", cursor: "pointer", transition: "all 0.15s" }}
+        >{procOpen ? "CLOSE" : "OPEN"}</button>
+      </div>
+
       {eqOpen && (
         <MasterEQRack
           bands={eqBands}
           onChange={handleMasterEqChange}
           onClose={() => setEqOpen(false)}
+        />
+      )}
+
+      {procOpen && (
+        <ProcessorRack
+          params={procParams}
+          stored={procStored}
+          onChange={patchProc}
+          presets={presets}
+          activePreset={activePreset}
+          onSelectPreset={(name) => {
+            const pre = presets.find(x => x.name === name); if (!pre) return;
+            setActivePreset(name);
+            try { (window as any).ether?.stationConfigKv?.upsertByKey(stationId, "proc_preset_active", name); } catch {}
+            patchProc(pre.params);   // one action, every parameter — so an A/B is one click each way
+          }}
+          onSavePreset={(name) => {
+            const next = [...presets.filter(x => x.name !== name && !x.builtIn), { name, params: { ...procParams } }];
+            setPresets([ETHER_V1, ...next]);
+            setActivePreset(name);
+            try {
+              const kv = (window as any).ether?.stationConfigKv;
+              kv?.upsertByKey(stationId, "proc_presets", JSON.stringify(next));
+              kv?.upsertByKey(stationId, "proc_preset_active", name);
+            } catch {}
+          }}
+          rideBypass={rideBypass}
+          limiterBypass={limiterBypass}
+          onBypass={(which, on) => {
+            // SESSION ONLY. Never written to the KV — that is what makes a restart hold the ceiling.
+            const rb = which === "ride" ? on : rideBypass;
+            const lb = which === "limiter" ? on : limiterBypass;
+            setRideBypass(rb); setLimiterBypass(lb);
+            sendProc(procParams, rb, lb);
+          }}
+          meters={procMeters}
+          onClose={() => setProcOpen(false)}
         />
       )}
 

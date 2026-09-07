@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld("ether", {
     // channel. The BUS, not the content: what plays on the slot is the source dropdown.
     setSlotKind: (stationId, deck, kind) => ipcRenderer.invoke("audio:set-slot-kind", stationId, deck, kind),
     setDuckParams: (stationId, params) => ipcRenderer.invoke("audio:set-duck-params", stationId, params),
+    setProcessorParams: (stationId, params) => ipcRenderer.invoke("audio:set-processor-params", stationId, params),
     setDuckable: (stationId, deck, duckable) => ipcRenderer.invoke("audio:set-duckable", stationId, deck, duckable),
     setAuxDevice:  (stationId, device)      => ipcRenderer.invoke("audio:set-aux-device", stationId, device),
     getSpectrum: (stationId) => ipcRenderer.invoke("audio:getSpectrum", stationId),
