@@ -934,3 +934,35 @@ Two problems left behind, neither fixed:
 The daemon's own `audiod/engine.js` `crossfadeDuration = 3` is the same shape and the same name problem:
 it feeds the preload cadence and `_foreignGraceMs()`, which decides how long two decks may both be on air.
 Filed together; both are Jeff's to rule on.
+
+## smoke-topofhour has failed on HEAD across several sessions — test or fault? (2026-09-07)
+
+**Jeff's instruction: decide whether this is a broken test or a real fault before it becomes background
+noise.** It has been red every time the bench sweep has run this week, and it was red on HEAD before any
+of this week's changes — verified by checking out HEAD's `audiod/loggen.js` and re-running.
+
+Symptom, verbatim:
+
+```
+fillFromHour(@7:00) returned 0 item(s):
+  first element is the 7:00 top-of-hour item ........ FAIL
+  no previous-hour (6 o'clock) tail leaked in ....... PASS
+  exactly the 3 seven-o'clock rows returned ......... FAIL
+```
+
+It returns **nothing at all**, which is why the "no 6 o'clock tail leaked" check passes — an empty result
+trivially satisfies it. That check passing is not evidence of anything.
+
+Why it matters: `fillFromHour` is the **top-of-hour hard cut** refill (`engine.js:599`). If the fault is in
+the query rather than the fixture, the hour boundary is not being filled from the new hour's rows on a live
+station, and the symptom on air would be a top-of-hour that runs on whatever was already queued.
+
+It is a self-contained bench — `node:sqlite` in-memory, hand-built schedule, no daemon, no addon, no live
+data — so it is fully reproducible and cheap to settle.
+
+**The check that settles it:** the query is wrapped in `try { … } catch { return []; }`
+(`loggen.js:255-263`), so a schema mismatch in the fixture and a genuine query fault look identical from
+outside. Remove the catch (or log inside it) and run the bench once: an exception names a missing column in
+the fixture, and no exception means the WHERE clause genuinely matches nothing and the fault is real.
+
+Not investigated further — filed on instruction, not fixed.

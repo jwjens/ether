@@ -238,7 +238,7 @@ function readGeneratedSchedule(db, count, stationId) {
               COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
        FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
        WHERE gs.id > ? AND gs.station_id = ? AND gs.scheduled_at >= ? - 300 AND gs.deleted_at IS NULL
-         AND (gs.content_class IS NULL OR gs.content_class != 'JIN') ${catClause}
+         AND (gs.content_class IS NULL OR gs.content_class NOT IN ('JIN','SWP')) ${catClause}
        ORDER BY gs.scheduled_at LIMIT ?`).all(...params);
   } catch { return []; }
   if (rows.length) _schedCursor = rows[rows.length - 1].row_id;
@@ -258,7 +258,7 @@ function fillFromHour(db, stationId, hourStartTs, count = 20) {
               COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
        FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
        WHERE gs.station_id = ? AND gs.scheduled_at >= ? AND gs.deleted_at IS NULL
-         AND (gs.content_class IS NULL OR gs.content_class != 'JIN') ${catClause}
+         AND (gs.content_class IS NULL OR gs.content_class NOT IN ('JIN','SWP')) ${catClause}
        ORDER BY gs.scheduled_at LIMIT ?`).all(...params);
   } catch { return []; }
   const playable = rows.filter(r => r.file_path);

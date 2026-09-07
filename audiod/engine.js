@@ -796,6 +796,26 @@ class DaemonEngine {
     // end-detection, therefore no handleRotate. (One of the two paths that were ungated before 2026-07-31.)
     if (!this._mayDecide()) return;
     if (this.processingEnd) return;
+    // THE TWO 5s BELOW ARE NOT THE SAME DECISION. They share a value and nothing else, and someone will
+    // eventually change them together. Do not.
+    //
+    //   dur > 5 in positionEnd      — UNEXPLAINED. It arrived with "Ether v1.5 initial release" and no
+    //                                 commit, comment or doc says why short items are excluded from the
+    //                                 engine's own clock. Its effect: an item of 5s or less on a rotation
+    //                                 deck can ONLY end via Rust's finished flag (observed 2026-09-07 —
+    //                                 a 4s item with no backend flag never ends at all). Nothing under 5s
+    //                                 reaches a rotation deck today, which is why it has never bitten.
+    //
+    //   (dur - pos) < 5 in genuineBackendEnd — DELIBERATE, and a real incident fix: 5fcb47f (2026-05-12)
+    //                                 "Rust occasionally emits a spurious 'ended' status for a preloaded
+    //                                 or mid-play deck ... causing C to fire and play over an active
+    //                                 deck." The position must corroborate the flag. The `dur <= 5` escape
+    //                                 beside it exists so short items, whose position can never satisfy a
+    //                                 5s window, are not locked out of the only gate they have.
+    //
+    // The 0.3 is also unexplained (same v1.5 origin) but it is not a truncation risk: the window has no
+    // floor, so any late sample still lands in it, and checkEnd only triggers a rotate — it stops nothing.
+    // See docs/end-detection-trace-2026-09-07.md for the observations behind all three.
     const positionEnd = prevStatus === "playing" && dur > 5 && pos > 0 && (dur - pos) < 0.3;
     const genuineBackendEnd = backendEnded && (dur <= 5 || (dur - pos) < 5);
     if ((positionEnd || genuineBackendEnd) && !this.endTriggered.has(deckId)) {
