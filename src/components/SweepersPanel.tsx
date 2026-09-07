@@ -59,7 +59,22 @@ const hhLabel = (h: number) => `${((h % 12) || 12)}${h < 12 ? "a" : "p"}`;
 // CATEGORY rows it patches (overlay_kind / overlay_song_id / overlay_category_id / overlay_active_hours),
 // which the hub also owns; onMutated is how the Categories pane learns an assignment changed.
 // Optional, so the SWEEPERS push-up (its canonical home) is unchanged.
-export default function SweepersPanel({ stationId, onMutated }: { stationId: number; onMutated?: (tables?: string[]) => void }) {
+// LIFTED, NOT COPIED (imaging slice 1, 2026-09-07). The IMAGING surface renders THIS component for its
+// ASSIGNMENTS and POOLS views rather than growing its own tables, because two views of the same thing
+// that can disagree is a failure Jeff has already had. Two props do it:
+//
+//   section   which half to render. Omitted = both, plus the MANAGE / ADD IMAGING tabs — the push-up,
+//             unchanged, still the canonical editor.
+//   readOnly  IMAGING is a read-only surface in slice 1. Every control is disabled AND every write
+//             handler returns early: the guard is not the disabled attribute alone, because a control
+//             that cannot be clicked is not the same as a path that cannot write.
+export default function SweepersPanel({ stationId, onMutated, section, readOnly }: {
+  stationId: number; onMutated?: (tables?: string[]) => void;
+  section?: "assignments" | "pools"; readOnly?: boolean;
+}) {
+  const ro = !!readOnly;
+  const showAssign = !section || section === "assignments";
+  const showPools  = !section || section === "pools";
   // Right-click on any file-backed row: Open / Change File Location, from the shared set.
   const fileMenu = useFileMenu();
   const [pools, setPools] = useState<Pool[]>([]);
@@ -107,6 +122,7 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
   const accent = SWP_INDIGO;
 
   const createPool = async () => {
+    if (ro) return;
     const name = newName.trim(); if (!name || busy) return; setBusy(true);
     try {
       // Seeded from the same station default the LEAD column shows. underlap_sec is not passed: the
@@ -116,25 +132,27 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
       setNewName(""); await reload();
     } finally { setBusy(false); }
   };
-  const patchPool = async (p: Pool, patch: Partial<Pool>) => { try { await ether()?.jingleCategories?.updateById(p.id, patch); await reload(); } catch {} };
-  const delPool = async (p: Pool) => { if (!confirm(`Delete pool "${p.name}"? Assigned overlays become unassigned (not deleted).`)) return; try { await ether()?.jingleCategories?.delete(p.uuid, stationId); await reload(); } catch {} };
-  const assignSong = async (s: OverlaySong, poolId: number | null) => { try { await ether()?.songs?.updateById(s.id, { jingle_category_id: poolId }); await reload(); } catch {} };
-  const setFallback = async (poolId: number | null) => { try { await ether()?.stationConfigKv?.upsertByKey(stationId, "overlay_fallback_category_id", poolId != null ? String(poolId) : ""); setFallbackId(poolId); } catch {} };
+  const patchPool = async (p: Pool, patch: Partial<Pool>) => { if (ro) return; try { await ether()?.jingleCategories?.updateById(p.id, patch); await reload(); } catch {} };
+  const delPool = async (p: Pool) => { if (ro) return; if (!confirm(`Delete pool "${p.name}"? Assigned overlays become unassigned (not deleted).`)) return; try { await ether()?.jingleCategories?.delete(p.uuid, stationId); await reload(); } catch {} };
+  const assignSong = async (s: OverlaySong, poolId: number | null) => { if (ro) return; try { await ether()?.songs?.updateById(s.id, { jingle_category_id: poolId }); await reload(); } catch {} };
+  const setFallback = async (poolId: number | null) => { if (ro) return; try { await ether()?.stationConfigKv?.upsertByKey(stationId, "overlay_fallback_category_id", poolId != null ? String(poolId) : ""); setFallbackId(poolId); } catch {} };
 
   // Category assignment: encode as "item:<songId>" | "pool:<poolId>" | "".
   const assignCategory = async (c: MusicCat, value: string) => {
+    if (ro) return;
     let patch: Partial<MusicCat> = { overlay_kind: null, overlay_song_id: null, overlay_category_id: null };
     if (value.startsWith("item:")) patch = { overlay_kind: "item", overlay_song_id: Number(value.slice(5)), overlay_category_id: null };
     else if (value.startsWith("pool:")) patch = { overlay_kind: "pool", overlay_category_id: Number(value.slice(5)), overlay_song_id: null };
     try { await ether()?.categories?.updateById(c.id, patch); await reload(); onMutated?.(["categories"]); } catch {}
   };
   const catValue = (c: MusicCat) => c.overlay_kind === "item" && c.overlay_song_id != null ? `item:${c.overlay_song_id}` : c.overlay_kind === "pool" && c.overlay_category_id != null ? `pool:${c.overlay_category_id}` : "";
-  const setHours = async (c: MusicCat, mask: number) => { try { await ether()?.categories?.updateById(c.id, { overlay_active_hours: mask }); await reload(); onMutated?.(["categories"]); } catch {} };
+  const setHours = async (c: MusicCat, mask: number) => { if (ro) return; try { await ether()?.categories?.updateById(c.id, { overlay_active_hours: mask }); await reload(); onMutated?.(["categories"]); } catch {} };
 
   // LEAD commit. Blank clears the override so the category falls back to the station default (and the
   // box greys to show it). Written through the same categories.updateById path as ACTIVE HOURS, so it
   // syncs and reaches _placeJingles on the next Generate exactly like every other overlay field.
   const commitLead = async (c: MusicCat) => {
+    if (ro) return;
     const dk = String(c.id);
     const raw = timingDraft[dk];
     setTimingDraft(d => { const n = { ...d }; delete n[dk]; return n; });
@@ -159,7 +177,10 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", color: "var(--text-primary)", minHeight: 0 }}>
-      {/* Mode tabs — Manage the imaging library vs. Add imaging (reel splitter / single cut) */}
+      {/* Mode tabs — Manage the imaging library vs. Add imaging (reel splitter / single cut).
+          PUSH-UP ONLY: inside IMAGING the surface supplies its own tabs, and a second row of them
+          would be the duplicate-door failure this slice exists to end. */}
+      {!section && (
       <div style={{ display: "flex", gap: 4, padding: "8px 16px 0", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
         {(["manage", "create"] as const).map(m => (
           <button key={m} onClick={() => { setMode(m); if (m === "manage") reload(); }} style={{
@@ -168,15 +189,22 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
           }}>{m === "manage" ? "MANAGE" : "ADD IMAGING — CUT A REEL"}</button>
         ))}
       </div>
-      {mode === "create" ? (
+      )}
+      {!section && mode === "create" ? (
         <div style={{ flex: 1, minHeight: 0 }}><ReelSplitter stationId={stationId} embedded onCommitted={reload} /></div>
       ) : (
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 16, maxWidth: 900 }}>
+      {showAssign && (<>
       <div style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", marginBottom: 16, lineHeight: 1.5 }}>
         Overlay imaging fires on the seam between songs (over master). Assign a <b>specific</b> jingle/sweeper
         or a <b>rotating pool</b> to each music category below — some categories get imaging, some don't. Mark
         songs as <b style={{ color: SWP_INDIGO }}>sweepers</b> in the Library first.
       </div>
+      {ro && (
+        <div style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", marginBottom: 12, fontStyle: "italic" }}>
+          Read-only here. Edit assignments in the SWEEPERS push-up at the bottom bar.
+        </div>
+      )}
 
       {/* ── Category assignments (the core) ── */}
       <div style={{ fontSize: "var(--t-small)", fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: 8 }}>Category assignments</div>
@@ -197,7 +225,7 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
                   <span style={{ width: 8, height: 8, borderRadius: "var(--r-0)", background: c.color || "var(--text-tertiary)", flexShrink: 0 }} />
                   <span style={{ fontSize: "var(--t-small)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.code}{c.name && c.name !== c.code ? ` · ${c.name}` : ""}</span>
                 </div>
-                <select key={c.id + "s"} value={catValue(c)} onChange={e => assignCategory(c, e.target.value)} style={sel}>
+                <select key={c.id + "s"} value={catValue(c)} disabled={ro} onChange={e => assignCategory(c, e.target.value)} style={sel}>
                   <option value="">— none (clean segue) —</option>
                   {swpItems.length > 0 && <optgroup label="Specific sweeper">{swpItems.map(s => <option key={"i" + s.id} value={`item:${s.id}`}>♫ {s.title}</option>)}</optgroup>}
 
@@ -215,6 +243,7 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
                         + ` Maximum ${maxLead}s: the engine arms a sweeper ${ARM_WINDOW_S}s before the end and your segue overlap is ${segueOverlap}s, so it cannot honour more.`}>
                       <input type="number" min={0} max={maxLead} step={1}
                         value={draft ?? String(c.overlay_lead_in_sec ?? DEF_LEAD)}
+                        disabled={ro}
                         onChange={e => setTimingDraft(d => ({ ...d, [dk]: e.target.value }))}
                         onBlur={() => commitLead(c)}
                         onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
@@ -228,15 +257,15 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
                 })()}
                 <div key={c.id + "h"} style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "var(--t-small)", color: "var(--text-secondary)", cursor: "pointer" }}>
-                    <input type="checkbox" checked={always} onChange={e => setHours(c, e.target.checked ? ALWAYS : maskFromRange(6, 19))} /> Always
+                    <input type="checkbox" checked={always} disabled={ro} onChange={e => setHours(c, e.target.checked ? ALWAYS : maskFromRange(6, 19))} /> Always
                   </label>
                   {!always && rng && (
                     <>
-                      <select value={rng.from} onChange={e => setHours(c, maskFromRange(Math.min(Number(e.target.value), rng.to), rng.to))} style={{ ...sel, padding: "2px 4px" }}>
+                      <select value={rng.from} disabled={ro} onChange={e => setHours(c, maskFromRange(Math.min(Number(e.target.value), rng.to), rng.to))} style={{ ...sel, padding: "2px 4px" }}>
                         {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{hhLabel(h)}</option>)}
                       </select>
                       <span style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)" }}>–</span>
-                      <select value={rng.to} onChange={e => setHours(c, maskFromRange(rng.from, Math.max(Number(e.target.value), rng.from)))} style={{ ...sel, padding: "2px 4px" }}>
+                      <select value={rng.to} disabled={ro} onChange={e => setHours(c, maskFromRange(rng.from, Math.max(Number(e.target.value), rng.from)))} style={{ ...sel, padding: "2px 4px" }}>
                         {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{hhLabel(h)}</option>)}
                       </select>
                     </>
@@ -249,22 +278,29 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 22, fontSize: "var(--t-body)", color: "var(--text-secondary)" }}>
         <span>Fallback for unassigned categories:</span>
-        <select value={fallbackId ?? ""} onChange={e => setFallback(e.target.value ? Number(e.target.value) : null)} style={sel}>
+        <select value={fallbackId ?? ""} disabled={ro} onChange={e => setFallback(e.target.value ? Number(e.target.value) : null)} style={sel}>
           <option value="">None (clean segue — silence is fine)</option>
           {pools.map(p => <option key={p.id} value={p.id}>{p.type} · {p.name}</option>)}
         </select>
       </div>
 
-      {/* ── Sweeper pools + assignment. One list: there is one imaging class (v52). ── */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 12, borderBottom: "1px solid var(--border-primary)" }}>
-      </div>
+      </>)}
 
+      {/* ── Sweeper pools + assignment. One list: there is one imaging class (v52). ── */}
+      {showPools && (<>
+      {ro && (
+        <div style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", marginBottom: 12, fontStyle: "italic" }}>
+          Read-only here. Create, rename and fill pools in the SWEEPERS push-up at the bottom bar.
+        </div>
+      )}
+      {!ro && (
       <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
         <input value={newName} onChange={e => setNewName(e.target.value)} onKeyDown={e => e.key === "Enter" && createPool()}
           placeholder="New sweeper pool (e.g. Legal IDs)"
           style={{ flex: 1, maxWidth: 280, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", borderRadius: "var(--r-0)", padding: "6px 10px", fontSize: "var(--t-lead)" }} />
         <button onClick={createPool} disabled={busy || !newName.trim()} style={{ padding: "var(--s-2) var(--s-3)", borderRadius: "var(--r-0)", border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", color: "var(--text-secondary)", fontWeight: 700, fontSize: "var(--t-small)", letterSpacing: "0.06em", textTransform: "uppercase", cursor: "pointer", opacity: busy || !newName.trim() ? 0.5 : 1 }}>Add pool</button>
       </div>
+      )}
 
       {tabPools.length > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: "6px 12px", alignItems: "center", marginBottom: 16 }}>
@@ -276,7 +312,7 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
             <Fragment key={p.id}>
               <div key={p.id + "n"} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: p.color || accent }} />
-                <input defaultValue={p.name} onBlur={e => e.target.value.trim() && e.target.value !== p.name && patchPool(p, { name: e.target.value.trim() })}
+                <input defaultValue={p.name} disabled={ro} onBlur={e => e.target.value.trim() && e.target.value !== p.name && patchPool(p, { name: e.target.value.trim() })}
                   style={{ flex: 1, background: "transparent", color: "var(--text-primary)", border: "1px solid transparent", borderRadius: "var(--r-0)", padding: "2px 4px", fontSize: "var(--t-lead)", fontWeight: 600 }} />
                 <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>{tabSongs.filter(s => s.jingle_category_id === p.id).length} in pool</span>
               </div>
@@ -284,8 +320,9 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
                   today — _placeJingles takes its lead from categories.overlay_lead_in_sec only, and that is
                   filed separately — but an unbounded input is a control that lies whether or not anything
                   is listening. */}
-              <input key={p.id + "l"} type="number" min={0} max={maxLead} step={0.5} title={`Maximum ${maxLead}s — the engine cannot honour a longer lead.`} defaultValue={p.lead_in_sec} onBlur={e => patchPool(p, { lead_in_sec: Math.max(0, Math.min(maxLead, parseFloat(e.target.value) || p.lead_in_sec)) })} style={inp} />
-              <button key={p.id + "d"} onClick={() => delPool(p)} title="Delete pool" style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-lead)" }}>✕</button>
+              <input key={p.id + "l"} type="number" disabled={ro} min={0} max={maxLead} step={0.5} title={`Maximum ${maxLead}s — the engine cannot honour a longer lead.`} defaultValue={p.lead_in_sec} onBlur={e => patchPool(p, { lead_in_sec: Math.max(0, Math.min(maxLead, parseFloat(e.target.value) || p.lead_in_sec)) })} style={inp} />
+              {ro ? <span key={p.id + "d"} /> :
+              <button key={p.id + "d"} onClick={() => delPool(p)} title="Delete pool" style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-lead)" }}>✕</button>}
             </Fragment>
           ))}
         </div>
@@ -302,12 +339,16 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
               onContextMenu={e => fileMenu.open(e, { table: "songs", id: s.id, filePath: (s as any).file_path, title: s.title }, reload)}
               style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 8px", background: "var(--bg-secondary)", borderRadius: "var(--r-0)" }}>
               <span style={{ width: 6, height: 6, borderRadius: "50%", background: accent, flexShrink: 0 }} />
+              {ro ? (
+                <span style={{ fontSize: "var(--t-lead)", flex: 1 }}>{s.title}{s.artist_name ? ` — ${s.artist_name}` : ""}</span>
+              ) : (
               <InlineNameEditor
                 value={s.title}
                 display={<span style={{ fontSize: "var(--t-lead)" }}>{s.title}{s.artist_name ? ` — ${s.artist_name}` : ""}</span>}
                 onSave={async (next) => { try { await ether()?.songs?.updateById(s.id, { title: next }); await reload(); } catch {} }}
               />
-              <select value={s.jingle_category_id ?? ""} onChange={e => assignSong(s, e.target.value ? Number(e.target.value) : null)} style={sel}>
+              )}
+              <select value={s.jingle_category_id ?? ""} disabled={ro} onChange={e => assignSong(s, e.target.value ? Number(e.target.value) : null)} style={sel}>
                 <option value="">— unassigned —</option>
                 {tabPools.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
@@ -315,6 +356,7 @@ export default function SweepersPanel({ stationId, onMutated }: { stationId: num
           ))}
         </div>
       )}
+      </>)}
       </div>
       )}
       {fileMenu.node}

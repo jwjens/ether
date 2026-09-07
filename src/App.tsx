@@ -50,6 +50,7 @@ import ImportDialog from "./components/ImportDialog";
 import NexGenImport from "./components/NexGenImport";
 import SettingsPanel from "./components/SettingsPanel";
 import SweepersPanel from "./components/SweepersPanel";
+import ImagingPanel from "./components/ImagingPanel";
 import { ClassFilter, passesClassFilter } from "./lib/contentClass";
 import { StreamStatusProvider } from "./contexts/StreamStatusContext";
 import { AudioEngineProvider, useAudioEngine } from "./audio/AudioEngineContext";
@@ -135,7 +136,7 @@ import VUMeter from "./components/VUMeter";
 import IrisBadge from "./components/IrisBadge";
 import { SchedulerHealthHost } from "./components/SchedulerHealthPanel";
 
-type Panel = "live" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "rotation" | "schedulehub" | "schedulehubfixed" | "help";
+type Panel = "live" | "imaging" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "rotation" | "schedulehub" | "schedulehubfixed" | "help";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -2964,6 +2965,10 @@ export default function App() {
                 {([
                   { key: "library",    emoji: "🎵", label: "Library",     action: () => setPanel("library"),     active: panel === "library"     },
                   { key: "schedule",       emoji: "📋", label: "Schedule",     action: () => setPanel("clocks"),          active: panel === "clocks"          },
+                  // IMAGING is a top-level destination, not a tab: three of its five views exist
+                  // nowhere else, and burying them under a push-up would repeat the doors-before-rooms
+                  // failure. The push-up stays as the EDITOR and links into here.
+                  { key: "imaging",        emoji: "📻", label: "Imaging",      action: () => setPanel("imaging"),         active: panel === "imaging"         },
                   { key: "schedulebuilder", emoji: "🗓", label: "Program Log",  action: () => setPanel("schedulebuilder"), active: panel === "schedulebuilder" },
                   { key: "calendar",       emoji: "📅", label: "Calendar",     action: () => setPanel("calendar"),        active: panel === "calendar"        },
                   { key: "logs",           emoji: "📜", label: "Play Log",     action: () => setPanel("logs"),            active: panel === "logs"            },
@@ -3116,6 +3121,7 @@ export default function App() {
                   hasJinglePool={hasJinglePool}
                   onOpenJingleSettings={() => { setPanel("live"); setShowCarts(false); setProgPanel("jingles"); }}
                   onCloseDock={() => setProgPanel(null)}
+                  onOpenImaging={() => { setProgPanel(null); setPanel("imaging"); }}
                   autoAdv={autoAdv} shuffle={shuffle}
                   toggleAuto={toggleAuto} toggleShuffle={toggleShuffle}
                   queueLen={queueLen} showCarts={showCarts}
@@ -3159,6 +3165,7 @@ export default function App() {
               )}
               {panel === "logs" && <Logs />}
               {panel === "rotation" && <RotationAnalytics />}
+              {panel === "imaging" && <ImagingPanel />}
               {/* v2 docking workspace is the default; v1's fixed three-pane layout stays reachable
                   from its header (the Phase 1 gate requires the fixed layout to keep working). */}
               {panel === "schedulehub" && <ScheduleWorkspace onOpenAnalytics={() => setPanel("rotation")} onUseFixedLayout={() => setPanel("schedulehubfixed")} />}
@@ -3899,7 +3906,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onAddSourceChannel, onSetSourceKind, onSetSourceDuck, onRemoveSourceChannel, canAddSourceChannel, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, onOpenCarts, libraryDock, jingleOverlay, hasJinglePool, onOpenJingleSettings, onCloseDock }: {
+function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onAddSourceChannel, onSetSourceKind, onSetSourceDuck, onRemoveSourceChannel, canAddSourceChannel, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, onOpenCarts, libraryDock, jingleOverlay, hasJinglePool, onOpenJingleSettings, onCloseDock, onOpenImaging }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
   autoAdv: boolean | null; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
@@ -3927,6 +3934,8 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   hasJinglePool: boolean;
   onOpenJingleSettings: () => void;
   onCloseDock: () => void;
+  /** Door from the imaging EDITOR (this push-up) into the IMAGING surface. */
+  onOpenImaging: () => void;
 }) {
   const engine = useAudioEngine();
   const { stationId: lpStationId, stationUuid: lpStationUuid } = useActiveStation();   // for the JINGLES push-up (imaging home)
@@ -4716,8 +4725,21 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                   : progPanel === "phone"
                     ? <PhoneDesk onClose={onCloseDock} />
                     : progPanel === "jingles"
-                      // Imaging home: pools + assignments + reel splitter, all in one push-up.
-                      ? <SweepersPanel stationId={lpStationId} />
+                      // The imaging EDITOR: pools + assignments + reel splitter, unchanged. IMAGING is
+                      // the surface that reads all of it; this stays the place it is written, and now
+                      // says where the rest of it lives.
+                      ? <div style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 16px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
+                            <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Editing imaging</span>
+                            <div style={{ flex: 1 }} />
+                            <button
+                              onClick={onOpenImaging}
+                              title="The full imaging surface — the rack, the pools, what fires ahead of you"
+                              style={{ padding: "3px 12px", fontSize: "var(--t-small)", fontWeight: 800, letterSpacing: "0.06em", background: "transparent", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}
+                            >OPEN IMAGING →</button>
+                          </div>
+                          <div style={{ flex: 1, minHeight: 0 }}><SweepersPanel stationId={lpStationId} /></div>
+                        </div>
                       : progPanel
                         ? <Scheduler defaultTab={progPanel} embedded />
                         : <BoutiqueCartWall variant="strip" />}
