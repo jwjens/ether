@@ -133,6 +133,18 @@ station-scoping notes; the processor makes it sharper, not new.)
 
 ---
 
-## Status
+## Status — BUILT, v4.6.10 (commit 3274ba0)
 
-Nothing built. Both items await Jeff's go.
+Both items shipped as specified. Three things worth recording that the proposal did not cover:
+
+1. **Bypass stopped being a UI flag.** With the rack in its own renderer, a local flag would let the
+   pop-out and the Master Out row disagree. The engine now **echoes** the bypass state on the meter
+   frame (`proc_ride_bypass` / `proc_limiter_bypass`) and every window renders the echo. Engaging
+   bypass in the pop-out lights the amber chip in the main window.
+2. **Settings was quoting a literal.** `"limiter holds −1 dBTP"` stopped being true the moment 4.6.9
+   made the ceiling a control, and was already false under bypass. The ceiling now rides the meter
+   frame too, so the line is observed rather than asserted. This was a regression introduced by the
+   4.6.9 controls, found while fixing OUT.
+3. **C6 (d)** pins the fix with a control: an acting ride winds to −8.33 dB and lands at exactly the
+   −14.0 LUFS target on the same signal where the bypassed one holds 0.00 dB with out == in. Fed in
+   real 480-frame blocks — one giant block grants a single 0.6 dB step and would prove nothing.
