@@ -2292,7 +2292,7 @@ function MusicFolderSection() {
   );
 }
 
-export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, segueOverlap = 3, setSegueOverlap }: { xfadeDuration?: number; setXfadeDuration?: (v: number) => void; segueOverlap?: number; setSegueOverlap?: (v: number) => void }) {
+export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { segueOverlap?: number; setSegueOverlap?: (v: number) => void }) {
   const { stationId } = useActiveStation();
   const loadKvVersionRef = useRef(0);
   // Active category — persisted via URL hash so deep links + reloads stay
@@ -2994,20 +2994,6 @@ export default function SettingsPanel({ xfadeDuration = 3, setXfadeDuration, seg
         <button onClick={loadDevices} style={{ padding: "6px 14px", borderRadius: 0, fontSize: 13, fontWeight: 600, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer" }}>
           ↻ Rescan Devices
         </button>
-        {setXfadeDuration && (
-          <SettingRow label="Manual crossfade (X key)" hint="How long a crossfade takes when YOU trigger it — the X key or AUTO-X. Does not affect automatic segues.">
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <input
-                type="range" min={1} max={10} step={1} value={xfadeDuration}
-                onChange={e => setXfadeDuration(Number(e.target.value))}
-                style={{ width: 110, accentColor: "#a78bfa", cursor: "pointer" }}
-              />
-              <span style={{ fontSize: 13, fontWeight: 700, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "#a78bfa", minWidth: 28, textAlign: "right" as const }}>
-                {xfadeDuration}s
-              </span>
-            </div>
-          </SettingRow>
-        )}
         {setSegueOverlap && (
           <SettingRow label="Segue overlap (auto)" hint="How many seconds the next song starts before the current one ends — both play over the outgoing's own tail, so there's no dead air. The outgoing song always plays to its natural end; nothing cuts it short. 0 = wait for the end. No fades (songs carry their own mastered fade-outs). Saved with this station, so it follows your account to any machine.">
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>

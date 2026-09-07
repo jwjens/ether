@@ -142,8 +142,14 @@ export class AudioEngine {
   }
   shuffle = false;
   continuous = false;
-  outroCrossfade = false;
-  crossfadeDuration = 3;                 // manual X-key / AUTO-X crossfade (in-process path)
+  // STAYS, deliberately. The manual crossfade it was named for is gone, but two readers below still need
+  // it: the in-process rotate's deferred stop and its preload cadence. Removing it would make both
+  // `undefined * 1000` = NaN, and setTimeout(fn, NaN) fires IMMEDIATELY — every in-process rotate would
+  // hard-stop the outgoing deck at once.
+  //
+  // It is a HARDCODED NUMBER ON THE FALLBACK PATH and nothing can set it — filed in backlog.md. The name
+  // is wrong now too: it times a stop and a preload, not a crossfade.
+  crossfadeDuration = 3;
   segueOverlap = 3;                      // routine auto segue OVERLAP (seconds the next song starts early, 0 = off) — daemon-side, no fades
   // advancePromise serializes advance operations. Any handler chains onto this promise
   // so that concurrent same-tick callers await the in-flight advance rather than
@@ -1131,16 +1137,11 @@ export class AudioEngine {
     }
   }
 
-  crossfade(fromId: DeckId, toId: DeckId, ms = 2000) {
-    const from = this.getDeck(fromId);
-    const to = this.getDeck(toId);
-    to.setVolume(1);
-    invoke("audio_play", { deck: toId, stationId: this.stationId });
-    from.fadeTo(0, ms / 1000);
-    setTimeout(() => invoke("audio_stop", { deck: fromId, stationId: this.stationId }), ms + 100);
-  }
-
-  checkOutroCrossfade() {}
+  // crossfade() and checkOutroCrossfade() removed (2026-09-07) — no callers left once the X key and the
+  // "Crossfade A→B" macro went. crossfade() was the ONLY fade in the product: a renderer-side 20-step
+  // setInterval issuing audio_set_volume per step, which is why it sounded stepped. It also reached past
+  // the daemon with direct audio_play/audio_stop, and left the outgoing fader at 0 with nothing to
+  // restore it. checkOutroCrossfade() was an empty body — the unbuilt half of AUTO-X.
 }
 
 // SCAFFOLDING: hardcoded 1 matches current Rust default behavior

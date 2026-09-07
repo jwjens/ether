@@ -47,7 +47,6 @@ export const MACRO_ACTIONS: { category: string; actions: { label: string; type: 
       { label: "Stop Deck B",          type: "audio", value: "stop",    args: { deck: "B" } },
       { label: "Stop Deck C",          type: "audio", value: "stop",    args: { deck: "C" } },
       { label: "Stop All Decks",       type: "command", value: "stop_all" },
-      { label: "Crossfade A→B",        type: "command", value: "crossfade_ab" },
       { label: "Skip to Next",         type: "command", value: "skip" },
     ],
   },
@@ -92,8 +91,10 @@ export async function executeMacro(macro: Macro, dispatch?: (cmd: string) => voi
           await ether?.invoke?.("audio:stop", { deck: "A" });
           await ether?.invoke?.("audio:stop", { deck: "B" });
           await ether?.invoke?.("audio:stop", { deck: "C" });
-        } else if (action.value === "crossfade_ab") {
-          engine.crossfade("A", "B");
+        // "Crossfade A→B" removed (2026-09-07). Last caller of the renderer's crossfade(), a leftover of
+        // the retired XFADE concept. It never used the crossfade-duration setting (it passed no ms, so it
+        // always ran the 2s default), and it left deck A's fader parked at 0 — AudioCmd::Load deliberately
+        // never restores slot.volume, so the next rotation into that deck would have played silent.
         } else if (action.value === "skip") {
           engine.getDeck("A")?.stop();
         } else if (action.value === "automation_on") {

@@ -801,7 +801,10 @@ export default function App() {
     setDelayFill(0);
   };
   const [globalSearch, setGlobalSearch] = useState("");
-  const [autoXfade, setAutoXfade] = useState(true);
+  // AUTO-X removed (2026-09-07). Origin was 168d4f6 (2026-03-09) "auto-crossfade on outro point" — a
+  // one-line commit with no body. It was never built: engine.outroCrossfade was written here and read by
+  // nothing anywhere, and its only companion was `checkOutroCrossfade() {}`, an empty method. A toggle
+  // that sets a field no code reads is not a feature.
   // handleXfade/xfadeActive removed 2026-08-02 with the XFADE button. The deck ON button is the only
   // start control now, and it routes through the daemon's serialized rotate (deckCrossfade →
   // intentCrossfade → _rotateBody) rather than this renderer-side crossfade.
@@ -1876,14 +1879,14 @@ export default function App() {
     return () => { cancelled = true; clearTimeout(t); };
   }, [accountSignedIn]);
 
-  const [xfadeDuration, setXfadeDurationState] = useState(() => {
-    try { const v = parseInt(localStorage.getItem("ether_xfade_duration") || "3"); return isNaN(v) ? 3 : Math.min(10, Math.max(1, v)); } catch { return 3; }
-  });
-  const setXfadeDuration = (v: number) => {
-    setXfadeDurationState(v);
-    localStorage.setItem("ether_xfade_duration", String(v));
-    engine.crossfadeDuration = v;
-  };
+  // MANUAL CROSSFADE removed (2026-09-07). The XFADE button was retired on 2026-08-02 as redundant —
+  // pressing ON on the next deck already hands over through the daemon — and the X key and the
+  // "Crossfade A→B" macro were its last two triggers. Both are gone, so the duration had nothing left to
+  // time and the slider was a control for a thing that no longer happens. ether_xfade_duration is no
+  // longer read or written; a stale value in a machine's localStorage is inert.
+  //
+  // NOT segue overlap. That is the auto-playout deck transition a sweeper plays over, it is a separate
+  // concept with its own setting, and it is untouched (Jeff, 2026-09-07).
   // Routine segue overlap (auto song→song) — seconds the next song starts before the current ends
   // (0 = wait for the end). Distinct from the manual X-key crossfade above. No fades.
   //
@@ -1950,18 +1953,20 @@ export default function App() {
           break;
         }
         case "KeyB": if (dB) { if (dB.getState().status === "playing") dB.pause(); else if (dB.getState().status === "paused") dB.resume(); else dB.play(); } break;
-        case "KeyX":
-          const xPlaying = deckA?.status === "playing" ? "A" : deckB?.status === "playing" ? "B" : deckC?.status === "playing" ? "C" : null;
-          if (xPlaying) {
-            const xOrder: Array<"A"|"B"|"C"> = ["A","B","C"];
-            const xIdx = xOrder.indexOf(xPlaying as "A"|"B"|"C");
-            for (let xi = 1; xi <= 2; xi++) {
-              const xCand = xOrder[(xIdx + xi) % 3];
-              const xState = xCand === "A" ? deckA : xCand === "B" ? deckB : deckC;
-              if (xState?.filePath) { engine.crossfade(xPlaying, xCand, xfadeDuration * 1000); break; }
-            }
-          }
-          break;
+        // KeyX REMOVED (2026-09-07). It was the last caller of the renderer's own crossfade path and a
+        // leftover of the XFADE button, which was retired on 2026-08-02 as redundant: pressing ON on the
+        // next deck already hands over through the daemon (deckCrossfade -> intentCrossfade -> the
+        // serialized rotate). The key was missed in that cleanup and kept calling engine.crossfade(),
+        // which reached PAST the daemon with direct audio_play/audio_stop invokes — so the daemon's
+        // liveDeck, deckReady and retire bookkeeping never learned about the handover, and the liveDeck
+        // guard saw a foreign deck on air.
+        //
+        // It also left the outgoing deck's FADER AT ZERO. crossfade() ran fadeTo(0, ...) and nothing
+        // restored it: AudioCmd::Load deliberately never touches slot.volume ("THE FADER LEVEL IS THE
+        // JOCK'S"), so the next automation rotation into that deck would have played silent.
+        //
+        // Segue overlap (auto) is a SEPARATE concept and is untouched — that is the auto-playout overlap
+        // a sweeper plays over, and it has nothing to do with the manual crossfade (Jeff, 2026-09-07).
         case "KeyL": setPanel("library"); break;
         case "KeyS": setPanel("clocks"); break;
         case "KeyG": setPanel("logs"); break;
@@ -2040,8 +2045,6 @@ export default function App() {
 
   useEffect(() => {
     engine.init();
-    engine.outroCrossfade = true;
-    engine.crossfadeDuration = xfadeDuration;
     // Restore persisted AUTO state on boot — autoAdv was hydrated from
     // localStorage in useState init, but engine is a singleton that doesn't
     // know about it until we sync here.
@@ -3118,15 +3121,11 @@ export default function App() {
                   onConfigureDecks={() => setShowDeckConfig(true)}
                   autoSilenceTrim={autoSilenceTrim}
                   setAutoSilenceTrim={v => { setAutoSilenceTrim(v); localStorage.setItem("ether_auto_silence_trim", String(v)); }}
-                  xfadeDuration={xfadeDuration}
-                  setXfadeDuration={setXfadeDuration}
                   globalSearch={globalSearch}
                   setGlobalSearch={setGlobalSearch}
                   nowPlaying={nowPlayingStr || undefined}
                   toolsCollapsed={toolsCollapsed}
                   toggleToolsCollapsed={toggleToolsCollapsed}
-                  autoXfade={autoXfade}
-                  setAutoXfade={(v) => { setAutoXfade(v); engine.outroCrossfade = v; }}
                   onOpenCarts={() => setPanel("cartwall")}
                   libraryDock={<LibraryPanel onLoadA={loadA} onLoadB={loadB} onLoadC={loadC} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} onSendToStudio={(s) => { try { (window as any).ether.invoke("studio:push-track", { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms }); } catch { /* not in electron */ } }} />}
                 />
@@ -3166,7 +3165,7 @@ export default function App() {
               {panel === "announce" && <Announcements />}
               {panel === "voicetrack" && <VoiceTracker inputDeviceId={inputDevice || undefined} />}
               {panel === "showprep" && <ShowPrep onGoLive={() => setPanel("live")} />}
-              {panel === "settings" && <SettingsPanel key={stationId} xfadeDuration={xfadeDuration} setXfadeDuration={setXfadeDuration} segueOverlap={segueOverlap} setSegueOverlap={setSegueOverlap} />}
+              {panel === "settings" && <SettingsPanel key={stationId} segueOverlap={segueOverlap} setSegueOverlap={setSegueOverlap} />}
               {panel === "trackedit" && <TrackEditor song={editSong} onClose={() => setPanel("library")} onSaved={(s) => { setEditSong(s); }} />}
               {panel === "phonedesk" && <PhoneDesk onClose={() => setPanel("live")} />}
               {panel === "subscription" && <SubscriptionPanel />}
@@ -3889,7 +3888,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onAddSourceChannel, onSetSourceKind, onSetSourceDuck, onRemoveSourceChannel, canAddSourceChannel, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, xfadeDuration, setXfadeDuration, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, autoXfade, setAutoXfade, onOpenCarts, libraryDock, jingleOverlay, hasJinglePool, onOpenJingleSettings, onCloseDock }: {
+function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onAddSourceChannel, onSetSourceKind, onSetSourceDuck, onRemoveSourceChannel, canAddSourceChannel, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, onOpenCarts, libraryDock, jingleOverlay, hasJinglePool, onOpenJingleSettings, onCloseDock }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
   autoAdv: boolean | null; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
@@ -3906,15 +3905,11 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   onConfigureDecks?: () => void;
   autoSilenceTrim?: boolean;
   setAutoSilenceTrim?: (v: boolean) => void;
-  xfadeDuration: number;
-  setXfadeDuration: (v: number) => void;
   globalSearch: string;
   setGlobalSearch: (v: string) => void;
   nowPlaying?: string;
   toolsCollapsed: boolean;
   toggleToolsCollapsed: () => void;
-  autoXfade: boolean;
-  setAutoXfade: (v: boolean) => void;
   onOpenCarts: () => void;
   libraryDock: JSX.Element;
   jingleOverlay: { deck: string | null; state: string; title: string | null; contentClass: string | null; jinDurSec: number | null } | null;

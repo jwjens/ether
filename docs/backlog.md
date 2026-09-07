@@ -910,3 +910,27 @@ is reachable — see the known cold-stage daemon-connect race — and if it ever
 **Found because the 4.6.3 verification checked only the daemon engine.** A "the timed stop is gone" claim
 has to check BOTH engines. Not fixed: the renderer engine's rotate path is untested by the seam benches,
 and changing it blind is worse than leaving a dormant copy documented.
+
+## engine-rodio.ts crossfadeDuration = 3 — a hardcoded number on the fallback path (2026-09-07)
+
+The manual crossfade it was named for is gone (X key, XFADE button, "Crossfade A→B" macro, the Settings
+slider, AUTO-X — all removed 2026-09-07). The FIELD stays because two readers still need it:
+
+- `engine-rodio.ts:866` — the in-process rotate's deferred `audio_stop`
+- `engine-rodio.ts:876` — `nearDelay`, the in-process preload cadence
+
+Deleting it makes both `undefined * 1000` = NaN, and `setTimeout(fn, NaN)` fires IMMEDIATELY — every
+in-process rotate would hard-stop the outgoing deck at once. So it stays at its declared `3`.
+
+Two problems left behind, neither fixed:
+
+1. **Nothing can set it.** It is a number that shapes a deck transition, chosen in code, with no control —
+   the same class as everything in `docs/hidden-decisions-inventory-2026-09-07.md`. It only bites on the
+   in-process fallback path (the cold-stage daemon-connect race), which is why it is filed rather than
+   fixed.
+2. **The name is now wrong.** It times a stop and a preload; it does not time a crossfade. There is no
+   crossfade anywhere in Ether any more — `crossfade()` was the only fade in the product and it is gone.
+
+The daemon's own `audiod/engine.js` `crossfadeDuration = 3` is the same shape and the same name problem:
+it feeds the preload cadence and `_foreignGraceMs()`, which decides how long two decks may both be on air.
+Filed together; both are Jeff's to rule on.
