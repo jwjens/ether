@@ -200,7 +200,35 @@ function createLibraryHealth(opts) {
       totals.rows += rows.length;
       byTable[spec.table] = t;
     }
-    return { totals, byTable, foreignSample: sample };
+    return { totals, byTable, foreignSample: sample, unmeasured: unmeasuredLoudness(db) };
+  }
+
+  /** Rows with no loudness measurement. A song with no gain_db gets no trim in the mixer, so it airs at
+   *  the file's own level while everything around it has been pulled down — audibly louder, with nothing
+   *  saying why. Counted here so the Health Monitor states it once, rather than leaving it to be found
+   *  one row at a time in the Library. Account-scoped: `songs` carries no station_id.
+   *
+   *  This does NOT measure anything and must not. Measuring is an operator action (Library → right-click
+   *  → Measure loudness); an invented number would silently change how that song airs. */
+  function unmeasuredLoudness(db) {
+    try {
+      const cols = colsOf(db, 'songs');
+      if (!cols.has('lufs_measured') || !cols.has('gain_db')) return { count: 0, sample: [] };
+      const rows = db.prepare(
+        `SELECT id, title, content_class FROM songs
+          WHERE deleted_at IS NULL AND file_path IS NOT NULL
+            AND (lufs_measured IS NULL OR gain_db IS NULL)
+          ORDER BY title`).all();
+      const med = db.prepare(
+        `SELECT gain_db FROM songs WHERE deleted_at IS NULL AND gain_db IS NOT NULL
+          ORDER BY gain_db LIMIT 1 OFFSET (SELECT COUNT(*)/2 FROM songs WHERE deleted_at IS NULL AND gain_db IS NOT NULL)`
+      ).get();
+      return {
+        count: rows.length,
+        medianTrimDb: med ? med.gain_db : null,     // what the rest of the library IS trimmed by
+        sample: rows.slice(0, 5).map(r => ({ id: r.id, title: r.title, contentClass: r.content_class || 'MUSIC' })),
+      };
+    } catch { return { count: 0, sample: [] }; }
   }
 
   // Edge-triggered, NOT per sweep. The prefetch defect wrote 2,443 identical lines in two days

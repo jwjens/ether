@@ -51,6 +51,7 @@
     "files": [
       "!**/scripts/diag-*.js",
       "!docs/**",
+      "!temp-extract/**",
       "!node_modules/onnxruntime-node/bin/napi-v3/linux/**",
       "!node_modules/onnxruntime-node/bin/napi-v3/darwin/**",
       "!node_modules/better-sqlite3/prebuilds/darwin-*",

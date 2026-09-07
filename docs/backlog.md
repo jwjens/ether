@@ -888,3 +888,25 @@ Underlap itself: **stripped 2026-09-06** (it was carried through five files and 
 three DB columns `categories.overlay_underlap_sec`, `generated_schedule.underlap_sec` and
 `jingle_categories.underlap_sec` were deliberately LEFT IN PLACE — they are synced scalars and dropping
 one is a schema migration older peers would keep writing to.
+
+## engine-rodio.ts:860 carries a SECOND timed force-stop (2026-09-06)
+
+Slice 0 removed the timed post-crossfade stop from `audiod/engine.js` — the daemon engine, which is what
+drives playout. **`src/audio/engine-rodio.ts:860` still has its own copy**, verbatim in the shipped 4.6.3
+renderer bundle:
+
+```js
+await co("audio_play",{deck:r,...}),
+setTimeout(()=>{co("audio_stop",{deck:n,...}).catch(()=>{})}, this.crossfadeDuration*1e3+500)
+```
+
+Unconditional, no drained check, no deckGen guard — the exact behaviour that was cutting 1.5s off every
+segued song. It is on the **in-process fallback path**, which is not the one running today (the daemon
+engine is: `engine-rodio.ts` contains zero sweeper code and sweepers fire at every seam). But the fallback
+is reachable — see the known cold-stage daemon-connect race — and if it ever runs, the truncation is back.
+
+`engine-rodio.ts:147` also still carries `segueOverlap = 3`, the literal slice 0 removed from the daemon.
+
+**Found because the 4.6.3 verification checked only the daemon engine.** A "the timed stop is gone" claim
+has to check BOTH engines. Not fixed: the renderer engine's rotate path is untested by the seam benches,
+and changing it blind is worse than leaving a dormant copy documented.

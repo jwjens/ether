@@ -144,6 +144,8 @@ interface SongRow {
   category_code: string | null; category_color: string | null;
   intro_end?: number | null; outro_start?: number | null; bpm?: number | null;
   gain_db?: number | null; play_count?: number | null;
+  /** EBU R128 loudness of the FILE. Null = never measured — see isUnmeasured(). */
+  lufs_measured?: number | null;
   cart_id?: string | null;
   content_class?: string | null;   // MUSIC / SWP / SPOT / ANN — what the row IS (badge + filter)
   /** Registry TYPE (SONG | SPOT | SWEEPER | ANNOUNCEMENT | …). Present on every row. */
@@ -151,6 +153,24 @@ interface SongRow {
   /** Which table this row came from. Actions branch on this, never on the id’s sign. */
   source?: "songs" | "library_asset";
   asset_uuid?: string | null;
+}
+
+// A ROW WITH NO LOUDNESS MEASUREMENT PLAYS UNTRIMMED, AND THAT HAS TO BE VISIBLE.
+//
+// gain_db is the per-file trim the mixer applies (native/src/audio.rs — `trim`). A row with no
+// measurement has no trim, so it airs at the file's own level while everything around it has been
+// pulled down. On halloVeen the measured library sits at a median trim of about -5.7 dB, so an
+// unmeasured hot master is audibly louder than its neighbours with nothing on screen saying why.
+//
+// Nothing here measures anything. The state is DERIVED from the row every render — never a stored flag
+// that someone has to remember to clear — and the fix is an action the operator takes.
+const isUnmeasured = (s: { lufs_measured?: number | null; gain_db?: number | null }) =>
+  s.lufs_measured == null || s.gain_db == null;
+
+/** The median trim across the rows that DO have one, so the warning quotes this library, not a constant. */
+function medianTrimDb(rows: { gain_db?: number | null }[]): number | null {
+  const g = rows.map(r => r.gain_db).filter((x): x is number => typeof x === "number").sort((a, b) => a - b);
+  return g.length ? g[Math.floor(g.length / 2)] : null;
 }
 
 // THE TWO VOCABULARIES, mapped once. `content_class` is what a row IS on the wire and in the log
@@ -5128,6 +5148,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
   // shows every element type means reading `library_asset` instead — the unified-library rework,
   // filed and not built.
   const [classFilter, setClassFilter] = useState<Set<string>>(new Set());
+  const [onlyUnmeasured, setOnlyUnmeasured] = useState(false);
   const [count, setCount] = useState(0);
   const [status, setStatus] = useState("");
   const [missingSongs, setMissingSongs] = useState<string[]>([]);
@@ -5644,7 +5665,8 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
       (s.cart_id||"").toLowerCase().includes(search.toLowerCase());
     const matchCat = !categoryFilter || (s.category_code || "") === categoryFilter;
     const matchClass = passesClassFilter((s as any).content_class, classFilter);
-    return matchSearch && matchCat && matchClass;
+    const matchMeasured = !onlyUnmeasured || isUnmeasured(s);
+    return matchSearch && matchCat && matchClass && matchMeasured;
   });
 
   const S = {
@@ -5868,6 +5890,20 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
             const k = String(s.content_class || "MUSIC").toUpperCase();
             m[k] = (m[k] || 0) + 1; return m;
           }, {})} />
+        {(() => {
+          const n = songs.filter(isUnmeasured).length;
+          if (!n) return null;                       // nothing unmeasured → no chip to ignore
+          return (
+            <button onClick={() => setOnlyUnmeasured(v => !v)}
+              title="Songs with no loudness measurement. They play at the file's own level, untrimmed."
+              style={{ padding: "8px 12px", borderRadius: 0, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                background: onlyUnmeasured ? "rgba(245, 158, 11, 0.16)" : "var(--bg-secondary)",
+                border: `1px solid ${onlyUnmeasured ? "rgba(245, 158, 11, 0.55)" : "var(--border-primary)"}`,
+                color: onlyUnmeasured ? "#f59e0b" : "var(--text-secondary)", letterSpacing: "0.04em" }}>
+              UNMEASURED {n}
+            </button>
+          );
+        })()}
         <select value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}
           style={{ padding: "8px 12px", borderRadius: 0, fontSize: 12, background: categoryFilter ? "rgb(from var(--accent-blue) r g b / 0.1)" : "var(--bg-secondary)", border: `1px solid ${categoryFilter ? "rgb(from var(--accent-blue) r g b / 0.4)" : "var(--border-primary)"}`, color: categoryFilter ? "var(--accent-cyan)" : "var(--text-secondary)", outline: "none", cursor: "pointer" }}>
           <option value="">All Categories</option>
@@ -5940,6 +5976,20 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
             { label: "Load to Deck C", action: () => { onLoadC(ctxMenu.song); setCtxMenu(null); } },
             { label: "Add to Queue",   action: () => { onQueue(ctxMenu.song); setCtxMenu(null); } },
             { label: "Edit Cue Points", action: () => { onEdit(ctxMenu.song); setCtxMenu(null); } },
+            // MEASURE LOUDNESS — operator-initiated, always. Nothing in Ether measures a row on its own:
+            // an invented number would silently change how that song airs. Writes lufs_measured / gain_db /
+            // peak_db only; the audio file is never touched.
+            { label: isUnmeasured(ctxMenu.song) ? "Measure loudness" : "Re-measure loudness",
+              disabled: !ctxMenu.song.file_path,
+              action: async () => {
+                const song = ctxMenu.song; setCtxMenu(null);
+                if (!song.file_path) return;
+                try {
+                  const { analyzeAndSave } = await import("./audio/songAnalysis");
+                  await analyzeAndSave(song.id, song.file_path);
+                  load();
+                } catch (e) { alert(`Could not measure "${song.title}": ${(e as any)?.message ?? e}`); }
+              } },
             { label: "Send to Studio", action: () => { onSendToStudio(ctxMenu.song); setCtxMenu(null); } },
             null,
             // ── The two FILE actions, from the shared set (src/lib/fileLocation.tsx) ──────────
@@ -6226,6 +6276,15 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                     {s.content_class === "SPOT" && (
                       <span title="Spot — commercial/promo; excluded from music rotation & reporting" style={{ marginRight: 6, padding: "1px 6px", fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "#f59e0b", background: "rgba(245, 158, 11, 0.14)", border: "1px solid rgba(245, 158, 11, 0.4)", borderRadius: 0, flexShrink: 0, letterSpacing: "0.06em" }}>SPOT</span>
                     )}
+                    {isUnmeasured(s) && (() => {
+                      const med = medianTrimDb(songs);
+                      const hint = med != null
+                        ? `No loudness measurement. This plays at the file's own level, untrimmed — the rest of the library is trimmed by a median of ${Math.abs(med).toFixed(1)} dB, so it will sound about that much louder. Right-click → Measure loudness.`
+                        : "No loudness measurement. This plays at the file's own level, untrimmed. Right-click → Measure loudness.";
+                      return (
+                        <span title={hint} style={{ marginRight: 6, padding: "1px 6px", fontSize: 10, fontWeight: 800, fontFamily: "'JetBrains Mono', ui-monospace, monospace", color: "#f59e0b", background: "rgba(245, 158, 11, 0.14)", border: "1px solid rgba(245, 158, 11, 0.5)", borderRadius: 0, flexShrink: 0, letterSpacing: "0.06em" }}>UNMEASURED</span>
+                      );
+                    })()}
                     <InlineNameEditor
                       value={s.title || ""}
                       readOnly={libraryBorrowed}

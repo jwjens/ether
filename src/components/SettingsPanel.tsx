@@ -714,11 +714,42 @@ function CloudPlayoutSection() {
 // the daemon reads them (segue pattern) and pushes to the native engine via audioSetProcessing, then feeds
 // live meters back over its dedicated "audio:proc-meters" channel. Both OFF by default → bit-identical
 // passthrough. Native DSP + fork bench-proven (native/src/program_processor.rs).
+// DECLARED AT MODULE SCOPE, AND IT HAS TO BE.
+//
+// This lived inside AudioProcessingSection, which makes it a NEW COMPONENT TYPE on every render —
+// React unmounts the old button and mounts a fresh DOM node each time. That section re-renders ~15
+// times a second while processing is on, because the "audio:proc-meters" feed calls setMeters on every
+// frame. So the button was being rebuilt every ~66ms: the .15s CSS transitions never completed (it
+// flashed instead of sliding), and a click — which needs mousedown and mouseup on the SAME element —
+// mostly straddled a remount and never fired at all.
+//
+// The direction that mattered was OFF: the meter feed only runs while a toggle is ON, so turning
+// processing on was one click on a still button and turning it off meant hitting a target being
+// rebuilt 15 times a second. Reported by Jeff, 2026-09-06: "when i click the processing button it
+// flashes it doesnt turn off ... it finally turned off but it shouldnt be that difficult."
+//
+// Named ProcToggle, not Toggle: there is already a different module-scope Toggle at :163 (value /
+// onChange / label) that the inner declaration was shadowing.
+const ProcToggle = ({ on, onClick }: { on: boolean; onClick: () => void }) => (
+  <button onClick={onClick} role="switch" aria-checked={on} style={{ width: 44, height: 24, borderRadius: 999, border: "none", cursor: "pointer", background: on ? "var(--accent-blue)" : "var(--bg-tertiary)", position: "relative", transition: "background .15s", flexShrink: 0 }}>
+    <span style={{ position: "absolute", top: 2, left: on ? 22 : 2, width: 20, height: 20, borderRadius: "50%", background: "#fff", transition: "left .15s" }} />
+  </button>
+);
+
+// The loudness target the engine uses when a station has no stored value. It is written to
+// station_config_kv at boot (_surfaceProcTargetDefault in electron/main.js) so it stops being invisible,
+// and this constant exists ONLY so the field can render an honest number in the moment before that read
+// lands — never as a silent stand-in for a setting. Keep in step with audiod/engine.js and audio.rs.
+const PROC_TARGET_EFFECTIVE = -14;
+
 function AudioProcessingSection() {
   const { stationId, stationUuid } = useActiveStation();
   const [local, setLocal]   = useState(false);
   const [stream, setStream] = useState(false);
-  const [target, setTarget] = useState(-14);
+  // null until the KV read lands. The number on screen is never a component default pretending to be a
+  // stored setting — if nothing is stored, the field says so instead of quietly showing -14.
+  const [target, setTarget] = useState<number | null>(null);
+  const [targetStored, setTargetStored] = useState(false);
   useEffect(() => {
     if (!stationId) return;
     (async () => {
@@ -728,7 +759,9 @@ function AudioProcessingSection() {
         const get = (k: string) => rows.find(x => x.key === k)?.value;
         setLocal(get("proc_local") === "1");
         setStream(get("proc_stream") === "1");
-        const t = parseFloat(get("proc_target_lufs")); if (!isNaN(t)) setTarget(t);
+        const t = parseFloat(get("proc_target_lufs"));
+        if (!isNaN(t)) { setTarget(t); setTargetStored(true); }
+        else { setTarget(PROC_TARGET_EFFECTIVE); setTargetStored(false); }
       } catch { /* defaults */ }
     })();
   }, [stationId]);
@@ -753,27 +786,27 @@ function AudioProcessingSection() {
     return () => { try { audio.offProcMeters?.(h); } catch { /* ignore */ } if (staleTimer) clearTimeout(staleTimer); };
   }, [stationId, stationUuid]);
   const on = local || stream;
-  const Toggle = ({ on, onClick }: { on: boolean; onClick: () => void }) => (
-    <button onClick={onClick} role="switch" aria-checked={on} style={{ width: 44, height: 24, borderRadius: 999, border: "none", cursor: "pointer", background: on ? "var(--accent-blue)" : "var(--bg-tertiary)", position: "relative", transition: "background .15s", flexShrink: 0 }}>
-      <span style={{ position: "absolute", top: 2, left: on ? 22 : 2, width: 20, height: 20, borderRadius: "50%", background: "#fff", transition: "left .15s" }} />
-    </button>
-  );
   return (
     <Section category="broadcast"
       icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>}
       title="Audio Processing" description="Per-station loudness on the program bus — loudness ride to target + −1 dBTP true-peak limiter. Both OFF by default; opt in per station.">
       <SettingRow label="Process local output" hint="Apply processing to THIS machine's speaker/monitor output. Broadcast is unaffected — this is the PRE/POST monitor choice.">
-        <Toggle on={local} onClick={() => { const v = !local; setLocal(v); save("proc_local", v ? "1" : "0"); }} />
+        <ProcToggle on={local} onClick={() => { const v = !local; setLocal(v); save("proc_local", v ? "1" : "0"); }} />
       </SettingRow>
       <SettingRow label="Process stream" hint="Apply processing to the Icecast stream — what listeners hear.">
-        <Toggle on={stream} onClick={() => { const v = !stream; setStream(v); save("proc_stream", v ? "1" : "0"); }} />
+        <ProcToggle on={stream} onClick={() => { const v = !stream; setStream(v); save("proc_stream", v ? "1" : "0"); }} />
       </SettingRow>
       <SettingRow label="Target loudness" hint="EBU R128 program target. −14 LUFS is the streaming standard; the limiter holds −1 dBTP.">
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <input type="number" min={-30} max={-6} step={1} value={target}
-            onChange={e => { const t = parseFloat(e.target.value); if (!isNaN(t)) { const c = Math.max(-30, Math.min(-6, t)); setTarget(c); save("proc_target_lufs", String(c)); } }}
+          <input type="number" min={-30} max={-6} step={1} value={target ?? PROC_TARGET_EFFECTIVE}
+            onChange={e => { const t = parseFloat(e.target.value); if (!isNaN(t)) { const c = Math.max(-30, Math.min(-6, t)); setTarget(c); setTargetStored(true); save("proc_target_lufs", String(c)); } }}
             style={{ width: 70, padding: "6px 8px", fontSize: 13, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
           <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>LUFS</span>
+          {target !== null && !targetStored && (
+            <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontStyle: "italic" }}>
+              station default, not yet saved
+            </span>
+          )}
         </div>
       </SettingRow>
       {on ? (
