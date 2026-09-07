@@ -4873,11 +4873,30 @@ ipcMain.handle("audio:set-duck-params", (_, stationId, p) =>
          ? audio.audioSetDuckParams(stationId, p.depthDb, p.thresholdDb, p.attackMs, p.holdMs, p.releaseMs) : false));
 // The program processor's operator parameters. Routed exactly like set-duck-params so it reaches
 // whichever engine owns the audio. The two bypasses ride this call and are never stored anywhere.
-ipcMain.handle("audio:set-processor-params", (_, stationId, p) =>
-  AUDIO_DAEMON
-    ? audiodClient.cmd("setProcessorParams", { stationId, ceilingDbtp: p.ceilingDbtp, releaseMs: p.releaseMs, rideRate: p.rideRate, rideClamp: p.rideClamp, rideBypass: !!p.rideBypass, limiterBypass: !!p.limiterBypass })
-    : (audio && typeof audio.audioSetProcessorParams === "function"
-         ? audio.audioSetProcessorParams(stationId, p.ceilingDbtp, p.releaseMs, p.rideRate, p.rideClamp, !!p.rideBypass, !!p.limiterBypass) : false));
+// TWO engine commands, because the numbers and the bypass are two different lifetimes: the numbers are
+// re-asserted from the KV every ~15s, the bypass must never be. Reports which of the two actually
+// landed, so the renderer can say so instead of assuming — a command that silently did nothing is how
+// the BYPASS button stayed dead through 4.6.9 and 4.6.10.
+ipcMain.handle("audio:set-processor-params", async (_, stationId, p) => {
+  const numbers = [stationId, p.ceilingDbtp, p.releaseMs, p.rideRate, p.rideClamp];
+  try {
+    if (AUDIO_DAEMON) {
+      const okNums = await audiodClient.cmd("setProcessorParams", { stationId, ceilingDbtp: p.ceilingDbtp, releaseMs: p.releaseMs, rideRate: p.rideRate, rideClamp: p.rideClamp });
+      const okByp  = await audiodClient.cmd("setProcessorBypass", { stationId, rideBypass: !!p.rideBypass, limiterBypass: !!p.limiterBypass });
+      return { numbers: !!okNums, bypass: !!okByp };
+    }
+    if (!audio || typeof audio.audioSetProcessorParams !== "function") return { numbers: false, bypass: false, reason: "no audio engine" };
+    const okNums = !!audio.audioSetProcessorParams(...numbers);
+    const okByp  = typeof audio.audioSetProcessorBypass === "function"
+      ? !!audio.audioSetProcessorBypass(stationId, !!p.rideBypass, !!p.limiterBypass)
+      : false;
+    return { numbers: okNums, bypass: okByp };
+  } catch (e) {
+    // NOT swallowed. The renderer surfaces this and the ledger keeps it.
+    try { _healthEvent("proc-params-failed", { stationId, detail: String(e && e.message || e) }); } catch {}
+    return { numbers: false, bypass: false, reason: String(e && e.message || e) };
+  }
+});
 ipcMain.handle("audio:set-aux-monitor", (_, stationId, deck, gain) =>
   AUDIO_DAEMON ? audiodClient.cmd("setAuxMonitor", { stationId, deck, gain })
                : audio.audioSetAuxMonitor(stationId, deck, gain));

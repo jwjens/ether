@@ -314,7 +314,16 @@ class DaemonEngine {
         else if (r.key === "proc_ride_rate")    { const v = parseFloat(r.value); if (!isNaN(v)) rideRate = Math.max(0.1, Math.min(12, v)); }
         else if (r.key === "proc_ride_clamp")   { const v = parseFloat(r.value); if (!isNaN(v)) rideClamp= Math.max(0, Math.min(24, v)); }
       }
-    } catch { return; }   // KV unreadable → leave the last-applied state untouched; never disturb playout
+    } catch (e) {
+      // Leave the last-applied state untouched — never disturb playout for a read failure. But SAY SO:
+      // this used to return silently, so a station whose KV could not be read looked identical to one
+      // with nothing to change. Rate-limited to once a minute so a persistent fault cannot flood.
+      if (!this._procKvErrAt || (now - this._procKvErrAt) > 60000) {
+        this._procKvErrAt = now;
+        this._log("processing kv ✗", String(e && e.message || e));
+      }
+      return;
+    }
     const prev = this._procApplied;
     const changed = !prev || prev.local !== local || prev.stream !== stream || prev.target !== target
       || prev.ceiling !== ceiling || prev.release !== release || prev.rideRate !== rideRate || prev.rideClamp !== rideClamp;
@@ -325,10 +334,12 @@ class DaemonEngine {
     this._procAssertedAt = now;
     try {
       A.audioSetProcessing(this.stationId, local, stream, target);
-      // The NUMBERS only. Bypass is not read from anywhere here by design — it arrives live via the
-      // setProcessorParams command and dies with the process, so a restart cannot leave the ceiling off.
+      // THE NUMBERS ONLY — and now that is enforced by the signature, not by care. This call used to
+      // take two trailing bypass booleans and passed `false, false`, so every ~15s re-assert silently
+      // un-bypassed whatever the operator had engaged in the rack. Bypass moved to its own command
+      // (audioSetProcessorBypass); this path cannot express it and therefore cannot clear it.
       if (typeof A.audioSetProcessorParams === "function") {
-        A.audioSetProcessorParams(this.stationId, ceiling, release, rideRate, rideClamp, false, false);
+        A.audioSetProcessorParams(this.stationId, ceiling, release, rideRate, rideClamp);
       }
       if (changed) this._log("processing", `local=${local} stream=${stream} target=${target} ceiling=${ceiling} release=${release} rideRate=${rideRate} rideClamp=${rideClamp}`);
     } catch (e) { this._log("processing apply ✗", String(e)); }

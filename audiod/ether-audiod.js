@@ -298,7 +298,11 @@ const handlers = {
   // The processor's operator parameters. The four NUMBERS also live in station_config_kv and are
   // re-read by the engine poll, so they survive a restart; the two BYPASSES arrive only here and die
   // with the process, which is what makes them a test tool rather than a setting.
-  setProcessorParams: (m) => { A.audioSetProcessorParams(m.stationId, m.ceilingDbtp, m.releaseMs, m.rideRate, m.rideClamp, !!m.rideBypass, !!m.limiterBypass); return true; },
+  // Returns what the ENGINE returned, not a literal true. The old version discarded the napi boolean
+  // and reported success unconditionally, so a command that never reached the audio thread looked
+  // identical to one that did — part of why a dead BYPASS button was invisible for two releases.
+  setProcessorParams: (m) => !!A.audioSetProcessorParams(m.stationId, m.ceilingDbtp, m.releaseMs, m.rideRate, m.rideClamp),
+  setProcessorBypass: (m) => !!A.audioSetProcessorBypass(m.stationId, !!m.rideBypass, !!m.limiterBypass),
   setDuckParams:      (m) => A.audioSetDuckParams(m.stationId, m.depthDb, m.thresholdDb, m.attackMs, m.holdMs, m.releaseMs),
   // AUX MONITOR (room) level for one aux deck — D/E/F only, enforced in Rust. 0 = silent locally.
   setAuxMonitor:      (m) => A.audioSetAuxMonitor(m.stationId, m.deck, m.gain),

@@ -60,6 +60,10 @@ interface Props {
   /** What the ride WOULD apply, derived from the observed input and the operator's target/clamp.
    *  Rendered greyed and labelled as a projection — never in the place the applied gain goes. */
   wouldRideDb: number | null;
+  /** Set when the last command did not reach the engine. A control that did nothing must say so. */
+  sendError?: string | null;
+  /** The operator engaged a bypass the engine has not confirmed. Never left silent. */
+  bypassPending?: boolean;
 }
 
 const LABEL: React.CSSProperties = { fontSize: 11, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -138,6 +142,20 @@ export default function ProcessorRack(p: Props) {
           <button disabled={!saveName.trim()} onClick={() => { p.onSavePreset(saveName.trim()); setSaveName(""); }}
             style={{ padding: "4px 10px", fontSize: 11, fontWeight: 700, background: "var(--bg-tertiary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: saveName.trim() ? "pointer" : "default", opacity: saveName.trim() ? 1 : 0.4 }}>Save</button>
         </div>
+
+        {/* A COMMAND THAT DID NOT LAND SAYS SO. The BYPASS button was dead for two releases and looked
+            identical to a working one, because every failure on this path was swallowed. */}
+        {p.sendError && (
+          <div style={{ padding: "7px 11px", background: "rgba(239,68,68,0.15)", border: "1px solid #ef4444", color: "#ef4444", fontSize: 12, fontWeight: 700 }}>
+            ⚠ The engine did not accept that — {p.sendError}
+          </div>
+        )}
+        {p.bypassPending && !p.sendError && (
+          <div style={{ padding: "6px 11px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", fontSize: 11 }}>
+            Waiting for the engine to confirm the bypass… if this does not clear, the audio daemon is
+            older than this build — fully close and reopen Ether.
+          </div>
+        )}
 
         {/* THE BYPASS BANNER. Visually obvious while engaged, as ruled — a bypassed limiter means nothing
             is holding the ceiling on the processed path, and that is distortion you cannot hear locally. */}

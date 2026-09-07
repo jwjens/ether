@@ -831,7 +831,9 @@ function AudioProcessingSection() {
             {" · "}
             {meters?.limiterBypass
               ? <b style={{ color: "#f59e0b" }}>limiter BYPASSED — nothing is holding the ceiling</b>
-              : <>limiter holds {(meters?.ceilingDbtp ?? -1).toFixed(1)} dBTP</>}
+              : (typeof meters?.ceilingDbtp === "number" && meters.ceilingDbtp < 0
+                  ? <>limiter holds {meters.ceilingDbtp.toFixed(1)} dBTP</>
+                  : <>limiter ceiling <span title="The engine has not reported a ceiling on this frame. An older audio daemon (it does not reload on auto-update) does not send one — fully close and reopen Ether.">not reported</span></>)}
             {" · "}{local && stream ? "monitor + stream" : local ? "monitor only" : "stream only"}.
           </div>
           {(meters?.rideBypass || meters?.limiterBypass) && (

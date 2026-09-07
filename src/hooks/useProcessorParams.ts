@@ -18,6 +18,9 @@ export type ProcMeters = {
   inLufs: number; outLufs: number; grDb: number; rideGainDb: number;
   inPeakDb: number; outPeakDb: number;
   rideBypass?: boolean; limiterBypass?: boolean;
+  /** The ceiling the limiter is actually holding. Always negative when reported; absent or >= 0 means
+   *  the engine did not send one (an older daemon), and no panel may substitute a number for it. */
+  ceilingDbtp?: number;
 } | null;
 
 /** The four persisted NUMBERS (plus the target). Bypass is deliberately absent — never written. */
@@ -38,6 +41,8 @@ export function useProcessorParams(stationId: number | null) {
   // Pre-confirmation intent only. Everything downstream prefers the engine's echo.
   const [intentRide, setIntentRide]       = useState(false);
   const [intentLimiter, setIntentLimiter] = useState(false);
+  /** Last delivery failure, shown in the rack. Null when the last command was accepted. */
+  const [sendError, setSendError] = useState<string | null>(null);
 
   // ── the numbers + presets, from station_config_kv ──────────────────────────
   useEffect(() => {
@@ -78,7 +83,7 @@ export function useProcessorParams(stationId: number | null) {
       setMeters({
         inLufs: m.inLufs, outLufs: m.outLufs, grDb: m.grDb, rideGainDb: m.rideGainDb ?? 0,
         inPeakDb: m.inPeakDb, outPeakDb: m.outPeakDb,
-        rideBypass: m.rideBypass, limiterBypass: m.limiterBypass,
+        rideBypass: m.rideBypass, limiterBypass: m.limiterBypass, ceilingDbtp: m.ceilingDbtp,
       });
       if (stale) clearTimeout(stale);
       // No frame for a second means no observed state — drop to "—" rather than hold a stale number.
@@ -90,16 +95,31 @@ export function useProcessorParams(stationId: number | null) {
   const rideBypass    = meters?.rideBypass    ?? intentRide;
   const limiterBypass = meters?.limiterBypass ?? intentLimiter;
 
-  /** Deliver to the engine. The two bypasses ride this call and are stored nowhere. */
-  const send = useCallback((prm: ProcParams, rb: boolean, lb: boolean) => {
+  /** Deliver to the engine, and SAY WHETHER IT LANDED.
+   *
+   *  This was fire-and-forget inside a `catch {}`: the promise was never awaited and any failure was
+   *  swallowed, so a command that never reached the audio thread looked exactly like one that did. The
+   *  main process now answers { numbers, bypass } and a false on either surfaces in the rack. */
+  const send = useCallback(async (prm: ProcParams, rb: boolean, lb: boolean) => {
     if (stationId == null) return;
     try {
-      (window as any).ether?.audio?.setProcessorParams?.(stationId, {
+      const r = await (window as any).ether?.audio?.setProcessorParams?.(stationId, {
         ceilingDbtp: prm.ceilingDbtp, releaseMs: prm.releaseMs,
         rideRate: prm.rideRate, rideClamp: prm.rideClamp,
         rideBypass: rb, limiterBypass: lb,
       });
-    } catch { /* engine not up; the daemon re-reads the KV on its own poll */ }
+      // Older daemons (the daemon does NOT reload on auto-update) answer with a bare boolean or
+      // undefined. Only an explicit false is treated as a failure; an unknown shape stays quiet.
+      if (r && typeof r === "object" && (r.numbers === false || r.bypass === false)) {
+        setSendError(r.reason || (r.bypass === false && r.numbers !== false
+          ? "the engine did not accept the bypass command"
+          : "the engine did not accept the processor settings"));
+      } else {
+        setSendError(null);
+      }
+    } catch (e: any) {
+      setSendError(String(e?.message || e));
+    }
   }, [stationId]);
 
   const patch = useCallback((p: Partial<ProcParams>) => {
@@ -151,6 +171,10 @@ export function useProcessorParams(stationId: number | null) {
     ? Math.max(-params.rideClamp, Math.min(params.rideClamp, params.targetLufs - meters.inLufs))
     : null;
 
+  // A bypass the operator engaged that the ENGINE has not confirmed. The chip renders the echo, so
+  // without this an unconfirmed click is silent — exactly the failure that hid the dead button.
+  const bypassPending = (intentRide !== rideBypass) || (intentLimiter !== limiterBypass);
+
   return { params, stored, presets, activePreset, meters, rideBypass, limiterBypass, wouldRideDb,
-           patch, selectPreset, savePreset, setBypass };
+           sendError, bypassPending, patch, selectPreset, savePreset, setBypass };
 }

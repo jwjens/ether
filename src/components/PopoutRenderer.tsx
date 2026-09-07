@@ -143,6 +143,8 @@ function ProcessorPopout() {
       onBypass={proc.setBypass}
       meters={proc.meters}
       wouldRideDb={proc.wouldRideDb}
+      sendError={proc.sendError}
+      bypassPending={proc.bypassPending}
     />
   );
 }

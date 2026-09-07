@@ -337,12 +337,17 @@ pub enum AudioCmd {
     /// DUCKER tuning, per STATION — there is ONE duck envelope per bus, so every one of these is
     /// station-wide by construction, never per channel. Dialled by ear from Preferences.
     SetDuckParams { depth_db: f32, threshold_db: f32, attack_ms: f32, hold_ms: f32, release_ms: f32 },
-    /// The program processor's operator-settable parameters. SEPARATE from SetProcessing (which carries
-    /// the two on/off toggles and the loudness target) so a station that never sends this is
-    /// bit-identical to before — the defaults live in ProgramProcessor::new and nothing overwrites them.
-    /// The two bypasses ride this command and are never stored, so they cannot survive a restart.
-    SetProcessorParams { ceiling_dbtp: f32, release_ms: f32, ride_rate_db_s: f32, ride_clamp_db: f32,
-                         ride_bypass: bool, limiter_bypass: bool },
+    /// The program processor's operator-settable NUMBERS. Separate from SetProcessing (the two on/off
+    /// toggles and the loudness target) so a station that never sends this is bit-identical to before.
+    SetProcessorParams { ceiling_dbtp: f32, release_ms: f32, ride_rate_db_s: f32, ride_clamp_db: f32 },
+    /// BYPASS, ON ITS OWN COMMAND — and this separation is the whole point.
+    ///
+    /// It used to ride SetProcessorParams. The daemon re-asserts the numbers from the KV every ~15s
+    /// while processing is on, and had to pass SOMETHING for bypass, so it passed `false` — silently
+    /// un-bypassing whatever the operator had engaged, within 15 seconds, every time. Splitting the
+    /// command means the re-assert has no way to express bypass and therefore cannot clear it. A
+    /// structural guarantee, not a rule someone has to remember. 2026-09-07.
+    SetProcessorBypass { ride_bypass: bool, limiter_bypass: bool },
     /// Choose the output device for the AUX monitor bus. Empty string = none = the aux stream is
     /// closed and the bus is silent.
     SetAuxDevice(String),
@@ -878,6 +883,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             // compiler catching this arm is what makes adding a command safe, and a `_ =>`
                             // here would silently swallow the next one.
                             AudioCmd::SetProcessorParams { .. } => {}
+                            AudioCmd::SetProcessorBypass { .. } => {}
                             AudioCmd::StartStream { server, port, mount, station_name, .. } => {
                                 eprintln!("Stream: {}:{}{} ({})", server, port, mount, station_name);
                             }
@@ -1930,6 +1936,20 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     lvl.proc_ride_gain_db = bus.proc_ride_gain_db;
                                     lvl.proc_in_peak     = bus.proc_in_peak;
                                     lvl.proc_out_peak    = bus.proc_out_peak;
+                                    // THE ECHO. These six were declared on AudioLevels in 4.6.9 with a
+                                    // comment describing exactly this assignment — and the assignment was
+                                    // never written. Six fields shipped as their zero value on every frame
+                                    // for two releases: the rack's BYPASS chip could never light (the UI
+                                    // read `false` and, because `false` is not nullish, `?? intent` never
+                                    // fell back), and Settings read a 0.0 dBTP ceiling. A field a consumer
+                                    // reads and no producer writes is indistinguishable from a dead
+                                    // control. audiod/smoke-meter-contract.js now fails the build for it.
+                                    lvl.proc_ceiling_dbtp   = bus.proc_ceiling_dbtp;
+                                    lvl.proc_release_ms     = bus.proc_release_ms;
+                                    lvl.proc_ride_rate      = bus.proc_ride_rate;
+                                    lvl.proc_ride_clamp     = bus.proc_ride_clamp;
+                                    lvl.proc_ride_bypass    = bus.proc_ride_bypass;
+                                    lvl.proc_limiter_bypass = bus.proc_limiter_bypass;
                                     let mut active = 0u32;
                                     // CART (slot 6) is reported HERE so jingles/carts carry a real
                                     // sample position too — without it every cart reads 0:00 forever.
@@ -2009,7 +2029,13 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::SetMasterMonitorVolume(v) => {
                                 if let Ok(mut bus) = bus_cmd.lock() { bus.master_monitor_vol = v.clamp(0.0, 1.0); }
                             }
-                            AudioCmd::SetProcessorParams { ceiling_dbtp, release_ms, ride_rate_db_s, ride_clamp_db, ride_bypass, limiter_bypass } => {
+                            AudioCmd::SetProcessorBypass { ride_bypass, limiter_bypass } => {
+                                if let Ok(mut bus) = bus_cmd.lock() {
+                                    bus.proc_ride_bypass    = ride_bypass;
+                                    bus.proc_limiter_bypass = limiter_bypass;
+                                }
+                            }
+                            AudioCmd::SetProcessorParams { ceiling_dbtp, release_ms, ride_rate_db_s, ride_clamp_db } => {
                                 if let Ok(mut bus) = bus_cmd.lock() {
                                     // Clamped at the edges only, as the ducker's params are: every value
                                     // between is a legitimate operator choice. The ceiling is never
@@ -2019,8 +2045,6 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     bus.proc_release_ms     = release_ms.clamp(5.0, 2000.0);
                                     bus.proc_ride_rate      = ride_rate_db_s.clamp(0.1, 12.0);
                                     bus.proc_ride_clamp     = ride_clamp_db.clamp(0.0, 24.0);
-                                    bus.proc_ride_bypass    = ride_bypass;
-                                    bus.proc_limiter_bypass = limiter_bypass;
                                 }
                             }
                             AudioCmd::SetProcessing { local, stream, target_lufs } => {

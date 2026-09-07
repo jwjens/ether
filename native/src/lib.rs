@@ -237,8 +237,7 @@ pub fn audio_set_processing(station_id: u32, process_local: bool, process_stream
 #[napi]
 #[allow(clippy::too_many_arguments)]
 pub fn audio_set_processor_params(station_id: u32, ceiling_dbtp: f64, release_ms: f64,
-                                  ride_rate_db_s: f64, ride_clamp_db: f64,
-                                  ride_bypass: bool, limiter_bypass: bool) -> bool {
+                                  ride_rate_db_s: f64, ride_clamp_db: f64) -> bool {
     let engine = get_or_create_engine(station_id, None);
     let Ok(audio) = engine.lock() else { return false };
     audio.sender.send(AudioCmd::SetProcessorParams {
@@ -246,8 +245,16 @@ pub fn audio_set_processor_params(station_id: u32, ceiling_dbtp: f64, release_ms
         release_ms: release_ms as f32,
         ride_rate_db_s: ride_rate_db_s as f32,
         ride_clamp_db: ride_clamp_db as f32,
-        ride_bypass, limiter_bypass,
     }).is_ok()
+}
+
+/// Bypass, on its own entry point. The daemon's periodic number re-assert calls the function ABOVE,
+/// which has no bypass parameter to get wrong — that is why these are two functions and not one.
+#[napi]
+pub fn audio_set_processor_bypass(station_id: u32, ride_bypass: bool, limiter_bypass: bool) -> bool {
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetProcessorBypass { ride_bypass, limiter_bypass }).is_ok()
 }
 
 #[napi]
