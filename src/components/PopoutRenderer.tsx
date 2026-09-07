@@ -117,6 +117,9 @@ function StudioProPopout() {
 function ProcessorPopout() {
   const { stationId, isReady } = useActiveStation();
   const proc = useProcessorParams(stationId ?? null);
+  // Which branch the CONTROLS are editing. Purely a view choice, so it lives here rather than in the
+  // hook — the meters show both branches regardless.
+  const [branch, setBranch] = React.useState<"local" | "stream">("local");
 
   if (!isReady || stationId == null) {
     return (
@@ -131,20 +134,24 @@ function ProcessorPopout() {
   }
   return (
     <ProcessorRack
+      branch={branch}
+      onBranch={setBranch}
+      split={proc.split}
+      onSplit={proc.setSplit}
       params={proc.params}
       stored={proc.stored}
       onChange={proc.patch}
       presets={proc.presets}
       activePreset={proc.activePreset}
-      onSelectPreset={proc.selectPreset}
-      onSavePreset={proc.savePreset}
-      rideBypass={proc.rideBypass}
-      limiterBypass={proc.limiterBypass}
+      onSelectPreset={(name) => proc.selectPreset(proc.split ? branch : "local", name)}
+      onSavePreset={(name) => proc.savePreset(proc.split ? branch : "local", name)}
+      bypass={proc.bypass}
       onBypass={proc.setBypass}
       meters={proc.meters}
       wouldRideDb={proc.wouldRideDb}
       sendError={proc.sendError}
       bypassPending={proc.bypassPending}
+      streamBranchUnreported={proc.streamBranchUnreported}
     />
   );
 }

@@ -196,6 +196,22 @@ pub struct AudioLevels {
     #[serde(default)] pub proc_ride_clamp:     f32,
     #[serde(default)] pub proc_ride_bypass:    bool,
     #[serde(default)] pub proc_limiter_bypass: bool,
+    // THE STREAM BRANCH (2026-09-07). Its own meters and its own parameters — see BusState.
+    // Every one of these must ALSO be named in the json! block of audio_get_levels in lib.rs, or it
+    // dies at the NAPI boundary. audiod/smoke-meter-contract.js fails the build if one is not.
+    #[serde(default)] pub proc_stream_in_lufs:  f32,
+    #[serde(default)] pub proc_stream_out_lufs: f32,
+    #[serde(default)] pub proc_stream_gr_db:    f32,
+    #[serde(default)] pub proc_stream_ride_gain_db: f32,
+    #[serde(default)] pub proc_stream_in_peak:  f32,
+    #[serde(default)] pub proc_stream_out_peak: f32,
+    #[serde(default)] pub proc_stream_target_lufs:  f32,
+    #[serde(default)] pub proc_stream_ceiling_dbtp: f32,
+    #[serde(default)] pub proc_stream_release_ms:   f32,
+    #[serde(default)] pub proc_stream_ride_rate:    f32,
+    #[serde(default)] pub proc_stream_ride_clamp:   f32,
+    #[serde(default)] pub proc_stream_ride_bypass:    bool,
+    #[serde(default)] pub proc_stream_limiter_bypass: bool,
     #[serde(default)] pub proc_in_lufs:  f32,
     #[serde(default)] pub proc_out_lufs: f32,
     #[serde(default)] pub proc_gr_db:    f32,
@@ -339,7 +355,10 @@ pub enum AudioCmd {
     SetDuckParams { depth_db: f32, threshold_db: f32, attack_ms: f32, hold_ms: f32, release_ms: f32 },
     /// The program processor's operator-settable NUMBERS. Separate from SetProcessing (the two on/off
     /// toggles and the loudness target) so a station that never sends this is bit-identical to before.
-    SetProcessorParams { ceiling_dbtp: f32, release_ms: f32, ride_rate_db_s: f32, ride_clamp_db: f32 },
+    /// `branch`: 0 = LOCAL (studio monitor), 1 = STREAM. Every parameter is independent per branch;
+    /// the daemon mirrors local into stream while the operator has the two linked.
+    SetProcessorParams { branch: u8, target_lufs: f32, ceiling_dbtp: f32, release_ms: f32,
+                         ride_rate_db_s: f32, ride_clamp_db: f32 },
     /// BYPASS, ON ITS OWN COMMAND — and this separation is the whole point.
     ///
     /// It used to ride SetProcessorParams. The daemon re-asserts the numbers from the KV every ~15s
@@ -347,7 +366,7 @@ pub enum AudioCmd {
     /// un-bypassing whatever the operator had engaged, within 15 seconds, every time. Splitting the
     /// command means the re-assert has no way to express bypass and therefore cannot clear it. A
     /// structural guarantee, not a rule someone has to remember. 2026-09-07.
-    SetProcessorBypass { ride_bypass: bool, limiter_bypass: bool },
+    SetProcessorBypass { branch: u8, ride_bypass: bool, limiter_bypass: bool },
     /// Choose the output device for the AUX monitor bus. Empty string = none = the aux stream is
     /// closed and the bus is silent.
     SetAuxDevice(String),
@@ -503,7 +522,38 @@ pub struct BusState {
     pub proc_ride_clamp: f32,
     pub proc_ride_bypass: bool,
     pub proc_limiter_bypass: bool,
+    /// THE LOCAL (studio monitor) branch's processor. Until the split it was the ONLY one, shared by
+    /// both branches — so what Jeff heard and what listeners heard were literally the same samples.
     pub processor:   Arc<Mutex<crate::program_processor::ProgramProcessor>>,
+
+    // ── THE LOCAL / STREAM SPLIT (2026-09-07) ────────────────────────────────────────────────────
+    // A second, fully independent instance for the stream branch: its own ride state, its own limiter
+    // state, its own parameters and its own meters. The monitor is what Jeff hears in the room; the
+    // stream is what listeners hear through an encoder. They are different problems and now they are
+    // different processors.
+    //
+    // BIT-IDENTICAL WHERE NOTHING IS STORED: these default to the SAME shipped chain as the local set,
+    // and the daemon mirrors the local values into them whenever `proc_split` is off. Two instances
+    // with identical parameters and identical input produce identical output — asserted by C7 — so a
+    // station that has never touched the split hears exactly what it heard before.
+    pub proc_stream_target_lufs: f32,
+    pub proc_stream_ceiling_dbtp: f32,
+    pub proc_stream_release_ms: f32,
+    pub proc_stream_ride_rate: f32,
+    pub proc_stream_ride_clamp: f32,
+    pub proc_stream_ride_bypass: bool,
+    pub proc_stream_limiter_bypass: bool,
+    pub processor_stream: Arc<Mutex<crate::program_processor::ProgramProcessor>>,
+    /// PER-BRANCH METERS. One set of numbers for two processors would be a meter that lies: with the
+    /// split on, the two branches ride to different targets and reduce by different amounts at the same
+    /// instant. The legacy proc_* fields keep describing the LOCAL branch, and mirror the stream branch
+    /// when only the stream is processing, so every existing reader keeps working unchanged.
+    pub proc_stream_in_lufs: f32,
+    pub proc_stream_out_lufs: f32,
+    pub proc_stream_gr_db: f32,
+    pub proc_stream_ride_gain_db: f32,
+    pub proc_stream_in_peak: f32,
+    pub proc_stream_out_peak: f32,
 
     // ── AUX MONITOR BUS (2026-08-18) — "slot = room, board = air" ────────────────────────────────
     // Decks D/E/F (slots 3/4/5) are AUX decks: automation never touches them, and per Jeff's ruling
@@ -654,6 +704,19 @@ impl BusState {
             proc_ride_bypass: false,
             proc_limiter_bypass: false,
             processor:   Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
+            // The stream branch starts as an exact copy of the shipped chain — same target, same
+            // ceiling, same release, same ride. Nothing about a fresh station is different.
+            proc_stream_target_lufs: -14.0,
+            proc_stream_ceiling_dbtp: -1.0,
+            proc_stream_release_ms: 120.0,
+            proc_stream_ride_rate: 1.5,
+            proc_stream_ride_clamp: 12.0,
+            proc_stream_ride_bypass: false,
+            proc_stream_limiter_bypass: false,
+            processor_stream: Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
+            proc_stream_in_lufs: -70.0, proc_stream_out_lufs: -70.0,
+            proc_stream_gr_db: 0.0, proc_stream_ride_gain_db: 0.0,
+            proc_stream_in_peak: 0.0, proc_stream_out_peak: 0.0,
             aux_monitor_gain: [0.0; SLOT_COUNT],   // nothing selected → aux decks silent in the room
             room_gain: [1.0; SLOT_COUNT],          // unity until an operator says otherwise — never silent by default
             // Ducker: OFF everywhere until asked for. Defaults are §B.6's.
@@ -1950,6 +2013,19 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     lvl.proc_ride_clamp     = bus.proc_ride_clamp;
                                     lvl.proc_ride_bypass    = bus.proc_ride_bypass;
                                     lvl.proc_limiter_bypass = bus.proc_limiter_bypass;
+                                    lvl.proc_stream_in_lufs      = bus.proc_stream_in_lufs;
+                                    lvl.proc_stream_out_lufs     = bus.proc_stream_out_lufs;
+                                    lvl.proc_stream_gr_db        = bus.proc_stream_gr_db;
+                                    lvl.proc_stream_ride_gain_db = bus.proc_stream_ride_gain_db;
+                                    lvl.proc_stream_in_peak      = bus.proc_stream_in_peak;
+                                    lvl.proc_stream_out_peak     = bus.proc_stream_out_peak;
+                                    lvl.proc_stream_target_lufs  = bus.proc_stream_target_lufs;
+                                    lvl.proc_stream_ceiling_dbtp = bus.proc_stream_ceiling_dbtp;
+                                    lvl.proc_stream_release_ms   = bus.proc_stream_release_ms;
+                                    lvl.proc_stream_ride_rate    = bus.proc_stream_ride_rate;
+                                    lvl.proc_stream_ride_clamp   = bus.proc_stream_ride_clamp;
+                                    lvl.proc_stream_ride_bypass    = bus.proc_stream_ride_bypass;
+                                    lvl.proc_stream_limiter_bypass = bus.proc_stream_limiter_bypass;
                                     let mut active = 0u32;
                                     // CART (slot 6) is reported HERE so jingles/carts carry a real
                                     // sample position too — without it every cart reads 0:00 forever.
@@ -2029,14 +2105,30 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::SetMasterMonitorVolume(v) => {
                                 if let Ok(mut bus) = bus_cmd.lock() { bus.master_monitor_vol = v.clamp(0.0, 1.0); }
                             }
-                            AudioCmd::SetProcessorBypass { ride_bypass, limiter_bypass } => {
+                            AudioCmd::SetProcessorBypass { branch, ride_bypass, limiter_bypass } => {
                                 if let Ok(mut bus) = bus_cmd.lock() {
-                                    bus.proc_ride_bypass    = ride_bypass;
-                                    bus.proc_limiter_bypass = limiter_bypass;
+                                    if branch == 1 {
+                                        bus.proc_stream_ride_bypass    = ride_bypass;
+                                        bus.proc_stream_limiter_bypass = limiter_bypass;
+                                    } else {
+                                        bus.proc_ride_bypass    = ride_bypass;
+                                        bus.proc_limiter_bypass = limiter_bypass;
+                                    }
                                 }
                             }
-                            AudioCmd::SetProcessorParams { ceiling_dbtp, release_ms, ride_rate_db_s, ride_clamp_db } => {
+                            AudioCmd::SetProcessorParams { branch, target_lufs, ceiling_dbtp, release_ms, ride_rate_db_s, ride_clamp_db } => {
                                 if let Ok(mut bus) = bus_cmd.lock() {
+                                if branch == 1 {
+                                    // Same edge clamps as the local branch — every value between is a
+                                    // legitimate operator choice, and the two branches get the same
+                                    // freedom because they are the same processor.
+                                    bus.proc_stream_target_lufs  = target_lufs.clamp(-30.0, -6.0);
+                                    bus.proc_stream_ceiling_dbtp = ceiling_dbtp.clamp(-12.0, -0.1);
+                                    bus.proc_stream_release_ms   = release_ms.clamp(5.0, 2000.0);
+                                    bus.proc_stream_ride_rate    = ride_rate_db_s.clamp(0.1, 12.0);
+                                    bus.proc_stream_ride_clamp   = ride_clamp_db.clamp(0.0, 24.0);
+                                } else {
+                                    bus.proc_target_lufs = target_lufs.clamp(-30.0, -6.0);
                                     // Clamped at the edges only, as the ducker's params are: every value
                                     // between is a legitimate operator choice. The ceiling is never
                                     // allowed to reach 0 dBTP — above about -0.3 the stream's encoder
@@ -2045,6 +2137,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     bus.proc_release_ms     = release_ms.clamp(5.0, 2000.0);
                                     bus.proc_ride_rate      = ride_rate_db_s.clamp(0.1, 12.0);
                                     bus.proc_ride_clamp     = ride_clamp_db.clamp(0.0, 24.0);
+                                }
                                 }
                             }
                             AudioCmd::SetProcessing { local, stream, target_lufs } => {
@@ -2531,30 +2624,73 @@ fn mixer_callback(
     // taps use the clean out_l/out_r (bit-identical to today). The processor has its OWN lock (mirrors bus.eq):
     // try_lock only, never blocks air; a missed lock falls back to clean. Meters are extracted before the lock
     // drops, then written to the bus fields (no split-borrow of the guard). `peak` is the clean stage-IN VU.
-    let (proc_l, proc_r): (Option<Vec<f32>>, Option<Vec<f32>>) = if bus.proc_local || bus.proc_stream {
-        let target = bus.proc_target_lufs;
+    // THE SPLIT (2026-09-07). Each branch runs its OWN processor, and only if its own toggle is on.
+    //
+    // Before this, one instance computed one buffer whenever EITHER toggle was on, and both branches
+    // tapped it — so the monitor and the stream were literally the same samples and could not be shaped
+    // apart. Now the monitor rides to what sounds right in the room and the stream rides to what
+    // survives an encoder, independently.
+    //
+    // COST: a station with both branches on now runs two instances instead of one. Measured through the
+    // shipped module (C5): 0.0325 ms -> 0.0629 ms median per 10 ms block, 1.97x, 0.6% of the callback
+    // budget. A station with one branch on pays exactly what it paid before.
+    //
+    // BIT-IDENTICAL WHERE NOTHING IS STORED: the daemon mirrors the local parameters into the stream set
+    // while the two are linked (the default), and two instances with identical parameters and identical
+    // input produce identical output — C7 asserts it on the sample bits.
+    let mut run_branch = |proc: &Arc<Mutex<crate::program_processor::ProgramProcessor>>,
+                          target: f32, ceiling: f32, release: f32, rate: f32, clamp: f32,
+                          ride_byp: bool, lim_byp: bool|
+     -> (Option<Vec<f32>>, Option<Vec<f32>>, Option<(f32, f32, f32, f32, f32)>) {
         let mut pl = out_l.clone();
         let mut pr = out_r.clone();
-        let meters = if let Ok(mut p) = bus.processor.try_lock() {
+        // try_lock only, never blocks air; a missed lock falls back to the clean tap, as before.
+        if let Ok(mut p) = proc.try_lock() {
             p.set_target(target);
-            // The operator's parameters, applied every buffer beside the target. All three processor
-            // instances (program, aux, room) get the same chain — one station, one sound.
-            p.set_params(bus.proc_ceiling_dbtp, bus.proc_release_ms, bus.proc_ride_rate,
-                         bus.proc_ride_clamp, bus.proc_ride_bypass, bus.proc_limiter_bypass);
-            // §B.3a — freeze the loudness ride while the duck has the music down, so the two
-            // features cannot fight. The meter still runs; only the corrective gain is held.
+            p.set_params(ceiling, release, rate, clamp, ride_byp, lim_byp);
+            // §B.3a — freeze the loudness ride while the duck has the music down, so the two features
+            // cannot fight. The meter still runs; only the corrective gain is held. Both branches, since
+            // the duck applies to the programme both of them carry.
             p.set_ride_hold(duck_active);
             p.process_planar(&mut pl, &mut pr);
-            Some((p.in_lufs(), p.out_lufs(), p.gain_reduction_db(), p.ride_gain_db()))
-        } else { None };
-        if let Some((il, ol, gr, ride)) = meters {
             let op = pl.iter().chain(pr.iter()).map(|&s| s.abs()).fold(0.0f32, f32::max);
+            let m = (p.in_lufs(), p.out_lufs(), p.gain_reduction_db(), p.ride_gain_db(), op);
+            (Some(pl), Some(pr), Some(m))
+        } else { (None, None, None) }
+    };
+
+    let (proc_l, proc_r, local_m) = if bus.proc_local {
+        run_branch(&bus.processor.clone(), bus.proc_target_lufs, bus.proc_ceiling_dbtp,
+                   bus.proc_release_ms, bus.proc_ride_rate, bus.proc_ride_clamp,
+                   bus.proc_ride_bypass, bus.proc_limiter_bypass)
+    } else { (None, None, None) };
+
+    let (str_l, str_r, stream_m) = if bus.proc_stream {
+        run_branch(&bus.processor_stream.clone(), bus.proc_stream_target_lufs, bus.proc_stream_ceiling_dbtp,
+                   bus.proc_stream_release_ms, bus.proc_stream_ride_rate, bus.proc_stream_ride_clamp,
+                   bus.proc_stream_ride_bypass, bus.proc_stream_limiter_bypass)
+    } else { (None, None, None) };
+
+    // METERS, PER BRANCH. proc_stream_* always describes the stream instance. The legacy proc_* fields
+    // describe the LOCAL instance, and fall back to the stream instance when only the stream is
+    // processing — so every existing reader (Settings, the Health Monitor) shows the same numbers it
+    // showed before the split in every configuration that existed before the split.
+    if let Some((il, ol, gr, ride, op)) = local_m {
+        bus.proc_in_lufs = il; bus.proc_out_lufs = ol; bus.proc_gr_db = gr; bus.proc_ride_gain_db = ride;
+        bus.proc_in_peak  = peak.max(bus.proc_in_peak * VU_RELEASE);
+        bus.proc_out_peak = op.max(bus.proc_out_peak * VU_RELEASE);
+    }
+    if let Some((il, ol, gr, ride, op)) = stream_m {
+        bus.proc_stream_in_lufs = il; bus.proc_stream_out_lufs = ol;
+        bus.proc_stream_gr_db = gr; bus.proc_stream_ride_gain_db = ride;
+        bus.proc_stream_in_peak  = peak.max(bus.proc_stream_in_peak * VU_RELEASE);
+        bus.proc_stream_out_peak = op.max(bus.proc_stream_out_peak * VU_RELEASE);
+        if local_m.is_none() {
             bus.proc_in_lufs = il; bus.proc_out_lufs = ol; bus.proc_gr_db = gr; bus.proc_ride_gain_db = ride;
-            bus.proc_in_peak  = peak.max(bus.proc_in_peak * VU_RELEASE);
-            bus.proc_out_peak = op.max(bus.proc_out_peak * VU_RELEASE);
-            (Some(pl), Some(pr))
-        } else { (None, None) }
-    } else { (None, None) };
+            bus.proc_in_peak  = bus.proc_stream_in_peak;
+            bus.proc_out_peak = bus.proc_stream_out_peak;
+        }
+    }
 
     // v4.4.46 mix telemetry: advance the frames-consumed counter (single u64 add under the lock we
     // already hold — no new lock, no atomic, RT-safe). GetLevel surfaces it; the daemon heartbeat
@@ -2566,14 +2702,15 @@ fn mixer_callback(
     // client presence gates THIS station's push; never a sibling's.
     if bus.stream_connected.load(Ordering::Relaxed) {
         // Stream drain taps PROCESSED when "Process stream" is on and the processed buffer exists, else clean.
-        let use_proc = bus.proc_stream && proc_l.is_some();
+        // The stream taps the STREAM processor now, not the shared one.
+        let use_proc = bus.proc_stream && str_l.is_some();
         for f in 0..prog_frames {
             // PROCESSED audio is already ceiling-controlled by the -1 dBTP limiter and passes through
             // untouched. The CLEAN tap has no limiter in front of it, so it is clamped HERE — at the
             // point of use, for an unprocessed station only, instead of on the way in where it also
             // clipped the processor's input.
             let (l, r) = if use_proc {
-                (proc_l.as_ref().unwrap()[f], proc_r.as_ref().unwrap()[f])
+                (str_l.as_ref().unwrap()[f], str_r.as_ref().unwrap()[f])
             } else {
                 (out_l[f].clamp(-1.0, 1.0), out_r[f].clamp(-1.0, 1.0))
             };

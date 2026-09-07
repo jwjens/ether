@@ -1,3 +1,6 @@
+// The levels payload is a 45-key json! object. The macro recurses once per key and the default
+// recursion limit (128) is not enough; this is a compile-time expansion budget, not a runtime cost.
+#![recursion_limit = "512"]
 #![deny(clippy::all)]
 #![allow(clippy::unused_unit)]
 
@@ -236,11 +239,14 @@ pub fn audio_set_processing(station_id: u32, process_local: bool, process_stream
 /// ceiling held (Jeff's ruling, 2026-09-07).
 #[napi]
 #[allow(clippy::too_many_arguments)]
-pub fn audio_set_processor_params(station_id: u32, ceiling_dbtp: f64, release_ms: f64,
-                                  ride_rate_db_s: f64, ride_clamp_db: f64) -> bool {
+/// `branch`: 0 = LOCAL (studio monitor), 1 = STREAM. Every parameter is independent per branch.
+pub fn audio_set_processor_params(station_id: u32, branch: u32, target_lufs: f64, ceiling_dbtp: f64,
+                                  release_ms: f64, ride_rate_db_s: f64, ride_clamp_db: f64) -> bool {
     let engine = get_or_create_engine(station_id, None);
     let Ok(audio) = engine.lock() else { return false };
     audio.sender.send(AudioCmd::SetProcessorParams {
+        branch: branch as u8,
+        target_lufs: target_lufs as f32,
         ceiling_dbtp: ceiling_dbtp as f32,
         release_ms: release_ms as f32,
         ride_rate_db_s: ride_rate_db_s as f32,
@@ -251,10 +257,10 @@ pub fn audio_set_processor_params(station_id: u32, ceiling_dbtp: f64, release_ms
 /// Bypass, on its own entry point. The daemon's periodic number re-assert calls the function ABOVE,
 /// which has no bypass parameter to get wrong — that is why these are two functions and not one.
 #[napi]
-pub fn audio_set_processor_bypass(station_id: u32, ride_bypass: bool, limiter_bypass: bool) -> bool {
+pub fn audio_set_processor_bypass(station_id: u32, branch: u32, ride_bypass: bool, limiter_bypass: bool) -> bool {
     let engine = get_or_create_engine(station_id, None);
     let Ok(audio) = engine.lock() else { return false };
-    audio.sender.send(AudioCmd::SetProcessorBypass { ride_bypass, limiter_bypass }).is_ok()
+    audio.sender.send(AudioCmd::SetProcessorBypass { branch: branch as u8, ride_bypass, limiter_bypass }).is_ok()
 }
 
 #[napi]
@@ -316,20 +322,29 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
     // Anything added to AudioLevels must be destructured here AND named in the json! below.
     let (la, lb, lc, lcart, lmaster, lroom, auxframes, auxpeak, auxin, auxout, auxgr, auxride, frames, active, mon, decks,
          p_local, p_stream, p_target, p_in_lufs, p_out_lufs, p_gr, p_in_peak, p_out_peak, p_ride, duckg,
-         p_ceiling, p_release, p_rate, p_clamp, p_ride_byp, p_lim_byp) = match levels_arc.lock() {
+         p_ceiling, p_release, p_rate, p_clamp, p_ride_byp, p_lim_byp,
+         s_in, s_out, s_gr, s_ride, s_inpk, s_outpk,
+         s_target, s_ceiling, s_release, s_rate, s_clamp, s_ride_byp, s_lim_byp) = match levels_arc.lock() {
         Ok(lvl) => (lvl.level_a, lvl.level_b, lvl.level_c, lvl.level_cart, lvl.level_master, lvl.level_room, lvl.aux_frames, lvl.aux_peak, lvl.aux_proc_in_lufs, lvl.aux_proc_out_lufs, lvl.aux_proc_gr_db, lvl.aux_proc_ride_db,
                     lvl.frames_total, lvl.active_decks, lvl.mon_vol, lvl.decks.clone(),
                     lvl.proc_local, lvl.proc_stream, lvl.proc_target_lufs,
                     lvl.proc_in_lufs, lvl.proc_out_lufs, lvl.proc_gr_db,
                     lvl.proc_in_peak, lvl.proc_out_peak, lvl.proc_ride_gain_db, lvl.duck_gain,
                     lvl.proc_ceiling_dbtp, lvl.proc_release_ms, lvl.proc_ride_rate, lvl.proc_ride_clamp,
-                    lvl.proc_ride_bypass, lvl.proc_limiter_bypass),
+                    lvl.proc_ride_bypass, lvl.proc_limiter_bypass,
+                    lvl.proc_stream_in_lufs, lvl.proc_stream_out_lufs, lvl.proc_stream_gr_db,
+                    lvl.proc_stream_ride_gain_db, lvl.proc_stream_in_peak, lvl.proc_stream_out_peak,
+                    lvl.proc_stream_target_lufs, lvl.proc_stream_ceiling_dbtp, lvl.proc_stream_release_ms,
+                    lvl.proc_stream_ride_rate, lvl.proc_stream_ride_clamp,
+                    lvl.proc_stream_ride_bypass, lvl.proc_stream_limiter_bypass),
         Err(_)  => (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0u64, 0.0f32, -70.0f32, -70.0f32, 0.0f32, 0.0f32, 0u64, 0u32, 0.0f32, Vec::new(),
                     false, false, -14.0f32, -70.0f32, -70.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32, 1.0f32,
                     // A POISONED LOCK MUST NOT REPORT A BYPASS. The numbers fall back to the shipped
                     // chain and both bypasses to false, which is the safe direction: the ceiling is
                     // reported as held, never as off.
-                    -1.0f32, 120.0f32, 1.5f32, 12.0f32, false, false),
+                    -1.0f32, 120.0f32, 1.5f32, 12.0f32, false, false,
+                    -70.0f32, -70.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32,
+                    -14.0f32, -1.0f32, 120.0f32, 1.5f32, 12.0f32, false, false),
     };
     serde_json::json!({
         "a": la, "b": lb, "c": lc, "cart": lcart, "master": lmaster, "room": lroom, "aux_frames": auxframes, "aux_peak": auxpeak,
@@ -348,7 +363,16 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
         // a green test the first time it was made.
         "proc_ceiling_dbtp": p_ceiling, "proc_release_ms": p_release,
         "proc_ride_rate": p_rate, "proc_ride_clamp": p_clamp,
-        "proc_ride_bypass": p_ride_byp, "proc_limiter_bypass": p_lim_byp
+        "proc_ride_bypass": p_ride_byp, "proc_limiter_bypass": p_lim_byp,
+        // THE STREAM BRANCH — its own meters and its own parameters. One set of numbers for two
+        // processors would be a meter that lies: with the split on they ride to different targets and
+        // reduce by different amounts at the same instant.
+        "proc_stream_in_lufs": s_in, "proc_stream_out_lufs": s_out, "proc_stream_gr_db": s_gr,
+        "proc_stream_ride_gain_db": s_ride, "proc_stream_in_peak": s_inpk, "proc_stream_out_peak": s_outpk,
+        "proc_stream_target_lufs": s_target, "proc_stream_ceiling_dbtp": s_ceiling,
+        "proc_stream_release_ms": s_release, "proc_stream_ride_rate": s_rate,
+        "proc_stream_ride_clamp": s_clamp,
+        "proc_stream_ride_bypass": s_ride_byp, "proc_stream_limiter_bypass": s_lim_byp
     }).to_string()
 }
 

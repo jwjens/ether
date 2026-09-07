@@ -543,6 +543,56 @@ mod bench {
         assert_eq!(byp.out_lufs(), byp.in_lufs(), "a bypassed ride reported a ridden output level");
     }
 
+    /// C7 — THE SPLIT DOES NOT CHANGE A STATION THAT HAS NOT USED IT.
+    ///
+    /// Jeff's condition: "A station with nothing stored is bit-identical to today. My two customers
+    /// do not get a changed chain." Before the split, ONE instance produced ONE buffer and both
+    /// branches tapped it. After, each branch runs its own instance. While the two are linked (the
+    /// default, and the only state a station that has never opened the rack can be in) they carry
+    /// identical parameters — so this asserts, on the sample bits, that two instances with identical
+    /// parameters reproduce the single shared instance exactly, for BOTH branches.
+    #[test]
+    fn criterion_7_linked_split_is_bit_identical_to_one_instance() {
+        let sig = gen(20.0, 0.8, true, 11);      // bursty: the ride and limiter both work hard
+        let block = 480 * 2;
+
+        let run = |p: &mut ProgramProcessor, buf: &mut Vec<f32>| {
+            let mut i = 0;
+            while i < buf.len() { let e = (i + block).min(buf.len()); p.process_block(&mut buf[i..e]); i = e; }
+        };
+
+        // TODAY: one instance, one buffer, both branches tap it.
+        let mut shared = ProgramProcessor::new(FS, -14.0);
+        shared.set_params(-1.0, 120.0, 1.5, 12.0, false, false);
+        let mut one = sig.clone();
+        run(&mut shared, &mut one);
+
+        // AFTER: two instances, identical parameters - what "linked" means.
+        let mut local  = ProgramProcessor::new(FS, -14.0);
+        let mut stream = ProgramProcessor::new(FS, -14.0);
+        local.set_params(-1.0, 120.0, 1.5, 12.0, false, false);
+        stream.set_params(-1.0, 120.0, 1.5, 12.0, false, false);
+        let mut bl = sig.clone();
+        let mut bs = sig.clone();
+        run(&mut local, &mut bl);
+        run(&mut stream, &mut bs);
+
+        let same_l = bl.iter().zip(one.iter()).all(|(a, b)| a.to_bits() == b.to_bits());
+        let same_s = bs.iter().zip(one.iter()).all(|(a, b)| a.to_bits() == b.to_bits());
+        println!("[C7] linked split vs one shared instance -> local bit-identical: {}  stream bit-identical: {}", same_l, same_s);
+        assert!(same_l, "the LOCAL branch changed for a station that stored nothing");
+        assert!(same_s, "the STREAM branch changed for a station that stored nothing");
+
+        // And the split is REAL when the parameters differ - otherwise the feature is decorative.
+        let mut different = ProgramProcessor::new(FS, -16.0);
+        different.set_params(-3.0, 300.0, 4.0, 6.0, false, false);
+        let mut bd = sig.clone();
+        run(&mut different, &mut bd);
+        let differs = bd.iter().zip(one.iter()).any(|(a, b)| a.to_bits() != b.to_bits());
+        println!("[C7] a stream branch with its OWN parameters differs from the local branch: {}", differs);
+        assert!(differs, "the split made no audible difference - the parameters are not reaching the instance");
+    }
+
     #[test]
     fn criterion_5_one_instance_vs_two() {
         let sig = gen(30.0, 0.8, false, 4);

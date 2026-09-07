@@ -301,9 +301,15 @@ class DaemonEngine {
     // panel shows these greyed as the current value rather than a blank box.
     // The two bypasses are deliberately absent: they are a live test tool and are never persisted.
     let ceiling = -1.0, release = 120.0, rideRate = 1.5, rideClamp = 12.0;
+    // THE STREAM BRANCH. `proc_split` off (the default, and the only state a station that has never
+    // opened the rack can be in) MIRRORS the local values into the stream branch, so the two instances
+    // carry identical parameters and produce identical audio - C7 asserts that on the sample bits.
+    // Only when the operator explicitly splits them do the stream keys take over.
+    let split = false;
+    let sTarget = null, sCeiling = null, sRelease = null, sRate = null, sClamp = null;
     try {
       const rows = this.db.prepare(
-        "SELECT key, value FROM station_config_kv WHERE station_id=? AND key IN ('proc_local','proc_stream','proc_target_lufs','proc_ceiling_dbtp','proc_release_ms','proc_ride_rate','proc_ride_clamp') AND deleted_at IS NULL"
+        "SELECT key, value FROM station_config_kv WHERE station_id=? AND key IN ('proc_local','proc_stream','proc_target_lufs','proc_ceiling_dbtp','proc_release_ms','proc_ride_rate','proc_ride_clamp','proc_split','proc_stream_target_lufs','proc_stream_ceiling_dbtp','proc_stream_release_ms','proc_stream_ride_rate','proc_stream_ride_clamp') AND deleted_at IS NULL"
       ).all(this.stationId);
       for (const r of rows) {
         if (r.key === "proc_local") local = (r.value === "1" || r.value === "true");
@@ -313,6 +319,12 @@ class DaemonEngine {
         else if (r.key === "proc_release_ms")   { const v = parseFloat(r.value); if (!isNaN(v)) release  = Math.max(5, Math.min(2000, v)); }
         else if (r.key === "proc_ride_rate")    { const v = parseFloat(r.value); if (!isNaN(v)) rideRate = Math.max(0.1, Math.min(12, v)); }
         else if (r.key === "proc_ride_clamp")   { const v = parseFloat(r.value); if (!isNaN(v)) rideClamp= Math.max(0, Math.min(24, v)); }
+        else if (r.key === "proc_split")  split = (r.value === "1" || r.value === "true");
+        else if (r.key === "proc_stream_target_lufs")  { const v = parseFloat(r.value); if (!isNaN(v)) sTarget  = Math.max(-30, Math.min(-6, v)); }
+        else if (r.key === "proc_stream_ceiling_dbtp") { const v = parseFloat(r.value); if (!isNaN(v)) sCeiling = Math.max(-12, Math.min(-0.1, v)); }
+        else if (r.key === "proc_stream_release_ms")   { const v = parseFloat(r.value); if (!isNaN(v)) sRelease = Math.max(5, Math.min(2000, v)); }
+        else if (r.key === "proc_stream_ride_rate")    { const v = parseFloat(r.value); if (!isNaN(v)) sRate    = Math.max(0.1, Math.min(12, v)); }
+        else if (r.key === "proc_stream_ride_clamp")   { const v = parseFloat(r.value); if (!isNaN(v)) sClamp   = Math.max(0, Math.min(24, v)); }
       }
     } catch (e) {
       // Leave the last-applied state untouched — never disturb playout for a read failure. But SAY SO:
@@ -324,12 +336,25 @@ class DaemonEngine {
       }
       return;
     }
+    // MIRROR WHILE LINKED. This is where "bit-identical for a station that stored nothing" is enforced:
+    // with the split off, the stream branch is handed exactly the local numbers, whatever they are.
+    const st = {
+      target:  split && sTarget  !== null ? sTarget  : target,
+      ceiling: split && sCeiling !== null ? sCeiling : ceiling,
+      release: split && sRelease !== null ? sRelease : release,
+      rate:    split && sRate    !== null ? sRate    : rideRate,
+      clamp:   split && sClamp   !== null ? sClamp   : rideClamp,
+    };
     const prev = this._procApplied;
     const changed = !prev || prev.local !== local || prev.stream !== stream || prev.target !== target
-      || prev.ceiling !== ceiling || prev.release !== release || prev.rideRate !== rideRate || prev.rideClamp !== rideClamp;
+      || prev.ceiling !== ceiling || prev.release !== release || prev.rideRate !== rideRate || prev.rideClamp !== rideClamp
+      || prev.split !== split || prev.sTarget !== st.target || prev.sCeiling !== st.ceiling
+      || prev.sRelease !== st.release || prev.sRate !== st.rate || prev.sClamp !== st.clamp;
     const reassert = (local || stream) && (now - (this._procAssertedAt || 0) > 15000);
     if (!changed && !reassert) return;
-    this._procApplied = { local, stream, target, ceiling, release, rideRate, rideClamp };
+    this._procApplied = { local, stream, target, ceiling, release, rideRate, rideClamp,
+                          split, sTarget: st.target, sCeiling: st.ceiling, sRelease: st.release,
+                          sRate: st.rate, sClamp: st.clamp };
     this._procOn = local || stream;
     this._procAssertedAt = now;
     try {
@@ -339,9 +364,11 @@ class DaemonEngine {
       // un-bypassed whatever the operator had engaged in the rack. Bypass moved to its own command
       // (audioSetProcessorBypass); this path cannot express it and therefore cannot clear it.
       if (typeof A.audioSetProcessorParams === "function") {
-        A.audioSetProcessorParams(this.stationId, ceiling, release, rideRate, rideClamp);
+        A.audioSetProcessorParams(this.stationId, 0, target,    ceiling,    release,    rideRate, rideClamp);
+        A.audioSetProcessorParams(this.stationId, 1, st.target, st.ceiling, st.release, st.rate,  st.clamp);
       }
-      if (changed) this._log("processing", `local=${local} stream=${stream} target=${target} ceiling=${ceiling} release=${release} rideRate=${rideRate} rideClamp=${rideClamp}`);
+      if (changed) this._log("processing", `local=${local} stream=${stream} | monitor target=${target} ceiling=${ceiling} release=${release} rate=${rideRate} clamp=${rideClamp}` +
+        ` | stream ${split ? "SPLIT" : "linked"} target=${st.target} ceiling=${st.ceiling} release=${st.release} rate=${st.rate} clamp=${st.clamp}`);
     } catch (e) { this._log("processing apply ✗", String(e)); }
   }
 
@@ -377,6 +404,18 @@ class DaemonEngine {
         // The ceiling the limiter is ACTUALLY holding. Carried here so a panel never has to print a
         // literal "-1 dBTP" that stops being true the moment the operator moves the control.
         ceilingDbtp: lv.proc_ceiling_dbtp ?? -1.0,
+        // THE STREAM BRANCH's own meters and parameters. Present whether or not the operator has split
+        // them: while linked they simply read the same as the monitor, which is the honest report.
+        stream: {
+          inLufs: lv.proc_stream_in_lufs ?? -70, outLufs: lv.proc_stream_out_lufs ?? -70,
+          grDb: lv.proc_stream_gr_db ?? 0, rideGainDb: lv.proc_stream_ride_gain_db ?? 0,
+          inPeakDb: dbfs(lv.proc_stream_in_peak ?? 0), outPeakDb: dbfs(lv.proc_stream_out_peak ?? 0),
+          target: lv.proc_stream_target_lufs ?? -14, ceilingDbtp: lv.proc_stream_ceiling_dbtp ?? -1,
+          releaseMs: lv.proc_stream_release_ms ?? 120, rideRate: lv.proc_stream_ride_rate ?? 1.5,
+          rideClamp: lv.proc_stream_ride_clamp ?? 12,
+          rideBypass: !!lv.proc_stream_ride_bypass, limiterBypass: !!lv.proc_stream_limiter_bypass,
+        },
+
         inPeakDb: dbfs(lv.proc_in_peak ?? 0), outPeakDb: dbfs(lv.proc_out_peak ?? 0),
         // DECK (aux) PROCESSING — the same four measurements, from the aux bus's own instance of the
         // same processor, on THIS frame rather than a second channel. The Health Monitor renders it

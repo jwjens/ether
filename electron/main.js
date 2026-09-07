@@ -4878,17 +4878,20 @@ ipcMain.handle("audio:set-duck-params", (_, stationId, p) =>
 // landed, so the renderer can say so instead of assuming — a command that silently did nothing is how
 // the BYPASS button stayed dead through 4.6.9 and 4.6.10.
 ipcMain.handle("audio:set-processor-params", async (_, stationId, p) => {
-  const numbers = [stationId, p.ceilingDbtp, p.releaseMs, p.rideRate, p.rideClamp];
+  // branch: 0 = LOCAL (studio monitor), 1 = STREAM. Absent means the branch every caller meant before
+  // the split existed.
+  const branch = p.branch | 0;
+  const numbers = [stationId, branch, p.targetLufs, p.ceilingDbtp, p.releaseMs, p.rideRate, p.rideClamp];
   try {
     if (AUDIO_DAEMON) {
-      const okNums = await audiodClient.cmd("setProcessorParams", { stationId, ceilingDbtp: p.ceilingDbtp, releaseMs: p.releaseMs, rideRate: p.rideRate, rideClamp: p.rideClamp });
-      const okByp  = await audiodClient.cmd("setProcessorBypass", { stationId, rideBypass: !!p.rideBypass, limiterBypass: !!p.limiterBypass });
+      const okNums = await audiodClient.cmd("setProcessorParams", { stationId, branch, targetLufs: p.targetLufs, ceilingDbtp: p.ceilingDbtp, releaseMs: p.releaseMs, rideRate: p.rideRate, rideClamp: p.rideClamp });
+      const okByp  = await audiodClient.cmd("setProcessorBypass", { stationId, branch, rideBypass: !!p.rideBypass, limiterBypass: !!p.limiterBypass });
       return { numbers: !!okNums, bypass: !!okByp };
     }
     if (!audio || typeof audio.audioSetProcessorParams !== "function") return { numbers: false, bypass: false, reason: "no audio engine" };
     const okNums = !!audio.audioSetProcessorParams(...numbers);
     const okByp  = typeof audio.audioSetProcessorBypass === "function"
-      ? !!audio.audioSetProcessorBypass(stationId, !!p.rideBypass, !!p.limiterBypass)
+      ? !!audio.audioSetProcessorBypass(stationId, branch, !!p.rideBypass, !!p.limiterBypass)
       : false;
     return { numbers: okNums, bypass: okByp };
   } catch (e) {

@@ -156,15 +156,23 @@ console.log("\nRULE 3 - the processor echo the rack depends on reaches JS");
 // something for it, so it passed false - silently un-bypassing whatever the operator engaged, every 15s.
 console.log("\nRULE 4 - the periodic number re-assert cannot clear a bypass");
 {
-  const m = /A\.audioSetProcessorParams\(([^)]*)\)/.exec(engineJs);
-  if (!m) bad("engine.js no longer calls audioSetProcessorParams - has the re-assert moved?");
+  // EVERY call, not the first: the re-assert now sends one per branch, and a literal bypass argument
+  // slipping into either would resurrect the defect on that branch alone.
+  const calls = [...engineJs.matchAll(/A\.audioSetProcessorParams\(([^)]*)\)/g)].map(x => x[1]);
+  if (!calls.length) bad("engine.js no longer calls audioSetProcessorParams - has the re-assert moved?");
   else {
-    const args = m[1].split(",").map(s => s.trim());
-    if (args.some(a => a === "false" || a === "true"))
-      bad(`the re-assert passes a literal bypass argument (${args.join(", ")}) - it will clear an engaged bypass`);
-    else if (args.length !== 5)
-      bad(`the re-assert passes ${args.length} args; the numbers-only signature takes 5 (station + 4 numbers)`);
-    else ok("the re-assert calls the numbers-only signature - no bypass argument to get wrong");
+    let clean = true;
+    for (const c of calls) {
+      const args = c.split(",").map(x => x.trim());
+      if (args.some(a => a === "false" || a === "true")) {
+        bad(`a re-assert call passes a literal bypass argument (${args.join(", ")}) - it will clear an engaged bypass`);
+        clean = false;
+      } else if (args.length !== 7) {
+        bad(`a re-assert call passes ${args.length} args; the numbers-only signature takes 7 (station, branch, target + 4 numbers)`);
+        clean = false;
+      }
+    }
+    if (clean) ok(`all ${calls.length} re-assert calls use the numbers-only signature - no bypass argument to get wrong`);
   }
   if (/audioSetProcessorBypass/.test(daemonJs)) ok("the daemon exposes a separate setProcessorBypass command");
   else bad("no separate bypass command in the daemon - bypass is riding the numbers path again");

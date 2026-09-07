@@ -769,7 +769,8 @@ function AudioProcessingSection() {
   // Live processing meters — the daemon's dedicated ~15Hz "audio:proc-meters" feed (emitted ONLY while a
   // toggle is on). Observed at the taps: IN/OUT LUFS, gain-reduction, IN/OUT peak (dBFS). Null until a
   // frame arrives (processing on + audio flowing). Auto-stales to null after 1s of no frames.
-  const [meters, setMeters] = useState<null | { inLufs: number; outLufs: number; grDb: number; rideGainDb: number; inPeakDb: number; outPeakDb: number; rideBypass?: boolean; limiterBypass?: boolean; ceilingDbtp?: number }>(null);
+  const [meters, setMeters] = useState<null | { inLufs: number; outLufs: number; grDb: number; rideGainDb: number; inPeakDb: number; outPeakDb: number; rideBypass?: boolean; limiterBypass?: boolean; ceilingDbtp?: number;
+    stream?: { inLufs: number; outLufs: number; grDb: number; rideGainDb: number; ceilingDbtp?: number; rideBypass?: boolean; limiterBypass?: boolean } | null }>(null);
   useEffect(() => {
     const audio = (window as any).ether?.audio;
     if (!audio?.onProcMeters || !stationId) return;
@@ -780,7 +781,8 @@ function AudioProcessingSection() {
       if (!m) return;
       if (stationUuid && m.stationUuid != null && m.stationUuid !== stationUuid) return;
       setMeters({ inLufs: m.inLufs, outLufs: m.outLufs, grDb: m.grDb, rideGainDb: m.rideGainDb ?? 0, inPeakDb: m.inPeakDb, outPeakDb: m.outPeakDb,
-                  rideBypass: m.rideBypass, limiterBypass: m.limiterBypass, ceilingDbtp: m.ceilingDbtp });
+                  rideBypass: m.rideBypass, limiterBypass: m.limiterBypass, ceilingDbtp: m.ceilingDbtp,
+                  stream: m.stream ?? null });
       if (staleTimer) clearTimeout(staleTimer);
       staleTimer = setTimeout(() => setMeters(null), 1000);   // no frames for 1s → meters idle
     });
@@ -799,12 +801,16 @@ function AudioProcessingSection() {
       </SettingRow>
       {/* The toggles stay here; the CHAIN lives in one place — the Processor rack in Master Out. A second
           copy of the controls would be two panels able to disagree about what is running. */}
-      <SettingRow label="The chain" hint="Ceiling, release, ride rate and clamp, presets, gain-reduction metering and the two bypasses all live in the Processor rack, opened from Master Out.">
+      <SettingRow label="The chain" hint="Ceiling, release, ride rate and clamp, presets, per-branch gain-reduction metering, the monitor/stream split and the bypasses all live in the Processor rack, opened from Master Out.">
         <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
           Master Out → <b style={{ color: "#8868D8" }}>PROCESSOR</b> → OPEN
+          {meters?.stream && meters.ceilingDbtp != null && meters.stream.ceilingDbtp != null &&
+           Math.abs(meters.stream.ceilingDbtp - meters.ceilingDbtp) > 0.01 && (
+            <b style={{ color: "#8868D8", marginLeft: 8 }}>· SPLIT: the stream runs its own chain</b>
+          )}
         </span>
       </SettingRow>
-      <SettingRow label="Target loudness" hint="EBU R128 program target. −14 LUFS is the streaming standard; the limiter holds −1 dBTP. Also adjustable in the Processor rack.">
+      <SettingRow label="Target loudness" hint="EBU R128 program target for the STUDIO MONITOR branch. −14 LUFS is the streaming standard. When the monitor and stream are split, the stream has its own target, set in the Processor rack.">
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <input type="number" min={-30} max={-6} step={1} value={target ?? PROC_TARGET_EFFECTIVE}
             onChange={e => { const t = parseFloat(e.target.value); if (!isNaN(t)) { const c = Math.max(-30, Math.min(-6, t)); setTarget(c); setTargetStored(true); save("proc_target_lufs", String(c)); } }}
@@ -827,6 +833,8 @@ function AudioProcessingSection() {
               stopped being true the moment the ceiling became a control, and was already false whenever a
               stage was bypassed from the rack. Both facts now come off the meter frame. */}
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 8 }}>
+            {meters?.stream && meters.stream.ceilingDbtp != null && meters.ceilingDbtp != null &&
+             Math.abs(meters.stream.ceilingDbtp - meters.ceilingDbtp) > 0.01 ? <b>Monitor: </b> : null}
             {meters?.rideBypass ? <b style={{ color: "#f59e0b" }}>Ride BYPASSED</b> : <>Riding to {target} LUFS</>}
             {" · "}
             {meters?.limiterBypass
@@ -836,7 +844,20 @@ function AudioProcessingSection() {
                   : <>limiter ceiling <span title="The engine has not reported a ceiling on this frame. An older audio daemon (it does not reload on auto-update) does not send one — fully close and reopen Ether.">not reported</span></>)}
             {" · "}{local && stream ? "monitor + stream" : local ? "monitor only" : "stream only"}.
           </div>
-          {(meters?.rideBypass || meters?.limiterBypass) && (
+          {/* THE STREAM BRANCH, when it is running something different. Reported from its own meters —
+              the monitor's numbers cannot describe it once the two are split. */}
+          {meters?.stream && meters.stream.ceilingDbtp != null && meters.ceilingDbtp != null &&
+           Math.abs(meters.stream.ceilingDbtp - meters.ceilingDbtp) > 0.01 && (
+            <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 3 }}>
+              <b>Stream: </b>
+              {meters.stream.rideBypass ? <b style={{ color: "#f59e0b" }}>Ride BYPASSED</b> : <>Riding to {meters.stream.outLufs.toFixed(1)} LUFS out</>}
+              {" · "}
+              {meters.stream.limiterBypass
+                ? <b style={{ color: "#f59e0b" }}>limiter BYPASSED — nothing is holding the ceiling on air</b>
+                : <>limiter holds {meters.stream.ceilingDbtp.toFixed(1)} dBTP</>}
+            </div>
+          )}
+          {(meters?.rideBypass || meters?.limiterBypass || meters?.stream?.rideBypass || meters?.stream?.limiterBypass) && (
             <div style={{ fontSize: 11, color: "#f59e0b", marginTop: 4 }}>
               Bypass is a test tool from the Processor rack — it is not saved and clears when Ether restarts.
             </div>

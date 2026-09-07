@@ -301,8 +301,10 @@ const handlers = {
   // Returns what the ENGINE returned, not a literal true. The old version discarded the napi boolean
   // and reported success unconditionally, so a command that never reached the audio thread looked
   // identical to one that did — part of why a dead BYPASS button was invisible for two releases.
-  setProcessorParams: (m) => !!A.audioSetProcessorParams(m.stationId, m.ceilingDbtp, m.releaseMs, m.rideRate, m.rideClamp),
-  setProcessorBypass: (m) => !!A.audioSetProcessorBypass(m.stationId, !!m.rideBypass, !!m.limiterBypass),
+  // branch: 0 = LOCAL (studio monitor), 1 = STREAM. Defaults to 0 so an older caller still targets the
+  // branch it always targeted.
+  setProcessorParams: (m) => !!A.audioSetProcessorParams(m.stationId, m.branch | 0, m.targetLufs, m.ceilingDbtp, m.releaseMs, m.rideRate, m.rideClamp),
+  setProcessorBypass: (m) => !!A.audioSetProcessorBypass(m.stationId, m.branch | 0, !!m.rideBypass, !!m.limiterBypass),
   setDuckParams:      (m) => A.audioSetDuckParams(m.stationId, m.depthDb, m.thresholdDb, m.attackMs, m.holdMs, m.releaseMs),
   // AUX MONITOR (room) level for one aux deck — D/E/F only, enforced in Rust. 0 = silent locally.
   setAuxMonitor:      (m) => A.audioSetAuxMonitor(m.stationId, m.deck, m.gain),
@@ -548,6 +550,18 @@ const eventTimer = setInterval(() => {
           // State is read, never assumed.
           rideBypass: !!lv.proc_ride_bypass, limiterBypass: !!lv.proc_limiter_bypass,
           ceilingDbtp: lv.proc_ceiling_dbtp ?? -1.0,
+          // THE STREAM BRANCH's own meters and parameters. Present whether or not the operator has split
+          // them: while linked they simply read the same as the monitor, which is the honest report.
+          stream: {
+            inLufs: lv.proc_stream_in_lufs ?? -70, outLufs: lv.proc_stream_out_lufs ?? -70,
+            grDb: lv.proc_stream_gr_db ?? 0, rideGainDb: lv.proc_stream_ride_gain_db ?? 0,
+            inPeakDb: dbfs(lv.proc_stream_in_peak ?? 0), outPeakDb: dbfs(lv.proc_stream_out_peak ?? 0),
+            target: lv.proc_stream_target_lufs ?? -14, ceilingDbtp: lv.proc_stream_ceiling_dbtp ?? -1,
+            releaseMs: lv.proc_stream_release_ms ?? 120, rideRate: lv.proc_stream_ride_rate ?? 1.5,
+            rideClamp: lv.proc_stream_ride_clamp ?? 12,
+            rideBypass: !!lv.proc_stream_ride_bypass, limiterBypass: !!lv.proc_stream_limiter_bypass,
+          },
+
           inPeakDb: dbfs(lv.proc_in_peak ?? 0), outPeakDb: dbfs(lv.proc_out_peak ?? 0),
           // The aux (deck) chain rides the same frame — see the Health Monitor's deck row.
           aux: (lv.aux_peak ?? 0) > 0 || (lv.aux_proc_out_lufs ?? -70) > -69 ? {

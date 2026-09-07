@@ -673,6 +673,14 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
   // subscription and the OBSERVED bypass state. The rack is a separate window now, so this row can only
   // stay in step by reading what the ENGINE reports — not a copy of what this window last sent.
   const proc = useProcessorParams(stationId ?? null);
+  // The row summarises BOTH branches: a bypass on either one is a bypass the operator needs to see from
+  // the main window, and with the split on they can differ.
+  const anyProcBypass = proc.bypass.local.ride || proc.bypass.local.limiter ||
+                        proc.bypass.stream.ride || proc.bypass.stream.limiter;
+  const bypassWhere = [
+    (proc.bypass.local.ride || proc.bypass.local.limiter) ? "monitor" : null,
+    (proc.bypass.stream.ride || proc.bypass.stream.limiter) ? "stream" : null,
+  ].filter(Boolean).join(" + ");
 
   // ── Master EQ ────────────────────────────────────────────────
   const [eqOpen,  setEqOpen]  = useState(false);
@@ -947,14 +955,20 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
           pop-out: its own window, draggable to another monitor, remembered where you left it. */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 12px", flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ width: 8, height: 8, borderRadius: "50%", background: (proc.rideBypass || proc.limiterBypass) ? "#f59e0b" : "#8868D8" }} />
+          <span style={{ width: 8, height: 8, borderRadius: "50%", background: anyProcBypass ? "#f59e0b" : "#8868D8" }} />
           <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase" as const }}>Processor</span>
           {/* OBSERVED from the engine's meter frame, so bypass engaged in the pop-out lights up HERE too. */}
-          {(proc.rideBypass || proc.limiterBypass) && (
+          {anyProcBypass && (
             <span style={{ fontSize: 10, fontWeight: 800, color: "#f59e0b" }}
-                  title={proc.limiterBypass && proc.rideBypass ? "Ride and limiter bypassed" : proc.limiterBypass ? "Limiter bypassed — nothing is holding the ceiling" : "Loudness ride bypassed"}>
-              BYPASSED
+                  title={(proc.bypass.local.limiter || proc.bypass.stream.limiter)
+                    ? "Limiter bypassed — nothing is holding the ceiling"
+                    : "Loudness ride bypassed"}>
+              {bypassWhere.toUpperCase()} BYPASSED
             </span>
+          )}
+          {proc.split && !anyProcBypass && (
+            <span style={{ fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)" }}
+                  title="The monitor and the stream are running different chains.">SPLIT</span>
           )}
         </div>
         <button onClick={() => { try { (window as any).ether?.invoke("window:popout", "processor"); } catch { /* not in electron */ } }}
