@@ -48,6 +48,7 @@ const { installStationProgrammingMoods } = require('./station_programming_moods'
 // handler). Calling installStations here would throw a duplicate-handler error.
 const { installVoiceTracks } = require('./voice_tracks');
 const { installJingleCategories } = require('./jingle_categories');
+const { installSweeperPoolMember } = require('./sweeper_pool_member');
 
 function installAll(ipcMain, db) {
   installStationProgramming(ipcMain, db);
@@ -90,6 +91,7 @@ function installAll(ipcMain, db) {
   installStationProgrammingMoods(ipcMain, db);
   installVoiceTracks(ipcMain, db);
   installJingleCategories(ipcMain, db);
+  installSweeperPoolMember(ipcMain, db);
 }
 
 module.exports = { installAll };

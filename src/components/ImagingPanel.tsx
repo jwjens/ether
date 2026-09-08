@@ -42,7 +42,7 @@ const VIEWS: { key: View; label: string; blurb: string }[] = [
   { key: "rules",       label: "RULES",       blurb: "Where a produced cut may not go." },
 ];
 
-interface RackRow { type: string; title: string | null; duration_ms: number | null; pool: string | null; }
+interface RackRow { type: string; title: string | null; duration_ms: number | null; pools: string | null; }
 interface DeckRow { scheduled_at: number; content_class: string; title: string | null; lead_in_sec: number | null; }
 
 const secs = (ms: number | null) => {
@@ -70,16 +70,18 @@ export default function ImagingPanel() {
     try {
       // The same join SweepersPanel already runs — a proven path, not a new one. Announcements are
       // included: type is metadata, and an imaging surface that shows only sweepers is not one.
-      // THE CUT LIST IS GLOBAL, THE POOL NAME IS NOT. Every sweeper is available to every station —
-      // one shared set, like the song library — so there is deliberately no station filter on the
-      // assets. But `jingle_categories` rows belong to a station, so the join MUST be scoped: without
-      // `jc.station_id`, halloVeen printed "Summer Christmas" and "Christmas" on 52 of 64 rows, which
-      // are other stations' pool names. A pool this station does not own now reads as no pool.
+      // THE CUT LIST IS GLOBAL, THE POOLS ARE NOT. Every sweeper is available to every station — one
+      // shared set, like the song library — so there is deliberately no station filter on the assets.
+      // The pools are per station and, since v55, a cut can be in SEVERAL of them, so this is a
+      // group_concat and the column is POOLS, plural. Scoped by jc.station_id: without it halloVeen
+      // printed other stations' pool names on 52 of 64 rows.
       setRack(await query<RackRow>(
-        "SELECT la.type, la.title, la.duration_ms, jc.name AS pool" +
+        "SELECT la.type, la.title, la.duration_ms," +
+        "       (SELECT group_concat(jc.name, ', ') FROM sweeper_pool_member m" +
+        "          JOIN jingle_categories jc ON jc.id = m.pool_id AND jc.station_id = ? AND jc.deleted_at IS NULL" +
+        "         WHERE m.asset_uuid = la.uuid AND m.deleted_at IS NULL) AS pools" +
         "  FROM library_asset la" +
         "  JOIN songs s ON s.uuid = la.uuid" +
-        "  LEFT JOIN jingle_categories jc ON jc.id = s.jingle_category_id AND jc.station_id = ?" +
         " WHERE la.type IN ('SWEEPER','ANNOUNCEMENT') AND la.deleted_at IS NULL AND s.deleted_at IS NULL" +
         " ORDER BY la.type, la.title", [stationId]));
     } catch { setRack([]); }
@@ -152,7 +154,7 @@ export default function ImagingPanel() {
                 <div style={{ ...LABEL, marginBottom: 10 }}>{rack.length} cuts</div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 80px 1fr", gap: "6px 14px", alignItems: "center" }}>
                   <div style={LABEL}>Name</div><div style={LABEL}>Type</div>
-                  <div style={LABEL}>Length</div><div style={LABEL}>Pool</div>
+                  <div style={LABEL}>Length</div><div style={LABEL}>Pools</div>
                   {rack.map((r, i) => {
                     const len = secs(r.duration_ms);
                     return (
@@ -162,14 +164,14 @@ export default function ImagingPanel() {
                         {/* A dash is the honest render of an absent length; it also marks the row as
                             incomplete, which is information rather than a gap. */}
                         <span style={{ fontSize: "var(--t-small)", color: len ? "var(--text-secondary)" : "var(--text-tertiary)" }}>{len ?? "—"}</span>
-                        <span style={{ fontSize: "var(--t-small)", color: r.pool ? "var(--text-secondary)" : "var(--text-tertiary)" }}>{r.pool ?? "— unpooled —"}</span>
+                        <span style={{ fontSize: "var(--t-small)", color: r.pools ? "var(--text-secondary)" : "var(--text-tertiary)" }}>{r.pools ?? "— not in this station's pools —"}</span>
                       </Row>
                     );
                   })}
                 </div>
                 <div style={{ ...EMPTY, marginTop: 16 }}>
-                  Every cut in the shared library — all of them are available to every station. POOL shows
-                  this station&rsquo;s pool only; a dash means the cut is not in one of them.
+                  Every cut in the shared library — all of them are available to every station. POOLS shows
+                  this station&rsquo;s pools only, and a cut can be in more than one of them.
                   <br />Auditioning and the dry-length mark arrive in the next slice. Pool membership is set
                   in POOLS.
                 </div>

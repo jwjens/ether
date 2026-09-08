@@ -398,6 +398,7 @@ contextBridge.exposeInMainWorld("ether", {
   },
   spotCategories:            handlers.spotCategories,
   jingleCategories:          handlers.jingleCategories,
+  sweeperPoolMember:         handlers.sweeperPoolMember,
   spots:                     handlers.spots,
   stationConfigKv:           handlers.stationConfigKv,
   // Jukebox requests — LOCAL-ONLY table (migration v38). Who asked for what on the public jukebox;

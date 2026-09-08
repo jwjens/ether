@@ -8412,17 +8412,18 @@ function _placeJingles(db, stationId, rows) {
     if (fb && fb.value) fallbackCatId = parseInt(fb.value, 10) || null;
   } catch {}
   // Prepared reads (defensive — a pre-v32 DB lacks the overlay columns → skip, byte-identical prior behavior).
-  let stmtAssign, stmtItem, stmtPoolType, stmtPool;
+  let stmtAssign, stmtItem, stmtPoolType, poolReader;
   try {
     stmtAssign = db.prepare("SELECT overlay_kind, overlay_song_id, overlay_category_id, overlay_lead_in_sec, overlay_active_hours FROM categories WHERE id = ?");
     stmtItem = db.prepare("SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.duration_ms, s.content_class FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ? AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND s.content_class IN ('SWP','JIN')");   // JIN read-only: a pre-v52 row from an un-migrated peer
     stmtPoolType = db.prepare("SELECT type FROM jingle_categories WHERE id = ? AND deleted_at IS NULL");
-    stmtPool = db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.duration_ms, s.content_class
-       FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
-      WHERE s.jingle_category_id = ? AND s.content_class = ? AND s.file_path IS NOT NULL
-        AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
-      ORDER BY COALESCE((SELECT MAX(pl.played_at) FROM play_log pl
-               WHERE pl.file_path = s.file_path AND pl.station_id = ? AND pl.deleted_at IS NULL), 0) ASC, s.id ASC`);
+    // WHICH CUTS ARE IN A POOL now lives in one module (electron/sweeper-pool.js), which picks the
+    // shape the database actually has: the v55 join table where a cut can be in several stations'
+    // pools, or the pre-v55 single column on the song row. Same columns, same least-recently-played
+    // ordering, same station scoping — the module shares one ORDER BY between both shapes so they
+    // cannot drift. It is a module so that scripts/verify-pool-membership.js can replay a real
+    // generated day through THIS query rather than a copy of it.
+    poolReader = require('./sweeper-pool').preparePoolCandidates(db);
   } catch { return; }
   const music = rows.filter(r => (r.content_class || 'MUSIC') === 'MUSIC' && r.song_id)
                     .slice().sort((a, b) => a.scheduled_at - b.scheduled_at);
@@ -8454,7 +8455,7 @@ function _placeJingles(db, stationId, rows) {
     let cands = poolCands.get(poolId);
     if (cands === undefined) {
       let type = 'SWP'; try { const t = stmtPoolType.get(poolId); if (t && t.type) type = t.type; } catch {}
-      try { cands = stmtPool.all(poolId, type, stationId); } catch { cands = []; }
+      cands = poolReader.all(poolId, type, stationId);
       poolCands.set(poolId, cands);
     }
     if (!cands.length) return null;

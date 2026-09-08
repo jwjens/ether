@@ -23,7 +23,9 @@ import InlineNameEditor from "./InlineNameEditor";
 import { useFileMenu } from "../lib/fileLocation";
 
 interface Pool { id: number; uuid: string; name: string; color: string | null; type: string; lead_in_sec: number; sort_order: number; }
-interface OverlaySong { id: number; title: string; artist_name: string | null; content_class: string; jingle_category_id: number | null; }
+interface OverlaySong { id: number; title: string; artist_name: string | null; content_class: string; jingle_category_id: number | null; uuid: string | null; }
+/** v55 — one row per (pool, cut). A cut can be in several pools, so membership is a set, not a field. */
+interface PoolMember { uuid: string; pool_id: number; asset_uuid: string; }
 interface MusicCat {
   id: number; code: string; name: string; color: string | null;
   overlay_kind: string | null; overlay_song_id: number | null; overlay_category_id: number | null;
@@ -79,6 +81,7 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
   const fileMenu = useFileMenu();
   const [pools, setPools] = useState<Pool[]>([]);
   const [songs, setSongs] = useState<OverlaySong[]>([]);
+  const [members, setMembers] = useState<PoolMember[]>([]);
   const [cats, setCats] = useState<MusicCat[]>([]);
   const [fallbackId, setFallbackId] = useState<number | null>(null);
   const [newName, setNewName] = useState("");
@@ -102,9 +105,15 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
       //
       // One list: v50 typed both old classes as SWEEPER and v52 collapsed the data to a single SWP,
       // so the type filter alone is now the whole story.
-      const rows = await query<OverlaySong>("SELECT s.id, la.title AS title, a.name AS artist_name, s.content_class, s.jingle_category_id FROM library_asset la JOIN songs s ON s.uuid = la.uuid LEFT JOIN artists a ON a.id = s.artist_id WHERE la.type = 'SWEEPER' AND la.deleted_at IS NULL AND s.deleted_at IS NULL ORDER BY s.content_class, la.title");
+      const rows = await query<OverlaySong>("SELECT s.id, s.uuid, la.title AS title, a.name AS artist_name, s.content_class, s.jingle_category_id FROM library_asset la JOIN songs s ON s.uuid = la.uuid LEFT JOIN artists a ON a.id = s.artist_id WHERE la.type = 'SWEEPER' AND la.deleted_at IS NULL AND s.deleted_at IS NULL ORDER BY s.content_class, la.title");
       setSongs(rows || []);
     } catch { setSongs([]); }
+    // v55 — membership for THIS station's pools. Every cut is in the shared library; which of them
+    // are in a pool is per station, and a cut can be in several.
+    try {
+      const r = await ether()?.sweeperPoolMember?.list(stationId, { limit: 5000 });
+      setMembers(((r?.rows || []) as PoolMember[]));
+    } catch { setMembers([]); }
     try {
       const r = await ether()?.stationConfigKv?.list(stationId);
       const rows = (r?.rows || []) as { key: string; value: string }[];
@@ -134,7 +143,23 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
   };
   const patchPool = async (p: Pool, patch: Partial<Pool>) => { if (ro) return; try { await ether()?.jingleCategories?.updateById(p.id, patch); await reload(); } catch {} };
   const delPool = async (p: Pool) => { if (ro) return; if (!confirm(`Delete pool "${p.name}"? Assigned overlays become unassigned (not deleted).`)) return; try { await ether()?.jingleCategories?.delete(p.uuid, stationId); await reload(); } catch {} };
-  const assignSong = async (s: OverlaySong, poolId: number | null) => { if (ro) return; try { await ether()?.songs?.updateById(s.id, { jingle_category_id: poolId }); await reload(); } catch {} };
+  /** v55 — a MEMBERSHIP is created or removed. It is not a field on the song any more, because a cut
+   *  belongs to more than one pool: adding it to halloVeen's Halloween no longer takes it out of
+   *  Christmas in Jully's Summer Christmas. Keyed on the asset uuid, which names the same cut on
+   *  every machine. */
+  const toggleMember = async (s: OverlaySong, poolId: number, on: boolean) => {
+    if (ro || !s.uuid) return;
+    try {
+      if (on) {
+        await ether()?.sweeperPoolMember?.create({ pool_id: poolId, asset_uuid: s.uuid, station_id: stationId });
+      } else {
+        const m = members.find(x => x.pool_id === poolId && x.asset_uuid === s.uuid);
+        if (m) await ether()?.sweeperPoolMember?.delete(m.uuid, stationId);
+      }
+      await reload();
+    } catch {}
+  };
+  const inPool = (s: OverlaySong, poolId: number) => !!s.uuid && members.some(m => m.pool_id === poolId && m.asset_uuid === s.uuid);
   const setFallback = async (poolId: number | null) => { if (ro) return; try { await ether()?.stationConfigKv?.upsertByKey(stationId, "overlay_fallback_category_id", poolId != null ? String(poolId) : ""); setFallbackId(poolId); } catch {} };
 
   // Category assignment: encode as "item:<songId>" | "pool:<poolId>" | "".
@@ -314,7 +339,7 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: p.color || accent }} />
                 <input defaultValue={p.name} disabled={ro} onBlur={e => e.target.value.trim() && e.target.value !== p.name && patchPool(p, { name: e.target.value.trim() })}
                   style={{ flex: 1, background: "transparent", color: "var(--text-primary)", border: "1px solid transparent", borderRadius: "var(--r-0)", padding: "2px 4px", fontSize: "var(--t-lead)", fontWeight: 600 }} />
-                <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>{tabSongs.filter(s => s.jingle_category_id === p.id).length} in pool</span>
+                <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>{members.filter(m => m.pool_id === p.id).length} in pool</span>
               </div>
               {/* Bounded at the same ceiling as the category LEAD. Nothing reads jingle_categories.lead_in_sec
                   today — _placeJingles takes its lead from categories.overlay_lead_in_sec only, and that is
@@ -348,10 +373,24 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
                 onSave={async (next) => { try { await ether()?.songs?.updateById(s.id, { title: next }); await reload(); } catch {} }}
               />
               )}
-              <select value={s.jingle_category_id ?? ""} disabled={ro} onChange={e => assignSong(s, e.target.value ? Number(e.target.value) : null)} style={sel}>
-                <option value="">— unassigned —</option>
-                {tabPools.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
+              {/* ONE CHECKBOX PER POOL. A dropdown could only ever say one pool, which is the limitation
+                  v55 removed. A cut with no uuid cannot be a member — it cannot be named across machines
+                  — so it says so instead of offering a control that would fail. */}
+              {s.uuid ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  {tabPools.length === 0
+                    ? <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>no pools yet</span>
+                    : tabPools.map(p => (
+                      <label key={p.id} title={`In ${p.name}`} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "var(--t-micro)", color: inPool(s, p.id) ? "var(--text-primary)" : "var(--text-tertiary)", cursor: ro ? "default" : "pointer" }}>
+                        <input type="checkbox" disabled={ro} checked={inPool(s, p.id)}
+                               onChange={e => toggleMember(s, p.id, e.target.checked)} />
+                        {p.name}
+                      </label>
+                    ))}
+                </div>
+              ) : (
+                <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }} title="This cut has no uuid, so it cannot be referenced by a pool or synced to another machine.">no uuid — cannot be pooled</span>
+              )}
             </div>
           ))}
         </div>

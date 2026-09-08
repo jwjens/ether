@@ -75,6 +75,15 @@ module.exports = function buildHandlers(ipcRenderer) {
     refs:       (uuid)            => ipcRenderer.invoke('spot_categories:refs',          uuid),
     delete:     (uuid, stationId) => ipcRenderer.invoke('spot_categories:delete',       uuid, stationId),
   },
+  // v55 — pool membership. A cut can be in several pools, so this is create/delete, not an update.
+  sweeperPoolMember: {
+    list:       (stationId, opts) => ipcRenderer.invoke('sweeper_pool_member:list',        stationId, opts),
+    getById:    (uuid)            => ipcRenderer.invoke('sweeper_pool_member:get-by-id',   uuid),
+    create:     (payload)         => ipcRenderer.invoke('sweeper_pool_member:create',      payload),
+    update:     (uuid, patch)     => ipcRenderer.invoke('sweeper_pool_member:update',      uuid, patch),
+    updateById: (intId, patch)    => ipcRenderer.invoke('sweeper_pool_member:update-by-id', intId, patch),
+    delete:     (uuid, stationId) => ipcRenderer.invoke('sweeper_pool_member:delete',      uuid, stationId),
+  },
   jingleCategories: {
     list:       (stationId, opts) => ipcRenderer.invoke('jingle_categories:list',         stationId, opts),
     getById:    (uuid)            => ipcRenderer.invoke('jingle_categories:get-by-id',    uuid),

@@ -299,6 +299,26 @@ const REGISTRY = {
     },
   },
 
+  // v55 — WHICH CUTS ARE IN WHICH POOL. Replaces songs.jingle_category_id, which was one integer on a
+  // SHARED song row and so allowed exactly one pool, owned by exactly one station. Keyed on the ASSET
+  // UUID because this row crosses machines and a local integer id does not name the same cut there.
+  sweeper_pool_member: {
+    tableName: 'sweeper_pool_member',
+    primaryKey: ['id'],
+    scope: 'station',
+    columns: {
+      id:         'scalar',
+      pool_id:    'scalar',
+      asset_uuid: 'scalar',
+      station_id: 'scalar',
+      sort_order: 'scalar',
+      uuid:       'scalar',
+      created_at: 'scalar',
+      updated_at: 'scalar',
+      deleted_at: 'scalar',
+    },
+  },
+
   clock_breaks: {
     tableName: 'clock_breaks',
     primaryKey: ['id'],
