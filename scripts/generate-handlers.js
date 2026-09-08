@@ -172,6 +172,12 @@ function buildPreloadNamespace(camelName, tableName, scope, isKv) {
 
 // ── File emitter ──────────────────────────────────────────────────────────────
 
+// ⚠ THIS OVERWRITES HAND-EDITED FILES WITHOUT WARNING. Unconditional writeFileSync: no skip-if-exists,
+// no diff, no prompt — `--dry-run` is the only thing between a run and a clobber. Several handlers have
+// been hand-customised since they were generated (announcements' fire/canFire and the
+// announcement_schedule namespace, the categories PATCHABLE list, sweeper_pool_member) and a run
+// silently reverts them to the template. The app still starts; the missing IPC surfaces later as a dead
+// button. RUN WITH --dry-run FIRST, ALWAYS. Filed in docs/backlog.md, 2026-09-08.
 function emit(filePath, content) {
   const rel = path.relative(ROOT, filePath);
   if (DRY_RUN) {

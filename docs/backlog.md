@@ -1,5 +1,26 @@
 # Backlog
 
+## TRAP: scripts/generate-handlers.js overwrites hand-edited handlers without warning (filed 2026-09-08)
+**Jeff's instruction, verbatim:** *"the generator is a trap for whoever runs it next. File it — the
+generator overwrites hand-edits without warning."*
+- `scripts/generate-handlers.js` renders every table in `REGISTRY` from templates and writes each file
+  with an unconditional `fs.writeFileSync` (`emit()`, line 175). There is no "skip if exists", no diff,
+  no prompt. `--dry-run` is the ONLY thing standing between a run and a clobber.
+- It rewrites **all 30** `electron/sync/handlers/*.js`, **all 30** `scripts/smoke-*-handlers.js`,
+  `electron/sync/handlers/index.js` and `electron/preload-handlers.js`.
+- **Several of those files have been hand-customised since they were generated** and would be silently
+  reverted to the template: `announcements.js` (the `fire` / `canFire` handlers and the
+  `announcement_schedule` namespace), `categories.js` (its `PATCHABLE` list carries the overlay_*
+  columns), `songs.js`, `jingle_categories.js`. The loss would not fail a build — the app would start
+  and the missing IPC would surface later as a dead button.
+- Hit while adding `sweeper_pool_member` (v55): the handler was hand-placed from the same
+  station-scoped template instead of regenerating, and the file says so at the top so the next person
+  does not run the generator to "regenerate" it and lose the others.
+- **Fix, when it is worth doing:** make `emit()` refuse to overwrite a file whose content differs from
+  what the template would produce, unless `--force`; or emit to a staging directory and diff. Either
+  turns a silent clobber into a question. Not taken now — it is tooling, not product, and the note at
+  the top of `sweeper_pool_member.js` plus this entry are the guard until then.
+
 ## MIC on the aux/source decks is still greyed out — Phase 2 capture path (filed 2026-08-26)
 **Jeff's report, verbatim:** *"the MIC option on the aux/source decks is still greyed out — that's the
 Phase 2 capture path that was never finished."* Flagged at his instruction; **do NOT fix now.**
