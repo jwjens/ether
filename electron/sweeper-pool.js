@@ -22,7 +22,13 @@
 // every pool. Robustness rule: open ANY state a prior or future build made.
 
 /** The candidate columns and ordering, shared by both shapes so they cannot drift apart. */
-const SELECT_COLS = `s.id, s.title, a.name AS artist_name, s.file_path, s.duration_ms, s.content_class`;
+// `cue_out` / `outro_start` / `duration_ms` are here because AUTO-POST measures a cut by its AUDIBLE
+// END FROM FILE START — not by a trimmed length. The engine plays every file from sample 0, so firing
+// at `post - cut_end` puts the last audible moment on the post with no seek and no engine change; any
+// leading silence simply plays silently inside the intro. cue_out is the operator's mark, outro_start
+// the analyser's, duration the fallback — see audibleEndMs below.
+const SELECT_COLS = `s.id, s.title, a.name AS artist_name, s.file_path, s.duration_ms, s.content_class,
+       s.cue_out, s.cue_out_ms, s.outro_start`;
 const FILTERS = `s.content_class = ? AND s.file_path IS NOT NULL
         AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')`;
 const ORDER = `ORDER BY COALESCE((SELECT MAX(pl.played_at) FROM play_log pl
@@ -67,4 +73,43 @@ function preparePoolCandidates(db, force) {
   };
 }
 
-module.exports = { preparePoolCandidates, MEMBER_SQL, LEGACY_SQL, hasMemberTable };
+/**
+ * The AUDIBLE END of a cut, in ms from file start. Operator mark first, analyser second, whole file
+ * last — and each fallback is a real answer, not a guess: a file with no marks at all IS audible to its
+ * final sample as far as anything here knows.
+ */
+function audibleEndMs(row) {
+  if (!row) return null;
+  if (row.cue_out_ms != null && row.cue_out_ms > 0) return Math.round(row.cue_out_ms);
+  if (row.cue_out    != null && row.cue_out    > 0) return Math.round(row.cue_out * 1000);
+  if (row.outro_start != null && row.outro_start > 0) return Math.round(row.outro_start * 1000);
+  return row.duration_ms != null ? Math.round(row.duration_ms) : null;
+}
+
+/**
+ * AUTO-POST SELECTION. A cut qualifies when its audible end fits inside the intro with the segue
+ * overlap held back:
+ *
+ *     audibleEnd <= post - segueOverlap
+ *
+ * The subtraction is what keeps a sweeper off BOTH songs. Off the incoming, because the cut ends at or
+ * before the vocal. Off the OUTGOING, because the incoming starts when the outgoing has segueOverlap
+ * left to run, so a cut that fits inside `post - segueOverlap` fires at or after the moment the
+ * outgoing finishes — measured on the deck, not assumed. Jeff's ruling, 2026-09-08: strict, not clever.
+ *
+ * Returns the candidates in the order given (least-recently-played first), filtered. Never reorders:
+ * rotation is the caller's, and a filter that also sorted would quietly change which cut repeats.
+ */
+function qualifyingCandidates(cands, postMs, segueOverlapSec) {
+  const room = postMs - Math.round((segueOverlapSec || 0) * 1000);
+  if (!(room > 0)) return [];
+  const out = [];
+  for (const c of cands || []) {
+    const end = audibleEndMs(c);
+    if (end != null && end <= room) out.push(c);
+  }
+  return out;
+}
+
+module.exports = { preparePoolCandidates, MEMBER_SQL, LEGACY_SQL, hasMemberTable,
+                   audibleEndMs, qualifyingCandidates };

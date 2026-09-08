@@ -18,7 +18,9 @@ const { REGISTRY } = require('../synced-tables');
 const TABLE    = 'songs';
 const PATCHABLE = ["title","file_path","file_key","artist_id","album_id","category_id","genre","duration_ms","bpm","energy","mood","gender","rotation_status","daypart_mask","no_repeat_hours","lufs_measured","peak_db","gain_db","is_processed","cue_in","cue_out","cue_in_ms","cue_out_ms","intro_end","outro_start","intro_end_ms","outro_start_ms","intro_version_path","has_intro","last_played_at","play_count","is_explicit","updated_at","raw_metadata","spotify_uri","cart_id","content_class","jingle_category_id",
   // v56 marks — patchable so the by-ear editor in RACK can set them through the logged writer.
-  "post_ms","post_source","post_confirmed_at","dry_ms","dry_source","dry_confirmed_at"];
+  "post_ms","post_source","post_confirmed_at","dry_ms","dry_source","dry_confirmed_at",
+  // v57 named-only outro mark — patchable so a later slice needs no handler change.
+  "end_post_ms","end_post_source","end_post_confirmed_at"];
 
 // ── Scope guard ───────────────────────────────────────────────────────────────
 

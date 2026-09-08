@@ -142,6 +142,9 @@ const REGISTRY = {
       // programming decision about a record and belongs to the account, not the machine.
       post_ms: 'scalar', post_source: 'scalar', post_confirmed_at: 'scalar',
       dry_ms:  'scalar', dry_source:  'scalar', dry_confirmed_at:  'scalar',
+      // v57 — NAMED ONLY. Where the last vocal ENDS, the mirror of post_ms. Nothing reads it; deliberate
+      // outro imaging is a slice of its own. Named now so the pair reads as a pair before either travels.
+      end_post_ms: 'scalar', end_post_source: 'scalar', end_post_confirmed_at: 'scalar',
       has_intro: 'scalar', intro_version_path: 'scalar',
       lufs_measured: 'scalar', peak_db: 'scalar', gain_db: 'scalar', is_processed: 'scalar',
       last_played_at: 'scalar', play_count: 'scalar',
@@ -259,6 +262,8 @@ const REGISTRY = {
       overlay_lead_in_sec:  'scalar',
       overlay_underlap_sec: 'scalar',
       overlay_active_hours: 'scalar',  // 24-bit daypart mask (16777215 = always)
+      // v57 — the AUTO-POST opt-in. NULL = the LEAD path, which is every row until an operator sets one.
+      overlay_chain_type:   'scalar',
       station_id:     'scalar',
       uuid:           'scalar',
       created_at:     'scalar',
@@ -469,6 +474,11 @@ const REGISTRY = {
       lead_in_sec:        'scalar',
       underlap_sec:       'scalar',
       jingle_category_id: 'scalar',
+      // v57 — what the category ASKED for, what actually RAN, and the two numbers the daemon fires on.
+      chain_type:           'scalar',
+      chain_type_effective: 'scalar',
+      post_ms:              'scalar',
+      cut_end_ms:           'scalar',
       // Log-Reader Flip v33 (Phase 0) — playout lifecycle / playhead. LOCAL-ONLY: the always-on local
       // engine owns these per-machine; excluded from sync payloads BOTH directions so a playhead flip
       // never CRDT-merges (avoids the peer-sync last-write-wins fight — see project_peer_sync_station_uuid).
@@ -943,6 +953,9 @@ const REGISTRY = {
       // programming decision about a record and belongs to the account, not the machine.
       post_ms: 'scalar', post_source: 'scalar', post_confirmed_at: 'scalar',
       dry_ms:  'scalar', dry_source:  'scalar', dry_confirmed_at:  'scalar',
+      // v57 — NAMED ONLY. Where the last vocal ENDS, the mirror of post_ms. Nothing reads it; deliberate
+      // outro imaging is a slice of its own. Named now so the pair reads as a pair before either travels.
+      end_post_ms: 'scalar', end_post_source: 'scalar', end_post_confirmed_at: 'scalar',
       intro_version_path:  'blob-ref',
       has_intro:           'scalar',
       last_played_at:      'scalar',

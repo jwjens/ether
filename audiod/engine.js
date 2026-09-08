@@ -2100,11 +2100,47 @@ class DaemonEngine {
     return null;
   }
 
+  /** Is an armed AUTO-POST entry due to fire against this deck state? Milliseconds throughout; the
+   *  position is the only live term. Separated out so the harness can drive the real predicate. */
+  _autoPostFireDue(j, st) {
+    const posMs = Math.max(0, (st && st.positionSec ? st.positionSec : 0) * 1000);
+    return posMs >= (j.postMs - j.cutEndMs);
+  }
+
+  /**
+   * ARM AUTO-POST AFTER THE ROTATE — the whole reason this is a separate path.
+   *
+   * An entry armed before a rotate does not survive it: _jingleSuperseded cancels on an airGen bump, on
+   * the armed deck no longer playing, and on a deckGen change, and a rotate is all three. Rather than
+   * weaken that guard — it is Bug-A immunity and it earns its keep — AUTO-POST simply arms later, on
+   * the deck that is now playing, so there is no rotate left to survive. Supersession then protects it
+   * exactly as it protects every other arm: a FURTHER rotate cancels it, which is correct, because the
+   * song it belongs to is gone.
+   *
+   * Returns true if it armed. Never throws into playout.
+   */
+  _autoPostArm(deck) {
+    try {
+      if (this._jingle) return false;                       // something is already armed or firing
+      const sched = this.deckSched ? this.deckSched[deck] : null;
+      if (sched == null) return false;                      // the deck has no schedule identity to key on
+      const jin = loggen.readAutoPostForSong(this.db, this.stationId, sched, this._firedJinRows.slice(-100));
+      if (!jin) return false;
+      if (!this._fileOk(jin.filePath)) { this._noteFiredRow(jin.rowId); return false; }
+      this._armJingle(jin, deck);
+      this._log(`auto-post armed on ${deck} post=${jin.postMs}ms cut_end=${jin.cutEndMs}ms ` +
+                `fires at position ${((jin.postMs - jin.cutEndMs) / 1000).toFixed(2)}s - "${jin.title}"`);
+      return true;
+    } catch (e) { this._log("autoPostArm error (playout unaffected): " + String(e)); return false; }
+  }
+
   _armJingle(jin, deck) {
     this._jingle = {
       phase: "armed", rowId: jin.rowId, filePath: jin.filePath, title: jin.title, artist: jin.artist,
       jinDur: (jin.durationMs || 0) / 1000, leadIn: jin.leadInSec,
       categoryId: jin.jingleCategoryId, contentClass: 'SWP',   // v52: one imaging class
+      // AUTO-POST terms, absent on a LEAD arm. Copied onto the entry so the fire predicate reads no DB.
+      chainType: jin.chainType || null, postMs: jin.postMs ?? null, cutEndMs: jin.cutEndMs ?? null,
       deck, airGen: this._airGen, deckGen: this.deckGen[deck],
       firedAt: 0, firingConfirmedAt: 0, nextStart: 0, outgoingEndedAt: 0,
     };
@@ -2331,6 +2367,16 @@ class DaemonEngine {
           // definition of its start, not a correction. Both terms read the same live deck position, so this
           // cannot drift — generated_schedule.scheduled_at is a plan, not a clock (measured 2026-09-06:
           // only ~10% of plays land within 1s of their scheduled time).
+          // AUTO-POST fires off the INCOMING deck's POSITION, not the outgoing's remaining time. The
+          // cut is chosen so it fits inside the intro, so its last audible moment lands on the post:
+          //     fire when P >= post - cutEnd
+          // Both terms are milliseconds on the row; P is the live deck position. This arm was created
+          // AFTER the rotate (see _autoPostArm), so j.deck is the song being introduced and the
+          // outgoing has already finished — which is what keeps a sweeper off the end of a song.
+          if (j.chainType === 'auto_post') {
+            if (this._autoPostFireDue(j, st)) this._fireJingle(j);
+            return;
+          }
           if (remaining <= j.leadIn + this.segueOverlap) this._fireJingle(j);   // FIRE on the advance chain
           return;
         }
@@ -2369,6 +2415,13 @@ class DaemonEngine {
       const remaining = (st.durationSec || 0) - (st.positionSec || 0);
       const afterTs = this.deckSched[P];
       if (!(remaining > 0) || afterTs == null) { this._clearScheduled("unscheduled"); return; }  // non-scheduled row → no seam
+
+      // AUTO-POST belongs to the song PLAYING NOW, not to the seam ahead — it fires inside this song's
+      // intro. Tried first and every tick until it arms, because the rotate that started this song is
+      // the event it waits for, and an entry armed before that rotate would have been cancelled by it.
+      // Returns false instantly when the placement is not auto_post, so the LEAD path below is reached
+      // on exactly the seams it always was.
+      if (this._autoPostArm(P)) { this._clearScheduled("auto-post-armed"); return; }
       const nextDeck = this._nextRotateDeck(P);
       // A SCHEDULED SWEEPER FIRES. The engine used to suppress the seam whenever the outgoing or incoming
       // deck was a SPOT — an editorial judgement ("imaging doesn't belong next to a commercial") made in

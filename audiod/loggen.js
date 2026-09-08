@@ -469,6 +469,52 @@ function orderForNearestAnchor(items, seamTs, opts = {}) {
 // again in an emergency, flip this to false (gates only the FIRE; Generate placement is harmless).
 const JINGLES_ENABLED = true;
 
+/**
+ * AUTO-POST lookup — the placement that belongs to the song ALREADY PLAYING on a deck.
+ *
+ * readJingleForSeam (below) answers "what fires at the seam ahead of the outgoing deck", and arms
+ * BEFORE the rotate. AUTO-POST cannot use it: the fire point is inside the incoming song, and an entry
+ * armed before the rotate is cancelled BY the rotate — _jingleSuperseded treats an airGen bump, the
+ * armed deck ceasing to play, and a deckGen change as supersession, and a rotate is all three at once.
+ * That is Bug-A immunity working as designed, and it is not something to work around.
+ *
+ * So AUTO-POST arms AFTER the rotate instead, against the deck that is now playing. This finds its
+ * placement by exact scheduled_at — _placeJingles writes the sweeper row at the incoming song's own
+ * scheduled_at, so the song's slot IS the key. A window of +/- 1s absorbs the second-rounding between
+ * a deck's stored schedule and the placement's.
+ *
+ * Returns null unless the placement asks for auto_post AND carries the numbers to do it, so a row
+ * without them can never take this path.
+ */
+function readAutoPostForSong(db, stationId, songScheduledAt, excludeIds) {
+  if (!JINGLES_ENABLED) return null;
+  if (songScheduledAt == null) return null;
+  const ex = Array.isArray(excludeIds) ? excludeIds.filter(n => Number.isFinite(n)) : [];
+  const notIn = ex.length ? ` AND gs.id NOT IN (${ex.map(() => "?").join(",")})` : "";
+  try {
+    const row = db.prepare(
+      `SELECT gs.id AS row_id, gs.scheduled_at, gs.title, gs.artist, gs.content_class,
+              COALESCE(gs.file_path, s.file_path) AS file_path,
+              COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms,
+              gs.lead_in_sec, gs.jingle_category_id, gs.chain_type, gs.post_ms, gs.cut_end_ms
+         FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
+        WHERE gs.station_id = ? AND gs.content_class IN ('JIN','SWP') AND gs.deleted_at IS NULL
+          AND gs.chain_type = 'auto_post'
+          AND gs.scheduled_at >= ? AND gs.scheduled_at <= ?${notIn}
+        ORDER BY gs.scheduled_at ASC LIMIT 1`)
+      .get(stationId, songScheduledAt - 1, songScheduledAt + 1, ...ex);
+    if (!row || !row.file_path) return null;
+    if (row.post_ms == null || row.cut_end_ms == null) return null;   // cannot be timed → not this path
+    return {
+      rowId: row.row_id, filePath: row.file_path, title: row.title || "", artist: row.artist || "",
+      durationMs: row.duration_ms || 0, scheduledAt: row.scheduled_at, contentClass: 'SWP',
+      leadInSec: row.lead_in_sec != null ? row.lead_in_sec : 2,
+      jingleCategoryId: row.jingle_category_id ?? null,
+      chainType: 'auto_post', postMs: row.post_ms, cutEndMs: row.cut_end_ms,
+    };
+  } catch { return null; }
+}
+
 function readJingleForSeam(db, stationId, afterTs, beforeTs, excludeIds) {
   if (!JINGLES_ENABLED) return null;   // kill-switch — see comment above
   if (afterTs == null || beforeTs == null || beforeTs <= afterTs) return null;
@@ -618,7 +664,7 @@ function fillQueue(db, stationId, count = 12) {
   return { source: clock ? `clock "${clock.showName}"` : "on-format", tier, formatCats, items: songs.map(toItem), starved };
 }
 
-module.exports = { fillQueue, fillQueueEnforced, enforceSeparationOn, sepWindows, fillFromHour, getActiveShowClock, getFormatCategoryIds, getStationCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, selectRowForNow, readLogAnchored, orderForNearestAnchor, eligibleForFit,
+module.exports = { fillQueue, fillQueueEnforced, enforceSeparationOn, sepWindows, fillFromHour, getActiveShowClock, getFormatCategoryIds, getStationCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, readAutoPostForSong, selectRowForNow, readLogAnchored, orderForNearestAnchor, eligibleForFit,
   // Internals, exposed for tests only — not part of the daemon's API. The category gate is the kind
   // of rule that is silently deleted by a future refactor unless something asserts it.
   _test: { baseConditions, pickTier } };

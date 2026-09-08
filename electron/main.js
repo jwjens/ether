@@ -8414,7 +8414,7 @@ function _placeJingles(db, stationId, rows) {
   // Prepared reads (defensive — a pre-v32 DB lacks the overlay columns → skip, byte-identical prior behavior).
   let stmtAssign, stmtItem, stmtPoolType, poolReader;
   try {
-    stmtAssign = db.prepare("SELECT overlay_kind, overlay_song_id, overlay_category_id, overlay_lead_in_sec, overlay_active_hours FROM categories WHERE id = ?");
+    stmtAssign = db.prepare("SELECT overlay_kind, overlay_song_id, overlay_category_id, overlay_lead_in_sec, overlay_active_hours, overlay_chain_type FROM categories WHERE id = ?");
     stmtItem = db.prepare("SELECT s.id, s.title, a.name AS artist_name, s.file_path, s.duration_ms, s.content_class FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ? AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND s.content_class IN ('SWP','JIN')");   // JIN read-only: a pre-v52 row from an un-migrated peer
     stmtPoolType = db.prepare("SELECT type FROM jingle_categories WHERE id = ? AND deleted_at IS NULL");
     // WHICH CUTS ARE IN A POOL now lives in one module (electron/sweeper-pool.js), which picks the
@@ -8449,15 +8449,43 @@ function _placeJingles(db, stationId, rows) {
   // the least-recently-played ordering cannot change mid-run; rotation within the run was already
   // handled by usedByPool, not by re-querying. Measured after: 0.29ms for the whole run.
   // Paired with idx_play_log_file_station (runMigrations), which takes the query itself 1015ms → 0.16ms.
+  // AUTO-POST needs the station's own segue overlap, because the selection rule holds it back so a
+  // sweeper cannot reach the outgoing song. Read once per run from the same KV the daemon reads.
+  let segueOverlapSec = 0;
+  try {
+    const so = db.prepare("SELECT value FROM station_config_kv WHERE station_id=? AND key='segue_overlap_sec' AND deleted_at IS NULL").get(stationId);
+    if (so && so.value != null) { const v = parseFloat(so.value); if (!isNaN(v)) segueOverlapSec = Math.max(0, v); }
+  } catch {}
+  const { audibleEndMs, qualifyingCandidates } = require('./sweeper-pool');
+  // The incoming song's post. Only read for categories that opted in, so a station with no chain type
+  // set never runs this query at all.
+  let stmtPost = null;
+  try { stmtPost = db.prepare("SELECT post_ms FROM songs WHERE id = ?"); } catch {}
+
   const poolCands = new Map();             // poolId → candidate rows, resolved once
   const itemCache = new Map();             // songId → specific overlay row, resolved once
-  const resolvePool = (poolId) => {
+  // Split in two so AUTO-POST can filter the candidate list by length BEFORE the rotation picks from
+  // it, without either re-querying (the 2026-08-06 freeze) or duplicating the anti-repeat rule.
+  const resolvePoolCands = (poolId) => {
     let cands = poolCands.get(poolId);
     if (cands === undefined) {
       let type = 'SWP'; try { const t = stmtPoolType.get(poolId); if (t && t.type) type = t.type; } catch {}
       cands = poolReader.all(poolId, type, stationId);
       poolCands.set(poolId, cands);
     }
+    return cands;
+  };
+  /** The rotation, over whatever list it is handed — the full pool, or the cuts that fit. */
+  const pickFrom = (poolId, cands) => {
+    if (!cands.length) return null;
+    let used = usedByPool.get(poolId); if (!used) { used = new Set(); usedByPool.set(poolId, used); }
+    let pick = cands.find(x => !used.has(x.id));
+    if (!pick) { used.clear(); pick = cands[0]; }
+    used.add(pick.id);
+    return pick;
+  };
+  const resolvePool = (poolId) => {
+    const cands = resolvePoolCands(poolId);
     if (!cands.length) return null;
     let used = usedByPool.get(poolId); if (!used) { used = new Set(); usedByPool.set(poolId, used); }
     let pick = cands.find(x => !used.has(x.id));
@@ -8476,6 +8504,8 @@ function _placeJingles(db, stationId, rows) {
       const itemId = a ? a.overlay_song_id : null;
       let leadOverride = a ? a.overlay_lead_in_sec : null;
       let activeHours = (a && a.overlay_active_hours != null) ? a.overlay_active_hours : 16777215;
+      // THE OPT-IN. NULL — every category today — takes the LEAD path below, unchanged.
+      const wantsAutoPost = !!(a && a.overlay_chain_type === 'auto_post');
       // Unassigned → station fallback pool (no hours gate), else a clean dead segue (deliberate, not an error).
       if (!kind) {
         if (fallbackCatId) { kind = 'pool'; poolId = fallbackCatId; leadOverride = null; activeHours = 16777215; }
@@ -8490,6 +8520,24 @@ function _placeJingles(db, stationId, rows) {
         if (itemCache.has(itemId)) pick = itemCache.get(itemId);
         else { try { pick = stmtItem.get(itemId); } catch { pick = null; } itemCache.set(itemId, pick); }
       }
+      // AUTO-POST. The SONG owns the timing: its post says how much room there is, and a cut is only a
+      // candidate if it fits. No post on this song → fall through to LEAD, recorded, so the seam behaves
+      // exactly as it does today rather than going silent while a library is being marked.
+      let effective = 'lead', postMs = null, cutEndMs = null;
+      if (wantsAutoPost) {
+        let sp = null; try { sp = stmtPost ? stmtPost.get(incoming.song_id) : null; } catch {}
+        postMs = sp && sp.post_ms != null ? sp.post_ms : null;
+      }
+      if (wantsAutoPost && postMs != null && kind === 'pool' && poolId != null) {
+        const all = resolvePoolCands(poolId);
+        const fits = qualifyingCandidates(all, postMs, segueOverlapSec);
+        if (!fits.length) continue;   // NOTHING SHORT ENOUGH → no imaging on this seam. Jeff's ruling:
+                                      // strict rather than clever. A cut that does not fit would have to
+                                      // talk over one of the two songs, and neither is acceptable.
+        pick = pickFrom(poolId, fits);
+        if (pick) { effective = 'auto_post'; cutEndMs = audibleEndMs(pick); }
+      }
+      else if (kind === 'item' && itemId != null) { /* already resolved above */ }
       else if (kind === 'pool' && poolId != null) { pick = resolvePool(poolId); }
       if (!pick || !pick.file_path) continue;
       const cls = 'SWP';                       // v52: the only imaging class
@@ -8503,6 +8551,12 @@ function _placeJingles(db, stationId, rows) {
         content_class: cls, channel: 'CART',
         lead_in_sec: leadOverride != null ? leadOverride : def.lead,
         jingle_category_id: kind === 'pool' ? poolId : null,
+        // WHAT WAS ASKED FOR, and WHAT ACTUALLY RAN. The pair is what lets ON DECK say "fixed lead (no
+        // post on this song)" instead of silently doing something other than what the category asked.
+        chain_type: wantsAutoPost ? 'auto_post' : null,
+        chain_type_effective: effective,
+        post_ms: effective === 'auto_post' ? postMs : null,
+        cut_end_ms: effective === 'auto_post' ? cutEndMs : null,
       });
     }
   } catch (e) { console.error('[schedule] overlay placement error (music unaffected):', e.message); return; }

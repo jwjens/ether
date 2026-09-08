@@ -178,7 +178,7 @@ function generatedScheduleBulkCreate(db, stationId, rows) {
   if (!rows.length) return { ok: true, inserted: 0 };
   const now = new Date().toISOString();
   const stmtInsert = db.prepare(
-    `INSERT INTO ${TABLE} (scheduled_at, song_id, title, artist, file_key, file_path, duration_s, category_id, clock_id, generated_at, content_class, channel, lead_in_sec, underlap_sec, jingle_category_id, pick_reason, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO ${TABLE} (scheduled_at, song_id, title, artist, file_key, file_path, duration_s, category_id, clock_id, generated_at, content_class, channel, lead_in_sec, underlap_sec, jingle_category_id, pick_reason, chain_type, chain_type_effective, post_ms, cut_end_ms, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   const nowSec = Math.floor(Date.now() / 1000);
   db.transaction(() => {
@@ -198,6 +198,11 @@ function generatedScheduleBulkCreate(db, stationId, rows) {
         row.duration_s, row.category_id, row.clock_id, row.generated_at ?? nowSec,
         row.content_class ?? 'MUSIC', row.channel ?? null, row.lead_in_sec ?? null, row.underlap_sec ?? null, row.jingle_category_id ?? null,
         row.pick_reason ?? null,      // Phase 4: compact JSON of why this row was chosen (music only)
+        // v57 AUTO-POST: what the category asked for, what actually ran, and the two numbers the daemon
+        // needs at fire time so it never queries. NULL on every row until a category opts in.
+        // ORDER MATTERS — these sit after pick_reason in the column list above. A mismatch here writes
+        // a post into pick_reason and is invisible until something reads it back.
+        row.chain_type ?? null, row.chain_type_effective ?? null, row.post_ms ?? null, row.cut_end_ms ?? null,
         row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at
       );
       logMutation(db, {

@@ -43,6 +43,7 @@ const PATCHABLE = [
   'intro_end_ms', 'outro_start_ms', 'has_intro', 'intro_version_path',
   // v56 marks — see synced-tables.js for what they mean and why they sync.
   'post_ms', 'post_source', 'post_confirmed_at', 'dry_ms', 'dry_source', 'dry_confirmed_at',
+  'end_post_ms', 'end_post_source', 'end_post_confirmed_at',
   'lufs_measured', 'peak_db', 'gain_db', 'is_processed', 'last_played_at', 'play_count',
   'raw_metadata', 'r2_uploaded_at',
 ];
