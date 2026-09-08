@@ -8438,6 +8438,21 @@ function _placeJingles(db, stationId, rows) {
   // is the CURRENT VALUE of the LEAD setting in the Sweepers panel TIMING column, shown greyed in the
   // box. Keep it identical to loggen.js readJingleForSeam — two places must never disagree.
   const SWEEPER_DEFAULT = { lead: 2 };
+// ⚠ TWO FIELDS, ONE SUFFIX APART, MEANING DIFFERENT THINGS. Read this before touching either.
+  //
+  //   intro_end     SECONDS.      Written by the ANALYSER. The SILENCE boundary — where audio starts.
+  //   intro_end_ms  MILLISECONDS. Written by the CUE EDITOR. THE POST — where the VOCAL starts.
+  //
+  // They are not the same measurement, they are not the same unit, and they are not the same author.
+  // `intro_end` on a song with no leading silence is 0 and correct; `intro_end_ms` on the same song is
+  // the number a jock talks up to. Reading one where the other was meant is a sweeper over a vocal.
+  //
+  // The same trap exists on the other end: outro_start (seconds, analyser, trailing silence) versus
+  // outro_start_ms (milliseconds, cue editor, where the outro begins).
+  //
+  // AUTO-POST reads intro_end_ms and nothing else. The `_ms` pair is the operator's; the bare pair is
+  // the analyser's. Nothing else in the app acts on either — see docs/post-vs-intro-end-duplication.
+
   // THE GENERATE FREEZE (2026-08-06, 4.4.153). A CPU profile of the LIVE frozen main process put
   // 99.2% of 30s inside one native better-sqlite3 `.all()` under resolvePool. This query re-ran for
   // EVERY music row, and its correlated MAX(played_at) subquery scanned all ~36,900 play_log rows per
@@ -8457,10 +8472,17 @@ function _placeJingles(db, stationId, rows) {
     if (so && so.value != null) { const v = parseFloat(so.value); if (!isNaN(v)) segueOverlapSec = Math.max(0, v); }
   } catch {}
   const { audibleEndMs, qualifyingCandidates } = require('./sweeper-pool');
-  // The incoming song's post. Only read for categories that opted in, so a station with no chain type
-  // set never runs this query at all.
+  // THE POST COMES FROM THE CUE EDITOR. `intro_end_ms` is the INTRO END marker an operator sets in the
+  // cue editor (right-click a song → Open in Cue Editor) — milliseconds, never auto-filled, and it has
+  // meant "where the vocal starts" since long before AUTO-POST existed. A second column for the same
+  // mark (`post_ms`, added in v56) was a duplicate of a field with a mature editor, and is no longer
+  // read by anything.
+  //
+  // NOT `intro_end`. See the warning above SWEEPER_DEFAULT: that one is SECONDS, written by the
+  // analyser, and means the silence boundary. Reading it here would put a sweeper over a vocal on
+  // every song whose audio starts at 0.
   let stmtPost = null;
-  try { stmtPost = db.prepare("SELECT post_ms FROM songs WHERE id = ?"); } catch {}
+  try { stmtPost = db.prepare("SELECT intro_end_ms FROM songs WHERE id = ?"); } catch {}
 
   const poolCands = new Map();             // poolId → candidate rows, resolved once
   const itemCache = new Map();             // songId → specific overlay row, resolved once
@@ -8526,7 +8548,9 @@ function _placeJingles(db, stationId, rows) {
       let effective = 'lead', postMs = null, cutEndMs = null;
       if (wantsAutoPost) {
         let sp = null; try { sp = stmtPost ? stmtPost.get(incoming.song_id) : null; } catch {}
-        postMs = sp && sp.post_ms != null ? sp.post_ms : null;
+        // 0 is "not set", not "the vocal starts at zero": the cue editor initialises the marker at 0
+        // and only a drag makes it meaningful. A song nobody has marked falls back to LEAD.
+        postMs = sp && sp.intro_end_ms != null && sp.intro_end_ms > 0 ? sp.intro_end_ms : null;
       }
       if (wantsAutoPost && postMs != null && kind === 'pool' && poolId != null) {
         const all = resolvePoolCands(poolId);

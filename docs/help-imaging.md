@@ -40,9 +40,8 @@ is unavailable.
 **POOLS** — the groups a category can draw from. A pool is how you get variety: assign a category to a
 pool of ten IDs and it rotates through them instead of playing the same one every time.
 
-Today a cut can be in **one pool at a time**, and pools belong to a station — so putting a cut in this
-station's pool takes it out of another station's. Letting one cut sit in several stations' pools is a
-change still to come.
+A cut can be in **several pools at once**, including pools belonging to different stations — the
+library is shared, and adding a cut to one pool takes it out of nothing.
 
 **ASSIGNMENTS** — which music category gets which imaging, the LEAD (how many seconds before the next
 song starts the cut fires), and the ACTIVE HOURS it is allowed in. This is the grid that decides what
@@ -65,7 +64,11 @@ than leaving the mixer, so use whichever is closer to hand: both are the same ed
 disagree about what is set.
 
 **RACK, ON DECK and RULES show no controls at all** — not greyed-out ones. What they will eventually let
-you do (mark a cut, swap a placement, write a ban) is not built, so there is nothing there to press.
+you do (swap a placement, write a ban) is not built, so there is nothing there to press.
+
+**Song timing is not set here.** A song's intro is marked where songs are edited: right-click the song
+anywhere in the Library and choose **Open in Cue Editor**, then drag **INTRO END** to the first word and
+Save. That is the mark imaging is measured against — see "How imaging fits a song" below.
 
 ## If ON DECK is empty
 
@@ -90,9 +93,22 @@ see it take effect.
   the song that is ending.
 - **Active hours** — the hours of the day an assignment is allowed to fire in.
 
-Three more words belong to imaging and are **not built yet** — you will see them in later releases:
-**post** (where a song's vocal starts), **dry** (the part of a cut with no music under it), and **ban**
-(a rule saying a cut may not go somewhere).
+- **Post** — where a song's vocal starts. It is the **INTRO END** marker in the cue editor, and it is
+  how much room imaging has before the singing.
+- **Ban** — a rule saying a cut may not go somewhere. Not built yet.
+
+## How imaging fits a song
+
+When a music category is set to **AUTO-POST**, the song decides the timing and the sweeper either fits
+or is not chosen:
+
+1. The song's **post** (INTRO END in the cue editor) says how much room there is before the vocal.
+2. Only cuts **shorter than that room** are candidates. A cut that would run past the vocal is never
+   selected.
+3. The chosen cut is fired so its last moment lands **on** the first word.
+
+A song you have not marked keeps the fixed **LEAD** behaviour, unchanged — so marking is worth doing one
+song at a time, starting with the ones that play most, and nothing breaks while the rest wait.
 
 ## Related
 

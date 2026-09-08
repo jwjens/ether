@@ -243,6 +243,10 @@ export default function CueEditor({ songId, filePath, onSaved }: Props) {
     setPlayPos(0);
   };
 
+  // INTRO END IS THE POST. What this saves as `intro_end_ms` is the mark AUTO-POST reads to decide
+  // how much room a sweeper has before the vocal — see electron/main.js _placeJingles. It is a
+  // DIFFERENT column from `intro_end` (seconds, written by the analyser, meaning the silence
+  // boundary), and the two are one suffix apart. Never point one at the other.
   const save = async () => {
     await (window as any).ether.songs.updateById(songId, {
       cue_in_ms:      cueIn,

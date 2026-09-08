@@ -36,6 +36,20 @@ export interface EnergyResult {
   dynamic_range_db: number;  // between quiet and loud sections
 }
 
+// ⚠ TWO FIELDS, ONE SUFFIX APART, MEANING DIFFERENT THINGS. Read this before touching either.
+//
+//   intro_end     SECONDS.      Written by the ANALYSER. The SILENCE boundary — where audio starts.
+//   intro_end_ms  MILLISECONDS. Written by the CUE EDITOR. THE POST — where the VOCAL starts.
+//
+// They are not the same measurement, they are not the same unit, and they are not the same author.
+// `intro_end` on a song with no leading silence is 0 and correct; `intro_end_ms` on the same song is
+// the number a jock talks up to. Reading one where the other was meant is a sweeper over a vocal.
+//
+// The same trap exists on the other end: outro_start (seconds, analyser, trailing silence) versus
+// outro_start_ms (milliseconds, cue editor, where the outro begins).
+//
+// AUTO-POST reads intro_end_ms and nothing else. The `_ms` pair is the operator's; the bare pair is
+// the analyser's. Nothing else in the app acts on either — see docs/post-vs-intro-end-duplication.
 export interface CuePoints {
   cue_in: number;           // seconds
   intro_end: number;        // seconds — where music starts

@@ -135,11 +135,15 @@ const REGISTRY = {
       bpm: 'scalar', energy: 'scalar', mood: 'scalar', gender: 'scalar',
       is_explicit: 'scalar', spotify_uri: 'scalar', cart_id: 'scalar',
       cue_in: 'scalar', cue_out: 'scalar', cue_in_ms: 'scalar', cue_out_ms: 'scalar',
+      // ⚠ ONE SUFFIX APART, DIFFERENT MEANINGS. intro_end/outro_start are SECONDS from the analyser and
+      // mean the SILENCE boundaries. intro_end_ms/outro_start_ms are MILLISECONDS from the cue editor
+      // and mean THE POST and the outro. AUTO-POST reads intro_end_ms. Nothing reads the bare pair.
       intro_end: 'scalar', outro_start: 'scalar', intro_end_ms: 'scalar', outro_start_ms: 'scalar',
-      // v56 — THE MARKS. post_ms is where the vocal begins; dry_ms is how much of a cut carries no
-      // music under the voice. *_source says 'auto' (a detector proposed it) or 'operator' (someone
-      // set it by ear); *_confirmed_at is when a human last agreed. Synced because a mark is a
-      // programming decision about a record and belongs to the account, not the machine.
+      // v56 — RETIRED, 2026-09-08, before anything was ever written to them. post_ms duplicated
+      // intro_end_ms (the cue editor's INTRO END, which has meant the post all along); end_post_ms
+      // duplicated outro_start_ms; dry_ms was dropped when selection became a length test. Nothing
+      // reads or writes any of them. Left in place because they are empty on every row and dropping
+      // them is a `songs` table rebuild — a cleanup of its own, not a thing to do in passing.
       post_ms: 'scalar', post_source: 'scalar', post_confirmed_at: 'scalar',
       dry_ms:  'scalar', dry_source:  'scalar', dry_confirmed_at:  'scalar',
       // v57 — NAMED ONLY. Where the last vocal ENDS, the mirror of post_ms. Nothing reads it; deliberate
@@ -947,10 +951,11 @@ const REGISTRY = {
       outro_start:         'local-only',   // legacy marker, superseded by outro_start_ms
       intro_end_ms:        'scalar',
       outro_start_ms:      'scalar',
-      // v56 — THE MARKS. post_ms is where the vocal begins; dry_ms is how much of a cut carries no
-      // music under the voice. *_source says 'auto' (a detector proposed it) or 'operator' (someone
-      // set it by ear); *_confirmed_at is when a human last agreed. Synced because a mark is a
-      // programming decision about a record and belongs to the account, not the machine.
+      // v56 — RETIRED, 2026-09-08, before anything was ever written to them. post_ms duplicated
+      // intro_end_ms (the cue editor's INTRO END, which has meant the post all along); end_post_ms
+      // duplicated outro_start_ms; dry_ms was dropped when selection became a length test. Nothing
+      // reads or writes any of them. Left in place because they are empty on every row and dropping
+      // them is a `songs` table rebuild — a cleanup of its own, not a thing to do in passing.
       post_ms: 'scalar', post_source: 'scalar', post_confirmed_at: 'scalar',
       dry_ms:  'scalar', dry_source:  'scalar', dry_confirmed_at:  'scalar',
       // v57 — NAMED ONLY. Where the last vocal ENDS, the mirror of post_ms. Nothing reads it; deliberate
