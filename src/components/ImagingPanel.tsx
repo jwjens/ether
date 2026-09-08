@@ -2,14 +2,26 @@
 //
 // Imaging had one door: a push-up at the bottom bar. That is a room, not a home, and by the
 // doors-before-rooms rule a feature its owner cannot find is a defect. This is slice 1 of
-// docs/imaging-model-redesign-2026-09-06.md §1 — the surface, READ-ONLY.
+// docs/imaging-model-redesign-2026-09-06.md §1 — the surface.
 //
-// READ-ONLY MEANS READ-ONLY. Every query here is a SELECT. ASSIGNMENTS and POOLS render the existing
-// SweepersPanel with `readOnly`, so there is ONE component behind both this surface and the push-up
-// editor — two views of the same thing that can disagree is a failure Jeff has already had. Editing
-// stays in the push-up, which remains the canonical home and is unchanged.
+// WHAT IS EDITABLE HERE, AND WHY (revised 2026-09-07 after the first build).
 //
-// NOTHING RENDERS UNLESS IT IS WIRED. RACK shows NAME · TYPE · LENGTH · POOL and no more, because the
+// ASSIGNMENTS and POOLS are EDITABLE. They render the existing SweepersPanel — one component, one set
+// of write handlers, reached through two doors. The duplication worth fearing is two IMPLEMENTATIONS
+// that can disagree; two doors onto one component is not that, and §1.2 of the redesign always had the
+// push-up becoming "a shortcut INTO it rather than the thing itself".
+//
+// The first build shipped them with `readOnly`, which DISABLED every control rather than not drawing
+// it — a surface full of dead controls, which is the exact defect this work exists to remove. Jeff:
+// "every control renders and none of them work". Fixed by letting them work, not by greying them out.
+//
+// RACK, ON DECK and RULES are read-only and draw NO CONTROLS AT ALL — not disabled ones. Their writes
+// belong to later slices (marks, overrides, bans); until then there is nothing to click, which is the
+// honest render of a thing that cannot yet be done.
+//
+// NOTHING RENDERS UNLESS IT IS WIRED.
+//
+// RACK shows NAME · TYPE · LENGTH · POOL and no more, because the
 // other two columns in the design do not exist yet: no imaging asset carries run dates anywhere
 // (asset_sweeper_meta is asset_uuid + sweeper_category_id, nothing else), and the hour mask is a
 // property of the ASSIGNMENT (categories.overlay_active_hours), not of a cut — so it is shown in
@@ -58,13 +70,18 @@ export default function ImagingPanel() {
     try {
       // The same join SweepersPanel already runs — a proven path, not a new one. Announcements are
       // included: type is metadata, and an imaging surface that shows only sweepers is not one.
+      // THE CUT LIST IS GLOBAL, THE POOL NAME IS NOT. Every sweeper is available to every station —
+      // one shared set, like the song library — so there is deliberately no station filter on the
+      // assets. But `jingle_categories` rows belong to a station, so the join MUST be scoped: without
+      // `jc.station_id`, halloVeen printed "Summer Christmas" and "Christmas" on 52 of 64 rows, which
+      // are other stations' pool names. A pool this station does not own now reads as no pool.
       setRack(await query<RackRow>(
         "SELECT la.type, la.title, la.duration_ms, jc.name AS pool" +
         "  FROM library_asset la" +
         "  JOIN songs s ON s.uuid = la.uuid" +
-        "  LEFT JOIN jingle_categories jc ON jc.id = s.jingle_category_id" +
+        "  LEFT JOIN jingle_categories jc ON jc.id = s.jingle_category_id AND jc.station_id = ?" +
         " WHERE la.type IN ('SWEEPER','ANNOUNCEMENT') AND la.deleted_at IS NULL AND s.deleted_at IS NULL" +
-        " ORDER BY la.type, la.title"));
+        " ORDER BY la.type, la.title", [stationId]));
     } catch { setRack([]); }
     try {
       // What WILL fire, from the generated log. A placed sweeper carries the same scheduled_at as the
@@ -151,20 +168,22 @@ export default function ImagingPanel() {
                   })}
                 </div>
                 <div style={{ ...EMPTY, marginTop: 16 }}>
-                  Read-only. Auditioning and the dry-length mark arrive in the next slice; renaming and pool
-                  assignment live in the SWEEPERS push-up.
+                  Every cut in the shared library — all of them are available to every station. POOL shows
+                  this station&rsquo;s pool only; a dash means the cut is not in one of them.
+                  <br />Auditioning and the dry-length mark arrive in the next slice. Pool membership is set
+                  in POOLS.
                 </div>
               </>
             )}
           </div>
         )}
 
-        {/* ── POOLS and ASSIGNMENTS — the existing editor, lifted and disabled ── */}
+        {/* ── POOLS and ASSIGNMENTS — the existing editor, lifted and LIVE ── */}
         {view === "pools" && (
-          <SweepersPanel stationId={stationId} section="pools" readOnly />
+          <SweepersPanel stationId={stationId} section="pools" />
         )}
         {view === "assignments" && (
-          <SweepersPanel stationId={stationId} section="assignments" readOnly />
+          <SweepersPanel stationId={stationId} section="assignments" />
         )}
 
         {/* ── ON DECK ──────────────────────────────────────────────────────── */}

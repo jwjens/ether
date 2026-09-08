@@ -16,15 +16,16 @@ tour: true
 "you're listening to…" drops, and announcements. It never sits on a deck and never interrupts the music:
 it fires on the **seam** between two songs.
 
-Until now the only way in was a push-up at the bottom of the screen. That push-up is still where you
-*edit* imaging — but IMAGING is now a place of its own in the menu, where you can see all of it at once,
-including two things you could not see anywhere before: every cut in one list, and what is about to fire.
+Until now the only way in was a push-up at the bottom of the screen. That push-up still works and is
+unchanged — but IMAGING is now a place of its own in the menu, where you can see and set all of it in
+one screen, including two things you could not see anywhere before: every cut in one list, and what is
+about to fire.
 
 ## How to get there
 
 - **Hamburger menu → Imaging.** This is the main door.
-- **Bottom bar → SWEEPERS → OPEN IMAGING.** The push-up is the editor; this button walks you from
-  editing to the full picture.
+- **Bottom bar → SWEEPERS → OPEN IMAGING.** The push-up is the quick way in mid-show; this button
+  walks you from it to the full picture.
 
 ## The five views
 
@@ -32,8 +33,16 @@ including two things you could not see anywhere before: every cut in one list, a
 ANNOUNCEMENT), its length, and which pool it belongs to. If a length shows a dash, that cut has no
 duration recorded — the row is incomplete, not broken, and it will still play.
 
+Every cut is available to **every station** — one shared library, the same as your songs. The POOL
+column shows only *this* station's pool; a dash there means the cut is not in one of them, not that it
+is unavailable.
+
 **POOLS** — the groups a category can draw from. A pool is how you get variety: assign a category to a
 pool of ten IDs and it rotates through them instead of playing the same one every time.
+
+Today a cut can be in **one pool at a time**, and pools belong to a station — so putting a cut in this
+station's pool takes it out of another station's. Letting one cut sit in several stations' pools is a
+change still to come.
 
 **ASSIGNMENTS** — which music category gets which imaging, the LEAD (how many seconds before the next
 song starts the cut fires), and the ACTIVE HOURS it is allowed in. This is the grid that decides what
@@ -48,12 +57,15 @@ says so rather than showing controls that do nothing.
 
 ## What you can change here
 
-**Nothing, in this release.** IMAGING is read-only: it shows you what is set, and every panel that lets
-you change something says where that is done. Editing lives in the **SWEEPERS push-up** at the bottom
-bar — create and name pools there, assign cuts to pools, set each category's imaging, LEAD and active
-hours.
+**POOLS and ASSIGNMENTS are live** — create and name pools, put cuts in them, and set each category's
+imaging, LEAD and active hours, right here.
 
-This is deliberate. There is one editor, so two screens can never disagree about what is set.
+The **SWEEPERS push-up** at the bottom bar does the same job and is unchanged. Mid-show it is faster
+than leaving the mixer, so use whichever is closer to hand: both are the same editor, so they can never
+disagree about what is set.
+
+**RACK, ON DECK and RULES show no controls at all** — not greyed-out ones. What they will eventually let
+you do (mark a cut, swap a placement, write a ban) is not built, so there is nothing there to press.
 
 ## If ON DECK is empty
 
@@ -63,7 +75,7 @@ It tells you which of three things is true, because they need different fixes:
   generate a day.
 - **"N elements scheduled, no imaging placed."** The log exists but carries no imaging. The view names
   the reason — usually that no music category has an overlay assigned and there is no fallback pool.
-  Fix it in the push-up, then Generate again.
+  Fix it in ASSIGNMENTS, then Generate again.
 - **A list.** Imaging is placed and this is what will fire.
 
 Changing an assignment does **not** rewrite a log that is already generated. Generate the day again to
