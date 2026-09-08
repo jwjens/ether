@@ -63,6 +63,10 @@ const secs = (ms: number | null) => {
 };
 const clock = (ts: number) => new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
+/** How many rows RACK renders. A full library is thousands of cuts and a full render is tens of
+ *  thousands of DOM nodes; the list is ordered so the rows worth working on are the ones you get. */
+const PAGE = 300;
+
 const LABEL: React.CSSProperties = { fontSize: "var(--t-micro)", color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.08em" };
 const NO_POOL = "— not in one of this station" + String.fromCharCode(39) + "s pools —";
 const EMPTY: React.CSSProperties = { fontSize: "var(--t-body)", color: "var(--text-tertiary)", fontStyle: "italic", lineHeight: 1.6, maxWidth: 620 };
@@ -91,26 +95,58 @@ export default function ImagingPanel() {
       // The pools are per station and, since v55, a cut can be in SEVERAL of them, so this is a
       // group_concat and the column is POOLS, plural. Scoped by jc.station_id: without it halloVeen
       // printed other stations' pool names on 52 of 64 rows.
+      // NO CORRELATED SUBQUERIES. Both lists used to carry one per row — the pool names on the imaging
+      // list, the placement count on the songs list — and with an ORDER BY, SQLite computes and sorts
+      // EVERY row before a LIMIT applies. Measured on a synthetic 5,000-cut library: 1,937 ms, and
+      // LIMIT 200 only took it to 1,732 ms, because the limit was never the expensive part.
+      //
+      // Two flat queries and a Map instead. The second one is the cheap half — the whole membership
+      // list for a station measured 4.1 ms at 4,955 rows — so the cost stops growing with the number
+      // of rows the operator can see.
       const MARKS = " s.post_ms, s.post_source, s.post_confirmed_at, s.dry_ms, s.dry_source, s.dry_confirmed_at,";
-      setRack(rackMode === "imaging"
-        ? await query<RackRow>(
+      if (rackMode === "imaging") {
+        const [cuts, mem] = await Promise.all([
+          query<RackRow>(
             "SELECT s.id, la.uuid, la.type, la.title, la.duration_ms, s.file_path, s.intro_end," + MARKS +
-            "       (SELECT group_concat(jc.name, ', ') FROM sweeper_pool_member m" +
-            "          JOIN jingle_categories jc ON jc.id = m.pool_id AND jc.station_id = ? AND jc.deleted_at IS NULL" +
-            "         WHERE m.asset_uuid = la.uuid AND m.deleted_at IS NULL) AS pools" +
+            "       NULL AS pools" +
             "  FROM library_asset la" +
             "  JOIN songs s ON s.uuid = la.uuid" +
             " WHERE la.type IN ('SWEEPER','ANNOUNCEMENT') AND la.deleted_at IS NULL AND s.deleted_at IS NULL" +
-            " ORDER BY la.type, la.title", [stationId])
-        // MOST-SCHEDULED FIRST, and unmarked before marked: the order in which marking is worth doing.
-        : await query<RackRow>(
+            " ORDER BY la.type, la.title LIMIT " + PAGE),
+          query<{ asset_uuid: string; name: string }>(
+            "SELECT m.asset_uuid, jc.name FROM sweeper_pool_member m" +
+            "  JOIN jingle_categories jc ON jc.id = m.pool_id AND jc.deleted_at IS NULL" +
+            " WHERE m.station_id = ? AND m.deleted_at IS NULL", [stationId]),
+        ]);
+        const byAsset = new Map<string, string[]>();
+        for (const r of mem || []) {
+          const list = byAsset.get(r.asset_uuid); if (list) list.push(r.name); else byAsset.set(r.asset_uuid, [r.name]);
+        }
+        setRack((cuts || []).map(r => ({ ...r, pools: (byAsset.get(r.uuid) || []).join(", ") || null })));
+      } else {
+        // MOST-SCHEDULED FIRST, unmarked before marked — the order in which marking is worth doing. The
+        // count comes from ONE grouped query rather than one per song, and the sort happens here, so
+        // neither cost grows with the size of the library.
+        const [songs, ahead] = await Promise.all([
+          query<RackRow>(
             "SELECT s.id, s.uuid, 'SONG' AS type, s.title, s.duration_ms, s.file_path, s.intro_end," + MARKS +
-            "       NULL AS pools," +
-            "       (SELECT COUNT(*) FROM generated_schedule g" +
-            "         WHERE g.song_id = s.id AND g.station_id = ? AND g.scheduled_at >= strftime('%s','now')) AS scheduled" +
+            "       NULL AS pools" +
             "  FROM songs s" +
-            " WHERE s.content_class = 'MUSIC' AND s.deleted_at IS NULL AND s.file_path IS NOT NULL" +
-            " ORDER BY (s.post_ms IS NOT NULL), scheduled DESC, s.title LIMIT 400", [stationId]));
+            " WHERE s.content_class = 'MUSIC' AND s.deleted_at IS NULL AND s.file_path IS NOT NULL"),
+          query<{ song_id: number; n: number }>(
+            "SELECT song_id, COUNT(*) n FROM generated_schedule" +
+            " WHERE station_id = ? AND scheduled_at >= strftime('%s','now') AND song_id IS NOT NULL" +
+            " GROUP BY song_id", [stationId]),
+        ]);
+        const counts = new Map<number, number>();
+        for (const r of ahead || []) counts.set(r.song_id, r.n);
+        const rows = (songs || []).map(r => ({ ...r, scheduled: counts.get(r.id) || 0 }));
+        rows.sort((a, b) =>
+          (a.post_ms == null ? 0 : 1) - (b.post_ms == null ? 0 : 1) ||
+          (b.scheduled || 0) - (a.scheduled || 0) ||
+          (a.title || "").localeCompare(b.title || ""));
+        setRack(rows.slice(0, PAGE));
+      }
     } catch { setRack([]); }
     try {
       // What WILL fire, from the generated log. A placed sweeper carries the same scheduled_at as the
@@ -216,6 +252,9 @@ export default function ImagingPanel() {
                 <div style={{ ...LABEL, marginBottom: 10 }}>
                   {rack.length} {rackMode === "imaging" ? "cuts" : "songs"} ·{" "}
                   {rack.filter(r => (rackMode === "imaging" ? r.dry_ms : r.post_ms) != null).length} marked
+                  {/* NO SILENT TRUNCATION. A list that stops at 300 and does not say so reads as a
+                      complete library. */}
+                  {rack.length >= PAGE && <span> · showing the first {PAGE}, ordered so these are the ones worth doing first</span>}
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 92px 70px 150px 1fr", gap: "6px 14px", alignItems: "center" }}>
                   <div style={LABEL}>Name</div><div style={LABEL}>Type</div>

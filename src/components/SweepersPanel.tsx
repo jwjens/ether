@@ -82,6 +82,11 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
   const [pools, setPools] = useState<Pool[]>([]);
   const [songs, setSongs] = useState<OverlaySong[]>([]);
   const [members, setMembers] = useState<PoolMember[]>([]);
+  // POOLS IS POOL-FIRST. The old shape listed every cut with a checkbox per pool, which is fine at 64
+  // and unusable at thousands — it renders the whole library to answer a question about one pool.
+  // Now: pick a pool, see what is in it, and search the library to add. Both halves are bounded.
+  const [selPool, setSelPool] = useState<number | null>(null);
+  const [addQuery, setAddQuery] = useState("");
   const [cats, setCats] = useState<MusicCat[]>([]);
   const [fallbackId, setFallbackId] = useState<number | null>(null);
   const [newName, setNewName] = useState("");
@@ -159,7 +164,6 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
       await reload();
     } catch {}
   };
-  const inPool = (s: OverlaySong, poolId: number) => !!s.uuid && members.some(m => m.pool_id === poolId && m.asset_uuid === s.uuid);
   const setFallback = async (poolId: number | null) => { if (ro) return; try { await ether()?.stationConfigKv?.upsertByKey(stationId, "overlay_fallback_category_id", poolId != null ? String(poolId) : ""); setFallbackId(poolId); } catch {} };
 
   // Category assignment: encode as "item:<songId>" | "pool:<poolId>" | "".
@@ -335,7 +339,11 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
           <div />
           {tabPools.map(p => (
             <Fragment key={p.id}>
-              <div key={p.id + "n"} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div key={p.id + "n"} onClick={() => setSelPool(p.id)}
+                title="Show what is in this pool"
+                style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+                         background: selPool === p.id ? "rgba(136,104,216,0.12)" : "transparent",
+                         padding: "2px 4px", borderRadius: "var(--r-0)" }}>
                 <span style={{ width: 8, height: 8, borderRadius: "50%", background: p.color || accent }} />
                 <input defaultValue={p.name} disabled={ro} onBlur={e => e.target.value.trim() && e.target.value !== p.name && patchPool(p, { name: e.target.value.trim() })}
                   style={{ flex: 1, background: "transparent", color: "var(--text-primary)", border: "1px solid transparent", borderRadius: "var(--r-0)", padding: "2px 4px", fontSize: "var(--t-lead)", fontWeight: 600 }} />
@@ -353,48 +361,82 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
         </div>
       )}
 
-      <div style={{ fontSize: "var(--t-small)", fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: 8 }}>Sweepers ({tabSongs.length})</div>
-      {tabSongs.length === 0 ? (
-        <div style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", fontStyle: "italic" }}>None tagged. In the Library, right-click an item and choose “Mark as Sweeper”, then assign it to a pool here.</div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-          {tabSongs.map(s => (
-            <div key={s.id}
-              // Sweepers are `songs` rows (content_class SWP/JIN), so the table is songs.
-              onContextMenu={e => fileMenu.open(e, { table: "songs", id: s.id, filePath: (s as any).file_path, title: s.title }, reload)}
-              style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 8px", background: "var(--bg-secondary)", borderRadius: "var(--r-0)" }}>
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: accent, flexShrink: 0 }} />
-              {ro ? (
-                <span style={{ fontSize: "var(--t-lead)", flex: 1 }}>{s.title}{s.artist_name ? ` — ${s.artist_name}` : ""}</span>
-              ) : (
-              <InlineNameEditor
-                value={s.title}
-                display={<span style={{ fontSize: "var(--t-lead)" }}>{s.title}{s.artist_name ? ` — ${s.artist_name}` : ""}</span>}
-                onSave={async (next) => { try { await ether()?.songs?.updateById(s.id, { title: next }); await reload(); } catch {} }}
-              />
-              )}
-              {/* ONE CHECKBOX PER POOL. A dropdown could only ever say one pool, which is the limitation
-                  v55 removed. A cut with no uuid cannot be a member — it cannot be named across machines
-                  — so it says so instead of offering a control that would fail. */}
-              {s.uuid ? (
-                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                  {tabPools.length === 0
-                    ? <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>no pools yet</span>
-                    : tabPools.map(p => (
-                      <label key={p.id} title={`In ${p.name}`} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: "var(--t-micro)", color: inPool(s, p.id) ? "var(--text-primary)" : "var(--text-tertiary)", cursor: ro ? "default" : "pointer" }}>
-                        <input type="checkbox" disabled={ro} checked={inPool(s, p.id)}
-                               onChange={e => toggleMember(s, p.id, e.target.checked)} />
-                        {p.name}
-                      </label>
-                    ))}
-                </div>
-              ) : (
-                <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }} title="This cut has no uuid, so it cannot be referenced by a pool or synced to another machine.">no uuid — cannot be pooled</span>
-              )}
-            </div>
-          ))}
+      {/* WHAT IS IN THIS POOL — bounded by the pool, not by the library. */}
+      {selPool == null ? (
+        <div style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", fontStyle: "italic" }}>
+          Pick a pool above to see what is in it and add cuts to it.
         </div>
-      )}
+      ) : (() => {
+        const pool = tabPools.find(p => p.id === selPool);
+        const inThis = tabSongs.filter(x => x.uuid && members.some(m => m.pool_id === selPool && m.asset_uuid === x.uuid));
+        const q = addQuery.trim().toLowerCase();
+        // The add list is SEARCH-FIRST and capped. Rendering every cut not already in the pool is the
+        // thing that breaks at thousands, and it is also not how anyone looks for one.
+        const candidates = q
+          ? tabSongs.filter(x => x.uuid
+              && !inThis.some(y => y.id === x.id)
+              && (x.title || "").toLowerCase().includes(q)).slice(0, 40)
+          : [];
+        return (
+          <>
+            <div style={{ fontSize: "var(--t-small)", fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: 8 }}>
+              In {pool ? pool.name : "pool"} ({inThis.length})
+            </div>
+            {inThis.length === 0 ? (
+              <div style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", fontStyle: "italic", marginBottom: 12 }}>
+                No cuts in this pool yet. A category assigned to it would find nothing to play.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 14 }}>
+                {inThis.map(x => (
+                  <div key={x.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 8px", background: "var(--bg-secondary)", borderRadius: "var(--r-0)" }}>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: accent, flexShrink: 0 }} />
+                    <span style={{ flex: 1, fontSize: "var(--t-lead)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {x.title}{x.artist_name ? ` — ${x.artist_name}` : ""}
+                    </span>
+                    {!ro && (
+                      <button onClick={() => toggleMember(x, selPool, false)} title="Remove from this pool — the cut stays in the library and in any other pool"
+                        style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-lead)" }}>✕</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!ro && (
+              <>
+                <div style={{ fontSize: "var(--t-small)", fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase", marginBottom: 8 }}>Add a cut</div>
+                <input value={addQuery} onChange={e => setAddQuery(e.target.value)}
+                  placeholder={`Search ${tabSongs.length} cuts by name…`}
+                  style={{ width: "100%", maxWidth: 420, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", borderRadius: "var(--r-0)", padding: "6px 10px", fontSize: "var(--t-lead)" }} />
+                {q && candidates.length === 0 && (
+                  <div style={{ fontSize: "var(--t-body)", color: "var(--text-tertiary)", fontStyle: "italic", marginTop: 8 }}>
+                    Nothing matches, or everything that does is already in this pool.
+                  </div>
+                )}
+                <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 8 }}>
+                  {candidates.map(x => (
+                    <button key={x.id} onClick={() => { toggleMember(x, selPool, true); setAddQuery(""); }}
+                      style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 8px", background: "transparent", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer", textAlign: "left" as const, fontSize: "var(--t-body)" }}>
+                      <span style={{ color: accent, fontWeight: 800 }}>+</span>
+                      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.title}</span>
+                    </button>
+                  ))}
+                </div>
+                {q && candidates.length === 40 && (
+                  <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", marginTop: 6 }}>
+                    first 40 matches — narrow the search to see the rest
+                  </div>
+                )}
+              </>
+            )}
+            <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", marginTop: 12 }}>
+              Every cut in the library is available to every station. A cut can be in several pools —
+              adding it here takes it out of nothing.
+            </div>
+          </>
+        );
+      })()}
       </>)}
       </div>
       )}
