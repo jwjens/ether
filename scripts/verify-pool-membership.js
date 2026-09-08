@@ -139,12 +139,35 @@ function main() {
   for (const id of only) before.set(id, replay(db, id, 'legacy'));
 
   // ── MIGRATE the copy ─────────────────────────────────────────────────────
+  // ── ROWS BEFORE ──────────────────────────────────────────────────────────
+  const tableBefore = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sweeper_pool_member'").get();
+  const rowsBefore = tableBefore ? db.prepare('SELECT COUNT(*) n FROM sweeper_pool_member').get().n : 0;
+  console.log('');
+  console.log('--- rows BEFORE ---');
+  console.log(`  sweeper_pool_member: ${tableBefore ? rowsBefore + ' row(s)' : 'table does not exist'}`);
+  console.log(`  songs.jingle_category_id set: ${db.prepare('SELECT COUNT(*) n FROM songs WHERE jingle_category_id IS NOT NULL').get().n} row(s)`);
+  console.table(db.prepare(
+    "SELECT jc.name AS pool, jc.station_id, st.name AS station, COUNT(s.id) AS cuts" +
+    "  FROM jingle_categories jc LEFT JOIN stations st ON st.id = jc.station_id" +
+    "  LEFT JOIN songs s ON s.jingle_category_id = jc.id" +
+    " WHERE jc.deleted_at IS NULL GROUP BY jc.id ORDER BY jc.station_id").all());
   console.log('\n--- applying migration v55 to the COPY ---');
   require(path.join(__dirname, 'migrate-sweeper-pool-member-phase-sync-55.js')).applyMigration(db);
 
   const memberCount = db.prepare('SELECT COUNT(*) n FROM sweeper_pool_member WHERE deleted_at IS NULL').get().n;
   const legacyCount = db.prepare('SELECT COUNT(*) n FROM songs WHERE jingle_category_id IS NOT NULL AND uuid IS NOT NULL').get().n;
   console.log(`--- memberships: ${memberCount} in the join table, ${legacyCount} in the old column ---`);
+  console.log('');
+  console.log('--- rows AFTER ---');
+  console.log(`  sweeper_pool_member: ${memberCount} row(s)`);
+  console.log(`  songs.jingle_category_id set: ${legacyCount} row(s) (left in place, unread)`);
+  // THE SPLIT, REPRODUCED — counted from the NEW table, joined the NEW way. If the backfill were
+  // wrong this is where it would show, not in a count that merely echoes the source.
+  console.table(db.prepare(
+    "SELECT jc.name AS pool, jc.station_id, st.name AS station, COUNT(m.id) AS cuts" +
+    "  FROM jingle_categories jc LEFT JOIN stations st ON st.id = jc.station_id" +
+    "  LEFT JOIN sweeper_pool_member m ON m.pool_id = jc.id AND m.deleted_at IS NULL" +
+    " WHERE jc.deleted_at IS NULL GROUP BY jc.id ORDER BY jc.station_id").all());
 
   // ── AFTER: the v55 shape, same file, same replay ─────────────────────────
   let failures = 0;
