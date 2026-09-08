@@ -136,6 +136,12 @@ const REGISTRY = {
       is_explicit: 'scalar', spotify_uri: 'scalar', cart_id: 'scalar',
       cue_in: 'scalar', cue_out: 'scalar', cue_in_ms: 'scalar', cue_out_ms: 'scalar',
       intro_end: 'scalar', outro_start: 'scalar', intro_end_ms: 'scalar', outro_start_ms: 'scalar',
+      // v56 — THE MARKS. post_ms is where the vocal begins; dry_ms is how much of a cut carries no
+      // music under the voice. *_source says 'auto' (a detector proposed it) or 'operator' (someone
+      // set it by ear); *_confirmed_at is when a human last agreed. Synced because a mark is a
+      // programming decision about a record and belongs to the account, not the machine.
+      post_ms: 'scalar', post_source: 'scalar', post_confirmed_at: 'scalar',
+      dry_ms:  'scalar', dry_source:  'scalar', dry_confirmed_at:  'scalar',
       has_intro: 'scalar', intro_version_path: 'scalar',
       lufs_measured: 'scalar', peak_db: 'scalar', gain_db: 'scalar', is_processed: 'scalar',
       last_played_at: 'scalar', play_count: 'scalar',
@@ -931,6 +937,12 @@ const REGISTRY = {
       outro_start:         'local-only',   // legacy marker, superseded by outro_start_ms
       intro_end_ms:        'scalar',
       outro_start_ms:      'scalar',
+      // v56 — THE MARKS. post_ms is where the vocal begins; dry_ms is how much of a cut carries no
+      // music under the voice. *_source says 'auto' (a detector proposed it) or 'operator' (someone
+      // set it by ear); *_confirmed_at is when a human last agreed. Synced because a mark is a
+      // programming decision about a record and belongs to the account, not the machine.
+      post_ms: 'scalar', post_source: 'scalar', post_confirmed_at: 'scalar',
+      dry_ms:  'scalar', dry_source:  'scalar', dry_confirmed_at:  'scalar',
       intro_version_path:  'blob-ref',
       has_intro:           'scalar',
       last_played_at:      'scalar',

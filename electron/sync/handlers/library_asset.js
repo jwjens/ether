@@ -41,6 +41,8 @@ const PATCHABLE = [
   'bpm', 'energy', 'mood', 'gender', 'is_explicit', 'spotify_uri', 'cart_id',
   'cue_in', 'cue_out', 'cue_in_ms', 'cue_out_ms', 'intro_end', 'outro_start',
   'intro_end_ms', 'outro_start_ms', 'has_intro', 'intro_version_path',
+  // v56 marks — see synced-tables.js for what they mean and why they sync.
+  'post_ms', 'post_source', 'post_confirmed_at', 'dry_ms', 'dry_source', 'dry_confirmed_at',
   'lufs_measured', 'peak_db', 'gain_db', 'is_processed', 'last_played_at', 'play_count',
   'raw_metadata', 'r2_uploaded_at',
 ];

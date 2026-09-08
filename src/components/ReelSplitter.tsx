@@ -9,6 +9,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { detectSilenceRegions, type Region } from "../audio/silenceRegions";
 import { auditionRegion } from "../audio/regionAudition";
+import { computePeaks } from "../audio/waveformPeaks";
 import { commitRegionToLibrary, imagingSlug as slug } from "../audio/imagingCommit";
 import InlineNameEditor from "./InlineNameEditor";
 import ClassPoolSelect, { useImagingPools } from "./ClassPoolSelect";
@@ -235,14 +236,6 @@ export default function ReelSplitter({ stationId, embedded, onCommitted }: { sta
 
 const btn: React.CSSProperties = { background: "transparent", border: "none", color: "var(--text-secondary)", cursor: "pointer", fontSize: 13, padding: "0 3px" };
 
-// min/max peaks per column for the waveform canvas.
-function computePeaks(buf: AudioBuffer, cols: number): { min: Float32Array; max: Float32Array } {
-  const data = buf.getChannelData(0); const n = data.length; const per = Math.max(1, Math.floor(n / cols));
-  const min = new Float32Array(cols), max = new Float32Array(cols);
-  for (let c = 0; c < cols; c++) {
-    let lo = 1, hi = -1; const s = c * per, e = Math.min(n, s + per);
-    for (let i = s; i < e; i++) { const v = data[i]; if (v < lo) lo = v; if (v > hi) hi = v; }
-    min[c] = lo === 1 ? 0 : lo; max[c] = hi === -1 ? 0 : hi;
-  }
-  return { min, max };
-}
+// computePeaks now lives in ../audio/waveformPeaks — shared with the RACK mark editor, which draws
+// the same picture. One implementation, so two surfaces cannot disagree about where a sound starts.
+
