@@ -255,25 +255,32 @@ export default function ImagingPanel() {
                         {rackMode === "imaging"
                           ? <span style={{ fontSize: "var(--t-small)", color: r.pools ? "var(--text-secondary)" : "var(--text-tertiary)" }}>{r.pools ?? NO_POOL}</span>
                           : <span style={{ fontSize: "var(--t-small)", color: r.scheduled ? "var(--text-secondary)" : "var(--text-tertiary)" }}>{r.scheduled ? `${r.scheduled}x ahead` : "not in the log ahead"}</span>}
+                        {/* THE EDITOR OPENS AT THE ROW YOU CLICKED. It used to render after the whole
+                            grid, which on a 64-row list put it sixty rows below the cut being marked —
+                            off the bottom of the screen, so clicking `mark…` looked like it did nothing.
+                            Jeff: "im not getting the editor". A panel that appears where the eye is not
+                            is the same defect as a panel that does not appear. */}
+                        {open && r.file_path && (
+                          <div style={{ gridColumn: "1 / -1" }}>
+                            <MarkEditor
+                              filePath={r.file_path}
+                              title={r.title || "(untitled)"}
+                              kind={kind}
+                              valueMs={ms}
+                              source={src}
+                              confirmedAt={kind === "dry" ? r.dry_confirmed_at : r.post_confirmed_at}
+                              introEndMs={r.intro_end != null ? Math.round(r.intro_end * 1000) : null}
+                              onSave={(v) => writeMark(r, kind, v)}
+                              onClear={() => writeMark(r, kind, null)}
+                              onClose={() => setEditing(null)}
+                            />
+                          </div>
+                        )}
                       </Row>
                     );
                   })}
                 </div>
 
-                {editing && editing.file_path && (
-                  <MarkEditor
-                    filePath={editing.file_path}
-                    title={editing.title || "(untitled)"}
-                    kind={rackMode === "imaging" ? "dry" : "post"}
-                    valueMs={rackMode === "imaging" ? editing.dry_ms : editing.post_ms}
-                    source={rackMode === "imaging" ? editing.dry_source : editing.post_source}
-                    confirmedAt={rackMode === "imaging" ? editing.dry_confirmed_at : editing.post_confirmed_at}
-                    introEndMs={editing.intro_end != null ? Math.round(editing.intro_end * 1000) : null}
-                    onSave={(ms) => writeMark(editing, rackMode === "imaging" ? "dry" : "post", ms)}
-                    onClear={() => writeMark(editing, rackMode === "imaging" ? "dry" : "post", null)}
-                    onClose={() => setEditing(null)}
-                  />
-                )}
                 <div style={{ ...EMPTY, marginTop: 16 }}>
                   {rackMode === "imaging"
                     ? <>Every cut in the shared library — all of them are available to every station. POOLS shows this station&rsquo;s pools only, and a cut can be in more than one of them. Pool membership is set in POOLS.</>
