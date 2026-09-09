@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { audioLibraryDir } from "../lib/fileLocation";
 import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -718,8 +719,15 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
   // Write the take to a REAL .wav on disk — the on-air engine plays files, not data URLs.
   const writeTakeFile = async (): Promise<string> => {
     const bytes  = new Uint8Array(encodeWav(editBuffer!));
-    const appDir = await (window as any).ether.system.getAppDataDir();
-    const filePath = `${appDir}/voice-tracks/vt_${Date.now()}.wav`;
+    // THE CATALOGUE, not <profile>/voice-tracks/. A take is an audio file like any other: written
+    // outside the catalogue it does not travel to another machine, is not in the cloud backup, and no
+    // basename resolves it — the same three failures as a cart in Downloads, for a file Ether made
+    // itself. `vt_<epoch>` is already unique, so a flat folder needs no further disambiguation.
+    // Refuses rather than guessing a location: a take saved somewhere unfindable is worse than one
+    // the operator is told was not saved.
+    const dir = await audioLibraryDir();
+    if (!dir) throw new Error("The audio catalogue could not be found, so this take was not saved.");
+    const filePath = `${dir}/vt_${Date.now()}.wav`;
     const res = await (window as any).ether.ffmpeg.writeAudio(bytes, filePath);
     if (!res?.ok) throw new Error(res?.error || "writeAudio failed");
     return filePath;

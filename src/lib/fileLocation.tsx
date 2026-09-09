@@ -90,6 +90,26 @@ export async function importIntoAudioLibrary(srcPath: string | null | undefined)
   }
 }
 
+/**
+ * THE CATALOGUE — the one folder every audio file lives in.
+ *
+ * Jeff's rule: "Every audio file Ether creates lands where every other audio file lands." That covers
+ * audio Ether GENERATES, not only audio it imports: a voice-track take and a rendered imaging cut are
+ * audio files, and a row pointing at one outside the catalogue is the same defect as a cart in
+ * Downloads — it does not travel, it is not backed up, and a basename will not resolve it.
+ *
+ * NO SUBFOLDERS. A reel slug belongs in a filename, never in a folder: the resolver, the R2 backup and
+ * [N-23a] all key on BASENAME, so a nested layout is invisible to every one of them.
+ *
+ * Exported here rather than copied per component — BroadcastEditor kept a private copy of exactly this
+ * function, which is how two definitions of one thing start.
+ *
+ * @returns the catalogue path, or null if it cannot be resolved (callers must then refuse, not guess).
+ */
+export async function audioLibraryDir(): Promise<string | null> {
+  try { const r = await (window as any).ether?.music?.getDir(); return r?.dir || null; } catch { return null; }
+}
+
 /** What a surface knows about the ROW behind a file, so it can be repointed. */
 export interface FileRowRef {
   table: string;          // 'songs' | 'announcements' | 'spots' | 'cart_slots' | …

@@ -106,10 +106,9 @@ function createLibraryHealth(opts) {
   /**
    * Classify one file-backed row.
    * @param row {{file_path, file_key}}
-   * @param opts {{ neverForeign?: boolean }}  cart_slots opts out of `foreign` — see below.
    * @returns {{ cls: 'resolves'|'resolvesElsewhere'|'r2Only'|'dead', foreign: boolean }}
    */
-  function classifyRow(row, opts = {}) {
+  function classifyRow(row) {
     const fp = row && row.file_path;
     if (exists(fp)) return { cls: 'resolves', foreign: false };
 
@@ -117,11 +116,11 @@ function createLibraryHealth(opts) {
     // DIRECTORY, not the file: a deleted file in a real local folder is a local problem, not a
     // synced-path problem, and conflating them would cry wolf on ordinary housekeeping.
     //
-    // cart_slots opts out. Cart audio legitimately lives outside the library — measured on this dev
-    // machine, 10 of 10 carts point at Downloads/Music and none at the library folder — so a cart
-    // with a missing file is `dead`, never `foreign`, and must never be rebased into the library
-    // (design doc T-new-4).
-    const foreign = !opts.neverForeign && !!fp && !dirExists(path.dirname(String(fp)));
+    // EVERY TABLE, INCLUDING cart_slots (2026-09-09). The carve-out that exempted carts is gone with
+    // the premise behind it — every audio file lives in the catalogue now, so a cart pointing
+    // elsewhere is exactly as wrong as a song pointing elsewhere, and hiding it only meant nobody
+    // could see the thing that had already gone wrong.
+    const foreign = !!fp && !dirExists(path.dirname(String(fp)));
 
     // The resolver tier (design doc option C) will find it by basename in this machine's library.
     // Counting it here is what turns "mysteriously silent" into "airing on a fallback".
@@ -135,10 +134,10 @@ function createLibraryHealth(opts) {
 
   // Every audio-bearing table. The OV incident spanned SEVEN — a signal that watched only `songs`
   // would have reported green while announcements, spots and carts were all unairable.
-  // `neverForeign` is the cart_slots carve-out explained in classifyRow.
-  // The audio-bearing table list — and the `neverForeign` flag — now come from
-  // electron/audio-library-index.js. This module used to declare its own copy, which is exactly the
-  // two-lists-that-can-disagree problem the index module exists to end.
+  // The list comes from electron/audio-library-index.js. This module used to declare its own copy,
+  // which is exactly the two-lists-that-can-disagree problem the index module exists to end.
+  // No table carries behaviour any more — the cart_slots `neverForeign` carve-out was removed on
+  // 2026-09-09 with the premise behind it (see the note in audio-library-index.js).
 
   /** Column presence, read once per sweep — schemas vary by build and by migration state. */
   const _colCache = new Map();

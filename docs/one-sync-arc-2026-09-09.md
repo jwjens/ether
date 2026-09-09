@@ -155,6 +155,33 @@ Three tiers, in order, and none of them is new:
 
 **No row is rewritten by removing the flag.** It is a reporting change only.
 
+### 2.3a · THE LIMIT OF IT — found while building, and it needs a ruling
+
+`classifyRow` **short-circuits on reachability**, on its very first line:
+
+```js
+if (exists(fp)) return { cls: 'resolves', foreign: false };
+```
+
+So **a file that opens is never reported `foreign`, on any table.** That is the classifier's own
+semantics and it was never what the cart carve-out controlled.
+
+The consequence, stated plainly: **a cart sitting on the desktop that plays on this machine still
+reads clean.** It travels nowhere, no basename resolves it on another machine, and health says
+nothing. Removing `neverForeign` does not fix that case — it only makes an *unreachable* cart
+countable.
+
+`docs/audio-library-one-folder-rule-2026-09-04.md` §4 proposed exactly this case as `foreign`
+("the file being reachable does not make its location legitimate"). It is right, and it is **a change
+to the shipped meaning of `foreign` for every table**, not a cart carve-out removal — so it is not
+smuggled in. `H-5c` in `test-library-health-foreign.js` pins the current behaviour so nobody assumes
+otherwise.
+
+**Needs a ruling.** Make `foreign` mean "the stored path is not in the catalogue", independent of
+whether the file opens? Both machines read 0 either way today, so it would ship green here too. My
+recommendation is yes, for the same reason as the carve-out: it is a signal that currently cannot see
+the thing it exists to see.
+
 ### 2.4 · Is this the held one-library arc, or something smaller?
 
 **Smaller, and separable.** The held arc is the ~12 import paths, the 60-string rename, and the

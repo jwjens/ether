@@ -103,14 +103,25 @@ function findInIndex(index, storedPath) {
 // its OWN copy of this list purely to hold that flag — two lists that could drift, which is the
 // defect this module exists to prevent. One list, and the flag travels with it.
 //
-// `neverForeign` — cart audio was allowed to live outside the catalogue, so a cart with a path
-// elsewhere must not be reported as `foreign`. Under the one-library rule that carve-out goes; that
-// rule's work is HELD, so the flag stays until it ships rather than shipping half a decision.
+// THE `neverForeign` CARVE-OUT IS GONE (2026-09-09).
+//
+// It existed because cart audio was allowed to live outside the catalogue — a premise taken from a
+// measurement (10 of 10 carts in Downloads) that was read as a design intent rather than as the
+// defect it was. Jeff, 2026-09-09: "That rule describes a design I've replaced. Everything lives in
+// the catalogue now." Both machines measured `foreign: 0` for carts when this was removed, so the
+// alarm went live already green — which is the right moment to remove a suppressor.
+//
+// What the carve-out was ALSO protecting is kept, and is a different rule: the sync layer must never
+// rebase a path on its own. Rebasing on mutation apply would have the receiver invent a path the
+// operator never chose. That lives in the amended T-new-4, not in a per-table flag here.
+//
+// Objects rather than bare names, still: the shape is the seam where behaviour would travel with a
+// table if any ever needs to again, and one list cannot drift from another.
 const AUDIO_TABLES = [
   { table: 'songs' },
   { table: 'announcements' },
   { table: 'spots' },
-  { table: 'cart_slots', neverForeign: true },
+  { table: 'cart_slots' },
   { table: 'library_asset' },
   { table: 'published_episodes' },
   { table: 'voice_tracks' },

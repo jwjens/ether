@@ -92,30 +92,51 @@ console.log("\n== 2. the cart assign paths specifically ==");
 
 console.log("\n== 3. generated audio is written INTO the catalogue, not beside it ==");
 {
-  // A file Ether creates is still an audio file, and the rule does not exempt it. BroadcastEditor
-  // gets this right (audioLibraryDir()); these two write into the profile directory instead, so the
-  // row they create points outside the catalogue by construction. Neither has ever run on this dev
-  // machine — no such folders exist — so they have produced no bad rows here yet.
-  const KNOWN_OUTSIDE = [
+  // A file Ether CREATES is still an audio file, and the rule does not exempt it. Jeff, 2026-09-09:
+  // "Every audio file Ether creates lands where every other audio file lands." Both of these used to
+  // write into the profile directory, so the row they created pointed outside the catalogue by
+  // construction — it would not travel to another machine, would not be in the cloud backup, and no
+  // basename would resolve it. Three failures, for a file Ether made itself.
+  const GENERATORS = [
     ["src/components/VoiceTracker.tsx", "voice-tracks/", "writeTakeFile"],
     ["src/audio/imagingCommit.ts", "imaging/", "renderRegionToDisk"],
+    ["src/components/BroadcastEditor.tsx", null, "clip export"],
   ];
-  for (const [f, marker, fn] of KNOWN_OUTSIDE) {
+  for (const [f, marker, fn] of GENERATORS) {
+    let src;
+    try { src = read(f); } catch { fail(`${f} is missing — this test is stale`); continue; }
+    if (marker) {
+      const usesProfileDir = new RegExp(`getAppDataDir[\\s\\S]{0,200}?${marker.replace("/", "\\/")}`).test(src);
+      if (usesProfileDir) {
+        fail(`${f} · ${fn}() writes generated audio to <profile>/${marker} — outside the catalogue`);
+        continue;
+      }
+    }
+    if (/audioLibraryDir\s*\(/.test(src)) pass(`${f} · ${fn}() resolves the catalogue before writing`);
+    else fail(`${f} · ${fn}() does not resolve the catalogue — where does its audio land?`);
+  }
+}
+
+console.log("\n== 4. the catalogue stays FLAT — a slug goes in the filename, never a folder ==");
+{
+  // A subfolder under the catalogue is not an organisational choice, it is a file three things
+  // cannot find: the resolver, the R2 backup and [N-23a] all key on BASENAME. Jeff: "a reel slug in
+  // a filename is fine, a folder isn't."
+  //
+  // Matches `${dir}/…/…` — a separator between the catalogue root and the filename.
+  const NESTED = /audioLibraryDir[\s\S]{0,600}?\$\{dir\}\/[^`\n]*\/[^`\n]*\$\{/;
+  for (const [f, fn] of [
+    ["src/audio/imagingCommit.ts", "renderRegionToDisk"],
+    ["src/components/VoiceTracker.tsx", "writeTakeFile"],
+  ]) {
     let src;
     try { src = read(f); } catch { continue; }
-    const usesProfileDir = new RegExp(`getAppDataDir[\\s\\S]{0,200}?${marker.replace("/", "\\/")}`).test(src);
-    if (usesProfileDir) {
-      // Reported, not failed: moving these is a decision Jeff has not made yet (the imaging path
-      // organises by reel subfolder, which a flat catalogue would collapse). Recorded here so it
-      // cannot be forgotten, and so the day it is fixed this check flips to a PASS on its own.
-      console.log(`  NOTE  ${f} · ${fn}() writes generated audio to <profile>/${marker} — outside the catalogue (open decision)`);
-    } else {
-      pass(`${f} · ${fn}() no longer writes outside the catalogue`);
-    }
+    if (NESTED.test(src)) fail(`${f} · ${fn}() builds a SUBFOLDER under the catalogue — the slug belongs in the filename`);
+    else pass(`${f} · ${fn}() writes flat into the catalogue`);
   }
 }
 
 console.log(failures === 0
-  ? "\nVERDICT: PASS — no door stores an operator-chosen path without copying it into the catalogue.\n"
+  ? "\nVERDICT: PASS — every audio file Ether imports or creates lands flat in the catalogue.\n"
   : `\nVERDICT: FAIL — ${failures} door(s) store a path without copy-on-import.\n`);
 process.exit(failures === 0 ? 0 : 1);

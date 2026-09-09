@@ -55,7 +55,8 @@ const lh = createLibraryHealth({
   licenseKeyFn: () => null,
   backendUrl: null,
 });
-const cls = (row, opts) => { lh.resetSweepCaches(); return lh.classifyRow(row, opts); };
+// No `opts`: classifyRow's second parameter went with the cart carve-out (2026-09-09).
+const cls = (row) => { lh.resetSweepCaches(); return lh.classifyRow(row); };
 
 // ── H-1..H-4 · the four resolution classes ─────────────────────────────────────────────────────
 console.log('\n── resolution classes ──');
@@ -78,13 +79,35 @@ check('  H-4b missing file in an EXISTING local dir → dead but NOT foreign',
   cls({ file_path: path.join(musicDir, 'deleted-by-hand.mp3'), file_key: null }),
   { cls: 'dead', foreign: false });
 
-// ── H-5 · the cart_slots carve-out ─────────────────────────────────────────────────────────────
-console.log('\n── cart_slots never reports foreign ──');
-check('  H-5 cart outside the music dir, file missing → dead, NOT foreign',
-  cls({ file_path: FOREIGN('cart.mp3'), file_key: null }, { neverForeign: true }),
-  { cls: 'dead', foreign: false });
-check('  H-5b a cart whose file EXISTS outside the library still resolves',
-  cls({ file_path: LOCAL_FILE }, { neverForeign: true }), { cls: 'resolves', foreign: false });
+// ── H-5 · carts are ordinary rows (the carve-out is gone, 2026-09-09) ──────────────────────────
+//
+// `neverForeign` exempted cart_slots from `foreign` because cart audio was allowed to live outside
+// the catalogue. Jeff replaced that design — every audio file lives in the catalogue now — so a cart
+// pointing elsewhere is exactly as wrong as a song pointing elsewhere, and just as reportable.
+// classifyRow no longer takes opts at all, so these call it the same way every other case does.
+console.log('\n── cart_slots reports foreign like every other table ──');
+check('  H-5 cart outside the catalogue, file missing → dead AND foreign',
+  cls({ file_path: FOREIGN('cart.mp3'), file_key: null }),
+  { cls: 'dead', foreign: true });
+
+check('  H-5b a cart INSIDE the catalogue resolves and is not foreign',
+  cls({ file_path: LOCAL_FILE }), { cls: 'resolves', foreign: false });
+
+// H-5c — THE LIMIT OF WHAT REMOVING THE FLAG BUYS, pinned so nobody assumes otherwise.
+//
+// classifyRow SHORT-CIRCUITS on reachability: `if (exists(fp)) return {cls:'resolves', foreign:false}`
+// — the very first line. So a file that opens is never reported foreign, on ANY table. That is the
+// classifier's own semantics and it was never what the cart carve-out controlled.
+//
+// The consequence, stated plainly: a cart sitting on the desktop that PLAYS on this machine still
+// reads clean. It travels nowhere and no basename resolves it elsewhere, and health says nothing.
+// docs/audio-library-one-folder-rule-2026-09-04.md §4 proposed making that case `foreign` too — that
+// is a change to the shipped meaning of `foreign` for EVERY table, not a cart carve-out removal, so
+// it is not smuggled in here. Flagged for Jeff in docs/one-sync-arc-2026-09-09.md §2.
+const OUTSIDE_BUT_REAL = path.join(dataDir, 'cart-on-the-desktop.mp3');
+fs.writeFileSync(OUTSIDE_BUT_REAL, 'x');
+check('  H-5c a REACHABLE file outside the catalogue reads clean (classifier short-circuits on exists)',
+  cls({ file_path: OUTSIDE_BUT_REAL }), { cls: 'resolves', foreign: false });
 
 // ── H-6 · across tables, and the level ─────────────────────────────────────────────────────────
 console.log('\n── classifyAll across tables ──');
@@ -110,8 +133,10 @@ check('  announcements: 1 dead (no file_key column ⇒ never r2Only)', all.byTab
 check('  announcements: 1 foreign',     all.byTable.announcements.foreign, 1);
 check('  announcements: canFetch false', all.byTable.announcements.canFetch, false);
 check('  cart_slots: 1 dead',           all.byTable.cart_slots.dead, 1);
-check('  cart_slots: 0 foreign (carve-out)', all.byTable.cart_slots.foreign, 0);
-check('  totals: 3 foreign across tables', all.totals.foreign, 3);
+// WAS 0 — "cart_slots: 0 foreign (carve-out)". The cart row here points at a directory this machine
+// does not have, which is the OV condition exactly; the carve-out reported it as clean. It counts now.
+check('  cart_slots: 1 foreign (carve-out removed 2026-09-09)', all.byTable.cart_slots.foreign, 1);
+check('  totals: 4 foreign across tables', all.totals.foreign, 4);
 
 // H-6: the level rule the ruling fixed — foreign is RED, and never blocks.
 const level = (dead, foreign, r2, elsewhere) =>

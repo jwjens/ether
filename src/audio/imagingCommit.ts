@@ -7,6 +7,7 @@
 // NOT used: ether.fs.writeFile (dead stub, no handler); content-hash/songs_v2 (not shipped — file_path identity).
 import { encodeWav, sliceRegion } from "./wavEdit";
 import { query } from "../db/client";
+import { audioLibraryDir } from "../lib/fileLocation";
 
 const ether = () => (window as any).ether;
 
@@ -28,10 +29,17 @@ export const imagingSlug = (s: string) =>
 export async function renderRegionToDisk(
   buffer: AudioBuffer, startSec: number, endSec: number, reelSlug: string, name: string,
 ): Promise<{ filePath: string; durationMs: number }> {
-  const appDir = await ether().system.getAppDataDir();
-  const folder = `${appDir}/imaging/${imagingSlug(reelSlug)}`;
+  // THE CATALOGUE, FLAT — was <profile>/imaging/<reel-slug>/<name>.wav.
+  //
+  // The reel slug moves from the FOLDER into the FILENAME, which is what Jeff ruled and is also the
+  // only thing that works: the resolver, the R2 backup and [N-23a] all key on BASENAME, so a nested
+  // layout is invisible to every one of them. Carrying the slug in the name ALSO keeps what the
+  // folder was really providing — two reels with a cut called "sting" no longer collide, which in a
+  // flat namespace they otherwise would.
+  const dir = await audioLibraryDir();
+  if (!dir) throw new Error("The audio catalogue could not be found, so this cut was not written.");
   const safe = (name || reelSlug).replace(/[^\w.-]+/g, "_") || "clip";
-  const filePath = `${folder}/${safe}.wav`;
+  const filePath = `${dir}/${imagingSlug(reelSlug)}__${safe}.wav`;
   const wav = new Uint8Array(encodeWav(sliceRegion(buffer, startSec, endSec)));
   const res = await ether().ffmpeg.writeAudio(wav, filePath);
   if (!res?.ok) throw new Error(`write failed for "${name}"`);

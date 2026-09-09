@@ -22,6 +22,7 @@
 //   • Export WAV (OfflineAudioContext render)
 //   • Export MP3 (requires: npm install lamejs)
 
+import { audioLibraryDir } from "../lib/fileLocation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
 const readFile = (p: string) => (window as any).ether.fs.readFile(p);
@@ -41,9 +42,8 @@ const openDialog = (opts?: any) => opts?.directory ? (window as any).ether.dialo
  * Falls back to the old behaviour only if the library cannot be resolved, so an export never fails
  * outright over a missing setting.
  */
-async function audioLibraryDir(): Promise<string | null> {
-  try { const r = await (window as any).ether?.music?.getDir(); return r?.dir || null; } catch { return null; }
-}
+// (moved to src/lib/fileLocation.tsx — this was a private copy of it, which is how two definitions of
+// one thing start. Both call sites below are unchanged.)
 const save = (opts?: any) => (window as any).ether.dialog.saveFile(opts);
 const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 import TrackEditor from "./TrackEditor";
