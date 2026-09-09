@@ -3,7 +3,7 @@ import ethercastWordmark from "../assets/ethercast-wordmark.svg";
 import { queryOne, query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
-import { useAudioEngine } from "../audio/AudioEngineContext";
+import { getEngine } from "../audio/engine-registry";
 import { getNextTransition } from "../audio/showClock";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -59,7 +59,17 @@ function fmtSecs(s: number): string {
 // ── Component ─────────────────────────────────────────────────
 
 export default function OnShiftScreen({ onStart }: Props) {
-  const engine = useAudioEngine();
+  // NO useAudioEngine() HERE. This screen is one of App()'s gate early-returns (App.tsx:2638) and
+  // every one of them renders ABOVE <AudioEngineProvider> (App.tsx:2670), so the context is null and
+  // the hook throws — that is the 4.6.22 launch failure. The engine is resolved with
+  // getEngine(stationId) at its point of use inside the load effect below, the same way App.tsx:604
+  // resolves it for the same above-the-provider reason.
+  //
+  // Point of use, not here, for a second reason: useActiveStation() reports its id=1 fallback
+  // (useActiveStation.tsx:115) until the stations IPC answers, and getEngine() CONSTRUCTS on first
+  // call (engine-registry.ts:32). Resolving on the render path would build and read station 1's
+  // engine for the frames before the answer arrives — the silent-wrong-station bug this release
+  // removed, in a new place. Everything the render draws comes from state the guarded effect fills.
   const { stationId, isReady } = useActiveStation();
   const loadVersionRef = useRef(0);
   const [operators, setOperators]       = useState<Operator[]>([]);
@@ -69,6 +79,9 @@ export default function OnShiftScreen({ onStart }: Props) {
   const [currentShow, setCurrentShow]   = useState<ShowInfo | null>(null);
   const [upcomingShows, setUpcomingShows] = useState<ShowInfo[]>([]);
   const [queueItems, setQueueItems]     = useState<QueueItem[]>([]);
+  // The FULL queue length, not queueItems.length — queueItems is the sliced preview. Held in state
+  // so the render never calls engine.getQueue() itself.
+  const [queueTotal, setQueueTotal]     = useState(0);
   const [mode, setMode]                 = useState<ExperienceMode>("live_radio");
   const [songCount, setSongCount]       = useState(0);
   const [rulesOk, setRulesOk]           = useState(true);
@@ -192,10 +205,15 @@ export default function OnShiftScreen({ onStart }: Props) {
   // ── Build Iris scripted greeting ──────────────────────────────
 
   useEffect(() => {
-    if (!operator) return;
+    // isReady BEFORE operator: `operator` only ever gets set inside the isReady-guarded load effect
+    // above, so this held transitively — but it held by accident. Naming isReady here is what makes
+    // getEngine(stationId) below safe, because stationId is only trustworthy once isReady is true.
+    if (!isReady || !operator) return;
+    const engine = getEngine(stationId);
     const qItems = engine.getQueue();
     const previewCount = mode === "solo" ? 1 : mode === "standard" ? 2 : 4;
     setQueueItems(qItems.slice(0, previewCount));
+    setQueueTotal(qItems.length);
 
     const qLen = qItems.length;
     const hasExplicit = qItems.some((q: any) => q.is_explicit === 1 || q.is_explicit === true);
@@ -215,7 +233,7 @@ export default function OnShiftScreen({ onStart }: Props) {
       text = `${greeting()}, ${operator.name}. ${showLine} ${queueLine}${explicitLine}${breakLine}${noteLine}`;
     }
     setIrisText(text.trim());
-  }, [operator?.id, currentShow, note, nextBreakIn, inviteUsed, invitedBy, mode, engine]);
+  }, [operator?.id, currentShow, note, nextBreakIn, inviteUsed, invitedBy, mode, isReady, stationId]);
 
   // ── Save note on blur ─────────────────────────────────────────
 
@@ -257,8 +275,10 @@ export default function OnShiftScreen({ onStart }: Props) {
     amber:    "#b87020",
   } as const;
 
-  const queueVisible = mode === "solo" ? 1 : mode === "standard" ? 2 : 4;
-  const qDisplay = engine.getQueue().slice(0, queueVisible);
+  // queueItems IS the preview: the effect slices it by the same mode-derived count this used to
+  // recompute, and it was dead state until now (set, never read) while this line read the engine a
+  // second time — unguarded, on the render path. One guarded read, one source.
+  const qDisplay = queueItems;
 
   // ── Render ────────────────────────────────────────────────────
 
@@ -371,7 +391,7 @@ export default function OnShiftScreen({ onStart }: Props) {
               <div style={{ marginBottom: 28 }}>
                 <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.16em", color: S.muted, textTransform: "uppercase", marginBottom: 8 }}>
                   Queue preview
-                  <span style={{ marginLeft: 8, color: S.label }}>{engine.getQueue().length} tracks</span>
+                  <span style={{ marginLeft: 8, color: S.label }}>{queueTotal} tracks</span>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column" }}>
                   {qDisplay.map((q, i) => {
