@@ -770,6 +770,16 @@ that is a containment fix, not the consolidation.
 **If it needs closing:** one wall, one store (`cart_slots`), with a one-time read of
 `ether_carts_v1` to carry any localStorage-only assignments across before the key is dropped.
 
+**Update 2026-09-08 (4.6.20, NAVIGATE consolidation):** the drawer's **Carts** entry now opens the
+`carts` **pop-out**, which renders `BoutiqueCartWall` — the `cart_slots` wall, the one holding the
+operator's actual carts. `CartWallPanel` is therefore **no longer reachable from the drawer**; its
+`panel === "cartwall"` route still exists in `src/App.tsx` and nothing routes to it.
+
+That is a reachability change, **not** the consolidation. The dead route and the `ether_carts_v1` key
+are both still in the tree, and any assignment a user made through the old wall on an earlier build is
+still only in localStorage and still invisible to sync, backup and every `cart_slots` walker. Closing
+this item still means deleting the route and carrying `ether_carts_v1` across first.
+
 **Teardown note:** none — a code finding, not tooling.
 
 ---
@@ -987,3 +997,83 @@ outside. Remove the catch (or log inside it) and run the bench once: an exceptio
 the fixture, and no exception means the WHERE clause genuinely matches nothing and the fault is real.
 
 Not investigated further — filed on instruction, not fixed.
+
+---
+
+## `db:backup` copies a live WAL database with `copyFileSync` (filed 2026-09-08) — FILED, NOT FIXED
+
+`electron/main.js:5510`:
+
+```js
+fs.copyFileSync(dbPath, backupPath);
+```
+
+The database runs in **WAL mode**. Every transaction committed since the last checkpoint lives in
+`openair.db-wal`, not in `openair.db` — and `db:backup` copies only the `.db`. Two consequences, both
+silent:
+
+- **The backup is stale.** It is missing everything written since the last checkpoint. It restores
+  cleanly, so nothing announces the loss; the operator finds out by noticing rows are gone.
+- **The backup can be torn.** A `copyFileSync` racing a writer produces a file whose pages come from
+  two different points in time. This is the same class as the torn-`asar` incident — a byte copy of
+  something that is being written.
+
+**The fix is one call.** better-sqlite3 ships the SQLite online-backup API: `db.backup(backupPath)`
+takes a transactionally consistent snapshot of a live database, WAL included, without stopping writers.
+No file copying, no checkpoint dance.
+
+**Not fixed here** because it is outside the window-consolidation task and backup/restore deserves its
+own verification pass (restore path, the 7-day pruning, and `help-backup-and-restore.md`).
+
+**Teardown note:** none — a code finding, not tooling.
+
+---
+
+## Magical Forest airs no imaging: its pool has 0 cuts (filed 2026-09-08, at Jeff's request)
+
+Observed while reading OV's database copy for the 4.6.19 readiness check, and reproduced on this
+machine: the sweeper pool belonging to **Magical Forest** contains **zero cuts**. A pool with no
+members has nothing to select from, so the station airs no imaging at all — on either machine. It is
+not a selection bug, a marking bug, or an AUTO-POST bug; there is simply nothing in the pool.
+
+Jeff's instruction: *"Magical Forest's pool has 0 cuts… I want it on the list."*
+
+**What closing it looks like:** decide whether Magical Forest is meant to share Ether's pools or carry
+its own, then populate. Migration 55's `sweeper_pool_member(pool_id, asset_uuid, station_id)` is the
+table that now answers "which cuts does this station's pool hold" — an empty result there is exactly
+this condition, and IMAGING → POOLS is where it is fixed.
+
+**Worth noting for the empty state:** the POOLS view should say *"this pool has no cuts, so this
+station airs no imaging"* rather than rendering an empty grid. A silent empty list is how this went
+unnoticed.
+
+**Teardown note:** none — a content/config finding, not tooling.
+
+---
+
+## Live Captions cannot become a window until the capture moves to main (filed 2026-09-08)
+
+Surfaced by the NAVIGATE consolidation (4.6.20), where every other destination became a pop-out.
+Live Captions did **not**, and the reason is structural rather than a missed case:
+
+`useCaptions().enable()` (`src/components/Captions.tsx:125`) opens a capture **in the renderer that
+runs the hook** — `startLoopbackTap(micDeviceId)` — and streams chunks to main via
+`ether.captions.sendAudioChunk`. So a second renderer running the same hook would:
+
+- open the **same capture device a second time** — the identical double-open that breaks Show+
+  (*"Requested device not found"*, see `docs/showplus-device-layer-design-2026-07-27.md`), and
+- disagree about state: `enabled` is per-renderer `useState`, so the dashboard could show captions off
+  while the window shows them on.
+
+The read side is already window-safe (`ether.captions.onLine` / `onStatus` are main-process pushes, and
+`getTranscript()` rehydrates). Only the capture is renderer-owned.
+
+**What closing it looks like:** main owns the tap — `captions:start` opens the device in the main
+process (or through the audio daemon, which already owns devices), and every renderer becomes a pure
+subscriber. That is the same acquisition-service shape the Show+ device layer needs, and both should be
+closed by one piece of work rather than two.
+
+Until then Live Captions stays a dashboard panel, with the reason stated at the call site in
+`src/App.tsx` so the next person to consolidate does not "finish the job" and ship a double-open.
+
+**Teardown note:** none — a code finding, not tooling.

@@ -2962,34 +2962,50 @@ export default function App() {
                     <span style={{ flex: 1 }}>Return to Mixer</span>
                   </button>
                 )}
+                {/* ONE LIST, AND EVERY ENTRY IS A WINDOW.
+                    NAVIGATE and WINDOWS were two sections doing the same job by different means: one
+                    replaced the dashboard, the other opened beside it. Replacing the dashboard takes
+                    the live view off screen, which for a jock is the one thing that must not happen —
+                    so there is now one list and everything on it opens in its own window.
+                    `panel` is the POP-OUT key, not a dashboard route: Program Log is `programlog` and
+                    Carts is `carts`, which are the names openPopoutWindow and PopoutRenderer know.
+                    Carts deliberately resolves to the cart_slots wall (BoutiqueCartWall) — the one
+                    holding the operator's actual carts — not App's second, localStorage-backed wall. */}
                 {([
-                  { key: "library",    emoji: "🎵", label: "Library",     action: () => setPanel("library"),     active: panel === "library"     },
-                  { key: "schedule",       emoji: "📋", label: "Schedule",     action: () => setPanel("clocks"),          active: panel === "clocks"          },
-                  // IMAGING is a top-level destination, not a tab: three of its five views exist
-                  // nowhere else, and burying them under a push-up would repeat the doors-before-rooms
-                  // failure. The push-up stays as the EDITOR and links into here.
-                  { key: "imaging",        emoji: "📻", label: "Imaging",      action: () => setPanel("imaging"),         active: panel === "imaging"         },
-                  { key: "schedulebuilder", emoji: "🗓", label: "Program Log",  action: () => setPanel("schedulebuilder"), active: panel === "schedulebuilder" },
-                  { key: "calendar",       emoji: "📅", label: "Calendar",     action: () => setPanel("calendar"),        active: panel === "calendar"        },
-                  { key: "logs",           emoji: "📜", label: "Play Log",     action: () => setPanel("logs"),            active: panel === "logs"            },
-                  { key: "schedulehub",    emoji: "🗂", label: "Schedule Manager", action: () => setPanel("schedulehub"), active: panel === "schedulehub" },
-                  { key: "rotation",       emoji: "📊", label: "Rotation Analytics", action: () => setPanel("rotation"), active: panel === "rotation"   },
-                  { key: "cartwall",   emoji: "🎛️", label: "Carts",       action: () => setPanel("cartwall"),    active: panel === "cartwall"    },
+                  { key: "library",        emoji: "🎵", label: "Library",            panel: "library" },
+                  { key: "schedule",       emoji: "📋", label: "Schedule",           panel: "clocks" },
+                  { key: "imaging",        emoji: "📻", label: "Imaging",            panel: "imaging" },
+                  { key: "schedulebuilder",emoji: "🗓", label: "Program Log",        panel: "programlog" },
+                  { key: "calendar",       emoji: "📅", label: "Calendar",           panel: "calendar" },
+                  { key: "logs",           emoji: "📜", label: "Play Log",           panel: "logs" },
+                  { key: "schedulehub",    emoji: "🗂", label: "Schedule Manager",   panel: "schedulehub" },
+                  { key: "rotation",       emoji: "📊", label: "Rotation Analytics", panel: "rotation" },
+                  { key: "cartwall",       emoji: "🎛️", label: "Carts",              panel: "carts" },
+                  { key: "po-decks",       emoji: "🎚", label: "Decks",              panel: "decks" },
+                  { key: "po-processor",   emoji: "🎛", label: "Processor",          panel: "processor" },
+                  { key: "po-shows",       emoji: "🎙", label: "Shows",              panel: "shows" },
+                  { key: "po-categories",  emoji: "🏷", label: "Categories",         panel: "categories" },
+                  { key: "po-jukebox",     emoji: "🕹", label: "Jukebox",            panel: "jukebox" },
+                  { key: "po-videostudio", emoji: "🎥", label: "Show+",              panel: "videostudio" },
+                  { key: "po-studiopro",   emoji: "🎬", label: "Show+ DAW",          panel: "studiopro" },
                 ] as const).map(item => (
                   <button
                     key={item.key}
-                    onClick={() => drawerClick(item.key, item.action)}
+                    onClick={() => drawerClick(item.key, () => { openPopout(item.panel); setDrawerOpen(false); })}
                     style={{
                       display: "flex", alignItems: "center", gap: 11, width: "100%",
-                      padding: "10px 16px", background: item.active ? "rgb(from var(--accent-blue) r g b / 0.08)" : "transparent",
+                      padding: "10px 16px", background: "transparent",
                       border: "none",
-                      borderLeft: `3px solid ${item.active ? "var(--accent-cyan)" : "transparent"}`,
-                      color: item.active ? "var(--accent-cyan)" : "var(--text-secondary)",
+                      // No `active` state: nothing here replaces the dashboard any more, so there is no
+                      // "you are here" to show. A window is either open or it is not, and clicking again
+                      // focuses the one that exists (openPopoutWindow dedupes by title).
+                      borderLeft: "3px solid transparent",
+                      color: "var(--text-secondary)",
                       fontSize: 13, fontWeight: (drawerUsage[item.key] || 0) >= 3 ? 700 : 500,
                       cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s",
                     }}
                     onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = item.active ? "rgb(from var(--accent-blue) r g b / 0.08)" : "transparent"; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
                   >
                     <span style={{ fontSize: 15, lineHeight: 1 }}>{item.emoji}</span>
                     <span style={{ flex: 1 }}>{item.label}</span>
@@ -2997,10 +3013,10 @@ export default function App() {
                   </button>
                 ))}
 
-                <div style={{ height: 1, background: "var(--border-primary)", margin: "10px 16px" }} />
-
-                {/* ── WINDOWS ── */}
-                <div style={{ padding: "12px 16px 8px", fontSize: 13, fontWeight: 800, letterSpacing: "0.14em", color: "var(--text-tertiary)" }}>WINDOWS</div>
+                {/* No divider, no second heading: NAVIGATE and WINDOWS are ONE list now. The three
+                    below keep their own buttons because each has a bespoke action — Desk opens the
+                    desk window, Now Playing asks which station first — but they are the same kind of
+                    thing as every row above: a window, opened beside the dashboard. */}
                 <button
                   onClick={() => drawerClick("desk", openDeskWindow)}
                   style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 13, fontWeight: (drawerUsage["desk"] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
@@ -3033,34 +3049,19 @@ export default function App() {
                   {(drawerUsage["phone"] || 0) >= 3 && <span style={{ fontSize: 12, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
                 </button>
 
-                {/* Pop-out windows for every bottom-toolbar feature — drag to another monitor */}
-                {([
-                  { key: "po-jukebox",    label: "Jukebox",    panel: "jukebox" },
-                  { key: "po-videostudio",label: "Show+",      panel: "videostudio" },
-                  { key: "po-studiopro",  label: "Show+ DAW",  panel: "studiopro" },
-                  { key: "po-decks",      label: "Decks",      panel: "decks" },
-                  { key: "po-processor",  label: "Processor",  panel: "processor" },
-                  { key: "po-carts",      label: "Carts",      panel: "carts" },
-                  { key: "po-shows",      label: "Shows",      panel: "shows" },
-                  { key: "po-clocks",     label: "Clocks",     panel: "clocks" },
-                  { key: "po-categories", label: "Categories", panel: "categories" },
-                  { key: "po-library",    label: "Library",    panel: "library" },
-                  { key: "po-calendar",   label: "Calendar",   panel: "calendar" },
-                ] as const).map(item => (
-                  <button
-                    key={item.key}
-                    onClick={() => drawerClick(item.key, () => openPopout(item.panel))}
-                    title={`Open ${item.label} in a separate window`}
-                    style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 13, fontWeight: (drawerUsage[item.key] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
-                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
-                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-                  >
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
-                    <span style={{ flex: 1 }}>{item.label}</span>
-                    {(drawerUsage[item.key] || 0) >= 3 && <span style={{ fontSize: 12, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
-                  </button>
-                ))}
+                {/* The second pop-out list that used to live here is GONE — every one of its
+                    entries (Jukebox, Show+, Show+ DAW, Decks, Processor, Carts, Shows, Clocks,
+                    Categories, Library, Calendar) is in the single list above, which now opens
+                    windows too. Two lists of the same destinations, one covering the dashboard and
+                    one not, is exactly the confusion this consolidation removes. */}
 
+                {/* LIVE CAPTIONS IS THE ONE EXCEPTION, AND FOR A HARD REASON — NOT AN OVERSIGHT.
+                    useCaptions().enable() opens a mic/loopback tap IN THE RENDERER THAT RUNS IT
+                    (startLoopbackTap -> ether.captions.sendAudioChunk). A second renderer running the
+                    same hook would open the SAME capture device a second time — the identical
+                    double-open that breaks Show+ ("Requested device not found") — and `enabled` is
+                    per-renderer state, so the two windows would disagree about whether captions are on.
+                    It stays a dashboard panel until the capture is owned by the main process. */}
                 <button
                   onClick={() => { drawerClick("captions", () => setPanel("captions")); }}
                   style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: panel === "captions" ? "rgba(0,200,168,0.08)" : "transparent", border: "none", borderLeft: `3px solid ${panel === "captions" ? "#00c8a8" : "transparent"}`, color: panel === "captions" ? "#00c8a8" : "var(--text-secondary)", fontSize: 13, fontWeight: 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
@@ -5083,7 +5084,11 @@ function LibStatusChip({ status }: { status: string }) {
   return <span style={{ fontSize: 8, fontWeight: 800, letterSpacing: "0.04em", color: c, border: `1px solid ${c}66`, padding: "1px 4px", borderRadius: 2, textTransform: "uppercase" as const, whiteSpace: "nowrap" as const }}>{l}</span>;
 }
 
-export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStudio }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onLoadC: (s: SongRow) => void; onQueue: (s: SongRow) => void; onEdit: (s: SongRow) => void; onSendToStudio: (s: SongRow) => void }) {
+// `onEdit` is OPTIONAL, and its absence HIDES the two menu items rather than making them do nothing.
+// The cue editor is a DASHBOARD panel (panel === "trackedit"), not a window, so a Library running in
+// its own window has nothing to open — and a control that renders and does nothing is the defect this
+// codebase keeps paying for. When a cue-editor WINDOW exists, pass onEdit here and both items return.
+export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStudio }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onLoadC: (s: SongRow) => void; onQueue: (s: SongRow) => void; onEdit?: (s: SongRow) => void; onSendToStudio: (s: SongRow) => void }) {
   const engine = useAudioEngine();
   const { stationId } = useActiveStation();
   // Slice C: per-song rotation eligibility (plays + last-played + rest + status) from library-health —
@@ -6003,7 +6008,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
             { label: "Load to Deck B", action: () => { onLoadB(ctxMenu.song); setCtxMenu(null); } },
             { label: "Load to Deck C", action: () => { onLoadC(ctxMenu.song); setCtxMenu(null); } },
             { label: "Add to Queue",   action: () => { onQueue(ctxMenu.song); setCtxMenu(null); } },
-            { label: "Edit Cue Points", action: () => { onEdit(ctxMenu.song); setCtxMenu(null); } },
+            ...(onEdit ? [{ label: "Edit Cue Points", action: () => { onEdit(ctxMenu.song); setCtxMenu(null); } }] : []),
             // MEASURE LOUDNESS — operator-initiated, always. Nothing in Ether measures a row on its own:
             // an invented number would silently change how that song airs. Writes lufs_measured / gain_db /
             // peak_db only; the audio file is never touched.
@@ -6521,7 +6526,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
           <div onClick={() => setCueMenu(null)} style={{ position: "fixed", inset: 0, zIndex: 6000 }} />
           <div style={{ position: "fixed", top: cueMenu.y, left: cueMenu.x, transform: "translateX(-100%)", zIndex: 6001, minWidth: 190, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", boxShadow: "0 12px 40px rgba(0,0,0,0.5)" }}>
             {[
-              { label: "Open in Cue Editor", act: () => { const s = cueMenu.song; setCueMenu(null); onEdit(s); } },
+              ...(onEdit ? [{ label: "Open in Cue Editor", act: () => { const s = cueMenu.song; setCueMenu(null); onEdit(s); } }] : []),
               { label: "Quick Cue here",     act: () => { const s = cueMenu.song; setCueMenu(null); setQuickCueSong(s); } },
             ].map((it, i) => (
               <button key={it.label} onClick={it.act}

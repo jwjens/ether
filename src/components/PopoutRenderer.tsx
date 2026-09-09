@@ -4,6 +4,7 @@
 import React, { useState, useEffect } from "react";
 import PopoutShell from "./PopoutShell";
 import ProcessorRack from "./ProcessorRack";
+import ImagingPanel from "./ImagingPanel";
 import { useProcessorParams } from "../hooks/useProcessorParams";
 import StandaloneDecksPanel from "./StandaloneDecksPanel";
 import MasterOutput from "./MasterOutput";
@@ -93,6 +94,7 @@ const TITLES: Record<string, string> = {
   "cloudbackup":  "Cloud Log Backup",
   "multioutput":  "Audio Routing",
   "processor":    "Processor",
+  "imaging":      "Imaging",
   "importlibrary":"Import Library",
 };
 
@@ -172,7 +174,12 @@ function PopoutLibrary() {
       <LibraryPanel
         onLoadA={s => cue("A", s)} onLoadB={s => cue("B", s)} onLoadC={s => cue("C", s)}
         onQueue={s => { try { (eng as any).enqueue?.({ filePath: s.file_path, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 }); } catch {} }}
-        onEdit={() => {}} onSendToStudio={() => {}}
+        // THESE WERE BOTH NO-OPS — controls that rendered and did nothing, in the window that is now
+        // the ONLY Library. Send to Studio is genuinely fixable and is fixed: studio:push-track is a
+        // real IPC and is exactly what the dashboard calls. Edit is NOT: the cue editor is a dashboard
+        // PANEL, not a window, so there is nothing for this renderer to open. Rather than fake it,
+        // onEdit is left off, and LibraryPanel now HIDES both cue items when it is absent.
+        onSendToStudio={s => { try { (window as any).ether?.invoke("studio:push-track", { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms }); } catch {} }}
       />
     </div>
   );
@@ -197,6 +204,10 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
       break;
     case "processor":
       content = <ProcessorPopout />;
+      break;
+    case "imaging":
+      // Takes no props and resolves its own station — nothing of it lives in the dashboard's tree.
+      content = <ImagingPanel />;
       break;
     case "mic":
       content = <MicDeck />;
@@ -226,7 +237,10 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
       content = <Scheduler defaultTab="categories" embedded />;
       break;
     case "calendar":
-      content = <BroadcastCalendar />;
+      // Clicking a show used to navigate the DASHBOARD (setPanel + setSchedulerTab). In a window of
+      // its own that is meaningless, so it opens the Shows window instead — the same treatment the
+      // Schedule Manager's escape hatches already get.
+      content = <BroadcastCalendar onShowClick={() => { try { (window as any).ether?.invoke("window:popout", "shows"); } catch {} }} />;
       break;
     case "library":
       content = <PopoutLibrary />;

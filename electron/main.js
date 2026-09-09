@@ -2885,6 +2885,7 @@ function buildMenu() {
         { label: "Mic",            click: () => popout("mic") },
         { label: "Master Output",  click: () => popout("master") },
         { label: "Processor",      click: () => popout("processor") },
+        { label: "Imaging",        click: () => popout("imaging") },
         { label: "Phone Desk",     click: () => popout("phone") },
         { label: "Voice Tracker",  click: () => popout("voicetrack") },
       ]},
@@ -6145,6 +6146,16 @@ const POPOUT_SIZES = {
   "cloudbackup": { width:  900, height: 680 },
   "multioutput": { width:  960, height: 700 },
   "importlibrary": { width: 900, height: 660 },
+  // Every NAVIGATE destination is a window now, so every one needs a size. These six were reachable
+  // as pop-outs but had no entry and fell back to 640x520 — small enough that a library or a calendar
+  // opened unusable, which is its own reason an operator would go back to covering the dashboard.
+  "imaging":     { width: 1100, height: 780 },
+  "library":     { width: 1180, height: 820 },
+  "carts":       { width: 1000, height: 720 },
+  "shows":       { width: 1100, height: 780 },
+  "clocks":      { width: 1100, height: 780 },
+  "categories":  { width: 1100, height: 780 },
+  "calendar":    { width: 1280, height: 860 },
 };
 
 // Human-readable names for the debug bridge's log prefix — "[POPOUT: Show+ DAW] …".
@@ -6152,6 +6163,13 @@ const POPOUT_SIZES = {
 const POPOUT_LABELS = {
   "decks":       "Decks",
   "processor":   "Processor",
+  "imaging":     "Imaging",
+  "library":     "Library",
+  "carts":       "Carts",
+  "shows":       "Shows",
+  "clocks":      "Schedule",
+  "categories":  "Categories",
+  "calendar":    "Calendar",
   "mic":         "Mic",
   "master":      "Master Output",
   "upnext":      "Queue / Up Next",
@@ -6259,8 +6277,32 @@ function openPopoutWindow(panel) {
   } else {
     const primary   = screen.getPrimaryDisplay();
     const secondary = screen.getAllDisplays().find(d => d.id !== primary.id);
-    x = secondary ? secondary.workArea.x + 60 : undefined;                  // secondary monitor if present
-    y = secondary ? secondary.workArea.y + 60 : undefined;
+    if (secondary) {
+      x = secondary.workArea.x + 60;                                        // second monitor: plenty of room
+      y = secondary.workArea.y + 60;
+    } else {
+      // ONE MONITOR: A JOCK MUST NEVER LOSE SIGHT OF WHAT IS LIVE (Jeff's rule).
+      //
+      // The old code left x/y undefined here, so Electron centred the window on the primary display —
+      // directly over the dashboard. With every destination becoming a window, that turned nine
+      // destinations into nine ways to hide the thing that is on air.
+      //
+      // So a first open is placed in the RIGHT-HAND PORTION of the work area, below the header strip
+      // that carries the station, the clock and the ON AIR state. The left column and the top strip
+      // stay visible, which is what "seeing what is live" actually means. Windows cascade by 26px so a
+      // second one does not land exactly on the first.
+      const wa = primary.workArea;
+      const HEADER_STRIP = 64;             // matches the dashboard header (56) plus a margin
+      const open = BrowserWindow.getAllWindows().filter(w => w.getTitle().startsWith("popout:")).length;
+      const step = Math.min(open, 6) * 26;
+      width  = Math.min(width,  Math.max(560, Math.round(wa.width * 0.58)));
+      height = Math.min(height, Math.max(420, wa.height - HEADER_STRIP - 40));
+      x = wa.x + wa.width - width - 24 + Math.min(0, -step);
+      y = wa.y + HEADER_STRIP + step;
+      // Never push a window off the bottom or the left of the work area.
+      if (y + height > wa.y + wa.height) y = Math.max(wa.y + HEADER_STRIP, wa.y + wa.height - height);
+      if (x < wa.x) x = wa.x;
+    }
   }
 
   const win = new BrowserWindow({
