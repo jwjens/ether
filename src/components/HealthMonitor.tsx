@@ -1466,7 +1466,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                       /* FOREIGN leads. It is the condition that made OV silent while this row read
                          "163/163 resolvable" in yellow, and it is the one an operator can act on. */
                       st.materialization.foreign > 0
-                        ? `${st.materialization.foreign} not on this machine — use Scan catalogue above`
+                        ? `${st.materialization.foreign} stored outside the catalogue — they will not travel; use Scan catalogue above`
                       : st.materialization.dead > 0 ? `${st.materialization.dead} unresolvable — needs re-import`
                       : st.materialization.resolvesElsewhere > 0 ? `${st.materialization.resolvesElsewhere} airing from the library rather than their stored path`
                       : st.materialization.r2Only > 0 ? `${st.materialization.r2Only} cloud-only (prefetching)`
@@ -1959,8 +1959,13 @@ export function ContentStatusDot({ onClick, compact = false, height }: { onClick
               : level === "warn" ? "var(--accent-amber)"
               : level === "ok" ? "var(--accent-green)" : "var(--text-tertiary)";
 
+  // "MISSING" WAS WRONG AS OF 2026-09-09 and had to change with the rule behind it. `foreign` now
+  // means "the stored path is not inside the catalogue" — REGARDLESS of whether the file opens. A
+  // cart sitting on the desktop that plays perfectly well is foreign, and calling it MISSING would be
+  // the indicator lying in the other direction. OUTSIDE is what it is: on this machine, playable
+  // today, and in a place that does not travel.
   const shortLabel = level === "unknown" ? "CATALOGUE —"
-    : level === "alarm" ? `${(foreign || dead).toLocaleString()} MISSING`
+    : level === "alarm" ? (foreign > 0 ? `${foreign.toLocaleString()} OUTSIDE` : `${dead.toLocaleString()} MISSING`)
     : level === "warn" ? `${elsewhere.toLocaleString()} RELINKED`
     : "CATALOGUE OK";
 
@@ -1968,8 +1973,14 @@ export function ContentStatusDot({ onClick, compact = false, height }: { onClick
   // that user's is an explanation, and it ends the diagnosis in one glance.
   const title = level === "unknown" ? "Catalogue: still checking"
     : level === "alarm"
-      ? `${foreign.toLocaleString()} file${foreign === 1 ? "" : "s"} are not on this machine`
-        + (dead ? ` · ${dead.toLocaleString()} cannot be recovered automatically` : "")
+      // "are not on this machine" was true only while `foreign` meant "the directory does not exist
+      // here". It now means "not inside the catalogue", which INCLUDES files that are right here and
+      // play. Saying they are missing would send the operator looking for a file that is not lost.
+      ? (foreign > 0
+          ? `${foreign.toLocaleString()} file${foreign === 1 ? "" : "s"} are stored outside the catalogue.`
+            + "\nThey may play on this machine and will NOT travel to another one."
+          : "")
+        + (dead ? (foreign > 0 ? "\n" : "") + `${dead.toLocaleString()} cannot be recovered automatically` : "")
         + (sample.length ? "\n\n" + sample.map((x: any) => `${x.table}: ${x.file_path}`).join("\n") : "")
         + "\n\nClick to open the Health Monitor."
     : level === "warn"

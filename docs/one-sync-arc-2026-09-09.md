@@ -180,10 +180,48 @@ to the shipped meaning of `foreign` for every table**, not a cart carve-out remo
 smuggled in. `H-5c` in `test-library-health-foreign.js` pins the current behaviour so nobody assumes
 otherwise.
 
-**Needs a ruling.** Make `foreign` mean "the stored path is not in the catalogue", independent of
-whether the file opens? Both machines read 0 either way today, so it would ship green here too. My
-recommendation is yes, for the same reason as the carve-out: it is a signal that currently cannot see
-the thing it exists to see.
+**RULED 2026-09-09 and BUILT.** Jeff: *"A file outside the catalogue is wrong even when it opens,
+because 'it works here' is exactly the state that breaks the moment it syncs. That's the state I need
+to see. Change it for every table."*
+
+```
+was:  foreign = the path names a DIRECTORY THIS MACHINE DOES NOT HAVE   (computed AFTER an exists() short-circuit)
+now:  foreign = the path is NOT INSIDE THE CATALOGUE                    (computed FIRST, independent of reachability)
+```
+
+Reachability and legitimacy are now separate facts and both are reported: `cls` says whether it can be
+played, `foreign` says whether its location is legitimate. **`resolves` AND `foreign` together is not a
+contradiction** — it is the honest reading of "works, here, today". A file missing from *inside* the
+catalogue is still `dead` and NOT foreign: someone deleted it, which is housekeeping, not a synced-path
+problem.
+
+**The operator-facing wording changed with it**, because it would otherwise have started lying in the
+other direction:
+
+| was | now |
+|---|---|
+| `N MISSING` | `N OUTSIDE` (`MISSING` is kept for `dead`) |
+| "N files are not on this machine" | "N files are stored outside the catalogue. They may play on this machine and will NOT travel to another one." |
+| "N not on this machine — use Scan catalogue" | "N stored outside the catalogue — they will not travel; use Scan catalogue" |
+
+A reachable-but-outside file **is** on this machine. Calling it missing would send the operator looking
+for a file that is not lost.
+
+**Measured after the change — this machine, real classifier against a snapshot of the live DB:**
+
+```
+station 1 Open Format        582 rows · foreign 0
+station 2 halloVeen          600 rows · foreign 0
+station 3 Magical Forest     583 rows · foreign 0
+station 4 Christmas in Jully 583 rows · foreign 0
+ALL: 2348 row-classifications · foreign 0 · dead 0 · resolves 2348 · elsewhere 0 · r2Only 0
+```
+
+**OV: not measured from here, and not guessed.** The only OV database on this machine is the
+2026-09-08 `P:` snapshot, which predates the catalogue move — running the new rule against it would
+produce a large number describing a state OV is no longer in. On Jeff's runtime figures (flat
+catalogue, 598 rows all inside after the two empty carts were cleared) it should read **0**, and the
+Health Monitor's Materialization row on OV is the one-glance confirmation.
 
 ### 2.4 · Is this the held one-library arc, or something smaller?
 

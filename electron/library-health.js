@@ -104,23 +104,64 @@ function createLibraryHealth(opts) {
   }
 
   /**
+   * IS THIS PATH INSIDE THE CATALOGUE? — the whole definition of `foreign`, as of 2026-09-09.
+   *
+   * Same comparison as audio-library-migrate.js `isInside`: resolved, case-folded, separator-aware,
+   * so `C:\Ether\Catalogue\x.mp3` and `c:\ether\catalogue\x.mp3` are the same place and
+   * `…\catalogue-old\` is not a child of `…\catalogue`.
+   *
+   * Deliberately NOT memoised on the directory the way dirExists is: this is string work, not a
+   * filesystem call, so a per-row answer costs nothing.
+   */
+  function insideLibrary(fp) {
+    const root = (typeof musicDirFn === 'function') ? musicDirFn() : null;
+    if (!root || !fp) return false;
+    try {
+      const a = path.resolve(String(fp)).toLowerCase();
+      const b = path.resolve(String(root)).toLowerCase();
+      return a.startsWith(b.endsWith(path.sep) ? b : b + path.sep);
+    } catch { return false; }
+  }
+
+  /**
    * Classify one file-backed row.
    * @param row {{file_path, file_key}}
    * @returns {{ cls: 'resolves'|'resolvesElsewhere'|'r2Only'|'dead', foreign: boolean }}
    */
   function classifyRow(row) {
     const fp = row && row.file_path;
-    if (exists(fp)) return { cls: 'resolves', foreign: false };
 
-    // FOREIGN = the stored path names a directory this machine does not have. Tested on the
-    // DIRECTORY, not the file: a deleted file in a real local folder is a local problem, not a
-    // synced-path problem, and conflating them would cry wolf on ordinary housekeeping.
+    // ── FOREIGN = THE STORED PATH IS NOT IN THE CATALOGUE ────────────────────────────────────────
     //
-    // EVERY TABLE, INCLUDING cart_slots (2026-09-09). The carve-out that exempted carts is gone with
-    // the premise behind it — every audio file lives in the catalogue now, so a cart pointing
-    // elsewhere is exactly as wrong as a song pointing elsewhere, and hiding it only meant nobody
-    // could see the thing that had already gone wrong.
-    const foreign = !!fp && !dirExists(path.dirname(String(fp)));
+    // Jeff, 2026-09-09: "A file outside the catalogue is wrong even when it opens, because 'it works
+    // here' is exactly the state that breaks the moment it syncs. That's the state I need to see."
+    //
+    // WHAT THIS REPLACES, and why the old rule could not see the thing it existed to see:
+    //
+    //   was:  foreign = the path names a DIRECTORY THIS MACHINE DOES NOT HAVE
+    //   now:  foreign = the path is NOT INSIDE THE CATALOGUE
+    //
+    // The old test was computed only AFTER a reachability short-circuit — `if (exists(fp)) return
+    // {foreign:false}` was the first line — so a cart sitting on the desktop that PLAYS here read
+    // perfectly clean. It travels nowhere, no basename resolves it on another machine, and health
+    // said nothing. That is the OV condition one machine BEFORE it becomes visible: the row is
+    // already wrong, and the only reason nobody could tell is that this machine happens to be the
+    // one where the file is.
+    //
+    // Reachability is now orthogonal, and both facts are reported: `cls` says whether it can be
+    // played, `foreign` says whether its location is legitimate. A row can be `resolves` AND
+    // `foreign` — "it works, here, today" — which is precisely the state worth showing.
+    //
+    // EVERY TABLE. The cart_slots `neverForeign` carve-out is gone (same day, same reasoning): every
+    // audio file lives in the catalogue, so a cart pointing elsewhere is exactly as wrong as a song
+    // pointing elsewhere.
+    //
+    // A file MISSING from inside the catalogue is still not foreign — it is `dead`, a local problem
+    // (someone deleted it), not a synced-path problem. Conflating those would cry wolf on ordinary
+    // housekeeping, which is the one thing the original rule got right and this keeps.
+    const foreign = !!fp && !insideLibrary(fp);
+
+    if (exists(fp)) return { cls: 'resolves', foreign };
 
     // The resolver tier (design doc option C) will find it by basename in this machine's library.
     // Counting it here is what turns "mysteriously silent" into "airing on a fallback".

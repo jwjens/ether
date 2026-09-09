@@ -93,21 +93,31 @@ check('  H-5 cart outside the catalogue, file missing → dead AND foreign',
 check('  H-5b a cart INSIDE the catalogue resolves and is not foreign',
   cls({ file_path: LOCAL_FILE }), { cls: 'resolves', foreign: false });
 
-// H-5c — THE LIMIT OF WHAT REMOVING THE FLAG BUYS, pinned so nobody assumes otherwise.
+// H-5c — "IT WORKS HERE" IS THE STATE THAT HAS TO BE VISIBLE.
 //
-// classifyRow SHORT-CIRCUITS on reachability: `if (exists(fp)) return {cls:'resolves', foreign:false}`
-// — the very first line. So a file that opens is never reported foreign, on ANY table. That is the
-// classifier's own semantics and it was never what the cart carve-out controlled.
+// Jeff, 2026-09-09: "A file outside the catalogue is wrong even when it opens, because 'it works
+// here' is exactly the state that breaks the moment it syncs."
 //
-// The consequence, stated plainly: a cart sitting on the desktop that PLAYS on this machine still
-// reads clean. It travels nowhere and no basename resolves it elsewhere, and health says nothing.
-// docs/audio-library-one-folder-rule-2026-09-04.md §4 proposed making that case `foreign` too — that
-// is a change to the shipped meaning of `foreign` for EVERY table, not a cart carve-out removal, so
-// it is not smuggled in here. Flagged for Jeff in docs/one-sync-arc-2026-09-09.md §2.
+// This assertion INVERTED the day it was written. It first pinned the old behaviour — classifyRow
+// short-circuited on reachability (`if (exists(fp)) return {foreign:false}` was the FIRST line), so a
+// cart on the desktop that plays here read perfectly clean. That is the OV condition one machine
+// BEFORE it becomes visible: the row is already wrong, and the only reason nobody can tell is that
+// this machine happens to be the one where the file is.
+//
+// Reachability and legitimacy are now separate facts, and both are reported: `cls` says whether it
+// can be played, `foreign` says whether its location is legitimate. `resolves` AND `foreign` together
+// is not a contradiction — it is the honest reading of "works, here, today".
 const OUTSIDE_BUT_REAL = path.join(dataDir, 'cart-on-the-desktop.mp3');
 fs.writeFileSync(OUTSIDE_BUT_REAL, 'x');
-check('  H-5c a REACHABLE file outside the catalogue reads clean (classifier short-circuits on exists)',
-  cls({ file_path: OUTSIDE_BUT_REAL }), { cls: 'resolves', foreign: false });
+check('  H-5c a REACHABLE file outside the catalogue is foreign anyway (it plays HERE and travels nowhere)',
+  cls({ file_path: OUTSIDE_BUT_REAL }), { cls: 'resolves', foreign: true });
+
+// The counterpart, and the thing the new rule must NOT break: a file missing from INSIDE the
+// catalogue is a local problem (someone deleted it), not a synced-path problem. H-4b already covers
+// it; this states the pairing explicitly so the two are read together.
+check('  H-5d a file INSIDE the catalogue is never foreign, present or not',
+  cls({ file_path: path.join(musicDir, 'nothing-here.mp3'), file_key: null }),
+  { cls: 'dead', foreign: false });
 
 // ── H-6 · across tables, and the level ─────────────────────────────────────────────────────────
 console.log('\n── classifyAll across tables ──');
