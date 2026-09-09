@@ -33,7 +33,9 @@ function createLibraryHealth(opts) {
   // musicDirFn: () => this machine's library root. REQUIRED by the prefetch path — it is the only
   // trustworthy source of a target directory, because every stored file_path column is a synced
   // `blob-ref` and may hold another machine's absolute path. See prefetchTick below.
-  const { getDb, backendUrl, licenseKeyFn, broadcast, userDataDir, musicDirFn } = opts;
+  // restoreInFlightFn: () => true while a restore is pulling rows or files. Optional — absent means
+  // false, so every existing caller keeps its current behaviour.
+  const { getDb, backendUrl, licenseKeyFn, broadcast, userDataDir, musicDirFn, restoreInFlightFn } = opts;
   const jsonlPath = path.join(userDataDir, 'health-events.jsonl');
   const inFlight = new Set();          // file_key currently downloading (dedup)
   const skipCounts = new Map();        // stationId -> { hour: <epoch hour>, n }
@@ -631,6 +633,13 @@ function createLibraryHealth(opts) {
     const materialization = {
       resolvable, total, r2Only, dead,
       resolvesElsewhere,
+      // A RESTORE IN PROGRESS IS NOT A FAULT (Jeff's ruling, 2026-09-09). A restore is rows THEN
+      // files, so between the two phases every row exists and its file does not — which this module
+      // correctly classifies as `dead`. The classification stays honest; what changes is that the
+      // reader is told a transfer is underway, so it can say "N files still arriving" instead of
+      // "N unresolvable — needs re-import" and send the operator hunting damage that isn't there.
+      // See docs/one-switch-2026-09-09.md §4.1.
+      restoreInFlight: (typeof restoreInFlightFn === 'function') ? !!restoreInFlightFn() : false,
       foreign: audio.totals.foreign,
       songsForeign: foreignSongs,
       byTable: audio.byTable,

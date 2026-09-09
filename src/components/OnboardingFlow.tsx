@@ -644,7 +644,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
       const STALL_MS = 120000;                 // two minutes with no byte of progress = stalled
       let lastTick = Date.now();
       const touch = () => { lastTick = Date.now(); };
-      const offP = ether.libraryR2.onDownloadProgress?.((v: any) => {
+      const offP = ether.catalogueBackup.onDownloadProgress?.((v: any) => {
         const done = v?.done ?? 0, total = v?.total ?? 0;
         // Real fraction: the music download is the bulk of the work → 5%..98%.
         touch();                                   // real progress → the stall watchdog stands down
@@ -662,7 +662,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
       // every progress event refreshes the deadline, and silence past it is a real, named failure.
       let offD: (() => void) | undefined;
       const downloadDone = new Promise<any>((resolve) => {
-        offD = ether.libraryR2.onDownloadDone?.((v: any) => resolve(v));
+        offD = ether.catalogueBackup.onDownloadDone?.((v: any) => resolve(v));
         const timer = setInterval(() => {
           if (Date.now() - lastTick > STALL_MS) {
             clearInterval(timer);
@@ -670,14 +670,14 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
           }
         }, 5000);
         // Stop the watchdog once the real terminal event lands.
-        const stop = ether.libraryR2.onDownloadDone?.(() => { clearInterval(timer); stop?.(); });
+        const stop = ether.catalogueBackup.onDownloadDone?.(() => { clearInterval(timer); stop?.(); });
       });
 
       // download() validates synchronously (tier / license / "nothing in R2") and
       // returns {ok:false,error} — it does NOT throw — then runs fire-and-forget.
       // A not-ok result means the music will never arrive: surface it instead of
       // falsely reporting success. No done event fires in this case.
-      const dl = await ether.libraryR2.download();
+      const dl = await ether.catalogueBackup.download();
       if (!dl?.ok) {
         offP?.(); offD?.();
         setSyncPhase('error');
@@ -2439,8 +2439,8 @@ function PickAudioLocationScreen({ stationId, onPull, onDone }: PickAudioLocatio
     await writeSourceKv('cloud');
     // Fire-and-forget. Downloads continue post-onboarding via the persistent
     // progress bar (B.4). Network+ paid for cloud sync; don't ask twice.
-    (window as any).ether.libraryR2.download().catch((err: any) =>
-      console.error('[onboarding] libraryR2.download() invoke failed:', err)
+    (window as any).ether.catalogueBackup.download().catch((err: any) =>
+      console.error('[onboarding] catalogueBackup.download() invoke failed:', err)
     );
     onPull();
   };

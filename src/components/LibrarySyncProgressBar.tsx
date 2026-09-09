@@ -1,10 +1,20 @@
 import { useState, useEffect } from "react";
 
-// Persistent bottom-of-UI progress bar for library:sync-r2:download (Phase B.4).
+// THE canonical restore surface (docs/one-switch-2026-09-09.md §4).
+//
 // Mounts at App.tsx top-level so it's visible across every panel. Renders null
 // when no download is in progress — invisible until the first progress/done
 // event arrives, or until a mount-time getDownloadState() catch-up reveals a
 // download already in flight (the onboarding hand-off scenario from B.3).
+//
+// Now driven by catalogue:backup:* rather than library:sync-r2:*. The old path counted the `songs`
+// table; the catalogue engine walks the folder, so this bar covers carts, sweepers, spots,
+// announcements and voice-tracks too — everything an operator would call "my audio". One engine,
+// per Jeff's ruling: "I'm not shipping two engines."
+//
+// It also carries the PHASE, which the old shape could not express. A restore is rows THEN files,
+// and that order was invisible: "Downloading library — 312/483" said nothing about the setup pull
+// that had to finish first. The three phases are one sentence each, so the arc reads as one act.
 //
 // Auto-hide: 3s after a clean done event, 6s after errors or cancel. A new
 // progress event during the fade cancels the timer and switches back to the
@@ -17,8 +27,11 @@ import { useState, useEffect } from "react";
 const FADE_NORMAL_MS = 3000;
 const FADE_ERROR_MS  = 6000;
 
+type Phase = "idle" | "rows" | "files" | "done";
+
 interface BarState {
   visible:  boolean;
+  phase:    Phase;
   done:     number;
   total:    number;
   errors:   number;
@@ -27,7 +40,7 @@ interface BarState {
 }
 
 const HIDDEN: BarState = {
-  visible: false, done: 0, total: 0, errors: 0, aborted: false, finished: false,
+  visible: false, phase: "idle", done: 0, total: 0, errors: 0, aborted: false, finished: false,
 };
 
 export default function LibrarySyncProgressBar() {
@@ -44,12 +57,13 @@ export default function LibrarySyncProgressBar() {
     // Mount-time catch-up — if a download is already in flight (typical when
     // arriving from onboarding's "From the cloud" path), the snapshot from
     // main process tells us the current counts before any progress event fires.
-    (window as any).ether.libraryR2.getDownloadState()
-      .then((s: { in_progress: boolean; done: number; total: number; errors: number }) => {
+    (window as any).ether.catalogueBackup.getDownloadState()
+      .then((s: { in_progress: boolean; phase: Phase; done: number; total: number; errors: number }) => {
         if (cancelled) return;
         if (s.in_progress) {
           setBar({
             visible: true,
+            phase:   s.phase ?? "files",
             done:    s.done,
             total:   s.total,
             errors:  s.errors,
@@ -60,12 +74,31 @@ export default function LibrarySyncProgressBar() {
       })
       .catch((err: any) => console.error('[LibrarySyncProgressBar] getDownloadState failed:', err));
 
-    const unsubP = (window as any).ether.libraryR2.onDownloadProgress(
+    // PHASE CHANGES ARRIVE SEPARATELY from progress, because the rows phase has no per-file
+    // progress to report — it is one database swap. Without this subscription the bar would stay
+    // invisible for the whole setup pull and then appear abruptly when the files start, which is
+    // the "no way to know which I need" problem in miniature.
+    const unsubS = (window as any).ether.catalogueBackup.onDownloadState(
+      (s: { in_progress: boolean; phase: Phase; done: number; total: number; errors: number }) => {
+        if (cancelled) return;
+        if (s.phase === "rows") {
+          clearHideTimer();
+          setBar({ visible: true, phase: "rows", done: 0, total: 0, errors: 0, aborted: false, finished: false });
+        } else if (s.phase === "idle" && !s.in_progress) {
+          // A rows-only restore (a snapshot rollback pulls no files) ends here rather than hanging
+          // on "bringing your audio down".
+          setBar(HIDDEN);
+        }
+      }
+    );
+
+    const unsubP = (window as any).ether.catalogueBackup.onDownloadProgress(
       (e: { done: number; total: number; errors: number; current: string }) => {
         if (cancelled) return;
         clearHideTimer(); // a fresh progress event during fade cancels the hide
         setBar({
           visible: true,
+          phase:   "files",
           done:    e.done,
           total:   e.total,
           errors:  e.errors,
@@ -75,11 +108,12 @@ export default function LibrarySyncProgressBar() {
       }
     );
 
-    const unsubD = (window as any).ether.libraryR2.onDownloadDone(
+    const unsubD = (window as any).ether.catalogueBackup.onDownloadDone(
       (e: { done: number; total: number; errors: number; aborted: boolean }) => {
         if (cancelled) return;
         setBar({
           visible: true,
+          phase:   "done",
           done:    e.done,
           total:   e.total,
           errors:  e.errors,
@@ -96,6 +130,7 @@ export default function LibrarySyncProgressBar() {
 
     return () => {
       cancelled = true;
+      unsubS();
       unsubP();
       unsubD();
       clearHideTimer();
@@ -107,13 +142,18 @@ export default function LibrarySyncProgressBar() {
   const pct = state.total > 0 ? Math.min(100, (state.done / state.total) * 100) : 0;
   const isAlert = state.errors > 0 || state.aborted;
 
+  // ONE ACT, THREE SENTENCES. "audio files", never "songs" — the catalogue holds carts, sweepers,
+  // spots, announcements and voice-tracks, and calling that count "songs" is the label defect this
+  // work exists to fix (docs/one-switch-2026-09-09.md §5).
   const label = state.finished
     ? (state.aborted
-        ? `Cancelled — ${state.done.toLocaleString()} / ${state.total.toLocaleString()} files`
+        ? `Stopped — ${state.done.toLocaleString()} of ${state.total.toLocaleString()} audio files arrived`
         : (state.errors > 0
-            ? `Done — ${state.done.toLocaleString()} / ${state.total.toLocaleString()} files, ${state.errors} error${state.errors === 1 ? '' : 's'}`
-            : `Done — ${state.done.toLocaleString()} files synced`))
-    : `Downloading library — ${state.done.toLocaleString()} / ${state.total.toLocaleString()} audio files${state.errors > 0 ? `, ${state.errors} error${state.errors === 1 ? '' : 's'}` : ''}`;
+            ? `Everything's here, except ${state.errors} file${state.errors === 1 ? '' : 's'} that wouldn't come down — ${state.done.toLocaleString()} of ${state.total.toLocaleString()} arrived`
+            : `Everything's here — ${state.done.toLocaleString()} audio files`))
+    : state.phase === "rows"
+      ? `Bringing your setup down…`
+      : `Bringing your audio down — ${state.done.toLocaleString()} of ${state.total.toLocaleString()} files${state.errors > 0 ? `, ${state.errors} error${state.errors === 1 ? '' : 's'}` : ''}`;
 
   return (
     <div style={{

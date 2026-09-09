@@ -1465,14 +1465,22 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                     sub={
                       /* FOREIGN leads. It is the condition that made OV silent while this row read
                          "163/163 resolvable" in yellow, and it is the one an operator can act on. */
-                      st.materialization.foreign > 0
+                      /* A RESTORE LEADS, ahead of foreign. While a restore is pulling, rows exist
+                         whose files have not landed yet — correctly `dead`, and not a fault. Saying
+                         "needs re-import" here sends the operator hunting damage that is simply
+                         still in flight (docs/one-switch-2026-09-09.md §4.1). */
+                      st.materialization.restoreInFlight && st.materialization.dead > 0
+                        ? `${st.materialization.dead} files still arriving`
+                      : st.materialization.foreign > 0
                         ? `${st.materialization.foreign} stored outside the catalogue — they will not travel; use Scan catalogue above`
                       : st.materialization.dead > 0 ? `${st.materialization.dead} unresolvable — needs re-import`
                       : st.materialization.resolvesElsewhere > 0 ? `${st.materialization.resolvesElsewhere} airing from the library rather than their stored path`
                       : st.materialization.r2Only > 0 ? `${st.materialization.r2Only} cloud-only (prefetching)`
                       : "all local"}
                   />
-                  {st.materialization.dead > 0 && (
+                  {/* No "unresolvable list" while a restore runs — the list would be a red roster of
+                      files that are on their way. */}
+                  {st.materialization.dead > 0 && !st.materialization.restoreInFlight && (
                     <button onClick={() => showUnresolvable(st.stationId)} style={{ fontSize: 11, color: "var(--accent-red)", background: "none", border: "none", cursor: "pointer", padding: "2px 0 0 0", textDecoration: "underline" }}>
                       {unresolvableFor === st.stationId ? "hide" : "show"} unresolvable list
                     </button>

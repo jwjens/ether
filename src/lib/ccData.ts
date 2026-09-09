@@ -528,9 +528,10 @@ export async function addLibrarySong(
       console.warn("[addSong] no song id returned — skipped station_programming");
     }
     console.log(`[addSong] created "${title}" file_key=${file_key} song_id=${songId}`);
-    // Materialize: pull the audio down to local + set file_path so the song enters
-    // automation rotation (fire-and-forget; the download re-pushes the view when done).
-    try { await ether.invoke?.("library:sync-r2:download", { materialize: true }); } catch { /* best-effort */ }
+    // Pull the audio down so the song can air (fire-and-forget; the download re-pushes the view
+    // when done). It does NOT set file_path any more and does not need to: the catalogue engine
+    // writes zero rows, the file arrives under its basename, and the row resolves against it.
+    try { await ether.catalogueBackup?.download?.(); } catch { /* best-effort */ }
   } catch (e) {
     console.error("[addSong] failed:", (e as any)?.message ?? e);
     return;

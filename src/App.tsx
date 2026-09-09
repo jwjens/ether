@@ -1167,7 +1167,7 @@ export default function App() {
   // library view so the dashboard's local/cloud status reflects the new local files.
   useEffect(() => {
     const ether = (window as any).ether;
-    const off = ether?.libraryR2?.onDownloadDone?.(() => {
+    const off = ether?.catalogueBackup?.onDownloadDone?.(() => {
       if (apiKeyRef.current && stationUuid) pushLibrary(apiKeyRef.current, stationUuid, stationId);
     });
     return typeof off === "function" ? off : undefined;
@@ -1647,7 +1647,12 @@ export default function App() {
             await addLibrarySong(apiKeyRef.current, data);
             break;
           case "library:syncDownload":
-            try { await (window as any).ether.invoke?.("library:sync-r2:download", { materialize: true }); } catch { /* best-effort */ }
+            // No `materialize` counterpart, by design: the catalogue engine writes ZERO rows
+            // (electron/audio-library-r2.js). The file lands in the catalogue under its basename and
+            // the existing row resolves against it — which is the whole point of the basename
+            // resolver. Asking a download to write rows is what let a sender's absolute path cross
+            // machines in the first place ([N-23a]).
+            try { await (window as any).ether.catalogueBackup?.download?.(); } catch { /* best-effort */ }
             break;
 
           default:

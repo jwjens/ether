@@ -1093,6 +1093,11 @@ interface SyncPreflight {
   schedulerRunning?: boolean;
   mutations?: {
     pending: number | null; total: number | null;
+    // pending counts EVERY row with sync_status='pending'; pendingPushable applies the push query's
+    // own exclusion list and is the only one that means "waiting to go up". See §1 of
+    // docs/one-switch-2026-09-09.md — the two were collapsed, and that is what made 79,341 unreadable.
+    pendingPushable?: number | null;
+    pendingJournalOnly?: number | null;
     byStatus?: Array<{ sync_status: string; n: number }>;
     byOrigin?: Array<{ origin: string; n: number }>;
     songDeletes?: number | null;
@@ -1192,8 +1197,8 @@ function MultiMachineSyncSection() {
     <Section
       icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>}
       category="backup"
-      title="Multi-Machine Sync"
-      description="Station UUIDs, pending mutations, and manual push/pull between installs.">
+      title="Advanced — sync diagnostics"
+      description="Station identity, queue counts, and manual overrides. Not needed in normal use.">
       <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginBottom: 12, lineHeight: 1.5 }}>
         Sync runs continuously in the background once enabled — pushing about every 10 seconds and
         pulling about every 30. Enable it once and leave it. <b>Before enabling it on a second
@@ -1221,28 +1226,45 @@ function MultiMachineSyncSection() {
                 ))}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
+            {/* WAITING TO SYNC — the pushable count, and the only one that answers "is anything
+                stuck". The old single "Pending mutations" figure read 79,341 here while the engine
+                was idle and correct: the writer stamps sync_status='pending' on every journalled
+                write, including tables push then excludes, so 79,341 generated_schedule rows that
+                can NEVER be sent were being counted as backlog — with a progress bar showing 49%
+                against a queue that was actually empty. docs/one-switch-2026-09-09.md §1. */}
             <div>
-              <div style={lbl}>Pending mutations</div>
-              {/* The live number wins when the scheduler is emitting — it is the one the engine just
-                  acted on, rather than whatever Preflight last happened to read. */}
+              <div style={lbl}>Waiting to sync</div>
               <div style={{ fontSize: 18, fontWeight: 800, fontVariantNumeric: "tabular-nums",
-                            color: ((status?.pending ?? pf.mutations?.pending) ?? 0) > 0 ? "#fbbf24" : "#4ade80" }}>
-                {(status?.pending ?? pf.mutations?.pending)?.toLocaleString() ?? "—"}
+                            color: (pf.mutations?.pendingPushable ?? 0) > 0 ? "#fbbf24" : "#4ade80" }}>
+                {pf.mutations?.pendingPushable?.toLocaleString() ?? "—"}
               </div>
               <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-                of {pf.mutations?.total?.toLocaleString() ?? "—"} total
+                of {pf.mutations?.total?.toLocaleString() ?? "—"} journalled
                 {status?.lastSyncAt && <> · last sync {new Date(status.lastSyncAt).toLocaleTimeString()}</>}
               </div>
-              {/* Progress against the backlog this session. Only shown while there IS a backlog —
-                  a permanently-full bar on a synced install would say nothing. */}
-              {(status?.pending ?? 0) > 0 && (pf.mutations?.total ?? 0) > 0 && (
+              {/* Progress against the REAL backlog, and only while there is one. Measured against
+                  pushable rows, so it can reach 100% instead of parking at 49% forever. */}
+              {(pf.mutations?.pendingPushable ?? 0) > 0 && (pf.mutations?.total ?? 0) > 0 && (
                 <div style={{ height: 4, background: "var(--bg-primary)", border: "1px solid var(--border-primary)", marginTop: 4 }}>
                   <div style={{ height: "100%", background: "#fbbf24",
-                                width: `${Math.max(0, Math.min(100, 100 - ((status.pending / (pf.mutations!.total || 1)) * 100)))}%`,
+                                width: `${Math.max(0, Math.min(100, 100 - ((pf.mutations!.pendingPushable! / (pf.mutations!.total || 1)) * 100)))}%`,
                                 transition: "width .4s linear" }} />
                 </div>
               )}
             </div>
+            {/* The remainder, named rather than hidden. Collapsing these two into one number is what
+                produced a screen nobody could read. */}
+            {(pf.mutations?.pendingJournalOnly ?? 0) > 0 && (
+              <div>
+                <div style={lbl}>Journal only</div>
+                <div style={{ fontSize: 18, fontWeight: 800, fontVariantNumeric: "tabular-nums", color: "var(--text-tertiary)" }}>
+                  {pf.mutations!.pendingJournalOnly!.toLocaleString()}
+                </div>
+                <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.45 }}>
+                  local-only records that never leave this computer — not a backlog
+                </div>
+              </div>
+            )}
             <div>
               <div style={lbl}>Sync engine</div>
               <div style={{ fontSize: 18, fontWeight: 800, color: pf.schedulerRunning ? "#4ade80" : "var(--text-tertiary)" }}>
@@ -1347,13 +1369,19 @@ function MultiMachineSyncSection() {
 
       {clearArmed && (
         <div style={{ marginTop: 10, padding: 12, border: "1px solid #a0522d", background: "rgba(160,82,45,0.08)" }}>
+          {/* NAMES THE PUSHABLE COUNT, not the raw one. Asking someone to type CLEAR to discard
+              "79,341 queued changes" when 0 of them are pushable is a trap: it reads as a crisis,
+              and the irreversible act it arms does nothing about the number shown. §1 and §3. */}
           <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text-primary)" }}>
-            Discard {(pf?.mutations?.pending ?? 0).toLocaleString()} queued change{(pf?.mutations?.pending ?? 0) === 1 ? "" : "s"} and set the baseline to now?
+            Discard {(pf?.mutations?.pendingPushable ?? 0).toLocaleString()} queued change{(pf?.mutations?.pendingPushable ?? 0) === 1 ? "" : "s"} and set the baseline to now?
           </div>
           <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 6, lineHeight: 1.55 }}>
             The sync backlog on this machine is thrown away and this moment becomes the baseline, so edits
             made from now on sync normally. <strong>Nothing else is touched</strong> — no songs, stations,
             clocks, logs or settings are deleted. Other machines keep their own history.
+            {(pf?.mutations?.pendingJournalOnly ?? 0) > 0 && (
+              <><br />The {pf!.mutations!.pendingJournalOnly!.toLocaleString()} journal-only records stay where they are — they were never going to sync, so discarding them would change nothing.</>
+            )}
             <br />This cannot be undone.
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10, flexWrap: "wrap" }}>
@@ -1616,8 +1644,7 @@ function SyncSection() {
         <div style={{ marginTop: 14, borderTop: "1px solid var(--border-primary)", paddingTop: 14 }}>
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 6 }}>What syncs</div>
           <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-            Your <b>library, clocks, shows, categories, schedule, and settings</b> (the database) sync across every device above.
-            <br /><span style={{ color: "var(--text-tertiary)" }}>Audio files sync separately via Cloud Backup.</span>
+            Your <b>library, clocks, shows, categories, schedule, and settings</b> and <b>all your audio files</b> travel to every computer signed into your account. One switch covers both — see <b>Keep my stuff synced</b>.
           </div>
         </div>
 
@@ -2447,14 +2474,89 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
   // Manual full-DB cloud backup — same backend-signed R2 upload as the auto-timer, on demand.
   // How much of the library is actually in the cloud — read from the database, never assumed.
   // A backup isn't finished until the audio is up too; this is the half the status used to omit.
-  const [libCloud, setLibCloud] = useState<{ total: number; uploaded: number; pending: number } | null>(null);
+  const [libCloud, setLibCloud] = useState<{ total: number; uploaded: number; pending: number; reachable: boolean } | null>(null);
+  // THE CATALOGUE IS THE TRUTH, NOT THE songs TABLE.
+  //
+  // This read used to be `library:cloud-status` (main.js:10936), which counts `songs` rows carrying
+  // r2_uploaded_at — 510 on this machine. The catalogue holds 483 FILES, and it holds carts,
+  // sweepers, spots, announcements and voice-tracks as well as music. So the old screen answered a
+  // different mechanism's question in the wrong units and called them "songs": "All 510 songs are in
+  // the cloud" was asserted from the very column whose seed defects step 4 had to fix (five rows
+  // marked uploaded that were never in the bucket).
+  //
+  // catalogue:backup:status (main.js:11288) walks the folder and reads the REAL remote manifest.
+  // See docs/one-switch-2026-09-09.md §0 and §5.
   const refreshLibCloud = useCallback(async () => {
     try {
-      const r: any = await (window as any).ether.invoke("library:cloud-status");
-      if (r?.ok) setLibCloud({ total: r.total ?? 0, uploaded: r.uploaded ?? 0, pending: r.pending ?? 0 });
+      const r: any = await (window as any).ether.catalogueBackup.status();
+      if (r?.ok) {
+        setLibCloud({
+          total:    r.localFiles ?? 0,
+          uploaded: Math.max(0, (r.localFiles ?? 0) - (r.pending ?? 0)),
+          pending:  r.pending ?? 0,
+          reachable: true,
+        });
+      } else {
+        // An unreachable cloud is NOT "nothing is backed up". The card says so in its own words
+        // rather than falling through to a green tick or a scary zero.
+        setLibCloud({ total: r?.localFiles ?? 0, uploaded: 0, pending: 0, reachable: false });
+      }
     } catch { /* status unknown — the UI says so rather than claiming success */ }
   }, []);
   useEffect(() => { refreshLibCloud(); }, [refreshLibCloud]);
+
+  // ONE SWITCH. "Keep my stuff synced" is on only when BOTH mechanisms are on, and turning it on
+  // turns both on — the operator should not have to know that rows travel by one path (the sync
+  // engine, sync_enabled) and files by another (the scheduled catalogue backup, r2Enabled). Two
+  // switches for one intention is how this screen grew six buttons.
+  //
+  // sync_backend_url is written alongside sync_enabled, and that is NOT redundant: the toggle at
+  // :1288 once wrote sync_enabled alone while nothing else in the tree wrote the destination, so
+  // main resolved the host to '' and started an engine with nowhere to send — switching sync on
+  // appeared to work and moved nothing (4.4.202).
+  const [syncOn, setSyncOn] = useState<boolean | null>(null);
+  const [syncSwitchMsg, setSyncSwitchMsg] = useState("");
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const rows = await query<{ value: string }>(
+          "SELECT value FROM station_config_kv WHERE key = 'sync_enabled' AND station_id = ?", [stationId]);
+        if (alive) setSyncOn(rows?.[0]?.value === "true");
+      } catch { if (alive) setSyncOn(null); }
+    })();
+    return () => { alive = false; };
+  }, [stationId]);
+
+  const toggleKeepSynced = async () => {
+    const next = !(syncOn && r2Enabled);
+    setSyncSwitchMsg("");
+    try {
+      const kv = (window as any).ether.stationConfigKv;
+      await kv.upsertByKey(stationId, 'sync_enabled', next ? 'true' : 'false');
+      if (next) await kv.upsertByKey(stationId, 'sync_backend_url', 'https://ether-backend-production.up.railway.app');
+      setSyncOn(next);
+      setR2Enabled(next);
+      // Honest about the restart. The engine reads sync_enabled at startup, so claiming it is on
+      // this instant would be the same lie the old panel told.
+      setSyncSwitchMsg(next
+        ? "On. Your audio starts going up now; your setup joins in after you next restart Ether."
+        : "Off. Nothing is going to the cloud.");
+    } catch (e: any) {
+      setSyncSwitchMsg(`Couldn't change that — ${e?.message || String(e)}`);
+    }
+  };
+
+  // Restore state, so the card can mirror the progress bar's sentence instead of inventing a second
+  // one (docs/one-switch-2026-09-09.md §4).
+  const [restoreState, setRestoreState] = useState<{ in_progress: boolean; phase: string; done: number; total: number } | null>(null);
+  useEffect(() => {
+    const cb = (window as any).ether?.catalogueBackup;
+    if (!cb) return;
+    cb.getDownloadState?.().then((s: any) => setRestoreState(s)).catch(() => {});
+    const unsub = cb.onDownloadState?.((s: any) => setRestoreState(s));
+    return () => { try { unsub?.(); } catch {} };
+  }, []);
 
   // ONE button = the whole station: the setup AND every song. It is not "backed up" until the
   // transfer is 100% complete, so this runs the database backup, then any songs still missing from
@@ -2478,15 +2580,15 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
     // Part 2 — the audio. Skipping this is what produced a station that restored looking complete
     // and then couldn't play half its songs.
     try {
-      const before: any = await ether.invoke("library:cloud-status");
+      const before: any = await ether.catalogueBackup.status();
       if (before?.ok && before.pending > 0) {
-        setR2BackupNowStatus(`Setup saved — now sending ${before.pending.toLocaleString()} song${before.pending === 1 ? "" : "s"} to the cloud…`);
+        setR2BackupNowStatus(`Setup saved — now sending ${before.pending.toLocaleString()} audio file${before.pending === 1 ? "" : "s"} to the cloud…`);
         setLibUploading(true); setLibUploadMsg(""); setLibProgress(null);
         await new Promise<void>((resolve) => {
           let off: any = null;
           const finish = () => { try { off?.(); } catch {} resolve(); };
-          off = ether.libraryR2.onUploadDone?.(() => finish());
-          ether.libraryR2.upload({}).then((rr: any) => { if (!rr?.ok) { setLibUploading(false); setLibUploadMsg(rr?.error || "Couldn't start the upload."); finish(); } })
+          off = ether.catalogueBackup.onUploadDone?.(() => finish());
+          ether.catalogueBackup.upload({}).then((rr: any) => { if (!rr?.ok) { setLibUploading(false); setLibUploadMsg(rr?.error || "Couldn't start the upload."); finish(); } })
             .catch((e: any) => { setLibUploading(false); setLibUploadMsg(String(e?.message || e)); finish(); });
         });
       }
@@ -2495,15 +2597,15 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
     // Claim nothing — re-read and report what is actually in the cloud.
     await refreshLibCloud();
     try {
-      const after: any = await ether.invoke("library:cloud-status");
+      const after: any = await ether.catalogueBackup.status();
       if (after?.ok && after.pending > 0) {
-        setR2BackupNowStatus(`⚠ Setup is backed up, but ${after.pending.toLocaleString()} of ${after.total.toLocaleString()} songs did not upload — those songs would arrive on another computer with no audio.`);
+        setR2BackupNowStatus(`⚠ Your setup is safe, but ${after.pending.toLocaleString()} of ${(after.localFiles ?? 0).toLocaleString()} audio files didn't go up — on another computer those would arrive with no sound.`);
       } else if (after?.ok) {
-        setR2BackupNowStatus(`✓ Backed up — your setup and all ${after.total.toLocaleString()} songs are in the cloud`);
+        setR2BackupNowStatus(`✓ Everything's in the cloud — your setup and all ${(after.localFiles ?? 0).toLocaleString()} audio files`);
       } else {
-        setR2BackupNowStatus("✓ Setup backed up — couldn't confirm the music files");
+        setR2BackupNowStatus("✓ Setup saved — couldn't reach the cloud to confirm your audio files");
       }
-    } catch { setR2BackupNowStatus("✓ Setup backed up — couldn't confirm the music files"); }
+    } catch { setR2BackupNowStatus("✓ Setup saved — couldn't reach the cloud to confirm your audio files"); }
     setR2BackingNow(false);
   };
 
@@ -2752,7 +2854,7 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
     const ether = (window as any).ether;
     setLibUploadMsg(""); setLibProgress(null); setLibUploading(true);
     try {
-      const r: any = await ether.libraryR2.upload({ force: libForce });
+      const r: any = await ether.catalogueBackup.upload({ force: libForce });
       if (!r?.ok) {
         setLibUploading(false);
         setLibUploadMsg(r?.error || "Couldn't start the upload.");
@@ -2762,15 +2864,15 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
       setLibUploadMsg(String(e?.message || e));
     }
   };
-  const cancelLibraryUpload = () => { (window as any).ether.libraryR2.uploadCancel?.(); };
+  const cancelLibraryUpload = () => { (window as any).ether.catalogueBackup.cancelUpload?.(); };
 
   // Subscribe to library-upload progress/done so the button reflects real work.
   useEffect(() => {
     const ether = (window as any).ether;
-    const offP = ether.libraryR2.onUploadProgress?.((v: any) => {
+    const offP = ether.catalogueBackup.onUploadProgress?.((v: any) => {
       setLibProgress({ phase: v?.phase ?? "upload", done: v?.done ?? 0, total: v?.total ?? 0, errors: v?.errors ?? 0 });
     });
-    const offD = ether.libraryR2.onUploadDone?.((v: any) => {
+    const offD = ether.catalogueBackup.onUploadDone?.((v: any) => {
       refreshLibCloud();   // re-read the real counts so the status reflects what's actually in the cloud
       const uploaded = v?.uploaded ?? 0, total = v?.total ?? 0, errors = v?.errors ?? 0;
       const consolidated = v?.consolidated ?? 0, notFound = v?.notFound ?? 0;
@@ -3377,54 +3479,126 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
 
       {/* ── Backup ── */}
       {/* ── Cloud Backup — the everyday safety net (leads the tab) ── */}
-      <Section category="backup" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>} title="Cloud Backup" description="An always-current copy of your whole station, kept safe online — every station, your schedule, and your settings. If a computer dies or you move to a new one, it all comes back.">
+      <Section category="backup" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>} title="Keep my stuff synced" description="Your setup and your audio, both, kept current in the cloud and on every computer signed into your account. If a computer dies or you move to a new one, it all comes back.">
 
-        {/* Status hero + primary action.
-            "Backed up" means BOTH halves are in the cloud — the setup AND every song. The check used
-            to reflect the database alone, so a station whose audio never finished uploading still
-            showed green, restored onto another machine looking complete, and then couldn't play. */}
+        {/* ── ONE SENTENCE, ONE BUTTON ──────────────────────────────────────────────────────────
+            Jeff, 2026-09-09: "Six buttons doing three jobs and no way to know which I need."
+            "One thing: keep my stuff synced. I shouldn't have to know there are two mechanisms."
+
+            The sentence states the WEAKER of the two halves, because "safe" is only true when rows
+            AND files are both up. The old hero showed green off the database alone, so a station
+            whose audio never finished restored onto another machine looking complete and then
+            couldn't play.
+
+            The words backup / sync / push / pull / R2 appear nowhere here. Those are four names for
+            two mechanisms, and they are why six buttons looked like six jobs. The mechanisms live
+            in Advanced, under their own names, for the person who needs them.
+            docs/one-switch-2026-09-09.md §2. */}
         {(() => {
-          const dbSafe    = r2LastBackup > 0 && r2LastStatus === "success";
-          const audioSafe = !!libCloud && libCloud.pending === 0;
-          const allSafe   = dbSafe && audioSafe;
-          const partial   = dbSafe && !!libCloud && libCloud.pending > 0;
-          const headline  = r2BackingNow ? "Backing up…"
-            : allSafe ? "Your station is backed up"
-            : partial ? "Music files unfinished"
-            : dbSafe  ? "Your station's setup is backed up"
-            : "Not backed up yet";
-          const sub = r2BackingNow ? "Sending your setup and your music to the cloud"
-            : partial ? `${libCloud!.pending.toLocaleString()} of ${libCloud!.total.toLocaleString()} songs aren't in the cloud — they'd arrive on another computer with no audio. Back up now to finish.`
-            : allSafe ? `Setup and all ${libCloud!.total.toLocaleString()} songs · last backed up ${timeAgo(r2LastBackup)}`
-            : dbSafe  ? `Last backed up ${timeAgo(r2LastBackup)} · checking your music files…`
-            : "Send your first backup whenever you're ready";
+          const restoring   = !!restoreState?.in_progress;
+          const dbSafe      = r2LastBackup > 0 && r2LastStatus === "success";
+          const unreachable = !!libCloud && !libCloud.reachable;
+          const audioSafe   = !!libCloud && libCloud.reachable && libCloud.pending === 0;
+          const filesBehind = !!libCloud && libCloud.reachable && libCloud.pending > 0;
+          const files       = libCloud?.total ?? 0;
+          const nothingYet  = !dbSafe && !!libCloud && libCloud.reachable && libCloud.uploaded === 0;
+          const off         = syncOn === false;
+
+          type Card = { tone: "ok" | "warn" | "busy" | "idle"; glyph: string; line: string; action?: string; onAction?: () => void };
+
+          const card: Card =
+            restoring
+              ? { tone: "busy", glyph: "☁",
+                  line: restoreState!.phase === "rows"
+                    ? "Bringing your setup down…"
+                    : `Bringing your audio down — ${restoreState!.done.toLocaleString()} of ${restoreState!.total.toLocaleString()} files.`,
+                  action: "Stop", onAction: () => (window as any).ether.catalogueBackup.cancelDownload?.() }
+            : r2BackingNow
+              ? { tone: "busy", glyph: "☁", line: "Sending your setup and your audio to the cloud…" }
+            : off
+              ? { tone: "idle", glyph: "☁", line: "Keeping your stuff synced is off. Nothing is going to the cloud." }
+            : unreachable
+              ? { tone: "warn", glyph: "!",
+                  line: dbSafe
+                    ? `Can't reach the cloud right now — last confirmed ${timeAgo(r2LastBackup)}. Nothing is lost; it'll catch up.`
+                    : "Can't reach the cloud right now. Nothing is lost; it'll catch up.",
+                  action: "Try again", onAction: () => { refreshLibCloud(); testR2Connection(); } }
+            : nothingYet
+              ? { tone: "idle", glyph: "☁", line: "Nothing is in the cloud yet.",
+                  action: "Back up now", onAction: runCloudBackupNow }
+            : filesBehind
+              ? { tone: "warn", glyph: "!",
+                  line: `Your setup is safe. ${libCloud!.pending.toLocaleString()} of ${files.toLocaleString()} audio files haven't gone up yet — on another computer those would arrive with no sound.`,
+                  action: "Finish sending", onAction: runCloudBackupNow }
+            : !dbSafe && audioSafe
+              ? { tone: "warn", glyph: "!",
+                  line: `All ${files.toLocaleString()} audio files are safe. Your setup hasn't gone up yet.`,
+                  action: "Back up now", onAction: runCloudBackupNow }
+            : dbSafe && audioSafe
+              ? { tone: "ok", glyph: "✓",
+                  line: `Everything on this computer is in the cloud — your whole setup and all ${files.toLocaleString()} audio files, as of ${timeAgo(r2LastBackup)}.` }
+            // Status not in yet. Says so rather than guessing in either direction.
+              : { tone: "idle", glyph: "☁", line: "Checking what's in the cloud…" };
+
+          const ring = card.tone === "ok" ? "rgba(34,197,94,0.15)" : card.tone === "warn" ? "rgba(217,164,65,0.16)" : "var(--bg-secondary)";
+          const ink  = card.tone === "ok" ? "var(--accent-green)" : card.tone === "warn" ? "var(--accent-amber, #d9a441)" : "var(--text-tertiary)";
           return (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" as any, padding: "16px 18px", background: "var(--bg-tertiary)", border: `1px solid ${partial ? "var(--accent-amber, #d9a441)" : "var(--border-primary)"}`, marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" as any, padding: "16px 18px", background: "var(--bg-tertiary)", border: `1px solid ${card.tone === "warn" ? "var(--accent-amber, #d9a441)" : "var(--border-primary)"}`, marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <div style={{ width: 38, height: 38, borderRadius: 999, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, background: allSafe ? "rgba(34,197,94,0.15)" : partial ? "rgba(217,164,65,0.16)" : "var(--bg-secondary)", color: allSafe ? "var(--accent-green)" : partial ? "var(--accent-amber, #d9a441)" : "var(--text-tertiary)" }}>
-              {r2BackingNow ? "☁" : allSafe ? "✓" : partial ? "!" : "☁"}
+            <div style={{ width: 38, height: 38, borderRadius: 999, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 19, background: ring, color: ink }}>
+              {card.glyph}
             </div>
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)" }}>{headline}</div>
-              <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginTop: 2, maxWidth: 520, lineHeight: 1.5 }}>{sub}</div>
-            </div>
+            <div style={{ fontSize: 14, color: "var(--text-primary)", maxWidth: 560, lineHeight: 1.55 }}>{card.line}</div>
           </div>
-          <button onClick={runCloudBackupNow} disabled={r2BackingNow}
-            style={{ padding: "11px 22px", fontSize: 13.5, fontWeight: 700, background: "var(--accent-green)", color: "#000", border: "none", cursor: r2BackingNow ? "default" : "pointer", borderRadius: 0, opacity: r2BackingNow ? 0.6 : 1 }}>
-            {r2BackingNow ? "Backing up…" : partial ? "Finish backing up" : "Back up now"}
-          </button>
+          {card.action && (
+            <button onClick={card.onAction} disabled={r2BackingNow && card.tone !== "busy"}
+              style={{ padding: "11px 22px", fontSize: 13.5, fontWeight: 700, background: card.tone === "busy" ? "var(--bg-secondary)" : "var(--accent-green)", color: card.tone === "busy" ? "var(--text-secondary)" : "#000", border: card.tone === "busy" ? "1px solid var(--border-primary)" : "none", cursor: "pointer", borderRadius: 0 }}>
+              {card.action}
+            </button>
+          )}
         </div>
           );
         })()}
+
+        {/* THE ONE SWITCH. Replaces "Enable the sync engine" and "Back up automatically" both. */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" as any, padding: "13px 16px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", marginBottom: 8 }}>
+          <div style={{ minWidth: 240 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text-primary)" }}>Keep my stuff synced</div>
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2, maxWidth: 520, lineHeight: 1.5 }}>
+              Your setup and your audio, both directions, kept current on every computer signed into your account. Leave it on.
+            </div>
+          </div>
+          <button onClick={toggleKeepSynced} aria-label="Keep my stuff synced"
+            style={{ position: "relative", width: 46, height: 26, borderRadius: 999, border: "none", flexShrink: 0, cursor: "pointer", background: (syncOn && r2Enabled) ? "var(--accent-green)" : "var(--bg-tertiary)", boxShadow: (syncOn && r2Enabled) ? "none" : "inset 0 0 0 1px var(--border-primary)" }}>
+            <span style={{ position: "absolute", top: 3, left: (syncOn && r2Enabled) ? 23 : 3, width: 20, height: 20, borderRadius: 999, background: "#fff", transition: "left 0.15s ease" }} />
+          </button>
+        </div>
+        {syncSwitchMsg && (
+          <div style={{ fontSize: 12, marginBottom: 16, color: "var(--text-secondary)" }}>{syncSwitchMsg}</div>
+        )}
         {!r2BackingNow && r2BackupNowStatus && (
           <div style={{ fontSize: 12.5, marginTop: -10, marginBottom: 18, color: r2BackupNowStatus.startsWith("✓") ? "var(--accent-green)" : r2BackupNowStatus.startsWith("✗") ? "var(--accent-red)" : "var(--text-secondary)" }}>{r2BackupNowStatus}</div>
         )}
 
-        {/* Automatic backup */}
+        {/* ── ADVANCED ─────────────────────────────────────────────────────────────────────────
+            Everything that used to compete with the card, kept and named, one disclosure down.
+            Nothing is removed — the manual controls are the escape hatch, and the folder, the
+            force re-send and the connection check all still matter to someone. They are simply no
+            longer six equal-looking buttons on the front page. */}
+        <details style={{ marginTop: 4 }}>
+          <summary style={{ cursor: "pointer", fontSize: 12.5, fontWeight: 600, color: "var(--text-tertiary)", padding: "6px 0", userSelect: "none" as any }}>
+            Advanced
+          </summary>
+          <div style={{ fontSize: 12, color: "var(--text-tertiary)", margin: "6px 0 16px", lineHeight: 1.55 }}>
+            Diagnostics and manual controls. You don't need any of this in normal use — the switch above does the whole job.
+          </div>
+
+        {/* How often the scheduled half runs. An implementation detail of ONE of the two
+            mechanisms, which is exactly why it does not belong beside the switch. */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" as any, paddingBottom: 18, borderBottom: "1px solid var(--border-primary)", marginBottom: 18 }}>
           <div style={{ minWidth: 220 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text-primary)" }}>Back up automatically</div>
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>Keeps your cloud copy current while ether is open.</div>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text-primary)" }}>How often to send your setup</div>
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>Only applies while Ether is open. Your audio goes up as it changes, not on this schedule.</div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <select value={r2Interval} onChange={e => setR2Interval(Number(e.target.value))} disabled={!r2Enabled}
@@ -3448,22 +3622,29 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
           <div style={{ fontSize: 12, marginTop: -10, marginBottom: 18, color: (r2SaveStatus || r2TestStatus).startsWith("✓") ? "var(--accent-green)" : "var(--accent-red)" }}>{r2SaveStatus || r2TestStatus}</div>
         )}
 
-        {/* Music files */}
+        {/* Your audio files — "audio", never "songs". The catalogue holds carts, sweepers, spots,
+            announcements and voice-tracks too, and 483 files is not 510 song rows. Calling this
+            count "songs" is the label defect this work exists to fix (§5). */}
         <div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>Your music files</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", marginBottom: 4 }}>Your audio files</div>
           <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginBottom: 14, lineHeight: 1.55 }}>
-            <strong>Back up now</strong> above already sends your music along with your setup. Use this to send just the audio on its own — handy after adding a batch of songs. Any computer signed into your account can pull your whole library down into the same folder.
-            {libCloud && (
+            Music, carts, sweepers, spots, announcements and voice-tracks — everything in your catalogue folder. The switch above sends these along with your setup; this sends just the audio on its own, which is handy right after adding a batch.
+            {libCloud && libCloud.reachable && (
               <div style={{ marginTop: 6, color: libCloud.pending > 0 ? "var(--accent-amber, #d9a441)" : "var(--accent-green)" }}>
                 {libCloud.pending > 0
-                  ? `${libCloud.uploaded.toLocaleString()} of ${libCloud.total.toLocaleString()} songs are in the cloud — ${libCloud.pending.toLocaleString()} still to send.`
-                  : `All ${libCloud.total.toLocaleString()} songs are in the cloud.`}
+                  ? `${libCloud.uploaded.toLocaleString()} of ${libCloud.total.toLocaleString()} audio files are in the cloud — ${libCloud.pending.toLocaleString()} still to send.`
+                  : `All ${libCloud.total.toLocaleString()} audio files are in the cloud.`}
+              </div>
+            )}
+            {libCloud && !libCloud.reachable && (
+              <div style={{ marginTop: 6, color: "var(--text-tertiary)" }}>
+                {libCloud.total.toLocaleString()} audio files here on this computer — couldn't reach the cloud to compare.
               </div>
             )}
           </div>
 
           <div style={{ background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", padding: "12px 14px", marginBottom: 14 }}>
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--text-secondary)", letterSpacing: "0.05em", marginBottom: 6 }}>WHERE YOUR SONGS LIVE</div>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: "var(--text-secondary)", letterSpacing: "0.05em", marginBottom: 6 }}>WHERE YOUR AUDIO LIVES</div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" as any }}>
               <span style={{ flex: 1, minWidth: 200, fontSize: 12.5, color: "var(--text-secondary)", wordBreak: "break-all" }}>{musicDir || "Default folder"}</span>
               <button onClick={chooseLibraryFolder} disabled={libUploading}
@@ -3476,7 +3657,7 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" as any }}>
             <button onClick={uploadLibrary} disabled={libUploading}
               style={{ padding: "10px 20px", fontSize: 13, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: libUploading ? "default" : "pointer", borderRadius: 0, opacity: libUploading ? 0.6 : 1 }}>
-              {libUploading ? "Working…" : "Send my music to the cloud"}
+              {libUploading ? "Working…" : "Send just the audio"}
             </button>
             {libUploading && (
               <button onClick={cancelLibraryUpload}
@@ -3496,7 +3677,7 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
           <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" as any, marginTop: 12 }}>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-tertiary)", cursor: libUploading ? "default" : "pointer" }}>
               <input type="checkbox" checked={libForce} disabled={libUploading} onChange={(e) => setLibForce(e.target.checked)} />
-              Re-send every song, even ones already uploaded
+              Re-send every file, even ones already uploaded
             </label>
             <button onClick={testR2Connection} disabled={r2Testing}
               style={{ padding: 0, fontSize: 11.5, fontWeight: 600, background: "transparent", color: "var(--text-tertiary)", border: "none", textDecoration: "underline", cursor: r2Testing ? "default" : "pointer", opacity: r2Testing ? 0.5 : 1 }}>
@@ -3504,12 +3685,13 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
             </button>
           </div>
         </div>
+        </details>
       </Section>
 
       {/* ── Danger zone — factory reset ── */}
       <Section category="system" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>} title="Factory reset this computer" description="Erase this computer's Ether data and start over from first-time setup — does not touch other computers on your account">
         <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 14 }}>
-          Erases this account's data on this computer — stations, library, schedule, users and settings — then <strong>closes Ether completely</strong>. Reopen it to sign in again. Other accounts on this computer, and this account on other computers, are unaffected. Consider <strong>Back up now</strong> above first. <strong>This cannot be undone.</strong>
+          Erases this account's data on this computer — stations, library, schedule, users and settings — then <strong>closes Ether completely</strong>. Reopen it to sign in again. Other accounts on this computer, and this account on other computers, are unaffected. Make sure <strong>Keep my stuff synced</strong> has finished first. <strong>This cannot be undone.</strong>
         </div>
         <button onClick={() => { setFrOpen(true); setFrEmail1(""); setFrEmail2(""); setFrErr(""); }} style={{ padding: "8px 18px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(239,68,68,0.12)", color: "#ef4444", border: "1px solid rgba(239,68,68,0.4)", cursor: "pointer" }}>
           Factory reset…
@@ -3538,7 +3720,7 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
       )}
 
       {/* ── Save a copy on this computer (secondary, manual snapshot) ── */}
-      <Section category="backup" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>} title="Save a copy on this computer" description="A manual snapshot kept on this PC only — handy right before a big change so you can roll back. Audio files aren't included.">
+      <Section category="backup" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>} title="Roll back this computer" description="A manual snapshot kept on this PC only — handy right before a big change so you can undo it. Your audio files are not part of a snapshot.">
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: backups.length > 0 ? 16 : 0 }}>
           <button onClick={backup} disabled={backupLoading} style={{ padding: "10px 20px", borderRadius: 0, fontSize: 13, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", cursor: "pointer", opacity: backupLoading ? 0.6 : 1 }}>
             {backupLoading ? "Saving…" : "Save a snapshot"}

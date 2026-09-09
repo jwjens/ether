@@ -130,6 +130,13 @@ const _RESTORE_SAFE_CHANNELS = new Set([
   "station:install-from-cloud", "db:restore", "restore_db", "station:cloud-install-available",
   "restore:begin", "restore:end", "app:relaunch", "system:getAppDataDir", "get_local_ip",
   "app:getVersion", "app:version", "system:factoryReset",
+  // The restore's own progress surface. Both read or write a module variable and never open the
+  // database, so they are safe while gated — and they have to be: the ROWS phase runs with the
+  // gate SET (main.js:1627), so without these the one place that can say "bringing your setup
+  // down…" is the one place that cannot answer. `catalogue:backup:download` is deliberately NOT
+  // here: it reads plan_tier and license_key through _catalogueR2Gate(), and the files phase runs
+  // after the gate clears anyway.
+  "catalogue:backup:download:get-state", "catalogue:backup:phase",
 ]);
 {
   const _origHandle = ipcMain.handle.bind(ipcMain);
@@ -808,6 +815,9 @@ if (AUDIO_DAEMON_DESIRED) {
       // getMusicDir() reads music-dir.txt (a FILE, not the DB) and so is immune to the synced
       // file_path columns that used to steer prefetch into another machine's home directory.
       musicDirFn: () => { try { return getMusicDir(); } catch { return null; } },
+      // "N files still arriving", not "N unresolvable" — a restore in progress is not a fault
+      // (docs/one-switch-2026-09-09.md §4.1).
+      restoreInFlightFn: () => { try { return catalogueRestoreInFlight(); } catch { return false; } },
       // The health ledger is ACCOUNT state (it records this account's library), so it lives in the
       // profile alongside the database it describes — not in machine-level Roaming.
       userDataDir: P.profileDir(P.activeKey()),
@@ -1625,10 +1635,18 @@ async function openWithSchemaSelfHeal(dbFile, onProgress) {
 // database mid-swap, and always releases it — success, failure or throw.
 async function swapDatabaseFile(srcPath, onProgress) {
   setRestoreGate("replacing the station database");
+  // PHASE 1 OF ONE ACT. Rows first, then files — the order the operator never sees today. Setting
+  // it here rather than at the call sites means every route into a database swap reports the same
+  // phase, including the ones that then go on to pull the catalogue.
+  _catSetPhase('rows');
   try {
     return await _swapDatabaseFileGated(srcPath, onProgress);
   } finally {
     clearRestoreGate();
+    // The rows phase is over either way. It does NOT advance to 'files' here — only an actual
+    // catalogue download does that, so a plain snapshot rollback (which pulls no files) ends here
+    // rather than sitting forever at "bringing your audio down".
+    if (_catDownloadState.phase === 'rows') _catSetPhase('idle');
     // Whatever happened, this app must end with a usable connection.
     try { if (!db || !db.open) { initDb(); restoreLog("post-restore: database reopened"); } } catch (e) { restoreLog(`post-restore reopen failed: ${e.message}`); }
   }
@@ -10773,6 +10791,39 @@ ipcMain.handle('sync:preflight', () => {
       schedulerRunning: scheduler ? !!scheduler._running : false,
       mutations: {
         pending,
+        // TWO NUMBERS, NEVER ONE. `pending` counts every row with sync_status='pending' — and the
+        // writer (sync/mutation-writer.js:349-350) stamps that on EVERY journalled write, including
+        // tables the push query then excludes (sync/sync-engine.js:544). On this machine that made
+        // "PENDING MUTATIONS 79,341" out of 79,341 generated_schedule rows that can never be sent,
+        // with a progress bar reading 49% while the truth was "finished". The engine was idle and
+        // correct; the number was measuring the wrong set.
+        //
+        // pendingPushable applies the engine's own exclusion list, so it answers the question an
+        // operator actually asks: is anything waiting to go up.
+        // docs/one-switch-2026-09-09.md §1.
+        pendingPushable: (() => {
+          try {
+            const { REGISTRY } = require('./sync/synced-tables');
+            const excluded = Object.entries(REGISTRY)
+              .filter(([, e]) => e.syncExcluded === true || e.scope === 'local-only')
+              .map(([wireName]) => wireName);
+            if (excluded.length === 0) return pending;
+            const ph = excluded.map(() => '?').join(', ');
+            return q(`SELECT COUNT(*) n FROM mutations WHERE sync_status = 'pending' AND table_name NOT IN (${ph})`, ...excluded)[0]?.n ?? null;
+          } catch { return null; }
+        })(),
+        // What the unpushable remainder is, so the panel can name it rather than hide it.
+        pendingJournalOnly: (() => {
+          try {
+            const { REGISTRY } = require('./sync/synced-tables');
+            const excluded = Object.entries(REGISTRY)
+              .filter(([, e]) => e.syncExcluded === true || e.scope === 'local-only')
+              .map(([wireName]) => wireName);
+            if (excluded.length === 0) return 0;
+            const ph = excluded.map(() => '?').join(', ');
+            return q(`SELECT COUNT(*) n FROM mutations WHERE sync_status = 'pending' AND table_name IN (${ph})`, ...excluded)[0]?.n ?? null;
+          } catch { return null; }
+        })(),
         total: q("SELECT COUNT(*) n FROM mutations")[0]?.n ?? null,
         byStatus: q("SELECT sync_status, COUNT(*) n FROM mutations GROUP BY sync_status ORDER BY n DESC"),
         // origin all 'local' means nothing has ever been RECEIVED, which push counts alone hide.
@@ -11212,6 +11263,57 @@ function _catalogueR2Gate() {
 let _catUploadAbort = false;
 let _catDownloadAbort = false;
 
+// ── RESTORE STATE — one place, so a window that mounts mid-restore is not blind ────────────────
+//
+// The legacy path kept _libDownloadState (main.js:10907) for exactly this: LibrarySyncProgressBar
+// asks for it on mount, because progress arrives as an EVENT and a window opened halfway through a
+// 483-file pull would otherwise show nothing at all until the next tick. The catalogue engine had
+// no equivalent, which is the one real gap in swapping the surfaces over.
+//
+// `phase` is the part the legacy shape could not express. A restore is rows THEN files, and the
+// order is invisible today: "Downloading library — 312/483" says nothing about the setup pull that
+// preceded it. Named phases let one sentence carry the whole arc (docs/one-switch-2026-09-09.md §4).
+let _catDownloadState = {
+  in_progress: false,
+  phase:       'idle',   // 'idle' | 'rows' | 'files' | 'done'
+  done:        0,
+  total:       0,
+  errors:      0,
+  started_at:  0,
+};
+
+// A restore in progress is NOT a fault. Between the rows phase and the end of the files phase every
+// row exists and its file does not, which the step-2 rule reads as DEAD — so Health Monitor would
+// report hundreds of dead rows mid-restore and the operator would read it as damage. Jeff's ruling:
+// "N files still arriving", not dead. library-health reads this flag to say so.
+function catalogueRestoreInFlight() {
+  return !!_catDownloadState.in_progress;
+}
+
+// Every window, not just the main one. `send` here used to target mainWindow alone, so a restore
+// driven from the dashboard was invisible in a pop-out — the same window-blindness the console
+// relay and the board-change fan-out both had to fix.
+function _catBroadcast(ch, payload) {
+  try {
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (w && !w.isDestroyed()) w.webContents.send(ch, payload);
+    }
+  } catch { /* a progress broadcast must never break the transfer */ }
+}
+
+// A function declaration, not a const arrow: swapDatabaseFile() sits ~9,600 lines above this and
+// calls it, so it has to hoist.
+function _catSetPhase(phase) {
+  _catDownloadState = {
+    ..._catDownloadState,
+    phase,
+    in_progress: phase === 'rows' || phase === 'files',
+    started_at:  _catDownloadState.started_at || Date.now(),
+  };
+  _catBroadcast('catalogue:backup:download:state', _catDownloadState);
+  return _catDownloadState;
+}
+
 ipcMain.handle('catalogue:backup:upload', async (_evt, opts = {}) => {
   const gate = _catalogueR2Gate();
   if (!gate.ok) return gate;
@@ -11261,25 +11363,66 @@ ipcMain.handle('catalogue:backup:download', async () => {
   const root = getMusicDir();
   _catDownloadAbort = false;
 
-  const send = (ch, p) => { try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ch, p); } catch {} };
+  // Set SYNCHRONOUSLY, before the async worker starts, so a get-state that lands between this
+  // invoke and the first onProgress still reports in_progress. The legacy path documents the same
+  // ordering requirement at main.js:11436.
+  _catDownloadState = {
+    in_progress: true,
+    phase:       'files',
+    done:        0,
+    total:       0,
+    errors:      0,
+    started_at:  Date.now(),
+  };
+  _catBroadcast('catalogue:backup:download:state', _catDownloadState);
+
+  const send = (ch, p) => _catBroadcast(ch, p);
 
   (async () => {
     try {
       const res = await R2LIB.downloadCatalogue(_r2SignedIO(gate.licenseKey), {
         root,
-        onProgress: (p) => send('catalogue:backup:download:progress', p),
+        onProgress: (p) => {
+          _catDownloadState = {
+            ..._catDownloadState,
+            done:   p?.done   ?? _catDownloadState.done,
+            total:  p?.total  ?? _catDownloadState.total,
+            errors: p?.errors ?? _catDownloadState.errors,
+          };
+          send('catalogue:backup:download:progress', _catDownloadState);
+        },
         shouldAbort: () => _catDownloadAbort,
       });
       console.log(`[catalogue:restore] ${res.aborted ? 'CANCELLED' : 'done'} — ${res.downloaded}/${res.toDownload} pulled, `
         + `${res.alreadyLocal} already here, ${res.errors} errors, ROWS WRITTEN ${res.rowsWritten}`);
+      _catDownloadState = { ..._catDownloadState, in_progress: false, phase: 'done' };
+      _catBroadcast('catalogue:backup:download:state', _catDownloadState);
       send('catalogue:backup:download:done', res);
     } catch (e) {
       console.error('[catalogue:restore] fatal:', e.message);
+      // in_progress false on the failure path too, or Health Monitor would suppress its dead-row
+      // line forever after one failed restore — the flag must never outlive the transfer.
+      _catDownloadState = { ..._catDownloadState, in_progress: false, phase: 'idle' };
+      _catBroadcast('catalogue:backup:download:state', _catDownloadState);
       send('catalogue:backup:download:done', { fatal: e.message, downloaded: 0, errors: 1 });
     }
   })();
 
   return { ok: true, started: true, root };
+});
+
+// What a window asks for when it mounts mid-restore. Without this the swap off libraryR2 would
+// lose the seed that LibrarySyncProgressBar.tsx:47 depends on.
+ipcMain.handle('catalogue:backup:download:get-state', () => _catDownloadState);
+
+// The rows half of a restore. The catalogue engine deliberately writes NO rows (step 4), so the
+// setup pull is a different mechanism entirely — but to the operator it is phase 1 of one act, and
+// the phase has to be settable from wherever that pull is driven.
+ipcMain.handle('catalogue:backup:phase', (_evt, { phase } = {}) => {
+  const ok = ['idle', 'rows', 'files', 'done'];
+  if (!ok.includes(phase)) return { ok: false, error: `unknown phase: ${phase}` };
+  _catSetPhase(phase);
+  return { ok: true, phase };
 });
 
 ipcMain.handle('catalogue:backup:download:cancel', () => { _catDownloadAbort = true; return { ok: true }; });

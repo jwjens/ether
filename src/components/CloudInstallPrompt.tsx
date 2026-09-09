@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 
 // Post-sign-in prompt: on a FRESH install whose account has a cloud backup, offer to pull the
 // whole station down (database + audio). Self-contained; checks availability on mount and shows
-// once per session unless dismissed. Reuses station:install-from-cloud + libraryR2.download.
+// once per session unless dismissed. Reuses station:install-from-cloud + catalogueBackup.download.
 export default function CloudInstallPrompt() {
   const [show, setShow]   = useState(false);
   const [phase, setPhase] = useState<"offer" | "installing" | "done" | "error">("offer");
@@ -27,9 +27,9 @@ export default function CloudInstallPrompt() {
       if (!r?.ok) { setPhase("error"); setMsg(r?.error || "Install failed"); return; }
       setStationName(r.stationName || "");
       setMsg(`Database installed — ${r.songs} songs. Downloading audio…`);
-      const offP = (window as any).ether.libraryR2.onDownloadProgress?.((v: any) => setMsg(`Downloading audio… ${v.done ?? 0}/${v.total ?? 0}`));
-      const offD = (window as any).ether.libraryR2.onDownloadDone?.((v: any) => { offP?.(); offD?.(); setPhase("done"); setMsg(`Installed ${v?.done ?? r.songs} files.`); });
-      await (window as any).ether.libraryR2.download();
+      const offP = (window as any).ether.catalogueBackup.onDownloadProgress?.((v: any) => setMsg(`Downloading audio… ${v.done ?? 0}/${v.total ?? 0}`));
+      const offD = (window as any).ether.catalogueBackup.onDownloadDone?.((v: any) => { offP?.(); offD?.(); setPhase("done"); setMsg(`Installed ${v?.done ?? r.songs} files.`); });
+      await (window as any).ether.catalogueBackup.download();
     } catch (e: any) { setPhase("error"); setMsg(String(e?.message || e)); }
   };
 

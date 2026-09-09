@@ -141,14 +141,27 @@ contextBridge.exposeInMainWorld("ether", {
     download:       ()      => ipcRenderer.invoke('catalogue:backup:download'),
     cancelDownload: ()      => ipcRenderer.invoke('catalogue:backup:download:cancel'),
     status:         ()      => ipcRenderer.invoke('catalogue:backup:status'),
-    onUploadProgress:   (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('catalogue:backup:upload:progress', h); return h; },
+    // EVERY on* RETURNS ITS OWN UNSUBSCRIBE. These used to hand back the raw handler, so a caller
+    // had to keep it and pair it with the matching off* — and the four call sites migrating onto
+    // this surface (CloudBackup, CloudInstallPrompt, OnboardingFlow, LibrarySyncProgressBar) were
+    // all written against libraryR2, whose on* returns an unsubscribe function (preload.js:200).
+    // Two different contracts behind one rename is a listener leak waiting to happen, and nothing
+    // consumed these doors yet, so the shape is free to fix. The off* doors stay for callers that
+    // would rather hold the handler.
+    onUploadProgress:   (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('catalogue:backup:upload:progress', h);   return () => ipcRenderer.removeListener('catalogue:backup:upload:progress', h); },
     offUploadProgress:  (h)  => ipcRenderer.removeListener('catalogue:backup:upload:progress', h),
-    onUploadDone:       (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('catalogue:backup:upload:done', h); return h; },
+    onUploadDone:       (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('catalogue:backup:upload:done', h);       return () => ipcRenderer.removeListener('catalogue:backup:upload:done', h); },
     offUploadDone:      (h)  => ipcRenderer.removeListener('catalogue:backup:upload:done', h),
-    onDownloadProgress: (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('catalogue:backup:download:progress', h); return h; },
+    onDownloadProgress: (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('catalogue:backup:download:progress', h); return () => ipcRenderer.removeListener('catalogue:backup:download:progress', h); },
     offDownloadProgress:(h)  => ipcRenderer.removeListener('catalogue:backup:download:progress', h),
-    onDownloadDone:     (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('catalogue:backup:download:done', h); return h; },
+    onDownloadDone:     (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('catalogue:backup:download:done', h);     return () => ipcRenderer.removeListener('catalogue:backup:download:done', h); },
     offDownloadDone:    (h)  => ipcRenderer.removeListener('catalogue:backup:download:done', h),
+    // Seed for a window that mounts mid-restore — progress arrives as an event, so without this a
+    // window opened halfway through a 483-file pull shows nothing until the next tick.
+    getDownloadState:   ()   => ipcRenderer.invoke('catalogue:backup:download:get-state'),
+    setPhase:           (phase) => ipcRenderer.invoke('catalogue:backup:phase', { phase }),
+    onDownloadState:    (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('catalogue:backup:download:state', h);     return () => ipcRenderer.removeListener('catalogue:backup:download:state', h); },
+    offDownloadState:   (h)  => ipcRenderer.removeListener('catalogue:backup:download:state', h),
   },
 
   // Cross-window UI events for controls whose listener may live in another window. Allow-listed in

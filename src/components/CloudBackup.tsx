@@ -204,12 +204,12 @@ export default function CloudBackup() {
   const [libProgress, setLibProgress]   = useState<{ done: number; total: number }>({ done: 0, total: 0 });
   const uploadLibrary = async () => {
     setLibUploading(true); setLibProgress({ done: 0, total: 0 });
-    const offP = (window as any).ether.libraryR2.onUploadProgress((v: any) => setLibProgress({ done: v.done ?? 0, total: v.total ?? 0 }));
-    const offD = (window as any).ether.libraryR2.onUploadDone((v: any) => {
+    const offP = (window as any).ether.catalogueBackup.onUploadProgress((v: any) => setLibProgress({ done: v.done ?? 0, total: v.total ?? 0 }));
+    const offD = (window as any).ether.catalogueBackup.onUploadDone((v: any) => {
       setLibUploading(false); offP?.(); offD?.();
       setR2Status({ msg: `✓ Library uploaded — ${v.done ?? 0} files${v.errors ? `, ${v.errors} errors` : ""}`, type: v.errors ? "err" : "ok" });
     });
-    try { await (window as any).ether.libraryR2.upload(); }
+    try { await (window as any).ether.catalogueBackup.upload(); }
     catch (e: any) { setLibUploading(false); offP?.(); offD?.(); setR2Status({ msg: "Library upload failed: " + e.message, type: "err" }); }
   };
 
@@ -237,9 +237,9 @@ export default function CloudBackup() {
       }
       if (!r?.ok) { setInstalling(false); setInstallMsg("✗ " + (r?.error || "Install failed")); return; }
       setInstallMsg(`Database installed${r.stationName ? ` (${r.stationName})` : ""} — ${r.songs} songs. Downloading audio…`);
-      const offP = (window as any).ether.libraryR2.onDownloadProgress?.((v: any) => setInstallMsg(`Downloading audio… ${v.done ?? 0}/${v.total ?? 0}`));
-      const offD = (window as any).ether.libraryR2.onDownloadDone?.((v: any) => { offP?.(); offD?.(); setInstalling(false); setInstallMsg(`✓ Installed — ${v?.done ?? r.songs} files. Restart Ether to finish.`); });
-      await (window as any).ether.libraryR2.download();
+      const offP = (window as any).ether.catalogueBackup.onDownloadProgress?.((v: any) => setInstallMsg(`Downloading audio… ${v.done ?? 0}/${v.total ?? 0}`));
+      const offD = (window as any).ether.catalogueBackup.onDownloadDone?.((v: any) => { offP?.(); offD?.(); setInstalling(false); setInstallMsg(`✓ Installed — ${v?.done ?? r.songs} files. Restart Ether to finish.`); });
+      await (window as any).ether.catalogueBackup.download();
     } catch (e: any) { setInstalling(false); setInstallMsg("✗ " + String(e?.message || e)); }
   };
 
