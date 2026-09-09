@@ -27,6 +27,13 @@
     "!audiod/**/*.test.js",
     "!electron/**/*.test.js",
     "!electron/sync/tests/**",
+    "!docs/**",
+    "!temp-extract/**",
+    "!node_modules/onnxruntime-node/bin/napi-v3/linux/**",
+    "!node_modules/onnxruntime-node/bin/napi-v3/darwin/**",
+    "!node_modules/better-sqlite3/prebuilds/darwin-*",
+    "!node_modules/better-sqlite3/prebuilds/linux-*",
+    "!node_modules/better-sqlite3/prebuilds/linuxmusl-*",
     "node_modules/**/*",
     "package.json"
   ],
@@ -48,16 +55,6 @@
     ],
     "icon": "build-resources/icon.ico",
     "signExts": [".node", ".dll"],
-    "files": [
-      "!**/scripts/diag-*.js",
-      "!docs/**",
-      "!temp-extract/**",
-      "!node_modules/onnxruntime-node/bin/napi-v3/linux/**",
-      "!node_modules/onnxruntime-node/bin/napi-v3/darwin/**",
-      "!node_modules/better-sqlite3/prebuilds/darwin-*",
-      "!node_modules/better-sqlite3/prebuilds/linux-*",
-      "!node_modules/better-sqlite3/prebuilds/linuxmusl-*"
-    ],
     "extraFiles": [
       {
         "from": "build-resources/Reset Ether Data.bat",

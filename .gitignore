@@ -90,3 +90,12 @@ dist-electron/
 # than deleted because the .bak- addons are the rollback path for the audio work.
 temp-extract/
 native/*.bak-*
+
+# Credentials — never commit, never package (leaked via broken win.files, 4.4.233–4.6.22)
+key iris.txt
+keys  - weather.txt
+deepseek api.txt
+ether-guests-couldflare-keys-tokens.txt
+*.dump
+openair.db
+openair-backup.db
