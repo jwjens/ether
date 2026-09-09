@@ -84,6 +84,11 @@ jobs:
       - name: Copy-on-import contract
         run: node scripts/smoke-copy-on-import.js
 
+      # The cloud backup carries the CATALOGUE FOLDER, and a restore writes no rows. Runs the real
+      # module against an in-memory R2 and a temp catalogue — no network, no license, no bucket.
+      - name: Catalogue backup contract
+        run: node scripts/smoke-catalogue-r2.js
+
       # NOT GATED HERE, deliberately, and neither is a lie of omission:
       #
       # · `npm run test:sync` runs under `electron --no-sandbox`, needs better-sqlite3 rebuilt for

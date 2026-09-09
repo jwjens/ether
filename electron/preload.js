@@ -132,6 +132,25 @@ contextBridge.exposeInMainWorld("ether", {
   // into a window with no console strip listening and no file sink — the cart wall's "fired on F" and
   // its "no channel is dialled" refusal both vanished. emit() hands the line to main, which fans it
   // out to every window; onEntry() is how a window receives the other windows' lines.
+  // FOLDER-DRIVEN CLOUD BACKUP — the catalogue folder, not one table. The engine is
+  // electron/audio-library-r2.js; these are its doors. The download deliberately has no row-writing
+  // counterpart: it writes none.
+  catalogueBackup: {
+    upload:         (opts)  => ipcRenderer.invoke('catalogue:backup:upload', opts || {}),
+    cancelUpload:   ()      => ipcRenderer.invoke('catalogue:backup:upload:cancel'),
+    download:       ()      => ipcRenderer.invoke('catalogue:backup:download'),
+    cancelDownload: ()      => ipcRenderer.invoke('catalogue:backup:download:cancel'),
+    status:         ()      => ipcRenderer.invoke('catalogue:backup:status'),
+    onUploadProgress:   (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('catalogue:backup:upload:progress', h); return h; },
+    offUploadProgress:  (h)  => ipcRenderer.removeListener('catalogue:backup:upload:progress', h),
+    onUploadDone:       (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('catalogue:backup:upload:done', h); return h; },
+    offUploadDone:      (h)  => ipcRenderer.removeListener('catalogue:backup:upload:done', h),
+    onDownloadProgress: (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('catalogue:backup:download:progress', h); return h; },
+    offDownloadProgress:(h)  => ipcRenderer.removeListener('catalogue:backup:download:progress', h),
+    onDownloadDone:     (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('catalogue:backup:download:done', h); return h; },
+    offDownloadDone:    (h)  => ipcRenderer.removeListener('catalogue:backup:download:done', h),
+  },
+
   // Cross-window UI events for controls whose listener may live in another window. Allow-listed in
   // main — see the note there.
   ui: {

@@ -11147,6 +11147,169 @@ ipcMain.handle('library:sync-r2:upload:cancel', () => {
   return { ok: true };
 });
 
+// ══ FOLDER-DRIVEN CLOUD BACKUP — the catalogue, not one table ═══════════════════════════════════
+//
+// Jeff, 2026-09-09: "R2 backs up songs only. That's wrong and it was always wrong — an mp3 is an mp3,
+// the table name is just a name." And: "all audio files, the entire catalogue folder is what backs up
+// to R2." And: "Upload everything in the catalogue, referenced or not."
+//
+// The engine is electron/audio-library-r2.js — pure, injectable, and covered offline by
+// scripts/smoke-catalogue-r2.js. THIS is only the transport: the backend hands out signed PUT/GET
+// URLs per key, so the same two endpoints the row-driven path already used carry the manifest as an
+// ordinary object. No backend change, no migration, no new credentials on the customer machine.
+//
+// The old songs-driven handlers above are LEFT IN PLACE and untouched. They still own per-row
+// MATERIALIZATION (`file_key` + `r2_uploaded_at`), which is a different job from backup and still
+// needed — docs/one-sync-arc-2026-09-09.md §3.4.
+
+function _r2SignedIO(licenseKey) {
+  return {
+    async putObject(key, body, contentType) {
+      const urlRes = await fetch(`${ETHER_BACKEND_URL}/audio/upload-url`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ license_key: licenseKey, file_key: key }),
+      });
+      const urlData = await urlRes.json().catch(() => ({}));
+      if (!urlRes.ok || !urlData.signed_url) throw new Error(urlData.error || `upload-url HTTP ${urlRes.status}`);
+      const putRes = await fetch(urlData.signed_url, {
+        method: 'PUT',
+        headers: { 'Content-Type': contentType || 'application/octet-stream' },
+        body,
+      });
+      if (!putRes.ok) {
+        const text = await putRes.text().catch(() => '');
+        throw new Error(`R2 PUT ${putRes.status} — ${text.slice(0, 200)}`);
+      }
+    },
+    async getObject(key) {
+      const urlRes = await fetch(`${ETHER_BACKEND_URL}/audio/download-url`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ license_key: licenseKey, file_key: key }),
+      });
+      const urlData = await urlRes.json().catch(() => ({}));
+      // A key that is not there is not an error — the manifest is absent on a first run, and a file
+      // named by a manifest but missing from the bucket must be reported per-file, not fatally.
+      if (!urlRes.ok || !urlData.signed_url) return null;
+      const getRes = await fetch(urlData.signed_url);
+      if (getRes.status === 404) return null;
+      if (!getRes.ok) throw new Error(`R2 GET ${getRes.status}`);
+      return Buffer.from(await getRes.arrayBuffer());
+    },
+  };
+}
+
+function _catalogueR2Gate() {
+  const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
+  const planTier = (db.prepare("SELECT value FROM station_config_kv WHERE key='plan_tier' LIMIT 1").get())?.value || 'free';
+  if ((TIER_RANK_LOCAL[planTier] || 0) < TIER_RANK_LOCAL.station) {
+    return { ok: false, error: `Cloud backup requires Network (station) tier or higher — current: ${planTier}` };
+  }
+  const licenseKey = accountLicenseKey();
+  if (!licenseKey) return { ok: false, error: 'No license_key in station_config_kv' };
+  return { ok: true, licenseKey };
+}
+
+let _catUploadAbort = false;
+let _catDownloadAbort = false;
+
+ipcMain.handle('catalogue:backup:upload', async (_evt, opts = {}) => {
+  const gate = _catalogueR2Gate();
+  if (!gate.ok) return gate;
+  const R2LIB = require('./audio-library-r2');
+  const root = getMusicDir();
+  _catUploadAbort = false;
+
+  const send = (ch, p) => { try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ch, p); } catch {} };
+
+  (async () => {
+    try {
+      const res = await R2LIB.uploadCatalogue(_r2SignedIO(gate.licenseKey), {
+        root, db, force: !!opts.force,
+        onProgress: (p) => send('catalogue:backup:upload:progress', p),
+        shouldAbort: () => _catUploadAbort,
+        // MATERIALIZATION STAYS WORKING. `file_key` is a CONTENT identity, not a machine path, so it
+        // is safe and correct to sync — unlike file_path, which nothing on this path ever writes.
+        // Only fills a key that is absent; it never rewrites one an operator or a peer already set.
+        onFileKey: (basename) => {
+          try {
+            const { songsUpdateById } = require('./sync/handlers/songs');
+            const rows = db.prepare(
+              "SELECT id FROM songs WHERE deleted_at IS NULL AND (file_key IS NULL OR file_key = '') AND file_path LIKE ?"
+            ).all('%' + basename);
+            for (const r of rows) songsUpdateById(db, r.id, { file_key: basename });
+          } catch { /* backup must never fail over a bookkeeping write */ }
+        },
+      });
+      console.log(`[catalogue:backup] ${res.aborted ? 'CANCELLED' : 'done'} — ${res.uploaded}/${res.toUpload} uploaded, `
+        + `${res.alreadyUp} already up, ${res.errors} errors, ${(res.uploadedBytes / 1e9).toFixed(2)} GB in ${(res.elapsedMs / 1000).toFixed(0)}s`);
+      send('catalogue:backup:upload:done', res);
+    } catch (e) {
+      console.error('[catalogue:backup] fatal:', e.message);
+      send('catalogue:backup:upload:done', { fatal: e.message, uploaded: 0, errors: 1 });
+    }
+  })();
+
+  return { ok: true, started: true, root };
+});
+
+ipcMain.handle('catalogue:backup:upload:cancel', () => { _catUploadAbort = true; return { ok: true }; });
+
+ipcMain.handle('catalogue:backup:download', async () => {
+  const gate = _catalogueR2Gate();
+  if (!gate.ok) return gate;
+  const R2LIB = require('./audio-library-r2');
+  const root = getMusicDir();
+  _catDownloadAbort = false;
+
+  const send = (ch, p) => { try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ch, p); } catch {} };
+
+  (async () => {
+    try {
+      const res = await R2LIB.downloadCatalogue(_r2SignedIO(gate.licenseKey), {
+        root,
+        onProgress: (p) => send('catalogue:backup:download:progress', p),
+        shouldAbort: () => _catDownloadAbort,
+      });
+      console.log(`[catalogue:restore] ${res.aborted ? 'CANCELLED' : 'done'} — ${res.downloaded}/${res.toDownload} pulled, `
+        + `${res.alreadyLocal} already here, ${res.errors} errors, ROWS WRITTEN ${res.rowsWritten}`);
+      send('catalogue:backup:download:done', res);
+    } catch (e) {
+      console.error('[catalogue:restore] fatal:', e.message);
+      send('catalogue:backup:download:done', { fatal: e.message, downloaded: 0, errors: 1 });
+    }
+  })();
+
+  return { ok: true, started: true, root };
+});
+
+ipcMain.handle('catalogue:backup:download:cancel', () => { _catDownloadAbort = true; return { ok: true }; });
+
+// What is in the catalogue and what the cloud says it holds — counted, never claimed.
+ipcMain.handle('catalogue:backup:status', async () => {
+  const gate = _catalogueR2Gate();
+  const R2LIB = require('./audio-library-r2');
+  const root = getMusicDir();
+  const local = R2LIB.walkCatalogue(root);
+  const localBytes = local.reduce((a, f) => a + f.size, 0);
+  if (!gate.ok) return { ok: false, error: gate.error, root, localFiles: local.length, localBytes };
+  try {
+    const { manifest, existed } = await R2LIB.readRemoteManifest(_r2SignedIO(gate.licenseKey));
+    const cloudNames = new Set(Object.keys(manifest.files || {}));
+    const pending = local.filter(f => R2LIB.needsUpload(f, manifest.files[f.name]));
+    return {
+      ok: true, root,
+      localFiles: local.length, localBytes,
+      cloudFiles: cloudNames.size,
+      pending: pending.length,
+      pendingBytes: pending.reduce((a, f) => a + f.size, 0),
+      manifestExisted: existed,
+      updatedAt: manifest.updated_at || null,
+    };
+  } catch (e) {
+    return { ok: false, error: e.message, root, localFiles: local.length, localBytes };
+  }
+});
+
 // ── Library ← R2 download ─────────────────────────────────────────────────────
 // Phase B.2: mirrors the upload handler with inverse direction. Used by Screen 4
 // of onboarding ("From the cloud") to pre-warm <userData>/r2-cache/ on a fresh
