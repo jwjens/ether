@@ -968,6 +968,22 @@ export default function App() {
     catch (e) { console.error("[SourceChannel] duck push failed:", e); }
   }, [deckConfigs, saveDeckConfigs, stationId]);
 
+  // THE ON LAMP'S WRITER (v58). Same shape as setSourceDuck directly above, and for the same reason:
+  // BOTH, every time. The row is what survives a restart and what every OTHER window reads; the
+  // engine call is what makes it true right now. Storing without pushing leaves a lamp that only
+  // takes effect after a relaunch; pushing without storing forgets it — and now that a second window
+  // renders the same board, forgetting means that window asserts the old value straight back.
+  //
+  // It lives in App, not in LivePanel, because only App holds saveDeckConfigs. LivePanel owns the
+  // DERIVED read and nothing else, which is exactly the split that lets the fader section render in
+  // two windows without them fighting over the cut.
+  const setSourceChannelOn = useCallback(async (slot: string, on: boolean) => {
+    try { engine.getDeck(slot)?.setMuted(!on); } catch (e) { console.error("[SourceChannel] cut push failed:", e); }
+    const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, channelOn: on } : c));
+    try { await saveDeckConfigs(merged); }
+    catch (e) { console.error("[SourceChannel] cut save failed:", e); }
+  }, [deckConfigs, saveDeckConfigs, engine]);
+
   const setSourceKind = useCallback(async (slot: string, kind: SourceKind | "") => {
     const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, kind } : c));
     try { await saveDeckConfigs(merged); }
@@ -3133,6 +3149,7 @@ export default function App() {
                   onAddSourceChannel={addSourceChannel}
                   onSetSourceKind={setSourceKind}
                   onSetSourceDuck={setSourceDuck}
+                  onSetSourceChannelOn={setSourceChannelOn}
                   onRemoveSourceChannel={removeSourceChannel}
                   canAddSourceChannel={!!nextFreeSourceSlot}
                   onConfigureDecks={() => setShowDeckConfig(true)}
@@ -3906,7 +3923,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onAddSourceChannel, onSetSourceKind, onSetSourceDuck, onRemoveSourceChannel, canAddSourceChannel, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, onOpenCarts, libraryDock, jingleOverlay, hasJinglePool, onOpenJingleSettings, onCloseDock, onOpenImaging }: {
+function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onAddSourceChannel, onSetSourceKind, onSetSourceDuck, onSetSourceChannelOn, onRemoveSourceChannel, canAddSourceChannel, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, onOpenCarts, libraryDock, jingleOverlay, hasJinglePool, onOpenJingleSettings, onCloseDock, onOpenImaging }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
   autoAdv: boolean | null; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
@@ -3918,6 +3935,10 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   onAddSourceChannel?: () => void;
   onSetSourceKind?: (slot: string, kind: SourceKind | "") => void;
   onSetSourceDuck?: (slot: string, duck: boolean) => void;
+  /** The ON lamp's writer. Persists to deck_configs.channel_on AND pushes the cut to the engine —
+   *  never one without the other. LivePanel derives the lamp from the config rows and owns no state
+   *  of its own for it, which is what lets this section render in more than one window. */
+  onSetSourceChannelOn?: (slot: string, on: boolean) => void;
   onRemoveSourceChannel?: (slot: string) => void;
   canAddSourceChannel?: boolean;
   onConfigureDecks?: () => void;
@@ -4078,19 +4099,38 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
     c.enabled && (c.type === "jukebox" || (c.type === "source" && c.kind === "jukebox"))
   )?.slot || null;
   const [jukeboxOn, setJukeboxOn] = useState(false);
-  // Channel switch for source channels that are NOT the jukebox. The jukebox has its own persisted
-  // state (station_config_kv, default OFF) because it faces the public; a jingle or announcement
-  // channel is ordinary board furniture and starts ON like every other deck.
-  const [srcChannelOn, setSrcChannelOn] = useState<Record<string, boolean>>({});
+  // ── THE ON LAMP READS THE ROW (v58) ───────────────────────────────────────────────────────────
+  //
+  // This was `useState<Record<string, boolean>>({})` — renderer state with no store — while the
+  // effect below asserted it DOWNWARD into the engine on every change. That combination makes the
+  // board a WRITER of the channel cut, not a display of it, and it was the one thing blocking the
+  // fader section from being rendered in two windows: each window would carry its own `{}`, each
+  // would assert its own `?? true`, and they would overwrite each other's cut with no arbiter.
+  //
+  // It is derived from deck_configs.channel_on now, so both windows read one truth and the operator's
+  // cut survives a restart. Writing goes through saveDeckConfigs, which announces to every window.
+  // The jukebox keeps its own persisted state (station_config_kv, default OFF, because it faces the
+  // public) and is excluded here exactly as it always was.
+  const srcChannelOn = useMemo(() => {
+    const m: Record<string, boolean> = {};
+    for (const c of deckConfigs || []) if (c.type === "source") m[c.slot] = c.channelOn ?? true;
+    return m;
+  }, [deckConfigs]);
 
   // ── ASSERT THE CHANNEL CUT DOWNWARD ────────────────────────────────────────────────────────────
   //
-  // The ON lamp was a CLAIM, not a reading. `srcChannelOn` starts as {} and every strip renders ON
-  // by default (`?? true`), while the only code that ever sent setMuted for a source channel was a
-  // press of that button. So a channel nobody had pressed showed ON with the engine never told —
+  // The ON lamp was a CLAIM, not a reading. It was `{}` in renderer state and every strip rendered
+  // ON by default (`?? true`), while the only code that ever sent setMuted for a source channel was
+  // a press of that button. So a channel nobody had pressed showed ON with the engine never told —
   // and a cart re-dialled onto it played into a slot whose cut had never been asserted. Pressing
   // OFF then ON "fixed" it because the second press was the first time the engine heard anything.
   // The operator was performing an assertion the app should have made for them.
+  //
+  // v58 — WHAT THIS ASSERTS IS NOW THE STORED VALUE, and that is what makes the board safe to render
+  // in more than one window. Every window reads the same deck_configs.channel_on and therefore
+  // asserts the same cut, so two of them agree instead of overwriting each other. The double push
+  // (this effect plus the writer's own) is deliberate and idempotent: the writer makes it true this
+  // instant, this effect makes it true again after any reload, station switch or re-mount.
   //
   // This is the pattern the jukebox channel already uses ("Assert BOTH downward every time: the
   // engine boots un-muted and at its own level", App.tsx:3977) and the one the duck toggle already
@@ -4526,9 +4566,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                     }}
                     onToggleOn={() => {
                       if (isJukeboxSrc) { toggleJukeboxChannel(); return; }
-                      const next = !(srcChannelOn[slot] ?? true);
-                      setSrcChannelOn(p => ({ ...p, [slot]: next }));
-                      engine.getDeck(slot)?.setMuted(!next);
+                      void onSetSourceChannelOn?.(slot, !(srcChannelOn[slot] ?? true));
                     }}
                     onKindChange={k => onSetSourceKind?.(slot, k)}
                     duck={!!config.duck}

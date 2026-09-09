@@ -126,6 +126,10 @@ module.exports = function buildHandlers(ipcRenderer) {
     update:       (uuid, patch)            => ipcRenderer.invoke('deck_configs:update',           uuid, patch),
     updateBySlot: (stationId, slot, patch) => ipcRenderer.invoke('deck_configs:update-by-slot',  stationId, slot, patch),
     delete:       (uuid, stationId)        => ipcRenderer.invoke('deck_configs:delete',           uuid, stationId),
+    // The board changed somewhere. Every window re-reads rather than drifting apart — see the
+    // announce() note in electron/sync/handlers/deck_configs.js.
+    onChanged:    (cb) => { const h = (_, v) => cb(v); ipcRenderer.on('deck_configs:changed', h); return h; },
+    offChanged:   (h)  => ipcRenderer.removeListener('deck_configs:changed', h),
   },
   formatClocks: {
     list:       (stationId, opts) => ipcRenderer.invoke('format_clocks:list',           stationId, opts),

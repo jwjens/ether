@@ -16,6 +16,16 @@ generator overwrites hand-edits without warning."*
 - Hit while adding `sweeper_pool_member` (v55): the handler was hand-placed from the same
   station-scoped template instead of regenerating, and the file says so at the top so the next person
   does not run the generator to "regenerate" it and lose the others.
+- **`deck_configs.js` now carries FOUR hand-edits** (added 2026-09-09, and named here because "it has
+  hand-edits" is not actionable — the next person needs the list):
+  1. `PATCHABLE` + `kind`, `address` — slice 2's source-channel patch point (2026-08-22)
+  2. `PATCHABLE` + `duck`, `duckable` — v43 / v44
+  3. `PATCHABLE` + `channel_on` — v58, the console channel's ON lamp
+  4. the `announce()` helper and its call in all four mutating handlers — the `deck_configs:changed`
+     broadcast that keeps two windows from drifting apart on the same board
+  Losing 1–3 makes the write fail *loudly* (`cannot patch immutable field(s)`), which is recoverable.
+  Losing 4 fails *silently*: both windows keep working, they simply stop agreeing — which is the
+  defect class the v58 work exists to close. The warning block now sits at the top of the file.
 - **Fix, when it is worth doing:** make `emit()` refuse to overwrite a file whose content differs from
   what the template would produce, unless `--force`; or emit to a staging directory and diff. Either
   turns a silent clobber into a question. Not taken now — it is tooling, not product, and the note at

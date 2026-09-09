@@ -125,6 +125,18 @@ export interface DeckConfig {
    *  A preference, not the rule: only SOURCE slots can duck at all, enforced in Rust by the slot's
    *  kind, so arming a rotation deck stores a setting that can never fire. */
   duck?: boolean;
+  /** THE ON LAMP — is this channel open to the program bus? (deck_configs.channel_on, v58)
+   *
+   *  This was renderer useState with no store, while an effect asserted it DOWNWARD into the engine
+   *  on every change. That made the board a WRITER of the channel cut rather than a display of it,
+   *  so two windows rendering the same fader section would each assert their own default and fight.
+   *  There is no read-back from the engine either — DeckState carries `volume`, never `muted` — so
+   *  the row is the only place the truth can live.
+   *
+   *  Default TRUE, matching what every install already shows. The jukebox channel is the exception
+   *  and keeps its own persisted cut in station_config_kv (default OFF, because it faces the
+   *  public); nothing reads this field for a jukebox-patched slot. */
+  channelOn?: boolean;
 }
 
 export interface PlaylistTrack {
@@ -168,24 +180,48 @@ export function useDeckConfig() {
   const { stationId, isReady } = useActiveStation();
   const [configs, setConfigs] = useState<DeckConfig[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     if (!isReady) return;
     // Depends on stationId: switching station must RE-READ that station's decks. With
     // [isReady] alone the list loaded at mount persisted across switches, so a station
     // could show another station's deck layout.
-    queryScoped<{ slot: string; type: string; label: string; color: string; enabled: number; purpose: string; kind: string; address: string | null; duck: number }>(
-      "SELECT slot, type, label, color, enabled, COALESCE(purpose,'') as purpose, COALESCE(kind,'') as kind, address, COALESCE(duck,0) as duck FROM deck_configs ORDER BY slot",
+    // COALESCE(channel_on, 1): a row written before v58 has no value, and the honest reading of
+    // "this install has never recorded a cut" is the board every operator has been looking at —
+    // open. Defaulting the unknown to CLOSED would silence channels on the first launch after an
+    // update.
+    queryScoped<{ slot: string; type: string; label: string; color: string; enabled: number; purpose: string; kind: string; address: string | null; duck: number; channel_on: number }>(
+      "SELECT slot, type, label, color, enabled, COALESCE(purpose,'') as purpose, COALESCE(kind,'') as kind, address, COALESCE(duck,0) as duck, COALESCE(channel_on,1) as channel_on FROM deck_configs ORDER BY slot",
       [], stationId
     ).then(rows => {
       const sorted = [...rows].sort(compareSlots);
-      setConfigs(sorted.map(r => ({ ...r, type: r.type as DeckType, enabled: r.enabled === 1, kind: (r.kind || "") as any, duck: r.duck === 1 })));
+      setConfigs(sorted.map(r => ({ ...r, type: r.type as DeckType, enabled: r.enabled === 1, kind: (r.kind || "") as any, duck: r.duck === 1, channelOn: r.channel_on === 1 })));
       setError(null);
     }).catch(e => {
       console.error("[DeckConfig] Failed to load from DB:", e);
       setError(String(e?.message || e));
     });
-  }, [isReady, stationId]);
+  }, [isReady, stationId, reloadTick]);
+
+  // ── THE BOARD CHANGED SOMEWHERE ELSE ────────────────────────────────────────────────────────
+  // This hook used to re-read only on [isReady, stationId], so a channel added with +, a source
+  // re-dialled, or an ON lamp toggled in ANOTHER WINDOW was invisible here until a re-mount. With
+  // the fader section rendering in the dashboard AND in its own window, two boards drifting apart
+  // is not a display quirk: each one asserts its own state downward at the engine.
+  // main broadcasts on every deck_configs write (electron/sync/handlers/deck_configs.js).
+  useEffect(() => {
+    const ether = (window as any).ether;
+    if (!ether?.deckConfigs?.onChanged) return;
+    const h = ether.deckConfigs.onChanged((v: { stationId: number | null }) => {
+      // A write for another station cannot change this board. A write with no station (a caller that
+      // did not know it) is taken as ours — re-reading costs one scoped query and being stale does
+      // not cost one thing.
+      if (v && v.stationId != null && v.stationId !== stationId) return;
+      setReloadTick(t => t + 1);
+    });
+    return () => ether.deckConfigs.offChanged?.(h);
+  }, [stationId]);
 
   const save = async (next: DeckConfig[]) => {
     // Every write is INSPECTED. This used to fire and forget, then update the UI
@@ -195,6 +231,10 @@ export function useDeckConfig() {
       const res = await (window as any).ether.deckConfigs.updateBySlot(stationId, c.slot, {
         type: c.type, label: c.label, color: c.color,
         enabled: c.enabled ? 1 : 0, purpose: c.purpose || "",
+        // v58. `?? true` and not `?? false`: a config object built by older code (or by a caller that
+        // does not care about the lamp) must not cut the channel as a side effect of saving something
+        // else. Absent means "unchanged from open", which is what every board already shows.
+        channel_on: (c.channelOn ?? true) ? 1 : 0,
         // SLICE 2 — the patch point travels with every save, so a source channel keeps what it is
         // patched to across a reload. address is written even while unused so Phase 2 needs no
         // migration.

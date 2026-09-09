@@ -141,7 +141,63 @@ console.log("\n== 5. the daemon's load line names the station it reached ==");
   }
 }
 
+console.log("\n== 6. the ON lamp has a STORE, so two windows cannot fight over the channel cut ==");
+{
+  // The second half of the contract. srcChannelOn was useState({}) in App while an effect asserted
+  // it DOWNWARD into the engine (setMuted) on every change — which makes the board a WRITER of the
+  // channel cut, not a display of it. Render that section in two windows and each carries its own
+  // {}, each asserts its own `?? true`, and they overwrite each other with no arbiter. There is no
+  // read-back either: DeckState carries `volume`, never `muted`. The row is the only place the
+  // truth can live. Jeff: "I'm not shipping two writers fighting over a channel cut."
+  const app     = code("src/App.tsx");
+  const cfg     = code("src/components/DeckConfigurator.tsx");
+  const handler = code("electron/sync/handlers/deck_configs.js");
+
+  if (/const\s*\[\s*srcChannelOn\s*,/.test(app)) {
+    fail("srcChannelOn is renderer useState again — unstored state asserted downward is two writers waiting to happen");
+  } else if (/const\s+srcChannelOn\s*=\s*useMemo/.test(app)) {
+    pass("srcChannelOn is derived from the config rows, not held as window-local state");
+  } else {
+    fail("could not find srcChannelOn in App.tsx — has it moved?");
+  }
+
+  if (/channelOn/.test(cfg) && /COALESCE\(channel_on,\s*1\)/.test(cfg)) {
+    pass("useDeckConfig reads channel_on, defaulting an unwritten row to OPEN");
+  } else {
+    fail("useDeckConfig does not read channel_on — the lamp has no store to read");
+  }
+
+  // Without this the handler's guard rejects the write outright and the toggle silently does not
+  // persist: "cannot patch immutable field(s): channel_on".
+  if (/PATCHABLE[^\n]*"channel_on"/.test(handler)) pass("channel_on is patchable in the deck_configs handler");
+  else fail("channel_on is missing from PATCHABLE — every write of the lamp will be refused");
+}
+
+console.log("\n== 7. a board change reaches every window ==");
+{
+  const handler = code("electron/sync/handlers/deck_configs.js");
+  const preload = code("electron/preload-handlers.js");
+  const cfg     = code("src/components/DeckConfigurator.tsx");
+
+  // EVERY mutating handler, not only the one the UI happens to call: a change announcement that
+  // depends on which caller made the change is the partial truth that lets two windows drift.
+  for (const h of ["create", "update", "delete", "update-by-slot"]) {
+    const re = new RegExp("deck_configs:" + h + "'[\\s\\S]{0,400}?announce\\(");
+    if (re.test(handler)) pass(`deck_configs:${h} announces the change`);
+    else fail(`deck_configs:${h} does not announce — a write through it is invisible to other windows`);
+  }
+
+  if (/webContents\.send\('deck_configs:changed'/.test(handler)) pass("the announcement reaches every window");
+  else fail("nothing sends deck_configs:changed to the windows");
+
+  if (/onChanged:/.test(preload) && /offChanged:/.test(preload)) pass("preload exposes deckConfigs.onChanged/offChanged");
+  else fail("preload does not expose the board-changed subscription");
+
+  if (/deckConfigs\.onChanged/.test(cfg)) pass("useDeckConfig re-reads when the board changes elsewhere");
+  else fail("useDeckConfig never re-reads — a second window stays stale until it re-mounts");
+}
+
 console.log(failures === 0
-  ? "\nVERDICT: PASS — a window cannot silently command the wrong station.\n"
+  ? "\nVERDICT: PASS — a window cannot silently command the wrong station, and two windows cannot disagree about the board.\n"
   : `\nVERDICT: FAIL — ${failures} check(s) failed.\n`);
 process.exit(failures === 0 ? 0 : 1);

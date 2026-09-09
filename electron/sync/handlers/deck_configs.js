@@ -18,7 +18,22 @@ const HAS_STATION_ID_COL = true;
 // dropdown writes on every change, and `address` is its Phase 2 companion (mic device id /
 // network endpoint). Without them here the guard rejects the write outright:
 //   "[deck_configs] cannot patch immutable field(s): kind, address"
-const PATCHABLE          = ["type","label","color","enabled","purpose","updated_at","kind","address","duck","duckable"];
+// v58 (2026-09-09): channel_on — the console channel's ON lamp. It was renderer useState with no
+// store, and an effect asserted it downward into the engine, which made the fader section a WRITER
+// of the channel cut. Two windows rendering that section would have fought over it. Without
+// channel_on here the guard rejects the write outright:
+//   "[deck_configs] cannot patch immutable field(s): channel_on"
+const PATCHABLE          = ["type","label","color","enabled","purpose","updated_at","kind","address","duck","duckable","channel_on"];
+
+// ── THIS FILE IS GENERATED, AND FOUR THINGS IN IT ARE NOT ──────────────────────────────────────
+// scripts/generate-handlers.js renders every table in its REGISTRY from templates and overwrites
+// each file unconditionally. Running it would silently revert, in this file alone:
+//   1. PATCHABLE's `kind` and `address` (slice 2, 2026-08-22)
+//   2. PATCHABLE's `duck` and `duckable` (v43/v44)
+//   3. PATCHABLE's `channel_on` (v58, above)
+//   4. the deck_configs:changed broadcast (below)
+// Each is load-bearing: without 1-3 the write is refused by the guard; without 4 two windows drift
+// apart on the same board. Filed in docs/backlog.md under the generator trap.
 
 // ── Scope guard ───────────────────────────────────────────────────────────────
 
@@ -215,6 +230,28 @@ function deckConfigsClearAll(db, stationId) {
 
 function installDeckConfigs(ipcMain, db) {
   const getDb = (typeof db === 'function') ? db : () => db;
+
+  // ── EVERY WINDOW RE-READS WHEN THE BOARD CHANGES ────────────────────────────────────────────
+  //
+  // useDeckConfig() (src/components/DeckConfigurator.tsx) re-reads only on [isReady, stationId], so
+  // a board change made in ONE window was invisible in every other until it re-mounted. With the
+  // fader section rendering in both the dashboard and its own window that is not cosmetic: add a
+  // channel with +, re-dial a source, or toggle a channel's ON lamp, and the two windows would show
+  // different boards and assert different things downward at the engine.
+  //
+  // It lives HERE, at the write, rather than in the renderer that happens to call save() — a change
+  // announcement that depends on which caller made the change is the kind of partial truth that
+  // produces exactly the disagreement this removes. Every writer announces, including the sync layer
+  // applying a remote mutation.
+  const announce = (stationId) => {
+    try {
+      const { BrowserWindow } = require('electron');
+      for (const w of BrowserWindow.getAllWindows()) {
+        try { if (!w.isDestroyed()) w.webContents.send('deck_configs:changed', { stationId: stationId ?? null }); }
+        catch { /* window closing */ }
+      }
+    } catch { /* no electron (tests) — the write itself already stands */ }
+  };
   ipcMain.handle('deck_configs:list', (_, stationId, opts) => {
     try { return { ok: true, rows: deckConfigsList(getDb(), stationId, opts) }; }
     catch (e) { return { ok: false, error: e.message }; }
@@ -226,22 +263,22 @@ function installDeckConfigs(ipcMain, db) {
   });
 
   ipcMain.handle('deck_configs:create', (_, payload) => {
-    try { return { ok: true, row: deckConfigsCreate(getDb(), payload) }; }
+    try { const row = deckConfigsCreate(getDb(), payload); announce(row && row.station_id); return { ok: true, row }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('deck_configs:update', (_, uuid, patch) => {
-    try { return { ok: true, row: deckConfigsUpdate(getDb(), uuid, patch) }; }
+    try { const row = deckConfigsUpdate(getDb(), uuid, patch); announce(row && row.station_id); return { ok: true, row }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('deck_configs:delete', (_, uuid, stationId) => {
-    try { return { ok: true, ...deckConfigsDelete(getDb(), uuid, stationId) }; }
+    try { const r = deckConfigsDelete(getDb(), uuid, stationId); announce(stationId); return { ok: true, ...r }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
   ipcMain.handle('deck_configs:update-by-slot', (_, stationId, slot, patch) => {
-    try { return { ok: true, row: deckConfigsUpdateBySlot(getDb(), stationId, slot, patch) }; }
+    try { const row = deckConfigsUpdateBySlot(getDb(), stationId, slot, patch); announce(stationId); return { ok: true, row }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
