@@ -1,6 +1,6 @@
 # One arc: rows sync, files follow, any machine signs in and is current
 
-**Status: CURRENT · 2026-09-09 · SWEEP + FIX BUILT (§1) · §2–§5 ARE PROPOSALS, NOTHING BUILT.**
+**Status: CURRENT · 2026-09-09 · §1 AND §2 BUILT · §3–§4 IN PROGRESS · §5 NOT STARTED (deliberately last).**
 
 Jeff, 2026-09-09:
 > "Carts work like everything else. A file can come from anywhere — desktop, downloads, a USB stick —
@@ -57,8 +57,8 @@ gone, and the migration that would have moved stragglers has nothing left to mov
 |---|---|---|---|---|
 | **A** | Cart **drag-and-drop** (`cart_slots` wall) | `DeckConfigurator.tsx:1035` | **`cart_slots` — SYNCED** | **FIXED** |
 | **B** | Cart **drag-and-drop** (localStorage wall) | `App.tsx:3616` | `ether_carts_v1` | **FIXED** |
-| **C** | Voice-track take | `VoiceTracker.tsx:719` `writeTakeFile()` | `voice_tracks` | **open — §1.3** |
-| **D** | Imaging region commit | `imagingCommit.ts:28` `renderRegionToDisk()` | `songs` | **open — §1.3** |
+| **C** | Voice-track take | `VoiceTracker.tsx:719` `writeTakeFile()` | `voice_tracks` | **FIXED** — ruling 1 |
+| **D** | Imaging region commit | `imagingCommit.ts:28` `renderRegionToDisk()` | `songs` | **FIXED** — ruling 1 |
 
 A is the serious one and is exactly what Jeff found. `cart_slots` is a **synced** table, so a path
 written by the drop handler travelled to every peer; a peer without that directory got a cart it
@@ -89,11 +89,14 @@ Under "every audio file lives in one folder" these are the same violation as A a
 outside the catalogue by construction. **Neither has ever run on this machine** (no such folders
 exist), so they have produced no bad rows here.
 
-**Not fixed, because one of them carries a design question:** `renderRegionToDisk` organises by
-**reel subfolder**, which a flat catalogue collapses. Is that organisation load-bearing for the Reel
-Splitter, or incidental? Voice tracks have no such question and could move today.
+**RULED 2026-09-09 and BUILT.** Jeff: *"Voice tracks and imaging renders go in the catalogue like
+everything else. No subfolders — a reel slug in a filename is fine, a folder isn't."*
 
-**Needs your call.** The guard reports both as `NOTE` and flips to `PASS` on its own when they move.
+The reel slug moved from the FOLDER into the FILENAME (`<reel-slug>__<name>.wav`), which is the only
+form the resolver, the R2 backup and `[N-23a]` can see — all three key on basename — and it keeps what
+the folder was really providing: two reels with a cut called "sting" no longer collide. Both refuse
+rather than guess if the catalogue cannot be resolved. `audioLibraryDir()` is now one export;
+BroadcastEditor's private copy of it is gone. Guard sections 3 and 4 enforce both halves.
 
 ### 1.4 · Migration re-run — nothing to do
 

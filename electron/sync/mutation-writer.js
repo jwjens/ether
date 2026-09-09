@@ -30,6 +30,7 @@
 'use strict';
 
 const crypto    = require('crypto');
+const path      = require('path');
 const { REGISTRY } = require('./synced-tables');
 
 // ── Module-scoped cache ────────────────────────────────────────
@@ -513,13 +514,68 @@ function serializePayload(row, tableName) {
  * transformers that supply defaults per [N-70] and [Q-15].
  *
  * json-text  — JSON.stringify'd back to TEXT for DB storage
- * blob-ref   — __blob_origin path extracted from envelope; raw string if no envelope
+ * blob-ref   — [N-23a]: the BASENAME is taken and the sender's directory is DISCARDED
  *
  * @param {object} payload   serialized payload from a mutation row
  * @param {string} tableName must be a key in REGISTRY
+ * @param {object} [opts]
+ * @param {string} [opts.localAudioDir]  THIS machine's catalogue. When given, a blob-ref column is
+ *                                       rebuilt as <localAudioDir>/<basename> — a path this receiver
+ *                                       CONSTRUCTED. Without it the bare basename is stored, which
+ *                                       the resolver still matches and which is still never another
+ *                                       machine's directory.
  * @returns {object} row-shaped object (local-only columns absent)
  */
-function deserializePayload(payload, tableName) {
+/**
+ * [N-23a] — THE RECEIVER TAKES THE BASENAME AND DISCARDS THE DIRECTORY.
+ *
+ * This one function is the whole amendment, and it closes the defect that has driven this arc.
+ *
+ * WHAT IT REPLACES. `row[col] = val.__blob_origin` — the receiver stored the SENDER'S ABSOLUTE PATH,
+ * verbatim. That is how one machine's user directory landed in the other's rows: not a bug in any one
+ * feature, but the apply path faithfully writing a directory that exists on exactly one computer in
+ * the world. Every downstream repair — the resolver's basename tier, the health classifier's `foreign`
+ * count, the migration, CHANGE FILE LOCATION — exists to cope with rows produced right here.
+ *
+ * WHY A BASENAME IS ENOUGH NOW, AND WAS NOT BEFORE. Jeff: "If every audio file is in the library, a
+ * basename plus the local audio dir always resolves, on any machine." Before the one-catalogue rule a
+ * basename was not an identity — the same name could sit in four folders and the directory carried
+ * real information. It does not any more, which is why [N-23a] is now SUFFICIENT rather than merely
+ * transitional, and why it needs no per-table special case: it never asks which table a row came
+ * from, so carts stopped needing a carve-out the moment this became true.
+ *
+ * IT CONSTRUCTS, IT DOES NOT COPY. With `localAudioDir` the receiver writes <its own catalogue>/<name>
+ * — a path built from its own configuration, which is exactly what the amendment requires ("a receiver
+ * MUST NOT store a path it did not construct itself"). Without it: the bare basename, still resolvable
+ * by the basename tier and still never another machine's directory.
+ *
+ * IT DOES NOT REBASE ON ITS OWN — the half of T-new-4 that survives. This runs on APPLY of an inbound
+ * mutation: the moment a value arrives from elsewhere and a local one must be chosen. It never
+ * rewrites a row already sitting in this database. That stays the job of import and explicit
+ * migration.
+ *
+ * `__blob_key` is preferred when present (the revised [N-22] shape); `__blob_origin` is the legacy
+ * envelope this build still EMITS, so an old sender and a new receiver interoperate — which is what
+ * makes the amendment deployable one machine at a time instead of all at once.
+ */
+function localizeBlobRef(val, localAudioDir) {
+  const raw = (val && typeof val === 'object')
+    ? (val.__blob_key !== undefined && val.__blob_key !== null ? val.__blob_key : val.__blob_origin)
+    : val;
+  if (raw === null || raw === undefined) return raw;
+
+  // Cross-platform basename, deliberately not path.basename(): the sender may be macOS (USPH) and the
+  // receiver Windows (OV, this machine). On posix, path.basename() does not treat a backslash as a
+  // separator, so a Windows path arriving on a Mac would come through whole — the exact defect,
+  // surviving the fix, on the one pairing we actually ship to.
+  const s = String(raw);
+  const base = s.split(/[\\/]/).pop() || '';
+  if (!base) return s;
+
+  return localAudioDir ? path.join(localAudioDir, base) : base;
+}
+
+function deserializePayload(payload, tableName, opts = {}) {
   if (payload === null || payload === undefined) {
     throw new Error('[mutation-writer] deserializePayload: payload must not be null/undefined');
   }
@@ -551,10 +607,8 @@ function deserializePayload(payload, tableName) {
     } else if (category === 'blob-ref') {
       if (val === null || val === undefined) {
         row[col] = val;
-      } else if (typeof val === 'object' && val.__blob_origin !== undefined) {
-        row[col] = val.__blob_origin;  // extract path from [N-22] envelope
       } else {
-        row[col] = String(val);  // fallback: treat as raw path
+        row[col] = localizeBlobRef(val, opts.localAudioDir);   // [N-23a]
       }
     }
   }
@@ -701,6 +755,7 @@ module.exports = {
   withMutation,
   serializePayload,
   deserializePayload,
+  localizeBlobRef,
   toWireFormat,
   compactMutations,
   _resetForTest,

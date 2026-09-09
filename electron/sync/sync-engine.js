@@ -103,6 +103,9 @@ class SyncEngine {
       causalQueue:        this._causalQueue,
       onCursorAdvance:    (cid, hlc) => this._advanceCursor(cid, hlc),
       uuidIdentity:       this._uuidIdentity,
+      // [N-23a]. Supplied by whoever constructs the sync engine (main.js knows getMusicDir); absent
+      // in tests, where the bare-basename branch is exercised instead.
+      localAudioDir:      opts.localAudioDir ?? null,
     });
 
     // Prepared statements for push

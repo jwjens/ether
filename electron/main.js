@@ -3247,6 +3247,11 @@ app.whenReady().then(() => {
         // never the normal incremental sync. _wasOnAir() reads the HA marker file (Icecast liveCount>0),
         // so the full-history re-pull burst defers to a quiet window and never fights the audio daemon.
         isOnAir: () => { try { return _wasOnAir(); } catch (_) { return false; } },
+        // [N-23a] — THIS machine's catalogue. An inbound blob-ref is rebuilt as
+        // <catalogue>/<basename> instead of the sender's absolute path being stored verbatim, which
+        // is how one machine's user directory used to land in the other's rows. A getter, not a
+        // string: changing the library folder takes effect on the next apply, not the next restart.
+        localAudioDir: () => getMusicDir(),
       });
       if (uuidIdentity) console.log('[SYNC] UUID-identity scoping ENABLED (station programming syncs by station UUID)');
       // Do NOT start sync here. Sync must never run off a license_key that's merely sitting in the
@@ -3296,6 +3301,9 @@ app.whenReady().then(() => {
           getStationUuid: () => uuid,
           // Push ONLY OV's mutations, under the member token — never the owner's or another station's.
           getPushOnlyStationId: localId,
+          // [N-23a], same rule on the member path — this is the channel the two machines actually
+          // use, so leaving it off here would fix the defect everywhere except where it happened.
+          localAudioDir: () => getMusicDir(),
         });
         // push (if bidirectional) + pull each tick.
         const tick = () => me.syncCycle()

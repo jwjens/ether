@@ -51,8 +51,14 @@ class MergeEngine {
    * @param {import('./causal-order').CausalOrderQueue} opts.causalQueue
    * @param {function} opts.onCursorAdvance  (clientId: string, hlc: string) => void
    */
-  constructor(db, { localSchemaVersion, causalQueue, onCursorAdvance, uuidIdentity }) {
+  constructor(db, { localSchemaVersion, causalQueue, onCursorAdvance, uuidIdentity, localAudioDir }) {
     this._db                  = db;
+    // [N-23a] — THIS machine's catalogue, so an inbound blob-ref becomes a path this receiver
+    // CONSTRUCTED rather than the sender's directory copied verbatim. A function, not a string: the
+    // catalogue is resolved per apply, so changing the library folder does not need a restart to
+    // take effect on the sync path. Absent (tests, older callers) => the bare basename is stored,
+    // which the resolver still matches and which is still never another machine's directory.
+    this._localAudioDir       = typeof localAudioDir === 'function' ? localAudioDir : (localAudioDir ? () => localAudioDir : null);
     this._localSchemaVersion  = localSchemaVersion;
     this._causalQueue         = causalQueue;
     this._onCursorAdvance     = onCursorAdvance ?? (() => {});
@@ -195,7 +201,11 @@ class MergeEngine {
     if (op === 'insert' || op === 'update') {
       if (!payload_after) return;
       // Deserialization is keyed on the WIRE name (the REGISTRY key), never the physical table.
-      const row = deserializePayload(payload_after, m.table_name);
+      // [N-23a]: the receiver takes the basename and discards the sender's directory. This is the
+      // single point where a foreign absolute path used to enter this database.
+      let localAudioDir = null;
+      try { localAudioDir = this._localAudioDir ? this._localAudioDir() : null; } catch { localAudioDir = null; }
+      const row = deserializePayload(payload_after, m.table_name, { localAudioDir });
 
       // Remap the sender's local-integer references (station_id + parent FKs) to THIS install's local
       // ids via their stable uuids before writing, so a station that is local id 1 on the sender and

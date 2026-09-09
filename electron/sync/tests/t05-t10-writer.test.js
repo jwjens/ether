@@ -164,9 +164,55 @@ describe('B: Writer unit tests', () => {
     expect(payload.file_path.__blob_size).toBeNull();
     expect(payload.file_path.__blob_origin).toBe(filePath);
 
-    // Round-trip via deserializePayload restores the original path string
+    // [N-23a] — THE RECEIVER TAKES THE BASENAME AND DISCARDS THE DIRECTORY.
+    //
+    // This assertion INVERTED on 2026-09-09, and the inversion is the point. It used to read
+    // `expect(restored.file_path).toBe(filePath)` — a round-trip that "restores the original path
+    // string" — which is precisely the defect: the receiver storing the SENDER'S absolute path, a
+    // directory that exists on exactly one computer. That is how one machine's user folder landed in
+    // the other's rows, and every downstream repair exists to cope with rows produced here.
+    //
+    // Without a local catalogue the bare basename is stored: still resolvable by the resolver's
+    // basename tier, and still never another machine's directory.
     const restored = deserializePayload(payload, 'announcements');
-    expect(restored.file_path).toBe(filePath);
+    expect(restored.file_path).toBe('jingle.mp3');          // '/audio/jingle.mp3' minus its directory
+    expect(restored.file_path).not.toContain('/');
+    expect(restored.file_path).not.toContain('\\');
+
+    // With one, the receiver CONSTRUCTS a path from its own configuration — the rule the amendment
+    // states ("a receiver MUST NOT store a path it did not construct itself").
+    const localised = deserializePayload(payload, 'announcements', { localAudioDir: '/srv/ether/catalogue' });
+    expect(localised.file_path).toBe(require('path').join('/srv/ether/catalogue', 'jingle.mp3'));
+  });
+
+  // ── [N-23a] · the receiver never stores a foreign directory ────────────────
+
+  it('[N-23a]: a Windows sender path arriving on a posix receiver still loses its directory', () => {
+    // THE ONE PAIRING WE ACTUALLY SHIP TO: OV/this machine are Windows, USPH is macOS. path.basename()
+    // does NOT treat a backslash as a separator on posix, so relying on it would let a Windows path
+    // through whole — the defect surviving the fix, on the exact route it travels.
+    const { localizeBlobRef } = require('../mutation-writer');
+    const winPath = 'C:\\Users\\someone\\Downloads\\cart.mp3';
+
+    expect(localizeBlobRef({ __blob_origin: winPath })).toBe('cart.mp3');
+    expect(localizeBlobRef({ __blob_origin: '/Users/someone/Music/cart.mp3' })).toBe('cart.mp3');
+    expect(localizeBlobRef({ __blob_origin: winPath }, '/srv/cat'))
+      .toBe(require('path').join('/srv/cat', 'cart.mp3'));
+  });
+
+  it('[N-23a]: __blob_key is preferred over the legacy __blob_origin', () => {
+    // The revised [N-22] shape. Accepting it now means a sender that upgrades first interoperates
+    // with a receiver that has not — the property that makes this deployable one machine at a time.
+    const { localizeBlobRef } = require('../mutation-writer');
+    expect(localizeBlobRef({ __blob_key: 'real.mp3', __blob_origin: 'C:\\wrong\\other.mp3' }))
+      .toBe('real.mp3');
+  });
+
+  it('[N-23a]: null and undefined pass through untouched', () => {
+    const { localizeBlobRef } = require('../mutation-writer');
+    expect(localizeBlobRef(null)).toBeNull();
+    expect(localizeBlobRef(undefined)).toBeUndefined();
+    expect(localizeBlobRef({ __blob_origin: null })).toBeNull();
   });
 
   // ── T-09 ──────────────────────────────────────────────────────────────────
