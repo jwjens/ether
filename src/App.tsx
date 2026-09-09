@@ -3613,11 +3613,17 @@ function CartWallPanel({ onClose }: { onClose: () => void }) {
             onDoubleClick={() => setEditing(cart.key)}
             onDragOver={e => { e.preventDefault(); setDragOver(cart.key); }}
             onDragLeave={() => setDragOver(null)}
-            onDrop={e => {
+            onDrop={async e => {
               e.preventDefault();
-              const path = e.dataTransfer.getData("text/plain");
-              save(carts.map(c => c.key === cart.key ? { ...c, filePath: path } : c));
               setDragOver(null);
+              // COPY-ON-IMPORT, same as this wall's picker path above. localStorage is still
+              // persistence: a path stored here outlives the session and points outside the
+              // catalogue just the same.
+              const dropped = e.dataTransfer.getData("text/plain");
+              if (!dropped) return;
+              const fp = await importIntoAudioLibrary(dropped);
+              if (!fp) return;
+              save(carts.map(c => c.key === cart.key ? { ...c, filePath: fp } : c));
             }}
             style={{
               padding: "12px 12px 10px",

@@ -78,6 +78,12 @@ jobs:
       - name: Window/station contract
         run: node scripts/smoke-window-station.js
 
+      # Every door that puts an operator-chosen file into a row must copy it into the catalogue
+      # first. A door that stores a browsed path is the SUPPLY of foreign paths — the thing every
+      # downstream repair exists to cope with. Static, so it gates here beside the typecheck.
+      - name: Copy-on-import contract
+        run: node scripts/smoke-copy-on-import.js
+
       # NOT GATED HERE, deliberately, and neither is a lie of omission:
       #
       # · `npm run test:sync` runs under `electron --no-sandbox`, needs better-sqlite3 rebuilt for

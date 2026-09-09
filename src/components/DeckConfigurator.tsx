@@ -1032,12 +1032,24 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
     return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("mousedown", onDown); };
   }, [cartMenu]);
 
-  const handleDrop = (e: React.DragEvent, key: string) => {
+  const handleDrop = async (e: React.DragEvent, key: string) => {
     e.preventDefault();
     const label = e.dataTransfer.getData("text/plain");
-    const filePath = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain");
-    updateSlot(key, { ...(label ? { label } : {}), filePath });   // persisted
+    const dropped = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain");
     setDragOver(null);
+    if (!dropped) return;
+    // COPY-ON-IMPORT — the door the PICKER path (assignCart, below) has guarded since 2026-09-04 and
+    // this one did not. Dropping a file onto a cart tile wrote whatever path the drag carried
+    // straight into cart_slots. That is a SYNCED table, so the path travelled to every peer, and a
+    // peer without that exact directory gets a cart that cannot open its own audio.
+    //
+    // Every door puts audio in the catalogue, so no reader has to special-case where a cart lives —
+    // which is what makes the cart_slots `neverForeign` carve-out unnecessary rather than merely
+    // inconvenient. A refusal returns null and nothing is written: the slot keeps what it had rather
+    // than pointing at a file the catalogue does not have.
+    const fp = await importIntoAudioLibrary(dropped);
+    if (!fp) return;
+    updateSlot(key, { ...(label ? { label } : {}), filePath: fp });   // persisted
   };
 
   // ── RENAMING A CART — inline on the tile ───────────────────────────────────────────────────────
