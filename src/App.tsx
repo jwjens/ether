@@ -42,6 +42,7 @@ import ClipEditor from "./components/ClipEditor";
 import { useCaptions, CaptionsOverlay, CaptionsLogPanel } from "./components/Captions";
 import DeckConfigurator, { useDeckConfig, PlaylistPlayer, BoutiqueCartWall, type DeckConfig } from "./components/DeckConfigurator";
 import ProducerDesk, { InlineProducerDesk } from "./components/ProducerDesk";
+import FaderSection from "./components/FaderSection";
 import MasterOutput, { consoleLog } from "./components/MasterOutput";
 import SmartScheduler from "./components/SmartScheduler";
 import BroadcastCalendar from "./components/BroadcastCalendar";
@@ -923,111 +924,15 @@ export default function App() {
   // slot; updateBySlot creates the row if that slot has none yet, so no separate insert path exists
   // to drift. Pressing − disables it again, which leaves the row (and its patch point) intact for
   // next time rather than destroying the operator's setup.
-  const sourceSlotsInUse = useMemo(
-    () => new Set((deckConfigs || []).filter(c => c.enabled && c.type === "source").map(c => c.slot)),
-    [deckConfigs]
-  );
-  const nextFreeSourceSlot = useMemo(
-    () => (SOURCE_SLOTS as readonly string[]).find(sl => {
-      const row = (deckConfigs || []).find(c => c.slot === sl);
-      return !row || !row.enabled;          // a disabled row is reusable; an enabled one is taken
-    }) || null,
-    [deckConfigs]
-  );
-
-  const addSourceChannel = useCallback(async () => {
-    const slot = nextFreeSourceSlot;
-    if (!slot) return;
-    const existing = (deckConfigs || []).find(c => c.slot === slot);
-    const next: DeckConfig = {
-      slot,
-      type: "source",
-      label: `Source ${slot}`,
-      color: "#8868D8",
-      enabled: true,
-      purpose: existing?.purpose || "",
-      kind: (existing?.kind as any) || "",
-      address: existing?.address ?? null,
-    };
-    const merged = (deckConfigs || []).some(c => c.slot === slot)
-      ? (deckConfigs || []).map(c => (c.slot === slot ? next : c))
-      : [...(deckConfigs || []), next];
-    try { await saveDeckConfigs(merged); }
-    catch (e) { console.error("[SourceChannel] add failed:", e); }
-  }, [deckConfigs, nextFreeSourceSlot, saveDeckConfigs]);
-
-  // DUCK — persisted on the channel's own row (deck_configs.duck, v43) and pushed to whichever
-  // engine owns the audio. Both, every time: the row is what survives a restart, the engine call is
-  // what makes it true right now. Storing without pushing would leave a toggle that only takes
-  // effect after a relaunch; pushing without storing would forget it.
-  const setSourceDuck = useCallback(async (slot: string, duck: boolean) => {
-    const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, duck } : c));
-    try { await saveDeckConfigs(merged); }
-    catch (e) { console.error("[SourceChannel] duck save failed:", e); }
-    try { await (window as any).ether?.audio?.setDuck?.(stationId, slot, duck); }
-    catch (e) { console.error("[SourceChannel] duck push failed:", e); }
-  }, [deckConfigs, saveDeckConfigs, stationId]);
-
-  // THE ON LAMP'S WRITER (v58). Same shape as setSourceDuck directly above, and for the same reason:
-  // BOTH, every time. The row is what survives a restart and what every OTHER window reads; the
-  // engine call is what makes it true right now. Storing without pushing leaves a lamp that only
-  // takes effect after a relaunch; pushing without storing forgets it — and now that a second window
-  // renders the same board, forgetting means that window asserts the old value straight back.
+  // ── THE SOURCE-CHANNEL WRITERS MOVED TO FaderSection.tsx ─────────────────────────────────────
+  // add / kind / duck / on / remove, and nextFreeSourceSlot. Each had exactly ONE consumer — the
+  // fader section — and each is a pure function of deckConfigs + saveDeckConfigs + engine, so they
+  // travelled with the JSX rather than being threaded to it as six props. That is what makes the
+  // section self-sufficient in a window of its own.
   //
-  // It lives in App, not in LivePanel, because only App holds saveDeckConfigs. LivePanel owns the
-  // DERIVED read and nothing else, which is exactly the split that lets the fader section render in
-  // two windows without them fighting over the cut.
-  const setSourceChannelOn = useCallback(async (slot: string, on: boolean) => {
-    try { engine.getDeck(slot)?.setMuted(!on); } catch (e) { console.error("[SourceChannel] cut push failed:", e); }
-    const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, channelOn: on } : c));
-    try { await saveDeckConfigs(merged); }
-    catch (e) { console.error("[SourceChannel] cut save failed:", e); }
-  }, [deckConfigs, saveDeckConfigs, engine]);
+  // The duck ASSERT-DOWNWARD effect below stays here deliberately: it is a once-per-app assertion
+  // (the engine boots un-armed), not a per-window one, and App renders in the main window only.
 
-  const setSourceKind = useCallback(async (slot: string, kind: SourceKind | "") => {
-    const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, kind } : c));
-    try { await saveDeckConfigs(merged); }
-    catch (e) { console.error("[SourceChannel] patch failed:", e); }
-  }, [deckConfigs, saveDeckConfigs]);
-
-  useEffect(() => {
-    // The engine boots un-armed. Push every stored duck toggle down once the configs are known, or a
-    // channel the operator armed yesterday would silently not duck until they toggled it again.
-    if (!deckConfigs || !deckConfigs.length || stationId == null) return;
-    for (const c of deckConfigs) {
-      if (c.type !== "source" || !c.enabled) continue;
-      try { (window as any).ether?.audio?.setDuck?.(stationId, c.slot, !!c.duck); } catch { /* engine not up yet */ }
-    }
-  }, [deckConfigs, stationId]);
-
-  // ── WHICH BUS EACH SOURCE CHANNEL JOINS ────────────────────────────────────────────────────────
-  //
-  // A sweeper belongs in the programme WITH THE MUSIC — same sum, same fader law, same processor,
-  // ducked with it, heard on the station monitor. That is what slot 6 always did, and moving
-  // sweepers to a dialled channel moved them onto the aux bus instead: a different fader, a separate
-  // loudness ride, a separate output device. Every audio complaint since came from that.
-  //
-  // The engine's slot kind was write-once until now, which is exactly why a sweeper could only ever
-  // be slot 6 — its behaviour was welded to its address. This asserts the kind downward from
-  // deck_configs so the ADDRESS moves and nothing else does. Same shape as the duck assert above,
-  // and for the same reason: the engine boots with defaults and must be TOLD what the operator set.
-  //
-  // Carts are NOT sweepers and stay on the aux bus, where a hand-fired rack belongs.
-  useEffect(() => {
-    if (!deckConfigs || !deckConfigs.length || stationId == null) return;
-    for (const c of deckConfigs) {
-      if (c.type !== "source" || !c.enabled) continue;
-      const bus = isSweeperKind(c.kind) ? "sweeper" : "source";
-      try { (window as any).ether?.audio?.setSlotKind?.(stationId, c.slot, bus); }
-      catch { /* engine not up yet — re-asserted whenever the configs change */ }
-    }
-  }, [deckConfigs, stationId]);
-
-  const removeSourceChannel = useCallback(async (slot: string) => {
-    const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, enabled: false } : c));
-    try { await saveDeckConfigs(merged); }
-    catch (e) { console.error("[SourceChannel] remove failed:", e); }
-  }, [deckConfigs, saveDeckConfigs]);
 
   // Experience mode — controls deck visibility
   const [shiftStarted, setShiftStarted] = useState(false);
@@ -3146,12 +3051,6 @@ export default function App() {
                   inputDevice={inputDevice}
                   visiblePanels={visiblePanels}
                   deckConfigs={visibleEnabledDecks}
-                  onAddSourceChannel={addSourceChannel}
-                  onSetSourceKind={setSourceKind}
-                  onSetSourceDuck={setSourceDuck}
-                  onSetSourceChannelOn={setSourceChannelOn}
-                  onRemoveSourceChannel={removeSourceChannel}
-                  canAddSourceChannel={!!nextFreeSourceSlot}
                   onConfigureDecks={() => setShowDeckConfig(true)}
                   autoSilenceTrim={autoSilenceTrim}
                   setAutoSilenceTrim={v => { setAutoSilenceTrim(v); localStorage.setItem("ether_auto_silence_trim", String(v)); }}
@@ -3923,7 +3822,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onAddSourceChannel, onSetSourceKind, onSetSourceDuck, onSetSourceChannelOn, onRemoveSourceChannel, canAddSourceChannel, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, onOpenCarts, libraryDock, jingleOverlay, hasJinglePool, onOpenJingleSettings, onCloseDock, onOpenImaging }: {
+function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, onOpenCarts, libraryDock, jingleOverlay, hasJinglePool, onOpenJingleSettings, onCloseDock, onOpenImaging }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
   autoAdv: boolean | null; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
@@ -3932,15 +3831,6 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   inputDevice: string;
   visiblePanels?: Record<string, boolean>;
   deckConfigs?: DeckConfig[];
-  onAddSourceChannel?: () => void;
-  onSetSourceKind?: (slot: string, kind: SourceKind | "") => void;
-  onSetSourceDuck?: (slot: string, duck: boolean) => void;
-  /** The ON lamp's writer. Persists to deck_configs.channel_on AND pushes the cut to the engine —
-   *  never one without the other. LivePanel derives the lamp from the config rows and owns no state
-   *  of its own for it, which is what lets this section render in more than one window. */
-  onSetSourceChannelOn?: (slot: string, on: boolean) => void;
-  onRemoveSourceChannel?: (slot: string) => void;
-  canAddSourceChannel?: boolean;
   onConfigureDecks?: () => void;
   autoSilenceTrim?: boolean;
   setAutoSilenceTrim?: (v: boolean) => void;
@@ -4014,8 +3904,6 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   const [consoleMicOn, setConsoleMicOn] = useState<Record<string, boolean>>({});
   const [consoleMicVol, setConsoleMicVol] = useState<Record<string, number>>({});
   // Guest mic on/off state — keyed by slot ("E", "F", etc.). Mirrors mic state pattern.
-  const [consoleGuestOn, setConsoleGuestOn] = useState<Record<string, boolean>>({});
-  const [consoleGuestLevel, setConsoleGuestLevel] = useState<Record<string, number>>({});
   // Jingle overlay fader (CART slot 6) — ride level for jingles/carts, independent of each item's
   // gain_db trim. Ephemeral (resets to unity per session, like the deck faders).
   const [jingleVol, setJingleVol] = useState(1);
@@ -4070,135 +3958,17 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
     });
   };
 
-  // ── JUKEBOX CHANNEL — the board is the sole gate on the jukebox's audio ────────────────────────────
+  // ── THE BOARD'S STATE MOVED TO FaderSection.tsx ──────────────────────────────────────────────
   //
-  // Jeff's ruling (2026-08-18): the jukebox is audible ONLY when its assigned deck's channel is ON and
-  // the fader is up. The jukebox's AUTO chooses SONGS; the board chooses AIR.
+  // The jukebox channel's cut and fader, the source-channel ON lamp, and the two effects that ASSERT
+  // both downward into the engine used to live here. They moved with the JSX they belong to.
   //
-  // Before this, a jukebox deck fell through LivePanel's type switch into the generic fallback strip,
-  // whose `deck` came from deckMap = {A,B,C} — undefined for D/E/F. So the strip rendered no state (ON
-  // could never light, isPlaying was always false) and its ON handler called play()/pause() transport
-  // instead of cutting the channel. Audio reached MASTER with the strip showing nothing, which is
-  // exactly what Jeff saw.
-  //
-  // Modelled on the CART channel above, which already does this correctly. Same shape: persisted, and
-  // pushed DOWN to the engine on mount, because Rust boots un-muted and the UI must ASSERT the saved
-  // setting rather than assume it. Rust honours it per slot — deck_index maps D/E/F to slots 3/4/5
-  // (native/src/audio.rs:447) and the mixer sums every slot through `muted`/`volume`
-  // (native/src/audio.rs:1151). The wiring was always there; nothing was sending the cut.
-  //
-  // DEFAULT OFF, unlike carts. A public jukebox must not become audible because someone assigned a deck;
-  // it becomes audible when an operator presses ON. "ON dark = silence" is the spec.
-  //
-  // Stored in station_config_kv (not localStorage) so the JUKEBOX window can read the same truth and
-  // report its own state honestly — it already polls that table.
-  // A jukebox now reaches the board two ways: the legacy deck TYPE (Configure Decks), or a SOURCE
-  // channel patched to it (slice 2). Both are the same routing — one lookup, so the dropdown is a
-  // real patch point and not decoration.
-  const jukeboxSlot = deckConfigs?.find(c =>
-    c.enabled && (c.type === "jukebox" || (c.type === "source" && c.kind === "jukebox"))
-  )?.slot || null;
-  const [jukeboxOn, setJukeboxOn] = useState(false);
-  // ── THE ON LAMP READS THE ROW (v58) ───────────────────────────────────────────────────────────
-  //
-  // This was `useState<Record<string, boolean>>({})` — renderer state with no store — while the
-  // effect below asserted it DOWNWARD into the engine on every change. That combination makes the
-  // board a WRITER of the channel cut, not a display of it, and it was the one thing blocking the
-  // fader section from being rendered in two windows: each window would carry its own `{}`, each
-  // would assert its own `?? true`, and they would overwrite each other's cut with no arbiter.
-  //
-  // It is derived from deck_configs.channel_on now, so both windows read one truth and the operator's
-  // cut survives a restart. Writing goes through saveDeckConfigs, which announces to every window.
-  // The jukebox keeps its own persisted state (station_config_kv, default OFF, because it faces the
-  // public) and is excluded here exactly as it always was.
-  const srcChannelOn = useMemo(() => {
-    const m: Record<string, boolean> = {};
-    for (const c of deckConfigs || []) if (c.type === "source") m[c.slot] = c.channelOn ?? true;
-    return m;
-  }, [deckConfigs]);
+  // They are DELETED rather than left dead, and that distinction matters: those effects WRITE — they
+  // call setMuted/setVolume on every change. Left here they would run a second time alongside
+  // FaderSection's, in this same window, which is precisely the two-writer collision on the channel
+  // cut that deck_configs.channel_on (v58) was added to prevent. Dead state is untidy; a dead WRITER
+  // is the bug.
 
-  // ── ASSERT THE CHANNEL CUT DOWNWARD ────────────────────────────────────────────────────────────
-  //
-  // The ON lamp was a CLAIM, not a reading. It was `{}` in renderer state and every strip rendered
-  // ON by default (`?? true`), while the only code that ever sent setMuted for a source channel was
-  // a press of that button. So a channel nobody had pressed showed ON with the engine never told —
-  // and a cart re-dialled onto it played into a slot whose cut had never been asserted. Pressing
-  // OFF then ON "fixed" it because the second press was the first time the engine heard anything.
-  // The operator was performing an assertion the app should have made for them.
-  //
-  // v58 — WHAT THIS ASSERTS IS NOW THE STORED VALUE, and that is what makes the board safe to render
-  // in more than one window. Every window reads the same deck_configs.channel_on and therefore
-  // asserts the same cut, so two of them agree instead of overwriting each other. The double push
-  // (this effect plus the writer's own) is deliberate and idempotent: the writer makes it true this
-  // instant, this effect makes it true again after any reload, station switch or re-mount.
-  //
-  // This is the pattern the jukebox channel already uses ("Assert BOTH downward every time: the
-  // engine boots un-muted and at its own level", App.tsx:3977) and the one the duck toggle already
-  // uses for these same channels (App.tsx:949). Mute was simply omitted from it.
-  //
-  // Runs whenever the channel list or a lamp changes, which covers boot, a station switch, a channel
-  // newly enabled with +, and a re-dial of an existing one.
-  //
-  // THE JUKEBOX IS EXCLUDED, deliberately: its cut is persisted in station_config_kv and DEFAULTS
-  // OFF ("a public jukebox must not become audible because someone assigned a deck"), and its own
-  // effect owns it. Asserting the generic lamp's `?? true` over that would re-open a channel the
-  // operator deliberately left closed.
-  useEffect(() => {
-    if (!deckConfigs || !deckConfigs.length) return;
-    for (const c of deckConfigs) {
-      if (c.type !== "source" || !c.enabled) continue;
-      if (c.kind === "jukebox") continue;
-      const on = srcChannelOn[c.slot] ?? true;
-      try { engine.getDeck(c.slot)?.setMuted(!on); } catch { /* engine not up yet — re-asserted on the next change */ }
-    }
-  }, [deckConfigs, srcChannelOn, engine]);
-  // Fader position for the jukebox channel. Asserted downward on mount with the cut, for the same
-  // reason: the engine boots at its own defaults and the board must state the operator's position.
-  const [jukeboxVol, setJukeboxVol] = useState(1);
-
-  useEffect(() => {
-    if (!jukeboxSlot || lpStationId == null) return;
-    let stop = false;
-    (async () => {
-      let on = false;
-      try {
-        const r: any = await (window as any).ether.stationConfigKv.list(lpStationId);
-        on = ((r && r.rows) || []).find((x: any) => x.key === "jukebox_channel_on")?.value === "1";
-      } catch { /* no config yet — stays OFF, the safe direction */ }
-      if (stop) return;
-      setJukeboxOn(on);
-      // Assert BOTH downward every time: the engine boots un-muted and at its own level.
-      try {
-        (engine.getDeck(jukeboxSlot as any) as any)?.setMuted?.(!on);
-        engine.getDeck(jukeboxSlot as any)?.setVolume(jukeboxVol);
-      } catch { /* engine not ready */ }
-    })();
-    return () => { stop = true; };
-  }, [engine, jukeboxSlot, lpStationId]);
-
-  const toggleJukeboxChannel = () => {
-    if (!jukeboxSlot) return;
-    setJukeboxOn(prev => {
-      const next = !prev;
-      try { (engine.getDeck(jukeboxSlot as any) as any)?.setMuted?.(!next); } catch { /* engine not ready */ }
-      // Persist so the jukebox can tell the public the truth, and so a restart restores the operator's
-      // choice rather than silently re-opening the channel.
-      try { (window as any).ether.stationConfigKv.upsertByKey(lpStationId, "jukebox_channel_on", next ? "1" : "0"); }
-      catch { /* non-fatal */ }
-      return next;
-    });
-  };
-
-  // Listen for guest level updates pushed from the WebRTC layer (Studio.tsx)
-  useEffect(() => {
-    const onLevel = (e: Event) => {
-      const d = (e as CustomEvent).detail as { slot: string; level: number };
-      if (!d?.slot) return;
-      setConsoleGuestLevel(prev => ({ ...prev, [d.slot]: d.level }));
-    };
-    window.addEventListener("ether:guest-level", onLevel as EventListener);
-    return () => window.removeEventListener("ether:guest-level", onLevel as EventListener);
-  }, []);
 
   // Panel widths — resizable via drag divider. Persisted + defaults WIDE ("stretched to the
   // right") so the queue's album-art deck rows open roomy by default, and the user's preferred
@@ -4516,225 +4286,25 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
       {/* The top DECK A/B/C title strip (ThreeSlotBar) was removed — deck identity now
           lives in the Up Next deck rows + the color-coded fader accents, and the faders
           grow to fill the reclaimed height. */}
-      {(
-        /* ── Console channel strips — the default deck view.
-           Uses activeDeckOrder from the deck configurator so all 6 slots work. ── */
-        <div style={{ display: "flex", gap: 0, flex: 1, minHeight: 0, overflow: "hidden" }}>
-          {activeDeckOrder.map((slot) => {
-            const stored = deckConfigs?.find(d => d.slot === slot);
-            // A slot the engine is carrying with no config row is still a CHANNEL. It renders as the
-            // generic source strip — selector, fader, ON/PFL, meter — rather than defaulting to a
-            // music deck, because "what you dial in is the source; the channel itself is generic".
-            // Its patch point cannot be persisted until it has a row (that is the next step in
-            // docs/on-air-but-invisible-slot-enumeration-2026-09-03.md); until then it is visible and
-            // controllable, which is the state this step exists to guarantee.
-            const config = stored || (slot === "mic" ? undefined : {
-              slot, type: "source" as DeckType, kind: "" as any, label: slot,
-              color: "#8868D8", enabled: true, purpose: "", address: null, duck: false,
-            } as DeckConfig);
-            const deckType = config?.type || (slot === "mic" ? "mic" : "music");
-            const deckMap: Record<string, any> = { A: deckA, B: deckB, C: deckC };
-            const deck = deckMap[slot as string];
-            const deckColors: Record<string, string> = { A: "var(--deck-a)", B: "var(--deck-b)", C: "var(--deck-c)", D: "#fb923c", E: "#e879f9", mic: "#a855f7" };
-            // Rotation decks A/B/C always use the canonical slot color (A blue, B green, C purple)
-            // so the faders match the Up Next deck rows + library A/B/C buttons. config.color only
-            // carries the deck-TYPE color (every music deck is green), which can't tell A/B/C apart.
-            const deckColor = (slot === "A" || slot === "B" || slot === "C")
-              ? deckColors[slot]
-              : (config?.color || deckColors[slot] || "var(--accent-blue)");
+      {/* ── THE BOARD — one implementation, and this is not it any more ──────────────────────────
+          These 215 lines of JSX WERE the dashboard's fader section, and the Decks pop-out rendered a
+          different, months-old widget instead (StandaloneDecksPanel, now deleted) that drew "not
+          available in monitor mode" over every source channel. Two implementations of one thing, the
+          second silently the wrong one — the same shape as the two cart walls.
 
-            // SOURCE channel → the strip with the patch-point dropdown (slice 2)
-            if (deckType === "source" && config) {
-              // deckMap covers A/B/C only, so this is undefined for a source slot — exactly as it is
-              // for D/E/F in the fallback branch below. The fader starts at unity and the VU comes
-              // from ConsoleStrip's own levels subscription (which DOES cover every slot since
-              // 2026-08-18). engine.getDeck() is a command handle, not state.
-              const dk = deckMap[slot as string];
-              const isJukeboxSrc = config.kind === "jukebox";
-              return (
-                <div key={slot} style={{ flex: 1, display: "flex", minWidth: 0 }}>
-                  <SourceChannelStrip
-                    config={config}
-                    // A jukebox-patched channel IS the jukebox channel: same persisted cut, same
-                    // default-OFF, same fader the retired legacy branch drove. Anything else is an
-                    // ordinary channel. One strip, two owners of state — never two strips.
-                    volume={isJukeboxSrc ? jukeboxVol : (dk?.volume ?? 1)}
-                    isOn={isJukeboxSrc ? jukeboxOn : (srcChannelOn[slot] ?? true)}
-                    onVolumeChange={v => {
-                      if (isJukeboxSrc) setJukeboxVol(v);
-                      engine.getDeck(slot)?.setVolume(v);
-                    }}
-                    onToggleOn={() => {
-                      if (isJukeboxSrc) { toggleJukeboxChannel(); return; }
-                      void onSetSourceChannelOn?.(slot, !(srcChannelOn[slot] ?? true));
-                    }}
-                    onKindChange={k => onSetSourceKind?.(slot, k)}
-                    duck={!!config.duck}
-                    onDuckChange={d => onSetSourceDuck?.(slot, d)}
-                    onRemove={() => onRemoveSourceChannel?.(slot)}
-                  />
-                </div>
-              );
-            }
-
-            // Music decks → ConsoleStrip (fader + VU)
-            if (deckType === "music") {
-              return (
-                <div key={slot} style={{ flex: 1, display: "flex", minWidth: 0 }}>
-                  <ConsoleStrip
-                    label={config?.label || `DECK ${slot}`}
-                    color={deckColor}
-                    volume={deck?.volume ?? 1}
-                    deckId={slot}
-                    hideLabel={["A","B","C"].includes(slot)}
-                    role={["A","B","C"].includes(slot) ? computeDeckRole(slot as "A"|"B"|"C", { A: deckA, B: deckB, C: deckC }) : "third"}
-                    isPlaying={deck?.status === "playing"}
-                    isOn={true}
-                    onVolumeChange={v => engine.getDeck(slot)?.setVolume(v)}
-                    // ── DECK ON — the board's start control, and the ONLY one (2026-08-02) ──────────
-                    // This used to be a solo play/pause: `getDeck(slot).play()` → a RAW audioPlay
-                    // straight to Rust, outside the advance chain. No serialization, no guards, no stop
-                    // of the outgoing, no liveDeck update — the out-of-chain start shape that put two
-                    // decks on air on 2026-07-29. Pressing ON on a cued deck while another played gave
-                    // you both, caught only by the liveDeck guard after its 7.5s grace.
-                    //
-                    // Now: PLAYING → board-style channel OFF (audio off now, not a pause — a real
-                    // board's ON kills the channel). Otherwise → the serialized, guarded rotate, which
-                    // starts this deck and stops the outgoing via the deferred Bug-A stop.
-                    // (docs/auto-xfade-contract-trace-2026-08-02.md)
-                    onToggleOn={async () => {
-                      const eng: any = engine;
-                      if (deck?.status === "playing") {
-                        if (eng.isDaemonDriven) await eng.deckOff(slot);
-                        else engine.getDeck(slot)?.stop();
-                        return;
-                      }
-                      if (eng.isDaemonDriven) {
-                        const r = await eng.deckCrossfade(undefined, slot);
-                        // Honest feedback: a press the daemon absorbed must not look like it worked.
-                        if (r && r.ok === false) console.warn(`[deck ${slot}] start not applied: ${r.reason}`);
-                        return;
-                      }
-                      engine.getDeck(slot)?.play();   // in-process: no daemon chain to route through
-                    }}
-                  />
-                </div>
-              );
-            }
-
-            // Mic decks → independent MicChannel: own device + capture + meter + output gate per slot.
-            // Up to 6 mics, each on a different physical input (device saved per slot).
-            if (deckType === "mic" || slot === "mic") {
-              return (
-                <div key={slot} style={{ flex: 1, display: "flex", minWidth: 0 }}>
-                  <MicChannel slot={slot} label={config?.label || "MIC"} />
-                </div>
-              );
-            }
-            if (deckType === "video") {
-              return <div key={slot} style={{ flex: 2, minWidth: 280 }}><VideoStudio embedded /></div>;
-            }
-            if (deckType === "cart") {
-              return <div key={slot} style={{ flex: 1, minWidth: 120 }}><div style={{ height: "100%", background: "var(--bg-secondary)", overflow: "hidden" }}><BoutiqueCartWall /></div></div>;
-            }
-            if (deckType === "desk") {
-              return <div key={slot} style={{ flex: 1, minWidth: 220 }}><InlineProducerDesk episodeTitle={undefined} nowPlaying={nowPlaying} /></div>;
-            }
-            if (deckType === "guest") {
-              const guestIsOn  = consoleGuestOn[slot] ?? false;
-              const guestLevel = consoleGuestLevel[slot] ?? 0;
-              const guestVol   = consoleGuestLevel[`${slot}_vol`] ?? 1;
-              return (
-                <div key={slot} style={{ flex: 1, minWidth: 0 }}>
-                  <ConsoleStrip
-                    label={config?.label || `GUEST ${slot}`}
-                    color="#a78bfa"
-                    volume={guestVol}
-                    level={guestIsOn ? guestLevel : 0}
-                    isPlaying={guestIsOn && guestLevel > 0.02}
-                    isOn={guestIsOn}
-                    onVolumeChange={v => {
-                      setConsoleGuestLevel(prev => ({ ...prev, [`${slot}_vol`]: v }));
-                      window.dispatchEvent(new CustomEvent("ether:guest-volume", { detail: { slot, volume: v } }));
-                    }}
-                    onToggleOn={() => {
-                      const next = !guestIsOn;
-                      setConsoleGuestOn(prev => ({ ...prev, [slot]: next }));
-                      // Broadcast guest on/off — VideoStudio/Guest WebRTC layer can mute/unmute
-                      window.dispatchEvent(new CustomEvent("ether:guest-toggle", { detail: { slot, active: next } }));
-                    }}
-                  />
-                </div>
-              );
-            }
-
-            // (RETIRED 2026-08-22) The legacy `deckType === "jukebox"` strip stood here.
-            //
-            // The jukebox is a SOURCE you patch in, not a deck type — so it is now one entry in the
-            // source dropdown and renders through the SOURCE branch above, which carries the same
-            // persisted channel cut and the same default-OFF. Two strips for one routing was the
-            // duplication the console model exists to remove.
-            //
-            // Existing rows were migrated in place (electron/main.js runMigrations: type='jukebox'
-            // → type='source', kind='jukebox'), so a station that had deck D as a jukebox keeps its
-            // deck, its fader and its remembered ON state. station_config_kv's jukebox_channel_on is
-            // station-scoped, not slot-scoped, so the key survives the type change untouched — and
-            // the Jukebox window still reads the same truth.
-
-            // Fallback: ConsoleStrip
-            return (
-              <div key={slot} style={{ flex: 1, minWidth: 0 }}>
-                <ConsoleStrip
-                  label={config?.label || slot}
-                  color={deckColor}
-                  volume={deck?.volume ?? 1}
-                  deckId={slot}
-                  hideLabel={["A","B","C"].includes(slot)}
-                  isPlaying={deck?.status === "playing"}
-                  isOn={true}
-                  onVolumeChange={v => engine.getDeck(slot)?.setVolume(v)}
-                  onToggleOn={() => {
-                    if (deck?.status === "playing") engine.getDeck(slot)?.pause();
-                    else engine.getDeck(slot)?.play();
-                  }}
-                />
-              </div>
-            );
-          })}
-          {/* ── ADD A SOURCE CHANNEL (slice 2) ──────────────────────────────────────────────────
-              The console gesture: press +, get a channel, pick its source. It is a UI affordance
-              over a FIXED engine slot pool (SLOT_COUNT = 12, slice 1) — nothing about the realtime
-              callback changes shape when a channel appears, which is the whole reason this is safe.
-              When every source-capable slot is in use the control says so rather than vanishing. */}
-          {onAddSourceChannel && (
-            <div style={{ display: "flex", alignItems: "stretch", padding: "0 2px" }}>
-              <button
-                onClick={() => canAddSourceChannel && onAddSourceChannel()}
-                disabled={!canAddSourceChannel}
-                title={canAddSourceChannel
-                  ? "Add a source channel — jukebox, announcement or hand-fired jingle"
-                  : "Every source channel is already on the board"}
-                aria-label="Add a source channel"
-                style={{
-                  width: 26, alignSelf: "center", padding: "10px 0",
-                  background: "var(--bg-tertiary)",
-                  border: "1px solid var(--border-primary)", borderRadius: 3,
-                  color: canAddSourceChannel ? "var(--accent-cyan)" : "var(--text-tertiary)",
-                  fontSize: 15, fontWeight: 700, lineHeight: 1,
-                  cursor: canAddSourceChannel ? "pointer" : "not-allowed",
-                  opacity: canAddSourceChannel ? 1 : 0.45,
-                }}
-              >+</button>
-            </div>
-          )}
-          {/* Master Output — owns its own audio:levels subscription */}
-          <MasterOutput
-            expanded={!showCarts && !masterCollapsed}
-            collapsed={masterCollapsed}
-            onToggleCollapsed={toggleMasterCollapsed}
-          />
-        </div>
-      )}
+          Jeff: "That's the component the dashboard already renders. Lift that, don't rebuild it, and
+          don't keep two." So the block moved to FaderSection.tsx verbatim and both surfaces render
+          it. It owns its own board state — deck_configs, the ON lamp, the six source-channel writers,
+          the jukebox cut — which is exactly what lets it render in two windows without them
+          disagreeing. LivePanel keeps only the view flags it actually owns. */}
+      <FaderSection
+        deckA={deckA} deckB={deckB} deckC={deckC}
+        showCarts={showCarts}
+        masterCollapsed={masterCollapsed}
+        onToggleMasterCollapsed={toggleMasterCollapsed}
+        nowPlaying={nowPlaying}
+        narrow={lpViewport.narrow}
+      />
 
       {/* Bottom dock — carts OR a programming editor. Pushes the decks up (queue
           untouched). The divider above it is draggable up/down to give more room to the

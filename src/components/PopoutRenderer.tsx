@@ -6,7 +6,7 @@ import PopoutShell from "./PopoutShell";
 import ProcessorRack from "./ProcessorRack";
 import ImagingPanel from "./ImagingPanel";
 import { useProcessorParams } from "../hooks/useProcessorParams";
-import StandaloneDecksPanel from "./StandaloneDecksPanel";
+import FaderSection from "./FaderSection";
 import MasterOutput from "./MasterOutput";
 import MicDeck from "./MicDeck";
 import PhoneDesk from "./PhoneDesk";
@@ -160,6 +160,42 @@ function ProcessorPopout() {
 
 // Library pop-out handlers — cue a track onto a deck via the shared engine (daemon-backed,
 // so it affects the live air chain). Edit/send-to-studio aren't meaningful in a pop-out.
+// THE BOARD in its own window. It resolves everything else itself — deck_configs, the ON lamp, the
+// six source-channel writers, the jukebox cut — so all this has to supply is the live A/B/C deck
+// state, which comes off the engine the same way the dashboard's does.
+function PopoutFaders() {
+  const eng = useAudioEngine();
+  const [decks, setDecks] = React.useState<{ A: any; B: any; C: any }>({ A: null, B: null, C: null });
+  React.useEffect(() => {
+    const sync = () => setDecks({
+      A: eng.getDeck("A")?.getState() ?? null,
+      B: eng.getDeck("B")?.getState() ?? null,
+      C: eng.getDeck("C")?.getState() ?? null,
+    });
+    sync();
+    // The engine's own listener, not a poll: the dashboard reads the same stream, so the two windows
+    // show the same decks on the same tick rather than drifting by up to a poll interval.
+    const off = eng.on(sync);            // engine-rodio.ts:962 — returns its own unsubscribe
+    // The engine only emits on CHANGE, and position advances without one, so the countdown and the
+    // progress bar need a tick of their own. 250ms matches the engine's own poll.
+    const id = setInterval(sync, 250);
+    return () => { try { off(); } catch {} clearInterval(id); };
+  }, [eng]);
+  // masterCollapsed is a per-window VIEW preference and is deliberately not shared: this window is
+  // usually narrower than the dashboard, and forcing them to agree would collapse the master meter
+  // on a screen that has room for it.
+  const [masterCollapsed, setMasterCollapsed] = React.useState(false);
+  return (
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <FaderSection
+        deckA={decks.A} deckB={decks.B} deckC={decks.C}
+        masterCollapsed={masterCollapsed}
+        onToggleMasterCollapsed={() => setMasterCollapsed(v => !v)}
+      />
+    </div>
+  );
+}
+
 function PopoutLibrary() {
   // WAS `getEngine(stationId ?? 1)` — the one place that hand-worked around the missing provider,
   // and it still carried the `?? 1` guess. main.tsx mounts <AudioEngineProvider gate> over every
@@ -199,7 +235,12 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
   let content: React.ReactNode;
   switch (panel) {
     case "decks":
-      content = <StandaloneDecksPanel />;
+      // THE SAME BOARD THE DASHBOARD RENDERS — not a monitor-mode copy of it.
+      // This used to be StandaloneDecksPanel, a months-old widget that predated source channels and
+      // drew "not available in monitor mode" over D/E/F. Deleted. FaderSection owns its own board
+      // state, so it needs only the three rotation deck states, which this window subscribes to
+      // itself. Jeff: "everything opens on its own window" — including the faders, in full.
+      content = <PopoutFaders />;
       break;
     case "master":
       // The full master section (fader + EQ + meters) — the EQ pop-out the panel button opens.

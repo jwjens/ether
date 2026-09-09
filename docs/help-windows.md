@@ -85,3 +85,23 @@ in the normal place. Move it back and it is remembered again.
 - `help-imaging.md` — the Imaging window
 - `help-logs.md` — the Play Log window
 - `help-schedule-manager.md` — the Schedule Manager window
+
+---
+
+## Update in 4.6.22 — the Decks window is the real board
+
+Before this, **Decks** opened an old, cut-down view: three decks, and the words *"not available in
+monitor mode"* where Source D/E/F should have been. It was a different piece of the app from the one
+the live screen draws.
+
+It now opens **the same board the live screen shows** — six channels, A/B/C plus Source D/E/F with
+their assignment dropdowns, DUCK, meters, ON and PFL, the **+** on the right edge for adding a
+channel, and the master output. Not a copy of it: the same one.
+
+**What that means in practice:** anything you change in one place shows up in the other. Add a
+channel with **+** in the Decks window and it appears on the live screen. Re-dial a source, turn a
+channel ON or OFF, arm DUCK — the two always agree, because there is only one board underneath.
+
+**Your ON buttons are remembered now.** A channel you switch off stays off through a restart. Before
+4.6.22 the ON lamps reset every launch, and the board could show a channel as ON that the audio
+engine had never been told about.

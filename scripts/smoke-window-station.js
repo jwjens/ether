@@ -149,16 +149,28 @@ console.log("\n== 6. the ON lamp has a STORE, so two windows cannot fight over t
   // {}, each asserts its own `?? true`, and they overwrite each other with no arbiter. There is no
   // read-back either: DeckState carries `volume`, never `muted`. The row is the only place the
   // truth can live. Jeff: "I'm not shipping two writers fighting over a channel cut."
+  // The board lives in FaderSection.tsx now (extracted from LivePanel so the dashboard and the Decks
+  // window render ONE implementation). Both files are checked: the state must be derived where it
+  // lives, and must not reappear as useState in either.
   const app     = code("src/App.tsx");
+  const fader   = code("src/components/FaderSection.tsx");
   const cfg     = code("src/components/DeckConfigurator.tsx");
   const handler = code("electron/sync/handlers/deck_configs.js");
 
-  if (/const\s*\[\s*srcChannelOn\s*,/.test(app)) {
+  if (/const\s*\[\s*srcChannelOn\s*,/.test(fader) || /const\s*\[\s*srcChannelOn\s*,/.test(app)) {
     fail("srcChannelOn is renderer useState again — unstored state asserted downward is two writers waiting to happen");
-  } else if (/const\s+srcChannelOn\s*=\s*useMemo/.test(app)) {
+  } else if (/const\s+srcChannelOn\s*=\s*useMemo/.test(fader)) {
     pass("srcChannelOn is derived from the config rows, not held as window-local state");
   } else {
-    fail("could not find srcChannelOn in App.tsx — has it moved?");
+    fail("could not find the derived srcChannelOn in FaderSection.tsx — has it moved?");
+  }
+
+  // The assert-downward effect WRITES (setMuted on every change). Two copies of it in one app is the
+  // collision this arc removes, so App must not carry one beside FaderSection's.
+  if (/srcChannelOn\[c\.slot\]/.test(app)) {
+    fail("App.tsx still runs its own channel-cut assert — that is a second writer alongside FaderSection's");
+  } else {
+    pass("App.tsx carries no second channel-cut assert");
   }
 
   if (/channelOn/.test(cfg) && /COALESCE\(channel_on,\s*1\)/.test(cfg)) {

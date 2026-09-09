@@ -132,6 +132,13 @@ contextBridge.exposeInMainWorld("ether", {
   // into a window with no console strip listening and no file sink — the cart wall's "fired on F" and
   // its "no channel is dialled" refusal both vanished. emit() hands the line to main, which fans it
   // out to every window; onEntry() is how a window receives the other windows' lines.
+  // Cross-window UI events for controls whose listener may live in another window. Allow-listed in
+  // main — see the note there.
+  ui: {
+    broadcast:   (msg) => ipcRenderer.send("ui:broadcast", msg),
+    onBroadcast: (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("ui:broadcast", h); return h; },
+    offBroadcast:(h)  => ipcRenderer.removeListener("ui:broadcast", h),
+  },
   console: {
     emit:     (entry) => ipcRenderer.send("console:emit", entry),
     onEntry:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("console:entry", h); return h; },

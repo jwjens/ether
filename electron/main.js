@@ -4244,6 +4244,27 @@ ipcMain.on("console:emit", (_evt, entry) => {
   if (line.type === "error") { try { logStartup(`[console] ${line.msg}`); } catch { /* log not open yet */ } }
 });
 
+// ── CROSS-WINDOW UI EVENTS — an ALLOW-LIST, not a general bus ─────────────────────────────────
+//
+// Some board controls talk to their listener with `window.dispatchEvent`, which never leaves the
+// window it fired in. That was harmless while the board rendered in exactly one window. It stops
+// being harmless the moment the fader section renders in its own window too: the GUEST strip's ON
+// button dispatches 'ether:guest-toggle' for the WebRTC layer to act on, and from a pop-out that
+// event reaches nobody — a control that renders and does nothing, which is the defect class this
+// whole arc is closing.
+//
+// Deliberately an ALLOW-LIST rather than a general renderer-to-renderer bus: a general one is an
+// invitation to move state across windows by shouting, which is how two windows end up disagreeing.
+// These two are relayed because a control that already exists depends on them.
+const UI_BROADCAST_ALLOWED = new Set(["ether:guest-toggle", "ether:guest-volume"]);
+
+ipcMain.on("ui:broadcast", (_evt, msg) => {
+  if (!msg || !UI_BROADCAST_ALLOWED.has(msg.name)) return;
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { if (!w.isDestroyed()) w.webContents.send("ui:broadcast", msg); } catch { /* window closing */ }
+  }
+});
+
 ipcMain.handle("audio:load", async (_, deck, filePath, title, artist, gainDb, stationId) => {
   // Item 10 Phase 2 Step 1: the resolved load goes to the daemon when enabled (it owns the
   // engine); otherwise the in-process addon. File resolution (existsSync + R2 fetch) — which
