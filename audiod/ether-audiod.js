@@ -272,7 +272,13 @@ const handlers = {
     log(`releaseDb — engines+streams stopped, db ${dbWasOpen ? "CLOSED" : "was not open"}${closeError ? " (close error: " + closeError + ")" : ""}`);
     return { released: !closeError, dbWasOpen, closeError, stations: stations.size };
   },
-  load:               (m) => { stations.add(m.stationId); const r = A.audioLoad(m.deck, m.filePath, m.title || "", m.artist || "", m.gainDb ?? 0, m.stationId); const e = engines.get(m.stationId); if (e) e.noteManualCue(m.deck, { title: m.title, artist: m.artist, filePath: m.filePath, durationMs: m.durationMs, contentClass: m.contentClass ?? null }); return r; },
+  // THE LOAD LINE NAMES THE STATION. A load carries whichever stationId the caller stamped, and
+  // nothing here second-guesses it — which is correct, but it also meant a load addressed to the
+  // WRONG station was indistinguishable from a right one in every log we keep. That is precisely how
+  // the pop-out windows fired carts into station 1 for as long as they did, unnoticed. One line per
+  // load (a few per hour per station, in a 5 MB rotating file) makes "which station did this reach"
+  // readable instead of inferred.
+  load:               (m) => { stations.add(m.stationId); log(`[engine s${m.stationId}] load ${m.deck} <- "${m.title || "(untitled)"}"`); const r = A.audioLoad(m.deck, m.filePath, m.title || "", m.artist || "", m.gainDb ?? 0, m.stationId); const e = engines.get(m.stationId); if (e) e.noteManualCue(m.deck, { title: m.title, artist: m.artist, filePath: m.filePath, durationMs: m.durationMs, contentClass: m.contentClass ?? null }); return r; },
   // A refused play is a DECISION the operator must see, not a silent no-op (2026-07-31). audioPlay
   // returns false when the deck has no content; say so, name the deck, and tell them what to do.
   play:               (m) => {

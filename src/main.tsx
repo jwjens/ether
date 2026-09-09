@@ -13,6 +13,7 @@ import NowPlaying from "./components/NowPlaying";
 import ProducerDeskWindow from "./components/ProducerDeskWindow";
 import CueEditorWindow from "./components/CueEditorWindow";
 import PopoutRenderer from "./components/PopoutRenderer";
+import { AudioEngineProvider } from "./audio/AudioEngineContext";
 import "./index.css";
 import { runMigrations } from "./db/client";
 
@@ -89,11 +90,28 @@ async function boot() {
     DevTierBanner = debugMod.DevTierBanner;
   }
 
-  const mainContent = isNowPlaying  ? <NowPlaying /> :
-                      isDesk        ? <ProducerDeskWindow /> :
-                      isCueEditor   ? <CueEditorWindow /> :
-                      isPopout      ? <PopoutRenderer panel={popoutPanel} /> :
-                      <App />;
+  // ── EVERY WINDOW MOUNTS THE PROVIDER. THIS IS THE FIX FOR THE WHOLE CLASS. ────────────────────
+  //
+  // Only <App /> mounted <AudioEngineProvider> (it still does, inside its own JSX). The other four
+  // roots are separate React trees in separate BrowserWindows, and they mounted nothing — so every
+  // component in them fell through to the context's old default of station 1 and commanded the
+  // wrong station's engine, silently. That is the Carts pop-out defect, and it was never only Carts:
+  // PhoneDesk, VoiceTracker, MasterOutput, ConsoleStrip, UpNext, Spots and HealthMonitor all call
+  // useAudioEngine() and all render in windows.
+  //
+  // `gate` holds each secondary window until useActiveStation() has actually answered, so none of
+  // them can act on the id=1 fallback that stands during the first IPC round trip. <App /> is
+  // deliberately NOT gated — see the note on AudioEngineProvider for why the main window must never
+  // be blocked on that IPC.
+  const secondary = isNowPlaying  ? <NowPlaying /> :
+                    isDesk        ? <ProducerDeskWindow /> :
+                    isCueEditor   ? <CueEditorWindow /> :
+                    isPopout      ? <PopoutRenderer panel={popoutPanel} /> :
+                    null;
+
+  const mainContent = secondary
+    ? <AudioEngineProvider gate>{secondary}</AudioEngineProvider>
+    : <App />;
 
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <RootBoundary>

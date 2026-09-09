@@ -38,7 +38,6 @@ import { fillQueueFromSchedule, refillFromSchedule, resetScheduleCursor, getForm
 import { readID3 } from "./audio/id3";
 import { autoCueSong } from "./audio/songAnalysis";
 import Waveform from "./components/Waveform";
-import OnAirDeck from "./components/OnAirDeck";
 import ClipEditor from "./components/ClipEditor";
 import { useCaptions, CaptionsOverlay, CaptionsLogPanel } from "./components/Captions";
 import DeckConfigurator, { useDeckConfig, PlaylistPlayer, BoutiqueCartWall, type DeckConfig } from "./components/DeckConfigurator";

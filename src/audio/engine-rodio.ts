@@ -81,6 +81,12 @@ export class AudioEngine {
     this.stationId = stationId;
   }
 
+  /** WHICH STATION THIS ENGINE ACTUALLY COMMANDS — readable, so a surface can report its own address
+   *  rather than the app's opinion of it. Every command below stamps `this.stationId`; when a window
+   *  resolved the wrong engine, the two disagreed and nothing on screen could show the disagreement.
+   *  Read-only on purpose: an engine's station is fixed at construction (see the registry). */
+  get station(): number { return this.stationId; }
+
   private listeners = new Set<Listener>();
   private playStartCallbacks = new Set<(deckId: DeckId, title: string, artist: string, filePath: string) => void>();
 

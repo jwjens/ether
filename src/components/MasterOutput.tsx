@@ -34,9 +34,44 @@ function readThemeColors() {
 // Call from anywhere in the app to push a line to the console.
 export type ConsoleEventType = "system" | "audio" | "rotation" | "error" | "clock" | "info";
 
+// ── THE CONSOLE REACHES THE OPERATOR FROM ANY WINDOW (2026-09-08) ──────────────────────────────
+//
+// This was a bare `window.dispatchEvent`. A DOM CustomEvent never leaves the window it is dispatched
+// in, and the console strip that listens for it lives in the DASHBOARD — so every consoleLog() call
+// made from a pop-out went into a window with no listener and no file sink.
+//
+// That silently disabled the honesty layer exactly where it was needed most. The cart wall's fire
+// path is written to be loud — it names the channel a cart went to, and refuses to fail quietly when
+// no channel is dialled to Cart / SFX rack — and in a pop-out none of it was reachable. Receipt: a
+// 1.6 GB ether-startup.log with ZERO [CART] lines in it, ever.
+//
+// Now every line goes to the main process, which fans it out to every window. The local dispatch
+// stays FIRST and unconditional so a window's own console still works when IPC is unavailable
+// (dev server, browser) and so the emitting window never waits on a round trip to show its own line.
+// The relay carries an origin id; the receiver skips its own, which is what stops the echo.
+const CONSOLE_ORIGIN = Math.random().toString(36).slice(2) + "-" + (typeof performance !== "undefined" ? Math.floor(performance.now()) : 0);
+
 export function consoleLog(type: ConsoleEventType, msg: string) {
-  window.dispatchEvent(new CustomEvent("ether:console", { detail: { type, msg, ts: Date.now() } }));
+  const ts = Date.now();
+  window.dispatchEvent(new CustomEvent("ether:console", { detail: { type, msg, ts } }));
+  try { (window as any).ether?.console?.emit?.({ type, msg, ts, origin: CONSOLE_ORIGIN }); } catch { /* no IPC: the local dispatch above already stands */ }
 }
+
+// Installed once per window, at module load, so a window receives relayed lines whether or not it
+// renders a console strip. Re-dispatches as the SAME local event the strip already listens for —
+// one listener contract, two sources.
+let _consoleRelayInstalled = false;
+function installConsoleRelay() {
+  if (_consoleRelayInstalled) return;
+  const ether = (window as any).ether;
+  if (!ether?.console?.onEntry) return;
+  _consoleRelayInstalled = true;
+  ether.console.onEntry((entry: { type: ConsoleEventType; msg: string; ts: number; origin?: string }) => {
+    if (!entry || entry.origin === CONSOLE_ORIGIN) return;   // our own line, already shown locally
+    window.dispatchEvent(new CustomEvent("ether:console", { detail: { type: entry.type, msg: entry.msg, ts: entry.ts } }));
+  });
+}
+installConsoleRelay();
 
 const TYPE_COLOR: Record<ConsoleEventType, string> = {
   system:   "#208080",

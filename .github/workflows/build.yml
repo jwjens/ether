@@ -71,6 +71,13 @@ jobs:
       - name: Unit tests (renderer + audiod)
         run: npx vitest run
 
+      # A window that cannot tell which station it commands must not command one. This is static —
+      # no Electron, no engine, no audio — so it gates here for the same reason the typecheck does.
+      # It exists because the context default of `1` let every pop-out address the wrong station
+      # silently for as long as pop-outs have existed (4.6.20 diagnosis, docs/popout-defects-2026-09-08.md).
+      - name: Window/station contract
+        run: node scripts/smoke-window-station.js
+
       # NOT GATED HERE, deliberately, and neither is a lie of omission:
       #
       # · `npm run test:sync` runs under `electron --no-sandbox`, needs better-sqlite3 rebuilt for

@@ -4221,6 +4221,29 @@ async function resolveLocalAudioPath(filePath) {
   return fetched;
 }
 
+// ── OPERATOR CONSOLE FAN-OUT — the honesty layer must reach the operator from ANY window ────────
+//
+// consoleLog() (src/components/MasterOutput.tsx) was a window-scoped DOM CustomEvent. The console
+// strip that listens for it lives in the dashboard, so every line a POP-OUT reported went nowhere:
+// no listener, no file. The cart wall's fire path is deliberately loud — it names the channel a cart
+// went to and refuses to fail silently when nothing is dialled to Cart / SFX rack — and none of it
+// was reachable from the Carts window. Receipt: a 1.6 GB ether-startup.log with zero [CART] lines.
+//
+// Every window gets every line. The emitter is skipped by ORIGIN in the renderer, not by webContents
+// id here, because a window shows its own line locally the instant it is logged — filtering here
+// would also have to guess at reloads and re-created windows.
+//
+// Errors additionally go to the startup log. Only errors: this log is already the largest file the
+// app writes, and a failure the operator can no longer scroll back to is exactly what this fixes.
+ipcMain.on("console:emit", (_evt, entry) => {
+  if (!entry || typeof entry.msg !== "string") return;
+  const line = { type: entry.type || "info", msg: entry.msg, ts: entry.ts || Date.now(), origin: entry.origin || null };
+  for (const w of BrowserWindow.getAllWindows()) {
+    try { if (!w.isDestroyed()) w.webContents.send("console:entry", line); } catch { /* window closing */ }
+  }
+  if (line.type === "error") { try { logStartup(`[console] ${line.msg}`); } catch { /* log not open yet */ } }
+});
+
 ipcMain.handle("audio:load", async (_, deck, filePath, title, artist, gainDb, stationId) => {
   // Item 10 Phase 2 Step 1: the resolved load goes to the daemon when enabled (it owns the
   // engine); otherwise the in-process addon. File resolution (existsSync + R2 fetch) — which

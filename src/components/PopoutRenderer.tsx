@@ -37,7 +37,7 @@ import CloudBackup from "./CloudBackup";
 import AudioRoutingScreen from "./AudioRoutingPanel";
 import LibraryImport from "./LibraryImport";
 import { PlanGate } from "../hooks/usePlan";
-import { getEngine } from "../audio/engine-registry";
+import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useActiveStation } from "../hooks/useActiveStation";
 
 // ── StandaloneUpNext — wraps UpNext; syncs queue via broadcast relay ──
@@ -107,7 +107,7 @@ function StudioProPopout() {
     <StudioPro
       deckAPath={null} deckATitle={undefined}
       deckBPath={null} deckBTitle={undefined}
-      stationId={stationId ?? 1}
+      stationId={stationId}
     />
   );
 }
@@ -161,8 +161,11 @@ function ProcessorPopout() {
 // Library pop-out handlers — cue a track onto a deck via the shared engine (daemon-backed,
 // so it affects the live air chain). Edit/send-to-studio aren't meaningful in a pop-out.
 function PopoutLibrary() {
-  const { stationId } = useActiveStation();
-  const eng = getEngine(stationId ?? 1);
+  // WAS `getEngine(stationId ?? 1)` — the one place that hand-worked around the missing provider,
+  // and it still carried the `?? 1` guess. main.tsx mounts <AudioEngineProvider gate> over every
+  // window now, so this reads the live station like the dashboard does, and a window with no
+  // provider throws instead of quietly addressing station 1.
+  const eng = useAudioEngine();
   const cue = (deck: "A" | "B" | "C", s: any) => {
     try { eng.deckCue?.(deck, { filePath: s.file_path, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 }); } catch { /* engine not ready */ }
   };

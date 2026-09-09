@@ -21,7 +21,8 @@
     "check:audio-isolation": "node scripts/check-no-global-audio-statics.js",
     "test:sync": "electron --no-sandbox scripts/run-sync-tests.js",
     "test:designation": "cross-env ELECTRON_RUN_AS_NODE=1 electron electron/smoke-designation-write.js",
-    "test:closing": "node scripts/smoke-closing-isolation.js",
+    "test:window-station": "node scripts/smoke-window-station.js",
+  "test:closing": "node scripts/smoke-closing-isolation.js",
     "test:announce": "node scripts/smoke-announce-coexist.js",
     "test:iris-phrases": "node scripts/test-iris-transport-phrases.js",
     "test:library-foreign": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-library-health-foreign.js",
@@ -83,5 +84,5 @@
     "email": "jensj@ov.org",
     "name": "Jeffrey Jens"
   },
-  "version": "4.6.20"
+  "version": "4.6.21"
 }

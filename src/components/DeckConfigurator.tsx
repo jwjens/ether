@@ -928,7 +928,12 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
     // fire — this whole block used to sit in `catch {}`, which produced the load line in the console
     // and then absolute silence: no error, no refusal, no clue.
     const chans = await resolveFireChannels();
-    consoleLog("audio", `[CART] "${cart.label}" → ${chans.join("+")}`);
+    // BOTH HALVES OF THE ADDRESS. This said only which CHANNEL a cart went to, and a channel letter
+    // is not an address — the pop-out windows fired onto the right letter of the WRONG STATION for
+    // as long as they did precisely because nothing on screen or in any log named the station. It is
+    // the same line the daemon now writes on its side (audiod/ether-audiod.js `load`), so the two
+    // can be read against each other.
+    consoleLog("audio", `[CART] "${cart.label}" → ${chans.join("+")} (station ${engine.station})`);
     for (const ch of chans) {
       try {
         await engine.loadToDeck(ch, cart.filePath, cart.label, "");

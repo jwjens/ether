@@ -127,6 +127,16 @@ contextBridge.exposeInMainWorld("ether", {
   songsExtra: {
     setCartId:           (id, cartId)                  => ipcRenderer.invoke("songs:set-cart-id", { id, cartId }),
   },
+  // ── OPERATOR CONSOLE, ACROSS WINDOWS ──────────────────────────────────────────────────────────
+  // consoleLog() used to be a window-local DOM event, so anything a POP-OUT reported was dispatched
+  // into a window with no console strip listening and no file sink — the cart wall's "fired on F" and
+  // its "no channel is dialled" refusal both vanished. emit() hands the line to main, which fans it
+  // out to every window; onEntry() is how a window receives the other windows' lines.
+  console: {
+    emit:     (entry) => ipcRenderer.send("console:emit", entry),
+    onEntry:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("console:entry", h); return h; },
+    offEntry: (h)  => ipcRenderer.removeListener("console:entry", h),
+  },
   captions: {
     start:             ()        => ipcRenderer.invoke("captions:start"),
     stop:              ()        => ipcRenderer.invoke("captions:stop"),
