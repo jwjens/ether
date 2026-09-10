@@ -1287,41 +1287,30 @@ function MultiMachineSyncSection() {
         </div>
       )}
 
-      {/* Enable the engine. Replaces the old Multi-Device Sync toggle, which lived in a second
-          section and read as a competing control beside these buttons.
-          It writes sync_backend_url too — that is NOT redundant. This toggle once wrote
-          `sync_enabled` alone while no other UI in the tree wrote the destination, so main.js
-          resolved the host to '' and started an engine with nowhere to send: switching sync on
-          appeared to work and moved nothing (4.4.202). The repair scripts also read this key and
-          refuse to run without it. */}
+      {/* READ-ONLY STATUS. This was a checkbox, and it was a SECOND master switch for half of what
+          "Keep my stuff synced" does: unticking it here left the top switch claiming on while the
+          rows half was off (Jeff, 2026-09-09 — "It shouldn't be settable in two places").
+          Two writers on one key is the same class of defect as the srcChannelOn split and the
+          duplicated channel-cut assert, and it is what smoke-window-station.js §6 exists to catch.
+          The information stays — stored value vs what the RUNNING engine is using is genuinely
+          diagnostic, and the two differ legitimately because the flag is read at startup.
+          The one writer is toggleKeepSynced(), which sets sync_enabled and sync_backend_url
+          together — writing the flag without the destination once left main resolving the host to
+          '' and starting an engine with nowhere to send (4.4.202). */}
       <div style={{ padding: "10px 12px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", marginBottom: 12 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-          <input
-            type="checkbox"
-            checked={pf?.flags?.sync_enabled === "true"}
-            disabled={busy !== null || !pf?.ok}
-            onChange={async () => {
-              const next = pf?.flags?.sync_enabled !== "true";
-              const sid = pf?.activeStationId;
-              if (sid == null) { setMsg("✗ no active station"); return; }
-              setBusy("enable"); setMsg("");
-              try {
-                const kv = (window as any).ether.stationConfigKv;
-                await kv.upsertByKey(sid, 'sync_enabled', next ? 'true' : 'false');
-                if (next) await kv.upsertByKey(sid, 'sync_backend_url', 'https://ether-backend-production.up.railway.app');
-                setMsg(next
-                  ? "✓ sync enabled — RESTART Ether for the engine to start"
-                  : "✓ sync disabled — takes effect after a restart");
-              } catch (e: any) { setMsg(`✗ ${e?.message || String(e)}`); }
-              finally { setBusy(null); refresh(); }
-            }}
-          />
-          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>Enable the sync engine</span>
-        </label>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" as any }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>Sync engine</span>
+          <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "'DM Mono', monospace",
+                         color: (status?.running ?? pf?.schedulerRunning) ? "#4ade80" : "var(--text-tertiary)" }}>
+            {(status?.running ?? pf?.schedulerRunning) ? "running" : "not running"}
+          </span>
+        </div>
         <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1.5 }}>
-          The master switch. While this is on, Ether pushes and pulls in the background with no
-          further input. Stored: <b>{pf?.flags?.sync_enabled ?? "unset"}</b> · engine right now:{" "}
-          <b>{status?.running ?? pf?.schedulerRunning ? "running" : "not running"}</b>. Requires a Network licence.
+          Stored: <b>{pf?.flags?.sync_enabled ?? "unset"}</b> · engine right now:{" "}
+          <b>{(status?.running ?? pf?.schedulerRunning) ? "running" : "not running"}</b>. These differ
+          until a restart, because the flag is read when Ether starts. Requires a Network licence.
+          <br />Turn it on or off with <b>Keep my stuff synced</b> above — this is status only, so the
+          two halves cannot disagree.
         </div>
       </div>
 
@@ -1445,225 +1434,16 @@ function AccessibleAccountsSection() {
   );
 }
 
-function SyncSection() {
-  const { stationId } = useActiveStation();
-  const { isStation, plan } = usePlan();   // Multi-Device Sync is a NETWORK-tier feature only
-  const [enabled, setEnabled]   = useState(false);
-  const [dirty, setDirty]       = useState(false);
-  const [stats, setStats]       = useState<{
-    running: boolean;
-    lastSyncAt: string | null;
-    pushedToday: number;
-    pulledToday: number;
-  }>({ running: false, lastSyncAt: null, pushedToday: 0, pulledToday: 0 });
-  const [devices, setDevices] = useState<{ machine_id: string; machine_name: string | null; os: string | null; last_seen: string | null }[]>([]);
-  const [thisId, setThisId]   = useState<string | null>(null);
-  const [devLimit, setDevLimit] = useState<number | null>(null);
-  const [devErr, setDevErr]   = useState<string | null>(null);
-  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
-  const [removingId, setRemovingId] = useState<string | null>(null);
-
-  const loadDevices = () => {
-    (window as any).ether.invoke('sync:devices').then((r: any) => {
-      if (r?.ok) { setDevices(r.devices || []); setThisId(r.thisMachineId || null); setDevLimit(r.limit ?? null); setDevErr(null); }
-      else setDevErr(r?.error || 'Could not load devices');
-    }).catch((e: any) => setDevErr(String(e?.message || e)));
-  };
-
-  const removeDevice = async (machineId: string) => {
-    setRemovingId(machineId);
-    try {
-      const r = await (window as any).ether.invoke('sync:removeDevice', machineId);
-      if (!r?.ok) setDevErr(r?.error || 'Could not remove device');
-      else { setConfirmRemoveId(null); loadDevices(); }
-    } catch (e: any) { setDevErr(String(e?.message || e)); }
-    finally { setRemovingId(null); }
-  };
-
-  useEffect(() => {
-    (window as any).ether.invoke('sync:getStats').then((s: any) => {
-      setEnabled(!!s?.enabled);
-      setStats({
-        running:     !!s?.running,
-        lastSyncAt:  s?.lastSyncAt ?? null,
-        pulledToday: s?.pulledToday ?? 0,
-        pushedToday: s?.pushedToday ?? 0,
-      });
-    }).catch(() => {});
-    (window as any).ether.invoke('sync:devices').then((r: any) => {
-      if (r?.ok) { setDevices(r.devices || []); setThisId(r.thisMachineId || null); setDevLimit(r.limit ?? null); }
-      else setDevErr(r?.error || 'Could not load devices');
-    }).catch((e: any) => setDevErr(String(e?.message || e)));
-  }, []);
-
-  const toggle = async () => {
-    const next = !enabled;
-    setEnabled(next);
-    setDirty(true);
-    if (stationId != null) {
-      await (window as any).ether.stationConfigKv.upsertByKey(
-        stationId, 'sync_enabled', next ? 'true' : 'false'
-      ).catch(() => {});
-      // ALSO WRITE THE DESTINATION (2026-08-12). This toggle used to write `sync_enabled` alone, and
-      // `sync_backend_url` is written by no other UI in the tree — so main.js resolved the transport
-      // host to '' and started a sync engine with nowhere to send. Switching sync on appeared to work
-      // and moved nothing. docs/mirror-regression-diagnosis-2026-07-14.md predicted exactly this.
-      //
-      // main.js now also falls back to the app's own backend, so this is belt-and-braces — but it
-      // makes the stored config self-describing, and the repair scripts
-      // (scripts/push-pending-mutations.js) read this key and refuse to run without it.
-      if (next) {
-        await (window as any).ether.stationConfigKv.upsertByKey(
-          stationId, 'sync_backend_url', 'https://ether-backend-production.up.railway.app'
-        ).catch(() => {});
-      }
-    }
-  };
-
-  const fmtTime = (iso: string | null) => {
-    if (!iso) return '—';
-    try {
-      return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    } catch (_) { return iso; }
-  };
-
-  // Lives under Backup & Restore, not System (2026-08-14). Everything about keeping installs in
-  // step — cloud backup, restore, and the engineering sync controls — now sits on one page, so an
-  // operator is not chasing sync across two tabs.
-  const shouldRender = useShouldRender('Multi-Device Sync', 'Keep multiple Ether installs in sync via the cloud backend', 'backup');
-  if (!shouldRender) return null;
-
-  return (
-    <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", overflow: "hidden", marginBottom: 12 }}>
-      <div style={{ padding: "18px 20px 14px", borderBottom: "1px solid var(--border-primary)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ display: "flex", alignItems: "center", color: "var(--text-tertiary)" }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M17 1l4 4-4 4"/>
-              <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
-              <path d="M7 23l-4-4 4-4"/>
-              <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
-            </svg>
-          </span>
-          <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.02em", fontFamily: "'Inter', sans-serif" }}>Multi-Device Sync</div>
-            <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 2 }}>Keep multiple Ether installs in sync via the cloud backend</div>
-          </div>
-        </div>
-      </div>
-      <div style={{ padding: "16px 20px" }}>
-        {!isStation ? (
-          <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-            Multi-Device Sync is a <b style={{ color: "var(--accent-blue)" }}>Network</b>-plan feature{plan ? <> (your plan: <b>{plan}</b>)</> : null}. It keeps multiple Ether installs — your studio, a backup PC, a remote board op — in sync across the cloud, and lets a new install pull your whole station down. Upgrade to Network to turn it on.
-          </div>
-        ) : (
-        <>
-        <SettingRow label="Enable sync" hint="Turns the sync engine on so Push Now and Pull Now can run. Transfers are manual — nothing syncs on a timer. Requires an active Network license.">
-          <Toggle value={enabled} onChange={toggle} label="" />
-        </SettingRow>
-
-        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-            <span style={{ color: "var(--text-tertiary)" }}>Status</span>
-            <span style={{ color: stats.running ? "var(--accent-green)" : "var(--text-tertiary)" }}>
-              {stats.running ? "Running" : enabled ? "Starts on next launch" : "Disabled"}
-            </span>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-            <span style={{ color: "var(--text-tertiary)" }}>Last sync</span>
-            <span style={{ color: "var(--text-secondary)" }}>{fmtTime(stats.lastSyncAt)}</span>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-            <span style={{ color: "var(--text-tertiary)" }}>Pushed today</span>
-            <span style={{ color: "var(--text-secondary)" }}>{stats.pushedToday}</span>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-            <span style={{ color: "var(--text-tertiary)" }}>Pulled today</span>
-            <span style={{ color: "var(--text-secondary)" }}>{stats.pulledToday}</span>
-          </div>
-        </div>
-
-        {/* Synced devices — which computers are on this account + when each was last seen */}
-        <div style={{ marginTop: 16, borderTop: "1px solid var(--border-primary)", paddingTop: 14 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 8 }}>
-            Synced devices{devLimit ? ` · ${devices.length}/${devLimit}` : devices.length ? ` · ${devices.length}` : ""}
-          </div>
-          {devErr ? (
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>{devErr}</div>
-          ) : devices.length === 0 ? (
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>No other devices yet — this is your only install.</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {devices.map(d => {
-                const isMe = d.machine_id === thisId;
-                const seenMs = d.last_seen ? Date.now() - new Date(d.last_seen).getTime() : Infinity;
-                const online = seenMs < 2 * 60 * 1000;
-                const seenLabel = !d.last_seen ? "—"
-                  : online ? "online"
-                  : seenMs < 3600e3   ? `${Math.round(seenMs / 60000)}m ago`
-                  : seenMs < 86400e3  ? `${Math.round(seenMs / 3600e3)}h ago`
-                  : `${Math.round(seenMs / 86400e3)}d ago`;
-                return (
-                  <div key={d.machine_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", background: "var(--bg-tertiary)", border: `1px solid ${isMe ? "var(--accent-blue)" : "var(--border-primary)"}` }}>
-                    <span style={{ fontSize: 16 }}>🖥</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {d.machine_name || d.machine_id.slice(0, 12)}{isMe ? <span style={{ color: "var(--accent-blue)", fontWeight: 600 }}> · this machine</span> : ""}
-                      </div>
-                      <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{d.os || "—"}</div>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: "50%", background: online ? "var(--accent-green)" : "var(--text-tertiary)" }} />
-                      <span style={{ fontSize: 11, color: online ? "var(--accent-green)" : "var(--text-tertiary)" }}>{seenLabel}</span>
-                      {!isMe && (confirmRemoveId === d.machine_id ? (
-                        <span style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 4 }}>
-                          <button onClick={() => removeDevice(d.machine_id)} disabled={removingId === d.machine_id}
-                            style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", background: "var(--accent-red, #e0484a)", color: "#fff", border: "none", borderRadius: 4, cursor: removingId === d.machine_id ? "wait" : "pointer" }}>
-                            {removingId === d.machine_id ? "Removing…" : "Remove"}
-                          </button>
-                          <button onClick={() => setConfirmRemoveId(null)} disabled={removingId === d.machine_id}
-                            style={{ fontSize: 11, padding: "3px 8px", background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", borderRadius: 4, cursor: "pointer" }}>
-                            Cancel
-                          </button>
-                        </span>
-                      ) : (
-                        <button onClick={() => setConfirmRemoveId(d.machine_id)} title="Remove this device from the account"
-                          style={{ marginLeft: 4, width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", borderRadius: 4, cursor: "pointer", fontSize: 13, lineHeight: 1 }}>
-                          ✕
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* What syncs */}
-        <div style={{ marginTop: 14, borderTop: "1px solid var(--border-primary)", paddingTop: 14 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.08em", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 6 }}>What syncs</div>
-          <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-            Your <b>library, clocks, shows, categories, schedule, and settings</b> and <b>all your audio files</b> travel to every computer signed into your account. One switch covers both — see <b>Keep my stuff synced</b>.
-          </div>
-        </div>
-
-        {/* How to add a device */}
-        <div style={{ marginTop: 14, padding: "10px 12px", background: "rgba(96,128,192,0.08)", border: "1px solid rgba(96,128,192,0.25)", fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.6 }}>
-          <b>Add a device:</b> install Ether on another computer and sign in with this account — it appears here automatically and syncs both ways.
-        </div>
-
-        {dirty && (
-          <div style={{ marginTop: 14, padding: "8px 12px", background: "rgba(234,179,8,0.1)", border: "1px solid rgba(234,179,8,0.3)", fontSize: 12, color: "var(--accent-amber)" }}>
-            Restart Ether to apply this change
-          </div>
-        )}
-        </>
-        )}
-      </div>
-    </div>
-  );
-}
+// SyncSection — DELETED 2026-09-09.
+//
+// It had already stopped being rendered (its own note lived beside <MultiMachineSyncSection />),
+// but 227 lines of unrendered component is not harmless when one of them writes a shared key: its
+// toggle() wrote `sync_enabled`, which made TWO writers of the flag that "Keep my stuff synced"
+// now owns. Dead code that writes shared state is a defect waiting for someone to re-render it,
+// and it also carried a whole competing "Multi-Device Sync" surface that contradicted the one
+// switch. Jeff, 2026-09-09: "It shouldn't be settable in two places."
+//
+// The one writer is toggleKeepSynced(). Guarded by scripts/smoke-one-switch.js §7.
 
 // ── Keep My Station On Air (HA auto-logon — Phase 4) ─────────
 // Opt-in, default OFF. Enabling registers the per-user watchdog task AND
@@ -3560,13 +3340,14 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
           );
         })()}
 
-        {/* THE ONE SWITCH. Replaces "Enable the sync engine" and "Back up automatically" both. */}
+        {/* THE ONE SWITCH. Replaces "Enable the sync engine" and "Back up automatically" both.
+            NO TEXT LABEL HERE. The section heading above already says "Keep my stuff synced", and
+            repeating it on the only switch in the section made one control read as two (Jeff,
+            2026-09-09). The name lives at the top, the switch sits under it, and the sentence below
+            says what it does. The accessible name is on the button itself via aria-label. */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" as any, padding: "13px 16px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", marginBottom: 8 }}>
-          <div style={{ minWidth: 240 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text-primary)" }}>Keep my stuff synced</div>
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2, maxWidth: 520, lineHeight: 1.5 }}>
-              Your setup and your audio, both directions, kept current on every computer signed into your account. Leave it on.
-            </div>
+          <div style={{ minWidth: 240, fontSize: 12.5, color: "var(--text-tertiary)", maxWidth: 520, lineHeight: 1.55 }}>
+            Your setup and your audio, both directions, kept current on every computer signed into your account. Leave it on.
           </div>
           <button onClick={toggleKeepSynced} aria-label="Keep my stuff synced"
             style={{ position: "relative", width: 46, height: 26, borderRadius: 999, border: "none", flexShrink: 0, cursor: "pointer", background: (syncOn && r2Enabled) ? "var(--accent-green)" : "var(--bg-tertiary)", boxShadow: (syncOn && r2Enabled) ? "none" : "inset 0 0 0 1px var(--border-primary)" }}>

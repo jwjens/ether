@@ -172,6 +172,55 @@ console.log("\n== 6. the pending count is not the pushable count ==");
   else fail("Clear pending still names the raw pending count — an irreversible act armed against the wrong number");
 }
 
+console.log("\n== 7. sync_enabled has exactly ONE writer ==");
+{
+  // Jeff, 2026-09-09: "It shouldn't be settable in two places." Advanced carried its own
+  // "Enable the sync engine" checkbox, which was a second master switch for HALF of what the top
+  // toggle does — untick it there and the card claimed on while the rows half was off. Two writers
+  // on one key is the srcChannelOn class of defect, which §6 of smoke-window-station.js already
+  // guards for the board. This is the same guard for the sync flag.
+  const writers = [];
+  for (const f of RENDERER) {
+    code(f).split("\n").forEach((l, i) => {
+      if (/upsertByKey\s*\(/.test(l) && /'sync_enabled'|"sync_enabled"/.test(l)) writers.push(`${f}:${i + 1}`);
+      // The multi-line form: the key sits on its own line inside the call.
+      else if (/^\s*(stationId|sid)\s*,\s*'sync_enabled'/.test(l)) writers.push(`${f}:${i + 1}`);
+    });
+  }
+  if (writers.length === 1) pass(`one writer of sync_enabled (${writers[0]})`);
+  else if (writers.length === 0) fail("nothing writes sync_enabled — the master switch cannot turn the engine on");
+  else fail(`sync_enabled is written in ${writers.length} places (${writers.join(", ")}) — one switch means one writer`);
+
+  // Whoever writes the flag must write the destination in the same act.
+  const sp = code("src/components/SettingsPanel.tsx");
+  if (/sync_enabled[\s\S]{0,400}sync_backend_url/.test(sp)) pass("the writer sets sync_backend_url alongside it");
+  else fail("sync_enabled is written without sync_backend_url — main resolves the host to '' and starts an engine with nowhere to send (4.4.202)");
+
+  // The retired second control, by its own label.
+  if (!sp.includes("Enable the sync engine")) pass("the second master switch is gone from Advanced");
+  else fail("Advanced still offers \"Enable the sync engine\" — a second settable master switch");
+
+  // And the card must not name itself twice. Counting occurrences was the WRONG test — the string
+  // legitimately appears as the section title, as the switch's aria-label, and in three places that
+  // point the operator at it ("turn it on with…"). What must not exist is a second VISIBLE label
+  // repeating the heading next to the switch, which is the shape it had: a bare text node in the
+  // toggle row. Jeff, 2026-09-09: "the card heading AND the toggle label — reads like two controls."
+  // Match the DEFECT's shape, not the words. The duplicated label was a styled label element —
+  // `<div style={{ fontSize: 13.5, fontWeight: 600, ... }}>Keep my stuff synced</div>`. Inline
+  // <b>/<strong> mentions are the cross-references that point AT the switch, and those are wanted,
+  // so keying on fontWeight is what separates a heading-weight label from a sentence.
+  if (!/fontWeight[^>]*>\s*Keep my stuff synced\s*</.test(sp)) {
+    pass("the switch carries no styled label repeating the section heading");
+  } else {
+    fail("a styled \"Keep my stuff synced\" label sits beside the heading of the same name — one control reading as two");
+  }
+
+  const titles = (sp.match(/title="Keep my stuff synced"/g) || []).length;
+  const arias  = (sp.match(/aria-label="Keep my stuff synced"/g) || []).length;
+  if (titles === 1 && arias === 1) pass("one section title, one accessible name — one control");
+  else fail(`expected 1 title= and 1 aria-label=, found ${titles} and ${arias}`);
+}
+
 console.log(failures === 0
   ? "\nVERDICT: PASS — one engine, one switch, and every count says what it counted.\n"
   : `\nVERDICT: FAIL — ${failures} check(s) failed.\n`);
