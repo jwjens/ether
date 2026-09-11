@@ -25,6 +25,7 @@
     "test:copy-on-import": "node scripts/smoke-copy-on-import.js",
     "test:catalogue-r2": "node scripts/smoke-catalogue-r2.js",
     "test:one-switch": "node scripts/smoke-one-switch.js",
+    "test:undefined-calls": "node scripts/smoke-undefined-calls.js",
     "test:closing": "node scripts/smoke-closing-isolation.js",
     "test:announce": "node scripts/smoke-announce-coexist.js",
     "test:iris-phrases": "node scripts/test-iris-transport-phrases.js",
@@ -87,5 +88,5 @@
     "email": "jensj@ov.org",
     "name": "Jeffrey Jens"
   },
-  "version": "4.6.25"
+  "version": "4.6.26"
 }

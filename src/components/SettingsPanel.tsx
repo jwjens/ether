@@ -2326,7 +2326,14 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
       // sync_enabled and starts or stops the timer accordingly.
       await (window as any).ether.cloudBackup.setR2Config({ intervalHours: r2Interval });
       setSyncOn(next);
-      setR2Enabled(next);
+      // RE-READ, do not predict. setR2Enabled(next) was an optimistic echo of what this function
+      // had just tried to do, and "Going to the cloud right now" renders from it — so the one line
+      // on the screen whose job is to report what the machinery ANSWERS was, after a toggle,
+      // reporting what the renderer ASSUMED until the next mount. Ask main.
+      try {
+        const cfg: any = await (window as any).ether.cloudBackup.getR2Config();
+        setR2Enabled(!!cfg?.enabled);
+      } catch { setR2Enabled(next); }
       // Honest about the restart. The engine reads sync_enabled at startup, so claiming it is on
       // this instant would be the same lie the old panel told.
       setSyncSwitchMsg(next

@@ -385,7 +385,12 @@ async function runBackup(dbPath) {
     r2Config.lastBackup = config.lastBackup;
     r2Config.lastStatus = "success";
     saveConfig();
-    saveR2Config();
+    // saveR2Config() was here and threw ReferenceError on every SUCCESSFUL backup (OV, 4.6.24):
+    // 873aab4 renamed it to saveIntervalHours() and updated the set-r2-config caller but not this
+    // one. The throw landed in runBackup's outer catch, which recorded a FAILED history row for a
+    // backup whose two PUTs had both succeeded, and made run-now return ok:false — so the caller
+    // returned early and the AUDIO half never ran. Nothing replaces it: r2Config.lastBackup and
+    // lastStatus are in-memory only under Option A, and saveConfig() above persists the record.
     try {
       getDb().prepare("INSERT INTO cloud_backup_history (endpoint, size_bytes, checksum, status, duration_ms) VALUES (?,?,?,?,?)")
         .run("r2 (backend-signed)", gzippedDb.length, checksum, "success", durationMs);
