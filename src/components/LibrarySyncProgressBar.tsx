@@ -108,20 +108,39 @@ export default function LibrarySyncProgressBar() {
       }
     );
 
+    // THE COMPLETION PAYLOAD IS NOT SHAPED LIKE THE PROGRESS PAYLOAD, AND THIS READ THE WRONG ONE.
+    //
+    // OV, 4.6.27: "Cannot read properties of undefined (reading 'toLocaleString')" — the UI went
+    // down on install while audio kept running. onProgress emits { phase, done, total, errors,
+    // current } (audio-library-r2.js:352), but the DONE event carries downloadCatalogue's result
+    // object, which names the same two numbers `downloaded` and `toDownload` (:315-328). There is no
+    // `done` and no `total` on it. So both went undefined, `finished` went true, and the label below
+    // called .toLocaleString() on undefined.
+    //
+    // The annotation is why it survived review: a hand-written type on an IPC boundary asserting a
+    // shape nothing ever checked against the producer. tsc typechecks the CLAIM, not the wire.
+    // scripts/smoke-ipc-payload-contract.js now checks the wire.
+    //
+    // Latent since step 5 — a manual download with files in it would have crashed identically. The
+    // Phase 0 pull made it routine rather than causing it: the timer fires this event on every tick
+    // that actually fetches something, and OV had files waiting after the catalogue move.
+    //
+    // ?? on every field deliberately. A progress bar must never be able to take the UI down; if a
+    // future payload drops a field, the worst outcome allowed is a wrong number.
     const unsubD = (window as any).ether.catalogueBackup.onDownloadDone(
-      (e: { done: number; total: number; errors: number; aborted: boolean }) => {
+      (e: { downloaded?: number; toDownload?: number; errors?: number; aborted?: boolean; fatal?: string }) => {
         if (cancelled) return;
         setBar({
           visible: true,
           phase:   "done",
-          done:    e.done,
-          total:   e.total,
-          errors:  e.errors,
-          aborted: e.aborted,
+          done:    e.downloaded ?? 0,
+          total:   e.toDownload ?? 0,
+          errors:  e.errors ?? 0,
+          aborted: e.aborted ?? false,
           finished: true,
         });
         clearHideTimer();
-        const fadeMs = (e.aborted || e.errors > 0) ? FADE_ERROR_MS : FADE_NORMAL_MS;
+        const fadeMs = (e.aborted || (e.errors ?? 0) > 0) ? FADE_ERROR_MS : FADE_NORMAL_MS;
         hideTimer = setTimeout(() => {
           if (!cancelled) setBar(HIDDEN);
         }, fadeMs);

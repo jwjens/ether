@@ -2684,18 +2684,21 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
     });
     const offD = ether.catalogueBackup.onUploadDone?.((v: any) => {
       refreshLibCloud();   // re-read the real counts so the status reflects what's actually in the cloud
-      const uploaded = v?.uploaded ?? 0, total = v?.total ?? 0, errors = v?.errors ?? 0;
-      const consolidated = v?.consolidated ?? 0, notFound = v?.notFound ?? 0;
+      // `toUpload`, not `total`. And `consolidated` / `notFound` do not exist on this channel at
+      // all: they belong to the LEGACY library:sync-r2 uploader (main.js:11194) that step 4 retired
+      // — the songs-table one §1 of smoke-one-switch.js forbids the renderer from touching. This
+      // handler was migrated onto the catalogue channel and kept reading the old producer's shape,
+      // so "Uploaded 12 of 0" was the honest output of a dishonest read, and the two "moved into
+      // your library folder" / "not found on disk" clauses could never render at all.
+      const uploaded = v?.uploaded ?? 0, total = v?.toUpload ?? 0, errors = v?.errors ?? 0;
       setLibUploading(false);
       setLibProgress({ phase: "done", done: uploaded, total, errors });
-      const consPart = consolidated > 0 ? ` · ${consolidated.toLocaleString()} moved into your library folder` : "";
-      const missPart = notFound > 0 ? ` · ${notFound.toLocaleString()} file${notFound === 1 ? "" : "s"} not found on disk` : "";
       setLibUploadMsg(
         v?.fatal     ? `Upload failed: ${v.fatal}`
-        : v?.aborted ? `Cancelled — ${uploaded.toLocaleString()} uploaded${consPart}${missPart}`
-        : errors > 0 ? `Uploaded ${uploaded.toLocaleString()} of ${total.toLocaleString()} — ${errors} failed${consPart}${missPart}`
-        : total === 0 ? `✓ Library already in the cloud${consPart}${missPart}`
-        :              `✓ All ${uploaded.toLocaleString()} files uploaded to the cloud${consPart}${missPart}`
+        : v?.aborted ? `Cancelled — ${uploaded.toLocaleString()} uploaded`
+        : errors > 0 ? `Uploaded ${uploaded.toLocaleString()} of ${total.toLocaleString()} — ${errors} failed`
+        : total === 0 ? `✓ Library already in the cloud`
+        :              `✓ All ${uploaded.toLocaleString()} files uploaded to the cloud`
       );
     });
     return () => { offP?.(); offD?.(); };

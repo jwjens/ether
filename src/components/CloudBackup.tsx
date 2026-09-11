@@ -190,7 +190,11 @@ export default function CloudBackup() {
     const offP = (window as any).ether.catalogueBackup.onUploadProgress((v: any) => setLibProgress({ done: v.done ?? 0, total: v.total ?? 0 }));
     const offD = (window as any).ether.catalogueBackup.onUploadDone((v: any) => {
       setLibUploading(false); offP?.(); offD?.();
-      setR2Status({ msg: `✓ Library uploaded — ${v.done ?? 0} files${v.errors ? `, ${v.errors} errors` : ""}`, type: v.errors ? "err" : "ok" });
+      // `uploaded`, not `done`. uploadCatalogue's result names the count `uploaded`
+      // (audio-library-r2.js:218-233); only the PROGRESS event carries `done`. Reading `done` here
+      // reported "0 files" after a successful upload of any size — not a crash, because of the ?? 0,
+      // but a number that was always wrong. Same defect as the download bar, silent instead of loud.
+      setR2Status({ msg: `✓ Library uploaded — ${v.uploaded ?? 0} files${v.errors ? `, ${v.errors} errors` : ""}`, type: v.errors ? "err" : "ok" });
     });
     try { await (window as any).ether.catalogueBackup.upload(); }
     catch (e: any) { setLibUploading(false); offP?.(); offD?.(); setR2Status({ msg: "Library upload failed: " + e.message, type: "err" }); }
@@ -221,7 +225,7 @@ export default function CloudBackup() {
       if (!r?.ok) { setInstalling(false); setInstallMsg("✗ " + (r?.error || "Install failed")); return; }
       setInstallMsg(`Database installed${r.stationName ? ` (${r.stationName})` : ""} — ${r.songs} songs. Downloading audio…`);
       const offP = (window as any).ether.catalogueBackup.onDownloadProgress?.((v: any) => setInstallMsg(`Downloading audio… ${v.done ?? 0}/${v.total ?? 0}`));
-      const offD = (window as any).ether.catalogueBackup.onDownloadDone?.((v: any) => { offP?.(); offD?.(); setInstalling(false); setInstallMsg(`✓ Installed — ${v?.done ?? r.songs} files. Restart Ether to finish.`); });
+      const offD = (window as any).ether.catalogueBackup.onDownloadDone?.((v: any) => { offP?.(); offD?.(); setInstalling(false); setInstallMsg(`✓ Installed — ${v?.downloaded ?? 0} files. Restart Ether to finish.`); });
       await (window as any).ether.catalogueBackup.download();
     } catch (e: any) { setInstalling(false); setInstallMsg("✗ " + String(e?.message || e)); }
   };

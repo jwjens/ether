@@ -28,7 +28,7 @@ export default function CloudInstallPrompt() {
       setStationName(r.stationName || "");
       setMsg(`Database installed — ${r.songs} songs. Downloading audio…`);
       const offP = (window as any).ether.catalogueBackup.onDownloadProgress?.((v: any) => setMsg(`Downloading audio… ${v.done ?? 0}/${v.total ?? 0}`));
-      const offD = (window as any).ether.catalogueBackup.onDownloadDone?.((v: any) => { offP?.(); offD?.(); setPhase("done"); setMsg(`Installed ${v?.done ?? r.songs} files.`); });
+      const offD = (window as any).ether.catalogueBackup.onDownloadDone?.((v: any) => { offP?.(); offD?.(); setPhase("done"); setMsg(`Installed ${v?.downloaded ?? 0} files.`); });
       await (window as any).ether.catalogueBackup.download();
     } catch (e: any) { setPhase("error"); setMsg(String(e?.message || e)); }
   };
