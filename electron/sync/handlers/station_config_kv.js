@@ -60,7 +60,13 @@ const PATCHABLE          = ["value","updated_at"];
 // The per-machine value lives in the profile's music-dir.txt (main.js MUSIC_DIR_FILE); the per-station
 // key is now read-through-only and will be retired by migration once peers have stopped carrying it.
 // See docs/audio-library-one-folder-rule-2026-09-04.md §8.1.
-const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_designation', 'schedule_layout_v1', 'sweep_last_run', 'music_dir']);
+// cloud_backup_config (2026-09-11) — THIS machine's record of when IT last backed up, and with what
+// result. Same reasoning as sweep_last_run directly above: syncing it lets one install overwrite
+// another's account of its own work, and the value is meaningless on a machine that did not do it.
+//
+// ai_voice_config (2026-09-11) — holds the provider API KEY. A credential must not enter the
+// mutation stream, which is a durable journal that travels to every peer on the account.
+const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_designation', 'schedule_layout_v1', 'sweep_last_run', 'music_dir', 'cloud_backup_config', 'ai_voice_config']);
 
 // Prefixes, for families of per-machine keys. `grid_widths_<pane>` is one key per grid, so it cannot
 // be enumerated — column widths had been written and refused on every resize since 4.4.177.

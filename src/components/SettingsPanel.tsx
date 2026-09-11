@@ -2315,15 +2315,16 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
       const kv = (window as any).ether.stationConfigKv;
       await kv.upsertByKey(stationId, 'sync_enabled', next ? 'true' : 'false');
       if (next) await kv.upsertByKey(stationId, 'sync_backend_url', 'https://ether-backend-production.up.railway.app');
-      // THE FILES HALF, IN THE SAME ACT (2026-09-11). setR2Enabled() alone was React state and
-      // nothing else: main never heard, so r2Config.enabled stayed true, r2Ready() stayed true, and
-      // triggerUpload() kept sending the database on every backup_db while this switch said "Off.
-      // Nothing is going to the cloud." Confirmed at runtime before this was written — getR2Config()
-      // read enabled:true, the switch was flipped off, and it read enabled:true again.
-      // This is the one writer of the files half, exactly as it is the one writer of sync_enabled.
-      // It sends intervalHours too so main's `?? r2Config.intervalHours` cannot quietly reset the
-      // operator's schedule to the 6h default on the first toggle after a launch.
-      await (window as any).ether.cloudBackup.setR2Config({ enabled: next, intervalHours: r2Interval });
+      // THE FILES HALF IS THIS SAME WRITE (2026-09-11). There is no second flag any longer: main's
+      // r2Ready() reads sync_enabled for the active station, so the line above turned BOTH halves
+      // off or on. The first attempt at this shipped a stored `enabled` boolean instead, and it
+      // failed three ways — three writers, a write that threw NOT NULL every time, and nothing
+      // reading it back — so the hardcoded `enabled: true` default decided everything.
+      //
+      // This call carries NO enabled field and must never carry one. It exists to make main
+      // re-evaluate the schedule NOW rather than at the next launch: the handler always re-reads
+      // sync_enabled and starts or stops the timer accordingly.
+      await (window as any).ether.cloudBackup.setR2Config({ intervalHours: r2Interval });
       setSyncOn(next);
       setR2Enabled(next);
       // Honest about the restart. The engine reads sync_enabled at startup, so claiming it is on

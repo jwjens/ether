@@ -2149,6 +2149,9 @@ function runMigrations() {
         PRIMARY KEY (station_id, key)
       );
     `);
+    // GUARD-EXEMPT(station_config_kv-insert): migration-time. The CREATE TABLE directly above makes
+    // the OLD three-column shape — station_id, key, value — so there is no uuid column to name yet.
+    // Every other INSERT into this table must go through sync/handlers/station_config_kv.js.
     const ins = db.prepare("INSERT OR IGNORE INTO station_config_kv (station_id, key, value) VALUES (?, ?, ?)");
     const migrate = db.transaction(() => {
       for (const row of oldRows) ins.run(0, row.key, row.value);

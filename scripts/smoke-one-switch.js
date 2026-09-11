@@ -221,23 +221,25 @@ console.log("\n== 7. sync_enabled has exactly ONE writer ==");
   else fail(`expected 1 title= and 1 aria-label=, found ${titles} and ${arias}`);
 }
 
-console.log("\n== 8. the FILES half has exactly ONE writer, and it survives a restart ==");
+console.log("\n== 8. the FILES half is not a flag at all ==");
 {
-  // Jeff, 2026-09-10, after confirming it at runtime: "The switch never reaches main."
+  // Jeff, 2026-09-11: "Delete the second flag — the files half reads sync_enabled for the active
+  // station. One flag, one writer." And on the literal that armed it: "that's the thing that's been
+  // arming the gate all along."
   //
-  // Section 7 made sync_enabled single-writer — the ROWS half. The FILES half (cloud-backup's
-  // r2Config.enabled, which gates r2Ready() and therefore triggerUpload()) had THREE writers and
-  // the one switch was not among them: toggleKeepSynced() only called setR2Enabled(), which is
-  // React state and nothing else. So "Off. Nothing is going to the cloud." moved a pill and told
-  // main nothing, and the database kept going up on every backup_db (main.js:5808).
-  // Receipt: getR2Config().enabled read true, the switch was flipped off, it read true again.
-  //
-  // Two things have to hold, and the second is the one that bites: a single writer is useless if
-  // main never reads the value back. 1.3f stopped loading cloud_backup_r2 because it carried
-  // credentials, which left saveR2Config() writing a key nothing consumed — so the flag reset to
-  // its hardcoded `enabled: true` on every launch and the off could not survive a restart.
+  // The first attempt kept a stored `enabled` boolean and made toggleKeepSynced its single writer.
+  // That failed three ways at once, confirmed on a real install:
+  //   1. the toggle only writes on a CLICK, so an install already off never wrote anything;
+  //   2. the write threw SQLITE_CONSTRAINT_NOTNULL every time — the hand-rolled INSERT omitted
+  //      station_id (INTEGER NOT NULL, PK) and uuid (TEXT NOT NULL), reported via console.error,
+  //      which a packaged build discards;
+  //   3. so the row never existed, nothing was read back, and the hardcoded `enabled: true` decided
+  //      everything.
+  // A flag that is derived cannot be stale, cannot need seeding, and cannot be written wrong.
 
-  // (a) exactly ONE renderer call passes `enabled` to setR2Config.
+  const cb = code("electron/cloud-backup.js");
+
+  // (a) NOTHING passes `enabled` to setR2Config. Not one writer — none.
   const writers = [];
   for (const f of RENDERER) {
     const src = code(f);
@@ -247,19 +249,27 @@ console.log("\n== 8. the FILES half has exactly ONE writer, and it survives a re
       if (/\benabled\s*:/.test(m[0])) writers.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
     }
   }
-  if (writers.length === 1) pass(`one writer of the files-half flag (${writers[0]})`);
-  else if (writers.length === 0) fail("nothing passes enabled: to setR2Config — the switch cannot turn the files half off");
-  else fail(`the files-half flag is written in ${writers.length} places (${writers.join(", ")}) — one switch means one writer`);
+  if (writers.length === 0) pass("no caller passes enabled: to setR2Config — there is no second flag to set");
+  else fail(`${writers.length} caller(s) still set the files half independently (${writers.join(", ")})`);
 
-  // (b) it is the SAME function that writes sync_enabled. Two writers in two places is the defect;
-  //     two writes in one act is the fix.
-  const sp = code("src/components/SettingsPanel.tsx");
-  const at = sp.indexOf("const toggleKeepSynced");
-  const fn = at === -1 ? "" : sp.slice(at, at + 1400);
-  if (/sync_enabled/.test(fn) && /setR2Config/.test(fn)) pass("both halves are written by toggleKeepSynced, in one act");
-  else fail("toggleKeepSynced does not write both halves — the card can claim a state only one half is in");
+  // (b) the gate is derived from the one flag.
+  if (/function\s+filesHalfEnabled\s*\(/.test(cb) && /sync_enabled/.test(cb)) {
+    pass("cloud-backup derives the files half from sync_enabled");
+  } else {
+    fail("cloud-backup has no filesHalfEnabled() reading sync_enabled — the files half is a flag again");
+  }
+  const ready = cb.slice(cb.indexOf("function r2Ready"), cb.indexOf("function r2Ready") + 400);
+  if (/filesHalfEnabled\s*\(\s*\)/.test(ready)) pass("r2Ready() asks filesHalfEnabled()");
+  else fail("r2Ready() does not consult filesHalfEnabled() — the gate is reading something else");
 
-  // (c) the retired second and third master switches, by their own labels.
+  // (c) the literal that armed it is gone.
+  if (!/let\s+r2Config\s*=\s*\{[^}]*\benabled\s*:/.test(cb)) {
+    pass("the hardcoded enabled: true is gone from the r2Config literal");
+  } else {
+    fail("r2Config still declares an `enabled` default — that literal is what armed the gate on every install");
+  }
+
+  // (d) the retired master switches, by their own labels.
   for (const [needle, where] of [
     ["Toggle automatic backup", "Advanced"],
     ["Save Credentials", "the Cloud Backup panel"],
@@ -268,23 +278,64 @@ console.log("\n== 8. the FILES half has exactly ONE writer, and it survives a re
     if (hits.length === 0) pass(`"${needle}" is gone from ${where}`);
     else fail(`"${needle}" still renders in ${hits.join(", ")} — a second writer of the files half`);
   }
+}
 
-  // (d) THE LOAD PATH. Without this the off is written and never read.
-  const cb = code("electron/cloud-backup.js");
-  const ci = cb.indexOf("function installCloudBackup");
-  const install = ci === -1 ? "" : cb.slice(ci, ci + 4000);
-  if (/cloud_backup_r2/.test(install) && /r2Config\.enabled\s*=/.test(install)) {
-    pass("installCloudBackup reads cloud_backup_r2 back — the flag survives a restart");
+console.log("\n== 9. nothing hand-rolls an INSERT into station_config_kv ==");
+{
+  // Jeff, 2026-09-11: "Nothing hand-rolls an INSERT into station_config_kv anywhere. That's twice now."
+  //
+  // It was three times: cloud_backup_r2, cloud_backup_config (two copies) and ai_voice_config, plus
+  // the designation upsert bug before them. The table declares station_id INTEGER NOT NULL PRIMARY
+  // KEY and uuid TEXT NOT NULL, so any INSERT that does not name both throws
+  // SQLITE_CONSTRAINT_NOTNULL — and every one of these callers swallowed it, so the settings simply
+  // never persisted and nobody saw an error. AI Voice lost the operator's API key on every restart
+  // for as long as that code has existed.
+  //
+  // The sanctioned writers are in sync/handlers/station_config_kv.js: stationConfigKvUpsertByKey for
+  // an ordinary synced key, stationConfigKvSetLocal for a LOCAL_ONLY_KEYS key. Both generate the uuid
+  // and require the station id, so neither can be written wrong.
+  //
+  // This is a RATCHET, not a baseline: the only way past it is the sanctioned writer or a
+  // GUARD-EXEMPT marker with a reason on the line above.
+  const OWNER = "electron/sync/handlers/station_config_kv.js";
+  const files = [];
+  const walkJs = (dir) => {
+    for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) { if (e.name !== "node_modules") walkJs(rel); }
+      else if (/\.(js|ts|tsx)$/.test(e.name)) files.push(rel);
+    }
+  };
+  walkJs("electron");
+  for (const f of RENDERER) files.push(f);
+
+  const offenders = [];
+  for (const f of files) {
+    if (f === OWNER) continue;
+    // DETECT on the comment-stripped text, so a comment QUOTING the old broken statement (several
+    // now do, by way of explaining it) is not itself an offence. But read the MARKER off the raw
+    // lines: code() strips comments, which deleted the exemption before the check could see it.
+    // Both views keep the same line numbering, so one index serves both.
+    const lines = code(f).split("\n");
+    const raw   = read(f).replace(/\r/g, "").split("\n");
+    lines.forEach((l, i) => {
+      if (!/(INSERT|REPLACE)\s+(OR\s+\w+\s+)?INTO\s+station_config_kv/i.test(l)) return;
+      const prev = raw.slice(Math.max(0, i - 5), i).join("\n");
+      if (/GUARD-EXEMPT\(station_config_kv-insert\)/.test(prev)) return;
+      offenders.push(`${f}:${i + 1}`);
+    });
+  }
+  if (offenders.length === 0) {
+    pass(`no hand-rolled INSERT into station_config_kv outside ${OWNER}`);
   } else {
-    fail("installCloudBackup never reads cloud_backup_r2 — r2Config.enabled resets to its hardcoded default every launch");
+    fail(`hand-rolled INSERT into station_config_kv at ${offenders.join(", ")} — use stationConfigKvUpsertByKey / stationConfigKvSetLocal, which name station_id and uuid`);
   }
 
-  // (e) …and still refuses to load credentials. 1.3f's decision stands; only the operator's two
-  //     fields come back.
-  if (!/stored\.(accessKeyId|secretAccessKey|accountId|bucket|endpoint)/.test(install)) {
-    pass("the restored load path takes no credentials — backend-signed mode is intact");
-  } else {
-    fail("the load path reads credential fields out of KV — 1.3f moved R2 access to the backend");
+  // The two keys this commit reclassified must be refused by the synced path.
+  const owner = read(OWNER);
+  for (const k of ["cloud_backup_config", "ai_voice_config"]) {
+    if (new RegExp(`LOCAL_ONLY_KEYS[\\s\\S]{0,600}'${k}'`).test(owner)) pass(`${k} is local-only — it never enters the mutation stream`);
+    else fail(`${k} is not in LOCAL_ONLY_KEYS — machine-local bookkeeping and an API key would sync to every peer`);
   }
 }
 

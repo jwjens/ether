@@ -83,6 +83,9 @@ console.log('\n=== designation write smoke ===\n');
 console.log('[1] the 4.4.188 hand-rolled INSERT is still impossible against this schema');
 let rawErr = null;
 try {
+  // GUARD-EXEMPT(station_config_kv-insert): this INSERT is the SUBJECT of the test, not a caller.
+  // It is deliberately malformed and the assertions below require it to throw. If it ever stops
+  // throwing, the schema drifted and smoke-one-switch.js §9 is guarding nothing.
   db.prepare(`INSERT INTO station_config_kv (station_id, key, value, created_at, updated_at)
               VALUES (?,?,?,datetime('now'),datetime('now'))
               ON CONFLICT(station_id,key) DO UPDATE SET value=excluded.value`).run(ST, 'raw_probe', 'x');

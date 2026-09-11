@@ -23,16 +23,32 @@ let voiceSegmentsDir = null;
 // ── Config helpers ──────────────────────────────────────────
 function getConfig() {
   try {
-    const row = getDb().prepare("SELECT value FROM station_config_kv WHERE key = 'ai_voice_config'").get();
+    const db0 = getDb();
+    const sid0 = db0.prepare("SELECT id FROM stations WHERE is_active=1 LIMIT 1").get()?.id ?? null;
+    const row = sid0 == null ? null : db0.prepare(
+      "SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'ai_voice_config' AND deleted_at IS NULL"
+    ).get(sid0);
     if (row?.value) return JSON.parse(row.value);
   } catch {}
   return { provider: "elevenlabs", apiKey: "", voiceId: "", model: "eleven_turbo_v2_5", stability: 0.5, similarity: 0.75 };
 }
+// THE THIRD INSTANCE OF THE SAME DEFECT (found 2026-09-11 in the station_config_kv sweep). This
+// hand-rolled INSERT omitted station_id (INTEGER NOT NULL, PK) and uuid (TEXT NOT NULL), so it threw
+// SQLITE_CONSTRAINT_NOTNULL on every call; setConfig swallowed it and returned false. AI Voice
+// settings — including the provider API key the operator typed — have never survived a restart.
+//
+// stationConfigKvSetLocal, not the synced writer: this holds a provider API KEY, and a credential
+// must not enter the mutation stream and travel to every peer on the account. It is in
+// LOCAL_ONLY_KEYS so the synced path refuses it.
 function setConfig(cfg) {
   try {
-    getDb().prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('ai_voice_config', ?)").run(JSON.stringify(cfg));
+    const db = getDb();
+    const sid = db.prepare("SELECT id FROM stations WHERE is_active=1 LIMIT 1").get()?.id ?? null;
+    if (sid == null) return false;
+    const { stationConfigKvSetLocal } = require('./sync/handlers/station_config_kv');
+    stationConfigKvSetLocal(db, sid, 'ai_voice_config', JSON.stringify(cfg));
     return true;
-  } catch { return false; }
+  } catch (e) { console.warn("[AI-VOICE] setConfig failed:", e.message); return false; }
 }
 
 // ── Generic HTTPS POST returning a Buffer (audio binary) ────

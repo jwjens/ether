@@ -35,13 +35,41 @@ let config = { endpoint: "", method: "PUT", intervalHours: 6, enabled: false, la
 
 // Settings panel still reads/writes this shape; the credential fields stay in
 // the structure but are never populated post-1.3f (1.3h removes them + the UI).
-let r2Config = { accountId: "", endpoint: "", bucket: "ether-backups", accessKeyId: "", secretAccessKey: "", enabled: true, intervalHours: 6, lastBackup: 0, lastStatus: "never" };
+// NO `enabled` HERE ANY MORE (2026-09-11). It used to read `enabled: true`, and that literal is what
+// armed the gate on every install: nothing loaded a stored value, so r2Ready() came back true on
+// every launch no matter what the switch said. Jeff, 2026-09-11: "that's the thing that's been
+// arming the gate all along." The files half is no longer a flag of its own.
+let r2Config = { accountId: "", endpoint: "", bucket: "ether-backups", accessKeyId: "", secretAccessKey: "", intervalHours: 6, lastBackup: 0, lastStatus: "never" };
+
+// ── THE FILES HALF IS NOT A SECOND FLAG ─────────────────────────────────────────────────────────
+// It reads sync_enabled for the active station — the SAME key "Keep my stuff synced" writes. One
+// flag, one writer, and the two halves cannot disagree because there is only one of them.
+//
+// The second flag failed three ways at once and this deletes all three: it was written by three
+// callers, every write threw NOT NULL (station_config_kv needs station_id + uuid and the hand-rolled
+// INSERT gave neither), and nothing read it back — so the only value that ever decided anything was
+// the hardcoded default above. Reading the live key also means there is nothing to seed: an install
+// that has never touched the switch is already correct, which a stored flag never was.
+function activeStationId() {
+  try { return getDb().prepare("SELECT id FROM stations WHERE is_active=1 LIMIT 1").get()?.id ?? null; }
+  catch { return null; }
+}
+function filesHalfEnabled() {
+  const sid = activeStationId();
+  if (sid == null) return false;           // no active station = nothing to send
+  try {
+    const row = getDb().prepare(
+      "SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'sync_enabled' AND deleted_at IS NULL"
+    ).get(sid);
+    return row?.value === "true";          // absent = off. An unset switch sends nothing.
+  } catch { return false; }
+}
 
 // Backup-ready: enabled flag is true AND a license_key is set in KV AND the
 // plan tier is pro+. Replaces the legacy r2Ready() which checked customer-side
 // credentials; this version trusts the backend with R2 access.
 function r2Ready() {
-  if (!r2Config.enabled) return false;
+  if (!filesHalfEnabled()) return false;
   const licenseKey = getBackupLicenseKey();
   if (!licenseKey) return false;
   const planTier = getConfigValue("plan_tier") || "free";
@@ -93,38 +121,39 @@ function installCloudBackup(ipcMain, database, opts = {}) {
   _dbPath = dbPath;
 
   // Ensure config table entry
+  // Scoped to the active station, because that is where saveConfig() writes it. The old unscoped
+  // read would have picked an arbitrary station's row once rows started existing.
   try {
-    const existing = getDb().prepare("SELECT value FROM station_config_kv WHERE key = 'cloud_backup_config'").get();
-    if (existing) config = { ...config, ...JSON.parse(existing.value) };
+    const sid0 = activeStationId();
+    if (sid0 != null) {
+      const existing = getDb().prepare(
+        "SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'cloud_backup_config' AND deleted_at IS NULL"
+      ).get(sid0);
+      if (existing?.value) config = { ...config, ...JSON.parse(existing.value) };
+    }
   } catch {}
 
-  // CREDENTIALS STAY UNLOADED. 1.3f moved R2 access to the backend and stopped reading customer
-  // keys out of KV; that decision stands and nothing below re-reads accountId / accessKeyId /
+  // CREDENTIALS STAY UNLOADED. 1.3f moved R2 access to the backend and stopped reading customer keys
+  // out of KV; that decision stands and nothing here re-reads accountId / accessKeyId /
   // secretAccessKey / endpoint / bucket.
   //
-  // THE OPERATOR'S TWO FIELDS COME BACK (2026-09-11). The same stop also orphaned `enabled` and
-  // `intervalHours`, which are not secrets — they are the operator's decision about whether this
-  // computer sends anything at all. saveR2Config() kept WRITING them to cloud_backup_r2 and nothing
-  // ever read them back, so r2Config reset to the hardcoded `enabled: true` at :38 on every launch.
-  // Turning the switch off could not survive a restart because the off was never read: r2Ready()
-  // came back true and triggerUpload() (main.js:5808, after every backup_db) kept sending.
-  // Runtime receipt, 2026-09-10: getR2Config().enabled read true, the switch was flipped off, and it
-  // read true again — main was never told. Only the two honored fields are taken, and only when they
-  // are the right type, so a half-written or older row cannot poison the flag.
+  // THE INTERVAL IS THE ONLY THING LEFT TO RESTORE. There is no stored on/off any more —
+  // filesHalfEnabled() reads sync_enabled live, so it can never be stale and never needs seeding.
+  // The interval keeps its own key, written through the sanctioned writer.
   try {
-    const row = getDb().prepare("SELECT value FROM station_config_kv WHERE key = 'cloud_backup_r2'").get();
-    if (row) {
-      const stored = JSON.parse(row.value);
-      if (typeof stored.enabled === "boolean")   r2Config.enabled       = stored.enabled;
-      if (Number.isFinite(stored.intervalHours)) r2Config.intervalHours = stored.intervalHours;
-      console.log("[CLOUD-BACKUP] loaded operator fields from KV — enabled:", r2Config.enabled, "intervalHours:", r2Config.intervalHours);
-    } else {
-      console.log("[CLOUD-BACKUP] no cloud_backup_r2 row — keeping defaults, enabled:", r2Config.enabled);
+    const sid = activeStationId();
+    if (sid != null) {
+      const row = getDb().prepare(
+        "SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'cloud_backup_interval_hours' AND deleted_at IS NULL"
+      ).get(sid);
+      const h = Number(row?.value);
+      if (Number.isFinite(h) && h > 0) r2Config.intervalHours = h;
     }
   } catch (e) {
-    console.warn("[CLOUD-BACKUP] could not read cloud_backup_r2, keeping defaults:", e.message);
+    console.warn("[CLOUD-BACKUP] could not read cloud_backup_interval_hours, keeping default:", e.message);
   }
-  console.log("[CLOUD-BACKUP] backend-signed mode — credentials not loaded from KV");
+  console.log("[CLOUD-BACKUP] backend-signed mode — credentials not loaded from KV; files half:",
+              filesHalfEnabled() ? "on" : "off", "· interval:", r2Config.intervalHours + "h");
 
   // ── IPC handlers ──────────────────────────────────────────────
 
@@ -138,7 +167,8 @@ function installCloudBackup(ipcMain, database, opts = {}) {
     accessKeyId:  r2Config.accessKeyId,
     hasSecret:    !!r2Config.secretAccessKey,
     secretLast4:  r2Config.secretAccessKey ? r2Config.secretAccessKey.slice(-4) : "",
-    enabled:      r2Config.enabled,
+    // Answers from sync_enabled, live. This is the value Jeff reads in DevTools to check the switch.
+    enabled:      filesHalfEnabled(),
     intervalHours: r2Config.intervalHours,
     lastBackup:   r2Config.lastBackup || 0,
     lastStatus:   r2Config.lastStatus || "never",
@@ -148,20 +178,22 @@ function installCloudBackup(ipcMain, database, opts = {}) {
   // fields (accountId, accessKeyId, secretAccessKey, bucket, endpoint) are
   // accepted in the payload for UI compatibility but ignored — backend holds
   // the only R2 credentials now. 1.3h removes the credential UI entirely.
-  ipcMain.handle("cloud-backup:set-r2-config", (_evt, incoming) => {
-    console.log("[CLOUD-BACKUP] set-r2-config — backend-signed mode; ignoring credential fields if any");
-    r2Config = {
-      ...r2Config,
-      enabled:       incoming.enabled       ?? r2Config.enabled,
-      intervalHours: incoming.intervalHours ?? r2Config.intervalHours,
-    };
-    // saveR2Config kept so SettingsPanel's "save" feedback works; 1.3h drops
-    // the KV row in a one-shot cleanup. Credential fields written here are
-    // whatever empty defaults r2Config currently holds — not customer secrets.
-    saveR2Config();
-    console.log("[CLOUD-BACKUP] set-r2-config done — r2Ready():", r2Ready(), "enabled:", r2Config.enabled);
-    if (r2Config.enabled && r2Ready()) startAutoBackup(dbPath);
-    else if (!r2Config.enabled && !config.enabled) stopAutoBackup();
+  // Sets the INTERVAL and nothing else. `enabled` is deliberately NOT read out of the payload — the
+  // files half is sync_enabled, and this handler must never become a second way to set it.
+  // It always RE-EVALUATES the timer from filesHalfEnabled(), so the one switch calling this right
+  // after it writes sync_enabled starts or stops the schedule in the same session rather than at the
+  // next launch.
+  ipcMain.handle("cloud-backup:set-r2-config", (_evt, incoming = {}) => {
+    const h = Number(incoming.intervalHours);
+    if (Number.isFinite(h) && h > 0 && h !== r2Config.intervalHours) {
+      r2Config.intervalHours = h;
+      saveIntervalHours();
+    }
+    const on = filesHalfEnabled();
+    console.log("[CLOUD-BACKUP] set-r2-config — files half:", on ? "on" : "off",
+                "· r2Ready():", r2Ready(), "· interval:", r2Config.intervalHours + "h");
+    if (on && r2Ready()) startAutoBackup(dbPath);
+    else if (!on && !config.enabled) stopAutoBackup();
     return { ok: true, ready: r2Ready() };
   });
 
@@ -189,9 +221,7 @@ function installCloudBackup(ipcMain, database, opts = {}) {
 
   ipcMain.handle("cloud-backup:set-config", (_evt, newConfig) => {
     config = { ...config, ...newConfig };
-    try {
-      getDb().prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('cloud_backup_config', ?)").run(JSON.stringify(config));
-    } catch {}
+    saveConfig();   // was a second copy of the same hand-rolled INSERT that threw NOT NULL
     if (config.enabled) startAutoBackup(dbPath);
     else stopAutoBackup();
     return config;
@@ -413,25 +443,47 @@ function getTableStats() {
   return stats;
 }
 
+// cloud_backup_config is THIS MACHINE'S bookkeeping — lastBackup, lastStatus, the legacy endpoint.
+// It goes through stationConfigKvSetLocal, not the synced writer: syncing "when I last backed up"
+// would let one install overwrite another's record of its own work, which is the reason
+// sweep_last_run is local-only too. The key is in LOCAL_ONLY_KEYS so the synced path refuses it.
+//
+// It also used to hand-roll the same INSERT that omitted station_id and uuid, so like the R2 row it
+// threw on every call and the row never existed — which is why cloud_backup_config was missing on
+// the live install alongside cloud_backup_r2.
 function saveConfig() {
   try {
-    getDb().prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('cloud_backup_config', ?)").run(JSON.stringify(config));
-  } catch {}
+    const sid = activeStationId();
+    if (sid == null) return;
+    const { stationConfigKvSetLocal } = require('./sync/handlers/station_config_kv');
+    stationConfigKvSetLocal(getDb(), sid, 'cloud_backup_config', JSON.stringify(config));
+  } catch (e) { console.warn("[CLOUD-BACKUP] saveConfig failed:", e.message); }
 }
 
-function saveR2Config() {
+// saveR2Config -> saveIntervalHours (2026-09-11). The old one hand-rolled
+//   INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('cloud_backup_r2', ?)
+// which omits station_id (INTEGER NOT NULL, PK) and uuid (TEXT NOT NULL). It threw
+// SQLITE_CONSTRAINT_NOTNULL on every call, reported through console.error — discarded by a packaged
+// build — so the row NEVER existed. Same defect as the designation upsert bug. The sanctioned writer
+// generates the uuid and requires the station id, so it cannot be written wrong.
+//
+// There is no on/off to save any more: the files half is sync_enabled, written by the one switch.
+function saveIntervalHours() {
   let _db = null;
   try { _db = getDb(); } catch { _db = null; }
   if (!_db || !_db.open) {
-    console.warn("[CLOUD-BACKUP] db not ready, skipping save — will retry in 2s");
-    setTimeout(() => saveR2Config(), 2000);
+    console.warn("[CLOUD-BACKUP] db not ready, skipping interval save — will retry in 2s");
+    setTimeout(() => saveIntervalHours(), 2000);
     return;
   }
+  const sid = activeStationId();
+  if (sid == null) { console.warn("[CLOUD-BACKUP] no active station — interval not saved"); return; }
   try {
-    getDb().prepare("INSERT OR REPLACE INTO station_config_kv (key, value) VALUES ('cloud_backup_r2', ?)").run(JSON.stringify(r2Config));
-    console.log("[CLOUD-BACKUP] saveR2Config — wrote to DB OK, bucket:", r2Config.bucket);
+    const { stationConfigKvUpsertByKey } = require('./sync/handlers/station_config_kv');
+    stationConfigKvUpsertByKey(_db, sid, 'cloud_backup_interval_hours', String(r2Config.intervalHours));
+    console.log("[CLOUD-BACKUP] interval saved —", r2Config.intervalHours + "h for station", sid);
   } catch (e) {
-    console.error("[CLOUD-BACKUP] saveR2Config FAILED to write DB:", e.message);
+    console.error("[CLOUD-BACKUP] FAILED to save interval:", e.message);
   }
 }
 
@@ -453,7 +505,7 @@ function stopAutoBackup() {
 // Returns a result object; never throws — caller can fire-and-forget.
 async function triggerUpload() {
   console.log("[CLOUD-BACKUP:triggerUpload] called");
-  console.log("[CLOUD-BACKUP:triggerUpload] r2Config.enabled =", r2Config.enabled);
+  console.log("[CLOUD-BACKUP:triggerUpload] files half (sync_enabled) =", filesHalfEnabled());
   console.log("[CLOUD-BACKUP:triggerUpload] r2Ready()        =", r2Ready(), "(enabled + license_key + tier>=pro)");
   console.log("[CLOUD-BACKUP:triggerUpload] _dbPath          =", _dbPath || "(empty)");
   if (!r2Ready()) {
