@@ -269,7 +269,32 @@ console.log("\n== 8. the FILES half is not a flag at all ==");
     fail("r2Config still declares an `enabled` default — that literal is what armed the gate on every install");
   }
 
-  // (d) the retired master switches, by their own labels.
+  // (d) THE PROOF LINE MUST BE FINDABLE.
+  //
+  // Jeff, 2026-09-11: "it's a tiny grey word next to a dropdown — I didn't find it. That's the line
+  // that proves the whole fix and it reads like a typo."
+  //
+  // Every other label on that screen states an intention. This one reports what the backup
+  // machinery answers when asked, so it is the only thing on the card that can contradict the
+  // switch — which makes it the line an operator needs when a switch only LOOKS like it worked.
+  // It shipped as a 12px lowercase span wedged between a dropdown and a Save button, and went
+  // unfound by the person who asked for it. It now has its own row and its own label.
+  //
+  // Keyed to the DEFECT's shape, not to styling numbers that will drift: the bare lowercase form is
+  // what was unreadable, and the row must carry a label naming what is being reported.
+  const sp2 = code("src/components/SettingsPanel.tsx");
+  if (/Going to the cloud right now/.test(sp2)) {
+    pass("the files-half status has its own labelled row");
+  } else {
+    fail("the files-half status has no label of its own — it is the line that proves the fix and it must be findable");
+  }
+  if (!/\{\s*r2Enabled\s*\?\s*"on"\s*:\s*"off"\s*\}/.test(sp2)) {
+    pass("the tiny lowercase on/off beside the interval dropdown is gone");
+  } else {
+    fail("the status is still a bare lowercase on/off next to the dropdown — that is the form Jeff could not find");
+  }
+
+  // (e) the retired master switches, by their own labels.
   for (const [needle, where] of [
     ["Toggle automatic backup", "Advanced"],
     ["Save Credentials", "the Cloud Backup panel"],

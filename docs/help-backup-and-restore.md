@@ -45,12 +45,14 @@ If you've just imported a big batch and don't want to wait, press **Back up now*
 ### Checking it really is on (or really is off)
 
 The switch and the machinery behind it read the same setting, so they cannot disagree — but if you
-want to see it with your own eyes, open **Advanced**. Beside **How often to send your setup** there
-is a small **on** / **off**. That word is not a second switch and you cannot click it: it is the
-answer the backup machinery gives when asked, so it tells you what is actually happening rather than
-what the screen hopes is happening.
+want to see it with your own eyes, open **Advanced**. The first row inside is **Going to the cloud
+right now**, with a green **ON** or a grey **OFF** on the right.
 
-If the big switch says off, that word must say **off**. If it says **on** while the switch says off,
+That is not a second switch and you cannot click it. Every other label on this screen tells you what
+Ether means to do; this one reports what the backup machinery answers when you ask it. It is the one
+line that can contradict the big switch, which is exactly why it is there.
+
+If the big switch says off, this must say **OFF**. If it says **ON** while the switch says off,
 something is wrong and it is worth reporting.
 
 ### Sending just the music

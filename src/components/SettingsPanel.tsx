@@ -3385,6 +3385,33 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
             Diagnostics and manual controls. You don't need any of this in normal use — the switch above does the whole job.
           </div>
 
+        {/* THE HONEST ANSWER, ON ITS OWN ROW (2026-09-11).
+
+            Jeff: "it's a tiny grey word next to a dropdown — I didn't find it. That's the line that
+            proves the whole fix and it reads like a typo."
+
+            He is right, and the placement was backwards. This is the ONE line on the screen that is
+            not a claim: every other label says what the app intends, while this reports what the
+            backup machinery answers when asked — filesHalfEnabled(), reading sync_enabled through
+            main. It is how an operator (or a bug report) tells a working switch from a switch that
+            only looks like it worked. A proof line buried at 12px beside a dropdown is not a proof
+            line. Its own row, its own label, the same weight as everything else here. */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" as any, padding: "12px 14px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", marginBottom: 18 }}>
+          <div style={{ minWidth: 240 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text-primary)" }}>Going to the cloud right now</div>
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 3, maxWidth: 460, lineHeight: 1.5 }}>
+              What the backup machinery reports when asked — not what the screen hopes. If the switch
+              above says off, this must say <b>OFF</b>.
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 9, flexShrink: 0 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 999, flexShrink: 0, background: r2Enabled ? "var(--accent-green)" : "var(--text-tertiary)" }} />
+            <span style={{ fontSize: 15, fontWeight: 800, letterSpacing: "0.06em", fontFamily: "'DM Mono', monospace", color: r2Enabled ? "var(--accent-green)" : "var(--text-secondary)" }}>
+              {r2Enabled ? "ON" : "OFF"}
+            </span>
+          </div>
+        </div>
+
         {/* How often the scheduled half runs. An implementation detail of ONE of the two
             mechanisms, which is exactly why it does not belong beside the switch. */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" as any, paddingBottom: 18, borderBottom: "1px solid var(--border-primary)", marginBottom: 18 }}>
@@ -3403,14 +3430,9 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
               <option value={12}>Every 12 hours</option>
               <option value={24}>Once a day</option>
             </select>
-            {/* READ-ONLY STATUS, not a switch. This was a settable toggle writing the files-half
-                master flag — a second master switch for half of what "Keep my stuff synced" does,
-                which is the defect that let the card claim off while the database kept going up.
-                The schedule beside it stays settable: an interval is a parameter, not a master. */}
-            <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "'DM Mono', monospace",
-                           color: r2Enabled ? "#4ade80" : "var(--text-tertiary)" }}>
-              {r2Enabled ? "on" : "off"}
-            </span>
+            {/* The on/off that used to sit here moved to its own row at the top of Advanced
+                (2026-09-11) — at 12px beside this dropdown it read like a typo and went unfound.
+                It was never a switch: the files half is sync_enabled, set by the one switch only. */}
             <button onClick={saveR2Config} disabled={r2Saving}
               style={{ padding: "8px 14px", fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", borderRadius: 0, opacity: r2Saving ? 0.6 : 1 }}>
               {r2Saving ? "Saving…" : "Save"}
