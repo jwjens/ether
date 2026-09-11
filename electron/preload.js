@@ -141,6 +141,8 @@ contextBridge.exposeInMainWorld("ether", {
     download:       ()      => ipcRenderer.invoke('catalogue:backup:download'),
     cancelDownload: ()      => ipcRenderer.invoke('catalogue:backup:download:cancel'),
     status:         ()      => ipcRenderer.invoke('catalogue:backup:status'),
+    // The pull runs on a timer; this is the door for an operator who does not want to wait for it.
+    pullNow:        ()      => ipcRenderer.invoke('catalogue:pull:now'),
     // EVERY on* RETURNS ITS OWN UNSUBSCRIBE. These used to hand back the raw handler, so a caller
     // had to keep it and pair it with the matching off* — and the four call sites migrating onto
     // this surface (CloudBackup, CloudInstallPrompt, OnboardingFlow, LibrarySyncProgressBar) were

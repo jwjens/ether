@@ -2254,7 +2254,15 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
   // Manual full-DB cloud backup — same backend-signed R2 upload as the auto-timer, on demand.
   // How much of the library is actually in the cloud — read from the database, never assumed.
   // A backup isn't finished until the audio is up too; this is the half the status used to omit.
-  const [libCloud, setLibCloud] = useState<{ total: number; uploaded: number; pending: number; reachable: boolean } | null>(null);
+  const [libCloud, setLibCloud] = useState<{
+    total: number; uploaded: number; pending: number; reachable: boolean;
+    // What the automatic pull last did. Carried here rather than through a second status call,
+    // because catalogue:backup:status already reads the manifest and is already polled.
+    pullIntervalMinutes?: number | null;
+    lastPullAt?: number | null;
+    lastPullDownloaded?: number | null;
+    lastPullError?: string | null;
+  } | null>(null);
   // THE CATALOGUE IS THE TRUTH, NOT THE songs TABLE.
   //
   // This read used to be `library:cloud-status` (main.js:10936), which counts `songs` rows carrying
@@ -2275,6 +2283,10 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
           uploaded: Math.max(0, (r.localFiles ?? 0) - (r.pending ?? 0)),
           pending:  r.pending ?? 0,
           reachable: true,
+          pullIntervalMinutes: r.pullIntervalMinutes ?? null,
+          lastPullAt:          r.lastPullAt ?? null,
+          lastPullDownloaded:  r.lastPullDownloaded ?? null,
+          lastPullError:       r.lastPullError ?? null,
         });
       } else {
         // An unreachable cloud is NOT "nothing is backed up". The card says so in its own words
@@ -3425,7 +3437,8 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
           <div style={{ minWidth: 220 }}>
             <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text-primary)" }}>How often to send your setup</div>
             <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>
-              Only applies while Ether is open. Your audio goes up as it changes, not on this schedule.
+              Only applies while Ether is open, and it covers your <b>setup</b> only — audio is a
+              separate transfer, described below.
               <br />On or off is <b>Keep my stuff synced</b> above — this row only sets how often.
             </div>
           </div>
@@ -3444,6 +3457,24 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
               style={{ padding: "8px 14px", fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", borderRadius: 0, opacity: r2Saving ? 0.6 : 1 }}>
               {r2Saving ? "Saving…" : "Save"}
             </button>
+          </div>
+        </div>
+        {/* THE TWO DIRECTIONS, NAMED SEPARATELY, BECAUSE THEY BEHAVE DIFFERENTLY (2026-09-11).
+            Coming down is automatic as of Phase 0: a timer calls the incremental catalogue
+            download, which fetches only files this computer does not already have. Going up is
+            still a button — nothing watches the catalogue folder and nothing uploads on a clock.
+            Saying "your audio goes up as it changes", which is what this panel used to say, was
+            simply untrue. A screen that flatters one direction is how an operator ends up carrying
+            files on a USB stick wondering why sync did not. */}
+        <div style={{ padding: "12px 14px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", marginBottom: 18 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text-primary)" }}>Audio transfer</div>
+          <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 4, lineHeight: 1.6 }}>
+            <b>Coming down:</b> automatic{libCloud?.pullIntervalMinutes ? <> — Ether checks for new audio every <b>{libCloud.pullIntervalMinutes} minutes</b> while the switch is on</> : null}, and only
+            fetches files this computer does not already have.
+            {libCloud?.lastPullAt ? <> Last check: <b>{new Date(libCloud.lastPullAt).toLocaleTimeString()}</b>{libCloud.lastPullDownloaded ? <>, pulled <b>{libCloud.lastPullDownloaded}</b></> : ", nothing new"}.</> : null}
+            {libCloud?.lastPullError ? <><br /><span style={{ color: "var(--accent-red)" }}>Last check failed: {libCloud.lastPullError}</span></> : null}
+            <br /><b>Going up:</b> when you press <b>Send just the audio</b> below. Nothing uploads on a
+            timer, so audio you add here reaches your other computers after you send it.
           </div>
         </div>
         {(r2SaveStatus || r2TestStatus) && (

@@ -55,6 +55,22 @@ line that can contradict the big switch, which is exactly why it is there.
 If the big switch says off, this must say **OFF**. If it says **ON** while the switch says off,
 something is wrong and it is worth reporting.
 
+### Audio arriving from your other computers
+
+While **Keep my stuff synced** is on, Ether checks the cloud for new audio every few minutes and
+downloads anything this computer does not already have. You do not press anything. A sweeper you cut
+on the studio machine turns up on the on-air machine on its own, usually within a few minutes.
+
+It only fetches what is missing, so the check costs almost nothing when there is nothing new. While
+files are coming down, the Health Monitor says **"N files still arriving"** rather than reporting
+them as missing — because they are not missing, they are on their way.
+
+**The two directions are not the same, and it is worth knowing which is which.** Audio comes *down*
+on its own. Audio goes *up* when you press **Send just the audio**. So after you import a batch or
+record a voice track, send it — until you do, your other computers cannot know it exists. Preferences
+→ Backup & Restore → **Advanced** spells both out under **Audio transfer**, including when the last
+check ran and what it found.
+
 ### Sending just the music
 
 **Back up now** already includes your music, so you rarely need anything else. If you want to force the

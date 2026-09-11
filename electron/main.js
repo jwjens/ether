@@ -3099,6 +3099,15 @@ app.whenReady().then(() => {
     cloudBackupTrigger = triggerUpload;
     app._getR2Config = getR2Config;
 
+    // ARM THE CATALOGUE PULL. Deferred, and that is load-bearing rather than stylistic: the timer
+    // state (_catPullTimer) is declared ~8,000 lines below this, so calling startCataloguePull()
+    // synchronously here would hit the temporal dead zone and throw. The function declaration
+    // hoists; its `let` bindings do not. A timer also gives the first tick a quiet boot.
+    setTimeout(() => {
+      try { startCataloguePull(); }
+      catch (e) { console.warn("[catalogue:pull] could not arm:", e.message); }
+    }, 30000);
+
     // Auto-push R2 credentials to cloud playout server every startup.
     // Runs after a short delay so it doesn't block the app launching.
     setTimeout(async () => {
@@ -11252,6 +11261,12 @@ function _r2SignedIO(licenseKey) {
   };
 }
 
+// The five tables that gained `file_key` in v59. Named here because two things need the same list:
+// the upload's onFileKey fill below, and anyone reading why these tables suddenly carry a key.
+// They are NOT swept — see the exclusion in deletion-sweep.js, which is asserted by
+// scripts/smoke-one-switch.js §11.
+const AUDIO_FILE_KEY_TABLES = ['announcements', 'spots', 'cart_slots', 'voice_tracks', 'published_episodes'];
+
 function _catalogueR2Gate() {
   const TIER_RANK_LOCAL = { free: 0, pro: 1, pro_lifetime: 1, station: 2, station_lifetime: 2, operator: 3 };
   const planTier = (db.prepare("SELECT value FROM station_config_kv WHERE key='plan_tier' LIMIT 1").get())?.value || 'free';
@@ -11336,6 +11351,16 @@ ipcMain.handle('catalogue:backup:upload', async (_evt, opts = {}) => {
         // is safe and correct to sync — unlike file_path, which nothing on this path ever writes.
         // Only fills a key that is absent; it never rewrites one an operator or a peer already set.
         onFileKey: (basename) => {
+          // FIVE MORE TABLES AS OF v59. `file_key` is a CONTENT identity, not a machine path, so it
+          // is safe and correct to sync — unlike file_path, which nothing on this path ever writes.
+          // Only fills a key that is absent; it never rewrites one an operator or a peer already set.
+          //
+          // songs goes through songsUpdateById (the mutation-logging writer) as it always has. The
+          // other five take a DIRECT update, deliberately: the value is derived from file_path,
+          // which every peer already holds, so every peer computes the identical key from its own
+          // copy of the row. Journalling it would send a mutation whose only content is something
+          // the receiver can already work out — noise on a queue that has enough of it. Same
+          // reasoning as the v59 backfill.
           try {
             const { songsUpdateById } = require('./sync/handlers/songs');
             const rows = db.prepare(
@@ -11343,6 +11368,15 @@ ipcMain.handle('catalogue:backup:upload', async (_evt, opts = {}) => {
             ).all('%' + basename);
             for (const r of rows) songsUpdateById(db, r.id, { file_key: basename });
           } catch { /* backup must never fail over a bookkeeping write */ }
+          for (const t of AUDIO_FILE_KEY_TABLES) {
+            try {
+              db.prepare(
+                `UPDATE ${t} SET file_key = ?
+                  WHERE (file_key IS NULL OR file_key = '')
+                    AND file_path IS NOT NULL AND file_path LIKE ?`
+              ).run(basename, '%' + basename);
+            } catch { /* table absent on this install, or pre-v59 — never fail a backup over it */ }
+          }
         },
       });
       console.log(`[catalogue:backup] ${res.aborted ? 'CANCELLED' : 'done'} — ${res.uploaded}/${res.toUpload} uploaded, `
@@ -11414,6 +11448,108 @@ ipcMain.handle('catalogue:backup:download', async () => {
   return { ok: true, started: true, root };
 });
 
+// ── THE PULL. The half of "Keep my stuff synced" that did not exist ─────────────────────────────
+//
+// Jeff, 2026-09-11: "That's the half of keep my stuff synced that doesn't exist — it pushes and
+// never pulls, which is why I'm carrying files by hand."
+//
+// Every trigger for catalogue:backup:download was manual or first-run — the CloudBackup button,
+// CloudInstallPrompt, OnboardingFlow, and the dashboard's library:syncDownload command. A cart made
+// on one machine uploaded fine and then sat in R2 until a human pressed something on the other.
+//
+// NO NEW ENGINE. downloadCatalogue() is ALREADY incremental: it reads the remote manifest, walks the
+// local catalogue and fetches only what is absent or size-mismatched (audio-library-r2.js:308-313).
+// The steady-state cost of a tick is one manifest GET. This adds the clock, nothing else.
+//
+// pruneMissing: FALSE on this path, deliberately. Pruning REWRITES the remote manifest
+// (audio-library-r2.js:375-383). One operator pressing a button may do that; every install on the
+// account doing it on a timer would have them racing to overwrite one object, and a lost update
+// drops a file from the manifest so the other machines stop seeing it. Pruning stays with the
+// explicit, human-initiated run.
+
+// The interval is not hidden: catalogue:backup:status reports it and Preferences → Advanced prints
+// it, so the number on screen is this constant and not a second copy of it.
+const CATALOGUE_PULL_INTERVAL_MS = 5 * 60 * 1000;
+let _catPullTimer   = null;
+let _catPullRunning = false;
+let _catLastPull    = { at: null, downloaded: 0, checked: false, error: null };
+
+async function _cataloguePullTick() {
+  // Every reason to do nothing, checked before anything is read.
+  if (_catPullRunning) return;                       // our own previous tick is still going
+  if (restoreGateActive()) return;                   // a database swap owns the app
+  if (_catDownloadState.in_progress) return;         // a restore or a manual pull is already running
+  let on = false;
+  try { on = require("./cloud-backup.js").filesHalfEnabled(); } catch { return; }
+  if (!on) return;                                   // the switch is off; pulling would contradict it
+  const gate = _catalogueR2Gate();
+  if (!gate.ok) return;                              // tier or licence; the card already says so
+
+  _catPullRunning = true;
+  let announced = false;                             // have we told the windows a transfer is on?
+  try {
+    const R2LIB = require("./audio-library-r2");
+    const root  = getMusicDir();
+    const res = await R2LIB.downloadCatalogue(_r2SignedIO(gate.licenseKey), {
+      root,
+      pruneMissing: false,
+      shouldAbort: () => _catDownloadAbort,
+      // SILENT WHEN THERE IS NOTHING TO FETCH. A tick that finds nothing must not flip
+      // in_progress: catalogueRestoreInFlight() reads that flag and library-health suppresses the
+      // dead count while it is set, so a five-minute no-op heartbeat would leave the Health Monitor
+      // permanently saying "files still arriving" over a library that is complete. onProgress only
+      // fires once there is a file to fetch, so the announcement rides on the first one.
+      onProgress: (p) => {
+        const total = p?.total ?? 0;
+        if (!announced && total > 0) {
+          announced = true;
+          _catDownloadState = { in_progress: true, phase: "files", done: p?.done ?? 0, total,
+                                errors: p?.errors ?? 0, started_at: Date.now() };
+        } else if (announced) {
+          _catDownloadState = { ..._catDownloadState, done: p?.done ?? _catDownloadState.done,
+                                total, errors: p?.errors ?? _catDownloadState.errors };
+        }
+        if (announced) {
+          _catBroadcast("catalogue:backup:download:state", _catDownloadState);
+          _catBroadcast("catalogue:backup:download:progress", _catDownloadState);
+        }
+      },
+    });
+    _catLastPull = { at: Date.now(), downloaded: res.downloaded, checked: true, error: null };
+    if (res.downloaded > 0 || res.errors > 0) {
+      console.log(`[catalogue:pull] ${res.downloaded}/${res.toDownload} pulled, ${res.alreadyLocal} already here, ${res.errors} errors`);
+    }
+    if (announced) {
+      _catDownloadState = { ..._catDownloadState, in_progress: false, phase: "done" };
+      _catBroadcast("catalogue:backup:download:state", _catDownloadState);
+      _catBroadcast("catalogue:backup:download:done", res);
+    }
+  } catch (e) {
+    _catLastPull = { at: Date.now(), downloaded: 0, checked: true, error: e.message };
+    console.warn("[catalogue:pull] failed:", e.message);
+    // in_progress must never outlive the transfer, on the failure path too — one failed pull would
+    // otherwise suppress the dead-row line forever.
+    if (announced) {
+      _catDownloadState = { ..._catDownloadState, in_progress: false, phase: "idle" };
+      _catBroadcast("catalogue:backup:download:state", _catDownloadState);
+    }
+  } finally {
+    _catPullRunning = false;
+  }
+}
+
+// Armed unconditionally and gated per tick, rather than started and stopped as the switch moves.
+// A tick with the switch off returns before it reads anything, so the cost of arming it always is
+// nil — and it cannot drift out of step with a switch it does not observe.
+function startCataloguePull() {
+  if (_catPullTimer) return;
+  _catPullTimer = setInterval(() => { _cataloguePullTick().catch(() => {}); }, CATALOGUE_PULL_INTERVAL_MS);
+  if (_catPullTimer.unref) _catPullTimer.unref();
+  console.log(`[catalogue:pull] armed — every ${CATALOGUE_PULL_INTERVAL_MS / 60000} min while the switch is on`);
+}
+
+ipcMain.handle('catalogue:pull:now', async () => { await _cataloguePullTick(); return { ok: true, last: _catLastPull }; });
+
 // What a window asks for when it mounts mid-restore. Without this the swap off libraryR2 would
 // lose the seed that LibrarySyncProgressBar.tsx:47 depends on.
 ipcMain.handle('catalogue:backup:download:get-state', () => _catDownloadState);
@@ -11450,6 +11586,12 @@ ipcMain.handle('catalogue:backup:status', async () => {
       pendingBytes: pending.reduce((a, f) => a + f.size, 0),
       manifestExisted: existed,
       updatedAt: manifest.updated_at || null,
+      // Reported, not hidden. Preferences → Advanced prints these, so the number an operator reads
+      // is the constant the timer actually uses.
+      pullIntervalMinutes: CATALOGUE_PULL_INTERVAL_MS / 60000,
+      lastPullAt:          _catLastPull.at,
+      lastPullDownloaded:  _catLastPull.downloaded,
+      lastPullError:       _catLastPull.error,
     };
   } catch (e) {
     return { ok: false, error: e.message, root, localFiles: local.length, localBytes };

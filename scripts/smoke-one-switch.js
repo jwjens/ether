@@ -364,6 +364,134 @@ console.log("\n== 9. nothing hand-rolls an INSERT into station_config_kv ==");
   }
 }
 
+console.log("\n== 10. the switch PULLS as well as pushes ==");
+{
+  // Jeff, 2026-09-11: "That's the half of keep my stuff synced that doesn't exist — it pushes and
+  // never pulls, which is why I'm carrying files by hand."
+  //
+  // Every trigger for catalogue:backup:download was manual or first-run. A cart made on one machine
+  // uploaded and then sat in R2 until a human pressed something on the other. downloadCatalogue()
+  // was already incremental; nothing called it on a clock.
+
+  const main = code("electron/main.js");
+
+  // (a) the timer exists and is armed.
+  if (/function\s+startCataloguePull\s*\(/.test(main) && /startCataloguePull\s*\(\s*\)/.test(main.replace(/function\s+startCataloguePull\s*\([^)]*\)/, ""))) {
+    pass("a catalogue pull timer exists and is armed at boot");
+  } else {
+    fail("nothing arms a catalogue pull — the switch pushes and never pulls");
+  }
+
+  // (b) pruneMissing FALSE on the automatic path. Pruning rewrites the REMOTE manifest, and every
+  //     install doing that on a timer would race to overwrite one object; a lost update drops a file
+  //     from the manifest and the other machines stop seeing it.
+  const tick = main.slice(main.indexOf("async function _cataloguePullTick"), main.indexOf("function startCataloguePull"));
+  if (/pruneMissing\s*:\s*false/.test(tick)) pass("the automatic pull passes pruneMissing: false");
+  else fail("the automatic pull does not disable pruning — timed installs would race on the remote manifest");
+
+  // (c) it asks the ONE flag, it does not carry its own copy of the test.
+  if (/filesHalfEnabled\s*\(\s*\)/.test(tick)) pass("the pull gates on filesHalfEnabled() — the same flag as the switch");
+  else fail("the pull does not consult filesHalfEnabled() — a second definition of 'is sync on' is how the files half grew three writers");
+
+  // (d) A NO-OP TICK MUST STAY SILENT. catalogueRestoreInFlight() reads _catDownloadState.in_progress
+  //     and library-health suppresses the dead count while it is set, so a five-minute heartbeat that
+  //     announced itself would leave the Health Monitor permanently claiming files were arriving over
+  //     a library that is complete. The announcement has to be conditional on there being something
+  //     to fetch.
+  if (/announced/.test(tick) && /total\s*>\s*0/.test(tick)) {
+    pass("a tick with nothing to fetch never flips in_progress");
+  } else {
+    fail("the pull announces unconditionally — Health Monitor would say 'files still arriving' forever");
+  }
+
+  // (e) and when it IS fetching, the existing sentence has to appear — that is the whole reason the
+  //     state flag is shared with the restore path rather than invented fresh.
+  if (/_catDownloadState\s*=\s*\{\s*in_progress:\s*true/.test(tick)) {
+    pass("a pull that fetches reports through the same state the restore uses — 'N files still arriving'");
+  } else {
+    fail("the pull does not set the shared download state, so Health Monitor cannot say files are arriving");
+  }
+
+  // (f) THE SENTENCE THAT WAS FALSE. The panel said audio "goes up as it changes". Every caller of
+  //     catalogue:backup:upload is a button and nothing watches the catalogue folder, so audio has
+  //     never gone up on its own. After Phase 0 it comes DOWN on its own and still goes UP by hand;
+  //     the screen must not flatter either half.
+  const hits = RENDERER.filter((f) => code(f).includes("goes up as it changes"));
+  if (hits.length === 0) pass("the false 'audio goes up as it changes' claim is gone");
+  else fail(`"goes up as it changes" still renders in ${hits.join(", ")} — nothing uploads on a timer`);
+}
+
+console.log("\n== 11. file_key on every audio table, and the sweep excluded explicitly ==");
+{
+  // Jeff, 2026-09-11: "Then Phase 1 as proposed. Sweep excluded, and I want that exclusion explicit
+  // and guarded, not implied."
+  //
+  // v59 gave announcements, spots, cart_slots, voice_tracks and published_episodes a file_key. It is
+  // NOT for backup coverage — the backup has been folder-driven since e36d675 and has been carrying
+  // cart audio for days. It is for the two things that are still row-shaped: honest health reporting
+  // (classifyRow returns r2Only instead of dead, which is why OV read "4 missing" over three files
+  // sitting safely in the cloud) and per-row materialization.
+  const V59 = ['announcements', 'spots', 'cart_slots', 'voice_tracks', 'published_episodes'];
+
+  // (a) THE RATCHET. Every audio table registered with a blob-ref file_path must also register
+  //     file_key as a scalar. A new audio table cannot be added without one — which is exactly how
+  //     five tables drifted away from songs and stayed there.
+  const reg = read("electron/sync/synced-tables.js").replace(/\r/g, "");
+  const missing = [];
+  for (const t of ['songs', ...V59]) {
+    const at = reg.indexOf(`tableName: '${t}'`);
+    if (at === -1) { missing.push(`${t} (not in the registry)`); continue; }
+    const entry = reg.slice(at, at + 2600);
+    if (!/file_path:\s*'blob-ref'/.test(entry)) continue;      // not an audio-bearing entry
+    if (!/file_key:\s*'scalar'/.test(entry)) missing.push(t);
+  }
+  if (missing.length === 0) pass("every audio table registers file_key as a scalar alongside its blob-ref file_path");
+  else fail(`these audio tables have a blob-ref file_path and no file_key: ${missing.join(", ")}`);
+
+  // (b) r2_uploaded_at is deliberately NOT added to the five. The manifest is the resume marker now
+  //     (audio-library-r2.js:25-29); a local-only column nothing reads is how a schema grows fields
+  //     no one can explain.
+  const stray = V59.filter((t) => {
+    const at = reg.indexOf(`tableName: '${t}'`);
+    return at !== -1 && /r2_uploaded_at/.test(reg.slice(at, at + 2600));
+  });
+  if (stray.length === 0) pass("no r2_uploaded_at was added to the v59 tables — the manifest is the resume marker");
+  else fail(`${stray.join(", ")} gained r2_uploaded_at — that column has no reader since folder-driven R2`);
+
+  // (c) THE MIGRATION EXISTS AND IS HONEST ABOUT WHAT IT TOUCHES.
+  const mig = code("scripts/migrate-audio-file-key-phase-sync-59.js");
+  const covered = V59.filter((t) => mig.includes(`'${t}'`));
+  if (covered.length === V59.length) pass("the v59 migration names all five tables");
+  else fail(`the v59 migration misses: ${V59.filter((t) => !covered.includes(t)).join(", ")}`);
+  if (/INSERT INTO schema_version \(version\) VALUES \(59\)/.test(mig)) pass("the v59 migration records its version");
+  else fail("the v59 migration never records version 59 — it would re-run on every launch");
+
+  // (d) THE SWEEP EXCLUSION, EXPLICIT. deletion-sweep.js keys on file_key for everything it does, so
+  //     the v59 tables are now SHAPED like things it could sweep. Its ownership check (evaluateRow
+  //     step 1) asks only whether a live `songs` row shares the key — a cart and a song can name the
+  //     same file, so releasing on a song-only check would delete an object a cart still needs.
+  //     Admitting these tables means widening that guard first, and that is its own phase.
+  // The NOT_SWEPT_TABLES declaration is the one place these names may legitimately appear — it IS
+  // the exclusion. Strip it before scanning, or the guard fires on the very statement that
+  // satisfies it. Every other mention in that file is a real reference and must fail.
+  const sweep = code("electron/deletion-sweep.js")
+    .replace(/const NOT_SWEPT_TABLES[\s\S]*?\);/, "");
+  const leaked = V59.filter((t) => new RegExp(`\\b${t}\\b`).test(sweep));
+  if (leaked.length === 0) {
+    pass("deletion-sweep.js reads none of the v59 tables — deleting a cart releases nothing from R2");
+  } else {
+    fail(`deletion-sweep.js now references ${leaked.join(", ")} — widen evaluateRow()'s ownership check BEFORE admitting a table to the release pipeline`);
+  }
+
+  // (e) …and the exclusion is a runtime fact, not only a comment and a test.
+  const rawSweep = read("electron/deletion-sweep.js");
+  if (/function\s+isSweepableTable/.test(rawSweep) && /NOT_SWEPT_TABLES/.test(rawSweep)) {
+    pass("the exclusion is named in code and exported, not implied by omission");
+  } else {
+    fail("the sweep exclusion exists only as an absence — one refactor from not existing");
+  }
+}
+
 console.log(failures === 0
   ? "\nVERDICT: PASS — one engine, one switch, and every count says what it counted.\n"
   : `\nVERDICT: FAIL — ${failures} check(s) failed.\n`);

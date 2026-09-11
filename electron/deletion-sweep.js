@@ -20,6 +20,29 @@
 const fs = require('fs');
 const path = require('path');
 
+// ── THE v59 TABLES ARE EXCLUDED FROM THIS MODULE. EXPLICITLY, NOT BY OMISSION ───────────────────
+//
+// Jeff, 2026-09-11: "Sweep excluded, and I want that exclusion explicit and guarded, not implied."
+//
+// v59 gave announcements, spots, cart_slots, voice_tracks and published_episodes a `file_key`. This
+// module keys on file_key for everything it does, so those tables are now SHAPED like things it
+// could sweep. They must not be swept, and the reason is not caution — it is that the ownership
+// checks below cannot yet answer for them:
+//
+//   • evaluateRow() step 1 asks whether any LIVE `songs` row shares the key. It does not ask about
+//     carts, spots, announcements, voice tracks or episodes. A cart and a song can legitimately name
+//     the same file, so releasing on a song-only check would delete an object a cart still needs.
+//   • step 3 falls back to `play_log`, which has no file_key at all and can only match file_path.
+//
+// Admitting these tables means widening the guard FIRST, and that is its own phase with its own
+// risk. It is not to ride along with the column. Until then: nothing in this module reads these
+// table names, enqueueForDeletion is called only from the song soft-delete path, and deleting a
+// cart releases NOTHING from R2 — the object stays, which is the safe direction and costs pennies.
+//
+// Guarded by scripts/smoke-one-switch.js §11, which fails if any of these names appears in this
+// file. If you are here to add one, widen evaluateRow() first and come back with Jeff.
+const NOT_SWEPT_TABLES = Object.freeze(['announcements', 'spots', 'cart_slots', 'voice_tracks', 'published_episodes']);
+
 const GRACE_DAYS = 30;
 const PLAY_LOG_WINDOW_DAYS = 90;
 const REPORT_FILE = 'r2-deletion-report.jsonl';
@@ -119,6 +142,14 @@ function dequeueOnRestore(db, song) {
  * checks see only this install; another machine on the account may hold a reference this one cannot
  * see. `marked` therefore means "eligible as far as this machine can tell", never "safe to delete".
  */
+/**
+ * Is this table allowed anywhere near the release pipeline? Only `songs` is, today. Exported and
+ * asserted rather than assumed — an implied exclusion is one refactor away from not existing.
+ */
+function isSweepableTable(table) {
+  return table === "songs";
+}
+
 function evaluateRow(db, row, opts = {}) {
   const now = opts.now ?? nowSec();
 
@@ -387,4 +418,7 @@ module.exports = {
   GRACE_DAYS,
   PLAY_LOG_WINDOW_DAYS,
   REPORT_FILE,
+  // The v59 exclusion, exported so it can be asserted rather than trusted.
+  isSweepableTable,
+  NOT_SWEPT_TABLES,
 };

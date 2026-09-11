@@ -543,4 +543,7 @@ function getR2Config() {
   };
 }
 
-module.exports = { installCloudBackup, triggerUpload, getR2Config };
+// filesHalfEnabled is exported so the catalogue PULL timer in main.js asks the same question this
+// module asks — "is Keep my stuff synced on for the active station". A second copy of that test in
+// main.js is how the files half grew three writers in the first place. One definition, two callers.
+module.exports = { installCloudBackup, triggerUpload, getR2Config, filesHalfEnabled };

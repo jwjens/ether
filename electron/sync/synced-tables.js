@@ -195,6 +195,7 @@ const REGISTRY = {
       id:             'scalar',
       title:          'scalar',
       file_path:      'blob-ref',
+      file_key:       'scalar',         // v59 — R2 object basename, content identity (songs precedent)
       trigger_time:   'scalar',
       days:           'scalar',
       // SLICE 5 — what KIND of trigger this is, and how far before closing it fires.
@@ -238,6 +239,7 @@ const REGISTRY = {
       slot_number: 'scalar',
       title:       'scalar',
       file_path:   'blob-ref',
+      file_key:    'scalar',         // v59 — R2 object basename, content identity (songs precedent)
       color:       'scalar',
       hotkey:      'scalar',
       station_id:  'scalar',
@@ -763,6 +765,7 @@ const REGISTRY = {
       id:           'scalar',
       title:        'scalar',
       file_path:    'blob-ref',
+      file_key:     'scalar',         // v59 — R2 object basename, content identity (songs precedent)
       show_id:      'scalar',
       published_at: 'scalar',
       station_id:   'scalar',
@@ -983,6 +986,7 @@ const REGISTRY = {
       id:             'scalar',
       title:          'scalar',
       file_path:      'blob-ref',
+      file_key:       'scalar',         // v59 — R2 object basename, content identity (songs precedent)
       spot_type:      'scalar',
       advertiser:     'scalar',
       start_date:     'scalar',
@@ -1121,6 +1125,7 @@ const REGISTRY = {
       id:             'scalar',
       title:          'scalar',
       file_path:      'blob-ref',
+      file_key:       'scalar',         // v59 — R2 object basename, content identity (songs precedent)
       show_id:        'scalar',
       clock_slot_id:  'scalar',
       duration_ms:    'scalar',
