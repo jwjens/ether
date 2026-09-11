@@ -2315,6 +2315,15 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
       const kv = (window as any).ether.stationConfigKv;
       await kv.upsertByKey(stationId, 'sync_enabled', next ? 'true' : 'false');
       if (next) await kv.upsertByKey(stationId, 'sync_backend_url', 'https://ether-backend-production.up.railway.app');
+      // THE FILES HALF, IN THE SAME ACT (2026-09-11). setR2Enabled() alone was React state and
+      // nothing else: main never heard, so r2Config.enabled stayed true, r2Ready() stayed true, and
+      // triggerUpload() kept sending the database on every backup_db while this switch said "Off.
+      // Nothing is going to the cloud." Confirmed at runtime before this was written — getR2Config()
+      // read enabled:true, the switch was flipped off, and it read enabled:true again.
+      // This is the one writer of the files half, exactly as it is the one writer of sync_enabled.
+      // It sends intervalHours too so main's `?? r2Config.intervalHours` cannot quietly reset the
+      // operator's schedule to the 6h default on the first toggle after a launch.
+      await (window as any).ether.cloudBackup.setR2Config({ enabled: next, intervalHours: r2Interval });
       setSyncOn(next);
       setR2Enabled(next);
       // Honest about the restart. The engine reads sync_enabled at startup, so claiming it is on
@@ -2602,11 +2611,12 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
     setR2Saving(true);
     setR2SaveStatus("");
     try {
-      // Post-1.3h: only the toggle + interval are persisted client-side.
-      // Backend handles R2 access; cloud-backup.js's set-r2-config handler
-      // ignores credential fields if any older callers send them.
+      // THE INTERVAL ONLY. This used to send `enabled` as well, which made it a second writer of
+      // the files-half master flag — the same defect 4.6.23 removed for sync_enabled. The handler
+      // resolves an omitted field with `?? r2Config.enabled`, so leaving it out preserves whatever
+      // the one switch last set. Backend handles R2 access; credential fields are not sent and
+      // set-r2-config ignores them if an older caller does.
       const payload: any = {
-        enabled:       r2Enabled,
         intervalHours: r2Interval,
       };
       const ether = (window as any).ether;
@@ -3379,7 +3389,10 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" as any, paddingBottom: 18, borderBottom: "1px solid var(--border-primary)", marginBottom: 18 }}>
           <div style={{ minWidth: 220 }}>
             <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text-primary)" }}>How often to send your setup</div>
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>Only applies while Ether is open. Your audio goes up as it changes, not on this schedule.</div>
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>
+              Only applies while Ether is open. Your audio goes up as it changes, not on this schedule.
+              <br />On or off is <b>Keep my stuff synced</b> above — this row only sets how often.
+            </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <select value={r2Interval} onChange={e => setR2Interval(Number(e.target.value))} disabled={!r2Enabled}
@@ -3389,10 +3402,14 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
               <option value={12}>Every 12 hours</option>
               <option value={24}>Once a day</option>
             </select>
-            <button onClick={() => setR2Enabled(e => !e)} aria-label="Toggle automatic backup"
-              style={{ position: "relative", width: 46, height: 26, borderRadius: 999, border: "none", flexShrink: 0, cursor: "pointer", background: r2Enabled ? "var(--accent-green)" : "var(--bg-tertiary)", boxShadow: r2Enabled ? "none" : "inset 0 0 0 1px var(--border-primary)" }}>
-              <span style={{ position: "absolute", top: 3, left: r2Enabled ? 23 : 3, width: 20, height: 20, borderRadius: 999, background: "#fff", transition: "left 0.15s ease" }} />
-            </button>
+            {/* READ-ONLY STATUS, not a switch. This was a settable toggle writing the files-half
+                master flag — a second master switch for half of what "Keep my stuff synced" does,
+                which is the defect that let the card claim off while the database kept going up.
+                The schedule beside it stays settable: an interval is a parameter, not a master. */}
+            <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "'DM Mono', monospace",
+                           color: r2Enabled ? "#4ade80" : "var(--text-tertiary)" }}>
+              {r2Enabled ? "on" : "off"}
+            </span>
             <button onClick={saveR2Config} disabled={r2Saving}
               style={{ padding: "8px 14px", fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", borderRadius: 0, opacity: r2Saving ? 0.6 : 1 }}>
               {r2Saving ? "Saving…" : "Save"}

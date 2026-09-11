@@ -221,6 +221,73 @@ console.log("\n== 7. sync_enabled has exactly ONE writer ==");
   else fail(`expected 1 title= and 1 aria-label=, found ${titles} and ${arias}`);
 }
 
+console.log("\n== 8. the FILES half has exactly ONE writer, and it survives a restart ==");
+{
+  // Jeff, 2026-09-10, after confirming it at runtime: "The switch never reaches main."
+  //
+  // Section 7 made sync_enabled single-writer — the ROWS half. The FILES half (cloud-backup's
+  // r2Config.enabled, which gates r2Ready() and therefore triggerUpload()) had THREE writers and
+  // the one switch was not among them: toggleKeepSynced() only called setR2Enabled(), which is
+  // React state and nothing else. So "Off. Nothing is going to the cloud." moved a pill and told
+  // main nothing, and the database kept going up on every backup_db (main.js:5808).
+  // Receipt: getR2Config().enabled read true, the switch was flipped off, it read true again.
+  //
+  // Two things have to hold, and the second is the one that bites: a single writer is useless if
+  // main never reads the value back. 1.3f stopped loading cloud_backup_r2 because it carried
+  // credentials, which left saveR2Config() writing a key nothing consumed — so the flag reset to
+  // its hardcoded `enabled: true` on every launch and the off could not survive a restart.
+
+  // (a) exactly ONE renderer call passes `enabled` to setR2Config.
+  const writers = [];
+  for (const f of RENDERER) {
+    const src = code(f);
+    const re = /setR2Config\s*\(\s*\{[\s\S]*?\}\s*\)/g;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      if (/\benabled\s*:/.test(m[0])) writers.push(`${f}:${src.slice(0, m.index).split("\n").length}`);
+    }
+  }
+  if (writers.length === 1) pass(`one writer of the files-half flag (${writers[0]})`);
+  else if (writers.length === 0) fail("nothing passes enabled: to setR2Config — the switch cannot turn the files half off");
+  else fail(`the files-half flag is written in ${writers.length} places (${writers.join(", ")}) — one switch means one writer`);
+
+  // (b) it is the SAME function that writes sync_enabled. Two writers in two places is the defect;
+  //     two writes in one act is the fix.
+  const sp = code("src/components/SettingsPanel.tsx");
+  const at = sp.indexOf("const toggleKeepSynced");
+  const fn = at === -1 ? "" : sp.slice(at, at + 1400);
+  if (/sync_enabled/.test(fn) && /setR2Config/.test(fn)) pass("both halves are written by toggleKeepSynced, in one act");
+  else fail("toggleKeepSynced does not write both halves — the card can claim a state only one half is in");
+
+  // (c) the retired second and third master switches, by their own labels.
+  for (const [needle, where] of [
+    ["Toggle automatic backup", "Advanced"],
+    ["Save Credentials", "the Cloud Backup panel"],
+  ]) {
+    const hits = RENDERER.filter((f) => code(f).includes(needle));
+    if (hits.length === 0) pass(`"${needle}" is gone from ${where}`);
+    else fail(`"${needle}" still renders in ${hits.join(", ")} — a second writer of the files half`);
+  }
+
+  // (d) THE LOAD PATH. Without this the off is written and never read.
+  const cb = code("electron/cloud-backup.js");
+  const ci = cb.indexOf("function installCloudBackup");
+  const install = ci === -1 ? "" : cb.slice(ci, ci + 4000);
+  if (/cloud_backup_r2/.test(install) && /r2Config\.enabled\s*=/.test(install)) {
+    pass("installCloudBackup reads cloud_backup_r2 back — the flag survives a restart");
+  } else {
+    fail("installCloudBackup never reads cloud_backup_r2 — r2Config.enabled resets to its hardcoded default every launch");
+  }
+
+  // (e) …and still refuses to load credentials. 1.3f's decision stands; only the operator's two
+  //     fields come back.
+  if (!/stored\.(accessKeyId|secretAccessKey|accountId|bucket|endpoint)/.test(install)) {
+    pass("the restored load path takes no credentials — backend-signed mode is intact");
+  } else {
+    fail("the load path reads credential fields out of KV — 1.3f moved R2 access to the backend");
+  }
+}
+
 console.log(failures === 0
   ? "\nVERDICT: PASS — one engine, one switch, and every count says what it counted.\n"
   : `\nVERDICT: FAIL — ${failures} check(s) failed.\n`);

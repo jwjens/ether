@@ -115,14 +115,11 @@ export default function CloudBackup() {
   const [autoBackup, setAutoBackup]       = useState(false);
   const [lastBackupAt, setLastBackupAt]   = useState<string | null>(null);
 
-  // ── R2 config state ──
-  const [r2Endpoint, setR2Endpoint]       = useState("");
-  const [r2Bucket, setR2Bucket]           = useState("");
-  const [r2AccessKey, setR2AccessKey]     = useState("");
-  const [r2Secret, setR2Secret]           = useState("");
-  const [r2HasSecret, setR2HasSecret]     = useState(false);
+  // ── R2 state ──
+  // The endpoint / bucket / access-key / secret fields went with the form (2026-09-11): the backend
+  // has held the only R2 credentials since 1.3f and set-r2-config discards anything a caller sends,
+  // so every one of those inputs was typing into a wall. r2Enabled stays as read-only STATUS.
   const [r2Enabled, setR2Enabled]         = useState(false);
-  const [r2Saving, setR2Saving]           = useState(false);
   const [r2Running, setR2Running]         = useState(false);
   const [r2History, setR2History]         = useState<{id:number;status:string;size_bytes:number;checksum:string;backed_up_at:number}[]>([]);
   const [r2Status, setR2Status]           = useState<{ msg: string; type: "ok" | "err" | "info" } | null>(null);
@@ -148,10 +145,6 @@ export default function CloudBackup() {
     (async () => {
       try {
         const cfg = await (window as any).ether.cloudBackup.getR2Config();
-        if (cfg.endpoint)    setR2Endpoint(cfg.endpoint);
-        if (cfg.bucket)      setR2Bucket(cfg.bucket);
-        if (cfg.accessKeyId) setR2AccessKey(cfg.accessKeyId);
-        setR2HasSecret(!!cfg.hasSecret);
         setR2Enabled(!!cfg.enabled);
         const hist = await (window as any).ether.cloudBackup.getHistory();
         setR2History(hist ?? []);
@@ -159,27 +152,17 @@ export default function CloudBackup() {
     })();
   }, []);
 
-  const saveR2Config = async () => {
-    setR2Saving(true);
-    setR2Status({ msg: "Saving...", type: "info" });
-    try {
-      const result = await (window as any).ether.cloudBackup.setR2Config({
-        endpoint:      r2Endpoint.trim(),
-        bucket:        r2Bucket.trim(),
-        accessKeyId:   r2AccessKey.trim(),
-        secretAccessKey: r2Secret.trim() || undefined,
-        enabled:       r2Enabled,
-      });
-      if (r2Secret) { setR2HasSecret(true); setR2Secret(""); }
-      setR2Status({
-        msg: result.ready ? "✓ R2 credentials saved — ready to backup" : "Saved (credentials incomplete — enter access key + secret)",
-        type: result.ready ? "ok" : "info",
-      });
-    } catch (e: any) {
-      setR2Status({ msg: "Save failed: " + e.message, type: "err" });
-    }
-    setR2Saving(false);
-  };
+  // saveR2Config — DELETED 2026-09-11.
+  //
+  // It was the THIRD writer of the files-half master flag (`enabled`), after the one switch and the
+  // Advanced toggle, and unlike the dead SyncSection this one was RENDERED — App.tsx:3120 and a
+  // popout. It also promised "credentials stored locally, never transmitted" over four inputs that
+  // main has discarded since 1.3f. A save that changes nothing and a master switch that competes
+  // with the real one, in the same block.
+  //
+  // The one writer of the files half is toggleKeepSynced() in SettingsPanel.tsx, which writes it
+  // with sync_enabled in a single act. Guarded by scripts/smoke-one-switch.js §8.
+  // "Backup to R2 Now" below is untouched — a manual run is an escape hatch, not a second switch.
 
   const runR2Backup = async () => {
     setR2Running(true);
@@ -422,12 +405,12 @@ export default function CloudBackup() {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
             <div>
               <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "#f97316", textTransform: "uppercase", marginBottom: 2 }}>Cloudflare R2</div>
-              <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Direct object storage — credentials stored locally, never transmitted</div>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Signed by the Ether backend — no keys are kept on this computer. Turn it on or off with <b>Keep my stuff synced</b> in Preferences.</div>
             </div>
-            {/* enabled toggle */}
-            <button onClick={() => setR2Enabled(e => !e)} style={{ width: 40, height: 22, borderRadius: 0, border: "none", cursor: "pointer", position: "relative", background: r2Enabled ? "#f97316" : "var(--bg-tertiary)", transition: "background 0.2s", flexShrink: 0 }}>
-              <div style={{ position: "absolute", top: 3, left: r2Enabled ? 20 : 3, width: 16, height: 16, borderRadius: "50%", background: "#fff", transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }} />
-            </button>
+            {/* READ-ONLY STATUS. Was a settable toggle writing the files-half master flag. */}
+            <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'DM Mono', monospace", color: r2Enabled ? "#34d399" : "var(--text-tertiary)", flexShrink: 0 }}>
+              {r2Enabled ? "ON" : "OFF"}
+            </span>
           </div>
 
           {r2Status && (
@@ -437,37 +420,12 @@ export default function CloudBackup() {
             </div>
           )}
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
-            <div style={{ gridColumn: "1 / -1" }}>
-              <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 4 }}>Endpoint URL</div>
-              <input type="text" value={r2Endpoint} onChange={e => setR2Endpoint(e.target.value)} placeholder="https://<account-id>.r2.cloudflarestorage.com"
-                style={{ width: "100%", padding: "8px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace", boxSizing: "border-box" }} />
-            </div>
-            <div>
-              <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 4 }}>Bucket Name</div>
-              <input type="text" value={r2Bucket} onChange={e => setR2Bucket(e.target.value)} placeholder="ether-backups"
-                style={{ width: "100%", padding: "8px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", boxSizing: "border-box" }} />
-            </div>
-            <div>
-              <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 4 }}>Access Key ID</div>
-              <input type="text" value={r2AccessKey} onChange={e => setR2AccessKey(e.target.value)} placeholder="Access key ID"
-                style={{ width: "100%", padding: "8px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace", boxSizing: "border-box" }} />
-            </div>
-            <div style={{ gridColumn: "1 / -1" }}>
-              <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 4 }}>
-                Secret Access Key {r2HasSecret && !r2Secret && <span style={{ color: "#34d399" }}>— saved ✓</span>}
-              </div>
-              <input type="password" value={r2Secret} onChange={e => setR2Secret(e.target.value)}
-                placeholder={r2HasSecret ? "Leave blank to keep saved secret" : "Secret access key"}
-                style={{ width: "100%", padding: "8px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none", fontFamily: "'DM Mono', monospace", boxSizing: "border-box" }} />
-            </div>
-          </div>
-
+          {/* The four credential inputs and "Save Credentials" — DELETED 2026-09-11. The backend has
+              held the only R2 credentials since 1.3f; set-r2-config discards endpoint, bucket,
+              accessKeyId and secretAccessKey, so every keystroke here went nowhere and the Save
+              button existed only to write the files-half master flag, competing with the one switch.
+              A manual run is still an escape hatch, so "Backup to R2 Now" stays. */}
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={saveR2Config} disabled={r2Saving}
-              style={{ padding: "7px 16px", borderRadius: 0, fontSize: 11, fontWeight: 700, background: "rgba(249,115,22,0.12)", color: "#f97316", border: "1px solid rgba(249,115,22,0.3)", cursor: "pointer", opacity: r2Saving ? 0.6 : 1 }}>
-              {r2Saving ? "Saving..." : "Save Credentials"}
-            </button>
             <button onClick={runR2Backup} disabled={r2Running}
               style={{ padding: "7px 18px", borderRadius: 0, fontSize: 11, fontWeight: 700, background: r2Running ? "var(--bg-tertiary)" : "#f97316", color: r2Running ? "var(--text-tertiary)" : "#000", border: "none", cursor: r2Running ? "default" : "pointer", transition: "all 0.15s" }}>
               {r2Running ? "⏳ Backing up..." : "▲ Backup to R2 Now"}

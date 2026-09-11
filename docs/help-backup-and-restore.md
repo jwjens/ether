@@ -32,17 +32,24 @@ and the cloud. It won't reappear on another computer.
 
 ### Automatic backups
 
-Turn on **Back up automatically** and pick how often (every hour up to once a day). Ether keeps your cloud
-copy current while it's open. Automatic backups cover your setup — if you've added a batch of songs, press
-**Back up now** so the audio goes up too.
+There is no separate switch for this. **Keep my stuff synced** is the one switch, and while it is on Ether
+keeps your cloud copy current on its own — your setup and your audio, both directions, on every computer
+signed into your account. Leave it on.
+
+To change how often your setup goes up, open **Advanced** and use **How often to send your setup** (every
+hour up to once a day), then press **Save**. That row only sets the schedule; on and off is the switch
+above it. Your audio goes up as it changes, not on that schedule.
+
+If you've just imported a big batch and don't want to wait, press **Back up now**.
 
 ### Sending just the music
 
-Under **Your music files** there's **Send my music to the cloud**. **Back up now** already includes your
-music, so you only need this if you want to send audio on its own — handy right after importing a batch.
-Underneath it you'll see how many of your songs are in the cloud.
+**Back up now** already includes your music, so you rarely need anything else. If you want to force the
+audio up on its own — say you're not sure an import made it — open **Advanced** and press **Re-send every
+file, even ones already uploaded**.
 
-**Where your songs live** shows the folder Ether keeps your library in. **Change folder** moves it. This is
+**WHERE YOUR AUDIO LIVES** (under **Advanced**) shows the folder Ether keeps your library in. **Change
+folder** moves it. This is
 also the folder your music lands in on another computer.
 
 ---
@@ -90,6 +97,6 @@ retry.
 | | Covers your setup | Covers your music | Survives the computer dying |
 |---|---|---|---|
 | **Back up now** (cloud) | yes | yes | yes |
-| **Back up automatically** | yes | setup only | yes |
-| **Send my music to the cloud** | no | yes | yes |
+| **Keep my stuff synced** (the switch) | yes | yes | yes |
+| **Re-send every file** (Advanced) | no | yes | yes |
 | **Save a snapshot** | yes | no | no |

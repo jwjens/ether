@@ -98,10 +98,32 @@ function installCloudBackup(ipcMain, database, opts = {}) {
     if (existing) config = { ...config, ...JSON.parse(existing.value) };
   } catch {}
 
-  // 1.3f: customer-side R2 credentials are no longer loaded. The cloud_backup_r2
-  // / r2_config keys stay in station_config_kv on existing installs until 1.3h
-  // sweeps them out; this file simply ignores them. Backup readiness is now
-  // gated by license_key + plan_tier (see r2Ready()).
+  // CREDENTIALS STAY UNLOADED. 1.3f moved R2 access to the backend and stopped reading customer
+  // keys out of KV; that decision stands and nothing below re-reads accountId / accessKeyId /
+  // secretAccessKey / endpoint / bucket.
+  //
+  // THE OPERATOR'S TWO FIELDS COME BACK (2026-09-11). The same stop also orphaned `enabled` and
+  // `intervalHours`, which are not secrets — they are the operator's decision about whether this
+  // computer sends anything at all. saveR2Config() kept WRITING them to cloud_backup_r2 and nothing
+  // ever read them back, so r2Config reset to the hardcoded `enabled: true` at :38 on every launch.
+  // Turning the switch off could not survive a restart because the off was never read: r2Ready()
+  // came back true and triggerUpload() (main.js:5808, after every backup_db) kept sending.
+  // Runtime receipt, 2026-09-10: getR2Config().enabled read true, the switch was flipped off, and it
+  // read true again — main was never told. Only the two honored fields are taken, and only when they
+  // are the right type, so a half-written or older row cannot poison the flag.
+  try {
+    const row = getDb().prepare("SELECT value FROM station_config_kv WHERE key = 'cloud_backup_r2'").get();
+    if (row) {
+      const stored = JSON.parse(row.value);
+      if (typeof stored.enabled === "boolean")   r2Config.enabled       = stored.enabled;
+      if (Number.isFinite(stored.intervalHours)) r2Config.intervalHours = stored.intervalHours;
+      console.log("[CLOUD-BACKUP] loaded operator fields from KV — enabled:", r2Config.enabled, "intervalHours:", r2Config.intervalHours);
+    } else {
+      console.log("[CLOUD-BACKUP] no cloud_backup_r2 row — keeping defaults, enabled:", r2Config.enabled);
+    }
+  } catch (e) {
+    console.warn("[CLOUD-BACKUP] could not read cloud_backup_r2, keeping defaults:", e.message);
+  }
   console.log("[CLOUD-BACKUP] backend-signed mode — credentials not loaded from KV");
 
   // ── IPC handlers ──────────────────────────────────────────────
