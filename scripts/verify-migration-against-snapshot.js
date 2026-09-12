@@ -105,10 +105,7 @@ if (TABLES) {
     if (!tableExists(t)) { info(`${t.padEnd(20)} ABSENT on this install`); rowsBefore[t] = null; continue; }
     rowsBefore[t] = count(t);
     colsBefore[t] = cols(t);
-    const hasPath = colsBefore[t].includes('file_path');
-    const hasKey  = colsBefore[t].includes('file_key');
-    info(`${t.padEnd(20)} ${String(rowsBefore[t]).padStart(8)} rows · file_path ${hasPath ? 'yes' : 'NO '} · file_key ${hasKey ? 'ALREADY PRESENT' : 'absent'}`);
-    if (hasPath && hasKey) fail(`${t} already has file_key — nothing to prove`);
+    info(`${t.padEnd(20)} ${String(rowsBefore[t]).padStart(8)} rows · ${colsBefore[t].length} columns`);
   }
 } else {
   info('this migration exports no TABLES list; per-table numbers cannot be reported');
@@ -145,26 +142,43 @@ if (TABLES) {
   for (const t of TABLES) {
     if (!tableExists(t)) { info(`${t.padEnd(20)} ABSENT — correctly skipped`); continue; }
     const c = cols(t);
-    if (!colsBefore[t] || !colsBefore[t].includes('file_path')) {
-      info(`${t.padEnd(20)} no file_path — correctly skipped`);
-      continue;
+
+    // WHICH COLUMNS DID IT ACTUALLY ADD? DIFFED, NOT ASSUMED.
+    //
+    // This block hard-coded `file_key`, because it was written for v59. Run against v60 — which adds
+    // requester_token — it reported "file_key MISSING after the migration" and printed DO NOT SHIP
+    // over a migration that was entirely correct. A guard that cries wolf is worse than no guard:
+    // the next real failure gets waved through by whoever remembers this one. The tool now asks the
+    // database what changed instead of assuming it already knows.
+    const added = c.filter((x) => !(colsBefore[t] || []).includes(x));
+    if (added.length === 0) { fail(`${t}: the migration added no column to this table`); continue; }
+    pass(`${t}: added ${added.join(', ')}`);
+
+    const total = count(t);
+    fillAfter[t] = {};
+    for (const col of added) {
+      // How much of the new column is filled. A BACKFILLED column shows a number; a purely additive
+      // one shows 0. Both are reported as the fact they are, and neither is judged here — what is
+      // correct depends on the migration, and the migration says so in its own header.
+      const filled = one(`SELECT COUNT(*) n FROM ${t} WHERE "${col}" IS NOT NULL AND "${col}" != ''`).n;
+      fillAfter[t][col] = filled;
+      info(`${(t + '.' + col).padEnd(34)} filled ${String(filled).padStart(7)} of ${String(total).padStart(7)} row(s)`);
+
+      // A column meant to hold a BASENAME must never hold a directory — that is file_path's defect,
+      // and the check is worth keeping wherever the name says it applies.
+      if (/key$|basename/i.test(col)) {
+        const withSep = one(`SELECT COUNT(*) n FROM ${t} WHERE "${col}" LIKE '%/%' OR "${col}" LIKE '%\\%'`).n;
+        if (withSep === 0) pass(`${t}.${col}: no value contains a path separator`);
+        else fail(`${t}.${col}: ${withSep} value(s) contain a directory — that is a path, not an identity`);
+      }
+
+      // If the migration backfills FROM file_path, every row that has one should have a value.
+      if (filled > 0 && (colsBefore[t] || []).includes('file_path')) {
+        const withPath = one(`SELECT COUNT(*) n FROM ${t} WHERE file_path IS NOT NULL AND file_path != ''`).n;
+        if (filled === withPath) pass(`${t}.${col}: every row with a file_path got a value`);
+        else fail(`${t}.${col}: ${withPath - filled} row(s) have a file_path but no ${col}`);
+      }
     }
-    if (c.includes('file_key')) pass(`${t}.file_key added`);
-    else { fail(`${t}.file_key MISSING after the migration`); continue; }
-
-    const filled = one(`SELECT COUNT(*) n FROM ${t} WHERE file_key IS NOT NULL AND file_key != ''`).n;
-    const empty  = one(`SELECT COUNT(*) n FROM ${t} WHERE file_key IS NULL OR file_key = ''`).n;
-    const withPath = one(`SELECT COUNT(*) n FROM ${t} WHERE file_path IS NOT NULL AND file_path != ''`).n;
-    fillAfter[t] = { filled, empty, withPath };
-    info(`${t.padEnd(20)} file_key filled ${String(filled).padStart(7)} · empty ${String(empty).padStart(7)} · rows with a file_path ${String(withPath).padStart(7)}`);
-    if (filled === withPath) pass(`${t}: every row that has a file_path got a file_key`);
-    else fail(`${t}: ${withPath - filled} row(s) have a file_path but no file_key`);
-
-    // The key must be a BASENAME — no directory ever, or this column would carry another machine's
-    // path exactly like file_path used to.
-    const withSep = one(`SELECT COUNT(*) n FROM ${t} WHERE file_key LIKE '%/%' OR file_key LIKE '%\\%'`).n;
-    if (withSep === 0) pass(`${t}: no file_key contains a path separator`);
-    else fail(`${t}: ${withSep} file_key value(s) contain a directory — that is a path, not an identity`);
   }
 }
 
@@ -210,9 +224,11 @@ else fail(`schema_version gained a duplicate v${VERSION} row (${verCountBefore} 
 if (TABLES) {
   for (const t of TABLES) {
     if (!fillAfter[t]) continue;
-    const filled = one(`SELECT COUNT(*) n FROM ${t} WHERE file_key IS NOT NULL AND file_key != ''`).n;
-    if (filled === fillAfter[t].filled) pass(`${t}: file_key fill unchanged by the second run (${filled})`);
-    else fail(`${t}: file_key fill changed on re-run (${fillAfter[t].filled} → ${filled})`);
+    for (const [col, was] of Object.entries(fillAfter[t])) {
+      const now = one(`SELECT COUNT(*) n FROM ${t} WHERE "${col}" IS NOT NULL AND "${col}" != ''`).n;
+      if (now === was) pass(`${t}.${col}: fill unchanged by the second run (${now})`);
+      else fail(`${t}.${col}: fill changed on re-run (${was} → ${now})`);
+    }
   }
 }
 
