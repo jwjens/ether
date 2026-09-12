@@ -134,15 +134,29 @@ export default function ReelSplitter({ stationId, embedded, onCommitted }: { sta
   const commit = async () => {
     if (!buffer || !regions.length) return;
     setCommitState({ busy: true, done: 0, total: regions.length, err: null });
+    // WHICH cut failed, not just that one did. A reel is a dozen cuts and "Failed: …" without a name
+    // sends the operator through all of them. Tracked outside the loop so the catch can name it.
+    let atName = "";
+    let doneCount = 0;
     try {
       for (let i = 0; i < regions.length; i++) {
         const r = regions[i];
-        await commitRegionToLibrary(buffer, r.start, r.end, { name: r.name, cls, poolId, reelSlug: reelName });
-        setCommitState({ busy: true, done: i + 1, total: regions.length, err: null });
+        atName = r.name;
+        await commitRegionToLibrary(buffer, r.start, r.end, { name: r.name, cls, poolId, reelSlug: reelName, stationId });
+        doneCount = i + 1;
+        setCommitState({ busy: true, done: doneCount, total: regions.length, err: null });
       }
       setCommitState({ busy: false, done: regions.length, total: regions.length, err: null });
       try { onCommitted?.(); } catch {}
-    } catch (e) { setCommitState(s => ({ busy: false, done: s?.done || 0, total: regions.length, err: (e as Error).message })); }
+    } catch (e) {
+      // Partial progress is REPORTED, not rounded to zero or hidden behind the total. Earlier cuts
+      // really are in the Library and the operator needs to know that before he re-runs the reel.
+      const msg = (e as Error).message;
+      setCommitState({ busy: false, done: doneCount, total: regions.length,
+                       err: doneCount > 0 ? `stopped at "${atName}" after ${doneCount} of ${regions.length} — ${msg}` : msg });
+      // Anything that DID commit should show up in the panel behind this one.
+      if (doneCount > 0) { try { onCommitted?.(); } catch {} }
+    }
   };
 
   const accent = SWP_INDIGO;
@@ -223,7 +237,7 @@ export default function ReelSplitter({ stationId, embedded, onCommitted }: { sta
             <div style={{ flex: 1 }} />
             {commitState && (commitState.busy ? <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>Committing {commitState.done}/{commitState.total}…</span>
               : commitState.err ? <span style={{ fontSize: 12, color: "var(--accent-red)" }}>Failed: {commitState.err}</span>
-              : <span style={{ fontSize: 12, color: "var(--accent-green)" }}>✓ {commitState.done} committed to Library</span>)}
+              : <span style={{ fontSize: 12, color: "var(--accent-green)" }}>✓ {commitState.done} of {commitState.total} committed to Library</span>)}
             <button onClick={commit} disabled={!regions.length || commitState?.busy} style={{ padding: "7px 16px", borderRadius: 4, border: "none", background: accent, color: "#04201c", fontWeight: 800, fontSize: 13, cursor: "pointer", opacity: !regions.length || commitState?.busy ? 0.5 : 1 }}>
               Commit {regions.length} {cls === "SWP" ? "sweeper" : "jingle"}{regions.length === 1 ? "" : "s"} →
             </button>

@@ -55,9 +55,9 @@ export default function StudioSendBar({ buffer, startSec, endSec, defaultName, s
   };
 
   const sendLibrary = () => run("Library", () =>
-    commitRegionToLibrary(buffer, startSec, endSec, { name, cls: "MUS", poolId: null, reelSlug }));
+    commitRegionToLibrary(buffer, startSec, endSec, { name, cls: "MUS", poolId: null, reelSlug, stationId }));
   const sendClass = () => run("Sweepers", () =>
-    commitRegionToLibrary(buffer, startSec, endSec, { name, cls, poolId, reelSlug }));
+    commitRegionToLibrary(buffer, startSec, endSec, { name, cls, poolId, reelSlug, stationId }));
   const sendDeck = (deck: "A" | "B" | "C") => run(`Deck ${deck}`, async () => {
     const { filePath, durationMs } = await renderRegionToDisk(buffer, startSec, endSec, reelSlug, name);
     const eng = getEngine(stationId);                      // resolve the ACTIVE station's engine fresh (command-path scoping)

@@ -1,6 +1,7 @@
 # The unified library — one store, every asset typed (design, 2026-08-26)
 
-**Status: DESIGN ONLY. NOTHING BUILT. Jeff rules.**
+**Status: DESIGN. Partly built (v50 `library_asset`, v51, v55 `sweeper_pool_member` — all additive,
+none read). AMENDED 2026-09-12 by Jeff's assignment ruling — see §2a, which CORRECTS §2 and §6.**
 
 Jeff specified this model from the start and it got built as separate subsystems instead. This is the
 north star that the sweeper redesign, the spots fix and the log-reader flip each serve — one coherent
@@ -94,6 +95,11 @@ library_asset            ← ONE store. Every asset. Every type.
 
 **TYPE DRIVES BEHAVIOUR.** Not a badge — a dispatch key. One table says what each type does:
 
+> **SUPERSEDED 2026-09-12 — see §2a.** A single dispatch key cannot say "this cut is a cart AND a
+> sweeper", which is the thing Jeff cannot do today. Type survives as what he ASSIGNS in the Library;
+> the assignment tables became the truth. The table below stays because the per-type BEHAVIOUR it
+> describes is still correct — it is the "one type per asset" premise that is wrong.
+
 | Type | Eligible for | Scheduled by | Plays on | Separation | Logged as |
 |---|---|---|---|---|---|
 | `SONG` | music rotation | clocks / rotation | deck A/B/C | artist + title + file | `MUSIC` |
@@ -110,6 +116,84 @@ No tab owns a store.
 be lost. They belong in a **side table keyed by asset uuid** (`asset_spot_meta`), joined only by the
 paths that need them. One shared identity, per-type detail alongside. This is the single most
 important structural decision in the whole design: unify IDENTITY, not every column.
+
+## 2a. THE ASSIGNMENT RULING (Jeff, 2026-09-12) — corrects §2 and §6
+
+> "One library. Import once, then assign where it plays. A file should be assignable to a cart slot
+> AND a sweeper pool AND anywhere else at the same time, because it's the same audio."
+>
+> "A cart slot IS an assignment. A hotkey pointing at a library asset, nothing more. It does not own
+> audio."
+
+### What this changes about §2
+
+§2 made `type` a **dispatch key** — one value per asset, deciding behaviour. That cannot express an
+asset with two jobs, and an operator with a cut he wants on a hotkey *and* in the Halloween pool has
+exactly that. So:
+
+| | §2 as written | §2a, ruling |
+|---|---|---|
+| `type` | one value, drives dispatch | **what Jeff assigns in the Library.** An asset may carry MORE THAN ONE |
+| behaviour decided by | the type column | **the assignment tables** — membership is the truth |
+| a cart | not modelled | an **assignment**: a hotkey pointing at an asset |
+| the panels | filtered views of one store | filtered views, AND the place WHEN is set — never WHAT |
+
+**`sweeper_pool_member` (v55) is the pattern everything else copies.** It already does this correctly:
+a join keyed on `asset_uuid`, many-to-many, so one cut sits in halloVeen's Halloween pool and
+Christmas in Jully's Summer Christmas pool at once. Its own header states the principle — *"one
+library, many uses"* — and it was built because a single-integer `jingle_category_id` was silently
+taking a cut OUT of one station's pool when it was added to another's. The same single-value defect,
+one level up, is what §2's dispatch key would have reintroduced.
+
+### Carts join the model, as assignments
+
+`cart_slots` today carries its **own `file_path`** (registry: `file_path: 'blob-ref'`, station-scoped)
+and has no link to any library row. That is why a cut imported through the cart door cannot be used
+as a sweeper: there is no shared identity to assign.
+
+Under the ruling `cart_slots` stops owning audio and becomes what it always was in the operator's
+head — **a hotkey with something assigned to it**:
+
+```
+cart_slots (assignment)     slot_number · hotkey · colour · label-override · asset_uuid →
+sweeper_pool_member         asset_uuid · pool_id · station_id            (exists, v55)
+library_asset               uuid · type(s) · file_path · file_key · duration   (exists, v50)
+```
+
+`file_path` leaves `cart_slots` entirely. Two consequences worth stating: the table stops being a
+`blob-ref` carrier, which removes one of the surfaces [N-23a] has to defend; and "is this file still
+referenced?" becomes a real query across assignment tables instead of a guess, which the deletion
+sweep needs and does not have.
+
+### The surfaces split by JOB — and this is the part that stops the drift
+
+> "THE LIBRARY is the only import door, and the only place I say what a file IS… THE CART WALL and
+> THE SWEEPER PANELS are only about WHEN something fires."
+
+| surface | answers | may create audio or rows? |
+|---|---|---|
+| **Library** | **WHAT** — import, and what the file *is* (cart, sweeper, spot, announcement), assigned like a category | **YES. The only one.** |
+| Cart wall | **WHEN** — which hotkey, which colour | no |
+| Sweeper panels | **WHEN** — which pool, which active hours, which categories | no |
+| Spots / Announcements | **WHEN** — breaks, dates, counts | no |
+
+**No import button in the cart wall. No ADD IMAGING tab in Sweepers. No import anywhere but the
+Library.** Today the opposite is true and it is the direct cause of the defect: a file is typed by
+the door it came through, so the same audio arrives as a cart or a sweeper depending on which button
+the operator happened to press. Four import doors produce four incompatible kinds of the same thing.
+
+### What §6 question 1 becomes
+
+§6.1 asked "new table or grow `songs`?" and recommended growing `songs`. The ruling does not settle
+it, but it lowers the stakes: what assignments need is a STABLE ASSET UUID to point at, and that
+already exists either way — v50 deliberately **reused each song's uuid as its asset uuid**, so
+`library_asset.uuid == songs.uuid` for every backfilled row. Assignment tables can be built against
+that identity before the storage question is answered.
+
+§6.2 (install vs station scope) gets *harder* and must be ruled before slice 3: the asset is
+install-scoped, but a cart slot and a sweeper pool are station-scoped. That is correct and is the
+point — **the asset is shared, the assignment is per-station** — but it means the same cut can be
+cart 3 on one station and unassigned on another, which is a behaviour to confirm rather than assume.
 
 ---
 
@@ -185,6 +269,9 @@ whole point — but nothing is broken until it happens.
 - **It does not flatten type metadata** into one wide table. Identity unifies; detail stays beside.
 - **It does not touch the ducker, the fire path, or the 250 ms announcement tick.**
 - **It does not require the log-reader flip** for Steps 1-5. Only Step 6 does.
+- **(2026-09-12) It does not give the WHEN surfaces an import door back.** A "quick add" on the cart
+  wall would recreate the defect in one commit. If importing from the Library feels like too many
+  steps, the answer is a better Library, not a second door.
 
 ---
 
@@ -213,3 +300,7 @@ whole point — but nothing is broken until it happens.
 **Everything that can air is one asset with a type; the type says what it does; the panels are
 filters.** Storage was already right for sweepers, wrong for spots, and the wrongness has cost one
 silent months-long logging defect — which is the argument for converging rather than patching again.
+
+**Amended 2026-09-12:** *one asset, which may carry more than one type, imported in ONE place and*
+*assigned in many. The panels are filters and they set WHEN; the Library sets WHAT. A cart slot is a*
+*hotkey pointing at an asset, not a thing that owns audio.*
