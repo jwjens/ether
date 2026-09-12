@@ -6488,6 +6488,120 @@ ipcMain.handle("jukebox:requests-list", (_evt, stationId) => {
   }
 });
 
+// ── THE JUKEBOX ADMISSION GATE — one implementation, both paths ─────────────────────────────────
+//
+// Jeff, 2026-09-11: "One song at a time is the rule."
+//
+// WHY IT IS HERE AND NOT IN THE RENDERER. Two paths reach jukebox_requests: the kiosk (someone
+// typing at the Jukebox window, Jukebox.tsx submit()) and the web (a phone that scanned the QR,
+// arriving as the jukebox:request command in App.tsx). Until now the kiosk path carried a pending
+// cap and a duplicate check and the WEB PATH CARRIED NEITHER — it called createRequest directly.
+// So the guards existed for the person standing in front of the operator and not for the room.
+//
+// Both paths already funnel through jukebox:request-create, so the gate goes there and there is
+// exactly one copy of it. A renderer may still check early for fast feedback, but it is advisory:
+// the answer that counts is this one. Two enforcement sites is how the files half grew three
+// writers, and the same lesson applies to a rule as much as to a flag.
+//
+// THE LIMITS ARE THE OPERATOR'S NUMBERS, read from station_config_kv here rather than passed in by
+// the caller — a limit a caller supplies is a limit a caller can omit.
+//   jukebox_max_pending     how many may be waiting at once      (default 12)
+//   jukebox_repeat_minutes  how soon a song may come round again (default 60)
+//
+// `jukebox_repeat_minutes` HAS NEVER DONE ANYTHING. It was read into React state at
+// Jukebox.tsx:411 and never compared against anything, on either path — a configured cooldown that
+// enforced nothing since the feature shipped. This is where it starts meaning something.
+function _jukeboxLimits(sid) {
+  const num = (key, dflt, min, max) => {
+    try {
+      const row = getDb().prepare(
+        "SELECT value FROM station_config_kv WHERE station_id = ? AND key = ? AND deleted_at IS NULL"
+      ).get(sid, key);
+      const v = parseInt(String(row?.value ?? ""), 10);
+      return Number.isFinite(v) && v >= min && v <= max ? v : dflt;
+    } catch { return dflt; }
+  };
+  return {
+    maxPending:    num("jukebox_max_pending", 12, 1, 500),
+    repeatMinutes: num("jukebox_repeat_minutes", 60, 0, 24 * 60),
+  };
+}
+
+/**
+ * May this request be admitted? Returns null to admit, or a refusal.
+ *
+ * The refusal carries a `reason` code for the caller to route on and a `message` written for the
+ * person who asked — the web path relays it to a phone and the kiosk shows it on the wall, so it
+ * must read as an answer to a human, not as an error.
+ */
+function jukeboxAdmit(sid, req) {
+  const db = getDb();
+  const { maxPending, repeatMinutes } = _jukeboxLimits(sid);
+  const OPEN = "('pending','awaiting','queued')";
+  const now = Math.floor(Date.now() / 1000);
+
+  // 1. ONE AT A TIME. The token is the web page's localStorage id; kiosk requests have none, and
+  //    neither do rows written before v60. Falling back to the NAME is weaker on purpose — it is
+  //    defeated by typing a different one — but a weak rule beats no rule, and at the kiosk the
+  //    person is standing in front of the operator anyway.
+  const token = String(req?.requesterToken ?? "").trim();
+  const name  = String(req?.requesterName ?? "").trim();
+  let mine = null;
+  try {
+    mine = token
+      ? db.prepare(`SELECT title FROM ${"jukebox_requests"} WHERE station_id=? AND requester_token=? AND status IN ${OPEN} LIMIT 1`).get(sid, token)
+      : db.prepare(`SELECT title FROM ${"jukebox_requests"} WHERE station_id=? AND requester_token IS NULL AND LOWER(requester_name)=LOWER(?) AND status IN ${OPEN} LIMIT 1`).get(sid, name);
+  } catch { /* pre-v60 schema — fall through and admit rather than refuse on a missing column */ }
+  if (mine) {
+    return { reason: "one_at_a_time",
+             message: `You already have "${mine.title}" waiting. You can pick another once it has played.` };
+  }
+
+  // 2. THE QUEUE IS FULL. Was kiosk-only; the room could always outrun it from the web.
+  let pending = 0;
+  try {
+    pending = db.prepare(`SELECT COUNT(*) n FROM jukebox_requests WHERE station_id=? AND status IN ${OPEN}`).get(sid)?.n ?? 0;
+  } catch { /* treat an unreadable count as not-full rather than refusing everyone */ }
+  if (pending >= maxPending) {
+    return { reason: "queue_full",
+             message: `The queue is full right now — ${maxPending} songs are already waiting. Try again shortly.` };
+  }
+
+  // 3. ALREADY ON THE LIST. Matched on file_path, which is what actually airs; song_id can be null
+  //    on a row whose library entry was deleted underneath it.
+  const filePath = String(req?.filePath ?? "");
+  let dupe = null;
+  try {
+    dupe = db.prepare(`SELECT requester_name FROM jukebox_requests WHERE station_id=? AND file_path=? AND status IN ${OPEN} LIMIT 1`).get(sid, filePath);
+  } catch { /* as above */ }
+  if (dupe) {
+    return { reason: "already_queued",
+             message: `"${req?.title ?? "That song"}" is already on the list.` };
+  }
+
+  // 4. THE REPEAT WINDOW, at last. Two sources, because a song can air without anyone requesting it:
+  //    the jukebox's own played rows AND play_log, which is the REAL airplay including rotation.
+  //    Checking only the first would let a song that just played from the log be requested again
+  //    immediately, which is precisely the "we just heard that" complaint the setting exists for.
+  //    Both tables store played_at as INTEGER epoch SECONDS (the v37/v38 headers record why), so
+  //    this comparison is integer-to-integer and not the TEXT-vs-INTEGER trap that has bitten here.
+  if (repeatMinutes > 0 && filePath) {
+    const cutoff = now - repeatMinutes * 60;
+    let lastPlayed = null;
+    try {
+      const a = db.prepare("SELECT MAX(played_at) t FROM jukebox_requests WHERE station_id=? AND file_path=? AND status='played' AND played_at IS NOT NULL").get(sid, filePath)?.t ?? null;
+      const b = db.prepare("SELECT MAX(played_at) t FROM play_log WHERE station_id=? AND file_path=? AND deleted_at IS NULL").get(sid, filePath)?.t ?? null;
+      lastPlayed = Math.max(Number(a) || 0, Number(b) || 0) || null;
+    } catch { /* no play history readable — do not refuse on an unanswerable question */ }
+    if (lastPlayed && lastPlayed >= cutoff) {
+      const mins = Math.max(1, Math.ceil((lastPlayed + repeatMinutes * 60 - now) / 60));
+      return { reason: "played_recently",
+               message: `"${req?.title ?? "That song"}" played recently. You can ask for it again in about ${mins} minute${mins === 1 ? "" : "s"}.` };
+    }
+  }
+
+  return null;   // admitted
+}
 ipcMain.handle("jukebox:request-create", (_evt, req) => {
   if (!jukeboxTableReady()) return { ok: false, error: "jukebox_requests table missing — restart Ether to run migration v38" };
   try {
@@ -6496,11 +6610,19 @@ ipcMain.handle("jukebox:request-create", (_evt, req) => {
     const name = String(req?.requesterName ?? "").trim().slice(0, 40);
     if (!name) return { ok: false, error: "a name is required" };
     if (!req?.filePath || !req?.title) return { ok: false, error: "song is incomplete" };
+
+    // THE GATE. Both paths reach here, so this is the one place a request can be refused. A refusal
+    // is a normal answer, not an error: it carries a code the caller routes on and a message written
+    // for the person who asked.
+    const refusal = jukeboxAdmit(sid, req);
+    if (refusal) return { ok: false, refused: refusal.reason, error: refusal.message };
+
+    const token = String(req?.requesterToken ?? "").trim().slice(0, 64) || null;
     const info = getDb().prepare(
       `INSERT INTO jukebox_requests
-         (station_id, requester_name, song_id, file_path, title, artist, status, source, qid, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(sid, name, req.songId ?? null, req.filePath, req.title, req.artist ?? null,
+         (station_id, requester_name, requester_token, song_id, file_path, title, artist, status, source, qid, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(sid, name, token, req.songId ?? null, req.filePath, req.title, req.artist ?? null,
           req.status ?? "queued", req.source ?? "jukebox", req.qid ?? null,
           Math.floor(Date.now() / 1000));
     // Read the row BACK rather than reporting success from the insert alone — the same rule the

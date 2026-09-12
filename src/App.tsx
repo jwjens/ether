@@ -1375,13 +1375,26 @@ export default function App() {
               } catch { /* fall back to the active station */ }
             }
 
+            // The phone's localStorage id, minted by the request page. Absent on an older page or a
+            // browser that refuses storage — the gate falls back to the name and says so.
+            const requesterToken = String(data?.requester_token ?? "").trim().slice(0, 64);
             const created: any = await (window as any).ether?.jukebox?.createRequest?.({
-              stationId: targetStation, requesterName: rawName, songId: song.id,
+              stationId: targetStation, requesterName: rawName, requesterToken, songId: song.id,
               filePath: song.file_path, title: song.title, artist: song.artist,
               source: "web",
             });
-            console.log(`[Jukebox] web request from "${rawName}": ${song.title} -> station ${targetStation}`,
-                        created?.ok ? "queued" : created?.error || "failed");
+            // A REFUSAL IS NOT A FAILURE. The gate in main.js answers "no" for a reason — already
+            // waiting, queue full, already on the list, played too recently — and that is a normal
+            // outcome of a public jukebox, not an error to bury. The backend pre-checks the same
+            // rules so the phone usually hears it first; this is the authoritative answer for
+            // anything that raced past that check, and it is logged distinctly so a refused request
+            // is never mistaken for a lost one.
+            if (created?.refused) {
+              console.log(`[Jukebox] web request from "${rawName}" REFUSED (${created.refused}): ${created.error}`);
+            } else {
+              console.log(`[Jukebox] web request from "${rawName}": ${song.title} -> station ${targetStation}`,
+                          created?.ok ? "queued" : created?.error || "failed");
+            }
             // The wall polls jukebox_requests, so it appears there on its next tick without a nudge.
             break;
           }

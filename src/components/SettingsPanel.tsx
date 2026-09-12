@@ -1953,6 +1953,15 @@ function JukeboxSection() {
   const [checked, setChecked] = useState<number[]>([]);
   const [url, setUrl] = useState("");
   const [savedUrl, setSavedUrl] = useState("");
+  // THE TWO LIMITS THE GATE ENFORCES. They had no door: nothing in the app has ever written
+  // jukebox_max_pending or jukebox_repeat_minutes, so they could only be set by editing the database
+  // by hand. That was survivable while neither did anything — jukebox_repeat_minutes enforced
+  // nothing at all until 2026-09-11 — but a cooldown that now REFUSES a guest's request and cannot
+  // be tuned is a trap: get 60 minutes wrong for the night and requests bounce with no way back.
+  // A rule the operator cannot see or change is not a setting, it is a surprise.
+  const [maxPending, setMaxPending]       = useState("12");
+  const [repeatMins, setRepeatMins]       = useState("60");
+  const [savedLimits, setSavedLimits]     = useState({ maxPending: "12", repeatMins: "60" });
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
 
@@ -1984,11 +1993,19 @@ function JukeboxSection() {
           if (Array.isArray(parsed)) ids = parsed.map((n: any) => parseInt(n, 10)).filter(Number.isFinite);
         } catch { ids = []; }
         const u = String(get("jukebox_request_url") ?? "");
+        // Defaults mirror _jukeboxLimits() in electron/main.js, which is the enforcing side. Two
+        // copies of a default is one more than there should be; the honest fix is an IPC that reads
+        // main's own numbers, and it is noted for when this screen grows one.
+        const mp = String(get("jukebox_max_pending") ?? "12");
+        const rm = String(get("jukebox_repeat_minutes") ?? "60");
         if (!on) return;
         setCats(rows);
         setChecked(ids);
         setUrl(u);
         setSavedUrl(u);
+        setMaxPending(mp);
+        setRepeatMins(rm);
+        setSavedLimits({ maxPending: mp, repeatMins: rm });
       } catch { if (on) { setCats([]); setChecked([]); } }
       finally { if (on) setLoading(false); }
     })();
@@ -2026,6 +2043,28 @@ function JukeboxSection() {
     } catch (e: any) { setMsg(e?.message || "Could not save."); }
     setTimeout(() => setMsg(""), 2600);
   };
+
+  /** Write through and RE-READ, the same rule saveUrl and persist() follow: a save that reports
+   *  success without confirming the stored value is the class of lie the designation bug taught. */
+  const saveLimits = async () => {
+    if (stationId == null) return;
+    const mp = String(Math.max(1, Math.min(500, parseInt(maxPending, 10) || 12)));
+    const rm = String(Math.max(0, Math.min(1440, parseInt(repeatMins, 10) || 0)));
+    try {
+      await kv().upsertByKey(stationId, "jukebox_max_pending", mp);
+      await kv().upsertByKey(stationId, "jukebox_repeat_minutes", rm);
+      const r: any = await kv().list(stationId);
+      const rows2 = (r && r.rows) || [];
+      const backMp = rows2.find((x: any) => x.key === "jukebox_max_pending")?.value;
+      const backRm = rows2.find((x: any) => x.key === "jukebox_repeat_minutes")?.value;
+      setMaxPending(mp); setRepeatMins(rm);
+      setSavedLimits({ maxPending: mp, repeatMins: rm });
+      setMsg(backMp === mp && backRm === rm ? "Request limits saved." : "Saved, but the values did not read back — check the log.");
+    } catch (e: any) { setMsg(e?.message || "Could not save."); }
+    setTimeout(() => setMsg(""), 2600);
+  };
+
+  const limitsDirty = maxPending !== savedLimits.maxPending || repeatMins !== savedLimits.repeatMins;
 
   const poolTotal = cats.filter(c => checked.includes(c.id)).reduce((a, c) => a + c.n, 0);
 
@@ -2082,6 +2121,31 @@ function JukeboxSection() {
                 onClick={() => void saveUrl()}
                 disabled={url.trim() === savedUrl}
                 style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: url.trim() === savedUrl ? "var(--text-tertiary)" : "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: url.trim() === savedUrl ? "default" : "pointer" }}
+              >Save</button>
+            </div>
+          </SettingRow>
+
+          <SettingRow
+            label="Request limits"
+            hint="How many songs may be waiting at once, and how long before the same song can be asked for again. Both apply to the QR page AND to requests typed at the Jukebox — one set of rules for everyone. Set the repeat window to 0 to allow a song straight back.">
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" as any }}>
+              <label style={{ fontSize: 12, color: "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 6 }}>
+                Max waiting
+                <input type="number" min={1} max={500} value={maxPending}
+                  onChange={e => setMaxPending(e.target.value)}
+                  style={{ width: 72, padding: "7px 10px", fontSize: 12, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-secondary)" }} />
+              </label>
+              <label style={{ fontSize: 12, color: "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 6 }}>
+                Repeat after
+                <input type="number" min={0} max={1440} value={repeatMins}
+                  onChange={e => setRepeatMins(e.target.value)}
+                  style={{ width: 72, padding: "7px 10px", fontSize: 12, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-secondary)" }} />
+                minutes
+              </label>
+              <button
+                onClick={() => void saveLimits()}
+                disabled={!limitsDirty}
+                style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: limitsDirty ? "var(--text-secondary)" : "var(--text-tertiary)", border: "1px solid var(--border-secondary)", cursor: limitsDirty ? "pointer" : "default" }}
               >Save</button>
             </div>
           </SettingRow>

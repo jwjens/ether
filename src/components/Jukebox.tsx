@@ -82,8 +82,9 @@ function jukeboxPublicUrl(raw: string | null | undefined): string {
   return `${JUKEBOX_PUBLIC_BASE}/jukebox/${encodeURIComponent(slug)}`;
 }
 
-const DEFAULT_REPEAT_MINUTES = 60;
-const DEFAULT_MAX_PENDING = 12;
+// DEFAULT_REPEAT_MINUTES / DEFAULT_MAX_PENDING moved to electron/main.js _jukeboxLimits(), the only
+// place that enforces them. They were declared here, loaded into React state, and — in the case of
+// the repeat window — never compared against anything for the life of the feature.
 const PAGE_SIZE = 60;
 const NAME_MAX = 40;
 
@@ -321,8 +322,9 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
   const [licenseKey, setLicenseKey] = useState<string>("");
   const [configLoaded, setConfigLoaded] = useState(false);
 
-  const [repeatMinutes, setRepeatMinutes] = useState(DEFAULT_REPEAT_MINUTES);
-  const [maxPending, setMaxPending] = useState(DEFAULT_MAX_PENDING);
+  // The request limits live in main.js (_jukeboxLimits) and are enforced there, for BOTH the kiosk
+  // and the web. This window keeps no copy: one rule, one reader. They are edited in Preferences →
+  // the Jukebox section, which is the door they never had.
 
   const [search, setSearch] = useState("");
   const [songs, setSongs] = useState<JukeSong[]>([]);
@@ -398,8 +400,7 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
         // jukebox reports it rather than inferring air from its own AUTO. A cut channel is silence no
         // matter what this window is doing.
         const chOn = get("jukebox_channel_on") === "1";
-        const rm = parseInt(get("jukebox_repeat_minutes") ?? "", 10);
-        const mp = parseInt(get("jukebox_max_pending") ?? "", 10);
+        // jukebox_repeat_minutes / jukebox_max_pending are NOT read here — main.js owns them.
         if (stop) return;
         // Identity-stable update: same ids in the same order -> keep the existing array so the
         // dependent query effects do not re-run every 4 seconds.
@@ -408,8 +409,6 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
         setRequestSlug(String(get("jukebox_request_url") ?? "").trim().toLowerCase());
         setLicenseKey(String(get("license_key") ?? "").trim());
         setChannelOn(chOn);
-        if (Number.isFinite(rm)) setRepeatMinutes(rm);
-        if (Number.isFinite(mp)) setMaxPending(mp);
       } catch { if (!stop) setCategoryIds([]); }
       finally { if (!stop) setConfigLoaded(true); }
     };
@@ -673,14 +672,14 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
     if (!who) { say("Please enter your name first."); return; }
     setBusy(true);
     try {
-      if (pendingCount >= maxPending) {
-        say(`The queue is full right now — ${maxPending} songs are already waiting. Try again shortly.`);
-        return;
-      }
-      if (requests.some(r => r.file_path === song.file_path && r.status === "queued")) {
-        say(`"${song.title}" is already on the list.`);
-        return;
-      }
+      // THE CHECKS THAT WERE HERE MOVED TO main.js jukeboxAdmit() (2026-09-11).
+      //
+      // They were the pending cap and the duplicate check, and they lived ONLY here — so the kiosk
+      // path had them and the WEB path, which is the one a whole room can reach, had neither. Two
+      // enforcement sites means two sets of rules free to drift apart, and one of them already had.
+      // The gate now runs inside request-create, which BOTH paths funnel through, and it also
+      // enforces one-at-a-time and the repeat window this screen has been configuring and never
+      // applying. createRequest returns { refused, error }; the message shown below is the gate's.
 
       const auth = await provider.authorize({ songId: song.id, title: song.title, artist: song.artist || "" });
       if (!auth.ok) { say(auth.declineReason || "That didn't go through."); return; }
