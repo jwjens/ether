@@ -131,6 +131,70 @@ export async function pushJukeboxPool(
 // If the operator closes the Jukebox window the state stops updating, and the lobby says
 // "reconnecting…" while holding its last frame. That is honest: with the window shut there is nothing
 // driving the deck either.
+// ── JUKEBOX DONATIONS — Stripe Connect onboarding (phase 2). NOTHING HERE CHARGES ANYTHING. ──────
+//
+// Each station connects its OWN Stripe account and the money goes to that account directly: the
+// station is merchant of record, the receipt carries their name, and nothing passes through Ether
+// Technologies' balance. For a nonprofit that is not a preference, it is the only correct shape —
+// a donation to Opportunity Village must not arrive as a gift to a software company.
+export interface JukeboxPayouts {
+  ok: boolean;
+  connected: boolean;
+  stripe_account_id: string | null;
+  charges_enabled: boolean;
+  payouts_enabled: boolean;
+  details_submitted: boolean;
+  requirements_due: string[];
+  account_name: string | null;
+  country: string | null;
+  currency: string | null;
+  donations_mode: "off" | "suggested" | "required";
+  min_amount_cents: number;
+  ready: boolean;
+  stripe_configured: boolean;
+}
+
+export async function getJukeboxPayouts(licenseKey: string, stationUuid: string): Promise<JukeboxPayouts | null> {
+  try {
+    const r = await fetch(`${ETHER_BACKEND_URL}/api/account/jukebox/payouts/${encodeURIComponent(stationUuid)}`,
+      { headers: { "x-license-key": licenseKey } });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+/** Returns a Stripe-hosted onboarding URL to open IN A REAL BROWSER — never an embedded webview.
+ *  A payment provider's login belongs somewhere the operator can see the address bar. */
+export async function connectJukeboxPayouts(licenseKey: string, stationUuid: string): Promise<{ url?: string; error?: string }> {
+  try {
+    const r = await fetch(`${ETHER_BACKEND_URL}/api/account/jukebox/payouts/${encodeURIComponent(stationUuid)}/connect`,
+      { method: "POST", headers: { "x-license-key": licenseKey } });
+    const b = await r.json().catch(() => ({}));
+    return r.ok ? { url: b.url } : { error: b.error || `failed_${r.status}` };
+  } catch (e: any) { return { error: e?.message || "network" }; }
+}
+
+export async function refreshJukeboxPayouts(licenseKey: string, stationUuid: string): Promise<boolean> {
+  try {
+    const r = await fetch(`${ETHER_BACKEND_URL}/api/account/jukebox/payouts/${encodeURIComponent(stationUuid)}/refresh`,
+      { method: "POST", headers: { "x-license-key": licenseKey } });
+    return r.ok;
+  } catch { return false; }
+}
+
+export async function setJukeboxDonationSettings(
+  licenseKey: string, stationUuid: string,
+  donationsMode: "off" | "suggested" | "required", minAmountCents: number,
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const r = await fetch(`${ETHER_BACKEND_URL}/api/account/jukebox/payouts/${encodeURIComponent(stationUuid)}/settings`,
+      { method: "POST", headers: { "Content-Type": "application/json", "x-license-key": licenseKey },
+        body: JSON.stringify({ donations_mode: donationsMode, min_amount_cents: minAmountCents }) });
+    const b = await r.json().catch(() => ({}));
+    return r.ok ? { ok: true } : { ok: false, error: b.error || `failed_${r.status}` };
+  } catch (e: any) { return { ok: false, error: e?.message || "network" }; }
+}
+
 export async function pushJukeboxState(
   licenseKey: string | null | undefined,
   slug: string | null | undefined,

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
+import { getJukeboxPayouts, connectJukeboxPayouts, refreshJukeboxPayouts, setJukeboxDonationSettings, type JukeboxPayouts } from "../lib/ccData";
 const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 import { query, execute } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
@@ -1962,6 +1963,29 @@ function JukeboxSection() {
   const [maxPending, setMaxPending]       = useState("12");
   const [repeatMins, setRepeatMins]       = useState("60");
   const [savedLimits, setSavedLimits]     = useState({ maxPending: "12", repeatMins: "60" });
+
+  // ── DONATIONS (phase 2: onboarding only — nothing here charges anybody) ───────────────────────
+  const [payouts, setPayouts]     = useState<JukeboxPayouts | null>(null);
+  const [payBusy, setPayBusy]     = useState(false);
+  const [payMsg, setPayMsg]       = useState("");
+  const [licKey, setLicKey]       = useState("");
+  const [stUuid, setStUuid]       = useState("");
+  const [mode, setMode]           = useState<"off" | "suggested" | "required">("off");
+  const [minDollars, setMinDollars] = useState("1");
+
+
+  const loadPayouts = useCallback(async () => {
+    if (!licKey || !stUuid) return;
+    const p = await getJukeboxPayouts(licKey, stUuid);
+    if (!p) return;
+    setPayouts(p);
+    setMode(p.donations_mode);
+    setMinDollars(String(Math.max(1, Math.round((p.min_amount_cents ?? 100) / 100))));
+  }, [licKey, stUuid]);
+
+  // Runs when the licence key and station uuid resolve, and again whenever they change. Without
+  // this the card renders "Checking…" permanently — a screen describing a state nothing ever fills.
+  useEffect(() => { void loadPayouts(); }, [licKey, stUuid]);   // eslint-disable-line react-hooks/exhaustive-deps
   const [loading, setLoading] = useState(true);
   const [msg, setMsg] = useState("");
 
@@ -2006,6 +2030,11 @@ function JukeboxSection() {
         setMaxPending(mp);
         setRepeatMins(rm);
         setSavedLimits({ maxPending: mp, repeatMins: rm });
+        setLicKey(String(get("license_key") ?? "").trim());
+        try {
+          const st: any[] = await query("SELECT uuid FROM stations WHERE id = ?", [stationId]);
+          if (st?.[0]?.uuid) setStUuid(String(st[0].uuid));
+        } catch { /* no uuid -> the donations card says it cannot reach the account */ }
       } catch { if (on) { setCats([]); setChecked([]); } }
       finally { if (on) setLoading(false); }
     })();
@@ -2150,6 +2179,157 @@ function JukeboxSection() {
             </div>
           </SettingRow>
 
+          {/* ── DONATIONS ────────────────────────────────────────────────────────────────────────
+              Phase 2: ONBOARDING ONLY. Nothing on this screen or behind it charges anybody.
+
+              Jeff, 2026-09-11: "each station connects their own Stripe account and money goes to
+              them, not me. A nonprofit's donations must go to the nonprofit."
+
+              THE TWO PAID MODES MUST NOT LOOK ALIKE — Jeff's instruction, and it is not decoration.
+              Under `suggested` the money is a GIFT: freely given, buying nothing, the song plays
+              either way. Under `required` it is CONSIDERATION for a service: the guest pays, the
+              song plays. For a 501(c)(3) those are not the same transaction, the receipts differ,
+              and the tax treatment differs. A screen that renders them as two settings of one
+              switch invites an operator to flip between them without noticing they have changed
+              what the transaction IS. So each carries its own words, its own colour and its own
+              consequence line. */}
+          <SettingRow
+            label="Donations"
+            hint="Guests can support your organisation when they request a song. The money goes to YOUR Stripe account — it never passes through Ether Technologies, and we take no cut.">
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, minWidth: 420 }}>
+
+              {/* State, read from Stripe rather than assumed. */}
+              {!payouts ? (
+                <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
+                  {licKey && stUuid ? "Checking…" : "Sign in and pick a station to set up donations."}
+                </div>
+              ) : !payouts.stripe_configured ? (
+                <div style={{ fontSize: 12, color: "var(--accent-amber, #d9a441)" }}>
+                  Donations aren't available on this server yet.
+                </div>
+              ) : !payouts.connected ? (
+                <div style={{ fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.6 }}>
+                  <b>Not connected.</b> Connect a Stripe account and guests can donate to your
+                  organisation. The account is <b>yours</b> — your name on the receipt, your dashboard,
+                  your money. Ether never holds it and takes no fee.
+                </div>
+              ) : !payouts.charges_enabled ? (
+                <div style={{ fontSize: 12.5, color: "var(--accent-amber, #d9a441)", lineHeight: 1.6 }}>
+                  <b>Stripe still needs a few things</b> before it can accept donations
+                  {payouts.account_name ? <> for <b>{payouts.account_name}</b></> : null}:
+                  {payouts.requirements_due?.length ? (
+                    <ul style={{ margin: "6px 0 0 18px", padding: 0 }}>
+                      {payouts.requirements_due.slice(0, 8).map((r) => (
+                        <li key={r} style={{ fontFamily: "'DM Mono', monospace", fontSize: 11.5 }}>{r}</li>
+                      ))}
+                    </ul>
+                  ) : <> finish the setup in Stripe.</>}
+                </div>
+              ) : (
+                <div style={{ fontSize: 12.5, color: "var(--accent-green)", lineHeight: 1.6 }}>
+                  <b>Connected.</b> Donations go to{" "}
+                  <b>{payouts.account_name || "your Stripe account"}</b>
+                  {payouts.currency ? <> ({payouts.currency.toUpperCase()})</> : null}.
+                  {!payouts.payouts_enabled && <><br />Stripe hasn't enabled payouts to your bank yet — donations will be held in your Stripe balance until it does.</>}
+                </div>
+              )}
+
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" as any }}>
+                <button
+                  disabled={payBusy || !licKey || !stUuid || !payouts?.stripe_configured}
+                  onClick={async () => {
+                    setPayBusy(true); setPayMsg("");
+                    const r = await connectJukeboxPayouts(licKey, stUuid);
+                    setPayBusy(false);
+                    if (r.url) {
+                      // A REAL BROWSER, never an embedded view. An operator typing their bank details
+                      // must be able to see the address bar and the padlock.
+                      const opener = (window as any).ether?.system?.openUrl;
+                      if (typeof opener === "function") {
+                        try { await opener(r.url); } catch { /* reported below */ }
+                        setPayMsg("Stripe opened in your browser. Come back and press Refresh when you're done.");
+                      } else {
+                        // Never leave the operator pressing a button that does nothing: hand them the
+                        // address instead of swallowing it.
+                        setPayMsg(`Open this in your browser to finish: ${r.url}`);
+                      }
+                    } else setPayMsg(r.error || "Could not start Stripe setup.");
+                  }}
+                  style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: payBusy ? "default" : "pointer" }}
+                >{payouts?.connected ? "Continue setting up" : "Connect a Stripe account"}</button>
+
+                <button
+                  disabled={payBusy || !payouts?.connected}
+                  onClick={async () => { setPayBusy(true); await refreshJukeboxPayouts(licKey, stUuid); await loadPayouts(); setPayBusy(false); setPayMsg("Checked with Stripe."); }}
+                  style={{ padding: "7px 14px", fontSize: 12, background: "var(--bg-secondary)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", cursor: payouts?.connected ? "pointer" : "default" }}
+                >Refresh</button>
+              </div>
+
+              {/* THE MODE. Three genuinely different things, described in their own words. */}
+              {payouts?.connected && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, paddingTop: 4 }}>
+                  {([
+                    { id: "off", title: "Don't ask for anything",
+                      line: "Requests are free. No donation step, no mention of money." },
+                    { id: "suggested", title: "Ask for a donation — the song plays either way",
+                      line: "After a guest's request is in, we invite them to support your organisation. They can skip it and nobody is turned away. This is a gift, not a purchase." },
+                    { id: "required", title: "Require payment before the request goes through",
+                      line: "A guest pays to have their song queued. This is a sale, not a donation — for a nonprofit that usually means it is not a deductible gift, so check with your finance people first." },
+                  ] as const).map(opt => (
+                    <label key={opt.id} style={{ display: "flex", gap: 9, alignItems: "flex-start", cursor: "pointer",
+                                                 padding: "9px 11px", border: `1px solid ${mode === opt.id ? "var(--accent-blue)" : "var(--border-primary)"}`,
+                                                 background: mode === opt.id ? "var(--bg-secondary)" : "transparent" }}>
+                      <input type="radio" name="jb-donations-mode" checked={mode === opt.id}
+                             onChange={() => setMode(opt.id as any)} style={{ marginTop: 2 }} />
+                      <span>
+                        <span style={{ fontSize: 12.5, fontWeight: 600, color: opt.id === "required" ? "var(--accent-amber, #d9a441)" : "var(--text-primary)" }}>{opt.title}</span>
+                        <span style={{ display: "block", fontSize: 11.5, color: "var(--text-tertiary)", marginTop: 2, lineHeight: 1.5 }}>{opt.line}</span>
+                      </span>
+                    </label>
+                  ))}
+
+                  {/* The one place the not-ready fallback is spelled out, because it applies to ONE
+                      mode and an operator must not have to infer which. */}
+                  {mode === "required" && !payouts.charges_enabled && (
+                    <div style={{ fontSize: 11.5, color: "var(--accent-amber, #d9a441)", lineHeight: 1.5 }}>
+                      Stripe can't take payments yet, so requests will go through <b>free</b> until setup is finished. Nobody is turned away in the meantime.
+                    </div>
+                  )}
+
+                  {mode !== "off" && (
+                    <label style={{ fontSize: 12, color: "var(--text-tertiary)", display: "flex", alignItems: "center", gap: 6 }}>
+                      Smallest amount $
+                      <input type="number" min={1} max={1000} value={minDollars}
+                        onChange={e => setMinDollars(e.target.value)}
+                        style={{ width: 70, padding: "6px 9px", fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
+                      <span style={{ fontSize: 11 }}>guests type their own amount above this</span>
+                    </label>
+                  )}
+
+                  <div>
+                    <button
+                      disabled={payBusy}
+                      onClick={async () => {
+                        setPayBusy(true);
+                        const cents = Math.max(100, Math.min(100000, Math.round((parseFloat(minDollars) || 1) * 100)));
+                        const r = await setJukeboxDonationSettings(licKey, stUuid, mode, cents);
+                        await loadPayouts();
+                        setPayBusy(false);
+                        setPayMsg(r.ok ? "Donation settings saved." : (r.error || "Could not save."));
+                      }}
+                      style={{ padding: "7px 14px", fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: payBusy ? "default" : "pointer" }}
+                    >Save donation settings</button>
+                  </div>
+
+                  <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
+                    Guests can't donate yet — the donation step itself is still being built. What you set here is ready for when it arrives.
+                  </div>
+                </div>
+              )}
+
+              {payMsg && <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{payMsg}</div>}
+            </div>
+          </SettingRow>
           {msg && <div style={{ fontSize: 12, color: "var(--text-secondary)", paddingTop: 6 }}>{msg}</div>}
         </>
       )}
