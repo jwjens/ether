@@ -369,6 +369,17 @@ class MergeEngine {
           }
         } catch (e) { console.error('[merge-engine] inbound spot retraction failed (tombstone still set):', e.message); }
       }
+      // voice_tracks: the same frozen-copy hole as spots. A take placed in the log carries the take's
+      // own file_path and no voice_track_id, so the tombstone above cannot reach it on this machine.
+      if (m.table_name === 'voice_tracks') {
+        try {
+          const vt = db.prepare('SELECT title, station_id, file_path FROM voice_tracks WHERE uuid = ?').get(row_id);
+          if (vt) {
+            const res = require('./handlers/voice_tracks').retractVoiceTrackReferences(db, vt, deleteTime);
+            console.log(`[merge-engine] inbound voice-track delete "${vt.title}" - ${(res && res.pendingLog) || 0} future airing(s) retracted`);
+          }
+        } catch (e) { console.error('[merge-engine] inbound voice-track retraction failed (tombstone still set):', e.message); }
+      }
       // If row not present locally: no-op — tombstone already satisfied [N-107]
     }
     // op='checkpoint': reserved; not applied to live tables in v0 [N-10]

@@ -172,3 +172,45 @@ panel did, throws the result away).
 advertiser spot — a jock break, not a paid commercial — which is the only reason it is reported here
 rather than fixed in the same commit. The fix is the identical shape and would take one pass. NOT
 BUILT, awaiting Jeff's go-ahead.
+
+---
+
+# Voice tracks — fixed in the same pass (2026-09-14)
+
+Jeff: *"fix the voice-track cascade in the same pass — I'd rather not find it live in three weeks."*
+
+`retractVoiceTrackReferences` in `handlers/voice_tracks.js`, fired from `voiceTracksDelete`, and from
+`merge-engine.js` on an inbound delete. `voice_tracks` has no `is_active` column, so unlike spots
+there is only the delete path. `VoiceTracker.tsx:796` now checks its result.
+
+## The trap this turned up, which the spot fix did NOT have
+
+`schedule:insertVoiceTrack` (`main.js:8624`) does not set `content_class` — and
+`generated_schedule.content_class` **DEFAULTS TO `'MUSIC'`** (migration v31 adds the column with that
+default and backfills NULLs to it).
+
+So **a placed voice track sits in the airing log labelled MUSIC.** Measured on OV's snapshot,
+2026-09-14:
+
+    content_class   rows       song_id NULL
+    MUSIC           125,388    37
+    SPOT             11,787    11,787
+    SWP              71,630     0
+
+Those 37 MUSIC rows with a NULL `song_id` are the placed takes. A retraction written by analogy with
+the spot one — filtering `content_class = 'VT'`, or `IS NULL` — would have matched **nothing at all**
+while reading as though it were correct, and the bug would have survived its own fix.
+
+The predicate is therefore `station_id = ? AND song_id IS NULL AND state = 'pending' AND
+file_path = ?`. `song_id IS NULL` is the only thing that actually separates a placed take from a
+song: music and sweeper rows always carry one. The smoke reproduces the MUSIC label in its fixture
+and asserts it, rather than assuming it, so the test cannot quietly stop testing anything.
+
+## Still not fixed, and deliberately
+
+Neither spots nor voice tracks get a **back-reference column**. Matching on `file_path` is correct
+for what these rows actually do — it is the path the log plays — but it is matching on a string.
+A real `spot_id` / `voice_track_id` on `generated_schedule` belongs to slice 3 of the assignment arc,
+alongside the `file_key` work. Until then, re-pointing a spot at a different file leaves the old
+pending rows naming the old path; they will air the old audio until the next Generate. That is a
+narrower hole than the one closed here and it is not being closed by guesswork today.

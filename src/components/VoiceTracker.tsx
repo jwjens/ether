@@ -790,10 +790,23 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
     audio.play();
   };
   const queueTrack = (t: VoiceTrack) => engine.addToQueue([{ filePath: t.file_path, title: "[VT] " + t.title, artist: t.recorded_by || "DJ" }]);
+  // Same silence the Spots panel had: the result was thrown away, so a failed delete closed as
+  // though it had worked. And a take that was PLACED on air is retracted from the log by the delete
+  // (handlers/voice_tracks.js retractVoiceTrackReferences) -- the count is the receipt that it ran.
   const deleteTrack = async (id: number) => {
-    if (!confirm("Delete this voice track?")) return;
+    const track = tracks.find(t => t.id === id);
+    if (!confirm(`Delete "${track?.title ?? "this voice track"}"?`)) return;
     if (playingId === id) { audioRef.current?.pause(); setPlayingId(null); }
-    await (window as any).ether.voiceTracks.deleteById(id); load();
+    try {
+      const res = await (window as any).ether.voiceTracks.deleteById(id);
+      if (!res?.ok) { alert(`Could not delete "${track?.title ?? id}": ${res?.error ?? "no reason given"}`); return; }
+      const pulled = res.retracted?.pendingLog ?? 0;
+      if (pulled > 0) console.log(`[VoiceTracker] deleted "${track?.title}" - ${pulled} placed airing(s) pulled from the log`);
+    } catch (e) {
+      alert(`Could not delete "${track?.title ?? id}": ${String(e)}`);
+      return;
+    }
+    load();
   };
 
   // ── Slot assignment ──

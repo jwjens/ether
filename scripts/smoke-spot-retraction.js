@@ -1,5 +1,5 @@
 'use strict';
-// scripts/smoke-spot-retraction.js — a deleted or deactivated spot stops airing.
+// scripts/smoke-spot-retraction.js — a deleted or deactivated spot, or voice track, stops airing.
 //
 // Jeff, 2026-09-14 (OV, on air): "the Opportunity Village spot I deleted is STILL BEING SCHEDULED
 // and airing." A deleted spot still airing is an advertiser problem, not a panel problem.
@@ -32,6 +32,7 @@ const Database = resolveFrom([
 ], 'better-sqlite3');
 
 const { retractSpotReferences } = require(path.join(HERE, '..', 'electron', 'sync', 'handlers', 'spots'));
+const { retractVoiceTrackReferences } = require(path.join(HERE, '..', 'electron', 'sync', 'handlers', 'voice_tracks'));
 
 let failures = 0;
 const pass = (m) => console.log(`  PASS  ${m}`);
@@ -44,10 +45,13 @@ db.exec(`
   CREATE TABLE spots (
     id INTEGER PRIMARY KEY, uuid TEXT, title TEXT, file_path TEXT,
     is_active INTEGER DEFAULT 1, station_id INTEGER, deleted_at TEXT, updated_at TEXT);
+  CREATE TABLE voice_tracks (
+    id INTEGER PRIMARY KEY, uuid TEXT, title TEXT, file_path TEXT,
+    station_id INTEGER, deleted_at TEXT, updated_at TEXT);
   CREATE TABLE generated_schedule (
     id INTEGER PRIMARY KEY, uuid TEXT, scheduled_at INTEGER, song_id INTEGER,
     title TEXT, artist TEXT, file_path TEXT, duration_s INTEGER, station_id INTEGER,
-    state TEXT DEFAULT 'pending', content_class TEXT, source TEXT,
+    state TEXT DEFAULT 'pending', content_class TEXT DEFAULT 'MUSIC', source TEXT,
     deleted_at TEXT, updated_at TEXT);
 `);
 
@@ -134,10 +138,52 @@ console.log('\n== edge cases that must not throw ==');
   else fail(`a second run retracted ${r.pendingLog} more rows`);
 }
 
+console.log('\n== a deleted VOICE TRACK stops airing too ==');
+
+// THE TRAP THIS SECTION EXISTS FOR. schedule:insertVoiceTrack (main.js:8624) does not set
+// content_class, and the column DEFAULTS TO 'MUSIC' -- so a placed take sits in the log labelled
+// MUSIC, indistinguishable from a song except that its song_id is NULL and it carries its own
+// file_path. On OV's real database, 2026-09-14: 37 MUSIC rows with song_id NULL. A retraction
+// filtering on content_class would match nothing at all while looking perfectly correct.
+{
+  const VT = 'C:\\takes\\vt-0900.wav';
+  const track = { id: 1, uuid: 'u-vt', title: '[VT] morning break', file_path: VT, station_id: 2 };
+  db.prepare('INSERT INTO voice_tracks (id,uuid,title,file_path,station_id) VALUES (?,?,?,?,?)')
+    .run(track.id, track.uuid, track.title, track.file_path, track.station_id);
+
+  // Placed exactly as insertVoiceTrack does it: song_id NULL, file_path set, content_class DEFAULTED.
+  const insVt = db.prepare(`INSERT INTO generated_schedule
+    (scheduled_at, song_id, title, file_path, station_id, state) VALUES (?, NULL, ?, ?, ?, ?)`);
+  insVt.run(9000, track.title, VT, 2, 'played');
+  insVt.run(9100, track.title, VT, 2, 'playing');
+  insVt.run(9200, track.title, VT, 2, 'pending');
+  insVt.run(9300, track.title, VT, 3, 'pending');   // another station
+
+  const labelled = db.prepare('SELECT content_class FROM generated_schedule WHERE scheduled_at = 9200').get();
+  if (labelled.content_class === 'MUSIC')
+    pass("a placed take really is labelled MUSIC — the trap is reproduced, not assumed");
+  else fail(`the fixture labelled it ${labelled.content_class} — this test would prove nothing`);
+
+  const r = retractVoiceTrackReferences(db, track, NOW);
+  if (r.pendingLog === 1) pass('retracted exactly the 1 pending take at this station');
+  else fail(`retracted ${r.pendingLog} rows — expected 1`);
+
+  if (live("file_path = ? AND state = 'played'", VT) === 1) pass("the take's aired history survives");
+  else fail('a played voice-track row was retracted');
+  if (live("file_path = ? AND state = 'playing'", VT) === 1) pass('the take on air right now is not yanked');
+  else fail('the ON-AIR take was retracted');
+  if (live("file_path = ? AND station_id = 3", VT) === 1) pass('another station is untouched');
+  else fail('another station lost its take');
+
+  // The whole point of matching on song_id IS NULL rather than content_class.
+  if (live("song_id = 42") === 1) pass('a real MUSIC row sharing the class label is untouched');
+  else fail('a song row was retracted — song_id IS NULL is not doing its job');
+}
+
 db.close();
 try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
 
 console.log(failures === 0
-  ? '\nVERDICT: PASS — a deleted spot stops airing, and its history survives.\n'
+  ? '\nVERDICT: PASS — deleted spots and voice tracks stop airing, and their history survives.\n'
   : `\nVERDICT: FAIL — ${failures} check(s) failed.\n`);
 process.exit(failures === 0 ? 0 : 1);

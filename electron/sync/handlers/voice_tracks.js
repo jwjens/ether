@@ -116,12 +116,58 @@ function voiceTracksUpdate(db, uuid, patch) {
   return voiceTracksGet(db, uuid);
 }
 
+// -- The delete contract, for voice tracks ------------------------------------
+// A delete RETRACTS THE TAKE'S FUTURE and NEVER EDITS ITS PAST.
+//
+// Identical in shape to spots (handlers/spots.js retractSpotReferences) and for the identical
+// reason. schedule:insertVoiceTrack (electron/main.js:8624) places a take into the log as a FROZEN
+// COPY: song_id NULL and the take's file_path copied straight in. There is no voice_track_id column
+// on generated_schedule. Playout plays that path directly and never consults this table, so
+// tombstoning the row here stopped nothing that was already scheduled -- a deleted jock break kept
+// airing, exactly as the deleted OV spot did on 2026-09-14.
+//
+// Found by the sweep Jeff asked for after the spot fix, and fixed in the same pass rather than left
+// to surface live in three weeks. docs/deleted-spot-still-airing-2026-09-14.md
+//
+// WHY THE MATCH IS song_id IS NULL AND file_path. There is no id to match on. A music or sweeper row
+// always carries a song_id, so `song_id IS NULL` excludes every one of them, and the take's file is
+// written per-recording by writeTakeFile() -- unique to this take.
+//
+// content_class is deliberately NOT in the predicate, and THIS IS THE TRAP. insertVoiceTrack does
+// not set the column, and generated_schedule.content_class DEFAULTS TO 'MUSIC' (migration v31). So a
+// voice track sits in the log LABELLED MUSIC -- 37 such rows on OV's database, measured 2026-09-14.
+// A filter like content_class='VT', or IS NULL, would match exactly nothing while looking correct.
+// song_id IS NULL is the only thing that actually distinguishes a placed take from a song.
+//
+// PRESERVED, deliberately -- as in the song and spot contracts:
+//   * played / missed rows  - the record of what actually went to air.
+//   * playing               - audio ON AIR RIGHT NOW. Never yanked from under the operator.
+// Only state = 'pending' is retracted.
+//
+// UNLOGGED, and also wired into the inbound apply path in merge-engine.js: generated_schedule does
+// not sync (synced-tables.js RULING A), so each install must retract from its own log.
+function retractVoiceTrackReferences(db, track, nowIso) {
+  const out = { pendingLog: 0 };
+  if (!track || !track.file_path) return out;
+  try {
+    out.pendingLog = db.prepare(
+      `UPDATE generated_schedule SET deleted_at = ?, updated_at = ?
+        WHERE station_id = ? AND song_id IS NULL AND state = 'pending'
+          AND deleted_at IS NULL AND file_path = ?`
+    ).run(nowIso, nowIso, track.station_id, track.file_path).changes || 0;
+  } catch (e) {
+    console.error(`[voice_tracks] future-airings retraction failed for "${track.title}": ${e.message}`);
+  }
+  return out;
+}
+
 function voiceTracksDelete(db, uuid, stationId) {
   validateScope();
   const existing = db.prepare(`SELECT * FROM ${TABLE} WHERE uuid = ?`).get(uuid);
   if (!existing) throw new Error(`[voice_tracks] row not found: ${uuid}`);
 
   const before = serializePayload(existing, TABLE);
+  let retracted = null;
 
   withMutation(db, {
     table_name:     TABLE,
@@ -136,8 +182,11 @@ function voiceTracksDelete(db, uuid, stationId) {
     db.prepare(
       `UPDATE ${TABLE} SET deleted_at = ?, updated_at = ? WHERE uuid = ?`
     ).run(now, now, uuid);
+    // The tombstone stops nothing that is already in the log. This does.
+    retracted = retractVoiceTrackReferences(db, existing, now);
   });
-  return { ok: true };
+  console.log(`[voice_tracks] "${existing.title}" deleted - ${(retracted && retracted.pendingLog) || 0} future airing(s) retracted`);
+  return { ok: true, retracted };
 }
 
 
@@ -239,6 +288,7 @@ module.exports = {
   voiceTracksCreate,
   voiceTracksUpdate,
   voiceTracksDelete,
+  retractVoiceTrackReferences,
   voiceTracksUpdateById,
   voiceTracksDeleteById,
   voiceTracksClearClockSlotId,
