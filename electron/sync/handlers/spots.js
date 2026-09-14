@@ -91,7 +91,73 @@ function spotsCreate(db, payload) {
   return created;
 }
 
-function spotsUpdate(db, uuid, patch) {
+// -- The delete contract, for spots -------------------------------------------
+// A delete RETRACTS THE SPOT'S FUTURE and NEVER EDITS ITS PAST.
+//
+// This is the contract songs got on 2026-08-06 (retractSongReferences in handlers/songs.js, ruling
+// section 9 of docs/deleted-songs-still-air-design-2026-08-06.md). Spots never got it, and on
+// 2026-09-14 a spot Jeff had deleted at OV was still being scheduled and airing. That is an
+// ADVERTISER problem, not a panel problem. docs/deleted-spot-still-airing-2026-09-14.md
+//
+// WHY FLAGGING THE ROW DELETED DOES NOT STOP IT. Generate does not schedule a REFERENCE to a spot,
+// it schedules a FROZEN COPY: generate-core.js:333 and :423 push a row with song_id NULL and the
+// spot file_path copied straight in. There is no spot_id column on generated_schedule at all.
+// Playout then plays that path directly (src/audio/loggen.ts:591) and never consults this table.
+// So the delete correctly stops every FUTURE Generate from picking the spot, and does nothing
+// whatever about the log that is already on disk and already airing it.
+//
+// WHY IT MATCHES ON file_path AND NOT AN ID. Because there is no id to match on -- the honest
+// consequence of the frozen-copy design. file_path is what the log row actually plays, so it is
+// precisely the right key: a pending row naming this file IS a future airing of this spot. Giving
+// these rows a real back-reference belongs to slice 3 of the assignment arc; this does not wait for
+// it, because an advertiser is on the air today.
+//
+// PRESERVED, deliberately -- the same three things the song contract preserves:
+//   * play_log              - the advertiser airplay proof. Never touched.
+//   * played / missed rows  - the record of what actually went to air.
+//   * playing               - audio ON AIR RIGHT NOW. Never yanked from under the operator.
+// Only state = 'pending' is retracted.
+//
+// WHY UNLOGGED (no per-row mutations). generated_schedule is EXCLUDED from sync -- synced-tables.js
+// RULING A, the backend has refused the table since 2026-06-16. Every install generates and owns
+// its own log, so this retraction is local hygiene each install must perform for itself. That is
+// also exactly why it is wired into the INBOUND apply path in merge-engine.js and not only here: a
+// spot deleted on OVEVENTS has to stop airing on OV, and no mutation can carry the log edit over
+// for us. Same reasoning as the inbound asset mirror.
+//
+// Returns the count, so a delete is observable instead of silent.
+function retractSpotReferences(db, spot, nowIso) {
+  const out = { pendingLog: 0 };
+  if (!spot || !spot.file_path) return out;   // nothing with no path was ever frozen into a log
+  try {
+    out.pendingLog = db.prepare(
+      `UPDATE generated_schedule SET deleted_at = ?, updated_at = ?
+        WHERE station_id = ? AND content_class = 'SPOT' AND state = 'pending'
+          AND deleted_at IS NULL AND file_path = ?`
+    ).run(nowIso, nowIso, spot.station_id, spot.file_path).changes || 0;
+  } catch (e) {
+    // Never break a delete over log hygiene -- and never swallow the failure either.
+    console.error(`[spots] future-airings retraction failed for "${spot.title}": ${e.message}`);
+  }
+  return out;
+}
+
+// True only when this patch takes an ACTIVE spot inactive. An inactive spot is as much an advertiser
+// problem as a deleted one: Generate stops placing it, so it must equally stop airing from the log
+// already written. Jeff, 2026-09-14: "a spot switched inactive should stop airing too."
+// Only the 1->0 transition retracts. Re-saving an already-inactive spot is a no-op, and activating
+// one never retracts.
+function _isDeactivation(existing, patch) {
+  if (!('is_active' in patch)) return false;
+  const was  = existing.is_active === 1 || existing.is_active === true;
+  const will = patch.is_active === 1 || patch.is_active === true;
+  return was && !will;
+}
+
+// `out`, when supplied, receives { retracted } so the IPC layer can tell the operator what the save
+// pulled off the air. Optional on purpose -- spot_categories.js and smoke-spots-handlers.js call
+// this with three arguments and must keep working unchanged.
+function spotsUpdate(db, uuid, patch, out) {
   validateScope();
   const existing = db.prepare(`SELECT * FROM ${TABLE} WHERE uuid = ?`).get(uuid);
   if (!existing) throw new Error(`[spots] row not found: ${uuid}`);
@@ -112,6 +178,8 @@ function spotsUpdate(db, uuid, patch) {
 
   const before = serializePayload(existing, TABLE);
   const after  = serializePayload(updated,  TABLE);
+  const deactivating = _isDeactivation(existing, patch);
+  let retracted = null;
 
   withMutation(db, {
     table_name:     TABLE,
@@ -125,7 +193,13 @@ function spotsUpdate(db, uuid, patch) {
     const sets = patchFields.map(k => `${k} = ?`).join(', ');
     const vals = patchFields.map(k => patch[k]);
     db.prepare(`UPDATE ${TABLE} SET ${sets}, updated_at = ? WHERE uuid = ?`).run(...vals, now, uuid);
+    // Inside the transaction so the flag and the retraction can never disagree.
+    if (deactivating) retracted = retractSpotReferences(db, existing, now);
   });
+  if (deactivating) {
+    console.log(`[spots] "${existing.title}" deactivated - ${(retracted && retracted.pendingLog) || 0} future airing(s) retracted`);
+  }
+  if (out) out.retracted = retracted;
   return spotsGet(db, uuid);
 }
 
@@ -135,6 +209,7 @@ function spotsDelete(db, uuid, stationId) {
   if (!existing) throw new Error(`[spots] row not found: ${uuid}`);
 
   const before = serializePayload(existing, TABLE);
+  let retracted = null;
 
   withMutation(db, {
     table_name:     TABLE,
@@ -149,11 +224,16 @@ function spotsDelete(db, uuid, stationId) {
     db.prepare(
       `UPDATE ${TABLE} SET deleted_at = ?, updated_at = ? WHERE uuid = ?`
     ).run(now, now, uuid);
+    // THE POINT OF THE WHOLE CHANGE. Flagging the row stops the next Generate; this stops the log
+    // that is already written. Inside the transaction: a delete that rolled back must not have
+    // silently pulled the spot off the air anyway.
+    retracted = retractSpotReferences(db, existing, now);
   });
-  return { ok: true };
+  console.log(`[spots] "${existing.title}" deleted - ${(retracted && retracted.pendingLog) || 0} future airing(s) retracted`);
+  return { ok: true, retracted };
 }
 
-function spotsUpdateById(db, intId, patch) {
+function spotsUpdateById(db, intId, patch, out) {
   let existing = db.prepare(`SELECT * FROM ${TABLE} WHERE id = ?`).get(intId);
   if (!existing) throw new Error(`[spots] row not found by id: ${intId}`);
   if (!existing.uuid) {
@@ -161,7 +241,7 @@ function spotsUpdateById(db, intId, patch) {
     db.prepare(`UPDATE ${TABLE} SET uuid = ? WHERE id = ?`).run(newUuid, intId);
     existing = { ...existing, uuid: newUuid };
   }
-  return spotsUpdate(db, existing.uuid, patch);
+  return spotsUpdate(db, existing.uuid, patch, out);
 }
 
 function spotsDeleteById(db, intId) {
@@ -196,7 +276,7 @@ function installSpots(ipcMain, db) {
   });
 
   ipcMain.handle('spots:update', (_, uuid, patch) => {
-    try { return { ok: true, row: spotsUpdate(getDb(), uuid, patch) }; }
+    try { const o = {}; const row = spotsUpdate(getDb(), uuid, patch, o); return { ok: true, row, retracted: o.retracted ?? null }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
@@ -206,7 +286,7 @@ function installSpots(ipcMain, db) {
   });
 
   ipcMain.handle('spots:update-by-id', (_, intId, patch) => {
-    try { return { ok: true, row: spotsUpdateById(getDb(), intId, patch) }; }
+    try { const o = {}; const row = spotsUpdateById(getDb(), intId, patch, o); return { ok: true, row, retracted: o.retracted ?? null }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
 
@@ -228,4 +308,5 @@ module.exports = {
   spotsDelete,
   spotsUpdateById,
   spotsDeleteById,
+  retractSpotReferences,
 };

@@ -30,6 +30,8 @@
     "test:undefined-calls": "node scripts/smoke-undefined-calls.js",
     "test:ipc-contract": "node scripts/smoke-ipc-payload-contract.js",
     "test:jukebox-gate": "node scripts/smoke-jukebox-gate.js",
+    "test:spot-retraction": "node scripts/smoke-spot-retraction.js",
+    "test:inbound-mirror": "node scripts/smoke-inbound-asset-mirror.js",
     "test:closing": "node scripts/smoke-closing-isolation.js",
     "test:announce": "node scripts/smoke-announce-coexist.js",
     "test:iris-phrases": "node scripts/test-iris-transport-phrases.js",

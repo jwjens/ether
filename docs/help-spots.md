@@ -84,6 +84,49 @@ Spots don't rotate like music — they air in **timed breaks** you place on a cl
   that deck card pulses an amber/gold frame, readable across the room. Songs never flash; this is separate
   from the sweeper indicator (the white/yellow line under a deck).
 
+## Taking a spot off the air
+
+A campaign ends, or an advertiser pulls a commercial, and you need it to stop airing. Two ways, and
+they now do the same thing:
+
+- **Delete it** — the trash icon on its row.
+- **Switch it inactive** — open the spot and turn **Active** off. Use this when the advertiser may be
+  back; the spot keeps its artwork, category and play history and can be switched on again later.
+
+Either way Ether does **two** things, and the second one is the one that matters:
+
+1. It stops the spot being placed in any future log.
+2. **It pulls the spot out of the log that is already written.**
+
+That second step matters because the airing log is generated ahead of time — often a full day or more.
+Without it, a spot you deleted this morning would keep airing all day from the log made last night.
+
+Ether tells you what it pulled: *"Deleted ‘Opportunity Village’ — 14 future airings pulled from the log"*.
+If it says **no future airings were pulled** and you can still hear the spot, that is worth reporting —
+the message is there so the two can never quietly disagree.
+
+If the delete fails for any reason, the panel says so and the spot stays on screen. It never closes as
+though it worked.
+
+### What is deliberately NOT removed
+
+- **Anything that already aired.** The play log is your advertiser affidavit — proof the commercial ran.
+  Deleting the spot never erases a minute of it.
+- **The spot playing right now.** If it is on air as you delete it, it finishes. Ether never yanks audio
+  off the transmitter mid-play.
+- **Rows you placed by hand.** Anything you dropped into the log yourself stays yours.
+
+### Across two computers
+
+If you run more than one Ether machine on the same account, deleting or deactivating a spot on one of
+them takes it off the air on **both** — each machine pulls the spot from its own log as the change
+arrives. There is nothing to repeat on the second machine.
+
+### The one case you still handle by hand
+
+A spot already **loaded on a deck**, or scheduled inside the **current hour**, may air once more. If you
+need it gone immediately, remove that entry from the log grid in the calendar, or eject the deck.
+
 ## Notes
 
 - A spot at the **top of the hour** airs exactly at :00; breaks at other minutes drop at the nearest song

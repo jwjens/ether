@@ -201,6 +201,25 @@ function createLibraryHealth(opts) {
     const totals = { resolves: 0, resolvesElsewhere: 0, r2Only: 0, dead: 0, foreign: 0, rows: 0 };
     const byTable = {};
     const sample = [];
+
+    // ── THE COUNT IS FILES, NOT ROWS, AND IT HAS TO NAME THEM ────────────────────────────────────
+    //
+    // Jeff, 2026-09-14: "0 two days ago, 17 this morning, 16 an hour ago, 32 now. It's climbing."
+    // And: "A count that moves on its own and can't name itself is the thing that needs answering
+    // first." He had asked three times, and three times it took a purpose-written script to answer,
+    // because this function built a foreignSample and no equivalent for dead.
+    //
+    // TWO DEFECTS, BOTH HERE. The first is arithmetic: library_asset MIRRORS songs/spots/
+    // announcements and is itself in AUDIO_TABLES, so one missing file is counted once for the row
+    // and again for its mirror. On this machine that read 32 over 13 real files, and it doubled the
+    // instant a backfill registered the mirrors. The operator-facing question is "how many files am
+    // I missing", so the answer is a count of FILES: distinct stored paths, case-folded, counted
+    // once however many rows point at them. byTable keeps the per-row numbers, which are still the
+    // right shape for "which table has the problem".
+    //
+    // The second is that a number nobody can expand is not a diagnosis. deadSample carries the rows,
+    // so the Health Monitor can name what it counted without anyone writing a script again.
+    const deadByFile = new Map();   // lowercased path -> { file_path, rows: [...] }
     for (const spec of AUDIO_TABLES) {
       const cols = colsOf(db, spec.table);
       if (!cols.has('file_path')) continue;              // table absent, or has no audio column
@@ -231,7 +250,16 @@ function createLibraryHealth(opts) {
                   canFetch: hasKey };
       for (const r of rows) {
         const { cls, foreign } = classifyRow(r, spec);
-        t[cls]++; totals[cls]++;
+        t[cls]++;
+        // Every class except dead still totals by ROW. Only dead is de-duplicated to files, because
+        // only dead is the number an operator reads as "things I have lost".
+        if (cls !== 'dead') totals[cls]++;
+        else {
+          const key = String(r.file_path).toLowerCase();
+          let e = deadByFile.get(key);
+          if (!e) { e = { file_path: r.file_path, file_key: r.file_key || null, rows: [] }; deadByFile.set(key, e); }
+          e.rows.push({ table: spec.table, id: r._id, title: r._title });
+        }
         if (foreign) {
           t.foreign++; totals.foreign++;
           // A number is not an explanation. Five real paths make the cause obvious at a glance:
@@ -242,7 +270,26 @@ function createLibraryHealth(opts) {
       totals.rows += rows.length;
       byTable[spec.table] = t;
     }
-    return { totals, byTable, foreignSample: sample, unmeasured: unmeasuredLoudness(db) };
+
+    // dead = distinct FILES. deadRows = how many rows reference them, kept so the difference between
+    // "13 files" and "32 rows" is visible rather than argued about.
+    totals.dead = deadByFile.size;
+    totals.deadRows = [...deadByFile.values()].reduce((a, e) => a + e.rows.length, 0);
+
+    // Capped, like foreignSample: a panel needs enough to identify the problem, not a data dump. The
+    // full list is what scripts/diag-which-missing.js prints, and the cap is stated so a reader knows
+    // when they are looking at a subset.
+    const DEAD_SAMPLE_MAX = 25;
+    const deadSample = [...deadByFile.values()].slice(0, DEAD_SAMPLE_MAX).map((e) => ({
+      file_path: e.file_path,
+      file_key:  e.file_key,
+      basename:  String(e.file_path).split(/[\\/]/).pop(),
+      rows:      e.rows,
+    }));
+
+    return { totals, byTable, foreignSample: sample, deadSample,
+             deadSampleTruncated: deadByFile.size > DEAD_SAMPLE_MAX,
+             unmeasured: unmeasuredLoudness(db) };
   }
 
   /** Rows with no loudness measurement. A song with no gain_db gets no trim in the mixer, so it airs at
@@ -644,6 +691,12 @@ function createLibraryHealth(opts) {
       songsForeign: foreignSongs,
       byTable: audio.byTable,
       foreignSample: audio.foreignSample,
+      // WHAT THE DEAD COUNT COUNTED. Carried to the renderer so the Health Monitor can name the files
+      // instead of printing a number nobody can expand — which is what sent Jeff to a script three
+      // times. deadRows is alongside it so "13 files / 32 rows" is visible rather than argued about.
+      deadSample: audio.deadSample,
+      deadSampleTruncated: audio.deadSampleTruncated,
+      deadRows: audio.totals.deadRows,
       audioRows: audio.totals.rows,
     };
     // FOREIGN IS RED, AND IT NEVER BLOCKS (Jeff's ruling, 2026-09-04): "the OV machine kept playing

@@ -94,6 +94,73 @@ function mirrorAssetDelete(db, tableName, uuid) {
   }
 }
 
+/**
+ * THE RECEIVING SIDE. Mirror an INBOUND row — directly, with no mutation journalled.
+ *
+ * Jeff, 2026-09-14: "Stranded-on-arrival makes sync useless for anything with a panel."
+ *
+ * WHY THE APPLY PATH NEEDED ITS OWN. merge-engine.js:277-299 lands an inbound row with a raw
+ * INSERT OR REPLACE and never calls the handlers — deliberately, because it has to control the
+ * integer id ([N-107], [N-108c]) in ways the handlers do not. So mirrorAsset(), which lives in the
+ * handlers, never ran on a receiver: a spot created on one machine synced its row to the other and
+ * was invisible there, permanently, because the panel INNER JOINs library_asset. Two machines means
+ * every import is stranded in one direction or the other, and the backfill becomes a chore you run
+ * after every sync rather than a repair you run once.
+ *
+ * WHY IT MUST NOT JOURNAL. assetCreate/assetUpdate write through withMutation. Calling them here
+ * would turn every INBOUND mutation into an OUTBOUND one — a receiver telling the sender something
+ * the sender already knows, forever, with two machines echoing each other. The asset row is DERIVED:
+ * every peer can compute it from a row it already holds, so it must never travel. Same reasoning as
+ * the backfill, and the same reasoning the v55 and v59 backfills used.
+ *
+ * NEVER THROWS. A mirror failure must not abort an apply — the real row has already landed, and
+ * failing here would roll back a legitimate sync over bookkeeping.
+ */
+function mirrorAssetInbound(db, tableName, row) {
+  const baseType = assetTypeFor(tableName);
+  if (!baseType) return { ok: true, skipped: 'not_audio_bearing' };
+  if (!row || !row.uuid) return { ok: true, skipped: 'no_uuid' };
+  // Only mirror something that actually carries audio. A row with no path is not an asset yet.
+  if (!row.file_path) return { ok: true, skipped: 'no_file_path' };
+
+  const type = tableName === 'songs' ? assetTypeForContentClass(row.content_class) : baseType;
+  const title = row.title || row.name || '(untitled)';
+  const durationMs = row.duration_ms ?? (row.length_sec != null ? Math.round(Number(row.length_sec) * 1000) : null);
+  const now = new Date().toISOString();
+
+  try {
+    const existing = db.prepare('SELECT uuid FROM library_asset WHERE uuid = ?').get(row.uuid);
+    if (existing) {
+      db.prepare(`UPDATE library_asset SET type = ?, title = ?, file_path = ?, file_key = ?,
+                         duration_ms = ?, deleted_at = NULL, updated_at = ? WHERE uuid = ?`)
+        .run(type, title, row.file_path, row.file_key ?? null, durationMs, now, row.uuid);
+    } else {
+      db.prepare(`INSERT INTO library_asset (uuid, type, title, file_path, file_key, duration_ms,
+                                             created_at, updated_at, deleted_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`)
+        .run(row.uuid, type, title, row.file_path, row.file_key ?? null, durationMs, now, now);
+    }
+    return { ok: true };
+  } catch (e) {
+    console.error(`[asset-mirror] inbound ${tableName} ${row.uuid} not mirrored: ${e.message}`);
+    return { ok: false, error: e.message };
+  }
+}
+
+/** The inbound counterpart of a delete. Tombstones the asset rather than dropping it, matching how
+ *  the tables themselves carry deleted_at — and, like the create, journals nothing. */
+function mirrorAssetInboundDelete(db, tableName, uuid, deletedAt) {
+  if (!assetTypeFor(tableName) || !uuid) return { ok: true, skipped: true };
+  try {
+    db.prepare('UPDATE library_asset SET deleted_at = ?, updated_at = ? WHERE uuid = ?')
+      .run(deletedAt || new Date().toISOString(), new Date().toISOString(), uuid);
+    return { ok: true };
+  } catch (e) {
+    console.error(`[asset-mirror] inbound delete ${tableName} ${uuid}: ${e.message}`);
+    return { ok: false, error: e.message };
+  }
+}
+
 /** `songs.content_class` is the operator-facing marking; library_asset.type is what the panels
  *  filter on. ONE mapping, here, so a new class cannot mean two different things in two files. */
 function assetTypeForContentClass(cls) {
@@ -104,4 +171,5 @@ function assetTypeForContentClass(cls) {
   }
 }
 
-module.exports = { mirrorAsset, mirrorAssetDelete, assetTypeFor, audioBearingTables, assetTypeForContentClass };
+module.exports = { mirrorAsset, mirrorAssetDelete, mirrorAssetInbound, mirrorAssetInboundDelete,
+                   assetTypeFor, audioBearingTables, assetTypeForContentClass };

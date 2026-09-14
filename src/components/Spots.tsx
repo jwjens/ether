@@ -333,7 +333,12 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
   const save = async () => {
     if (!editing || !editing.title) return;
     if (editing.id) {
-      await (window as any).ether.spots.updateById(editing.id, { title: editing.title, spot_type: editing.spot_type || "promo", advertiser: editing.advertiser || null, start_date: editing.start_date || null, end_date: editing.end_date || null, max_plays_day: editing.max_plays_day || 999, is_active: editing.is_active ?? 1, notes: editing.notes || null, spot_category_id: editing.spot_category_id ?? null, art_image: editing.art_image || null });
+      // Switching a spot inactive takes it off the air, so the save reports what it pulled exactly
+      // as the delete does -- and reports a failure instead of closing the editor as if it worked.
+      const res = await (window as any).ether.spots.updateById(editing.id, { title: editing.title, spot_type: editing.spot_type || "promo", advertiser: editing.advertiser || null, start_date: editing.start_date || null, end_date: editing.end_date || null, max_plays_day: editing.max_plays_day || 999, is_active: editing.is_active ?? 1, notes: editing.notes || null, spot_category_id: editing.spot_category_id ?? null, art_image: editing.art_image || null });
+      if (!res?.ok) { setStatus(`Could not save "${editing.title}": ${res?.error ?? "no reason given"}`); return; }
+      const pulled = res.retracted?.pendingLog ?? 0;
+      if (pulled > 0) setStatus(`"${editing.title}" is now inactive - ${pulled} future airing${pulled === 1 ? "" : "s"} pulled from the log`);
       // Drop the cached artwork for this file so the new override shows on air immediately
       // instead of after a restart.
       clearSpotArtCache(editing.file_path ?? null, stationId);
@@ -352,7 +357,33 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
   };
   const clearArt = () => { if (editing) setEditing({ ...editing, art_image: null }); };
 
-  const remove = async (id: number) => { if (!confirm("Delete this spot?")) return; await (window as any).ether.spots.deleteById(id); load(); };
+  // A DELETE THAT CANNOT FAIL OUT LOUD IS A DELETE YOU CANNOT TRUST.
+  //
+  // This used to be `await ...deleteById(id); load();` -- the result thrown away, exactly the
+  // silence that hid the failing spot imports. The handler already returns { ok, error }; nothing
+  // read it.
+  //
+  // And it now says what came OFF THE AIR, not just what left the table. Deleting a spot retracts
+  // its pending rows from the generated log (handlers/spots.js retractSpotReferences); before that
+  // existed, a deleted spot kept airing at OV from the copy Generate had frozen into the log. The
+  // count is the receipt that the retraction actually ran -- and "0 future airings" on a spot the
+  // operator can hear is itself the signal that something is wrong.
+  const remove = async (id: number) => {
+    const spot = spots.find(s => s.id === id);
+    if (!confirm(`Delete "${spot?.title ?? "this spot"}"?`)) return;
+    try {
+      const res = await (window as any).ether.spots.deleteById(id);
+      if (!res?.ok) { setStatus(`Could not delete "${spot?.title ?? id}": ${res?.error ?? "no reason given"}`); return; }
+      const pulled = res.retracted?.pendingLog ?? 0;
+      setStatus(pulled > 0
+        ? `Deleted "${spot?.title ?? id}" - ${pulled} future airing${pulled === 1 ? "" : "s"} pulled from the log`
+        : `Deleted "${spot?.title ?? id}" - it was not scheduled to air again`);
+    } catch (e) {
+      setStatus(`Could not delete "${spot?.title ?? id}": ${String(e)}`);
+      return;
+    }
+    load();
+  };
 
   const playSpot = (spot: Spot) => {
     if (spot.file_path) { engine.init(); engine.loadToDeck("B", spot.file_path, spot.title, spot.spot_type); setTimeout(() => engine.getDeck("B")?.play(), 500); }

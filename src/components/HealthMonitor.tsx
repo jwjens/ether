@@ -637,13 +637,24 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     const id = setInterval(tick, 30000);
     return () => { stop = true; clearInterval(id); };
   }, []);
-  const showUnresolvable = async (sid: number) => {
+  // THE PANEL NAMES WHAT IT COUNTED.
+  //
+  // Jeff, 2026-09-14: "The panel must be able to name what it counted. Three times I've asked and
+  // three times it needed a script."
+  //
+  // It USED to ask library-health:eligibility and render titles alone — a different, station-scoped,
+  // songs-shaped query that could not say which TABLE a row was in or what PATH it was looking for.
+  // So "32 missing" expanded into a list of song titles, which is not an answer to "which 32".
+  //
+  // deadSample comes from the same sweep that produced the count, so the list cannot disagree with
+  // the number beside it — and it carries the stored path verbatim, the basename, whether there is a
+  // file_key to recover it from the cloud, and every row that references it.
+  const [unresolvableTruncated, setUnresolvableTruncated] = useState(false);
+  const showUnresolvable = (sid: number, sample: any[], truncated?: boolean) => {
     if (unresolvableFor === sid) { setUnresolvableFor(null); return; }
-    try {
-      const rows = await (window as any).ether.invoke("library-health:eligibility", sid);
-      setUnresolvableList((Array.isArray(rows) ? rows : []).filter((r: any) => r.status === "UNRESOLVABLE").map((r: any) => ({ id: r.id, title: r.title })));
-      setUnresolvableFor(sid);
-    } catch { setUnresolvableList([]); setUnresolvableFor(sid); }
+    setUnresolvableList(Array.isArray(sample) ? sample : []);
+    setUnresolvableTruncated(!!truncated);
+    setUnresolvableFor(sid);
   };
 
   // ── LOG-READER FLIP §2.7 boundary shadow (Phase 3) — poll logreader-shadow:get (60s; low-churn) ──
@@ -1473,7 +1484,15 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                         ? `${st.materialization.dead} files still arriving`
                       : st.materialization.foreign > 0
                         ? `${st.materialization.foreign} stored outside the catalogue — they will not travel; use Scan catalogue above`
-                      : st.materialization.dead > 0 ? `${st.materialization.dead} unresolvable — needs re-import`
+                      // FILES, not rows. library_asset mirrors songs/spots/announcements and is itself
+                      // scanned, so one missing file used to be counted once per row that named it —
+                      // 32 over 13 real files here, and it doubled the moment a backfill registered
+                      // the mirrors. The operator asked "how many files am I missing", so that is what
+                      // this says; the row count rides along when it differs, because the gap between
+                      // the two is itself worth seeing.
+                      : st.materialization.dead > 0 ? `${st.materialization.dead} file${st.materialization.dead === 1 ? "" : "s"} missing`
+                        + (st.materialization.deadRows && st.materialization.deadRows !== st.materialization.dead
+                            ? ` (${st.materialization.deadRows} rows reference them)` : "")
                       : st.materialization.resolvesElsewhere > 0 ? `${st.materialization.resolvesElsewhere} airing from the library rather than their stored path`
                       : st.materialization.r2Only > 0 ? `${st.materialization.r2Only} cloud-only (prefetching)`
                       : "all local"}
@@ -1481,13 +1500,29 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                   {/* No "unresolvable list" while a restore runs — the list would be a red roster of
                       files that are on their way. */}
                   {st.materialization.dead > 0 && !st.materialization.restoreInFlight && (
-                    <button onClick={() => showUnresolvable(st.stationId)} style={{ fontSize: 11, color: "var(--accent-red)", background: "none", border: "none", cursor: "pointer", padding: "2px 0 0 0", textDecoration: "underline" }}>
+                    <button onClick={() => showUnresolvable(st.stationId, st.materialization.deadSample, st.materialization.deadSampleTruncated)} style={{ fontSize: 11, color: "var(--accent-red)", background: "none", border: "none", cursor: "pointer", padding: "2px 0 0 0", textDecoration: "underline" }}>
                       {unresolvableFor === st.stationId ? "hide" : "show"} unresolvable list
                     </button>
                   )}
                   {unresolvableFor === st.stationId && (
                     <div style={{ margin: "4px 0 6px", padding: "6px 8px", background: "rgba(248,113,113,0.06)", border: "1px solid rgba(248,113,113,0.2)", maxHeight: 120, overflowY: "auto" as const, fontSize: 12, color: "rgba(248,113,113,0.85)", fontFamily: "'DM Mono', monospace" }}>
-                      {unresolvableList.length ? unresolvableList.map(r => <div key={r.id}>{r.title}</div>) : <div>none</div>}
+                      {unresolvableList.length ? (<>
+                        {unresolvableList.map((f: any, i: number) => (
+                          <div key={f.file_path || i} style={{ marginBottom: 6 }}>
+                            <div style={{ color: "rgba(248,113,113,0.95)" }}>{f.basename || f.file_path}</div>
+                            {/* THE PATH, VERBATIM. Not tidied, not shortened: the literal stored
+                                string is the evidence, and a prettified one has sent people looking
+                                in the wrong folder before. */}
+                            <div style={{ fontSize: 11, opacity: 0.75, wordBreak: "break-all" }}>{f.file_path}</div>
+                            <div style={{ fontSize: 11, opacity: 0.75 }}>
+                              {(f.rows || []).map((r: any) => `${r.table} #${r.id}${r.title ? ` — ${r.title}` : ""}`).join(" · ")}
+                              {f.file_key ? "  · in the cloud, recoverable" : "  · no file_key — nothing to recover it from"}
+                            </div>
+                          </div>
+                        ))}
+                        {/* A capped list that does not say it is capped is a list that lies. */}
+                        {unresolvableTruncated && <div style={{ opacity: 0.8 }}>…more not shown — run scripts/diag-which-missing.js for the full list</div>}
+                      </>) : <div>none</div>}
                     </div>
                   )}
                   <HealthRow label="Rotation pool" value={`${st.pool.spunPool24h}/${st.pool.librarySize} aired (24h)`} status={lvl(st.pool.level) as any} sub={`top song ${st.pool.topSpins24h} spins/24h`} />

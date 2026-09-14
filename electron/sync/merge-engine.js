@@ -266,6 +266,43 @@ class MergeEngine {
       }
       const localId = (localRow && localRow.id != null) ? localRow.id : null;
       if (localId != null) row.id = localId;
+      // MIRROR ON ARRIVAL. This path writes rows RAW — it never calls the handlers, because it has to
+      // control the integer id ([N-107], [N-108c]) in ways they do not. That is deliberate and stays.
+      // But it meant the library_asset mirror, which lives in the handlers, never ran on a receiver:
+      // a spot created on one machine synced its row to the other and was invisible there for good,
+      // because the panel INNER JOINs library_asset. With two machines every import was stranded in
+      // one direction or the other, which turns a one-off backfill into a chore after every sync.
+      //
+      // Written DIRECTLY and journalled NOWHERE: the asset row is derived, every peer can compute it
+      // from a row it already holds, and journalling it here would turn each inbound mutation into an
+      // outbound one — two machines echoing derived state at each other forever.
+      const mirrorInbound = (d, t, r) => {
+        try { require('./handlers/asset-mirror').mirrorAssetInbound(d, t, r); }
+        catch (e) { console.error('[merge-engine] inbound asset mirror failed:', e.message); }
+      };
+      // A SPOT THAT ARRIVES INACTIVE MUST STOP AIRING HERE TOO.
+      //
+      // generated_schedule does not sync (synced-tables.js RULING A), so each install owns its own
+      // log and nothing can carry a log edit between machines. A spot deactivated on OVEVENTS sends
+      // only the spots-row update; without this, OV keeps airing it from the frozen copy Generate
+      // wrote (generate-core.js:333 copies file_path straight into the row).
+      //
+      // Songs do not need this, and the reason is worth knowing before anyone "simplifies" it: a
+      // MUSIC log row carries NO file_path (generate-core.js:319), so the air-time resolver
+      // COALESCE(gs.file_path, s.file_path) falls through to the song row, which neuterSong has
+      // already set to NULL. Songs are stopped by DATA. A spot row carries its own path, so the
+      // COALESCE never reaches the spots table and only an explicit retraction stops it.
+      //
+      // Direct, and journalled nowhere: it is derived local hygiene every peer performs for itself.
+      const retractInbound = (d, t, r) => {
+        if (t !== 'spots' || !r) return;
+        const inactive = !(r.is_active === 1 || r.is_active === true);
+        if (!inactive) return;
+        try {
+          const res = require('./handlers/spots').retractSpotReferences(d, r, new Date().toISOString());
+          if (res && res.pendingLog) console.log(`[merge-engine] inbound inactive spot "${r.title}" - ${res.pendingLog} future airing(s) retracted`);
+        } catch (e) { console.error('[merge-engine] inbound spot retraction failed:', e.message); }
+      };
       const omitId = (localRow === null);   // strictly "we looked, and this row is genuinely new here"
       const cols = Object.keys(row).filter(k => row[k] !== undefined && !(k === 'id' && omitId));
       if (cols.length === 0) return;
@@ -278,6 +315,8 @@ class MergeEngine {
         db.prepare(
           `INSERT OR REPLACE INTO ${table_name} (${cols.join(', ')}) VALUES (${placeholders})`
         ).run(...vals);
+        mirrorInbound(db, table_name, row);
+        retractInbound(db, table_name, row);
 
       } else {
         // UPDATE; fall back to INSERT OR REPLACE if row doesn't exist locally [N-107]
@@ -296,6 +335,8 @@ class MergeEngine {
               `INSERT OR REPLACE INTO ${table_name} (${cols.join(', ')}) VALUES (${placeholders})`
             ).run(...vals);
           }
+          mirrorInbound(db, table_name, row);
+          retractInbound(db, table_name, row);
         }
       }
 
@@ -311,6 +352,22 @@ class MergeEngine {
       if (m.table_name === 'songs') {
         try { require('./handlers/songs').neuterSong(db, row_id, deleteTime); }
         catch (e) { console.error('[merge-engine] songs neuter failed (tombstone still set):', e.message); }
+      }
+      // The asset goes with the row, or the panels list a ghost nothing can play.
+      try { require('./handlers/asset-mirror').mirrorAssetInboundDelete(db, m.table_name, row_id, deleteTime); }
+      catch (e) { console.error('[merge-engine] inbound asset un-mirror failed:', e.message); }
+      // spots: a remote delete must be as final as a local one. The tombstone above stops the next
+      // Generate from picking it; this stops the log that is already written and already airing it.
+      // Read the row back AFTER the tombstone -- retractSpotReferences needs its station_id and
+      // file_path, and the payload of a delete mutation carries only payload_before.
+      if (m.table_name === 'spots') {
+        try {
+          const sp = db.prepare('SELECT title, station_id, file_path FROM spots WHERE uuid = ?').get(row_id);
+          if (sp) {
+            const res = require('./handlers/spots').retractSpotReferences(db, sp, deleteTime);
+            console.log(`[merge-engine] inbound spot delete "${sp.title}" - ${(res && res.pendingLog) || 0} future airing(s) retracted`);
+          }
+        } catch (e) { console.error('[merge-engine] inbound spot retraction failed (tombstone still set):', e.message); }
       }
       // If row not present locally: no-op — tombstone already satisfied [N-107]
     }
