@@ -395,11 +395,11 @@ Deletes travel with your account. Delete on one machine and the other stops play
 
 # If something will not delete
 
-**"I click Delete and nothing happens."** On builds before **4.6.33**, Delete in the Library did nothing at all on a commercial or announcement — no error, no message, the row just stayed. Check **Help → About** for your version and update.
+**"I click Delete and nothing happens."** On builds before **4.6.34**, Delete in the Library did nothing at all on a commercial or announcement — no error, no message, the row just stayed. Check **Help → About** for your version and update.
 
-**"It is in the Library but not in the Spots panel."** The commercial's traffic record is gone but its library entry was left behind — a stray. Builds before 4.6.33 left one behind every time. Deleting the stray from the Library clears it, and the removal travels to your other machines. If there are a lot, ask for the one-off cleanup instead of clicking through them; it shows you the list before it changes anything.
+**"It is in the Library but not in the Spots panel."** The commercial's traffic record is gone but its library entry was left behind — a stray. Builds before 4.6.34 left one behind every time. Deleting the stray from the Library clears it, and the removal travels to your other machines. If there are a lot, ask for the one-off cleanup instead of clicking through them; it shows you the list before it changes anything.
 
-**"I deleted it and it is still airing."** Update to 4.6.33 or later, then **Generate** the day. Generate rewrites the log from the next top of the hour, which clears anything stale. Something scheduled inside the *current* hour, or already loaded on a deck, can still air once — remove that entry from the log grid if you need it gone immediately.
+**"I deleted it and it is still airing."** Update to 4.6.34 or later, then **Generate** the day. Generate rewrites the log from the next top of the hour, which clears anything stale. Something scheduled inside the *current* hour, or already loaded on a deck, can still air once — remove that entry from the log grid if you need it gone immediately.
 
 **"I deleted the wrong thing."** There is no undo. Re-import the file and re-tag it.
 `,
