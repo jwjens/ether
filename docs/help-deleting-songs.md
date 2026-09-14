@@ -82,3 +82,32 @@ That's it. There is no second step and nothing to clean up afterwards.
   regenerate the day.
 - **You deleted the wrong song.** There's no undo. Re-import the file from the **Library → Import** button
   and re-tag it.
+
+## Deleting things that aren't songs (spots, announcements)
+
+The Library lists more than songs. Commercials and announcements appear there too, alongside your
+music, because the Library is the one place you say what a file **is**.
+
+**Delete works on all of them.** You don't have to go and find the right panel first — deleting a
+commercial from the Library is the same as deleting it from the Spots panel, and does exactly the
+same things: it stops being scheduled, and **it is pulled out of the log that was already written**
+so it stops airing. Ether tells you what it pulled.
+
+This arrived in **4.6.33**. Before that, Delete on a commercial or announcement in the Library did
+nothing at all — no error, no message, the row simply stayed. If you are on an older build, that is
+what you are seeing; update.
+
+### "It's in the Library but not in the Spots panel"
+
+That means the commercial's traffic record is gone but its library entry was left behind — a stray.
+Builds before 4.6.33 left one behind every time something was deleted.
+
+**Deleting the stray from the Library clears it**, and the removal travels to your other machines.
+If you have a lot of them, ask for the one-off cleanup rather than clicking through them — it can
+retire all of them at once, and it shows you the list before it changes anything.
+
+### What is still never deleted
+
+Same rules as songs: **your airplay history is kept** — that's the advertiser's proof the commercial
+ran — anything **currently on air finishes**, and **the audio file stays on your disk**. Deleting
+removes the library entry, not the recording.
