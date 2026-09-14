@@ -105,19 +105,13 @@ export async function commitRegionToLibrary(
     throw new Error(`"${opts.name}" was written to ${filePath} but no Library row could be found for it afterwards.`);
   }
 
-  // THE ASSET ROW — the thing every reader actually looks for. type comes from shared/asset-types.json
-  // (SONG · SPOT · PROMO · SWEEPER · ANNOUNCEMENT · VOICE_TRACK · BED · SFX); the uuid is the SONG's,
-  // because v50 deliberately reused it as the asset uuid so the two can never drift apart.
-  const asset = await ether().libraryAsset.create({
-    uuid: assetUuid,
-    type: opts.cls === "SWP" ? "SWEEPER" : "SONG",
-    title: opts.name,
-    file_path: filePath,
-    duration_ms: durationMs,
-  });
-  if (asset && asset.ok === false) {
-    throw new Error(`"${opts.name}" is in the Library but was not registered as an asset — ${asset.error}. It will not appear under Sweepers until it is.`);
-  }
+  // THE ASSET ROW IS NOT CREATED HERE ANY MORE — songsCreate mirrors it (sync/handlers/asset-mirror.js),
+  // and songsUpdate re-types it when content_class below marks this cut a sweeper.
+  //
+  // It WAS created here, for exactly one commit, and that was the shape Jeff ruled out: "make the
+  // asset row structural at the handler layer, not something each import path remembers". Spots
+  // proved the point within two days — the identical gap, in a second import path, found the same
+  // way. One import path remembering is one that another can forget.
 
   if (opts.cls === "SWP") {
     const tagged = await ether().songs.updateById(songId, { content_class: "SWP" });

@@ -10,6 +10,7 @@
 
 const crypto = require('crypto');
 const { withMutation, serializePayload } = require('../mutation-writer');
+const { mirrorAsset } = require('./asset-mirror');
 const { REGISTRY } = require('../synced-tables');
 
 const TABLE              = 'spots';
@@ -80,7 +81,14 @@ function spotsCreate(db, payload) {
       `INSERT INTO ${TABLE} (title, file_path, spot_type, advertiser, start_date, end_date, max_plays_day, play_count, last_played_at, is_active, notes, created_at, isci_code, cart_number, agency, length_sec, station_id, uuid, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(row.title, row.file_path, row.spot_type, row.advertiser, row.start_date, row.end_date, row.max_plays_day, row.play_count, row.last_played_at, row.is_active, row.notes, row.created_at, row.isci_code, row.cart_number, row.agency, row.length_sec, row.station_id, row.uuid, row.updated_at, row.deleted_at);
   });
-  return spotsGet(db, uuid);
+  // THE ASSET ROW. Spots.tsx:87 lists spots with
+  //     FROM library_asset la JOIN spots s ON s.uuid = la.uuid
+  // — an INNER JOIN — and nothing here maintained library_asset, so every spot imported since v50
+  // was created successfully and was invisible in its own panel. The import even reported "Imported
+  // 1 spot", which was true about the write and wrong about the result.
+  const created = spotsGet(db, uuid);
+  mirrorAsset(db, TABLE, created);
+  return created;
 }
 
 function spotsUpdate(db, uuid, patch) {

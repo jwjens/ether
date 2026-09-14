@@ -188,6 +188,7 @@ const REGISTRY = {
   },
 
   announcements: {
+    assetType: 'ANNOUNCEMENT',  // audio-bearing — announcements.js mirrored this by hand first
     tableName: 'announcements',
     primaryKey: ['id'],
     scope: 'station',
@@ -915,6 +916,11 @@ const REGISTRY = {
   },
 
   songs: {
+    // AUDIO-BEARING. A row here is also a library_asset of this type, mirrored by
+    // sync/handlers/asset-mirror.js. Three panels list their content by INNER JOINing library_asset,
+    // and songsCreate/spotsCreate did not maintain it — so an import succeeded and its own panel
+    // showed nothing. One declaration, one mirror, and a guard that fails if a handler forgets.
+    assetType: 'SONG',
     // `songs` is BOTH the wire name and the physical table, and it stays a real TABLE forever — the
     // 4.4.151 rename-to-a-view stranded a customer whose older build ran ALTER against it. Deleted
     // songs are unreachable because they MOVE to songs_deleted, not because the name points elsewhere.
@@ -979,6 +985,7 @@ const REGISTRY = {
   },
 
   spots: {
+    assetType: 'SPOT',        // audio-bearing — see asset-mirror.js
     tableName: 'spots',
     primaryKey: ['id'],
     scope: 'station',

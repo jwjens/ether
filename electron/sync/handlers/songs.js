@@ -10,6 +10,7 @@
 
 const crypto = require('crypto');
 const { withMutation, logMutation, serializePayload } = require('../mutation-writer');
+const { mirrorAsset, assetTypeForContentClass } = require('./asset-mirror');
 const { REGISTRY } = require('../synced-tables');
 
 // WIRE / REGISTRY name — what peers see and what serializePayload + REGISTRY are keyed on. It MUST
@@ -72,7 +73,12 @@ function songsCreate(db, payload) {
       `INSERT INTO ${TABLE} (title, file_path, artist_id, album_id, category_id, genre, duration_ms, bpm, energy, mood, gender, rotation_status, daypart_mask, no_repeat_hours, lufs_measured, peak_db, gain_db, is_processed, cue_in, cue_out, cue_in_ms, cue_out_ms, intro_end, outro_start, intro_end_ms, outro_start_ms, intro_version_path, has_intro, last_played_at, play_count, is_explicit, created_at, updated_at, raw_metadata, spotify_uri, cart_id, uuid, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(row.title, row.file_path, row.artist_id, row.album_id, row.category_id, row.genre, row.duration_ms, row.bpm, row.energy, row.mood, row.gender, row.rotation_status, row.daypart_mask, row.no_repeat_hours, row.lufs_measured, row.peak_db, row.gain_db, row.is_processed, row.cue_in, row.cue_out, row.cue_in_ms, row.cue_out_ms, row.intro_end, row.outro_start, row.intro_end_ms, row.outro_start_ms, row.intro_version_path, row.has_intro, row.last_played_at, row.play_count, row.is_explicit, row.created_at, row.updated_at, row.raw_metadata, row.spotify_uri, row.cart_id, row.uuid, row.deleted_at);
   });
-  return songsGet(db, uuid);
+  // THE ASSET ROW — same reason as spots. SweepersPanel.tsx:113 INNER JOINs library_asset, so a cut
+  // committed by the Reel Splitter was invisible in the one screen that could pool it. Mirrored as
+  // SONG here; marking it a sweeper later re-types the asset through songsUpdate below.
+  const createdRow = songsGet(db, uuid);
+  mirrorAsset(db, TABLE, createdRow);
+  return createdRow;
 }
 
 function songsUpdate(db, uuid, patch) {
@@ -110,7 +116,13 @@ function songsUpdate(db, uuid, patch) {
     const vals = patchFields.map(k => patch[k]);
     db.prepare(`UPDATE ${TABLE} SET ${sets}, updated_at = ? WHERE uuid = ?`).run(...vals, now, uuid);
   });
-  return songsGet(db, uuid);
+  // RE-TYPE THE ASSET. Marking a song a sweeper changes content_class here, and the Sweepers panel
+  // filters on library_asset.type — so without this the cut is SWP in `songs` and SONG in
+  // `library_asset`, and the panel still cannot see it. The same defect, one layer along.
+  // Title and path changes ride along too, so a rename does not leave the asset showing the old one.
+  const updatedRow = songsGet(db, uuid);
+  mirrorAsset(db, TABLE, updatedRow, { type: assetTypeForContentClass(updatedRow && updatedRow.content_class) });
+  return updatedRow;
 }
 
 function songsDelete(db, uuid) {
