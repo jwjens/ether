@@ -367,7 +367,44 @@ The **As-Run** button on the Play Log tab reconciles the whole log — music inc
 `,
   },
   {
-    id: "gselector", category: "Migration", tags: ["gselector", "rcs", "import", "migrate"],
+    id: "deleting", category: "Basics", tags: ["delete", "remove", "spot", "commercial", "announcement", "voice track", "library", "stuck", "wont delete", "still airing"],
+    title: "Deleting things (and what stays)",
+    body: `
+# The short version
+
+Delete something and Ether does **two** things: it stops scheduling it, and **it pulls it out of the log that was already written**. The second one matters — the airing log is generated ahead of time, often a full day. Without it, something you deleted this morning would keep airing all day from last night's log.
+
+Ether tells you what it pulled: *"Deleted 'Opportunity Village' — 14 future airings pulled from the log"*.
+
+# Where to delete from
+
+**The Library deletes anything** — songs, commercials, announcements. You do not have to find the right panel first. The Spots panel and the Sweepers panel delete their own items too, and all of them do the same work.
+
+Select rows and use **Delete N**, right-click → **Delete**, or the **✕** on the row.
+
+# What is never deleted
+
+- **Your airplay history.** For a commercial this is the advertiser's proof it ran. Deleting never erases a minute of it.
+- **Anything on air right now.** It finishes. Ether does not yank audio off the transmitter.
+- **The audio file on your disk.** Deleting removes the library entry, not the recording. If you want the file gone, delete it yourself.
+- **Rows you placed in the log by hand.** Those stay yours.
+
+# On more than one machine
+
+Deletes travel with your account. Delete on one machine and the other stops playing it too, as soon as it syncs. There is nothing to repeat on the second machine.
+
+# If something will not delete
+
+**"I click Delete and nothing happens."** On builds before **4.6.33**, Delete in the Library did nothing at all on a commercial or announcement — no error, no message, the row just stayed. Check **Help → About** for your version and update.
+
+**"It is in the Library but not in the Spots panel."** The commercial's traffic record is gone but its library entry was left behind — a stray. Builds before 4.6.33 left one behind every time. Deleting the stray from the Library clears it, and the removal travels to your other machines. If there are a lot, ask for the one-off cleanup instead of clicking through them; it shows you the list before it changes anything.
+
+**"I deleted it and it is still airing."** Update to 4.6.33 or later, then **Generate** the day. Generate rewrites the log from the next top of the hour, which clears anything stale. Something scheduled inside the *current* hour, or already loaded on a deck, can still air once — remove that entry from the log grid if you need it gone immediately.
+
+**"I deleted the wrong thing."** There is no undo. Re-import the file and re-tag it.
+`,
+  },
+  {    id: "gselector", category: "Migration", tags: ["gselector", "rcs", "import", "migrate"],
     title: "Importing from GSelector",
     body: `
 # One-shot migration
