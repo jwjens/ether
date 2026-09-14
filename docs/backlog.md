@@ -1087,3 +1087,95 @@ Until then Live Captions stays a dashboard panel, with the reason stated at the 
 `src/App.tsx` so the next person to consolidate does not "finish the job" and ship a double-open.
 
 **Teardown note:** none — a code finding, not tooling.
+
+---
+
+## Preload bridge: replace the hand-wired namespace list with `...handlers` (2026-09-14)
+
+**Filed at Jeff's instruction:** *"The preload spread is the real answer and I want it, but not as a
+footnote to a delete button. File it as its own piece with its own verification pass."*
+
+**The defect class.** `electron/preload-handlers.js` exports `buildHandlers(ipcRenderer)` and its own
+header says the consumer should do:
+
+    contextBridge.exposeInMainWorld('ether', { ...existingNamespaces, ...handlers });
+
+`electron/preload.js` does not. It hand-wires every namespace, one line each
+(*"all 34 namespaces wired (Phase 3.5)"* — it is 42 now). A namespace added to the factory and
+forgotten in that list **exists, is exported, and is reachable from nothing**, with no error at any
+layer, until a caller dereferences `undefined`.
+
+That is what `libraryAsset` did: added in v50, unwired, harmless for four months because its own
+comment said *"NOTHING IN THE UI READS THESE YET"* — and a TypeError on OVEVENTS the day the first
+caller shipped. Fixed for that one namespace in 4.6.35, and `scripts/smoke-preload-bridge.js` now
+fails on any recurrence.
+
+**Why the guard is not the end of it.** The guard makes the drift *loud*. The spread makes it
+*impossible*. A hand-maintained list of 42 entries that must mirror another file is the same
+"remembered, not structural" shape as the copy-on-import doors (nine remembered, two didn't) and the
+asset mirror (`mirrorAssetDelete`, exported, zero callers). The standing ruling on that shape is to
+delete the class, not to guard it.
+
+**Why it is not a one-liner.** It changes what 42 currently-working namespaces resolve to, in one
+edit, in the file that gates every renderer→main call in the app. Specifically:
+
+- **Order matters.** The literal contains hand-written entries that DELIBERATELY differ from the
+  factory — `stations` (inline; main excludes `stations:*` from `installAll` and registers it with
+  custom logic) and `scheduledLog` (`{ ...handlers.scheduledLog, getByDate, batchInsert,
+  clearByDate }`). A naive `...handlers` placed after them silently overwrites both and takes the
+  custom logic out of the app. Placed before, they survive. This is the whole risk of the change and
+  it is invisible in review.
+- **The two deliberately-unwired namespaces become wired** unless explicitly deleted after the
+  spread. `assetSpotMeta` and `assetSweeperMeta` are currently unexposed on purpose
+  (`DELIBERATELY_UNWIRED` in the guard). Spreading exposes them. That is probably fine and possibly
+  desirable, but it is a decision, not a side effect.
+- **Nothing today proves the bridge is unchanged.** There is no test that enumerates what
+  `window.ether` actually carries at runtime.
+
+**The verification pass this needs, before the edit:**
+
+1. A snapshot of the resolved bridge BEFORE — every namespace and every method name, from the AST
+   (the guard already computes exactly this; have it emit the map).
+2. The same snapshot AFTER the spread.
+3. **Diff must be empty except for intentional additions**, and each addition named.
+4. `smoke-preload-bridge.js` green, and the custom `stations` / `scheduledLog` entries asserted to
+   still be the custom ones rather than the factory's.
+
+**Not started. Do not fold into another change.**
+
+**Teardown note:** none — a code finding, not tooling.
+
+---
+
+## `ether.fs.writeFile` / `mkdir` / `copyFile` have no handler (2026-09-14)
+
+**Found by `scripts/smoke-preload-bridge.js` on its first run**, which is the argument for the guard.
+
+Exposed at `electron/preload.js:251-253`, invoked by the renderer in seven-plus places, and there is
+**no `ipcMain.handle` for any of the three anywhere in `electron/**`**. Every call rejects.
+
+It was discovered at least twice before and written down rather than fixed —
+`src/audio/imagingCommit.ts:7` and `src/components/ReelSplitter.tsx:8` both carry the comment
+*"dead stub, no handler"*. Those two files route around it. The others do not:
+
+    src/audio/zettaBridge.tsx:20-22     writeFile / mkdir / copyFile
+    src/components/BroadcastEditor.tsx:29
+    src/components/HealthMonitor.tsx:1049
+    src/components/PublishEpisode.tsx:410
+    src/components/StudioEditor.tsx:21
+    src/components/StudioPro.tsx:2717   awaits it to save rendered audio
+
+Ratcheted in the guard as `KNOWN_MISSING_HANDLERS` so the gate is green on existing breakage and
+fails on any new channel — the number comes down by fixing one and deleting its line, never up.
+
+**Why it is not fixed here:** a general "write any file the renderer names" channel is a decision
+about what the sandbox may touch, not a repair to a delete button. The likely correct shape is
+narrow, purpose-built channels (export a WAV to a chosen path; write a publish manifest) rather than
+a generic `fs` passthrough — which is probably why it was never implemented. Needs its own pass, and
+each of the seven call sites needs to be looked at to see what it actually wanted.
+
+**Unknown, and worth establishing first:** whether any of these paths are reachable in normal use, or
+whether they are all behind features that are themselves unfinished. `StudioPro.tsx:2717` looks
+reachable.
+
+**Teardown note:** none — a code finding, not tooling.

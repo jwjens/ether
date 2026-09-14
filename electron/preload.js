@@ -449,6 +449,13 @@ contextBridge.exposeInMainWorld("ether", {
   },
   spotCategories:            handlers.spotCategories,
   jingleCategories:          handlers.jingleCategories,
+  // THE UNIFIED LIBRARY (v50). Built by preload-handlers.js since v50 and never wired here, so
+  // window.ether.libraryAsset was undefined for four months — harmless while nothing read it, and
+  // a TypeError the moment something did (App.tsx:4837, the Library delete). preload.js hand-wires
+  // every namespace instead of spreading ...handlers, so a namespace can exist, be exported, and be
+  // reachable from nothing, with no error at any layer. scripts/smoke-preload-bridge.js now fails
+  // on exactly that. docs/preload-bridge-unwired-namespace-2026-09-14.md
+  libraryAsset:              handlers.libraryAsset,
   sweeperPoolMember:         handlers.sweeperPoolMember,
   spots:                     handlers.spots,
   stationConfigKv:           handlers.stationConfigKv,
