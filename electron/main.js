@@ -3187,6 +3187,58 @@ app.whenReady().then(() => {
     console.error(e.stack);
   }
 
+  // ── DELETE WHATEVER OWNS THIS ASSET ────────────────────────────────────────────────────────────
+  //
+  // Jeff's ruling, 2026-09-12: "One library. Import once, then assign where it plays. THE LIBRARY is
+  // the only import door and the only place he says what a file IS." A place you say what a file IS
+  // is a place you can say it is nothing. So the Library's Delete deletes — it does not refuse and
+  // send you to another panel.
+  //
+  // WHAT IT MUST NOT DO is delete the library_asset row alone. That would leave a live spots row with
+  // no mirror, which is the EXACT shape of the bug that made the Spots panel read 0 while a spot was
+  // on air (2026-09-12) — the same orphan, just facing the other way. So this resolves the OWNING
+  // table and calls that table's real delete handler, which is what runs the cascades: the tombstone,
+  // the mutation, the un-mirror, and the retraction of pending airings.
+  //
+  // The registry is the list. Any table that gains an assetType is covered with nothing added here.
+  ipcMain.handle('library:delete-asset', (_e, uuid) => {
+    try {
+      if (!uuid) return { ok: false, error: 'no uuid given' };
+      const d = getDb();
+      const { audioBearingTables } = require('./sync/handlers/asset-mirror');
+      for (const { table } of audioBearingTables()) {
+        let owner = null;
+        try { owner = d.prepare(`SELECT uuid FROM ${table} WHERE uuid = ? AND deleted_at IS NULL`).get(uuid); }
+        catch { continue; }                       // table absent on an older schema — not an error
+        if (!owner) continue;
+        if (table === 'songs') {
+          const r = require('./sync/handlers/songs').songsDelete(d, uuid);
+          return { ok: true, owner: table, retracted: (r && r.retracted) || null };
+        }
+        if (table === 'spots') {
+          const r = require('./sync/handlers/spots').spotsDelete(d, uuid);
+          return { ok: true, owner: table, retracted: (r && r.retracted) || null };
+        }
+        if (table === 'announcements') {
+          require('./sync/handlers/announcements').announcementsDelete(d, uuid);
+          return { ok: true, owner: table, retracted: null };
+        }
+        return { ok: false, error: `no delete wired for ${table} — the asset was left alone` };
+      }
+      // NO OWNER. The asset is an ORPHAN: its source row is already gone (or was never there), which
+      // is what every row deleted before the un-mirror existed looks like. Tombstoning the asset is
+      // the whole of the delete here, and it is what lets an operator clear the strays by hand
+      // instead of waiting on a repair script.
+      const { assetGet, assetDelete } = require('./sync/handlers/library_asset');
+      if (!assetGet(d, uuid)) return { ok: false, error: 'nothing found to delete' };
+      assetDelete(d, uuid);
+      return { ok: true, owner: null, orphan: true };
+    } catch (e) {
+      console.error('[library:delete-asset]', e);
+      return { ok: false, error: e.message };
+    }
+  });
+
   // ── v2 library bootstrap + tail (spec §4) — ALWAYS ON, independent of the opt-in mutation sync
   // (sync_enabled). Runs only when a real account session exists (account_jwt) AND a license resolves:
   // on a fresh install it fills songs_v2 from GET /library/snapshot; thereafter it tails

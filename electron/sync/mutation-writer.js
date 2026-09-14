@@ -375,6 +375,45 @@ function logMutation(db, opts) {
  * @param {function} fn    () => any — caller's data operation; return value is passed through
  * @returns {any} the return value of fn
  */
+// THE ASSET MIRROR DIES WITH ITS ROW — STRUCTURALLY, NOT PER TABLE.
+//
+// Jeff, 2026-09-14: "Call mirrorAssetDelete from the local delete path — structurally at the
+// handler layer, not remembered per table." Same ruling he gave the create side on 2026-09-12:
+// "the same class as the copy-on-import doors — nine remembered and two didn't."
+//
+// WHAT WENT WRONG WITHOUT IT. mirrorAssetDelete existed, was exported, and had ZERO callers. So a
+// local delete tombstoned the source row and left library_asset alive for ever. The Spots panel
+// INNER JOINs the mirror and stopped showing the row; the Library LEFT JOINs it and kept showing it
+// — for ever, on both machines, because library_asset is itself synced. That is the "spot I deleted
+// won't stay deleted" of 2026-09-14. Nothing was resurrecting it; it never died.
+// docs/library-delete-noop-orphan-assets-2026-09-14.md
+//
+// WHY HERE. This is the one place EVERY journalled local delete passes through, whatever table it
+// is and whoever wrote the handler. A table that gains an assetType in the registry tomorrow is
+// covered the day it gains it, with nothing to remember and nothing to review.
+//
+// NOT THE INBOUND PATH. Pulled rows never reach withMutation — merge-engine.js applies them raw and
+// calls mirrorAssetInboundDelete itself. Both sides are covered, by different code, on purpose.
+//
+// NO RECURSION. assetDelete journals its own mutation on library_asset, which re-enters here — and
+// library_asset carries no assetType, so assetTypeFor() returns null and the second pass is a
+// no-op. The nesting is the ordinary parent_mutation_id case the stack above already handles.
+//
+// NEVER THROWS. Bookkeeping must not roll back a legitimate delete. It runs INSIDE the transaction
+// so a rolled-back delete does not leave the mirror gone, but a mirror failure is swallowed and
+// logged: the source row is the truth, the mirror is derived from it.
+function _unmirrorOnDelete(db, opts) {
+  if (!opts || opts.op !== 'delete' || !opts.row_id) return;
+  try {
+    // Lazily required: asset-mirror -> library_asset -> mutation-writer is a cycle at module load,
+    // and resolving it at call time is what keeps that cycle harmless.
+    const { mirrorAssetDelete } = require('./handlers/asset-mirror');
+    mirrorAssetDelete(db, opts.table_name, opts.row_id);
+  } catch (e) {
+    console.error(`[mutation-writer] un-mirror failed for ${opts.table_name} ${opts.row_id}: ${e.message}`);
+  }
+}
+
 function withMutation(db, opts, fn) {
   // Library-borrowed read-only guard: reject LOCAL writes to the install-scoped catalog while
   // this install is borrowing a library via a grant. The KV lookup runs ONLY for catalog-table
@@ -415,6 +454,7 @@ function withMutation(db, opts, fn) {
         parent_mutation_id: effective_parent,
         _mutation_id:       mutation_id,
       });
+      _unmirrorOnDelete(db, opts);
       return result;
     } finally {
       _mutationContextStack.pop();

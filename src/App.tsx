@@ -4800,6 +4800,52 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
   // selection unique across two sources; reading intent from it would be inferring a fact from a
   // workaround, and would break the moment ids are allocated differently.
   const isSongRow = (row: { source?: string }) => row.source !== "library_asset";
+
+  // ONE DELETE, FOR EITHER KIND OF ROW, THAT SAYS WHAT HAPPENED.
+  //
+  // Jeff, 2026-09-14: "I click delete on the Opportunity Village spot and nothing happens — no
+  // error, no message, the row stays." / "A delete that silently does nothing is the defect
+  // underneath everything today."
+  //
+  // WHAT IT WAS. All three delete doors (bulk, right-click, the row ✕) called
+  // `ether.songs.deleteById(s.id)` with NO isSongRow guard and NO result check. An asset-sourced row
+  // carries a NEGATIVE synthetic id (see the row builder below: `id: -Math.abs(a.id)`), so
+  // songsDeleteById looked up `WHERE id = -5`, found nothing, threw, and the handler returned
+  // { ok:false }. Every caller discarded it and re-rendered. Hence: nothing happens, for ever.
+  //
+  // The guard directly above this was written for exactly this hazard — "the song machinery keys off
+  // a row in `songs`, and a library_asset-sourced row has no such row to write" — and then it was
+  // applied to the edit paths and not to delete, which is the one that destroys data.
+  //
+  // WHY ASSET ROWS DELETE RATHER THAN REFUSE. "One library. Import once, then assign where it plays"
+  // — the Library is where you say what a file IS, so it is where you can say it is nothing. Routing
+  // is by OWNER, never by deleting the mirror alone: `library:delete-asset` resolves the owning table
+  // and calls that table's real handler, so the tombstone, the mutation, the un-mirror and the
+  // retraction of pending airings all run. Deleting the mirror by itself would strand a live spot with
+  // no asset row — the same orphan that made the Spots panel read 0 while a spot was on air.
+  //
+  // Returns true when the row is gone, so a caller knows whether to reload or leave the screen alone.
+  const deleteLibraryRow = async (row: { id: number; title?: string | null; asset_uuid?: string | null; source?: string }): Promise<boolean> => {
+    const name = row.title || "this track";
+    try {
+      if (isSongRow(row)) {
+        const res = await (window as any).ether.songs.deleteById(row.id);
+        if (res && res.ok === false) { setStatus(`Could not delete "${name}": ${res.error ?? "no reason given"}`); return false; }
+        return true;
+      }
+      if (!row.asset_uuid) { setStatus(`Could not delete "${name}": this row has no library id.`); return false; }
+      const res = await (window as any).ether.libraryAsset.deleteOwner(row.asset_uuid);
+      if (!res?.ok) { setStatus(`Could not delete "${name}": ${res?.error ?? "no reason given"}`); return false; }
+      // A delete that took something off the air says so — the same receipt the Spots panel gives.
+      const pulled = res.retracted?.pendingLog ?? 0;
+      if (pulled > 0) setStatus(`Deleted "${name}" — ${pulled} future airing${pulled === 1 ? "" : "s"} pulled from the log`);
+      else if (res.orphan) setStatus(`Removed "${name}" from the library — it had no ${"" }playable row behind it.`);
+      return true;
+    } catch (e) {
+      setStatus(`Could not delete "${name}": ${String(e)}`);
+      return false;
+    }
+  };
   // ELEMENT-TYPE FILTER. This grid reads `songs`, which holds music AND the 64 sweepers AND any
   // spot-classed rows — all mixed together with nothing to tell them apart or filter them out.
   // The Play Log already solved this exact problem, so this is its ClassFilter, unchanged: one
@@ -5290,8 +5336,18 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
   const toggleSelect = (id: number) => { setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; }); };
   const selectAll = () => { setSelectedIds(prev => prev.size === filtered.length ? new Set() : new Set(filtered.map(s => s.id))); };
   const deleteSelected = async () => {
-    if (!confirm("Delete " + selectedIds.size + " song(s)?")) return;
-    for (const id of selectedIds) await (window as any).ether.songs.deleteById(id);
+    if (!confirm("Delete " + selectedIds.size + " item(s)?")) return;
+    // Per row, by source, and COUNTED — a bulk delete that half-worked used to look identical to one
+    // that fully worked.
+    const chosen = songs.filter(x => selectedIds.has(x.id));
+    let gone = 0; const failed: string[] = [];
+    for (const row of chosen) {
+      if (await deleteLibraryRow(row)) gone++;
+      else failed.push(row.title || String(row.id));
+    }
+    setStatus(failed.length
+      ? `Deleted ${gone} of ${chosen.length}. Could not delete: ${failed.slice(0, 5).join(", ")}${failed.length > 5 ? ` and ${failed.length - 5} more` : ""}`
+      : `Deleted ${gone} item${gone === 1 ? "" : "s"}.`);
     setSelectedIds(new Set()); load();
   };
   const deleteAll = async () => {
@@ -5670,7 +5726,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
               action: () => { const song = ctxMenu.song; setCtxMenu(null);
                               void changeFileLocationItem({ table: "songs", id: song.id }, song.file_path, load).run?.(); } },
             null,
-            { label: "Delete", action: async () => { setCtxMenu(null); if (confirm("Delete " + ctxMenu.song.title + "?")) { await (window as any).ether.songs.deleteById(ctxMenu.song.id); load(); } }, danger: true },
+            { label: "Delete", action: async () => { const row = ctxMenu.song; setCtxMenu(null); if (confirm("Delete " + row.title + "?")) { await deleteLibraryRow(row); load(); } }, danger: true },
           ].map((item, idx) => item === null
             ? <div key={idx} style={{ height: 1, background: "var(--border-primary)", margin: "2px 0" }} />
             : <div key={item.label} onMouseDown={() => item.action()} style={{ padding: "9px 16px", fontSize: 13, cursor: "pointer", color: (item as any).danger ? "var(--accent-red)" : "var(--text-primary)", userSelect: "none" as any }}
@@ -6118,7 +6174,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                 <button onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setCueMenu({ song: s, x: r.right, y: r.bottom + 4 }); }} title="Cue…" className="ether-action-btn" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none", cursor: "pointer" }}>
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="10" y1="15" x2="20" y2="5"/><line x1="17" y1="2" x2="22" y2="7"/><polyline points="20 12 20 22 4 22 4 6 14 6"/></svg>
                 </button>
-                <button onClick={async () => { if (confirm("Delete " + (s.title || "this track") + "?")) { await (window as any).ether.songs.deleteById(s.id); load(); } }} title="Delete" className="ether-action-btn" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                <button onClick={async () => { if (confirm("Delete " + (s.title || "this track") + "?")) { await deleteLibraryRow(s); load(); } }} title="Delete" className="ether-action-btn" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
               </div>
             </div>
           ))}

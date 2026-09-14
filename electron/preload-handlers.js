@@ -294,6 +294,9 @@ module.exports = function buildHandlers(ipcRenderer) {
     create:  (payload)      => ipcRenderer.invoke('library_asset:create', payload),
     update:  (uuid, patch)  => ipcRenderer.invoke('library_asset:update', uuid, patch),
     delete:  (uuid)         => ipcRenderer.invoke('library_asset:delete', uuid),
+    // Deletes whatever OWNS the asset (spot, announcement, song) and the mirror with it — never the
+    // mirror alone, which would strand the source row. See main.js 'library:delete-asset'.
+    deleteOwner: (uuid)     => ipcRenderer.invoke('library:delete-asset', uuid),
   },
   // Traffic terms are PER STATION — the same audio file can be sold to two stations differently.
   assetSpotMeta: {
