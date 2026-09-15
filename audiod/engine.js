@@ -1248,16 +1248,37 @@ class DaemonEngine {
   // bounded) and drops them from the pending region; AHEAD (rider A) queues the early row so it plays when
   // the current song ends — never waits, never dead-airs (health event only beyond slack). EXHAUSTED →
   // the emergency floor (loud). Throttled 2s. The proven preload/rotate/loadToDeck path is untouched.
-  async _refillFromLog() {
+  async _refillFromLog(opts = {}) {
     const now = Date.now();
-    if (now - (this._lastRefillAt || 0) < 2000) return;
+    // `force` bypasses the 2s throttle. AUTO uses it: engaging automation must anchor to the calendar
+    // THIS second, not up to two seconds later, because the row it picks is the one that goes to air.
+    if (!opts.force && now - (this._lastRefillAt || 0) < 2000) return;
     this._lastRefillAt = now;
     let r;
     try { r = loggen.readLogAnchored(this.db, this.stationId, 20); }
     catch (e) { this._log("logreader refill error: " + String(e)); return; }
 
-    // Cued/bound head — the decks. NEVER dropped (§2.4a: only the pending region re-syncs to the log).
-    const boundHead = this.queue.filter(q => this.boundQids.has(q.qid));
+    // ONLY THE PLAYING DECK IS COMMITTED.
+    //
+    // Jeff, 2026-09-14: "the calendar is always supposed to be running no matter what. the queue and
+    // decks are a slave to the calendar so it should anchor back to the calendar if it's off."
+    //
+    // This kept the whole BOUND head — every cued deck — and that is what made an overdue spot
+    // unpromotable: the rows standing in front of it were already cued, so the anchored rebuild never
+    // saw them and orderForNearestAnchor had nothing it was allowed to move.
+    //
+    // §2.4a of the design says the opposite, and has since 2026-07-20: "the non-playing decks are, by
+    // construction, cued from the log's next pending rows after the playhead... only the currently-
+    // playing deck is committed." A cued deck is a CACHE of the calendar, not a promise. So the
+    // committed head is the playing deck alone; every other bound row re-syncs like the rest.
+    const playingDecks = ["A", "B", "C"].filter(d => this._deckState(d).status === "playing" || this._deckState(d).status === "paused");
+    const committedQids = new Set();
+    for (const q of this.queue) {
+      if (!this.boundQids.has(q.qid)) continue;
+      // A bound row belongs to a deck; keep it only while that deck is the one on air.
+      if (playingDecks.some(d => this._deckState(d).filePath && this._deckState(d).filePath === q.filePath)) committedQids.add(q.qid);
+    }
+    const boundHead = this.queue.filter(q => committedQids.has(q.qid));
     const boundSchedIds = new Set(boundHead.map(q => q.schedId).filter(x => x != null));
 
     // EMERGENCY FLOOR — no pending log row for now (log exhausted / error). Loud, then fall to the
@@ -1299,6 +1320,7 @@ class DaemonEngine {
       this._log("LOG-READER: ahead " + Math.round(r.aheadBySec / 60) + "m — next row plays early (never wait)");
     }
 
+    // A cued deck that is no longer the calendar's next row is re-cued below (_resyncCuedDecks).
     // Rebuild the PENDING region from the anchored log rows (dedup vs the bound head).
     const seen = new Set(boundSchedIds); const kept = [];
     for (const it of r.items) {
@@ -1328,6 +1350,7 @@ class DaemonEngine {
     if (oldPending !== newPending) {
       this.emit("queue", { stationId: this.stationId, source: "logreader", items: this.queue });
       this._log("logreader refill: " + freshPending.length + " pending from log (mode=" + r.mode + ", queue=" + this.queue.length + ")");
+      this._resyncCuedDecks();
 
       // RECONCILIATION IS A DECISION, NOT A SILENT TIDY-UP (2026-07-30). The rebuild above drops rows
       // that are already cued on a deck (the `seen.has(it.schedId)` continue). That is correct — but
@@ -1994,6 +2017,21 @@ class DaemonEngine {
       if (idle[0]) setTimeout(async () => { await this.preload(idle[0], 0); if (idle[1]) setTimeout(() => this.preload(idle[1], 1), 400); }, 300);
       return true;
     }
+    // AUTO ANCHORS TO THE CALENDAR.
+    //
+    // This used to take queue[0] — whatever happened to be queued — and play it. It never asked what
+    // should be on air at this second, so engaging automation after any break resumed wherever the
+    // queue had been left rather than where the clock is. The anchored reader then ran on the next
+    // refill tick and could only correct the tail BEHIND a start that was already wrong, because the
+    // deck it had just started was in the bound head.
+    //
+    // Jeff: "the calendar is always supposed to be running no matter what." Engaging automation is
+    // exactly the moment to obey that — forced, so it anchors to THIS second and not up to two
+    // seconds later, because the row this picks is the one that goes to air.
+    if (this._logReaderOn()) {
+      try { await this._refillFromLog({ force: true }); }
+      catch (e) { this._log("automationStart: anchor refill failed, using the existing queue — " + String(e)); }
+    }
     // Load the first PLAYABLE track into A, skipping any missing-file items.
     let loaded = false, guard = 0;
     while (this.queue.length > 0 && guard++ < 100) {
@@ -2090,6 +2128,74 @@ class DaemonEngine {
     if (this._deckState(j.deck).status !== "playing") return true; // armed deck no longer playing
     if (this.deckGen[j.deck] !== j.deckGen) return true;           // armed deck re-loaded (fresh source)
     return false;
+  }
+
+  /**
+   * THE DECKS FOLLOW THE CALENDAR. Re-cue any NON-PLAYING deck whose loaded row is no longer what the
+   * calendar says comes next.
+   *
+   * Without this the anchored rebuild corrects the queue and the decks keep playing yesterday's idea
+   * of it: a spot that came due while the next song was already cued could never take its slot, and
+   * its row was stamped `missed` without airing.
+   *
+   * THE SAFETY BOUNDARY, and it is the whole of it:
+   *   - a deck that is PLAYING or PAUSED is never touched. That is §2.4a's "committed", and it is why
+   *     this can never interrupt audio.
+   *   - nothing happens once the seam is in motion: a triggered segue or an ARMED/FIRING sweeper means
+   *     the rotate is already being set up against this deck, and swapping the file under it then is
+   *     the one way this could bite.
+   *   - a margin on the playing deck's remaining time, so a re-cue cannot land in the same tick as the
+   *     rotate that consumes it.
+   *   - it runs inside _advance, the same serialized chain every other deck command uses, so it cannot
+   *     interleave with a rotate even if the margin is wrong.
+   *
+   * The sweeper is NOT endangered: _jingleSuperseded keys on the OUTGOING deck's generation, and this
+   * only ever reloads an incoming one.
+   *
+   * If a re-cue does leave a deck unready, _rotateBody's play-skip guard re-preloads and retries rather
+   * than going silent — the backstop that was already there.
+   */
+  _resyncCuedDecks() {
+    try {
+      if (!this._started || !this._logReaderOn()) return;
+      if (this._jingle) return;                                   // a sweeper is armed/firing for this seam
+      const order = ["A", "B", "C"];
+      const playing = order.find(d => this._deckState(d).status === "playing");
+      if (playing && this.segueTriggered.has(playing)) return;     // the rotate has already begun
+      if (playing) {
+        const st = this._deckState(playing);
+        const remaining = (st.durationSec || 0) - (st.positionSec || 0);
+        // Below this there is no useful time to reload and the rotate is imminent. segueOverlap is the
+        // moment the incoming would start; a couple of seconds beyond it is the honest floor.
+        if (!(remaining > (this.segueOverlap || 0) + 2)) return;
+      }
+      const pending = this.queue.filter(q => !this.boundQids.has(q.qid));
+      if (!pending.length) return;
+      let want = 0;
+      for (const d of order) {
+        if (d === playing) continue;
+        if (this._deckState(d).status === "playing" || this._deckState(d).status === "paused") continue;
+        if (this.manualCue.has(d)) continue;                      // the operator cued this by hand — theirs
+        if (!this.deckReady.has(d)) continue;                     // nothing cued here; preload will fill it
+        const target = pending[want];
+        if (!target) break;
+        const loaded = this._deckState(d).filePath || "";
+        if (loaded && target.filePath && loaded === target.filePath) { want++; continue; }   // already right
+        this._advance("recue:" + d, async () => {
+          // Re-check inside the chain: a rotate may have taken this deck live since we decided.
+          const s2 = this._deckState(d);
+          if (s2.status === "playing" || s2.status === "paused") return;
+          if (this._jingle) return;
+          this._stop(d);
+          this.deckReady.delete(d);
+          this.endTriggered.delete(d);
+          this._setDeck(d, { status: "idle", positionSec: 0 });
+          this._log(`calendar re-cue: deck ${d} held "${s2.title || "(untitled)"}" — the log now says "${target.title || "(untitled)"}"`);
+          await this.preload(d, this._pendingStart());
+        });
+        want++;
+      }
+    } catch (e) { this._log("recue error (playout unaffected): " + String(e)); }
   }
 
   _nextRotateDeck(fromDeck) {
