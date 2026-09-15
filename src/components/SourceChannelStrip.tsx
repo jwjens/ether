@@ -16,7 +16,7 @@
 import { useMemo, useState, useEffect, useRef } from "react";
 import ConsoleStrip from "./ConsoleStrip";
 import { SOURCE_KINDS, sourceKindMeta, deckLetter, type SourceKind, type DeckConfig } from "./DeckConfigurator";
-import { canHostJukebox, isSweeperKind } from "./DeckConfigurator";
+import { canHostJukebox } from "./DeckConfigurator";
 
 interface Props {
   config: DeckConfig;
@@ -235,20 +235,24 @@ export default function SourceChannelStrip({
             are implemented with the design's defaults but have no tuning UI yet, so this says ON/OFF
             and nothing more. A control that implied tunability it does not have would be the same
             defect as the AUTO-DUCK button this replaces. */}
-        {/* NO DUCK CONTROL ON A SWEEPER CHANNEL. A sweeper joins the programme bus, and only a
-            SOURCE-bus slot can arm the ducker (native/src/audio.rs, the arming branch is gated on
-            the slot's kind). That is A.8's guarantee — a sweeper must never duck the song it is
-            sweeping into — and it is structural, not a setting. Rendering a toggle that the engine
-            will never honour is the honest-UI defect this project treats as a bug. */}
-        {isSweeperKind(config.kind) ? (
-          <div style={{
-            fontSize: 8, lineHeight: 1.25, color: "var(--text-tertiary)",
-            border: "1px solid var(--border-primary)", padding: "3px 4px", borderRadius: 2,
-            textAlign: "center" as const,
-          }}>
-            SWEEPERS RIDE WITH THE MUSIC — never duck it
-          </div>
-        ) : (
+        {/* THE DUCKER IS ALWAYS AVAILABLE, WHATEVER THE SOURCE IS.
+
+            Jeff, 2026-09-14: "there is no specific deck/fader for anything the drop-down source menu
+            is for the user to decide what input goes there just like a wheatstone board the ducker
+            option should always be available whether its a sweeper announcement cart jukebox doesnt
+            matter but the user would most likely have ducker off on a deck/fader they have sweeper
+            on." And: "deck e should never be dedicated to sweepers."
+
+            WHAT WAS HERE. On a sweeper-kinded channel this hid the toggle and printed "SWEEPERS RIDE
+            WITH THE MUSIC — never duck it", on the reasoning that the engine could not duck from that
+            slot so a control would be dishonest. Two things wrong with that. The channel is GENERIC —
+            the dropdown is the operator's choice of what feeds this fader, not a fact about the
+            hardware — so deciding its controls from its current selection is the wrong model. And the
+            behaviour it promised was not happening: the duck flag on that channel was ON at -34 dB and
+            was cutting the lyrics off the end and start of songs, with no way to reach it from the
+            screen because this had removed the only control.
+
+            A control taken off the screen does not stop the behaviour. It stops the operator fixing it. */}
         <button
           onClick={() => onDuckChange(!duck)}
           role="switch"
@@ -266,7 +270,6 @@ export default function SourceChannelStrip({
         >
           {duck ? "DUCK ON" : "DUCK OFF"}
         </button>
-        )}
 
       </div>
 
