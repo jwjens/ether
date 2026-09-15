@@ -242,6 +242,9 @@ contextBridge.exposeInMainWorld("ether", {
   },
   schedule: {
     get:      (fromTs, toTs) => ipcRenderer.invoke("schedule:get", fromTs, toTs),
+    // Every sweeper PLACEMENT in a window — the list the queue renders a row from. The live armed
+    // state (jingleOverlay) marks which one is armed or firing; it is not the source of the list.
+    sweeperPlacements: (stationId, fromTs, toTs) => ipcRenderer.invoke("schedule:sweeper-placements", stationId, fromTs, toTs),
   },
   fs: {
     readFile: (fp) => ipcRenderer.invoke("fs:readFile", fp),

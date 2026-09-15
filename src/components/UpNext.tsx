@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Fragment } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSongMenu } from "../lib/songActions";
 import { useAudioEngine } from "../audio/AudioEngineContext";
@@ -11,6 +11,66 @@ import { resolveArtwork } from "../lib/albumArt";
 // ── Types ─────────────────────────────────────────────────────
 
 interface CategoryInfo { id: number; code: string; name: string; color: string; }
+
+/** One sweeper PLACEMENT from generated_schedule, keyed to the song it introduces. */
+interface SweeperPlacement {
+  scheduledAt: number;
+  title: string;
+  durationMs: number;
+  leadInSec: number;
+  atSeam: boolean;    // the element before it is a commercial — 4.6.36 clamps the lead to 0 there
+  playable: boolean;  // the audio resolves on this machine, by the daemon's own test
+}
+
+// THE SWEEPER IS ITS OWN ROW, ABOVE THE SONG IT INTRODUCES.
+//
+// Jeff, 2026-09-14: "A sweeper is a separate element that plays BEFORE the song it introduces… Right
+// now the SWP badge sits inside the song's row, which reads as 'plays with this song' when it
+// actually plays before it. I can't tell from looking what's about to happen."
+//
+// The badge this replaces was worse than mislaid: it rendered where jingleOverlay.deck matched, and
+// that deck is the deck PLAYING — the outgoing song, the one the sweeper plays over the tail of. The
+// sweeper introduces the INCOMING song. So it was drawn inside the wrong element AND attached to the
+// wrong one. Sitting above the song it introduces fixes the sentence and the fact together.
+//
+// `state` is the live armed state for THIS row only, or null. It accents a row that already exists;
+// it never decides whether one exists.
+function SweeperRow({ p, color, state }: { p: SweeperPlacement; color: string; state: string | null }) {
+  const firing = state === "FIRING";
+  const armed  = state === "ARMED";
+  // NOT PLAYABLE IS NOT A DIMMER SHADE OF PLANNED. Jeff: "A row that promises a sweeper the daemon
+  // will refuse is the same lie I'm replacing the badge for." A missing file is stated in words and
+  // struck through, so it can never be mistaken at a glance for one that is merely scheduled.
+  const dead = !p.playable;
+  const fg = dead ? "var(--text-tertiary)" : firing ? "#ffe93b" : armed ? "#ffffff" : color;
+  return (
+    <div
+      title={dead ? `This sweeper's audio is not on this machine — it will not play.`
+                  : p.atSeam ? `Starts at the seam: the element before it is a commercial, which airs clean.`
+                             : `Starts ${p.leadInSec}s before the previous element ends.`}
+      className={firing ? "jingle-blink" : ""}
+      style={{
+        display: "flex", alignItems: "center", gap: 8,
+        height: 26, flexShrink: 0, padding: "0 14px 0 0",
+        borderLeft: `3px solid ${dead ? "var(--text-tertiary)" : color}`,
+        background: dead ? "transparent" : `rgb(from ${color} r g b / ${firing ? 0.22 : armed ? 0.16 : 0.08})`,
+        borderBottom: "1px solid rgba(255,255,255,0.04)",
+        fontFamily: "'DM Mono', monospace", color: fg, minWidth: 0,
+      }}
+    >
+      <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.08em", padding: "1px 4px",
+                     border: `1px solid ${fg}`, marginLeft: 11, flexShrink: 0 }}>SWP</span>
+      <span style={{ fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis",
+                     whiteSpace: "nowrap" as any, textDecoration: dead ? "line-through" : "none", minWidth: 0 }}>
+        {p.title || "sweeper"}
+      </span>
+      {dead && <span style={{ fontSize: 10, fontWeight: 700, flexShrink: 0, color: "var(--accent-red)" }}>FILE MISSING — WILL NOT PLAY</span>}
+      {!dead && p.atSeam && <span style={{ fontSize: 10, fontWeight: 700, opacity: 0.85, flexShrink: 0 }}>at seam</span>}
+      <span style={{ flex: 1 }} />
+      {p.durationMs > 0 && <span style={{ fontSize: 11, fontWeight: 800, flexShrink: 0 }}>{fmtDur(p.durationMs)}</span>}
+    </div>
+  );
+}
 
 function fmtDur(ms: number): string {
   if (!ms || ms <= 0) return "";
@@ -40,7 +100,7 @@ function fmtSec(sec: number): string {
 // A / B / C deck accent colors — must match the fader strips + ThreeSlotBar.
 const DECK_COLORS: Record<"A" | "B" | "C", string> = { A: "var(--deck-a)", B: "var(--deck-b)", C: "var(--deck-c)" };
 
-interface DeckRowState { title: string; artist: string; status: string; positionSec: number; durationSec: number; filePath: string; contentClass: string | null; }
+interface DeckRowState { title: string; artist: string; status: string; positionSec: number; durationSec: number; filePath: string; contentClass: string | null; scheduledAt: number | null; }
 
 // The iTunes lookup that used to live here has MOVED to src/lib/albumArt.ts as
 // `fetchMusicStoreArt`, reachable only through `resolveArtwork()`. It is not exported from this
@@ -167,6 +227,42 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
     return () => { clearInterval(interval); window.removeEventListener("ether:queue-changed", onChanged); };
   }, [engine, queueLen]);
 
+  // ── EVERY UPCOMING SWEEPER, from the PLACEMENTS — not from the live armed state ─────────────────
+  //
+  // scheduledAt -> placement, exactly the shape lintMap below already uses, because this component
+  // already reads main-process data keyed by scheduledAt on an interval. jingleOverlay stays, but it
+  // is now only the accent on whichever of these rows is armed or firing: it can describe ONE seam,
+  // which is why the queue "kept only showing the next one".
+  const [sweeperMap, setSweeperMap] = useState<Record<number, SweeperPlacement>>({});
+  useEffect(() => {
+    if (!isReady) return;
+    let stop = false;
+    const fetchSweepers = async () => {
+      try {
+        const rows = await (window as any).ether?.schedule?.sweeperPlacements?.(stationId);
+        if (stop || !Array.isArray(rows)) return;
+        const m: Record<number, SweeperPlacement> = {};
+        for (const r of rows) if (r?.scheduledAt != null) m[r.scheduledAt] = r;
+        setSweeperMap(m);
+      } catch { /* IPC absent on an older main — no rows, no rows rendered */ }
+    };
+    fetchSweepers();
+    // 30s, and immediately on a queue change: a placement only moves when Generate runs or the log is
+    // edited, and the queue-change event covers the case the operator is watching.
+    const id = setInterval(fetchSweepers, 30000);
+    const onChanged = () => fetchSweepers();
+    window.addEventListener("ether:queue-changed", onChanged);
+    return () => { stop = true; clearInterval(id); window.removeEventListener("ether:queue-changed", onChanged); };
+  }, [stationId, isReady]);
+
+  // The live armed state, but ONLY for the row it actually belongs to. jingleOverlay.deck is the
+  // OUTGOING deck; the placement belongs to the song being introduced, so the two are matched by the
+  // sweeper title rather than by deck — the deck would point at the wrong row by construction.
+  const sweeperState = (p: SweeperPlacement | undefined): string | null => {
+    if (!p || !jingleOverlay || !jingleOverlay.state) return null;
+    return (jingleOverlay.title || "") === p.title ? jingleOverlay.state : null;
+  };
+
   // ── Slice C: live queue lint — fetch upcoming separation violations (rules-derived, main-process) ──
   useEffect(() => {
     if (!isReady) return;
@@ -238,9 +334,9 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
   // Live A/B/C deck snapshots for the stacked deck rows. engine.on fires on every state
   // change; the 1s tick keeps the playing deck's countdown + progress fresh between events.
   const [deckStates, setDeckStates] = useState<Record<"A" | "B" | "C", DeckRowState>>({
-    A: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "", contentClass: null },
-    B: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "", contentClass: null },
-    C: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "", contentClass: null },
+    A: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "", contentClass: null, scheduledAt: null },
+    B: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "", contentClass: null, scheduledAt: null },
+    C: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "", contentClass: null, scheduledAt: null },
   });
   useEffect(() => {
     const pull = () => setDeckStates(prev => {
@@ -252,6 +348,9 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
           positionSec: s?.positionSec ?? 0, durationSec: s?.durationSec ?? 0,
           filePath: (s as any)?.filePath ?? "",
           contentClass: (s as any)?.contentClass ?? null,
+          // Emitted by the daemon on every deck event since engine.js:820; the renderer simply never
+          // copied it through. It is the key the sweeper placements are looked up by.
+          scheduledAt: (s as any)?.scheduledAt ?? null,
         };
       });
       return next;
@@ -487,8 +586,12 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
           const isSpotDeck = s.contentClass === "SPOT" && hasTrack && s.status !== "ended";
           const timeStr = isPlaying ? `-${fmtSec(remaining)}` : (dur > 0 ? fmtSec(dur) : "");
           const artKey = `${s.title}::${s.artist}`;
+          // The placement is keyed on the scheduled_at of the song it introduces — this deck's row.
+          const swp = s.scheduledAt != null ? sweeperMap[s.scheduledAt] : undefined;
           return (
-            <div key={id} style={{
+            <Fragment key={id}>
+            {swp && <SweeperRow p={swp} color={color} state={sweeperState(swp)} />}
+            <div style={{
               position: "relative", overflow: "hidden", display: "flex", alignItems: "stretch",
               height: 94, flexShrink: 0,
               borderBottom: "1px solid rgba(255,255,255,0.05)",
@@ -539,31 +642,13 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
                   </div>
                 )}
               </div>
-              {/* JINGLES third line — the jingle's NAME + time under THIS deck's duration. Grey = SCHEDULED
-                  (read-ahead from song start), solid white = ARMED, blinking yellow = FIRING. Class-aware
-                  (JIN/SWP). The countdown colors above are untouched — nothing shared with the countdown. */}
-              {jingleOverlay && jingleOverlay.deck === id && jingleOverlay.state && (() => {
-                const firing = jingleOverlay.state === "FIRING";
-                const scheduled = jingleOverlay.state === "SCHEDULED";
-                // SCHEDULED (read-ahead, from song start) = grey · ARMED (seam imminent) = white · FIRING = yellow.
-                const col = firing ? "#ffe93b" : scheduled ? "#8b909b" : "#ffffff";
-                const tag = "SWP";   // v52: one imaging class
-                const jdur = jingleOverlay.jinDurSec || 0;
-                return (
-                  <div className={firing ? "jingle-blink" : ""} style={{
-                    position: "absolute", left: 101, right: 14, bottom: 6, zIndex: 2,
-                    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
-                    fontFamily: "'DM Mono', monospace", pointerEvents: "none",
-                  }}>
-                    <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, color: col }}>
-                      <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.08em", padding: "1px 4px", borderRadius: 2, border: `1px solid ${col}`, flexShrink: 0 }}>{tag}</span>
-                      <span style={{ fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{jingleOverlay.title || "jingle"}</span>
-                    </span>
-                    {jdur > 0 && <span style={{ fontSize: 12, fontWeight: 800, color: col, flexShrink: 0 }}>{fmtSec(jdur)}</span>}
-                  </div>
-                );
-              })()}
+              {/* The third-line SWP badge that used to live here is GONE — replaced by SweeperRow,
+                  rendered ABOVE this deck row. It keyed on jingleOverlay.deck, which is the OUTGOING
+                  deck, so it sat on the song the sweeper plays over rather than the one it introduces;
+                  and being inside the row it read as "plays with this song". Keeping both would be two
+                  indicators for one element, which is how the confusion started. */}
             </div>
+            </Fragment>
           );
         });
         })()}
@@ -618,9 +703,14 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
           const isBeingDragged = dragVisual.from === engineIdx;
           const isDropTarget = dragVisual.over === engineIdx && dragVisual.from !== null && dragVisual.from !== engineIdx;
 
+          // SAME MAP AS THE DECK ROWS, so the two surfaces can never disagree about what is coming.
+          // An item with no scheduledAt — a hand-load, a cart fire, a live pick — has no placement and
+          // gets no row, which is correct: nothing was scheduled for it.
+          const qswp = (item as any).scheduledAt != null ? sweeperMap[(item as any).scheduledAt] : undefined;
           return (
+            <Fragment key={`${item.title}-${item.artist}-${engineIdx}`}>
+            {qswp && <SweeperRow p={qswp} color={"var(--text-secondary)"} state={sweeperState(qswp)} />}
             <motion.div
-              key={`${item.title}-${item.artist}-${engineIdx}`}
               layout
               initial={{ opacity: 0, y: -8 }}
               animate={{ opacity: 1, y: 0 }}
@@ -701,6 +791,7 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
                 >✕</button>
               </div>
             </motion.div>
+            </Fragment>
           );
         })}
           </AnimatePresence>

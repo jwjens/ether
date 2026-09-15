@@ -8658,6 +8658,91 @@ let _playoutLastPing = 0;  // epoch ms of last successful play POST
 // Place a voice track into the playout log so it airs at a chosen transition.
 // We slot it just before the upcoming scheduled row for the song the break sits in front of
 // (matched by title/artist), giving it a direct file_path (it isn't a library song).
+// ── EVERY UPCOMING SWEEPER, NOT JUST THE ARMED ONE ─────────────────────────────────────────────
+//
+// Jeff, 2026-09-14: "sweepers should ALWAYS be visible for every upcoming song in the queue, not
+// just the one that's armed. That's what I've wanted from the start and it kept only showing the
+// next one."
+//
+// It kept showing one because the queue read `jingleOverlay`, the LIVE armed state — one seam at a
+// time by nature. The list has to come from the PLACEMENTS, which is generated_schedule: the same
+// rows the calendar draws.
+//
+// THE JOIN IS EXACT, not a guess. _placeJingles stamps a placement at the INCOMING song's
+// scheduled_at, and every queue item already carries that same key (loggen.ts: "generated_schedule
+// row identity — single source for the calendar"). So the renderer's lookup is one map read per row
+// and never matches on title or arithmetic on time.
+//
+// THE SHAPE OF THE READ IS COPIED FROM THE DAEMON ON PURPOSE. Same class set, same deleted filter,
+// and the same two COALESCEs as loggen.js readJingleForSeam — a sweeper placement carries file_key
+// and NOT file_path (main.js _placeJingles writes only the basename), so its audio resolves through
+// the songs row it points at. Reading it any other way would show a different answer from the one
+// that airs.
+ipcMain.handle('schedule:sweeper-placements', (_e, stationId, fromTs, toTs) => {
+  try {
+    const sid = stationId ?? getActiveStationId();
+    const now = Math.floor(Date.now() / 1000);
+    const a = Number.isFinite(fromTs) ? fromTs : now - 300;      // a little behind, so the on-air seam is included
+    const b = Number.isFinite(toTs)   ? toTs   : now + 4 * 3600;
+
+    // Where a commercial ENDS. 4.6.36 clamps a sweeper's lead to 0 at those seams so it cannot play
+    // over the spot's tail; the row says so. Derived here rather than inferred from lead_in_sec == 0,
+    // because an operator may legitimately set LEAD 0 for a whole category — and then every row would
+    // claim to be clamped when none of them were.
+    const spotEndsAt = new Set();
+    for (const r of db.prepare(
+      `SELECT scheduled_at, duration_s FROM generated_schedule
+        WHERE station_id = ? AND content_class = 'SPOT' AND deleted_at IS NULL
+          AND scheduled_at >= ? AND scheduled_at <= ?`).all(sid, a - 600, b)) {
+      spotEndsAt.add(r.scheduled_at + (r.duration_s || 0));
+    }
+
+    const rows = db.prepare(
+      `SELECT gs.scheduled_at, gs.title, gs.lead_in_sec, gs.jingle_category_id,
+              COALESCE(gs.file_path, s.file_path) AS file_path,
+              COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
+         FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
+        WHERE gs.station_id = ? AND gs.content_class IN ('JIN','SWP') AND gs.deleted_at IS NULL
+          AND gs.scheduled_at >= ? AND gs.scheduled_at <= ?
+        ORDER BY gs.scheduled_at ASC`).all(sid, a, b);
+
+    // PLAYABLE, BY THE SAME TEST THE DAEMON APPLIES. Jeff: "A row that promises a sweeper the daemon
+    // will refuse is the same lie I'm replacing the badge for."
+    //
+    // audiod _resolveLocal is: the stored path if it exists, else the audio-library index by
+    // basename. Both tiers are reproduced here from the SAME module, so the two cannot drift about
+    // what "playable" means — which is the whole value of the flag.
+    //
+    // ONE HONEST DIFFERENCE, named rather than hidden: the daemon also requires _dur(path) > 0,
+    // which decodes the file. That is far too heavy for a list refreshed every 30s, so a zero-length
+    // or corrupt file still reports playable here. The common failure — the file is simply not on
+    // this machine — is caught, and that is the one this flag exists for.
+    let index = null;
+    const { findInIndex } = require('./audio-library-index');
+    const resolves = (p) => {
+      if (!p) return false;
+      if (/^[a-z]+:\/\//i.test(p)) return true;          // a URL is the daemon's to stream, not to stat
+      try { if (fs.existsSync(p)) return true; } catch { return false; }
+      try {
+        if (index === null) index = _libIndexCached();
+        return !!findInIndex(index, p);
+      } catch { return false; }
+    };
+
+    return rows.map(r => ({
+      scheduledAt: r.scheduled_at,
+      title:       r.title || '',
+      durationMs:  r.duration_ms || 0,
+      leadInSec:   r.lead_in_sec != null ? r.lead_in_sec : 2,
+      atSeam:      spotEndsAt.has(r.scheduled_at),
+      playable:    resolves(r.file_path),
+    }));
+  } catch (e) {
+    console.error('[schedule:sweeper-placements]', e.message);
+    return [];
+  }
+});
+
 ipcMain.handle('schedule:insertVoiceTrack', (_, { stationId, hour, beforeTitle, beforeArtist, filePath, title, artist, durationMs }) => {
   try {
     const sid = stationId ?? getActiveStationId();
