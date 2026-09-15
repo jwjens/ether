@@ -559,13 +559,50 @@ export default function BroadcastCalendar({ onShowClick, hostedDayLog, focusShow
 
     const logColumns: GridColumn<DayRow>[] = [
       {
-        id: "time", header: "Time", width: 86, minWidth: 70, mono: true, sortType: "numeric",
+        // SECONDS, NOT MINUTES.
+        //
+        // Jeff, 2026-09-14, reading the calendar: "the clock times look like its assuming just by
+        // minutes isnt precise enought like what fills the 5minutes between 11:14 and 11:19?"
+        //
+        // Nothing filled it — "Harry's Wondrous World" is 5:21, running 11:14:34 to 11:19:55, and the
+        // spot starts at 11:19:55 exactly. The log was contiguous to the second and the DISPLAY made it
+        // look like a five-minute hole, because minute-rounding turned 11:14:34 into "11:14" and
+        // 11:19:55 into "11:19".
+        //
+        // It also made the thing this station is judged on unreadable: a break at :19:55 and a break at
+        // :19:05 both render as 11:19, so "did it land on its anchor" cannot be answered by looking —
+        // which is exactly the question that has been asked all evening.
+        id: "time", header: "Time", width: 104, minWidth: 86, mono: true, sortType: "numeric",
         accessor: (r) => r.scheduled_at,
         cell: (r) => {
           const isNow = isToday && r.scheduled_at === currentAt;
           return (
             <span style={{ color: isNow ? "var(--accent-green)" : "var(--text-secondary)", fontWeight: isNow ? 800 : 500 }}>
-              {isNow ? "▶ " : ""}{new Date(r.scheduled_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              {isNow ? "▶ " : ""}{new Date(r.scheduled_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+            </span>
+          );
+        },
+      },
+      {
+        // DURATION, so the span to the next row is ACCOUNTED FOR rather than inferred.
+        //
+        // With seconds alone the reader still has to subtract two timestamps to see whether a gap is a
+        // long song or a hole. Showing the length makes a 5:21 song visibly own the five minutes after
+        // it, and makes a genuine gap obvious by subtraction failing rather than by looking odd.
+        //
+        // A sweeper rides OVER the song it introduces rather than consuming its own slot, so its length
+        // is shown dimmed — it is a real duration, but it is not time the log spends.
+        id: "dur", header: "Length", width: 76, minWidth: 60, mono: true, sortType: "numeric",
+        accessor: (r) => r.duration_s || 0,
+        cell: (r) => {
+          const d = r.duration_s || 0;
+          if (!d) return <span style={{ color: "var(--text-tertiary)" }}>—</span>;
+          const rides = typeOf(r).label === "Sweeper";
+          return (
+            <span title={rides ? "Rides over the start of the song below it — it does not take its own time in the log."
+                               : "How long this row runs. The next row starts when it ends."}
+                  style={{ color: rides ? "var(--text-tertiary)" : "var(--text-secondary)", opacity: rides ? 0.75 : 1 }}>
+              {Math.floor(d / 60)}:{String(d % 60).padStart(2, "0")}
             </span>
           );
         },
