@@ -1258,27 +1258,20 @@ class DaemonEngine {
     try { r = loggen.readLogAnchored(this.db, this.stationId, 20); }
     catch (e) { this._log("logreader refill error: " + String(e)); return; }
 
-    // ONLY THE PLAYING DECK IS COMMITTED.
+    // THE BOUND HEAD IS THE CUED DECKS, AND IT STAYS IN THE QUEUE. (Reverted 2026-09-14, same night.)
     //
-    // Jeff, 2026-09-14: "the calendar is always supposed to be running no matter what. the queue and
-    // decks are a slave to the calendar so it should anchor back to the calendar if it's off."
+    // §2.4a says "only the currently-playing deck is committed", and I read that as "the bound head
+    // should contain only the playing deck's row". That is wrong about this data structure: dequeue()
+    // splices an item OUT of the queue and out of boundQids the moment its deck goes live (:1572-1577),
+    // so the playing row is never in the queue at all. Filtering the bound head down to playing decks
+    // therefore made it ALWAYS EMPTY — which dropped the cued decks' items from the queue while the
+    // decks still held them, desynced dequeue() from what was actually loaded, and produced rows
+    // stamped `missed` while they were audibly on air.
     //
-    // This kept the whole BOUND head — every cued deck — and that is what made an overdue spot
-    // unpromotable: the rows standing in front of it were already cued, so the anchored rebuild never
-    // saw them and orderForNearestAnchor had nothing it was allowed to move.
-    //
-    // §2.4a of the design says the opposite, and has since 2026-07-20: "the non-playing decks are, by
-    // construction, cued from the log's next pending rows after the playhead... only the currently-
-    // playing deck is committed." A cued deck is a CACHE of the calendar, not a promise. So the
-    // committed head is the playing deck alone; every other bound row re-syncs like the rest.
-    const playingDecks = ["A", "B", "C"].filter(d => this._deckState(d).status === "playing" || this._deckState(d).status === "paused");
-    const committedQids = new Set();
-    for (const q of this.queue) {
-      if (!this.boundQids.has(q.qid)) continue;
-      // A bound row belongs to a deck; keep it only while that deck is the one on air.
-      if (playingDecks.some(d => this._deckState(d).filePath && this._deckState(d).filePath === q.filePath)) committedQids.add(q.qid);
-    }
-    const boundHead = this.queue.filter(q => committedQids.has(q.qid));
+    // §2.4a is still right, and it is honoured by _resyncCuedDecks below: the cued decks FOLLOW the
+    // calendar by being re-cued when they diverge, not by being evicted from the queue that tracks
+    // them. "Not committed" means "may be replaced", not "must not be represented".
+    const boundHead = this.queue.filter(q => this.boundQids.has(q.qid));
     const boundSchedIds = new Set(boundHead.map(q => q.schedId).filter(x => x != null));
 
     // EMERGENCY FLOOR — no pending log row for now (log exhausted / error). Loud, then fall to the

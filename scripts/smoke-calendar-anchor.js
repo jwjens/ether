@@ -8,9 +8,11 @@
 //   1. automationStart took queue[0] — whatever was queued — and played it. It never asked what should
 //      be on air at this second, so engaging AUTO after any break resumed where the queue had been left
 //      rather than where the clock is.
-//   2. _refillFromLog kept the whole BOUND head, so a cued deck holding a stale row was never re-synced.
-//      That is why an overdue spot could not take the next slot: the rows in front of it were already
-//      cued, so the anchored rebuild never saw them.
+//   2. A cued deck holding a stale row was never re-synced, so an overdue spot could not take the next
+//      slot — the rows in front of it were already cued and nothing would replace them.
+//      FIXED BY RE-CUEING (_resyncCuedDecks), not by changing what the bound head contains. My first
+//      attempt filtered the bound head down to playing decks and had to be reverted the same night;
+//      see the section below for why that emptied it.
 //   3. (left in place, now redundant) the top-of-hour hard cut re-anchors once an hour.
 //
 // §2.4a of docs/log-reader-single-source-playout-design-2026-07-20.md has said since 2026-07-20 that
@@ -49,17 +51,21 @@ console.log('\n== AUTO anchors to the calendar ==');
   else fail(`the anchor runs after the track is chosen — it would correct nothing (i=${i}, j=${j})`);
 }
 
-console.log('\n== only the PLAYING deck is committed ==');
+console.log('\n== the cued decks stay IN the queue (hunk reverted the same night) ==');
 {
-  if (/const playingDecks = \["A", "B", "C"\]\.filter\(d => this\._deckState\(d\)\.status === "playing" \|\| this\._deckState\(d\)\.status === "paused"\)/.test(src))
-    pass('the committed head is derived from what is actually on air');
-  else fail('the bound head is still every cued deck');
+  // I first filtered the bound head down to playing decks. dequeue() splices an item out of the
+  // queue AND out of boundQids the moment its deck goes live, so the playing row is never in the
+  // queue at all — the filter made the bound head ALWAYS EMPTY, dropped the cued decks' items while
+  // the decks still held them, and rows went out stamped `missed` while audibly on air.
+  // §2.4a is honoured by RE-CUEING a diverged deck, not by evicting it from the queue that tracks it.
+  if (/const boundHead = this\.queue\.filter\(q => this\.boundQids\.has\(q\.qid\)\);/.test(src))
+    pass('the bound head is the cued decks — they stay represented in the queue');
+  else fail('the bound head no longer tracks the cued decks; dequeue() would desync from the decks');
 
-  if (!/const boundHead = this\.queue\.filter\(q => this\.boundQids\.has\(q\.qid\)\);/.test(src))
-    pass('the old "keep every bound row" head is gone');
-  else fail('the old bound head survives — cued decks are still treated as committed');
+  if (!/const playingDecks = \["A", "B", "C"\]\.filter/.test(src))
+    pass('the playing-decks-only filter that emptied the bound head is gone');
+  else fail('the filter that emptied the bound head is still there');
 }
-
 console.log('\n== the re-cue refuses whenever the seam is in motion ==');
 {
   const fn = src.slice(src.indexOf('_resyncCuedDecks() {'), src.indexOf('_nextRotateDeck(fromDeck)'));
