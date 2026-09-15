@@ -2152,11 +2152,42 @@ class DaemonEngine {
     // stopped there, so a LEAD of 40 logged "lead_in=40s" while the sweeper actually got 24.75s. A log
     // that repeats the operator's number back at them is not evidence — it is the same defect as the
     // control that swallowed it.
-    const ceiling = this.effectiveLeadCeiling();
+    // CLEAN SPOT EDGES APPLY TO IMAGING TOO.
+    //
+    // Jeff, station 2, on air 2026-09-14: "sweepers are being scheduled against the GC spot."
+    //
+    // The sweeper is stamped at the INCOMING song's slot and is correct there — 0 sweeper rows in
+    // that log sit at a SPOT slot. But LEAD fires it N seconds before the OUTGOING element ends, and
+    // when that element is a commercial the sweeper plays over its tail. Measured on station 2: all
+    // 4,223 spots in the log were followed by a sweeper reaching 2s back into them.
+    //
+    // THIS IS NOT A NEW EDITORIAL JUDGEMENT, and it is deliberately NOT a refusal. bd87a95 deleted a
+    // guard that SUPPRESSED the seam entirely whenever a deck held a SPOT, because it silently dropped
+    // placements the operator had scheduled — "whether a sweeper suits a seam is the operator's call".
+    // That still stands: the sweeper below still fires. What it may not do is bleed BACKWARDS into
+    // content it was never assigned to.
+    //
+    // The rule it restores is already shipped twice over: _segueTick refuses to overlap a spot's tail
+    // ("a SPOT is exclusive PROGRAM content — the spot plays alone"), and docs/help-spots.md promises
+    // operators "clean start, clean end, no music overlap in or out AND NO SWEEPER OVER IT". The
+    // sweeper path was the one route that never honoured it.
+    //
+    // Expressed as a CEILING rather than a branch, so it rides the clamp machinery that already
+    // exists here — including the rule that the engine never asserts a number it did not honour.
+    const outgoingIsSpot = this.deckContentClass[deck] === "SPOT";
+    const ceiling = outgoingIsSpot ? 0 : this.effectiveLeadCeiling();
     const effective = Math.min(jin.leadInSec, ceiling);
     this._jingle.leadInRequested = jin.leadInSec;
     this._jingle.leadInEffective = effective;
     if (effective < jin.leadInSec) {
+      if (outgoingIsSpot) {
+        this._log(`${this._jingle.contentClass} ARMED — "${jin.title}" over deck ${deck} seam (lead_in ${jin.leadInSec}s REQUESTED but 0s EFFECTIVE — deck ${deck} holds a SPOT and a commercial airs clean; the sweeper starts at the seam instead of over its tail)`);
+        try {
+          this.emit("error", { stationId: this.stationId, where: "sweeper-lead-clamped-spot",
+            error: `sweeper "${jin.title}" asked for a ${jin.leadInSec}s lead, but the outgoing element is a commercial — it fires at the seam so the spot airs clean`,
+            requestedSec: jin.leadInSec, effectiveSec: 0, ceilingSec: 0, reason: "clean-spot-edge" });
+        } catch {}
+      } else {
       this._log(`${this._jingle.contentClass} ARMED — "${jin.title}" over deck ${deck} seam (lead_in ${jin.leadInSec}s REQUESTED but ${effective}s EFFECTIVE — the arm window caps it at ${DaemonEngine._ARM_WINDOW_S}s minus a ${this.segueOverlap}s overlap)`);
       try {
         this.emit("error", { stationId: this.stationId, where: "sweeper-lead-clamped",
@@ -2164,6 +2195,7 @@ class DaemonEngine {
           requestedSec: jin.leadInSec, effectiveSec: effective, ceilingSec: ceiling,
           armWindowSec: DaemonEngine._ARM_WINDOW_S, segueOverlapSec: this.segueOverlap });
       } catch {}
+      }
     } else {
       this._log(`${this._jingle.contentClass} ARMED — "${jin.title}" over deck ${deck} seam (lead_in=${jin.leadInSec}s)`);
     }

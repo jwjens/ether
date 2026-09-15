@@ -8726,6 +8726,18 @@ function _placeJingles(db, stationId, rows) {
   const music = rows.filter(r => (r.content_class || 'MUSIC') === 'MUSIC' && r.song_id)
                     .slice().sort((a, b) => a.scheduled_at - b.scheduled_at);
   if (!music.length) return;
+  // SEAMS WHERE A COMMERCIAL ENDS. A sweeper's LEAD fires it N seconds before the OUTGOING element
+  // ends; where that element is a spot, the lead would play over the commercial's tail. The daemon
+  // refuses that at air time (engine.js _armJingle, "clean spot edge"), and this makes the LOG SAY SO
+  // rather than promising a 2s lead that air-time then silently reduces — the operator reads lead_in
+  // in the calendar and should not have to know the engine will disagree with it.
+  //
+  // The placement itself is NOT dropped. bd87a95 removed exactly that behaviour for good reason.
+  const spotEndsAt = new Set();
+  for (const r of rows) {
+    if ((r.content_class || 'MUSIC') !== 'SPOT') continue;
+    spotEndsAt.add(r.scheduled_at + (r.duration_s || 0));
+  }
   const usedByPool = new Map();            // poolId → Set of overlay-song ids used this run (LRP anti-repeat)
   // ONE sweeper type, so ONE default (v52). This was { JIN: 5/2, SWP: 2/1 } and the class picked
   // between them. There is ONE number at a sweeper seam: LEAD — how far before the outgoing song ends
@@ -8871,7 +8883,7 @@ function _placeJingles(db, stationId, rows) {
         duration_s: pick.duration_ms ? Math.round(pick.duration_ms / 1000) : 0,
         category_id: null, clock_id: incoming.clock_id ?? null,
         content_class: cls, channel: 'CART',
-        lead_in_sec: leadOverride != null ? leadOverride : def.lead,
+        lead_in_sec: spotEndsAt.has(incoming.scheduled_at) ? 0 : (leadOverride != null ? leadOverride : def.lead),
         jingle_category_id: kind === 'pool' ? poolId : null,
         // WHAT WAS ASKED FOR, and WHAT ACTUALLY RAN. The pair is what lets ON DECK say "fixed lead (no
         // post on this song)" instead of silently doing something other than what the category asked.
