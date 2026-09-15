@@ -70,6 +70,38 @@ console.log('\n== air side: the lead is clamped when the outgoing deck holds a s
   else fail('LEAD 0 was altered');
 }
 
+console.log('\n== the fire predicate uses the EFFECTIVE lead, and no overlap at a spot edge ==');
+{
+  const src = fs.readFileSync(path.join(ROOT, 'audiod', 'engine.js'), 'utf8');
+
+  if (/const lead = \(j\.leadInEffective != null\) \? j\.leadInEffective : j\.leadIn;/.test(src))
+    pass('the predicate reads leadInEffective — the number the engine computed is the one it uses');
+  else fail('the predicate still reads the REQUESTED lead; any clamp is inert');
+
+  if (/const overlap = j\.spotEdge \? 0 : this\.segueOverlap;/.test(src))
+    pass('no segueOverlap term at a spot edge — _segueTick refuses the early start there');
+  else fail('segueOverlap is still added at a spot edge, aiming the sweeper into the tail');
+
+  if (/this\._jingle\.spotEdge = outgoingIsSpot;/.test(src))
+    pass('the spot edge is captured at ARM time, so the predicate re-queries nothing');
+  else fail('spotEdge is not recorded on the armed entry');
+
+  // The decision itself, over the four cases that matter.
+  const EPS = 0.3;
+  const fires = (remaining, lead, overlap) => remaining <= ((lead + overlap) || EPS);
+
+  if (!fires(3, 0, 0) && fires(0.2, 0, 0))
+    pass('lead 0 at a spot edge: does NOT fire 3s into the tail, DOES fire on the last tick');
+  else fail('lead 0 at a spot edge still fires early, or never fires at all');
+
+  if (fires(3, 2, 3) && !fires(6, 2, 3))
+    pass('an ordinary music seam is unchanged — lead 2 + overlap 3 fires at 5s');
+  else fail('the music seam timing changed — this would move every sweeper on the station');
+
+  if (fires(0.25, 0, 0)) pass('the seam epsilon is wider than one 250ms poll tick, so the tick cannot be missed');
+  else fail('a lead of 0 can fall between poll ticks and never fire — the bug Jeff predicted');
+}
+
 // ── GENERATE SIDE ───────────────────────────────────────────────────────────────────────────────
 // _placeJingles is ~200 lines inside main.js with prepared statements bound to a live DB. The part
 // under test is the one arithmetic decision — which seams a spot ends on — so that is what is

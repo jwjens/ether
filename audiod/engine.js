@@ -2175,6 +2175,7 @@ class DaemonEngine {
     // Expressed as a CEILING rather than a branch, so it rides the clamp machinery that already
     // exists here — including the rule that the engine never asserts a number it did not honour.
     const outgoingIsSpot = this.deckContentClass[deck] === "SPOT";
+    this._jingle.spotEdge = outgoingIsSpot;   // read by the fire predicate; captured here, never re-queried
     const ceiling = outgoingIsSpot ? 0 : this.effectiveLeadCeiling();
     const effective = Math.min(jin.leadInSec, ceiling);
     this._jingle.leadInRequested = jin.leadInSec;
@@ -2409,7 +2410,36 @@ class DaemonEngine {
             if (this._autoPostFireDue(j, st)) this._fireJingle(j);
             return;
           }
-          if (remaining <= j.leadIn + this.segueOverlap) this._fireJingle(j);   // FIRE on the advance chain
+          // THE NUMBER THE ENGINE COMPUTED IS THE NUMBER THE ENGINE USES.
+          //
+          // This read j.leadIn — the REQUESTED lead — while _armJingle computed leadInEffective and
+          // stored it. Nothing ever read it. So the 4.6.36 spot clamp logged a reduction, emitted a
+          // health event, and changed nothing about when the sweeper fired. A value computed, logged
+          // and never read is worse than no value: it reports a fix that is not happening.
+          const lead = (j.leadInEffective != null) ? j.leadInEffective : j.leadIn;
+
+          // AND NO OVERLAP TERM AT A SPOT EDGE.
+          //
+          // segueOverlap is added because on a music->music seam the incoming starts that many seconds
+          // early (_segueTick), so firing then lands the sweeper on the incoming song's start. At a SPOT
+          // edge _segueTick REFUSES the early start ("a SPOT is exclusive PROGRAM content"), so there is
+          // no overlap to compensate for and adding it aims the sweeper three seconds INTO the
+          // commercial's tail — the exact thing the clamp exists to prevent.
+          const overlap = j.spotEdge ? 0 : this.segueOverlap;
+
+          // THE SEAM IS A TICK WIDE, and pretending otherwise is why lead 0 could never fire. poll()
+          // runs every 250ms and checkEnd() runs BEFORE this in the same tick, so by the time
+          // `remaining` would read exactly 0 the rotate has already happened and _jingleSuperseded
+          // cancels the entry. Firing on the last tick the outgoing is still playing is the closest a
+          // 250ms poll can get to the seam, and it is the difference between firing late and never
+          // firing at all. The residue is under a quarter second over the very end of the spot.
+          //
+          // The fully clean version fires off the INCOMING deck's position the way _autoPostArm does,
+          // so the sweeper starts with the song rather than at the end of what preceded it. That is a
+          // lifecycle change, not a predicate change, and it is not this fix.
+          const SEAM_EPS_S = 0.3;   // one poll tick (250ms) plus a margin
+          const threshold = (lead + overlap) || SEAM_EPS_S;
+          if (remaining <= threshold) this._fireJingle(j);   // FIRE on the advance chain
           return;
         }
         // firing / bridging
