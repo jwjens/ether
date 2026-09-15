@@ -186,3 +186,35 @@ DB.
 
 **Approval requested on:** the selector contract, the four settled points, and — separately — whether the
 companion re-cue of an unstarted deck is in scope. **Building nothing until approved.**
+
+---
+
+# SUPERSEDED — the selector was deleted, 2026-09-15
+
+**Jeff:** *"Delete the reorder. The generator does the math weeks ahead; the player plays the log. A
+mechanism that can only correct drift that doesn't exist, and drops spots when it can't, has no
+reason to be there."*
+
+`orderForNearestAnchor`, `spotBlockAt`, `NEAREST_ANCHOR_TIE_SEC`, the `_recueForPromotedSpot`
+companion and `audiod/smoke-nearest-anchor.js` are all removed.
+
+**Why the design's premise did not hold.** This document's worked example — anchor `11:19:50`, seams
+at `11:17:18` and `11:20:49` — is the whole justification: seams that do not coincide with anchors.
+That was captured on a development machine that only runs while it is being worked on, and per Jeff
+no install has ever run continuously. So the drift the selector corrects was never demonstrated on a
+station that runs.
+
+What Generate actually produces, measured on station 2 over a day: **60 spots, mean 1.7 s from their
+anchor, and not one case where a closer boundary existed and was passed over.** The log is already
+right.
+
+**And it failed in one direction.** The selector could only reorder rows that were not yet cued to a
+deck. When a spot came due behind an already-cued song it could not move it, the slot passed, and the
+anchored reader stamped the spot `missed` — a commercial silently not airing. A mechanism that cannot
+help when it matters and can hurt when it does not is not worth keeping.
+
+**What does the job now:** `_resyncCuedDecks` re-cues a standby deck whose loaded row is no longer
+what the calendar says is next — the same goal approached from the right end, and inside the
+§2.4a rule that only the playing deck is committed.
+
+**Kept:** the auto-fitter observation (`_observeFit`) still reads `seamTs`. It writes nothing.

@@ -724,6 +724,9 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   // Recent designation history, read back from the honest ledger (health-events.jsonl).
   const [desigEvents, setDesigEvents] = useState<any[]>([]);
   const [desigEventsErr, setDesigEventsErr] = useState<string | null>(null);
+  // A COMMERCIAL THAT DID NOT AIR. Jeff, 2026-09-14: "A missed spot must be loud — Health Monitor,
+  // naming the spot and the time. Six today and I only found out by asking."
+  const [missedSpots, setMissedSpots] = useState<any[]>([]);
   // Applies rows and stamps the read time. Errors are SURFACED, not swallowed: the previous version
   // caught everything silently, so an unregistered handler and a healthy empty result looked
   // identical — the button appeared to do nothing and said nothing.
@@ -761,6 +764,20 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     } catch (e: any) { setDesigEventsErr(e?.message || String(e)); }
   }, []);
   useEffect(() => { loadDesigEvents(); }, [loadDesigEvents]);
+
+  // Same ledger, same reader, one kind. The daemon emits spot-missed once per catch-up sweep with
+  // every spot named, so this is a handful of rows, not a stream.
+  const loadMissedSpots = useCallback(async () => {
+    try {
+      const r = await (window as any).ether?.invoke?.("health:recent-events", { kinds: ["spot-missed"], limit: 20 });
+      if (r && r.ok) setMissedSpots(r.rows || []);
+    } catch { /* ledger unreadable — the panel simply stays empty */ }
+  }, []);
+  useEffect(() => {
+    loadMissedSpots();
+    const id = setInterval(loadMissedSpots, 60000);
+    return () => clearInterval(id);
+  }, [loadMissedSpots]);
   // Clear pending banner timers on unmount — a timer firing into an unmounted tree is a leak.
   useEffect(() => () => { for (const t of Object.values(bannerTimers.current)) clearTimeout(t); }, []);
 
@@ -1615,6 +1632,45 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                 </div>
               );
             })}
+          </HealthPanel>
+        )}
+
+        {/* ── SPOTS THAT DID NOT AIR ────────────────────────────────────────────────────────────
+            A song that did not air is a programming choice. A commercial that did not air is an
+            advertiser billed for something that never played. Six went missing on 2026-09-14 and the
+            only way Jeff found out was by asking — the count existed in the ledger and nowhere on
+            screen. This names each one and the second it was due.
+
+            It is deliberately NOT a red alarm on a quiet day: the panel hides itself when there is
+            nothing to report, so its presence IS the signal. */}
+        {missedSpots.length > 0 && (
+          <HealthPanel id="missed-spots" title="Spots that did not air" right={
+              <button onClick={loadMissedSpots}
+                title="Re-read the health ledger. A plain read — it changes nothing."
+                style={{ fontSize: "var(--t-micro, 9px)", fontWeight: 800, letterSpacing: "0.08em",
+                         padding: "2px 8px", background: "transparent",
+                         border: "1px solid var(--border-primary)", borderRadius: "var(--r-0, 0px)",
+                         color: "var(--text-tertiary)", cursor: "pointer" }}>RELOAD</button>
+            }>
+            {missedSpots.map((e: any, i: number) => (
+              <div key={(e.t || "") + i} style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>
+                  {e.t ? new Date(e.t).toLocaleString() : ""}
+                  {typeof e.count === "number" ? `  ·  ${e.count} spot${e.count === 1 ? "" : "s"}` : ""}
+                </div>
+                {(e.spots || []).map((sp: any, j: number) => (
+                  <div key={j} style={{ fontSize: 13, color: "var(--accent-red)", fontWeight: 600, lineHeight: 1.5 }}>
+                    “{sp.title || "(untitled)"}” — due {sp.scheduledAt
+                      ? new Date(sp.scheduledAt * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+                      : "(no time)"}
+                  </div>
+                ))}
+              </div>
+            ))}
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)", lineHeight: 1.5, marginTop: 4 }}>
+              These were scheduled and their slot passed without them playing. Anything already aired is
+              unaffected — this is about what did not.
+            </div>
           </HealthPanel>
         )}
 

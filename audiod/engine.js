@@ -1295,6 +1295,30 @@ class DaemonEngine {
         this.db.prepare(`UPDATE generated_schedule SET state='missed' WHERE id IN (${ph}) AND station_id=? AND state='pending'`).run(...r.missedRowIds, this.stationId);
       } catch { /* stamping is best-effort; never break playout */ }
       try { this.emit("logreader-missed", { stationId: this.stationId, count: r.missedRowIds.length, driftSec: r.driftSec }); } catch {}
+      // A COMMERCIAL THAT DID NOT AIR IS NAMED.
+      //
+      // Jeff, 2026-09-14: "A missed spot must be loud — Health Monitor, naming the spot and the time.
+      // Six today and I only found out by asking." Nothing was on air yet, so there was no billing
+      // consequence — and that will not be true for long.
+      //
+      // The count above is not enough: "8 rows missed" reads as bookkeeping, and a song that did not
+      // air is a programming choice while a spot that did not air is an advertiser who was billed for
+      // something that never played. So SPOTS are separated out and each one is named with its slot
+      // time. Emitted per sweep, never per row, so a long catch-up is one honest line and not a storm.
+      try {
+        const ph2 = r.missedRowIds.map(() => "?").join(",");
+        const spots = this.db.prepare(
+          `SELECT title, scheduled_at FROM generated_schedule
+            WHERE id IN (${ph2}) AND station_id = ? AND content_class = 'SPOT'
+            ORDER BY scheduled_at`).all(...r.missedRowIds, this.stationId);
+        if (spots.length) {
+          const named = spots.map(s => ({ title: s.title || "(untitled)", scheduledAt: s.scheduled_at }));
+          this.emit("spot-missed", { stationId: this.stationId, count: named.length, spots: named });
+          for (const s of named) {
+            this._log(`SPOT DID NOT AIR — "${s.title}" was due ${new Date(s.scheduledAt * 1000).toLocaleTimeString()}`);
+          }
+        }
+      } catch (e) { this._log("spot-missed report failed (stamping already done): " + String(e)); }
       // WORDING (2026-07-31): after a manual shift this is a HANDOVER, not a fault. The rows are retired
       // as bookkeeping — nothing is aired, nothing is caught up — and without it they sit `pending`
       // forever and become the stale-row debris cleaned out of station 4 on 2026-07-30. The alarm
@@ -1326,15 +1350,28 @@ class DaemonEngine {
       if (it.schedId != null) seen.add(it.schedId);
       kept.push(rp === it.filePath ? it : { ...it, filePath: rp });
     }
-    // NEAREST-ANCHOR SEAM SELECTION — order the pending region so the next seam lands a due spot as close
-    // to its anchor as possible (early or late; closest wins). Pure reorder of rows that were already
-    // going to air: no deck command, no effect on the playing deck, and it cannot produce silence.
-    // Design: docs/design-nearest-anchor-seam-selection-2026-07-30.md
+    // THE PLAYER PLAYS THE LOG, IN ORDER. (Reorder deleted 2026-09-15.)
+    //
+    // Jeff: "The generator does the math weeks ahead; the player plays the log. A mechanism that can
+    // only correct drift that doesn't exist, and drops spots when it can't, has no reason to be there."
+    //
+    // orderForNearestAnchor weighed "spot now" against "spot after the next song" and promoted the
+    // closer one. It existed to pick the least-bad seam among seams that had drifted off their anchors.
+    // But Generate already places a spot ON its anchor — measured over a day on station 2, mean 1.9s —
+    // and the drift it was correcting was never shown to exist: the only evidence was air times from a
+    // dev box that runs intermittently, which is not a receipt for anything.
+    //
+    // What it DID reliably do was fail in one direction. It could only reorder rows that were not yet
+    // cued, so when a spot came due behind an already-cued song it could not move it, the slot passed,
+    // and the anchored reader stamped the spot `missed` — an advertiser's commercial silently not
+    // airing. A mechanism that cannot help when it matters, and can hurt when it does not, is not one
+    // worth keeping.
+    //
+    // The decks follow the calendar instead: _resyncCuedDecks re-cues a standby deck whose row is no
+    // longer what the calendar says is next — the same job, done from the right end.
+    // seamTs stays: the observation-only auto-fitter below still reads it.
     const seamTs = this._projectedSeamTs();
-    const ordered = loggen.orderForNearestAnchor(kept, seamTs, { nextHourTs: this._nextTopOfHourTs() });
-    const promoted = ordered !== kept;   // the selector returns the SAME array when nothing changed
-
-    const freshPending = this._ensureIds(ordered);
+    const freshPending = this._ensureIds(kept);
     // Only emit if the pending region actually changed (avoid a queue-event storm on the 2s tick).
     const oldPendingItems = this.queue.filter(q => !this.boundQids.has(q.qid));
     const oldPending = oldPendingItems.map(q => q.schedId).join(",");
@@ -1363,21 +1400,12 @@ class DaemonEngine {
         this._log(`logreader reconciled: removed ${dropped.length} row(s) from Up Next — ${names}` +
           (dropped.length > 4 ? ` +${dropped.length - 4} more` : ""));
       }
-      if (promoted) {
-        const head = freshPending[0];
-        this._log(`logreader reconciled: nearest-anchor promoted "${head && head.title ? head.title : "(untitled)"}" to the head of Up Next`);
-      }
     }
     // AUTO-FITTER — OBSERVATION ONLY (§2.7). Computes what it WOULD do to make a seam land on the next
     // hard anchor, logs it as a DECISION, and WRITES NOTHING. No row is altered, no queue is reordered,
     // no deck is touched. One observation day on real air before authoring is even proposed.
     this._observeFit(seamTs);
 
-    // COMPANION RE-CUE — a promotion only reaches air if a deck can take it. Without this the spot waits
-    // behind whatever was already cued, i.e. "closest" degrades to within-one-SONG instead of
-    // within-one-SEAM. Strictly bounded: SPOT promotions only, UNSTARTED standby decks only, and never
-    // the deck that is playing.
-    if (promoted) this._recueForPromotedSpot(freshPending[0]);
   }
 
   // ── AUTO-FITTER, OBSERVATION PHASE (§2.7) ───────────────────────────────────────────────────────
@@ -1464,45 +1492,6 @@ class DaemonEngine {
     return Math.floor(d.getTime() / 1000) + 3600;
   }
 
-  /** Re-cue an UNSTARTED standby deck to the promoted spot so it can actually air at the next seam.
-   *  Never touches a playing deck, never touches the deck the engine has live, and does nothing unless
-   *  the head of the pending region really is a SPOT. Best-effort — a failure just leaves the old cue. */
-  _recueForPromotedSpot(head) {
-    try {
-      if (!head || head.contentClass !== "SPOT") return;
-      const live = this.liveDeck;
-      // The standby deck that would be rotated into next, if it is cued and NOT playing.
-      const target = ["A", "B", "C"].find(d =>
-        d !== live &&
-        this._deckState(d).status !== "playing" &&      // never re-cue something already sounding
-        this.deckReady.has(d)                            // it holds a cued source we would have aired
-      );
-      if (!target) return;
-      const cur = this._deckState(target);
-      if (cur.filePath && head.filePath && cur.filePath === head.filePath) return;   // already the spot
-      if (!this.loadToDeck(target, head)) return;        // load failed — leave the previous cue intact
-      this.deckChainType[target] = head.chainType || "segue";
-      this.deckReady.add(target);
-      this.dequeue();                                    // the head is now ON the deck, not pending
-      this._log(`nearest-anchor: re-cued deck ${target} to SPOT "${head.title || "(untitled)"}" (was "${cur.title || "(empty)"}") — anchor ${head.scheduledAt ?? "?"}`);
-      this._maybeEmitDeck(target);
-    } catch (e) { this._log("nearest-anchor re-cue error (playout unaffected): " + String(e)); }
-  }
-
-  // Log-Reader Flip (ACTIVATION, §2.5) — a jock hand-loading a deck is FIRST-CLASS in the one file: write
-  // a generated_schedule row at the playhead stamped source='operator', so the queue/calendar reflect it
-  // and it airs AS a log row (zero off-log airs). Only when the flip is ON for this station. Direct local
-  // write (like playlog/shadow-stamp); best-effort, never breaks the load. info: {title,artist,filePath,
-  // fileKey,songId,durationMs}.
-  /** Resolve what a hand-loaded FILE actually is. songs → spots → cart_slots → unknown.
-   *
-   *  The cart_slots step is the one that matters and the one a songs-only lookup misses: a cart file
-   *  may exist in NEITHER songs NOR spots. That is exactly how "Adele   Someone Like You 68" — a cart
-   *  with no songs row — took the MUSIC default and became an airable music row (2026-08-04).
-   *
-   *  Returns "MUSIC" | "SWP" | "SPOT" | "CART" | null (pre-v52 rows may still read "JIN").
-   *  null means UNKNOWN, and unknown must
-   *  never be treated as music. */
   _resolveHandLoadClass(filePath) {
     if (!filePath) return null;
     try {
