@@ -8678,6 +8678,64 @@ let _playoutLastPing = 0;  // epoch ms of last successful play POST
 // and NOT file_path (main.js _placeJingles writes only the basename), so its audio resolves through
 // the songs row it points at. Reading it any other way would show a different answer from the one
 // that airs.
+// ── RETIRE ROWS WHOSE SLOT HAS PASSED ──────────────────────────────────────────────────────────
+//
+// Jeff, 2026-09-14, after a spot he had deleted aired anyway: "A row from 23 July that can still
+// air is a corpse that plays."
+//
+// WHAT LEAVES THEM BEHIND. Generate is day-scoped by design — it deletes from the next top of the
+// hour to the end of the day being generated, and must never rewrite an hour that already aired. So
+// a row whose slot passed on a PREVIOUS day is outside every window anything runs: Generate will not
+// touch it, and the anchored reader stamps `missed` only within the day. Measured on station 2
+// tonight: 25,387 SWP, 9,514 MUSIC and 1,417 SPOT rows still `pending` with slots going back to
+// 20 July.
+//
+// WHY THAT IS NOT COSMETIC. readLogAnchored selects the latest still-`pending` row whose slot has
+// arrived. A row from July qualifies for ever. That is how a spot deleted this afternoon aired this
+// evening: its placements were written on 6 September for the 13th, never aired, never retired, and
+// still selectable. Nothing resurrected anything — the corpse was always in the room.
+//
+// `missed` IS THE HONEST STATE, not a delete. It already means "this was due and did not play", it
+// is what the anchored reader stamps for the same situation inside a day, and it preserves the row
+// for the as-run. Nothing is removed and no airplay history is touched.
+//
+// THE GRACE WINDOW is a real on-air number — it decides what is still allowed to play — so it is
+// read from station_config_kv (`stale_row_grace_sec`) rather than baked in, defaulting to one hour.
+// An hour is far longer than the anchored reader's own behind-slack, so this can never retire a row
+// the reader was about to legitimately catch up on.
+function retireStaleScheduleRows(stationId, reason) {
+  try {
+    let grace = 3600;
+    try {
+      const r = db.prepare("SELECT value FROM station_config_kv WHERE station_id=? AND key='stale_row_grace_sec' AND deleted_at IS NULL").get(stationId);
+      if (r && r.value != null) { const v = parseInt(r.value, 10); if (Number.isFinite(v) && v >= 0) grace = v; }
+    } catch {}
+    const cutoff = Math.floor(Date.now() / 1000) - grace;
+    const before = db.prepare(
+      "SELECT COUNT(*) n FROM generated_schedule WHERE station_id = ? AND state = 'pending' AND deleted_at IS NULL AND scheduled_at < ?"
+    ).get(stationId, cutoff).n;
+    if (!before) return { retired: 0 };
+    const info = db.prepare(
+      `UPDATE generated_schedule SET state = 'missed', updated_at = ?
+        WHERE station_id = ? AND state = 'pending' AND deleted_at IS NULL AND scheduled_at < ?`
+    ).run(new Date().toISOString(), stationId, cutoff);
+    const retired = info.changes || 0;
+    // LOUD. A silent sweep that retires 36,000 rows is indistinguishable from data loss.
+    console.log(`[stale-rows] station ${stationId}: retired ${retired} pending row(s) whose slot passed more than ${grace}s ago (${reason})`);
+    try { mainWindow && mainWindow.webContents.send('schedule:stale-retired', { stationId, retired, graceSec: grace, reason }); } catch {}
+    return { retired, graceSec: grace };
+  } catch (e) {
+    console.error('[stale-rows] sweep failed (playout unaffected):', e.message);
+    return { retired: 0, error: e.message };
+  }
+}
+
+// Manual door, so the operator can run it and see the number rather than wonder.
+ipcMain.handle('schedule:retire-stale', (_e, stationId) => {
+  try { return { ok: true, ...retireStaleScheduleRows(stationId ?? getActiveStationId(), 'requested') }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
 ipcMain.handle('schedule:sweeper-placements', (_e, stationId, fromTs, toTs) => {
   try {
     const sid = stationId ?? getActiveStationId();
@@ -9355,6 +9413,9 @@ ipcMain.handle('schedule:generateDays', async (_, dayTsList) => {
       const dayRows = ctx.generatedRows.slice(before);
       _placeJingles(db, stationId, dayRows);
       _commitDayRows(stationId, effStart, dayEnd, dayRows);   // atomic, per day
+      // Every Generate is a chance to bury the corpses: rows from earlier days whose slots passed
+      // are outside this (and every) Generate window, so nothing else will ever retire them.
+      retireStaleScheduleRows(stationId, 'generate');
       committed++; total += dayRows.length;
       _genEmit({ phase: "day-committed", day: dayBase.toDateString(), dayIdx: i, dayTotal: days.length, rows: dayRows.length });
     }
@@ -9463,6 +9524,7 @@ async function _generateRange(stationId, fromTs, toTs, opts) {
     const dayRows = ctx.generatedRows.slice(before);
     _placeJingles(db, stationId, dayRows);
     _commitDayRows(stationId, effStart, dayEnd, dayRows);
+    retireStaleScheduleRows(stationId, 'generate');
     // Stamped AFTER the commit rather than carried through generatedScheduleBulkCreate, whose column
     // list has no `source` and is shared with every manual generate. Scoped to the window just
     // written and only over rows still NULL, so an 'operator' row can never be relabelled.

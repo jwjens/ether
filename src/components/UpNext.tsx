@@ -348,9 +348,13 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
           positionSec: s?.positionSec ?? 0, durationSec: s?.durationSec ?? 0,
           filePath: (s as any)?.filePath ?? "",
           contentClass: (s as any)?.contentClass ?? null,
-          // Emitted by the daemon on every deck event since engine.js:820; the renderer simply never
-          // copied it through. It is the key the sweeper placements are looked up by.
-          scheduledAt: (s as any)?.scheduledAt ?? null,
+          // NOT on the state object, and that was the bug. The daemon emits scheduledAt on every deck
+          // event, but engine-rodio.ts:417 stores it in its OWN map (this.deckSched) and exposes it
+          // only through the getDeckSched accessor — getState() has never carried it. Reading
+          // (s as any).scheduledAt gave undefined on every deck, so sweeperMap[undefined] never
+          // matched and no deck row could render a sweeper, while the queue rows worked because
+          // queue ITEMS genuinely carry the field.
+          scheduledAt: (engine as any)?.getDeckSched?.(id) ?? null,
         };
       });
       return next;

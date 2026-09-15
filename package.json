@@ -32,6 +32,7 @@
     "test:preload-bridge": "node scripts/smoke-preload-bridge.js",
     "test:spot-edge": "node scripts/smoke-sweeper-clean-spot-edge.js",
     "test:queue-rows": "node scripts/smoke-sweeper-queue-rows.js",
+    "test:stale-rows": "node scripts/smoke-stale-schedule-rows.js",
     "test:jukebox-gate": "node scripts/smoke-jukebox-gate.js",
     "test:spot-retraction": "node scripts/smoke-spot-retraction.js",
     "test:asset-unmirror": "node scripts/smoke-asset-unmirror.js",
@@ -99,5 +100,5 @@
     "email": "jensj@ov.org",
     "name": "Jeffrey Jens"
   },
-  "version": "4.6.37"
+  "version": "4.6.38"
 }
