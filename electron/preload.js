@@ -287,6 +287,9 @@ contextBridge.exposeInMainWorld("ether", {
     dashboard:   ()         => ipcRenderer.invoke("ha:dashboard"),
     alarmStatus: ()         => ipcRenderer.invoke("ha:alarmStatus"),
     readLog:     (lines)    => ipcRenderer.invoke("ha:readLog", lines),
+    // Clear a tripped crash-loop alarm AND put supervision back (kills a halted watchdog, relaunches
+    // one that adopts this app). Returns { ok, markerRemoved, staleWatchdogKilled, watchdogPid, error }.
+    clearAlarm:  ()         => ipcRenderer.invoke("ha:clearAlarm"),
     // Phase 4 auto-logon — each fires one UAC prompt in main via the elevated helper
     enable:      (password) => ipcRenderer.invoke("ha:enable", password),
     disable:     ()         => ipcRenderer.invoke("ha:disable"),

@@ -22,8 +22,17 @@ export interface HaControlPlane {
   active: boolean;
   config: { enabled?: boolean; autologon?: boolean; user?: string | null };
   startup: { registered: boolean; taskName?: string };
-  watchdog: { pid: number | null; alive: boolean; monitoring: boolean };
+  watchdog: {
+    pid: number | null; alive: boolean; monitoring: boolean;
+    // OBSERVED supervision (2026-09-15): did a watchdog poll THIS process's /health recently?
+    //   true = yes (within ~20s) · false = it used to, and stopped · null/absent = never observed
+    //   (an older watchdog sends no header, or there is no watchdog) — unknown is not "off".
+    supervising?: boolean | null;
+    lastPollAt?: number;
+    lastPollPid?: number;
+  };
   alarm: boolean;
+  alarmAt?: number;   // when the crash-loop limit was hit (marker content), 0/absent if unknown
   currentUser?: string;   // Phase 4: current logged-in account (for the auto-logon form)
 }
 
@@ -42,7 +51,12 @@ export interface HaRollup {
 
 // Roll the dashboard up to one banner status. Ordering is deliberate:
 //   1. alarm marker → ALARM (the watchdog tripped its crash-loop limit and gave
-//      up; nothing else matters until a human clears it).
+//      up; nothing else matters until a human clears it) — UNLESS a watchdog is
+//      observed polling this very process, in which case the marker is a leftover
+//      and the truth is "supervised, stale marker" (DEGRADED with a clear action).
+//      Either way the text says WHEN it tripped and whether THIS app is supervised:
+//      on 2026-09-15 the banner was red about a 16:29 event and silent about HA
+//      being off for the app that was actually running.
 //   2. health endpoint not answering → ALARM (process hung/down — defensive; in
 //      practice the panel's own IPC failing surfaces as `null`, handled below).
 //   3. HA not active → INACTIVE, a NEUTRAL state (the app was launched directly /
@@ -57,21 +71,41 @@ export function deriveHaRollup(dash: HaDashboard | null): HaRollup {
   if (!dash) return { level: "loading", label: "CHECKING…", reasons: [] };
   const { health, ha } = dash;
 
+  const supervising = ha.watchdog.supervising ?? null;
+  const pid = health && health.pid ? ` (pid ${health.pid})` : "";
   if (ha.alarm) {
-    return { level: "alarm", label: "ALARM", reasons: ["Crash-loop limit reached — auto-restart halted. Manual intervention required."] };
+    const when = ha.alarmAt ? ` at ${fmtWhen(ha.alarmAt)}` : "";
+    if (supervising === true) {
+      return { level: "degraded", label: "DEGRADED", reasons: [
+        `Stale crash-loop alarm marker — the limit was hit${when}, but watchdog pid ${ha.watchdog.lastPollPid || "?"} is supervising this app${pid} now. Clear the alarm.`,
+      ] };
+    }
+    return { level: "alarm", label: "ALARM", reasons: [
+      `Crash-loop limit reached${when} — auto-restart halted.`,
+      `This app${pid} is NOT supervised: HA is off until the alarm is cleared and the watchdog restarted (Clear & re-supervise).`,
+    ] };
   }
   if (!health || health.ok === false) {
     return { level: "alarm", label: "ALARM", reasons: ["Health endpoint is not responding."] };
   }
-  if (!ha.active) {
+  if (!ha.active && supervising !== true) {
     return { level: "inactive", label: "HA INACTIVE", reasons: ["Watchdog not running — HA is not enabled on this machine."] };
   }
 
   const reasons: string[] = [];
-  if (!ha.watchdog.alive)                     reasons.push("Watchdog process is not alive.");
+  if (!ha.watchdog.alive && supervising !== true) reasons.push("Watchdog process is not alive.");
+  if (supervising === false)                  reasons.push(`Watchdog has stopped polling this app${pid} — it is no longer supervised.`);
   if (ha.supported && !ha.startup.registered) reasons.push("Startup task not registered — HA won't survive a reboot.");
   if (!ha.watchdog.monitoring)                reasons.push("Mutual supervision is inactive.");
   if (reasons.length) return { level: "degraded", label: "DEGRADED", reasons };
 
   return { level: "healthy", label: "HEALTHY", reasons: [] };
+}
+
+function fmtWhen(ms: number): string {
+  try {
+    const d = new Date(ms);
+    const sameDay = new Date().toDateString() === d.toDateString();
+    return sameDay ? d.toLocaleTimeString() : d.toLocaleString();
+  } catch { return String(ms); }
 }

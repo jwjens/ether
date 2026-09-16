@@ -18,7 +18,8 @@ const os = require("os");
 // GUARDED: a missing/broken log module must NEVER crash the daemon. A staged build once omitted this file
 // (stage-engine DAEMON_FILES) → an unguarded require MODULE_NOT_FOUND took the whole daemon down → dead
 // air. Logging is diagnostic only; it can fail without stopping playout.
-try { require("./daemon-log").install(); } catch (e) { try { console.error("[audiod] daemon-log unavailable:", e && e.message); } catch { /* ignore */ } }
+let _dlog = null;   // kept so `hello` can report WHERE this daemon is actually writing (logPath)
+try { _dlog = require("./daemon-log"); _dlog.install(); } catch (e) { try { console.error("[audiod] daemon-log unavailable:", e && e.message); } catch { /* ignore */ } }
 
 // Cross-platform IPC endpoint: Windows → named pipe; macOS/Linux → a per-user Unix domain
 // socket in the temp dir. Override with ETHER_AUDIOD_PIPE. (Client + watchdog compute the
@@ -347,7 +348,13 @@ const handlers = {
     if (pid) { _knownDead.delete(pid); ownerPid = pid; if (orphanSince) { log("adopted while orphaned — countdown cleared"); orphanSince = 0; } }
     const sup = Number(m && m.supervisorPid) || 0;
     if (sup !== supervisorPid) { _knownDead.delete(sup); supervisorPid = sup; log(`supervisor (HA watchdog) pid → ${sup || "(none)"}`); }
-    return { ok: true, pid: process.pid, startedAt: DAEMON_STARTED_AT, ownerPid, supervisorPid, spawnedFor: SPAWNED_FOR, version: process.env.ETHER_DAEMON_VERSION || "0" };
+    // logPath: the sink THIS process opened (daemon-log.js) — the app's Live Activity terminal tails
+    // whatever is reported here, so it can never again follow a file nobody is writing (2026-09-15:
+    // the panel showed a month-old log while the running daemon wrote to a different folder, because
+    // three code paths each resolved "the daemon log" on their own). null when the log module is absent.
+    let logPath = null;
+    try { logPath = _dlog && _dlog.logPath ? (_dlog.logPath() || null) : null; } catch { logPath = null; }
+    return { ok: true, pid: process.pid, startedAt: DAEMON_STARTED_AT, ownerPid, supervisorPid, spawnedFor: SPAWNED_FOR, version: process.env.ETHER_DAEMON_VERSION || "0", logPath };
   },
   // The app version this daemon was spawned with (passed via env). Lets the app detect a stale
   // daemon left running across an update and reload it (the dead-air-on-update gotcha).

@@ -148,7 +148,12 @@ function spawnDaemon(reason) {
     // named, living owner. THIS supervisor is the right owner for a daemon it spawned — its whole
     // job is to bring the app back — and when the app connects it takes ownership via `hello`.
     // Without this the watchdog was the one spawner that produced a permanently ownerless engine.
-    const child2 = spawn(exe, [script], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ETHER_OWNER_PID: String(process.pid) }, detached: true, stdio: 'ignore' });
+    // ETHER_AUDIOD_LOG (2026-09-15): the SAME file the app hands an app-spawned daemon
+    // (electron/audio-daemon-client.js → <userData>\logs\ether-audiod.log). Without it the daemon fell
+    // back to daemon-log.js's legacy default (<APPDATA>\openair\logs\…), so a watchdog-spawned daemon
+    // wrote its log where nothing in the app looked. One daemon log per machine, like watchdog.log.
+    const daemonLog = path.join(USER_DATA, 'logs', 'ether-audiod.log');
+    const child2 = spawn(exe, [script], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', ETHER_OWNER_PID: String(process.pid), ETHER_AUDIOD_LOG: daemonLog }, detached: true, stdio: 'ignore' });
     child2.unref();
     log(`ether-audiod not responding (${reason}) — (re)spawned daemon pid ${child2.pid} (${tag})`);
   } catch (e) { log(`ether-audiod spawn failed: ${e.message}`); }
@@ -183,6 +188,8 @@ let intentionalKill = false; // set when WE kill the child (hang); suppresses th
                              // exit handler's crash-respawn so the hang path is
                              // the sole respawner (avoids a double-spawn race)
 const restartTimes = [];  // ms timestamps of recent (re)spawns, for the crash-loop window
+let spawnedAt = 0;           // when the tracked pid was spawned/adopted (startup grace + lock-bounce test)
+let firstOkSeen = false;     // /health has answered at least once for the tracked pid → grace is over
 
 function restartsInWindow() {
   const cutoff = Date.now() - T.crashWindowMs;
@@ -193,14 +200,16 @@ function restartsInWindow() {
 // ── Health polling ──────────────────────────────────────────────────────────────
 function checkHealth() {
   return new Promise((resolve) => {
-    const req = http.get(T.healthUrl, (res) => {
+    // x-ether-watchdog: we name ourselves on every poll so the app can OBSERVE that it is supervised,
+    // and by whom (electron/main.js /health route → the Health Monitor's "Supervising This App" row).
+    const req = http.get(T.healthUrl, { headers: { 'x-ether-watchdog': String(process.pid) } }, (res) => {
       let body = '';
       res.on('data', (d) => { body += d; });
       res.on('end', () => {
         if (res.statusCode !== 200) { resolve({ ok: false, reason: `http ${res.statusCode}` }); return; }
-        let audioAlive = null;
-        try { audioAlive = JSON.parse(body)?.audio?.alive ?? null; } catch { /* ignore */ }
-        resolve({ ok: true, audioAlive });
+        let audioAlive = null, pid = 0;
+        try { const j = JSON.parse(body); audioAlive = j?.audio?.alive ?? null; pid = Number(j?.pid) || 0; } catch { /* ignore */ }
+        resolve({ ok: true, audioAlive, pid });
       });
     });
     req.setTimeout(T.healthTimeoutMs, () => { req.destroy(); resolve({ ok: false, reason: 'timeout' }); });
@@ -213,9 +222,17 @@ async function poll() {
   const h = await checkHealth();
   if (!trackedPid || stopping || halted) return;
   if (h.ok) {
+    if (!firstOkSeen) { firstOkSeen = true; log(`app answered /health ${Date.now() - spawnedAt}ms after spawn — startup grace over, hang detection armed`); }
     if (missCount > 0) log(`health recovered after ${missCount} miss(es)`);
     missCount = 0;
     if (h.audioAlive === false) log('WARN /health ok but audio.alive=false (engine thread not firing) — logged, NOT a v1 restart trigger');
+    return;
+  }
+  // STARTUP GRACE: a process that has never answered is BOOTING, not hung, until startupGraceMs
+  // has passed. A cold post-update boot (DB open + WAL recovery + AV scan) legitimately takes longer
+  // than three polls; killing it there (OVEVENTS 2026-09-15, 26s into life) only restarts the boot.
+  if (!firstOkSeen && (Date.now() - spawnedAt) < T.startupGraceMs) {
+    log(`starting — no /health yet (${h.reason}), ${Math.round((Date.now() - spawnedAt) / 1000)}s of ${Math.round(T.startupGraceMs / 1000)}s grace`);
     return;
   }
   missCount++;
@@ -264,6 +281,8 @@ function spawnEther(reason) {
   }
   const myPid = child.pid;
   trackedPid = myPid;
+  spawnedAt = Date.now();
+  firstOkSeen = false;
   log(`Ether spawned pid ${myPid}`);
   child.on('exit', (code, signal) => onChildExit(myPid, code, signal));
   child.on('error', (e) => log(`child error: ${e.message}`));
@@ -281,12 +300,36 @@ async function adoptEther(adoptPid) {
     child = null;
     trackedPid = adoptPid;
     missCount = 0;
+    spawnedAt = Date.now();
+    firstOkSeen = true;      // it just answered — no grace needed
     log(`adopted existing Ether pid ${adoptPid} (healthy) — monitoring, not spawning`);
     startPolling();
     return true;
   }
   log(`adopt(${adoptPid}) declined (${alive ? 'unhealthy' : 'not alive'}) — spawning fresh`);
   return false;
+}
+
+// After a lock bounce: the running Ether may itself still be booting (it may have won the lock a
+// second ago), so ask /health for its pid until it answers — within the startup grace — then adopt.
+// If nothing ever answers, the lock holder died in the meantime: fall back to a normal spawn.
+function adoptLockHolder() {
+  const deadline = Date.now() + T.startupGraceMs;
+  (function attempt() {
+    if (stopping || halted) return;
+    checkHealth().then(async (h) => {
+      if (stopping || halted) return;
+      if (h.ok && h.pid) {
+        const ok = await adoptEther(h.pid);
+        if (ok) return;
+        log(`lock holder pid ${h.pid} declined adoption — spawning`);
+        spawnEther('bounce-fallback');
+        return;
+      }
+      if (Date.now() > deadline) { log(`no lock holder answered /health within ${Math.round(T.startupGraceMs / 1000)}s of the bounce — spawning`); spawnEther('bounce-fallback'); return; }
+      setTimeout(attempt, 2000);
+    });
+  })();
 }
 
 function onChildExit(pid, code, signal) {
@@ -320,6 +363,20 @@ function onChildExit(pid, code, signal) {
     waitForSelfRelaunch();
     return;
   }
+  // LOCK BOUNCE, not a crash — checked AFTER the sentinels: a clean quit or an expected restart
+  // that happens to exit 0 quickly is what its sentinel says it is, not a bounce. Exit 0 within
+  // lockBounceMs of the spawn is requestSingleInstanceLock refusing a second instance
+  // (electron/main.js) — an Ether is ALREADY running. The comment on
+  // adoptEther has said so since Phase 2.5; the exit handler just never checked. On OVEVENTS the
+  // operator's own launch produced three of these in 52s and the counter tripped the alarm on them.
+  // The spawn is struck from the crash window and the lock holder is adopted via /health's pid.
+  if (code === 0 && spawnedAt && (Date.now() - spawnedAt) < T.lockBounceMs) {
+    if (restartTimes.length) restartTimes.pop();
+    log(`exit 0 within ${Date.now() - spawnedAt}ms of spawn → single-instance lock bounce: another Ether holds the lock — adopting it, NOT counting a crash`);
+    adoptLockHolder();
+    return;
+  }
+
   log('unexpected exit → CRASH.');
   scheduleCrashRespawn();
 }

@@ -85,6 +85,11 @@ const MAX_SPAWN_ATTEMPTS = 5;     // after this, stop SPAWNING (no PID storm) �
 let spawnGivenUp = false;         // v4.4.50: hit the spawn cap → probe-only (non-terminal); reset on connect
 let disownAttempts = 0;           // dev: consecutive "that daemon isn't ours" evictions (storm guard)
 const MAX_DISOWN = 3;             // after this, use it and say so LOUDLY rather than loop forever
+// OBSERVED, never assumed: the log file the connected daemon says it is writing (hello.logPath).
+// null until a daemon that reports it connects (a pre-4.6.45 daemon answers hello without it).
+// main's Live Activity terminal tails THIS path — the file the daemon actually opened — not a
+// path main re-derives on its own (the three-folders mix-up of 2026-09-15).
+let daemonLogPath = null;
 
 function setEventHandler(fn) { onEvent = typeof fn === "function" ? fn : (() => {}); }
 function setConnectedHandler(fn) { onConnected = typeof fn === "function" ? fn : (() => {}); }
@@ -210,6 +215,10 @@ function attach(s) {
     const supervisorPid = Number(process.env.ETHER_WATCHDOG_PID) || 0;
     try { hi = await cmd("hello", { ownerPid: process.pid, supervisorPid }); } catch { /* pre-hello daemon */ }
     if (sock !== s || !connected) return;
+    if (hi && typeof hi.logPath === "string" && hi.logPath) {
+      if (hi.logPath !== daemonLogPath) { try { _log(`[audiod-client] daemon pid ${hi.pid} logs to ${hi.logPath}`); } catch {} }
+      daemonLogPath = hi.logPath;
+    }
     const dev = !isPackagedApp();
     const foreign = dev && hi && Number(hi.spawnedFor) !== process.pid;
     if (foreign || (dev && !hi)) {
@@ -267,6 +276,7 @@ function cmd(name, args = {}) {
 }
 
 function isConnected() { return connected; }
+function getDaemonLogPath() { return daemonLogPath; }
 function stop() { stopped = true; if (reconnectTimer) clearTimeout(reconnectTimer); try { if (sock) sock.end(); } catch {} }
 
 // Reload a stale daemon (closes the dead-air-on-update gotcha). Tell the running daemon to shut
@@ -277,4 +287,4 @@ function reloadDaemon() {
   try { if (connected && sock) sock.write(JSON.stringify({ cmd: "shutdown" }) + "\n"); } catch {}
 }
 
-module.exports = { isEnabled, ensure, cmd, setEventHandler, setConnectedHandler, setLog, isConnected, stop, reloadDaemon };
+module.exports = { isEnabled, ensure, cmd, setEventHandler, setConnectedHandler, setLog, isConnected, getDaemonLogPath, stop, reloadDaemon };

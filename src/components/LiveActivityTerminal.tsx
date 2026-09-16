@@ -85,8 +85,15 @@ export function LiveActivityTerminal() {
   const [warnOnly, setWarnOnly] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [stations, setStations] = useState<number[]>([]);
+  // WHICH FILE, AND HOW FRESH (2026-09-15). The tail reports the file it follows and that file's last
+  // write. Both are shown, because for a month this pane followed a log nobody was writing and read as
+  // "live" — a stale tail must look stale. `observed` = the running daemon itself named this file
+  // (hello.logPath); otherwise main fell back to the newest writer location.
+  const [src, setSrc] = useState<{ file: string; observed: boolean; lastWriteAt: number } | null>(null);
+  const [now, setNow] = useState(Date.now());
 
   const offsetRef = useRef<number>(-1);          // -1 seeds from the tail on the first call
+  const fileRef = useRef<string | null>(null);   // the file the offset belongs to
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
@@ -102,6 +109,19 @@ export function LiveActivityTerminal() {
         if (stop || !r) return;
         if (!r.ok) { setErr(r.error || "cannot read the daemon log"); return; }
         setErr(null);
+        setNow(Date.now());
+        if (typeof r.file === "string") {
+          setSrc({ file: r.file, observed: !!r.observed, lastWriteAt: Number(r.lastWriteAt) || 0 });
+          // A different file than the offset belongs to (a new daemon reported its own log): the
+          // offset is meaningless there — re-seed from that file's tail and say so in the feed.
+          if (fileRef.current !== null && fileRef.current !== r.file) {
+            offsetRef.current = -1;
+            fileRef.current = r.file;
+            setLines(prev => [...prev, parseActivityLine(`— now following ${r.file} —`)]);
+            return;
+          }
+          fileRef.current = r.file;
+        }
         offsetRef.current = r.offset;
         if (r.reset) setLines(prev => [...prev, parseActivityLine("— log rotated —")]);
         if (r.lines?.length) {
@@ -196,6 +216,21 @@ export function LiveActivityTerminal() {
             ? err
             : `${visible.length} shown of ${lines.length} buffered${paused ? " · scroll-locked" : ""}`}
         </div>
+        {src && (() => {
+          const ageMs = src.lastWriteAt ? now - src.lastWriteAt : NaN;
+          const stale = Number.isFinite(ageMs) && ageMs > 10 * 60 * 1000;   // no daemon output for 10 min
+          const age = !Number.isFinite(ageMs) ? "unknown" : ageMs < 60_000 ? `${Math.floor(ageMs / 1000)}s ago`
+                    : ageMs < 3_600_000 ? `${Math.floor(ageMs / 60_000)}m ago` : `${Math.floor(ageMs / 3_600_000)}h ${Math.floor((ageMs % 3_600_000) / 60_000)}m ago`;
+          // last three path segments, either separator
+          const segs = src.file.split(/[\\/]/).filter(Boolean);
+          const name = segs.length > 3 ? `…\\${segs.slice(-3).join("\\")}` : src.file;
+          return (
+            <div style={{ fontSize: 9, color: stale ? "#f87171" : "var(--text-tertiary)", marginTop: 3 }} title={src.file}>
+              {stale ? "STALE — " : ""}following {name} · last write {age}
+              {src.observed ? "" : " · path not confirmed by the daemon"}
+            </div>
+          );
+        })()}
       </div>
 
       {/* the terminal */}

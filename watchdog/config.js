@@ -13,6 +13,16 @@ const TUNABLES = {
   crashWindowMs:          5 * 60 * 1000,
   maxRestartsInWindow:    5,      // > this within the window → halt + alarm
   backoffMs:              [2000, 5000, 10000, 20000, 30000], // by restart index in window
+  // 2026-09-15 (OVEVENTS, post-Windows-Update cold boot): the first spawn was killed as a "hang" 26s
+  // after launch, before it had even written SESSION START — polling began at once and three 2s
+  // timeouts made a boot look like a freeze. Misses do not count until the app has answered /health
+  // once OR this long has passed since the spawn, whichever is first. Health is still polled during
+  // the grace (a healthy answer ends it early); only the verdict is deferred.
+  startupGraceMs:         90000,
+  // A spawn that exits 0 within this window did not crash — it lost requestSingleInstanceLock to an
+  // Ether that is already running (an operator's own launch, a task-started copy). Counting those as
+  // crashes is exactly how the 16:29 crash-loop alarm was manufactured: three bounces in 52s.
+  lockBounceMs:           2000,
 };
 
 // Test-only overrides (watchdog/test sets these to run fast). Prod never sets
@@ -25,6 +35,9 @@ TUNABLES.expectedRestartGraceMs = envNum('WD_GRACE_MS',       TUNABLES.expectedR
 TUNABLES.maxRestartsInWindow    = envNum('WD_MAX_RESTARTS',   TUNABLES.maxRestartsInWindow);
 TUNABLES.crashWindowMs          = envNum('WD_WINDOW_MS',      TUNABLES.crashWindowMs);
 TUNABLES.killConfirmTimeoutMs   = envNum('WD_KILL_CONFIRM_MS', TUNABLES.killConfirmTimeoutMs);
+TUNABLES.startupGraceMs         = envNum('WD_STARTUP_GRACE_MS', TUNABLES.startupGraceMs);
+if (process.env.WD_HEALTH_URL) TUNABLES.healthUrl = process.env.WD_HEALTH_URL;   // test-only: keep the suite off a live app's :3400
+TUNABLES.lockBounceMs           = envNum('WD_LOCK_BOUNCE_MS',   TUNABLES.lockBounceMs);
 if (process.env.WD_BACKOFF_MS) TUNABLES.backoffMs = process.env.WD_BACKOFF_MS.split(',').map(Number).filter(n => n >= 0);
 
 const fs = require('fs');

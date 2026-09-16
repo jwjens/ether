@@ -62,6 +62,32 @@ Below the cards:
 - **Core Systems**, **High Availability**, **Library & Rotation**, **Designation Activity**, the
   **Log-Reader** panels and **DMCA Play Log Export** — the underlying detail behind the cards above.
 
+### High Availability — what the rows mean
+
+- **Watchdog Process** — whether a watchdog (the "Keep My Station On Air" supervisor) is running.
+- **Supervising This App** — whether that watchdog is actually watching **this** copy of Ether. The
+  watchdog checks in every 5 seconds and signs its check-in; this row shows the last one. *Yes · pid N*
+  is the only reading that means you are covered. *STOPPED* means it used to check in and no longer
+  does. *Not observed* means no watchdog has ever checked in on this launch — either there is none, or
+  it is from an older build that does not sign its check-ins.
+- **Crash-Loop Alarm** — the watchdog gives up after 5 restarts in 5 minutes and leaves a marker on
+  disk. The row shows **when** it tripped. While it is tripped, auto-restart is off — and if *Supervising
+  This App* is not *Yes*, this copy of Ether is running with **no** supervision at all.
+- **App uptime** in the header is how long the Ether process itself has been running (with its
+  process id) — not how long this panel has been open.
+
+### Clearing a crash-loop alarm
+
+1. Open the Health Monitor and find **Crash-Loop Alarm** under **High Availability**.
+2. Press **CLEAR & RE-SUPERVISE**.
+3. Ether removes the marker, stops the halted watchdog if one is still sitting there, and starts a fresh
+   watchdog that adopts the running app. The row's small print reports exactly what happened
+   (*marker removed · halted watchdog pid N stopped · supervised by watchdog pid M*).
+4. Within a few seconds **Supervising This App** should read *Yes · pid M* and the banner should leave
+   red. If it does not, the small print says why.
+
+Nothing is restarted and nothing goes off air: the running app is adopted, not relaunched.
+
 ## Rearranging the panels
 
 Every panel on this screen can be moved and hidden, so you can make the top of the screen show what
@@ -102,6 +128,13 @@ with other local preferences.
   station, so quiet tracks stay quiet. Turn it on in Preferences if you want the ride and limiter.
 - **I dragged a panel and it went back.** The drop only takes effect when you release the pointer
   **over another panel**. Release over the gap between panels and nothing moves.
+- **The banner says ALARM but the station is playing fine.** The alarm is a marker left by a watchdog
+  that gave up earlier (the row shows when). It does not mean the app is failing now — it means
+  auto-restart is off. Read **Supervising This App**: if it is not *Yes*, press **CLEAR & RE-SUPERVISE**
+  to put supervision back. If it *is* Yes, the marker is stale and the same button just removes it.
+- **Live Activity shows hours-old lines and says STALE.** The feed is honest: the engine has not
+  written anything for that long. If the station should be playing, look at the decks and the
+  Audio Output row before assuming the feed is broken.
 
 ## Related
 

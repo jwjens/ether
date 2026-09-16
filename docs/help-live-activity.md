@@ -83,3 +83,17 @@ Each line is: **time · station · what happened**.
 - After an update, **fully close and reopen Ether** — the audio engine does not reload on its own, so its log
   won't restart until you do.
 - Empty with a filter on? Switch to **All activity** to confirm the feed is alive.
+
+### Which file it is reading, and how fresh it is
+
+Under the line count the terminal names the **log file it is following** and **when that file was last
+written** — for example *following …\Ether\logs\ether-audiod.log · last write 4s ago*.
+
+- The audio engine tells Ether where it is writing, so this is the engine's own answer, not a guess.
+- If the file has not been written for **10 minutes** the line turns red and says **STALE**. Old lines
+  on screen are then old lines — the engine is not busy, it is quiet (or not running).
+- *"path not confirmed by the daemon"* means the running engine is from an older build that does not
+  report its file; Ether falls back to the most recently written engine log. After you **fully close and
+  reopen Ether** the new engine reports its path and the note goes away.
+- If the engine restarts into a different file, the feed says *— now following … —* and continues from
+  the new file's tail.

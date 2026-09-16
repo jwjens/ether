@@ -1046,6 +1046,29 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer",
   };
 
+  // Crash-loop alarm: the "manual intervention" the banner demands, as a button (2026-09-15). Same
+  // contract as PUSH/PULL above — the result line is the handler's own report, verbatim.
+  const [alarmBusy, setAlarmBusy] = useState(false);
+  const [alarmMsg, setAlarmMsg] = useState<string>("");
+  const clearAlarm = async () => {
+    setAlarmBusy(true); setAlarmMsg("");
+    try {
+      const r: any = await (window as any).ether?.ha?.clearAlarm?.();
+      if (!r) setAlarmMsg("✗ clearAlarm: no response from the app");
+      else {
+        const parts: string[] = [];
+        parts.push(r.markerRemoved ? "marker removed" : "no marker to remove");
+        if (r.staleWatchdogKilled) parts.push(`halted watchdog pid ${r.staleWatchdogKilled} stopped`);
+        if (r.watchdogPid) parts.push(`supervised by watchdog pid ${r.watchdogPid}`);
+        setAlarmMsg(`${r.ok ? "✓" : "✗"} ${parts.join(" · ")}${r.error ? ` — ${r.error}` : ""}`);
+      }
+    } catch (e: any) { setAlarmMsg(`✗ clearAlarm: ${e?.message || String(e)}`); }
+    finally {
+      setAlarmBusy(false);
+      try { const d = await (window as any).ether?.ha?.dashboard(); if (d) setDash(d); } catch {}
+    }
+  };
+
   const exportPlayLog = async () => {
     setExporting(true);
     try {
@@ -1078,8 +1101,12 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     setExporting(false);
   };
 
-  const uptime = health ? Math.floor((Date.now() - health.sessionStart) / 60000) : 0;
-  const uptimeStr = uptime < 60 ? `${uptime}m` : `${Math.floor(uptime / 60)}h ${uptime % 60}m`;
+  // "Session uptime" used to be time since THIS PANEL mounted (health.sessionStart = useState(Date.now()))
+  // and read "1m" on an app that had been up 66 minutes (2026-09-15). The header now shows the main
+  // process's own uptime from /health, and says so; the panel-open time is not a fact about the app.
+  const procUp = dash?.health?.uptimeSec;
+  const uptimeStr = Number.isFinite(procUp) ? fmtUptime(procUp as number)
+                  : health ? `${Math.floor((Date.now() - health.sessionStart) / 60000)}m since panel opened` : "—";
   const [panelRef, twoCol] = useTwoColumn();
 
   // ── SPOT SCHEDULE (display-only) ────────────────────────────────────────────────────────────────
@@ -1189,7 +1216,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
           </div>
         </div>
         <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--text-tertiary)" }}>
-          Session uptime: {uptimeStr} · Live per-station health updates every second
+          App uptime: {uptimeStr}{dash?.health?.pid ? ` · pid ${dash.health.pid}` : ""} · Live per-station health updates every second
         </p>
       </div>
 
@@ -1338,6 +1365,17 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                   status={!ha.active ? "warn" : wd.alive ? "ok" : "error"}
                   sub={!ha.active ? "App launched without HA supervision" : "Supervises crash & hang"}
                 />
+                {/* OBSERVED, not assumed (2026-09-15): the watchdog names itself on every /health poll.
+                    "alive" above only says a watchdog process exists; this row says whether it is
+                    watching THIS app. On OVEVENTS a halted watchdog was alive beside an unsupervised app. */}
+                <HealthRow
+                  label="Supervising This App"
+                  value={wd.supervising === true ? `Yes · pid ${wd.lastPollPid}` : wd.supervising === false ? "STOPPED" : "Not observed"}
+                  status={wd.supervising === true ? "ok" : wd.supervising === false ? "error" : ha.active ? "warn" : "warn"}
+                  sub={wd.supervising == null
+                    ? "No watchdog has polled this process yet (older watchdog, or none)"
+                    : `Last /health poll ${Math.max(0, Math.round((Date.now() - (wd.lastPollAt || 0)) / 1000))}s ago · pid ${hh.pid}`}
+                />
                 <HealthRow
                   label="Startup Task"
                   value={ha.supported ? (ha.startup.registered ? "Registered" : "Not registered") : "N/A"}
@@ -1353,8 +1391,17 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                 <HealthRow
                   label="Crash-Loop Alarm"
                   value={ha.alarm ? "TRIPPED" : "Clear"}
-                  status={ha.alarm ? "error" : "ok"}
-                  sub={ha.alarm ? "Auto-restart halted — see HA runbook" : "Trips after 5 restarts in 5 min"}
+                  status={ha.alarm ? (wd.supervising === true ? "warn" : "error") : "ok"}
+                  sub={ha.alarm
+                    ? `Tripped ${ha.alarmAt ? new Date(ha.alarmAt).toLocaleString() : "(time unknown)"} — auto-restart halted. ` +
+                      (wd.supervising === true ? "A watchdog is supervising this app; the marker is stale." : "This app is NOT supervised until cleared.") +
+                      (alarmMsg ? ` ${alarmMsg}` : "")
+                    : `Trips after 5 restarts in 5 min${alarmMsg ? ` · ${alarmMsg}` : ""}`}
+                  actions={ha.alarm ? (
+                    <button onClick={clearAlarm} disabled={alarmBusy}
+                      title="Remove the alarm marker, stop the halted watchdog, and relaunch one that adopts this running app."
+                      style={syncBtn}>{alarmBusy ? "CLEARING…" : "CLEAR & RE-SUPERVISE"}</button>
+                  ) : undefined}
                 />
                 <HealthRow
                   label="Process Uptime"

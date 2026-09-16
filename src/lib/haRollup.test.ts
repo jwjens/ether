@@ -48,6 +48,41 @@ describe("deriveHaRollup", () => {
     expect(r.level).toBe("alarm");
   });
 
+  // 2026-09-15 (OVEVENTS): the banner was red about a 16:29 event and silent about HA being OFF for
+  // the app that was actually running. The alarm text must carry both facts.
+  it("alarm + not supervised → alarm that names the time and says THIS app is unsupervised", () => {
+    const at = new Date("2026-09-15T23:29:32.629Z").getTime();
+    const r = deriveHaRollup(dash({ ha: { alarm: true, alarmAt: at, active: false, watchdog: { pid: 16672, alive: true, monitoring: false, supervising: null } } }));
+    expect(r.level).toBe("alarm");
+    expect(r.reasons.join(" ")).toMatch(/NOT supervised/);
+    expect(r.reasons.join(" ")).toMatch(/pid 1234/);
+    expect(r.reasons.join(" ")).toMatch(/Crash-loop limit reached at /);
+  });
+
+  it("alarm marker but a watchdog is observed polling us → degraded (stale marker), not alarm", () => {
+    const r = deriveHaRollup(dash({ ha: { alarm: true, watchdog: { pid: 777, alive: true, monitoring: true, supervising: true, lastPollAt: Date.now(), lastPollPid: 777 } } }));
+    expect(r.level).toBe("degraded");
+    expect(r.reasons.join(" ")).toMatch(/Stale crash-loop alarm marker/);
+    expect(r.reasons.join(" ")).toMatch(/pid 777 is supervising/);
+  });
+
+  it("no alarm, HA active, but the watchdog STOPPED polling us → degraded", () => {
+    const r = deriveHaRollup(dash({ ha: { watchdog: { pid: 777, alive: true, monitoring: true, supervising: false, lastPollAt: Date.now() - 60000, lastPollPid: 777 } } }));
+    expect(r.level).toBe("degraded");
+    expect(r.reasons.join(" ")).toMatch(/stopped polling/);
+  });
+
+  it("supervision never observed (older watchdog, no header) is UNKNOWN — does not demote", () => {
+    const r = deriveHaRollup(dash({ ha: { watchdog: { pid: 777, alive: true, monitoring: true, supervising: null } } }));
+    expect(r.level).toBe("healthy");
+  });
+
+  it("app launched directly (inactive) but a watchdog adopted it and is polling → not inactive", () => {
+    const r = deriveHaRollup(dash({ ha: { active: false, watchdog: { pid: null, alive: false, monitoring: false, supervising: true, lastPollAt: Date.now(), lastPollPid: 777 } } }));
+    expect(r.level).not.toBe("inactive");
+    expect(r.level).not.toBe("alarm");
+  });
+
   it("health endpoint not ok → alarm", () => {
     const r = deriveHaRollup(dash({ health: { ok: false } }));
     expect(r.level).toBe("alarm");

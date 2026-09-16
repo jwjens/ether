@@ -1,5 +1,31 @@
 # Backlog
 
+## ether-startup.log never rotates — 1.6 GB on OVEVENTS (filed 2026-09-15)
+**Jeff's instruction, verbatim:** *"File the 1.6 GB startup log … Not tonight."*
+- `%APPDATA%\Ether\ether-startup.log` is 1,606,809,965 bytes on OVEVENTS. Every SESSION START appends;
+  nothing ever rotates or truncates it (the daemon log rotates at 5 MB — `audiod/daemon-log.js`; the
+  watchdog log at 2 MB — `watchdog/watchdog.js:68`; this one has no cap).
+- 1.17 GB of it is **25.7 million un-timestamped continuation lines** written on 2026-09-03 (a multi-line
+  dump repeated), plus 397 MB of timestamped lines that day. Today's session is 468 lines.
+- On OV, Roaming is a network share (`H:\`) — a file this size there is a real cost, not a curiosity.
+- Fix shape: size-capped rotation like the other two logs (rename to `.1` at N MB), and find what
+  emitted the 09-03 dump (a stack trace or object printed in a loop) and bound it. Not a repair of the
+  existing file on any machine without Jeff's say-so.
+- Receipt: `docs/ovevents-crash-loop-alarm-2026-09-15.md` (side findings).
+
+## generated_schedule date query throws "Too few parameter values were provided" (filed 2026-09-15)
+**Jeff's instruction, verbatim:** *"File … the generated_schedule query error. Not tonight."*
+- OVEVENTS `ether-startup.log` 2026-09-16T00:33:58.228Z (17:33:58 local, the moment AUTO was pressed):
+  `[renderer:error] [DB query error] SELECT DISTINCT date(scheduled_at,'unixepoch','localtime') d FROM
+  generated_schedule WHERE station_i… Too few parameter values were provided`.
+- A renderer-side query (the calendar's day list) is built with more `?` placeholders than values
+  bound. The message is SQLite's. Call site: `src/components/BroadcastCalendar.tsx:205` (the day list):
+  the SQL has `station_id = ?` but the call passes `[]` for params with `skipScoping: true`, so the
+  placeholder is never bound. Fix is `[stationId]`. Filed, not fixed ("not tonight").
+- Impact unknown (UNVERIFIED): the calendar may show fewer days than exist for that station. One
+  occurrence seen.
+- Receipt: `docs/ovevents-crash-loop-alarm-2026-09-15.md` (side findings).
+
 ## TRAP: scripts/generate-handlers.js overwrites hand-edited handlers without warning (filed 2026-09-08)
 **Jeff's instruction, verbatim:** *"the generator is a trap for whoever runs it next. File it — the
 generator overwrites hand-edits without warning."*

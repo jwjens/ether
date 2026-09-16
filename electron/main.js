@@ -658,8 +658,6 @@ if (AUDIO_DAEMON_DESIRED) {
   // audio state, never triggers recovery. Two display-only signals the daemon emits only to its log
   // (per-station drain B/s, daemon pid) are read from a cheap tail of ether-audiod.log.
   const { createHealthMonitor } = require("./audio-health");
-  const _healthLogDir = _profileData("logs");
-  const _healthDaemonLog = path.join(_healthLogDir, "ether-audiod.log");
   let _healthTail = { at: 0, drain: {}, pid: null };
   function _readLastBytes(p, n) {
     try { const st = fs.statSync(p); const start = Math.max(0, st.size - n); const fd = fs.openSync(p, "r"); const buf = Buffer.alloc(st.size - start); fs.readSync(fd, buf, 0, buf.length, start); fs.closeSync(fd); return buf.toString("utf8"); } catch { return ""; }
@@ -673,6 +671,7 @@ if (AUDIO_DAEMON_DESIRED) {
       // blind. Read BOTH tails. Order .1 then .log; the last match per station wins: post-rotation the
       // fresh [RUST] drain is in .1 (.log has none), pre-rotation it's in .log. (Daemon re-opening its
       // own fd 2 on rotation isn't feasible in pure Node on Windows — no dup2 — so this is the safe one.)
+      const _healthDaemonLog = _daemonLogPath().file;   // the file the RUNNING daemon writes (see _daemonLogPath)
       const text = _readLastBytes(_healthDaemonLog + ".1", 65536) + "\n" + _readLastBytes(_healthDaemonLog, 65536);
       const drain = {}; let pid = _healthTail.pid;
       let m2; const dre = /Station (\d+) drain: real=([\d.]+)/g;
@@ -3750,6 +3749,11 @@ const HA_RELAUNCH_WINDOW_MS  = 5 * 60 * 1000;
 const HA_MAX_RELAUNCHES      = 3;
 let _haWatchdogPid  = Number(process.env.ETHER_WATCHDOG_PID) || 0;
 let _haMonitorTimer = null;
+// Observed supervision — set by the /health route when a poll carries x-ether-watchdog (see there).
+// 0 = never observed this session (a pre-4.6.45 watchdog sends no header: UNKNOWN, not "off").
+let _haLastPollAt   = 0;
+let _haLastPollPid  = 0;
+const HA_SUPERVISED_WITHIN_MS = 20000;   // 4 poll intervals (watchdog/config.js pollIntervalMs 5000)
 let _haMonitorOff   = false; // set on intentional quit / ha:disable
 const _haRelaunchTimes = [];
 
@@ -3836,6 +3840,24 @@ function _haConfigPath() { return path.join(app.getPath("userData"), "ha-config.
 function readHaConfigFile() {
   try { return JSON.parse(fs.readFileSync(_haConfigPath(), "utf8")); } catch { return { enabled: true }; }
 }
+// The watchdog's view of us, as OBSERVED: did a watchdog poll /health recently?
+//   true  — a header-bearing poll landed within HA_SUPERVISED_WITHIN_MS
+//   false — one landed earlier this session but has since stopped (the watchdog halted or died)
+//   null  — never observed (older watchdog without the header, or no watchdog at all)
+function _haSupervisionState() {
+  if (!_haLastPollAt) return { supervising: null, lastPollAt: 0, lastPollPid: 0 };
+  return { supervising: (Date.now() - _haLastPollAt) < HA_SUPERVISED_WITHIN_MS, lastPollAt: _haLastPollAt, lastPollPid: _haLastPollPid };
+}
+// When the marker was written (its content is Date.now() at trip — watchdog.js tripCrashLoop), so the
+// panel can say WHEN the limit was hit instead of presenting a 16:29 event as the present tense.
+function _haAlarmAt() {
+  try {
+    const p = path.join(app.getPath("userData"), ".ether-ha-alarm");
+    const txt = fs.readFileSync(p, "utf8").trim();
+    const n = Number(txt);
+    return Number.isFinite(n) && n > 0 ? n : Math.round(fs.statSync(p).mtimeMs);
+  } catch { return 0; }
+}
 function _haAlarmActive() {
   // MACHINE-level, NOT per-profile: the watchdog writes and reads this in Roaming\Ether
   // (watchdog/watchdog.js ALARM_MARKER) and knows nothing about accounts. Moving it into a profile
@@ -3919,8 +3941,9 @@ ipcMain.handle("ha:status", () => {
     supported: !!(plat && plat.registerStartup && process.platform === "win32"),
     config: readHaConfigFile(),
     startup: cachedStartupStatus(),
-    watchdog: { pid: _haWatchdogPid || null, alive: _haIsAlive(_haWatchdogPid), monitoring: !!_haMonitorTimer },
+    watchdog: { pid: _haWatchdogPid || null, alive: _haIsAlive(_haWatchdogPid), monitoring: !!_haMonitorTimer, ..._haSupervisionState() },
     alarm: _haAlarmActive(),
+    alarmAt: _haAlarmAt(),
   };
 });
 
@@ -3938,8 +3961,9 @@ ipcMain.handle("ha:dashboard", () => {
       active: !!_haWatchdogPid,
       config: readHaConfigFile(),
       startup: cachedStartupStatus(),
-      watchdog: { pid: _haWatchdogPid || null, alive: _haIsAlive(_haWatchdogPid), monitoring: !!_haMonitorTimer },
+      watchdog: { pid: _haWatchdogPid || null, alive: _haIsAlive(_haWatchdogPid), monitoring: !!_haMonitorTimer, ..._haSupervisionState() },
       alarm: _haAlarmActive(),
+      alarmAt: _haAlarmAt(),
       // Current logged-in account (env, no subprocess) — the Settings auto-logon
       // form shows it as the account that will be configured. config.user holds
       // the account actually configured (once enabled).
@@ -3951,6 +3975,41 @@ ipcMain.handle("ha:dashboard", () => {
 // ha:alarmStatus — minimal alarm-only check for the footer NOMINAL dot. A single
 // fs.existsSync; no subprocess, no risk of the dot holding stale dashboard state.
 ipcMain.handle("ha:alarmStatus", () => ({ alarm: _haAlarmActive() }));
+
+// ha:clearAlarm — the "manual intervention" the alarm text demands, done from the panel (2026-09-15).
+// Before this the ONLY thing that removed the marker was the next watchdog start (watchdog.js main()),
+// so a tripped watchdog left a red banner on every later launch of the app, forever, with no button.
+// Three steps, all reported back honestly:
+//   1. unlink the marker;
+//   2. a halted watchdog stays alive on purpose (tripCrashLoop keeps the process so a startup task
+//      can't relaunch it into another loop) — if the pid in .ether-watchdog.pid is alive and is NOT
+//      the one polling us, it is that halted supervisor: kill it, or step 3 would be a second one;
+//   3. relaunch a watchdog that ADOPTS this process (ETHER_ADOPT_PID — never a second Ether) and start
+//      the mutual-supervision monitor, so clearing the alarm also puts HA back ON for the running app.
+ipcMain.handle("ha:clearAlarm", () => {
+  const out = { ok: true, markerRemoved: false, staleWatchdogKilled: 0, watchdogPid: 0, error: null };
+  try {
+    const p = path.join(app.getPath("userData"), ".ether-ha-alarm");
+    if (fs.existsSync(p)) { fs.unlinkSync(p); out.markerRemoved = true; }
+  } catch (e) { out.ok = false; out.error = `could not remove the alarm marker: ${e.message}`; return out; }
+  try {
+    const sup = _haSupervisionState();
+    const filePid = readWatchdogPidFile();
+    const stale = filePid && _haIsAlive(filePid) && !(sup.supervising && sup.lastPollPid === filePid);
+    if (stale) { _haKillWatchdog(filePid); out.staleWatchdogKilled = filePid; if (_haWatchdogPid === filePid) _haWatchdogPid = 0; }
+  } catch (e) { console.warn("[HA] clearAlarm: stale-watchdog check failed:", e.message); }
+  try {
+    const sup = _haSupervisionState();
+    if (sup.supervising) { out.watchdogPid = sup.lastPollPid; return out; }   // already supervised — nothing to relaunch
+    _haMonitorOff = false;
+    _haRelaunchTimes.length = 0;                       // a deliberate operator action is not a storm
+    const pid = relaunchWatchdog();
+    if (pid) { startWatchdogMonitor(pid); out.watchdogPid = pid; }
+    else { out.ok = false; out.error = "alarm cleared, but the watchdog could not be relaunched — see the app log"; }
+  } catch (e) { out.ok = false; out.error = `alarm cleared, but relaunching the watchdog failed: ${e.message}`; }
+  console.log(`[HA] clearAlarm → ${JSON.stringify(out)}`);
+  return out;
+});
 
 // ha:readLog — last N lines of watchdog.log (on-demand, not polled). Main owns
 // the userData path; the renderer just asks for a tail.
@@ -3976,17 +4035,40 @@ ipcMain.handle("ha:readLog", (_e, lines) => {
 // Rotation/truncation: daemon-log.js rotates at 5 MB to `.log.1` and starts a fresh `.log`
 // (audiod/daemon-log.js:23,51). After that the file is SMALLER than our cursor, so `offset > size`
 // is the rotation signal — restart from the head of the new file and tell the caller (`reset`).
+//
+// WHICH FILE (2026-09-15). The daemon log had three homes and this read the wrong one for a month:
+//   · app-spawned daemon  → <userData>\logs\ether-audiod.log   (audio-daemon-client.js sets ETHER_AUDIOD_LOG)
+//   · watchdog-spawned    → <APPDATA>\openair\logs\…            (watchdog passed no env → daemon-log.js default)
+//   · this handler        → <profile>\logs\ether-audiod.log     (moved there by profile-migrate, written by nobody)
+// On OVEVENTS the panel showed 2026-08-14 lines as "live" while the running daemon wrote elsewhere.
+// The rule now: the daemon SAYS where it writes (hello.logPath, audiod/ether-audiod.js) and we tail that.
+// Only when no daemon has reported (older daemon, or none connected) do we fall back — to the newest of
+// the two writer locations, never the profile copy — and the response names the file + its last write,
+// so a stale tail is visible on the panel instead of impersonating live activity.
+function _daemonLogPath() {
+  const reported = (() => { try { return audiodClient.getDaemonLogPath(); } catch { return null; } })();
+  if (reported) return { file: reported, observed: true };
+  const cands = [
+    path.join(app.getPath("userData"), "logs", "ether-audiod.log"),
+    path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "openair", "logs", "ether-audiod.log"),
+  ];
+  let best = cands[0], bestM = -1;
+  for (const c of cands) { try { const m = fs.statSync(c).mtimeMs; if (m > bestM) { bestM = m; best = c; } } catch {} }
+  return { file: best, observed: false };
+}
 ipcMain.handle("activity:tail", (_e, fromOffset) => {
   const MAX_CHUNK = 256 * 1024;   // bound one call's work — a burst can never stall the UI
   try {
-    const p = _profileData("logs", "ether-audiod.log");
-    const size = fs.statSync(p).size;
+    const { file: p, observed } = _daemonLogPath();
+    const st = fs.statSync(p);
+    const size = st.size;
+    const meta = { file: p, observed, lastWriteAt: Math.round(st.mtimeMs) };
     const prev = Number(fromOffset);
     const seeding = !Number.isFinite(prev) || prev < 0;      // first call → seed from the tail
     const rotated = !seeding && prev > size;                 // file shrank → rotated/truncated
     let start = seeding ? Math.max(0, size - MAX_CHUNK) : rotated ? 0 : prev;
     if (size - start > MAX_CHUNK) start = size - MAX_CHUNK;  // clamp a large catch-up
-    if (start >= size) return { ok: true, offset: size, lines: [], reset: rotated };
+    if (start >= size) return { ok: true, offset: size, lines: [], reset: rotated, ...meta };
 
     const len = size - start;
     const fd = fs.openSync(p, "r");
@@ -3998,12 +4080,12 @@ ipcMain.handle("activity:tail", (_e, fromOffset) => {
     // Only consume up to the last complete line, so a line still being written is never split
     // across two polls. The remainder is picked up next call.
     const nl = text.lastIndexOf("\n");
-    if (nl < 0) return { ok: true, offset: start, lines: [], reset: rotated };
+    if (nl < 0) return { ok: true, offset: start, lines: [], reset: rotated, ...meta };
     const complete = text.slice(0, nl + 1);
     const lines = complete.split(/\r?\n/).filter(Boolean);
     // If we did not begin at a known line boundary (seeded or clamped mid-line), drop the partial head.
     if (start !== prev && start > 0) lines.shift();
-    return { ok: true, offset: start + Buffer.byteLength(complete, "utf8"), lines, reset: rotated };
+    return { ok: true, offset: start + Buffer.byteLength(complete, "utf8"), lines, reset: rotated, ...meta };
   } catch (e) {
     return { ok: false, offset: 0, lines: [], reset: false, error: e.code === "ENOENT" ? "no daemon log yet" : e.message };
   }
@@ -7812,6 +7894,17 @@ const irisHttpServer = require('http').createServer((req, res) => {
   // decision uses just two things: that this responds at all (main process not
   // hung) and audio.alive (engine thread still firing callbacks).
   if (req.method === 'GET' && url === '/health') {
+    // OBSERVED SUPERVISION (2026-09-15): the watchdog names itself on every poll (x-ether-watchdog:
+    // <pid>, watchdog.js checkHealth). Recording it is the only way this process can KNOW it is being
+    // supervised — `active`/`alive` below only say a watchdog pid exists somewhere, and on OVEVENTS a
+    // halted watchdog sat alive next to an unsupervised app while the panel said ALARM.
+    const wdHdr = Number(req.headers['x-ether-watchdog']) || 0;
+    if (wdHdr) {
+      _haLastPollAt = Date.now(); _haLastPollPid = wdHdr;
+      // A watchdog we did not launch (the logon task's, adopting us after a lock bounce) is still OUR
+      // supervisor — monitor it back, so mutual supervision is symmetric and `active` tells the truth.
+      if (!_haWatchdogPid && !_haMonitorOff && !app.isQuitting) { console.log(`[HA] supervised by watchdog pid ${wdHdr} (observed via /health) — monitoring it back`); startWatchdogMonitor(wdHdr); }
+    }
     res.end(JSON.stringify(buildHealthSnapshot()));
     return;
   }

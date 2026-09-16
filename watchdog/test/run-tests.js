@@ -17,9 +17,13 @@ const WD   = path.resolve(__dirname, '..', 'watchdog.js');
 const MOCK = path.resolve(__dirname, 'mock-ether.js');
 const NODE = process.execPath;
 
+// Own port (2026-09-15): the dev box usually has a LIVE Ether answering :3400, which silently
+// answered the mock's /health in the startup-grace tests. Watchdog + mock both use TEST_PORT.
+const TEST_PORT = 3477;
 const FAST = {
   WD_POLL_MS: '500', WD_TIMEOUT_MS: '500', WD_MISS_MAX: '3',
   WD_GRACE_MS: '6000', WD_KILL_CONFIRM_MS: '4000',
+  WD_HEALTH_URL: `http://127.0.0.1:${TEST_PORT}/health`, MOCK_HEALTH_PORT: String(TEST_PORT),
 };
 
 let passed = 0, failed = 0;
@@ -55,6 +59,33 @@ function runWatchdog({ behavior, env, runMs }) {
   });
 }
 
+// Bounce harness (2026-09-15): a healthy mock is ALREADY running (an operator's own launch); the
+// watchdog cold-starts with NO adopt hint and its spawn is a `bounce` mock — exit 0 at once, the
+// single-instance-lock refusal. The watchdog must recognise the bounce, strike it from the crash
+// window, find the running instance through /health and adopt it. Before this, three bounces in a
+// row were counted as three crashes (OVEVENTS, 16:29).
+async function runBounce({ runMs, env }) {
+  const userData = freshUserData();
+  const mock = spawn(NODE, [MOCK, 'healthy'], {
+    env: { ...process.env, WATCHDOG_USER_DATA: userData, MOCK_HEALTH_PORT: String(TEST_PORT) },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  await sleep(900);
+  const wd = spawn(NODE, [WD], {
+    env: {
+      ...process.env, ...FAST, ...(env || {}),
+      WATCHDOG_USER_DATA: userData,
+      WATCHDOG_TEST_CMD: NODE,
+      WATCHDOG_TEST_ARGS: `${MOCK} bounce`,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let out = '';
+  wd.stdout.on('data', d => out += d); wd.stderr.on('data', d => out += d);
+  await sleep(runMs);
+  return { out, mockPid: mock.pid, wdPid: wd.pid, userData };
+}
+
 // Adopt harness: spawn a standalone healthy mock (the "already-running Ether"),
 // then start the watchdog with ETHER_ADOPT_PID pointing at it. The watchdog
 // should adopt + monitor it, never spawn. WATCHDOG_TEST_ARGS is set only so a
@@ -62,10 +93,10 @@ function runWatchdog({ behavior, env, runMs }) {
 async function runAdopt({ runMs }) {
   const userData = freshUserData();
   const mock = spawn(NODE, [MOCK, 'healthy'], {
-    env: { ...process.env, WATCHDOG_USER_DATA: userData },
+    env: { ...process.env, WATCHDOG_USER_DATA: userData, MOCK_HEALTH_PORT: String(TEST_PORT) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  await sleep(900); // let the mock bind :3400 before the watchdog health-checks it
+  await sleep(900); // let the mock bind the test port before the watchdog health-checks it
   const wd = spawn(NODE, [WD], {
     env: {
       ...process.env, ...FAST,
@@ -130,10 +161,10 @@ function check(name, cond, detail) {
     });
     let out = ''; wd.stdout.on('data', d => out += d); wd.stderr.on('data', d => out += d);
     // Simulate the app self-relaunching: after the mock exits (~0.8s), bring a
-    // healthy /health server back up on :3400.
+    // healthy /health server back up on the test port.
     await sleep(1500);
     const healthy = http.createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: true, audio: { alive: true } })); });
-    await new Promise(r => healthy.listen(3400, '127.0.0.1', r));
+    await new Promise(r => healthy.listen(TEST_PORT, '127.0.0.1', r));
     await sleep(4000);
     console.log('--- [expected-restart] ---'); process.stdout.write(indent(out));
     check('relaunch: expected-restart sentinel honored', /expected-restart sentinel → update\/relaunch/.test(out));
@@ -171,6 +202,36 @@ function check(name, cond, detail) {
     check('no-storm: never spawned a duplicate', !/Ether spawned pid/.test(out));
     check('no-storm: no crash/respawn loop', !/unexpected exit → CRASH/.test(out) && !/respawning after/.test(out));
     killTree(wdPid); killTree(mockPid); await sleep(300);
+  }
+
+  // 9. Lock bounce (2026-09-15): exit 0 within lockBounceMs is NOT a crash — adopt the lock holder.
+  {
+    const { out, mockPid, wdPid, userData } = await runBounce({ runMs: 5000, env: { WD_MAX_RESTARTS: '2', WD_BACKOFF_MS: '0,0,0' } });
+    console.log(`--- [bounce] --- (healthy mock pid ${mockPid})`); process.stdout.write(indent(out));
+    check('bounce: recognised as a lock bounce', /single-instance lock bounce/.test(out));
+    check('bounce: NOT counted as a crash', !/unexpected exit → CRASH/.test(out));
+    check('bounce: adopted the running instance via /health pid', new RegExp(`adopted existing Ether pid ${mockPid} \\(healthy\\)`).test(out));
+    check('bounce: no crash-loop alarm', !/CRASH LOOP/.test(out) && !fs.existsSync(path.join(userData, '.ether-ha-alarm')));
+    check('bounce: spawned exactly once', (out.match(/Ether spawned pid/g) || []).length === 1);
+    killTree(wdPid); killTree(mockPid); await sleep(300);
+  }
+
+  // 10. Startup grace (2026-09-15): a slow boot must not be declared a hang before the grace ends.
+  {
+    const { out } = await runWatchdog({ behavior: 'slow-start:2500', env: { WD_STARTUP_GRACE_MS: '8000' }, runMs: 6000 });
+    console.log('--- [startup-grace] ---'); process.stdout.write(indent(out));
+    check('grace: misses during boot deferred', /starting — no \/health yet/.test(out));
+    check('grace: NOT declared a hang', !/HANG declared/.test(out));
+    check('grace: armed once the app answered', /startup grace over, hang detection armed/.test(out));
+    check('grace: no respawn', (out.match(/Ether spawned pid/g) || []).length === 1);
+  }
+
+  // 11. Grace expiry: a boot that NEVER answers is a hang once the grace has passed.
+  {
+    const { out } = await runWatchdog({ behavior: 'slow-start:60000', env: { WD_STARTUP_GRACE_MS: '2000' }, runMs: 6500 });
+    console.log('--- [grace-expiry] ---'); process.stdout.write(indent(out));
+    check('grace-expiry: misses counted after the grace', /health miss 3\/3/.test(out));
+    check('grace-expiry: HANG declared', /HANG declared/.test(out));
   }
 
   console.log(`\n=== ${passed} passed, ${failed} failed ===`);
