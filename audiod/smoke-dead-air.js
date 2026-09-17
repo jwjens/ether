@@ -32,7 +32,8 @@ function rig() {
   e.logs = [];
   e._log = (...a) => e.logs.push(a.join(" "));
   e.errors = [];
-  e.emit = (ev, p) => { if (ev === "error") e.errors.push(p); };
+  e.skips = [];     // `loadskip` events — what main routes to library-health "skipped this hour" + the ledger
+  e.emit = (ev, p) => { if (ev === "error") e.errors.push(p); else if (ev === "loadskip") e.skips.push(p); };
   e._dur = () => 180;
   e._fileOk = (fp) => !!fp && !/missing/.test(fp);
   e._maybeEmitDeck = () => {};
@@ -121,6 +122,7 @@ playlog.logPlay = (_db, row) => { rows.push(row); };
     check("b · _airGen bumped exactly once (for A), not for the refusal", e._airGen - airGenBefore, 1);
     check("b · queue consumed", e.queue.length, 0);
     check("b · no REFUSED line (B was never even selected — filePath rules)", e.plays.includes("B:REFUSED"), false);
+    check("b · nothing was refused, so nothing is counted as a skip", e.skips.length, 0);
   }
 
   console.log("\n── (b2) RUST REFUSES A DECK WE THOUGHT HAD A FILE — the refusal is honoured, not painted over ──");
@@ -147,6 +149,42 @@ playlog.logPlay = (_db, row) => { rows.push(row); };
     check("b2 · fell through: deck A playing the queue's row", [e.stateA.status, e.stateA.filePath], ["playing", "next.mp3"]);
     check("b2 · one play_log row, for A", rows.map(r => r.deck), ["A"]);
     check("b2 · _airGen bumped once, for A only", e._airGen - airGenBefore, 1);
+    // VISIBILITY (2026-09-16): the refusal is counted and named, not just logged.
+    const err = e.errors.find(x => x.where === "resume-playout" && x.deck === "B");
+    check("b2 · the error event carries deck / title / file / kind", [err.deck, err.title, err.filePath, err.kind], ["B", "Ghost Song", "ghost.mp3", "refused"]);
+    check("b2 · _noteLoadSkip fired for the refusal", e.skips.length, 1);
+    check("b2 · the loadskip names deck, title, file and says refused", [e.skips[0].deck, e.skips[0].title, e.skips[0].filePath, /refused by engine/.test(e.skips[0].reason)], ["B", "Ghost Song", "ghost.mp3", true]);
+  }
+
+  console.log("\n── (b3) REFUSED AFTER LOAD ON A — counted and named, then the next row plays ──");
+  {
+    const e = rig();
+    rows = [];
+    // Rust accepts the load but refuses the play for the FIRST row only (a stop raced it); the second plays.
+    const realPlay = e._play;
+    e._play = (d) => { if (d === "A" && e.rust.A.file_path === "first.mp3") { e.rust.A.file_path = ""; e.plays.push("A:REFUSED"); return false; } return realPlay(d); };
+    e.queue = e._ensureIds([{ title: "First", filePath: "first.mp3" }, { title: "Second", filePath: "second.mp3" }]);
+    e._recoverStall();
+    check("b3 · settled", await settled(e.advanceP, 2000), "settled");
+    check("b3 · refusal logged as a refusal", e.logs.some(l => /resume-playout: deck A REFUSED by the engine after load — skipping first\.mp3/.test(l)), true);
+    const err = e.errors.find(x => x.where === "resume-playout" && x.kind === "refused");
+    check("b3 · error event carries deck / title / file", [err.deck, err.title, err.filePath], ["A", "First", "first.mp3"]);
+    check("b3 · _noteLoadSkip fired once, naming deck A + file", [e.skips.length, e.skips[0].deck, e.skips[0].filePath, /refused by engine after load/.test(e.skips[0].reason)], [1, "A", "first.mp3", true]);
+    check("b3 · no play_log row for the refused row", rows.some(r => r.title === "First"), false);
+    check("b3 · the NEXT row went live on A, one play_log row", [e.stateA.status, e.stateA.filePath, rows.map(r => r.title)], ["playing", "second.mp3", ["Second"]]);
+  }
+
+  console.log("\n── (b4) FIVE MISSING FILES — five counted skips, then the sixth plays, all in one recovery ──");
+  {
+    const e = rig();
+    rows = [];
+    e.queue = e._ensureIds([1, 2, 3, 4, 5].map(i => ({ title: "Missing " + i, filePath: "missing" + i + ".mp3" })).concat([{ title: "Sixth", filePath: "sixth.mp3" }]));
+    e._recoverStall();
+    check("b4 · settled", await settled(e.advanceP, 2000), "settled");
+    check("b4 · five loadskips, each naming deck A + its file", [e.skips.length, e.skips.map(k => k.deck).join(""), e.skips.map(k => k.filePath)], [5, "AAAAA", ["missing1.mp3", "missing2.mp3", "missing3.mp3", "missing4.mp3", "missing5.mp3"]]);
+    check("b4 · five 'unplayable' error events carrying title + file", e.errors.filter(x => x.kind === "unplayable" && x.deck === "A" && x.title && x.filePath).length, 5);
+    check("b4 · the sixth is LIVE on A; one play_log row", [e.stateA.filePath, rows.map(r => r.title)], ["sixth.mp3", ["Sixth"]]);
+    check("b4 · queue drained", e.queue.length, 0);
   }
 
   console.log("\n── (c) WATCHDOG: a title-only deck is not 'content' — no recovery fires for it with an empty queue ──");

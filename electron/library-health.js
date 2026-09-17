@@ -961,11 +961,16 @@ function createLibraryHealth(opts) {
     // category on any live station has a target set (measured 2026-08-10).
     goalCheck,
     // Slice B feeds this from the daemon's loud skip events.
-    noteSkip(stationId, title, reason) {
+    // `extra` (2026-09-16): { deck, filePath } when the daemon knows them — a play REFUSED by the engine
+    // is counted here like a missing file, and the ledger line names the deck and the file.
+    noteSkip(stationId, title, reason, extra) {
       const hr = Math.floor(nowSec() / 3600);
       const c = skipCounts.get(stationId);
       skipCounts.set(stationId, c && c.hour === hr ? { hour: hr, n: c.n + 1 } : { hour: hr, n: 1 });
-      appendJsonl({ kind: 'load-skip', stationId, title, reason });
+      const ev = { kind: 'load-skip', stationId, title, reason };
+      if (extra && extra.deck) ev.deck = extra.deck;
+      if (extra && extra.filePath) ev.filePath = extra.filePath;
+      appendJsonl(ev);
     },
     // Item 2 — Generate reports its within-category relaxation (separation bent) + empty categories after
     // each run. LOUD: a health event per relaxed category + per empty category, and a per-station summary

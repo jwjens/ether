@@ -72,6 +72,8 @@ Each line is: **time · station · what happened**.
 | `top-of-hour HARD CUT` | The top of the hour arrived and the schedule was re-synced to the clock. |
 | `liveDeck OBSERVER — TWO DECKS ON AIR` | **Two songs are playing at once.** Report this. |
 | `watchdog: STALL` | Nothing was playing and the engine forced a recovery. |
+| `resume-playout: deck B REFUSED by the engine` | The recovery tried deck B but the deck had nothing loaded, so the engine refused to play it. **Nothing went to air from that deck** — the recovery moves on to the next queued song on deck A. Shown in red under **Warnings**; it is also counted in the Health Monitor (see *Library & Rotation* → skipped this hour, and the station's red line). |
+| `[RUST] Play deck B: REFUSED — no content loaded` | The audio engine's own line for the same refusal. |
 | `LOGREADER-SHADOW: behind` | The station is running later than its scheduled log. |
 
 ## Good to know

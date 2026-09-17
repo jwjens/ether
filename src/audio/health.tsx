@@ -36,6 +36,9 @@ export interface HealthStation {
   track: string | null; trackLeftSec: number | null;
   streaming: boolean; drainBps: number | null; enginestate: string; levelSince: string;
   jingle?: { state: string; title: string | null; categoryId: number | null; contentClass?: string | null; since: number } | null;   // JINGLES v1/v2
+  // 2026-09-16: the last play the engine REFUSED (or a queue row a stall recovery could not load) —
+  // deck, title, file, kind ("refused" | "unplayable"), when. null until one happens this session.
+  lastRefusal?: { deck: string | null; title: string; filePath: string; kind: string; error: string; at: string } | null;
 }
 export interface HealthEvent { ts: string; stationUuid: string; stationName?: string; level: HealthLevel; prevLevel: HealthLevel; reason: string; metrics?: any; }
 export interface HealthSnapshot {
@@ -225,6 +228,16 @@ export function LiveHealthMonitor() {
                 )}
               </div>
               <div style={cell}>{s.trackLeftSec != null ? `-${fmtLeft(s.trackLeftSec)}` : ""} {s.nextDeckReady ? <span style={{ color: LEVEL_COLOR.GREEN }}>· next ✓</span> : <span style={{ color: "var(--text-tertiary)" }}>· next …</span>}</div>
+              {/* A REFUSED play is named here, not only in the daemon log (2026-09-16). It stays until the
+                  next one; the RED level itself relaxes after PLAYSKIP_RECENT_MS like a play-skip. */}
+              {s.lastRefusal && (
+                <div title={s.lastRefusal.filePath || s.lastRefusal.error || ""} style={{ fontSize: 12, color: LEVEL_COLOR.RED, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {s.lastRefusal.kind === "unplayable" ? "unplayable row skipped" : "play refused"}
+                  {s.lastRefusal.deck ? ` on deck ${s.lastRefusal.deck}` : ""}
+                  {s.lastRefusal.title ? ` — ${s.lastRefusal.title}` : ""}
+                  {` · ${new Date(s.lastRefusal.at).toLocaleTimeString()}`}
+                </div>
+              )}
             </div>
             {/* The meters get the full width of the card, like the deck meters above.
                 scale="audio" on peak: it is an AMPLITUDE, so it maps through dB exactly as the

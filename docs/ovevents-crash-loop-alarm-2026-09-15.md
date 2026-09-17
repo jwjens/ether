@@ -560,3 +560,216 @@ DB, `loggen.js` untouched by this change, last changed in 928f48e).
 One hour of air on a box running this build with the log-reader flag on: zero `advanceP WEDGED` after
 a `calendar re-cue`, `advance done recue:B` present, and no `resume-playout: deck B LIVE` runs. On a
 stop, the deck panel goes empty. Jeff confirms on screen before anything is pushed.
+
+### Part 5 addendum — two questions on 995fa97 (read-only, 2026-09-16)
+
+**Q1. Cued-branch refusal (`engine.js:778-784`): is `manualCue` cleared for the refused deck?**
+
+Yes. `:782 this.manualCue.delete(cued);` runs on every refusal, beside `:781 deckReady.delete` and
+`:783 _setDeck(idle, title:"", artist:"", filePath:"")`. Not a defect.
+
+For the record, every reader of `manualCue`, and what a stale entry on an emptied deck WOULD have done
+had `:782` been missing:
+- `:769` — `_resumePlayout`'s first pick (manual first). Also requires `hasFile(d)`, so an emptied deck
+  is never re-picked whatever the set says. No loop from here.
+- `:788` — after a successful play: `manualCue.has(cued) ? delete : dequeue()`. A stale flag on a deck
+  that `_maintain` later refills FROM THE QUEUE (`:891-892` check `deckReady`/status only, never
+  `manualCue`) would make its eventual go-live skip the `dequeue()` — the queue's head row would stay
+  in the queue after airing. `preload`'s `onOtherDecks` guard (`:1184`) stops it being cued twice, but
+  the row would linger as a phantom pending item until something else dequeued it. That is the one
+  real consequence of a stale entry, and it is what `:782` prevents.
+- `:1111` (`handleRotate`) and `:1935` (operator start) — same skip-the-dequeue rule; same consequence.
+- `:2199` (`_resyncCuedDecks`) — a manual-cued deck is skipped by the calendar re-cue ("theirs"). A
+  stale flag would exempt the emptied deck from re-cue; `_maintain` (`:891`) would still refill it, so
+  it would not stay empty — but it would refill from queue index 0/1 rather than the calendar's
+  pending head. Prevented by `:782`.
+- `:1812` (`noteManualCue`, every renderer-initiated load) and `:1885` (operator cue) add; `:1981`
+  (operator OFF) deletes; `:682`, `:2025` clear on automation stop/start.
+PLAY NOW: `intentPlayNow` → `_resumePlayout`. After a refusal the deck has no file and no flag, so the
+next PLAY NOW takes the next pick in order (`deckReady` deck, else any idle deck with a file, else the
+queue onto A). Behaviour identical to a deck that was never cued.
+
+One observation, not a defect for the loop: the refusal path does not touch `boundQids`. If the refused
+deck's original row is still in the queue as bound head, it stays "bound" to a deck that is now empty.
+It resolves itself: the load-next branch `dequeue()`s from index 0 (`:800`, `:1593-1600` clears the
+qid), and `_maintain`'s `preload(n1, 0)` also loads from index 0, so the row is the next thing cued
+either way. `_resyncCuedDecks` already leaves the OLD row's qid bound after its own `_stop` (pre-existing,
+`:2210-2218`), so the fix did not introduce the pattern.
+
+**Q2. Load-next-onto-A refusal (`:802-807`): what happens after "skipping"?**
+
+`continue` → back to `while (this.queue.length > 0 && guard++ < 100)` (`:798`) → `dequeue()` the next
+row → `loadToDeck("A")` again. Not a return, not a spin: a bounded retry over the queue.
+- Bound: at most 100 iterations (`guard`), or until the queue is empty. Inside the loop, an empty queue
+  after a skip triggers ONE `refillIfNeeded()` (`:815`) — with the log-reader on that is
+  `_refillFromLog`, throttled to one read per 2 s (`:1294`), so a second refill in the same recovery
+  returns without rows. Then the loop ends and `_resumePlayout` returns `false` (`:817`).
+- After `false`: `_watchdog` retries at most every `RETRY_MS` 2 s (`:727-728`) while `haveContent`
+  holds (`:723`: a deck with a file, `queue.length > 0`, or `continuous`). Each retry is one more pass
+  of the same bounded loop. With an empty queue the `while` never runs, so a retry emits nothing.
+- The refusal-after-load path is near-unreachable by construction: `loadToDeck` returned true, so
+  `audio_load` (`lib.rs:63-75`) has just set `file_path`, and `audio_play` refuses only on an empty
+  `file_path` (`lib.rs:92-96`). It would take a stop on the same deck between those two calls; both run
+  on the advance chain, so nothing else that stops decks can interleave. Kept for the contract, not
+  because it fires.
+
+What the operator sees, per skipped item:
+- **Missing file** (`loadToDeck` false, `_fileOk` → `_resolveLocal` `:1654-1670`): `:812` error event
+  `skipped unplayable: <path>` + `:813 _noteLoadSkip(title, "unplayable at load (resume-playout)")`.
+  The `loadskip` event reaches main (`electron/main.js:877-880`) → `_libHealth.noteSkip` → the
+  Library & Rotation "skipped this hour" counter, red on any skip (`library-health.js:720-731`,
+  `:964`) + a `health-events.jsonl` entry. The daemon log carries no line for it (the error event is
+  the only daemon-side trace).
+- **Refused after load** (`:802-807`): daemon log line `resume-playout: deck A REFUSED by the engine
+  after load — skipping <path>` + an error event. **Nothing reaches the panel:** main routes `error`
+  events only when `where === "play-skip"` (`main.js:961`); every other `where` — including
+  `resume-playout` and the pre-existing `:812` — falls through the handler and is dropped. There is no
+  `_noteLoadSkip` on this path, so the skipped-at-load sense does not count it either.
+- **Refused in the cued branch** (`:779-780`): same — the log line is visible in Live Activity as a
+  *decision* line (`DECISION_RE` matches `resume-playout`, `LiveActivityTerminal.tsx:40`), not as a
+  warning (`WARNING_RE` `:39` has no `REFUSED`); the error event is dropped by main.
+
+The five-missing-files case, step by step (queue = [m1..m5, ok6]):
+1. `dequeue()` m1 → `_fileOk` false → error event (dropped) + `loadskip` (counted: skipped=1) — queue 5.
+2–5. same for m2..m5 — skipped=5, five `health-events.jsonl` `loadskip` entries, panel red.
+6. `dequeue()` ok6 → `loadToDeck("A")` true → `_play("A")` true → `_setDeck(playing)` → `_fireStart` →
+   `resume-playout: deck A LIVE — ok6` → return true. Total: one recovery, ~ms, six iterations.
+If ALL rows are missing: the loop drains the queue, refills once (throttled), returns false; the
+watchdog retries every 2 s; each retry refills (the reader hands back the next 20 rows ≥ now, or the
+emergency floor when the log is exhausted, `_refillFromLog` `:1290-1300`) and drains again. Skips keep
+counting on the panel; no unbounded spin (the while is capped at 100 per pass and the pass is capped at
+one per 2 s).
+
+**Verdict.** Q1: not a defect. Q2: the retry is bounded and correct; **one observability defect**: a
+play refused by the engine — in either branch — is invisible outside the daemon log, because (i) the
+refusal-after-load path does not call `_noteLoadSkip`, and (ii) main drops every engine `error` event
+whose `where` is not `play-skip` (`main.js:961`), which also silently drops the pre-existing
+`skipped unplayable` errors at `:812`. Sized to the rule "build the sense, not the scaffold":
+
+Proposed fix (not built):
+1. `engine.js:802-807` — add `this._noteLoadSkip(next.title, "play refused after load (resume-playout)")`
+   beside the error event, so the skipped-at-load counter sees it.
+2. `engine.js:779-780` — add `this._noteLoadSkip(this._deckState(cued).title || "(empty deck)", "play
+   refused — deck " + cued + " had no loaded source")` so the cued-branch refusal is counted too (the
+   title is read before `:783` empties it).
+3. `electron/main.js:961` — widen the route: `m.event === "error" && (m.where === "play-skip" ||
+   m.where === "resume-playout")` → `_health.notePlaySkip(m.stationId)` (or a dedicated
+   `noteRefusal`), so the Health Monitor's play-skip cell reflects refusals as it does play-skip guards.
+4. `src/components/LiveActivityTerminal.tsx:39` — add `REFUSED` to `WARNING_RE` so the line shows red
+   under the Warnings filter.
+Blast radius: additive senses only; no playout path changes.
+
+---
+
+## Part 6 — refusal visibility, BUILT (local commit only, 2026-09-16)
+
+Branch `log-reader-flip`, one commit on top of 995fa97 (7fb8eba and 995fa97 untouched). No push, no
+tag, no version bump, no install. Neither live DB opened. **No playout behaviour changed** — every
+edit is an added sense, a routed event, a classification, or help text. Line numbers are post-change.
+
+### ⚠ A regression from 7fb8eba, found and fixed here — the app would not have started
+
+`electron/main.js:703 logDir: _healthLogDir` (the health monitor's ledger directory) still referenced
+`_healthLogDir`, whose definition 7fb8eba deleted together with the daemon-log path it no longer
+needed. The line sits at module top level inside `if (AUDIO_DAEMON_DESIRED) { … }` — it runs at load,
+so 7fb8eba as committed throws `ReferenceError: _healthLogDir is not defined` on launch in daemon mode
+(the Windows default). It was never launched between then and now, which is the only reason it was not
+seen; `tsc` does not check `main.js` and no smoke loads it. Restored at `main.js:666`:
+`const _healthLogDir = _profileData("logs");` — the ledger stays exactly where it was
+(`profiles\<uuid>\logs\health-events.jsonl`); only the daemon-log tail moved in 7fb8eba. **Do not
+install 7fb8eba or 995fa97 on their own; this commit is required with them.** Runtime receipt (a
+launch) still owed for all three.
+
+### What changed
+
+**1. Both refusal paths are counted and named — `audiod/engine.js`**
+- `_noteLoadSkip(title, reason, extra)` (`:1208-1211`) now forwards `extra` (`{ deck, filePath }`) on
+  the `loadskip` event.
+- Cued-branch refusal (`:778-786`): the deck's title/file are read BEFORE the deck is emptied (`:779
+  const was = …`); the `error` event carries `kind:"refused", deck, title, filePath` (`:781`);
+  `_noteLoadSkip(was.title || "(empty deck)", "refused by engine — deck X had no loaded source",
+  { deck, filePath })` (`:785`).
+- Load-next-onto-A refusal (`:806-812`): same — `error` with `kind:"refused"` + deck/title/file
+  (`:809`), `_noteLoadSkip(next.title, "refused by engine after load (resume-playout)", { deck:"A",
+  filePath })` (`:810`).
+- The pre-existing unplayable-row event (`:820-821`) now carries `kind:"unplayable", deck:"A", title,
+  filePath` and its `_noteLoadSkip` passes `{ deck, filePath }` too — so a missing file in recovery is
+  named as fully as a refusal.
+- `electron/library-health.js:966-975 noteSkip(stationId, title, reason, extra)`: the counter is
+  unchanged; the ledger line gains `deck` and `filePath` when present
+  (`{"kind":"load-skip","stationId":2,"title":…,"reason":"refused by engine — deck B …","deck":"B","filePath":…}`).
+
+**2. main.js stops dropping the engine's `resume-playout` errors**
+- `electron/main.js:969-974`: `m.event === "error" && m.where === "resume-playout"` →
+  `_health.noteRefusal(m.stationId, m)`. Both kinds ride this route — `refused` (the two paths above)
+  and `unplayable` (the `:820` load-error events).
+- `main.js:886`: the `loadskip` route passes `{ deck: m.deck, filePath: m.filePath }` to
+  `_libHealth.noteSkip`.
+- `electron/audio-health.js`: new sense `noteRefusal(stationId, m)` (`:172-183`) — per-station
+  `refusalAt` + `lastRefusal { deck, title, filePath, kind, error, at }` (`:72`), level RED for
+  `PLAYSKIP_RECENT_MS` with a named reason (`:227-230`: `play refused on deck B — <title>` /
+  `unplayable row skipped on deck A — <title>`), `lastRefusal` in the snapshot (`:312`), and a ledger
+  line `{"ts","type":"play-refused","stationUuid","stationName","stationId","deck","title","filePath",
+  "kind","error","at"}` in `health-events.jsonl` (`:180`). Exported at `:326`.
+- **Other `where` values the engine emits that main STILL drops (listed, routed none):** `watchdog`
+  (stall/wedge notices), `top-of-hour`, `sweeper-lead-clamped`, `sweeper-lead-clamped-spot`, `start`,
+  `skip`, `preload` (dropped unplayable at preload — its `_noteLoadSkip` IS counted, only the `error`
+  twin is dropped), `loadToDeck`, `liveDeckGuard`, `handleLoadNext`, `deck-retire-slow`, `daemon-fill`,
+  `automationStart`, `autofit`. `play-skip` was already routed (`:967`).
+
+**3. Live Activity — `src/components/LiveActivityTerminal.tsx:39`**: `REFUSED` added to `WARNING_RE`
+(case-insensitive), so both the engine's `resume-playout: deck B REFUSED …` and Rust's
+`[RUST] Play deck B: REFUSED — no content loaded` render red and appear under **Warnings**.
+
+**4. The station card names it — `src/audio/health.tsx`**: `HealthStation.lastRefusal` (`:41`); under
+the track line (`:233-241`) a red line `play refused on deck B — <title> · 17:33:12` (or `unplayable
+row skipped …`), tooltip = file path / error text. It stays until the next refusal; the RED level
+itself relaxes like a play-skip.
+
+**Help**: `docs/help-live-activity.md` (two new rows in *What the lines mean*),
+`docs/help-health-monitor.md` (*When a station shows "play refused" or "unplayable row skipped"*).
+
+### Tests
+`audiod/smoke-dead-air.js` — extended; (b) asserts nothing is counted when nothing was refused, (b2)
+asserts the error carries deck/title/file/kind and `_noteLoadSkip` fired naming deck/title/file, new
+(b3) refused-after-load on A, new (b4) the five-missing-files walk. Verbatim (new/changed lines):
+```
+PASS  b · nothing was refused, so nothing is counted as a skip
+PASS  b2 · the error event carries deck / title / file / kind
+PASS  b2 · _noteLoadSkip fired for the refusal
+PASS  b2 · the loadskip names deck, title, file and says refused
+── (b3) REFUSED AFTER LOAD ON A — counted and named, then the next row plays ──
+PASS  b3 · settled
+PASS  b3 · refusal logged as a refusal
+PASS  b3 · error event carries deck / title / file
+PASS  b3 · _noteLoadSkip fired once, naming deck A + file
+PASS  b3 · no play_log row for the refused row
+PASS  b3 · the NEXT row went live on A, one play_log row
+── (b4) FIVE MISSING FILES — five counted skips, then the sixth plays, all in one recovery ──
+PASS  b4 · settled
+PASS  b4 · five loadskips, each naming deck A + its file
+PASS  b4 · five 'unplayable' error events carrying title + file
+PASS  b4 · the sixth is LIVE on A; one play_log row
+PASS  b4 · queue drained
+=== 50 passed, 0 failed ===
+```
+`electron/audio-health-refusal.test.js` (vitest, main-side): `noteRefusal` → snapshot `lastRefusal`
+{deck B, title, kind refused}, a `play-refused` ledger line with stationId 2 / stationName /
+deck / title / ts; the `unplayable` kind; and the main.js route pinned as a source contract (main.js
+only loads under Electron): `m.event === "error" && m.where === "resume-playout" … _health.noteRefusal
+(m.stationId, m)` and the `loadskip` route carrying deck/file. → **3 passed**.
+`src/components/LiveActivityTerminal.test.ts`: both REFUSED lines → warning; a go-live stays a
+decision; the heartbeat stays routine → **4 passed**.
+
+Gates: `npx tsc --noEmit` exit 0. `npx vitest run` → **30 files, 406 passed**. `node
+watchdog/test/run-tests.js` → **32 passed, 0 failed**. Existing audiod smokes (same set as Part 5):
+autofit 47 · autopost-arm 21 · cmd-routing 7 · deck-identity 22 · deck-position 16 · deck-snapshot 25
+· enginestate-wire 15 · enginestate 19 · logreader-anchor 18 · manual-mode 30 · meter-contract 15 ·
+orphan 4 · queue-classes 8 · seam-stop 60 · xfade-contract 33 — all pass. `test:ipc-contract`,
+`test:preload-bridge`, `test:undefined-calls` → PASS. `node --check` on the four edited JS files → ok.
+
+### Runtime receipts owed
+A launch of a build carrying 7fb8eba + 995fa97 + this commit: the app starts in daemon mode (the
+`_healthLogDir` fix), a forced refusal (stop a cued deck by hand, then PLAY NOW with the queue
+populated) shows the red line on the station card, the count in *skipped this hour*, the ledger line
+in *Live events*, and a red REFUSED line under Live Activity → Warnings.

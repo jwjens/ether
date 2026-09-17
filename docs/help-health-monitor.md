@@ -48,6 +48,22 @@ Below the cards:
   the last 24 hours. If the station was only on air for part of that window, it says so.
 - **Live events** — the health ledger, read back. What actually happened, newest first.
 
+### When a station shows "play refused" or "unplayable row skipped"
+
+The station's card turns red for about a minute and names it — *play refused on deck B — <song> ·
+17:33:12* — and the line stays under the card until the next one. It means the engine was asked to
+play a deck that had nothing loaded (or a queued song whose file is missing) and **refused**, and
+playout moved on to the next queued song instead. Nothing was aired from the refused deck.
+
+- It is counted in **Library & Rotation → skipped this hour** (red on any skip) and written to the
+  health ledger with the station, deck, song, file and time, so you can see it in **Live events** and
+  find it later.
+- One or two in a day after a re-cue is the engine protecting air. A run of them, or the same song
+  every time, means a file is missing or a deck is being emptied and not re-cued — open **Live
+  Activity**, filter **Warnings**, and read the lines around it.
+- If the card says *unplayable row skipped*, the song's file could not be found on this machine:
+  check the library entry and whether the file has been fetched from the cloud.
+
 ## The bottom half — the detail
 
 - **Audio Processing** — the loudness chain. IN and OUT loudness lead as figures, then meters for the

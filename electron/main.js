@@ -658,6 +658,12 @@ if (AUDIO_DAEMON_DESIRED) {
   // audio state, never triggers recovery. Two display-only signals the daemon emits only to its log
   // (per-station drain B/s, daemon pid) are read from a cheap tail of ether-audiod.log.
   const { createHealthMonitor } = require("./audio-health");
+  // The health ledger (health-events.jsonl) lives in the PROFILE's logs dir — unchanged. 7fb8eba removed
+  // this line together with the daemon-log path it no longer needed, but `logDir: _healthLogDir` below
+  // still read it: a ReferenceError at module load in daemon mode, i.e. the app would not have started.
+  // Caught 2026-09-16 while reading this block; never launched in between. Only the DAEMON LOG moved
+  // (see _daemonLogPath) — the ledger did not.
+  const _healthLogDir = _profileData("logs");
   let _healthTail = { at: 0, drain: {}, pid: null };
   function _readLastBytes(p, n) {
     try { const st = fs.statSync(p); const start = Math.max(0, st.size - n); const fd = fs.openSync(p, "r"); const buf = Buffer.alloc(st.size - start); fs.readSync(fd, buf, 0, buf.length, start); fs.closeSync(fd); return buf.toString("utf8"); } catch { return ""; }
@@ -876,8 +882,8 @@ if (AUDIO_DAEMON_DESIRED) {
         try { _health.noteDeck(m.stationId, m.deck, m.ready, m.state); } catch {}
       } else if (m.event === "loadskip") {
         // Slice B: a row was skipped/dropped as unresolvable → feed the library-health skipped-at-load
-        // sense (+ health-events.jsonl). Never silent.
-        try { _libHealth && _libHealth.noteSkip(m.stationId, m.title, m.reason); } catch {}
+        // sense (+ health-events.jsonl). Never silent. deck/filePath ride along when the daemon knows them.
+        try { _libHealth && _libHealth.noteSkip(m.stationId, m.title, m.reason, { deck: m.deck, filePath: m.filePath }); } catch {}
       } else if (m.event === "logreader-floor" || m.event === "logreader-missed" || m.event === "logreader-ahead" || m.event === "logreader-operator-write" || m.event === "fill-starved" || m.event === "separation-relaxed" || m.event === "position-authority" || m.event === "spot-missed") {
         // Log-Reader Flip (ACTIVATION): loud flip-time events — emergency floor (log exhausted), a
         // behind-anchor missed sweep, an ahead early-play beyond slack, or an operator deck-load written
@@ -960,6 +966,12 @@ if (AUDIO_DAEMON_DESIRED) {
         try { if (_health) _health.noteStreamStatus(m.stationId, m.state); } catch {}   // v4.4.51: Health Monitor streaming ▲ + drain B/s
       } else if (m.event === "error" && m.where === "play-skip") {
         try { _health.notePlaySkip(m.stationId); } catch {}
+      } else if (m.event === "error" && m.where === "resume-playout") {
+        // 2026-09-16: a play the engine REFUSED, or a queue row the stall recovery could not load. These
+        // used to fall through this chain and vanish — a refusal was visible only in the daemon log.
+        // Other `where` values still fall through here unrouted (listed in
+        // docs/ovevents-crash-loop-alarm-2026-09-15.md §6); this routes only the two named there.
+        try { _health.noteRefusal(m.stationId, m); } catch {}
       } else if (m.event === "jingle") {
         // JINGLES overlay v1: daemon ARMED/FIRING/ARMED_CANCELLED/CLEARED → renderer (deck indicators +
         // seam chip) + the Health Monitor (jingle cell + ledger event). Observed states only.

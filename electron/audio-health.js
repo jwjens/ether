@@ -69,6 +69,7 @@ function createHealthMonitor(opts) {
         streaming: false, drainBps: null,
         jingle: null,   // JINGLES v1: { state:'ARMED'|'FIRING', title, categoryId, since } or null
         refill0At: 0, playSkipAt: 0,
+        refusalAt: 0, lastRefusal: null,   // 2026-09-16: a play the engine REFUSED (or a row it could not load) — { deck, title, filePath, kind, at }
         degradedSince: 0, frozenSince: 0,
         level: "GREY", levelSince: nowMs(), reason: "init",
         displayLevel: "GREY", worseSince: 0,   // v4.4.51: debounced level shown in the UI (5s hysteresis)
@@ -164,6 +165,21 @@ function createHealthMonitor(opts) {
       if (source && addedCount === 0) r.refill0At = nowMs(); } catch {}
   }
   function notePlaySkip(stationId) { try { rec(uuidOf(stationId)).playSkipAt = nowMs(); } catch {} }
+  // A play the engine refused (Rust had no file on the deck) or a queue row that could not be loaded in
+  // a stall recovery (engine `error` events with where "resume-playout"). Until 2026-09-16 main dropped
+  // these on the floor — a refusal was visible only in the daemon log. Now: a per-station cell (RED for
+  // PLAYSKIP_RECENT_MS, like a play-skip), a snapshot field naming deck/title/file/time, and a ledger line.
+  function noteRefusal(stationId, m) {
+    try {
+      const r = rec(uuidOf(stationId)); r.stationId = stationId; r.name = stationName(stationId);
+      const t = nowMs();
+      r.refusalAt = t;
+      r.lastRefusal = { deck: (m && m.deck) || null, title: (m && m.title) || "", filePath: (m && m.filePath) || "",
+                        kind: (m && m.kind) || "refused", error: (m && m.error) || "", at: iso(t) };
+      const ev = { ts: iso(t), type: "play-refused", stationUuid: r.uuid, stationName: r.name, stationId, ...r.lastRefusal };
+      try { if (jsonlPath) fs.appendFileSync(jsonlPath, JSON.stringify(ev) + "\n"); } catch {}
+    } catch {}
+  }
   function notePlayStart(stationId, title, artist, durationMs) {
     try { const r = rec(uuidOf(stationId)); r.track = title ? (artist ? `${title} — ${artist}` : title) : r.track;
       r.trackStartAt = nowMs(); if (typeof durationMs === "number") r.trackDurMs = durationMs; } catch {}
@@ -208,6 +224,10 @@ function createHealthMonitor(opts) {
     // RED conditions
     if (r._restartFlag && (t - r._restartFlag) < 3000) return { level: "RED", reason: "engine restarted" };
     if (r.playSkipAt && (t - r.playSkipAt) < PLAYSKIP_RECENT_MS) return { level: "RED", reason: "play-skip event" };
+    if (r.refusalAt && (t - r.refusalAt) < PLAYSKIP_RECENT_MS) {
+      const lr = r.lastRefusal || {};
+      return { level: "RED", reason: (lr.kind === "unplayable" ? "unplayable row skipped" : "play refused") + (lr.deck ? " on deck " + lr.deck : "") + (lr.title ? " — " + lr.title : "") };
+    }
     if (r.queueDepth === 0) return { level: "RED", reason: "queue empty" };
     const silentMs = r.lastNonSilentAt ? (t - r.lastNonSilentAt) : 0;
     if (playing && r.lastNonSilentAt && silentMs > SILENT_RED_MS) return { level: "RED", reason: `silent ${Math.round(silentMs/1000)}s while playing` };
@@ -289,6 +309,7 @@ function createHealthMonitor(opts) {
         trackLeftSec: r.trackLeftMs != null ? Math.round(r.trackLeftMs/1000) : null,
         streaming: r.streaming, drainBps: r.drainBps, enginestate: r.enginestate, levelSince: iso(r.levelSince),
         jingle: r.jingle,   // JINGLES v1: live overlay state (null when idle)
+        lastRefusal: r.lastRefusal,   // 2026-09-16: { deck, title, filePath, kind, error, at } or null
       })),
       recentEvents: recentEvents.slice(0, MAX_RECENT),
     };
@@ -305,7 +326,7 @@ function createHealthMonitor(opts) {
   function stop() { if (timer) { clearInterval(timer); timer = null; } }
 
   return {
-    noteLevels, noteEngineState, noteDeck, noteQueue, notePlaySkip, notePlayStart, noteStreamStatus, noteEnginePid, noteJingle,
+    noteLevels, noteEngineState, noteDeck, noteQueue, notePlaySkip, noteRefusal, notePlayStart, noteStreamStatus, noteEnginePid, noteJingle,
     start, stop, getSnapshot: () => snapshot(), getRecentEvents: (n = MAX_RECENT) => recentEvents.slice(0, n),
   };
 }

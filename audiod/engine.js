@@ -776,8 +776,13 @@ class DaemonEngine {
       // started. Now a refusal changes NO state that claims air — it is logged, surfaced, the
       // phantom deck is emptied on our side too, and recovery falls through to the queue.
       if (this._play(cued) === false) {
+        const was = this._deckState(cued);   // read BEFORE the deck is emptied below — the ledger names what we thought was there
         this._log("resume-playout: deck " + cued + " REFUSED by the engine (no content loaded) — falling through to the queue");
-        this.emit("error", { stationId: this.stationId, where: "resume-playout", deck: cued, error: "play refused — deck " + cued + " has no loaded source; loading from the queue instead" });
+        this.emit("error", { stationId: this.stationId, where: "resume-playout", kind: "refused", deck: cued, title: was.title || "", filePath: was.filePath || "", error: "play refused — deck " + cued + " has no loaded source; loading from the queue instead" });
+        // Counted where a missing file is counted (Library & Rotation "skipped this hour") and written to
+        // health-events.jsonl with deck + file. A refusal that only the daemon log knew about was the
+        // gap named in docs/ovevents-crash-loop-alarm-2026-09-15.md §5 addendum.
+        this._noteLoadSkip(was.title || "(empty deck)", "refused by engine — deck " + cued + " had no loaded source", { deck: cued, filePath: was.filePath || "" });
         this.deckReady.delete(cued);
         this.manualCue.delete(cued);
         this._setDeck(cued, { status: "idle", title: "", artist: "", filePath: "", positionSec: 0 });
@@ -801,7 +806,8 @@ class DaemonEngine {
         this.deckChainType.A = next.chainType || "segue";
         if (this._play("A") === false) {   // same contract: a refused play is not a play
           this._log("resume-playout: deck A REFUSED by the engine after load — skipping " + (next.filePath || ""));
-          this.emit("error", { stationId: this.stationId, where: "resume-playout", deck: "A", error: "play refused after load: " + (next.filePath || "") });
+          this.emit("error", { stationId: this.stationId, where: "resume-playout", kind: "refused", deck: "A", title: next.title || "", filePath: next.filePath || "", error: "play refused after load: " + (next.filePath || "") });
+          this._noteLoadSkip(next.title, "refused by engine after load (resume-playout)", { deck: "A", filePath: next.filePath || "" });
           this._setDeck("A", { status: "idle", title: "", artist: "", filePath: "", positionSec: 0 });
           continue;
         }
@@ -811,8 +817,8 @@ class DaemonEngine {
         this._log("resume-playout: deck A LIVE — " + (this.stateA.title || "(untitled)"));
         return true;
       }
-      this.emit("error", { stationId: this.stationId, where: "resume-playout", error: "skipped unplayable: " + (next.filePath || "") });
-      this._noteLoadSkip(next.title, "unplayable at load (resume-playout)");
+      this.emit("error", { stationId: this.stationId, where: "resume-playout", kind: "unplayable", deck: "A", title: next.title || "", filePath: next.filePath || "", error: "skipped unplayable: " + (next.filePath || "") });
+      this._noteLoadSkip(next.title, "unplayable at load (resume-playout)", { deck: "A", filePath: next.filePath || "" });
       if (this.queue.length === 0) await this.refillIfNeeded();
     }
     return false;
@@ -1197,8 +1203,10 @@ class DaemonEngine {
   // Slice B — every skip of an unresolvable row is LOUD: a structured health event (title, station,
   // reason) that main routes to the library-health skipped-at-load sense + health-events.jsonl. A deck
   // load must never die silently again.
-  _noteLoadSkip(title, reason) {
-    try { this.emit("loadskip", { stationId: this.stationId, title: title || "(untitled)", reason }); } catch { /* never break playout */ }
+  // `extra` (2026-09-16): deck + file, so a REFUSED play (the engine had the deck, Rust had no file) is
+  // named in the ledger as fully as a missing file is — main routes this to library-health.noteSkip.
+  _noteLoadSkip(title, reason, extra) {
+    try { this.emit("loadskip", { stationId: this.stationId, title: title || "(untitled)", reason, ...(extra || {}) }); } catch { /* never break playout */ }
   }
 
   // Log-Reader Flip (ACTIVATION) — is the time-anchored log-reader ON for THIS station? Per-station via
