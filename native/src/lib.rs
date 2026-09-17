@@ -115,9 +115,16 @@ pub fn audio_stop(deck: String, station_id: Option<u32>) -> bool {
         // AudioCmd::Stop drops the sink AND loaded_files, so the deck genuinely has no content
         // afterwards. Clear file_path to match (2026-07-31) — it is what audio_play now trusts, and a
         // stale path here would let a play claim success on a deck Rust would silently skip.
+        //
+        // And clear title + artist with it (2026-09-16): an empty deck that still NAMES a track is a
+        // deck the JS engine read as "has content" — its stall recovery selected on the title, this
+        // function refused the play (correctly), and the retry fired every 2s until the top of the
+        // hour. Eight hours of dead air on OV. A stopped deck has nothing on it; say so in every field.
         let m = deck_meta_mut(&mut audio, &deck);
         m.status = "idle".to_string();
         m.file_path = String::new();
+        m.title = String::new();
+        m.artist = String::new();
     }
     audio.sender.send(AudioCmd::Stop(deck)).is_ok()
 }

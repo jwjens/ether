@@ -716,7 +716,11 @@ class DaemonEngine {
     if (playing) { this._lastPlayingAt = now; this._watchdogArmed = true; return; }  // healthy → re-arm
 
     // Is there anything to recover WITH? A cued/loaded deck, or queued (or continuous-refillable) content.
-    const haveContent = order.some(d => !!this._deckState(d).title) || this.queue.length > 0 || this.continuous;
+    // A deck "has content" when it has a FILE (filePath) — never a title. Rust's audio_stop clears the
+    // file but (until 2026-09-16) kept the title, so a stopped deck read as content here, the recovery
+    // below picked it, Rust refused to play it, and the retry fired every 2s until the top of the hour
+    // — 8 hours of dead air on OV, 1h33m on OVEVENTS (docs/ovevents-crash-loop-alarm-2026-09-15.md §4).
+    const haveContent = order.some(d => !!this._deckState(d).filePath) || this.queue.length > 0 || this.continuous;
     if (!haveContent) return;                               // genuinely nothing to play — not a stall
     if (now - this._lastPlayingAt < STALL_MS) return;       // not stalled long enough (could be mid-transition)
     // Fire ONCE per stall (armed). If that recovery can't find content, fall back to a bounded retry
@@ -757,19 +761,36 @@ class DaemonEngine {
     const order = ["A", "B", "C"];
     if (order.some(d => this._deckState(d).status === "playing")) return false;  // someone's already playing
     // Prefer a cued standby deck (manual cue first → operator intent, then any ready/loaded-idle deck).
-    const cued = order.find(d => this.manualCue.has(d) && this._deckState(d).status === "idle" && this._deckState(d).title)
-              || order.find(d => this.deckReady.has(d) && this._deckState(d).status === "idle" && this._deckState(d).title)
-              || order.find(d => this._deckState(d).status === "idle" && this._deckState(d).title);
+    // CONTENT IS A FILE, NOT A TITLE (2026-09-16). These three picks selected on `.title`, and Rust's
+    // audio_stop left the title on a deck it had emptied — so a deck the calendar re-cue had just
+    // stopped was picked, refused by Rust, marked LIVE anyway, logged as a play, and picked again 2s
+    // later until the top of the hour. filePath is the bit Rust clears when a deck truly has nothing.
+    const hasFile = (d) => !!this._deckState(d).filePath;
+    const cued = order.find(d => this.manualCue.has(d) && this._deckState(d).status === "idle" && hasFile(d))
+              || order.find(d => this.deckReady.has(d) && this._deckState(d).status === "idle" && hasFile(d))
+              || order.find(d => this._deckState(d).status === "idle" && hasFile(d));
     if (cued) {
-      this._play(cued);
-      this._setDeck(cued, { status: "playing", positionSec: 0 });
-      this.endTriggered.delete(cued);
-      this.deckReady.delete(cued);
-      if (this.manualCue.has(cued)) this.manualCue.delete(cued);  // it just went live; don't dequeue against it
-      else if (this.queue.length > 0) this.dequeue();
-      this._fireStart(cued);
-      this._log("resume-playout: deck " + cued + " LIVE — " + (this._deckState(cued).title || "(untitled)"));
-      return true;
+      // RUST'S REFUSAL IS THE TRUTH. audio_play returns false when the deck has no content
+      // (native/src/lib.rs). Before this the return value was dropped: status became "playing",
+      // _fireStart wrote a play_log row and bumped the jingle generation for audio that never
+      // started. Now a refusal changes NO state that claims air — it is logged, surfaced, the
+      // phantom deck is emptied on our side too, and recovery falls through to the queue.
+      if (this._play(cued) === false) {
+        this._log("resume-playout: deck " + cued + " REFUSED by the engine (no content loaded) — falling through to the queue");
+        this.emit("error", { stationId: this.stationId, where: "resume-playout", deck: cued, error: "play refused — deck " + cued + " has no loaded source; loading from the queue instead" });
+        this.deckReady.delete(cued);
+        this.manualCue.delete(cued);
+        this._setDeck(cued, { status: "idle", title: "", artist: "", filePath: "", positionSec: 0 });
+      } else {
+        this._setDeck(cued, { status: "playing", positionSec: 0 });
+        this.endTriggered.delete(cued);
+        this.deckReady.delete(cued);
+        if (this.manualCue.has(cued)) this.manualCue.delete(cued);  // it just went live; don't dequeue against it
+        else if (this.queue.length > 0) this.dequeue();
+        this._fireStart(cued);
+        this._log("resume-playout: deck " + cued + " LIVE — " + (this._deckState(cued).title || "(untitled)"));
+        return true;
+      }
     }
     // Nothing cued anywhere — load + play the next PLAYABLE track from the queue onto deck A.
     await this.refillIfNeeded();
@@ -778,7 +799,12 @@ class DaemonEngine {
       const next = this.dequeue();
       if (this.loadToDeck("A", next)) {
         this.deckChainType.A = next.chainType || "segue";
-        this._play("A");
+        if (this._play("A") === false) {   // same contract: a refused play is not a play
+          this._log("resume-playout: deck A REFUSED by the engine after load — skipping " + (next.filePath || ""));
+          this.emit("error", { stationId: this.stationId, where: "resume-playout", deck: "A", error: "play refused after load: " + (next.filePath || "") });
+          this._setDeck("A", { status: "idle", title: "", artist: "", filePath: "", positionSec: 0 });
+          continue;
+        }
         this._setDeck("A", { status: "playing", positionSec: 0 });
         this.endTriggered.delete("A");
         this._fireStart("A");
@@ -1132,27 +1158,40 @@ class DaemonEngine {
   // a transient deckReady → the Bug-2 stall). Cheap guards run synchronously up front to avoid queuing
   // obvious no-ops every poll tick; the load (and a re-check, since a rotate may run ahead of us on the
   // chain) runs inside the serialized, wedge-tracked _advance closure.
+  // TWO LAYERS (2026-09-16): `preload()` is the public wrapper — it queues the work on the serialized
+  // advance chain, as every caller outside the chain must. `_preloadNow()` is the body — it assumes it
+  // is ALREADY running on the chain and must be the one called from inside another _advance op.
+  //
+  // Why: the calendar re-cue (_resyncCuedDecks) ran inside `_advance("recue:B")` and did
+  // `await this.preload(B)`. preload chained a NEW op onto advanceP — which at that moment was the
+  // promise of the recue op itself — and awaited it. The recue waited for the preload; the preload was
+  // queued behind the recue. Every re-cue wedged the chain for the rest of the song (44 of 44 on
+  // OVEVENTS, `advanceP WEDGED <song length>ms`), nothing was cued for the seam, and the stall
+  // recovery then picked the deck the re-cue had just emptied — the 2-second dead-air loop.
+  // Receipts: docs/ovevents-crash-loop-alarm-2026-09-15.md §4.2.
   preload(deckId, queueIndex = 0) {
     if (this.deckReady.has(deckId)) return Promise.resolve();   // already cued — idempotent
     const st = this._deckState(deckId);
     if (st.status === "playing" || st.status === "paused") return Promise.resolve();
-    return this._advance("preload:" + deckId, async () => {
-      if (this.deckReady.has(deckId)) return;                   // re-check inside the chain
-      const st2 = this._deckState(deckId);
-      if (st2.status === "playing" || st2.status === "paused") return;
-      // Never cue a file that's already playing/cued on another deck — that stacked the same song.
-      const onOtherDecks = ["A", "B", "C"].filter(d => d !== deckId).map(d => this._deckState(d).filePath).filter(Boolean);
-      let guard = 0;
-      while (this.queue.length > queueIndex && guard++ < 100) {
-        const next = this.queue[queueIndex];
-        if (onOtherDecks.includes(next.filePath)) { queueIndex++; continue; } // already on another deck — skip
-        if (this.loadToDeck(deckId, next)) { this.deckChainType[deckId] = next.chainType || "segue"; this.deckReady.add(deckId); if (next.qid) this.boundQids.add(next.qid); return; }
-        this.queue.splice(queueIndex, 1);
-        this.emit("queue", { stationId: this.stationId, items: this.queue });
-        this.emit("error", { stationId: this.stationId, where: "preload", error: "dropped unplayable: " + (next.filePath || "") });
-        this._noteLoadSkip(next.title, "unplayable at load (preload)");
-      }
-    });
+    return this._advance("preload:" + deckId, () => this._preloadNow(deckId, queueIndex));
+  }
+  // The body. ONLY call this from code that is already executing on the advance chain.
+  async _preloadNow(deckId, queueIndex = 0) {
+    if (this.deckReady.has(deckId)) return;                   // re-check inside the chain
+    const st2 = this._deckState(deckId);
+    if (st2.status === "playing" || st2.status === "paused") return;
+    // Never cue a file that's already playing/cued on another deck — that stacked the same song.
+    const onOtherDecks = ["A", "B", "C"].filter(d => d !== deckId).map(d => this._deckState(d).filePath).filter(Boolean);
+    let guard = 0;
+    while (this.queue.length > queueIndex && guard++ < 100) {
+      const next = this.queue[queueIndex];
+      if (onOtherDecks.includes(next.filePath)) { queueIndex++; continue; } // already on another deck — skip
+      if (this.loadToDeck(deckId, next)) { this.deckChainType[deckId] = next.chainType || "segue"; this.deckReady.add(deckId); if (next.qid) this.boundQids.add(next.qid); return; }
+      this.queue.splice(queueIndex, 1);
+      this.emit("queue", { stationId: this.stationId, items: this.queue });
+      this.emit("error", { stationId: this.stationId, where: "preload", error: "dropped unplayable: " + (next.filePath || "") });
+      this._noteLoadSkip(next.title, "unplayable at load (preload)");
+    }
   }
 
   // Slice B — every skip of an unresolvable row is LOUD: a structured health event (title, station,
@@ -2171,9 +2210,12 @@ class DaemonEngine {
           this._stop(d);
           this.deckReady.delete(d);
           this.endTriggered.delete(d);
-          this._setDeck(d, { status: "idle", positionSec: 0 });
+          // Our side of the deck is emptied WITH the file, not just the status: a title left behind on
+          // an empty deck is what the stall recovery used to pick (see _resumePlayout).
+          this._setDeck(d, { status: "idle", title: "", artist: "", filePath: "", positionSec: 0 });
           this._log(`calendar re-cue: deck ${d} held "${s2.title || "(untitled)"}" — the log now says "${target.title || "(untitled)"}"`);
-          await this.preload(d, this._pendingStart());
+          // We ARE the advance chain here — call the body, never the chained wrapper (see preload()).
+          await this._preloadNow(d, this._pendingStart());
         });
         want++;
       }
