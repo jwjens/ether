@@ -1,5 +1,6 @@
 // src/components/ProgramLog.tsx
 // Ether Program Log — one-stop scheduling, viewing, and export
+// docs/program-log-one-surface-2026-09-17.md · docs/help-program-log.md
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { query, execute } from "../db/client";
@@ -15,8 +16,9 @@ import {
 
 // Slice 1 (2026-09-18): the panel READS generated_schedule — the log the engine airs and the
 // Calendar shows — through schedule:get, not the dead scheduled_log (0 rows since inception,
-// docs/program-log-wiring-2026-09-17.md §3). The writes below (Generate / Fill Day / Clear Day,
-// the hour modal's swap and drag) still target scheduled_log and are untouched here — slices 3/4.
+// docs/program-log-wiring-2026-09-17.md §3). Slice 2: Generate / Fill Day / Clear Day ride
+// schedule:generateDay / schedule:clearDay. The hour modal's swap and drag still write scheduled_log
+// (slice 4) — until then they are INCONSISTENT with what this panel reads.
 type ScheduledEntry = ProgramLogEntry;
 
 interface HourBlock {
@@ -31,12 +33,6 @@ interface Show {
   id: number; name: string; start_hour: number; end_hour: number;
   clock_id: number | null; clock_name: string | null; color: string | null;
   description?: string;
-}
-
-interface Rules {
-  artist_sep_min: number; song_repeat_min: number;
-  title_sep_min: number; max_same_category: number;
-  artist_sep_strict: number; song_repeat_strict: number;
 }
 
 interface Song {
@@ -153,252 +149,90 @@ export default function ProgramLog({ onClose }: Props) {
   useEffect(() => { loadScheduledDates(); loadShows(); }, [loadScheduledDates, loadShows]);
   useEffect(() => { loadDayData(selectedDate); }, [selectedDate, loadDayData]);
 
-  // ── Scheduling engine ─────────────────────────────────────────
-  // DEFERRED (phase-3.5 cluster C): every execute() write in this section
-  // targets scheduled_log using column names (song_title, song_artist,
-  // slot_type, category_code, category_color, label, status) that do NOT
-  // exist in the live DB schema (which has title, artist and nothing else
-  // from that list). Every INSERT silently fails inside the try/catch, so
-  // scheduled_log has 0 rows and schedule generation has never worked.
-  // Full fix — schema repair + typed-handler migration + UI corrections —
-  // is tracked in docs/phase-3.5-programlog-deferred.md.
+  // ── Generate / Clear — the real path (slice 2, 2026-09-18) ────────────────────────────────────
+  // The local picker that lived here (its own separation arithmetic, INSERTs into the dead
+  // scheduled_log, and two FUTURE stamps on songs.last_played_at that would have rested songs the real
+  // generator had not played) is gone. Fill Day, the hour button and Clear Day now ride the handlers
+  // the Calendar has used since 4.4.x — schedule:generateDay / schedule:clearDay — on the active
+  // station, over the same local-midnight window slice 1 reads. Nothing in this file writes
+  // songs.last_played_at. docs/program-log-one-surface-2026-09-17.md §3.
 
-  const scheduleOneHour = async (date: string, hour: number): Promise<boolean> => {
-    try {
-      // Fix: handle overnight shows (end_hour=0 means "until midnight" = 24)
-      const allShowsForHour = await query<{ id: number; name: string; clock_id: number | null; start_hour: number; end_hour: number }>(
-        "SELECT id, name, clock_id, start_hour, end_hour FROM shows WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL",
-        [stationId]
-      );
-      const matchedShow = allShowsForHour.find(s => {
-        if (s.end_hour === 0 || s.end_hour === s.start_hour) return hour >= s.start_hour;
-        if (s.end_hour > s.start_hour) return hour >= s.start_hour && hour < s.end_hour;
-        return hour >= s.start_hour || hour < s.end_hour; // overnight
-      });
-      const showRows = matchedShow ? [matchedShow] : [];
-      if (!showRows.length || !showRows[0].clock_id) return false;
-
-      const clockSlots = await query<{
-        position: number; slot_type: string; category_id: number | null;
-        duration_min: number; label: string | null;
-        category_code: string | null; category_color: string | null;
-      }>(
-        `SELECT cs.*, c.code as category_code, c.color as category_color
-         FROM clock_slots cs LEFT JOIN categories c ON c.id = cs.category_id
-         WHERE cs.clock_id = ? ORDER BY cs.position`,
-        [showRows[0].clock_id]
-      );
-      if (!clockSlots.length) return false;
-
-      let rules: Rules = { artist_sep_min:60, song_repeat_min:240, title_sep_min:120, max_same_category:3, artist_sep_strict:1, song_repeat_strict:1 };
-      try {
-        const r = await query<Rules>("SELECT * FROM scheduling_rules LIMIT 1");
-        if (r.length) rules = { ...rules, ...r[0] };
-      } catch {}
-
-      // Read content filter — same localStorage key used by the auto-play queue (loggen.ts)
-      let blockExplicit = false;
-      try { blockExplicit = JSON.parse(localStorage.getItem("ether_content_filter") || "{}").blockExplicit === true; } catch {}
-
-      const hourStartTs = new Date(`${date}T${String(hour).padStart(2,"0")}:00:00`).getTime() / 1000;
-      const usedSongIds = new Set<number>();
-      const usedArtistIds = new Set<number>();
-
-      console.log(`[schedule] Scheduling ${date} hour=${hour} | blockExplicit=${blockExplicit} | artistSep=${rules.artist_sep_min}min | songRepeat=${rules.song_repeat_min}min`);
-
-      await (window as any).ether.scheduledLog.clearByHour(stationId, date, hour);
-
-      const pendingRows: any[] = [];
-
-      for (const slot of clockSlots) {
-        if (slot.slot_type !== "music" || !slot.category_id) {
-          pendingRows.push({
-            log_date: date, hour, position: slot.position,
-            slot_type: slot.slot_type, category_id: slot.category_id,
-            category_code: slot.category_code, category_color: slot.category_color,
-            song_id: null, title: null, artist: null, song_title: null, song_artist: null,
-            duration_ms: Math.round(slot.duration_min * 60000), label: slot.label, status: "scheduled",
-            overflow: 0, fade_out_at_ms: 0, fade_duration_ms: 8000,
-          });
-          continue;
-        }
-
-        // ── Candidate query — enforces ALL rotation rules ────────────────
-        // 1. rotation_status != 'inactive'  — never schedule pulled/retired songs
-        // 2. daypart_mask bit for this hour  — respects per-song daypart restrictions
-        // 3. is_explicit = 0                 — when content filter is active
-        // 4. category_id = slot's category   — format clock category filter
-        const explicitClause = blockExplicit ? "AND (s.is_explicit IS NULL OR s.is_explicit = 0)" : "";
-        const candidates = await query<Song>(
-          `SELECT s.id, s.title, a.name as artist_name, s.artist_id, s.category_id, s.duration_ms, s.last_played_at
-           FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
-           WHERE s.category_id = ?
-             AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
-             AND ((s.daypart_mask >> ?) & 1) = 1
-             ${explicitClause}
-           ORDER BY COALESCE(s.last_played_at, 0) ASC`,
-          [slot.category_id, hour]
-        );
-
-        if (candidates.length === 0) {
-          console.warn(`[schedule] RULE BLOCK: no eligible songs in category ${slot.category_code || slot.category_id} at hour ${hour} — rotation_status/daypart_mask/explicit filters removed all candidates`);
-        }
-
-        let picked: Song | null = null;
-        let softFallback: Song | null = null;
-
-        for (const song of candidates) {
-          if (usedSongIds.has(song.id)) continue;
-          const timeSince = song.last_played_at ? hourStartTs - song.last_played_at : 999999;
-          if (rules.song_repeat_strict && timeSince < rules.song_repeat_min * 60) {
-            console.log(`[schedule] SKIP: "${song.title}" — played ${Math.round(timeSince/60)}min ago (min: ${rules.song_repeat_min}min)`);
-            continue;
-          }
-          if (rules.artist_sep_strict && song.artist_id && usedArtistIds.has(song.artist_id)) {
-            console.log(`[schedule] SKIP: "${song.title}" by "${song.artist_name}" — artist already used this hour`);
-            continue;
-          }
-          const passesAll = timeSince >= rules.title_sep_min * 60 && (!song.artist_id || !usedArtistIds.has(song.artist_id));
-          if (passesAll) { picked = song; break; }
-          else if (!softFallback) softFallback = song;
-        }
-        if (!picked) picked = softFallback;
-
-        // All songs exhausted — cycle back from the beginning ignoring usedSongIds
-        if (!picked && candidates.length > 0) {
-          console.warn(`[schedule] All preferred candidates exhausted for category ${slot.category_code || slot.category_id} — cycling from least-recently-played`);
-          for (const song of candidates) {
-            const timeSince = song.last_played_at ? hourStartTs - song.last_played_at : 999999;
-            // Only skip strict artist repeat within this hour
-            if (rules.artist_sep_strict && song.artist_id && usedArtistIds.has(song.artist_id)) continue;
-            picked = song; // take least-recently-played, ignore song repeat rule
-            break;
-          }
-          // Absolute last resort — just take the first song
-          if (!picked) picked = candidates[0];
-        }
-
-        if (picked) {
-          usedSongIds.add(picked.id);
-          if (picked.artist_id) usedArtistIds.add(picked.artist_id);
-          console.log(`[schedule] QUEUED: "${picked.title}" by "${picked.artist_name}" → slot ${slot.position} (cat: ${slot.category_code})`);
-          pendingRows.push({
-            log_date: date, hour, position: slot.position,
-            slot_type: "music", category_id: slot.category_id,
-            category_code: slot.category_code, category_color: slot.category_color,
-            song_id: picked.id, title: picked.title, artist: picked.artist_name,
-            song_title: picked.title, song_artist: picked.artist_name,
-            duration_ms: picked.duration_ms || Math.round(slot.duration_min * 60000),
-            label: picked.title, status: "scheduled",
-            overflow: 0, fade_out_at_ms: 0, fade_duration_ms: 8000,
-          });
-          await (window as any).ether.songs.updateById(picked.id, { last_played_at: hourStartTs + slot.position });
-        } else {
-          console.warn(`[schedule] UNFILLED: slot ${slot.position} (cat: ${slot.category_code}) — no eligible songs remain after all rotation rules`);
-          pendingRows.push({
-            log_date: date, hour, position: slot.position,
-            slot_type: "music", category_id: slot.category_id,
-            category_code: slot.category_code, category_color: slot.category_color,
-            song_id: null, title: null, artist: null, song_title: null, song_artist: null,
-            duration_ms: Math.round(slot.duration_min * 60000), label: "UNFILLED", status: "unfilled",
-            overflow: 0, fade_out_at_ms: 0, fade_duration_ms: 8000,
-          });
-        }
-      }
-
-      // ── Overflow song — fills remaining time, fades into next hour ──
-      // Calculate remaining time from in-memory rows (batch not yet written to DB)
-      const usedMs   = pendingRows.reduce((sum: number, r: any) => sum + (r.duration_ms || 0), 0);
-      const hourMs   = 60 * 60 * 1000;
-      const remainMs = hourMs - usedMs;
-
-      // Only add overflow if there's at least 30 seconds remaining
-      if (remainMs >= 30000) {
-        // Find the last music slot's category to match
-        const lastMusicSlot = [...clockSlots].reverse().find(s => s.slot_type === "music" && s.category_id);
-        if (lastMusicSlot?.category_id) {
-          const overflowExplicitClause = blockExplicit ? "AND (s.is_explicit IS NULL OR s.is_explicit = 0)" : "";
-          const overflowCandidates = await query<Song>(
-            `SELECT s.id, s.title, a.name as artist_name, s.artist_id, s.category_id, s.duration_ms, s.last_played_at
-             FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
-             WHERE s.category_id = ? AND s.duration_ms > ?
-               AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
-               AND ((s.daypart_mask >> ?) & 1) = 1
-               ${overflowExplicitClause}
-             ORDER BY COALESCE(s.last_played_at, 0) ASC LIMIT 20`,
-            [lastMusicSlot.category_id, remainMs, hour]
-          );
-
-          // Pick one not used this hour
-          const overflowSong = overflowCandidates.find(s => !usedSongIds.has(s.id))
-            || overflowCandidates[0];
-
-          if (overflowSong) {
-            const fadeDurationMs = 8000; // 8-second crossfade
-            pendingRows.push({
-              log_date: date, hour, position: clockSlots.length,
-              slot_type: "music",
-              category_id: lastMusicSlot.category_id,
-              category_code: lastMusicSlot.category_code,
-              category_color: lastMusicSlot.category_color,
-              song_id: overflowSong.id,
-              title: overflowSong.title, artist: overflowSong.artist_name,
-              song_title: overflowSong.title, song_artist: overflowSong.artist_name,
-              duration_ms: overflowSong.duration_ms,
-              label: overflowSong.title, status: "overflow",
-              overflow: 1, fade_out_at_ms: remainMs, fade_duration_ms: fadeDurationMs,
-            });
-            await (window as any).ether.songs.updateById(overflowSong.id, { last_played_at: hourStartTs + 3600 });
-          }
-        }
-      }
-
-      await (window as any).ether.scheduledLog.batchInsert(stationId, pendingRows);
-
-      return true;
-    } catch (e) { console.error('[schedule] scheduleOneHour error:', e); return false; }
+  /** Unix seconds of a local wall-clock hour on the selected day (DST-safe: setHours, not h*3600). */
+  const hourStartTs = (date: string, hour: number): number => {
+    const [y, m, d] = date.split("-").map(Number);
+    return Math.floor(new Date(y, m - 1, d, hour, 0, 0, 0).getTime() / 1000);
   };
+  /** Generate never reaches an hour that has started: main.js effStart = max(dayStart, next top-of-hour). */
+  const hourLocked = (date: string, hour: number): boolean =>
+    hourStartTs(date, hour) < Math.ceil(Date.now() / 1000 / 3600) * 3600;
 
   const generateHour = async (hour: number) => {
+    if (hour < 0) return;
+    if (hourLocked(selectedDate, hour)) { setGlobalStatus(`✗ ${fmtHour(hour)} has already started — it is a record now, not a plan`); return; }
     setHourBlocks(prev => prev.map(b => b.hour === hour ? { ...b, generating: true } : b));
-    setGlobalStatus(`Scheduling ${fmtHour(hour)}...`);
-    const ok = await scheduleOneHour(selectedDate, hour);
+    setGlobalStatus(`Generating from ${fmtHour(hour)} to end of day...`);
+    let msg: string;
+    try {
+      const { dayStart } = dayWindow(selectedDate);
+      // fromTs → main regenerates [this hour, end of day) and leaves every earlier hour alone.
+      const res = await (window as any).ether.invoke("schedule:generateDay", dayStart, hourStartTs(selectedDate, hour));
+      msg = res?.ok === false ? `✗ ${res.error || "generate failed"}`
+          : res?.cancelled ? "↷ Generate cancelled"
+          : res?.skipped ? "↷ Nothing to generate — the day has aired"
+          : `✓ ${res?.count ?? 0} rows from ${fmtHour(hour)} to end of day`;
+    } catch (e: any) { msg = `✗ ${e?.message || e}`; }
     await loadDayData(selectedDate);
     loadScheduledDates();
     setExpandedHours(prev => new Set([...prev, hour]));
     setHourBlocks(prev => prev.map(b => b.hour === hour ? { ...b, generating: false } : b));
-    setGlobalStatus(ok ? `✓ ${fmtHour(hour)} scheduled` : `↷ Skipped ${fmtHour(hour)} — no show or clock assigned`);
+    setGlobalStatus(msg);
   };
 
   const fillDay = async () => {
     setFilling(true);
     setGlobalStatus("Filling day...");
-    let count = 0;
-    for (const block of hourBlocks) {
-      if (block.clock_name) {
-        setGlobalStatus(`Scheduling ${fmtHour(block.hour)}...`);
-        const ok = await scheduleOneHour(selectedDate, block.hour);
-        if (ok) count++;
-      }
-    }
+    let msg: string;
+    try {
+      const { dayStart } = dayWindow(selectedDate);
+      // Same station rule as the Calendar (the handler takes the ACTIVE station) and the same window
+      // slice 1 reads; effStart = max(dayStart, next top-of-hour) — aired hours are never touched.
+      const res = await (window as any).ether.invoke("schedule:generateDay", dayStart);
+      msg = res?.ok === false ? `✗ ${res.error || "generate failed"}`
+          : res?.cancelled ? "↷ Generate cancelled"
+          : res?.skipped ? "↷ Nothing to fill — the day has aired"
+          : `✓ ${res?.count ?? 0} rows generated`;
+    } catch (e: any) { msg = `✗ ${e?.message || e}`; }
     await loadDayData(selectedDate);
     loadScheduledDates();
     setExpandedHours(new Set(hourBlocks.map(b => b.hour)));
-    setGlobalStatus(`✓ ${count} hours scheduled`);
+    setGlobalStatus(msg);
     setFilling(false);
   };
 
+  // Clear = schedule:clearDay: soft-deletes this station's PENDING rows in the window from the next
+  // top-of-hour on. played / playing / missed rows are records and are never touched (main.js).
+  const clearRange = async (fromTs?: number, toTs?: number): Promise<string> => {
+    try {
+      const { dayStart } = dayWindow(selectedDate);
+      const res = await (window as any).ether.invoke("schedule:clearDay", dayStart, { fromTs, toTs });
+      if (res?.ok === false) return `✗ ${res.error || "clear failed"}`;
+      if (res?.skipped) return `↷ ${res.reason || "nothing to clear"}`;
+      return `✓ ${res?.cleared ?? 0} pending row(s) cleared`;
+    } catch (e: any) { return `✗ ${e?.message || e}`; }
+  };
+
   const clearHour = async (hour: number) => {
-    await (window as any).ether.scheduledLog.clearByHour(stationId, selectedDate, hour);
-    loadDayData(selectedDate);
+    const msg = await clearRange(hourStartTs(selectedDate, hour), hourStartTs(selectedDate, hour + 1));
+    await loadDayData(selectedDate);
     loadScheduledDates();
+    setGlobalStatus(msg.replace("cleared", `cleared in ${fmtHour(hour)}`));
   };
 
   const clearDay = async () => {
-    await (window as any).ether.scheduledLog.clearByDate(stationId, selectedDate);
-    loadDayData(selectedDate);
+    const msg = await clearRange();
+    await loadDayData(selectedDate);
     loadScheduledDates();
-    setGlobalStatus("Day cleared");
+    setGlobalStatus(msg);
   };
 
   // ── Export ────────────────────────────────────────────────────
@@ -909,7 +743,7 @@ export default function ProgramLog({ onClose }: Props) {
             }}>
             {isPro ? "📄 PDF Report" : "🔒 PDF Report"}
           </button>
-          <button onClick={clearDay}
+          <button onClick={clearDay} title="Clears what hasn't aired yet — pending rows from the next hour on. Played, playing and missed rows are records and stay."
             style={{ padding: "6px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 600, cursor: "pointer", background: "transparent", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)" }}>
             Clear Day
           </button>
@@ -974,6 +808,7 @@ export default function ProgramLog({ onClose }: Props) {
             const isScheduled = block.entries.length > 0;
             const blockMs = block.entries.reduce((s, e) => s + (e.duration_ms||0), 0);
             const unfilledInHour = block.entries.filter(e => e.status === "unfilled").length;
+            const locked = hourLocked(selectedDate, block.hour);
 
             return (
               <div key={block.hour} style={{
@@ -1022,7 +857,8 @@ export default function ProgramLog({ onClose }: Props) {
                   {/* Status dot */}
                   <div style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: isScheduled ? (unfilledInHour > 0 ? "#ef4444" : "#34d399") : "rgba(255,255,255,0.1)" }} />
 
-                  {/* Generate / Re-gen button */}
+                  {/* Generate from this hour → end of day (schedule:generateDay with fromTs). An hour that has
+                      started is a record, not a plan: the button is disabled and says so. */}
                   <button
                     onClick={e => {
                       e.stopPropagation();
@@ -1033,17 +869,18 @@ export default function ProgramLog({ onClose }: Props) {
                         generateHour(block.hour);
                       }
                     }}
-                    disabled={block.generating}
+                    disabled={block.generating || locked}
+                    title={locked ? `${fmtHour(block.hour)} has already started — it is a record now, not a plan` : `Regenerate from ${fmtHour(block.hour)} to the end of the day (earlier hours untouched)`}
                     style={{
                       padding: "3px 10px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 700,
-                      cursor: block.generating ? "default" : "pointer",
+                      cursor: block.generating || locked ? "default" : "pointer",
                       background: isScheduled ? "rgb(from var(--accent-blue) r g b / 0.08)" : "rgba(52,211,153,0.12)",
                       color: isScheduled ? "var(--accent-blue)" : "#34d399",
                       border: `1px solid ${isScheduled ? "rgb(from var(--accent-blue) r g b / 0.25)" : "rgba(52,211,153,0.3)"}`,
-                      opacity: block.generating ? 0.5 : 1, flexShrink: 0,
+                      opacity: block.generating || locked ? 0.35 : 1, flexShrink: 0,
                     }}
                   >
-                    {block.generating ? "..." : isScheduled ? "⟳ Regen" : "▶ Generate"}
+                    {block.generating ? "..." : locked ? "aired" : isScheduled ? "⟳ Regen →" : "▶ Generate →"}
                   </button>
 
                   {/* Deep Dive button — only when scheduled */}
@@ -1060,8 +897,8 @@ export default function ProgramLog({ onClose }: Props) {
                     </button>
                   )}
 
-                  {/* Clear button */}
-                  {isScheduled && (
+                  {/* Clear this hour's pending rows (schedule:clearDay windowed to the hour); an aired hour has none to clear */}
+                  {isScheduled && !locked && (
                     <button
                       onClick={e => { e.stopPropagation(); clearHour(block.hour); }}
                       style={{ padding: "3px 6px", borderRadius: 0, fontSize: "var(--t-micro)", cursor: "pointer", background: "transparent", border: "none", color: "var(--text-tertiary)", flexShrink: 0 }}
@@ -1149,9 +986,11 @@ export default function ProgramLog({ onClose }: Props) {
                 {/* Expanded but not scheduled */}
                 {isExpanded && !isScheduled && (
                   <div style={{ padding: "10px 14px", borderTop: "1px solid var(--border-primary)", fontSize: "var(--t-small)", color: "var(--text-tertiary)", fontStyle: "italic" }}>
-                    {block.clock_name
-                      ? `Click Generate to fill this hour with ${block.clock_name}`
-                      : `Click Generate to assign a clock and schedule this hour`}
+                    {locked
+                      ? `Nothing was in the log for this hour — it has aired`
+                      : block.clock_name
+                      ? `Generate → fills from ${fmtHour(block.hour)} to the end of the day with ${block.clock_name}; Fill Day fills the whole day`
+                      : `Generate → assigns a clock, then fills from ${fmtHour(block.hour)} to the end of the day`}
                   </div>
                 )}
               </div>

@@ -24,6 +24,7 @@
     "test:sync": "electron --no-sandbox scripts/run-sync-tests.js",
     "test:designation": "cross-env ELECTRON_RUN_AS_NODE=1 electron electron/smoke-designation-write.js",
     "test:programlog-reads": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-programlog-reads.js",
+    "test:programlog-writes": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-programlog-writes.js",
     "test:window-station": "node scripts/smoke-window-station.js",
     "test:copy-on-import": "node scripts/smoke-copy-on-import.js",
     "test:catalogue-r2": "node scripts/smoke-catalogue-r2.js",

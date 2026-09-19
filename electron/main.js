@@ -9357,6 +9357,38 @@ function _commitDayRows(stationId, effStart, dayEnd, rows) {
 }
 ipcMain.handle('schedule:generateCancel', () => { _genCancel = true; return { ok: true }; });
 
+// CLEAR DAY (Program Log slice 2, 2026-09-18) — generateDay's delete step WITHOUT the regenerate, for the
+// active station, over [max(dayStart, next top-of-hour, fromTs), min(dayEnd, toTs)). Only `pending`
+// rows go, and they go the way the log editor deletes (soft, deleted_at) so the log-reader and
+// schedule:get stop seeing them at once and the next Generate's gap-fill treats the slot as free.
+//   played / playing — never touched: the log is a record of what happened, not a plan (_guardEditable).
+//   missed           — never touched: "SPOT DID NOT AIR" is evidence, and clearing it would erase the
+//                      only trace that a spot was scheduled and did not run.
+//   the current hour — never touched: effStart is the next top-of-hour, the same guard Generate has, so
+//                      the rows the reader is airing from right now cannot be pulled from under it and
+//                      Clear + Fill act on exactly the same window.
+//   operator rows    — cleared: unlike Generate (which must not silently destroy a jock's placement),
+//                      Clear Day is the operator's own explicit act on the whole day.
+ipcMain.handle('schedule:clearDay', (_, dayTs, opts) => {
+  try {
+    const stationId = getActiveStationId();
+    const dayBase = new Date(dayTs * 1000); dayBase.setHours(0, 0, 0, 0);
+    const dayStart = Math.floor(dayBase.getTime() / 1000), dayEnd = dayStart + 86_400;
+    const nowTs = Math.floor(Date.now() / 1000);
+    const nextTop = Math.ceil(nowTs / 3600) * 3600;
+    const from = Math.max(dayStart, nextTop, Number(opts && opts.fromTs) || 0);
+    const to = Math.min(dayEnd, Number(opts && opts.toTs) || dayEnd);
+    if (from >= to) return { ok: true, cleared: 0, skipped: true, reason: "that window has already started — it is a record now, not a plan" };
+    const now = new Date().toISOString();
+    const r = db.prepare(
+      "UPDATE generated_schedule SET deleted_at = ?, updated_at = ? WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ? AND deleted_at IS NULL AND state = 'pending'"
+    ).run(now, now, stationId, from, to);
+    _healthEvent('log-edit', { action: 'clear-day', stationId, from, to, cleared: r.changes });
+    console.log(`[schedule:clearDay] station ${stationId} cleared ${r.changes} pending row(s) in [${from}, ${to})`);
+    return { ok: true, cleared: r.changes, from, to };
+  } catch (e) { console.error('[schedule:clearDay]', e.message); return { ok: false, error: e.message }; }
+});
+
 // ── MANUAL LOG EDITING (Fix 2) ──────────────────────────────────────────────────────────────────
 // The log becomes a list a DJ can rearrange. Every handler here obeys three rules:
 //   1. The PAST IS A RECORD. A row that has aired (state='played'/'playing') is never mutated.
@@ -9545,14 +9577,28 @@ ipcMain.handle('schedule:generateDays', async (_, dayTsList) => {
   }
 });
 
-ipcMain.handle('schedule:generateDay', async (_, dayTs) => {
+// fromTs (optional, Program Log slice 2, 2026-09-18): regenerate from THAT hour to the end of the day —
+// the hour row's Generate/Regen button. Snapped DOWN to its local hour start so the delete window in
+// _commitDayRows and the hour walk in generateDayRows (which skips hours starting before effStart)
+// agree on the same boundary. It can only NARROW the window: effStart is still never before the next
+// top-of-hour, so a fromTs inside an hour that has already started is refused by name rather than
+// silently moved forward — the operator asked for THAT hour and it is a record now, not a plan.
+ipcMain.handle('schedule:generateDay', async (_, dayTs, fromTs) => {
   try {
     _genCancel = false;
     const activeStationId = getActiveStationId();
     const dayBase = new Date(dayTs * 1000); dayBase.setHours(0, 0, 0, 0);
     const dayStart = Math.floor(dayBase.getTime() / 1000), dayEnd = dayStart + 86_400;
     const nowTs = Math.floor(Date.now() / 1000);
-    const effStart = Math.max(dayStart, Math.ceil(nowTs / 3600) * 3600); // next top-of-hour; never the past
+    const nextTop = Math.ceil(nowTs / 3600) * 3600;
+    let fromHour = 0;
+    if (fromTs != null) {
+      const f = new Date(fromTs * 1000); f.setMinutes(0, 0, 0);
+      fromHour = Math.floor(f.getTime() / 1000);
+      if (fromHour < dayStart || fromHour >= dayEnd) return { ok: false, error: "that hour is not in the selected day" };
+      if (fromHour < nextTop) return { ok: false, error: "that hour has already started — it is a record now, not a plan; regenerate from the next hour" };
+    }
+    const effStart = Math.max(dayStart, nextTop, fromHour); // next top-of-hour; never the past
     if (effStart >= dayEnd) return { ok: true, count: 0, skipped: true }; // whole day already aired — leave it
     _genEmit({ phase: "start", dayIdx: 0, dayTotal: 1, day: dayBase.toDateString() });
     // Build ctx BEFORE any delete — it reads play_log/separation_rules/songs, never generated_schedule,

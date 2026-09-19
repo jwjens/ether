@@ -349,3 +349,186 @@ Open Program Log on halloVeen → today's hour rows show the real songs; "HalloV
 on the hour headers and in TODAY'S SHOWS; the summary reads "24 of 24 hours"; the row on air is accent +
 bold with its scheduled time; aired rows show the green actual time; mini-month dots on the generated
 days; switching station re-reads. Jeff confirms on screen.
+
+
+---
+
+## Slice 2 — built (2026-09-18, writes; local commit on `log-reader-flip`)
+
+No push, no tag, no version bump, no install. Neither live DB opened. Jeff confirmed slice 1 on screen
+before this was started. Line numbers are post-change.
+
+### What changed
+**1. Fill Day → `schedule:generateDay(dayStart)`** — `ProgramLog.tsx:191-212 fillDay`: `dayWindow(selectedDate)`
+(the same local-midnight window slice 1 reads) → `ether.invoke("schedule:generateDay", dayStart)`
+(`:199`). Station = the active one (the handler takes no station, `main.js:9589`), exactly as the
+Calendar. The result is reported by name (`✓ N rows generated` / `↷ Nothing to fill — the day has
+aired` / `↷ Generate cancelled` / `✗ <error>`), then the day and the mini-month re-read.
+**The local picker is deleted** (`scheduleOneHour`, its `scheduling_rules` read, its `clock_slots` walk,
+its `songs` candidate query with its own separation) **and with it BOTH future `last_played_at` stamps**
+(the per-pick `songs.updateById(picked.id, { last_played_at: hourStartTs + slot.position })` and the
+overflow `+3600` one). `scheduledLog.clearByHour / clearByDate / batchInsert` are no longer called from
+this file. The `Rules` interface went with them.
+**Grep receipt** (`smoke-programlog-writes.js` (g), verbatim below): the only `last_played_at` mentions
+left in `ProgramLog.tsx` are the HourModal's song-search `SELECT … s.last_played_at` (`:1052`) and the
+`Song` type (`:41`) — reads. No `UPDATE`/`updateById`/`markPlayed`/`execute(` line touches it.
+
+**2. Per-hour Generate: KEPT, with `fromTs`** (proposal §3 option b). Decision: the ruling keeps the
+window's view, and the hour row's button is part of it; option (b) is one guard in one handler and
+makes the button mean exactly what it says.
+- `main.js:9586 schedule:generateDay(dayTs, fromTs?)`: `fromTs` is snapped DOWN to its local hour start
+  (`f.setMinutes(0,0,0)`, `:9596-9597`) so the delete window in `_commitDayRows` and the hour walk in
+  `generateDayRows` (`generate-core.js:223 if (hourStartTs < minTs) continue`) agree on one boundary;
+  refused by name if outside the day (`:9598`) or **if that hour has already started** (`:9599`:
+  `fromHour < nextTop` → `"that hour has already started — it is a record now, not a plan; regenerate
+  from the next hour"`) — it is never silently moved forward. `effStart = Math.max(dayStart, nextTop,
+  fromHour)` (`:9601`): `fromTs` can only NARROW the window. Callers without `fromTs` (the Calendar,
+  `BroadcastCalendar.tsx:445`) are byte-for-byte unchanged (`fromHour = 0`).
+- `ProgramLog.tsx:169-189 generateHour`: `hourStartTs(selectedDate, hour)` (`:161-164`, `new Date(y,
+  m-1, d, hour)` — local, DST-safe, never `h*3600`) → `invoke("schedule:generateDay", dayStart,
+  hourStart)` (`:178`); status `✓ N rows from 3 PM to end of day`. `hourLocked` (`:166-167`, the same
+  `next top-of-hour` rule as main) disables the button on an hour that has started — it reads **aired**,
+  opacity 0.35, tooltip says why (`:872-882`); an open hour's button is **▶ Generate →** / **⟳ Regen →**
+  with the tooltip "Regenerate from 3 PM to the end of the day (earlier hours untouched)". The
+  empty-hour text (`:990-994`) now says what the button does instead of "Click Generate to fill this
+  hour". The `generating` per-row state is kept (it is the button's own spinner).
+
+**3. Clear Day → new `schedule:clearDay(dayTs, { fromTs?, toTs? })`** — `main.js:9372-9390`.
+Window `[max(dayStart, next top-of-hour, fromTs), min(dayEnd, toTs))` for the active station; rows go the
+way the log editor deletes them — **soft**, `deleted_at = now` (`:9384`, the same UPDATE shape as
+`schedule:deleteRow :9418`), so `schedule:get` and the log-reader stop seeing them at once and the next
+Generate's gap-fill (`_commitDayRows`, `deleted_at IS NULL`) treats the slot as free. **Only
+`state = 'pending'` rows are touched.** What it does with the rest, and why:
+- **played / playing — never touched.** The log is a record of what happened, not a plan
+  (`_guardEditable`, `_EDIT_LOCKED = {played, playing}`, `:9365`).
+- **missed — never touched.** "SPOT DID NOT AIR" is evidence; clearing it would erase the only trace
+  that a spot was scheduled and did not run.
+- **the current hour — never touched** (`from ≥ next top-of-hour`): the same guard Generate has, so the
+  rows the reader is airing from right now are never pulled from under it, and Clear + Fill act on the
+  same window. A window entirely in the past returns `skipped` with the reason.
+- **operator rows — cleared.** Unlike Generate (which must not silently destroy a jock's placement),
+  Clear Day is the operator's own explicit act on the whole day. Stated, not hidden.
+- A `log-edit` health event `{ action:'clear-day', stationId, from, to, cleared }` is written (`:9386`).
+`ProgramLog.tsx:214-236`: `clearRange(fromTs?, toTs?)` → `invoke("schedule:clearDay", dayStart, { fromTs,
+toTs })` (`:217`); **Clear Day** = the whole day (`:231`), the hour row's **✕** = that hour (`:224`,
+hidden on an aired hour, `:901`). The Clear Day button's tooltip says what it does (`:746`).
+`scheduledLog.clearByHour / clearByDate` are gone from this file.
+
+**4. Naming.** Fill Day stays **Fill Day**. Hour button: **▶ Generate →** / **⟳ Regen →** (the arrow is
+the "to end of day"). Clear Day stays **Clear Day** (meaning "clear what hasn't aired", per its
+tooltip). **Fill Week — not built.** It would be one call: `ether.invoke("schedule:generateDays",
+[dayStart, dayStart+86400·1 … ·6])` (`main.js:9498`, what the Calendar's week Generate already sends at
+`BroadcastCalendar.tsx:222-231`), same station rule, same progress bar, cancel at every hour boundary,
+each day committed atomically; the seven `dayStart`s should be built with `dayWindow()` per date
+(local midnight each), not `+86400` arithmetic, so a DST week stays aligned.
+
+**5. Nothing else changes.** The hour modal's **swap** (`:1071 UPDATE scheduled_log SET song_id=… WHERE
+id=?`) and **drag** (`:1088 scheduledLog.batchUpdatePosition`) still write `scheduled_log`. **They are
+now inconsistent with what the panel reads**: the ids they receive are `generated_schedule` ids, the
+UPDATE hits 0 rows on the empty table, and the modal repaints as if saved. Slice 4 routes them through
+`schedule:checkRow / editRowFields / moveRow`. Said in the file header (`:17-20`) and in the help.
+
+### Guardrail: the generate path still refuses the past — from this window too
+- `main.js:9594 nextTop = Math.ceil(nowTs / 3600) * 3600`; `:9601 effStart = Math.max(dayStart,
+  nextTop, fromHour)`; `:9602 if (effStart >= dayEnd) return { ok:true, count:0, skipped:true }`.
+- `_commitDayRows` deletes only `scheduled_at >= effStart` (`:9307-9330`); `generateDayRows` skips
+  hours with `hourStartTs < minTs` (`generate-core.js:223`).
+- The Program Log passes only `dayStart` (Fill Day) or `dayStart + hourStart` (hour button); it cannot
+  lower `effStart`. Smoke receipts: (a) "no row before the next top-of-hour (11:00)"; (b) played /
+  playing / missed / current-hour rows untouched by Fill Day; (c) `fromTs` in an aired or current hour
+  → refused by name; (f) an aired day → `skipped`.
+
+### Progress bar
+`<GenerateProgressBar/>` is mounted once at App top-level (`App.tsx:3298`) and listens to
+`schedule:generate-progress`, so a Fill Day from the docked/main-window Program Log shows the bar the
+Calendar shows. The **pop-out** Program Log is its own React tree without `<App/>`, so it has no bar —
+the status line in the panel header is its only progress until slice 5's live-update work.
+
+### Help
+`docs/help-program-log.md` (new — the panel had no entry): reading the day, Fill Day, Generate → on an
+hour, Clear Day / the hour ✕, export, and a plain "what is not wired yet" paragraph naming the swap and
+drag. Pointer comment at `ProgramLog.tsx:3`.
+
+### Tests
+`scripts/smoke-programlog-writes.js` (`npm run test:programlog-writes`; `ELECTRON_RUN_AS_NODE=1
+electron`). A fresh in-memory schema = `schema-v0-baseline` + all 60 migrations + the 63 `alterSafe`
+ALTERs main.js applies at startup (read out of main.js). The handlers under test are **read out of
+`electron/main.js`** (brace-matched source, not copies): `schedule:generateDay`, `schedule:clearDay`,
+`schedule:get`, `_commitDayRows`, `_generateDayChunked`, evaluated with the real `generate-core.js`,
+`log-edit-core.js` and `sync/handlers/generated_schedule.js` underneath; stubbed: `_genEmit`,
+`_placeJingles`, `finishGenerateRun`, `retireStaleScheduleRows` (observation tails), `_healthEvent`
+(captured), `getActiveStationId → 1`, and `Date` pinned to 10:30 local on the test day (tomorrow).
+Verbatim:
+```
+PASS  fresh schema built: baseline + 60 migrations + 63 startup ALTERs
+PASS  main.js: generateDay handler takes fromTs
+PASS  main.js: clearDay handler exists and only touches state = 'pending'
+PASS  main.js: clearDay is a SOFT delete (deleted_at), the editor's own delete
+PASS  main.js: generateDay still refuses the past — effStart = max(dayStart, nextTop, fromHour)
+PASS  handlers registered: generateDay, clearDay, get
+PASS  a · the day is empty before Fill Day
+PASS  a · generateDay ok
+PASS  a · schedule:get returns the generated rows (156)
+PASS  a · no row before the next top-of-hour (11:00) — the past and the current hour are never generated
+PASS  a · rows span the rest of the day (13 hours: 11 → 23)
+PASS  a · every row is pending with no played_at
+PASS  a · nothing written to songs.last_played_at by the generate path
+PASS  b · generateDay ok
+PASS  b · played rows untouched (state, played_at, not deleted)
+PASS  b · the missed spot untouched
+PASS  b · the playing row untouched
+PASS  b · the current hour's pending row untouched (10:40 < next top-of-hour)
+PASS  b · the operator's future row survives Generate (log-edit-core NOT_OPERATOR_OWNED_SQL)
+PASS  b · the machine's future row was replaced
+PASS  b · the other station's row untouched
+PASS  b · generated rows again start at 11:00; the day now has aired + generated rows
+PASS  c · generateDay(fromTs=15:00) ok
+PASS  c · rows before 15:00 byte-identical (uuids unchanged)
+PASS  c · rows from 15:00 on were regenerated (9 hours: 15 → 23)
+PASS  c · fromTs in an aired hour is REFUSED by name, not moved forward
+PASS  c · fromTs in the CURRENT hour is refused too (it has started)
+PASS  c · fromTs outside the day is refused
+PASS  d · clearDay ok
+PASS  d · schedule:get shows nothing from 11:00 on
+PASS  d · the rows are SOFT-deleted (still in the table, deleted_at set)
+PASS  d · played / playing / missed untouched
+PASS  d · the current hour's pending row untouched
+PASS  d · the operator's pending row IS cleared (Clear Day is the operator's own explicit act)
+PASS  d · the other station untouched
+PASS  d · a log-edit health event named the clear
+PASS  d · clearing again clears 0 (idempotent)
+PASS  e · hour clear removes exactly that hour's pending rows
+PASS  e · the other hours keep their rows
+PASS  e · clearing the CURRENT hour is skipped by name (it has started)
+PASS  e · a Generate after the hour clear refills the gap
+PASS  f · generateDay on an aired day → skipped, nothing written
+PASS  f · clearDay on an aired day → skipped, 0 cleared
+PASS  g · ProgramLog.tsx: no line writes songs.last_played_at
+PASS  g · the remaining last_played_at mentions are the HourModal's song-search SELECT + its type (reads)
+PASS  g · no scheduledLog.clearByHour / clearByDate / batchInsert call remains
+PASS  g · no scheduling_rules / clock_slots picker query remains in ProgramLog.tsx
+PASS  g · Fill Day and the hour button invoke schedule:generateDay; Clear invokes schedule:clearDay
+PASS  g · the hour modal's swap and drag still write scheduled_log (slice 4, stated in the doc)
+=== 49 passed, 0 failed ===
+```
+Two seed facts the smoke had to learn, recorded because they are true of the product too:
+`generated_schedule.file_path` (and other columns) come from main.js's startup `alterSafe` list, not
+the migration chain — a fresh DB is baseline + chain + those ALTERs; and a song with `daypart_mask 0`
+is never a candidate — main.js backfills `16777215` at startup, which the seed mirrors.
+
+### Gates
+`npx tsc --noEmit` → exit 0. `npx vitest run` → **31 files, 415 passed**. `node --check electron/main.js`
+ok. `test:ipc-contract`, `test:preload-bridge`, `test:undefined-calls` → PASS. `test:programlog-reads`
+→ 11 passed. `node watchdog/test/run-tests.js` → 32 passed, 0 failed. audiod smokes (exit 0 each):
+autofit 47 · autopost-arm 21 · cmd-routing 7 · deck-identity 22 · deck-position 16 · deck-snapshot 25
+· enginestate-wire 15 · enginestate 19 · logreader-anchor 18 · manual-mode 30 · meter-contract 15 ·
+orphan 4 · queue-classes 8 · seam-stop 60 · xfade-contract 33 · dead-air 50.
+
+### Runtime receipt owed (not done — no install; the dev shell is running slice 1's build until relaunched)
+On halloVeen: Fill Day on **tomorrow** → rows appear in the Program Log AND the daemon log shows
+`logreader refill … from log` for them when their hour comes; Fill Day on **today** leaves the aired
+hours alone (the green actual times stay) and rebuilds from the next hour; an hour's **Generate →**
+rebuilds from that hour on and the earlier hours are unchanged; **Clear Day** empties from the next hour
+on and the on-air row keeps playing; the progress bar appears for the docked panel;
+`SELECT count(*) FROM songs WHERE last_played_at > strftime('%s','now')` on a DB **copy** stays 0.
+Jeff confirms on screen.
