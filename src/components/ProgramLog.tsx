@@ -3,22 +3,21 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { query, execute } from "../db/client";
+import { queryScoped } from "../db/stationScoped";
 import { usePlan } from "../hooks/usePlan";
 import { useActiveStation } from "../hooks/useActiveStation";
+import {
+  dayWindow, localDateStr, fmtClock, toEntries, showForHour, hoursToRender,
+  type ProgramLogEntry, type ScheduleGetRow, type CategoryRef,
+} from "../lib/programLogRows";
 
 // ── Types ──────────────────────────────────────────────────────
 
-interface ScheduledEntry {
-  id: number; log_date: string; hour: number; position: number;
-  slot_type: string; category_id: number | null;
-  category_code: string | null; category_color: string | null;
-  song_id: number | null; song_title: string | null;
-  song_artist: string | null; duration_ms: number;
-  label: string | null; status: string;
-  overflow: number;
-  fade_out_at_ms: number;
-  fade_duration_ms: number;
-}
+// Slice 1 (2026-09-18): the panel READS generated_schedule — the log the engine airs and the
+// Calendar shows — through schedule:get, not the dead scheduled_log (0 rows since inception,
+// docs/program-log-wiring-2026-09-17.md §3). The writes below (Generate / Fill Day / Clear Day,
+// the hour modal's swap and drag) still target scheduled_log and are untouched here — slices 3/4.
+type ScheduledEntry = ProgramLogEntry;
 
 interface HourBlock {
   hour: number;
@@ -58,8 +57,13 @@ function fmtMs(ms: number): string {
   const s = Math.floor((ms % 60000) / 1000);
   return `${m}:${String(s).padStart(2, "0")}`;
 }
-function fmtDate(d: Date): string { return d.toISOString().slice(0, 10); }
-function todayStr(): string { return fmtDate(new Date()); }
+// Local calendar date. The old toISOString() form was the UTC date — after 17:00 Pacific it opened
+// the panel on TOMORROW, and the day window below is local midnight, so the two must agree.
+function todayStr(): string { return localDateStr(new Date()); }
+// Shows are per station. Unscoped, the old query returned every station's all-day show and find()
+// took station 1's ("Open Format") for every hour of every station — docs/program-log-wiring §3.
+const SHOWS_SQL = `SELECT s.*, c.name as clock_name FROM shows s
+  LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.station_id = ? AND s.deleted_at IS NULL ORDER BY s.start_hour`;
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAYS_SHORT = ["Su","Mo","Tu","We","Th","Fr","Sa"];
 
@@ -86,71 +90,67 @@ export default function ProgramLog({ onClose }: Props) {
 
   // ── Load ─────────────────────────────────────────────────────
 
+  // Mini-month dots: the days this station has a log for. This is the Calendar's auto-days query
+  // (BroadcastCalendar.tsx:204-207) WITH the `[stationId]` binding it forgot (the filed
+  // "Too few parameter values" error) and without its `source = 'auto'` filter — a dot means
+  // "there is a log", whoever built it.
   const loadScheduledDates = useCallback(async () => {
+    if (!stationId) return;
     try {
-      const rows = await query<{ log_date: string }>(
-        "SELECT DISTINCT log_date FROM scheduled_log ORDER BY log_date"
+      const rows = await queryScoped<{ d: string }>(
+        "SELECT DISTINCT date(scheduled_at,'unixepoch','localtime') d FROM generated_schedule WHERE station_id = ? AND deleted_at IS NULL",
+        [stationId], stationId, { skipScoping: true }
       );
-      setScheduledDates(new Set(rows.map(r => r.log_date)));
+      setScheduledDates(new Set((rows || []).map(r => r.d)));
     } catch {}
-  }, []);
+  }, [stationId]);
 
   const loadShows = useCallback(async () => {
+    if (!stationId) return;
     try {
-      const rows = await query<Show>(
-        `SELECT s.*, c.name as clock_name FROM shows s
-         LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.deleted_at IS NULL ORDER BY s.start_hour`
-      );
-      setShows(rows);
+      const rows = await queryScoped<Show>(SHOWS_SQL, [stationId], stationId, { skipScoping: true });
+      setShows(rows || []);
     } catch {}
-  }, []);
+  }, [stationId]);
 
   const loadDayData = useCallback(async (date: string) => {
+    if (!stationId) return;
     try {
-      const entries = await query<ScheduledEntry>(
-        "SELECT * FROM scheduled_log WHERE log_date=? ORDER BY hour, position", [date]
-      );
-      // Group by hour and merge with shows
-      const allShows = await query<Show>(
-        `SELECT s.*, c.name as clock_name FROM shows s
-         LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.deleted_at IS NULL ORDER BY s.start_hour`
-      );
-      const blocks: HourBlock[] = [];
-      // Only show hours that have a show OR have scheduled entries
-      const scheduledHours = new Set(entries.map(e => e.hour));
-      const showHours = new Set<number>();
-      // Fix: handle overnight shows (end_hour=0 or end_hour < start_hour)
-      allShows.forEach(s => {
-        const end = s.end_hour === 0 || s.end_hour === s.start_hour ? 24 : s.end_hour;
-        if (end > s.start_hour) {
-          for (let h = s.start_hour; h < end; h++) showHours.add(h % 24);
-        } else {
-          // overnight: start_hour=19 end_hour=2 → hours 19,20,21,22,23,0,1
-          for (let h = s.start_hour; h < 24; h++) showHours.add(h);
-          for (let h = 0; h < end; h++) showHours.add(h);
-        }
-      });
-      const allHours = new Set([...scheduledHours, ...showHours]);
-      Array.from(allHours).sort((a,b) => a-b).forEach(hour => {
-        // Fix: correctly match overnight shows for a given hour
-        const show = allShows.find(s => {
-          if (s.end_hour === 0 || s.end_hour === s.start_hour) return hour >= s.start_hour;
-          if (s.end_hour > s.start_hour) return hour >= s.start_hour && hour < s.end_hour;
-          // overnight: active after start OR before end
-          return hour >= s.start_hour || hour < s.end_hour;
-        });
-        blocks.push({
+      // The day = [local midnight, +86 400) — the same window schedule:generateDay fills
+      // (main.js dayBase.setHours(0,0,0,0)); the rows = this station's generated_schedule via the
+      // Calendar's handler (station + window carried; db:query is unscoped by design).
+      const { dayStart, dayEnd } = dayWindow(date);
+      const res = await (window as any).ether.invoke("schedule:get", dayStart, dayEnd, stationId);
+      if (res?.error) throw new Error(res.error);
+      const rows: ScheduleGetRow[] = res?.data || [];
+      // Category code/colour for the type badge — per-station categories.
+      const cats = new Map<number, CategoryRef>();
+      try {
+        const cr = await queryScoped<CategoryRef>("SELECT id, code, color FROM categories WHERE deleted_at IS NULL", [], stationId);
+        (cr || []).forEach(c => cats.set(c.id, c));
+      } catch {}
+      const entries = toEntries(rows, date, cats);
+      const allShows = (await queryScoped<Show>(SHOWS_SQL, [stationId], stationId, { skipScoping: true })) || [];
+      // Render every hour a show covers ∪ every hour that has a row; the hour is the row's LOCAL
+      // wall-clock hour (a 25-hour fall-back day files both 1 AMs under 1 AM; a 23-hour spring day
+      // simply has no rows at 2 AM).
+      const blocks: HourBlock[] = hoursToRender(entries, allShows).map(hour => {
+        const show = showForHour(allShows, hour);
+        return {
           hour, entries: entries.filter(e => e.hour === hour),
           show_name: show?.name || null,
           clock_name: show?.clock_name || null,
           generating: false,
-        });
+        };
       });
       setHourBlocks(blocks);
-    } catch {}
-  }, []);
+    } catch (e) {
+      console.error("[ProgramLog] loadDayData", e);
+      setHourBlocks([]);
+    }
+  }, [stationId]);
 
-  useEffect(() => { loadScheduledDates(); loadShows(); }, []);
+  useEffect(() => { loadScheduledDates(); loadShows(); }, [loadScheduledDates, loadShows]);
   useEffect(() => { loadDayData(selectedDate); }, [selectedDate, loadDayData]);
 
   // ── Scheduling engine ─────────────────────────────────────────
@@ -167,7 +167,8 @@ export default function ProgramLog({ onClose }: Props) {
     try {
       // Fix: handle overnight shows (end_hour=0 means "until midnight" = 24)
       const allShowsForHour = await query<{ id: number; name: string; clock_id: number | null; start_hour: number; end_hour: number }>(
-        "SELECT id, name, clock_id, start_hour, end_hour FROM shows WHERE is_active = 1 AND deleted_at IS NULL"
+        "SELECT id, name, clock_id, start_hour, end_hour FROM shows WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL",
+        [stationId]
       );
       const matchedShow = allShowsForHour.find(s => {
         if (s.end_hour === 0 || s.end_hour === s.start_hour) return hour >= s.start_hour;
@@ -1075,11 +1076,11 @@ export default function ProgramLog({ onClose }: Props) {
                   <div style={{ borderTop: "1px solid var(--border-primary)" }}>
                     {/* Column headers */}
                     <div style={{
-                      display: "grid", gridTemplateColumns: "32px 48px 1fr 160px 56px 52px",
+                      display: "grid", gridTemplateColumns: "64px 48px 1fr 160px 56px 52px",
                       padding: "4px 12px", background: "var(--bg-tertiary)",
                       fontSize: "var(--t-micro)", fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", textTransform: "uppercase" as const,
                     }}>
-                      <span>#</span><span>Type</span><span>Title</span><span>Artist</span>
+                      <span>Time</span><span>Type</span><span>Title</span><span>Artist</span>
                       <span style={{ textAlign: "right" as const }}>Duration</span>
                       <span style={{ textAlign: "right" as const }}>Status</span>
                     </div>
@@ -1090,13 +1091,17 @@ export default function ProgramLog({ onClose }: Props) {
                       const isOverflow = entry.overflow === 1;
                       return (
                         <div key={entry.id} style={{
-                          display: "grid", gridTemplateColumns: "32px 48px 1fr 160px 56px 52px",
+                          display: "grid", gridTemplateColumns: "64px 48px 1fr 160px 56px 52px",
                           padding: "0 12px", minHeight: isOverflow ? 36 : 30, alignItems: "center",
                           background: isOverflow ? "rgba(167,139,250,0.06)" : i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)",
                           borderBottom: "1px solid rgba(255,255,255,0.02)",
                           borderLeft: isOverflow ? "3px solid rgba(167,139,250,0.5)" : "3px solid transparent",
                         }}>
-                          <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>{i+1}</span>
+                          {/* Scheduled HH:MM:SS; when the row aired, the actual time underneath — the as-run receipt. */}
+                          <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace", lineHeight: 1.2 }}>
+                            <span style={{ display: "block", color: entry.status === "playing" ? "var(--accent-blue)" : "var(--text-tertiary)" }}>{fmtClock(entry.scheduled_at)}</span>
+                            {entry.played_at ? <span style={{ display: "block", color: "#34d399" }}>{fmtClock(entry.played_at)}</span> : null}
+                          </span>
                           <span style={{ fontSize: "var(--t-micro)", fontWeight: 800, padding: "1px 4px", borderRadius: 0, background: isOverflow ? "rgba(167,139,250,0.2)" : color+"20", color: isOverflow ? "#a78bfa" : color, letterSpacing: "0.06em", whiteSpace: "nowrap" as const }}>
                             {isOverflow ? "XFADE" : entry.category_code || entry.slot_type.toUpperCase()}
                           </span>
@@ -1116,7 +1121,7 @@ export default function ProgramLog({ onClose }: Props) {
                           <span style={{ fontSize: "var(--t-micro)", fontFamily: "'DM Mono', monospace", color: isOverflow ? "#a78bfa" : "var(--text-tertiary)", textAlign: "right" as const }}>
                             {fmtMs(entry.duration_ms)}
                           </span>
-                          <span style={{ fontSize: "var(--t-micro)", textAlign: "right" as const, color: isOverflow ? "#a78bfa" : entry.status === "played" ? "#34d399" : isUnfilled ? "#ef4444" : "rgba(255,255,255,0.2)" }}>
+                          <span style={{ fontSize: "var(--t-micro)", textAlign: "right" as const, color: isOverflow ? "#a78bfa" : entry.status === "played" ? "#34d399" : entry.status === "playing" ? "var(--accent-blue)" : entry.status === "missed" || isUnfilled ? "#ef4444" : "rgba(255,255,255,0.2)", fontWeight: entry.status === "playing" ? 700 : 400 }}>
                             {isOverflow ? "overflow" : entry.status}
                           </span>
                         </div>
@@ -1125,7 +1130,7 @@ export default function ProgramLog({ onClose }: Props) {
 
                     {/* Hour footer */}
                     <div style={{
-                      display: "grid", gridTemplateColumns: "32px 48px 1fr 160px 56px 52px",
+                      display: "grid", gridTemplateColumns: "64px 48px 1fr 160px 56px 52px",
                       padding: "4px 12px", background: "var(--bg-tertiary)",
                       borderTop: "1px solid var(--border-primary)",
                       fontSize: "var(--t-micro)", color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace",
@@ -1464,7 +1469,8 @@ function ShowsDaypartsModal({ hour, stationId, onClose, onDone }: ShowsDaypartsM
 
   const loadModal = async () => {
     setModalShows(await query<Show>(
-      "SELECT s.*, c.name as clock_name FROM shows s LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.deleted_at IS NULL ORDER BY s.start_hour"
+      "SELECT s.*, c.name as clock_name FROM shows s LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.station_id = ? AND s.deleted_at IS NULL ORDER BY s.start_hour",
+      [stationId]
     ));
     setModalClocks(await query<{id:number;name:string}>("SELECT id, name FROM clocks ORDER BY name"));
   };

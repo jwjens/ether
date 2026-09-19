@@ -10545,8 +10545,9 @@ ipcMain.handle('schedule:get', (_, fromTs, toTs, stationId) => {
       // uuid/source/state added for the log editor (Fix 2): uuid is the only stable handle a row can
       // be addressed by for mutation, source says who owns it, state says whether it has already
       // aired (and is therefore a record, not a plan).
+      // played_at (v33, engine-stamped) added 2026-09-18 for the Program Log's as-run time cell.
       `SELECT g.id, g.uuid, g.scheduled_at, g.song_id, g.title, g.artist, g.file_key, g.file_path,
-              g.duration_s, g.category_id, g.source, g.state, g.content_class, g.channel
+              g.duration_s, g.category_id, g.source, g.state, g.content_class, g.channel, g.played_at
        FROM generated_schedule g
        WHERE g.station_id = ? AND g.scheduled_at >= ? AND g.scheduled_at < ? AND g.deleted_at IS NULL
          AND NOT EXISTS (
