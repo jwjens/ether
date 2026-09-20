@@ -26,7 +26,6 @@ interface HourBlock {
   entries: ScheduledEntry[];
   show_name: string | null;
   clock_name: string | null;
-  generating: boolean;
 }
 
 interface Show {
@@ -136,7 +135,6 @@ export default function ProgramLog({ onClose }: Props) {
           hour, entries: entries.filter(e => e.hour === hour),
           show_name: show?.name || null,
           clock_name: show?.clock_name || null,
-          generating: false,
         };
       });
       setHourBlocks(blocks);
@@ -152,41 +150,22 @@ export default function ProgramLog({ onClose }: Props) {
   // ── Generate / Clear — the real path (slice 2, 2026-09-18) ────────────────────────────────────
   // The local picker that lived here (its own separation arithmetic, INSERTs into the dead
   // scheduled_log, and two FUTURE stamps on songs.last_played_at that would have rested songs the real
-  // generator had not played) is gone. Fill Day, the hour button and Clear Day now ride the handlers
-  // the Calendar has used since 4.4.x — schedule:generateDay / schedule:clearDay — on the active
-  // station, over the same local-midnight window slice 1 reads. Nothing in this file writes
-  // songs.last_played_at. docs/program-log-one-surface-2026-09-17.md §3.
+  // generator had not played) is gone. Fill Day and Clear Day now ride the handlers the Calendar has
+  // used since 4.4.x — schedule:generateDay / schedule:clearDay — on the active station, over the
+  // same local-midnight window slice 1 reads. Fill Day is the ONLY fill (slice 2a): this window never
+  // passes fromTs. Nothing in this file writes songs.last_played_at.
+  // docs/program-log-one-surface-2026-09-17.md §3.
 
   /** Unix seconds of a local wall-clock hour on the selected day (DST-safe: setHours, not h*3600). */
   const hourStartTs = (date: string, hour: number): number => {
     const [y, m, d] = date.split("-").map(Number);
     return Math.floor(new Date(y, m - 1, d, hour, 0, 0, 0).getTime() / 1000);
   };
-  /** Generate never reaches an hour that has started: main.js effStart = max(dayStart, next top-of-hour). */
+  /** An hour that has started is a record: Clear never reaches it (main.js clearDay from = next
+   *  top-of-hour), so the hour ✕ is not offered there. Slice 2a: the per-hour Generate is gone —
+   *  Fill Day is the only fill (Jeff's ruling). */
   const hourLocked = (date: string, hour: number): boolean =>
     hourStartTs(date, hour) < Math.ceil(Date.now() / 1000 / 3600) * 3600;
-
-  const generateHour = async (hour: number) => {
-    if (hour < 0) return;
-    if (hourLocked(selectedDate, hour)) { setGlobalStatus(`✗ ${fmtHour(hour)} has already started — it is a record now, not a plan`); return; }
-    setHourBlocks(prev => prev.map(b => b.hour === hour ? { ...b, generating: true } : b));
-    setGlobalStatus(`Generating from ${fmtHour(hour)} to end of day...`);
-    let msg: string;
-    try {
-      const { dayStart } = dayWindow(selectedDate);
-      // fromTs → main regenerates [this hour, end of day) and leaves every earlier hour alone.
-      const res = await (window as any).ether.invoke("schedule:generateDay", dayStart, hourStartTs(selectedDate, hour));
-      msg = res?.ok === false ? `✗ ${res.error || "generate failed"}`
-          : res?.cancelled ? "↷ Generate cancelled"
-          : res?.skipped ? "↷ Nothing to generate — the day has aired"
-          : `✓ ${res?.count ?? 0} rows from ${fmtHour(hour)} to end of day`;
-    } catch (e: any) { msg = `✗ ${e?.message || e}`; }
-    await loadDayData(selectedDate);
-    loadScheduledDates();
-    setExpandedHours(prev => new Set([...prev, hour]));
-    setHourBlocks(prev => prev.map(b => b.hour === hour ? { ...b, generating: false } : b));
-    setGlobalStatus(msg);
-  };
 
   const fillDay = async () => {
     setFilling(true);
@@ -857,32 +836,6 @@ export default function ProgramLog({ onClose }: Props) {
                   {/* Status dot */}
                   <div style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: isScheduled ? (unfilledInHour > 0 ? "#ef4444" : "#34d399") : "rgba(255,255,255,0.1)" }} />
 
-                  {/* Generate from this hour → end of day (schedule:generateDay with fromTs). An hour that has
-                      started is a record, not a plan: the button is disabled and says so. */}
-                  <button
-                    onClick={e => {
-                      e.stopPropagation();
-                      if (!block.clock_name) {
-                        // No clock assigned — open assign modal
-                        setAssignModal({ hour: block.hour, showName: block.show_name });
-                      } else {
-                        generateHour(block.hour);
-                      }
-                    }}
-                    disabled={block.generating || locked}
-                    title={locked ? `${fmtHour(block.hour)} has already started — it is a record now, not a plan` : `Regenerate from ${fmtHour(block.hour)} to the end of the day (earlier hours untouched)`}
-                    style={{
-                      padding: "3px 10px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 700,
-                      cursor: block.generating || locked ? "default" : "pointer",
-                      background: isScheduled ? "rgb(from var(--accent-blue) r g b / 0.08)" : "rgba(52,211,153,0.12)",
-                      color: isScheduled ? "var(--accent-blue)" : "#34d399",
-                      border: `1px solid ${isScheduled ? "rgb(from var(--accent-blue) r g b / 0.25)" : "rgba(52,211,153,0.3)"}`,
-                      opacity: block.generating || locked ? 0.35 : 1, flexShrink: 0,
-                    }}
-                  >
-                    {block.generating ? "..." : locked ? "aired" : isScheduled ? "⟳ Regen →" : "▶ Generate →"}
-                  </button>
-
                   {/* Deep Dive button — only when scheduled */}
                   {isScheduled && (
                     <button
@@ -989,8 +942,8 @@ export default function ProgramLog({ onClose }: Props) {
                     {locked
                       ? `Nothing was in the log for this hour — it has aired`
                       : block.clock_name
-                      ? `Generate → fills from ${fmtHour(block.hour)} to the end of the day with ${block.clock_name}; Fill Day fills the whole day`
-                      : `Generate → assigns a clock, then fills from ${fmtHour(block.hour)} to the end of the day`}
+                      ? `Fill Day fills this hour with ${block.clock_name}`
+                      : `No clock for this hour — assign one under ⚙ Shows & Dayparts, then Fill Day`}
                   </div>
                 )}
               </div>
@@ -1009,7 +962,6 @@ export default function ProgramLog({ onClose }: Props) {
             setAssignModal(null);
             await loadShows();
             await loadDayData(selectedDate);
-            generateHour(assignModal.hour);
           }}
         />
       )}

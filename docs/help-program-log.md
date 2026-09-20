@@ -1,7 +1,7 @@
 ---
 feature: program-log
 title: "The Program Log"
-summary: One day of the station's real log — what aired, what is on air, what is coming — with Fill Day, an hour-by-hour Generate, Clear Day and CSV / Print / PDF export.
+summary: One day of the station's real log — what aired, what is on air, what is coming — with Fill Day, Clear Day and CSV / Print / PDF export.
 where: ≡ menu → Program Log, or Schedule → Program Log
 since: unreleased (branch log-reader-flip, after 4.6.45)
 audience: operator
@@ -38,14 +38,9 @@ Calendar uses. It fills **from the next top-of-hour to the end of the day**:
 
 Fill Day acts on the **station you are switched into**. Switch stations first if you mean another one.
 
-## Generate → on one hour
-
-Each hour row has a **▶ Generate →** (or **⟳ Regen →**) button. It regenerates **from that hour to the
-end of the day** and leaves every earlier hour exactly as it is. Use it when the afternoon needs
-rebuilding but the morning is fine.
-
-An hour that has already started shows **aired** and cannot be regenerated — the button is greyed and
-tells you why if you hover it.
+**Fill Day is the only fill.** There is no per-hour generate: to rebuild part of a day, clear the hours
+you want rebuilt (the ✕ on each hour row) and press Fill Day — it fills the gaps and leaves everything
+else in place.
 
 ## Clear Day and the hour ✕
 
@@ -54,7 +49,7 @@ the day. It never removes played, playing or missed items — those are the reco
 and it never touches the hour that is on air right now, so the engine is never left with nothing to
 play. The **✕** on an hour row does the same for that one hour.
 
-After a Clear, press Fill Day (or an hour's Generate →) to rebuild.
+After a Clear, press Fill Day to rebuild — it fills only the gaps.
 
 ## Export
 
@@ -73,4 +68,6 @@ reads and writes the airing log.
 - **The wrong show name on every hour** — check the station switcher; the panel follows the active
   station.
 - **Fill Day says "nothing to fill"** — the whole day has already aired.
-- **Generate → is greyed on an hour** — that hour has already started.
+- **An hour has no ✕** — that hour has already started; there is nothing left in it to clear.
+- **An hour says "No clock for this hour"** — open **⚙ Shows & Dayparts**, give the show a clock, then
+  Fill Day.

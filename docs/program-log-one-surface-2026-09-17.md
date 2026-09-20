@@ -532,3 +532,40 @@ rebuilds from that hour on and the earlier hours are unchanged; **Clear Day** em
 on and the on-air row keeps playing; the progress bar appears for the docked panel;
 `SELECT count(*) FROM songs WHERE last_played_at > strftime('%s','now')` on a DB **copy** stays 0.
 Jeff confirms on screen.
+
+---
+
+## Slice 2a — built (2026-09-19; local commit on `log-reader-flip`)
+
+**Jeff's ruling: Fill Day is the only fill.** No push, no tag, no bump, no install, no live DB.
+
+### What changed
+- **The per-hour ▶ Generate → / ⟳ Regen → button is gone** from the hour rows (`ProgramLog.tsx`), with
+  `generateHour`, the `HourBlock.generating` spinner state and the `locked` disabling on the button.
+  The Shows & Dayparts modal's `onDone` no longer triggers a generate — it reloads the shows and the day.
+  The empty-hour text now reads `Fill Day fills this hour with <clock>` / `No clock for this hour —
+  assign one under ⚙ Shows & Dayparts, then Fill Day` (`:942-947`).
+- **The per-hour ✕ clear is KEPT** — it was already `schedule:clearDay` windowed to the hour
+  (`clearHour`, `:203-208`), no extra code. One line of the `hourLocked` helper survives for it
+  (`:167-168`): an hour that has started has nothing to clear (the handler would return `skipped`), so
+  the ✕ is not offered there (`:854`) and the empty-hour text says "it has aired".
+- **Clear Day kept**, unchanged.
+- **`schedule:generateDay(dayTs, fromTs?)` is NOT touched** (`main.js:9586`) — the parameter stays for
+  the handler's callers and tests; this window simply never sends it. Receipt: smoke (g) asserts
+  `invoke("schedule:generateDay"` occurs exactly once in `ProgramLog.tsx`, as `(…, dayStart)`, and that
+  `generateHour` / `Regen` / `Generate →` / `generating:` are absent.
+- Help `docs/help-program-log.md`: the "Generate → on one hour" section is replaced by "Fill Day is the
+  only fill — to rebuild part of a day, ✕ the hours and press Fill Day; it fills the gaps".
+
+### Tests / gates
+`smoke-programlog-writes.js` → **50 passed, 0 failed** (section (c) still exercises the handler's
+`fromTs`; the (g) grep contract is the slice-2a one above). `npx tsc --noEmit` exit 0. `npx vitest run`
+→ 31 files, 415 passed. `node --check electron/main.js` ok. `test:ipc-contract` / `test:preload-bridge`
+/ `test:undefined-calls` → PASS. `test:programlog-reads` → 11 passed. watchdog → 32 passed. audiod
+smokes (exit 0 each): autofit 47 · autopost-arm 21 · cmd-routing 7 · deck-identity 22 · deck-position
+16 · deck-snapshot 25 · enginestate-wire 15 · enginestate 19 · logreader-anchor 18 · manual-mode 30 ·
+meter-contract 15 · orphan 4 · queue-classes 8 · seam-stop 60 · xfade-contract 33 · dead-air 50.
+
+### Runtime receipt owed
+Hour rows show ✎ Edit and ✕ only (no Generate/Regen); ✕ absent on aired hours; Fill Day still fills
+from the next hour. Jeff confirms on screen after the relaunch.

@@ -150,7 +150,7 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
   const rowsB = get(dayStart, dayEnd);
   check("b · generated rows again start at 11:00; the day now has aired + generated rows", rowsB.some(r => r.scheduled_at >= nextTop && r.state === "pending") && rowsB.filter(r => r.scheduled_at < nextTop).length === 5);
 
-  // ── (c) hour Generate = fromTs: regenerates [that hour, end of day), earlier hours untouched ──
+  // ── (c) generateDay's fromTs (kept for the handler's callers/tests; the Program Log no longer sends it — slice 2a) ──
   const before15 = get(dayStart, hourTs(15)).map(r => r.uuid).join(",");
   const rc = await handlers["schedule:generateDay"](null, dayStart, hourTs(15));
   check("c · generateDay(fromTs=15:00) ok", rc && rc.ok === true, JSON.stringify(rc));
@@ -202,7 +202,9 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
   check("g · the remaining last_played_at mentions are the HourModal's song-search SELECT + its type (reads)", lpaReads.every(([, l]) => /SELECT|s\.last_played_at|last_played_at: number/.test(l)), JSON.stringify(lpaReads));
   check("g · no scheduledLog.clearByHour / clearByDate / batchInsert call remains", !/scheduledLog\.(clearByHour|clearByDate|batchInsert)/.test(tsx));
   check("g · no scheduling_rules / clock_slots picker query remains in ProgramLog.tsx", !/scheduling_rules/.test(tsx) && !/FROM clock_slots/.test(tsx));
-  check("g · Fill Day and the hour button invoke schedule:generateDay; Clear invokes schedule:clearDay", /invoke\("schedule:generateDay", dayStart\)/.test(tsx) && /invoke\("schedule:generateDay", dayStart, hourStartTs\(selectedDate, hour\)\)/.test(tsx) && /invoke\("schedule:clearDay", dayStart, \{ fromTs, toTs \}\)/.test(tsx));
+  check("g · Fill Day invokes schedule:generateDay(dayStart) — and it is the ONLY generateDay call in this window (slice 2a: no fromTs, no hour button)",
+    (tsx.match(/invoke\("schedule:generateDay"/g) || []).length === 1 && /invoke\("schedule:generateDay", dayStart\)/.test(tsx) && !/generateHour|Regen|Generate →|generating:/.test(tsx));
+  check("g · Clear Day and the hour ✕ invoke schedule:clearDay", /invoke\("schedule:clearDay", dayStart, \{ fromTs, toTs \}\)/.test(tsx) && /const clearHour/.test(tsx));
   check("g · the hour modal's swap and drag still write scheduled_log (slice 4, stated in the doc)", /UPDATE scheduled_log SET song_id/.test(tsx) && /scheduledLog\.batchUpdatePosition/.test(tsx));
 
   console.log(`=== ${pass} passed, ${fail} failed ===`);
