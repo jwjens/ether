@@ -64,13 +64,40 @@ const DAYS_SHORT = ["Su","Mo","Tu","We","Th","Fr","Sa"];
 
 // ── Component ─────────────────────────────────────────────────
 
-interface Props { onClose?: () => void; }
+/** The day both surfaces open on (slice 3): the docked panel and the pop-out are separate React
+ *  trees, so the last-picked day is kept per station in localStorage and seeds whichever opens next.
+ *  Per-viewer convenience only — it can be absent or throw (private window), and the panel falls
+ *  back to today. */
+export const PROGRAMLOG_DATE_KEY = (stationId: number) => `ether_programlog_date_${stationId}`;
+export function readSharedDate(stationId: number): string | null {
+  try {
+    const v = localStorage.getItem(PROGRAMLOG_DATE_KEY(stationId));
+    return v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+  } catch { return null; }
+}
+export function writeSharedDate(stationId: number, date: string): void {
+  try { localStorage.setItem(PROGRAMLOG_DATE_KEY(stationId), date); } catch { /* per-viewer convenience */ }
+}
 
-export default function ProgramLog({ onClose }: Props) {
+/** How long a burst of schedule:changed events is coalesced before ONE re-read. A Generate emits one
+ *  per committed day plus the stale sweep; a go-live emits one; the two surfaces each re-read once. */
+export const CHANGED_DEBOUNCE_MS = 400;
+
+interface Props {
+  onClose?: () => void;
+  /** Docked in the dashboard's push-up (a short, full-width strip) rather than its own window: the
+   *  sidebar scrolls as a whole so Fill Day / Clear Day / exports stay reachable at dock height. */
+  embedded?: boolean;
+}
+
+export default function ProgramLog({ onClose, embedded = false }: Props) {
+  const { stationId } = useActiveStation();
+  const [selectedDate, setSelectedDateState] = useState<string>(() => readSharedDate(stationId) || todayStr());
   const [currentMonth, setCurrentMonth] = useState(() => {
-    const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() };
+    const [y, m] = (readSharedDate(stationId) || todayStr()).split("-").map(Number);
+    return { year: y, month: m - 1 };
   });
-  const [selectedDate, setSelectedDate] = useState(todayStr);
+  const setSelectedDate = useCallback((d: string) => { setSelectedDateState(d); writeSharedDate(stationId, d); }, [stationId]);
   const [scheduledDates, setScheduledDates] = useState<Set<string>>(new Set());
   const [shows, setShows] = useState<Show[]>([]);
   const [hourBlocks, setHourBlocks] = useState<HourBlock[]>([]);
@@ -81,7 +108,6 @@ export default function ProgramLog({ onClose }: Props) {
   const [hourModal, setHourModal] = useState<{ hour: number; block: HourBlock } | null>(null);
   const [assignModal, setAssignModal] = useState<{ hour: number; showName: string | null } | null>(null);
   const rundownRef = useRef<HTMLDivElement>(null);
-  const { stationId } = useActiveStation();
 
   // ── Load ─────────────────────────────────────────────────────
 
@@ -146,6 +172,31 @@ export default function ProgramLog({ onClose }: Props) {
 
   useEffect(() => { loadScheduledDates(); loadShows(); }, [loadScheduledDates, loadShows]);
   useEffect(() => { loadDayData(selectedDate); }, [selectedDate, loadDayData]);
+
+  // Station switch: the shared day is per station, so follow it (or today).
+  useEffect(() => {
+    const d = readSharedDate(stationId) || todayStr();
+    setSelectedDateState(d);
+    const [y, m] = d.split("-").map(Number); setCurrentMonth({ year: y, month: m - 1 });
+  }, [stationId]);
+
+  // schedule:changed (slice 3): main broadcasts after every write to generated_schedule — Generate,
+  // Clear, the editor, a voice-track insert, the stale sweep, the daemon's playing/played/missed
+  // stamps. Docked and pop-out both subscribe, so they always show the same rows. ONE listener per
+  // mount, removed on unmount; a burst is coalesced into ONE re-read (CHANGED_DEBOUNCE_MS), and the
+  // latest selectedDate is read through a ref so the handler is never re-registered per day change.
+  const selectedDateRef = useRef(selectedDate); selectedDateRef.current = selectedDate;
+  useEffect(() => {
+    const ether = (window as any).ether;
+    if (!ether?.on || !stationId) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const handle = ether.on("schedule:changed", (p: { stationId?: number }) => {
+      if (p && p.stationId != null && p.stationId !== stationId) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { timer = null; loadDayData(selectedDateRef.current); loadScheduledDates(); }, CHANGED_DEBOUNCE_MS);
+    });
+    return () => { if (timer) clearTimeout(timer); try { ether.off?.("schedule:changed", handle); } catch { /* ignore */ } };
+  }, [stationId, loadDayData, loadScheduledDates]);
 
   // ── Generate / Clear — the real path (slice 2, 2026-09-18) ────────────────────────────────────
   // The local picker that lived here (its own separation arithmetic, INSERTs into the dead
@@ -565,6 +616,8 @@ export default function ProgramLog({ onClose }: Props) {
         width: 220, flexShrink: 0, display: "flex", flexDirection: "column" as const,
         borderRight: "1px solid var(--border-primary)",
         background: "var(--bg-secondary)",
+        // Docked: the strip is short, so the whole sidebar scrolls and nothing below the fold is lost.
+        overflowY: embedded ? ("auto" as const) : ("hidden" as const), minHeight: 0,
       }}>
 
         {/* Header */}
@@ -646,7 +699,7 @@ export default function ProgramLog({ onClose }: Props) {
         </div>
 
         {/* Shows today */}
-        <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-primary)", flex: 1, overflowY: "auto" as const }}>
+        <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--border-primary)", flex: embedded ? ("0 0 auto" as const) : 1, maxHeight: embedded ? 180 : undefined, overflowY: "auto" as const }}>
           <div style={{ fontSize: "var(--t-micro)", fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", marginBottom: 6 }}>TODAY'S SHOWS</div>
           {shows.length === 0 && <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", fontStyle: "italic" }}>No shows configured</div>}
 

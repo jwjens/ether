@@ -569,3 +569,152 @@ meter-contract 15 · orphan 4 · queue-classes 8 · seam-stop 60 · xfade-contra
 ### Runtime receipt owed
 Hour rows show ✎ Edit and ✕ only (no Generate/Regen); ✕ absent on aired hours; Fill Day still fills
 from the next hour. Jeff confirms on screen after the relaunch.
+
+---
+
+## Slice 3 — built (2026-09-20, dock + pop-out; local commit on `log-reader-flip`)
+
+No push, no tag, no bump, no install, no live DB. Jeff confirmed slices 1–2a on screen first.
+Existing mechanisms only — no new window path, no new dock. The Calendar is untouched. Line
+numbers are post-change.
+
+### 1. Pop-out — the existing path, confirmed, one door fixed
+- Path: `openPopoutWindow(panel)` (`electron/main.js:6494-6600`) → `POPOUT_SIZES.programlog`
+  `{1180×820}` (`:6364`) → `new BrowserWindow` titled `popout:programlog`, deduped by title
+  (`:6496-6497`), bounds remembered in `popout-bounds.json` on `moved`/`resized` and restored when
+  still on a display (`loadPopoutBounds / savePopoutBounds / boundsOnScreen`, `:6427-6448`) → loads
+  `#popout/programlog` → `PopoutRenderer.tsx:306 case "programlog": <ProgramLog onClose={window.close}>`.
+- **Hamburger → Program Log**: `App.tsx:2916 { label: "Program Log", panel: "programlog" }` →
+  `openPopout("programlog")` → `window:popout`. Already correct.
+- **Schedule → Program Log — was broken, fixed.** `main.js:2874 menuNav("nav:programlog","programlog")`
+  only opened the pop-out when invoked FROM a pop-out; from the main window it sent `nav:programlog`,
+  and `App.tsx` answered by opening the **Schedule Manager** and focusing its "log" pane — a different
+  document under the menu entry's name. Now `App.tsx:1215 if (cmd === "nav:programlog") {
+  openPopout("programlog"); return; }` — the same window the hamburger opens. (The
+  `ether:focus-schedule-pane` listener in ScheduleWorkspace is left in place; nothing else was removed.)
+- Receipts: `scripts/smoke-programlog-popout.js` (`npm run test:programlog-popout`, plain node) reads
+  `openPopoutWindow` + the three bounds helpers out of main.js and runs them with a fake
+  BrowserWindow / fs / screen — verbatim below: first open sized from POPOUT_SIZES and placed so the
+  live screen stays visible; a second open reuses (show+focus, ONE window); a move/resize persists
+  under `programlog`; close + reopen restores `{300,200,1000,700}`; off-screen saved bounds fall back;
+  a second monitor gets the first open; dedupe is per panel.
+
+### 2. Docked panel
+- `App.tsx:780` / `:3854` — `"programlog"` added to the dock union; `:2678-2680` a **PROGRAM LOG** tab
+  beside CALENDAR (the Calendar tab and component untouched — slice 6 retires them); `:4356-4357`
+  `progPanel === "programlog" ? <ProgramLog embedded onClose={onCloseDock} />` — the same push-up,
+  divider and persisted `dockHeight` (default 320, min 110) the Calendar uses.
+- `ProgramLog.tsx` `embedded` prop (`:86-91`): the 220px sidebar scrolls as a whole (`:620
+  overflowY: embedded ? "auto" : "hidden", minHeight: 0`) and TODAY'S SHOWS stops claiming all the
+  height (`:702 flex: "0 0 auto", maxHeight: 180`), so at dock height the mini month, the day summary,
+  Fill Day, CSV / Print / PDF and Clear Day are all reachable by scrolling the left column; the hour
+  rows keep their own scroll. **Nothing is hidden.** The ✕ in the header closes the dock (`onCloseDock`).
+- Receipt: `src/components/ProgramLog.layout.test.tsx` (vitest; react-dom/server markup — there is no
+  DOM environment in this suite, so this asserts the layout RULES, not pixels; pixels are Jeff's
+  receipt): root `height:100%` flex; sidebar `width:220px flex-shrink:0`, `overflow-y:auto` embedded /
+  `hidden` standalone; shows block `flex:0 0 auto; max-height:180px` embedded / `flex:1` standalone;
+  rundown `flex:1; overflow-y:auto`; every control present; no `min-width` > 320px.
+
+### 3. Shared state — `schedule:changed`
+- `main.js:9320 _scheduleChanged(stationId, reason, extra)` → `sendToAllWindows("schedule:changed",
+  { stationId, reason, at, …extra })`. Fired from **every writer of `generated_schedule`**:
+  `_commitDayRows` (`:9361` — so every Generate caller: `generateDay`, `generateDays`, `_generateRange`
+  / auto-extend), `clearDay` (`:9404`), `moveRow` (`:9445`), `setRowSource` (`:9463`), `deleteRow`
+  (`:9477`), `editRowFields` (`:9510`), `insertVoiceTrack` (`:8935`), the stale sweep → missed
+  (`:8836`), and the daemon's stamps relayed by main: `playstart` (playing/played, `:954`) and
+  `logreader-missed` / `spot-missed` / `logreader-operator-write` (`:890`).
+- `ProgramLog.tsx:184-200`: ONE `ether.on("schedule:changed")` per mount, filtered to this station,
+  **coalesced into one re-read per 400 ms burst** (`CHANGED_DEBOUNCE_MS`, `:84`), `selectedDate` read
+  through a ref so the listener is never re-registered on a day change, `ether.off` on unmount.
+- **Shared selected day**: `localStorage` `ether_programlog_date_<stationId>` (`:70-82`), read on mount
+  and on a station switch (`:95-99`, `:176-181`), written on every pick (`:100`); absent/throwing/
+  garbage → today. Both surfaces open on the last day picked for the station. (Live-syncing the day
+  between them is deliberately NOT done — the two windows are two views; each keeps its own day
+  once open.)
+- Receipts: smoke (a) `schedule:changed` fired once for a Fill with `{stationId, reason:"generate",
+  from, to, rows}`; (d) once per Clear (`cleared` carried); (h) all 8 main.js writer sites call it,
+  the daemon relays are wired, ProgramLog subscribes once/debounced/unsubscribes.
+
+### 4. Both open, closing one, reopening
+- Two React trees, two listeners (one each), each debounced — a Generate (one `generate` + one
+  `missed` sweep event) is one re-read per surface; a go-live is one. No storm.
+- Closing the dock = `setProgPanel(null)` (unmount → `ether.off`); closing the window = `window.close`
+  (its renderer dies with it). Reopening either seeds from the shared day key and re-subscribes; the
+  pop-out restores its bounds. The Program Log's own Fill/Clear still re-read explicitly after the
+  call (2 reads of ≤ ~1,000 rows on a click; acceptable, and the other surface's read rides the
+  broadcast).
+- The progress bar (`<GenerateProgressBar/>`, App top-level) shows for the docked panel; the pop-out
+  has none — its status line is its progress (unchanged from slice 2).
+
+### 5. Calendar — untouched (`git diff --stat` shows no `BroadcastCalendar.tsx`).
+
+### Help
+`docs/help-program-log.md`: new "Docked or in its own window" section; `where:` names the tab, the
+menu and the hamburger.
+
+### Tests (verbatim)
+`scripts/smoke-programlog-writes.js` (57): the slice-3 lines —
+```
+PASS  handlers registered: generateDay, clearDay, get
+PASS  a · schedule:changed fired ONCE for the Fill (stationId 1, reason generate, window carried)
+PASS  d · schedule:changed fired for BOTH clears (reason clear-day; the second says cleared 0)
+PASS  h · every generated_schedule writer in main.js calls _scheduleChanged (8 sites)
+PASS  h · the daemon's playstart and missed events are relayed as schedule:changed
+PASS  h · _scheduleChanged sends to ALL windows on channel schedule:changed
+PASS  h · ProgramLog.tsx subscribes to schedule:changed once per mount, debounced, and unsubscribes
+PASS  h · the shared selected-day key is read on mount and written on every pick
+=== 57 passed, 0 failed ===
+```
+`scripts/smoke-programlog-popout.js`:
+```
+PASS  main.js: POPOUT_SIZES found and carries programlog
+PASS  main.js: the Schedule menu's Program Log entry goes through menuNav("nav:programlog", "programlog")
+PASS  App.tsx: nav:programlog opens the pop-out (not the Schedule Manager pane)
+PASS  App.tsx: the hamburger's Program Log entry opens pop-out panel programlog
+PASS  App.tsx: PROGRAM LOG is a dock tab and the dock renders <ProgramLog embedded>
+PASS  PopoutRenderer.tsx: case programlog mounts <ProgramLog onClose={window.close}>
+PASS  1 · first open creates ONE BrowserWindow titled popout:programlog
+PASS  1 · sized from POPOUT_SIZES.programlog (clamped to the single work area)
+PASS  1 · one monitor: placed right of centre, below the header strip (the live screen stays visible)
+PASS  1 · loads the dev URL with #popout/programlog (PopoutRenderer's route)
+PASS  1 · no bounds file yet (nothing persisted until the user moves/resizes)
+PASS  2 · a second open REUSES the window: show+focus, still ONE BrowserWindow
+PASS  3 · moved/resized → popout-bounds.json carries programlog {300,200,1000,700}
+PASS  3 · loadPopoutBounds reads it back
+PASS  4 · after close, reopen creates a NEW window with the saved bounds
+PASS  4 · the other panels' bounds are untouched by programlog's save
+PASS  5 · boundsOnScreen rejects an off-screen rectangle
+PASS  5 · reopen with off-screen saved bounds falls back to the default placement (on screen)
+PASS  6 · with a second monitor a first open lands there (x = secondary + 60) at full POPOUT_SIZES
+PASS  7 · dedupe is per panel: a Play Log window open does not stand in for the Program Log
+=== 20 passed, 0 failed ===
+```
+`src/components/ProgramLog.layout.test.tsx`:
+```
+ ✓ src/components/ProgramLog.layout.test.tsx > ProgramLog docked (embedded) layout contract > renders in both modes without throwing
+ ✓ src/components/ProgramLog.layout.test.tsx > ProgramLog docked (embedded) layout contract > root fills its box (height:100%, flex row) so the dock's height, not the content, sets the size
+ ✓ src/components/ProgramLog.layout.test.tsx > ProgramLog docked (embedded) layout contract > sidebar is a fixed 220px column; embedded it scrolls as a whole, standalone it does not
+ ✓ src/components/ProgramLog.layout.test.tsx > ProgramLog docked (embedded) layout contract > embedded, TODAY'S SHOWS stops claiming all the height (flex 0 0 auto, capped) so the buttons stay in reach
+ ✓ src/components/ProgramLog.layout.test.tsx > ProgramLog docked (embedded) layout contract > the rundown column scrolls on its own (flex:1 + overflow-y:auto)
+ ✓ src/components/ProgramLog.layout.test.tsx > ProgramLog docked (embedded) layout contract > nothing Jeff uses is hidden when docked: Fill Day, Clear Day, CSV, Print, PDF, the mini month, Shows & Dayparts
+ ✓ src/components/ProgramLog.layout.test.tsx > ProgramLog docked (embedded) layout contract > no element forces a min-width wider than a narrow panel
+ ✓ src/components/ProgramLog.layout.test.tsx > shared selected-day key + debounce constants (slice 3) > the key is per station
+ ✓ src/components/ProgramLog.layout.test.tsx > shared selected-day key + debounce constants (slice 3) > readSharedDate tolerates a missing/throwing localStorage and rejects garbage
+ ✓ src/components/ProgramLog.layout.test.tsx > shared selected-day key + debounce constants (slice 3) > a burst of schedule:changed events is coalesced into one re-read (400 ms)
+      Tests  10 passed (10)
+```
+
+### Gates
+`npx tsc --noEmit` exit 0. `npx vitest run` → **32 files, 425 passed**. `node --check electron/main.js`
+ok. `test:ipc-contract` / `test:preload-bridge` / `test:undefined-calls` → PASS. `test:programlog-reads`
+11 · `test:programlog-writes` 57 · `test:programlog-popout` 20. watchdog 32. audiod smokes (exit 0 each):
+autofit 47 · autopost-arm 21 · cmd-routing 7 · deck-identity 22 · deck-position 16 · deck-snapshot 25 ·
+enginestate-wire 15 · enginestate 19 · logreader-anchor 18 · manual-mode 30 · meter-contract 15 ·
+orphan 4 · queue-classes 8 · seam-stop 60 · xfade-contract 33 · dead-air 50.
+
+### Runtime receipt owed
+PROGRAM LOG tab → the panel docks under the decks, dashboard still visible, left column scrolls to
+Clear Day; Schedule → Program Log AND ≡ → Program Log open the SAME window (second click brings it to
+front); drag it, close, reopen → same place; with both open, Fill Day in one → the other shows the
+rows within ~1 s; a song going to air turns its row `playing` in both; both open on the same day.
+Jeff confirms on screen after the relaunch.

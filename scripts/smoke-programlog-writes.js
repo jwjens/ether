@@ -39,7 +39,10 @@ check(`fresh schema built: baseline + ${migs.length} migrations + ${alters.lengt
 function braceBlock(startNeedle) {
   const i = main.indexOf(startNeedle);
   if (i < 0) throw new Error("not found in main.js: " + startNeedle);
-  let depth = 0, j = main.indexOf("{", i);
+  // A handler's parameter list may itself carry braces (a destructured payload), so the body's
+  // opening brace is the first one after the arrow on the needle's line.
+  const eol = main.indexOf("\n", i), arrow = main.indexOf("=>", i);
+  let depth = 0, j = main.indexOf("{", arrow > -1 && arrow < eol ? arrow : i);
   for (; j < main.length; j++) {
     const c = main[j];
     if (c === "{") depth++;
@@ -52,6 +55,7 @@ function braceBlock(startNeedle) {
 }
 const src = [
   "let _genCancel = false;",
+  braceBlock("function _scheduleChanged("),
   braceBlock("async function _generateDayChunked("),
   braceBlock("function _commitDayRows("),
   braceBlock("ipcMain.handle('schedule:generateDay',"),
@@ -95,10 +99,11 @@ const insRow = (station, ts, state, extra = {}) => db.prepare(
 
 // ── sandbox with the shipped code ──
 const health = [];
+const broadcasts = [];
 const sandbox = new Function(
   "ipcMain", "db", "require", "getActiveStationId", "_healthEvent", "_genEmit", "_placeJingles",
   "finishGenerateRun", "retireStaleScheduleRows", "_hourRanges", "_fmtHour", "buildScheduleCtx",
-  "generateDayRows", "resetGenSlice", "Date", "console",
+  "generateDayRows", "resetGenSlice", "Date", "console", "sendToAllWindows",
   src
 );
 const handlers = {};
@@ -108,7 +113,8 @@ sandbox(
   (m) => require(m.startsWith(".") ? path.join(root, "electron", m) : m),
   () => 1, (kind, data) => health.push({ kind, ...data }), () => {}, () => {}, () => {}, () => {},
   (set) => [...set], (h) => String(h), gc.buildScheduleCtx, gc.generateDayRows, gc.resetGenSlice, FakeDate,
-  { log: () => {}, error: (...a) => origLog("  [handler error]", ...a) }
+  { log: () => {}, error: (...a) => origLog("  [handler error]", ...a) },
+  (channel, payload) => broadcasts.push({ channel, payload })
 );
 check("handlers registered: generateDay, clearDay, get", !!handlers["schedule:generateDay"] && !!handlers["schedule:clearDay"] && !!handlers["schedule:get"]);
 const get = (from, to, sid = 1) => { const r = handlers["schedule:get"](null, from, to, sid); if (r.error) throw new Error("schedule:get → " + r.error); return r.data; };
@@ -126,6 +132,12 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
   check("a · rows span the rest of the day (13 hours: 11 → 23)", new Set(rowsA.map(r => new RealDate(r.scheduled_at * 1000).getHours())).size === 13, [...new Set(rowsA.map(r => new RealDate(r.scheduled_at * 1000).getHours()))].join(","));
   check("a · every row is pending with no played_at", rowsA.every(r => r.state === "pending" && r.played_at === null));
   check("a · nothing written to songs.last_played_at by the generate path", db.prepare("SELECT count(*) n FROM songs WHERE last_played_at IS NOT NULL").get().n === 0);
+  // slice 3 — the broadcast every Program Log surface re-reads on
+  const genB = broadcasts.filter(b => b.channel === "schedule:changed");
+  check("a · schedule:changed fired ONCE for the Fill (stationId 1, reason generate, window carried)",
+    genB.length === 1 && genB[0].payload.stationId === 1 && genB[0].payload.reason === "generate" && genB[0].payload.from === nextTop && genB[0].payload.to === dayEnd && genB[0].payload.rows === ra.count,
+    JSON.stringify(genB));
+  broadcasts.length = 0;
 
   // ── (b) a day with PLAYED / PLAYING / current-hour rows: Fill Day leaves them untouched ──
   db.prepare("DELETE FROM generated_schedule").run();
@@ -176,6 +188,10 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
   check("d · a log-edit health event named the clear", health.some(h => h.kind === "log-edit" && h.action === "clear-day" && h.cleared === pendingFutureBefore));
   const rd2 = handlers["schedule:clearDay"](null, dayStart);
   check("d · clearing again clears 0 (idempotent)", rd2 && rd2.ok && rd2.cleared === 0, JSON.stringify(rd2));
+  const clrB = broadcasts.filter(b => b.channel === "schedule:changed" && b.payload.reason === "clear-day");
+  check("d · schedule:changed fired for BOTH clears (reason clear-day; the second says cleared 0)",
+    clrB.length === 2 && clrB[0].payload.cleared === pendingFutureBefore && clrB[1].payload.cleared === 0 && clrB.every(b => b.payload.stationId === 1), JSON.stringify(clrB));
+  broadcasts.length = 0;
 
   // ── (e) Clear one hour (the hour ✕) — windowed clearDay ──
   await handlers["schedule:generateDay"](null, dayStart);
@@ -206,6 +222,15 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
     (tsx.match(/invoke\("schedule:generateDay"/g) || []).length === 1 && /invoke\("schedule:generateDay", dayStart\)/.test(tsx) && !/generateHour|Regen|Generate →|generating:/.test(tsx));
   check("g · Clear Day and the hour ✕ invoke schedule:clearDay", /invoke\("schedule:clearDay", dayStart, \{ fromTs, toTs \}\)/.test(tsx) && /const clearHour/.test(tsx));
   check("g · the hour modal's swap and drag still write scheduled_log (slice 4, stated in the doc)", /UPDATE scheduled_log SET song_id/.test(tsx) && /scheduledLog\.batchUpdatePosition/.test(tsx));
+
+  // ── (h) slice 3 — every generated_schedule writer in main.js fires schedule:changed; the panel subscribes ONCE ──
+  const sites = ["_commitDayRows(", "ipcMain.handle('schedule:clearDay'", "ipcMain.handle('schedule:moveRow'", "ipcMain.handle('schedule:setRowSource'", "ipcMain.handle('schedule:deleteRow'", "ipcMain.handle('schedule:editRowFields'", "ipcMain.handle('schedule:insertVoiceTrack'", "function retireStaleScheduleRows("];
+  const missing = sites.filter(n => !/_scheduleChanged\(/.test(braceBlock(n)));
+  check("h · every generated_schedule writer in main.js calls _scheduleChanged (" + sites.length + " sites)", missing.length === 0, "missing: " + missing.join(", "));
+  check("h · the daemon's playstart and missed events are relayed as schedule:changed", /m\.event === "playstart"[\s\S]{0,600}_scheduleChanged\(m\.stationId, 'playstart'\)/.test(main) && /logreader-missed[\s\S]{0,900}_scheduleChanged\(m\.stationId, m\.event\)/.test(main));
+  check("h · _scheduleChanged sends to ALL windows on channel schedule:changed", /function _scheduleChanged[\s\S]{0,300}sendToAllWindows\("schedule:changed"/.test(main));
+  check("h · ProgramLog.tsx subscribes to schedule:changed once per mount, debounced, and unsubscribes", /ether\.on\("schedule:changed"/.test(tsx) && (tsx.match(/ether\.on\("schedule:changed"/g) || []).length === 1 && /CHANGED_DEBOUNCE_MS/.test(tsx) && /ether\.off\?\.\("schedule:changed", handle\)/.test(tsx));
+  check("h · the shared selected-day key is read on mount and written on every pick", /readSharedDate\(stationId\) \|\| todayStr\(\)/.test(tsx) && /writeSharedDate\(stationId, d\)/.test(tsx) && /ether_programlog_date_/.test(tsx));
 
   console.log(`=== ${pass} passed, ${fail} failed ===`);
   process.exit(fail ? 1 : 0);

@@ -885,6 +885,9 @@ if (AUDIO_DAEMON_DESIRED) {
         // sense (+ health-events.jsonl). Never silent. deck/filePath ride along when the daemon knows them.
         try { _libHealth && _libHealth.noteSkip(m.stationId, m.title, m.reason, { deck: m.deck, filePath: m.filePath }); } catch {}
       } else if (m.event === "logreader-floor" || m.event === "logreader-missed" || m.event === "logreader-ahead" || m.event === "logreader-operator-write" || m.event === "fill-starved" || m.event === "separation-relaxed" || m.event === "position-authority" || m.event === "spot-missed") {
+        // logreader-missed / spot-missed = the daemon stamped rows 'missed' (engine.js:1342); an
+        // operator write = a row inserted by a deck-load. The Program Log re-reads on these.
+        if (m.event === "logreader-missed" || m.event === "spot-missed" || m.event === "logreader-operator-write") _scheduleChanged(m.stationId, m.event);
         // Log-Reader Flip (ACTIVATION): loud flip-time events — emergency floor (log exhausted), a
         // behind-anchor missed sweep, an ahead early-play beyond slack, or an operator deck-load written
         // to the log. Plus fill-starved: the refill ladder found NO playable song in ANY of the station's
@@ -947,6 +950,8 @@ if (AUDIO_DAEMON_DESIRED) {
         try { _health.noteEngineState(m.stationId, m.state); } catch {}
       } else if (m.event === "playstart") {
         sendToAllWindows("audio:daemon-playstart", { stationId: m.stationId, deck: m.deck, title: m.title, artist: m.artist, filePath: m.filePath });
+        // The daemon stamped generated_schedule (playing → played) at this go-live (engine.js:1774-1781).
+        _scheduleChanged(m.stationId, 'playstart');
         try { _health.notePlayStart(m.stationId, m.title, m.artist); } catch {}
         // Song boundary: the cleanest moment to swap out a stale-but-healthy daemon (current song
         // just ended). The no-audio timer covers wedged/idle daemons that never reach here.
@@ -8828,6 +8833,7 @@ function retireStaleScheduleRows(stationId, reason) {
     // LOUD. A silent sweep that retires 36,000 rows is indistinguishable from data loss.
     console.log(`[stale-rows] station ${stationId}: retired ${retired} pending row(s) whose slot passed more than ${grace}s ago (${reason})`);
     try { mainWindow && mainWindow.webContents.send('schedule:stale-retired', { stationId, retired, graceSec: grace, reason }); } catch {}
+    _scheduleChanged(stationId, 'missed', { retired });
     return { retired, graceSec: grace };
   } catch (e) {
     console.error('[stale-rows] sweep failed (playout unaffected):', e.message);
@@ -8926,6 +8932,7 @@ ipcMain.handle('schedule:insertVoiceTrack', (_, { stationId, hour, beforeTitle, 
       `INSERT INTO generated_schedule (scheduled_at, song_id, title, artist, file_path, duration_s, station_id, uuid, generated_at)
        VALUES (?, NULL, ?, ?, ?, ?, ?, ?, unixepoch())`
     ).run(at, title, artist || '', filePath, Math.round((durationMs || 0) / 1000), sid, require('crypto').randomUUID());
+    _scheduleChanged(sid, 'voice-track');
     return { ok: true, scheduledAt: at };
   } catch (e) { return { ok: false, error: e.message }; }
 });
@@ -9304,6 +9311,15 @@ function finishGenerateRun(stationId, ctx, days) {
   try { _libHealth && _libHealth.noteGenerate(stationId, { relaxed: ctx.relaxed, emptyCatIds: [...ctx.diag.emptyCats], breakDrift: ctx.breakDrift }); } catch {}
   try { _noteGenerateTiming(stationId, ctx, days); } catch {}
 }
+// ── schedule:changed — ONE broadcast after every write to generated_schedule (Program Log slice 3) ──
+// The Program Log runs docked AND as a pop-out (two React trees, no shared state); both re-read their
+// day on this event so they always show the same rows. Fired from: _commitDayRows (every Generate
+// caller — generateDay, generateDays, _generateRange), clearDay, the editor's move / pin / delete /
+// edit-cell, insertVoiceTrack, the stale-row sweep (→ missed), and the daemon's playstart (→
+// playing/played stamps) + missed events relayed below. Listeners debounce; this fires per write.
+function _scheduleChanged(stationId, reason, extra) {
+  try { sendToAllWindows("schedule:changed", { stationId, reason, at: Date.now(), ...(extra || {}) }); } catch {}
+}
 function _commitDayRows(stationId, effStart, dayEnd, rows) {
   const { generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
   const { filterToGaps, NOT_OPERATOR_OWNED_SQL } = require('./log-edit-core');
@@ -9342,6 +9358,7 @@ function _commitDayRows(stationId, effStart, dayEnd, rows) {
     generatedScheduleBulkCreate(db, stationId, fill);
     result = { kept: kept.length, skipped: skipped.length };
   })();
+  _scheduleChanged(stationId, 'generate', { from: effStart, to: dayEnd, rows: rows.length });
 
   if (result.kept) {
     console.log(`[generate] kept ${result.kept} operator row(s); skipped ${result.skipped} generated row(s) that would have overlapped them`);
@@ -9384,6 +9401,7 @@ ipcMain.handle('schedule:clearDay', (_, dayTs, opts) => {
       "UPDATE generated_schedule SET deleted_at = ?, updated_at = ? WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ? AND deleted_at IS NULL AND state = 'pending'"
     ).run(now, now, stationId, from, to);
     _healthEvent('log-edit', { action: 'clear-day', stationId, from, to, cleared: r.changes });
+    _scheduleChanged(stationId, 'clear-day', { from, to, cleared: r.changes });
     console.log(`[schedule:clearDay] station ${stationId} cleared ${r.changes} pending row(s) in [${from}, ${to})`);
     return { ok: true, cleared: r.changes, from, to };
   } catch (e) { console.error('[schedule:clearDay]', e.message); return { ok: false, error: e.message }; }
@@ -9424,6 +9442,7 @@ ipcMain.handle('schedule:moveRow', (_e, uuidA, uuidB) => {
     })();
     _healthEvent('log-edit', { action: 'move', stationId: a.station_id,
       movedTitle: a.title, fromTs: a.scheduled_at, toTs: b.scheduled_at, swappedWith: b.title });
+    _scheduleChanged(a.station_id, 'move');
     return { ok: true, movedTo: b.scheduled_at };
   } catch (e) { console.error('[log-edit] move failed:', e.message); return { ok: false, error: e.message }; }
 });
@@ -9441,6 +9460,7 @@ ipcMain.handle('schedule:setRowSource', (_e, uuid, source) => {
       .run(val, new Date().toISOString(), uuid);
     _healthEvent('log-edit', { action: val ? 'pin' : 'release', stationId: row.station_id,
       title: row.title, at: row.scheduled_at });
+    _scheduleChanged(row.station_id, val ? 'pin' : 'release');
     return { ok: true, source: val };
   } catch (e) { console.error('[log-edit] setRowSource failed:', e.message); return { ok: false, error: e.message }; }
 });
@@ -9454,6 +9474,7 @@ ipcMain.handle('schedule:deleteRow', (_e, uuid) => {
     const now = new Date().toISOString();
     db.prepare("UPDATE generated_schedule SET deleted_at = ?, updated_at = ? WHERE uuid = ?").run(now, now, uuid);
     _healthEvent('log-edit', { action: 'delete', stationId: row.station_id, title: row.title, at: row.scheduled_at });
+    _scheduleChanged(row.station_id, 'delete');
     return { ok: true };
   } catch (e) { console.error('[log-edit] delete failed:', e.message); return { ok: false, error: e.message }; }
 });
@@ -9486,6 +9507,7 @@ ipcMain.handle('schedule:editRowFields', (_e, uuid, patch) => {
       .run(...vals, now, uuid);
     _healthEvent('log-edit', { action: 'edit-cell', stationId: row.station_id, title: row.title,
       at: row.scheduled_at, fields });
+    _scheduleChanged(row.station_id, 'edit-cell');
     return { ok: true };
   } catch (e) { console.error('[log-edit] editRowFields failed:', e.message); return { ok: false, error: e.message }; }
 });

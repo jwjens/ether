@@ -2,7 +2,7 @@
 feature: program-log
 title: "The Program Log"
 summary: One day of the station's real log — what aired, what is on air, what is coming — with Fill Day, Clear Day and CSV / Print / PDF export.
-where: ≡ menu → Program Log, or Schedule → Program Log
+where: ≡ menu → Program Log, Schedule → Program Log (its own window), or the PROGRAM LOG tab at the bottom of the dashboard (docked)
 since: unreleased (branch log-reader-flip, after 4.6.45)
 audience: operator
 tour: true
@@ -13,6 +13,16 @@ tour: true
 The Program Log shows **one day of the log the station actually airs from** — the same log the
 engine reads and the Calendar edits. Pick a day on the small calendar at the left; every hour of the
 day is a row you can open.
+
+## Docked or in its own window
+
+- **PROGRAM LOG** on the bottom tab bar docks it under the decks — the live screen stays where it is.
+  Drag the divider above it for more room; the left column scrolls if the dock is short.
+- **≡ → Program Log** or **Schedule → Program Log** opens it in its own window (drag it to a second
+  monitor; it remembers its size and place).
+- You can have both open. They show the **same rows**: a Fill, a Clear, an edit in the Calendar, a
+  song going to air — each surface updates within about a second. Both open on the last day you
+  picked for this station.
 
 ## Reading the day
 

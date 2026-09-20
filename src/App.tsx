@@ -777,7 +777,7 @@ export default function App() {
   // window:popout path as every other pop-out (rebuild design §0.1).
   // On-air programming push-up docks (like carts): one editor at a time, mutually
   // exclusive with the cart strip. null = closed.
-  const [progPanel, setProgPanel] = useState<null | "shows" | "categories" | "clocks" | "library" | "calendar" | "phone" | "jingles">(null);
+  const [progPanel, setProgPanel] = useState<null | "shows" | "categories" | "clocks" | "library" | "calendar" | "phone" | "jingles" | "programlog">(null);
   // Broadcast (profanity) delay arm + DUMP. Armed = stream lags live by DELAY_SEC so the
   // operator can dump before audio airs; DUMP becomes active once the buffer is full.
   const DELAY_SEC = 8;
@@ -1208,15 +1208,11 @@ export default function App() {
     const handler = (window as any).ether.on("menu-action", (cmd: string) => {
       const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:logs":"logs","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio","nav:importlibrary":"importlibrary","nav:cloudbackup":"cloudbackup","nav:clipeditor":"clipeditor","nav:captions":"captions","nav:eas":"eas","nav:rotation":"rotation","nav:schedulehub":"schedulehub" };
       if (panels[cmd]) { setPanel(panels[cmd] as Panel); return; }
-      // Schedule ▸ Program Log — the PLAN, which lives as a pane in the workspace rather than as a
-      // page of its own. Open the workspace and focus that pane. (It used to open the as-run record,
-      // i.e. the opposite document under the right name.) The event is fired after the panel switch
-      // so the workspace is mounted and listening by the time it lands.
-      if (cmd === "nav:programlog") {
-        setPanel("schedulehub");
-        setTimeout(() => window.dispatchEvent(new CustomEvent("ether:focus-schedule-pane", { detail: "log" })), 0);
-        return;
-      }
+      // Schedule ▸ Program Log — the Program Log window (Program Log slice 3, 2026-09-20). Until now
+      // this opened the Schedule Manager and focused its "log" pane — a different document under the
+      // menu entry's name — while the hamburger's "Program Log" opened the real window. One name, one
+      // door: the same pop-out the hamburger opens (openPopoutWindow → PopoutRenderer "programlog").
+      if (cmd === "nav:programlog") { openPopout("programlog"); return; }
       if (cmd === "nav:scheduler-tab:clocks")     { setSchedulerTab("clocks"); return; }
       if (cmd === "nav:scheduler-tab:shows")      { setSchedulerTab("shows"); return; }
       if (cmd === "nav:scheduler-tab:categories") { setSchedulerTab("categories"); return; }
@@ -2679,6 +2675,9 @@ export default function App() {
     { label: "SPOTS",      active: panel === "spots",          fn: () => { setShowCarts(false); setProgPanel(null); setPanel("spots"); } },
     { label: "LIBRARY",    active: progPanel === "library",    fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "library" ? null : "library"); } },
     { label: "CALENDAR",   active: progPanel === "calendar",   fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "calendar" ? null : "calendar"); } },
+    // PROGRAM LOG docked beside the dashboard (Program Log slice 3) — the same push-up the Calendar
+    // uses; the Calendar tab stays until slice 6 retires it.
+    { label: "PROGRAM LOG", active: progPanel === "programlog", fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "programlog" ? null : "programlog"); } },
     { label: "PHONE",      active: progPanel === "phone",      fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "phone" ? null : "phone"); } },
   ] as const;
 
@@ -3851,7 +3850,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   autoAdv: boolean | null; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
   queueLen: number; showCarts: boolean; toggleCarts: () => void;
-  progPanel: null | "shows" | "categories" | "clocks" | "library" | "calendar" | "phone" | "jingles";
+  progPanel: null | "shows" | "categories" | "clocks" | "library" | "calendar" | "phone" | "jingles" | "programlog";
   inputDevice: string;
   visiblePanels?: Record<string, boolean>;
   deckConfigs?: DeckConfig[];
@@ -4354,7 +4353,9 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                 ? <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "12px 16px" }}>{libraryDock}</div>
                 : progPanel === "calendar"
                   ? <BroadcastCalendar />
-                  : progPanel === "phone"
+                  : progPanel === "programlog"
+                    ? <ProgramLog embedded onClose={onCloseDock} />
+                    : progPanel === "phone"
                     ? <PhoneDesk onClose={onCloseDock} />
                     : progPanel === "jingles"
                       // The imaging EDITOR: pools + assignments + reel splitter, unchanged. IMAGING is
