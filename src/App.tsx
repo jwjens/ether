@@ -71,7 +71,6 @@ import ScheduleManager from "./components/ScheduleManager";
 import ScheduleWorkspace from "./components/schedule/ScheduleWorkspace";
 import EASLogbook from "./components/EASLogbook";
 import PDPicks from "./components/PDPicks";
-import SchedulePreview from "./components/SchedulePreview";
 import SchedulerReasons from "./components/SchedulerReasons";
 import VoiceTrackInbox from "./components/VoiceTrackInbox";
 import ActiveStationBadge from "./components/ActiveStationBadge";
@@ -135,7 +134,7 @@ import VUMeter from "./components/VUMeter";
 import IrisBadge from "./components/IrisBadge";
 import { SchedulerHealthHost } from "./components/SchedulerHealthPanel";
 
-type Panel = "live" | "imaging" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "rotation" | "schedulehub" | "schedulehubfixed" | "help";
+type Panel = "live" | "imaging" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "reasons" | "vtinbox" | "gselector" | "rotation" | "schedulehub" | "schedulehubfixed" | "help";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -3104,7 +3103,6 @@ export default function App() {
               {panel === "schedulehubfixed" && <ScheduleManager onOpenAnalytics={() => setPanel("rotation")} />}
               {panel === "eas" && <EASLogbook onClose={() => setPanel("live")} />}
               {panel === "pdpicks" && <PDPicks stationId={stationId} onClose={() => setPanel("live")} />}
-              {panel === "schedpreview" && <SchedulePreview onClose={() => setPanel("live")} />}
               {panel === "reasons" && <SchedulerReasons onClose={() => setPanel("live")} />}
               {panel === "vtinbox" && <VoiceTrackInbox onClose={() => setPanel("live")} />}
 

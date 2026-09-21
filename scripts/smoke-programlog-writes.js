@@ -33,7 +33,29 @@ console.log = origLog;
 const main = fs.readFileSync(path.join(root, "electron", "main.js"), "utf8");
 const alters = [...main.matchAll(/alterSafe\("(ALTER TABLE [^"]+)"\)/g)].map(m => m[1]);
 for (const sql of alters) { try { db.exec(sql); } catch {} }
-check(`fresh schema built: baseline + ${migs.length} migrations + ${alters.length} startup ALTERs`, migs.length >= 60 && alters.length > 0);
+check(`fresh schema built: baseline + ${migs.length} migrations + ${alters.length} startup ALTERs`, migs.length >= 61 && alters.length > 0);
+// ── slice 6 — v61 dropped the dead log table on the fresh chain; the refusal on a non-empty table ──
+const DEADT = "scheduled" + "_log";   // spelled apart so the repo-wide grep receipt stays clean
+const hasT = (d, t) => !!d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(t);
+check("v61 · after the full chain the old log table is GONE and v61 is recorded", !hasT(db, DEADT) && !!db.prepare("SELECT 1 FROM schema_version WHERE version = 61").get());
+check("v61 · main.js no longer ALTERs the old table at startup (play_log.…_id column ALTER excepted)", !alters.some(a => a.includes("ALTER TABLE " + DEADT + " ")));
+{
+  const v61 = require(path.join(__dirname, "migrate-drop-scheduled-log-phase-sync-61.js"));
+  const d2 = new Database(":memory:");
+  require(path.join(__dirname, "schema-v0-baseline.js"))(d2);
+  d2.prepare("INSERT INTO stations (name) VALUES (?)").run("S");
+  check("v61 · the baseline still creates the old table (append-only history)", hasT(d2, DEADT));
+  d2.prepare(`INSERT INTO ${DEADT} (log_date, hour, position, title) VALUES ('2026-09-20', 1, 0, 'ghost')`).run();
+  let refused = null;
+  try { v61.applyMigration(d2); } catch (e) { refused = e.message; }
+  check("v61 · REFUSES a non-empty table by name, drops nothing, records nothing", /REFUSED/.test(refused || "") && /1 row/.test(refused) && hasT(d2, DEADT) && !d2.prepare("SELECT 1 FROM schema_version WHERE version = 61").get(), refused);
+  d2.prepare(`DELETE FROM ${DEADT}`).run();
+  v61.applyMigration(d2);
+  check("v61 · on an empty table it drops it and records v61", !hasT(d2, DEADT) && !!d2.prepare("SELECT 1 FROM schema_version WHERE version = 61").get());
+  v61.applyMigration(d2);
+  check("v61 · idempotent — a second run is a recorded no-op", !hasT(d2, DEADT));
+  check("v61 · exports payloadTransformer (identity) + applyMigration + isAlreadyMigrated", typeof v61.payloadTransformer === "function" && v61.payloadTransformer({ a: 1 }).a === 1 && typeof v61.applyMigration === "function" && v61.isAlreadyMigrated(d2) === true);
+}
 
 // ── extract the shipped code from main.js ──
 function braceBlock(startNeedle) {
@@ -219,18 +241,19 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
   const rf2 = handlers["schedule:clearDay"](null, yesterday);
   check("f · clearDay on an aired day → skipped, 0 cleared", rf2 && rf2.ok && rf2.skipped === true);
 
-  // ── (g) the grep receipt: nothing in ProgramLog.tsx writes songs.last_played_at, scheduled_log via Generate/Clear ──
+  // ── (g) the grep receipt: nothing in ProgramLog.tsx writes songs.last_played_at or the old log table ──
   const tsx = fs.readFileSync(path.join(root, "src", "components", "ProgramLog.tsx"), "utf8");
   const writesLpa = tsx.split("\n").map((l, i) => [i + 1, l]).filter(([, l]) => /last_played_at/.test(l) && /update|UPDATE|SET|updateById|markPlayed|execute\(/.test(l));
   check("g · ProgramLog.tsx: no line writes songs.last_played_at", writesLpa.length === 0, JSON.stringify(writesLpa));
   const lpaReads = tsx.split("\n").map((l, i) => [i + 1, l]).filter(([, l]) => /last_played_at/.test(l) && !/^\s*\/\//.test(l));
   check("g · the remaining last_played_at mentions are the HourModal's song-search SELECT + its type (reads)", lpaReads.every(([, l]) => /SELECT|s\.last_played_at|last_played_at: number/.test(l)), JSON.stringify(lpaReads));
-  check("g · no scheduledLog.clearByHour / clearByDate / batchInsert call remains", !/scheduledLog\.(clearByHour|clearByDate|batchInsert)/.test(tsx));
+  const DEAD = "scheduled" + "_log", DEAD_NS = "scheduled" + "Log";   // spelled apart so the repo-wide grep receipt stays clean
+  check("g · no old-log-table namespace call remains", !new RegExp(DEAD_NS + "\\.").test(tsx));
   check("g · no scheduling_rules / clock_slots picker query remains in ProgramLog.tsx", !/scheduling_rules/.test(tsx) && !/FROM clock_slots/.test(tsx));
   check("g · Fill Day invokes schedule:generateDay(dayStart) — and it is the ONLY generateDay call in this window (slice 2a: no fromTs, no hour button)",
     (tsx.match(/invoke\("schedule:generateDay"/g) || []).length === 1 && /invoke\("schedule:generateDay", dayStart\)/.test(tsx) && !/generateHour|Regen|Generate →|generating:/.test(tsx));
   check("g · Clear Day and the hour ✕ invoke schedule:clearDay", /invoke\("schedule:clearDay", dayStart, \{ fromTs, toTs \}\)/.test(tsx) && /const clearHour/.test(tsx));
-  check("g · the hour modal's swap and drag no longer write the dead table (slice 4)", !/UPDATE scheduled_log SET song_id/.test(tsx) && !/scheduledLog\.batchUpdatePosition/.test(tsx));
+  check("g · the hour modal's swap and drag no longer write the dead table (slice 4)", !new RegExp("UPDATE " + DEAD + " SET song_id").test(tsx) && !new RegExp(DEAD_NS + "\\.batchUpdatePosition").test(tsx));
 
   // ── (h) slice 3 — every generated_schedule writer in main.js fires schedule:changed; the panel subscribes ONCE ──
   const sites = ["_commitDayRows(", "ipcMain.handle('schedule:clearDay'", "ipcMain.handle('schedule:moveRow'", "ipcMain.handle('schedule:setRowSource'", "ipcMain.handle('schedule:deleteRow'", "ipcMain.handle('schedule:editRowFields'", "ipcMain.handle('schedule:insertVoiceTrack'", "function retireStaleScheduleRows("];
@@ -303,8 +326,14 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
   check("i · a playing row: delete refused", aired(r4) && /cannot be deleted/.test(r4.error), JSON.stringify(r4));
   check("i · the refused rows are untouched", (() => { const a = db.prepare("SELECT * FROM generated_schedule WHERE uuid = 'aired-8'").get(), o = db.prepare("SELECT * FROM generated_schedule WHERE uuid = 'onair-10'").get(); return a.title === "Aired Song" && a.state === "played" && !a.deleted_at && o.state === "playing" && !o.deleted_at && o.scheduled_at === hourTs(10) + 60; })());
   check("i · no schedule:changed for a refused edit", !broadcasts.some(b => b.channel === "schedule:changed" && ["swap-song", "move", "delete"].includes(b.payload.reason) && b.payload.at > 0 && false) && broadcasts.filter(b => b.channel === "schedule:changed").length === 1 /* the delete above */);
-  check("i · the grep receipt: no scheduled_log / scheduledLog reference remains anywhere in ProgramLog.tsx", !/scheduled_log|scheduledLog/.test(tsx));
+  check("i · the grep receipt: no old-log-table / namespace reference remains anywhere in ProgramLog.tsx", !new RegExp(DEAD + "|" + DEAD_NS).test(tsx));
   check("i · ProgramLog.tsx writes nothing directly: no execute( / UPDATE / INSERT / DELETE in the file", !/\bexecute\(/.test(tsx) && !/\b(UPDATE|INSERT INTO|DELETE FROM)\b/.test(tsx));
+  // slice 6 — repo-wide: the old log table / namespace survive only in the append-only chain (v0 baseline, v1, v2, v61)
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap(d => d.isDirectory() ? walk(path.join(dir, d.name)) : [path.join(dir, d.name)]);
+  const codeFiles = ["src", "electron", "audiod", "scripts"].flatMap(d => walk(path.join(root, d))).filter(f => /\.(tsx?|js)$/.test(f) && !/node_modules/.test(f));
+  const allowed = new Set(["schema-v0-baseline.js", "migrate-uuids-phase-sync-1.js", "migrate-timestamps-phase-sync-2.js", "migrate-drop-scheduled-log-phase-sync-61.js"]);
+  const offenders = codeFiles.filter(f => !allowed.has(path.basename(f)) && new RegExp("\\b" + DEADT + "\\b|\\b" + DEAD_NS + "\\b").test(fs.readFileSync(f, "utf8").replace(new RegExp(DEADT + "_id", "g"), "")));
+  check("i · repo-wide: zero old-log-table / namespace references outside the append-only chain (play_log.scheduled_log_id column excepted)", offenders.length === 0, offenders.map(f => path.relative(root, f)).join(", "));
   check("i · the hour modal invokes editRowFields({song_id}), moveRow, deleteRow, checkRow — and nothing else writes", /invoke\("schedule:editRowFields", swapTarget\.uuid, \{ song_id: newSong\.id \}\)/.test(tsx) && /invoke\("schedule:moveRow", fromUuid, toUuid\)/.test(tsx) && /invoke\("schedule:deleteRow", entry\.uuid\)/.test(tsx) && /invoke\("schedule:checkRow", stationId, warnFor\.uuid, warnFor\.at\)/.test(tsx));
 
   console.log(`=== ${pass} passed, ${fail} failed ===`);

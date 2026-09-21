@@ -17,16 +17,6 @@ const EXPECTED = {
     "category_code", "programming_row_id", "station_id", "uuid",
     "created_at", "updated_at", "deleted_at", "file_path",
   ],
-  scheduled_log: [
-    "id", "log_date", "hour", "position", "song_id", "title",
-    "artist", "category_id", "category_code", "duration_ms", "clock_id",
-    "created_at",
-    // renderer display optimization columns
-    "slot_type", "song_title", "song_artist", "category_color", "label", "status",
-    // sync columns
-    "overflow", "fade_out_at_ms", "fade_duration_ms", "chain_type",
-    "station_id", "uuid", "updated_at", "deleted_at",
-  ],
   midi_mappings: [
     "id", "device_name", "channel", "type", "number", "action", "label", "is_fader",
   ],
@@ -182,35 +172,6 @@ try {
       created_at         TEXT,
       updated_at         TEXT,
       deleted_at         TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS scheduled_log (
-      id               INTEGER PRIMARY KEY AUTOINCREMENT,
-      log_date         TEXT NOT NULL,
-      hour             INTEGER NOT NULL,
-      position         INTEGER NOT NULL,
-      song_id          INTEGER REFERENCES songs(id),
-      title            TEXT,
-      artist           TEXT,
-      category_id      INTEGER,
-      category_code    TEXT,
-      duration_ms      INTEGER DEFAULT 0,
-      clock_id         INTEGER,
-      created_at       INTEGER DEFAULT (unixepoch()),
-      slot_type        TEXT,
-      song_title       TEXT,
-      song_artist      TEXT,
-      category_color   TEXT,
-      label            TEXT,
-      status           TEXT,
-      overflow         INTEGER DEFAULT 0,
-      fade_out_at_ms   INTEGER DEFAULT 0,
-      fade_duration_ms INTEGER DEFAULT 8000,
-      chain_type       TEXT DEFAULT 'segue',
-      station_id       INTEGER NOT NULL DEFAULT 1,
-      uuid             TEXT,
-      updated_at       TEXT,
-      deleted_at       TEXT
     );
 
     CREATE TABLE IF NOT EXISTS spots (
@@ -531,17 +492,6 @@ alterSafe("ALTER TABLE songs ADD COLUMN cart_id TEXT");
 alterSafe("ALTER TABLE clock_slots ADD COLUMN song_id INTEGER");
 alterSafe("ALTER TABLE clock_slots ADD COLUMN spot_type TEXT");
 alterSafe("ALTER TABLE clocks ADD COLUMN show_id INTEGER");
-alterSafe("ALTER TABLE scheduled_log ADD COLUMN chain_type TEXT DEFAULT 'segue'");
-alterSafe("ALTER TABLE scheduled_log ADD COLUMN overflow INTEGER DEFAULT 0");
-alterSafe("ALTER TABLE scheduled_log ADD COLUMN fade_out_at_ms INTEGER DEFAULT 0");
-alterSafe("ALTER TABLE scheduled_log ADD COLUMN fade_duration_ms INTEGER DEFAULT 8000");
-alterSafe("ALTER TABLE scheduled_log ADD COLUMN category_code TEXT");
-alterSafe("ALTER TABLE scheduled_log ADD COLUMN slot_type TEXT");
-alterSafe("ALTER TABLE scheduled_log ADD COLUMN song_title TEXT");
-alterSafe("ALTER TABLE scheduled_log ADD COLUMN song_artist TEXT");
-alterSafe("ALTER TABLE scheduled_log ADD COLUMN category_color TEXT");
-alterSafe("ALTER TABLE scheduled_log ADD COLUMN label TEXT");
-alterSafe("ALTER TABLE scheduled_log ADD COLUMN status TEXT");
 alterSafe("ALTER TABLE spots ADD COLUMN isci_code TEXT");
 alterSafe("ALTER TABLE spots ADD COLUMN cart_number TEXT");
 alterSafe("ALTER TABLE spots ADD COLUMN agency TEXT");
@@ -582,7 +532,7 @@ alterSafe("ALTER TABLE generated_schedule ADD COLUMN pick_reason TEXT");
 const uuidNeededNow = [
   'announcements', 'artists', 'cart_slots', 'categories',
   'clocks', 'liner_cards', 'macros', 'operators',
-  'pinned_songs', 'play_log', 'prep_notes', 'scheduled_log', 'spots',
+  'pinned_songs', 'play_log', 'prep_notes', 'spots',
 ];
 for (const tbl of uuidNeededNow) {
   alterSafe(`ALTER TABLE ${tbl} ADD COLUMN uuid TEXT`);
@@ -594,7 +544,7 @@ for (const tbl of uuidNeededNow) {
 // station_id loop
 const stationTables = [
   'artists', 'albums', 'categories', 'songs', 'separation_rules',
-  'clocks', 'clock_slots', 'shows', 'play_log', 'scheduled_log',
+  'clocks', 'clock_slots', 'shows', 'play_log',
   'spots', 'cart_slots', 'announcements', 'voice_tracks',
   'smart_schedule_rules', 'liner_cards', 'prep_notes',
   'published_episodes', 'format_clocks', 'generated_schedule',

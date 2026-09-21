@@ -35,7 +35,6 @@ const TABLES = [
   { name: "prep_notes",           pkCols: ["id"] },
   { name: "published_episodes",   pkCols: ["id"] },
   { name: "rtmp_destinations",    pkCols: ["id"] },
-  { name: "scheduled_log",        pkCols: ["id"] },
   { name: "separation_rules",     pkCols: ["id"] },
   { name: "shows",                pkCols: ["id"] },
   { name: "smart_schedule_rules", pkCols: ["id"] },

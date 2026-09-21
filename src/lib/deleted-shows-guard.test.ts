@@ -2,7 +2,7 @@
 // still airing on the Calendar, and the cause was one missing clause — repeated in TEN places.
 //
 // ShowsTab (the page you delete from) filtered correctly, so the delete looked like it worked. The
-// Calendar, ProgramLog, MasterOutput, BroadcastMonitor, SchedulePreview, OnShiftScreen, ProducerDesk,
+// ProgramLog, MasterOutput, BroadcastMonitor, OnShiftScreen, ProducerDesk,
 // VoiceTracker and showClock.ts did not. showClock was the serious one: a deleted show could still
 // select the clock that governs an hour.
 //

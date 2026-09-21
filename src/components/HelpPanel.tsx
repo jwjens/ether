@@ -65,9 +65,9 @@ To force a specific song at a specific time, use PD Picks (Schedule → PD Picks
 
 Force Play toggle: ignore separation rules. Use sparingly — that's how you end up playing the same song 4 times in a row.
 
-# Schedule preview
+# Looking ahead
 
-Schedule → Schedule Preview shows the next 24/48/72 hours with clock slots and PD picks visualized. Red borders = conflicts (pin in a slot the clock doesn't have).
+Open the **Program Log** (≡ → Program Log, or the PROGRAM LOG tab) and pick a day: every hour of the log the station will air, with the row on air highlighted. The old Schedule Preview window was retired — it read a table nothing wrote.
 `,
   },
   {

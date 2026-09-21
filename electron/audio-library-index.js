@@ -95,10 +95,8 @@ function findInIndex(index, storedPath) {
 // `songs` reported green while announcements, sweepers and carts were silent. Both the health
 // classifier and Re-sync read this, so neither can quietly know about a different set.
 //
-// `scheduled_log` is deliberately absent: the sync registry declares a `file_path` for it but the
-// live table has no such column (registry/schema mismatch, flagged in
-// docs/design-machine-local-paths-2026-09-04.md §9). tableColumns() would skip it anyway; leaving it
-// out states the intent.
+// (The old log table was deliberately absent here for a registry/schema mismatch, flagged in
+// docs/design-machine-local-paths-2026-09-04.md §9; it was dropped in v61, Program Log slice 6.)
 // Objects, not bare names, because one of them carries behaviour. `library-health.js` used to keep
 // its OWN copy of this list purely to hold that flag — two lists that could drift, which is the
 // defect this module exists to prevent. One list, and the flag travels with it.

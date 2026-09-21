@@ -178,7 +178,7 @@ function songsDelete(db, uuid) {
 
 
 // ── Neutering: how a deleted song becomes unreachable ─────────────────────────
-// The row STAYS in `songs`. It has to: generated_schedule / scheduled_log / song_metadata_values
+// The row STAYS in `songs`. It has to: generated_schedule / song_metadata_values
 // reference songs(id) with NO ACTION, station_programming with RESTRICT, and pinned_songs with
 // CASCADE — and the preserved history we deliberately keep is exactly what holds those references.
 // Proof on a real database: removing the row fails with FOREIGN KEY constraint failed, and the
@@ -224,7 +224,7 @@ function neuterSong(db, uuid, nowIso) {
 //
 // Returns per-table counts so the delete is observable instead of silent.
 function retractSongReferences(db, song, nowIso) {
-  const out = { pendingLog: 0, programming: 0, pinned: 0, metadata: 0, clockSlots: 0, overlays: 0, legacyLog: 0 };
+  const out = { pendingLog: 0, programming: 0, pinned: 0, metadata: 0, clockSlots: 0, overlays: 0 };
   const soft = (sql, ...args) => {
     try { return db.prepare(sql).run(...args).changes || 0; } catch { return 0; }
   };
@@ -244,12 +244,8 @@ function retractSongReferences(db, song, nowIso) {
   out.metadata = soft(
     `UPDATE song_metadata_values SET deleted_at = ?, updated_at = ?
       WHERE song_id = ? AND deleted_at IS NULL`, nowIso, nowIso, song.id);
-  // Legacy log: retract only what has not aired. Even if this table's status vocabulary ever differs,
-  // the airplay PROOF lives in play_log, which this function never touches.
-  out.legacyLog = soft(
-    `UPDATE scheduled_log SET deleted_at = ?, updated_at = ?
-      WHERE song_id = ? AND deleted_at IS NULL AND (status IS NULL OR status <> 'played')`,
-    nowIso, nowIso, song.id);
+  // (The old log table's retraction went with the table — dropped in v61, Program Log slice 6. The
+  // airplay PROOF lives in play_log, which this function never touches.)
   // Local diagnostic table, no deleted_at/uuid — a hard delete is correct here.
   try { db.prepare(`DELETE FROM scheduler_reasons WHERE song_id = ?`).run(song.id); } catch {}
 
@@ -274,7 +270,7 @@ function noteSongRetraction(song, retracted) {
     console.log(`[songs] retracted "${song.title}" (id ${song.id}): ` +
       `${retracted.pendingLog} pending log rows, ${retracted.programming} programming, ` +
       `${retracted.pinned} pinned, ${retracted.metadata} metadata, ${retracted.clockSlots} clock slots, ` +
-      `${retracted.overlays} overlays, ${retracted.legacyLog} legacy log — play_log and aired history preserved`);
+      `${retracted.overlays} overlays — play_log and aired history preserved`);
   } catch {}
   try {
     require('../../library-health').noteEvent('song-retracted', {

@@ -5,7 +5,7 @@
  * Data sources:
  *   play_log        — every on-air play (title, artist, deck, played_at)
  *   songs           — BPM, energy, LUFS, category, last_played_at
- *   scheduled_log   — what was scheduled vs what actually aired
+ *   generated_schedule — what the log aired (state='played'), by category
  *
  * The component creates play_log if it doesn't exist yet.
  */
@@ -232,15 +232,18 @@ export default function ListenerAnalytics({ onClose }: Props) {
       hourlyRaw.forEach(r => { hourlyMap[r.hour] = r; });
       setHourly(Array.from({ length: 24 }, (_, h) => hourlyMap[h] ?? { hour: h, play_count: 0, unique_artists: 0 }));
 
-      // Category breakdown — station_id scoping: Strategy C dynamic builder
+      // Category breakdown — what the AIRING log played, by category (Program Log slice 6). This
+      // read the dead table (0 rows since inception) and was always empty; the log's own
+      // state='played' rows joined to the station's categories are the honest source. played_at is
+      // the engine's stamp, so the window is "aired since", not "created since".
       const cats = await queryScoped<CategoryBreakdown>(`
-        SELECT category_code, category_color,
+        SELECT c.code AS category_code, c.color AS category_color,
                COUNT(*) as play_count,
-               SUM(duration_ms) as total_ms
-        FROM scheduled_log
-        WHERE station_id = ? AND (status = 'played' OR status = 'scheduled')
-        ${since > 0 ? `AND created_at >= ${since}` : ""}
-        GROUP BY category_code
+               SUM(COALESCE(g.duration_s, 0) * 1000) as total_ms
+        FROM generated_schedule g JOIN categories c ON c.id = g.category_id
+        WHERE g.station_id = ? AND g.state = 'played' AND g.deleted_at IS NULL
+        ${since > 0 ? `AND g.played_at >= ${since}` : ""}
+        GROUP BY c.code, c.color
         ORDER BY play_count DESC
       `, [stationId], stationId, { skipScoping: true });
       setCategories(cats.filter(c => c.category_code));

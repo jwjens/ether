@@ -239,13 +239,6 @@ module.exports = function buildHandlers(ipcRenderer) {
     update:  (uuid, patch)     => ipcRenderer.invoke('rtmp_destinations:update',    uuid, patch),
     delete:  (uuid, stationId) => ipcRenderer.invoke('rtmp_destinations:delete',    uuid, stationId),
   },
-  scheduledLog: {
-    list:    (stationId, opts) => ipcRenderer.invoke('scheduled_log:list',      stationId, opts),
-    getById: (uuid)            => ipcRenderer.invoke('scheduled_log:get-by-id', uuid),
-    create:  (payload)         => ipcRenderer.invoke('scheduled_log:create',    payload),
-    update:  (uuid, patch)     => ipcRenderer.invoke('scheduled_log:update',    uuid, patch),
-    delete:  (uuid, stationId) => ipcRenderer.invoke('scheduled_log:delete',    uuid, stationId),
-  },
   separationRules: {
     list:       (stationId, opts) => ipcRenderer.invoke('separation_rules:list',          stationId, opts),
     getById:    (uuid)            => ipcRenderer.invoke('separation_rules:get-by-id',     uuid),

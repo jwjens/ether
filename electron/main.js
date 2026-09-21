@@ -36,10 +36,6 @@
 // clock_slots         src/components/Scheduler.tsx       ~line 773
 // clock_slots         src/components/Scheduler.tsx       ~line 788
 // clock_slots         src/components/Scheduler.tsx       ~line 805
-// scheduled_log       src/components/ProgramLog.tsx      ~line 222
-// scheduled_log       src/components/ProgramLog.tsx      ~line 289
-// scheduled_log       src/components/ProgramLog.tsx      ~line 297
-// scheduled_log       src/components/ProgramLog.tsx      ~line 338
 // shows               src/components/CreateShowWizard    ~line 182
 // shows               src/components/ProgramLog.tsx      ~line 1473
 // shows               src/components/Scheduler.tsx       ~line 116
@@ -1944,7 +1940,7 @@ function runMigrations() {
     }
 
     // NO GRAVEYARD. Moving deleted rows out of `songs` was tried and REJECTED by proof on a real
-    // database: generated_schedule.song_id, scheduled_log.song_id and song_metadata_values.song_id all
+    // database: generated_schedule.song_id and song_metadata_values.song_id both
     // reference songs(id) with NO ACTION, station_programming with RESTRICT, and pinned_songs with
     // CASCADE. The preserved history we deliberately keep IS what holds those references — so removing
     // the row fails with FOREIGN KEY constraint failed, and the CASCADE would silently delete pins.
@@ -1983,19 +1979,8 @@ function runMigrations() {
   alterSafe("ALTER TABLE songs ADD COLUMN last_played_at INTEGER");
   alterSafe("ALTER TABLE songs ADD COLUMN play_count INTEGER DEFAULT 0");
   alterSafe("ALTER TABLE clocks ADD COLUMN show_id INTEGER");
-  alterSafe("ALTER TABLE scheduled_log ADD COLUMN chain_type TEXT DEFAULT 'segue'");
   alterSafe("ALTER TABLE clock_slots ADD COLUMN chain_type TEXT DEFAULT 'segue'");
   alterSafe("ALTER TABLE clock_slots ADD COLUMN spot_type TEXT");   // spot_break slots pull from spots WHERE spot_type = this (NULL = any active spot)
-  alterSafe("ALTER TABLE scheduled_log ADD COLUMN overflow INTEGER DEFAULT 0");
-  alterSafe("ALTER TABLE scheduled_log ADD COLUMN fade_out_at_ms INTEGER DEFAULT 0");
-  alterSafe("ALTER TABLE scheduled_log ADD COLUMN fade_duration_ms INTEGER DEFAULT 8000");
-  alterSafe("ALTER TABLE scheduled_log ADD COLUMN category_code TEXT");
-  alterSafe("ALTER TABLE scheduled_log ADD COLUMN slot_type TEXT");
-  alterSafe("ALTER TABLE scheduled_log ADD COLUMN song_title TEXT");
-  alterSafe("ALTER TABLE scheduled_log ADD COLUMN song_artist TEXT");
-  alterSafe("ALTER TABLE scheduled_log ADD COLUMN category_color TEXT");
-  alterSafe("ALTER TABLE scheduled_log ADD COLUMN label TEXT");
-  alterSafe("ALTER TABLE scheduled_log ADD COLUMN status TEXT");
   alterSafe("ALTER TABLE spots ADD COLUMN isci_code TEXT");
   alterSafe("ALTER TABLE spots ADD COLUMN cart_number TEXT");
   alterSafe("ALTER TABLE spots ADD COLUMN agency TEXT");
@@ -2127,7 +2112,7 @@ function runMigrations() {
   const uuidNeededNow = [
     'announcements', 'artists', 'cart_slots', 'categories',
     'clocks', 'liner_cards', 'macros', 'operators',
-    'pinned_songs', 'play_log', 'prep_notes', 'scheduled_log',
+    'pinned_songs', 'play_log', 'prep_notes',
     'spots',
   ];
   for (const tbl of uuidNeededNow) {
@@ -2140,7 +2125,7 @@ function runMigrations() {
   // Add station_id to all station-scoped tables (songs excluded — install-scoped, column dropped in v12)
   const stationTables = [
     'artists', 'albums', 'categories', 'separation_rules',
-    'clocks', 'clock_slots', 'shows', 'play_log', 'scheduled_log',
+    'clocks', 'clock_slots', 'shows', 'play_log',
     'spots', 'cart_slots', 'announcements', 'voice_tracks',
     'smart_schedule_rules', 'liner_cards', 'prep_notes',
     'published_episodes', 'format_clocks', 'generated_schedule',

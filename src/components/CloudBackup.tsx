@@ -2,7 +2,7 @@
  * CloudBackup.tsx
  * Ether Technologies — Cloud Log Backup (Pro feature)
  *
- * Backs up play_log, scheduled_log, and songs metadata to Railway backend.
+ * Backs up play_log and songs metadata to Railway backend.
  * Data is gzipped JSON before upload. Restore downloads and reimports.
  *
  * Gating: Pro = 30 backups max. Station = unlimited.
@@ -261,7 +261,7 @@ export default function CloudBackup() {
     // FULL-station backup: uploads the ENTIRE openair.db (stations, categories, clocks, clock_slots,
     // shows, programming AND library metadata) to R2 via cloud-backup:run-now — this is the backup that
     // install-from-cloud restores, so a station built on one machine reaches another intact. (The old
-    // path here backed up only play_log + scheduled_log + song metadata — none of the programming — which
+    // path here backed up only play_log + the old log table + song metadata — none of the programming — which
     // is why stations built on one box never carried over.)
     setStatus({ msg: "Backing up your full station to the cloud…", type: "info" });
     try {
@@ -283,7 +283,7 @@ export default function CloudBackup() {
   // ── Restore backup ─────────────────────────────────────────
 
   const restoreBackup = async (backup: BackupEntry) => {
-    if (!confirm(`Restore backup from ${fmtDate(backup.created_at)}?\n\nThis will REPLACE your current play_log and scheduled_log with the backup data. Songs library will not be affected.`)) return;
+    if (!confirm(`Restore backup from ${fmtDate(backup.created_at)}?\n\nThis will REPLACE your current play_log with the backup data. Songs library will not be affected.`)) return;
 
     setRestoring(backup.id);
     setStatus({ msg: "Downloading backup...", type: "info" });
@@ -321,32 +321,11 @@ export default function CloudBackup() {
         }
       }
 
-      // Restore scheduled_log
-      // DEFERRED (phase-3.5 cluster C): these execute() calls are intentional
-      // raw writes that bypass the typed handler. Same class as the play_log
-      // restore above — cloud restore is a privileged DB operation, not a
-      // normal app write. Additionally, the column names here (song_title,
-      // song_artist, slot_type, etc.) do not match the live DB schema (title,
-      // artist), so this restore path is doubly broken. Both problems deferred.
-      // See docs/phase-3.5-programlog-deferred.md and
-      //     docs/phase-3.5-cloudbackup-restore-deferred.md
-      if (payload.tables?.scheduled_log?.length > 0) {
-        await execute("DELETE FROM scheduled_log", []);
-        for (const row of payload.tables.scheduled_log) {
-          await execute(
-            `INSERT OR IGNORE INTO scheduled_log
-             (id,log_date,hour,position,slot_type,category_id,category_code,category_color,
-              song_id,song_title,song_artist,duration_ms,label,status,overflow,fade_out_at_ms,fade_duration_ms)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-            [row.id, row.log_date, row.hour, row.position, row.slot_type,
-             row.category_id, row.category_code, row.category_color,
-             row.song_id, row.song_title, row.song_artist, row.duration_ms,
-             row.label, row.status, row.overflow, row.fade_out_at_ms, row.fade_duration_ms]
-          );
-        }
-      }
+      // The old log table is not restored (Program Log slice 6, 2026-09-20): it was dropped in v61.
+      // generated_schedule is regenerated per machine by design and is not part of a restore. A
+      // legacy backup payload that still carries that table is simply ignored here.
 
-      setStatus({ msg: `✓ Restored ${payload.tables?.play_log?.length ?? 0} play log entries and ${payload.tables?.scheduled_log?.length ?? 0} scheduled entries.`, type: "ok" });
+      setStatus({ msg: `✓ Restored ${payload.tables?.play_log?.length ?? 0} play log entries.`, type: "ok" });
     } catch (e: any) {
       setStatus({ msg: "Restore failed: " + e.message, type: "err" });
     }

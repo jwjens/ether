@@ -166,8 +166,8 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
   const clearLog = async () => { if (!confirm("Clear the entire play log?")) return; await (window as any).ether.playLog.clearByStation(stationId); load(); };
 
   // ── As-Run reconciliation ───────────────────────────────────────────────────────────────────────
-  // FIXED 2026-08-09. This used to read `scheduled_log`, which NOTHING WRITES — ProgramLog.tsx:162
-  // records it plainly: "scheduled_log has 0 rows and schedule generation has never worked." So the
+  // FIXED 2026-08-09. This used to read the old log table, which NOTHING WROTE (0 rows since
+  // inception; the table was dropped in v61, Program Log slice 6). So the
   // scheduled side was always empty and every aired item was reported "+ UNSCHED". The real playout
   // source is `generated_schedule` (the Log-Reader Flip's single source).
   //
@@ -231,7 +231,7 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
     const header = "Time,Scheduled Title,Scheduled Artist,Actual Title,Actual Artist,Status,Duration";
     const rows = reconcileData.matched.map((m: any) => {
       // generated_schedule carries a real epoch; the old hour/position arithmetic belonged to
-      // scheduled_log and produced a fabricated clock time.
+      // the old log table and produced a fabricated clock time.
       const t = m.actual ? new Date((m.actual.played_at || 0) * 1000).toLocaleTimeString("en-US", { hour12: false })
                         : (m.scheduled ? new Date((m.scheduled.scheduled_at || 0) * 1000).toLocaleTimeString("en-US", { hour12: false }) : "");
       return [

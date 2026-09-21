@@ -81,7 +81,7 @@ const KNOWN_MISSING_HANDLERS = new Set([
 //
 // preload.js's exposeInMainWorld literal is read from the AST, not by regex: a namespace can be
 // `name: handlers.name`, an inline object literal (stations, which main registers with custom logic
-// and excludes from installAll), or a spread-plus-extras (`{ ...handlers.scheduledLog, getByDate }`).
+// and excludes from installAll), or a spread-plus-extras (`{ ...handlers.playLog, getByDate }`).
 // All three are legitimate and all three must resolve to a real set of method names.
 
 function objectKeys(node) {

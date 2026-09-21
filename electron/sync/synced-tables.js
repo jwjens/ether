@@ -43,7 +43,6 @@ const SYNCED_TABLES = [
   'prep_notes',
   'published_episodes',
   'rtmp_destinations',
-  'scheduled_log',
   'separation_rules',
   'shows',
   'smart_schedule_rules',
@@ -795,33 +794,6 @@ const REGISTRY = {
     },
   },
 
-  scheduled_log: {
-    tableName: 'scheduled_log',
-    primaryKey: ['id'],
-    scope: 'station',
-    columns: {
-      id:               'scalar',
-      log_date:         'scalar',
-      hour:             'scalar',
-      position:         'scalar',
-      song_id:          'scalar',
-      title:            'scalar',
-      artist:           'scalar',
-      category_id:      'scalar',
-      duration_ms:      'scalar',
-      clock_id:         'scalar',
-      created_at:       'scalar',
-      overflow:         'scalar',
-      fade_out_at_ms:   'scalar',
-      fade_duration_ms: 'scalar',
-      chain_type:       'scalar',
-      station_id:       'scalar',
-      uuid:             'scalar',
-      updated_at:       'scalar',
-      deleted_at:       'scalar',
-    },
-  },
-
   separation_rules: {
     tableName: 'separation_rules',
     primaryKey: ['id'],
@@ -863,7 +835,7 @@ const REGISTRY = {
       deleted_at:  'scalar',
     },
     // UUID-identity (Tier-2): the show→clock link, the reverse of clocks.show_id. Only the core
-    // rotation gap. Machine-generated logs (scheduled_log, play_log, …) intentionally get NO refs —
+    // rotation gap. Machine-generated logs (play_log, …) intentionally get NO refs —
     // they are not hand-edited and must not enter the edit-sync path; sacred value columns
     // (play_log.deck_id, play_log.session_id) are NEVER remapped.
     refs: { station_id: 'stations', clock_id: 'clocks' },

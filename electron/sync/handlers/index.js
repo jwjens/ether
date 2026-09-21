@@ -31,7 +31,6 @@ const { installPlayLog } = require('./play_log');
 const { installPrepNotes } = require('./prep_notes');
 const { installPublishedEpisodes } = require('./published_episodes');
 const { installRtmpDestinations } = require('./rtmp_destinations');
-const { installScheduledLog } = require('./scheduled_log');
 const { installSeparationRules } = require('./separation_rules');
 const { installShows } = require('./shows');
 const { installSmartScheduleRules } = require('./smart_schedule_rules');
@@ -78,7 +77,6 @@ function installAll(ipcMain, db) {
   installPrepNotes(ipcMain, db);
   installPublishedEpisodes(ipcMain, db);
   installRtmpDestinations(ipcMain, db);
-  installScheduledLog(ipcMain, db);
   installSeparationRules(ipcMain, db);
   installShows(ipcMain, db);
   installSmartScheduleRules(ipcMain, db);

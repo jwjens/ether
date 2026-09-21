@@ -47,8 +47,10 @@ check("1 · it drives the chunked driver instead",
   /await _generateDayChunked\(/.test(dayHandler));
 
 console.log("\n── 2 · the picker can be driven ONE hour at a time ──");
-const picker = fnBody(main, "_generateDayRows");
-check("2 · _generateDayRows accepts an hour slice", /_generateDayRows\(dayBaseDate, ctx, minTs = 0, onlyHour = null\)/.test(main));
+// The picker moved to electron/generate-core.js on 2026-08-11 (a pure move); read it there.
+const core = fs.readFileSync(path.join(__dirname, "..", "electron", "generate-core.js"), "utf8");
+const picker = fnBody(core, "_generateDayRows");
+check("2 · _generateDayRows accepts an hour slice", /_generateDayRows\(dayBaseDate, ctx, minTs = 0, onlyHour = null\)/.test(core));
 check("2 · the hour guard is the FIRST statement in the loop (nothing runs for other hours)",
   /for \(let h = 0; h < 24; h\+\+\) \{\s*\n\s*if \(onlyHour !== null && h !== onlyHour\) continue;/.test(picker));
 check("2 · the already-aired skip is still there (never regenerate a past hour)",
@@ -59,14 +61,14 @@ check("3 · the driver checks cancel at the top of each hour", /for \([^)]*\) \{
 check("3 · a cancel handler exists in main", /ipcMain\.handle\('schedule:generateCancel'/.test(main));
 check("3 · the CANCEL button invokes it (a renderer ref alone could never stop main)",
   /schedule:generateCancel/.test(bar));
-check("3 · a cancelled day is NEVER committed", /if \(run\.cancelled\) return \{ ok: true, cancelled: true, count: 0 \};/.test(dayHandler));
+check("3 · a cancelled day is NEVER committed", /if \(run\.cancelled\) \{[\s\S]{0,200}?return \{ ok: true, cancelled: true, count: 0 \};/.test(dayHandler) && dayHandler.indexOf("run.cancelled") < dayHandler.indexOf("_commitDayRows("));
 
 console.log("\n── 4 · the delete window is closed (generated_schedule is the playout source) ──");
-check("4 · delete + insert happen inside ONE transaction", /db\.transaction\(\(\) => \{\s*\n\s*db\.prepare\("DELETE FROM generated_schedule/.test(main));
+check("4 · delete + insert happen inside ONE transaction", (() => { const b = fnBody(main, "_commitDayRows"); const t = b.indexOf("db.transaction(() => {"); const ins = b.indexOf("generatedScheduleBulkCreate(db, stationId, fill)", t); return t > -1 && b.indexOf("DELETE FROM generated_schedule", t) > -1 && ins > -1 && b.indexOf("})();", ins) > ins; })());
 check("4 · the day handler no longer deletes before the pick",
-  !/DELETE FROM generated_schedule[\s\S]{0,200}_buildScheduleCtx/.test(dayHandler));
+  !/DELETE FROM generated_schedule[\s\S]{0,200}buildScheduleCtx/.test(dayHandler));
 check("4 · ctx is built BEFORE any delete (it reads play_log, never generated_schedule)",
-  dayHandler.indexOf("_buildScheduleCtx") < dayHandler.indexOf("_commitDayRows"));
+  dayHandler.indexOf("buildScheduleCtx(") > -1 && dayHandler.indexOf("buildScheduleCtx(") < dayHandler.indexOf("_commitDayRows"));
 
 console.log("\n── 5 · the week is ONE pipeline, not seven blocking calls ──");
 check("5 · a range handler exists", /ipcMain\.handle\('schedule:generateDays'/.test(main));

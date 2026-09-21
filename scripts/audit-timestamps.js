@@ -18,7 +18,7 @@ const TABLES = [
   "albums", "announcements", "artists", "cart_slots", "categories",
   "clock_slots", "clocks", "deck_configs", "format_clocks", "generated_schedule",
   "liner_cards", "macros", "operator_notes", "operators", "play_log",
-  "prep_notes", "published_episodes", "rtmp_destinations", "scheduled_log",
+  "prep_notes", "published_episodes", "rtmp_destinations",
   "separation_rules", "shows", "smart_schedule_rules", "songs", "spots",
   "station_config_kv", "voice_tracks", "stations",
 ];

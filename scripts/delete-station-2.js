@@ -75,7 +75,6 @@ const SCOPED_TABLES = [
   "clocks",
   "shows",
   "play_log",
-  "scheduled_log",
   "spots",
   "announcements",
   "voice_tracks",

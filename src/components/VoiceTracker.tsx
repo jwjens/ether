@@ -478,14 +478,22 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
     }).catch(() => setClockSlots([]));
   }, [selectedClock, tracks]);
 
-  // ── Load scheduled songs for prev/next song context ──
+  // ── Load the hour's rows for prev/next song context — from the AIRING log (Program Log slice 6) ──
+  // The rows the take will be inserted between: schedule:insertVoiceTrack looks for `beforeTitle`
+  // from now onward, so this is the NEXT occurrence of the selected hour (today, or tomorrow once
+  // the hour has fully passed). Local hour arithmetic (setHours / setDate), never h*3600.
   useEffect(() => {
     if (!isReady) return;
-    queryScoped<ScheduledSong>(
-      "SELECT position, title, artist, duration_ms FROM scheduled_log WHERE hour = ? ORDER BY position",
-      [selectedHour], stationId
-    ).then(r => setScheduledSongs(Array.isArray(r) ? r : [])).catch(() => setScheduledSongs([]));
-  }, [selectedHour, isReady]);
+    const start = new Date(); start.setHours(selectedHour, 0, 0, 0);
+    if (start.getTime() + 3600_000 <= Date.now()) start.setDate(start.getDate() + 1);
+    const end = new Date(start); end.setHours(selectedHour + 1, 0, 0, 0);
+    (window as any).ether.invoke("schedule:get", Math.floor(start.getTime() / 1000), Math.floor(end.getTime() / 1000), stationId)
+      .then((res: any) => {
+        const rows: any[] = Array.isArray(res?.data) ? res.data : [];
+        setScheduledSongs(rows.map((r, i) => ({ position: i, title: r.title || "", artist: r.artist || null, duration_ms: Math.round((r.duration_s || 0) * 1000) })));
+      })
+      .catch(() => setScheduledSongs([]));
+  }, [selectedHour, isReady, stationId]);
 
   // Derive prev/next songs for the selected slot
   const songs = scheduledSongs || [];

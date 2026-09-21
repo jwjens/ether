@@ -931,3 +931,116 @@ No CALENDAR tab, no Calendar in the hamburger; Health Monitor → Runway card do
 AUTO with nothing scheduled → Cancel → the Program Log docks; Schedule Manager's log pane is the
 Program Log; a Fill Day from the pop-out window shows the progress bar; a spot row's chip reads SPOT.
 Jeff confirms on screen after the relaunch.
+
+
+---
+
+## Slice 6 — built (2026-09-20, `scheduled_log` retired; local commit on `log-reader-flip`)
+
+No push, no tag, no bump, no install, no live DB opened by hand. Jeff confirmed slices 1–5 on screen
+first. §6's four recommendations applied, then the code and the table.
+
+### 1. Schedule Preview — deleted
+`src/components/SchedulePreview.tsx` (397 lines, read the dead table + `pinned_songs` = 0 rows) —
+`git rm`. Doors: `App.tsx` import, the `"schedpreview"` member of the `Panel` union and its workspace
+route; the in-app help passage (`HelpPanel.tsx` "Schedule preview") now says "Looking ahead — open the
+Program Log and pick a day" and that the window was retired. No menu, hamburger or pop-out entry
+existed (receipt: grep `schedpreview` → the three sites above only). `docs/help-*.md` — no mention
+existed.
+
+### 2. Voice Tracker — repointed to the airing log
+`VoiceTracker.tsx` (the prev/next context): `schedule:get(hourStart, hourStart+3600, stationId)` for the
+**next occurrence** of the selected hour (today, or tomorrow once the hour has fully passed — the same
+"from now onward" window `schedule:insertVoiceTrack` searches for `beforeTitle`), rows mapped to
+`{ position: index, title, artist, duration_ms: duration_s×1000 }`; local `setHours`/`setDate`, never
+`h*3600`. The list was always empty before (dead table); the insert path was already right.
+
+### 3. Listener Analytics — **repointed**, not dropped
+The "Category Breakdown" panel read `scheduled_log … status IN ('played','scheduled')` and so was
+always empty. It now reads **what the log aired, by category**: `generated_schedule g JOIN categories c
+… WHERE g.state = 'played' AND g.deleted_at IS NULL` (+ `g.played_at >= since`), grouped by
+`c.code, c.color`, `total_ms = duration_s×1000`. Why repoint rather than drop: the panel's question
+("what did we air, by category") is a real one and the engine stamps exactly the rows that answer it;
+`play_log.category_code` is written NULL by the daemon (`audiod/playlog.js:56`), so the log's own
+`played` rows are the honest source. Window semantics changed from "created since" to "aired since"
+(`played_at` is the engine's stamp) — stated in the code comment.
+
+### 4. Cloud Backup — the restore branch is deleted
+`CloudBackup.tsx`: the `payload.tables.scheduled_log` restore (DELETE + INSERT OR IGNORE with column
+names the live table never had) is gone; a legacy payload that still carries that table is ignored;
+the confirm text and the "✓ Restored …" status name play_log only. **Everything else in backup /
+restore is untouched** (the full-station R2 backup, the play_log restore).
+
+### 5. The code, then the table
+**Code removed:** `electron/sync/handlers/scheduled_log.js` (the 5 station-scoped channels + the 5
+Program-Log-era ones: get-by-date, batch-insert, clear-by-date, clear-by-hour, batch-update-position)
+and its `installScheduledLog` registration (`handlers/index.js`); the `scheduledLog` namespace in
+`preload-handlers.js` and `preload.js`; the `synced-tables.js` list entry and REGISTRY block; the
+`songs.js` delete-cascade UPDATE into it (`legacyLog` counter and log line); main.js's 11 startup
+`alterSafe("ALTER TABLE scheduled_log ADD COLUMN …")` lines and its two table-list entries
+(`uuidNeededNow`, `stationTables`); the header comment rows. `scripts/verify-main-schema.js` (the
+mirror of main.js's schema setup, `npm run verify:schema` → PASS) follows. One-off ops scripts that
+listed the table (`audit-timestamps`, `backfill-uuids(-preview)`, `delete-station-2`) drop the entry so
+they cannot fail on a v61 DB; `scripts/smoke-scheduled_log-handlers.js` (the handler's generated
+smoke) — deleted; `audio-library-index.js` / `Logs.tsx` comments reworded.
+**The table:** `scripts/migrate-drop-scheduled-log-phase-sync-61.js` — the next number in the chain.
+It **refuses** (throws with the count, before any transaction) if the table holds any row —
+`runMigrationChain` logs the throw as a non-fatal skip, the app still starts, the table stays, v61 is
+not recorded, it retries next launch and a human decides; on an empty table it `DROP TABLE`s, deletes
+the table's rows from `mutations` (the v49 precedent — a peer would reject them forever), records v61;
+idempotent when already absent. v0/v1/v2 stay in the chain and still create/touch the table on a
+fresh install (append-only history, the v49 rule); v61 then drops it. **Pre-commit chain gate:**
+`verify-transformer-chain` → `Fresh-install chain run: v0-baseline + v1–v61 clean`, 61 migrations,
+all exports present.
+**What this does on the next launch of a real install:** the chain applies v61 to the live profile DB
+through the app's own migration path (the sanctioned writer) — on this box's dev profile at the
+relaunch below, on OV with its next update. Peers still on ≤ 4.6.45 keep the table and its registry
+entry; they never wrote a row to it, so no mutation for it exists to reject.
+
+### 6. Grep receipt
+`scheduled_log` / `scheduledLog` across `src/`, `electron/`, `audiod/`, `scripts/` — **only** in the
+append-only chain: `schema-v0-baseline.js` (creates it), `migrate-uuids-phase-sync-1.js`,
+`migrate-timestamps-phase-sync-2.js` (touch it), `migrate-drop-scheduled-log-phase-sync-61.js` (drops
+it). **Stated exception:** `play_log.scheduled_log_id` — a COLUMN on `play_log` (v0 baseline, synced,
+written NULL by the daemon), not the table; renaming a synced column across machines is out of this
+slice's scope and was not asked. It appears in `main.js`, `handlers/play_log.js`, `synced-tables.js`,
+`audiod/playlog.js`, `verify-main-schema.js`, `smoke-play_log-handlers.js` and the v61 header, all as
+that column. The writes smoke's repo-wide check enforces exactly this (needles spelled apart so the
+smoke itself stays clean).
+
+### `scripts/smoke-generate-chunk.js`
+Fixed, not deleted: it stopped reading the Calendar in slice 5; its five remaining failures were
+drift, not this arc — the picker moved to `electron/generate-core.js` on 2026-08-11 (it now reads it
+there), the cancel/transaction regexes no longer matched comments and the `_genEmit` inside the
+cancel branch. → **21 passed, 0 failed**. Still wired to no npm script or CI (unchanged).
+
+### Tests (verbatim, `scripts/smoke-programlog-writes.js` — now 90)
+```
+PASS  v61 · after the full chain the old log table is GONE and v61 is recorded
+PASS  v61 · main.js no longer ALTERs the old table at startup (play_log.…_id column ALTER excepted)
+PASS  v61 · the baseline still creates the old table (append-only history)
+PASS  v61 · REFUSES a non-empty table by name, drops nothing, records nothing
+PASS  v61 · on an empty table it drops it and records v61
+PASS  v61 · idempotent — a second run is a recorded no-op
+PASS  v61 · exports payloadTransformer (identity) + applyMigration + isAlreadyMigrated
+PASS  i · repo-wide: zero old-log-table / namespace references outside the append-only chain (play_log.scheduled_log_id column excepted)
+=== 90 passed, 0 failed ===
+```
+
+### Gates
+`npx tsc --noEmit` exit 0. `npx vitest run` → **32 files, 425 passed**. `npm run build` → built in
+14.92 s. `node --check` on main.js / preload.js / preload-handlers.js / synced-tables.js /
+handlers/index.js / handlers/songs.js ok. `test:ipc-contract` / `test:preload-bridge` /
+`test:undefined-calls` → PASS. `npm run verify:schema` → PASS. **Pre-commit chain gate**
+(`verify-transformer-chain`) → v0-baseline + v1–v61 clean. `test:programlog-reads` 11 ·
+`test:programlog-writes` 90 · `test:programlog-popout` 30 · `smoke-generate-chunk` 21. watchdog 32.
+audiod smokes (exit 0 each): autofit 47 · autopost-arm 21 · cmd-routing 7 · deck-identity 22 ·
+deck-position 16 · deck-snapshot 25 · enginestate-wire 15 · enginestate 19 · logreader-anchor 18 ·
+manual-mode 30 · meter-contract 15 · orphan 4 · queue-classes 8 · seam-stop 60 · xfade-contract 33 ·
+dead-air 50.
+
+### Runtime receipt owed
+On the relaunch the main log shows `[migrate-v61] dropping scheduled_log (0 rows)` then
+`Transaction committed` (or the REFUSED line, which would be news); the app starts; Voice Tracker's
+hour context lists the real upcoming rows; Listener Analytics' Category Breakdown is non-empty;
+Cloud Backup restore still restores play_log. Jeff confirms on screen.
