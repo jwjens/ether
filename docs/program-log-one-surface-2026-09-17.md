@@ -718,3 +718,117 @@ Clear Day; Schedule → Program Log AND ≡ → Program Log open the SAME window
 front); drag it, close, reopen → same place; with both open, Fill Day in one → the other shows the
 rows within ~1 s; a song going to air turns its row `playing` in both; both open on the same day.
 Jeff confirms on screen after the relaunch.
+
+
+---
+
+## Slice 4 — built (2026-09-20, the hour modal's edits; local commit on `log-reader-flip`)
+
+No push, no tag, no bump, no install, no live DB. Jeff confirmed slice 3 on screen first. The
+Calendar is untouched (`git diff --stat`: no `BroadcastCalendar.tsx`). Line numbers are post-change.
+
+### 1. Every write rides the log editor's own handlers
+`ProgramLog.tsx` HourModal (`:1041-1330`) — the Calendar's rule, kept verbatim: **no optimistic paint**;
+after every edit the day is re-read (`onEdited` → `loadDayData`, `:1032`) and the modal is handed the
+LIVE block (`block={hourBlocks.find(b => b.hour === hourModal.hour)}`, `:1029`), so a refused edit never
+shows as applied for even a frame. `afterEdit` (`:1092-1103`): a handler's `ok:false` puts its `error`
+verbatim in a red line at the top of the modal; on success it re-reads, then asks
+`schedule:checkRow(stationId, uuid, at)` and shows the warnings under the row (informs, never gates).
+- **Swap a song** (`swapSong`, `:1105-1117`) → `schedule:editRowFields(uuid, { song_id })`.
+  `main.js:9493-9521`: the handler gained a `song_id` branch — the row's title, artist, length,
+  `file_key` (the file's basename, as Generate stamps it) and category are taken **from the Library
+  row**, never from the renderer (the same principle as its title/artist refusal: what the log says
+  must be what airs); `file_path` is left NULL for the reader's join (`loggen.js readLogAnchored`
+  `COALESCE(gs.file_key, s.file_key)` / `COALESCE(gs.file_path, s.file_path)` on `song_id`). Refused
+  by name on a non-song row (`:9504`), a song not in the Library (`:9509`), a song with no audio
+  (`:9510`). Stamps `source='operator'`; `log-edit` health event `swap-song`; fires
+  `_scheduleChanged(…, 'swap-song')` (`:9519`). The `_CELL_FIELDS` path (title/artist/category) is
+  unchanged.
+- **Drag** (`moveRow`, `:1119-1125`) → `schedule:moveRow(fromUuid, toUuid)` — the two rows **swap
+  times** (never a ripple; `main.js:9413`). The old modal shuffled positions in the dead table; the
+  header now says "drag a row onto another to swap their times".
+- **Delete** (`deleteRow`, `:1128-1136`) → `schedule:deleteRow(uuid)` (soft, `main.js:9450`).
+- **Aired rows are records**: `isAired` (`:1057`) → not draggable (`:1209`), no drop target, no swap,
+  no ✕, dimmed, tooltip "Already aired — a record, not a plan"; and whatever is tried, main's
+  `_guardEditable` (`_EDIT_LOCKED = {played, playing}`) answers `"<title>" has already aired — the log
+  is a record of what happened, not a plan, so it cannot be edited/moved/deleted`, shown verbatim.
+- **Grep receipt**: `scheduled_log` / `scheduledLog` — **0 mentions anywhere in `ProgramLog.tsx`**
+  (comments included); no `execute(` / `UPDATE` / `INSERT INTO` / `DELETE FROM` in the file; the `execute`
+  import is gone. Smoke (i) asserts all three.
+
+### 2. Brought over from the Calendar (§4)
+- **YOURS badge** (`:1249-1254`): `source === 'operator'` (log-edit-core's `OPERATOR_SOURCES`, the
+  allow-list; NOT "any source" — `auto` is the extender's provenance, not ownership).
+- **Time column with seconds + Length** (`:1233-1237`, header `:1176`): scheduled `HH:MM:SS`, actual
+  air time under it once aired; Length `m:ss`.
+- **Delete row** (the ✕, `:1277-1287`).
+- **Separation warnings after an edit** (`checkRow`, `:1098`).
+- **State on the row** (`playing` accent / `missed` red, `:1216`, `:1257`).
+**Skipped** (not built, listed): pin/release (`schedule:setRowSource`) — an edit, swap or move already
+stamps `operator`, so an explicit pin only matters for an untouched auto row; the spreadsheet cell
+edits (double-click title/artist on a non-song row, category picker) — `editRowFields` supports them,
+the modal does not offer them; the `ether:schedule-regenerated` DOM event and the Schedule Manager's
+`onMutated` hook — the Program Log's own re-read + `schedule:changed` cover both surfaces.
+
+### 3. Every edit fires `schedule:changed` — receipts
+`main.js`: `editRowFields` `:9519` (`swap-song`) and `:9538` (`edit-cell`), `moveRow` `:9445`
+(`move`), `deleteRow` `:9477` (`delete`). Smoke (i): `swap-song`, `move` and `delete` each observed on
+the broadcast; **none** for a refused edit.
+
+### 4. Calendar — untouched.
+
+### Help
+`docs/help-program-log.md`: "What is not wired yet" is gone; "Editing an hour (✎ Edit)" describes swap,
+drag = swap times, ✕, YOURS, the ⚠ warning, and why aired rows cannot change.
+
+### Tests (verbatim — `scripts/smoke-programlog-writes.js`, now 82)
+```
+PASS  g · the hour modal's swap and drag no longer write the dead table (slice 4)
+PASS  i · a generated 15:00 hour to edit (12 rows)
+PASS  i · swap: editRowFields({song_id}) ok
+PASS  i · swap: schedule:get returns the NEW song at that slot (song_id, title, artist, length, file_key from the Library; same time)
+PASS  i · swap: the row is now operator-owned (YOURS) — Generate will not replace it
+PASS  i · swap: schedule:changed fired (reason swap-song)
+PASS  i · swap: the log-reader would air the new file — its COALESCE(gs.file_key, s.file_key) / join on song_id resolves song1
+PASS  i · swap to a song that is not in the Library is refused by name
+PASS  i · swap on a non-song row is refused by name
+PASS  i · checkRow answers with a warnings array (informs; the edit already applied)
+PASS  i · drag: moveRow ok
+PASS  i · drag: the two rows swapped times (A ↔ B), both operator-owned
+PASS  i · drag: the daemon-facing order (pending rows ORDER BY scheduled_at — loggen's predicate) matches what the panel shows
+PASS  i · drag: B now airs where A was (first of the hour), A where B was
+PASS  i · drag: schedule:changed fired (reason move)
+PASS  i · delete: deleteRow ok, the row is gone from schedule:get but still in the table (soft)
+PASS  i · delete: schedule:changed fired (reason delete)
+PASS  i · a played row: swap refused with 'has already aired — the log is a record of what happened, not a plan'
+PASS  i · a played row: move refused (as the source)
+PASS  i · a playing row: move refused (as the target)
+PASS  i · a playing row: delete refused
+PASS  i · the refused rows are untouched
+PASS  i · no schedule:changed for a refused edit
+PASS  i · the grep receipt: no scheduled_log / scheduledLog reference remains anywhere in ProgramLog.tsx
+PASS  i · ProgramLog.tsx writes nothing directly: no execute( / UPDATE / INSERT / DELETE in the file
+PASS  i · the hour modal invokes editRowFields({song_id}), moveRow, deleteRow, checkRow — and nothing else writes
+=== 82 passed, 0 failed ===
+```
+Section (i) runs the shipped handlers (`editRowFields`, `moveRow`, `deleteRow`, `checkRow`, `_logRow`,
+`_guardEditable`, read out of main.js) against a generated day: a swap on a pending 15:00 row →
+`schedule:get` returns the new song at that slot with the Library's title/artist/length/file_key,
+`source='operator'`, and the reader's COALESCE resolves the new file; a drag → the two rows' times
+swap and the daemon-facing order (pending rows `ORDER BY scheduled_at`, loggen's predicate) matches the
+panel; a delete → gone from `schedule:get`, soft in the table; swap/move/delete on played and playing
+rows → refused with the handler's "already aired" reason and the rows untouched.
+
+### Gates
+`npx tsc --noEmit` exit 0. `npx vitest run` → **32 files, 425 passed**. `node --check electron/main.js`
+ok. `test:ipc-contract` / `test:preload-bridge` / `test:undefined-calls` → PASS. `test:programlog-reads`
+11 · `test:programlog-writes` 82 · `test:programlog-popout` 20. watchdog 32. audiod smokes (exit 0
+each): autofit 47 · autopost-arm 21 · cmd-routing 7 · deck-identity 22 · deck-position 16 ·
+deck-snapshot 25 · enginestate-wire 15 · enginestate 19 · logreader-anchor 18 · manual-mode 30 ·
+meter-contract 15 · orphan 4 · queue-classes 8 · seam-stop 60 · xfade-contract 33 · dead-air 50.
+
+### Runtime receipt owed
+✎ Edit on a future hour: click a song → pick another → the row shows the new title with YOURS, the
+Up Next / Calendar show the same song at that time, the daemon airs it when its slot comes; drag a row
+onto another → the two trade times; ✕ → the row is gone; on an aired hour the rows are dimmed and a
+try shows the red "already aired" line. Jeff confirms on screen after the relaunch.

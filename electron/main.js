@@ -9494,6 +9494,31 @@ ipcMain.handle('schedule:editRowFields', (_e, uuid, patch) => {
   try {
     const row = _logRow(uuid);
     const g = _guardEditable(row, 'edited'); if (g) return { ok: false, error: g };
+    // SWAP THE SONG (Program Log slice 4, 2026-09-20): `{ song_id }` on a music row. The row's label,
+    // length, file and category are taken from the LIBRARY row, never from the renderer — the same
+    // rule as the title/artist refusal below: what the log says must be what airs. The reader resolves
+    // the file by COALESCE(gs.file_key, s.file_key) / COALESCE(gs.file_path, s.file_path) joined on
+    // song_id (loggen.js readLogAnchored), so file_key is stamped the way Generate stamps it (the file's
+    // basename) and file_path is left to the join.
+    if (patch && patch.song_id != null) {
+      if (row.song_id == null) return { ok: false, error: `"${row.title || 'that row'}" is not a song slot — a spot, sweeper or voice track cannot be swapped for a song here` };
+      const song = db.prepare(
+        `SELECT s.id, s.title, a.name AS artist, s.duration_ms, s.file_path, s.file_key, s.category_id
+           FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ? AND s.deleted_at IS NULL`
+      ).get(Number(patch.song_id));
+      if (!song) return { ok: false, error: 'that song is not in the Library (or has been deleted)' };
+      if (!song.file_path && !song.file_key) return { ok: false, error: `"${song.title}" has no audio file — it cannot be scheduled` };
+      const now = new Date().toISOString();
+      db.prepare(
+        `UPDATE generated_schedule SET song_id = ?, title = ?, artist = ?, duration_s = ?, file_key = ?, file_path = NULL,
+                category_id = ?, source = 'operator', updated_at = ? WHERE uuid = ?`
+      ).run(song.id, song.title, song.artist || '', Math.round((song.duration_ms || 0) / 1000),
+            song.file_path ? path.basename(song.file_path) : song.file_key, song.category_id ?? row.category_id, now, uuid);
+      _healthEvent('log-edit', { action: 'swap-song', stationId: row.station_id, at: row.scheduled_at,
+        from: row.title, to: song.title, songId: song.id });
+      _scheduleChanged(row.station_id, 'swap-song');
+      return { ok: true, title: song.title, artist: song.artist || '', durationS: Math.round((song.duration_ms || 0) / 1000) };
+    }
     const fields = Object.keys(patch || {}).filter(k => _CELL_FIELDS.has(k));
     if (!fields.length) return { ok: false, error: 'nothing editable in that change' };
     if (row.song_id != null && (fields.includes('title') || fields.includes('artist'))) {

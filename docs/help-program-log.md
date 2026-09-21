@@ -65,12 +65,24 @@ After a Clear, press Fill Day to rebuild — it fills only the gaps.
 
 **⬇ CSV**, **🖨 Print** and **📄 PDF Report** (Studio plan) export the day you are looking at.
 
-## What is not wired yet
+## Editing an hour (✎ Edit)
 
-Inside an hour's **✎ Edit** window, swapping a song and dragging rows do **not** yet change the airing
-log — those two actions still write to an old table nothing reads. Until the next update, make those
-edits in the **Calendar** (drag, pin, remove), which writes the real log. Everything else on this panel
-reads and writes the airing log.
+Open an hour and press **✎ Edit**. Every change is saved to the airing log the moment you make it —
+there is no Save button, and what you see after each change is what the log now holds.
+
+- **Swap a song** — click a song row, then pick another song from the list on the right (same
+  category, searchable). The row takes that song's title, artist, length and file from the Library.
+- **Swap two rows' times** — drag a row and drop it onto another; the two trade places. (It is a
+  swap, not a shuffle-down: nothing else in the hour moves.)
+- **Remove a row** — the **✕** at the right of the row. The slot refills on the next Fill Day.
+- **YOURS** on a row means you placed, moved, swapped or edited it — Fill Day will not move, replace
+  or remove it.
+- A yellow **⚠** under a row after a swap or move is a separation rule the placement bends (artist,
+  title or song too close to another play). It tells you; it does not stop you.
+
+**Rows that have aired or are on air cannot be changed.** They are dimmed, cannot be dragged or
+deleted, and if you try, the reason is shown: *already aired — the log is a record of what happened,
+not a plan.*
 
 ## If something looks wrong
 

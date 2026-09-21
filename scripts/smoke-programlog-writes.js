@@ -61,6 +61,15 @@ const src = [
   braceBlock("ipcMain.handle('schedule:generateDay',"),
   braceBlock("ipcMain.handle('schedule:clearDay',"),
   braceBlock("ipcMain.handle('schedule:get',"),
+  // slice 4 — the log editor's handlers the hour modal rides
+  "const _EDIT_LOCKED = new Set(['played', 'playing']);",
+  "const _CELL_FIELDS = new Set(['title', 'artist', 'category_id']);",
+  braceBlock("function _logRow("),
+  braceBlock("function _guardEditable("),
+  braceBlock("ipcMain.handle('schedule:moveRow',"),
+  braceBlock("ipcMain.handle('schedule:deleteRow',"),
+  braceBlock("ipcMain.handle('schedule:editRowFields',"),
+  braceBlock("ipcMain.handle('schedule:checkRow',"),
 ].join("\n");
 check("main.js: generateDay handler takes fromTs", /ipcMain\.handle\('schedule:generateDay', async \(_, dayTs, fromTs\)/.test(src));
 check("main.js: clearDay handler exists and only touches state = 'pending'", /schedule:clearDay/.test(src) && /AND state = 'pending'/.test(src));
@@ -95,7 +104,7 @@ for (let i = 1; i <= 40; i++) {
 const insRow = (station, ts, state, extra = {}) => db.prepare(
   `INSERT INTO generated_schedule (uuid, station_id, scheduled_at, song_id, title, artist, duration_s, state, played_at, source, content_class, created_at, updated_at)
    VALUES (?,?,?,?,?,?,?,?,?,?,?,datetime('now'),datetime('now'))`
-).run(extra.uuid || ("seed-" + station + "-" + ts), station, ts, extra.song_id ?? 1, extra.title || ("seed " + state + " @" + ts), "a", 200, state, extra.played_at ?? null, extra.source ?? null, extra.content_class || "MUSIC");
+).run(extra.uuid || ("seed-" + station + "-" + ts), station, ts, ("song_id" in extra ? extra.song_id : 1), extra.title || ("seed " + state + " @" + ts), "a", 200, state, extra.played_at ?? null, extra.source ?? null, extra.content_class || "MUSIC");
 
 // ── sandbox with the shipped code ──
 const health = [];
@@ -103,7 +112,7 @@ const broadcasts = [];
 const sandbox = new Function(
   "ipcMain", "db", "require", "getActiveStationId", "_healthEvent", "_genEmit", "_placeJingles",
   "finishGenerateRun", "retireStaleScheduleRows", "_hourRanges", "_fmtHour", "buildScheduleCtx",
-  "generateDayRows", "resetGenSlice", "Date", "console", "sendToAllWindows",
+  "generateDayRows", "resetGenSlice", "Date", "console", "sendToAllWindows", "path",
   src
 );
 const handlers = {};
@@ -114,9 +123,9 @@ sandbox(
   () => 1, (kind, data) => health.push({ kind, ...data }), () => {}, () => {}, () => {}, () => {},
   (set) => [...set], (h) => String(h), gc.buildScheduleCtx, gc.generateDayRows, gc.resetGenSlice, FakeDate,
   { log: () => {}, error: (...a) => origLog("  [handler error]", ...a) },
-  (channel, payload) => broadcasts.push({ channel, payload })
+  (channel, payload) => broadcasts.push({ channel, payload }), path
 );
-check("handlers registered: generateDay, clearDay, get", !!handlers["schedule:generateDay"] && !!handlers["schedule:clearDay"] && !!handlers["schedule:get"]);
+check("handlers registered: generateDay, clearDay, get, moveRow, deleteRow, editRowFields, checkRow", ["schedule:generateDay", "schedule:clearDay", "schedule:get", "schedule:moveRow", "schedule:deleteRow", "schedule:editRowFields", "schedule:checkRow"].every(k => !!handlers[k]));
 const get = (from, to, sid = 1) => { const r = handlers["schedule:get"](null, from, to, sid); if (r.error) throw new Error("schedule:get → " + r.error); return r.data; };
 const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ?").get(sid, dayStart, dayEnd).n;
 
@@ -221,7 +230,7 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
   check("g · Fill Day invokes schedule:generateDay(dayStart) — and it is the ONLY generateDay call in this window (slice 2a: no fromTs, no hour button)",
     (tsx.match(/invoke\("schedule:generateDay"/g) || []).length === 1 && /invoke\("schedule:generateDay", dayStart\)/.test(tsx) && !/generateHour|Regen|Generate →|generating:/.test(tsx));
   check("g · Clear Day and the hour ✕ invoke schedule:clearDay", /invoke\("schedule:clearDay", dayStart, \{ fromTs, toTs \}\)/.test(tsx) && /const clearHour/.test(tsx));
-  check("g · the hour modal's swap and drag still write scheduled_log (slice 4, stated in the doc)", /UPDATE scheduled_log SET song_id/.test(tsx) && /scheduledLog\.batchUpdatePosition/.test(tsx));
+  check("g · the hour modal's swap and drag no longer write the dead table (slice 4)", !/UPDATE scheduled_log SET song_id/.test(tsx) && !/scheduledLog\.batchUpdatePosition/.test(tsx));
 
   // ── (h) slice 3 — every generated_schedule writer in main.js fires schedule:changed; the panel subscribes ONCE ──
   const sites = ["_commitDayRows(", "ipcMain.handle('schedule:clearDay'", "ipcMain.handle('schedule:moveRow'", "ipcMain.handle('schedule:setRowSource'", "ipcMain.handle('schedule:deleteRow'", "ipcMain.handle('schedule:editRowFields'", "ipcMain.handle('schedule:insertVoiceTrack'", "function retireStaleScheduleRows("];
@@ -231,6 +240,72 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
   check("h · _scheduleChanged sends to ALL windows on channel schedule:changed", /function _scheduleChanged[\s\S]{0,300}sendToAllWindows\("schedule:changed"/.test(main));
   check("h · ProgramLog.tsx subscribes to schedule:changed once per mount, debounced, and unsubscribes", /ether\.on\("schedule:changed"/.test(tsx) && (tsx.match(/ether\.on\("schedule:changed"/g) || []).length === 1 && /CHANGED_DEBOUNCE_MS/.test(tsx) && /ether\.off\?\.\("schedule:changed", handle\)/.test(tsx));
   check("h · the shared selected-day key is read on mount and written on every pick", /readSharedDate\(stationId\) \|\| todayStr\(\)/.test(tsx) && /writeSharedDate\(stationId, d\)/.test(tsx) && /ether_programlog_date_/.test(tsx));
+
+  // ── (i) slice 4 — the hour modal's edits ride the log editor's handlers ──
+  db.prepare("DELETE FROM generated_schedule").run();
+  broadcasts.length = 0;
+  await handlers["schedule:generateDay"](null, dayStart);
+  const day = () => get(dayStart, dayEnd);
+  const at15 = day().filter(r => new RealDate(r.scheduled_at * 1000).getHours() === 15);
+  check("i · a generated 15:00 hour to edit (" + at15.length + " rows)", at15.length >= 3);
+  const target = at15[1];
+  const other = db.prepare("SELECT id, title FROM songs WHERE id <> ? AND category_id = ? LIMIT 1").get(target.song_id, catId);
+  // swap
+  broadcasts.length = 0;
+  const sw = handlers["schedule:editRowFields"](null, target.uuid, { song_id: other.id });
+  check("i · swap: editRowFields({song_id}) ok", sw && sw.ok === true && sw.title === other.title, JSON.stringify(sw));
+  const after = day().find(r => r.uuid === target.uuid);
+  check("i · swap: schedule:get returns the NEW song at that slot (song_id, title, artist, length, file_key from the Library; same time)",
+    after && after.song_id === other.id && after.title === other.title && after.artist === "Artist " + other.id && after.duration_s === 240 && after.file_key === "song" + other.id + ".mp3" && after.scheduled_at === target.scheduled_at && after.file_path === null,
+    JSON.stringify(after));
+  check("i · swap: the row is now operator-owned (YOURS) — Generate will not replace it", after && after.source === "operator");
+  check("i · swap: schedule:changed fired (reason swap-song)", broadcasts.some(b => b.channel === "schedule:changed" && b.payload.reason === "swap-song" && b.payload.stationId === 1), JSON.stringify(broadcasts));
+  check("i · swap: the log-reader would air the new file — its COALESCE(gs.file_key, s.file_key) / join on song_id resolves song" + other.id,
+    (() => { const r = db.prepare("SELECT COALESCE(gs.file_key, s.file_key) fk, COALESCE(gs.file_path, s.file_path) fp FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id WHERE gs.uuid = ?").get(target.uuid); return r.fk === "song" + other.id + ".mp3" && r.fp === "C:/music/song" + other.id + ".mp3"; })());
+  const swBad = handlers["schedule:editRowFields"](null, target.uuid, { song_id: 999999 });
+  check("i · swap to a song that is not in the Library is refused by name", swBad && swBad.ok === false && /not in the Library/.test(swBad.error), JSON.stringify(swBad));
+  const spotUuid = "spot-15-" + Date.now();
+  insRow(1, hourTs(15) + 1800, "pending", { uuid: spotUuid, content_class: "SPOT", song_id: null, title: "A spot" });
+  const swSpot = handlers["schedule:editRowFields"](null, spotUuid, { song_id: other.id });
+  check("i · swap on a non-song row is refused by name", swSpot && swSpot.ok === false && /not a song slot/.test(swSpot.error), JSON.stringify(swSpot));
+  // checkRow after the swap: informs, never gates
+  const chk = handlers["schedule:checkRow"](null, 1, target.uuid, target.scheduled_at);
+  check("i · checkRow answers with a warnings array (informs; the edit already applied)", chk && chk.ok === true && Array.isArray(chk.warnings), JSON.stringify(chk));
+  // drag = moveRow: the two rows swap scheduled_at
+  broadcasts.length = 0;
+  const A = at15[0], B = at15[2];
+  const mv = handlers["schedule:moveRow"](null, A.uuid, B.uuid);
+  check("i · drag: moveRow ok", mv && mv.ok === true && mv.movedTo === B.scheduled_at, JSON.stringify(mv));
+  const A2 = day().find(r => r.uuid === A.uuid), B2 = day().find(r => r.uuid === B.uuid);
+  check("i · drag: the two rows swapped times (A ↔ B), both operator-owned", A2.scheduled_at === B.scheduled_at && B2.scheduled_at === A.scheduled_at && A2.source === "operator" && B2.source === "operator");
+  const readerOrder = db.prepare("SELECT uuid FROM generated_schedule WHERE station_id = 1 AND state = 'pending' AND deleted_at IS NULL AND scheduled_at >= ? AND scheduled_at < ? ORDER BY scheduled_at").all(hourTs(15), hourTs(16)).map(r => r.uuid);
+  const panelOrder = day().filter(r => new RealDate(r.scheduled_at * 1000).getHours() === 15).map(r => r.uuid);
+  check("i · drag: the daemon-facing order (pending rows ORDER BY scheduled_at — loggen's predicate) matches what the panel shows", JSON.stringify(readerOrder) === JSON.stringify(panelOrder));
+  check("i · drag: B now airs where A was (first of the hour), A where B was", panelOrder[0] === B.uuid && panelOrder[2] === A.uuid, JSON.stringify(panelOrder.slice(0, 3)));
+  check("i · drag: schedule:changed fired (reason move)", broadcasts.some(b => b.channel === "schedule:changed" && b.payload.reason === "move"));
+  // delete
+  broadcasts.length = 0;
+  const del = handlers["schedule:deleteRow"](null, at15[3] ? at15[3].uuid : target.uuid);
+  const delUuid = at15[3] ? at15[3].uuid : target.uuid;
+  check("i · delete: deleteRow ok, the row is gone from schedule:get but still in the table (soft)", del && del.ok === true && !day().some(r => r.uuid === delUuid) && !!db.prepare("SELECT deleted_at FROM generated_schedule WHERE uuid = ?").get(delUuid).deleted_at);
+  check("i · delete: schedule:changed fired (reason delete)", broadcasts.some(b => b.channel === "schedule:changed" && b.payload.reason === "delete"));
+  // aired rows are records: every edit refused with the reason
+  insRow(1, hourTs(8) + 60, "played", { uuid: "aired-8", played_at: hourTs(8) + 62, title: "Aired Song" });
+  insRow(1, hourTs(10) + 60, "playing", { uuid: "onair-10", played_at: hourTs(10) + 61, title: "On Air Song" });
+  const r1 = handlers["schedule:editRowFields"](null, "aired-8", { song_id: other.id });
+  const r2 = handlers["schedule:moveRow"](null, "aired-8", target.uuid);
+  const r3 = handlers["schedule:moveRow"](null, target.uuid, "onair-10");
+  const r4 = handlers["schedule:deleteRow"](null, "onair-10");
+  const aired = (r) => r && r.ok === false && /already aired/.test(r.error);
+  check("i · a played row: swap refused with 'has already aired — the log is a record of what happened, not a plan'", aired(r1) && /cannot be edited/.test(r1.error), JSON.stringify(r1));
+  check("i · a played row: move refused (as the source)", aired(r2) && /cannot be moved/.test(r2.error), JSON.stringify(r2));
+  check("i · a playing row: move refused (as the target)", aired(r3), JSON.stringify(r3));
+  check("i · a playing row: delete refused", aired(r4) && /cannot be deleted/.test(r4.error), JSON.stringify(r4));
+  check("i · the refused rows are untouched", (() => { const a = db.prepare("SELECT * FROM generated_schedule WHERE uuid = 'aired-8'").get(), o = db.prepare("SELECT * FROM generated_schedule WHERE uuid = 'onair-10'").get(); return a.title === "Aired Song" && a.state === "played" && !a.deleted_at && o.state === "playing" && !o.deleted_at && o.scheduled_at === hourTs(10) + 60; })());
+  check("i · no schedule:changed for a refused edit", !broadcasts.some(b => b.channel === "schedule:changed" && ["swap-song", "move", "delete"].includes(b.payload.reason) && b.payload.at > 0 && false) && broadcasts.filter(b => b.channel === "schedule:changed").length === 1 /* the delete above */);
+  check("i · the grep receipt: no scheduled_log / scheduledLog reference remains anywhere in ProgramLog.tsx", !/scheduled_log|scheduledLog/.test(tsx));
+  check("i · ProgramLog.tsx writes nothing directly: no execute( / UPDATE / INSERT / DELETE in the file", !/\bexecute\(/.test(tsx) && !/\b(UPDATE|INSERT INTO|DELETE FROM)\b/.test(tsx));
+  check("i · the hour modal invokes editRowFields({song_id}), moveRow, deleteRow, checkRow — and nothing else writes", /invoke\("schedule:editRowFields", swapTarget\.uuid, \{ song_id: newSong\.id \}\)/.test(tsx) && /invoke\("schedule:moveRow", fromUuid, toUuid\)/.test(tsx) && /invoke\("schedule:deleteRow", entry\.uuid\)/.test(tsx) && /invoke\("schedule:checkRow", stationId, warnFor\.uuid, warnFor\.at\)/.test(tsx));
 
   console.log(`=== ${pass} passed, ${fail} failed ===`);
   process.exit(fail ? 1 : 0);

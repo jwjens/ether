@@ -3,7 +3,7 @@
 // docs/program-log-one-surface-2026-09-17.md · docs/help-program-log.md
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { query, execute } from "../db/client";
+import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { usePlan } from "../hooks/usePlan";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -15,10 +15,11 @@ import {
 // ── Types ──────────────────────────────────────────────────────
 
 // Slice 1 (2026-09-18): the panel READS generated_schedule — the log the engine airs and the
-// Calendar shows — through schedule:get, not the dead scheduled_log (0 rows since inception,
-// docs/program-log-wiring-2026-09-17.md §3). Slice 2: Generate / Fill Day / Clear Day ride
-// schedule:generateDay / schedule:clearDay. The hour modal's swap and drag still write scheduled_log
-// (slice 4) — until then they are INCONSISTENT with what this panel reads.
+// Calendar shows — through schedule:get, never the dead table it used to read (0 rows since
+// inception, docs/program-log-wiring-2026-09-17.md §3). Slice 2: Generate / Fill Day / Clear Day ride
+// schedule:generateDay / schedule:clearDay. Slice 4: the hour modal's swap / drag / delete ride the log
+// editor's own handlers (editRowFields / moveRow / deleteRow). Nothing in this file writes any log
+// table directly.
 type ScheduledEntry = ProgramLogEntry;
 
 interface HourBlock {
@@ -199,8 +200,8 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
   }, [stationId, loadDayData, loadScheduledDates]);
 
   // ── Generate / Clear — the real path (slice 2, 2026-09-18) ────────────────────────────────────
-  // The local picker that lived here (its own separation arithmetic, INSERTs into the dead
-  // scheduled_log, and two FUTURE stamps on songs.last_played_at that would have rested songs the real
+  // The local picker that lived here (its own separation arithmetic, INSERTs into the dead log
+  // table, and two FUTURE stamps on songs.last_played_at that would have rested songs the real
   // generator had not played) is gone. Fill Day and Clear Day now ride the handlers the Calendar has
   // used since 4.4.x — schedule:generateDay / schedule:clearDay — on the active station, over the
   // same local-midnight window slice 1 reads. Fill Day is the ONLY fill (slice 2a): this window never
@@ -1024,39 +1025,57 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
         <HourModal
           date={selectedDate}
           hour={hourModal.hour}
-          block={hourModal.block}
+          // The LIVE block: after every edit the day is re-read and the modal shows what came back.
+          block={hourBlocks.find(b => b.hour === hourModal.hour) || hourModal.block}
+          stationId={stationId}
           onClose={() => setHourModal(null)}
-          onSaved={() => { loadDayData(selectedDate); setHourModal(null); }}
+          onEdited={async () => { await loadDayData(selectedDate); loadScheduledDates(); }}
         />
       )}
     </div>
   );
 }
 
-// ── HourModal — deep dive editor for a single scheduled hour ──
+// ── HourModal — the log editor for one hour (slice 4) ──────────────────────────────────────────
+// Every write goes through the log editor's own handlers — the ones the Calendar uses:
+//   swap a song  → schedule:editRowFields(uuid, { song_id })   (main.js resolves the song from the Library)
+//   drag         → schedule:moveRow(fromUuid, toUuid)           (the two rows swap times — never a ripple)
+//   delete       → schedule:deleteRow(uuid)                      (soft)
+//   after a swap/move → schedule:checkRow(stationId, uuid, at)   (separation warnings; informs, never gates)
+// Nothing here writes generated_schedule directly. No optimistic paint: the day is re-read after every
+// edit and the modal shows what came back, so a refused edit never shows as applied. played / playing
+// rows are records (main.js _guardEditable) — not draggable, not swappable, not deletable, and the
+// handler's reason is shown if anything is tried. Each handler fires schedule:changed (slice 3).
 
 interface HourModalProps {
-  date: string; hour: number; block: HourBlock;
-  onClose: () => void; onSaved: () => void;
+  date: string; hour: number; block: HourBlock; stationId: number;
+  onClose: () => void;
+  /** Re-read the day; the parent hands the modal the fresh block. */
+  onEdited: () => Promise<void>;
 }
 
-function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
-  const [entries, setEntries] = useState<ScheduledEntry[]>(block.entries);
+const isAired = (e: ScheduledEntry) => e.status === "played" || e.status === "playing";
+const AIRED_REASON = "Already aired — a record, not a plan";
+
+function HourModal({ date, hour, block, stationId, onClose, onEdited }: HourModalProps) {
+  const entries = block.entries;
   const [swapTarget, setSwapTarget] = useState<ScheduledEntry | null>(null);
   const [songSearch, setSongSearch] = useState("");
   const [songResults, setSongResults] = useState<Song[]>([]);
-  const [saving, setSaving] = useState(false);
-  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);          // uuid of the row an edit is in flight for
+  const [editErr, setEditErr] = useState<string | null>(null);     // the handler's refusal, verbatim
+  const [rowWarn, setRowWarn] = useState<Record<string, string[]>>({});
+  const [dragFrom, setDragFrom] = useState<string | null>(null);
 
-  // Load full song library for a category
+  // The library for a category — the swap list. A read; the write is the handler's.
   const loadSongs = async (categoryId: number | null, search: string) => {
-    if (!categoryId) return;
+    if (!categoryId) { setSongResults([]); return; }
     try {
       const rows = await query<Song>(
         `SELECT s.id, s.title, a.name as artist_name, s.artist_id,
                 s.category_id, s.duration_ms, s.last_played_at
          FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
-         WHERE s.category_id = ?
+         WHERE s.category_id = ? AND s.deleted_at IS NULL
            AND (s.title LIKE ? OR a.name LIKE ?)
          ORDER BY s.title ASC LIMIT 100`,
         [categoryId, `%${search}%`, `%${search}%`]
@@ -1069,34 +1088,54 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
     if (swapTarget) loadSongs(swapTarget.category_id, songSearch);
   }, [swapTarget, songSearch]);
 
-  const swapSong = async (newSong: Song) => {
-    if (!swapTarget) return;
-    // DEFERRED: scheduled_log UPDATE — see docs/phase-3.5-programlog-deferred.md
-    await execute(
-      `UPDATE scheduled_log SET song_id=?, song_title=?, song_artist=?, duration_ms=?
-       WHERE id=?`,
-      [newSong.id, newSong.title, newSong.artist_name, newSong.duration_ms, swapTarget.id]
-    );
-    // Update local state
-    setEntries(prev => prev.map(e => e.id === swapTarget.id
-      ? { ...e, song_id: newSong.id, song_title: newSong.title, song_artist: newSong.artist_name || null, duration_ms: newSong.duration_ms }
-      : e
-    ));
-    setSwapTarget(null);
-    setSongSearch("");
+  // The Calendar's rule: re-read after the edit, paint what came back, then ask for warnings.
+  const afterEdit = async (r: any, warnFor?: { uuid: string; at: number }) => {
+    if (!r || r.ok === false) { setEditErr((r && r.error) || "the edit did not apply"); return false; }
+    setEditErr(null);
+    await onEdited();
+    if (warnFor) {
+      try {
+        const c = await (window as any).ether.invoke("schedule:checkRow", stationId, warnFor.uuid, warnFor.at);
+        setRowWarn(prev => ({ ...prev, [warnFor.uuid]: (c && c.warnings) || [] }));
+      } catch { /* a failed check never blocks or misreports */ }
+    }
+    return true;
   };
 
-  const reorderEntries = async (fromIdx: number, toIdx: number) => {
-    const reordered = [...entries];
-    const [moved] = reordered.splice(fromIdx, 1);
-    reordered.splice(toIdx, 0, moved);
-    await (window as any).ether.scheduledLog.batchUpdatePosition(
-      reordered.map((e, i) => ({ id: e.id, position: i }))
-    );
-    setEntries(reordered);
+  const swapSong = async (newSong: Song) => {
+    if (!swapTarget) return;
+    if (isAired(swapTarget)) { setEditErr(AIRED_REASON); return; }
+    if (newSong.id === swapTarget.song_id) { setSwapTarget(null); return; }
+    setBusy(swapTarget.uuid);
+    try {
+      const ok = await afterEdit(
+        await (window as any).ether.invoke("schedule:editRowFields", swapTarget.uuid, { song_id: newSong.id }),
+        { uuid: swapTarget.uuid, at: swapTarget.scheduled_at });
+      if (ok) { setSwapTarget(null); setSongSearch(""); }
+    } catch (e: any) { setEditErr(e?.message || String(e)); }
+    finally { setBusy(null); }
+  };
+
+  const moveRow = async (fromUuid: string, toUuid: string) => {
+    if (!fromUuid || !toUuid || fromUuid === toUuid) return;
+    const to = entries.find(e => e.uuid === toUuid);
+    setBusy(fromUuid);
+    try { await afterEdit(await (window as any).ether.invoke("schedule:moveRow", fromUuid, toUuid), to ? { uuid: fromUuid, at: to.scheduled_at } : undefined); }
+    catch (e: any) { setEditErr(e?.message || String(e)); }
+    finally { setBusy(null); }
+  };
+
+  const deleteRow = async (entry: ScheduledEntry) => {
+    setBusy(entry.uuid);
+    try {
+      const ok = await afterEdit(await (window as any).ether.invoke("schedule:deleteRow", entry.uuid));
+      if (ok) setRowWarn(prev => { const n = { ...prev }; delete n[entry.uuid]; return n; });
+    } catch (e: any) { setEditErr(e?.message || String(e)); }
+    finally { setBusy(null); }
   };
 
   const totalMs = entries.reduce((s, e) => s + (e.duration_ms || 0), 0);
+  const GRID = "20px 66px 44px 1fr 180px 56px 24px";
 
   return (
     <div style={{
@@ -1104,7 +1143,7 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
       background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center",
     }} onClick={onClose}>
       <div onClick={e => e.stopPropagation()} style={{
-        width: "min(900px, 95vw)", maxHeight: "85vh", display: "flex", flexDirection: "column" as const,
+        width: "min(960px, 95vw)", maxHeight: "85vh", display: "flex", flexDirection: "column" as const,
         background: "var(--bg-secondary)", border: "1px solid var(--border-primary)",
         borderRadius: 0, overflow: "hidden",
         boxShadow: "var(--e-float)",
@@ -1121,16 +1160,24 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
               {fmtHour(hour)} — {block.show_name || "Unassigned"}
             </div>
             <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", marginTop: 1 }}>
-              {date} · {block.clock_name} · {entries.length} tracks · {fmtMs(totalMs)}
+              {date} · {block.clock_name} · {entries.length} items · {fmtMs(totalMs)}
             </div>
           </div>
-          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
             <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>
-              Click a row to swap its song
+              Click a song to swap it · drag a row onto another to swap their times
             </div>
             <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 0, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-lead)" }}>✕</button>
           </div>
         </div>
+
+        {/* The handler's refusal, verbatim — an edit that did not apply is never shown as applied */}
+        {editErr && (
+          <div style={{ padding: "6px 18px", background: "rgba(239,68,68,0.10)", borderBottom: "1px solid rgba(239,68,68,0.35)", color: "#ef4444", fontSize: "var(--t-small)", display: "flex", gap: 10, alignItems: "center", flexShrink: 0 }}>
+            <span style={{ flex: 1 }}>✗ {editErr}</span>
+            <button onClick={() => setEditErr(null)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer" }}>dismiss</button>
+          </div>
+        )}
 
         <div style={{ flex: 1, overflow: "hidden", display: "flex", minHeight: 0 }}>
 
@@ -1138,56 +1185,81 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
           <div style={{ flex: 1, overflowY: "auto" as const, minWidth: 0 }}>
             {/* Headers */}
             <div style={{
-              display: "grid", gridTemplateColumns: "28px 44px 1fr 180px 60px",
+              display: "grid", gridTemplateColumns: GRID,
               padding: "5px 14px", background: "var(--bg-tertiary)",
               borderBottom: "1px solid var(--border-primary)",
               fontSize: "var(--t-micro)", fontWeight: 800, letterSpacing: "0.1em", color: "var(--text-tertiary)", textTransform: "uppercase" as const,
               position: "sticky" as const, top: 0, zIndex: 1,
             }}>
-              <span></span><span>Type</span><span>Title</span><span>Artist</span>
-              <span style={{ textAlign: "right" as const }}>Duration</span>
+              <span></span><span>Time</span><span>Type</span><span>Title</span><span>Artist</span>
+              <span style={{ textAlign: "right" as const }}>Length</span><span></span>
             </div>
 
             {entries.map((entry, i) => {
               const color = entry.category_color || "var(--accent-blue)";
-              const isSwapping = swapTarget?.id === entry.id;
-              const isUnfilled = entry.status === "unfilled";
-
+              const isSwapping = swapTarget?.uuid === entry.uuid;
+              const aired = isAired(entry);
+              const canSwap = entry.slot_type === "music" && !aired;
+              const isBusy = busy === entry.uuid;
+              const warns = rowWarn[entry.uuid] || [];
+              const yours = entry.source === "operator";
               return (
                 <div
-                  key={entry.id}
-                  draggable
-                  onDragStart={() => setDragFrom(i)}
-                  onDragOver={e => e.preventDefault()}
-                  onDrop={e => { e.preventDefault(); if (dragFrom !== null && dragFrom !== i) reorderEntries(dragFrom, i); setDragFrom(null); }}
-                  onClick={() => { if (entry.slot_type === "music") { setSwapTarget(isSwapping ? null : entry); setSongSearch(""); } }}
+                  key={entry.uuid}
+                  draggable={!aired && !isBusy}
+                  onDragStart={() => setDragFrom(entry.uuid)}
+                  onDragOver={e => { if (!aired) e.preventDefault(); }}
+                  onDrop={e => { e.preventDefault(); if (dragFrom && dragFrom !== entry.uuid) moveRow(dragFrom, entry.uuid); setDragFrom(null); }}
+                  onClick={() => { if (canSwap) { setSwapTarget(isSwapping ? null : entry); setSongSearch(""); } else if (aired && entry.slot_type === "music") setEditErr(`"${entry.song_title || entry.label || "that row"}" — ${AIRED_REASON}`); }}
+                  title={aired ? AIRED_REASON : canSwap ? "Click to swap this song · drag onto another row to swap times" : "Drag onto another row to swap times"}
                   style={{
-                    display: "grid", gridTemplateColumns: "28px 44px 1fr 180px 60px",
+                    display: "grid", gridTemplateColumns: GRID,
                     padding: "0 14px", minHeight: 34, alignItems: "center",
-                    cursor: entry.slot_type === "music" ? "pointer" : "default",
+                    cursor: canSwap ? "pointer" : "default",
+                    opacity: aired ? 0.55 : isBusy ? 0.6 : 1,
                     background: isSwapping ? "rgba(167,139,250,0.1)" : i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)",
                     borderBottom: "1px solid rgba(255,255,255,0.03)",
-                    borderLeft: `3px solid ${isSwapping ? "#a78bfa" : isUnfilled ? "#ef4444" : color}`,
+                    borderLeft: `3px solid ${isSwapping ? "#a78bfa" : entry.status === "playing" ? "var(--accent-blue)" : entry.status === "missed" ? "#ef4444" : color}`,
                     transition: "background 0.1s",
                   }}
-                  onMouseEnter={e => { if (!isSwapping && entry.slot_type === "music") (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.04)"; }}
+                  onMouseEnter={e => { if (!isSwapping && canSwap) (e.currentTarget as HTMLElement).style.background = "rgba(255,255,255,0.04)"; }}
                   onMouseLeave={e => { if (!isSwapping) (e.currentTarget as HTMLElement).style.background = i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)"; }}
                 >
-                  {/* Drag grip */}
-                  <svg width="8" height="10" viewBox="0 0 8 10" fill="var(--text-tertiary)" style={{ opacity: 0.25 }}>
-                    <circle cx="2" cy="2" r="1"/><circle cx="6" cy="2" r="1"/>
-                    <circle cx="2" cy="5" r="1"/><circle cx="6" cy="5" r="1"/>
-                    <circle cx="2" cy="8" r="1"/><circle cx="6" cy="8" r="1"/>
-                  </svg>
+                  {/* Drag grip — absent on an aired row */}
+                  {aired ? <span /> : (
+                    <svg width="8" height="10" viewBox="0 0 8 10" fill="var(--text-tertiary)" style={{ opacity: 0.25 }}>
+                      <circle cx="2" cy="2" r="1"/><circle cx="6" cy="2" r="1"/>
+                      <circle cx="2" cy="5" r="1"/><circle cx="6" cy="5" r="1"/>
+                      <circle cx="2" cy="8" r="1"/><circle cx="6" cy="8" r="1"/>
+                    </svg>
+                  )}
 
-                  <span style={{ fontSize: "var(--t-micro)", fontWeight: 800, padding: "1px 4px", borderRadius: 0, background: color+"20", color, letterSpacing: "0.06em" }}>
+                  {/* Scheduled HH:MM:SS, actual air time under it once aired (the Calendar's seconds column) */}
+                  <span style={{ fontSize: "var(--t-micro)", fontFamily: "'DM Mono', monospace", lineHeight: 1.2 }}>
+                    <span style={{ display: "block", color: entry.status === "playing" ? "var(--accent-blue)" : "var(--text-tertiary)" }}>{fmtClock(entry.scheduled_at)}</span>
+                    {entry.played_at ? <span style={{ display: "block", color: "#34d399" }}>{fmtClock(entry.played_at)}</span> : null}
+                  </span>
+
+                  <span style={{ fontSize: "var(--t-micro)", fontWeight: 800, padding: "1px 4px", borderRadius: 0, background: color+"20", color, letterSpacing: "0.06em", whiteSpace: "nowrap" as const }}>
                     {entry.category_code || entry.slot_type.toUpperCase()}
                   </span>
 
                   <div style={{ minWidth: 0, paddingRight: 8 }}>
-                    <div style={{ fontSize: "var(--t-body)", fontWeight: 500, color: isUnfilled ? "#ef4444" : isSwapping ? "#a78bfa" : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
-                      {isUnfilled ? "⚠ Unfilled — click to assign" : entry.song_title || entry.label || "—"}
+                    <div style={{ fontSize: "var(--t-body)", fontWeight: 500, color: isSwapping ? "#a78bfa" : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, display: "flex", alignItems: "center", gap: 6 }}>
+                      {/* Ownership is VISIBLE: Generate will not move, replace or remove a YOURS row */}
+                      {yours && (
+                        <span title="You placed, moved, swapped or edited this. Generate will not move, replace or remove it."
+                          style={{ padding: "1px 5px", fontSize: "var(--t-micro)", fontWeight: 800, fontFamily: "'DM Mono', monospace",
+                                   color: "#8868D8", background: "rgba(136,104,216,0.14)", border: "1px solid rgba(136,104,216,0.5)", letterSpacing: "0.06em", flexShrink: 0 }}>YOURS</span>
+                      )}
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{entry.song_title || entry.label || "—"}</span>
+                      {entry.status !== "pending" && <span style={{ fontSize: "var(--t-micro)", color: entry.status === "playing" ? "var(--accent-blue)" : entry.status === "missed" ? "#ef4444" : "var(--text-tertiary)", flexShrink: 0 }}>{entry.status}</span>}
                     </div>
+                    {warns.length > 0 && (
+                      <div style={{ fontSize: "var(--t-micro)", color: "#fbbf24" }} title="A separation rule this placement bends — it informs, it does not block">
+                        ⚠ {warns.join(" · ")}
+                      </div>
+                    )}
                   </div>
 
                   <span style={{ fontSize: "var(--t-small)", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, paddingRight: 8 }}>
@@ -1197,9 +1269,24 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
                   <span style={{ fontSize: "var(--t-micro)", fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", textAlign: "right" as const }}>
                     {fmtMs(entry.duration_ms)}
                   </span>
+
+                  {/* Delete — pending rows only; an aired row is a record */}
+                  {aired ? <span /> : (
+                    <button
+                      onClick={e => { e.stopPropagation(); deleteRow(entry); }}
+                      disabled={isBusy}
+                      title="Remove this row from the log (the slot refills on the next Fill Day)"
+                      style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-small)", padding: 0, textAlign: "right" as const }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = "#ef4444"; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = "var(--text-tertiary)"; }}
+                    >✕</button>
+                  )}
                 </div>
               );
             })}
+            {entries.length === 0 && (
+              <div style={{ padding: "18px 14px", fontSize: "var(--t-small)", color: "var(--text-tertiary)", fontStyle: "italic" }}>Nothing in the log for this hour.</div>
+            )}
           </div>
 
           {/* Song swap panel */}
@@ -1210,7 +1297,7 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
             }}>
               <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
                 <div style={{ fontSize: "var(--t-micro)", fontWeight: 700, color: "#a78bfa", marginBottom: 6 }}>
-                  Swap: {swapTarget.category_code} slot #{entries.findIndex(e => e.id === swapTarget.id) + 1}
+                  Swap: {swapTarget.category_code || "song"} at {fmtClock(swapTarget.scheduled_at)}
                 </div>
                 <input
                   autoFocus
@@ -1224,7 +1311,7 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
                   }}
                 />
                 <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)", marginTop: 4 }}>
-                  {songResults.length} songs in {swapTarget.category_code}
+                  {songResults.length} songs in {swapTarget.category_code || "this category"}
                 </div>
               </div>
 
@@ -1234,9 +1321,9 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
                   return (
                     <div
                       key={song.id}
-                      onClick={() => swapSong(song)}
+                      onClick={() => { if (busy) return; swapSong(song); }}
                       style={{
-                        padding: "7px 12px", cursor: "pointer",
+                        padding: "7px 12px", cursor: busy ? "default" : "pointer",
                         borderBottom: "1px solid rgba(255,255,255,0.03)",
                         background: isCurrent ? "rgba(167,139,250,0.08)" : "transparent",
                         borderLeft: isCurrent ? "2px solid #a78bfa" : "2px solid transparent",
@@ -1270,12 +1357,12 @@ function HourModal({ date, hour, block, onClose, onSaved }: HourModalProps) {
           borderTop: "1px solid var(--border-primary)", flexShrink: 0,
           background: "var(--bg-tertiary)", fontSize: "var(--t-micro)", color: "var(--text-tertiary)",
         }}>
-          <span>Drag rows to reorder · Click a music row to swap the song</span>
+          <span>Every change is saved to the airing log as you make it · aired rows are records and stay as they are</span>
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
             <span style={{ fontFamily: "'DM Mono', monospace", color: "var(--text-secondary)" }}>
               {fmtMs(totalMs)} total
             </span>
-            <button onClick={onSaved} style={{
+            <button onClick={onClose} style={{
               padding: "5px 16px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 700,
               background: "rgba(52,211,153,0.15)", color: "#34d399",
               border: "1px solid rgba(52,211,153,0.3)", cursor: "pointer",
