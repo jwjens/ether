@@ -355,7 +355,7 @@ Opens in Excel/Sheets/Numbers and imports into most traffic systems.
 
 # "No spots scheduled in this period"
 
-Traffic reads the **generated log**, not your spot library. If it's empty but you have spots loaded: check the clock actually has spot breaks, then open the Calendar and click **Generate**.
+Traffic reads the **generated log**, not your spot library. If it's empty but you have spots loaded: check the clock actually has spot breaks, then open the Program Log and press **Fill Day**.
 
 # Blank advertiser / cart / ISCI
 

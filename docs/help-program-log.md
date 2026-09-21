@@ -11,7 +11,7 @@ tour: true
 # The Program Log
 
 The Program Log shows **one day of the log the station actually airs from** — the same log the
-engine reads and the Calendar edits. Pick a day on the small calendar at the left; every hour of the
+engine reads and airs from. Pick a day on the small calendar at the left; every hour of the
 day is a row you can open.
 
 ## Docked or in its own window
@@ -20,7 +20,7 @@ day is a row you can open.
   Drag the divider above it for more room; the left column scrolls if the dock is short.
 - **≡ → Program Log** or **Schedule → Program Log** opens it in its own window (drag it to a second
   monitor; it remembers its size and place).
-- You can have both open. They show the **same rows**: a Fill, a Clear, an edit in the Calendar, a
+- You can have both open. They show the **same rows**: a Fill, a Clear, an edit in the hour editor, a
   song going to air — each surface updates within about a second. Both open on the last day you
   picked for this station.
 
@@ -39,11 +39,10 @@ The summary at the top — *N of 24 hours scheduled · total programming* — is
 
 ## Fill Day
 
-**Fill Day** builds the log for the selected day from your shows and clocks — the same generator the
-Calendar uses. It fills **from the next top-of-hour to the end of the day**:
+**Fill Day** builds the log for the selected day from your shows and clocks. It fills **from the next top-of-hour to the end of the day**:
 
 - Hours that have already started are never touched. What aired is a record, not a plan.
-- Items you placed by hand (they wear the YOURS badge in the Calendar) survive a Fill.
+- Items you placed by hand (they wear the YOURS badge in the hour editor) survive a Fill.
 - Filling a day that has already fully aired does nothing and says so.
 
 Fill Day acts on the **station you are switched into**. Switch stations first if you mean another one.

@@ -32,7 +32,7 @@ and they never look alike.
 Four cards across the top, then four panels below them.
 
 - **Runway** — how many days of log this station has left before it runs out. Click it to open the
-  Calendar.
+  Program Log.
 - **Designated generator** — which machine builds this station's log. Click to jump to the controls.
 - **Rotation health** — your declared rotation goals against what the clocks actually call. Click to
   open Schedule Manager.

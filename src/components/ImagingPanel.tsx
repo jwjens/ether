@@ -227,7 +227,7 @@ export default function ImagingPanel() {
               // STATE 1 — nothing generated at all.
               <div style={EMPTY}>
                 Nothing is scheduled ahead of now.<br />
-                Generate a day in the Calendar, then come back — this view reads the generated log.
+                Fill Day in the Program Log, then come back — this view reads the generated log.
               </div>
             ) : pairs.length === 0 ? (
               // STATE 2 — a log exists and carries no imaging. The useful case: say WHY.

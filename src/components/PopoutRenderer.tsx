@@ -15,7 +15,6 @@ import UpNext from "./UpNext";
 import { HealthMonitor } from "./HealthMonitor";
 import { BoutiqueCartWall } from "./DeckConfigurator";
 import Scheduler from "./Scheduler";
-import BroadcastCalendar from "./BroadcastCalendar";
 import { LibraryPanel } from "../App";
 import StudioPro from "./StudioPro";
 import VideoStudio from "./ShowPlus";
@@ -24,6 +23,7 @@ import Jukebox from "./Jukebox";
 // (docs/native-menu-audit-2026-08-17.md §7). Each of these renders stand-alone — no props, or an
 // onClose the window satisfies by closing itself.
 import ProgramLog from "./ProgramLog";
+import GenerateProgressBar from "./GenerateProgressBar";
 import Logs from "./Logs";
 import RotationAnalytics from "./RotationAnalytics";
 import Spots from "./Spots";
@@ -76,7 +76,6 @@ const TITLES: Record<string, string> = {
   "clocks":    "Clocks",
   "categories":"Categories",
   "library":   "Library",
-  "calendar":  "Calendar",
   "studiopro": "Show+ DAW",
   "videostudio":"Show+",
   "jukebox":   "Jukebox",
@@ -280,12 +279,6 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
     case "categories":
       content = <Scheduler defaultTab="categories" embedded />;
       break;
-    case "calendar":
-      // Clicking a show used to navigate the DASHBOARD (setPanel + setSchedulerTab). In a window of
-      // its own that is meaningless, so it opens the Shows window instead — the same treatment the
-      // Schedule Manager's escape hatches already get.
-      content = <BroadcastCalendar onShowClick={() => { try { (window as any).ether?.invoke("window:popout", "shows"); } catch {} }} />;
-      break;
     case "library":
       content = <PopoutLibrary />;
       break;
@@ -304,7 +297,9 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
     // instead of raising <App/>. onClose closes THIS window — in the dashboard the same components
     // return to the live panel, which has no meaning in a window of their own.
     case "programlog":
-      content = <ProgramLog onClose={() => window.close()} />;
+      // The progress bar rides along: it listens to schedule:generate-progress, which main sends to
+      // ALL windows, so a Fill Day from this window shows its progress here too (slice 5).
+      content = <><ProgramLog onClose={() => window.close()} /><GenerateProgressBar /></>;
       break;
     case "logs":
       content = <Logs />;

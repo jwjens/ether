@@ -2,7 +2,7 @@
 // Run:  ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-programlog-reads.js   (exit 0 = pass)
 // (plain `node` fails with ERR_DLOPEN_FAILED — better-sqlite3 is built for Electron's ABI.)
 //
-// 1. the mini-month query (BroadcastCalendar.tsx:204-207's shape) runs WITH its [stationId] binding
+// 1. the mini-month query (the retired Calendar's auto-days shape) runs WITH its [stationId] binding
 //    and fails the way the filed bug fails WITHOUT it ("Too few parameter values");
 // 2. the schedule:get SELECT — read out of electron/main.js so this tests the shipped string, not a
 //    copy — returns played_at, windows by station + [from, to), and gives [] for a station with no log.

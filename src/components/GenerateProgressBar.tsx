@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 // docs/generate-freeze-and-calendar-history-2026-08-06.md
 //
 // WHY IT LIVES HERE AND NOT IN THE CALENDAR: a generate can be started from the month view and then
-// the operator navigates somewhere else. A bar owned by BroadcastCalendar disappears with it, and the
+// the operator navigates somewhere else. A bar owned by the (since retired) Calendar disappeared with it, and the
 // run goes silent again. This is mounted at App top-level, driven purely by main's own start/hour/end
 // events, so it is correct no matter which panel is open — and it cannot re-render the calendar's
 // 1000-row day list, because it does not live inside it.

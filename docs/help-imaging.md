@@ -74,8 +74,8 @@ Save. That is the mark imaging is measured against — see "How imaging fits a s
 
 It tells you which of three things is true, because they need different fixes:
 
-- **"Nothing is scheduled ahead of now."** There is no generated log. Go to the **Calendar** and
-  generate a day.
+- **"Nothing is scheduled ahead of now."** There is no generated log. Go to the **Program Log** and
+  press Fill Day.
 - **"N elements scheduled, no imaging placed."** The log exists but carries no imaging. The view names
   the reason — usually that no music category has an overlay assigned and there is no fallback pool.
   Fix it in ASSIGNMENTS, then Generate again.
@@ -114,4 +114,4 @@ song at a time, starting with the ones that play most, and nothing breaks while 
 
 - **Sweepers** (`help-sweepers.md`) — the push-up editor, in detail.
 - **Categories** — the music categories that assignments hang off.
-- **Calendar** — where the log is generated.
+- **Program Log** — where the log is filled.

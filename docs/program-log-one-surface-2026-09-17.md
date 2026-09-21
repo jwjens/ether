@@ -832,3 +832,102 @@ meter-contract 15 · orphan 4 · queue-classes 8 · seam-stop 60 · xfade-contra
 Up Next / Calendar show the same song at that time, the daemon airs it when its slot comes; drag a row
 onto another → the two trade times; ✕ → the row is gone; on an aired hour the rows are dimmed and a
 try shows the red "already aired" line. Jeff confirms on screen after the relaunch.
+
+
+---
+
+## Slice 5 — built (2026-09-20, the Calendar is deleted; local commit on `log-reader-flip`)
+
+No push, no tag, no bump, no install, no live DB. Jeff confirmed slices 1–4 on screen first.
+
+### 1. Parity check before deleting — everything the Calendar had, and where it is now
+| Calendar feature | In the Program Log | Receipt |
+|---|---|---|
+| drag / move (swap two rows' times) | ✔ hour editor, `schedule:moveRow` | slice 4, `ProgramLog.tsx` `moveRow`; smoke (i) |
+| swap a song | ✔ (the Calendar never had this; it edited labels) `editRowFields({song_id})` | slice 4 |
+| delete a row | ✔ ✕ → `schedule:deleteRow` | slice 4 |
+| YOURS badge | ✔ `source === 'operator'` | slice 4 |
+| seconds / Length column | ✔ `HH:MM:SS` + actual air time + Length | slices 1 & 4 |
+| separation warnings | ✔ `schedule:checkRow` after a swap/move, ⚠ under the row | slice 4 |
+| week Generate | **skipped by ruling** — Fill Day is the only fill (slice 2a) | doc §Slice 2a |
+| progress bar during Generate | **docked / main window: yes** (`<GenerateProgressBar/>` at `App.tsx` top level, listens to `schedule:generate-progress`, which main sends to ALL windows). **Pop-out: was NO — added now**: `PopoutRenderer.tsx` `case "programlog"` renders `<><ProgramLog…/><GenerateProgressBar/></>`, so a Fill from the window shows its bar (bottom-left, with CANCEL). | smoke-programlog-popout "the programlog pop-out carries the progress bar"; `smoke-generate-chunk.js` 5· |
+| auto-day dots | ✔ mini-month dots (any log, not only `source='auto'`) | slice 1 |
+| pin / release (📍), column sort + resize, double-click cell edits, "N yours" day counter | **skipped** (listed in slice 4; now also said in `help-log-editing.md` "What moved with the Calendar") | — |
+| the hosted day-log pane in the **Schedule Manager** (`ScheduleWorkspace.tsx` — a ninth door the proposal's §4 list missed) | ✔ the pane now hosts `<ProgramLog embedded key={hub.revision} />`; the show-focus prop is the panel's own sidebar show filter now; no `onMutated` (no hub table reads `generated_schedule`; the panel broadcasts `schedule:changed`); `key={hub.revision}` re-mounts it when a sibling pane writes shows/clocks so TODAY'S SHOWS follows | `ScheduleWorkspace.tsx:180-198` |
+
+### 2. Deleted — the file and every door (same mode kept)
+`src/components/BroadcastCalendar.tsx` (1,201 lines) — `git rm`. Doors:
+1. **CALENDAR bottom tab** (`App.tsx` viewTabs) — removed; PROGRAM LOG (dock, slice 3) is the tab.
+2. **dock case** `progPanel === "calendar"` — removed; `"calendar"` dropped from the `progPanel` union
+   (`App.tsx:780`, `:3853`).
+3. **hamburger entry** `{ key:"calendar", panel:"calendar" }` — removed; "Program Log" (pop-out) stays.
+4. **pop-out case** `PopoutRenderer.tsx case "calendar"` + its `TITLES` entry — removed; `main.js`
+   `POPOUT_SIZES["calendar"]` and its title — removed.
+5. **`ether:open-calendar`** → **`ether:open-programlog`** (`App.tsx` ~`:1263`): docks the Program
+   Log (`setPanel("live"); setShowCarts(false); setProgPanel("programlog")`) — never over the dashboard.
+6. **Runway card** (`HealthDashboard.tsx:214`): `openPanel("programlog")`, hint "Click to open the
+   Program Log".
+7. **the "go build it" jump** (`App.tsx` ~`:2294`, AUTO with nothing scheduled): docks the Program Log.
+8. **workspace route** `panel === "calendar"` + `"calendar"` in the `Panel` union — removed.
+9. **menu entry** — there was none (`main.js` menu has no Calendar item; receipt: grep).
+Plus the Schedule Manager host (table above), and the in-app strings that sent the operator to "the
+Calendar": `ClocksTab.tsx` ("Fill Day in the Program Log to air them"), `RotationAnalytics.tsx`
+(honest: "the Program Log does not show reasons yet"), `SchedulerHealthPanel.tsx`, `ImagingPanel.tsx`,
+`Logs.tsx` (traffic empty state), `HelpPanel.tsx`; comments in `GenerateProgressBar.tsx` and
+`ProgramLog.tsx`; `scripts/smoke-generate-chunk.js` read `BroadcastCalendar.tsx` and would have
+crashed — its renderer-side checks now read `ProgramLog.tsx` / `GenerateProgressBar.tsx` (its 5
+main.js-structure checks were already failing before this slice — pre-existing, it is wired to no npm
+script or CI; not touched further).
+Type chips: a spot row's chip now reads **SPOT** (was `SPOT_BREAK`), sweeper/cart/voice likewise
+(`typeChip`, `ProgramLog.tsx:64-66`) — so the help's "red SPOT chip" is true.
+
+### 3. No IPC handler deleted — receipts
+`main.js` still registers `schedule:get`, `generateDay`, `generateDays`, `generateCancel`, `clearDay`,
+`moveRow`, `editRowFields`, `deleteRow`, `checkRow`, `setRowSource`, `insertVoiceTrack`,
+`playhead-view` — smoke-programlog-popout "NO IPC handler was deleted — all 12 schedule:* handlers
+still registered". `setRowSource` has no Program Log caller today (pin skipped) and stays.
+
+### 4. Help — eleven docs touched
+`help-log-editing.md` rewritten for the hour editor (`where: Program Log → open an hour → ✎ Edit`;
+what did not come across is named); `help-program-log.md`, `help-windows.md` (Calendar out of the
+list), `help-health-monitor.md`, `help-imaging.md`, `help-deleting-songs.md`, `help-sweepers.md`,
+`help-traffic.md`, `help-spots.md`, `help-multi-machine-sync.md`.
+**Grep receipts:** `BroadcastCalendar` — 0 under `src/`, `electron/`, `scripts/` (smoke asserts
+`src/`); user-facing `Calendar` in `src/` — 0 (smoke, comment lines excluded; the one comment left says
+"since-retired Calendar"); `docs/help-*.md` — the only "calendar" left is the Announcements' own date
+picker (`help-announcement-schedule.md`), the Program Log's "small calendar" (its mini month), and
+`help-log-editing.md`'s "the Calendar window is gone" paragraph.
+
+### 5. The filed `BroadcastCalendar.tsx:205` bug — CLOSED
+"Too few parameter values" (`station_id = ?` bound `[]`) died with the file. The Program Log's version
+of that query carries its binding (slice 1, `test:programlog-reads`).
+
+### Tests (verbatim, `scripts/smoke-programlog-popout.js` — now 30)
+```
+PASS  5 · BroadcastCalendar.tsx is gone and nothing under src/ names it
+PASS  5 · App.tsx: no CALENDAR tab, no calendar dock case, no calendar hamburger entry, no calendar workspace route
+PASS  5 · App.tsx: ether:open-programlog docks the Program Log (the old ether:open-calendar is gone)
+PASS  5 · App.tsx: the 'go build it' jump docks the Program Log
+PASS  5 · Health Monitor's Runway card opens the Program Log
+PASS  5 · PopoutRenderer: no calendar case/title; the programlog pop-out carries the progress bar
+PASS  5 · Schedule Manager's log pane hosts <ProgramLog embedded> (the ninth door the proposal did not list)
+PASS  5 · main.js: no calendar pop-out size/title left
+PASS  5 · NO IPC handler was deleted — all 12 schedule:* handlers still registered
+PASS  5 · no user-facing string in src/ still points the operator at 'the Calendar'
+=== 30 passed, 0 failed ===
+```
+
+### Gates
+`npx tsc --noEmit` exit 0. `npx vitest run` → **32 files, 425 passed**. `npm run build` (vite) →
+built in 17.66 s. `node --check electron/main.js` ok. `test:ipc-contract` / `test:preload-bridge` /
+`test:undefined-calls` → PASS. `test:programlog-reads` 11 · `test:programlog-writes` 82 ·
+`test:programlog-popout` 30. watchdog 32. audiod smokes (exit 0 each): autofit 47 · autopost-arm 21 ·
+cmd-routing 7 · deck-identity 22 · deck-position 16 · deck-snapshot 25 · enginestate-wire 15 ·
+enginestate 19 · logreader-anchor 18 · manual-mode 30 · meter-contract 15 · orphan 4 ·
+queue-classes 8 · seam-stop 60 · xfade-contract 33 · dead-air 50.
+
+### Runtime receipt owed
+No CALENDAR tab, no Calendar in the hamburger; Health Monitor → Runway card docks the Program Log;
+AUTO with nothing scheduled → Cancel → the Program Log docks; Schedule Manager's log pane is the
+Program Log; a Fill Day from the pop-out window shows the progress bar; a spot row's chip reads SPOT.
+Jeff confirms on screen after the relaunch.

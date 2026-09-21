@@ -104,7 +104,7 @@ export default function SchedulerHealthPanel({ onClose }: { onClose: () => void 
           </>
         ) : (
           <>
-            {!report ? <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>Run Generate on the Calendar and the results appear here.</div>
+            {!report ? <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>Run Fill Day in the Program Log and the results appear here.</div>
               : (
                 <>
                   <div style={{ fontSize: 12, color: "var(--text-primary)", marginBottom: 10 }}>

@@ -233,7 +233,7 @@ export default function RotationAnalytics({ hideHeader }: RotationAnalyticsProps
             ) : (
               <div style={{ fontSize: "var(--t-body)", color: "var(--text-secondary)" }}>
                 <strong style={{ color: "var(--accent-green)" }}>{snap.reasonCoverage.withReason} of {snap.reasonCoverage.total}</strong> rows ({snap.reasonCoverage.pct}%) carry a recorded reason.
-                <div style={{ marginTop: 6, color: "var(--text-tertiary)" }}>Open the Calendar and click a scheduled row to see its explanation.</div>
+                <div style={{ marginTop: 6, color: "var(--text-tertiary)" }}>Reasons are recorded per row in the log (pick_reason); the Program Log does not show them yet.</div>
               </div>
             )}
           </div>

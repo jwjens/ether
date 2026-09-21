@@ -21,7 +21,7 @@ is this machine's work safely somewhere else.
 
 ## When to use it
 
-When two machines that share an account disagree — different libraries, different calendars, or a
+When two machines that share an account disagree — different libraries, different logs, or a
 song deleted on one that is still present on the other.
 
 ## Nothing here happens on its own

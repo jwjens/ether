@@ -10,7 +10,10 @@
 "use strict";
 const fs = require("fs"), path = require("path");
 const main = fs.readFileSync(path.join(__dirname, "..", "electron", "main.js"), "utf8");
-const cal  = fs.readFileSync(path.join(__dirname, "..", "src", "components", "BroadcastCalendar.tsx"), "utf8");
+// The Calendar was retired 2026-09-20 (Program Log slice 5). The renderer side of the contract now
+// lives in the Program Log (Fill Day → schedule:generateDay) and GenerateProgressBar (the bar + CANCEL).
+const plog = fs.readFileSync(path.join(__dirname, "..", "src", "components", "ProgramLog.tsx"), "utf8");
+const bar  = fs.readFileSync(path.join(__dirname, "..", "src", "components", "GenerateProgressBar.tsx"), "utf8");
 
 let pass = 0, fail = 0;
 function check(name, cond) {
@@ -55,7 +58,7 @@ console.log("\n── 3 · CANCEL is real — checked every hour, and it reaches
 check("3 · the driver checks cancel at the top of each hour", /for \([^)]*\) \{\s*\n\s*if \(_genCancel\) return \{ cancelled: true \};/.test(driver));
 check("3 · a cancel handler exists in main", /ipcMain\.handle\('schedule:generateCancel'/.test(main));
 check("3 · the CANCEL button invokes it (a renderer ref alone could never stop main)",
-  /schedule:generateCancel/.test(cal));
+  /schedule:generateCancel/.test(bar));
 check("3 · a cancelled day is NEVER committed", /if \(run\.cancelled\) return \{ ok: true, cancelled: true, count: 0 \};/.test(dayHandler));
 
 console.log("\n── 4 · the delete window is closed (generated_schedule is the playout source) ──");
@@ -67,13 +70,15 @@ check("4 · ctx is built BEFORE any delete (it reads play_log, never generated_s
 
 console.log("\n── 5 · the week is ONE pipeline, not seven blocking calls ──");
 check("5 · a range handler exists", /ipcMain\.handle\('schedule:generateDays'/.test(main));
-check("5 · the calendar calls it once", /invoke\("schedule:generateDays", tsList\)/.test(cal));
-check("5 · the calendar no longer loops generateDay per day",
-  !/for \(let i = 0; i < dates\.length; i\+\+\)[\s\S]{0,600}invoke\("schedule:generateDay"/.test(cal));
+check("5 · the Program Log's Fill Day is ONE generateDay call (Fill Week is not built — Jeff's ruling, slice 2a)",
+  (plog.match(/invoke\("schedule:generateDay"/g) || []).length === 1 && !/invoke\("schedule:generateDays"/.test(plog));
+check("5 · the Program Log never loops generateDay per hour or per day",
+  !/for \([^)]*\)[\s\S]{0,600}invoke\("schedule:generateDay"/.test(plog));
 check("5 · the range commits each day atomically as it completes",
   /_commitDayRows\(stationId, effStart, dayEnd, dayRows\)/.test(main));
 check("5 · progress is emitted per HOUR, not per day", /_genEmit\(\{ phase: "hour"/.test(main));
-check("5 · the calendar subscribes to hour progress", /schedule:generate-progress/.test(cal));
+check("5 · the progress bar subscribes to hour progress, and the Program Log pop-out mounts it",
+  /schedule:generate-progress/.test(bar) && /<ProgramLog onClose=\{\(\) => window\.close\(\)\} \/><GenerateProgressBar \/>/.test(fs.readFileSync(path.join(__dirname, "..", "src", "components", "PopoutRenderer.tsx"), "utf8")));
 
 console.log(`\n${fail === 0 ? "✅ ALL PASS" : "❌ " + fail + " FAILED"}  (${pass} passed, ${fail} failed)`);
 process.exit(fail === 0 ? 0 : 1);

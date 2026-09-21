@@ -18,7 +18,7 @@ the mixer. Same destinations, two different behaviours, and the one you got depe
 happened to use.
 
 There is now **one list**, and **everything on it opens in its own window**. Clicking Library, Schedule,
-Imaging, the Program Log, Calendar, Play Log, Carts, Decks — any of them — leaves the live screen exactly
+Imaging, the Program Log, Play Log, Carts, Decks — any of them — leaves the live screen exactly
 where it is. Decks keep spinning, levels keep moving, ON AIR stays in front of you.
 
 **Why it works this way:** you should never have to close something to see what is playing.
@@ -30,7 +30,7 @@ Any time you need to work on something while a show is on. That is most of the t
 ## Open a window (≡ → NAVIGATE)
 
 1. Click the **≡** button, top-left.
-2. Click any entry in the list — **Library**, **Schedule**, **Imaging**, **Program Log**, **Calendar**,
+2. Click any entry in the list — **Library**, **Schedule**, **Imaging**, **Program Log**,
    **Play Log**, **Schedule Manager**, **Rotation Analytics**, **Carts**, **Decks**, **Processor**,
    **Shows**, **Categories**, **Jukebox**, **Show+**, **Show+ DAW**, **Desk**, **Now Playing**, **Phone**.
 3. It opens in its own window. The menu closes. **The live screen stays put.**

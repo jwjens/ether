@@ -6388,7 +6388,6 @@ const POPOUT_SIZES = {
   "shows":       { width: 1100, height: 780 },
   "clocks":      { width: 1100, height: 780 },
   "categories":  { width: 1100, height: 780 },
-  "calendar":    { width: 1280, height: 860 },
 };
 
 // Human-readable names for the debug bridge's log prefix — "[POPOUT: Show+ DAW] …".
@@ -6402,7 +6401,6 @@ const POPOUT_LABELS = {
   "shows":       "Shows",
   "clocks":      "Schedule",
   "categories":  "Categories",
-  "calendar":    "Calendar",
   "mic":         "Mic",
   "master":      "Master Output",
   "upnext":      "Queue / Up Next",

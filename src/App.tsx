@@ -45,7 +45,6 @@ import ProducerDesk, { InlineProducerDesk } from "./components/ProducerDesk";
 import FaderSection from "./components/FaderSection";
 import MasterOutput, { consoleLog } from "./components/MasterOutput";
 import SmartScheduler from "./components/SmartScheduler";
-import BroadcastCalendar from "./components/BroadcastCalendar";
 import ImportDialog from "./components/ImportDialog";
 import NexGenImport from "./components/NexGenImport";
 import SettingsPanel from "./components/SettingsPanel";
@@ -136,7 +135,7 @@ import VUMeter from "./components/VUMeter";
 import IrisBadge from "./components/IrisBadge";
 import { SchedulerHealthHost } from "./components/SchedulerHealthPanel";
 
-type Panel = "live" | "imaging" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "calendar" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "rotation" | "schedulehub" | "schedulehubfixed" | "help";
+type Panel = "live" | "imaging" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "schedpreview" | "reasons" | "vtinbox" | "gselector" | "rotation" | "schedulehub" | "schedulehubfixed" | "help";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -777,7 +776,7 @@ export default function App() {
   // window:popout path as every other pop-out (rebuild design §0.1).
   // On-air programming push-up docks (like carts): one editor at a time, mutually
   // exclusive with the cart strip. null = closed.
-  const [progPanel, setProgPanel] = useState<null | "shows" | "categories" | "clocks" | "library" | "calendar" | "phone" | "jingles" | "programlog">(null);
+  const [progPanel, setProgPanel] = useState<null | "shows" | "categories" | "clocks" | "library" | "phone" | "jingles" | "programlog">(null);
   // Broadcast (profanity) delay arm + DUMP. Armed = stream lags live by DELAY_SEC so the
   // operator can dump before audio airs; DUMP becomes active once the buffer is full.
   const DELAY_SEC = 8;
@@ -1260,13 +1259,15 @@ export default function App() {
     window.addEventListener("ether:open-managedevices", handler);
     // Health dashboard cards route here (Health Monitor redesign, Phase 1) — same
     // `ether:open-<panel>` pattern as the two above, so the cards do not need panel state.
-    const toCalendar = () => setPanel("calendar");
+    // The Calendar was retired 2026-09-20 (Program Log slice 5): its door now docks the Program Log
+    // under the decks — the live screen stays where it is.
+    const toProgramLog = () => { setPanel("live"); setShowCarts(false); setProgPanel("programlog"); };
     const toSchedule = () => setPanel("schedulehub");
-    window.addEventListener("ether:open-calendar", toCalendar);
+    window.addEventListener("ether:open-programlog", toProgramLog);
     window.addEventListener("ether:open-schedulehub", toSchedule);
     return () => {
       window.removeEventListener("ether:open-managedevices", handler);
-      window.removeEventListener("ether:open-calendar", toCalendar);
+      window.removeEventListener("ether:open-programlog", toProgramLog);
       window.removeEventListener("ether:open-schedulehub", toSchedule);
     };
   }, []);
@@ -2291,7 +2292,7 @@ export default function App() {
           if (!populate) {
             setAutoAdv(false); engine.autoAdvance = false;
             writeAutoAdv(stationId, false);
-            setPanel("calendar");   // send them to the Scheduler to build it
+            setPanel("live"); setShowCarts(false); setProgPanel("programlog");   // dock the Program Log — Fill Day builds it
             return;
           }
         }
@@ -2674,9 +2675,8 @@ export default function App() {
     { label: "SWEEPERS",   active: progPanel === "jingles",    fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "jingles" ? null : "jingles"); } },
     { label: "SPOTS",      active: panel === "spots",          fn: () => { setShowCarts(false); setProgPanel(null); setPanel("spots"); } },
     { label: "LIBRARY",    active: progPanel === "library",    fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "library" ? null : "library"); } },
-    { label: "CALENDAR",   active: progPanel === "calendar",   fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "calendar" ? null : "calendar"); } },
-    // PROGRAM LOG docked beside the dashboard (Program Log slice 3) — the same push-up the Calendar
-    // uses; the Calendar tab stays until slice 6 retires it.
+    // PROGRAM LOG docked beside the dashboard (Program Log slice 3); it replaced the CALENDAR tab
+    // when the Calendar was retired (slice 5, 2026-09-20).
     { label: "PROGRAM LOG", active: progPanel === "programlog", fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "programlog" ? null : "programlog"); } },
     { label: "PHONE",      active: progPanel === "phone",      fn: () => { setPanel("live"); setShowCarts(false); setProgPanel(p => p === "phone" ? null : "phone"); } },
   ] as const;
@@ -2913,7 +2913,6 @@ export default function App() {
                   { key: "schedule",       emoji: "📋", label: "Schedule",           panel: "clocks" },
                   { key: "imaging",        emoji: "📻", label: "Imaging",            panel: "imaging" },
                   { key: "schedulebuilder",emoji: "🗓", label: "Program Log",        panel: "programlog" },
-                  { key: "calendar",       emoji: "📅", label: "Calendar",           panel: "calendar" },
                   { key: "logs",           emoji: "📜", label: "Play Log",           panel: "logs" },
                   { key: "schedulehub",    emoji: "🗂", label: "Schedule Manager",   panel: "schedulehub" },
                   { key: "rotation",       emoji: "📊", label: "Rotation Analytics", panel: "rotation" },
@@ -2988,7 +2987,7 @@ export default function App() {
 
                 {/* The second pop-out list that used to live here is GONE — every one of its
                     entries (Jukebox, Show+, Show+ DAW, Decks, Processor, Carts, Shows, Clocks,
-                    Categories, Library, Calendar) is in the single list above, which now opens
+                    Categories, Library, and the since-retired Calendar) is in the single list above, which now opens
                     windows too. Two lists of the same destinations, one covering the dashboard and
                     one not, is exactly the confusion this consolidation removes. */}
 
@@ -3147,9 +3146,6 @@ export default function App() {
               )}
               {panel === "smartschedule" && (
                 <SmartScheduler onClose={() => setPanel("live")} />
-              )}
-              {panel === "calendar" && (
-                <BroadcastCalendar onShowClick={() => { setPanel("clocks"); setSchedulerTab("shows"); }} />
               )}
               {panel === "cartwall" && (
                 <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
@@ -3850,7 +3846,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   autoAdv: boolean | null; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
   queueLen: number; showCarts: boolean; toggleCarts: () => void;
-  progPanel: null | "shows" | "categories" | "clocks" | "library" | "calendar" | "phone" | "jingles" | "programlog";
+  progPanel: null | "shows" | "categories" | "clocks" | "library" | "phone" | "jingles" | "programlog";
   inputDevice: string;
   visiblePanels?: Record<string, boolean>;
   deckConfigs?: DeckConfig[];
@@ -4351,9 +4347,7 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
                 // LibraryPanel relies on its parent for scrolling (like the full-screen view),
                 // so wrap it in a scroll container sized to the dock.
                 ? <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "12px 16px" }}>{libraryDock}</div>
-                : progPanel === "calendar"
-                  ? <BroadcastCalendar />
-                  : progPanel === "programlog"
+                : progPanel === "programlog"
                     ? <ProgramLog embedded onClose={onCloseDock} />
                     : progPanel === "phone"
                     ? <PhoneDesk onClose={onCloseDock} />

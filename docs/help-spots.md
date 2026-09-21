@@ -69,8 +69,8 @@ Spots don't rotate like music — they air in **timed breaks** you place on a cl
   **Clocks → Timed Spot Breaks** to re-pick. The clock break editor shows the same **⚠ 0 eligible spots**
   warning inline, and each category in its dropdown shows its eligible count. A break that would air silence
   is never a silent fact.
-- Once a spot is scheduled, its rows render **gold/amber** everywhere the log shows — in the **calendar**
-  (a **SPOT** chip + amber row) and in the **live Up Next queue** (amber left-edge + **SPOT** chip) — so a
+- Once a spot is scheduled, its rows render **gold/amber** everywhere the log shows — in the **Program Log**
+  (a red **SPOT** chip) and in the **live Up Next queue** (amber left-edge + **SPOT** chip) — so a
   commercial break is instantly distinct from music at a glance.
 
 ## How spots air (exclusive program, clean edges)
@@ -125,7 +125,7 @@ arrives. There is nothing to repeat on the second machine.
 ### The one case you still handle by hand
 
 A spot already **loaded on a deck**, or scheduled inside the **current hour**, may air once more. If you
-need it gone immediately, remove that entry from the log grid in the calendar, or eject the deck.
+need it gone immediately, remove that entry in the Program Log's hour editor (✎ Edit → ✕), or eject the deck.
 
 ## Notes
 

@@ -41,7 +41,7 @@ check("App.tsx: nav:programlog opens the pop-out (not the Schedule Manager pane)
 check("App.tsx: the hamburger's Program Log entry opens pop-out panel programlog", /label: "Program Log",\s*panel: "programlog"/.test(appTsx));
 check("App.tsx: PROGRAM LOG is a dock tab and the dock renders <ProgramLog embedded>", /label: "PROGRAM LOG"/.test(appTsx) && /progPanel === "programlog"\s*\?\s*<ProgramLog embedded onClose=\{onCloseDock\} \/>/.test(appTsx));
 const popTsx = fs.readFileSync(path.join(root, "src", "components", "PopoutRenderer.tsx"), "utf8");
-check("PopoutRenderer.tsx: case programlog mounts <ProgramLog onClose={window.close}>", /case "programlog":\s*content = <ProgramLog onClose=\{\(\) => window\.close\(\)\} \/>;/.test(popTsx));
+check("PopoutRenderer.tsx: case programlog mounts <ProgramLog onClose={window.close}> (+ the progress bar since slice 5)", /case "programlog":[\s\S]{0,400}content = <><ProgramLog onClose=\{\(\) => window\.close\(\)\} \/><GenerateProgressBar \/><\/>;/.test(popTsx));
 
 // ── sandbox ──
 const src = [
@@ -131,6 +131,26 @@ w5.close();
 api.openPopoutWindow("logs");
 const w6 = api.openPopoutWindow("programlog");
 check("7 · dedupe is per panel: a Play Log window open does not stand in for the Program Log", w6.title === "popout:programlog" && windows.filter(w => !w.destroyed).length === 2);
+
+// ── slice 5 — the Calendar is gone; every door points at the Program Log; no handler was deleted ──
+const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap(d => d.isDirectory() ? walk(path.join(dir, d.name)) : [path.join(dir, d.name)]);
+const srcFiles = walk(path.join(root, "src")).filter(f => /\.(tsx?|js)$/.test(f));
+const mentions = srcFiles.filter(f => /BroadcastCalendar/.test(fs.readFileSync(f, "utf8")));
+check("5 · BroadcastCalendar.tsx is gone and nothing under src/ names it", !fs.existsSync(path.join(root, "src", "components", "BroadcastCalendar.tsx")) && mentions.length === 0, mentions.join(", "));
+check("5 · App.tsx: no CALENDAR tab, no calendar dock case, no calendar hamburger entry, no calendar workspace route", !/label: "CALENDAR"/.test(appTsx) && !/progPanel === "calendar"/.test(appTsx) && !/panel: "calendar"/.test(appTsx) && !/panel === "calendar"/.test(appTsx) && !/"calendar" \|/.test(appTsx));
+check("5 · App.tsx: ether:open-programlog docks the Program Log (the old ether:open-calendar is gone)", /window\.addEventListener\("ether:open-programlog", toProgramLog\)/.test(appTsx) && /const toProgramLog = \(\) => \{ setPanel\("live"\); setShowCarts\(false\); setProgPanel\("programlog"\); \}/.test(appTsx) && !/open-calendar/.test(appTsx));
+check("5 · App.tsx: the 'go build it' jump docks the Program Log", /setProgPanel\("programlog"\);\s*\/\/ dock the Program Log — Fill Day builds it/.test(appTsx));
+const health = fs.readFileSync(path.join(root, "src", "components", "health", "HealthDashboard.tsx"), "utf8");
+check("5 · Health Monitor's Runway card opens the Program Log", /openPanel\("programlog"\)/.test(health) && !/openPanel\("calendar"\)/.test(health) && /Click to open the Program Log/.test(health));
+check("5 · PopoutRenderer: no calendar case/title; the programlog pop-out carries the progress bar", !/case "calendar"/.test(popTsx) && !/"calendar":\s*"Calendar"/.test(popTsx) && /<ProgramLog onClose=\{\(\) => window\.close\(\)\} \/><GenerateProgressBar \/>/.test(popTsx));
+const ws = fs.readFileSync(path.join(root, "src", "components", "schedule", "ScheduleWorkspace.tsx"), "utf8");
+check("5 · Schedule Manager's log pane hosts <ProgramLog embedded> (the ninth door the proposal did not list)", /<ProgramLog embedded key=\{hub\.revision\} \/>/.test(ws) && !/BroadcastCalendar/.test(ws));
+check("5 · main.js: no calendar pop-out size/title left", !/"calendar":\s*\{ width/.test(main) && !/"calendar":\s*"Calendar"/.test(main));
+const handlersKept = ["schedule:get", "schedule:generateDay", "schedule:generateDays", "schedule:generateCancel", "schedule:clearDay", "schedule:moveRow", "schedule:editRowFields", "schedule:deleteRow", "schedule:checkRow", "schedule:setRowSource", "schedule:insertVoiceTrack", "schedule:playhead-view"];
+const missingH = handlersKept.filter(h => !main.includes(`ipcMain.handle('${h}'`) && !main.includes(`ipcMain.handle("${h}"`));
+check("5 · NO IPC handler was deleted — all " + handlersKept.length + " schedule:* handlers still registered", missingH.length === 0, "missing: " + missingH.join(", "));
+const userFacing = srcFiles.map(f => [f, fs.readFileSync(f, "utf8")]).flatMap(([f, t]) => t.split("\n").map((l, i) => [f, i + 1, l])).filter(([, , l]) => /Calendar/.test(l) && !/^\s*(\/\/|\*|\{\/\*)/.test(l) && !/calendar re-cue|CalendarDays|calendarDay|since-retired Calendar/.test(l));
+check("5 · no user-facing string in src/ still points the operator at 'the Calendar'", userFacing.length === 0, userFacing.map(([f, i]) => path.relative(root, f) + ":" + i).join(", "));
 
 console.log(`=== ${pass} passed, ${fail} failed ===`);
 process.exit(fail ? 1 : 0);

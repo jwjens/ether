@@ -43,8 +43,8 @@ you here.
 3. **Assign per category — the core.** In **Category assignments**, each music category has an **Overlay**
    dropdown: pick **None**, a **specific** sweeper/sweeper, or a **pool**. Set **LEAD** for that category
    (see below) and **Active hours** (default Always) to keep imaging out of hours where it doesn't belong.
-4. **Generate.** Sweepers/sweepers are placed on the song seams when you Generate the schedule (Calendar →
-   Generate). On air they fire automatically.
+4. **Fill Day.** Sweepers are placed on the song seams when the log is filled (Program Log →
+   Fill Day). On air they fire automatically.
 
 ## LEAD — the one number
 

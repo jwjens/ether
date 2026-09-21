@@ -211,8 +211,8 @@ export function HealthDashboard({
           value={runway.value}
           sub={runway.sub}
           status={toLevel(st?.runway?.level)}
-          onClick={() => openPanel("calendar")}
-          wall={wall}          hint="How long until this station's log runs out. Click to open the Calendar."
+          onClick={() => openPanel("programlog")}
+          wall={wall}          hint="How long until this station's log runs out. Click to open the Program Log."
         />
         <HealthCard
           title="Designated generator"

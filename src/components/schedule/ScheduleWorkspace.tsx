@@ -38,7 +38,7 @@ import { CategoriesTab } from "../scheduler/CategoriesTab";
 import Spots from "../Spots";
 import SweepersPanel from "../SweepersPanel";
 import RotationAnalytics from "../RotationAnalytics";
-import BroadcastCalendar from "../BroadcastCalendar";
+import ProgramLog from "../ProgramLog";
 import Logs from "../Logs";
 import type { ClockSlot } from "../scheduler/types";
 
@@ -183,13 +183,16 @@ const components = {
     // Click a show → the log focuses that show's hours (the same scoping a show block on the week
     // grid applies). Deselect and it widens back to the whole day.
     const show = hub.shows.find(s => s.id === hub.selection.showId);
+    // Program Log slice 5 (2026-09-20): the Calendar's hosted day-log is gone; this pane hosts the
+    // Program Log — the ONE log surface — docked. Its writes go through the log editor's handlers
+    // and broadcast schedule:changed; no hub table reads generated_schedule, so it takes no
+    // onMutated. `key={hub.revision}` re-mounts it when a sibling pane writes shows/clocks, so
+    // TODAY'S SHOWS and the hour headers follow (it re-seeds from the shared day key). The show
+    // focus is the panel's own sidebar filter now; `show` is kept for the pane's title only.
+    void show;
     return (
       <PaneFrame flush>
-        <BroadcastCalendar
-          hostedDayLog
-          focusShow={show ? { name: show.name, startHour: show.start_hour, endHour: show.end_hour } : null}
-          onMutated={hub.onMutated}
-        />
+        <ProgramLog embedded key={hub.revision} />
       </PaneFrame>
     );
   },

@@ -519,7 +519,7 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
               <div style={{ textAlign: "center" as any, padding: "64px 24px" }}>
                 <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>No spots scheduled in this period</div>
                 <div style={{ fontSize: 13, color: "var(--text-tertiary)", maxWidth: 460, margin: "0 auto" }}>
-                  Traffic reads the generated log. Add spot breaks to a clock and run <strong>Generate</strong> in the Calendar, then spots will appear here with the time they aired.
+                  Traffic reads the generated log. Add spot breaks to a clock and run <strong>Fill Day</strong> in the Program Log, then spots will appear here with the time they aired.
                 </div>
               </div>
             ) : (

@@ -60,6 +60,9 @@ function todayStr(): string { return localDateStr(new Date()); }
 // took station 1's ("Open Format") for every hour of every station — docs/program-log-wiring §3.
 const SHOWS_SQL = `SELECT s.*, c.name as clock_name FROM shows s
   LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.station_id = ? AND s.deleted_at IS NULL ORDER BY s.start_hour`;
+/** The type chip for a row with no category code (spots, sweepers, carts, voice). */
+const TYPE_LABEL: Record<string, string> = { spot_break: "SPOT", music: "SONG", sweeper: "SWEEPER", cart: "CART", voice: "VOICE" };
+const typeChip = (e: { category_code: string | null; slot_type: string }) => e.category_code || TYPE_LABEL[e.slot_type] || e.slot_type.toUpperCase();
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAYS_SHORT = ["Su","Mo","Tu","We","Th","Fr","Sa"];
 
@@ -112,10 +115,10 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
 
   // ── Load ─────────────────────────────────────────────────────
 
-  // Mini-month dots: the days this station has a log for. This is the Calendar's auto-days query
-  // (BroadcastCalendar.tsx:204-207) WITH the `[stationId]` binding it forgot (the filed
-  // "Too few parameter values" error) and without its `source = 'auto'` filter — a dot means
-  // "there is a log", whoever built it.
+  // Mini-month dots: the days this station has a log for. This was the old Calendar's auto-days
+  // query WITH the `[stationId]` binding it forgot (the filed "Too few parameter values" error —
+  // closed when the Calendar was deleted, slice 5) and without its `source = 'auto'` filter — a dot
+  // means "there is a log", whoever built it.
   const loadScheduledDates = useCallback(async () => {
     if (!stationId) return;
     try {
@@ -947,7 +950,7 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
                             {entry.played_at ? <span style={{ display: "block", color: "#34d399" }}>{fmtClock(entry.played_at)}</span> : null}
                           </span>
                           <span style={{ fontSize: "var(--t-micro)", fontWeight: 800, padding: "1px 4px", borderRadius: 0, background: isOverflow ? "rgba(167,139,250,0.2)" : color+"20", color: isOverflow ? "#a78bfa" : color, letterSpacing: "0.06em", whiteSpace: "nowrap" as const }}>
-                            {isOverflow ? "XFADE" : entry.category_code || entry.slot_type.toUpperCase()}
+                            {isOverflow ? "XFADE" : typeChip(entry)}
                           </span>
                           <div style={{ minWidth: 0, paddingRight: 8 }}>
                             <span style={{ fontSize: "var(--t-small)", fontWeight: 500, color: isUnfilled ? "#ef4444" : isOverflow ? "#a78bfa" : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, display: "block" }}>
@@ -1241,7 +1244,7 @@ function HourModal({ date, hour, block, stationId, onClose, onEdited }: HourModa
                   </span>
 
                   <span style={{ fontSize: "var(--t-micro)", fontWeight: 800, padding: "1px 4px", borderRadius: 0, background: color+"20", color, letterSpacing: "0.06em", whiteSpace: "nowrap" as const }}>
-                    {entry.category_code || entry.slot_type.toUpperCase()}
+                    {typeChip(entry)}
                   </span>
 
                   <div style={{ minWidth: 0, paddingRight: 8 }}>

@@ -69,7 +69,7 @@ The button is greyed out when there are no spots in the period — that is the h
 Traffic reads the **generated log**, not your spot library. If this is empty but you have spots loaded:
 
 1. Check your **clock** actually contains **spot breaks** (Clocks → the clock → a break element).
-2. Open the **Calendar** and click **Generate** for the day(s) you want.
+2. Open the **Program Log** and press **Fill Day** for the day(s) you want.
 3. Come back — the spots will be listed with the time they are due.
 
 ## Blank advertiser, cart or ISCI

@@ -1060,7 +1060,7 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
                 <span style={{ fontSize: "var(--t-micro)", fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "var(--accent-green)", opacity: breaksSaved ? 1 : 0, transition: "opacity 0.2s" }}>✓ Saved</span>
               </div>
               <div style={{ fontSize: "var(--t-small)", color: "var(--text-tertiary)", marginBottom: 12 }}>
-                Air spots at set minutes past the hour on this clock — music fills around them. :00 = exact top of hour; other minutes land at the nearest song boundary (a song is never cut). Empty = no timed breaks (this clock plays its slots in order). Changes save automatically — <strong style={{ color: "var(--text-secondary)" }}>Generate in the Calendar</strong> to air them.
+                Air spots at set minutes past the hour on this clock — music fills around them. :00 = exact top of hour; other minutes land at the nearest song boundary (a song is never cut). Empty = no timed breaks (this clock plays its slots in order). Changes save automatically — <strong style={{ color: "var(--text-secondary)" }}>Fill Day in the Program Log</strong> to air them.
               </div>
               {breaks.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column" as const, gap: 8, marginBottom: 12 }}>

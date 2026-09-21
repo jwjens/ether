@@ -14,7 +14,7 @@ tour: true
 
 Deleting a song takes it out of your library **and out of everything scheduled ahead of it**. The song stops
 being something the station can play: it won't be picked when you Generate, it won't show up in the queue or
-the calendar, and it won't come back the next time you generate a day.
+the Program Log, and it won't come back the next time you fill a day.
 
 What it *already* played stays exactly where it is. Your airplay history — the record you'd hand an
 advertiser to prove their spot ran — is never rewritten by a delete.
@@ -42,7 +42,7 @@ That's it. There is no second step and nothing to clean up afterwards.
 
 - It disappears from the **Library** and from library search.
 - Every **upcoming log entry** for it is pulled — today's and every future day already generated.
-- It's dropped from the **queue** and the **calendar**.
+- It's dropped from the **queue** and the **Program Log**.
 - It's removed from any **pinned** spot, **programming** entry, and its **category assignment**.
 - If it was pinned into a **clock** slot or set as a **category's** imaging, that slot or category stays
   exactly where it is — it simply no longer points at the deleted song. Your clocks are not rearranged.
@@ -58,7 +58,7 @@ That's it. There is no second step and nothing to clean up afterwards.
 ## How to check it worked
 
 1. Search the **Library** for the song — no result.
-2. Open the **Calendar** and **Generate** the day again.
+2. Open the **Program Log** and **Fill Day** again.
 3. Search the log — the song is not there, and it won't be there after any future Generate either.
 
 ## Things worth knowing
