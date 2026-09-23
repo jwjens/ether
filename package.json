@@ -29,6 +29,7 @@
     "test:window-station": "node scripts/smoke-window-station.js",
     "test:copy-on-import": "node scripts/smoke-copy-on-import.js",
     "test:catalogue-r2": "node scripts/smoke-catalogue-r2.js",
+    "test:sign-filter": "node scripts/smoke-sign-filter.js",
     "test:one-switch": "node scripts/smoke-one-switch.js",
     "test:undefined-calls": "node scripts/smoke-undefined-calls.js",
     "test:ipc-contract": "node scripts/smoke-ipc-payload-contract.js",

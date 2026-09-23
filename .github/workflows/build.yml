@@ -89,6 +89,13 @@ jobs:
       - name: Catalogue backup contract
         run: node scripts/smoke-catalogue-r2.js
 
+      # The signed Windows publish only runs on a v* tag, so a bad signExts policy could not be
+      # discovered until the most expensive moment — which is exactly how v4.6.47 failed, on a Linux
+      # .node that Authenticode cannot sign. This asserts the file selection here, in the cheap gate,
+      # using the shipped shouldSignFile algorithm.
+      - name: Windows signing filter (no non-PE file reaches signtool)
+        run: node scripts/smoke-sign-filter.js
+
       # NOT GATED HERE, deliberately, and neither is a lie of omission:
       #
       # · `npm run test:sync` runs under `electron --no-sandbox`, needs better-sqlite3 rebuilt for
