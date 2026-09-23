@@ -97,6 +97,25 @@ describe("toEntries — the ScheduledEntry shape the markup renders", () => {
     expect(showForHour([{ start_hour: 22, end_hour: 2, name: "late" }], 1)?.name).toBe("late");
     expect(showForHour([{ start_hour: 22, end_hour: 2, name: "late" }], 3)).toBeUndefined();
   });
+  // Fill Week receipt (2026-09-23): a week fill is only useful if the operator can SEE the hours it
+  // filled, on a day that is entirely in the future.
+  it("no hour is dropped for being after now — hoursToRender takes no clock, so future hours render like any other", () => {
+    const allDay = [{ start_hour: 0, end_hour: 0 }];
+    // every hour of a day six days out, with rows only in two of them
+    expect(hoursToRender([{ hour: 3 }, { hour: 19 }], allDay)).toEqual(Array.from({ length: 24 }, (_, h) => h));
+    // and with no rows at all — a freshly-picked future day before Fill Week runs
+    expect(hoursToRender([], allDay)).toHaveLength(24);
+    // the function's inputs are hours and shows; there is no "now" to compare against
+    expect(hoursToRender.length).toBe(2);
+  });
+  it("KNOWN GAP (reported, deliberately NOT fixed here): an hour with neither a row nor a show does not render at all", () => {
+    // A station whose grid covers 06:00-10:00 only: the other 20 hours are invisible in the Program
+    // Log, before AND after now. Fill Week cannot fill them either (no clock), so the hole is real —
+    // but the panel shows no empty hour to explain why. See the build report.
+    const partial = [{ start_hour: 6, end_hour: 10 }];
+    expect(hoursToRender([], partial)).toEqual([6, 7, 8, 9]);
+    expect(hoursToRender([], partial)).not.toContain(14);
+  });
   it("slotTypeOf: content_class is authoritative; song_id is the fallback", () => {
     expect(slotTypeOf({ content_class: "MUSIC", song_id: null })).toBe("music");
     expect(slotTypeOf({ content_class: "SWP", song_id: 5 })).toBe("sweeper");

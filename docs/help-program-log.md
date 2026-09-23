@@ -1,7 +1,7 @@
 ---
 feature: program-log
 title: "The Program Log"
-summary: One day of the station's real log — what aired, what is on air, what is coming — with Fill Day, Clear Day and CSV / Print / PDF export.
+summary: One day of the station's real log — what aired, what is on air, what is coming — with Fill Day, Fill Week, Clear Day and CSV / Print / PDF export.
 where: ≡ menu → Program Log, Schedule → Program Log (its own window), or the PROGRAM LOG tab at the bottom of the dashboard (docked)
 since: unreleased (branch log-reader-flip, after 4.6.45)
 audience: operator
@@ -47,9 +47,40 @@ The summary at the top — *N of 24 hours scheduled · total programming* — is
 
 Fill Day acts on the **station you are switched into**. Switch stations first if you mean another one.
 
-**Fill Day is the only fill.** There is no per-hour generate: to rebuild part of a day, clear the hours
-you want rebuilt (the ✕ on each hour row) and press Fill Day — it fills the gaps and leaves everything
-else in place.
+There is no per-hour generate: to rebuild part of a day, clear the hours you want rebuilt (the ✕ on
+each hour row) and press Fill Day — it fills the gaps and leaves everything else in place.
+
+## Fill Week — scheduling weeks ahead
+
+**Fill Week** sits next to Fill Day and builds **seven days in one run: the selected day and the six
+days after it.**
+
+To schedule further out, pick the day you want to start from in the mini month and press Fill Week.
+There is no limit on how far ahead you can go — a week three weeks out fills exactly like next
+week's. Three presses from three different start days gives you three weeks.
+
+Every rule Fill Day follows, Fill Week follows on **each** of the seven days:
+
+- Hours that have already started are never touched — only the first day can have any, since the rest
+  are entirely in the future.
+- Items you placed by hand (the **YOURS** badge) survive.
+- Days that have already fully aired are skipped.
+
+While it runs:
+
+- The **progress bar** moves hour by hour across the whole week, not once per day, so you can see it
+  working.
+- **CANCEL** stops it at the next hour boundary. **Every day that already finished is kept** — you
+  never get half a day. The message tells you how many days were kept.
+
+When it finishes it reports **how many rows it placed across how many days**, and the day on screen
+re-reads itself. The other six days are built and waiting; open any of them in the mini month to see
+them. If you have the Program Log open in both the dock and its own window, both update.
+
+> **One thing to know about the count.** The number reported is what the scheduler *built*. If a day
+> contains rows you placed by hand, the built rows that would have landed on top of them are dropped
+> rather than double-booking your slot — so the number shown can be slightly higher than the number of
+> new rows actually in the log. Your rows are the ones that win.
 
 ## Clear Day and the hour ✕
 
@@ -85,7 +116,12 @@ not a plan.*
 
 ## If something looks wrong
 
-- **Every hour says "0 hours" / empty** — the day has no log yet. Press Fill Day.
+- **Every hour says "0 hours" / empty** — the day has no log yet. Press Fill Day, or Fill Week to
+  build it and the six days after it at once.
+- **An hour you expected is missing from the list entirely** — the Program Log lists the hours your
+  shows cover, plus any hour that already has rows. An hour no show covers has no clock, so nothing
+  can be scheduled in it and it is not listed. Give that hour a show under **⚙ Shows & Dayparts**,
+  then Fill Day or Fill Week.
 - **The wrong show name on every hour** — check the station switcher; the panel follows the active
   station.
 - **Fill Day says "nothing to fill"** — the whole day has already aired.

@@ -81,6 +81,7 @@ const src = [
   braceBlock("async function _generateDayChunked("),
   braceBlock("function _commitDayRows("),
   braceBlock("ipcMain.handle('schedule:generateDay',"),
+  braceBlock("ipcMain.handle('schedule:generateDays',"),
   braceBlock("ipcMain.handle('schedule:clearDay',"),
   braceBlock("ipcMain.handle('schedule:get',"),
   // slice 4 — the log editor's handlers the hour modal rides
@@ -155,7 +156,7 @@ sandbox(
   (channel, payload) => broadcasts.push({ channel, payload }), path,
   (id) => db.prepare("SELECT uuid FROM stations WHERE id = ?").get(id)?.uuid || null
 );
-check("handlers registered: generateDay, clearDay, get, moveRow, deleteRow, editRowFields, checkRow", ["schedule:generateDay", "schedule:clearDay", "schedule:get", "schedule:moveRow", "schedule:deleteRow", "schedule:editRowFields", "schedule:checkRow"].every(k => !!handlers[k]));
+check("handlers registered: generateDay, generateDays, clearDay, get, moveRow, deleteRow, editRowFields, checkRow", ["schedule:generateDay", "schedule:generateDays", "schedule:clearDay", "schedule:get", "schedule:moveRow", "schedule:deleteRow", "schedule:editRowFields", "schedule:checkRow"].every(k => !!handlers[k]));
 const get = (from, to, sid = 1) => { const r = handlers["schedule:get"](null, from, to, sid); if (r.error) throw new Error("schedule:get → " + r.error); return r.data; };
 const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ?").get(sid, dayStart, dayEnd).n;
 
@@ -348,6 +349,63 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
   const offenders = codeFiles.filter(f => !allowed.has(path.basename(f)) && new RegExp("\\b" + DEADT + "\\b|\\b" + DEAD_NS + "\\b").test(fs.readFileSync(f, "utf8").replace(new RegExp(DEADT + "_id", "g"), "")));
   check("i · repo-wide: zero old-log-table / namespace references outside the append-only chain (play_log.scheduled_log_id column excepted)", offenders.length === 0, offenders.map(f => path.relative(root, f)).join(", "));
   check("i · the hour modal invokes editRowFields({song_id}), moveRow, deleteRow, checkRow — and nothing else writes", /invoke\("schedule:editRowFields", swapTarget\.uuid, \{ song_id: newSong\.id \}\)/.test(tsx) && /invoke\("schedule:moveRow", fromUuid, toUuid\)/.test(tsx) && /invoke\("schedule:deleteRow", entry\.uuid\)/.test(tsx) && /invoke\("schedule:checkRow", stationId, warnFor\.uuid, warnFor\.at\)/.test(tsx));
+
+  // ── (j) Fill Week — the Program Log's week button rides schedule:generateDays (Jeff's correction) ──
+  // ONE invoke for the list. The guards are Fill Day's, applied PER DAY by the handler: the first day
+  // starts at the next top-of-hour, later days are whole, played rows are records, operator (YOURS)
+  // rows survive, and the other station is never touched.
+  db.prepare("DELETE FROM generated_schedule").run();
+  broadcasts.length = 0; health.length = 0;
+  const weekTs = Array.from({ length: 7 }, (_, i) => {
+    const d = new RealDate(dayBase.getTime()); d.setDate(d.getDate() + i); d.setHours(0, 0, 0, 0);
+    return Math.floor(d.getTime() / 1000);
+  });
+  // seeds on day 0 that Fill Week must respect, and one on the far day of the week
+  insRow(1, hourTs(8), "played", { uuid: "wk-played-8", played_at: hourTs(8) + 2 });
+  insRow(1, hourTs(10) + 2400, "pending", { uuid: "wk-pending-1040" });          // the CURRENT hour
+  insRow(1, hourTs(14), "pending", { uuid: "wk-op-14", source: "operator" });    // a jock's row
+  insRow(2, hourTs(15), "pending", { uuid: "wk-st2-15" });                       // the other station
+  const dayEnd6 = weekTs[6] + 86_400;
+  const rj = await handlers["schedule:generateDays"](null, weekTs);
+  check("j · generateDays ok over 7 days, none cancelled", rj && rj.ok === true && rj.cancelled === false, JSON.stringify(rj && { ok: rj.ok, cancelled: rj.cancelled, daysCommitted: rj.daysCommitted, count: rj.count }));
+  check("j · all 7 days committed (the week starts tomorrow, so no day has aired)", rj.daysCommitted === 7, String(rj.daysCommitted));
+  // count is what the GENERATOR made; the range also holds the seeds it was required to leave alone,
+  // so those are excluded rather than folded into the total the button reports.
+  const wkGenerated = get(weekTs[0], dayEnd6).filter(r => !String(r.uuid).startsWith("wk-"));
+  check("j · the run reports rows for the week and they are really in the range", rj.count > 0 && wkGenerated.length > 0, `count=${rj.count} landed=${wkGenerated.length}`);
+  // PRE-EXISTING, NOT INTRODUCED HERE, AND NOT PAPERED OVER: the handler sums dayRows.length — what the
+  // GENERATOR produced — while _commitDayRows then post-filters through filterToGaps and drops any row
+  // whose span overlaps a surviving operator row. So the number the button reports is larger than the
+  // number that landed, by exactly the operator-collision skips. Both Fill Day and the old Calendar
+  // week button report the same inflated figure. Proven, not assumed: the identical week fill with the
+  // operator row removed reports EXACTLY what landed.
+  check("j · reported count exceeds what landed by exactly the ONE operator-collision skip", rj.count - wkGenerated.length === 1, `count=${rj.count} landed=${wkGenerated.length}`);
+  check("j · every one of the 7 days got rows", weekTs.every(ts => get(ts, ts + 86_400).length > 0), weekTs.map(ts => get(ts, ts + 86_400).length).join(","));
+  check("j · day 0 still starts at the next top-of-hour — an hour that has STARTED is never filled", get(weekTs[0], dayEnd).filter(r => r.scheduled_at >= nextTop && r.source !== "operator").length > 0 && get(weekTs[0], nextTop).every(r => ["wk-played-8", "wk-pending-1040", "wk-op-14"].includes(r.uuid) || r.scheduled_at < nextTop));
+  check("j · days 1-6 are whole days (24 hours each), not clipped to the first day's effStart",
+    weekTs.slice(1).every(ts => new Set(get(ts, ts + 86_400).map(r => new RealDate(r.scheduled_at * 1000).getHours())).size === 24),
+    weekTs.slice(1).map(ts => new Set(get(ts, ts + 86_400).map(r => new RealDate(r.scheduled_at * 1000).getHours())).size).join(","));
+  check("j · the played row is a record — untouched", (() => { const r = byUuid("wk-played-8"); return r && r.state === "played" && r.played_at && !r.deleted_at; })());
+  check("j · the current hour's pending row untouched", !!byUuid("wk-pending-1040") && !byUuid("wk-pending-1040").deleted_at);
+  check("j · the operator's YOURS row survives the week fill", !!byUuid("wk-op-14") && !byUuid("wk-op-14").deleted_at && byUuid("wk-op-14").source === "operator");
+  check("j · the other station is never touched", !!byUuid("wk-st2-15") && !byUuid("wk-st2-15").deleted_at);
+  const wkB = broadcasts.filter(b => b.channel === "schedule:changed" && b.payload.reason === "generate");
+  check("j · schedule:changed fired once PER COMMITTED DAY, each keyed on stationUuid", wkB.length === 7 && wkB.every(b => b.payload.stationUuid === S1_UUID && !("stationId" in b.payload)), String(wkB.length));
+  check("j · nothing written to songs.last_played_at by the week fill", db.prepare("SELECT count(*) n FROM songs WHERE last_played_at IS NOT NULL").get().n === 0);
+  // the renderer side: the button exists, sends ONE generateDays invoke, and builds its 7 days with
+  // the Date day-field (DST-safe), never by adding 86 400 seconds.
+  check("j · ProgramLog.tsx has a Fill Week button that invokes schedule:generateDays ONCE", /Fill Week/.test(tsx) && /invoke\("schedule:generateDays", tsList\)/.test(tsx) && (tsx.match(/invoke\("schedule:generateDays"/g) || []).length === 1);
+  check("j · the week is stepped by the Date day field (DST-safe), not by adding 86 400s", /new Date\(y, m - 1, d \+ i, 0, 0, 0, 0\)/.test(tsx) && !/86_?400_?000/.test(tsx));
+  // The control for the count gap above. LAST in the section on purpose: it wipes the seeds, so every
+  // assertion that reads them has already run.
+  {
+    db.prepare("DELETE FROM generated_schedule").run();
+    insRow(1, hourTs(8), "played", { uuid: "wk2-played-8", played_at: hourTs(8) + 2 });
+    const rj2 = await handlers["schedule:generateDays"](null, weekTs);
+    const landed2 = get(weekTs[0], dayEnd6).filter(r => !String(r.uuid).startsWith("wk2-")).length;
+    check("j · with NO operator row the reported count matches what landed exactly — the gap is the skip, nothing else", rj2.ok === true && rj2.count === landed2, `count=${rj2.count} landed=${landed2}`);
+  }
+  check("j · Fill Week reports rows AND days, and is disabled while a fill is in flight", /rows across \$\{days\} of \$\{FILL_WEEK_DAYS\} days/.test(tsx) && (tsx.match(/onClick=\{fillWeek\} disabled=\{filling\}/g) || []).length === 1);
 
   console.log(`=== ${pass} passed, ${fail} failed ===`);
   process.exit(fail ? 1 : 0);

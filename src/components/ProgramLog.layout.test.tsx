@@ -58,13 +58,19 @@ describe("ProgramLog docked (embedded) layout contract", () => {
     const html = render(true);
     expect(html).toMatch(/style="flex:1;overflow-y:auto;display:flex;flex-direction:column"/);
   });
-  it("nothing Jeff uses is hidden when docked: Fill Day, Clear Day, CSV, Print, PDF, the mini month, Shows & Dayparts", () => {
+  it("nothing Jeff uses is hidden when docked: Fill Day, Fill Week, Clear Day, CSV, Print, PDF, the mini month, Shows & Dayparts", () => {
     const html = render(true);
-    for (const label of ["Fill Day", "Clear Day", "CSV", "Print", "PDF Report", "Shows &amp; Dayparts", "Expand All", "Collapse All"]) {
+    for (const label of ["Fill Day", "Fill Week", "Clear Day", "CSV", "Print", "PDF Report", "Shows &amp; Dayparts", "Expand All", "Collapse All"]) {
       expect(html, label).toContain(label);
     }
     // seven weekday headers = the mini month is there
     for (const d of ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"]) expect(html).toContain(`>${d}<`);
+  });
+  it("Fill Week is a door in BOTH trees — docked and pop-out render the same button", () => {
+    for (const html of [render(true), render(false)]) {
+      expect(html).toContain("Fill Week");
+      expect(html).toContain("Fill Day");
+    }
   });
   it("no element forces a min-width wider than a narrow panel", () => {
     const widths = [...render(true).matchAll(/min-width:(\d+)px/g)].map(m => Number(m[1]));

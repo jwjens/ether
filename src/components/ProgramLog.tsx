@@ -248,6 +248,46 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
 
   // Clear = schedule:clearDay: soft-deletes this station's PENDING rows in the window from the next
   // top-of-hour on. played / playing / missed rows are records and are never touched (main.js).
+  // Fill Week — the selected day and the six after it. This is the call the Calendar's week Generate
+  // made (Jeff's correction): ONE invoke of schedule:generateDays for the whole list, not seven
+  // generateDay calls. That matters — main yields between every hour, so progress moves hour by hour
+  // across the range instead of seven times, CANCEL is honoured at every hour boundary, each day is
+  // committed atomically as it finishes (a cancel leaves whole days, never a half day), and one
+  // shared ctx carries separation + the LRP ladder ACROSS day boundaries, which a seven-call loop
+  // rebuilt per day and lost.
+  //
+  // The guards are Fill Day's, applied per day by the handler, not re-implemented here:
+  // effStart = max(dayStart, next top-of-hour) so an hour that has STARTED is never touched; played
+  // and playing rows are records; and _commitDayRows keeps operator-owned (YOURS) rows through the
+  // regenerate rather than wiping the window. There is no horizon in the handler, so a week three
+  // weeks out fills exactly like next week's: pick the day, fill from there.
+  const FILL_WEEK_DAYS = 7;
+  const fillWeek = async () => {
+    setFilling(true);
+    setGlobalStatus(`Filling ${FILL_WEEK_DAYS} days...`);
+    let msg: string;
+    try {
+      const [y, m, d] = selectedDate.split("-").map(Number);
+      // Stepped with the Date constructor's day field, never by adding 86 400s: a DST day is 23 or
+      // 25 hours long, so second-stepping would walk the week off local midnight (and the handler
+      // snaps each entry to ITS local midnight, which must agree with the day the panel reads).
+      const tsList = Array.from({ length: FILL_WEEK_DAYS }, (_, i) =>
+        Math.floor(new Date(y, m - 1, d + i, 0, 0, 0, 0).getTime() / 1000));
+      const res = await (window as any).ether.invoke("schedule:generateDays", tsList);
+      const rows = res?.count ?? 0, days = res?.daysCommitted ?? 0;
+      msg = res?.ok === false ? `✗ ${res.error || "generate failed"}`
+          : res?.cancelled ? `↷ Cancelled — ${rows} rows across ${days} of ${FILL_WEEK_DAYS} days kept`
+          : `✓ ${rows} rows across ${days} of ${FILL_WEEK_DAYS} days`;
+    } catch (e: any) { msg = `✗ ${e?.message || e}`; }
+    // Re-read the SELECTED day (the one on screen); the other six are re-read when they are opened,
+    // and schedule:changed has already told the other tree to re-read whichever day it is showing.
+    await loadDayData(selectedDate);
+    loadScheduledDates();
+    setExpandedHours(new Set(hourBlocks.map(b => b.hour)));
+    setGlobalStatus(msg);
+    setFilling(false);
+  };
+
   const clearRange = async (fromTs?: number, toTs?: number): Promise<string> => {
     try {
       const { dayStart } = dayWindow(selectedDate);
@@ -755,10 +795,18 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
 
         {/* Action buttons */}
         <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column" as const, gap: 6 }}>
-          <button onClick={fillDay} disabled={filling}
-            style={{ padding: "8px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 700, cursor: filling ? "default" : "pointer", background: "rgba(52,211,153,0.12)", color: "#34d399", border: "1px solid rgba(52,211,153,0.3)", opacity: filling ? 0.6 : 1 }}>
-            {filling ? "⏳ Scheduling..." : "⚡ Fill Day"}
-          </button>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 }}>
+            <button onClick={fillDay} disabled={filling}
+              title="Fills the selected day from the next top-of-hour on. An hour that has started is never touched."
+              style={{ padding: "8px 4px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 700, cursor: filling ? "default" : "pointer", background: "rgba(52,211,153,0.12)", color: "#34d399", border: "1px solid rgba(52,211,153,0.3)", opacity: filling ? 0.6 : 1 }}>
+              {filling ? "⏳ …" : "⚡ Fill Day"}
+            </button>
+            <button onClick={fillWeek} disabled={filling}
+              title="Fills the selected day and the six after it — seven days in one run. Progress and CANCEL cover the whole week; cancelling keeps every day that finished. Pick a day weeks out and fill from there."
+              style={{ padding: "8px 4px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 700, cursor: filling ? "default" : "pointer", background: "rgba(52,211,153,0.12)", color: "#34d399", border: "1px solid rgba(52,211,153,0.3)", opacity: filling ? 0.6 : 1 }}>
+              {filling ? "⏳ …" : "⚡ Fill Week"}
+            </button>
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 }}>
             <button onClick={exportCSV}
               style={{ padding: "6px 4px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 700, cursor: "pointer", background: "rgb(from var(--accent-blue) r g b / 0.1)", color: "var(--accent-blue)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.25)" }}>
