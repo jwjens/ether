@@ -95,7 +95,7 @@ interface Props {
 }
 
 export default function ProgramLog({ onClose, embedded = false }: Props) {
-  const { stationId } = useActiveStation();
+  const { stationId, stationUuid } = useActiveStation();
   const [selectedDate, setSelectedDateState] = useState<string>(() => readSharedDate(stationId) || todayStr());
   const [currentMonth, setCurrentMonth] = useState(() => {
     const [y, m] = (readSharedDate(stationId) || todayStr()).split("-").map(Number);
@@ -194,13 +194,16 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
     const ether = (window as any).ether;
     if (!ether?.on || !stationId) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const handle = ether.on("schedule:changed", (p: { stationId?: number }) => {
-      if (p && p.stationId != null && p.stationId !== stationId) return;
+    const handle = ether.on("schedule:changed", (p: { stationUuid?: string }) => {
+      // Keyed on stationUuid, not the integer id (leak-guard ratchet). Both sides must be present to
+      // reject: an unresolved local uuid falls through to a re-read rather than going silently deaf,
+      // which is the same fall-through the id form had when the payload carried no station.
+      if (p && p.stationUuid && stationUuid && p.stationUuid !== stationUuid) return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => { timer = null; loadDayData(selectedDateRef.current); loadScheduledDates(); }, CHANGED_DEBOUNCE_MS);
     });
     return () => { if (timer) clearTimeout(timer); try { ether.off?.("schedule:changed", handle); } catch { /* ignore */ } };
-  }, [stationId, loadDayData, loadScheduledDates]);
+  }, [stationId, stationUuid, loadDayData, loadScheduledDates]);
 
   // ── Generate / Clear — the real path (slice 2, 2026-09-18) ────────────────────────────────────
   // The local picker that lived here (its own separation arithmetic, INSERTs into the dead log

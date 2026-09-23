@@ -113,6 +113,12 @@ const nextTop = hourTs(11);
 
 // ── seed: station 1 with a clock, a show, one category, 40 songs; station 2 with a row of its own ──
 db.prepare("INSERT INTO stations (name) VALUES (?)").run("Station 2");
+// stations.uuid carries no default in the baseline, so the seed sets it: schedule:changed is keyed on
+// the UUID now (leak-guard ratchet), and an assertion against a NULL uuid would prove nothing.
+const S1_UUID = "11111111-1111-4111-8111-111111111111";
+const S2_UUID = "22222222-2222-4222-8222-222222222222";
+db.prepare("UPDATE stations SET uuid = ? WHERE id = 1").run(S1_UUID);
+db.prepare("UPDATE stations SET uuid = ? WHERE id = 2").run(S2_UUID);
 const catId = db.prepare("INSERT INTO categories (code, name, station_id) VALUES ('A','Hot',1)").run().lastInsertRowid;
 const clockId = db.prepare("INSERT INTO clocks (name, station_id) VALUES ('Clock 1', 1)").run().lastInsertRowid;
 for (let p = 0; p < 12; p++) db.prepare("INSERT INTO clock_slots (clock_id, position, slot_type, category_id, duration_min) VALUES (?,?,?,?,?)").run(clockId, p, "music", catId, 5);
@@ -135,6 +141,7 @@ const sandbox = new Function(
   "ipcMain", "db", "require", "getActiveStationId", "_healthEvent", "_genEmit", "_placeJingles",
   "finishGenerateRun", "retireStaleScheduleRows", "_hourRanges", "_fmtHour", "buildScheduleCtx",
   "generateDayRows", "resetGenSlice", "Date", "console", "sendToAllWindows", "path",
+  "_stationUuidById",
   src
 );
 const handlers = {};
@@ -145,7 +152,8 @@ sandbox(
   () => 1, (kind, data) => health.push({ kind, ...data }), () => {}, () => {}, () => {}, () => {},
   (set) => [...set], (h) => String(h), gc.buildScheduleCtx, gc.generateDayRows, gc.resetGenSlice, FakeDate,
   { log: () => {}, error: (...a) => origLog("  [handler error]", ...a) },
-  (channel, payload) => broadcasts.push({ channel, payload }), path
+  (channel, payload) => broadcasts.push({ channel, payload }), path,
+  (id) => db.prepare("SELECT uuid FROM stations WHERE id = ?").get(id)?.uuid || null
 );
 check("handlers registered: generateDay, clearDay, get, moveRow, deleteRow, editRowFields, checkRow", ["schedule:generateDay", "schedule:clearDay", "schedule:get", "schedule:moveRow", "schedule:deleteRow", "schedule:editRowFields", "schedule:checkRow"].every(k => !!handlers[k]));
 const get = (from, to, sid = 1) => { const r = handlers["schedule:get"](null, from, to, sid); if (r.error) throw new Error("schedule:get → " + r.error); return r.data; };
@@ -165,8 +173,13 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
   check("a · nothing written to songs.last_played_at by the generate path", db.prepare("SELECT count(*) n FROM songs WHERE last_played_at IS NOT NULL").get().n === 0);
   // slice 3 — the broadcast every Program Log surface re-reads on
   const genB = broadcasts.filter(b => b.channel === "schedule:changed");
-  check("a · schedule:changed fired ONCE for the Fill (stationId 1, reason generate, window carried)",
-    genB.length === 1 && genB[0].payload.stationId === 1 && genB[0].payload.reason === "generate" && genB[0].payload.from === nextTop && genB[0].payload.to === dayEnd && genB[0].payload.rows === ra.count,
+  check("a · schedule:changed fired ONCE for the Fill (station 1's UUID, reason generate, window carried)",
+    genB.length === 1 && genB[0].payload.stationUuid === S1_UUID && genB[0].payload.reason === "generate" && genB[0].payload.from === nextTop && genB[0].payload.to === dayEnd && genB[0].payload.rows === ra.count,
+    JSON.stringify(genB));
+  // The ratchet's invariant, asserted where the contract is tested: the frame crosses the process
+  // boundary keyed on the UUID and carries NO integer station id (scripts/test-station-identity-leak.js).
+  check("a · schedule:changed carries stationUuid and NO integer stationId",
+    genB.length === 1 && typeof genB[0].payload.stationUuid === "string" && !("stationId" in genB[0].payload),
     JSON.stringify(genB));
   broadcasts.length = 0;
 
@@ -221,7 +234,7 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
   check("d · clearing again clears 0 (idempotent)", rd2 && rd2.ok && rd2.cleared === 0, JSON.stringify(rd2));
   const clrB = broadcasts.filter(b => b.channel === "schedule:changed" && b.payload.reason === "clear-day");
   check("d · schedule:changed fired for BOTH clears (reason clear-day; the second says cleared 0)",
-    clrB.length === 2 && clrB[0].payload.cleared === pendingFutureBefore && clrB[1].payload.cleared === 0 && clrB.every(b => b.payload.stationId === 1), JSON.stringify(clrB));
+    clrB.length === 2 && clrB[0].payload.cleared === pendingFutureBefore && clrB[1].payload.cleared === 0 && clrB.every(b => b.payload.stationUuid === S1_UUID), JSON.stringify(clrB));
   broadcasts.length = 0;
 
   // ── (e) Clear one hour (the hour ✕) — windowed clearDay ──
@@ -282,7 +295,7 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
     after && after.song_id === other.id && after.title === other.title && after.artist === "Artist " + other.id && after.duration_s === 240 && after.file_key === "song" + other.id + ".mp3" && after.scheduled_at === target.scheduled_at && after.file_path === null,
     JSON.stringify(after));
   check("i · swap: the row is now operator-owned (YOURS) — Generate will not replace it", after && after.source === "operator");
-  check("i · swap: schedule:changed fired (reason swap-song)", broadcasts.some(b => b.channel === "schedule:changed" && b.payload.reason === "swap-song" && b.payload.stationId === 1), JSON.stringify(broadcasts));
+  check("i · swap: schedule:changed fired (reason swap-song)", broadcasts.some(b => b.channel === "schedule:changed" && b.payload.reason === "swap-song" && b.payload.stationUuid === S1_UUID), JSON.stringify(broadcasts));
   check("i · swap: the log-reader would air the new file — its COALESCE(gs.file_key, s.file_key) / join on song_id resolves song" + other.id,
     (() => { const r = db.prepare("SELECT COALESCE(gs.file_key, s.file_key) fk, COALESCE(gs.file_path, s.file_path) fp FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id WHERE gs.uuid = ?").get(target.uuid); return r.fk === "song" + other.id + ".mp3" && r.fp === "C:/music/song" + other.id + ".mp3"; })());
   const swBad = handlers["schedule:editRowFields"](null, target.uuid, { song_id: 999999 });

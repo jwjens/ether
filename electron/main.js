@@ -8815,7 +8815,6 @@ function retireStaleScheduleRows(stationId, reason) {
     const retired = info.changes || 0;
     // LOUD. A silent sweep that retires 36,000 rows is indistinguishable from data loss.
     console.log(`[stale-rows] station ${stationId}: retired ${retired} pending row(s) whose slot passed more than ${grace}s ago (${reason})`);
-    try { mainWindow && mainWindow.webContents.send('schedule:stale-retired', { stationId, retired, graceSec: grace, reason }); } catch {}
     _scheduleChanged(stationId, 'missed', { retired });
     return { retired, graceSec: grace };
   } catch (e) {
@@ -9300,8 +9299,17 @@ function finishGenerateRun(stationId, ctx, days) {
 // caller — generateDay, generateDays, _generateRange), clearDay, the editor's move / pin / delete /
 // edit-cell, insertVoiceTrack, the stale-row sweep (→ missed), and the daemon's playstart (→
 // playing/played stamps) + missed events relayed below. Listeners debounce; this fires per write.
+// The frame carries stationUuid, NEVER the integer station_id: an IPC frame that crosses a process
+// boundary must be keyed on the identity that is stable across installs (leak-guard ratchet,
+// scripts/test-station-identity-leak.js). Callers still pass the local integer; the translation
+// happens here, once, so no caller has to remember.
 function _scheduleChanged(stationId, reason, extra) {
-  try { sendToAllWindows("schedule:changed", { stationId, reason, at: Date.now(), ...(extra || {}) }); } catch {}
+  // Hoisted, not inlined into the call: the leak-guard reads the emit's argument text, so an inline
+  // _stationUuidById(stationId) still trips it. Same shape as audio:daemon-jingle above.
+  try {
+    const _uuid = _stationUuidById(stationId);
+    sendToAllWindows("schedule:changed", { stationUuid: _uuid, reason, at: Date.now(), ...(extra || {}) });
+  } catch {}
 }
 function _commitDayRows(stationId, effStart, dayEnd, rows) {
   const { generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
