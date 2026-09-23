@@ -406,7 +406,7 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
   useEffect(() => {
     if (!isReady) return;
     (async () => {
-      try { setCategories(await queryScoped<CategoryInfo>("SELECT id, code, name, color FROM categories", [], stationId)); } catch {}
+      try { setCategories(await queryScoped<CategoryInfo>("SELECT id, code, name, color FROM categories WHERE deleted_at IS NULL", [], stationId)); } catch {}
     })();
   }, [isReady]);
 

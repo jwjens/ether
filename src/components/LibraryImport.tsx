@@ -341,7 +341,7 @@ export default function LibraryImport({ onClose }: Props) {
     setProgress({ done: 0, total: parseResult.rows.length });
 
     // Pre-load category map
-    const cats = await queryScoped<{ id: number; code: string }>("SELECT id, code FROM categories", [], stationId);
+    const cats = await queryScoped<{ id: number; code: string }>("SELECT id, code FROM categories WHERE deleted_at IS NULL", [], stationId);
     const catMap: Record<string, number> = {};
     cats.forEach(c => { catMap[c.code] = c.id; });
 

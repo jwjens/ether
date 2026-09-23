@@ -128,7 +128,7 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
   const loadCategories = useCallback(async () => {
     if (!isReady) return;
     try {
-      const rows = await queryScoped<Category>("SELECT id, code, name, color FROM categories ORDER BY code", [], stationId);
+      const rows = await queryScoped<Category>("SELECT id, code, name, color FROM categories WHERE deleted_at IS NULL ORDER BY code", [], stationId);
       setCategories(rows);
     } catch {}
   }, [isReady, stationId]);

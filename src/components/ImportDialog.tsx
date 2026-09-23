@@ -35,7 +35,7 @@ export default function ImportDialog({ onDone }: Props) {
   useEffect(() => {
     if (!isReady) return;
     (async () => {
-      const cats = await queryScoped<Category>("SELECT id, code, name, color FROM categories ORDER BY code", [], stationId);
+      const cats = await queryScoped<Category>("SELECT id, code, name, color FROM categories WHERE deleted_at IS NULL ORDER BY code", [], stationId);
       setCategories(cats);
     })();
   }, [isReady]);
@@ -45,7 +45,7 @@ export default function ImportDialog({ onDone }: Props) {
     const colors = ["#ef4444", "#f59e0b", "#22c55e", "#3b82f6", "#8b5cf6", "#ec4899", "#14b8a6", "#6366f1"];
     const color = colors[categories.length % colors.length];
     await (window as any).ether.categories.create({ station_id: stationId, code: newCatCode.trim().toUpperCase(), name: newCatName.trim(), color });
-    const cats = await queryScoped<Category>("SELECT id, code, name, color FROM categories ORDER BY code", [], stationId);
+    const cats = await queryScoped<Category>("SELECT id, code, name, color FROM categories WHERE deleted_at IS NULL ORDER BY code", [], stationId);
     setCategories(cats);
     const newCat = cats.find(c => c.code === newCatCode.trim().toUpperCase());
     if (newCat) setSelectedCat(newCat.id);

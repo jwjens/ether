@@ -5243,7 +5243,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
       const [r] = await query<{ c: number }>("SELECT COUNT(*) as c FROM songs WHERE deleted_at IS NULL");
       setCount(r ? r.c : 0);
       // station_id scoping: Strategy B — single table
-      setCatList(await queryScoped<{ id: number; code: string; name: string | null; color: string | null }>("SELECT id, code, name, color FROM categories ORDER BY code", [], stationId));
+      setCatList(await queryScoped<{ id: number; code: string; name: string | null; color: string | null }>("SELECT id, code, name, color FROM categories WHERE deleted_at IS NULL ORDER BY code", [], stationId));
     } catch (e) { console.error(e); setStatus("Error: " + e); }
     setLoading(false);
   };

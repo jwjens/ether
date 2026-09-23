@@ -26,13 +26,16 @@ function walk(dir: string, out: string[] = []): string[] {
 
 /** Every `FROM shows` occurrence with the ~400 chars that follow — enough to cover a multi-line
  *  WHERE, an ORDER BY, and the closing backtick of a template literal. */
-function showsQueries(src: string): string[] {
+const SHOWS_RE = /FROM\s+shows\b/gi;
+const CATS_RE  = /FROM\s+categories\b/gi;
+function tableQueries(src: string, re: RegExp): string[] {
   const out: string[] = [];
-  const re = /FROM\s+shows\b/gi;
+  re.lastIndex = 0;                 // shared literal: reset before every file
   let m: RegExpExecArray | null;
   while ((m = re.exec(src)) !== null) out.push(src.slice(m.index, m.index + 400));
   return out;
 }
+const showsQueries = (src: string) => tableQueries(src, SHOWS_RE);
 
 describe("every query that reads `shows` must exclude soft-deleted rows", () => {
   const files = walk(SRC);
@@ -54,6 +57,41 @@ describe("every query that reads `shows` must exclude soft-deleted rows", () => 
       }
     }
     expect(offenders, `these read shows without excluding deleted rows:\n  ${offenders.join("\n  ")}`)
+      .toEqual([]);
+  });
+});
+
+// 2026-09-24: the identical defect, in the identical shape, on `categories`. The Categories tab's own
+// list did NOT filter, so deleting a category set deleted_at, the list re-read, the row came back, and
+// the screen never changed — no error, because nothing had failed. ClocksTab kept offering the deleted
+// category as a clock-slot target. Exactly the ShowsTab story above: the page you delete FROM is the
+// one that lies to you. docs/category-delete-silent-2026-09-24.md
+describe("every query that reads `categories` must exclude soft-deleted rows", () => {
+  const files = walk(SRC);
+  // A sub-select counting songs BY category (`... FROM songs WHERE category_id = c.id)`) is not a read
+  // OF categories. Only a real `FROM categories` is this guard's business.
+  const EXEMPT = [
+    /FROM\s+categories\s*\)/i,     // `(SELECT COUNT(*) … FROM songs …)` closing a sub-select
+    /FROM\s+categories\s*\./i,     // prose naming a COLUMN ("from categories.overlay_lead_in_sec")
+  ];
+
+  it("finds the category queries at all (the grep itself still works)", () => {
+    const total = files.reduce((n, f) => n + tableQueries(readFileSync(f, "utf8"), CATS_RE).length, 0);
+    expect(total).toBeGreaterThan(3);
+  });
+
+  it("has no `FROM categories` without a deleted_at guard", () => {
+    const offenders: string[] = [];
+    for (const f of files) {
+      const src = readFileSync(f, "utf8");
+      for (const q of tableQueries(src, CATS_RE)) {
+        if (EXEMPT.some(re => re.test(q))) continue;
+        if (!/\bdeleted_at\s+IS\s+NULL/i.test(q)) {
+          offenders.push(`${f.replace(SRC, "src")} :: ${q.split("\n").slice(0, 3).join(" ").trim().slice(0, 120)}`);
+        }
+      }
+    }
+    expect(offenders, `these read categories without excluding deleted rows:\n  ${offenders.join("\n  ")}`)
       .toEqual([]);
   });
 });

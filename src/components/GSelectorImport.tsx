@@ -185,7 +185,7 @@ export default function GSelectorImport({ onClose }: { onClose?: () => void }) {
 
       // Build a {code → id} map so songs can get their category_id
       const catMap: Record<string, number> = {};
-      const catRows = await queryScoped<{ id: number; code: string }>("SELECT id, code FROM categories", [], stationId);
+      const catRows = await queryScoped<{ id: number; code: string }>("SELECT id, code FROM categories WHERE deleted_at IS NULL", [], stationId);
       catRows.forEach(r => { catMap[r.code.toUpperCase()] = r.id; });
 
       // ── Songs ──
