@@ -32,8 +32,13 @@ export function CategoriesTab({ cats: catsProp, onMutated, selectedCategoryId, o
   const load = async () => {
     if (hosted) { onMutated!(["categories"]); return; }
     if (!isReady) return;
+    // `AND c.deleted_at IS NULL` is LOAD-BEARING. categoriesDelete is a SOFT delete (it sets
+    // deleted_at and leaves the row), so without this the list re-read after a delete returns the row
+    // it just deleted and the screen never changes — "I press Delete, nothing happens, no error".
+    // Receipt: category id=15 "tt test categoyr" was deleted 2026-09-15 and was still listed on
+    // 2026-09-24. docs/category-delete-silent-2026-09-24.md
     const rows = await queryScoped<Category & { song_count: number }>(
-      "SELECT c.*, (SELECT COUNT(*) FROM songs WHERE category_id = c.id) as song_count FROM categories c WHERE c.station_id = ? ORDER BY c.code",
+      "SELECT c.*, (SELECT COUNT(*) FROM songs WHERE category_id = c.id) as song_count FROM categories c WHERE c.station_id = ? AND c.deleted_at IS NULL ORDER BY c.code",
       [stationId], stationId, { skipScoping: true }
     );
     setCats(rows);
@@ -101,7 +106,13 @@ export function CategoriesTab({ cats: catsProp, onMutated, selectedCategoryId, o
     if (!confirm(`Delete category "${label}"?\n\nSongs in this category won't be deleted, but they'll lose this category assignment.`)) return;
     setSaveError("");
     try {
-      await (window as any).ether.categories.delete(editing.uuid, stationId);
+      // categories:delete NEVER rejects — the handler catches and RETURNS { ok:false, error }
+      // (electron/sync/handlers/categories.js:190-193), a resolved promise. Awaiting it and ignoring
+      // the result made every possible refusal invisible: no throw, so no catch, so no message, and
+      // load() ran regardless. Read the result; a refusal now says why, and the editor stays OPEN so
+      // the reason is still on screen next to the button that was pressed.
+      const res = await (window as any).ether.categories.delete(editing.uuid, stationId);
+      if (!res?.ok) { setSaveError(res?.error || "Delete failed"); return; }
       load();
       setEditing(null);
     } catch (e: any) {

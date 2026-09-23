@@ -232,7 +232,9 @@ export function ClocksTab({ clocks: clocksProp, cats: catsProp, spotCats: spotCa
     if (hosted) { onMutated!(["clocks", "categories", "clock_slots", "clock_breaks"]); loadSpotCats(); return; }
     if (!isReady) return;
     setClocks(await queryScoped<Clock>("SELECT * FROM clocks WHERE deleted_at IS NULL ORDER BY name", [], stationId));
-    setCats(await queryScoped<Category>("SELECT * FROM categories ORDER BY priority, code", [], stationId));
+    // Same soft-delete trap as the Categories tab: unfiltered, a deleted category stays selectable as
+    // a clock-slot target. docs/category-delete-silent-2026-09-24.md
+    setCats(await queryScoped<Category>("SELECT * FROM categories WHERE deleted_at IS NULL ORDER BY priority, code", [], stationId));
     loadSpotCats();
   };
 
