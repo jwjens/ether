@@ -1,6 +1,6 @@
 # Slice 1 — real-time-safe audio callback: PROPOSAL
 
-**Date:** 2026-09-24 · **Branch:** `log-reader-flip` @ `290be25` · **Status:** PROPOSED — no code. Build on Jeff's GO.
+**Date:** 2026-09-24 · **Branch:** `log-reader-flip` @ `290be25` · **Status:** BUILT 2026-09-24 (S0–S8) — see §10; soak awaiting GO (§11).
 **Governs:** `docs/strata-to-ethercast-build-spec.md` §4 slice 1 (as amended: harness = slice 0, this = slice 1)
 and the Bencina rules quoted there: *no (de)allocation, no mutex locks, no disk I/O, no calls that may
 block; preallocate; talk to the callback through lock-free FIFOs.* The source list is
@@ -425,3 +425,117 @@ brief's point):
 - The drain thread (`audio.rs:2929-3111`), which is not the audio callback, is untouched. Its
   allocation-free passthrough and its delay FIFO are separate work. So is the per-station
   **device-switch restarts the track** behaviour (`audio.rs:2230-2263`), which is kept exactly as it is.
+
+---
+
+## 10 · Build report (2026-09-24) — S0–S8 built, soak NOT run (awaiting Jeff's GO)
+
+**Status:** BUILT. Local commits on `log-reader-flip`; no push, no tag, no installer.
+
+| Step | Commit(s) | Receipt |
+|---|---|---|
+| S0 goldens extended at current code | `b2c8b6d`, `9c7d3a8` | +6 renders: 1024/441-frame blocks, 48 kHz device + monitor 0.7, aux deck D (speech) + duck over music, processing on/off; aux ring as a 3rd tap. Two commits because capture refuses a dirty `native/src`. |
+| S1 scratch lanes | `0e8614d` | 43/43 bit-exact |
+| S2 events + liveness counter | `99d0f2c` | 43/43 bit-exact |
+| S3 callback owns state; Params / RtCmd / garbage / triple buffer | `e45f077` | 43/43 bit-exact; `commands_through_the_queue_reproduce_the_slice1_golden`; `a_param_block_never_changes_mid_buffer` (1 000 buffers uniform under a 20 000-block barrage); `triple_buffer_…never_a_torn_one` |
+| proposal doc | `32d5479` | — |
+| S4 decode workers + 2 s rings | `9069c9c` | 43/43 bit-exact **incl. frame counts** (EOF lands on the same frame); `threaded_ring_delivers_the_direct_decode` (real worker thread, 20 runs × 14 376 028 samples, bit-identical); `underrun_is_silence_counted_and_reported_and_never_an_ending`; `eof_is_an_ending_and_is_not_counted_as_an_underrun` |
+| S5 planar ebur128 feed | `61b63dc` | 43/43 bit-exact |
+| S6 trap + counters + wire + heartbeat + ledger | `e2cd53b` | **0 allocations inside the callback across all 43 renders**; trap proven live (2 counted for one Vec inside scope, 0 outside); contract smoke ALL PASS (54 keys) |
+| S7 FTZ/DAZ | `7896e92`, goldens `cd8862d` | FTZ proven (subnormal → 0 inside, restored after). **Ruling 3 report: ZERO taps changed** — 43/43 still bit-exact, max Δ 0. Re-captured at `7896e92`; the old manifest is kept as `native/goldens/manifest-6bd33e6.json`; 88/88 taps identical between them. |
+| S8 Health Monitor row + help | `a3917cd` | tsc 0 errors. **Rendered row UNVERIFIED** — check: open the Health Monitor, look for "audio engine · underruns 0 · overruns 0 · lock misses 0" under each station. |
+| soak switch | `c99baef` | `ETHER_SOAK_BUFFER_FRAMES` (dev-only, ruling 5) |
+
+### The underrun receipt (Jeff's condition)
+- **Silence for that deck only, counted, reported:** `underrun_is_silence_counted_and_reported_and_never_an_ending`
+  asserts 280 silent frames on the starved deck, `underruns = 1`, `underrun_frames = 280`, and one
+  `RtEvent::Underrun { slot: 0, frames: 280 }`. The dispatch thread logs it as
+  "UNDERRUN … position held, track NOT ended". The Health Monitor line turns amber, and an `audio-rt` line
+  goes to the ledger.
+- **No advance:** `frames_played` stays at 200 (the real frames), and playback resumes at the next sample
+  (400 × 1e-6) when the worker catches up.
+- **No state change:** the finished flag is not raised, the source is kept, the deck stays active and
+  unpaused, and `src_gen` is unchanged. The published meter frame says the same.
+- **No play_log row, and nothing reads it as an ending** (static; the soak is the runtime check):
+  - the daemon treats a track as ended only on `status === "ended"` (`audiod/engine.js:609-611`);
+  - that status comes only from the finished flag (`native/src/lib.rs:281-294`);
+  - `play_log` rows are written only in `_fireStart`, i.e. when a deck goes live (`audiod/engine.js:1728`);
+  - the daemon's position stays on the sample clock unless it reads exactly 0 past 1 s (`engine.js:259`),
+    and an underrun freezes `frames_played` at its last non-zero value, so no early segue is triggered.
+- **A real end of file is not an underrun:** `eof_is_an_ending_and_is_not_counted_as_an_underrun`.
+
+### Deviations from the proposal, stated
+- **The inner EQ/processor mutexes stay** (§4 had proposed plain fields). Since S3 only the callback locks
+  them, so they are uncontended by construction, and every miss branch now counts into `lock_misses`
+  (expected 0). This means less churn in the arithmetic S1–S5 had to keep bit-exact.
+- **`npm run test:rust` changed twice:**
+  - the processor timing benches run in a separate single-threaded pass (C3 failed once only under
+    parallel harness load);
+  - the harness pass runs with `--test-threads=2` (a fully parallel run was reaped for low memory).
+- **An allocation the inventory did not list:** `rustfft`'s `process()` allocates its scratch on every call
+  (`rustfft-6/src/lib.rs:196`), every 1024 samples, in the EQ analyser. S6 fixed it. The count before the
+  fix was never measured; the zero after it was.
+- **A test bug of mine, fixed in S5:** the parameter-barrage test could leave its sender spinning on a full
+  queue once the render loop stopped, which hung the first S5 run.
+
+### Gates at `c99baef`
+| Gate | Result |
+|---|---|
+| `npm run test:rust` | 25 + 7 passed, 0 failed (1 ignored = explicit capture) |
+| No-audio smokes (19) + `smoke-logreader-anchor` | 18/19 + 18 pass. **`smoke-topofhour` FAILS — pre-existing** (it fails identically on `b72b8ef`; nothing it reads changed). ⚠ `smoke-orphan`, `smoke-shutdown` and `accept-fallback` spawn the daemon with the **tracked** `native/ether-audio.node`, so they exercised the old engine, not this one. |
+| vitest | 32 files, 430 tests passed |
+| `check:audio-isolation` | passed |
+| `tsc --noEmit` | 0 errors |
+| NAPI determinism on the rebuilt `.node` | two fresh processes, **43/43 bit-exact** each |
+
+**Rebuilt `.node`:** `native/target/release/ether-audio.node`, SHA-256
+`6738e4f8b6135255bcbf366e0a2253cb4a5b520173dac1dd465d9650ef6b38b1`, 4 503 040 bytes, built
+2026-09-24 12:11:42 −0700 from `c99baef`. The **tracked** `native/ether-audio.node` is untouched
+(`4876be7964cd7a8239c8c845cf7fd6981515ad656878702e6a5c896f66f4aa8c`).
+
+### Architecture compliance
+- **Spec §4 rule 1 (no new DSP until the callback is safe):** no DSP was added. The only arithmetic-adjacent
+  change is FTZ, which changed zero samples.
+- **Rule 2 (every change proven against a golden):** every step nulled against the goldens, bit-exact.
+- **Bencina rules:**
+  - no allocation in the callback (trap: 0);
+  - no contended lock (all channels are lock-free; the remaining try_locks are uncontended and counted);
+  - no disk I/O (decode on workers);
+  - no logging and no clock reads (events queue; cpal timestamps).
+- **BUILD THE SENSE:** the counters flow to the heartbeat, the ledger and the Health Monitor in this slice.
+  No temporary watcher was created. The soak script is a manual, one-shot test tool, not persistence.
+
+## 11 · Soak instructions (NOT started — Jeff's GO)
+
+The soak runs the slice-1 engine in an **isolated daemon** against a copy of the DB. It uses AUTO with the
+station's own catalogue, so tracks load continuously, and it moves the GEQ and deck C's fader the whole
+time. It **plays through this machine's output device** (monitor at 0.01).
+
+1. **Close any running Ether** on this box, and make sure no daemon is running.
+2. **Swap the slice-1 addon in** (the daemon loads `native/ether-audio.node`, `audiod/ether-audiod.js:140`).
+   This is a working-tree change to a tracked file, for the duration of the soak only:
+   ```
+   cd C:\openair\native
+   copy ether-audio.node ether-audio.node.bak-pre-slice1-soak
+   copy target\release\ether-audio.node ether-audio.node
+   ```
+3. **Run** (1 hour at the smallest buffer; `--minutes 480` for the 8 h Jeff may call later):
+   ```
+   cd C:\openair
+   node scripts/soak-rt-callback.js --minutes 60 --buffer min --station 1
+   ```
+   - It prints the counters every minute, then a RESULT block. PASS means zero underruns, zero overruns
+     and zero lock misses, with tracks loaded.
+   - It refuses to run if the engine doesn't report `rt_callbacks`, i.e. the swap didn't happen.
+   - ⚠ UNVERIFIED: whether WASAPI shared mode accepts a fixed buffer. The daemon log prints
+     `SOAK: fixed device buffer N frames`. If it prints `build_output_stream … retrying` instead, rerun
+     with `--buffer 480` (or the device default by omitting the env var) and record which size ran.
+4. **Restore the tracked addon and verify:**
+   ```
+   cd C:\openair\native
+   copy ether-audio.node.bak-pre-slice1-soak ether-audio.node
+   certutil -hashfile ether-audio.node SHA256     (must print 4876be79…4aa8c)
+   del ether-audio.node.bak-pre-slice1-soak
+   ```
+5. The daemon log path is printed at the start. Its `[mix sN] … | rt ur=+Δ ov=+Δ lm=+Δ ev=+Δ` lines and any
+   `UNDERRUN` lines are the per-5-second record.
