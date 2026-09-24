@@ -1620,13 +1620,18 @@ mod rt_command_path {
         let mut garbage = h.garbage_cons;
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = stop.clone();
+        // The renderer tells the sender to give up once it has rendered enough; without this, a sender that
+        // is still pushing when the render loop ends spins on a full queue for ever (seen: S5 run).
+        let done = Arc::new(AtomicBool::new(false));
+        let done2 = done.clone();
         let sender = std::thread::spawn(move || {
             let mut sent = 0u32;
-            while sent < 20_000 {
+            while sent < 20_000 && !done2.load(Ordering::Acquire) {
                 let mut p = base;
                 p.master_vol = if sent % 2 == 0 { 0.0 } else { 1.0 };
                 let mut c = RtCmd::Params(Box::new(p));
                 loop {
+                    if done2.load(Ordering::Acquire) { break; }
                     match cmd.try_push(c) { Ok(()) => break, Err(back) => { c = back; while garbage.try_pop().is_some() {} std::thread::yield_now(); } }
                 }
                 sent += 1;
@@ -1648,6 +1653,7 @@ mod rt_command_path {
             buffers += 1;
             if buffers >= 2_900 { break; }   // the prefilled ring holds 3 000 buffers of the DC source
         }
+        done.store(true, Ordering::Release);
         sender.join().unwrap();
         println!("[rt-cmd] {} buffers, all uniform: {} at master 0.0, {} at master 1.0", buffers, zeros, halves);
         assert!(zeros > 0 && halves > 0, "both fader states must have been rendered");

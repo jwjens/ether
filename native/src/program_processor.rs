@@ -228,7 +228,17 @@ impl LoudnessRide {
     #[inline]
     fn update(&mut self, interleaved_in: &[f32]) -> f32 {
         let _ = self.meter.add_frames_f32(interleaved_in);
-        let frames = interleaved_in.len() / 2;
+        self.advance(interleaved_in.len() / 2)
+    }
+    /// SLICE 1 S5 — the same, fed PLANAR (the callback's own L/R lanes) through ebur128's planar entry
+    /// point, so no interleave scratch is needed on the audio thread.
+    #[inline]
+    fn update_planar(&mut self, l: &[f32], r: &[f32]) -> f32 {
+        let _ = self.meter.add_frames_planar_f32(&[l, r]);
+        self.advance(l.len().min(r.len()))
+    }
+    #[inline]
+    fn advance(&mut self, frames: usize) -> f32 {
         self.since_eval += frames;
         if self.since_eval >= self.eval_every {
             self.since_eval = 0;
@@ -277,7 +287,6 @@ pub struct ProgramProcessor {
     ride: LoudnessRide,
     limiter: TruePeakLimiter,
     pub target_lufs: f32,
-    scratch: Vec<f32>, // preallocated interleave buffer for the ebur128 meter feed (no RT alloc)
 }
 impl ProgramProcessor {
     pub fn new(sample_rate: f32, target_lufs: f32) -> Self {
@@ -285,7 +294,6 @@ impl ProgramProcessor {
             ride: LoudnessRide::new(sample_rate, target_lufs),
             limiter: TruePeakLimiter::new(sample_rate),
             target_lufs,
-            scratch: Vec::with_capacity(8192),
         }
     }
     /// Runtime target change (from settings) — no realloc, no state reset.
@@ -327,14 +335,13 @@ impl ProgramProcessor {
     pub fn set_ride_hold(&mut self, hold: bool) { self.ride.hold = hold; }
     /// Whether the ride is currently frozen — surfaced so the meters can say so rather than look stuck.
     pub fn ride_held(&self) -> bool { self.ride.hold }
-    /// Process planar L/R IN PLACE (the callback holds separate out_l/out_r Vecs). Same chain as
-    /// process_block; the ebur128 meter is fed via a preallocated interleave scratch (no RT alloc).
+    /// Process planar L/R IN PLACE (the callback's lanes). Same chain as process_block. SLICE 1 S5: the
+    /// ebur128 meter is fed planar (add_frames_planar_f32) — the interleave scratch this used to fill, which
+    /// GREW (allocated) on the audio thread for any buffer over 4 096 frames, is gone.
     #[inline]
     pub fn process_planar(&mut self, l: &mut [f32], r: &mut [f32]) {
         let n = l.len().min(r.len());
-        self.scratch.clear();
-        for i in 0..n { self.scratch.push(l[i]); self.scratch.push(r[i]); }
-        let g = self.ride.update(&self.scratch);
+        let g = self.ride.update_planar(&l[..n], &r[..n]);
         for i in 0..n {
             let (ol, or) = self.limiter.process(l[i] * g, r[i] * g);
             l[i] = ol; r[i] = or;
