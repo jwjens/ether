@@ -1,0 +1,1372 @@
+{
+  "about": "DSP parity harness goldens — docs/dsp-parity-harness.md. Hashes are FNV-1a 64 over raw f32 bits. WAVs are gitignored; regenerate with capture_goldens at `commit`.",
+  "block_frames": 480,
+  "chain": "Ether v1 (shipped processor params: -14 LUFS, -1.0 dBTP, 120 ms, 1.5 dB/s, ±12 dB)",
+  "commit": "6bd33e602c27e6cca886e1c9135b4619a04adab3",
+  "inputs": {
+    "isp_m1": {
+      "bytes": 1764044,
+      "file": "isp_m1.wav",
+      "fnv": "54ded2ebd5ac0b24"
+    },
+    "music": {
+      "bytes": 62597094,
+      "file": "music.wav",
+      "fnv": "a9b76206dc40dcae"
+    },
+    "silence": {
+      "bytes": 1764044,
+      "file": "silence.wav",
+      "fnv": "679f3cdbe1c54764"
+    },
+    "speech": {
+      "bytes": 2910440,
+      "file": "speech.wav",
+      "fnv": "f8e4f678d9383526"
+    },
+    "sweep_20_20k_m18": {
+      "bytes": 1764044,
+      "file": "sweep_20_20k_m18.wav",
+      "fnv": "f2e03db5bd3b5adc"
+    },
+    "tone_1k_m18": {
+      "bytes": 1764044,
+      "file": "tone_1k_m18.wav",
+      "fnv": "34d355bbc0503f84"
+    }
+  },
+  "null_bar": {
+    "dbfs": -120,
+    "max_abs": 9.999999974752427e-7
+  },
+  "rate": 44100,
+  "renders": {
+    "isp_m1__EQ": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": [
+          0.0,
+          4.0,
+          0.0,
+          0.0,
+          0.0,
+          -3.0,
+          0.0,
+          0.0,
+          2.0,
+          0.0
+        ],
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "28628901df4f152f",
+        "lufs_i": -0.7787945451690423,
+        "peak": 0.6561295986175537,
+        "tp_dbtp": -1.0683588445253966
+      },
+      "stream": {
+        "hash": "28628901df4f152f",
+        "lufs_i": -0.7787945451690423,
+        "peak": 0.6561295986175537,
+        "tp_dbtp": -1.0683588445253966
+      },
+      "taps_bit_identical": true
+    },
+    "isp_m1__LINKED": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "ca8906f25fe220b9",
+        "lufs_i": -1.189956013824241,
+        "peak": 0.6028370261192322,
+        "tp_dbtp": -1.3345873483110742
+      },
+      "stream": {
+        "hash": "ca8906f25fe220b9",
+        "lufs_i": -1.189956013824241,
+        "peak": 0.6028370261192322,
+        "tp_dbtp": -1.3345873483110742
+      },
+      "taps_bit_identical": true
+    },
+    "isp_m1__LOCAL": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": false,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "ca8906f25fe220b9",
+        "lufs_i": -1.189956013824241,
+        "peak": 0.6028370261192322,
+        "tp_dbtp": -1.3345873483110742
+      },
+      "stream": {
+        "hash": "f7ffbfc19038c083",
+        "lufs_i": 5.354369283737884,
+        "peak": 0.8912353515625,
+        "tp_dbtp": 2.113672980986453
+      },
+      "taps_bit_identical": false
+    },
+    "isp_m1__OFF": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": false,
+        "proc_split": false,
+        "proc_stream": false,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "f7ffbfc19038c083",
+        "lufs_i": 5.354369283737884,
+        "peak": 0.8912353515625,
+        "tp_dbtp": 2.113672980986453
+      },
+      "stream": {
+        "hash": "f7ffbfc19038c083",
+        "lufs_i": 5.354369283737884,
+        "peak": 0.8912353515625,
+        "tp_dbtp": 2.113672980986453
+      },
+      "taps_bit_identical": true
+    },
+    "isp_m1__SPLIT": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": true,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": -2.0,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": -16.0,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "ca8906f25fe220b9",
+        "lufs_i": -1.189956013824241,
+        "peak": 0.6028370261192322,
+        "tp_dbtp": -1.3345873483110742
+      },
+      "stream": {
+        "hash": "c23bcb610342ba8f",
+        "lufs_i": -1.7381487278585466,
+        "peak": 0.5512399673461914,
+        "tp_dbtp": -2.1263154951974057
+      },
+      "taps_bit_identical": false
+    },
+    "isp_m1__STREAM": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": false,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "f7ffbfc19038c083",
+        "lufs_i": 5.354369283737884,
+        "peak": 0.8912353515625,
+        "tp_dbtp": 2.113672980986453
+      },
+      "stream": {
+        "hash": "ca8906f25fe220b9",
+        "lufs_i": -1.189956013824241,
+        "peak": 0.6028370261192322,
+        "tp_dbtp": -1.3345873483110742
+      },
+      "taps_bit_identical": false
+    },
+    "music__EQ": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": [
+          0.0,
+          4.0,
+          0.0,
+          0.0,
+          0.0,
+          -3.0,
+          0.0,
+          0.0,
+          2.0,
+          0.0
+        ],
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 7193280,
+      "monitor": {
+        "hash": "06006f930d64855a",
+        "lufs_i": -13.96469836444281,
+        "peak": 0.7850227952003479,
+        "tp_dbtp": -2.095790523416106
+      },
+      "stream": {
+        "hash": "06006f930d64855a",
+        "lufs_i": -13.96469836444281,
+        "peak": 0.7850227952003479,
+        "tp_dbtp": -2.095790523416106
+      },
+      "taps_bit_identical": true
+    },
+    "music__LINKED": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 7193280,
+      "monitor": {
+        "hash": "c4f6d030c2836a10",
+        "lufs_i": -13.91969950981289,
+        "peak": 0.7387356758117676,
+        "tp_dbtp": -2.5795997580955725
+      },
+      "stream": {
+        "hash": "c4f6d030c2836a10",
+        "lufs_i": -13.91969950981289,
+        "peak": 0.7387356758117676,
+        "tp_dbtp": -2.5795997580955725
+      },
+      "taps_bit_identical": true
+    },
+    "music__LOCAL": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": false,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 7193280,
+      "monitor": {
+        "hash": "c4f6d030c2836a10",
+        "lufs_i": -13.91969950981289,
+        "peak": 0.7387356758117676,
+        "tp_dbtp": -2.5795997580955725
+      },
+      "stream": {
+        "hash": "799835688122ca1d",
+        "lufs_i": -9.895163172516536,
+        "peak": 0.8744936585426331,
+        "tp_dbtp": -1.1527452357954957
+      },
+      "taps_bit_identical": false
+    },
+    "music__OFF": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": false,
+        "proc_split": false,
+        "proc_stream": false,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 7193280,
+      "monitor": {
+        "hash": "799835688122ca1d",
+        "lufs_i": -9.895163172516536,
+        "peak": 0.8744936585426331,
+        "tp_dbtp": -1.1527452357954957
+      },
+      "stream": {
+        "hash": "799835688122ca1d",
+        "lufs_i": -9.895163172516536,
+        "peak": 0.8744936585426331,
+        "tp_dbtp": -1.1527452357954957
+      },
+      "taps_bit_identical": true
+    },
+    "music__OFF_TRIM_M6": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": -6.0,
+        "master_vol": 1.0,
+        "proc_local": false,
+        "proc_split": false,
+        "proc_stream": false,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 7193280,
+      "monitor": {
+        "hash": "79c4aabba4d045c0",
+        "lufs_i": -15.89516366327943,
+        "peak": 0.4382850229740143,
+        "tp_dbtp": -7.152747483285159
+      },
+      "stream": {
+        "hash": "79c4aabba4d045c0",
+        "lufs_i": -15.89516366327943,
+        "peak": 0.4382850229740143,
+        "tp_dbtp": -7.152747483285159
+      },
+      "taps_bit_identical": true
+    },
+    "music__SPLIT": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": true,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": -2.0,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": -16.0,
+        "target_lufs": -14.0
+      },
+      "frames": 7193280,
+      "monitor": {
+        "hash": "c4f6d030c2836a10",
+        "lufs_i": -13.91969950981289,
+        "peak": 0.7387356758117676,
+        "tp_dbtp": -2.5795997580955725
+      },
+      "stream": {
+        "hash": "faac8108b8e46f57",
+        "lufs_i": -15.887223456040852,
+        "peak": 0.6926906704902649,
+        "tp_dbtp": -3.168261897263579
+      },
+      "taps_bit_identical": false
+    },
+    "music__STREAM": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": false,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 7193280,
+      "monitor": {
+        "hash": "799835688122ca1d",
+        "lufs_i": -9.895163172516536,
+        "peak": 0.8744936585426331,
+        "tp_dbtp": -1.1527452357954957
+      },
+      "stream": {
+        "hash": "c4f6d030c2836a10",
+        "lufs_i": -13.91969950981289,
+        "peak": 0.7387356758117676,
+        "tp_dbtp": -2.5795997580955725
+      },
+      "taps_bit_identical": false
+    },
+    "silence__EQ": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": [
+          0.0,
+          4.0,
+          0.0,
+          0.0,
+          0.0,
+          -3.0,
+          0.0,
+          0.0,
+          2.0,
+          0.0
+        ],
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "804e4c72f0659083",
+        "lufs_i": null,
+        "peak": 0.0,
+        "tp_dbtp": null
+      },
+      "stream": {
+        "hash": "804e4c72f0659083",
+        "lufs_i": null,
+        "peak": 0.0,
+        "tp_dbtp": null
+      },
+      "taps_bit_identical": true
+    },
+    "silence__LINKED": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "804e4c72f0659083",
+        "lufs_i": null,
+        "peak": 0.0,
+        "tp_dbtp": null
+      },
+      "stream": {
+        "hash": "804e4c72f0659083",
+        "lufs_i": null,
+        "peak": 0.0,
+        "tp_dbtp": null
+      },
+      "taps_bit_identical": true
+    },
+    "silence__LOCAL": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": false,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "804e4c72f0659083",
+        "lufs_i": null,
+        "peak": 0.0,
+        "tp_dbtp": null
+      },
+      "stream": {
+        "hash": "804e4c72f0659083",
+        "lufs_i": null,
+        "peak": 0.0,
+        "tp_dbtp": null
+      },
+      "taps_bit_identical": true
+    },
+    "silence__OFF": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": false,
+        "proc_split": false,
+        "proc_stream": false,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "804e4c72f0659083",
+        "lufs_i": null,
+        "peak": 0.0,
+        "tp_dbtp": null
+      },
+      "stream": {
+        "hash": "804e4c72f0659083",
+        "lufs_i": null,
+        "peak": 0.0,
+        "tp_dbtp": null
+      },
+      "taps_bit_identical": true
+    },
+    "silence__SPLIT": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": true,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": -2.0,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": -16.0,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "804e4c72f0659083",
+        "lufs_i": null,
+        "peak": 0.0,
+        "tp_dbtp": null
+      },
+      "stream": {
+        "hash": "804e4c72f0659083",
+        "lufs_i": null,
+        "peak": 0.0,
+        "tp_dbtp": null
+      },
+      "taps_bit_identical": true
+    },
+    "silence__STREAM": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": false,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "804e4c72f0659083",
+        "lufs_i": null,
+        "peak": 0.0,
+        "tp_dbtp": null
+      },
+      "stream": {
+        "hash": "804e4c72f0659083",
+        "lufs_i": null,
+        "peak": 0.0,
+        "tp_dbtp": null
+      },
+      "taps_bit_identical": true
+    },
+    "speech__EQ": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": [
+          0.0,
+          4.0,
+          0.0,
+          0.0,
+          0.0,
+          -3.0,
+          0.0,
+          0.0,
+          2.0,
+          0.0
+        ],
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 670080,
+      "monitor": {
+        "hash": "56b5fdd4e3ec95b4",
+        "lufs_i": -14.039066038181923,
+        "peak": 0.7783904075622559,
+        "tp_dbtp": -2.1351009139561077
+      },
+      "stream": {
+        "hash": "56b5fdd4e3ec95b4",
+        "lufs_i": -14.039066038181923,
+        "peak": 0.7783904075622559,
+        "tp_dbtp": -2.1351009139561077
+      },
+      "taps_bit_identical": true
+    },
+    "speech__LINKED": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 670080,
+      "monitor": {
+        "hash": "d7cc32a97b90e6ed",
+        "lufs_i": -13.959342722296503,
+        "peak": 0.7656039595603943,
+        "tp_dbtp": -2.2571221175976666
+      },
+      "stream": {
+        "hash": "d7cc32a97b90e6ed",
+        "lufs_i": -13.959342722296503,
+        "peak": 0.7656039595603943,
+        "tp_dbtp": -2.2571221175976666
+      },
+      "taps_bit_identical": true
+    },
+    "speech__LOCAL": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": false,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 670080,
+      "monitor": {
+        "hash": "d7cc32a97b90e6ed",
+        "lufs_i": -13.959342722296503,
+        "peak": 0.7656039595603943,
+        "tp_dbtp": -2.2571221175976666
+      },
+      "stream": {
+        "hash": "514e84f8f76dc2aa",
+        "lufs_i": -13.160191840303112,
+        "peak": 0.728729248046875,
+        "tp_dbtp": -2.577396927029645
+      },
+      "taps_bit_identical": false
+    },
+    "speech__OFF": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": false,
+        "proc_split": false,
+        "proc_stream": false,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 670080,
+      "monitor": {
+        "hash": "514e84f8f76dc2aa",
+        "lufs_i": -13.160191840303112,
+        "peak": 0.728729248046875,
+        "tp_dbtp": -2.577396927029645
+      },
+      "stream": {
+        "hash": "514e84f8f76dc2aa",
+        "lufs_i": -13.160191840303112,
+        "peak": 0.728729248046875,
+        "tp_dbtp": -2.577396927029645
+      },
+      "taps_bit_identical": true
+    },
+    "speech__SPLIT": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": true,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": -2.0,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": -16.0,
+        "target_lufs": -14.0
+      },
+      "frames": 670080,
+      "monitor": {
+        "hash": "d7cc32a97b90e6ed",
+        "lufs_i": -13.959342722296503,
+        "peak": 0.7656039595603943,
+        "tp_dbtp": -2.2571221175976666
+      },
+      "stream": {
+        "hash": "b0d4b213bd3d9fa2",
+        "lufs_i": -15.811692482119868,
+        "peak": 0.6843295693397522,
+        "tp_dbtp": -3.232098054745256
+      },
+      "taps_bit_identical": false
+    },
+    "speech__STREAM": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": false,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 670080,
+      "monitor": {
+        "hash": "514e84f8f76dc2aa",
+        "lufs_i": -13.160191840303112,
+        "peak": 0.728729248046875,
+        "tp_dbtp": -2.577396927029645
+      },
+      "stream": {
+        "hash": "d7cc32a97b90e6ed",
+        "lufs_i": -13.959342722296503,
+        "peak": 0.7656039595603943,
+        "tp_dbtp": -2.2571221175976666
+      },
+      "taps_bit_identical": false
+    },
+    "sweep_20_20k_m18__EQ": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": [
+          0.0,
+          4.0,
+          0.0,
+          0.0,
+          0.0,
+          -3.0,
+          0.0,
+          0.0,
+          2.0,
+          0.0
+        ],
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "f37b7e8545104979",
+        "lufs_i": -12.551951732447135,
+        "peak": 0.26195910573005676,
+        "tp_dbtp": -11.627680022857948
+      },
+      "stream": {
+        "hash": "f37b7e8545104979",
+        "lufs_i": -12.551951732447135,
+        "peak": 0.26195910573005676,
+        "tp_dbtp": -11.627680022857948
+      },
+      "taps_bit_identical": true
+    },
+    "sweep_20_20k_m18__LINKED": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "c6c06e8027ad6eab",
+        "lufs_i": -14.40260767458968,
+        "peak": 0.2219952940940857,
+        "tp_dbtp": -13.064169252803921
+      },
+      "stream": {
+        "hash": "c6c06e8027ad6eab",
+        "lufs_i": -14.40260767458968,
+        "peak": 0.2219952940940857,
+        "tp_dbtp": -13.064169252803921
+      },
+      "taps_bit_identical": true
+    },
+    "sweep_20_20k_m18__LOCAL": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": false,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "c6c06e8027ad6eab",
+        "lufs_i": -14.40260767458968,
+        "peak": 0.2219952940940857,
+        "tp_dbtp": -13.064169252803921
+      },
+      "stream": {
+        "hash": "405a2443cabc9083",
+        "lufs_i": -17.06938341620091,
+        "peak": 0.125885009765625,
+        "tp_dbtp": -17.88968480277658
+      },
+      "taps_bit_identical": false
+    },
+    "sweep_20_20k_m18__OFF": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": false,
+        "proc_split": false,
+        "proc_stream": false,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "405a2443cabc9083",
+        "lufs_i": -17.06938341620091,
+        "peak": 0.125885009765625,
+        "tp_dbtp": -17.88968480277658
+      },
+      "stream": {
+        "hash": "405a2443cabc9083",
+        "lufs_i": -17.06938341620091,
+        "peak": 0.125885009765625,
+        "tp_dbtp": -17.88968480277658
+      },
+      "taps_bit_identical": true
+    },
+    "sweep_20_20k_m18__SPLIT": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": true,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": -2.0,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": -16.0,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "c6c06e8027ad6eab",
+        "lufs_i": -14.40260767458968,
+        "peak": 0.2219952940940857,
+        "tp_dbtp": -13.064169252803921
+      },
+      "stream": {
+        "hash": "92c79a44ca0a95e1",
+        "lufs_i": -16.199387336864074,
+        "peak": 0.19053468108177185,
+        "tp_dbtp": -14.392036245756085
+      },
+      "taps_bit_identical": false
+    },
+    "sweep_20_20k_m18__STREAM": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": false,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "405a2443cabc9083",
+        "lufs_i": -17.06938341620091,
+        "peak": 0.125885009765625,
+        "tp_dbtp": -17.88968480277658
+      },
+      "stream": {
+        "hash": "c6c06e8027ad6eab",
+        "lufs_i": -14.40260767458968,
+        "peak": 0.2219952940940857,
+        "tp_dbtp": -13.064169252803921
+      },
+      "taps_bit_identical": false
+    },
+    "tone_1k_m18__EQ": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": [
+          0.0,
+          4.0,
+          0.0,
+          0.0,
+          0.0,
+          -3.0,
+          0.0,
+          0.0,
+          2.0,
+          0.0
+        ],
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "0920ca1723ef5ba1",
+        "lufs_i": -15.260668306464533,
+        "peak": 0.19933386147022247,
+        "tp_dbtp": -14.001691764842604
+      },
+      "stream": {
+        "hash": "0920ca1723ef5ba1",
+        "lufs_i": -15.260668306464533,
+        "peak": 0.19933386147022247,
+        "tp_dbtp": -14.001691764842604
+      },
+      "taps_bit_identical": true
+    },
+    "tone_1k_m18__LINKED": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "93753526d0da540f",
+        "lufs_i": -14.450236115271021,
+        "peak": 0.19930489361286163,
+        "tp_dbtp": -14.003328223360576
+      },
+      "stream": {
+        "hash": "93753526d0da540f",
+        "lufs_i": -14.450236115271021,
+        "peak": 0.19930489361286163,
+        "tp_dbtp": -14.003328223360576
+      },
+      "taps_bit_identical": true
+    },
+    "tone_1k_m18__LOCAL": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": false,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "93753526d0da540f",
+        "lufs_i": -14.450236115271021,
+        "peak": 0.19930489361286163,
+        "tp_dbtp": -14.003328223360576
+      },
+      "stream": {
+        "hash": "a90f89af25ecc083",
+        "lufs_i": -18.00197264707681,
+        "peak": 0.125885009765625,
+        "tp_dbtp": -17.994206981635653
+      },
+      "taps_bit_identical": false
+    },
+    "tone_1k_m18__OFF": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": false,
+        "proc_split": false,
+        "proc_stream": false,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "a90f89af25ecc083",
+        "lufs_i": -18.00197264707681,
+        "peak": 0.125885009765625,
+        "tp_dbtp": -17.994206981635653
+      },
+      "stream": {
+        "hash": "a90f89af25ecc083",
+        "lufs_i": -18.00197264707681,
+        "peak": 0.125885009765625,
+        "tp_dbtp": -17.994206981635653
+      },
+      "taps_bit_identical": true
+    },
+    "tone_1k_m18__SPLIT": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": true,
+        "proc_split": true,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": -2.0,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": -16.0,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "93753526d0da540f",
+        "lufs_i": -14.450236115271021,
+        "peak": 0.19930489361286163,
+        "tp_dbtp": -14.003328223360576
+      },
+      "stream": {
+        "hash": "23d671155c17590f",
+        "lufs_i": -16.123409291014514,
+        "peak": 0.15831351280212402,
+        "tp_dbtp": -16.003329431008247
+      },
+      "taps_bit_identical": false
+    },
+    "tone_1k_m18__STREAM": {
+      "cfg": {
+        "ceiling_dbtp": -1.0,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "proc_local": false,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "frames": 445920,
+      "monitor": {
+        "hash": "a90f89af25ecc083",
+        "lufs_i": -18.00197264707681,
+        "peak": 0.125885009765625,
+        "tp_dbtp": -17.994206981635653
+      },
+      "stream": {
+        "hash": "93753526d0da540f",
+        "lufs_i": -14.450236115271021,
+        "peak": 0.19930489361286163,
+        "tp_dbtp": -14.003328223360576
+      },
+      "taps_bit_identical": false
+    }
+  },
+  "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+  "src_dirty_at_capture": false,
+  "tail_buffers": 10
+}
