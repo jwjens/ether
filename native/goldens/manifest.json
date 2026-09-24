@@ -1,5 +1,5 @@
 {
-  "about": "DSP parity harness goldens — docs/dsp-parity-harness.md. Hashes are FNV-1a 64 over raw f32 bits. WAVs are gitignored; regenerate with capture_goldens at `commit`.",
+  "about": "DSP parity harness goldens — docs/dsp-parity-harness.md. Hashes are FNV-1a 64 over raw f32 bits. WAVs are gitignored; regenerate with capture_goldens at each render's `commit` (or the top-level `commit` where a render has none).",
   "block_frames": 480,
   "chain": "Ether v1 (shipped processor params: -14 LUFS, -1.0 dBTP, 120 ms, 1.5 dB/s, ±12 dB)",
   "commit": "6bd33e602c27e6cca886e1c9135b4619a04adab3",
@@ -256,6 +256,104 @@
       },
       "taps_bit_identical": false
     },
+    "music__AUXDUCK_LINKED": {
+      "aux": {
+        "hash": "f699672868ffe8ed",
+        "lufs_i": -13.959342722296503,
+        "peak": 0.7656039595603943,
+        "tp_dbtp": -2.2571221175976666
+      },
+      "cfg": {
+        "aux": {
+          "aux_gain": 1.0,
+          "duck": true,
+          "path": "speech.wav"
+        },
+        "block_frames": null,
+        "ceiling_dbtp": -1.0,
+        "device_rate": null,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "monitor_vol": null,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "commit": "b2c8b6d6d3a786856a15714f07894e63c4bf59aa",
+      "frames": 7193280,
+      "monitor": {
+        "hash": "9000af2be3647f9c",
+        "lufs_i": -13.917492046040586,
+        "peak": 0.6280320286750793,
+        "tp_dbtp": -3.8558529731390108
+      },
+      "stream": {
+        "hash": "42ef7bbf2aff4677",
+        "lufs_i": -13.844059288022239,
+        "peak": 0.7794113755226135,
+        "tp_dbtp": -2.1262169594101383
+      },
+      "taps_bit_identical": false
+    },
+    "music__AUXDUCK_OFF": {
+      "aux": {
+        "hash": "8799d4dec4f7e6aa",
+        "lufs_i": -13.160191840303112,
+        "peak": 0.728729248046875,
+        "tp_dbtp": -2.577396927029645
+      },
+      "cfg": {
+        "aux": {
+          "aux_gain": 1.0,
+          "duck": true,
+          "path": "speech.wav"
+        },
+        "block_frames": null,
+        "ceiling_dbtp": -1.0,
+        "device_rate": null,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "monitor_vol": null,
+        "proc_local": false,
+        "proc_split": false,
+        "proc_stream": false,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "commit": "b2c8b6d6d3a786856a15714f07894e63c4bf59aa",
+      "frames": 7193280,
+      "monitor": {
+        "hash": "a37d735063f18792",
+        "lufs_i": -9.774619816517037,
+        "peak": 0.8744936585426331,
+        "tp_dbtp": -1.1527452357954957
+      },
+      "stream": {
+        "hash": "b828031cb46abbb1",
+        "lufs_i": -9.99281779811066,
+        "peak": 0.8744936585426331,
+        "tp_dbtp": -1.1527452357954957
+      },
+      "taps_bit_identical": false
+    },
     "music__EQ": {
       "cfg": {
         "ceiling_dbtp": -1.0,
@@ -334,6 +432,123 @@
         "tp_dbtp": -2.5795997580955725
       },
       "taps_bit_identical": true
+    },
+    "music__LINKED_B1024": {
+      "cfg": {
+        "aux": null,
+        "block_frames": 1024,
+        "ceiling_dbtp": -1.0,
+        "device_rate": null,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "monitor_vol": null,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "commit": "b2c8b6d6d3a786856a15714f07894e63c4bf59aa",
+      "frames": 7198720,
+      "monitor": {
+        "hash": "0ece37b610962ee0",
+        "lufs_i": -13.922544563613636,
+        "peak": 0.7387356758117676,
+        "tp_dbtp": -2.5979560987730106
+      },
+      "stream": {
+        "hash": "0ece37b610962ee0",
+        "lufs_i": -13.922544563613636,
+        "peak": 0.7387356758117676,
+        "tp_dbtp": -2.5979560987730106
+      },
+      "taps_bit_identical": true
+    },
+    "music__LINKED_B441": {
+      "cfg": {
+        "aux": null,
+        "block_frames": 441,
+        "ceiling_dbtp": -1.0,
+        "device_rate": null,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "monitor_vol": null,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "commit": "b2c8b6d6d3a786856a15714f07894e63c4bf59aa",
+      "frames": 7192710,
+      "monitor": {
+        "hash": "9540004bcb8a2a3f",
+        "lufs_i": -13.926639764657258,
+        "peak": 0.764696478843689,
+        "tp_dbtp": -2.2795991839480685
+      },
+      "stream": {
+        "hash": "9540004bcb8a2a3f",
+        "lufs_i": -13.926639764657258,
+        "peak": 0.764696478843689,
+        "tp_dbtp": -2.2795991839480685
+      },
+      "taps_bit_identical": true
+    },
+    "music__LINKED_DEV48K_MON07": {
+      "cfg": {
+        "aux": null,
+        "block_frames": null,
+        "ceiling_dbtp": -1.0,
+        "device_rate": 48000,
+        "eq_bands": null,
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "monitor_vol": 0.699999988079071,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "commit": "b2c8b6d6d3a786856a15714f07894e63c4bf59aa",
+      "frames": 7793280,
+      "monitor": {
+        "hash": "efed6120a1273921",
+        "lufs_i": -17.30274684281824,
+        "peak": 0.5339130163192749,
+        "tp_dbtp": -5.415058261788359
+      },
+      "stream": {
+        "hash": "9963973c7c6f5582",
+        "lufs_i": -13.928828044623152,
+        "peak": 0.764696478843689,
+        "tp_dbtp": -2.2795991839480685
+      },
+      "taps_bit_identical": false
     },
     "music__LOCAL": {
       "cfg": {
@@ -787,13 +1002,13 @@
       "frames": 670080,
       "monitor": {
         "hash": "d7cc32a97b90e6ed",
-        "lufs_i": -13.959342722296503,
+        "lufs_i": -13.959342722296505,
         "peak": 0.7656039595603943,
         "tp_dbtp": -2.2571221175976666
       },
       "stream": {
         "hash": "d7cc32a97b90e6ed",
-        "lufs_i": -13.959342722296503,
+        "lufs_i": -13.959342722296505,
         "peak": 0.7656039595603943,
         "tp_dbtp": -2.2571221175976666
       },
@@ -821,7 +1036,7 @@
       "frames": 670080,
       "monitor": {
         "hash": "d7cc32a97b90e6ed",
-        "lufs_i": -13.959342722296503,
+        "lufs_i": -13.959342722296505,
         "peak": 0.7656039595603943,
         "tp_dbtp": -2.2571221175976666
       },
@@ -889,7 +1104,7 @@
       "frames": 670080,
       "monitor": {
         "hash": "d7cc32a97b90e6ed",
-        "lufs_i": -13.959342722296503,
+        "lufs_i": -13.959342722296505,
         "peak": 0.7656039595603943,
         "tp_dbtp": -2.2571221175976666
       },
@@ -929,7 +1144,7 @@
       },
       "stream": {
         "hash": "d7cc32a97b90e6ed",
-        "lufs_i": -13.959342722296503,
+        "lufs_i": -13.959342722296505,
         "peak": 0.7656039595603943,
         "tp_dbtp": -2.2571221175976666
       },
@@ -968,17 +1183,67 @@
       "frames": 445920,
       "monitor": {
         "hash": "f37b7e8545104979",
-        "lufs_i": -12.551951732447135,
+        "lufs_i": -12.551951732447137,
         "peak": 0.26195910573005676,
         "tp_dbtp": -11.627680022857948
       },
       "stream": {
         "hash": "f37b7e8545104979",
-        "lufs_i": -12.551951732447135,
+        "lufs_i": -12.551951732447137,
         "peak": 0.26195910573005676,
         "tp_dbtp": -11.627680022857948
       },
       "taps_bit_identical": true
+    },
+    "sweep_20_20k_m18__EQ_DEV48K_MON07": {
+      "cfg": {
+        "aux": null,
+        "block_frames": null,
+        "ceiling_dbtp": -1.0,
+        "device_rate": 48000,
+        "eq_bands": [
+          0.0,
+          4.0,
+          0.0,
+          0.0,
+          0.0,
+          -3.0,
+          0.0,
+          0.0,
+          2.0,
+          0.0
+        ],
+        "gain_db": 0.0,
+        "master_vol": 1.0,
+        "monitor_vol": 0.699999988079071,
+        "proc_local": true,
+        "proc_split": false,
+        "proc_stream": true,
+        "release_ms": 120.0,
+        "ride_clamp": 12.0,
+        "ride_rate": 1.5,
+        "stream_ceiling_dbtp": null,
+        "stream_release_ms": null,
+        "stream_ride_clamp": null,
+        "stream_ride_rate": null,
+        "stream_target_lufs": null,
+        "target_lufs": -14.0
+      },
+      "commit": "b2c8b6d6d3a786856a15714f07894e63c4bf59aa",
+      "frames": 482880,
+      "monitor": {
+        "hash": "07095d54e099d889",
+        "lufs_i": -16.216857532826264,
+        "peak": 0.18344560265541077,
+        "tp_dbtp": -14.721992688688317
+      },
+      "stream": {
+        "hash": "16879eeffc6b8915",
+        "lufs_i": -12.640681908236667,
+        "peak": 0.2620684802532196,
+        "tp_dbtp": -11.623779095836568
+      },
+      "taps_bit_identical": false
     },
     "sweep_20_20k_m18__LINKED": {
       "cfg": {
@@ -1004,13 +1269,13 @@
         "hash": "c6c06e8027ad6eab",
         "lufs_i": -14.40260767458968,
         "peak": 0.2219952940940857,
-        "tp_dbtp": -13.064169252803921
+        "tp_dbtp": -13.06416925280392
       },
       "stream": {
         "hash": "c6c06e8027ad6eab",
         "lufs_i": -14.40260767458968,
         "peak": 0.2219952940940857,
-        "tp_dbtp": -13.064169252803921
+        "tp_dbtp": -13.06416925280392
       },
       "taps_bit_identical": true
     },
@@ -1038,7 +1303,7 @@
         "hash": "c6c06e8027ad6eab",
         "lufs_i": -14.40260767458968,
         "peak": 0.2219952940940857,
-        "tp_dbtp": -13.064169252803921
+        "tp_dbtp": -13.06416925280392
       },
       "stream": {
         "hash": "405a2443cabc9083",
@@ -1106,7 +1371,7 @@
         "hash": "c6c06e8027ad6eab",
         "lufs_i": -14.40260767458968,
         "peak": 0.2219952940940857,
-        "tp_dbtp": -13.064169252803921
+        "tp_dbtp": -13.06416925280392
       },
       "stream": {
         "hash": "92c79a44ca0a95e1",
@@ -1146,7 +1411,7 @@
         "hash": "c6c06e8027ad6eab",
         "lufs_i": -14.40260767458968,
         "peak": 0.2219952940940857,
-        "tp_dbtp": -13.064169252803921
+        "tp_dbtp": -13.06416925280392
       },
       "taps_bit_identical": false
     },
@@ -1217,13 +1482,13 @@
       "frames": 445920,
       "monitor": {
         "hash": "93753526d0da540f",
-        "lufs_i": -14.450236115271021,
+        "lufs_i": -14.45023611527102,
         "peak": 0.19930489361286163,
         "tp_dbtp": -14.003328223360576
       },
       "stream": {
         "hash": "93753526d0da540f",
-        "lufs_i": -14.450236115271021,
+        "lufs_i": -14.45023611527102,
         "peak": 0.19930489361286163,
         "tp_dbtp": -14.003328223360576
       },
@@ -1251,7 +1516,7 @@
       "frames": 445920,
       "monitor": {
         "hash": "93753526d0da540f",
-        "lufs_i": -14.450236115271021,
+        "lufs_i": -14.45023611527102,
         "peak": 0.19930489361286163,
         "tp_dbtp": -14.003328223360576
       },
@@ -1319,7 +1584,7 @@
       "frames": 445920,
       "monitor": {
         "hash": "93753526d0da540f",
-        "lufs_i": -14.450236115271021,
+        "lufs_i": -14.45023611527102,
         "peak": 0.19930489361286163,
         "tp_dbtp": -14.003328223360576
       },
@@ -1359,7 +1624,7 @@
       },
       "stream": {
         "hash": "93753526d0da540f",
-        "lufs_i": -14.450236115271021,
+        "lufs_i": -14.45023611527102,
         "peak": 0.19930489361286163,
         "tp_dbtp": -14.003328223360576
       },
