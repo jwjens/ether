@@ -64,6 +64,23 @@ playout moved on to the next queued song instead. Nothing was aired from the ref
 - If the card says *unplayable row skipped*, the song's file could not be found on this machine:
   check the library entry and whether the file has been fetched from the cloud.
 
+### The "audio engine" line under each station
+
+Every station card ends with a line like *audio engine · underruns 0 · overruns 0 · lock misses 0*.
+These are the audio engine's own health counts since it started, and **all three should read 0**.
+
+- **Underruns** — a deck's player fell behind reading its file (for example a slow or sleeping disk).
+  For that moment **only that deck goes quiet**; the song does **not** end, its time does not jump, and
+  the next song is not started. The count is how you know it happened. A few after the computer wakes
+  up is the disk spinning up; a steady climb means the music drive is too slow or too busy.
+- **Overruns** — the sound card asked for audio and the engine answered late. You may have heard a
+  tick. A climb means the computer is overloaded while on air.
+- **Lock misses** — should always be 0. If it is not, write down the time and tell support.
+
+When any of them goes up, the line turns **amber for a minute** and shows the time, and a line is
+written to the health ledger (**Live events**) with how many and for which station. The totals stay
+on the card after that, in grey. Hover the line for the full detail (callbacks run, silent frames).
+
 ## The bottom half — the detail
 
 - **Audio Processing** — the loudness chain. IN and OUT loudness lead as figures, then meters for the

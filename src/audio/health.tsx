@@ -39,7 +39,14 @@ export interface HealthStation {
   // 2026-09-16: the last play the engine REFUSED (or a queue row a stall recovery could not load) —
   // deck, title, file, kind ("refused" | "unplayable"), when. null until one happens this session.
   lastRefusal?: { deck: string | null; title: string; filePath: string; kind: string; error: string; at: string } | null;
+  // Slice 1 S8: the audio callback's own counters (cumulative since the engine started; null from an engine
+  // that does not report them) and when one last rose. docs/dsp-rt-callback.md §6.
+  rt?: { underruns: number; underrunFrames: number; overruns: number; lockMisses: number; eventsDropped: number; callbacks: number } | null;
+  rtIssueAt?: string | null;
 }
+
+/** A counter that rose in the last minute is shown amber; after that the totals stay, in the quiet colour. */
+const RT_RECENT_MS = 60_000;
 export interface HealthEvent { ts: string; stationUuid: string; stationName?: string; level: HealthLevel; prevLevel: HealthLevel; reason: string; metrics?: any; }
 export interface HealthSnapshot {
   ts: string;
@@ -238,6 +245,24 @@ export function LiveHealthMonitor() {
                   {` · ${new Date(s.lastRefusal.at).toLocaleTimeString()}`}
                 </div>
               )}
+              {/* AUDIO ENGINE (slice 1 S8) — the callback's own health: a deck's decode ring running dry
+                  (underrun: that deck went silent, position held, nothing ended), a late callback
+                  (overrun), a lock the callback missed (0 by construction). All three should read 0.
+                  Amber for a minute after any of them rises; the totals stay visible after that. */}
+              {(() => {
+                const rt = s.rt;
+                if (!rt) return <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>audio engine · not reported by this engine</div>;
+                const recent = !!s.rtIssueAt && (Date.now() - new Date(s.rtIssueAt).getTime()) < RT_RECENT_MS;
+                const clean = rt.underruns === 0 && rt.overruns === 0 && rt.lockMisses === 0;
+                return (
+                  <div title={`since the engine started · ${rt.callbacks.toLocaleString()} callbacks · ${rt.underrunFrames.toLocaleString()} silent frames from underruns · ${rt.eventsDropped} events dropped`}
+                       style={{ fontSize: 12, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                                color: recent ? LEVEL_COLOR.YELLOW : clean ? "var(--text-tertiary)" : "var(--text-secondary)" }}>
+                    {`audio engine · underruns ${rt.underruns} · overruns ${rt.overruns} · lock misses ${rt.lockMisses}`}
+                    {s.rtIssueAt ? ` · last ${new Date(s.rtIssueAt).toLocaleTimeString()}` : ""}
+                  </div>
+                );
+              })()}
             </div>
             {/* The meters get the full width of the card, like the deck meters above.
                 scale="audio" on peak: it is an AMPLITUDE, so it maps through dB exactly as the
