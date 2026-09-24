@@ -25,7 +25,23 @@ const fs = require('fs');
 const path = require('path');
 const ROOT = path.join(__dirname, '..');
 
-const signExts = require(path.join(ROOT, 'electron-builder.json')).win.signExts;
+const ebConfig = require(path.join(ROOT, 'electron-builder.json'));
+const signExts = ebConfig.win.signExts;
+
+// electron-builder VALIDATES its config against a strict schema and rejects unknown properties
+// outright (app-builder-lib/src/util/config/config.ts:239). JSON has no comments, so a "_why" key
+// explaining signExts is not a comment — it is a build-breaking config error, and on a tag the build
+// that finds it is the RELEASE build. That is exactly what happened: a '_signExts_why' array added
+// beside the fix below failed electron-builder at configuration load, before one file was packaged.
+// The rationale therefore lives in THIS file, and the config stays machine-clean.
+const WIN_KEYS_26_8_1 = new Set([
+  'appId', 'artifactName', 'asar', 'asarUnpack', 'azureSignOptions', 'compression', 'cscKeyPassword',
+  'cscLink', 'defaultArch', 'detectUpdateChannel', 'disableDefaultIgnoredFiles', 'electronLanguages',
+  'electronUpdaterCompatibility', 'executableName', 'extraFiles', 'extraResources', 'fileAssociations',
+  'files', 'forceCodeSigning', 'generateUpdatesFilesForAllChannels', 'icon', 'legalTrademarks',
+  'protocols', 'publish', 'releaseInfo', 'requestedExecutionLevel', 'signAndEditExecutable',
+  'signExts', 'signtoolOptions', 'target', 'verifyUpdateCodeSignature',
+]);
 
 /** VERBATIM from app-builder-lib/out/winPackager.js:197-214. Do not "improve" it — its value is that
  *  it is the shipped algorithm, including the positive-before-negative ordering. */
@@ -100,6 +116,20 @@ function auditList(files, label) {
 }
 
 console.log('=== signExts policy (electron-builder.json → win.signExts) ===\n');
+// Checked FIRST: if the config will not load, nothing below it matters.
+{
+  const unknown = Object.keys(ebConfig.win).filter(k => !WIN_KEYS_26_8_1.has(k));
+  check('electron-builder.json win carries no key the schema will reject (JSON has no comments)',
+    unknown.length === 0, unknown.join(', '));
+  const pseudo = [];
+  for (const [section, obj] of Object.entries(ebConfig)) {
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) continue;
+    for (const k of Object.keys(obj)) if (k.startsWith('_')) pseudo.push(`${section}.${k}`);
+  }
+  check('no underscore-prefixed pseudo-comment anywhere in electron-builder.json',
+    pseudo.length === 0, pseudo.join(', '));
+}
+
 const posix = auditList(FIXTURE, 'fixture, posix separators');
 auditList(FIXTURE.map(f => f.replace(/\//g, '\\')), 'fixture, native separators');
 
