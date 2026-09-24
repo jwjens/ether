@@ -2,7 +2,9 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
-use ringbuf::{HeapRb, HeapProd, traits::{Producer, Consumer, Observer, Split}};
+use ringbuf::{HeapRb, HeapProd, HeapCons, traits::{Producer, Consumer, Observer, Split}};
+use crate::rt::{Params, RtCmd, AuxCmd, Garbage, MeterFrame, DeckMeter, RtShared, TripleWriter, TripleReader,
+                RT_CMD_QUEUE, RT_CMD_PER_BUFFER, RT_GARBAGE_QUEUE, triple};
 
 // ── Per-station audio-thread liveness (HA health signal) ──────────────────────
 // Each station stamps ITS OWN clock on every cpal output callback — there is no
@@ -412,10 +414,8 @@ pub struct DeckSlot {
     /// Set true on Play, false on Stop/finish. Used by the callback to detect
     /// natural end-of-track (source exhausted while active == true).
     pub active:   bool,
-    /// Saved for device-failover restore (reopen file, rebuild decoder).
-    pub path:     String,
-    pub title:    String,
-    pub artist:   String,
+    // (S3) path/title/artist moved to the dispatch thread's DeckShadow: the callback never holds a
+    // String, so nothing it replaces can free one on the audio thread.
     pub gain_db:  f32,
     /// CHANNEL CUT — a console channel on/off, not a fader position and not a playback state.
     /// While true this slot contributes NOTHING to the program bus, so a jingle or cart that
@@ -451,9 +451,6 @@ impl DeckSlot {
             volume:  1.0,
             paused:  true,
             active:  false,
-            path:    String::new(),
-            title:   String::new(),
-            artist:  String::new(),
             gain_db: 0.0,
             muted:   false,
             frames_played: 0,
@@ -666,11 +663,45 @@ pub struct BusState {
     pub proc_out_lufs: f32,
     pub proc_gr_db:    f32,
     pub proc_ride_gain_db: f32,
+
+    // ── SLICE 1 S3 — the callback's ends of its lock-free channels (rt.rs). ─────────────────────────
+    /// Commands from the dispatch thread, applied at the top of each buffer (≤ RT_CMD_PER_BUFFER).
+    pub(crate) cmd_cons: HeapCons<RtCmd>,
+    /// Attach/detach of the aux monitor ring, from the aux thread.
+    pub(crate) aux_cmd_cons: HeapCons<AuxCmd>,
+    /// Everything the callback replaces goes here to be freed on the dispatch thread.
+    pub(crate) garbage: HeapProd<Garbage>,
+    /// Objects the callback had to LEAK because the garbage queue was full (never freed on this thread).
+    pub(crate) garbage_leaked: u64,
+    /// Meters + telemetry, published at the end of every buffer.
+    pub(crate) meter_w: Option<TripleWriter<MeterFrame>>,
+    pub(crate) shared: Arc<RtShared>,
+    /// The GEQ bands the callback last applied, and the version they came with.
+    pub(crate) eq_bands: [f32; 10],
+    pub(crate) eq_version_applied: u64,
+    /// The dispatch-side ends, created with the state and taken once by start_station_mixer.
+    pub(crate) handles: Option<BusHandles>,
+}
+
+/// The non-callback ends of BusState's channels (see BusState::handles).
+pub(crate) struct BusHandles {
+    pub cmd_prod: HeapProd<RtCmd>,
+    pub aux_cmd_prod: HeapProd<AuxCmd>,
+    pub garbage_cons: HeapCons<Garbage>,
+    pub meter_r: TripleReader<MeterFrame>,
+    pub shared: Arc<RtShared>,
 }
 
 impl BusState {
     pub fn new(eq: crate::eq::SharedEq, ring_prod: HeapProd<f32>, sample_rate: u32, stream_connected: Arc<AtomicBool>) -> Self {
-        BusState {
+        // S3 — the channels. Created with the state so a state can never exist without them; the
+        // dispatch-side ends wait in `handles` until start_station_mixer takes them (tests never do —
+        // they drive the state directly, exactly as before).
+        let (cmd_prod, cmd_cons) = HeapRb::<RtCmd>::new(RT_CMD_QUEUE).split();
+        let (aux_cmd_prod, aux_cmd_cons) = HeapRb::<AuxCmd>::new(16).split();
+        let (garbage, garbage_cons) = HeapRb::<Garbage>::new(RT_GARBAGE_QUEUE).split();
+        let shared = RtShared::new();
+        let mut b = BusState {
             // SLICE 1 — SLOT_COUNT slots, each stamped with what it IS. Indices 0..6 keep their
             // historic meaning exactly (A/B/C, D/E/F, CART); 7..11 are the new source channels and
             // start inactive, so they contribute nothing until something loads them.
@@ -746,7 +777,207 @@ impl BusState {
             processor_room: Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
             proc_in_peak: 0.0, proc_out_peak: 0.0,
             proc_in_lufs: -70.0, proc_out_lufs: -70.0, proc_gr_db: 0.0, proc_ride_gain_db: 0.0,
+            cmd_cons,
+            aux_cmd_cons,
+            garbage,
+            garbage_leaked: 0,
+            meter_w: None,
+            shared: shared.clone(),
+            eq_bands: [0.0; 10],
+            eq_version_applied: 0,
+            handles: None,
+        };
+        // The meter channel starts on THIS state's own first frame, so the first read is the truth.
+        let (w, meter_r) = triple(b.meter_frame());
+        b.meter_w = Some(w);
+        b.handles = Some(BusHandles { cmd_prod, aux_cmd_prod, garbage_cons, meter_r, shared });
+        b
+    }
+
+    /// The operator block this state is running, as the dispatch thread's starting copy.
+    pub(crate) fn params(&self) -> Params {
+        Params {
+            volume: std::array::from_fn(|i| self.decks[i].volume),
+            muted: std::array::from_fn(|i| self.decks[i].muted),
+            kind: std::array::from_fn(|i| self.decks[i].kind),
+            duck_enabled: self.duck_enabled,
+            duck_duckable: self.duck_duckable,
+            aux_monitor_gain: self.aux_monitor_gain,
+            room_gain: self.room_gain,
+            monitor_vol: self.monitor_vol,
+            master_vol: self.master_vol,
+            master_monitor_vol: self.master_monitor_vol,
+            proc_local: self.proc_local,
+            proc_stream: self.proc_stream,
+            proc_target_lufs: self.proc_target_lufs,
+            proc_ceiling_dbtp: self.proc_ceiling_dbtp,
+            proc_release_ms: self.proc_release_ms,
+            proc_ride_rate: self.proc_ride_rate,
+            proc_ride_clamp: self.proc_ride_clamp,
+            proc_ride_bypass: self.proc_ride_bypass,
+            proc_limiter_bypass: self.proc_limiter_bypass,
+            proc_stream_target_lufs: self.proc_stream_target_lufs,
+            proc_stream_ceiling_dbtp: self.proc_stream_ceiling_dbtp,
+            proc_stream_release_ms: self.proc_stream_release_ms,
+            proc_stream_ride_rate: self.proc_stream_ride_rate,
+            proc_stream_ride_clamp: self.proc_stream_ride_clamp,
+            proc_stream_ride_bypass: self.proc_stream_ride_bypass,
+            proc_stream_limiter_bypass: self.proc_stream_limiter_bypass,
+            duck_threshold: self.duck_threshold,
+            duck_depth_db: self.duck_depth_db,
+            duck_attack_ms: self.duck_attack_ms,
+            duck_hold_ms: self.duck_hold_ms,
+            duck_release_ms: self.duck_release_ms,
+            eq_bands: self.eq_bands,
+            eq_version: self.eq_version_applied,
         }
+    }
+
+    /// Adopt a parameter block (callback, top of buffer). Plain field copies; the GEQ is re-tuned only when
+    /// its bands actually changed, on BOTH instances, as SetEq always did.
+    fn apply_params(&mut self, p: &Params) {
+        for i in 0..SLOT_COUNT {
+            self.decks[i].volume = p.volume[i];
+            self.decks[i].muted = p.muted[i];
+            self.decks[i].kind = p.kind[i];
+        }
+        self.duck_enabled = p.duck_enabled;
+        self.duck_duckable = p.duck_duckable;
+        self.aux_monitor_gain = p.aux_monitor_gain;
+        self.room_gain = p.room_gain;
+        self.monitor_vol = p.monitor_vol;
+        self.master_vol = p.master_vol;
+        self.master_monitor_vol = p.master_monitor_vol;
+        self.proc_local = p.proc_local;
+        self.proc_stream = p.proc_stream;
+        self.proc_target_lufs = p.proc_target_lufs;
+        self.proc_ceiling_dbtp = p.proc_ceiling_dbtp;
+        self.proc_release_ms = p.proc_release_ms;
+        self.proc_ride_rate = p.proc_ride_rate;
+        self.proc_ride_clamp = p.proc_ride_clamp;
+        self.proc_ride_bypass = p.proc_ride_bypass;
+        self.proc_limiter_bypass = p.proc_limiter_bypass;
+        self.proc_stream_target_lufs = p.proc_stream_target_lufs;
+        self.proc_stream_ceiling_dbtp = p.proc_stream_ceiling_dbtp;
+        self.proc_stream_release_ms = p.proc_stream_release_ms;
+        self.proc_stream_ride_rate = p.proc_stream_ride_rate;
+        self.proc_stream_ride_clamp = p.proc_stream_ride_clamp;
+        self.proc_stream_ride_bypass = p.proc_stream_ride_bypass;
+        self.proc_stream_limiter_bypass = p.proc_stream_limiter_bypass;
+        self.duck_threshold = p.duck_threshold;
+        self.duck_depth_db = p.duck_depth_db;
+        self.duck_attack_ms = p.duck_attack_ms;
+        self.duck_hold_ms = p.duck_hold_ms;
+        self.duck_release_ms = p.duck_release_ms;
+        if p.eq_version != self.eq_version_applied {
+            // Only the callback ever locks these (S3), so try_lock cannot miss; if it ever did, the version
+            // is left unapplied and the next buffer tries again rather than dropping the change.
+            if let (Ok(mut a), Ok(mut r)) = (self.eq.try_lock(), self.eq_room.try_lock()) {
+                r.set_bands(&p.eq_bands);
+                a.set_bands(&p.eq_bands);
+                self.eq_bands = p.eq_bands;
+                self.eq_version_applied = p.eq_version;
+            }
+        }
+    }
+
+    /// Free `g` OFF the audio thread. If the garbage queue is full it is leaked and counted, never dropped here.
+    fn discard(&mut self, g: Garbage) {
+        if let Err(g) = self.garbage.try_push(g) {
+            std::mem::forget(g);
+            self.garbage_leaked = self.garbage_leaked.wrapping_add(1);
+        }
+    }
+
+    /// Apply queued commands (callback, top of buffer). A block that arrives while a buffer is being
+    /// rendered simply waits here for the next one — the buffer in progress always finishes on the block
+    /// it started with.
+    pub(crate) fn apply_commands(&mut self) {
+        let mut n = 0u64;
+        while (n as usize) < RT_CMD_PER_BUFFER {
+            let Some(c) = self.cmd_cons.try_pop() else { break };
+            n += 1;
+            match c {
+                RtCmd::Params(b) => {
+                    self.apply_params(&b);
+                    self.discard(Garbage::Params(b));
+                }
+                RtCmd::Load { slot, src, gain_db, gen } => {
+                    let i = slot as usize;
+                    let has = src.is_some();
+                    let d = &mut self.decks[i];
+                    let old = std::mem::replace(&mut d.source, src);
+                    d.paused = true;
+                    d.active = false;
+                    d.gain_db = gain_db;
+                    d.frames_played = 0;          // SAMPLE CLOCK — a new track restarts the position.
+                    self.shared.src_gen[i].store(if has { gen } else { 0 }, Ordering::Release);
+                    if let Some(o) = old { self.discard(Garbage::Source(o)); }
+                }
+                RtCmd::Play { slot, reload, gen } => {
+                    let i = slot as usize;
+                    if let Some(r) = reload {
+                        let old = self.decks[i].source.replace(r);
+                        self.shared.src_gen[i].store(gen, Ordering::Release);
+                        if let Some(o) = old { self.discard(Garbage::Source(o)); }
+                    }
+                    self.decks[i].paused = false;
+                    self.decks[i].active = true;
+                }
+                RtCmd::Pause { slot } => { self.decks[slot as usize].paused = true; }
+                RtCmd::Stop { slot } => {
+                    let i = slot as usize;
+                    let d = &mut self.decks[i];
+                    let old = d.source.take();
+                    d.paused = true;
+                    d.active = false;
+                    d.frames_played = 0;          // SAMPLE CLOCK — deck emptied, position clears with it.
+                    self.shared.src_gen[i].store(0, Ordering::Release);
+                    if let Some(o) = old { self.discard(Garbage::Source(o)); }
+                }
+            }
+        }
+        // src_gen stores above happen-before this; the dispatch thread reads applied_seq then src_gen.
+        if n > 0 { self.shared.applied_seq.fetch_add(n, Ordering::Release); }
+        while let Some(a) = self.aux_cmd_cons.try_pop() {
+            match a {
+                AuxCmd::Attach(p) => { if let Some(o) = self.aux_ring_prod.replace(p) { self.discard(Garbage::AuxProd(o)); } }
+                AuxCmd::Detach    => { if let Some(o) = self.aux_ring_prod.take()     { self.discard(Garbage::AuxProd(o)); } }
+            }
+        }
+    }
+
+    /// This buffer's observed state (callback, end of buffer). Copies only — no allocation.
+    pub(crate) fn meter_frame(&self) -> MeterFrame {
+        MeterFrame {
+            params: self.params(),
+            peaks: self.peaks,
+            master_peak: self.master_peak,
+            room_peak: self.room_peak,
+            aux_peak: self.aux_peak,
+            spectrum: self.spectrum,
+            frames_consumed: self.frames_consumed,
+            duck_gain: self.duck_gain,
+            aux_proc_in_lufs: self.aux_proc_in_lufs, aux_proc_out_lufs: self.aux_proc_out_lufs,
+            aux_proc_gr_db: self.aux_proc_gr_db, aux_proc_ride_db: self.aux_proc_ride_db,
+            proc_in_lufs: self.proc_in_lufs, proc_out_lufs: self.proc_out_lufs,
+            proc_gr_db: self.proc_gr_db, proc_ride_gain_db: self.proc_ride_gain_db,
+            proc_in_peak: self.proc_in_peak, proc_out_peak: self.proc_out_peak,
+            proc_stream_in_lufs: self.proc_stream_in_lufs, proc_stream_out_lufs: self.proc_stream_out_lufs,
+            proc_stream_gr_db: self.proc_stream_gr_db, proc_stream_ride_gain_db: self.proc_stream_ride_gain_db,
+            proc_stream_in_peak: self.proc_stream_in_peak, proc_stream_out_peak: self.proc_stream_out_peak,
+            decks: std::array::from_fn(|i| {
+                let d = &self.decks[i];
+                DeckMeter { source_present: d.source.is_some(), active: d.active, paused: d.paused,
+                            gain_db: d.gain_db, frames_played: d.frames_played }
+            }),
+        }
+    }
+
+    /// Publish this buffer's frame (callback, end of buffer).
+    fn publish_meters(&mut self) {
+        let f = self.meter_frame();
+        if let Some(w) = self.meter_w.as_mut() { *w.slot() = f; w.publish(); }
     }
 }
 
@@ -1304,6 +1535,124 @@ mod slice1_regression {
 }
 
 #[cfg(test)]
+mod rt_command_path {
+    // SLICE 1 S3 — the harness and the goldens set BusState fields directly, so on their own they never
+    // exercise the path the product now uses: parameter BLOCKS and deck COMMANDS through the lock-free queue.
+    // These two tests close that gap. docs/dsp-rt-callback.md §7 test 5.
+    use super::*;
+    use crate::rt::{Params, RtCmd};
+
+    struct Det(u64);
+    impl Iterator for Det {
+        type Item = f32;
+        fn next(&mut self) -> Option<f32> {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            Some(((self.0 >> 33) as f32 / (1u64 << 31) as f32) - 1.0)
+        }
+    }
+    fn checksum(v: &[f32]) -> u64 {
+        let mut h = 1469598103934665603u64;
+        for s in v { h ^= s.to_bits() as u64; h = h.wrapping_mul(1099511628211); }
+        h
+    }
+
+    /// The GOLDEN_7_SLOT scenario (A/B/C/CART, PRNG sources, fader 0.8), delivered the way the product
+    /// delivers it: Load + Play commands and a parameter block, all through the queue. The callback applies
+    /// them at the top of its first buffer, so the rendered bits must equal the directly-built golden.
+    #[test]
+    fn commands_through_the_queue_reproduce_the_slice1_golden() {
+        let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
+        let (prod, _cons) = rb.split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(false)));
+        let mut h = b.handles.take().unwrap();
+        let mut p: Params = b.params();
+        for (i, seed) in [(0usize, 11u64), (1usize, 22u64), (2usize, 33u64), (6usize, 66u64)] {
+            assert!(h.cmd_prod.try_push(RtCmd::Load { slot: i as u8, src: Some(Box::new(Det(seed))), gain_db: 0.0, gen: 1 + i as u64 }).is_ok());
+            p.volume[i] = 0.8;
+        }
+        assert!(h.cmd_prod.try_push(RtCmd::Params(Box::new(p))).is_ok());
+        for i in [0usize, 1, 2, 6] { assert!(h.cmd_prod.try_push(RtCmd::Play { slot: i as u8, reload: None, gen: 0 }).is_ok()); }
+        let bus = Arc::new(Mutex::new(b));
+        let fin = FinishedFlags::new();
+        let playing = Arc::new(AtomicBool::new(true));
+        let mut sc = Scratch::new();
+        let mut out: Vec<f32> = Vec::new();
+        for _ in 0..50 {
+            let mut data = vec![0f32; 480 * 2];
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+            out.extend_from_slice(&data);
+        }
+        let sum = checksum(&out);
+        println!("[rt-cmd] A/B/C/CART via commands checksum = {:#018x}", sum);
+        assert_eq!(sum, 0xfb5c26536f759828, "the command path renders differently from the directly-built golden");
+        // Every command was applied, and the four decks report a source.
+        assert_eq!(h.shared.applied_seq.load(Ordering::Acquire), 9);
+        for i in [0usize, 1, 2, 6] { assert_ne!(h.shared.src_gen[i].load(Ordering::Acquire), 0); }
+        // Garbage came back: the adopted Params box (the Loads replaced None, so no sources).
+        let mut g = 0; while h.garbage_cons.try_pop().is_some() { g += 1; }
+        assert_eq!(g, 1, "the adopted parameter block was not returned for freeing off-thread");
+        // And the meter frame the callback published is readable without the lock.
+        let m = h.meter_r.read();
+        assert!(m.decks[0].source_present && m.decks[0].active && !m.decks[0].paused);
+        assert_eq!(m.params.volume[0], 0.8);
+    }
+
+    /// A parameter block that arrives while a buffer is being rendered takes effect on the NEXT buffer,
+    /// never partway through one. One thread fires 20 000 master-fader blocks (alternating 0.0 / 1.0) as fast
+    /// as it can; another renders a constant 0.5 source. Every rendered buffer must be uniform — all 0.0 or
+    /// all 0.5 — and both values must actually occur (so the test is not passing on one static state).
+    #[test]
+    fn a_param_block_never_changes_mid_buffer() {
+        struct Dc;
+        impl Iterator for Dc { type Item = f32; fn next(&mut self) -> Option<f32> { Some(0.5) } }
+        let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
+        let (prod, _cons) = rb.split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(false)));
+        let h = b.handles.take().unwrap();
+        let base = b.params();
+        b.decks[0].source = Some(Box::new(Dc));
+        b.decks[0].active = true;
+        b.decks[0].paused = false;
+        let bus = Arc::new(Mutex::new(b));
+        let mut cmd = h.cmd_prod;
+        let mut garbage = h.garbage_cons;
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop2 = stop.clone();
+        let sender = std::thread::spawn(move || {
+            let mut sent = 0u32;
+            while sent < 20_000 {
+                let mut p = base;
+                p.master_vol = if sent % 2 == 0 { 0.0 } else { 1.0 };
+                let mut c = RtCmd::Params(Box::new(p));
+                loop {
+                    match cmd.try_push(c) { Ok(()) => break, Err(back) => { c = back; while garbage.try_pop().is_some() {} std::thread::yield_now(); } }
+                }
+                sent += 1;
+                while garbage.try_pop().is_some() {}
+            }
+            stop2.store(true, Ordering::Release);
+        });
+        let fin = FinishedFlags::new();
+        let playing = Arc::new(AtomicBool::new(true));
+        let mut sc = Scratch::new();
+        let (mut zeros, mut halves, mut buffers) = (0u64, 0u64, 0u64);
+        let mut data = vec![0f32; 480 * 2];
+        while !stop.load(Ordering::Acquire) || buffers < 1000 {
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+            let first = data[0];
+            assert!(data.iter().all(|&x| x.to_bits() == first.to_bits()),
+                    "buffer {} is not uniform: a parameter block changed mid-buffer", buffers);
+            if first == 0.0 { zeros += 1 } else if first == 0.5 { halves += 1 } else { panic!("unexpected level {}", first) }
+            buffers += 1;
+            if buffers > 5_000_000 { break; }
+        }
+        sender.join().unwrap();
+        println!("[rt-cmd] {} buffers, all uniform: {} at master 0.0, {} at master 1.0", buffers, zeros, halves);
+        assert!(zeros > 0 && halves > 0, "both fader states must have been rendered");
+    }
+}
+
+#[cfg(test)]
 mod duck_regression {
     // THE DUCKER — proof that it engages, holds, releases, and cannot be triggered by the wrong slot.
     //
@@ -1564,10 +1913,17 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     let aux_req: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
 
     let shared_eq = crate::eq::new_shared_eq(44100.0);
-    let bus_state: SharedBusState = Arc::new(Mutex::new(
-        BusState::new(shared_eq, ring_prod, 44100, stream_connected.clone())
-    ));
-    let bus_cmd = bus_state.clone(); // command thread's handle
+    let mut bus_init = BusState::new(shared_eq, ring_prod, 44100, stream_connected.clone());
+    // S3 — the non-callback ends of the state's channels. The aux thread gets its command producer and
+    // the frame counter; the dispatch thread gets everything else (Control). After this, nothing but the
+    // callback — and the device-switch path while no callback runs — ever locks the state.
+    let handles = bus_init.handles.take().expect("fresh BusState has its handles");
+    let aux_frames_ctr_shared = bus_init.aux_out_frames.clone();
+    let ctl_init = Control::new(&bus_init, handles.cmd_prod, handles.garbage_cons, handles.meter_r,
+                                handles.shared, aux_frames_ctr_shared.clone());
+    let aux_cmd_prod = handles.aux_cmd_prod;
+    let bus_state: SharedBusState = Arc::new(Mutex::new(bus_init));
+    let bus_cmd = bus_state.clone(); // device-open / device-switch only (no callback running then)
 
     // ── TCP listener (Program Bus) ────────────────────────────────────────────
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -1591,8 +1947,19 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     // cannot creep. Two clocks always drift; this bounds the consequence to an occasional tick on a
     // MONITOR feed, and it never touches air.
     {
-        let bus_aux = bus_state.clone();
         let req_aux = aux_req.clone();
+        let mut aux_tx = aux_cmd_prod;
+        let aux_frames = aux_frames_ctr_shared;
+        // Deliver an aux command to the callback. The queue holds 16 and these happen when an operator
+        // picks a device, so a full queue means the callback is not running; retry briefly, then give up
+        // loudly (the next device change or retry sends it again).
+        let mut send_aux = move |c: AuxCmd| {
+            let mut c = c;
+            for _ in 0..200 {
+                match aux_tx.try_push(c) { Ok(()) => return, Err(back) => { c = back; std::thread::sleep(std::time::Duration::from_millis(5)); } }
+            }
+            eprintln!("[RUST] Station {} AUX command not delivered (callback not running)", station_id);
+        };
         std::thread::spawn(move || {
             use cpal::traits::{DeviceTrait, StreamTrait};
             let mut open_name = String::new();
@@ -1609,7 +1976,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                     // Tear down first, always: clearing the producer stops the mixer writing before
                     // the stream that drains it goes away.
                     let changed = want != open_name;
-                    if let Ok(mut bus) = bus_aux.lock() { bus.aux_ring_prod = None; }
+                    send_aux(AuxCmd::Detach);
                     if _stream.is_some() || (changed && !open_name.is_empty()) {
                         eprintln!("[RUST] Station {} AUX monitor output closed", station_id);
                     }
@@ -1622,12 +1989,8 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             Some((device, sr, ch)) => {
                                 let rb = HeapRb::<f32>::new(AUX_BUS_BUF);
                                 let (prod, mut cons) = rb.split();
-                                let frames_ctr = {
-                                    let mut g = bus_aux.lock().ok();
-                                    let c = g.as_ref().map(|b| b.aux_out_frames.clone());
-                                    if let Some(ref mut b) = g { b.aux_ring_prod = Some(prod); }
-                                    match c { Some(c) => c, None => Arc::new(AtomicU64::new(0)) }
-                                };
+                                send_aux(AuxCmd::Attach(prod));
+                                let frames_ctr = aux_frames.clone();
 
                                 let cfg = cpal::StreamConfig {
                                     channels: ch,
@@ -1697,7 +2060,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     Ok(st) => {
                                         if let Err(e) = st.play() {
                                             eprintln!("[RUST] Station {} AUX stream.play(): {}", station_id, e);
-                                            if let Ok(mut bus) = bus_aux.lock() { bus.aux_ring_prod = None; }
+                                            send_aux(AuxCmd::Detach);
                                             retry_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
                                         } else {
                                             eprintln!("[RUST] Station {} AUX monitor output opened ({}Hz {}ch)", station_id, sr, ch);
@@ -1706,7 +2069,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     }
                                     Err(e) => {
                                         eprintln!("[RUST] Station {} AUX build_output_stream: {}", station_id, e);
-                                        if let Ok(mut bus) = bus_aux.lock() { bus.aux_ring_prod = None; }
+                                        send_aux(AuxCmd::Detach);
                                         retry_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
                                     }
                                 }
@@ -1737,6 +2100,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
         use cpal::traits::{DeviceTrait, StreamTrait};
 
         let mut current_device = device_name;
+        let mut ctl = ctl_init;
         // This station's own liveness clock. S2: the callback advances `cb_seq`; this thread stamps
         // `last_cb` with the wall time whenever it sees the sequence move, at ≤ 50 ms resolution — so
         // audio_last_callback_ms keeps its meaning without a clock call on the audio thread.
@@ -1762,7 +2126,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
             }
 
             // Restore any loaded-but-not-yet-active decks after device switch
-            restore_decks_after_switch(&bus_cmd, sr);
+            restore_decks_after_switch(&bus_cmd, sr, &mut ctl);
 
             let stream_config = cpal::StreamConfig {
                 channels:    ch,
@@ -1819,153 +2183,133 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                 // S2 — the audio thread's work that is not audio: its log lines and its liveness stamp.
                 // At the TOP of the loop so no `continue` in a command arm can skip it.
                 if let Some(ref mut c) = ev_cons { drain_rt_events(station_id, c); }
+                // S3 — free what the callback let go of, and hand it whatever is waiting.
+                ctl.drain_garbage();
+                ctl.flush();
                 let seq = cb_seq.load(Ordering::Relaxed);
                 if seq != seen_seq { seen_seq = seq; last_cb.store(now_ms(), Ordering::Relaxed); }
                 match rx.recv_timeout(std::time::Duration::from_millis(50)) {
                     Ok(cmd) => {
                         match cmd {
+                            // ── S3: every arm below edits the dispatch thread's OWN copy of the state (ctl) and
+                            // queues a message. None of them touches BusState: the callback owns it, and
+                            // applies these at the top of its next buffer (docs/dsp-rt-callback.md §4).
                             AudioCmd::Load { deck, file_path, title, artist, gain_db } => {
                                 let Some(idx) = deck_index(&deck) else { continue };
-                                // Decode outside the lock — file I/O must not block callback
+                                // Decode setup off the audio thread, as always.
                                 let src = build_source(&file_path, sr);
-                                if let Ok(mut bus) = bus_cmd.lock() {
-                                    let slot = &mut bus.decks[idx];
-                                    slot.source   = src;
-                                    slot.paused   = true;
-                                    slot.active   = false;
-                                    slot.path     = file_path;
-                                    slot.title    = title;
-                                    slot.artist   = artist;
-                                    // THE FADER LEVEL IS THE JOCK'S — a track load must never move it.
-                                    // This used to write `slot.volume` from gain_db (and slam it to unity
-                                    // whenever a track had no trim), so every song load reset the fader the
-                                    // operator had parked. A track was resetting the board. Only SetVolume
-                                    // — the jock's hand — writes the fader now.
-                                    //
-                                    // gain_db is the TRACK's own loudness trim and is stored here only; it
-                                    // is applied PRE-FADER as a separate multiplier at the mix, on top of
-                                    // whatever level the operator set. Two different things, kept apart.
-                                    slot.gain_db  = gain_db;
-                                    // SAMPLE CLOCK — a new track restarts the position.
-                                    slot.frames_played = 0;
-                                }
+                                let has = src.is_some();
+                                let gen = ctl.next_gen();
+                                // THE FADER LEVEL IS THE JOCK'S — a track load must never move it. Only the
+                                // track's own trim (gain_db) travels with the load; it is applied PRE-FADER
+                                // at the mix, on top of whatever level the operator set.
+                                let seq = ctl.enqueue(RtCmd::Load { slot: idx as u8, src, gain_db, gen });
+                                let d = &mut ctl.decks[idx];
+                                d.path = file_path;
+                                d.title = title;
+                                d.artist = artist;
+                                d.gain_db = gain_db;
+                                d.src_expected = has;
+                                d.src_msg_seq = seq;
                                 finished_clone.clear(&deck);
                             }
                             AudioCmd::Play(deck) => {
                                 let Some(idx) = deck_index(&deck) else { continue };
                                 finished_clone.clear(&deck);
-                                // If source was cleared (e.g. by Stop) but path is known,
-                                // reload before playing — file I/O outside the lock.
-                                let reload_path = bus_cmd.lock().ok().and_then(|b| {
-                                    if b.decks[idx].source.is_none() && !b.decks[idx].path.is_empty() {
-                                        Some(b.decks[idx].path.clone())
-                                    } else {
-                                        None
-                                    }
-                                });
+                                // "Does this deck hold a source?" — answered from what the callback has
+                                // actually applied (ctl.present), with any not-yet-applied Load/Stop/reload
+                                // taken as already done. Same question the locked read used to answer.
+                                let present = ctl.present(idx);
+                                let path = ctl.decks[idx].path.clone();
                                 // source=None AND path empty → fake play would produce silence
                                 // with a live level meter; skip entirely.
-                                let skip = reload_path.is_none()
-                                    && bus_cmd.lock().ok()
-                                        .map(|b| b.decks[idx].source.is_none())
-                                        .unwrap_or(false);
-                                if skip {
+                                if !present && path.is_empty() {
                                     eprintln!("[RUST] Play deck {}: source=None, path empty — skipping", deck);
                                     continue;
                                 }
-                                if let Some(ref path) = reload_path {
-                                    let src = build_source(path, sr);
+                                // If source was cleared (e.g. by natural end) but path is known,
+                                // reload before playing — file I/O on this thread, never the callback.
+                                let reload = if !present {
+                                    let src = build_source(&path, sr);
                                     if src.is_none() {
                                         eprintln!("[RUST] Play deck {}: reload failed for {} — skipping", deck, path);
                                         continue;
                                     }
-                                    if let Ok(mut bus) = bus_cmd.lock() {
-                                        bus.decks[idx].source = src;
-                                    }
-                                }
-                                if let Ok(mut bus) = bus_cmd.lock() {
-                                    bus.decks[idx].paused = false;
-                                    bus.decks[idx].active = true;
+                                    src
+                                } else { None };
+                                let reloading = reload.is_some();
+                                let gen = ctl.next_gen();
+                                let seq = ctl.enqueue(RtCmd::Play { slot: idx as u8, reload, gen });
+                                if reloading {
+                                    ctl.decks[idx].src_expected = true;
+                                    ctl.decks[idx].src_msg_seq = seq;
                                 }
                             }
                             AudioCmd::Pause(deck) => {
                                 let Some(idx) = deck_index(&deck) else { continue };
-                                if let Ok(mut bus) = bus_cmd.lock() {
-                                    bus.decks[idx].paused = true;
-                                }
+                                ctl.enqueue(RtCmd::Pause { slot: idx as u8 });
                             }
                             AudioCmd::Stop(deck) => {
                                 let Some(idx) = deck_index(&deck) else { continue };
                                 finished_clone.clear(&deck);
-                                if let Ok(mut bus) = bus_cmd.lock() {
-                                    let slot = &mut bus.decks[idx];
-                                    slot.source = None;
-                                    slot.paused = true;
-                                    slot.active = false;
-                                    slot.path   = String::new();
-                                    // SAMPLE CLOCK — deck emptied, position clears with it.
-                                    slot.frames_played = 0;
-                                }
+                                let seq = ctl.enqueue(RtCmd::Stop { slot: idx as u8 });
+                                let d = &mut ctl.decks[idx];
+                                d.path = String::new();
+                                d.src_expected = false;
+                                d.src_msg_seq = seq;
                             }
                             AudioCmd::SetVolume { deck, volume } => {
                                 let Some(idx) = deck_index(&deck) else { continue };
-                                if let Ok(mut bus) = bus_cmd.lock() {
-                                    bus.decks[idx].volume = volume;
-                                }
+                                ctl.params.volume[idx] = volume;
+                                ctl.params_changed();
                             }
                             AudioCmd::SetMuted { deck, muted } => {
                                 let Some(idx) = deck_index(&deck) else { continue };
-                                if let Ok(mut bus) = bus_cmd.lock() {
-                                    bus.decks[idx].muted = muted;
-                                }
+                                ctl.params.muted[idx] = muted;
+                                ctl.params_changed();
                             }
                             AudioCmd::SetAuxDevice(name) => {
                                 // Recorded for the aux thread, which owns opening/closing that stream.
-                                // Empty = none = it closes the stream and clears the ring producer.
+                                // Empty = none = it closes the stream and detaches the ring producer.
                                 if let Ok(mut r) = aux_req.lock() { *r = name; }
                             }
                             AudioCmd::SetSlotKind { deck, kind } => {
                                 let Some(idx) = deck_index(&deck) else { continue };
-                                if let Ok(mut bus) = bus_cmd.lock() {
-                                    // A/B/C are automation's decks and are never re-kinded: putting a
-                                    // rotation deck on another bus is not something an operator can
-                                    // ask for by dialling a dropdown.
-                                    if bus.decks[idx].kind != SlotKind::Rotation {
-                                        bus.decks[idx].kind = if kind == "sweeper" {
-                                            SlotKind::Sweeper
-                                        } else {
-                                            SlotKind::Source
-                                        };
-                                    }
+                                // A/B/C are automation's decks and are never re-kinded: putting a
+                                // rotation deck on another bus is not something an operator can
+                                // ask for by dialling a dropdown.
+                                if ctl.params.kind[idx] != SlotKind::Rotation {
+                                    ctl.params.kind[idx] = if kind == "sweeper" { SlotKind::Sweeper } else { SlotKind::Source };
+                                    ctl.params_changed();
                                 }
                             }
                             AudioCmd::SetDuck { deck, enabled } => {
                                 // Accepted for ANY slot and stored as given. The rule that only a
                                 // SOURCE slot can actually duck lives in the mixer callback, which
-                                // reads deck.kind — so a caller that arms deck A gets an honest
+                                // reads the slot's kind — so a caller that arms deck A gets an honest
                                 // "stored, and it will never fire" rather than a silent refusal that
                                 // the UI would then misreport as enabled.
                                 let Some(idx) = deck_index(&deck) else { continue };
-                                if let Ok(mut bus) = bus_cmd.lock() {
-                                    bus.duck_enabled[idx] = enabled;
-                                }
+                                ctl.params.duck_enabled[idx] = enabled;
+                                ctl.params_changed();
                             }
                             AudioCmd::SetDuckable { deck, duckable } => {
                                 let Some(idx) = deck_index(&deck) else { continue };
-                                if let Ok(mut bus) = bus_cmd.lock() { bus.duck_duckable[idx] = duckable; }
+                                ctl.params.duck_duckable[idx] = duckable;
+                                ctl.params_changed();
                             }
                             AudioCmd::SetDuckParams { depth_db, threshold_db, attack_ms, hold_ms, release_ms } => {
-                                if let Ok(mut bus) = bus_cmd.lock() {
-                                    // Clamped at the edges only — every value in between is a
-                                    // legitimate operator choice. 0 dB depth means "armed but not
-                                    // ducking", and a 0 ms hold means "release the moment the source
-                                    // stops", both of which someone may genuinely want to hear.
-                                    bus.duck_depth_db  = depth_db.clamp(-60.0, 0.0);
-                                    bus.duck_threshold = 10f32.powf(threshold_db.clamp(-90.0, 0.0) / 20.0);
-                                    bus.duck_attack_ms = attack_ms.clamp(1.0, 1000.0);
-                                    bus.duck_hold_ms   = hold_ms.clamp(0.0, 5000.0);
-                                    bus.duck_release_ms= release_ms.clamp(1.0, 5000.0);
-                                }
+                                // Clamped at the edges only — every value in between is a
+                                // legitimate operator choice. 0 dB depth means "armed but not
+                                // ducking", and a 0 ms hold means "release the moment the source
+                                // stops", both of which someone may genuinely want to hear.
+                                let p = &mut ctl.params;
+                                p.duck_depth_db   = depth_db.clamp(-60.0, 0.0);
+                                p.duck_threshold  = 10f32.powf(threshold_db.clamp(-90.0, 0.0) / 20.0);
+                                p.duck_attack_ms  = attack_ms.clamp(1.0, 1000.0);
+                                p.duck_hold_ms    = hold_ms.clamp(0.0, 5000.0);
+                                p.duck_release_ms = release_ms.clamp(1.0, 5000.0);
+                                ctl.params_changed();
                             }
                             AudioCmd::SetAuxMonitor { deck, gain } => {
                                 // AUX DECKS ONLY. A/B/C and CART are board channels and their local
@@ -1973,118 +2317,93 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 // caller can accidentally route a programme deck through the aux path.
                                 let Some(idx) = deck_index(&deck) else { continue };
                                 if !(3..=5).contains(&idx) { continue; }
-                                if let Ok(mut bus) = bus_cmd.lock() {
-                                    bus.aux_monitor_gain[idx] = gain.clamp(0.0, 4.0);
-                                    // The SAME row drives both, because it is one control: "how loud
-                                    // is this deck in the room". Which buffer it reaches depends on
-                                    // the slot's bus — an aux deck through the aux tap, a sweeper
-                                    // through the room sum — and the operator should not have to know
-                                    // which. Rotation decks never get here, so they keep unity.
-                                    if bus.decks[idx].kind != SlotKind::Rotation {
-                                        bus.room_gain[idx] = gain.clamp(0.0, 4.0);
-                                    }
+                                ctl.params.aux_monitor_gain[idx] = gain.clamp(0.0, 4.0);
+                                // The SAME row drives both, because it is one control: "how loud
+                                // is this deck in the room". Which buffer it reaches depends on
+                                // the slot's bus — an aux deck through the aux tap, a sweeper
+                                // through the room sum — and the operator should not have to know
+                                // which. Rotation decks never get here, so they keep unity.
+                                if ctl.params.kind[idx] != SlotKind::Rotation {
+                                    ctl.params.room_gain[idx] = gain.clamp(0.0, 4.0);
                                 }
+                                ctl.params_changed();
                             }
                             AudioCmd::GetLevel => {
-                                // REAL levels — the mixer callback writes true post-fader peaks
-                                // (per deck) + the post-EQ program peak (master) into bus.peaks;
-                                // surface them as-is (0..1, 1.0 = 0 dBFS). No more fake bouncing.
-                                if let (Ok(bus), Ok(mut lvl)) =
-                                    (bus_cmd.lock(), levels_clone.lock())
-                                {
-                                    lvl.level_a      = bus.peaks[0];
-                                    lvl.level_b      = bus.peaks[1];
-                                    lvl.level_c      = bus.peaks[2];
-                                    lvl.level_cart   = bus.peaks[6];
-                                    lvl.level_master = bus.master_peak;
-                                    lvl.level_room   = bus.room_peak;
-                                    lvl.aux_frames   = bus.aux_out_frames.load(Ordering::Relaxed);
-                                    lvl.aux_peak     = bus.aux_peak;
-                                    lvl.aux_proc_in_lufs  = bus.aux_proc_in_lufs;
-                                    lvl.aux_proc_out_lufs = bus.aux_proc_out_lufs;
-                                    lvl.aux_proc_gr_db    = bus.aux_proc_gr_db;
-                                    lvl.aux_proc_ride_db  = bus.aux_proc_ride_db;
-                                    lvl.duck_gain         = bus.duck_gain;
-                                    lvl.spectrum     = bus.spectrum;
-                                    // v4.4.46 mix telemetry — snapshot per-deck + counters under the
-                                    // SAME lock (no extra lock; diagnostic only). Fed to `[mix sN]`.
-                                    lvl.frames_total = bus.frames_consumed;
-                                    lvl.mon_vol      = bus.monitor_vol;
-                                    // Audio Processing v1 meters (same lock; observed at the taps).
-                                    lvl.proc_local       = bus.proc_local;
-                                    lvl.proc_stream      = bus.proc_stream;
-                                    lvl.proc_target_lufs = bus.proc_target_lufs;
-                                    lvl.proc_in_lufs     = bus.proc_in_lufs;
-                                    lvl.proc_out_lufs    = bus.proc_out_lufs;
-                                    lvl.proc_gr_db       = bus.proc_gr_db;
-                                    lvl.proc_ride_gain_db = bus.proc_ride_gain_db;
-                                    lvl.proc_in_peak     = bus.proc_in_peak;
-                                    lvl.proc_out_peak    = bus.proc_out_peak;
-                                    // THE ECHO. These six were declared on AudioLevels in 4.6.9 with a
-                                    // comment describing exactly this assignment — and the assignment was
-                                    // never written. Six fields shipped as their zero value on every frame
-                                    // for two releases: the rack's BYPASS chip could never light (the UI
-                                    // read `false` and, because `false` is not nullish, `?? intent` never
-                                    // fell back), and Settings read a 0.0 dBTP ceiling. A field a consumer
-                                    // reads and no producer writes is indistinguishable from a dead
-                                    // control. audiod/smoke-meter-contract.js now fails the build for it.
-                                    lvl.proc_ceiling_dbtp   = bus.proc_ceiling_dbtp;
-                                    lvl.proc_release_ms     = bus.proc_release_ms;
-                                    lvl.proc_ride_rate      = bus.proc_ride_rate;
-                                    lvl.proc_ride_clamp     = bus.proc_ride_clamp;
-                                    lvl.proc_ride_bypass    = bus.proc_ride_bypass;
-                                    lvl.proc_limiter_bypass = bus.proc_limiter_bypass;
-                                    lvl.proc_stream_in_lufs      = bus.proc_stream_in_lufs;
-                                    lvl.proc_stream_out_lufs     = bus.proc_stream_out_lufs;
-                                    lvl.proc_stream_gr_db        = bus.proc_stream_gr_db;
-                                    lvl.proc_stream_ride_gain_db = bus.proc_stream_ride_gain_db;
-                                    lvl.proc_stream_in_peak      = bus.proc_stream_in_peak;
-                                    lvl.proc_stream_out_peak     = bus.proc_stream_out_peak;
-                                    lvl.proc_stream_target_lufs  = bus.proc_stream_target_lufs;
-                                    lvl.proc_stream_ceiling_dbtp = bus.proc_stream_ceiling_dbtp;
-                                    lvl.proc_stream_release_ms   = bus.proc_stream_release_ms;
-                                    lvl.proc_stream_ride_rate    = bus.proc_stream_ride_rate;
-                                    lvl.proc_stream_ride_clamp   = bus.proc_stream_ride_clamp;
-                                    lvl.proc_stream_ride_bypass    = bus.proc_stream_ride_bypass;
-                                    lvl.proc_stream_limiter_bypass = bus.proc_stream_limiter_bypass;
+                                // REAL levels — the callback's latest published frame (S3: a lock-free
+                                // triple buffer; this no longer holds anything the callback needs).
+                                let m = ctl.meter.read();
+                                let p = &m.params;
+                                if let Ok(mut lvl) = levels_clone.lock() {
+                                    lvl.level_a      = m.peaks[0];
+                                    lvl.level_b      = m.peaks[1];
+                                    lvl.level_c      = m.peaks[2];
+                                    lvl.level_cart   = m.peaks[6];
+                                    lvl.level_master = m.master_peak;
+                                    lvl.level_room   = m.room_peak;
+                                    lvl.aux_frames   = ctl.aux_frames.load(Ordering::Relaxed);
+                                    lvl.aux_peak     = m.aux_peak;
+                                    lvl.aux_proc_in_lufs  = m.aux_proc_in_lufs;
+                                    lvl.aux_proc_out_lufs = m.aux_proc_out_lufs;
+                                    lvl.aux_proc_gr_db    = m.aux_proc_gr_db;
+                                    lvl.aux_proc_ride_db  = m.aux_proc_ride_db;
+                                    lvl.duck_gain         = m.duck_gain;
+                                    lvl.spectrum     = m.spectrum;
+                                    // v4.4.46 mix telemetry.
+                                    lvl.frames_total = m.frames_consumed;
+                                    lvl.mon_vol      = p.monitor_vol;
+                                    // Audio Processing v1 meters (observed at the taps).
+                                    lvl.proc_local       = p.proc_local;
+                                    lvl.proc_stream      = p.proc_stream;
+                                    lvl.proc_target_lufs = p.proc_target_lufs;
+                                    lvl.proc_in_lufs     = m.proc_in_lufs;
+                                    lvl.proc_out_lufs    = m.proc_out_lufs;
+                                    lvl.proc_gr_db       = m.proc_gr_db;
+                                    lvl.proc_ride_gain_db = m.proc_ride_gain_db;
+                                    lvl.proc_in_peak     = m.proc_in_peak;
+                                    lvl.proc_out_peak    = m.proc_out_peak;
+                                    // THE ECHO — the parameters the ENGINE ran this buffer (the block the
+                                    // callback adopted), not what this thread last sent.
+                                    lvl.proc_ceiling_dbtp   = p.proc_ceiling_dbtp;
+                                    lvl.proc_release_ms     = p.proc_release_ms;
+                                    lvl.proc_ride_rate      = p.proc_ride_rate;
+                                    lvl.proc_ride_clamp     = p.proc_ride_clamp;
+                                    lvl.proc_ride_bypass    = p.proc_ride_bypass;
+                                    lvl.proc_limiter_bypass = p.proc_limiter_bypass;
+                                    lvl.proc_stream_in_lufs      = m.proc_stream_in_lufs;
+                                    lvl.proc_stream_out_lufs     = m.proc_stream_out_lufs;
+                                    lvl.proc_stream_gr_db        = m.proc_stream_gr_db;
+                                    lvl.proc_stream_ride_gain_db = m.proc_stream_ride_gain_db;
+                                    lvl.proc_stream_in_peak      = m.proc_stream_in_peak;
+                                    lvl.proc_stream_out_peak     = m.proc_stream_out_peak;
+                                    lvl.proc_stream_target_lufs  = p.proc_stream_target_lufs;
+                                    lvl.proc_stream_ceiling_dbtp = p.proc_stream_ceiling_dbtp;
+                                    lvl.proc_stream_release_ms   = p.proc_stream_release_ms;
+                                    lvl.proc_stream_ride_rate    = p.proc_stream_ride_rate;
+                                    lvl.proc_stream_ride_clamp   = p.proc_stream_ride_clamp;
+                                    lvl.proc_stream_ride_bypass    = p.proc_stream_ride_bypass;
+                                    lvl.proc_stream_limiter_bypass = p.proc_stream_limiter_bypass;
                                     let mut active = 0u32;
-                                    // CART (slot 6) is reported HERE so jingles/carts carry a real
-                                    // sample position too — without it every cart reads 0:00 forever.
-                                    // It is addressed by the explicit "CART" literal: NEVER index
-                                    // DECK_LETTERS[6] (len 6, A–F) — that panicked the cpal output
-                                    // thread and caused permanent dead air.
-                                    // docs/incident-jingle-cart-panic-2026-07-15.md
-                                    // D/E/F ADDED 2026-08-18 so the AUX monitor strips have live
-                                    // meters and positions. Deck slots 3/4/5 are valid indices into
-                                    // `decks: [DeckSlot; 7]`, and — the point of the incident note
-                                    // above — they are addressed by EXPLICIT LITERALS in this tuple
-                                    // list, exactly like "CART". Nothing here indexes DECK_LETTERS,
-                                    // which is what panicked the output thread on 2026-07-15.
-                                    // SLICE 1 — the new source channels report too, through the
-                                    // SAME generic per-slot vector D/E/F were added to on
-                                    // 2026-08-18. Still explicit literals, still nothing indexing
-                                    // DECK_LETTERS — the 2026-07-15 panic rule holds.
+                                    // Explicit literals, never an index into DECK_LETTERS — the 2026-07-15
+                                    // panic rule (docs/incident-jingle-cart-panic-2026-07-15.md) still holds.
                                     let mut dt = Vec::with_capacity(SLOT_COUNT);
                                     for (i, id) in [(0usize, "A"), (1, "B"), (2, "C"),
                                                     (3, "D"), (4, "E"), (5, "F"), (6, "CART"),
                                                     (7, "S1"), (8, "S2"), (9, "S3"), (10, "S4"), (11, "S5")] {
-                                        let d = &bus.decks[i];
-                                        let present = d.source.is_some();
+                                        let d = &m.decks[i];
                                         // active_decks stays A/B/C ONLY — electron/audio-health.js
-                                        // already consumes this number; adding CART would silently
-                                        // change an existing health signal's meaning.
-                                        if i < 3 && d.active && !d.paused && present { active += 1; }
+                                        // already consumes this number.
+                                        if i < 3 && d.active && !d.paused && d.source_present { active += 1; }
                                         dt.push(DeckTel {
                                             id: id.to_string(),
-                                            source_present: present,
+                                            source_present: d.source_present,
                                             active: d.active,
                                             paused: d.paused,
-                                            muted: d.muted,
-                                            volume: d.volume,
+                                            muted: p.muted[i],
+                                            volume: p.volume[i],
                                             gain_db: d.gain_db,
                                             frames_played: d.frames_played,
-                                            peak: bus.peaks[i],
-                                            duck: bus.duck_enabled[i],
+                                            peak: m.peaks[i],
+                                            duck: p.duck_enabled[i],
                                         });
                                     }
                                     lvl.active_decks = active;
@@ -2103,70 +2422,65 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 break;
                             }
                             AudioCmd::SetEq(gains) => {
-                                // Mirror onto the ROOM chain's own EQ. Both instances must carry the
-                                // same bands or the room would be tonally different from air whenever
-                                // an aux deck is live and the room is running its own chain.
-                                if let Ok(bus) = bus_cmd.lock() {
-                                    if let Ok(mut eqr) = bus.eq_room.lock() { eqr.set_bands(&gains); }
-                                }
-                                if let Ok(bus) = bus_cmd.lock() {
-                                    if let Ok(mut eq) = bus.eq.lock() {
-                                        eq.set_bands(&gains);
-                                    }
-                                }
+                                // One control, both EQ instances (air + room) — the callback applies the
+                                // new bands to both when it adopts this block, as SetEq always did.
+                                for i in 0..10 { ctl.params.eq_bands[i] = gains.get(i).copied().unwrap_or(0.0); }
+                                ctl.params.eq_version = ctl.params.eq_version.wrapping_add(1);
+                                ctl.params_changed();
                             }
                             AudioCmd::SetMonitorVolume(v) => {
-                                if let Ok(mut bus) = bus_cmd.lock() { bus.monitor_vol = v.clamp(0.0, 4.0); }
+                                ctl.params.monitor_vol = v.clamp(0.0, 4.0);
+                                ctl.params_changed();
                             }
                             AudioCmd::SetMasterVolume(v) => {
                                 // Clamped 0..=1: master is an attenuator on air. >1 would let the operator
                                 // push the program bus into clipping ahead of the limiter.
-                                if let Ok(mut bus) = bus_cmd.lock() { bus.master_vol = v.clamp(0.0, 1.0); }
+                                ctl.params.master_vol = v.clamp(0.0, 1.0);
+                                ctl.params_changed();
                             }
                             AudioCmd::SetMasterMonitorVolume(v) => {
-                                if let Ok(mut bus) = bus_cmd.lock() { bus.master_monitor_vol = v.clamp(0.0, 1.0); }
+                                ctl.params.master_monitor_vol = v.clamp(0.0, 1.0);
+                                ctl.params_changed();
                             }
                             AudioCmd::SetProcessorBypass { branch, ride_bypass, limiter_bypass } => {
-                                if let Ok(mut bus) = bus_cmd.lock() {
-                                    if branch == 1 {
-                                        bus.proc_stream_ride_bypass    = ride_bypass;
-                                        bus.proc_stream_limiter_bypass = limiter_bypass;
-                                    } else {
-                                        bus.proc_ride_bypass    = ride_bypass;
-                                        bus.proc_limiter_bypass = limiter_bypass;
-                                    }
+                                let p = &mut ctl.params;
+                                if branch == 1 {
+                                    p.proc_stream_ride_bypass    = ride_bypass;
+                                    p.proc_stream_limiter_bypass = limiter_bypass;
+                                } else {
+                                    p.proc_ride_bypass    = ride_bypass;
+                                    p.proc_limiter_bypass = limiter_bypass;
                                 }
+                                ctl.params_changed();
                             }
                             AudioCmd::SetProcessorParams { branch, target_lufs, ceiling_dbtp, release_ms, ride_rate_db_s, ride_clamp_db } => {
-                                if let Ok(mut bus) = bus_cmd.lock() {
+                                let p = &mut ctl.params;
                                 if branch == 1 {
                                     // Same edge clamps as the local branch — every value between is a
-                                    // legitimate operator choice, and the two branches get the same
-                                    // freedom because they are the same processor.
-                                    bus.proc_stream_target_lufs  = target_lufs.clamp(-30.0, -6.0);
-                                    bus.proc_stream_ceiling_dbtp = ceiling_dbtp.clamp(-12.0, -0.1);
-                                    bus.proc_stream_release_ms   = release_ms.clamp(5.0, 2000.0);
-                                    bus.proc_stream_ride_rate    = ride_rate_db_s.clamp(0.1, 12.0);
-                                    bus.proc_stream_ride_clamp   = ride_clamp_db.clamp(0.0, 24.0);
+                                    // legitimate operator choice.
+                                    p.proc_stream_target_lufs  = target_lufs.clamp(-30.0, -6.0);
+                                    p.proc_stream_ceiling_dbtp = ceiling_dbtp.clamp(-12.0, -0.1);
+                                    p.proc_stream_release_ms   = release_ms.clamp(5.0, 2000.0);
+                                    p.proc_stream_ride_rate    = ride_rate_db_s.clamp(0.1, 12.0);
+                                    p.proc_stream_ride_clamp   = ride_clamp_db.clamp(0.0, 24.0);
                                 } else {
-                                    bus.proc_target_lufs = target_lufs.clamp(-30.0, -6.0);
-                                    // Clamped at the edges only, as the ducker's params are: every value
-                                    // between is a legitimate operator choice. The ceiling is never
-                                    // allowed to reach 0 dBTP — above about -0.3 the stream's encoder
-                                    // produces inter-sample overs that clip on the listener's decoder.
-                                    bus.proc_ceiling_dbtp   = ceiling_dbtp.clamp(-12.0, -0.1);
-                                    bus.proc_release_ms     = release_ms.clamp(5.0, 2000.0);
-                                    bus.proc_ride_rate      = ride_rate_db_s.clamp(0.1, 12.0);
-                                    bus.proc_ride_clamp     = ride_clamp_db.clamp(0.0, 24.0);
+                                    p.proc_target_lufs = target_lufs.clamp(-30.0, -6.0);
+                                    // The ceiling is never allowed to reach 0 dBTP — above about -0.3 the
+                                    // stream's encoder produces inter-sample overs that clip on the
+                                    // listener's decoder.
+                                    p.proc_ceiling_dbtp   = ceiling_dbtp.clamp(-12.0, -0.1);
+                                    p.proc_release_ms     = release_ms.clamp(5.0, 2000.0);
+                                    p.proc_ride_rate      = ride_rate_db_s.clamp(0.1, 12.0);
+                                    p.proc_ride_clamp     = ride_clamp_db.clamp(0.0, 24.0);
                                 }
-                                }
+                                ctl.params_changed();
                             }
                             AudioCmd::SetProcessing { local, stream, target_lufs } => {
-                                if let Ok(mut bus) = bus_cmd.lock() {
-                                    bus.proc_local  = local;
-                                    bus.proc_stream = stream;
-                                    bus.proc_target_lufs = target_lufs.clamp(-30.0, -6.0);
-                                }
+                                let p = &mut ctl.params;
+                                p.proc_local  = local;
+                                p.proc_stream = stream;
+                                p.proc_target_lufs = target_lufs.clamp(-30.0, -6.0);
+                                ctl.params_changed();
                             }
                             AudioCmd::Ping
                             | AudioCmd::StartStream { .. }
@@ -2186,6 +2500,78 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
 }
 
 // ── Helpers called from start_station_mixer ───────────────────────────────────
+
+/// S3 — what the dispatch thread knows about a deck that the callback does not need to hold.
+#[derive(Default)]
+pub(crate) struct DeckShadow {
+    pub path: String,
+    pub title: String,
+    pub artist: String,
+    pub gain_db: f32,
+    /// What the last source-changing message (Load / Stop / Play-with-reload) left this deck holding…
+    pub src_expected: bool,
+    /// …and that message's sequence number. Until the callback has applied it, `src_expected` is the
+    /// answer; after, the callback's own src_gen is (it also reflects natural ends).
+    pub src_msg_seq: u64,
+}
+
+/// S3 — the dispatch thread's end of the station: the authoritative parameter block, the deck shadow,
+/// the ordered outbox to the callback, the garbage it frees and the meters it reads. Owned by the
+/// dispatch thread alone; nothing here is shared with the callback except through rt.rs channels.
+pub(crate) struct Control {
+    cmd: HeapProd<RtCmd>,
+    /// Ordered overflow for when the ring is full: a command is delayed, never dropped or reordered.
+    pending: std::collections::VecDeque<RtCmd>,
+    /// Sequence number of the last command enqueued (FIFO ⇒ the callback applied #k iff applied_seq ≥ k).
+    seq: u64,
+    pub params: Params,
+    garbage: HeapCons<Garbage>,
+    pub meter: TripleReader<MeterFrame>,
+    shared: Arc<RtShared>,
+    pub decks: [DeckShadow; SLOT_COUNT],
+    gen: u64,
+    pub aux_frames: Arc<AtomicU64>,
+}
+impl Control {
+    pub(crate) fn new(bus: &BusState, cmd: HeapProd<RtCmd>, garbage: HeapCons<Garbage>,
+                      meter: TripleReader<MeterFrame>, shared: Arc<RtShared>, aux_frames: Arc<AtomicU64>) -> Self {
+        Control {
+            cmd, pending: std::collections::VecDeque::new(), seq: 0, params: bus.params(),
+            garbage, meter, shared, decks: std::array::from_fn(|_| DeckShadow::default()), gen: 0, aux_frames,
+        }
+    }
+    pub(crate) fn next_gen(&mut self) -> u64 { self.gen = self.gen.wrapping_add(1).max(1); self.gen }
+    /// Queue a command; returns its sequence number.
+    pub(crate) fn enqueue(&mut self, c: RtCmd) -> u64 {
+        self.pending.push_back(c);
+        self.seq += 1;
+        self.seq
+    }
+    /// The parameter block changed. Coalesced: if the newest queued command is already a block that has
+    /// not left, it is updated in place — order with deck commands is preserved, and a slider drag cannot
+    /// fill the ring.
+    pub(crate) fn params_changed(&mut self) {
+        if let Some(RtCmd::Params(b)) = self.pending.back_mut() { **b = self.params; return; }
+        let b = Box::new(self.params);
+        self.enqueue(RtCmd::Params(b));
+    }
+    /// Hand the callback everything that fits, in order.
+    pub(crate) fn flush(&mut self) {
+        while let Some(c) = self.pending.pop_front() {
+            if let Err(c) = self.cmd.try_push(c) { self.pending.push_front(c); break; }
+        }
+    }
+    /// Free what the callback replaced.
+    pub(crate) fn drain_garbage(&mut self) {
+        while let Some(g) = self.garbage.try_pop() { drop(g); }
+    }
+    /// Does deck `idx` hold a source? See DeckShadow::src_msg_seq.
+    pub(crate) fn present(&self, idx: usize) -> bool {
+        let d = &self.decks[idx];
+        if d.src_msg_seq > self.shared.applied_seq.load(Ordering::Acquire) { d.src_expected }
+        else { self.shared.src_gen[idx].load(Ordering::Acquire) != 0 }
+    }
+}
 
 /// S2 — log what the callback reported. Runs on the dispatch thread, never the audio thread. The text is
 /// the callback's old eprintln! verbatim, so log readers (audiod/daemon-log.js, diagnostics) are unaffected.
@@ -2260,18 +2646,18 @@ pub(crate) fn build_source(
     Some(Box::new(norm))
 }
 
-fn restore_decks_after_switch(bus_cmd: &SharedBusState, sr: u32) {
+fn restore_decks_after_switch(bus_cmd: &SharedBusState, sr: u32, ctl: &mut Control) {
     // Re-create decoders for decks that had a path but lost their source
     // when the device was switched (source was consumed up to the switch point
     // and needs to restart). Acceptable limitation: track restarts from beginning.
-    let paths: Vec<(usize, String, f32)> = bus_cmd.lock().ok().map(|bus| {
-        bus.decks.iter().enumerate()
-            .filter(|(_, d)| !d.path.is_empty())
-            .map(|(i, d)| (i, d.path.clone(), d.gain_db))
-            .collect()
-    }).unwrap_or_default();
+    // S3: runs with NO callback alive (before the stream is built), so the lock is uncontended; the paths
+    // come from the dispatch thread's shadow, since the callback no longer holds strings.
+    let paths: Vec<(usize, String)> = ctl.decks.iter().enumerate()
+        .filter(|(_, d)| !d.path.is_empty())
+        .map(|(i, d)| (i, d.path.clone()))
+        .collect();
 
-    for (idx, path, gain_db) in paths {
+    for (idx, path) in paths {
         if let Some(src) = build_source(&path, sr) {
             if let Ok(mut bus) = bus_cmd.lock() {
                 // Only replace if the source is gone (e.g. after a device failover mid-track)
@@ -2279,16 +2665,11 @@ fn restore_decks_after_switch(bus_cmd: &SharedBusState, sr: u32) {
                     bus.decks[idx].source = Some(src);
                     // SAMPLE CLOCK — the rebuilt decoder starts at the TOP of the file (see this
                     // function's header: "track restarts from beginning"), so the position must
-                    // restart with it. Carrying the old count forward would report a position the
-                    // listener is not hearing, and — because the daemon fires the segue on
-                    // remaining = duration - position — would cut the restarted track off almost
-                    // immediately. The jump to 0:00 on a card switch is real; show it.
+                    // restart with it. The jump to 0:00 on a card switch is real; show it.
                     bus.decks[idx].frames_played = 0;
-                    // The FADER LEVEL survives a device failover untouched — same rule as Load: only the
-                    // jock's hand moves it. This used to rebuild volume from gain_db, so a card switch
-                    // mid-show silently reset every deck's fader to unity. gain_db still rides pre-fader
-                    // at the mix and needs nothing done here; the slot already holds it.
-                    let _ = gain_db;
+                    // The FADER LEVEL survives a device failover untouched — only the jock's hand moves it.
+                    let g = ctl.next_gen();
+                    bus.shared.src_gen[idx].store(g, Ordering::Release);
                 }
             }
         }
@@ -2377,6 +2758,10 @@ pub(crate) fn mixer_callback(
         Ok(b)  => b,
         Err(_) => { data.iter_mut().for_each(|s| *s = 0.0); return; }
     };
+
+    // S3 — adopt queued parameter blocks and deck commands BEFORE anything reads them. The whole buffer
+    // then runs on this one state; a block that arrives meanwhile waits for the next buffer.
+    bus.apply_commands();
 
     let device_sr = bus.sample_rate;
     // How many PROGRAM_RATE (44100 Hz) frames cover this device buffer.
@@ -2551,7 +2936,9 @@ pub(crate) fn mixer_callback(
 
     for (i, done) in exhausted.iter().enumerate() {
         if *done {
-            bus.decks[i].source = None;
+            // S3 — the spent decoder is freed on the dispatch thread, not here.
+            if let Some(o) = bus.decks[i].source.take() { bus.discard(Garbage::Source(o)); }
+            bus.shared.src_gen[i].store(0, Ordering::Release);
             bus.decks[i].active = false;
             // Slot 6 is the CART overlay channel and is NOT in DECK_LETTERS (len 6, A–F). Before this
             // guard, a CART source playing to NATURAL END (first done by the maiden jingle overlay, 2026-07-15)
@@ -3037,6 +3424,8 @@ pub(crate) fn mixer_callback(
     }
 
     playing.store(any_playing, Ordering::Relaxed);   // S2 — was a try_lock on a Mutex<bool>
+    // S3 — this buffer's meters and telemetry, for GetLevel (lock-free triple buffer).
+    bus.publish_meters();
 
 }
 

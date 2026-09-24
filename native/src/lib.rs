@@ -11,6 +11,7 @@ pub mod eq;
 mod lufs;
 mod clock;
 mod program_processor;   // Audio Processing v1 — per-station program-bus loudness (bench-gated before ship)
+mod rt;                  // Slice 1 S3 — lock-free channels between the audio callback and everything else
 mod offline_render;      // DSP parity harness — docs/dsp-parity-harness.md (diagnostic; never on the audio path)
 
 use napi_derive::napi;
