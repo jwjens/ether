@@ -2257,7 +2257,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
             let stream_config = cpal::StreamConfig {
                 channels:    ch,
                 sample_rate: cpal::SampleRate(sr),
-                buffer_size: cpal::BufferSize::Default,
+                buffer_size: soak_buffer_size(station_id, &device),
             };
 
             let bus_cb   = bus_cmd.clone();
@@ -2771,6 +2771,37 @@ fn drain_rt_events(station_id: u32, cons: &mut ringbuf::HeapCons<RtEvent>) {
         if *n > 0 {
             eprintln!("[RUST] Station {} deck {} UNDERRUN: {} buffer(s), {} frames of silence — decode worker late (position held, track NOT ended)",
                       station_id, deck_finished_key(i), n, frames);
+        }
+    }
+}
+
+/// SLICE 1 SOAK — a DEV-ONLY buffer-size override for the real-time soak (Jeff's ruling 5: an env var,
+/// not an operator setting; it shapes no sound). Unset — the only state a shipped install is ever in —
+/// returns BufferSize::Default exactly as before.
+///   ETHER_SOAK_BUFFER_FRAMES=min  → the smallest period the device reports it supports
+///   ETHER_SOAK_BUFFER_FRAMES=<n>  → exactly n frames
+/// Logged every time it applies, so a soak log states what it actually ran at.
+fn soak_buffer_size(station_id: u32, device: &cpal::Device) -> cpal::BufferSize {
+    use cpal::traits::DeviceTrait;
+    let Ok(v) = std::env::var("ETHER_SOAK_BUFFER_FRAMES") else { return cpal::BufferSize::Default };
+    let v = v.trim().to_ascii_lowercase();
+    let supported = device.default_output_config().ok().map(|c| c.buffer_size().clone());
+    let frames = if v == "min" {
+        match supported {
+            Some(cpal::SupportedBufferSize::Range { min, .. }) => Some(min),
+            _ => None,
+        }
+    } else { v.parse::<u32>().ok() };
+    match frames {
+        Some(n) if n > 0 => {
+            eprintln!("[RUST] Station {} SOAK: fixed device buffer {} frames (ETHER_SOAK_BUFFER_FRAMES={}; device reports {:?})",
+                      station_id, n, v, supported);
+            cpal::BufferSize::Fixed(n)
+        }
+        _ => {
+            eprintln!("[RUST] Station {} SOAK: ETHER_SOAK_BUFFER_FRAMES={} not usable (device reports {:?}) — using the default buffer",
+                      station_id, v, supported);
+            cpal::BufferSize::Default
         }
     }
 }
