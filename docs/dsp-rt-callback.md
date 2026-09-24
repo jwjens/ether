@@ -475,6 +475,10 @@ brief's point):
 - **An allocation the inventory did not list:** `rustfft`'s `process()` allocates its scratch on every call
   (`rustfft-6/src/lib.rs:196`), every 1024 samples, in the EQ analyser. S6 fixed it. The count before the
   fix was never measured; the zero after it was.
+- **`MAX_PROG_FRAMES` is 32 768 frames** (743 ms at 44.1 kHz), not the proposed 16 384, so there is no
+  doubt for large device periods. It costs 26 lanes × 128 KB ≈ 3.4 MB per opened device. A larger request
+  is counted in `buffer_clamped` only; the proposed `Event::BufferTooLarge` was not built, because the
+  counter already reaches the Health Monitor.
 - **A test bug of mine, fixed in S5:** the parameter-barrage test could leave its sender spinning on a full
   queue once the render loop stopped, which hung the first S5 run.
 

@@ -73,6 +73,8 @@ These are the audio engine's own health counts since it started, and **all three
   For that moment **only that deck goes quiet**; the song does **not** end, its time does not jump, and
   the next song is not started. The count is how you know it happened. A few after the computer wakes
   up is the disk spinning up; a steady climb means the music drive is too slow or too busy.
+  (Each deck reads ahead into a 2-second buffer, topping it up whenever it falls below 1.5 seconds
+  and checking every 20 ms. An underrun means the disk could not keep 2 seconds ahead.)
 - **Overruns** — the sound card asked for audio and the engine answered late. You may have heard a
   tick. A climb means the computer is overloaded while on air.
 - **Lock misses** — should always be 0. If it is not, write down the time and tell support.
