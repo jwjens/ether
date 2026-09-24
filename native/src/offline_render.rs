@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use ringbuf::{HeapRb, traits::{Consumer, Split}};
 use serde::{Deserialize, Serialize};
-use crate::audio::{BusState, FinishedFlags, SharedBusState, mixer_callback, build_source, PROGRAM_BUS_BUF, AUX_BUS_BUF};
+use crate::audio::{BusState, FinishedFlags, SharedBusState, Scratch, mixer_callback, build_source, PROGRAM_BUS_BUF, AUX_BUS_BUF};
 
 /// The program-bus rate. The render always runs the device at this rate (condition 1 above).
 pub const RATE: u32 = 44_100;
@@ -191,10 +191,11 @@ pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
     let mut pop = vec![0f32; PROGRAM_BUS_BUF];
     let mut tail_left: Option<usize> = None;
     let max_buffers = device_rate as usize * MAX_SECONDS / block;
+    let mut sc = Scratch::new();
 
     for _ in 0..max_buffers {
         data.iter_mut().for_each(|s| *s = 0.0);
-        mixer_callback(&mut data, 2, &bus, &fin, &playing);
+        mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
         monitor.extend_from_slice(&data);
         // Drain EVERY call so neither ring can fill and drop samples (try_push at :2717, :2879).
         loop {

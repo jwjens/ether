@@ -1158,7 +1158,7 @@ mod slice1_regression {
         let mut out: Vec<f32> = Vec::new();
         for _ in 0..50 {
             let mut data = vec![0f32; 480 * 2];
-            mixer_callback(&mut data, 2, &bus, &fin, &playing);
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut Scratch::new());
             out.extend_from_slice(&data);
         }
         checksum(&out)
@@ -1202,7 +1202,7 @@ mod slice1_regression {
         let mut out: Vec<f32> = Vec::new();
         for _ in 0..8 {
             let mut data = vec![0f32; 480 * 2];
-            mixer_callback(&mut data, 2, &bus, &fin, &playing);
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut Scratch::new());
             out.extend_from_slice(&data);
         }
         checksum(&out)
@@ -1257,7 +1257,7 @@ mod slice1_regression {
         let playing = Arc::new(Mutex::new(true));
         for _ in 0..50 {
             let mut data = vec![0f32; 480 * 2];
-            mixer_callback(&mut data, 2, &bus, &fin, &playing);
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut Scratch::new());
         }
         let mut got: Vec<f32> = Vec::new();
         while let Some(v) = aux_cons.try_pop() { got.push(v); }
@@ -1339,7 +1339,7 @@ mod duck_regression {
         let playing = Arc::new(Mutex::new(true));
         for _ in 0..buffers {
             let mut data = vec![0f32; 480 * 2];
-            mixer_callback(&mut data, 2, bus, &fin, &playing);
+            mixer_callback(&mut data, 2, bus, &fin, &playing, &mut Scratch::new());
         }
     }
     fn set_source(bus: &SharedBusState, level: f32) {
@@ -1422,7 +1422,7 @@ mod duck_regression {
         let mut pk = 0.0f32;
         for _ in 0..buffers {
             let mut data = vec![0f32; 480 * 2];
-            mixer_callback(&mut data, 2, bus, &fin, &playing);
+            mixer_callback(&mut data, 2, bus, &fin, &playing, &mut Scratch::new());
             for v in &data { pk = pk.max(v.abs()); }
         }
         pk
@@ -1769,11 +1769,14 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
             let fin_cb   = finished_clone.clone();
             let play_cb  = is_playing_clone.clone();
             let cb_stamp = last_cb.clone();
+            // S1 — this stream's working buffers, allocated here on the dispatch thread and MOVED into the
+            // callback. The audio thread never allocates them; a reopened device gets a fresh set here.
+            let mut sc = Scratch::new();
 
             let stream = device.build_output_stream::<f32, _, _>(
                 &stream_config,
                 move |data: &mut [f32], _| {
-                    mixer_callback(data, ch, &bus_cb, &fin_cb, &play_cb);
+                    mixer_callback(data, ch, &bus_cb, &fin_cb, &play_cb, &mut sc);
                     // Per-station liveness — stamps THIS station's clock only.
                     cb_stamp.store(now_ms(), Ordering::Relaxed);
                 },
@@ -2265,12 +2268,57 @@ fn restore_decks_after_switch(bus_cmd: &SharedBusState, sr: u32) {
 // No global audio state (DESIGN-TRUTH §2): per-station liveness lives in STATION_CB_MS
 // (above); the program-bus stream-client flag is per-station on BusState.stream_connected.
 
+/// SLICE 1 S1 — the largest buffer the callback will process, in PROGRAM_RATE frames. 32 768 frames is
+/// 743 ms at 44.1 kHz: more than 70× WASAPI's shared-mode default and above any device period seen in the
+/// field. A device asking for more is COUNTED (Scratch::buffer_clamped) and gets silence for that buffer;
+/// the lanes are never grown on the audio thread. docs/dsp-rt-callback.md §2.
+pub(crate) const MAX_PROG_FRAMES: usize = 32_768;
+
+/// SLICE 1 S1 — every per-buffer working buffer of mixer_callback, allocated ONCE (on the thread that opens
+/// the device, or by a test), then only ever sliced and overwritten. This replaces the 16 `vec!` lanes, the
+/// EQ-out Vecs, the master-fader / clean-tap / room `collect()`s and the per-branch `clone()`s that the
+/// callback used to allocate on every buffer (docs/dsp-inventory.md §6.1). Box<[f32]> rather than Vec so
+/// that growing one is not expressible.
+pub(crate) struct Scratch {
+    mix_l: Box<[f32]>, mix_r: Box<[f32]>,
+    room_l: Box<[f32]>, room_r: Box<[f32]>,
+    imm_room_l: Box<[f32]>, imm_room_r: Box<[f32]>,
+    core_l: Box<[f32]>, core_r: Box<[f32]>,
+    aux_l: Box<[f32]>, aux_r: Box<[f32]>,
+    src_l: Box<[f32]>, src_r: Box<[f32]>,
+    imm_l: Box<[f32]>, imm_r: Box<[f32]>,
+    det_l: Box<[f32]>, det_r: Box<[f32]>,
+    out_l: Box<[f32]>, out_r: Box<[f32]>,            // post-EQ, post-master (the clean bus)
+    loc_l: Box<[f32]>, loc_r: Box<[f32]>,            // LOCAL-branch processed
+    str_l: Box<[f32]>, str_r: Box<[f32]>,            // STREAM-branch processed
+    room_out_l: Box<[f32]>, room_out_r: Box<[f32]>,  // the room chain's output
+    dev_l: Box<[f32]>, dev_r: Box<[f32]>,            // the clamped clean tap to the device
+    /// Buffers refused because the device asked for more than MAX_PROG_FRAMES. Published in S6.
+    pub(crate) buffer_clamped: u64,
+}
+impl Scratch {
+    pub(crate) fn new() -> Box<Scratch> {
+        let lane = || vec![0f32; MAX_PROG_FRAMES].into_boxed_slice();
+        Box::new(Scratch {
+            mix_l: lane(), mix_r: lane(), room_l: lane(), room_r: lane(),
+            imm_room_l: lane(), imm_room_r: lane(), core_l: lane(), core_r: lane(),
+            aux_l: lane(), aux_r: lane(), src_l: lane(), src_r: lane(),
+            imm_l: lane(), imm_r: lane(), det_l: lane(), det_r: lane(),
+            out_l: lane(), out_r: lane(), loc_l: lane(), loc_r: lane(),
+            str_l: lane(), str_r: lane(), room_out_l: lane(), room_out_r: lane(),
+            dev_l: lane(), dev_r: lane(),
+            buffer_clamped: 0,
+        })
+    }
+}
+
 pub(crate) fn mixer_callback(
     data:    &mut [f32],
     ch:      u16,
     bus_arc: &SharedBusState,
     fin:     &FinishedFlags,
     playing: &Arc<Mutex<bool>>,
+    sc:      &mut Scratch,
 ) {
 
     let device_frames = data.len() / ch as usize;
@@ -2289,9 +2337,21 @@ pub(crate) fn mixer_callback(
     } else {
         (device_frames as f64 * PROGRAM_RATE as f64 / device_sr as f64).ceil() as usize + 2
     };
+    // S1 — the lanes are fixed-size. A buffer larger than they are is refused, counted and silent for
+    // this one buffer; it is never serviced by growing a lane on the audio thread.
+    if prog_frames > MAX_PROG_FRAMES {
+        sc.buffer_clamped = sc.buffer_clamped.wrapping_add(1);
+        data.iter_mut().for_each(|s| *s = 0.0);
+        return;
+    }
+    let Scratch {
+        mix_l, mix_r, room_l, room_r, imm_room_l, imm_room_r, core_l, core_r, aux_l, aux_r,
+        src_l, src_r, imm_l, imm_r, det_l, det_r, out_l, out_r, loc_l, loc_r, str_l, str_r,
+        room_out_l, room_out_r, dev_l, dev_r, buffer_clamped: _,
+    } = sc;
 
-    let mut mix_l = vec![0f32; prog_frames];
-    let mut mix_r = vec![0f32; prog_frames];
+    let mix_l = &mut mix_l[..prog_frames]; mix_l.fill(0.0);
+    let mix_r = &mut mix_r[..prog_frames]; mix_r.fill(0.0);
     // ── ROOM vs AIR (2026-08-18) ─────────────────────────────────────────────────────────────────
     // core_* = every slot EXCEPT the aux decks — the room's programme base.
     // aux_*  = the aux decks a monitor slot has selected, PRE-CUT and PRE-FADER, at the slot level.
@@ -2302,14 +2362,14 @@ pub(crate) fn mixer_callback(
     // AIR and ROOM are accumulated separately from here. `core_*` is what airs and is NEVER scaled
     // by a monitor; `room_*` is the same slots at their per-slot room level. mix = core + src is
     // untouched, which is the property that keeps a monitor fader from ever reaching a listener.
-    let mut room_l = vec![0f32; prog_frames];
-    let mut room_r = vec![0f32; prog_frames];
-    let mut imm_room_l = vec![0f32; prog_frames];
-    let mut imm_room_r = vec![0f32; prog_frames];
-    let mut core_l = vec![0f32; prog_frames];
-    let mut core_r = vec![0f32; prog_frames];
-    let mut aux_l  = vec![0f32; prog_frames];
-    let mut aux_r  = vec![0f32; prog_frames];
+    let room_l = &mut room_l[..prog_frames]; room_l.fill(0.0);
+    let room_r = &mut room_r[..prog_frames]; room_r.fill(0.0);
+    let imm_room_l = &mut imm_room_l[..prog_frames]; imm_room_l.fill(0.0);
+    let imm_room_r = &mut imm_room_r[..prog_frames]; imm_room_r.fill(0.0);
+    let core_l = &mut core_l[..prog_frames]; core_l.fill(0.0);
+    let core_r = &mut core_r[..prog_frames]; core_r.fill(0.0);
+    let aux_l  = &mut aux_l[..prog_frames]; aux_l.fill(0.0);
+    let aux_r  = &mut aux_r[..prog_frames]; aux_r.fill(0.0);
     // DUCKER (slice 3): the source contribution AT AIR LEVEL, and the part of it that arms the duck.
     //   src_* — every Source slot, post-cut/post-fader. NOT scaled by the monitor gain: aux_* is the
     //           ROOM feed and is a different signal entirely.
@@ -2319,16 +2379,16 @@ pub(crate) fn mixer_callback(
     // construction, which is what makes the duck-off path provably bit-identical below.
     let duck_enabled = bus.duck_enabled;
     let duck_duckable = bus.duck_duckable;
-    let mut src_l = vec![0f32; prog_frames];
-    let mut src_r = vec![0f32; prog_frames];
+    let src_l = &mut src_l[..prog_frames]; src_l.fill(0.0);
+    let src_r = &mut src_r[..prog_frames]; src_r.fill(0.0);
     // RECEIVER SIDE: the non-source music splits in two. `duckable` is what the duck multiplies;
     // `immune` punches through at full level. core = duckable + immune, rebuilt after the duck, so
     // the room and the air both read one already-correct sum. Excluding at the source rather than
     // adding immune back afterwards: the same cost, and it says what it does.
-    let mut imm_l = vec![0f32; prog_frames];
-    let mut imm_r = vec![0f32; prog_frames];
-    let mut det_l = vec![0f32; prog_frames];
-    let mut det_r = vec![0f32; prog_frames];
+    let imm_l = &mut imm_l[..prog_frames]; imm_l.fill(0.0);
+    let imm_r = &mut imm_r[..prog_frames]; imm_r.fill(0.0);
+    let det_l = &mut det_l[..prog_frames]; det_l.fill(0.0);
+    let det_r = &mut det_r[..prog_frames]; det_r.fill(0.0);
     let mut duck_armed = false;    // at least one duck-enabled Source slot is actually producing
     let mut aux_present = false;   // an aux deck is producing audio → the room must use core_*
     let mut any_playing = false;
@@ -2574,20 +2634,20 @@ pub(crate) fn mixer_callback(
     //
     // (The ROOM chain further down still clamps the same way. Same defect, deliberately left alone
     // here: it is a separate path and a separate decision.)
-    let (out_l, out_r): (Vec<f32>, Vec<f32>) = if let Ok(mut eq) = bus.eq.try_lock() {
-        let mut ol = Vec::with_capacity(prog_frames);
-        let mut or_ = Vec::with_capacity(prog_frames);
+    let out_l = &mut out_l[..prog_frames];
+    let out_r = &mut out_r[..prog_frames];
+    if let Ok(mut eq) = bus.eq.try_lock() {
         for f in 0..prog_frames {
             let (l, r) = eq.process_stereo(mix_l[f], mix_r[f]);
-            ol.push(l);
-            or_.push(r);
+            out_l[f] = l;
+            out_r[f] = r;
         }
         // Snapshot the analyzer spectrum while we hold the lock; published to bus below.
         eq_spectrum = Some(eq.spectrum());
-        (ol, or_)
     } else {
-        (mix_l.clone(), mix_r.clone())
-    };
+        out_l.copy_from_slice(mix_l);
+        out_r.copy_from_slice(mix_r);
+    }
 
     // Publish the EQ analyzer spectrum (lock already released) for GetLevel → AudioLevels.
     if let Some(spec) = eq_spectrum { bus.spectrum = spec; }
@@ -2600,12 +2660,12 @@ pub(crate) fn mixer_callback(
     //     exactly like a console, and monitor still never touches air.
     // Unity is a no-op multiply, so an untouched station is bit-identical to the previous build.
     let master_vol = bus.master_vol;
-    let (out_l, out_r): (Vec<f32>, Vec<f32>) = if master_vol == 1.0 {
-        (out_l, out_r)
-    } else {
-        (out_l.iter().map(|&s| s * master_vol).collect(),
-         out_r.iter().map(|&s| s * master_vol).collect())
-    };
+    if master_vol != 1.0 {
+        for s in out_l.iter_mut() { *s = *s * master_vol; }
+        for s in out_r.iter_mut() { *s = *s * master_vol; }
+    }
+    let out_l: &[f32] = out_l;
+    let out_r: &[f32] = out_r;
 
     // Program/master peak for VU (functional — feeds master_peak below).
     let peak = out_l.iter().chain(out_r.iter())
@@ -2638,12 +2698,15 @@ pub(crate) fn mixer_callback(
     // BIT-IDENTICAL WHERE NOTHING IS STORED: the daemon mirrors the local parameters into the stream set
     // while the two are linked (the default), and two instances with identical parameters and identical
     // input produce identical output — C7 asserts it on the sample bits.
-    let mut run_branch = |proc: &Arc<Mutex<crate::program_processor::ProgramProcessor>>,
-                          target: f32, ceiling: f32, release: f32, rate: f32, clamp: f32,
-                          ride_byp: bool, lim_byp: bool|
-     -> (Option<Vec<f32>>, Option<Vec<f32>>, Option<(f32, f32, f32, f32, f32)>) {
-        let mut pl = out_l.clone();
-        let mut pr = out_r.clone();
+    // S1: each branch copies the clean bus into ITS OWN preallocated lane (was: two Vec clones per branch).
+    // Returns the meters when the branch processed, None when its lock was missed — in which case the
+    // lane holds a copy of the clean bus and is never read, exactly as the old None buffers were never read.
+    let run_branch = |proc: &Arc<Mutex<crate::program_processor::ProgramProcessor>>,
+                      target: f32, ceiling: f32, release: f32, rate: f32, clamp: f32,
+                      ride_byp: bool, lim_byp: bool, pl: &mut [f32], pr: &mut [f32]|
+     -> Option<(f32, f32, f32, f32, f32)> {
+        pl.copy_from_slice(out_l);
+        pr.copy_from_slice(out_r);
         // try_lock only, never blocks air; a missed lock falls back to the clean tap, as before.
         if let Ok(mut p) = proc.try_lock() {
             p.set_target(target);
@@ -2652,24 +2715,27 @@ pub(crate) fn mixer_callback(
             // cannot fight. The meter still runs; only the corrective gain is held. Both branches, since
             // the duck applies to the programme both of them carry.
             p.set_ride_hold(duck_active);
-            p.process_planar(&mut pl, &mut pr);
+            p.process_planar(pl, pr);
             let op = pl.iter().chain(pr.iter()).map(|&s| s.abs()).fold(0.0f32, f32::max);
-            let m = (p.in_lufs(), p.out_lufs(), p.gain_reduction_db(), p.ride_gain_db(), op);
-            (Some(pl), Some(pr), Some(m))
-        } else { (None, None, None) }
+            Some((p.in_lufs(), p.out_lufs(), p.gain_reduction_db(), p.ride_gain_db(), op))
+        } else { None }
     };
 
-    let (proc_l, proc_r, local_m) = if bus.proc_local {
+    let loc_l = &mut loc_l[..prog_frames];
+    let loc_r = &mut loc_r[..prog_frames];
+    let str_l = &mut str_l[..prog_frames];
+    let str_r = &mut str_r[..prog_frames];
+    let local_m = if bus.proc_local {
         run_branch(&bus.processor.clone(), bus.proc_target_lufs, bus.proc_ceiling_dbtp,
                    bus.proc_release_ms, bus.proc_ride_rate, bus.proc_ride_clamp,
-                   bus.proc_ride_bypass, bus.proc_limiter_bypass)
-    } else { (None, None, None) };
+                   bus.proc_ride_bypass, bus.proc_limiter_bypass, loc_l, loc_r)
+    } else { None };
 
-    let (str_l, str_r, stream_m) = if bus.proc_stream {
+    let stream_m = if bus.proc_stream {
         run_branch(&bus.processor_stream.clone(), bus.proc_stream_target_lufs, bus.proc_stream_ceiling_dbtp,
                    bus.proc_stream_release_ms, bus.proc_stream_ride_rate, bus.proc_stream_ride_clamp,
-                   bus.proc_stream_ride_bypass, bus.proc_stream_limiter_bypass)
-    } else { (None, None, None) };
+                   bus.proc_stream_ride_bypass, bus.proc_stream_limiter_bypass, str_l, str_r)
+    } else { None };
 
     // METERS, PER BRANCH. proc_stream_* always describes the stream instance. The legacy proc_* fields
     // describe the LOCAL instance, and fall back to the stream instance when only the stream is
@@ -2703,14 +2769,14 @@ pub(crate) fn mixer_callback(
     if bus.stream_connected.load(Ordering::Relaxed) {
         // Stream drain taps PROCESSED when "Process stream" is on and the processed buffer exists, else clean.
         // The stream taps the STREAM processor now, not the shared one.
-        let use_proc = bus.proc_stream && str_l.is_some();
+        let use_proc = bus.proc_stream && stream_m.is_some();
         for f in 0..prog_frames {
             // PROCESSED audio is already ceiling-controlled by the -1 dBTP limiter and passes through
             // untouched. The CLEAN tap has no limiter in front of it, so it is clamped HERE — at the
             // point of use, for an unprocessed station only, instead of on the way in where it also
             // clipped the processor's input.
             let (l, r) = if use_proc {
-                (str_l.as_ref().unwrap()[f], str_r.as_ref().unwrap()[f])
+                (str_l[f], str_r[f])
             } else {
                 (out_l[f].clamp(-1.0, 1.0), out_r[f].clamp(-1.0, 1.0))
             };
@@ -2732,24 +2798,22 @@ pub(crate) fn mixer_callback(
     // aux_present == false (every station not using an aux deck) → this whole block is skipped and the
     // room takes the ORIGINAL path below, bit-identical to the previous build. The second chain costs
     // nothing until the feature is in use.
-    let room_owned: Option<(Vec<f32>, Vec<f32>)> = if aux_present {
+    let rl = &mut room_out_l[..prog_frames];
+    let rr = &mut room_out_r[..prog_frames];
+    let room_owned: bool = if aux_present {
         // The room's programme base is core_* (aux decks excluded), run through the room's OWN EQ and
         // master gain so A/B/C local monitoring is unchanged. Separate instances because both stages
         // are stateful and the air chain has already used its own on a different sum this callback.
-        let (mut rl, mut rr): (Vec<f32>, Vec<f32>) = if let Ok(mut eqr) = bus.eq_room.try_lock() {
-            let mut a = Vec::with_capacity(prog_frames);
-            let mut b = Vec::with_capacity(prog_frames);
+        if let Ok(mut eqr) = bus.eq_room.try_lock() {
             for f in 0..prog_frames {
                 let (l, r) = eqr.process_stereo(room_l[f], room_r[f]);
-                a.push(l.clamp(-1.0, 1.0));
-                b.push(r.clamp(-1.0, 1.0));
+                rl[f] = l.clamp(-1.0, 1.0);
+                rr[f] = r.clamp(-1.0, 1.0);
             }
-            (a, b)
         } else {
             // Never block the audio thread for EQ — fall back to clean, exactly as the air chain does.
-            (room_l.iter().map(|&s| s.clamp(-1.0, 1.0)).collect(),
-             room_r.iter().map(|&s| s.clamp(-1.0, 1.0)).collect())
-        };
+            for f in 0..prog_frames { rl[f] = room_l[f].clamp(-1.0, 1.0); rr[f] = room_r[f].clamp(-1.0, 1.0); }
+        }
         if master_vol != 1.0 {
             for f in 0..prog_frames { rl[f] *= master_vol; rr[f] *= master_vol; }
         }
@@ -2762,7 +2826,7 @@ pub(crate) fn mixer_callback(
             // instances (program, aux, room) get the same chain — one station, one sound.
             p.set_params(bus.proc_ceiling_dbtp, bus.proc_release_ms, bus.proc_ride_rate,
                          bus.proc_ride_clamp, bus.proc_ride_bypass, bus.proc_limiter_bypass);
-                p.process_planar(&mut rl, &mut rr);
+                p.process_planar(rl, rr);
             }
         }
         // NOTE: the aux sum is NOT added here. It has exactly ONE destination — the device chosen in
@@ -2773,26 +2837,22 @@ pub(crate) fn mixer_callback(
         //
         // What this chain still does, and must: build the room from the NON-aux slots, so decks D/E/F
         // never sum into the station's local speaker output.
-        let _ = &aux_l;   // consumed by the aux ring below, not by the room
-        Some((rl, rr))
-    } else { None };
+        true
+    } else { false };
 
     // Holds the clamped clean buffers when the device takes that tap, so the borrow below outlives
     // the `if`. None whenever the room chain or the processed buffers are feeding the device.
-    let clean_dev: Option<(Vec<f32>, Vec<f32>)>;
-    let (dl, dr): (&[f32], &[f32]) = if let Some((ref rl, ref rr)) = room_owned {
-        clean_dev = None;
-        (rl, rr)
-    } else if bus.proc_local && proc_l.is_some() {
-        clean_dev = None;
-        (proc_l.as_ref().unwrap(), proc_r.as_ref().unwrap())
+    let (dl, dr): (&[f32], &[f32]) = if room_owned {
+        (&*rl, &*rr)
+    } else if bus.proc_local && local_m.is_some() {
+        (&*loc_l, &*loc_r)
     } else {
         // Clean tap to the device — no limiter in this path, so the ceiling is enforced here. Built
         // once rather than clamped per sample in the two write loops below, which are the hot ones.
-        clean_dev = Some((out_l.iter().map(|&s| s.clamp(-1.0, 1.0)).collect::<Vec<f32>>(),
-                          out_r.iter().map(|&s| s.clamp(-1.0, 1.0)).collect::<Vec<f32>>()));
-        let (ref cl, ref cr) = clean_dev.as_ref().unwrap();
-        (cl, cr)
+        let cl = &mut dev_l[..prog_frames];
+        let cr = &mut dev_r[..prog_frames];
+        for f in 0..prog_frames { cl[f] = out_l[f].clamp(-1.0, 1.0); cr[f] = out_r[f].clamp(-1.0, 1.0); }
+        (&*cl, &*cr)
     };
     // ── (REMOVED 2026-08-22) A SECOND, EARLIER AUX PROCESSING BLOCK STOOD HERE ───────────────────
     // It ran `if bus.proc_local { processor_aux.process_planar(&mut aux_l, &mut aux_r) }` — the same
@@ -2832,7 +2892,7 @@ pub(crate) fn mixer_callback(
             // instances (program, aux, room) get the same chain — one station, one sound.
             p.set_params(bus.proc_ceiling_dbtp, bus.proc_release_ms, bus.proc_ride_rate,
                          bus.proc_ride_clamp, bus.proc_ride_bypass, bus.proc_limiter_bypass);
-            p.process_planar(&mut aux_l, &mut aux_r);
+            p.process_planar(aux_l, aux_r);
             Some((p.in_lufs(), p.out_lufs(), p.gain_reduction_db(), p.ride_gain_db()))
         } else { None };
         if let Some((il, ol, gr, ride)) = meters {
