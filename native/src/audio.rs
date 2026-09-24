@@ -1525,7 +1525,7 @@ const PROGRAM_RATE:   u32       = 44100;
 pub(crate) const PROGRAM_BUS_BUF: usize    = PROGRAM_RATE as usize * 2 * 4; // 4 s at 44100 Hz stereo
 /// AUX monitor ring — ~0.5 s of 44100 Hz stereo. Deliberately SHORT: this is a monitor feed and
 /// latency matters more than resilience. The writer bounds it further (see AUX_RING_HIGH).
-const AUX_BUS_BUF: usize = PROGRAM_RATE as usize;          // 44100 samples = 0.5 s stereo
+pub(crate) const AUX_BUS_BUF: usize = PROGRAM_RATE as usize;          // 44100 samples = 0.5 s stereo
 /// Above this fill the writer drops a frame — the drift bound. Two device clocks run independently,
 /// so without this the ring creeps toward full and the monitor drifts seconds behind the room.
 const AUX_RING_HIGH: usize = PROGRAM_RATE as usize / 4;    // ~0.125 s stereo

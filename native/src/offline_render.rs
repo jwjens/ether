@@ -22,17 +22,19 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
 use ringbuf::{HeapRb, traits::{Consumer, Split}};
 use serde::{Deserialize, Serialize};
-use crate::audio::{BusState, FinishedFlags, SharedBusState, mixer_callback, build_source, PROGRAM_BUS_BUF};
+use crate::audio::{BusState, FinishedFlags, SharedBusState, mixer_callback, build_source, PROGRAM_BUS_BUF, AUX_BUS_BUF};
 
 /// The program-bus rate. The render always runs the device at this rate (condition 1 above).
 pub const RATE: u32 = 44_100;
-/// Frames per callback — 10 ms at 44.1 kHz, the block size the existing Rust goldens use (audio.rs:1160).
+/// Default frames per callback — 10 ms at 44.1 kHz, the block size the existing Rust goldens use
+/// (audio.rs:1160). RenderCfg.block_frames overrides it (the ride evaluates per call, so block size is
+/// part of what a golden pins).
 const BLOCK: usize = 480;
 /// Buffers rendered after the deck reports finished, so the limiter's look-ahead delay line
 /// (66 samples at 44.1 kHz, program_processor.rs:116) is flushed into the taps. 10 × 480 = 100 ms.
 const TAIL_BUFFERS: usize = 10;
-/// Refuse to render forever if a decoder never ends (a stream, a corrupt length): 30 minutes.
-const MAX_BUFFERS: usize = (RATE as usize / BLOCK) * 60 * 30;
+/// Refuse to render forever if a decoder never ends (a stream, a corrupt length): 30 minutes of audio.
+const MAX_SECONDS: usize = 60 * 30;
 
 /// What the render sets on the bus. Absent JSON fields take THE SHIPPED CHAIN ("Ether v1") — the same
 /// numbers BusState::new boots with (audio.rs:693-705) — so `{}` renders exactly an untouched station.
@@ -60,6 +62,27 @@ pub struct RenderCfg {
     pub gain_db: f32,
     /// Master GEQ band gains in dB. None = flat (the EQ skips its filters entirely, eq.rs:234).
     pub eq_bands: Option<Vec<f32>>,
+    // ── S0 (docs/dsp-rt-callback.md §7): the paths the first 37 goldens never exercised ──────────
+    /// Device frames per callback. None = 480.
+    pub block_frames: Option<usize>,
+    /// Device sample rate. None = 44 100 (the monitor tap is then dl/dr exactly). Any other rate runs
+    /// the callback's device resampler, and the device-open side effects are mirrored from the live
+    /// path (audio.rs:1754-1757): bus.sample_rate AND the air EQ are set to the device rate.
+    pub device_rate: Option<u32>,
+    /// bus.monitor_vol. None = 1.0. Anything else puts the monitor gain stage into the monitor tap.
+    pub monitor_vol: Option<f32>,
+    /// A second, AUX deck (slot 3 = D, SlotKind::Source) playing alongside deck A.
+    pub aux: Option<AuxCfg>,
+}
+
+/// The aux deck of a render: its file, whether its duck is armed, and its monitor-slot level (which, as
+/// SetAuxMonitor does for a non-rotation slot, sets both aux_monitor_gain and room_gain, audio.rs:1956-1964).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuxCfg {
+    /// Input file. The manifest stores a bare file name; callers resolve it against goldens/inputs.
+    pub path: String,
+    pub duck: bool,
+    pub aux_gain: f32,
 }
 
 impl Default for RenderCfg {
@@ -70,14 +93,19 @@ impl Default for RenderCfg {
             stream_target_lufs: None, stream_ceiling_dbtp: None, stream_release_ms: None,
             stream_ride_rate: None, stream_ride_clamp: None,
             master_vol: 1.0, gain_db: 0.0, eq_bands: None,
+            block_frames: None, device_rate: None, monitor_vol: None, aux: None,
         }
     }
 }
 
-/// Both taps of one render: interleaved stereo f32 at 44.1 kHz, equal length.
+/// The taps of one render, interleaved stereo f32.
+///   monitor — the device buffer. At a 44.1 kHz device with monitor_vol 1.0 this IS dl/dr (header).
+///   stream  — the program-bus ring, 44.1 kHz.
+///   aux     — the aux monitor ring (empty unless cfg.aux is set), 44.1 kHz.
 pub struct Render {
     pub monitor: Vec<f32>,
     pub stream: Vec<f32>,
+    pub aux: Vec<f32>,
 }
 
 /// Build a bus in the state `cfg` describes, through the SAME clamps the live command arms apply
@@ -101,7 +129,7 @@ fn configure(bus: &mut BusState, cfg: &RenderCfg) {
     bus.master_vol = cfg.master_vol.clamp(0.0, 1.0);
     // Condition 3: the room gains are unity so the device buffer IS dl/dr. These are BusState::new's
     // own defaults; set explicitly so the invariant is visible here and cannot drift silently.
-    bus.monitor_vol = 1.0;
+    bus.monitor_vol = cfg.monitor_vol.unwrap_or(1.0).clamp(0.0, 4.0);   // SetMonitorVolume clamp
     bus.master_monitor_vol = 1.0;
     // Master GEQ, as SetEq applies it (audio.rs:2084-2096): both the air EQ and the room EQ.
     if let Some(ref bands) = cfg.eq_bands {
@@ -110,15 +138,24 @@ fn configure(bus: &mut BusState, cfg: &RenderCfg) {
     }
 }
 
-/// Render one file through the live mixer. Deck A, fader at unity, channel ON, no other deck loaded.
+/// Render one file through the live mixer. Deck A, fader at unity, channel ON; optionally an aux deck D.
 pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
+    let block = cfg.block_frames.unwrap_or(BLOCK).max(1);
+    let device_rate = cfg.device_rate.unwrap_or(RATE);
     let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
     let (prod, mut cons) = rb.split();   // BOTH halves kept — the existing tests drop the consumer
     let eq = crate::eq::new_shared_eq(RATE as f32);
     // stream_connected = true: the callback pushes the stream tap only while a client is attached (:2703).
     let bus: SharedBusState = Arc::new(Mutex::new(BusState::new(eq, prod, RATE, Arc::new(AtomicBool::new(true)))));
+    let mut aux_cons = None;
     {
         let mut b = bus.lock().map_err(|_| "bus lock poisoned".to_string())?;
+        // Device open, exactly as the live path does it (audio.rs:1754-1757) — including retuning ONLY the
+        // air EQ to the device rate (inventory §6.6). A golden of what airs, defects and all.
+        if device_rate != RATE {
+            b.sample_rate = device_rate;
+            if let Ok(mut eq) = b.eq.lock() { eq.set_sample_rate(device_rate as f32); }
+        }
         configure(&mut b, cfg);
         let src = build_source(path, RATE).ok_or_else(|| format!("cannot decode {}", path))?;
         let d = &mut b.decks[0];
@@ -128,38 +165,63 @@ pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
         d.volume  = 1.0;
         d.muted   = false;
         d.gain_db = cfg.gain_db;
+        if let Some(ref ax) = cfg.aux {
+            let asrc = build_source(&ax.path, RATE).ok_or_else(|| format!("cannot decode aux {}", ax.path))?;
+            let d = &mut b.decks[3];
+            d.source = Some(asrc);
+            d.active = true;
+            d.paused = false;
+            d.volume = 1.0;
+            d.muted  = false;
+            b.duck_enabled[3] = ax.duck;
+            b.aux_monitor_gain[3] = ax.aux_gain.clamp(0.0, 4.0);
+            b.room_gain[3] = ax.aux_gain.clamp(0.0, 4.0);
+            let (ap, ac) = HeapRb::<f32>::new(AUX_BUS_BUF).split();
+            b.aux_ring_prod = Some(ap);
+            aux_cons = Some(ac);
+        }
     }
 
     let fin = FinishedFlags::new();
     let playing = Arc::new(Mutex::new(true));
     let mut monitor: Vec<f32> = Vec::new();
     let mut stream: Vec<f32> = Vec::new();
-    let mut data = vec![0f32; BLOCK * 2];
+    let mut aux: Vec<f32> = Vec::new();
+    let mut data = vec![0f32; block * 2];
     let mut pop = vec![0f32; PROGRAM_BUS_BUF];
     let mut tail_left: Option<usize> = None;
+    let max_buffers = device_rate as usize * MAX_SECONDS / block;
 
-    for _ in 0..MAX_BUFFERS {
+    for _ in 0..max_buffers {
         data.iter_mut().for_each(|s| *s = 0.0);
         mixer_callback(&mut data, 2, &bus, &fin, &playing);
         monitor.extend_from_slice(&data);
-        // Drain EVERY call so the 4 s ring can never fill and drop samples (try_push at :2717).
+        // Drain EVERY call so neither ring can fill and drop samples (try_push at :2717, :2879).
         loop {
             let n = cons.pop_slice(&mut pop);
             if n == 0 { break; }
             stream.extend_from_slice(&pop[..n]);
         }
-        // Exactly TAIL_BUFFERS buffers are rendered after the one in which the deck finished.
+        if let Some(ref mut ac) = aux_cons {
+            loop {
+                let n = ac.pop_slice(&mut pop);
+                if n == 0 { break; }
+                aux.extend_from_slice(&pop[..n]);
+            }
+        }
+        // Exactly TAIL_BUFFERS buffers are rendered after the one in which deck A finished.
         match tail_left {
             None => if fin.take("A") { tail_left = Some(TAIL_BUFFERS); },
             Some(t) => { if t <= 1 { break; } tail_left = Some(t - 1); }
         }
     }
-    if tail_left.is_none() { return Err(format!("{} did not finish within {} buffers", path, MAX_BUFFERS)); }
+    if tail_left.is_none() { return Err(format!("{} did not finish within {} buffers", path, max_buffers)); }
     if monitor.is_empty() { return Err("render produced no samples".into()); }
-    if monitor.len() != stream.len() {
+    // The two taps are the same length only when the device runs at the program rate.
+    if device_rate == RATE && monitor.len() != stream.len() {
         return Err(format!("tap length mismatch: monitor {} vs stream {} samples", monitor.len(), stream.len()));
     }
-    Ok(Render { monitor, stream })
+    Ok(Render { monitor, stream, aux })
 }
 
 // ── Measurements (for the manifest and the report) ──────────────────────────────────────────────────
@@ -274,7 +336,7 @@ pub fn wav_pcm16_bytes(samples: &[f32]) -> Vec<u8> {
 
 // ── The NAPI entry point's body (lib.rs audio_render_offline) ───────────────────────────────────────
 
-/// Render `path` with `cfg_json` and write out_dir/monitor.wav + out_dir/stream.wav. Returns a JSON
+/// Render `path` with `cfg_json` and write out_dir/monitor.wav + out_dir/stream.wav (+ aux.wav with an aux deck). Returns a JSON
 /// summary: frames, per-tap FNV hash (hex), sample peak, integrated LUFS and true peak, and the cfg used.
 pub fn render_to_dir(path: &str, cfg_json: &str, out_dir: &str) -> Result<String, String> {
     let cfg: RenderCfg = if cfg_json.trim().is_empty() { RenderCfg::default() }
@@ -286,13 +348,19 @@ pub fn render_to_dir(path: &str, cfg_json: &str, out_dir: &str) -> Result<String
     write_wav_f32(&dir.join("stream.wav"), &r.stream).map_err(|e| e.to_string())?;
     let (mi, mtp) = loudness(&r.monitor);
     let (si, stp) = loudness(&r.stream);
-    Ok(serde_json::json!({
+    let mut out = serde_json::json!({
         "frames": r.monitor.len() / 2,
         "monitor": { "hash": format!("{:016x}", fnv_bits(&r.monitor)), "peak": sample_peak(&r.monitor), "lufs_i": mi, "tp_dbtp": mtp },
         "stream":  { "hash": format!("{:016x}", fnv_bits(&r.stream)),  "peak": sample_peak(&r.stream),  "lufs_i": si, "tp_dbtp": stp },
-        "taps_bit_identical": bits_equal(&r.monitor, &r.stream),
+        "taps_bit_identical": r.monitor.len() == r.stream.len() && bits_equal(&r.monitor, &r.stream),
         "cfg": cfg,
-    }).to_string())
+    });
+    if cfg.aux.is_some() {
+        write_wav_f32(&dir.join("aux.wav"), &r.aux).map_err(|e| e.to_string())?;
+        let (ai, atp) = loudness(&r.aux);
+        out["aux"] = serde_json::json!({ "hash": format!("{:016x}", fnv_bits(&r.aux)), "peak": sample_peak(&r.aux), "lufs_i": ai, "tp_dbtp": atp });
+    }
+    Ok(out.to_string())
 }
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -389,25 +457,51 @@ mod parity {
         ]
     }
 
-    /// Every render in the golden set: 6 signals × 6 configs, plus music OFF with a −6 dB track trim.
+    /// Every render in the golden set.
+    ///   6 signals × 6 configs, plus music OFF with a −6 dB track trim         — captured at 6bd33e6
+    ///   S0 extras (docs/dsp-rt-callback.md §7) — the paths slice 1 touches that the first set never did:
+    ///     block sizes 1024 and 441 · a 48 kHz device with monitor gain 0.7 (resampler + mvol) · an aux
+    ///     deck (speech on D over music on A) with the duck armed, processing on and off (room + aux + duck).
     fn plan() -> Vec<(String, PathBuf, RenderCfg)> {
         let mut out = Vec::new();
-        for (sig, path) in corpus() {
+        let corpus = corpus();
+        let path_of = |n: &str| corpus.iter().find(|(s, _)| *s == n).unwrap().1.clone();
+        for (sig, path) in &corpus {
             for (cname, cfg) in configs() {
                 out.push((format!("{}__{}", sig, cname), path.clone(), cfg));
             }
-            if sig == "music" {
+            if *sig == "music" {
                 out.push(("music__OFF_TRIM_M6".to_string(), path.clone(), RenderCfg { gain_db: -6.0, ..RenderCfg::default() }));
             }
         }
+        let linked = RenderCfg { proc_local: true, proc_stream: true, ..RenderCfg::default() };
+        let eq = configs().into_iter().find(|(n, _)| *n == "EQ").unwrap().1;
+        let aux = |duck: bool| Some(AuxCfg { path: path_of("speech").to_string_lossy().into_owned(), duck, aux_gain: 1.0 });
+        out.push(("music__LINKED_B1024".into(), path_of("music"), RenderCfg { block_frames: Some(1024), ..linked.clone() }));
+        out.push(("music__LINKED_B441".into(),  path_of("music"), RenderCfg { block_frames: Some(441), ..linked.clone() }));
+        out.push(("music__LINKED_DEV48K_MON07".into(), path_of("music"),
+                  RenderCfg { device_rate: Some(48_000), monitor_vol: Some(0.7), ..linked.clone() }));
+        out.push(("sweep_20_20k_m18__EQ_DEV48K_MON07".into(), path_of("sweep_20_20k_m18"),
+                  RenderCfg { device_rate: Some(48_000), monitor_vol: Some(0.7), ..eq }));
+        out.push(("music__AUXDUCK_LINKED".into(), path_of("music"), RenderCfg { aux: aux(true), ..linked.clone() }));
+        out.push(("music__AUXDUCK_OFF".into(),    path_of("music"), RenderCfg { aux: aux(true), ..RenderCfg::default() }));
         out
+    }
+
+    /// The cfg as the manifest stores it: an aux input is named by file, never by this machine's path.
+    fn portable(c: &RenderCfg) -> RenderCfg {
+        let mut c = c.clone();
+        if let Some(ref mut a) = c.aux {
+            a.path = Path::new(&a.path).file_name().unwrap().to_string_lossy().into_owned();
+        }
+        c
     }
 
     // ── One shared evaluation per test process: every render once, samples dropped after measuring ───
     #[derive(Clone)]
     struct Eval {
         frames: usize,
-        mon_hash: u64, str_hash: u64,
+        mon_hash: u64, str_hash: u64, aux_hash: Option<u64>,
         mon_peak: f32, str_peak: f32,
         taps_identical: bool,
         taps_max_diff: f32,
@@ -415,6 +509,7 @@ mod parity {
         // vs golden WAV, when present: (max abs diff, bit-exact)
         mon_vs_golden: Option<(f32, bool)>,
         str_vs_golden: Option<(f32, bool)>,
+        aux_vs_golden: Option<(f32, bool)>,
     }
 
     fn evaluate(id: &str, path: &Path, cfg: &RenderCfg) -> Eval {
@@ -426,15 +521,18 @@ mod parity {
             if gold.len() != tap.len() { return Some((f32::INFINITY, false)); }
             Some((max_abs_diff(tap, &gold), bits_equal(tap, &gold)))
         };
+        let same_len = r.monitor.len() == r.stream.len();
         Eval {
             frames: r.monitor.len() / 2,
             mon_hash: fnv_bits(&r.monitor), str_hash: fnv_bits(&r.stream),
+            aux_hash: if cfg.aux.is_some() { Some(fnv_bits(&r.aux)) } else { None },
             mon_peak: sample_peak(&r.monitor), str_peak: sample_peak(&r.stream),
-            taps_identical: bits_equal(&r.monitor, &r.stream),
-            taps_max_diff: max_abs_diff(&r.monitor, &r.stream),
+            taps_identical: same_len && bits_equal(&r.monitor, &r.stream),
+            taps_max_diff: if same_len { max_abs_diff(&r.monitor, &r.stream) } else { f32::NAN },
             mon_tp: loudness(&r.monitor).1, str_tp: loudness(&r.stream).1,
             mon_vs_golden: vs(&r.monitor, "monitor"),
             str_vs_golden: vs(&r.stream, "stream"),
+            aux_vs_golden: if cfg.aux.is_some() { vs(&r.aux, "aux") } else { None },
         }
     }
 
@@ -460,26 +558,38 @@ mod parity {
             let got = format!("{:016x}", fnv_bytes(&std::fs::read(&path).unwrap()));
             assert_eq!(got, want, "input '{}' is not the file the goldens were captured from", name);
         }
-        println!("\n[null] {:<32} {:>9} | {:>12} {:>5} | {:>12} {:>5}", "render", "frames", "monitor Δmax", "exact", "stream Δmax", "exact");
+        println!("\n[null] {:<36} {:>9} | {:>12} {:>5} | {:>12} {:>5} | {:>12} {:>5}",
+                 "render", "frames", "monitor Δmax", "exact", "stream Δmax", "exact", "aux Δmax", "exact");
         let mut fails = Vec::new();
+        let mut not_exact = Vec::new();
         for (id, e) in all() {
             let g = &renders[id.as_str()];
             assert!(!g.is_null(), "manifest has no golden for {}", id);
             // Hash is always checkable; the sample diff needs the (gitignored) golden WAV.
-            let mh = format!("{:016x}", e.mon_hash) == g["monitor"]["hash"].as_str().unwrap();
-            let sh = format!("{:016x}", e.str_hash) == g["stream"]["hash"].as_str().unwrap();
+            let hash_ok = |h: u64, tap: &str| format!("{:016x}", h) == g[tap]["hash"].as_str().unwrap_or("");
             let fmt = |v: Option<(f32, bool)>, hash_ok: bool| match v {
-                Some((d, exact)) => (format!("{:.3e}", d), if exact { "yes" } else { "no" }.to_string(), d <= NULL_BAR),
-                None => ("(no wav)".to_string(), if hash_ok { "yes" } else { "no" }.to_string(), hash_ok),
+                Some((d, exact)) => (format!("{:.3e}", d), if exact { "yes" } else { "no" }.to_string(), d <= NULL_BAR, exact),
+                None => ("(no wav)".to_string(), if hash_ok { "yes" } else { "no" }.to_string(), hash_ok, hash_ok),
             };
-            let (md, mx, mok) = fmt(e.mon_vs_golden, mh);
-            let (sd, sx, sok) = fmt(e.str_vs_golden, sh);
-            println!("[null] {:<32} {:>9} | {:>12} {:>5} | {:>12} {:>5}", id, e.frames, md, mx, sd, sx);
+            let (md, mx, mok, mex) = fmt(e.mon_vs_golden, hash_ok(e.mon_hash, "monitor"));
+            let (sd, sx, sok, sex) = fmt(e.str_vs_golden, hash_ok(e.str_hash, "stream"));
+            let (ad, ax, aok, aex) = match e.aux_hash {
+                Some(h) => fmt(e.aux_vs_golden, hash_ok(h, "aux")),
+                None => ("—".to_string(), "—".to_string(), true, true),
+            };
+            println!("[null] {:<36} {:>9} | {:>12} {:>5} | {:>12} {:>5} | {:>12} {:>5}", id, e.frames, md, mx, sd, sx, ad, ax);
             if e.frames as u64 != g["frames"].as_u64().unwrap() { fails.push(format!("{}: frames {} vs golden {}", id, e.frames, g["frames"])); }
             if !mok { fails.push(format!("{} monitor", id)); }
             if !sok { fails.push(format!("{} stream", id)); }
+            if !aok { fails.push(format!("{} aux", id)); }
+            for (ok, tap) in [(mex, "monitor"), (sex, "stream"), (aex, "aux")] { if !ok { not_exact.push(format!("{} {}", id, tap)); } }
         }
+        println!("[null] taps not bit-exact (within the bar, or failing it): {:?}", not_exact);
         assert!(fails.is_empty(), "NULL FAILED (bar {} = −120 dBFS): {:?}", NULL_BAR, fails);
+        // Until Jeff re-baselines after FTZ (slice 1, S7), every tap must be BIT-EXACT, not merely within the bar.
+        if std::env::var("ETHER_NULL_ALLOW_INEXACT").ok().as_deref() != Some("1") {
+            assert!(not_exact.is_empty(), "taps within the bar but not bit-exact: {:?}", not_exact);
+        }
     }
 
     // ── 2 · LINKED ⇒ monitor == stream, bit-exact (and OFF, and EQ which is LINKED + GEQ) ────────────
@@ -487,7 +597,7 @@ mod parity {
     fn linked_off_and_eq_taps_identical() {
         for (id, e) in all() {
             let cfg = id.rsplit("__").next().unwrap();
-            if matches!(cfg, "LINKED" | "OFF" | "EQ" | "OFF_TRIM_M6") {
+            if matches!(cfg, "LINKED" | "OFF" | "EQ" | "OFF_TRIM_M6" | "LINKED_B1024" | "LINKED_B441") {
                 println!("[linked] {:<32} monitor==stream bit-exact: {}  (max Δ {:.3e})", id, e.taps_identical, e.taps_max_diff);
                 assert!(e.taps_identical, "{}: monitor and stream taps differ (max Δ {:e})", id, e.taps_max_diff);
             }
@@ -516,8 +626,9 @@ mod parity {
             let first = get(&id);
             let r = render_offline(p.to_str().unwrap(), &c).unwrap();
             let (mh, sh) = (fnv_bits(&r.monitor), fnv_bits(&r.stream));
-            println!("[determinism] {:<32} run1 {:016x}/{:016x}  run2 {:016x}/{:016x}", id, first.mon_hash, first.str_hash, mh, sh);
-            assert_eq!((mh, sh), (first.mon_hash, first.str_hash), "{}: two runs differ", id);
+            let ah = if c.aux.is_some() { Some(fnv_bits(&r.aux)) } else { None };
+            println!("[determinism] {:<36} run1 {:016x}/{:016x}  run2 {:016x}/{:016x}", id, first.mon_hash, first.str_hash, mh, sh);
+            assert_eq!((mh, sh, ah), (first.mon_hash, first.str_hash, first.aux_hash), "{}: two runs differ", id);
         }
     }
 
@@ -541,7 +652,27 @@ mod parity {
         }
     }
 
+    // ── 6 · THE AUX RENDERS REALLY EXERCISE AUX, ROOM AND DUCK ────────────────────────────────────────
+    #[test]
+    fn aux_renders_exercise_room_aux_and_duck() {
+        for id in ["music__AUXDUCK_LINKED", "music__AUXDUCK_OFF"] {
+            let e = get(id);
+            println!("[aux] {:<28} aux tap present: {}  monitor(room)≠stream(air): {}", id, e.aux_hash.is_some(), !e.taps_identical);
+            assert!(e.aux_hash.is_some(), "{}: no aux tap", id);
+            // The room excludes the aux deck and the air includes it, so the two taps must differ.
+            assert!(!e.taps_identical, "{}: room == air — the room chain did not run", id);
+        }
+        // The duck pulled the music down: AUXDUCK_OFF's stream (music ducked under speech + speech) is not
+        // music__OFF's stream (music alone) — trivially true — and, more to the point, its ROOM (music
+        // only, ducked) is quieter than music__OFF's monitor (music only, not ducked) over the speech.
+        assert_ne!(get("music__AUXDUCK_OFF").mon_hash, get("music__OFF").mon_hash, "the duck left the room untouched");
+    }
+
     // ── CAPTURE (explicit only) ─────────────────────────────────────────────────────────────────────
+    // ADDITIVE by default: renders already in the manifest are NOT re-rendered or rewritten — their goldens
+    // stay pinned to the commit they came from — and each new render records the commit it was captured at.
+    // ETHER_GOLDEN_RECAPTURE=1 re-captures EVERYTHING as a new baseline, archiving the old manifest as
+    // manifest-<commit>.json first (Jeff's ruling for slice 1 S7).
     #[test]
     #[ignore]
     fn capture_goldens() {
@@ -552,6 +683,18 @@ mod parity {
         assert!(!dirty, "uncommitted changes in native/src — commit the harness first, then capture, so `commit` names the code the goldens came from");
         let rustc = std::process::Command::new("rustc").arg("--version").output().ok()
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+        let recapture = std::env::var("ETHER_GOLDEN_RECAPTURE").ok().as_deref() == Some("1");
+
+        let old = manifest();
+        if recapture {
+            if let Some(ref m) = old {
+                let c = m["commit"].as_str().unwrap_or("unknown");
+                let arch = goldens_dir().join(format!("manifest-{}.json", &c[..c.len().min(7)]));
+                std::fs::write(&arch, serde_json::to_string_pretty(m).unwrap()).unwrap();
+                println!("[capture] archived the previous manifest as {}", arch.display());
+            }
+        }
+        let keep = if recapture { None } else { old.clone() };
 
         let mut inputs = serde_json::Map::new();
         for (name, path) in corpus() {
@@ -562,24 +705,29 @@ mod parity {
                 "fnv": format!("{:016x}", fnv_bytes(&bytes)),
             }));
         }
-        let mut renders = serde_json::Map::new();
+        let mut renders = keep.as_ref().and_then(|m| m["renders"].as_object().cloned()).unwrap_or_default();
         for (id, p, c) in plan() {
+            if renders.contains_key(&id) { continue; }
             let r = render_offline(p.to_str().unwrap(), &c).unwrap();
             write_wav_f32(&goldens_dir().join(format!("{}__monitor.wav", id)), &r.monitor).unwrap();
             write_wav_f32(&goldens_dir().join(format!("{}__stream.wav", id)), &r.stream).unwrap();
+            if c.aux.is_some() { write_wav_f32(&goldens_dir().join(format!("{}__aux.wav", id)), &r.aux).unwrap(); }
             let tap = |v: &[f32]| { let (i, tp) = loudness(v); serde_json::json!({
                 "hash": format!("{:016x}", fnv_bits(v)), "peak": sample_peak(v), "lufs_i": i, "tp_dbtp": tp }) };
             println!("[capture] {}", id);
-            renders.insert(id, serde_json::json!({
-                "cfg": c, "frames": r.monitor.len() / 2,
+            let mut rec = serde_json::json!({
+                "cfg": portable(&c), "frames": r.monitor.len() / 2, "commit": head,
                 "monitor": tap(&r.monitor), "stream": tap(&r.stream),
-                "taps_bit_identical": bits_equal(&r.monitor, &r.stream),
-            }));
+                "taps_bit_identical": r.monitor.len() == r.stream.len() && bits_equal(&r.monitor, &r.stream),
+            });
+            if c.aux.is_some() { rec["aux"] = tap(&r.aux); }
+            renders.insert(id, rec);
         }
+        let commit = keep.as_ref().and_then(|m| m["commit"].as_str().map(String::from)).unwrap_or(head.clone());
         let manifest = serde_json::json!({
-            "about": "DSP parity harness goldens — docs/dsp-parity-harness.md. Hashes are FNV-1a 64 over raw f32 bits. WAVs are gitignored; regenerate with capture_goldens at `commit`.",
+            "about": "DSP parity harness goldens — docs/dsp-parity-harness.md. Hashes are FNV-1a 64 over raw f32 bits. WAVs are gitignored; regenerate with capture_goldens at each render's `commit` (or the top-level `commit` where a render has none).",
             "chain": "Ether v1 (shipped processor params: -14 LUFS, -1.0 dBTP, 120 ms, 1.5 dB/s, ±12 dB)",
-            "commit": head, "src_dirty_at_capture": dirty, "rustc": rustc,
+            "commit": commit, "src_dirty_at_capture": false, "rustc": rustc,
             "rate": RATE, "block_frames": BLOCK, "tail_buffers": TAIL_BUFFERS,
             "null_bar": { "max_abs": NULL_BAR, "dbfs": -120 },
             "inputs": inputs, "renders": renders,

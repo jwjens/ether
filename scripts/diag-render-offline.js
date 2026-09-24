@@ -31,11 +31,15 @@ for (const id of ids) {
   if (!g) { console.log(`[napi] ${id}: not in manifest`); fails++; continue; }
   const out = fs.mkdtempSync(path.join(os.tmpdir(), "ether-render-"));
   const t0 = Date.now();
-  const r = JSON.parse(A.audioRenderOffline(inputFor(id), JSON.stringify(g.cfg), out));
+  // An aux deck is stored by file name; resolve it against the same inputs folder.
+  const cfg = JSON.parse(JSON.stringify(g.cfg));
+  if (cfg.aux && cfg.aux.path) cfg.aux.path = path.join(root, "inputs", path.basename(cfg.aux.path));
+  const r = JSON.parse(A.audioRenderOffline(inputFor(id), JSON.stringify(cfg), out));
   const ms = Date.now() - t0;
   fs.rmSync(out, { recursive: true, force: true });
   if (r.error) { console.log(`[napi] ${id}: ERROR ${r.error}`); fails++; continue; }
-  const ok = r.monitor.hash === g.monitor.hash && r.stream.hash === g.stream.hash && r.frames === g.frames;
+  const ok = r.monitor.hash === g.monitor.hash && r.stream.hash === g.stream.hash && r.frames === g.frames
+    && (!g.aux || (r.aux && r.aux.hash === g.aux.hash));
   if (!ok) fails++;
   console.log(`[napi] ${id.padEnd(30)} ${ok ? "BIT-EXACT" : "DIFFERS  "} monitor ${r.monitor.hash} stream ${r.stream.hash} frames ${r.frames} (${ms} ms)`);
 }
