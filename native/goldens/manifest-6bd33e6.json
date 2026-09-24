@@ -2,7 +2,7 @@
   "about": "DSP parity harness goldens — docs/dsp-parity-harness.md. Hashes are FNV-1a 64 over raw f32 bits. WAVs are gitignored; regenerate with capture_goldens at each render's `commit` (or the top-level `commit` where a render has none).",
   "block_frames": 480,
   "chain": "Ether v1 (shipped processor params: -14 LUFS, -1.0 dBTP, 120 ms, 1.5 dB/s, ±12 dB)",
-  "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
+  "commit": "6bd33e602c27e6cca886e1c9135b4619a04adab3",
   "inputs": {
     "isp_m1": {
       "bytes": 1764044,
@@ -43,10 +43,7 @@
   "renders": {
     "isp_m1__EQ": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": [
           0.0,
           4.0,
@@ -61,7 +58,6 @@
         ],
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": false,
         "proc_stream": true,
@@ -75,7 +71,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "28628901df4f152f",
@@ -93,14 +88,10 @@
     },
     "isp_m1__LINKED": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": false,
         "proc_stream": true,
@@ -114,7 +105,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "ca8906f25fe220b9",
@@ -132,14 +122,10 @@
     },
     "isp_m1__LOCAL": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": false,
         "proc_stream": false,
@@ -153,7 +139,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "ca8906f25fe220b9",
@@ -171,14 +156,10 @@
     },
     "isp_m1__OFF": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": false,
         "proc_split": false,
         "proc_stream": false,
@@ -192,7 +173,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "f7ffbfc19038c083",
@@ -210,14 +190,10 @@
     },
     "isp_m1__SPLIT": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": true,
         "proc_stream": true,
@@ -231,7 +207,6 @@
         "stream_target_lufs": -16.0,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "ca8906f25fe220b9",
@@ -249,14 +224,10 @@
     },
     "isp_m1__STREAM": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": false,
         "proc_split": false,
         "proc_stream": true,
@@ -270,7 +241,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "f7ffbfc19038c083",
@@ -289,7 +259,7 @@
     "music__AUXDUCK_LINKED": {
       "aux": {
         "hash": "f699672868ffe8ed",
-        "lufs_i": -13.959342722296503,
+        "lufs_i": -13.959342722296505,
         "peak": 0.7656039595603943,
         "tp_dbtp": -2.2571221175976666
       },
@@ -319,17 +289,17 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
+      "commit": "b2c8b6d6d3a786856a15714f07894e63c4bf59aa",
       "frames": 7193280,
       "monitor": {
         "hash": "9000af2be3647f9c",
         "lufs_i": -13.917492046040586,
         "peak": 0.6280320286750793,
-        "tp_dbtp": -3.8558529731390108
+        "tp_dbtp": -3.855852973139011
       },
       "stream": {
         "hash": "42ef7bbf2aff4677",
-        "lufs_i": -13.844059288022239,
+        "lufs_i": -13.84405928802224,
         "peak": 0.7794113755226135,
         "tp_dbtp": -2.1262169594101383
       },
@@ -368,7 +338,7 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
+      "commit": "b2c8b6d6d3a786856a15714f07894e63c4bf59aa",
       "frames": 7193280,
       "monitor": {
         "hash": "a37d735063f18792",
@@ -386,10 +356,7 @@
     },
     "music__EQ": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": [
           0.0,
           4.0,
@@ -404,7 +371,6 @@
         ],
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": false,
         "proc_stream": true,
@@ -418,7 +384,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 7193280,
       "monitor": {
         "hash": "06006f930d64855a",
@@ -436,14 +401,10 @@
     },
     "music__LINKED": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": false,
         "proc_stream": true,
@@ -457,7 +418,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 7193280,
       "monitor": {
         "hash": "c4f6d030c2836a10",
@@ -496,7 +456,7 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
+      "commit": "b2c8b6d6d3a786856a15714f07894e63c4bf59aa",
       "frames": 7198720,
       "monitor": {
         "hash": "0ece37b610962ee0",
@@ -535,7 +495,7 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
+      "commit": "b2c8b6d6d3a786856a15714f07894e63c4bf59aa",
       "frames": 7192710,
       "monitor": {
         "hash": "9540004bcb8a2a3f",
@@ -574,7 +534,7 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
+      "commit": "b2c8b6d6d3a786856a15714f07894e63c4bf59aa",
       "frames": 7793280,
       "monitor": {
         "hash": "efed6120a1273921",
@@ -592,14 +552,10 @@
     },
     "music__LOCAL": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": false,
         "proc_stream": false,
@@ -613,7 +569,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 7193280,
       "monitor": {
         "hash": "c4f6d030c2836a10",
@@ -631,14 +586,10 @@
     },
     "music__OFF": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": false,
         "proc_split": false,
         "proc_stream": false,
@@ -652,7 +603,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 7193280,
       "monitor": {
         "hash": "799835688122ca1d",
@@ -670,14 +620,10 @@
     },
     "music__OFF_TRIM_M6": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": -6.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": false,
         "proc_split": false,
         "proc_stream": false,
@@ -691,7 +637,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 7193280,
       "monitor": {
         "hash": "79c4aabba4d045c0",
@@ -709,14 +654,10 @@
     },
     "music__SPLIT": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": true,
         "proc_stream": true,
@@ -730,7 +671,6 @@
         "stream_target_lufs": -16.0,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 7193280,
       "monitor": {
         "hash": "c4f6d030c2836a10",
@@ -748,14 +688,10 @@
     },
     "music__STREAM": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": false,
         "proc_split": false,
         "proc_stream": true,
@@ -769,7 +705,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 7193280,
       "monitor": {
         "hash": "799835688122ca1d",
@@ -787,10 +722,7 @@
     },
     "silence__EQ": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": [
           0.0,
           4.0,
@@ -805,7 +737,6 @@
         ],
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": false,
         "proc_stream": true,
@@ -819,7 +750,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "804e4c72f0659083",
@@ -837,14 +767,10 @@
     },
     "silence__LINKED": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": false,
         "proc_stream": true,
@@ -858,7 +784,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "804e4c72f0659083",
@@ -876,14 +801,10 @@
     },
     "silence__LOCAL": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": false,
         "proc_stream": false,
@@ -897,7 +818,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "804e4c72f0659083",
@@ -915,14 +835,10 @@
     },
     "silence__OFF": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": false,
         "proc_split": false,
         "proc_stream": false,
@@ -936,7 +852,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "804e4c72f0659083",
@@ -954,14 +869,10 @@
     },
     "silence__SPLIT": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": true,
         "proc_stream": true,
@@ -975,7 +886,6 @@
         "stream_target_lufs": -16.0,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "804e4c72f0659083",
@@ -993,14 +903,10 @@
     },
     "silence__STREAM": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": false,
         "proc_split": false,
         "proc_stream": true,
@@ -1014,7 +920,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "804e4c72f0659083",
@@ -1032,10 +937,7 @@
     },
     "speech__EQ": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": [
           0.0,
           4.0,
@@ -1050,7 +952,6 @@
         ],
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": false,
         "proc_stream": true,
@@ -1064,7 +965,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 670080,
       "monitor": {
         "hash": "56b5fdd4e3ec95b4",
@@ -1082,14 +982,10 @@
     },
     "speech__LINKED": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": false,
         "proc_stream": true,
@@ -1103,17 +999,16 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 670080,
       "monitor": {
         "hash": "d7cc32a97b90e6ed",
-        "lufs_i": -13.959342722296503,
+        "lufs_i": -13.959342722296505,
         "peak": 0.7656039595603943,
         "tp_dbtp": -2.2571221175976666
       },
       "stream": {
         "hash": "d7cc32a97b90e6ed",
-        "lufs_i": -13.959342722296503,
+        "lufs_i": -13.959342722296505,
         "peak": 0.7656039595603943,
         "tp_dbtp": -2.2571221175976666
       },
@@ -1121,14 +1016,10 @@
     },
     "speech__LOCAL": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": false,
         "proc_stream": false,
@@ -1142,11 +1033,10 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 670080,
       "monitor": {
         "hash": "d7cc32a97b90e6ed",
-        "lufs_i": -13.959342722296503,
+        "lufs_i": -13.959342722296505,
         "peak": 0.7656039595603943,
         "tp_dbtp": -2.2571221175976666
       },
@@ -1160,14 +1050,10 @@
     },
     "speech__OFF": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": false,
         "proc_split": false,
         "proc_stream": false,
@@ -1181,7 +1067,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 670080,
       "monitor": {
         "hash": "514e84f8f76dc2aa",
@@ -1199,14 +1084,10 @@
     },
     "speech__SPLIT": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": true,
         "proc_stream": true,
@@ -1220,11 +1101,10 @@
         "stream_target_lufs": -16.0,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 670080,
       "monitor": {
         "hash": "d7cc32a97b90e6ed",
-        "lufs_i": -13.959342722296503,
+        "lufs_i": -13.959342722296505,
         "peak": 0.7656039595603943,
         "tp_dbtp": -2.2571221175976666
       },
@@ -1238,14 +1118,10 @@
     },
     "speech__STREAM": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": false,
         "proc_split": false,
         "proc_stream": true,
@@ -1259,7 +1135,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 670080,
       "monitor": {
         "hash": "514e84f8f76dc2aa",
@@ -1269,7 +1144,7 @@
       },
       "stream": {
         "hash": "d7cc32a97b90e6ed",
-        "lufs_i": -13.959342722296503,
+        "lufs_i": -13.959342722296505,
         "peak": 0.7656039595603943,
         "tp_dbtp": -2.2571221175976666
       },
@@ -1277,10 +1152,7 @@
     },
     "sweep_20_20k_m18__EQ": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": [
           0.0,
           4.0,
@@ -1295,7 +1167,6 @@
         ],
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": false,
         "proc_stream": true,
@@ -1309,17 +1180,16 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "f37b7e8545104979",
-        "lufs_i": -12.551951732447135,
+        "lufs_i": -12.551951732447137,
         "peak": 0.26195910573005676,
         "tp_dbtp": -11.627680022857948
       },
       "stream": {
         "hash": "f37b7e8545104979",
-        "lufs_i": -12.551951732447135,
+        "lufs_i": -12.551951732447137,
         "peak": 0.26195910573005676,
         "tp_dbtp": -11.627680022857948
       },
@@ -1359,17 +1229,17 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
+      "commit": "b2c8b6d6d3a786856a15714f07894e63c4bf59aa",
       "frames": 482880,
       "monitor": {
         "hash": "07095d54e099d889",
         "lufs_i": -16.216857532826264,
         "peak": 0.18344560265541077,
-        "tp_dbtp": -14.721992688688317
+        "tp_dbtp": -14.721992688688315
       },
       "stream": {
         "hash": "16879eeffc6b8915",
-        "lufs_i": -12.640681908236667,
+        "lufs_i": -12.640681908236669,
         "peak": 0.2620684802532196,
         "tp_dbtp": -11.623779095836568
       },
@@ -1377,14 +1247,10 @@
     },
     "sweep_20_20k_m18__LINKED": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": false,
         "proc_stream": true,
@@ -1398,32 +1264,27 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "c6c06e8027ad6eab",
         "lufs_i": -14.40260767458968,
         "peak": 0.2219952940940857,
-        "tp_dbtp": -13.064169252803921
+        "tp_dbtp": -13.06416925280392
       },
       "stream": {
         "hash": "c6c06e8027ad6eab",
         "lufs_i": -14.40260767458968,
         "peak": 0.2219952940940857,
-        "tp_dbtp": -13.064169252803921
+        "tp_dbtp": -13.06416925280392
       },
       "taps_bit_identical": true
     },
     "sweep_20_20k_m18__LOCAL": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": false,
         "proc_stream": false,
@@ -1437,13 +1298,12 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "c6c06e8027ad6eab",
         "lufs_i": -14.40260767458968,
         "peak": 0.2219952940940857,
-        "tp_dbtp": -13.064169252803921
+        "tp_dbtp": -13.06416925280392
       },
       "stream": {
         "hash": "405a2443cabc9083",
@@ -1455,14 +1315,10 @@
     },
     "sweep_20_20k_m18__OFF": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": false,
         "proc_split": false,
         "proc_stream": false,
@@ -1476,7 +1332,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "405a2443cabc9083",
@@ -1494,14 +1349,10 @@
     },
     "sweep_20_20k_m18__SPLIT": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": true,
         "proc_stream": true,
@@ -1515,13 +1366,12 @@
         "stream_target_lufs": -16.0,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "c6c06e8027ad6eab",
         "lufs_i": -14.40260767458968,
         "peak": 0.2219952940940857,
-        "tp_dbtp": -13.064169252803921
+        "tp_dbtp": -13.06416925280392
       },
       "stream": {
         "hash": "92c79a44ca0a95e1",
@@ -1533,14 +1383,10 @@
     },
     "sweep_20_20k_m18__STREAM": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": false,
         "proc_split": false,
         "proc_stream": true,
@@ -1554,7 +1400,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "405a2443cabc9083",
@@ -1566,16 +1411,13 @@
         "hash": "c6c06e8027ad6eab",
         "lufs_i": -14.40260767458968,
         "peak": 0.2219952940940857,
-        "tp_dbtp": -13.064169252803921
+        "tp_dbtp": -13.06416925280392
       },
       "taps_bit_identical": false
     },
     "tone_1k_m18__EQ": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": [
           0.0,
           4.0,
@@ -1590,7 +1432,6 @@
         ],
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": false,
         "proc_stream": true,
@@ -1604,7 +1445,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "0920ca1723ef5ba1",
@@ -1622,14 +1462,10 @@
     },
     "tone_1k_m18__LINKED": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": false,
         "proc_stream": true,
@@ -1643,17 +1479,16 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "93753526d0da540f",
-        "lufs_i": -14.450236115271021,
+        "lufs_i": -14.45023611527102,
         "peak": 0.19930489361286163,
         "tp_dbtp": -14.003328223360576
       },
       "stream": {
         "hash": "93753526d0da540f",
-        "lufs_i": -14.450236115271021,
+        "lufs_i": -14.45023611527102,
         "peak": 0.19930489361286163,
         "tp_dbtp": -14.003328223360576
       },
@@ -1661,14 +1496,10 @@
     },
     "tone_1k_m18__LOCAL": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": false,
         "proc_stream": false,
@@ -1682,11 +1513,10 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "93753526d0da540f",
-        "lufs_i": -14.450236115271021,
+        "lufs_i": -14.45023611527102,
         "peak": 0.19930489361286163,
         "tp_dbtp": -14.003328223360576
       },
@@ -1700,14 +1530,10 @@
     },
     "tone_1k_m18__OFF": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": false,
         "proc_split": false,
         "proc_stream": false,
@@ -1721,7 +1547,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "a90f89af25ecc083",
@@ -1739,14 +1564,10 @@
     },
     "tone_1k_m18__SPLIT": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": true,
         "proc_split": true,
         "proc_stream": true,
@@ -1760,11 +1581,10 @@
         "stream_target_lufs": -16.0,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "93753526d0da540f",
-        "lufs_i": -14.450236115271021,
+        "lufs_i": -14.45023611527102,
         "peak": 0.19930489361286163,
         "tp_dbtp": -14.003328223360576
       },
@@ -1778,14 +1598,10 @@
     },
     "tone_1k_m18__STREAM": {
       "cfg": {
-        "aux": null,
-        "block_frames": null,
         "ceiling_dbtp": -1.0,
-        "device_rate": null,
         "eq_bands": null,
         "gain_db": 0.0,
         "master_vol": 1.0,
-        "monitor_vol": null,
         "proc_local": false,
         "proc_split": false,
         "proc_stream": true,
@@ -1799,7 +1615,6 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
       "frames": 445920,
       "monitor": {
         "hash": "a90f89af25ecc083",
@@ -1809,7 +1624,7 @@
       },
       "stream": {
         "hash": "93753526d0da540f",
-        "lufs_i": -14.450236115271021,
+        "lufs_i": -14.45023611527102,
         "peak": 0.19930489361286163,
         "tp_dbtp": -14.003328223360576
       },
