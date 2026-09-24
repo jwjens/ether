@@ -383,7 +383,7 @@ pub struct AudioState {
     /// Always summed to the program bus so carts fire out of master over the music.
     pub deck_cart: DeckMeta,
     pub sender: std::sync::mpsc::Sender<AudioCmd>,
-    pub is_playing: Arc<Mutex<bool>>,
+    pub is_playing: Arc<AtomicBool>,
     pub levels: SharedLevels,
     pub delay: SharedDelay,
     pub finished: FinishedFlags,
@@ -1154,7 +1154,7 @@ mod slice1_regression {
             }
         }
         let fin = FinishedFlags::new();
-        let playing = Arc::new(Mutex::new(true));
+        let playing = Arc::new(AtomicBool::new(true));
         let mut out: Vec<f32> = Vec::new();
         for _ in 0..50 {
             let mut data = vec![0f32; 480 * 2];
@@ -1198,7 +1198,7 @@ mod slice1_regression {
             b.monitor_vol = 0.6;
         }
         let fin = FinishedFlags::new();
-        let playing = Arc::new(Mutex::new(true));
+        let playing = Arc::new(AtomicBool::new(true));
         let mut out: Vec<f32> = Vec::new();
         for _ in 0..8 {
             let mut data = vec![0f32; 480 * 2];
@@ -1254,7 +1254,7 @@ mod slice1_regression {
             b.aux_ring_prod = Some(aux_prod);
         }
         let fin = FinishedFlags::new();
-        let playing = Arc::new(Mutex::new(true));
+        let playing = Arc::new(AtomicBool::new(true));
         for _ in 0..50 {
             let mut data = vec![0f32; 480 * 2];
             mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut Scratch::new());
@@ -1336,7 +1336,7 @@ mod duck_regression {
 
     fn run(bus: &SharedBusState, buffers: usize) {
         let fin = FinishedFlags::new();
-        let playing = Arc::new(Mutex::new(true));
+        let playing = Arc::new(AtomicBool::new(true));
         for _ in 0..buffers {
             let mut data = vec![0f32; 480 * 2];
             mixer_callback(&mut data, 2, bus, &fin, &playing, &mut Scratch::new());
@@ -1418,7 +1418,7 @@ mod duck_regression {
     /// Peak of the DEVICE output over a run — what actually leaves the box.
     fn out_peak(bus: &SharedBusState, buffers: usize) -> f32 {
         let fin = FinishedFlags::new();
-        let playing = Arc::new(Mutex::new(true));
+        let playing = Arc::new(AtomicBool::new(true));
         let mut pk = 0.0f32;
         for _ in 0..buffers {
             let mut data = vec![0f32; 480 * 2];
@@ -1532,7 +1532,7 @@ const AUX_RING_HIGH: usize = PROGRAM_RATE as usize / 4;    // ~0.125 s stereo
 
 pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     std::sync::mpsc::Sender<AudioCmd>,
-    Arc<Mutex<bool>>,
+    Arc<AtomicBool>,
     SharedLevels,
     FinishedFlags,
     u16,  // Program Bus TCP port
@@ -1541,7 +1541,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     use std::net::TcpListener;
 
     let (tx, rx) = std::sync::mpsc::channel::<AudioCmd>();
-    let is_playing       = Arc::new(Mutex::new(false));
+    let is_playing       = Arc::new(AtomicBool::new(false));
     let is_playing_clone = is_playing.clone();
     let levels: SharedLevels = Arc::new(Mutex::new(AudioLevels::default()));
     let levels_clone     = levels.clone();
@@ -1737,8 +1737,13 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
         use cpal::traits::{DeviceTrait, StreamTrait};
 
         let mut current_device = device_name;
-        // This station's own liveness clock — stamped in the cpal callback below.
+        // This station's own liveness clock. S2: the callback advances `cb_seq`; this thread stamps
+        // `last_cb` with the wall time whenever it sees the sequence move, at ≤ 50 ms resolution — so
+        // audio_last_callback_ms keeps its meaning without a clock call on the audio thread.
         let last_cb = station_cb_clock(station_id);
+        let cb_seq = Arc::new(AtomicU64::new(0));
+        let mut seen_seq = 0u64;
+        let mut ev_cons: Option<ringbuf::HeapCons<RtEvent>> = None;
 
         'outer: loop {
             // Find and open output device
@@ -1768,17 +1773,25 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
             let bus_cb   = bus_cmd.clone();
             let fin_cb   = finished_clone.clone();
             let play_cb  = is_playing_clone.clone();
-            let cb_stamp = last_cb.clone();
+            // S2 — the callback no longer reads the wall clock. It bumps this counter (one atomic add);
+            // the dispatch loop below sees it advance and stamps THIS station's liveness clock there.
+            let cb_seq_cb = cb_seq.clone();
             // S1 — this stream's working buffers, allocated here on the dispatch thread and MOVED into the
             // callback. The audio thread never allocates them; a reopened device gets a fresh set here.
             let mut sc = Scratch::new();
+            // S2 — this device-open's event queue. The previous open's consumer is drained first, so an
+            // event from the last moments of the old stream is still logged.
+            if let Some(ref mut old) = ev_cons { drain_rt_events(station_id, old); }
+            let (ev_p, ev_c) = HeapRb::<RtEvent>::new(RT_EVENT_QUEUE).split();
+            sc.events = Some(ev_p);
+            ev_cons = Some(ev_c);
 
             let stream = device.build_output_stream::<f32, _, _>(
                 &stream_config,
                 move |data: &mut [f32], _| {
                     mixer_callback(data, ch, &bus_cb, &fin_cb, &play_cb, &mut sc);
-                    // Per-station liveness — stamps THIS station's clock only.
-                    cb_stamp.store(now_ms(), Ordering::Relaxed);
+                    // Per-station liveness — THIS station's counter only (stamped to wall time off-thread).
+                    cb_seq_cb.fetch_add(1, Ordering::Relaxed);
                 },
                 |err| eprintln!("[cpal] {}", err),
                 None,
@@ -1803,6 +1816,11 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
 
             // Command loop — holds `stream` alive; dropping it stops the callback
             loop {
+                // S2 — the audio thread's work that is not audio: its log lines and its liveness stamp.
+                // At the TOP of the loop so no `continue` in a command arm can skip it.
+                if let Some(ref mut c) = ev_cons { drain_rt_events(station_id, c); }
+                let seq = cb_seq.load(Ordering::Relaxed);
+                if seq != seen_seq { seen_seq = seq; last_cb.store(now_ms(), Ordering::Relaxed); }
                 match rx.recv_timeout(std::time::Duration::from_millis(50)) {
                     Ok(cmd) => {
                         match cmd {
@@ -2169,6 +2187,18 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
 
 // ── Helpers called from start_station_mixer ───────────────────────────────────
 
+/// S2 — log what the callback reported. Runs on the dispatch thread, never the audio thread. The text is
+/// the callback's old eprintln! verbatim, so log readers (audiod/daemon-log.js, diagnostics) are unaffected.
+fn drain_rt_events(_station_id: u32, cons: &mut ringbuf::HeapCons<RtEvent>) {
+    while let Some(ev) = cons.try_pop() {
+        match ev {
+            RtEvent::DeckFinished { slot } => {
+                eprintln!("[RUST] Deck {} finished (source exhausted)", deck_finished_key(slot as usize));
+            }
+        }
+    }
+}
+
 fn open_output_device(
     station_id: u32,
     device_name: &Option<String>,
@@ -2274,6 +2304,18 @@ fn restore_decks_after_switch(bus_cmd: &SharedBusState, sr: u32) {
 /// the lanes are never grown on the audio thread. docs/dsp-rt-callback.md §2.
 pub(crate) const MAX_PROG_FRAMES: usize = 32_768;
 
+/// SLICE 1 S2 — what the callback has to SAY, sent instead of printed. The audio thread never writes to
+/// stderr (a lock + a syscall); it pushes one of these onto a preallocated lock-free queue, and the
+/// station's dispatch thread drains it every ≤ 50 ms and does the logging there — with the same text
+/// the callback used to print, so nothing that greps the log changes. docs/dsp-rt-callback.md §3.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum RtEvent {
+    /// A deck's source ran out naturally (the finished FLAG is still set in the callback, lock-free).
+    DeckFinished { slot: u8 },
+}
+/// Events one device-open's queue holds. A full queue is counted (Scratch::events_dropped), never blocks.
+pub(crate) const RT_EVENT_QUEUE: usize = 256;
+
 /// SLICE 1 S1 — every per-buffer working buffer of mixer_callback, allocated ONCE (on the thread that opens
 /// the device, or by a test), then only ever sliced and overwritten. This replaces the 16 `vec!` lanes, the
 /// EQ-out Vecs, the master-fader / clean-tap / room `collect()`s and the per-branch `clone()`s that the
@@ -2295,6 +2337,11 @@ pub(crate) struct Scratch {
     dev_l: Box<[f32]>, dev_r: Box<[f32]>,            // the clamped clean tap to the device
     /// Buffers refused because the device asked for more than MAX_PROG_FRAMES. Published in S6.
     pub(crate) buffer_clamped: u64,
+    /// S2 — producer end of the event queue. None in tests and the offline harness (nobody listening);
+    /// the live stream gets Some at device open.
+    pub(crate) events: Option<ringbuf::HeapProd<RtEvent>>,
+    /// Events that could not be queued because the queue was full. Published in S6.
+    pub(crate) events_dropped: u64,
 }
 impl Scratch {
     pub(crate) fn new() -> Box<Scratch> {
@@ -2308,6 +2355,8 @@ impl Scratch {
             str_l: lane(), str_r: lane(), room_out_l: lane(), room_out_r: lane(),
             dev_l: lane(), dev_r: lane(),
             buffer_clamped: 0,
+            events: None,
+            events_dropped: 0,
         })
     }
 }
@@ -2317,7 +2366,7 @@ pub(crate) fn mixer_callback(
     ch:      u16,
     bus_arc: &SharedBusState,
     fin:     &FinishedFlags,
-    playing: &Arc<Mutex<bool>>,
+    playing: &AtomicBool,
     sc:      &mut Scratch,
 ) {
 
@@ -2347,7 +2396,7 @@ pub(crate) fn mixer_callback(
     let Scratch {
         mix_l, mix_r, room_l, room_r, imm_room_l, imm_room_r, core_l, core_r, aux_l, aux_r,
         src_l, src_r, imm_l, imm_r, det_l, det_r, out_l, out_r, loc_l, loc_r, str_l, str_r,
-        room_out_l, room_out_r, dev_l, dev_r, buffer_clamped: _,
+        room_out_l, room_out_r, dev_l, dev_r, buffer_clamped: _, events, events_dropped,
     } = sc;
 
     let mix_l = &mut mix_l[..prog_frames]; mix_l.fill(0.0);
@@ -2511,7 +2560,12 @@ pub(crate) fn mixer_callback(
             // lib.rs takes as fin_cart), never index DECK_LETTERS. See docs/incident-jingle-cart-panic-2026-07-15.md.
             let key = deck_finished_key(i);
             fin.set(key);
-            eprintln!("[RUST] Deck {} finished (source exhausted)", key);
+            // S2 — logged by the dispatch thread, not here (see RtEvent). A full queue is counted.
+            if let Some(ev) = events.as_mut() {
+                if ev.try_push(RtEvent::DeckFinished { slot: i as u8 }).is_err() {
+                    *events_dropped = events_dropped.wrapping_add(1);
+                }
+            }
         }
     }
 
@@ -2982,7 +3036,7 @@ pub(crate) fn mixer_callback(
         }
     }
 
-    if let Ok(mut p) = playing.try_lock() { *p = any_playing; }
+    playing.store(any_playing, Ordering::Relaxed);   // S2 — was a try_lock on a Mutex<bool>
 
 }
 

@@ -183,7 +183,7 @@ pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
     }
 
     let fin = FinishedFlags::new();
-    let playing = Arc::new(Mutex::new(true));
+    let playing = Arc::new(AtomicBool::new(true));
     let mut monitor: Vec<f32> = Vec::new();
     let mut stream: Vec<f32> = Vec::new();
     let mut aux: Vec<f32> = Vec::new();
