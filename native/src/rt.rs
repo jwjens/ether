@@ -14,7 +14,7 @@
 
 use std::cell::UnsafeCell;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use crate::audio::{SlotKind, SLOT_COUNT};
 
 /// Commands one device-open can have in flight to the callback. The dispatch thread keeps an ordered
@@ -69,16 +69,144 @@ pub(crate) struct Params {
     pub eq_version: u64,
 }
 
-/// A deck source — the decoder iterator the mixer pulls (S4 replaces it with a ring).
+/// A decoder — the iterator build_source returns (rodio Decoder → 2 ch / 44.1 kHz). S4: it lives on a
+/// DECODE WORKER, never in the callback.
 pub(crate) type DeckSource = Box<dyn Iterator<Item = f32> + Send>;
+
+// ── SLICE 1 S4 — decode off the audio thread (docs/dsp-rt-callback.md §1) ────────────────────────────
+//
+// One worker thread per deck slot owns that deck's decoder and keeps a preallocated SPSC ring topped up.
+// The callback only ever pops the ring. Three numbers, in one place (Jeff's ruling 1: 2 s per deck):
+
+/// Ring capacity per deck: 2.0 s of 44.1 kHz stereo (176 400 f32 = 706 KB).
+pub(crate) const DECK_RING_SAMPLES: usize = 44_100 * 2 * 2;
+/// The worker refills when the ring holds less than this: 1.5 s.
+pub(crate) const DECK_REFILL_BELOW: usize = 44_100 * 2 * 3 / 2;
+/// How often an idle-but-loaded worker checks its ring.
+pub(crate) const DECK_WORKER_TICK_MS: u64 = 20;
+/// Samples decoded per push. EVEN, so the ring's fill is always a whole number of stereo frames.
+const FEED_CHUNK: usize = 4096;
+
+/// The callback's end of a deck: the ring it pops, and the worker's end-of-file flag.
+pub(crate) struct DeckFeed {
+    pub cons: ringbuf::HeapCons<f32>,
+    /// Set by the worker AFTER it has pushed the last sample. Ring empty + eof = the track ended.
+    /// Ring empty + !eof = an UNDERRUN: the worker is late. The two are never confused.
+    pub eof: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
+}
+impl Drop for DeckFeed {
+    /// A replaced or stopped feed is dropped on the dispatch thread (it travels there as Garbage); this
+    /// tells its worker to stop decoding and free the file.
+    fn drop(&mut self) { self.cancel.store(true, Ordering::Release); }
+}
+
+/// The worker's end of a deck: the decoder and the ring's producer.
+pub(crate) struct Feeder {
+    src: DeckSource,
+    prod: ringbuf::HeapProd<f32>,
+    eof: Arc<AtomicBool>,
+    cancel: Arc<AtomicBool>,
+    pushed: u64,
+    chunk: Vec<f32>,
+}
+impl Feeder {
+    /// Decode until the ring holds at least `target` samples or the file ends. Returns true once at EOF.
+    /// This is THE fill routine: the worker thread runs it, the dispatch thread runs it to prefill on Load,
+    /// and the offline harness runs it inline before every buffer (the synchronous pump) — one code path.
+    pub fn fill(&mut self, target: usize) -> bool {
+        use ringbuf::traits::{Observer, Producer};
+        if self.eof.load(Ordering::Relaxed) { return true; }
+        let target = target.min(self.prod.capacity().get());
+        while self.prod.occupied_len() < target {
+            // Whole stereo frames only (room rounded down to even), and never past the target.
+            let room = (self.prod.vacant_len().min(FEED_CHUNK).min(target - self.prod.occupied_len())) & !1;
+            if room == 0 { break; }
+            self.chunk.clear();
+            let mut ended = false;
+            while self.chunk.len() < room {
+                match self.src.next() { Some(x) => self.chunk.push(x), None => { ended = true; break; } }
+            }
+            if ended && self.chunk.len() % 2 == 1 {
+                // The old callback read r = src.next().unwrap_or(0.0): a lone final sample got a 0.0 partner.
+                // Same here, so the last frame is bit-identical.
+                self.chunk.push(0.0);
+            }
+            let n = self.prod.push_slice(&self.chunk);
+            self.pushed += n as u64;
+            debug_assert_eq!(n, self.chunk.len());
+            if ended {
+                // Release: every sample above is visible to a callback that Acquires this flag.
+                self.eof.store(true, Ordering::Release);
+                return true;
+            }
+        }
+        false
+    }
+    pub fn cancelled(&self) -> bool { self.cancel.load(Ordering::Acquire) }
+    pub fn at_eof(&self) -> bool { self.eof.load(Ordering::Relaxed) }
+}
+
+/// Wrap a decoder in a deck ring of `capacity` samples: (callback end, worker end).
+pub(crate) fn deck_feed_with_capacity(src: DeckSource, capacity: usize) -> (DeckFeed, Feeder) {
+    use ringbuf::traits::Split;
+    let (prod, cons) = ringbuf::HeapRb::<f32>::new(capacity).split();
+    let eof = Arc::new(AtomicBool::new(false));
+    let cancel = Arc::new(AtomicBool::new(false));
+    (DeckFeed { cons, eof: eof.clone(), cancel: cancel.clone() },
+     Feeder { src, prod, eof, cancel, pushed: 0, chunk: Vec::with_capacity(FEED_CHUNK) })
+}
+/// A deck ring of the station size (DECK_RING_SAMPLES).
+pub(crate) fn deck_feed(src: DeckSource) -> (DeckFeed, Feeder) { deck_feed_with_capacity(src, DECK_RING_SAMPLES) }
+
+#[cfg(test)]
+impl DeckFeed {
+    /// TESTS ONLY: a feed whose ring is filled up front from `src` (capacity `samples`) — the product's own
+    /// ring and pop path, with the whole test's audio already decoded. A finite source reaches EOF exactly as
+    /// the worker would mark it; an infinite one simply never ends within the test.
+    pub(crate) fn prefilled(src: impl Iterator<Item = f32> + Send + 'static, samples: usize) -> DeckFeed {
+        let (feed, mut f) = deck_feed_with_capacity(Box::new(src), samples);
+        f.fill(samples);
+        feed
+    }
+}
+
+/// One deck slot's decode worker. Parked on its channel while the slot is empty; while a feed is live it
+/// tops the ring up every DECK_WORKER_TICK_MS once it drops below DECK_REFILL_BELOW, and drops the decoder
+/// (freeing the file) at EOF or when the callback lets go of the feed. A new Feeder replaces the old one.
+pub(crate) fn deck_worker(rx: std::sync::mpsc::Receiver<Feeder>) {
+    use ringbuf::traits::Observer;
+    let mut cur: Option<Feeder> = None;
+    loop {
+        let next = if cur.is_some() {
+            match rx.recv_timeout(std::time::Duration::from_millis(DECK_WORKER_TICK_MS)) {
+                Ok(f) => Some(f),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+        } else {
+            match rx.recv() { Ok(f) => Some(f), Err(_) => return }
+        };
+        if let Some(f) = next { cur = Some(f); }   // the previous feeder (if any) is freed here, on this thread
+        let done = match cur.as_mut() {
+            Some(f) if f.cancelled() => true,
+            Some(f) => {
+                if f.prod.occupied_len() < DECK_REFILL_BELOW { f.fill(DECK_RING_SAMPLES); }
+                f.at_eof()
+            }
+            None => false,
+        };
+        if done { cur = None; }
+    }
+}
 
 /// Dispatch thread → callback. Applied in order at the top of a buffer.
 pub(crate) enum RtCmd {
     Params(Box<Params>),
     /// `src` None = the file would not open/decode: the deck is emptied, exactly as a failed Load always did.
-    Load { slot: u8, src: Option<DeckSource>, gain_db: f32, gen: u64 },
+    Load { slot: u8, src: Option<DeckFeed>, gain_db: f32, gen: u64 },
     /// `reload` = a fresh decoder for a deck whose source had gone (Stop/natural end) but whose path is known.
-    Play { slot: u8, reload: Option<DeckSource>, gen: u64 },
+    Play { slot: u8, reload: Option<DeckFeed>, gen: u64 },
     Pause { slot: u8 },
     Stop { slot: u8 },
 }
@@ -91,7 +219,7 @@ pub(crate) enum AuxCmd {
 
 /// Callback → dispatch: things to FREE off the audio thread.
 pub(crate) enum Garbage {
-    Source(DeckSource),
+    Source(DeckFeed),
     Params(Box<Params>),
     AuxProd(ringbuf::HeapProd<f32>),
 }

@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use ringbuf::{HeapRb, HeapProd, HeapCons, traits::{Producer, Consumer, Observer, Split}};
 use crate::rt::{Params, RtCmd, AuxCmd, Garbage, MeterFrame, DeckMeter, RtShared, TripleWriter, TripleReader,
-                RT_CMD_QUEUE, RT_CMD_PER_BUFFER, RT_GARBAGE_QUEUE, triple};
+                RT_CMD_QUEUE, RT_CMD_PER_BUFFER, RT_GARBAGE_QUEUE, triple, DeckFeed, Feeder, DeckSource,
+                deck_feed, deck_worker, DECK_REFILL_BELOW};
 
 // ── Per-station audio-thread liveness (HA health signal) ──────────────────────
 // Each station stamps ITS OWN clock on every cpal output callback — there is no
@@ -407,8 +408,9 @@ pub struct DeckSlot {
     /// SLICE 1 — what this slot IS. Set once at construction from default_kind_for(); slice 2 will
     /// let deck_config drive it. Read by the AUX monitor tap and (slice 3) the ducker.
     pub kind:     SlotKind,
-    /// Live decoder — None when no track is loaded or after a track finishes.
-    pub source:   Option<Box<dyn Iterator<Item = f32> + Send>>,
+    /// Live feed — None when no track is loaded or after a track finishes. S4: a ring filled by this deck's
+    /// decode worker; the callback only pops it (rt.rs DeckFeed).
+    pub source:   Option<DeckFeed>,
     pub volume:   f32,
     pub paused:   bool,
     /// Set true on Play, false on Stop/finish. Used by the callback to detect
@@ -1378,7 +1380,7 @@ mod slice1_regression {
             // ONLY the slots that exist today: A, B, C and CART. No source channels configured —
             // which is exactly the state every shipped station is in.
             for (i, seed) in [(0usize, 11u64), (1usize, 22u64), (2usize, 33u64), (6usize, 66u64)] {
-                b.decks[i].source = Some(Box::new(Det(seed)));
+                b.decks[i].source = Some(DeckFeed::prefilled(Det(seed), 480 * 2 * 600));
                 b.decks[i].active = true;
                 b.decks[i].paused = false;   // DeckSlot::new() starts paused; without this the callback skips it
                 b.decks[i].volume = 0.8;
@@ -1418,7 +1420,7 @@ mod slice1_regression {
             // A/B on the programme, slot 6 as the sweeper, and D as an aux deck so the ROOM chain
             // is the one feeding the device rather than the air path.
             for (i, seed) in [(0usize, 11u64), (1usize, 22u64), (6usize, 66u64), (3usize, 44u64)] {
-                b.decks[i].source = Some(Box::new(Det(seed)));
+                b.decks[i].source = Some(DeckFeed::prefilled(Det(seed), 480 * 2 * 600));
                 b.decks[i].active = true;
                 b.decks[i].paused = false;
                 b.decks[i].volume = 0.8;
@@ -1472,11 +1474,11 @@ mod slice1_regression {
         {
             let mut b = bus.lock().unwrap();
             // A rotation deck so the core mix is non-trivial, and deck D as the aux source.
-            b.decks[0].source = Some(Box::new(Det(11)));
+            b.decks[0].source = Some(DeckFeed::prefilled(Det(11), 480 * 2 * 600));
             b.decks[0].active = true;
             b.decks[0].paused = false;
             b.decks[0].volume = 0.8;
-            b.decks[3].source = Some(Box::new(Det(44)));
+            b.decks[3].source = Some(DeckFeed::prefilled(Det(44), 480 * 2 * 600));
             b.decks[3].active = true;
             b.decks[3].paused = false;
             b.decks[3].volume = 0.9;
@@ -1567,7 +1569,7 @@ mod rt_command_path {
         let mut h = b.handles.take().unwrap();
         let mut p: Params = b.params();
         for (i, seed) in [(0usize, 11u64), (1usize, 22u64), (2usize, 33u64), (6usize, 66u64)] {
-            assert!(h.cmd_prod.try_push(RtCmd::Load { slot: i as u8, src: Some(Box::new(Det(seed))), gain_db: 0.0, gen: 1 + i as u64 }).is_ok());
+            assert!(h.cmd_prod.try_push(RtCmd::Load { slot: i as u8, src: Some(DeckFeed::prefilled(Det(seed), 480 * 2 * 600)), gain_db: 0.0, gen: 1 + i as u64 }).is_ok());
             p.volume[i] = 0.8;
         }
         assert!(h.cmd_prod.try_push(RtCmd::Params(Box::new(p))).is_ok());
@@ -1610,7 +1612,7 @@ mod rt_command_path {
         let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(false)));
         let h = b.handles.take().unwrap();
         let base = b.params();
-        b.decks[0].source = Some(Box::new(Dc));
+        b.decks[0].source = Some(DeckFeed::prefilled(Dc, 480 * 2 * 3000));
         b.decks[0].active = true;
         b.decks[0].paused = false;
         let bus = Arc::new(Mutex::new(b));
@@ -1644,11 +1646,103 @@ mod rt_command_path {
                     "buffer {} is not uniform: a parameter block changed mid-buffer", buffers);
             if first == 0.0 { zeros += 1 } else if first == 0.5 { halves += 1 } else { panic!("unexpected level {}", first) }
             buffers += 1;
-            if buffers > 5_000_000 { break; }
+            if buffers >= 2_900 { break; }   // the prefilled ring holds 3 000 buffers of the DC source
         }
         sender.join().unwrap();
         println!("[rt-cmd] {} buffers, all uniform: {} at master 0.0, {} at master 1.0", buffers, zeros, halves);
         assert!(zeros > 0 && halves > 0, "both fader states must have been rendered");
+    }
+}
+
+#[cfg(test)]
+mod rt_underrun {
+    // SLICE 1 S4 — an UNDERRUN (ring dry, worker late) must never be mistaken for the track ENDING.
+    // Jeff's condition: "an underrun plays silence for that deck and holds position — cannot be mistaken for
+    // the track ending (no advance, no play_log row, no state change) — and it is counted and reported."
+    use super::*;
+    use crate::rt::deck_feed_with_capacity;
+
+    /// Sample n of this source is n × 1e-6 — so continuity after the underrun is checkable sample by sample.
+    struct Ramp(u64);
+    impl Iterator for Ramp { type Item = f32; fn next(&mut self) -> Option<f32> { self.0 += 1; Some((self.0 - 1) as f32 * 1e-6) } }
+
+    #[test]
+    fn underrun_is_silence_counted_and_reported_and_never_an_ending() {
+        let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
+        let (prod, _cons) = rb.split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(false)));
+        let h = b.handles.take().unwrap();
+        // A ring that holds 480 frames; the "worker" (this test) has delivered only 200 of them.
+        let (feed, mut feeder) = deck_feed_with_capacity(Box::new(Ramp(0)), 480 * 2);
+        feeder.fill(200 * 2);
+        b.decks[0].source = Some(feed);
+        b.decks[0].active = true;
+        b.decks[0].paused = false;
+        b.shared.src_gen[0].store(7, Ordering::Release);
+        let bus = Arc::new(Mutex::new(b));
+        let fin = FinishedFlags::new();
+        let playing = Arc::new(AtomicBool::new(true));
+        let mut sc = Scratch::new();
+        let (ev_p, mut ev_c) = HeapRb::<RtEvent>::new(16).split();
+        sc.events = Some(ev_p);
+
+        // Buffer 1: 480 frames wanted, 200 available, EOF not set -> UNDERRUN.
+        let mut data = vec![0f32; 480 * 2];
+        mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+        {
+            let b = bus.lock().unwrap();
+            // Counted.
+            assert_eq!(sc.underruns[0], 1, "underrun not counted");
+            assert_eq!(sc.underrun_frames[0], 280, "underrun frames not counted");
+            // Position HELD: only the 200 real frames advanced it.
+            assert_eq!(b.decks[0].frames_played, 200, "position advanced over silence");
+            // NOT an ending: no finished flag, source kept, deck still active, still marked as holding a source.
+            assert!(!fin.take("A"), "an underrun raised the finished flag — the daemon would rotate");
+            assert!(b.decks[0].source.is_some() && b.decks[0].active && !b.decks[0].paused, "an underrun changed the deck's state");
+            assert_ne!(b.shared.src_gen[0].load(Ordering::Acquire), 0, "an underrun cleared the deck's source");
+        }
+        // The 200 real frames played; the 280 missing frames are silence for this deck.
+        for f in 0..200 { assert_eq!(data[2 * f], (2 * f) as f32 * 1e-6); }
+        for f in 200..480 { assert_eq!(data[2 * f], 0.0, "frame {} should be silence", f); assert_eq!(data[2 * f + 1], 0.0); }
+        // Reported: one Underrun event, and NO DeckFinished.
+        let mut evs = Vec::new(); while let Some(e) = ev_c.try_pop() { evs.push(e); }
+        assert!(matches!(evs.as_slice(), [RtEvent::Underrun { slot: 0, frames: 280 }]), "events: {:?}", evs);
+        // And the published meter frame says the same: source present, active, position 200.
+        let mut mr = h.meter_r;
+        let m = mr.read();
+        assert!(m.decks[0].source_present && m.decks[0].active && m.decks[0].frames_played == 200);
+
+        // The worker catches up -> the NEXT sample plays, no skip, no restart.
+        feeder.fill(480 * 2);
+        mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+        assert_eq!(data[0], 400.0 * 1e-6, "playback did not resume at the next sample");
+        assert_eq!(bus.lock().unwrap().decks[0].frames_played, 680);
+        assert_eq!(sc.underruns[0], 1, "a full buffer counted as an underrun");
+        println!("[underrun] 280 silent frames counted + reported; position held at 200, resumed at sample 400; no finished flag");
+    }
+
+    #[test]
+    fn eof_is_an_ending_and_is_not_counted_as_an_underrun() {
+        let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
+        let (prod, _cons) = rb.split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(false)));
+        // A 300-frame file, fully decoded: EOF set.
+        let (feed, mut feeder) = deck_feed_with_capacity(Box::new(Ramp(0).take(600)), 480 * 2);
+        assert!(feeder.fill(480 * 2), "worker did not mark EOF");
+        b.decks[0].source = Some(feed);
+        b.decks[0].active = true;
+        b.decks[0].paused = false;
+        let bus = Arc::new(Mutex::new(b));
+        let fin = FinishedFlags::new();
+        let playing = Arc::new(AtomicBool::new(true));
+        let mut sc = Scratch::new();
+        let mut data = vec![0f32; 480 * 2];
+        mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+        assert!(fin.take("A"), "a real end of file did not raise the finished flag");
+        assert_eq!(sc.underruns[0], 0, "a real end of file was counted as an underrun");
+        let b = bus.lock().unwrap();
+        assert_eq!(b.decks[0].frames_played, 300);
+        assert!(b.decks[0].source.is_none() && !b.decks[0].active);
     }
 }
 
@@ -1674,9 +1768,9 @@ mod duck_regression {
         let bus = Arc::new(Mutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
         {
             let mut b = bus.lock().unwrap();
-            b.decks[0].source = Some(Box::new(Tone(music)));   // Rotation — the music
+            b.decks[0].source = Some(DeckFeed::prefilled(Tone(music), 480 * 2 * 600));   // Rotation — the music
             b.decks[0].active = true; b.decks[0].paused = false; b.decks[0].volume = 1.0;
-            b.decks[3].source = Some(Box::new(Tone(source)));  // Source (D) — the announcement
+            b.decks[3].source = Some(DeckFeed::prefilled(Tone(source), 480 * 2 * 600));  // Source (D) — the announcement
             b.decks[3].active = true; b.decks[3].paused = false; b.decks[3].volume = 1.0;
             b.duck_enabled[3] = duck_on;
         }
@@ -1693,7 +1787,7 @@ mod duck_regression {
     }
     fn set_source(bus: &SharedBusState, level: f32) {
         let mut b = bus.lock().unwrap();
-        b.decks[3].source = Some(Box::new(Tone(level)));
+        b.decks[3].source = Some(DeckFeed::prefilled(Tone(level), 480 * 2 * 600));
     }
     fn duck_gain(bus: &SharedBusState) -> f32 { bus.lock().unwrap().duck_gain }
 
@@ -1790,7 +1884,7 @@ mod duck_regression {
             let bus = bus_with(0.0, 0.5, true);          // source on D, armed
             {
                 let mut b = bus.lock().unwrap();
-                b.decks[1].source = Some(Box::new(Tone(0.30)));   // deck B — the deck under test
+                b.decks[1].source = Some(DeckFeed::prefilled(Tone(0.30), 480 * 2 * 600));   // deck B — the deck under test
                 b.decks[1].active = true; b.decks[1].paused = false; b.decks[1].volume = 1.0;
                 b.duck_duckable[1] = !immune;
             }
@@ -1825,7 +1919,7 @@ mod duck_regression {
         {
             let mut b = bus.lock().unwrap();
             for i in [0usize, 6usize] {                  // deck A (Rotation) and CART
-                b.decks[i].source = Some(Box::new(Tone(0.7)));
+                b.decks[i].source = Some(DeckFeed::prefilled(Tone(0.7), 480 * 2 * 600));
                 b.decks[i].active = true; b.decks[i].paused = false; b.decks[i].volume = 1.0;
                 b.duck_enabled[i] = true;                // armed, and still must not duck
             }
@@ -1920,7 +2014,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     let handles = bus_init.handles.take().expect("fresh BusState has its handles");
     let aux_frames_ctr_shared = bus_init.aux_out_frames.clone();
     let ctl_init = Control::new(&bus_init, handles.cmd_prod, handles.garbage_cons, handles.meter_r,
-                                handles.shared, aux_frames_ctr_shared.clone());
+                                handles.shared, aux_frames_ctr_shared.clone(), station_id);
     let aux_cmd_prod = handles.aux_cmd_prod;
     let bus_state: SharedBusState = Arc::new(Mutex::new(bus_init));
     let bus_cmd = bus_state.clone(); // device-open / device-switch only (no callback running then)
@@ -2197,7 +2291,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::Load { deck, file_path, title, artist, gain_db } => {
                                 let Some(idx) = deck_index(&deck) else { continue };
                                 // Decode setup off the audio thread, as always.
-                                let src = build_source(&file_path, sr);
+                                let src = build_source(&file_path, sr).map(|d| ctl.feed_for(idx, d));
                                 let has = src.is_some();
                                 let gen = ctl.next_gen();
                                 // THE FADER LEVEL IS THE JOCK'S — a track load must never move it. Only the
@@ -2230,12 +2324,11 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 // If source was cleared (e.g. by natural end) but path is known,
                                 // reload before playing — file I/O on this thread, never the callback.
                                 let reload = if !present {
-                                    let src = build_source(&path, sr);
-                                    if src.is_none() {
+                                    let Some(d) = build_source(&path, sr) else {
                                         eprintln!("[RUST] Play deck {}: reload failed for {} — skipping", deck, path);
                                         continue;
-                                    }
-                                    src
+                                    };
+                                    Some(ctl.feed_for(idx, d))
                                 } else { None };
                                 let reloading = reload.is_some();
                                 let gen = ctl.next_gen();
@@ -2531,14 +2624,34 @@ pub(crate) struct Control {
     pub decks: [DeckShadow; SLOT_COUNT],
     gen: u64,
     pub aux_frames: Arc<AtomicU64>,
+    /// S4 — one decode worker per deck slot (Jeff's ruling 2), fed Feeders over its channel.
+    workers: Vec<std::sync::mpsc::Sender<Feeder>>,
 }
 impl Control {
     pub(crate) fn new(bus: &BusState, cmd: HeapProd<RtCmd>, garbage: HeapCons<Garbage>,
-                      meter: TripleReader<MeterFrame>, shared: Arc<RtShared>, aux_frames: Arc<AtomicU64>) -> Self {
+                      meter: TripleReader<MeterFrame>, shared: Arc<RtShared>, aux_frames: Arc<AtomicU64>,
+                      station_id: u32) -> Self {
+        let workers = (0..SLOT_COUNT).map(|i| {
+            let (tx, rx) = std::sync::mpsc::channel::<Feeder>();
+            let _ = std::thread::Builder::new()
+                .name(format!("ether-decode-s{}-{}", station_id, i))
+                .spawn(move || deck_worker(rx));
+            tx
+        }).collect();
         Control {
             cmd, pending: std::collections::VecDeque::new(), seq: 0, params: bus.params(),
             garbage, meter, shared, decks: std::array::from_fn(|_| DeckShadow::default()), gen: 0, aux_frames,
+            workers,
         }
+    }
+    /// Turn a decoder into a deck feed: PREFILL its ring to the refill mark here (1.5 s, on this thread —
+    /// so a Play that follows never starts on an empty ring), then hand the decoder to the slot's worker to
+    /// keep it topped up. The returned feed goes to the callback in a Load/Play command.
+    pub(crate) fn feed_for(&mut self, slot: usize, src: DeckSource) -> DeckFeed {
+        let (feed, mut feeder) = deck_feed(src);
+        feeder.fill(DECK_REFILL_BELOW);
+        if let Some(w) = self.workers.get(slot) { let _ = w.send(feeder); }
+        feed
     }
     pub(crate) fn next_gen(&mut self) -> u64 { self.gen = self.gen.wrapping_add(1).max(1); self.gen }
     /// Queue a command; returns its sequence number.
@@ -2575,12 +2688,26 @@ impl Control {
 
 /// S2 — log what the callback reported. Runs on the dispatch thread, never the audio thread. The text is
 /// the callback's old eprintln! verbatim, so log readers (audiod/daemon-log.js, diagnostics) are unaffected.
-fn drain_rt_events(_station_id: u32, cons: &mut ringbuf::HeapCons<RtEvent>) {
+fn drain_rt_events(station_id: u32, cons: &mut ringbuf::HeapCons<RtEvent>) {
+    // Underruns are coalesced per deck per drain (≤ 50 ms), so a stalled disk writes one line per deck per
+    // drain, not one per buffer. Every one is still counted exactly in Scratch::underruns (S6 publishes it).
+    let mut ur: [(u32, u64); SLOT_COUNT] = [(0, 0); SLOT_COUNT];
     while let Some(ev) = cons.try_pop() {
         match ev {
             RtEvent::DeckFinished { slot } => {
                 eprintln!("[RUST] Deck {} finished (source exhausted)", deck_finished_key(slot as usize));
             }
+            RtEvent::Underrun { slot, frames } => {
+                let e = &mut ur[slot as usize % SLOT_COUNT];
+                e.0 += 1;
+                e.1 += frames as u64;
+            }
+        }
+    }
+    for (i, (n, frames)) in ur.iter().enumerate() {
+        if *n > 0 {
+            eprintln!("[RUST] Station {} deck {} UNDERRUN: {} buffer(s), {} frames of silence — decode worker late (position held, track NOT ended)",
+                      station_id, deck_finished_key(i), n, frames);
         }
     }
 }
@@ -2658,7 +2785,10 @@ fn restore_decks_after_switch(bus_cmd: &SharedBusState, sr: u32, ctl: &mut Contr
         .collect();
 
     for (idx, path) in paths {
-        if let Some(src) = build_source(&path, sr) {
+        let needed = bus_cmd.lock().map(|b| b.decks[idx].source.is_none() && b.decks[idx].active).unwrap_or(false);
+        if !needed { continue; }
+        if let Some(d) = build_source(&path, sr) {
+            let src = ctl.feed_for(idx, d);
             if let Ok(mut bus) = bus_cmd.lock() {
                 // Only replace if the source is gone (e.g. after a device failover mid-track)
                 if bus.decks[idx].source.is_none() && bus.decks[idx].active {
@@ -2693,6 +2823,9 @@ pub(crate) const MAX_PROG_FRAMES: usize = 32_768;
 pub(crate) enum RtEvent {
     /// A deck's source ran out naturally (the finished FLAG is still set in the callback, lock-free).
     DeckFinished { slot: u8 },
+    /// S4 — a deck's ring ran dry BEFORE end of file: its decode worker is late. That deck played `frames`
+    /// frames of silence this buffer; its position did not advance and nothing reported an ending.
+    Underrun { slot: u8, frames: u32 },
 }
 /// Events one device-open's queue holds. A full queue is counted (Scratch::events_dropped), never blocks.
 pub(crate) const RT_EVENT_QUEUE: usize = 256;
@@ -2716,6 +2849,10 @@ pub(crate) struct Scratch {
     str_l: Box<[f32]>, str_r: Box<[f32]>,            // STREAM-branch processed
     room_out_l: Box<[f32]>, room_out_r: Box<[f32]>,  // the room chain's output
     dev_l: Box<[f32]>, dev_r: Box<[f32]>,            // the clamped clean tap to the device
+    feed: Box<[f32]>,                                // S4 — one deck's interleaved frames popped from its ring
+    /// S4 — per slot: buffers in which the ring ran dry before EOF, and the silent frames that cost. S6 publishes.
+    pub(crate) underruns: [u64; SLOT_COUNT],
+    pub(crate) underrun_frames: [u64; SLOT_COUNT],
     /// Buffers refused because the device asked for more than MAX_PROG_FRAMES. Published in S6.
     pub(crate) buffer_clamped: u64,
     /// S2 — producer end of the event queue. None in tests and the offline harness (nobody listening);
@@ -2735,6 +2872,9 @@ impl Scratch {
             out_l: lane(), out_r: lane(), loc_l: lane(), loc_r: lane(),
             str_l: lane(), str_r: lane(), room_out_l: lane(), room_out_r: lane(),
             dev_l: lane(), dev_r: lane(),
+            feed: vec![0f32; MAX_PROG_FRAMES * 2].into_boxed_slice(),
+            underruns: [0; SLOT_COUNT],
+            underrun_frames: [0; SLOT_COUNT],
             buffer_clamped: 0,
             events: None,
             events_dropped: 0,
@@ -2781,7 +2921,8 @@ pub(crate) fn mixer_callback(
     let Scratch {
         mix_l, mix_r, room_l, room_r, imm_room_l, imm_room_r, core_l, core_r, aux_l, aux_r,
         src_l, src_r, imm_l, imm_r, det_l, det_r, out_l, out_r, loc_l, loc_r, str_l, str_r,
-        room_out_l, room_out_r, dev_l, dev_r, buffer_clamped: _, events, events_dropped,
+        room_out_l, room_out_r, dev_l, dev_r, feed, underruns, underrun_frames,
+        buffer_clamped: _, events, events_dropped,
     } = sc;
 
     let mix_l = &mut mix_l[..prog_frames]; mix_l.fill(0.0);
@@ -2883,11 +3024,27 @@ pub(crate) fn mixer_callback(
         if is_aux && duck_enabled[i] { duck_armed = true; }
         let mut pk = 0.0f32;
         let mut pulled = 0u64;   // frames actually taken from THIS deck's source this buffer
-        for f in 0..prog_frames {
-            // Source is always stereo (UniformSourceIterator built with 2 ch)
-            match src.next() {
-                Some(l) => {
-                    let r = src.next().unwrap_or(0.0);
+        // S4 — pull this buffer's frames from the deck's RING (never the decoder). Interleaved stereo, always
+        // whole frames. A short read is one of exactly two things, decided by the worker's EOF flag, which it
+        // sets only after pushing its last sample (Release/Acquire):
+        //   · EOF set   → the track ENDED here: drain what is left, then exhausted — the same frame the old
+        //                 `src.next() == None` fired on;
+        //   · EOF clear → an UNDERRUN: the worker is late. The frames we did not get are silence for THIS deck
+        //                 only; they are not counted into its position, nothing ends, and it is counted +
+        //                 reported (Scratch::underruns, RtEvent::Underrun). Never silent, never an ending.
+        let want = prog_frames * 2;
+        let mut got = src.cons.pop_slice(&mut feed[..want]);
+        let mut ended = false;
+        if got < want && src.eof.load(Ordering::Acquire) {
+            got += src.cons.pop_slice(&mut feed[got..want]);
+            ended = got < want;
+        }
+        let take = got / 2;
+        for f in 0..take {
+            {
+                {
+                    let l = feed[2 * f];
+                    let r = feed[2 * f + 1];
                     let lv = l * vol;
                     let rv = r * vol;
                     mix_l[f] += lv;                       // AIR — every slot, unchanged
@@ -2921,7 +3078,20 @@ pub(crate) fn mixer_callback(
                     let a = lv.abs().max(rv.abs());
                     if a > pk { pk = a; }
                 }
-                None => { exhausted[i] = true; break; }
+            }
+        }
+        if take < prog_frames {
+            if ended {
+                exhausted[i] = true;
+            } else {
+                let missing = (prog_frames - take) as u64;
+                underruns[i] = underruns[i].wrapping_add(1);
+                underrun_frames[i] = underrun_frames[i].wrapping_add(missing);
+                if let Some(ev) = events.as_mut() {
+                    if ev.try_push(RtEvent::Underrun { slot: i as u8, frames: missing as u32 }).is_err() {
+                        *events_dropped = events_dropped.wrapping_add(1);
+                    }
+                }
             }
         }
         // SAMPLE CLOCK — committed once per buffer (the `src` borrow is dead here), not once per

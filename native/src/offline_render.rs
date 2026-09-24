@@ -23,6 +23,7 @@ use std::sync::atomic::AtomicBool;
 use ringbuf::{HeapRb, traits::{Consumer, Split}};
 use serde::{Deserialize, Serialize};
 use crate::audio::{BusState, FinishedFlags, SharedBusState, Scratch, mixer_callback, build_source, PROGRAM_BUS_BUF, AUX_BUS_BUF};
+use crate::rt::{deck_feed, Feeder, DECK_RING_SAMPLES};
 
 /// The program-bus rate. The render always runs the device at this rate (condition 1 above).
 pub const RATE: u32 = 44_100;
@@ -148,6 +149,11 @@ pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
     // stream_connected = true: the callback pushes the stream tap only while a client is attached (:2703).
     let bus: SharedBusState = Arc::new(Mutex::new(BusState::new(eq, prod, RATE, Arc::new(AtomicBool::new(true)))));
     let mut aux_cons = None;
+    // S4 — the decks are fed through the product's own rings (rt.rs). THE SYNCHRONOUS PUMP: before every
+    // buffer the harness runs each deck's Feeder::fill inline — the same routine the decode worker thread
+    // runs — to capacity, so the ring can never be dry when the callback reads it and the render stays
+    // deterministic. The threaded worker has its own tests (rt.rs).
+    let mut feeders: Vec<Feeder> = Vec::new();
     {
         let mut b = bus.lock().map_err(|_| "bus lock poisoned".to_string())?;
         // Device open, exactly as the live path does it (audio.rs:1754-1757) — including retuning ONLY the
@@ -158,8 +164,10 @@ pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
         }
         configure(&mut b, cfg);
         let src = build_source(path, RATE).ok_or_else(|| format!("cannot decode {}", path))?;
+        let (feed, feeder) = deck_feed(src);
+        feeders.push(feeder);
         let d = &mut b.decks[0];
-        d.source  = Some(src);
+        d.source  = Some(feed);
         d.active  = true;
         d.paused  = false;   // DeckSlot::new() starts paused — see the warning at audio.rs:1286-1290
         d.volume  = 1.0;
@@ -167,8 +175,10 @@ pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
         d.gain_db = cfg.gain_db;
         if let Some(ref ax) = cfg.aux {
             let asrc = build_source(&ax.path, RATE).ok_or_else(|| format!("cannot decode aux {}", ax.path))?;
+            let (afeed, afeeder) = deck_feed(asrc);
+            feeders.push(afeeder);
             let d = &mut b.decks[3];
-            d.source = Some(asrc);
+            d.source = Some(afeed);
             d.active = true;
             d.paused = false;
             d.volume = 1.0;
@@ -195,6 +205,7 @@ pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
 
     for _ in 0..max_buffers {
         data.iter_mut().for_each(|s| *s = 0.0);
+        for f in feeders.iter_mut() { f.fill(DECK_RING_SAMPLES); }   // the synchronous pump
         mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
         monitor.extend_from_slice(&data);
         // Drain EVERY call so neither ring can fill and drop samples (try_push at :2717, :2879).
@@ -667,6 +678,53 @@ mod parity {
         // music__OFF's stream (music alone) — trivially true — and, more to the point, its ROOM (music
         // only, ducked) is quieter than music__OFF's monitor (music only, not ducked) over the speech.
         assert_ne!(get("music__AUXDUCK_OFF").mon_hash, get("music__OFF").mon_hash, "the duck left the room untouched");
+    }
+
+    // ── 7 · THE THREADED RING DELIVERS EXACTLY WHAT THE DECODER DID (slice 1 S4) ────────────────────
+    // The harness pumps synchronously, so it never exercises the real worker THREAD. This does: a real
+    // deck_worker thread decodes music.wav into a 2 s ring, prefilled exactly as Control::feed_for does,
+    // while this thread drains it in PRNG-sized chunks (1-9 000 frames) with PRNG pauses. The concatenated
+    // samples must be bit-identical to draining build_source directly. 20 runs, different seeds.
+    #[test]
+    fn threaded_ring_delivers_the_direct_decode() {
+        use ringbuf::traits::{Consumer, Observer};
+        let music = corpus().into_iter().find(|(n, _)| *n == "music").unwrap().1;
+        let direct: Vec<f32> = build_source(music.to_str().unwrap(), RATE).unwrap().collect();
+        let mut dry_polls_total = 0u64;
+        for run in 0..20u64 {
+            let (feed, mut feeder) = crate::rt::deck_feed(build_source(music.to_str().unwrap(), RATE).unwrap());
+            let mut feed = feed;
+            feeder.fill(crate::rt::DECK_REFILL_BELOW);
+            let (tx, rx) = std::sync::mpsc::channel();
+            let worker = std::thread::spawn(move || crate::rt::deck_worker(rx));
+            tx.send(feeder).unwrap();
+            let mut rng = 0x9E3779B97F4A7C15u64 ^ (run + 1);
+            let mut next = || { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; rng };
+            let mut out: Vec<f32> = Vec::with_capacity(direct.len());
+            let mut buf = vec![0f32; 9_000 * 2];
+            let mut dry_polls = 0u64;
+            loop {
+                let frames = 1 + (next() % 9_000) as usize;
+                let eof = feed.eof.load(std::sync::atomic::Ordering::Acquire);
+                let got = feed.cons.pop_slice(&mut buf[..frames * 2]);
+                out.extend_from_slice(&buf[..got]);
+                if got < frames * 2 {
+                    if eof && feed.cons.is_empty() { break; }
+                    dry_polls += 1;                        // consumer outran the worker; wait for it
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                } else if next() % 4 == 0 {
+                    std::thread::sleep(std::time::Duration::from_micros(next() % 3_000));
+                }
+            }
+            drop(feed);          // cancels the worker's feeder (it may already be at EOF)
+            drop(tx);
+            worker.join().unwrap();
+            assert_eq!(out.len(), direct.len(), "run {}: sample count differs", run);
+            assert!(bits_equal(&out, &direct), "run {}: the ring delivered different samples than the decoder", run);
+            dry_polls_total += dry_polls;
+        }
+        println!("[ring] 20 threaded runs x {} samples: bit-identical to the direct decode ({} dry polls - this consumer is not paced; realtime underruns are measured in the soak)",
+                 direct.len(), dry_polls_total);
     }
 
     // ── CAPTURE (explicit only) ─────────────────────────────────────────────────────────────────────
