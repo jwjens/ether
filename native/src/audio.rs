@@ -1522,7 +1522,7 @@ mod duck_regression {
 }
 
 const PROGRAM_RATE:   u32       = 44100;
-const PROGRAM_BUS_BUF: usize    = PROGRAM_RATE as usize * 2 * 4; // 4 s at 44100 Hz stereo
+pub(crate) const PROGRAM_BUS_BUF: usize    = PROGRAM_RATE as usize * 2 * 4; // 4 s at 44100 Hz stereo
 /// AUX monitor ring — ~0.5 s of 44100 Hz stereo. Deliberately SHORT: this is a monitor feed and
 /// latency matters more than resilience. The writer bounds it further (see AUX_RING_HIGH).
 const AUX_BUS_BUF: usize = PROGRAM_RATE as usize;          // 44100 samples = 0.5 s stereo
@@ -2209,7 +2209,7 @@ fn open_named_output_device(station_id: u32, name: &str) -> Option<(cpal::Device
     Some((device, sr, ch))
 }
 
-fn build_source(
+pub(crate) fn build_source(
     file_path: &str,
     _sample_rate: u32,
 ) -> Option<Box<dyn Iterator<Item = f32> + Send>> {
@@ -2265,7 +2265,7 @@ fn restore_decks_after_switch(bus_cmd: &SharedBusState, sr: u32) {
 // No global audio state (DESIGN-TRUTH §2): per-station liveness lives in STATION_CB_MS
 // (above); the program-bus stream-client flag is per-station on BusState.stream_connected.
 
-fn mixer_callback(
+pub(crate) fn mixer_callback(
     data:    &mut [f32],
     ch:      u16,
     bus_arc: &SharedBusState,

@@ -11,6 +11,7 @@ pub mod eq;
 mod lufs;
 mod clock;
 mod program_processor;   // Audio Processing v1 — per-station program-bus loudness (bench-gated before ship)
+mod offline_render;      // DSP parity harness — docs/dsp-parity-harness.md (diagnostic; never on the audio path)
 
 use napi_derive::napi;
 use std::collections::HashMap;
@@ -460,6 +461,21 @@ pub fn audio_bench_processor(seconds: f64, seed: u32) -> String {
         "budget_share_one_pct": med1 / 10.0 * 100.0,
         "budget_share_two_pct": med2 / 10.0 * 100.0
     }).to_string()
+}
+
+/// DSP PARITY HARNESS — render one file through the REAL mixer callback with no device, faster than
+/// realtime, and write out_dir/monitor.wav (dl/dr, pre monitor gain, pre resample) and out_dir/stream.wav
+/// (what the program-bus ring hands ffmpeg). cfg_json is offline_render::RenderCfg; `{}` = the shipped
+/// chain. Returns a JSON summary (per-tap FNV hash, peak, integrated LUFS, true peak) or {"error":…}.
+///
+/// Diagnostic only, like audio_bench_processor: never touches ENGINES, never opens a device, never starts
+/// a thread, so it cannot disturb a station running in the same process. docs/dsp-parity-harness.md.
+#[napi]
+pub fn audio_render_offline(path: String, cfg_json: String, out_dir: String) -> String {
+    match offline_render::render_to_dir(&path, &cfg_json, &out_dir) {
+        Ok(v) => v,
+        Err(e) => serde_json::json!({ "error": e }).to_string(),
+    }
 }
 
 #[napi]
