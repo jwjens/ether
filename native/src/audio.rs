@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use ringbuf::{HeapRb, HeapProd, HeapCons, traits::{Producer, Consumer, Observer, Split}};
 use crate::rt::{Params, RtCmd, AuxCmd, Garbage, MeterFrame, DeckMeter, RtShared, TripleWriter, TripleReader,
                 RT_CMD_QUEUE, RT_CMD_PER_BUFFER, RT_GARBAGE_QUEUE, triple, DeckFeed, Feeder, DeckSource,
-                deck_feed, deck_worker, DECK_REFILL_BELOW};
+                deck_feed, deck_worker, DECK_REFILL_BELOW, RtCounters, RtScope, rt_allocs};
 
 // ── Per-station audio-thread liveness (HA health signal) ──────────────────────
 // Each station stamps ITS OWN clock on every cpal output callback — there is no
@@ -141,6 +141,9 @@ pub struct DeckTel {
     /// does not know this field is unaffected.
     #[serde(default)]
     pub peak: f32,
+    /// SLICE 1 S6 — buffers in which this deck's ring ran dry before end of file (0 on a healthy disk).
+    #[serde(default)]
+    pub underruns: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -228,6 +231,24 @@ pub struct AudioLevels {
     /// Per-deck A/B/C telemetry snapshot (source/active/paused/volume/gain).
     #[serde(default)]
     pub decks: Vec<DeckTel>,
+    /// SLICE 1 S6 — the audio callback's health counters (rt.rs RtCounters), cumulative per station.
+    #[serde(default)]
+    pub rt: RtLevels,
+}
+
+/// SLICE 1 S6 — the callback's counters as they cross the NAPI boundary (every one is named in lib.rs's json!).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RtLevels {
+    pub callbacks: u64,
+    pub underruns: u64,
+    pub underrun_frames: u64,
+    pub lock_misses: u64,
+    pub overruns: u64,
+    pub events_dropped: u64,
+    pub buffer_clamped: u64,
+    pub garbage_leaked: u64,
+    /// Allocations inside the callback — Some in a debug build (the trap), None in the shipped release.
+    pub allocs: Option<u64>,
 }
 
 pub type SharedLevels = Arc<Mutex<AudioLevels>>;
@@ -673,8 +694,8 @@ pub struct BusState {
     pub(crate) aux_cmd_cons: HeapCons<AuxCmd>,
     /// Everything the callback replaces goes here to be freed on the dispatch thread.
     pub(crate) garbage: HeapProd<Garbage>,
-    /// Objects the callback had to LEAK because the garbage queue was full (never freed on this thread).
-    pub(crate) garbage_leaked: u64,
+    /// S6 — the station's health counters (shared with every Scratch this station opens).
+    pub(crate) counters: Arc<RtCounters>,
     /// Meters + telemetry, published at the end of every buffer.
     pub(crate) meter_w: Option<TripleWriter<MeterFrame>>,
     pub(crate) shared: Arc<RtShared>,
@@ -782,7 +803,7 @@ impl BusState {
             cmd_cons,
             aux_cmd_cons,
             garbage,
-            garbage_leaked: 0,
+            counters: RtCounters::new(),
             meter_w: None,
             shared: shared.clone(),
             eq_bands: [0.0; 10],
@@ -879,6 +900,8 @@ impl BusState {
                 a.set_bands(&p.eq_bands);
                 self.eq_bands = p.eq_bands;
                 self.eq_version_applied = p.eq_version;
+            } else {
+                RtCounters::bump(&self.counters.lock_misses, 1);
             }
         }
     }
@@ -887,7 +910,7 @@ impl BusState {
     fn discard(&mut self, g: Garbage) {
         if let Err(g) = self.garbage.try_push(g) {
             std::mem::forget(g);
-            self.garbage_leaked = self.garbage_leaked.wrapping_add(1);
+            RtCounters::bump(&self.counters.garbage_leaked, 1);
         }
     }
 
@@ -1698,8 +1721,8 @@ mod rt_underrun {
         {
             let b = bus.lock().unwrap();
             // Counted.
-            assert_eq!(sc.underruns[0], 1, "underrun not counted");
-            assert_eq!(sc.underrun_frames[0], 280, "underrun frames not counted");
+            assert_eq!(sc.counters.underruns[0].load(Ordering::Relaxed), 1, "underrun not counted");
+            assert_eq!(sc.counters.underrun_frames[0].load(Ordering::Relaxed), 280, "underrun frames not counted");
             // Position HELD: only the 200 real frames advanced it.
             assert_eq!(b.decks[0].frames_played, 200, "position advanced over silence");
             // NOT an ending: no finished flag, source kept, deck still active, still marked as holding a source.
@@ -1723,7 +1746,7 @@ mod rt_underrun {
         mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
         assert_eq!(data[0], 400.0 * 1e-6, "playback did not resume at the next sample");
         assert_eq!(bus.lock().unwrap().decks[0].frames_played, 680);
-        assert_eq!(sc.underruns[0], 1, "a full buffer counted as an underrun");
+        assert_eq!(sc.counters.underruns[0].load(Ordering::Relaxed), 1, "a full buffer counted as an underrun");
         println!("[underrun] 280 silent frames counted + reported; position held at 200, resumed at sample 400; no finished flag");
     }
 
@@ -1745,7 +1768,7 @@ mod rt_underrun {
         let mut data = vec![0f32; 480 * 2];
         mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
         assert!(fin.take("A"), "a real end of file did not raise the finished flag");
-        assert_eq!(sc.underruns[0], 0, "a real end of file was counted as an underrun");
+        assert_eq!(sc.counters.underruns[0].load(Ordering::Relaxed), 0, "a real end of file was counted as an underrun");
         let b = bus.lock().unwrap();
         assert_eq!(b.decks[0].frames_played, 300);
         assert!(b.decks[0].source.is_none() && !b.decks[0].active);
@@ -2019,8 +2042,9 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     // callback — and the device-switch path while no callback runs — ever locks the state.
     let handles = bus_init.handles.take().expect("fresh BusState has its handles");
     let aux_frames_ctr_shared = bus_init.aux_out_frames.clone();
+    let station_counters = bus_init.counters.clone();
     let ctl_init = Control::new(&bus_init, handles.cmd_prod, handles.garbage_cons, handles.meter_r,
-                                handles.shared, aux_frames_ctr_shared.clone(), station_id);
+                                handles.shared, aux_frames_ctr_shared.clone(), station_id, station_counters.clone());
     let aux_cmd_prod = handles.aux_cmd_prod;
     let bus_state: SharedBusState = Arc::new(Mutex::new(bus_init));
     let bus_cmd = bus_state.clone(); // device-open / device-switch only (no callback running then)
@@ -2111,6 +2135,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 let built = device.build_output_stream::<f32, _, _>(
                                     &cfg,
                                     move |data: &mut [f32], _| {
+                                        let _rt = RtScope::enter();   // S6 — trap scope (no-op in release)
                                         let frames = data.len() / ch as usize;
                                         if !primed {
                                             let a = cons.try_pop().and_then(|l| cons.try_pop().map(|r| (l, r)));
@@ -2242,7 +2267,11 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
             let cb_seq_cb = cb_seq.clone();
             // S1 — this stream's working buffers, allocated here on the dispatch thread and MOVED into the
             // callback. The audio thread never allocates them; a reopened device gets a fresh set here.
-            let mut sc = Scratch::new();
+            let mut sc = Scratch::with_counters(station_counters.clone());
+            let cb_counters = station_counters.clone();
+            // S6 — OVERRUN detection from the timestamps cpal HANDS the callback (no clock call of ours):
+            // a gap since the previous callback of more than 1.5 × this buffer's duration is a late callback.
+            let mut prev_cb: Option<cpal::StreamInstant> = None;
             // S2 — this device-open's event queue. The previous open's consumer is drained first, so an
             // event from the last moments of the old stream is still logged.
             if let Some(ref mut old) = ev_cons { drain_rt_events(station_id, old); }
@@ -2252,7 +2281,17 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
 
             let stream = device.build_output_stream::<f32, _, _>(
                 &stream_config,
-                move |data: &mut [f32], _| {
+                move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
+                    let ts = info.timestamp().callback;
+                    if let Some(p) = prev_cb {
+                        if let Some(gap) = ts.duration_since(&p) {
+                            let frames = (data.len() / ch.max(1) as usize) as u64;
+                            let expected_ns = frames * 1_000_000_000 / (sr.max(1) as u64);
+                            if gap.as_nanos() as u64 > expected_ns * 3 / 2 { RtCounters::bump(&cb_counters.overruns, 1); }
+                        }
+                    }
+                    prev_cb = Some(ts);
+                    RtCounters::bump(&cb_counters.callbacks, 1);
                     mixer_callback(data, ch, &bus_cb, &fin_cb, &play_cb, &mut sc);
                     // Per-station liveness — THIS station's counter only (stamped to wall time off-thread).
                     cb_seq_cb.fetch_add(1, Ordering::Relaxed);
@@ -2503,10 +2542,25 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                             frames_played: d.frames_played,
                                             peak: m.peaks[i],
                                             duck: p.duck_enabled[i],
+                                            underruns: ctl.counters.underruns[i].load(Ordering::Relaxed),
                                         });
                                     }
                                     lvl.active_decks = active;
                                     lvl.decks = dt;
+                                    // S6 — the callback's health counters (cumulative for this station).
+                                    let c = &ctl.counters;
+                                    let ld = |a: &AtomicU64| a.load(Ordering::Relaxed);
+                                    lvl.rt = RtLevels {
+                                        callbacks: ld(&c.callbacks),
+                                        underruns: c.underruns.iter().map(ld).sum(),
+                                        underrun_frames: c.underrun_frames.iter().map(ld).sum(),
+                                        lock_misses: ld(&c.lock_misses),
+                                        overruns: ld(&c.overruns),
+                                        events_dropped: ld(&c.events_dropped),
+                                        buffer_clamped: ld(&c.buffer_clamped),
+                                        garbage_leaked: ld(&c.garbage_leaked),
+                                        allocs: rt_allocs(),
+                                    };
                                 }
                             }
                             AudioCmd::SwitchDevice(name) => {
@@ -2632,11 +2686,13 @@ pub(crate) struct Control {
     pub aux_frames: Arc<AtomicU64>,
     /// S4 — one decode worker per deck slot (Jeff's ruling 2), fed Feeders over its channel.
     workers: Vec<std::sync::mpsc::Sender<Feeder>>,
+    /// S6 — the station's callback health counters, read for GetLevel.
+    pub counters: Arc<RtCounters>,
 }
 impl Control {
     pub(crate) fn new(bus: &BusState, cmd: HeapProd<RtCmd>, garbage: HeapCons<Garbage>,
                       meter: TripleReader<MeterFrame>, shared: Arc<RtShared>, aux_frames: Arc<AtomicU64>,
-                      station_id: u32) -> Self {
+                      station_id: u32, counters: Arc<RtCounters>) -> Self {
         let workers = (0..SLOT_COUNT).map(|i| {
             let (tx, rx) = std::sync::mpsc::channel::<Feeder>();
             let _ = std::thread::Builder::new()
@@ -2647,7 +2703,7 @@ impl Control {
         Control {
             cmd, pending: std::collections::VecDeque::new(), seq: 0, params: bus.params(),
             garbage, meter, shared, decks: std::array::from_fn(|_| DeckShadow::default()), gen: 0, aux_frames,
-            workers,
+            workers, counters,
         }
     }
     /// Turn a decoder into a deck feed: PREFILL its ring to the refill mark here (1.5 s, on this thread —
@@ -2856,19 +2912,16 @@ pub(crate) struct Scratch {
     room_out_l: Box<[f32]>, room_out_r: Box<[f32]>,  // the room chain's output
     dev_l: Box<[f32]>, dev_r: Box<[f32]>,            // the clamped clean tap to the device
     feed: Box<[f32]>,                                // S4 — one deck's interleaved frames popped from its ring
-    /// S4 — per slot: buffers in which the ring ran dry before EOF, and the silent frames that cost. S6 publishes.
-    pub(crate) underruns: [u64; SLOT_COUNT],
-    pub(crate) underrun_frames: [u64; SLOT_COUNT],
-    /// Buffers refused because the device asked for more than MAX_PROG_FRAMES. Published in S6.
-    pub(crate) buffer_clamped: u64,
+    /// S6 — the station's health counters (underruns, lock misses, overruns, …). Shared with the station's
+    /// BusState and every Scratch it opens, so a device reopen does not reset them.
+    pub(crate) counters: Arc<RtCounters>,
     /// S2 — producer end of the event queue. None in tests and the offline harness (nobody listening);
     /// the live stream gets Some at device open.
     pub(crate) events: Option<ringbuf::HeapProd<RtEvent>>,
-    /// Events that could not be queued because the queue was full. Published in S6.
-    pub(crate) events_dropped: u64,
 }
 impl Scratch {
-    pub(crate) fn new() -> Box<Scratch> {
+    pub(crate) fn new() -> Box<Scratch> { Scratch::with_counters(RtCounters::new()) }
+    pub(crate) fn with_counters(counters: Arc<RtCounters>) -> Box<Scratch> {
         let lane = || vec![0f32; MAX_PROG_FRAMES].into_boxed_slice();
         Box::new(Scratch {
             mix_l: lane(), mix_r: lane(), room_l: lane(), room_r: lane(),
@@ -2879,11 +2932,8 @@ impl Scratch {
             str_l: lane(), str_r: lane(), room_out_l: lane(), room_out_r: lane(),
             dev_l: lane(), dev_r: lane(),
             feed: vec![0f32; MAX_PROG_FRAMES * 2].into_boxed_slice(),
-            underruns: [0; SLOT_COUNT],
-            underrun_frames: [0; SLOT_COUNT],
-            buffer_clamped: 0,
+            counters,
             events: None,
-            events_dropped: 0,
         })
     }
 }
@@ -2896,13 +2946,18 @@ pub(crate) fn mixer_callback(
     playing: &AtomicBool,
     sc:      &mut Scratch,
 ) {
+    // S6 — the allocation trap's scope (a no-op in the shipped release): any allocation or free on this
+    // thread until this returns is counted, and the tests assert the count is zero.
+    let _rt = RtScope::enter();
 
     let device_frames = data.len() / ch as usize;
     if device_frames == 0 { return; }
 
     let mut bus = match bus_arc.try_lock() {
         Ok(b)  => b,
-        Err(_) => { data.iter_mut().for_each(|s| *s = 0.0); return; }
+        // S6 — COUNTED. Since S3 only this callback (and device open/switch, while no callback runs) locks
+        // the state, so this cannot happen; the counter is how "cannot" is checked rather than assumed.
+        Err(_) => { RtCounters::bump(&sc.counters.lock_misses, 1); data.iter_mut().for_each(|s| *s = 0.0); return; }
     };
 
     // S3 — adopt queued parameter blocks and deck commands BEFORE anything reads them. The whole buffer
@@ -2920,16 +2975,16 @@ pub(crate) fn mixer_callback(
     // S1 — the lanes are fixed-size. A buffer larger than they are is refused, counted and silent for
     // this one buffer; it is never serviced by growing a lane on the audio thread.
     if prog_frames > MAX_PROG_FRAMES {
-        sc.buffer_clamped = sc.buffer_clamped.wrapping_add(1);
+        RtCounters::bump(&sc.counters.buffer_clamped, 1);
         data.iter_mut().for_each(|s| *s = 0.0);
         return;
     }
     let Scratch {
         mix_l, mix_r, room_l, room_r, imm_room_l, imm_room_r, core_l, core_r, aux_l, aux_r,
         src_l, src_r, imm_l, imm_r, det_l, det_r, out_l, out_r, loc_l, loc_r, str_l, str_r,
-        room_out_l, room_out_r, dev_l, dev_r, feed, underruns, underrun_frames,
-        buffer_clamped: _, events, events_dropped,
+        room_out_l, room_out_r, dev_l, dev_r, feed, counters, events,
     } = sc;
+    let counters: &RtCounters = counters;
 
     let mix_l = &mut mix_l[..prog_frames]; mix_l.fill(0.0);
     let mix_r = &mut mix_r[..prog_frames]; mix_r.fill(0.0);
@@ -3091,11 +3146,11 @@ pub(crate) fn mixer_callback(
                 exhausted[i] = true;
             } else {
                 let missing = (prog_frames - take) as u64;
-                underruns[i] = underruns[i].wrapping_add(1);
-                underrun_frames[i] = underrun_frames[i].wrapping_add(missing);
+                RtCounters::bump(&counters.underruns[i], 1);
+                RtCounters::bump(&counters.underrun_frames[i], missing);
                 if let Some(ev) = events.as_mut() {
                     if ev.try_push(RtEvent::Underrun { slot: i as u8, frames: missing as u32 }).is_err() {
-                        *events_dropped = events_dropped.wrapping_add(1);
+                        RtCounters::bump(&counters.events_dropped, 1);
                     }
                 }
             }
@@ -3126,7 +3181,7 @@ pub(crate) fn mixer_callback(
             // S2 — logged by the dispatch thread, not here (see RtEvent). A full queue is counted.
             if let Some(ev) = events.as_mut() {
                 if ev.try_push(RtEvent::DeckFinished { slot: i as u8 }).is_err() {
-                    *events_dropped = events_dropped.wrapping_add(1);
+                    RtCounters::bump(&counters.events_dropped, 1);
                 }
             }
         }
@@ -3262,6 +3317,7 @@ pub(crate) fn mixer_callback(
         // Snapshot the analyzer spectrum while we hold the lock; published to bus below.
         eq_spectrum = Some(eq.spectrum());
     } else {
+        RtCounters::bump(&counters.lock_misses, 1);   // S6 — uncontended by construction; counted if not
         out_l.copy_from_slice(mix_l);
         out_r.copy_from_slice(mix_r);
     }
@@ -3335,7 +3391,7 @@ pub(crate) fn mixer_callback(
             p.process_planar(pl, pr);
             let op = pl.iter().chain(pr.iter()).map(|&s| s.abs()).fold(0.0f32, f32::max);
             Some((p.in_lufs(), p.out_lufs(), p.gain_reduction_db(), p.ride_gain_db(), op))
-        } else { None }
+        } else { RtCounters::bump(&counters.lock_misses, 1); None }
     };
 
     let loc_l = &mut loc_l[..prog_frames];
@@ -3429,6 +3485,7 @@ pub(crate) fn mixer_callback(
             }
         } else {
             // Never block the audio thread for EQ — fall back to clean, exactly as the air chain does.
+            RtCounters::bump(&counters.lock_misses, 1);
             for f in 0..prog_frames { rl[f] = room_l[f].clamp(-1.0, 1.0); rr[f] = room_r[f].clamp(-1.0, 1.0); }
         }
         if master_vol != 1.0 {
@@ -3444,7 +3501,7 @@ pub(crate) fn mixer_callback(
             p.set_params(bus.proc_ceiling_dbtp, bus.proc_release_ms, bus.proc_ride_rate,
                          bus.proc_ride_clamp, bus.proc_ride_bypass, bus.proc_limiter_bypass);
                 p.process_planar(rl, rr);
-            }
+            } else { RtCounters::bump(&counters.lock_misses, 1); }
         }
         // NOTE: the aux sum is NOT added here. It has exactly ONE destination — the device chosen in
         // the AUX MONITORS section — and it reaches it through the aux ring below. An earlier revision
@@ -3511,7 +3568,7 @@ pub(crate) fn mixer_callback(
                          bus.proc_ride_clamp, bus.proc_ride_bypass, bus.proc_limiter_bypass);
             p.process_planar(aux_l, aux_r);
             Some((p.in_lufs(), p.out_lufs(), p.gain_reduction_db(), p.ride_gain_db()))
-        } else { None };
+        } else { RtCounters::bump(&counters.lock_misses, 1); None };
         if let Some((il, ol, gr, ride)) = meters {
             bus.aux_proc_in_lufs = il;
             bus.aux_proc_out_lufs = ol;

@@ -522,10 +522,14 @@ mod parity {
         mon_vs_golden: Option<(f32, bool)>,
         str_vs_golden: Option<(f32, bool)>,
         aux_vs_golden: Option<(f32, bool)>,
+        /// S6 — allocations the trap saw inside the callback during this render (this thread only).
+        rt_allocs: u64,
     }
 
     fn evaluate(id: &str, path: &Path, cfg: &RenderCfg) -> Eval {
+        let a0 = crate::rt::tl_rt_allocs();
         let r = render_offline(path.to_str().unwrap(), cfg).unwrap_or_else(|e| panic!("{}: {}", id, e));
+        let rt_allocs = crate::rt::tl_rt_allocs() - a0;
         let vs = |tap: &[f32], which: &str| -> Option<(f32, bool)> {
             let g = goldens_dir().join(format!("{}__{}.wav", id, which));
             if !g.exists() { return None; }
@@ -545,6 +549,7 @@ mod parity {
             mon_vs_golden: vs(&r.monitor, "monitor"),
             str_vs_golden: vs(&r.stream, "stream"),
             aux_vs_golden: if cfg.aux.is_some() { vs(&r.aux, "aux") } else { None },
+            rt_allocs,
         }
     }
 
@@ -725,6 +730,21 @@ mod parity {
         }
         println!("[ring] 20 threaded runs x {} samples: bit-identical to the direct decode ({} dry polls - this consumer is not paced; realtime underruns are measured in the soak)",
                  direct.len(), dry_polls_total);
+    }
+
+    // ── 8 · THE CALLBACK NEVER ALLOCATES (slice 1 S6) ─────────────────────────────────────────────────
+    // Every render above ran with the allocation trap armed around every callback. Across all of them —
+    // every signal, every config, block sizes 441/480/1024, a 48 kHz device, the aux/room/duck path —
+    // the callback must not have allocated or freed once.
+    #[test]
+    fn the_callback_never_allocates() {
+        let mut total = 0u64;
+        for (id, e) in all() {
+            if e.rt_allocs != 0 { println!("[trap] {:<36} {} allocations inside the callback", id, e.rt_allocs); }
+            total += e.rt_allocs;
+        }
+        println!("[trap] {} renders, {} allocations inside the callback", all().len(), total);
+        assert_eq!(total, 0, "the audio callback allocated");
     }
 
     // ── CAPTURE (explicit only) ─────────────────────────────────────────────────────────────────────

@@ -115,6 +115,10 @@ pub struct EqChain {
     ring_pos:   usize,           // Write index
     fft_plan:   std::sync::Arc<dyn rustfft::Fft<f32>>,
     fft_scratch: Vec<rustfft::num_complex::Complex<f32>>, // Pre-allocated to avoid audio-thread allocation
+    /// SLICE 1 S6 — the FFT's own working space. rustfft's plain `process()` allocates this on EVERY call
+    /// (rustfft-6 lib.rs: `let mut scratch = vec![...; get_inplace_scratch_len()]`), which this analyser ran
+    /// every 1024 samples on the audio thread. Preallocated once; `process_with_scratch` uses it.
+    fft_work: Vec<rustfft::num_complex::Complex<f32>>,
     window:     Vec<f32>,        // Hann window (precomputed)
     spectrum:   [f32; 10],       // Smoothed band magnitudes (0..1+)
     peak:       f32,             // Running peak for normalization
@@ -128,6 +132,7 @@ impl EqChain {
     pub fn new(sample_rate: f32) -> Self {
         let mut planner = rustfft::FftPlanner::new();
         let fft_plan = planner.plan_fft_forward(FFT_SIZE);
+        let fft_work_len = fft_plan.get_inplace_scratch_len();
         // Precompute Hann window
         let window: Vec<f32> = (0..FFT_SIZE)
             .map(|n| {
@@ -144,6 +149,7 @@ impl EqChain {
             ring_pos: 0,
             fft_plan,
             fft_scratch: vec![rustfft::num_complex::Complex::new(0.0, 0.0); FFT_SIZE],
+            fft_work: vec![rustfft::num_complex::Complex::new(0.0, 0.0); fft_work_len],
             window,
             spectrum: [0.0; 10],
             peak: 0.05,
@@ -164,7 +170,7 @@ impl EqChain {
             let idx = (self.ring_pos + i) % FFT_SIZE;
             self.fft_scratch[i] = Complex::new(self.ring[idx] * self.window[i], 0.0);
         }
-        self.fft_plan.process(&mut self.fft_scratch);
+        self.fft_plan.process_with_scratch(&mut self.fft_scratch, &mut self.fft_work);
 
         let half = FFT_SIZE / 2;
         let bin_hz = self.sample_rate / FFT_SIZE as f32;

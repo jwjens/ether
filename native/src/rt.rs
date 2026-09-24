@@ -316,6 +316,132 @@ impl<T: Copy> TripleReader<T> {
     }
 }
 
+
+// ── SLICE 1 S6 — the callback's health counters (docs/dsp-rt-callback.md §6) ────────────────────────────
+// Per STATION (one Arc shared by that station's BusState and every Scratch it opens), so they survive a
+// device reopen. Plain atomic adds on the audio thread; read by GetLevel → levels → the daemon heartbeat,
+// the health ledger and the Health Monitor. Every one of them is "should be 0"; the point is to SEE it.
+pub(crate) struct RtCounters {
+    /// Callbacks run (the denominator for everything below).
+    pub callbacks: AtomicU64,
+    /// Per slot: buffers in which that deck's ring ran dry before EOF, and the silent frames that cost.
+    pub underruns: [AtomicU64; SLOT_COUNT],
+    pub underrun_frames: [AtomicU64; SLOT_COUNT],
+    /// A try_lock the callback made and missed — the bus itself or an EQ/processor inside it. Only the
+    /// callback locks any of them now (S3), so this is 0 BY CONSTRUCTION; counted so that is visible.
+    pub lock_misses: AtomicU64,
+    /// Callbacks that arrived late: gap since the previous callback > 1.5 × this buffer's duration, measured
+    /// from the timestamps cpal hands the callback (no clock call on the audio thread).
+    pub overruns: AtomicU64,
+    /// Events the callback could not queue (queue full).
+    pub events_dropped: AtomicU64,
+    /// Buffers refused because the device asked for more than MAX_PROG_FRAMES.
+    pub buffer_clamped: AtomicU64,
+    /// Objects leaked (not freed) because the garbage queue was full.
+    pub garbage_leaked: AtomicU64,
+}
+impl RtCounters {
+    pub fn new() -> Arc<RtCounters> {
+        Arc::new(RtCounters {
+            callbacks: AtomicU64::new(0),
+            underruns: std::array::from_fn(|_| AtomicU64::new(0)),
+            underrun_frames: std::array::from_fn(|_| AtomicU64::new(0)),
+            lock_misses: AtomicU64::new(0),
+            overruns: AtomicU64::new(0),
+            events_dropped: AtomicU64::new(0),
+            buffer_clamped: AtomicU64::new(0),
+            garbage_leaked: AtomicU64::new(0),
+        })
+    }
+    #[inline] pub fn bump(c: &AtomicU64, n: u64) { c.fetch_add(n, Ordering::Relaxed); }
+}
+
+// ── SLICE 1 S6 — THE ALLOCATION TRAP ─────────────────────────────────────────────────────────────────────
+// In tests and debug builds (never the shipped release — a trap must not be able to touch air), every
+// allocation, reallocation and free is routed through this allocator. While a thread is inside the audio
+// callback (RtScope), each one is COUNTED: globally (RT_ALLOCS, surfaced as `rt_allocs`) and per thread
+// (so a test can attribute a count to the render it just ran). It counts rather than panics: unwinding
+// out of an allocator is itself an allocation. The tests assert the count is zero.
+#[cfg(any(test, debug_assertions))]
+pub(crate) mod trap {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    thread_local! {
+        pub(crate) static IN_RT: Cell<bool> = const { Cell::new(false) };
+        pub(crate) static TL_ALLOCS: Cell<u64> = const { Cell::new(0) };
+    }
+    pub(crate) static RT_ALLOCS: AtomicU64 = AtomicU64::new(0);
+    #[inline]
+    fn note() {
+        let _ = IN_RT.try_with(|f| {
+            if f.get() {
+                RT_ALLOCS.fetch_add(1, Ordering::Relaxed);
+                let _ = TL_ALLOCS.try_with(|c| c.set(c.get() + 1));
+            }
+        });
+    }
+    pub(crate) struct Trap;
+    unsafe impl GlobalAlloc for Trap {
+        unsafe fn alloc(&self, l: Layout) -> *mut u8 { note(); unsafe { System.alloc(l) } }
+        unsafe fn alloc_zeroed(&self, l: Layout) -> *mut u8 { note(); unsafe { System.alloc_zeroed(l) } }
+        unsafe fn dealloc(&self, p: *mut u8, l: Layout) { note(); unsafe { System.dealloc(p, l) } }
+        unsafe fn realloc(&self, p: *mut u8, l: Layout, n: usize) -> *mut u8 { note(); unsafe { System.realloc(p, l, n) } }
+    }
+    #[global_allocator]
+    static ALLOC: Trap = Trap;
+}
+
+/// Marks "this thread is inside the audio callback" for the trap, for the lifetime of the value. A no-op
+/// in the shipped release.
+pub(crate) struct RtScope;
+impl RtScope {
+    #[inline]
+    pub fn enter() -> RtScope {
+        #[cfg(any(test, debug_assertions))]
+        { let _ = trap::IN_RT.try_with(|f| f.set(true)); }
+        RtScope
+    }
+}
+impl Drop for RtScope {
+    #[inline]
+    fn drop(&mut self) {
+        #[cfg(any(test, debug_assertions))]
+        { let _ = trap::IN_RT.try_with(|f| f.set(false)); }
+    }
+}
+/// Allocations made inside the callback since start — Some in debug/test builds, None in release (where
+/// the trap does not exist; reported as null rather than a fabricated 0).
+pub(crate) fn rt_allocs() -> Option<u64> {
+    #[cfg(any(test, debug_assertions))]
+    { return Some(trap::RT_ALLOCS.load(Ordering::Relaxed)); }
+    #[cfg(not(any(test, debug_assertions)))]
+    { None }
+}
+/// Allocations made inside the callback ON THIS THREAD (tests attribute a count to their own render).
+#[cfg(test)]
+pub(crate) fn tl_rt_allocs() -> u64 { trap::TL_ALLOCS.with(|c| c.get()) }
+
+#[cfg(test)]
+mod trap_tests {
+    use super::*;
+    #[test]
+    fn the_trap_counts_an_allocation_inside_the_callback_scope_and_none_outside() {
+        let before = tl_rt_allocs();
+        let v: Vec<u8> = Vec::with_capacity(64);           // outside: not counted
+        drop(v);
+        assert_eq!(tl_rt_allocs(), before, "an allocation outside the callback was counted");
+        {
+            let _rt = RtScope::enter();
+            let v: Vec<u8> = Vec::with_capacity(64);       // inside: alloc + dealloc = 2
+            std::hint::black_box(&v);
+            drop(v);
+        }
+        assert_eq!(tl_rt_allocs(), before + 2, "the trap did not see an allocation inside the callback — its zeros would mean nothing");
+        println!("[trap] counts allocations inside RtScope (2 seen for one Vec), none outside");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

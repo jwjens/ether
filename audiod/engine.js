@@ -200,8 +200,16 @@ class DaemonEngine {
       const decks = (lv.decks || [])
         .map((d) => `${d.id} src=${d.source_present ? 1 : 0} a=${d.active ? 1 : 0} p=${d.paused ? 1 : 0} vol=${(d.volume || 0).toFixed(2)} g=${g(d.gain_db)}`)
         .join(" | ");
+      // SLICE 1 S6 — the audio callback's health counters, as DELTAS since the last line: underruns
+      // (a deck's decode ring ran dry), overruns (a late callback), lock misses (0 by construction) and
+      // dropped events. All four read 0 on a healthy station; a non-zero is the line to look at.
+      const rtNow = { ur: lv.rt_underruns || 0, ov: lv.rt_overruns || 0, lm: lv.rt_lock_misses || 0, ev: lv.rt_events_dropped || 0 };
+      const rtPrev = this._lastMixRt || rtNow;
+      const d = (k) => Math.max(0, rtNow[k] - rtPrev[k]);
+      this._lastMixRt = rtNow;
       console.log(
-        `[mix s${this.stationId}] active=${lv.active_decks || 0} frames=+${df} peak=${(lv.master || 0).toFixed(3)} mon=${(lv.mon_vol || 0).toFixed(2)} | ${decks}`
+        `[mix s${this.stationId}] active=${lv.active_decks || 0} frames=+${df} peak=${(lv.master || 0).toFixed(3)} mon=${(lv.mon_vol || 0).toFixed(2)} | ${decks}` +
+        ` | rt ur=+${d("ur")} ov=+${d("ov")} lm=+${d("lm")} ev=+${d("ev")}`
       );
     } catch { /* diagnostic only — never disturb playout */ }
   }

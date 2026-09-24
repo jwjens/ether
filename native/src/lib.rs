@@ -355,6 +355,8 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
                     -70.0f32, -70.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32,
                     -14.0f32, -1.0f32, 120.0f32, 1.5f32, 12.0f32, false, false),
     };
+    // SLICE 1 S6 — the audio callback's health counters. Named key by key, like everything above.
+    let rt = levels_arc.lock().map(|l| l.rt.clone()).unwrap_or_default();
     serde_json::json!({
         "a": la, "b": lb, "c": lc, "cart": lcart, "master": lmaster, "room": lroom, "aux_frames": auxframes, "aux_peak": auxpeak,
         "aux_proc_in_lufs": auxin, "aux_proc_out_lufs": auxout, "aux_proc_gr_db": auxgr, "aux_proc_ride_db": auxride,
@@ -381,7 +383,11 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
         "proc_stream_target_lufs": s_target, "proc_stream_ceiling_dbtp": s_ceiling,
         "proc_stream_release_ms": s_release, "proc_stream_ride_rate": s_rate,
         "proc_stream_ride_clamp": s_clamp,
-        "proc_stream_ride_bypass": s_ride_byp, "proc_stream_limiter_bypass": s_lim_byp
+        "proc_stream_ride_bypass": s_ride_byp, "proc_stream_limiter_bypass": s_lim_byp,
+        // SLICE 1 S6 — every one should read 0 on a healthy station; the Health Monitor shows them.
+        "rt_callbacks": rt.callbacks, "rt_underruns": rt.underruns, "rt_underrun_frames": rt.underrun_frames,
+        "rt_lock_misses": rt.lock_misses, "rt_overruns": rt.overruns, "rt_events_dropped": rt.events_dropped,
+        "rt_buffer_clamped": rt.buffer_clamped, "rt_garbage_leaked": rt.garbage_leaked, "rt_allocs": rt.allocs
     }).to_string()
 }
 

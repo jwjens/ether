@@ -99,6 +99,37 @@ function createHealthMonitor(opts) {
       // next-deck-ready: a non-active deck that already has a source loaded = a preloaded standby.
       if (Array.isArray(lv.decks)) r.nextDeckReady = lv.decks.some(d => d && d.source_present && !d.active);
 
+      // ── AUDIO ENGINE (slice 1 S6) — the audio callback's own health counters ─────────────────────
+      // Cumulative per station in the engine (they restart at 0 with the engine, which is taken as a new
+      // baseline, never as a negative delta). Any increase marks the station's "audio engine" cell for the
+      // Health Monitor (rtIssueAt) and is written to the ledger — coalesced to one line per station per
+      // 10 s, so a disk stall writes a line, not a flood. Every one of these should stay at 0.
+      if (typeof lv.rt_callbacks === "number") {
+        const cur = {
+          callbacks: lv.rt_callbacks, underruns: lv.rt_underruns || 0, underrunFrames: lv.rt_underrun_frames || 0,
+          overruns: lv.rt_overruns || 0, lockMisses: lv.rt_lock_misses || 0, eventsDropped: lv.rt_events_dropped || 0,
+          bufferClamped: lv.rt_buffer_clamped || 0, garbageLeaked: lv.rt_garbage_leaked || 0,
+        };
+        const prev = r.rt;
+        r.rt = cur;
+        if (prev && cur.callbacks >= prev.callbacks) {
+          const keys = ["underruns", "underrunFrames", "overruns", "lockMisses", "eventsDropped", "bufferClamped", "garbageLeaked"];
+          const delta = {}; let any = false;
+          for (const k of keys) { delta[k] = Math.max(0, cur[k] - prev[k]); if (delta[k] > 0 && k !== "underrunFrames") any = true; }
+          if (any) {
+            r.rtIssueAt = t;
+            const acc = r._rtAcc || (r._rtAcc = { since: t, d: Object.fromEntries(keys.map(k => [k, 0])) });
+            for (const k of keys) acc.d[k] += delta[k];
+          }
+        }
+        if (r._rtAcc && t - r._rtAcc.since >= 10000) {
+          const ev = { ts: iso(t), type: "audio-rt", stationUuid: r.uuid, stationName: r.name,
+                       windowSec: Math.round((t - r._rtAcc.since) / 1000), ...r._rtAcc.d, totals: cur };
+          try { if (jsonlPath) fs.appendFileSync(jsonlPath, JSON.stringify(ev) + "\n"); } catch {}
+          r._rtAcc = null;
+        }
+      }
+
       // ── PROCESSING RECORD — one ledger line per minute, per station that is processing audio ────
       //
       // So "what was our loudness at 3pm Tuesday" is answerable without anyone having been watching.
@@ -310,6 +341,10 @@ function createHealthMonitor(opts) {
         streaming: r.streaming, drainBps: r.drainBps, enginestate: r.enginestate, levelSince: iso(r.levelSince),
         jingle: r.jingle,   // JINGLES v1: live overlay state (null when idle)
         lastRefusal: r.lastRefusal,   // 2026-09-16: { deck, title, filePath, kind, error, at } or null
+        // Slice 1 S6: the audio callback's counters (null until the engine reports them) and when one last rose.
+        rt: r.rt ? { underruns: r.rt.underruns, underrunFrames: r.rt.underrunFrames, overruns: r.rt.overruns,
+                     lockMisses: r.rt.lockMisses, eventsDropped: r.rt.eventsDropped, callbacks: r.rt.callbacks } : null,
+        rtIssueAt: r.rtIssueAt ? iso(r.rtIssueAt) : null,
       })),
       recentEvents: recentEvents.slice(0, MAX_RECENT),
     };
