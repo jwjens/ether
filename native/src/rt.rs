@@ -442,6 +442,72 @@ mod trap_tests {
     }
 }
 
+// ── SLICE 1 S7 — DENORMALS FLUSHED ON THE AUDIO THREAD (docs/dsp-rt-callback.md §5) ──────────────────
+// Recursive state (the EQ biquads, the oversampler history, decay tails) can drift into subnormal floats
+// near silence, and on x86 SSE each subnormal operation costs 10–100× a normal one. For the length of each
+// callback this sets FTZ (flush results to zero) + DAZ (treat subnormal inputs as zero): MXCSR bits 15 and
+// 6 on x86-64, FPCR.FZ (bit 24) on aarch64. The previous mode is RESTORED on exit, so nothing else that
+// runs on the thread — in the offline harness, the synchronous pump's decoder — inherits it.
+// Effect on audio: only values below 1.18e-38 (about −758 dBFS) change, to 0.
+pub(crate) struct FtzScope {
+    #[cfg(target_arch = "x86_64")]
+    prev: u32,
+    #[cfg(target_arch = "aarch64")]
+    prev: u64,
+}
+impl FtzScope {
+    #[inline]
+    pub fn enter() -> FtzScope {
+        #[cfg(target_arch = "x86_64")]
+        #[allow(deprecated)]
+        unsafe {
+            use std::arch::x86_64::{_mm_getcsr, _mm_setcsr};
+            let prev = _mm_getcsr();
+            _mm_setcsr(prev | 0x8040);
+            return FtzScope { prev };
+        }
+        #[cfg(target_arch = "aarch64")]
+        unsafe {
+            let prev: u64;
+            std::arch::asm!("mrs {}, fpcr", out(reg) prev);
+            std::arch::asm!("msr fpcr, {}", in(reg) prev | (1u64 << 24));
+            return FtzScope { prev };
+        }
+        #[allow(unreachable_code)]
+        FtzScope { #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))] prev: 0 }
+    }
+}
+impl Drop for FtzScope {
+    #[inline]
+    fn drop(&mut self) {
+        #[cfg(target_arch = "x86_64")]
+        #[allow(deprecated)]
+        unsafe { std::arch::x86_64::_mm_setcsr(self.prev); }
+        #[cfg(target_arch = "aarch64")]
+        unsafe { std::arch::asm!("msr fpcr, {}", in(reg) self.prev); }
+    }
+}
+
+#[cfg(test)]
+mod ftz_tests {
+    use super::FtzScope;
+    #[test]
+    fn ftz_flushes_subnormals_inside_the_scope_and_restores_the_mode_after() {
+        let tiny = f32::MIN_POSITIVE;                 // smallest NORMAL f32
+        let x = std::hint::black_box(tiny);
+        let outside = std::hint::black_box(x * 0.5);  // subnormal result
+        assert!(outside > 0.0 && !outside.is_normal(), "without FTZ the product is a subnormal");
+        {
+            let _f = FtzScope::enter();
+            let inside = std::hint::black_box(std::hint::black_box(x) * 0.5);
+            assert_eq!(inside, 0.0, "FTZ did not flush a subnormal result inside the callback scope");
+        }
+        let after = std::hint::black_box(std::hint::black_box(x) * 0.5);
+        assert!(after > 0.0, "the previous float mode was not restored when the scope ended");
+        println!("[ftz] subnormal inside scope -> 0.0; outside and after -> {:e}", after);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

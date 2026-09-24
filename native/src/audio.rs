@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use ringbuf::{HeapRb, HeapProd, HeapCons, traits::{Producer, Consumer, Observer, Split}};
 use crate::rt::{Params, RtCmd, AuxCmd, Garbage, MeterFrame, DeckMeter, RtShared, TripleWriter, TripleReader,
                 RT_CMD_QUEUE, RT_CMD_PER_BUFFER, RT_GARBAGE_QUEUE, triple, DeckFeed, Feeder, DeckSource,
-                deck_feed, deck_worker, DECK_REFILL_BELOW, RtCounters, RtScope, rt_allocs};
+                deck_feed, deck_worker, DECK_REFILL_BELOW, RtCounters, RtScope, rt_allocs, FtzScope};
 
 // ── Per-station audio-thread liveness (HA health signal) ──────────────────────
 // Each station stamps ITS OWN clock on every cpal output callback — there is no
@@ -2136,6 +2136,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     &cfg,
                                     move |data: &mut [f32], _| {
                                         let _rt = RtScope::enter();   // S6 — trap scope (no-op in release)
+                                        let _ftz = FtzScope::enter(); // S7 — denormals flushed (the underrun decay below generates them)
                                         let frames = data.len() / ch as usize;
                                         if !primed {
                                             let a = cons.try_pop().and_then(|l| cons.try_pop().map(|r| (l, r)));
@@ -2949,6 +2950,8 @@ pub(crate) fn mixer_callback(
     // S6 — the allocation trap's scope (a no-op in the shipped release): any allocation or free on this
     // thread until this returns is counted, and the tests assert the count is zero.
     let _rt = RtScope::enter();
+    // S7 — flush denormals for this callback, restore the thread's float mode on return (rt.rs FtzScope).
+    let _ftz = FtzScope::enter();
 
     let device_frames = data.len() / ch as usize;
     if device_frames == 0 { return; }
