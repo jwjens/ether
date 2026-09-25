@@ -24,10 +24,11 @@ function matchesStation(lvl, myUuid) {
   return lvl.stationUuid === myUuid;
 }
 
-// SLICE 2 — the meter-bus frame: the same scoping, nothing else (the frame is forwarded whole).
+// SLICE 2 — the meter-bus frame, forwarded whole. The daemon's frame already carries stationUuid (main
+// supplies it on subscribe); the in-process path hands a stationId, resolved here. Never both on the wire.
 function scopeMetersFrame(m, resolveUuid) {
-  const { event, stationId, ...rest } = m || {};
-  return { ...rest, stationUuid: resolveUuid ? resolveUuid(stationId) : null };
+  const { event, stationId, stationUuid, ...rest } = m || {};
+  return { ...rest, stationUuid: stationUuid || (resolveUuid && stationId != null ? resolveUuid(stationId) : null) };
 }
 
 module.exports = { scopeLevelsFrame, scopeMetersFrame, matchesStation };

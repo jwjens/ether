@@ -5145,7 +5145,12 @@ ipcMain.handle("audio:subscribe-meters", (_, stationIds) => {
   const ids = (Array.isArray(stationIds) ? stationIds : []).map(Number).filter(Number.isFinite);
   const now = Date.now();
   for (const id of ids) _meterSubs.set(id, now);
-  if (AUDIO_DAEMON) return audiodClient.cmd("metersSubscribe", { stationIds: ids }).catch(() => ids);
+  // The daemon has no UUIDs: give it each station's UUID so its meters event crosses the boundary keyed by
+  // UUID, never by the per-machine integer (scripts/test-station-identity-leak.js).
+  if (AUDIO_DAEMON) {
+    const stations = ids.map(id => ({ id, uuid: _stationUuidById(id) })).filter(s => s.uuid);
+    return audiodClient.cmd("metersSubscribe", { stations }).catch(() => ids);
+  }
   return ids;
 });
 ipcMain.handle("audio:getLevels", (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("getLevels", { stationId }) : JSON.parse(audio.audioGetLevels(stationId)));

@@ -323,7 +323,14 @@ const handlers = {
   // SLICE 2 — the meter bus. A renderer names the stations it is drawing meters for; the daemon emits their
   // meter windows at ~30 Hz and nothing for anyone else. A subscription lapses after METER_SUB_TTL_MS
   // unless renewed, so a closed window stops costing anything without having to say goodbye.
-  metersSubscribe:    (m) => { const now = Date.now(); for (const id of (m.stationIds || [])) meterSubs.set(Number(id), now); return [...meterSubs.keys()]; },
+  // The subscriber names each station by BOTH ids: the integer to read the engine with (per-machine, never
+  // leaves this process pair) and the UUID the event carries across the boundary (station-identity rule,
+  // scripts/test-station-identity-leak.js — the daemon itself has no UUIDs, so main supplies them here).
+  metersSubscribe:    (m) => {
+    const now = Date.now();
+    for (const s of (m.stations || [])) if (s && s.uuid) meterSubs.set(Number(s.id), { at: now, uuid: String(s.uuid) });
+    return [...meterSubs.keys()];
+  },
   getSpectrum:        (m) => JSON.parse(A.audioGetSpectrum(m.stationId)),
   getFileDuration:    (m) => A.getFileDuration(m.filePath),
   listOutputDevices:  ()  => JSON.parse(A.audioListOutputDevices()),
@@ -534,17 +541,17 @@ let tick = 0;
 // Its own compact frame, not the 54-key levels frame: meters are the high-rate flow, levels stay 10 Hz.
 // Reading a window ACKNOWLEDGES it (the engine then starts the next), so this is the one meter reader per
 // station.
-const meterSubs = new Map();          // stationId → last subscribe time
+const meterSubs = new Map();          // stationId → { at: last subscribe time, uuid }
 const METER_SUB_TTL_MS = 5000;
 const meterTimer = setInterval(() => {
   if (clients.size === 0 || meterSubs.size === 0 || typeof A.audioGetMeters !== "function") return;
   const now = Date.now();
-  for (const [sid, at] of meterSubs) {
-    if (now - at > METER_SUB_TTL_MS) { meterSubs.delete(sid); continue; }
+  for (const [sid, sub] of meterSubs) {
+    if (now - sub.at > METER_SUB_TTL_MS) { meterSubs.delete(sid); continue; }
     if (!stations.has(sid)) continue;
     let mt;
     try { mt = JSON.parse(A.audioGetMeters(sid)); } catch { continue; }
-    broadcast({ event: "meters", stationId: sid, v: mt.v, e: mt.e, n: mt.n, ch: mt.ch, bus: mt.bus, live: mt.live });
+    broadcast({ event: "meters", stationUuid: sub.uuid, v: mt.v, e: mt.e, n: mt.n, ch: mt.ch, bus: mt.bus, live: mt.live });
   }
 }, 33);
 if (meterTimer.unref) meterTimer.unref();
