@@ -637,7 +637,10 @@ function startAudioLivenessWatchdog() {
 // VU levels station-scoping (v4.5 levels-slice; docs/vu-meter-crosstalk-2026-07-08.md). Resolve the
 // daemon's integer stationId → station UUID (cached; NOT the sync getter, NOT gated by uuidIdentity) so
 // the levels frame carries UUID identity and the renderer renders each station's meters only.
-const { scopeLevelsFrame } = require('./levels-scope');
+const { scopeLevelsFrame, scopeMetersFrame } = require('./levels-scope');
+// SLICE 2 — meter-bus subscriptions (stationId → last subscribe time), for the in-process fallback; in daemon
+// mode the subscription is forwarded and the daemon emits. docs/dsp-meter-bus.md §1.4.
+const _meterSubs = new Map();
 const _uuidByIdCache = new Map();
 function _stationUuidById(id) {
   if (id == null) return null;
@@ -842,6 +845,8 @@ if (AUDIO_DAEMON_DESIRED) {
 
   audiodClient.setEventHandler((m) => {
     try {
+      // SLICE 2 — meter bus, forwarded whole with the station UUID (never the per-machine integer id).
+      if (m.event === "meters") { sendToAllWindows("audio:meters", scopeMetersFrame(m, _stationUuidById)); return; }
       if (m.event === "levels") {
         // Forward the whole frame with the station UUID (not the per-machine integer id).
         const lv = scopeLevelsFrame(m, _stationUuidById);
@@ -3599,6 +3604,14 @@ app.whenReady().then(() => {
         try { if (_health) _health.noteLevels(sid, raw); } catch {}   // v4.4.50: feed the health monitor in in-process mode too (same addon → same frames_total/decks telemetry)
         const levels = scopeLevelsFrame({ ...raw, stationId: sid }, _stationUuidById);
         sendToAllWindows("audio:levels", levels);
+        // SLICE 2 — the meter bus in the in-process fallback: same frame, same 33 ms, subscribed stations.
+        if (typeof audio.audioGetMeters === "function") {
+          const now = Date.now();
+          for (const [msid, at] of _meterSubs) {
+            if (now - at > 5000) { _meterSubs.delete(msid); continue; }
+            try { sendToAllWindows("audio:meters", scopeMetersFrame({ ...JSON.parse(audio.audioGetMeters(msid)), stationId: msid }, _stationUuidById)); } catch {}
+          }
+        }
       } catch {}
     }, 33);
     // Write session header to rotation.log so every capture is clearly delimited
@@ -5127,6 +5140,14 @@ ipcMain.handle("audio:setVolume", (_, deck, volume, stationId) => AUDIO_DAEMON ?
 // engine actually owns the audio — the daemon when AUDIO_DAEMON is on, the in-process addon otherwise.
 ipcMain.handle("audio:setMuted", (_, deck, muted, stationId) => AUDIO_DAEMON ? audiodClient.cmd("setMuted", { deck, muted, stationId }) : audio.audioSetMuted(deck, muted, stationId));
 ipcMain.handle("audio:getState", (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("getState", { stationId }) : JSON.parse(audio.audioGetState(stationId)));
+// SLICE 2 — a renderer names the stations it draws meters for (renew every ≤ 5 s or it lapses).
+ipcMain.handle("audio:subscribe-meters", (_, stationIds) => {
+  const ids = (Array.isArray(stationIds) ? stationIds : []).map(Number).filter(Number.isFinite);
+  const now = Date.now();
+  for (const id of ids) _meterSubs.set(id, now);
+  if (AUDIO_DAEMON) return audiodClient.cmd("metersSubscribe", { stationIds: ids }).catch(() => ids);
+  return ids;
+});
 ipcMain.handle("audio:getLevels", (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("getLevels", { stationId }) : JSON.parse(audio.audioGetLevels(stationId)));
 // 10-band post-EQ master spectrum for the Master EQ rack's live FFT display. Routes to the
 // daemon when it owns playout (it has the live audio), else the in-process addon.

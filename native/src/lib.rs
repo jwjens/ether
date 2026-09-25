@@ -30,7 +30,7 @@ fn get_or_create_engine(station_id: u32, device_name: Option<String>) -> SharedA
     let engines = ENGINES.get_or_init(|| Mutex::new(HashMap::new()));
     let mut map = engines.lock().unwrap();
     if !map.contains_key(&station_id) {
-        let (sender, is_playing, levels, finished, program_bus_port, delay) =
+        let (sender, is_playing, levels, finished, program_bus_port, delay, meters) =
             start_station_mixer(station_id, device_name);
         let state: SharedAudioState = Arc::new(Mutex::new(AudioState {
             deck_a: DeckMeta::new(),
@@ -49,6 +49,7 @@ fn get_or_create_engine(station_id: u32, device_name: Option<String>) -> SharedA
             watchdog_threshold_sec: 10.0,
             watchdog_triggered_count: 0,
             program_bus_port,
+            meters,
         }));
         map.insert(station_id, state);
     }
@@ -468,6 +469,34 @@ pub fn audio_bench_processor(seconds: f64, seed: u32) -> String {
         "budget_share_one_pct": med1 / 10.0 * 100.0,
         "budget_share_two_pct": med2 / 10.0 * 100.0
     }).to_string()
+}
+
+/// SLICE 2 — THE METER BUS (docs/dsp-meter-bus.md). Returns this station's newest meter WINDOW — every tap's
+/// sample peak and RMS since the previous call — and acknowledges it, so the engine starts the next window.
+/// Raw LINEAR values (1.0 = 0 dBFS); ballistics are the renderer's (src/components/meter/meterBallistics.ts).
+///
+///   {"v":1,"e":<epoch>,"n":<frames in window>,
+///    "ch":[[pkL,pkR,rmsL,rmsR] × 12],   // A,B,C,D,E,F,CART,S1..S5 — PRE-fader, post-trim, pre-cut
+///    "bus":[[pkL,pkR,rmsL,rmsR] × 6],   // PGM, LOCAL, STREAM, MONITOR, ROOM, AUX
+///    "live":<bit n = bus n was fed this window>}
+///
+/// Every key here is checked by audiod/smoke-meter-contract.js (rules 6-7). Called ~30 Hz by the daemon for
+/// subscribed stations only; one reader per station (the daemon), since reading acknowledges the window.
+#[napi]
+pub fn audio_get_meters(station_id: u32) -> String {
+    let handle = {
+        let engine = get_or_create_engine(station_id, None);
+        let Ok(audio) = engine.lock() else { return r#"{"v":1,"e":0,"n":0,"ch":[],"bus":[],"live":0}"#.to_string() };
+        audio.meters.clone()
+    };
+    let Some(b) = handle.read_and_ack() else { return r#"{"v":1,"e":0,"n":0,"ch":[],"bus":[],"live":0}"#.to_string() };
+    let n = b.frames.max(1) as f64;
+    let quad = |t: &rt::MeterTap| -> [f32; 4] {
+        [t.peak[0], t.peak[1], (t.sumsq[0] / n).sqrt() as f32, (t.sumsq[1] / n).sqrt() as f32]
+    };
+    let ch: Vec<[f32; 4]> = b.ch.iter().map(quad).collect();
+    let bus: Vec<[f32; 4]> = b.bus.iter().map(quad).collect();
+    serde_json::json!({ "v": 1, "e": b.epoch, "n": b.frames, "ch": ch, "bus": bus, "live": b.bus_live }).to_string()
 }
 
 /// DSP PARITY HARNESS — render one file through the REAL mixer callback with no device, faster than

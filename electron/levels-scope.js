@@ -24,4 +24,10 @@ function matchesStation(lvl, myUuid) {
   return lvl.stationUuid === myUuid;
 }
 
-module.exports = { scopeLevelsFrame, matchesStation };
+// SLICE 2 — the meter-bus frame: the same scoping, nothing else (the frame is forwarded whole).
+function scopeMetersFrame(m, resolveUuid) {
+  const { event, stationId, ...rest } = m || {};
+  return { ...rest, stationUuid: resolveUuid ? resolveUuid(stationId) : null };
+}
+
+module.exports = { scopeLevelsFrame, scopeMetersFrame, matchesStation };

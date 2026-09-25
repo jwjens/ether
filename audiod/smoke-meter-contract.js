@@ -187,5 +187,41 @@ console.log("\nRULE 5 - processor commands report the engine real result");
   else ok("setProcessorParams returns the engine own boolean");
 }
 
+// ── RULE 6 — the meter bus: every key a consumer reads is emitted (slice 2) ─────────────────
+// Same seam as RULE 1, for the second wire: audio_get_meters builds its JSON with json! from an explicit key
+// list too. docs/dsp-meter-bus.md §5.
+console.log("\nRULE 6 - every mt.<key> read in JS is emitted by audio_get_meters");
+{
+  const i = libRs.indexOf("pub fn audio_get_meters(");
+  if (i < 0) bad("audio_get_meters not found in lib.rs");
+  else {
+    const body = blockFrom(libRs, libRs.indexOf("{", i));
+    const j = body.lastIndexOf("serde_json::json!(");
+    const keys = new Set();
+    if (j >= 0) for (const m of blockFrom(body, body.indexOf("{", j)).matchAll(/"([a-z0-9_]+)"\s*:/gi)) keys.add(m[1]);
+    const reads = new Set([...daemonJs.matchAll(/\bmt\.([a-z0-9_]+)/g)].map(m => m[1]));
+    if (!reads.size) bad("the daemon reads no mt.* keys - is the meters emitter gone?");
+    const orphans = [...reads].filter(k => !keys.has(k)).sort();
+    if (!orphans.length) ok(`all ${reads.size} keys the daemon forwards (${[...reads].sort().join(", ")}) are emitted by audio_get_meters`);
+    else for (const k of orphans) bad(`mt.${k} - read by the daemon but NOT NAMED in audio_get_meters's json! (it dies at the NAPI boundary)`);
+  }
+}
+
+// ── RULE 7 — the meter arrays have the shape the engine defines ─────────────────────────────
+console.log("\nRULE 7 - meter frame shape matches the engine constants");
+{
+  const rtRs = read("native/src/rt.rs");
+  const slot = /pub const SLOT_COUNT:\s*usize\s*=\s*(\d+)/.exec(audioRs);
+  const buses = /pub\(crate\) const METER_BUSES:\s*usize\s*=\s*(\d+)/.exec(rtRs);
+  const chArr = /pub ch:\s*\[MeterTap;\s*SLOT_COUNT\]/.test(rtRs);
+  const busArr = /pub bus:\s*\[MeterTap;\s*METER_BUSES\]/.test(rtRs);
+  const quad = /\[t\.peak\[0\],\s*t\.peak\[1\],[^\]]*sumsq\[0\][^\]]*sumsq\[1\][^\]]*\]/.test(libRs);
+  if (!slot || !buses) bad("SLOT_COUNT or METER_BUSES not found");
+  else if (+slot[1] !== 12 || +buses[1] !== 6) bad(`meter shape drifted: ${slot[1]} channels / ${buses[1]} buses (the renderer expects 12 / 6)`);
+  else if (!chArr || !busArr) bad("MeterBlock no longer sizes ch/bus from SLOT_COUNT/METER_BUSES");
+  else if (!quad) bad("audio_get_meters no longer emits [pkL, pkR, rmsL, rmsR] per tap");
+  else ok("ch = 12 taps, bus = 6 taps, each [pkL, pkR, rmsL, rmsR] — as the renderer reads them");
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILED"}  (${pass} passed, ${fail} failed)`);
 process.exit(fail === 0 ? 0 : 1);

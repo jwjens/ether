@@ -234,6 +234,65 @@ pub(crate) struct DeckMeter {
     pub frames_played: u64,
 }
 
+// ── SLICE 2 — THE METER BUS (docs/dsp-meter-bus.md) ─────────────────────────────────────────────────
+// Raw numbers only: sample peak and Σ sample² per tap, accumulated over a READ WINDOW. No ballistics here —
+// the renderer draws (src/components/meter/meterBallistics.ts).
+
+/// Number of bus taps in a MeterBlock, in this order.
+pub(crate) const METER_BUSES: usize = 6;
+/// Bus tap indices: the clean programme (post-EQ, post-master, pre-processor), the LOCAL processed branch,
+/// exactly what the stream ring receives, the device feed dl/dr (pre-monitor-gain, pre-resample), the room
+/// chain output (aux deck live only), and the aux monitor feed.
+pub(crate) const BUS_PGM: usize = 0;
+pub(crate) const BUS_LOCAL: usize = 1;
+pub(crate) const BUS_STREAM: usize = 2;
+pub(crate) const BUS_MONITOR: usize = 3;
+pub(crate) const BUS_ROOM: usize = 4;
+pub(crate) const BUS_AUX: usize = 5;
+
+/// One tap's window: the largest |sample| and the sum of squares, per side. RMS = sqrt(sumsq / frames).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct MeterTap {
+    pub peak: [f32; 2],
+    pub sumsq: [f64; 2],
+}
+impl MeterTap {
+    /// Fold a buffer into the window. Reads only — the audio is not touched.
+    #[inline]
+    pub fn add(&mut self, l: &[f32], r: &[f32]) {
+        let (mut pl, mut pr) = (self.peak[0], self.peak[1]);
+        let (mut sl, mut sr) = (0.0f64, 0.0f64);
+        for (&a, &b) in l.iter().zip(r.iter()) {
+            pl = pl.max(a.abs());
+            pr = pr.max(b.abs());
+            sl += (a as f64) * (a as f64);
+            sr += (b as f64) * (b as f64);
+        }
+        self.peak = [pl, pr];
+        self.sumsq[0] += sl;
+        self.sumsq[1] += sr;
+    }
+}
+
+/// Every meter tap for one read window. `epoch` names the window; the reader acknowledges it through
+/// RtShared::meter_ack and the callback then starts the next one — so each read covers exactly the audio
+/// since the previous read, and no buffer's peak is lost between two ~30 Hz reads (a latest-wins buffer
+/// alone would drop two of every three).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct MeterBlock {
+    pub epoch: u64,
+    /// Program-rate frames in this window — the RMS denominator for every tap.
+    pub frames: u64,
+    /// PER CHANNEL, PRE-FADER: post-trim, PRE-cut (it moves while the channel is OFF — Jeff's ruling 1),
+    /// pre-rack. Frames a deck did not supply (inactive, paused, underrun) add nothing.
+    pub ch: [MeterTap; SLOT_COUNT],
+    pub bus: [MeterTap; METER_BUSES],
+    /// Bit n set = bus n was actually fed during this window (LOCAL/STREAM/ROOM/AUX can be absent).
+    pub bus_live: u8,
+}
+
 /// One buffer's observed state, published by the callback at the end of every buffer. Everything GetLevel
 /// used to read out of BusState under the lock — now read from here, without touching anything the
 /// callback holds. `params` is the block the callback actually RAN, so the panel echoes the engine.
@@ -253,6 +312,8 @@ pub(crate) struct MeterFrame {
     pub proc_stream_in_lufs: f32, pub proc_stream_out_lufs: f32, pub proc_stream_gr_db: f32,
     pub proc_stream_ride_gain_db: f32, pub proc_stream_in_peak: f32, pub proc_stream_out_peak: f32,
     pub decks: [DeckMeter; SLOT_COUNT],
+    /// SLICE 2 — the meter bus: the current read window's taps.
+    pub meters: MeterBlock,
 }
 
 /// Atomics the dispatch thread reads to answer "does deck N hold a source right now" without a lock.
@@ -262,10 +323,14 @@ pub(crate) struct RtShared {
     /// Generation of the source each slot currently holds; 0 = none. Written by the callback (and by the
     /// device-switch path while no callback runs).
     pub src_gen: [AtomicU64; SLOT_COUNT],
+    /// SLICE 2 — the meter window the reader has consumed. When this reaches the callback's current
+    /// MeterBlock::epoch, the callback starts a fresh window at the top of its next buffer.
+    pub meter_ack: AtomicU64,
 }
 impl RtShared {
     pub fn new() -> Arc<RtShared> {
-        Arc::new(RtShared { applied_seq: AtomicU64::new(0), src_gen: std::array::from_fn(|_| AtomicU64::new(0)) })
+        Arc::new(RtShared { applied_seq: AtomicU64::new(0), src_gen: std::array::from_fn(|_| AtomicU64::new(0)),
+                            meter_ack: AtomicU64::new(0) })
     }
 }
 
@@ -505,6 +570,19 @@ mod ftz_tests {
         let after = std::hint::black_box(std::hint::black_box(x) * 0.5);
         assert!(after > 0.0, "the previous float mode was not restored when the scope ended");
         println!("[ftz] subnormal inside scope -> 0.0; outside and after -> {:e}", after);
+    }
+}
+
+#[cfg(test)]
+mod meter_layout_tests {
+    use super::*;
+    #[test]
+    fn meter_block_layout_is_pinned() {
+        // docs/dsp-meter-bus.md §1.3: 24-byte taps; 16 + 12×24 + 6×24 + 1, padded to 8 = 456.
+        assert_eq!(std::mem::size_of::<MeterTap>(), 24);
+        assert_eq!(std::mem::size_of::<MeterBlock>(), 456);
+        println!("[meters] MeterTap {} B · MeterBlock {} B · MeterFrame {} B",
+                 std::mem::size_of::<MeterTap>(), std::mem::size_of::<MeterBlock>(), std::mem::size_of::<MeterFrame>());
     }
 }
 

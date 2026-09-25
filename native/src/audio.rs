@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use ringbuf::{HeapRb, HeapProd, HeapCons, traits::{Producer, Consumer, Observer, Split}};
 use crate::rt::{Params, RtCmd, AuxCmd, Garbage, MeterFrame, DeckMeter, RtShared, TripleWriter, TripleReader,
                 RT_CMD_QUEUE, RT_CMD_PER_BUFFER, RT_GARBAGE_QUEUE, triple, DeckFeed, Feeder, DeckSource,
-                deck_feed, deck_worker, DECK_REFILL_BELOW, RtCounters, RtScope, rt_allocs, FtzScope};
+                deck_feed, deck_worker, DECK_REFILL_BELOW, RtCounters, RtScope, rt_allocs, FtzScope,
+                MeterBlock, MeterTap, BUS_PGM, BUS_LOCAL, BUS_STREAM, BUS_MONITOR, BUS_ROOM, BUS_AUX};
 
 // ── Per-station audio-thread liveness (HA health signal) ──────────────────────
 // Each station stamps ITS OWN clock on every cpal output callback — there is no
@@ -415,6 +416,25 @@ pub struct AudioState {
     pub watchdog_threshold_sec: f64,
     pub watchdog_triggered_count: u32,
     pub program_bus_port: u16,
+    /// SLICE 2 — the meter bus reader (shared with the station's dispatch thread) and the ack atomic.
+    pub meters: MetersHandle,
+}
+
+/// SLICE 2 — what audio_get_meters needs: the station's ONE meter-frame reader (the same triple buffer
+/// GetLevel reads — shared behind a mutex between the two NON-audio threads that read it; the callback never
+/// sees this lock) and the atomic that acknowledges a consumed window (docs/dsp-meter-bus.md §1.2, §1.4).
+#[derive(Clone)]
+pub struct MetersHandle {
+    pub(crate) reader: Arc<Mutex<TripleReader<MeterFrame>>>,
+    pub(crate) shared: Arc<RtShared>,
+}
+impl MetersHandle {
+    /// Read the newest meter window and acknowledge it. Returns the block (raw peaks + Σ² + frame count).
+    pub(crate) fn read_and_ack(&self) -> Option<MeterBlock> {
+        let f = self.reader.lock().ok()?.read();
+        self.shared.meter_ack.store(f.meters.epoch, Ordering::Release);
+        Some(f.meters)
+    }
 }
 
 pub type SharedAudioState = Arc<Mutex<AudioState>>;
@@ -704,6 +724,10 @@ pub struct BusState {
     pub(crate) eq_version_applied: u64,
     /// The dispatch-side ends, created with the state and taken once by start_station_mixer.
     pub(crate) handles: Option<BusHandles>,
+    /// SLICE 2 — the meter bus's current read window (docs/dsp-meter-bus.md §1.2). A fixed field: the
+    /// callback folds each buffer's taps into it; the reader acknowledges an epoch; the callback then starts
+    /// the next window. Published inside every MeterFrame.
+    pub(crate) meters_acc: MeterBlock,
 }
 
 /// The non-callback ends of BusState's channels (see BusState::handles).
@@ -809,6 +833,7 @@ impl BusState {
             eq_bands: [0.0; 10],
             eq_version_applied: 0,
             handles: None,
+            meters_acc: MeterBlock { epoch: 1, ..MeterBlock::default() },
         };
         // The meter channel starts on THIS state's own first frame, so the first read is the truth.
         let (w, meter_r) = triple(b.meter_frame());
@@ -991,6 +1016,7 @@ impl BusState {
             proc_stream_in_lufs: self.proc_stream_in_lufs, proc_stream_out_lufs: self.proc_stream_out_lufs,
             proc_stream_gr_db: self.proc_stream_gr_db, proc_stream_ride_gain_db: self.proc_stream_ride_gain_db,
             proc_stream_in_peak: self.proc_stream_in_peak, proc_stream_out_peak: self.proc_stream_out_peak,
+            meters: self.meters_acc,
             decks: std::array::from_fn(|i| {
                 let d = &self.decks[i];
                 DeckMeter { source_present: d.source.is_some(), active: d.active, paused: d.paused,
@@ -1776,6 +1802,161 @@ mod rt_underrun {
 }
 
 #[cfg(test)]
+mod meter_bus {
+    // SLICE 2 — docs/dsp-meter-bus.md §4. Through the real mixer_callback.
+    use super::*;
+
+    /// 1 kHz sine at −18.00 dBFS RMS (peak = RMS × √2 → −14.99 dBFS), 44.1 kHz stereo.
+    struct Sine { n: u64, amp: f32 }
+    impl Iterator for Sine {
+        type Item = f32;
+        fn next(&mut self) -> Option<f32> {
+            let frame = self.n / 2;
+            self.n += 1;
+            Some(self.amp * (2.0 * std::f64::consts::PI * 1000.0 * frame as f64 / 44100.0).sin() as f32)
+        }
+    }
+    fn sine() -> Sine { Sine { n: 0, amp: (10f64.powf(-18.0 / 20.0) * std::f64::consts::SQRT_2) as f32 } }
+    fn db(x: f64) -> f64 { 20.0 * x.log10() }
+
+    /// Render `buffers` 480-frame buffers of the sine on S1 (slot 7) at the given fader / channel state and
+    /// return (the S1 pre-fader window, the S1 post-fader engine peak).
+    fn run_s1(volume: f32, muted: bool, buffers: usize) -> (MeterTap, u64, f32) {
+        let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
+        let (prod, _cons) = rb.split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(false)));
+        let _h = b.handles.take().unwrap();
+        b.decks[7].source = Some(DeckFeed::prefilled(sine(), 480 * 2 * (buffers + 2)));
+        b.decks[7].active = true;
+        b.decks[7].paused = false;
+        b.decks[7].volume = volume;
+        b.decks[7].muted = muted;
+        let bus = Arc::new(Mutex::new(b));
+        let fin = FinishedFlags::new();
+        let playing = Arc::new(AtomicBool::new(true));
+        let mut sc = Scratch::new();
+        let mut data = vec![0f32; 480 * 2];
+        for _ in 0..buffers { mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc); }
+        let b = bus.lock().unwrap();
+        (b.meters_acc.ch[7], b.meters_acc.frames, b.peaks[7])
+    }
+
+    #[test]
+    fn pre_fader_meter_does_not_move_with_the_fader_or_the_channel_switch() {
+        let (on_full, n1, post_full) = run_s1(1.0, false, 100);
+        let (on_half, n2, post_half) = run_s1(0.5, false, 100);
+        let (off,     n3, post_off)  = run_s1(1.0, true,  100);
+        assert_eq!((n1, n2, n3), (48_000, 48_000, 48_000));
+        // BIT-IDENTICAL pre-fader windows: the fader and the channel switch do not reach this tap.
+        for (name, t) in [("fader 0.5", &on_half), ("channel OFF", &off)] {
+            assert_eq!(t.peak.map(f32::to_bits), on_full.peak.map(f32::to_bits), "{}: pre-fader PEAK moved", name);
+            assert_eq!(t.sumsq.map(f64::to_bits), on_full.sumsq.map(f64::to_bits), "{}: pre-fader RMS moved", name);
+        }
+        // Calibration — the spec's verification line: −18 RMS / −15 peak (plain RMS, ruling 2).
+        let rms = db((on_full.sumsq[0] / n1 as f64).sqrt());
+        let pk = db(on_full.peak[0] as f64);
+        println!("[meters] S1 pre-fader: RMS {:.3} dBFS, peak {:.3} dBFS — identical at fader 1.0 / 0.5 / channel OFF", rms, pk);
+        assert!((rms + 18.0).abs() <= 0.05, "RMS reads {:.3}, want −18.00 ± 0.05", rms);
+        assert!((pk + 14.99).abs() <= 0.05, "peak reads {:.3}, want −14.99 ± 0.05", pk);
+        // Control: the POST-fader field DOES see the fader (−6.02 dB at 0.5) and the switch (silent) —
+        // proving this test can see a fader at all.
+        let d = db(post_half as f64) - db(post_full as f64);
+        println!("[meters] post-fader control: fader 0.5 moves it {:.2} dB; channel OFF reads {}", d, post_off);
+        assert!((d + 6.02).abs() <= 0.02, "post-fader did not drop 6.02 dB at fader 0.5: {:.3}", d);
+        assert_eq!(post_off, 0.0, "post-fader should read silence with the channel OFF");
+    }
+
+    /// TIMING (slice 2 gate: "timing re-measured"). The whole callback with four decks playing and both
+    /// processors on, per 480-frame (10 ms) buffer; and the meter work alone (18 taps × 480 frames).
+    #[test]
+    fn callback_timing_with_meters() {
+        let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
+        let (prod, _cons) = rb.split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)));
+        let _h = b.handles.take().unwrap();
+        for i in [0usize, 1, 2, 6] {
+            b.decks[i].source = Some(DeckFeed::prefilled(sine(), 480 * 2 * 1100));
+            b.decks[i].active = true; b.decks[i].paused = false; b.decks[i].volume = 0.5;
+        }
+        b.proc_local = true; b.proc_stream = true;
+        let bus = Arc::new(Mutex::new(b));
+        let fin = FinishedFlags::new();
+        let playing = Arc::new(AtomicBool::new(true));
+        let mut sc = Scratch::new();
+        let mut data = vec![0f32; 480 * 2];
+        let mut ns: Vec<u128> = Vec::with_capacity(1000);
+        for _ in 0..1000 {
+            let t0 = std::time::Instant::now();
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+            ns.push(t0.elapsed().as_nanos());
+            // keep the stream ring from filling (it is drained by ffmpeg in the product)
+            let _ = &_cons;
+        }
+        ns.sort();
+        let (med, worst) = (ns[ns.len() / 2] as f64 / 1e6, *ns.last().unwrap() as f64 / 1e6);
+        // The meter work alone: 18 taps over one 480-frame buffer.
+        let l = vec![0.25f32; 480]; let r = vec![0.25f32; 480];
+        let mut taps = [MeterTap::default(); 18];
+        let mut mt: Vec<u128> = Vec::with_capacity(1000);
+        for _ in 0..1000 {
+            let t0 = std::time::Instant::now();
+            for t in taps.iter_mut() { t.add(std::hint::black_box(&l), std::hint::black_box(&r)); }
+            mt.push(t0.elapsed().as_nanos());
+        }
+        mt.sort();
+        println!("[meters-timing] callback (A,B,C,CART playing, LOCAL+STREAM processing): median {:.4} ms, worst {:.3} ms per 10 ms buffer", med, worst);
+        println!("[meters-timing] meter work alone (18 taps x 480 frames): median {:.4} ms ({:.2}% of the 10 ms budget)", mt[mt.len()/2] as f64 / 1e6, mt[mt.len()/2] as f64 / 1e6 / 10.0 * 100.0);
+        assert!(med < 1.0, "callback median {:.4} ms is over 10% of the buffer budget", med);
+    }
+
+    /// A burst lasting ONE buffer between two reads must appear in the next read — the case a latest-wins
+    /// buffer alone would drop. And after the read acknowledges it, the next window starts clean.
+    #[test]
+    fn a_one_buffer_burst_between_reads_is_not_lost() {
+        struct Burst { n: u64 }
+        impl Iterator for Burst {
+            type Item = f32;
+            fn next(&mut self) -> Option<f32> {
+                let frame = self.n / 2;
+                self.n += 1;
+                // buffer 5 (frames 2400..2880) at 0.9; everything else silent
+                Some(if (2400..2880).contains(&frame) { 0.9 } else { 0.0 })
+            }
+        }
+        let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
+        let (prod, _cons) = rb.split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(false)));
+        let h = b.handles.take().unwrap();
+        let meters = MetersHandle { reader: Arc::new(Mutex::new(h.meter_r)), shared: h.shared.clone() };
+        b.decks[0].source = Some(DeckFeed::prefilled(Burst { n: 0 }, 480 * 2 * 40));
+        b.decks[0].active = true;
+        b.decks[0].paused = false;
+        let bus = Arc::new(Mutex::new(b));
+        let fin = FinishedFlags::new();
+        let playing = Arc::new(AtomicBool::new(true));
+        let mut sc = Scratch::new();
+        let mut data = vec![0f32; 480 * 2];
+        let mut cb = |k: usize| for _ in 0..k { mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc); };
+        cb(4);                                          // buffers 0-3: silence
+        let w1 = meters.read_and_ack().unwrap();        // read after buffer 3
+        cb(3);                                          // buffers 4, 5 (BURST), 6 — no read in between
+        let w2 = meters.read_and_ack().unwrap();
+        cb(3);                                          // buffers 7-9: silence
+        let w3 = meters.read_and_ack().unwrap();
+        println!("[meters] windows: e{} peak {:.3} | e{} peak {:.3} (burst) | e{} peak {:.3}",
+                 w1.epoch, w1.ch[0].peak[0], w2.epoch, w2.ch[0].peak[0], w3.epoch, w3.ch[0].peak[0]);
+        assert_eq!(w1.ch[0].peak[0], 0.0);
+        assert_eq!(w2.ch[0].peak[0], 0.9, "the one-buffer burst between reads was lost");
+        assert_eq!(w2.frames, 480 * 3, "window 2 should cover exactly the 3 buffers since the previous read");
+        assert_eq!(w3.ch[0].peak[0], 0.0, "the acknowledged window did not reset");
+        assert!(w1.epoch < w2.epoch && w2.epoch < w3.epoch);
+        // PGM (post-fader bus) saw it too, and is marked live.
+        assert_eq!(w2.bus[crate::rt::BUS_PGM].peak[0], 0.9);
+        assert!(w2.bus_live & (1 << crate::rt::BUS_PGM) != 0 && w2.bus_live & (1 << crate::rt::BUS_MONITOR) != 0);
+    }
+}
+
+#[cfg(test)]
 mod duck_regression {
     // THE DUCKER — proof that it engages, holds, releases, and cannot be triggered by the wrong slot.
     //
@@ -2009,6 +2190,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     FinishedFlags,
     u16,  // Program Bus TCP port
     SharedDelay,  // broadcast-delay / dump control
+    MetersHandle, // SLICE 2 — the meter bus
 ) {
     use std::net::TcpListener;
 
@@ -2043,7 +2225,9 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     let handles = bus_init.handles.take().expect("fresh BusState has its handles");
     let aux_frames_ctr_shared = bus_init.aux_out_frames.clone();
     let station_counters = bus_init.counters.clone();
-    let ctl_init = Control::new(&bus_init, handles.cmd_prod, handles.garbage_cons, handles.meter_r,
+    let meter_reader = Arc::new(Mutex::new(handles.meter_r));
+    let meters_handle = MetersHandle { reader: meter_reader.clone(), shared: handles.shared.clone() };
+    let ctl_init = Control::new(&bus_init, handles.cmd_prod, handles.garbage_cons, meter_reader,
                                 handles.shared, aux_frames_ctr_shared.clone(), station_id, station_counters.clone());
     let aux_cmd_prod = handles.aux_cmd_prod;
     let bus_state: SharedBusState = Arc::new(Mutex::new(bus_init));
@@ -2470,7 +2654,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::GetLevel => {
                                 // REAL levels — the callback's latest published frame (S3: a lock-free
                                 // triple buffer; this no longer holds anything the callback needs).
-                                let m = ctl.meter.read();
+                                let Some(m) = ctl.meter.lock().ok().map(|mut r| r.read()) else { continue };
                                 let p = &m.params;
                                 if let Ok(mut lvl) = levels_clone.lock() {
                                     lvl.level_a      = m.peaks[0];
@@ -2650,7 +2834,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
         }
     });
 
-    (tx, is_playing, levels, finished, tcp_port, delay)
+    (tx, is_playing, levels, finished, tcp_port, delay, meters_handle)
 }
 
 // ── Helpers called from start_station_mixer ───────────────────────────────────
@@ -2680,7 +2864,8 @@ pub(crate) struct Control {
     seq: u64,
     pub params: Params,
     garbage: HeapCons<Garbage>,
-    pub meter: TripleReader<MeterFrame>,
+    /// Shared with audio_get_meters (MetersHandle). Only non-audio threads lock it.
+    pub meter: Arc<Mutex<TripleReader<MeterFrame>>>,
     shared: Arc<RtShared>,
     pub decks: [DeckShadow; SLOT_COUNT],
     gen: u64,
@@ -2692,7 +2877,7 @@ pub(crate) struct Control {
 }
 impl Control {
     pub(crate) fn new(bus: &BusState, cmd: HeapProd<RtCmd>, garbage: HeapCons<Garbage>,
-                      meter: TripleReader<MeterFrame>, shared: Arc<RtShared>, aux_frames: Arc<AtomicU64>,
+                      meter: Arc<Mutex<TripleReader<MeterFrame>>>, shared: Arc<RtShared>, aux_frames: Arc<AtomicU64>,
                       station_id: u32, counters: Arc<RtCounters>) -> Self {
         let workers = (0..SLOT_COUNT).map(|i| {
             let (tx, rx) = std::sync::mpsc::channel::<Feeder>();
@@ -2997,6 +3182,11 @@ pub(crate) fn mixer_callback(
     // S3 — adopt queued parameter blocks and deck commands BEFORE anything reads them. The whole buffer
     // then runs on this one state; a block that arrives meanwhile waits for the next buffer.
     bus.apply_commands();
+    // SLICE 2 — the reader has consumed the current meter window: start the next one (one Acquire load).
+    if bus.shared.meter_ack.load(Ordering::Acquire) >= bus.meters_acc.epoch {
+        let e = bus.meters_acc.epoch + 1;
+        bus.meters_acc = MeterBlock { epoch: e, ..MeterBlock::default() };
+    }
 
     let device_sr = bus.sample_rate;
     // How many PROGRAM_RATE (44100 Hz) frames cover this device buffer.
@@ -3064,6 +3254,9 @@ pub(crate) fn mixer_callback(
     let mut any_playing = false;
     let mut exhausted   = [false; SLOT_COUNT];
     let mut frame_peaks = [0.0f32; SLOT_COUNT]; // this-buffer post-fader peak per deck
+    // SLICE 2 — this buffer's PRE-FADER taps per channel (post-trim, pre-cut). On the stack; folded into
+    // bus.meters_acc after the deck loop releases its borrow.
+    let mut ch_meter = [MeterTap::default(); SLOT_COUNT];
 
     for (i, deck) in bus.decks.iter_mut().enumerate() {
         if !deck.active || deck.paused { continue; }
@@ -3135,6 +3328,25 @@ pub(crate) fn mixer_callback(
             ended = got < want;
         }
         let take = got / 2;
+        // SLICE 2 — PRE-FADER METER: the frames this deck actually supplied, × its trim, BEFORE the cut and
+        // the fader. Reads `feed` only; the mix below is untouched. Pre-cut by ruling: a channel that is OFF
+        // still shows its source.
+        {
+            let t = &mut ch_meter[i];
+            let (mut pl, mut pr) = (t.peak[0], t.peak[1]);
+            let (mut sl, mut sr) = (0.0f64, 0.0f64);
+            for f in 0..take {
+                let a = feed[2 * f] * trim;
+                let b = feed[2 * f + 1] * trim;
+                pl = pl.max(a.abs());
+                pr = pr.max(b.abs());
+                sl += (a as f64) * (a as f64);
+                sr += (b as f64) * (b as f64);
+            }
+            t.peak = [pl, pr];
+            t.sumsq[0] += sl;
+            t.sumsq[1] += sr;
+        }
         for f in 0..take {
             {
                 {
@@ -3197,6 +3409,14 @@ pub(crate) fn mixer_callback(
         // out with it, or the countdown lies about a track that is genuinely ending.
         deck.frames_played = deck.frames_played.wrapping_add(pulled);
         frame_peaks[i] = pk;
+    }
+    // SLICE 2 — fold this buffer's channel taps into the window.
+    bus.meters_acc.frames += prog_frames as u64;
+    for i in 0..SLOT_COUNT {
+        let (a, t) = (&mut bus.meters_acc.ch[i], &ch_meter[i]);
+        a.peak = [a.peak[0].max(t.peak[0]), a.peak[1].max(t.peak[1])];
+        a.sumsq[0] += t.sumsq[0];
+        a.sumsq[1] += t.sumsq[1];
     }
 
     for (i, done) in exhausted.iter().enumerate() {
@@ -3373,6 +3593,9 @@ pub(crate) fn mixer_callback(
     }
     let out_l: &[f32] = out_l;
     let out_r: &[f32] = out_r;
+    // SLICE 2 — PGM tap: the clean programme, post-EQ, post-master, pre-processor.
+    bus.meters_acc.bus[BUS_PGM].add(out_l, out_r);
+    bus.meters_acc.bus_live |= 1 << BUS_PGM;
 
     // Program/master peak for VU (functional — feeds master_peak below).
     let peak = out_l.iter().chain(out_r.iter())
@@ -3443,6 +3666,11 @@ pub(crate) fn mixer_callback(
                    bus.proc_stream_release_ms, bus.proc_stream_ride_rate, bus.proc_stream_ride_clamp,
                    bus.proc_stream_ride_bypass, bus.proc_stream_limiter_bypass, str_l, str_r)
     } else { None };
+    // SLICE 2 — LOCAL tap: the LOCAL branch's processed output, when that branch ran.
+    if local_m.is_some() {
+        bus.meters_acc.bus[BUS_LOCAL].add(loc_l, loc_r);
+        bus.meters_acc.bus_live |= 1 << BUS_LOCAL;
+    }
 
     // METERS, PER BRANCH. proc_stream_* always describes the stream instance. The legacy proc_* fields
     // describe the LOCAL instance, and fall back to the stream instance when only the stream is
@@ -3477,6 +3705,8 @@ pub(crate) fn mixer_callback(
         // Stream drain taps PROCESSED when "Process stream" is on and the processed buffer exists, else clean.
         // The stream taps the STREAM processor now, not the shared one.
         let use_proc = bus.proc_stream && stream_m.is_some();
+        // SLICE 2 — STREAM tap: exactly the samples pushed to the ring below.
+        let (mut spl, mut spr, mut ssl, mut ssr) = (bus.meters_acc.bus[BUS_STREAM].peak[0], bus.meters_acc.bus[BUS_STREAM].peak[1], 0.0f64, 0.0f64);
         for f in 0..prog_frames {
             // PROCESSED audio is already ceiling-controlled by the -1 dBTP limiter and passes through
             // untouched. The CLEAN tap has no limiter in front of it, so it is clamped HERE — at the
@@ -3489,7 +3719,14 @@ pub(crate) fn mixer_callback(
             };
             let _ = bus.ring_prod.try_push(l);
             let _ = bus.ring_prod.try_push(r);
+            spl = spl.max(l.abs()); spr = spr.max(r.abs());
+            ssl += (l as f64) * (l as f64); ssr += (r as f64) * (r as f64);
         }
+        let t = &mut bus.meters_acc.bus[BUS_STREAM];
+        t.peak = [spl, spr];
+        t.sumsq[0] += ssl;
+        t.sumsq[1] += ssr;
+        bus.meters_acc.bus_live |= 1 << BUS_STREAM;
     }
 
     // Studio Monitor Bus: resample 44100 Hz → device rate if they differ. The monitor gain
@@ -3562,6 +3799,14 @@ pub(crate) fn mixer_callback(
         for f in 0..prog_frames { cl[f] = out_l[f].clamp(-1.0, 1.0); cr[f] = out_r[f].clamp(-1.0, 1.0); }
         (&*cl, &*cr)
     };
+    // SLICE 2 — MONITOR tap: the device feed, pre-monitor-gain, pre-resample. ROOM tap: the room chain, when
+    // it owns the device feed (an aux deck is live).
+    bus.meters_acc.bus[BUS_MONITOR].add(dl, dr);
+    bus.meters_acc.bus_live |= 1 << BUS_MONITOR;
+    if room_owned {
+        bus.meters_acc.bus[BUS_ROOM].add(dl, dr);
+        bus.meters_acc.bus_live |= 1 << BUS_ROOM;
+    }
     // ── (REMOVED 2026-08-22) A SECOND, EARLIER AUX PROCESSING BLOCK STOOD HERE ───────────────────
     // It ran `if bus.proc_local { processor_aux.process_planar(&mut aux_l, &mut aux_r) }` — the same
     // stateful ride + -1 dBTP limiter the block below runs, over the SAME buffer. With processing on
@@ -3609,6 +3854,11 @@ pub(crate) fn mixer_callback(
             bus.aux_proc_gr_db = gr;
             bus.aux_proc_ride_db = ride;
         }
+    }
+    // SLICE 2 — AUX tap: the aux monitor feed as it leaves (after its processor when that is on).
+    if aux_present {
+        bus.meters_acc.bus[BUS_AUX].add(aux_l, aux_r);
+        bus.meters_acc.bus_live |= 1 << BUS_AUX;
     }
 
     // AUX FEED VU — the peak of what the aux bus is sending, with the same release ballistics as the

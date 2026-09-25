@@ -54,6 +54,11 @@ contextBridge.exposeInMainWorld("ether", {
     // Push-based level subscription — 30fps from main process, no polling
     onLevels:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:levels", h); return h; },
     offLevels: (h)  => ipcRenderer.removeListener("audio:levels", h),
+    // SLICE 2 — the meter bus: ~30 Hz raw windows (pre-fader channels + buses), only for stations you
+    // subscribe to. Renew the subscription at least every 5 s (usePeakMeters does this).
+    subscribeMeters: (stationIds) => ipcRenderer.invoke("audio:subscribe-meters", stationIds),
+    onMeters:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:meters", h); return h; },
+    offMeters: (h)  => ipcRenderer.removeListener("audio:meters", h),
     // Audio Processing v1 — dedicated processing-meter channel (~15Hz, ONLY while a toggle is on).
     // Separate from onLevels on purpose: the levels channel is high-rate; this one stays quiet otherwise.
     onProcMeters:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:proc-meters", h); return h; },
