@@ -2,11 +2,14 @@
 // "soak at smallest buffer size while loading tracks and moving sliders: zero xruns, no clicks").
 //
 // Isolated, like scripts/test-segue-overlap.js: its OWN daemon, against a COPY of the DB, on a private pipe.
-// It never touches a running Ether. It PLAYS AUDIO through this machine's output device (monitor turned to
-// its lowest non-zero level so the callback still runs a real device path) — run it only where that is OK.
+// It never touches a running Ether.
+//
+// THE SOAK IS AUDIBLE IN THE ROOM. It plays the station through this machine's default output device at
+// monitor level 1.0 (unity) unless --monitor says otherwise. (An earlier version set the monitor to 0.01 —
+// −40 dB, silent in practice — so an operator listening heard nothing; 2026-09-24.)
 //
 // What it does:
-//   · starts the daemon with ETHER_SOAK_BUFFER_FRAMES (default "min" — the device's smallest period)
+//   · starts the daemon at the device's DEFAULT buffer, or with ETHER_SOAK_BUFFER_FRAMES=<--buffer> if given
 //   · turns AUTO on for one station with continuous fill, so the station's own catalogue loads track after
 //     track through the new decode workers
 //   · moves "sliders" the whole time: the master GEQ toggles every 5 s, deck C's fader 1.0 ↔ 0.95 every 3 s
@@ -17,14 +20,16 @@
 // It REFUSES to run unless the engine reports the slice-1 counters (rt_callbacks) — i.e. unless
 // native/ether-audio.node is the slice-1 build. See the soak instructions for swapping it in and back.
 //
-// Run:  node scripts/soak-rt-callback.js [--minutes 60] [--station 1] [--buffer min|<frames>]
+// Run:  node scripts/soak-rt-callback.js [--minutes 60] [--station 1] [--buffer min|<frames>] [--monitor 1.0]
+//       (no --buffer = the device's default buffer: ETHER_SOAK_BUFFER_FRAMES is not set at all)
 "use strict";
 const net = require("net"), path = require("path"), os = require("os"), fs = require("fs"), cp = require("child_process");
 
 const arg = (k, d) => { const i = process.argv.indexOf("--" + k); return i > 0 && process.argv[i + 1] ? process.argv[i + 1] : d; };
 const MINUTES = Number(arg("minutes", "60"));
 const STATION = Number(arg("station", "1"));
-const BUFFER = String(arg("buffer", "min"));
+const BUFFER = arg("buffer", null);          // null = device default (env var not set)
+const MONITOR = Number(arg("monitor", "1.0"));  // the station's room monitor level; 1.0 = unity, AUDIBLE
 
 const srcDb = process.env.ETHER_DB_PATH || path.join(os.homedir(), "AppData", "Local", "Ether", "com.ether.radio", "openair.db");
 const tmp = path.join(os.tmpdir(), "ether-soak-" + process.pid + ".db");
@@ -36,7 +41,8 @@ const daemonLog = path.join(os.tmpdir(), "ether-soak-daemon-" + process.pid + ".
 const RUNTIME = path.join(__dirname, "..", "node_modules", "electron", "dist", "electron.exe");
 const dlog = fs.openSync(daemonLog, "a");
 const daemon = cp.spawn(RUNTIME, [path.join(__dirname, "..", "audiod", "ether-audiod.js")], {
-  env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ETHER_DB_PATH: tmp, ETHER_AUDIOD_PIPE: PIPE, ETHER_SOAK_BUFFER_FRAMES: BUFFER },
+  env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ETHER_DB_PATH: tmp, ETHER_AUDIOD_PIPE: PIPE,
+         ...(BUFFER ? { ETHER_SOAK_BUFFER_FRAMES: String(BUFFER) } : {}) },
   stdio: ["ignore", dlog, dlog],
 });
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -60,13 +66,13 @@ const rtOf = (lv) => ({
 });
 
 (async () => {
-  console.log(`[soak] ${MINUTES} min · station ${STATION} · ETHER_SOAK_BUFFER_FRAMES=${BUFFER} · DB copy ${tmp}`);
+  console.log(`[soak] ${MINUTES} min · station ${STATION} · buffer ${BUFFER ? "ETHER_SOAK_BUFFER_FRAMES=" + BUFFER : "device default"} · monitor ${MONITOR} (AUDIBLE) · DB copy ${tmp}`);
   console.log(`[soak] daemon log: ${daemonLog}`);
   let up = false; for (let i = 0; i < 80 && !(up = await pipeAlive()); i++) await sleep(500);
   if (!up) { console.error("[soak] daemon did not start:\n" + logText().split(/\r?\n/).slice(-25).join("\n")); return cleanup(2); }
   const app = client(); await app.connect(); await app.cmd("ping");
   await app.cmd("init", { stationId: STATION });
-  try { await app.cmd("setMonitorVolume", { stationId: STATION, volume: 0.01 }); } catch {}
+  try { await app.cmd("setMonitorVolume", { stationId: STATION, volume: MONITOR }); } catch {}
 
   const lv0 = await app.cmd("getLevels", { stationId: STATION }).catch(() => null);
   if (!lv0 || typeof lv0.rt_callbacks !== "number") {
