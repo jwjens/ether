@@ -64,6 +64,13 @@ playout moved on to the next queued song instead. Nothing was aired from the ref
 - If the card says *unplayable row skipped*, the song's file could not be found on this machine:
   check the library entry and whether the file has been fetched from the cloud.
 
+### The PGM meter on each station
+
+Each station card has a thin **PGM** meter: the station's programme output after the MASTER fader — the
+same meter as Master Out, laid on its side. Coloured bar = average level, white dot = peak, red end =
+OVER, purple line = −18. **Hatched with no bar** means the meter is not connected (the engine is not
+reporting that station), which is different from an empty bar (silence). See **Reading the Meters**.
+
 ### The "audio engine" line under each station
 
 Every station card ends with a line like *audio engine · underruns 0 · overruns 0 · lock misses 0*.

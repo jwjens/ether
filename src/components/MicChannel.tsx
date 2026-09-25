@@ -125,7 +125,9 @@ export default function MicChannel({ slot, label }: { slot: string; label: strin
           label={label}
           color="#ef4444"
           volume={volume}
-          level={isOn ? level : level * 0.35}
+          // Pre-fader, pre-cut (Slice 2 ruling 1): the meter shows the mic whether or not the channel is ON.
+          // It used to be dimmed to 35 % when OFF — a −9 dB lie about the input.
+          level={level}
           isPlaying={isOn && level > 0.02}
           isOn={isOn}
           onVolumeChange={setVolume}

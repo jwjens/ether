@@ -9,8 +9,8 @@ import React, { useState, useRef, useCallback, useEffect } from "react";
 import { useMidiState } from "./MidiEngine";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { playClick } from "../lib/uiSound";
-import { vuHeight, vuColor as vuZoneColor } from "../lib/vuMeter";
-import { matchesStation } from "../lib/levelsScope";
+import PeakAvgMeter, { type MeterSource } from "./meter/PeakAvgMeter";
+import { CH_INDEX, useMeterSubscription } from "./meter/meterStore";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { useSongMenu } from "../lib/songActions";
 
@@ -72,10 +72,11 @@ export default function ConsoleStrip({
     if (!st?.filePath) return;          // nothing loaded — no menu, rather than an empty one
     songMenu.open(e, { title: st.title, artist: st.artist, filePath: st.filePath });
   };
-  // Station scope — this strip's VU renders only its own station's levels frames (ref → no re-subscribe).
-  const { stationUuid } = useActiveStation();
-  const myUuidRef = useRef(stationUuid);
-  myUuidRef.current = stationUuid;
+  // Station scope — this strip's meter reads only its own station's meter frames.
+  const { stationUuid, stationId, isReady } = useActiveStation();
+  // Ask the engine for this station's meter windows while an engine-metered strip is on screen (the daemon
+  // only emits meters for subscribed stations; every strip renewing is cheap and needs no parent wiring).
+  useMeterSubscription([deckId && isReady ? stationId : null]);
   const [dragging, setDragging] = useState(false);
   // Local drag value: the knob follows the pointer instantly off this, instead of waiting
   // for the audio-engine state to round-trip back into `volume` (which ticks, so the knob
@@ -86,13 +87,6 @@ export default function ConsoleStrip({
   const trackRef = useRef<HTMLDivElement>(null);
   // faderAreaRef: the flex container we measure for faderH
   const faderAreaRef = useRef<HTMLDivElement>(null);
-  // VU DOM refs for direct update when deckId is provided
-  const vuFillRef   = useRef<HTMLDivElement>(null);
-  const vuPeakRef   = useRef<HTMLDivElement>(null);
-  const isOnRef     = useRef(isOn);
-  const isPlayingRef = useRef(isPlaying);
-  const sourceChannelRef = useRef(sourceChannel);
-  const colorRef    = useRef(color);
   const fillRef      = useRef<HTMLDivElement>(null);
   const fillTrackRef = useRef<string>("");
   const [faderH, setFaderH] = useState(220);
@@ -107,12 +101,6 @@ export default function ConsoleStrip({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-
-  // Sync prop refs so the onLevels handler always sees current values
-  useEffect(() => { isOnRef.current = isOn; },       [isOn]);
-  useEffect(() => { isPlayingRef.current = isPlaying; }, [isPlaying]);
-  useEffect(() => { sourceChannelRef.current = sourceChannel; }, [sourceChannel]);
-  useEffect(() => { colorRef.current = color; },     [color]);
 
   // Progress fill — imperative DOM, no React state, same pattern as VU
   useEffect(() => {
@@ -147,79 +135,25 @@ export default function ConsoleStrip({
     return () => unsub();
   }, [deckId, engine]);
 
-  // Direct DOM VU update when deckId is provided — bypasses React state
-  // so the parent (App.tsx) doesn't re-render the library table on each tick.
-  useEffect(() => {
-    if (!deckId) return;
-    const ether = (window as any).ether;
-    if (!ether?.audio?.onLevels) return;
-    let rafId = 0;
-    let smoothed = 0; // smoothed bar HEIGHT (0..1): fast attack, slow release (VU ballistic)
-    const h = ether.audio.onLevels((lvl: { a?: number; b?: number; c?: number; cart?: number; master?: number; stationUuid?: string; decks?: { id: string; peak?: number }[] }) => {
-      if (!matchesStation(lvl, myUuidRef.current)) return; // station scope
-      const id = deckId.toUpperCase();
-      // D/E/F read their OWN post-fader peak out of the per-deck telemetry array.
-      //
-      // THEY USED TO FALL THROUGH TO `master` (2026-08-18 incident): an aux deck's strip showed the
-      // programme meter, not its own. With that deck's fader down, master was silent, so the meter
-      // read 0 while the deck was still playing — the operator saw "nothing is running" while a
-      // jukebox track was live on deck D. A meter that reads zero on a playing deck is worse than no
-      // meter: it is used as evidence. The array (`decks[].peak`) covers every slot as of the same
-      // day's native change.
-      const auxPeak = (d: string) => lvl.decks?.find(x => x.id === d)?.peak ?? 0;
-      // ROUTED BY KIND, NOT BY LETTER (2026-08-25).
-      //
-      // This chain used to end `: (lvl.master ?? 0)` — so any slot that was not A/B/C/CART/D/E/F
-      // showed the PROGRAMME MIX on its meter. Slice 1 added source channels at S1..S5, and the
-      // moment the + button reached one of those, an IDLE channel would have displayed the whole
-      // station dancing on its meter. A meter that shows another signal is not a cosmetic fault: it
-      // is read as evidence, and this codebase has already paid for a VU showing the wrong source.
-      //
-      // A source channel now reads its OWN slot's peak whatever it is called, so adding slots can
-      // never rot this again. The letter list below stays only for legacy non-source strips.
-      const isSrc = sourceChannelRef.current;
-      let raw = isSrc ? auxPeak(id)
-              : id === "A" ? (lvl.a ?? 0)
-              : id === "B" ? (lvl.b ?? 0)
-              : id === "C" ? (lvl.c ?? 0)
-              : id === "CART" ? (lvl.cart ?? 0)   // jingle overlay bus (native slot 6, level_cart)
-              : (id === "D" || id === "E" || id === "F") ? auxPeak(id)
-              : (lvl.master ?? 0);
-      if (id === "MIC") raw = isOnRef.current ? (lvl.master ?? 0) * 0.6 : 0;
-      // Meters are taps: the CART/jingle overlay has no steady "playing" status like a rotation deck
-      // (jingles fire briefly over master), so its VU always reflects the live tap. Other strips keep
-      // the existing isPlaying gate unchanged.
-      // D/E/F are NOT gated on isPlaying either. For an aux strip `isPlaying` carries the CHANNEL
-      // switch, so a cut channel forced the meter to 0 — the second way this meter hid a live deck.
-      // Their peak is already post-fader and post-cut, so it reads zero when it should and only when
-      // it should: the tap tells the truth without help.
-      // A source channel is exempt for the same reason D/E/F are: for these strips `isPlaying`
-      // carries the CHANNEL SWITCH, so gating on it forced a cut channel's meter to zero and hid a
-      // deck that was genuinely running. Their peak is already post-fader and post-cut — the tap
-      // tells the truth without help.
-      if (!isSrc && id !== "CART" && id !== "D" && id !== "E" && id !== "F") raw = isPlayingRef.current ? raw : 0;
-      const targetH = vuHeight(Math.min(1, raw));   // dB-scaled target height
-      // Snap up to peaks (track the music), ease down — kills the flickery top edge.
-      smoothed += (targetH - smoothed) * (targetH > smoothed ? 0.5 : 0.12);
-      cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        const mask = vuFillRef.current;
-        const peak = vuPeakRef.current;
-        if (!mask) return;
-        // Mask uncovers the gradient from the bottom up to the (smoothed) level.
-        mask.style.height = `${(1 - smoothed) * 100}%`;
-        if (peak) {
-          // Edge line colored by the zone it sits in (height thresholds = the dB marks).
-          const col = smoothed >= 0.9375 ? "var(--accent-red)" : smoothed >= 0.75 ? "var(--accent-amber)" : colorRef.current;
-          peak.style.bottom     = `${smoothed * 100}%`;
-          peak.style.background = col;
-          peak.style.boxShadow  = `0 0 5px ${col}`;
-          peak.style.display    = isOnRef.current && smoothed > 0.02 ? "block" : "none";
-        }
-      });
-    });
-    return () => { ether.audio.offLevels(h); cancelAnimationFrame(rafId); };
-  }, [deckId]);
+  // ── THE STRIP METER — the PRE-FADER tap (Slice 2, docs/dsp-meter-bus.md; Jeff's rulings 1 and 3) ──
+  //
+  // It used to be the POST-fader peak off audio:levels, with a letter-by-letter routing chain and three
+  // different isPlaying gates (see git history for the 2026-08-18 and 2026-08-25 incidents it carried).
+  // All of that is gone: every engine slot now has its OWN pre-fader tap, read by index, so
+  //   • a channel that is OFF still shows its source (pre-cut — ruling 1), and the fader never moves it;
+  //   • no slot can ever fall through to the programme mix, because there is no fallthrough;
+  //   • a strip with no engine slot (a patched mic) meters the level its owner hands in, also pre-fader.
+  // The post-fader values stay on the wire (audio:levels) for the consumers that read them; a strip shows
+  // one meter, not two (ruling 3).
+  //
+  // An id with no engine slot (the old "MIC" id faked `master × 0.6`) is drawn NOT FED — never a fake level.
+  const slotIndex = deckId ? CH_INDEX[deckId.toUpperCase()] : undefined;
+  const meterSource: MeterSource = deckId
+    ? (slotIndex !== undefined ? { stationUuid, ch: slotIndex } : { stationUuid: null, ch: -1 })
+    : { external: level };
+  const meterTitle = deckId
+    ? (slotIndex !== undefined ? `${label} — pre-fader level (moves with the source, not the fader or ON)` : `${label} — no engine meter for this channel`)
+    : `${label} — input level, pre-fader`;
 
   // MIDI hardware fader sync
   const midiKey = `deck_${label.toLowerCase().replace(/[^a-z]/g, "")}_volume`;
@@ -270,8 +204,6 @@ export default function ConsoleStrip({
   }, [onVolumeChange]);
 
   const db = effVol > 0.001 ? (20 * Math.log10(effVol)).toFixed(0) : "−∞";
-  const vuH = vuHeight(isOn ? level : level * 0.05);
-  const vuColor = vuZoneColor(level, color);
 
   // JINGLES indicator moved OUT of the fader strip (4.4.63): the jingle's NAME + time now lives as a third
   // line under the playing song's duration in the Up Next deck row (UpNext.tsx). The `jingle`/`jingleClass`
@@ -411,30 +343,9 @@ export default function ConsoleStrip({
 
         </div>{/* end fader column */}
 
-        {/* ── Mono VU meter — slim, solid RGB (red top · blue · green), only lit on signal ── */}
-        <div style={{
-          width: 32, flexShrink: 0, height: "100%",
-          background: "var(--vu-meter-bg, #0a0a0f)",
-          position: "relative", overflow: "hidden", zIndex: 1,
-        }}>
-          {/* Solid 3-zone column — green (safe) → orange (hot) → red (clip). Hard stops, no blend. */}
-          <div style={{
-            position: "absolute", inset: 0,
-            background: "linear-gradient(to top, var(--accent-green) 0%, var(--accent-green) 66%, var(--accent-amber) 66%, var(--accent-amber) 88%, var(--accent-red) 88%, var(--accent-red) 100%)",
-            opacity: isOn ? 1 : 0.04,
-          }} />
-          {/* Mask — covers the UNLIT portion above the level. ref-updated at 30Hz when deckId set. */}
-          <div ref={deckId ? vuFillRef : undefined} style={{
-            position: "absolute", top: 0, left: 0, right: 0,
-            height: deckId ? "100%" : `${(1 - vuH) * 100}%`,
-            background: "#0a0a0f",
-          }} />
-          {/* Leading-edge line at the level */}
-          <div ref={deckId ? vuPeakRef : undefined} style={{
-            position: "absolute", bottom: deckId ? "0%" : `${vuH * 100}%`, left: 0, right: 0,
-            height: 2, background: "#fff",
-            display: deckId ? "none" : (isOn && level > 0.02 ? "block" : "none"),
-          }} />
+        {/* ── Pre-fader meter — L/R average bars, peak dot, hold, OVER, −18 mark (PeakAvgMeter) ── */}
+        <div style={{ width: 32, flexShrink: 0, height: "100%", position: "relative", zIndex: 1, padding: "0 2px" }}>
+          <PeakAvgMeter source={meterSource} size="strip" label={label} title={meterTitle} />
         </div>
 
       </div>{/* end main area */}

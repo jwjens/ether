@@ -36,9 +36,9 @@ The rule to remember: **MASTER is heard by everyone. MONITOR is heard by you.**
 
 1. Open the **Master Out** panel on the right (or pop it out with the pop-out icon for a big-screen
    version).
-2. Drag **MASTER** to set your on-air level. The **master VU meter reflects the change** — it shows
-   what is actually going out, so what you see is what your listeners get.
-3. Drag **MONITOR** to set your room level. The VU meter does **not** move, because your speakers are
+2. Drag **MASTER** to set your on-air level. The **PGM, LOCAL and STREAM meters reflect the change** —
+   they show what is actually going out, so what you see is what your listeners get.
+3. Drag **MONITOR** to set your room level. Only the **MONITOR** meter moves, because your speakers are
    not the broadcast.
 
 Both faders remember where you left them. If the audio engine restarts during a show, they are
@@ -47,10 +47,12 @@ silent, on their own.
 
 ## Reading the meter
 
-The master VU is measured **after** the MASTER fader. That is deliberate:
+The master meters (PGM / LOCAL / STREAM / MONITOR) are measured **after** the faders. That is deliberate:
 
-- If the meter is low and the audio sounds quiet to your listeners, **MASTER** is where to look.
-- If your room sounds quiet but the meter is healthy, that is **MONITOR** — your listeners are fine.
+- If PGM is low and the audio sounds quiet to your listeners, **MASTER** is where to look.
+- If your room sounds quiet but PGM is healthy, look at the **MONITOR** meter — your listeners are fine.
+
+How to read the bar, the peak dot and OVER: see **Reading the Meters** (`docs/help-meters.md`).
 
 ## Things worth knowing
 

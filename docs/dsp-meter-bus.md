@@ -278,3 +278,70 @@ of operations, or processor/duck/EQ state changes.
 - **No GR-per-slot.** There are no channel racks yet (slices 5–6).
 - **No change to the 10 Hz `levels` frame** or the engine's legacy `VU_RELEASE` fields.
 - **No new transport.** Meters ride the existing daemon pipe and IPC, gated by subscription.
+
+---
+
+## 8 · UI build notes (2026-09-25) — what was built, and where it departs from §3
+
+Rulings applied: pre-cut (1), plain RMS (2), one pre-fader meter per strip with post-fader data left on
+the wire and buses post-fader (3), and constants named in `src/components/meter/meterBallistics.ts`, with the
+two IEC-referenced ones marked UNVERIFIED (4).
+
+**Built**
+- **Ballistics:** `meter/meterBallistics.ts`, pure and wall-time driven, pinned by 8 vitest cases:
+  - −18/−15 calibration;
+  - peak fall;
+  - hold;
+  - one-pole;
+  - rate independence at 30 Hz vs 1 Hz;
+  - no decay without data;
+  - OVER;
+  - zones.
+- **Meter store:** `meter/meterStore.ts`. One `audio:meters` listener; the newest frame per station UUID
+  is held outside React. `useMeterSubscription(ids)` renews every 2 s against the daemon's 5 s TTL.
+- **The meter component:** `meter/PeakAvgMeter.tsx`.
+  - Its own rAF loop writes the DOM through refs, so it never re-renders React at meter rate.
+  - It draws L/R average bars, a peak dot, a hold tick, an OVER cap and the −18 mark.
+  - A stale feed, an absent bus (`live` bit clear) or a missing slot is drawn hatched as **NOT FED**,
+    never as silence.
+- **Master column:** `meter/MasterMeters.tsx`. PGM / LOCAL / STREAM / MONITOR plus WILD, whose selector
+  covers 6 buses and 12 channels (the choice is remembered per viewer in localStorage). The collapsed
+  master rail shows PGM.
+- **Strips:** `ConsoleStrip` meters `ch[slot]` (the pre-fader tap) for any engine slot, and the `level`
+  prop for strips with no slot (mic, guest).
+  - The letter-routing chain and the three `isPlaying` gates are removed; the tap needs no gating.
+  - An id with no engine slot (the old `"MIC"` id that faked `master × 0.6`) is drawn **NOT FED**.
+- **Health Monitor:** each station card's post-fader `peak` bar is now a compact horizontal PGM meter.
+- **Help:**
+  - new: `docs/help-meters.md`;
+  - corrected: `help-channel-faders.md`, which said "a cut channel shows no movement at all", now false
+    under pre-cut;
+  - corrected: `help-master-monitor-faders.md` and `help-health-monitor.md`.
+
+**Deviations from §3, stated**
+1. **Component props.** It takes a source descriptor (`{stationUuid, ch}` / `{stationUuid, bus}` /
+   `{external}`), not `peak`/`rms` arrays. It reads its source every animation frame; passing arrays as
+   props would re-render React at 30 Hz.
+2. **`VUMeter` is not converted.** It has **3** users (MicDeck, MixerChannelStrip, OnAirDeck), not the 7
+   the proposal said. Converting it is deferred; those screens are unchanged.
+3. **The Health Monitor subscribes at 30 Hz** to every reporting station while it is open, rather than
+   using the 1 s fleet-frame decimation. The ballistics are rate-independent, so it reads the same. Closing
+   the panel lets the subscription lapse. The fleet frame was not touched.
+4. **The subscription lives in the meter's owner.** Each engine-metered `ConsoleStrip`, `MasterMeters` and
+   the Health Monitor subscribe themselves; `FaderSection` does not. This keeps canvas and other hosts
+   correct with no parent wiring.
+5. **`MasterVU` is retired, not kept beside the column.** It drew one mono post-fader value as two bars
+   and invented the L/R difference with a sine "wobble". A stereo meter that doesn't measure stereo can't
+   stay next to one that does.
+6. **Pre-cut applied to the two `level`-prop strips too.** `MicChannel` dimmed its level to 35 % when
+   OFF, and the guest strip zeroed it. Both now pass the raw input level.
+7. **Engine-commit regression fixed in `233b1c9`.** `a77f55e`'s daemon `meters` broadcast carried the
+   integer `stationId`, the 14th emit over the leak-guard ratchet (baseline 13). It was migrated, not
+   exempted: main supplies each station's UUID on subscribe and the daemon emits `stationUuid`.
+
+**Runtime: UNVERIFIED.** Nothing here has been seen on screen. The check that settles it is Jeff's, in the
+running app:
+- a strip's meter holds still while its fader moves;
+- it keeps moving with the channel OFF;
+- PGM and STREAM move with MASTER, and MONITOR moves only with MONITOR;
+- LOCAL reads NOT FED when no local device is set.

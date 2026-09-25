@@ -12,9 +12,9 @@ import { useProcessorParams } from "../hooks/useProcessorParams";
 import { useAudioHealth, HealthDot, HealthStyles, HealthModeBanner, rateLabel, peakLabel, LEVEL_COLOR } from "../audio/health";
 import { EQ_DEFAULT } from "./GraphicEQ";
 import StationMonitorMixer from "./StationMonitorMixer";
+import MasterMeters from "./meter/MasterMeters";
 import AuxMonitorSlots from "./AuxMonitorSlots";
 import { useAudioEngine } from "../audio/AudioEngineContext";
-import { vuSmooth, vuPeak } from "../lib/vuMeter";
 
 // ── Constants ────────────────────────────────────────────────
 // Fallback values only — resolved via CSS custom properties at runtime
@@ -93,7 +93,7 @@ const TYPE_COLOR: Record<ConsoleEventType, string> = {
 //
 // So it comes back HERE, next to the master VU, under the rule that fixed it: a LEAF component with
 // its OWN subscription, writing to the DOM through a ref. Nothing above it re-renders — this file's
-// own MasterVU already works exactly this way, and HealthMeters.tsx states the rule one layer up
+// meter column (meter/PeakAvgMeter) works exactly this way, and HealthMeters.tsx states the rule one layer up
 // ("THE LEVELS CHANNEL NEVER TOUCHES REACT STATE"). No setState per frame, at all.
 //
 // Station-scoped like every other meter, and it goes to "—" when frames stop rather than freezing on
@@ -146,191 +146,11 @@ function LimiterGR() {
   );
 }
 
-// ── MasterVU — two-bar L/R canvas meter ──────────────────────
-// Subscribes directly to audio:levels IPC — no prop needed.
-/** `fill` — stretch to the container instead of the fixed 110px.
- *
- *  The expanded panel stacks the meter among other sections, so a fixed height is right there. The
- *  COLLAPSED rail is the opposite case: the operator gave up the whole panel to keep the level in
- *  view, and a 110px meter in a full-height strip left most of the rail empty with a small meter at
- *  the top — the collapse bought nothing. */
-function MasterVU({ fill = false }: { fill?: boolean }) {
-  const canvasRef  = useRef<HTMLCanvasElement>(null);
-  const levelL     = useRef(0);
-  const levelR     = useRef(0);
-  const peakL      = useRef(0); const peakLAt = useRef(0);
-  const peakR      = useRef(0); const peakRAt = useRef(0);
-  const phaseL     = useRef(0);
-  const phaseR     = useRef(Math.PI * 0.37);
-  const rafRef     = useRef(0);
-  const masterRef  = useRef(0);
-  const lastFrameMs = useRef(0);   // wall-clock of the previous RAF tick → delta-time ballistics
-
-  // Station scope — master VU shows the active station's master only (ref → switch needs no re-subscribe).
-  const { stationUuid } = useActiveStation();
-  const myUuidRef = useRef(stationUuid);
-  myUuidRef.current = stationUuid;
-
-  useEffect(() => {
-    const ether = (window as any).ether;
-    if (!ether?.audio?.onLevels) return;
-    const h = ether.audio.onLevels((lvl: { master?: number; a?: number; b?: number; c?: number; stationUuid?: string }) => {
-      if (!matchesStation(lvl, myUuidRef.current)) return; // station scope
-      masterRef.current = lvl.master ?? Math.max(lvl.a || 0, lvl.b || 0, lvl.c || 0);
-    });
-    return () => ether.audio.offLevels(h);
-  }, []);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ro = new ResizeObserver(entries => {
-      for (const e of entries) {
-        const { width, height } = e.contentRect;
-        const dpr = window.devicePixelRatio || 1;
-        canvas.width  = Math.floor(width  * dpr);
-        canvas.height = Math.floor(height * dpr);
-        canvas.style.width  = width  + "px";
-        canvas.style.height = height + "px";
-      }
-    });
-    ro.observe(canvas);
-
-    // Cache theme colors — refreshed every 2s so theme switches are reflected
-    let cachedBg   = "#080810";
-    let cachedTxt2 = "#606070";
-    let cachedVu = {
-      teal:     "#00c8a8",
-      amb:      "#c07820",
-      red:      "#c02828",
-      peakClip: "#e04040",
-      peakWarn: "#d09030",
-      peakNorm: "#00d8b0",
-      tick:     "rgba(255,255,255,0.04)",
-    };
-    let colorCacheTs = 0;
-
-    const draw = () => {
-      const ctx = canvas.getContext("2d");
-      if (!ctx) { rafRef.current = requestAnimationFrame(draw); return; }
-      const w = canvas.width;
-      const h = canvas.height;
-      const now = Date.now();
-      // Elapsed wall-clock since the last RAF tick — drives all ballistics so the meter feel is
-      // independent of draw rate AND of the (10 Hz) level feed. Clamp the first frame / a backgrounded
-      // tab so a huge dt can't snap the bar.
-      const dt = Math.min(now - (lastFrameMs.current || now), 100);
-      lastFrameMs.current = now;
-
-      // Refresh theme colors at most every 2 seconds
-      if (now - colorCacheTs > 2000) {
-        const cs = getComputedStyle(document.documentElement);
-        cachedBg   = cs.getPropertyValue("--vu-bg-master").trim()    || "#080810";
-        cachedTxt2 = cs.getPropertyValue("--text-secondary").trim()  || "#606070";
-        cachedVu = {
-          teal:     cs.getPropertyValue("--accent-teal").trim()   || "#00c8a8",
-          amb:      cs.getPropertyValue("--accent-amber").trim()  || "#c07820",
-          red:      cs.getPropertyValue("--accent-red").trim()    || "#c02828",
-          peakClip: cs.getPropertyValue("--vu-peak-clip").trim()  || "#e04040",
-          peakWarn: cs.getPropertyValue("--vu-peak-warn").trim()  || "#d09030",
-          peakNorm: cs.getPropertyValue("--vu-peak-normal").trim()|| "#00d8b0",
-          tick:     cs.getPropertyValue("--vu-tick").trim()       || "rgba(255,255,255,0.04)",
-        };
-        colorCacheTs = now;
-      }
-
-      ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = cachedBg;
-      ctx.fillRect(0, 0, w, h);
-
-      const m = masterRef.current;
-
-      phaseL.current += 0.045;
-      phaseR.current += 0.038;
-      const wobble = 0.04;
-      const targetL = Math.max(0, Math.min(1, m + wobble * Math.sin(phaseL.current)));
-      const targetR = Math.max(0, Math.min(1, m + wobble * Math.sin(phaseR.current)));
-      // Delta-time attack/decay (taus in lib/vuMeter) — rate-independent, replaces the old fixed
-      // per-frame lerp factors that assumed a steady 60fps/30Hz and turned jumpy at the 10 Hz feed.
-      levelL.current = vuSmooth(levelL.current, targetL, dt);
-      levelR.current = vuSmooth(levelR.current, targetR, dt);
-
-      const drawBar = (
-        x: number, barW: number,
-        lv: number,
-        peakRef: React.MutableRefObject<number>,
-        peakAtRef: React.MutableRefObject<number>
-      ) => {
-        const barH = Math.floor(lv * h);
-        const fillY = h - barH;
-
-        ctx.fillStyle = cachedBg;
-        ctx.fillRect(x, 0, barW, h);
-
-        if (barH > 0) {
-          const grad = ctx.createLinearGradient(x, h, x, fillY);
-          if (lv <= 0.60) {
-            grad.addColorStop(0, cachedVu.teal); grad.addColorStop(1, "#006058");
-          } else if (lv <= 0.80) {
-            grad.addColorStop(0, cachedVu.teal); grad.addColorStop(0.7, cachedVu.amb); grad.addColorStop(1, "#905010");
-          } else {
-            grad.addColorStop(0, cachedVu.teal); grad.addColorStop(0.5, cachedVu.amb); grad.addColorStop(0.8, cachedVu.red); grad.addColorStop(1, "#901818");
-          }
-          ctx.fillStyle = grad;
-          ctx.fillRect(x, fillY, barW, barH);
-        }
-
-        const pk = vuPeak(peakRef.current, peakAtRef.current, lv, now, dt);
-        peakRef.current   = pk.peak;
-        peakAtRef.current = pk.at;
-        if (peakRef.current > 0.05) {
-          const py = Math.max(1, h - Math.floor(peakRef.current * h) - 1);
-          ctx.fillStyle = peakRef.current > 0.80 ? cachedVu.peakClip : peakRef.current > 0.60 ? cachedVu.peakWarn : cachedVu.peakNorm;
-          ctx.fillRect(x, py, barW, 1);
-        }
-      };
-
-      const gap   = 3;
-      const barW  = Math.floor((w - gap) / 2);
-      drawBar(0,         barW, levelL.current, peakL, peakLAt);
-      drawBar(barW + gap, barW, levelR.current, peakR, peakRAt);
-
-      ctx.strokeStyle = cachedVu.tick;
-      ctx.lineWidth = 1;
-      [0.40, 0.20].forEach(f => {
-        const y = Math.floor(h * f);
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
-      });
-
-      ctx.fillStyle = cachedTxt2;
-      ctx.font = `700 8px system-ui`;
-      ctx.textAlign = "center";
-      ctx.fillText("L", barW / 2, h - 2);
-      ctx.fillText("R", barW + gap + barW / 2, h - 2);
-
-      rafRef.current = requestAnimationFrame(draw);
-    };
-
-    rafRef.current = requestAnimationFrame(draw);
-    return () => { cancelAnimationFrame(rafRef.current); ro.disconnect(); };
-  }, []);
-
-  return (
-    <div style={{
-      width: "100%",
-      // Fill the rail when collapsed; keep the fixed block in the stacked panel.
-      height: fill ? "100%" : 110,
-      flex: fill ? 1 : undefined,
-      minHeight: 0,
-      flexShrink: 0,
-      background: "var(--recess-bg, var(--vu-bg-master))", boxShadow: "var(--recess-inner-shadow, none)",
-      border: "var(--recess-border, none)", borderRadius: "var(--recess-radius, 0px)",
-    }}>
-      <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />
-    </div>
-  );
-}
+// ── (RETIRED, Slice 2) MasterVU stood here ──────────────────────────────────────────────────────
+// It drew ONE mono post-fader value as two bars and invented the L/R difference with a sine "wobble"
+// (±0.04 at two phase rates) — a stereo meter that was not measuring stereo. Replaced by MasterMeters
+// (src/components/meter/MasterMeters.tsx): real L/R bus taps from the engine's meter bus, PGM / LOCAL /
+// STREAM / MONITOR post-fader, plus the Wild Meter. docs/dsp-meter-bus.md §3.
 
 // ── Fader ────────────────────────────────────────────────────
 function Fader({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
@@ -875,7 +695,7 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
             sliver, which is the opposite of collapsing for a bigger meter. It lives in the expanded
             panel beside the meter it explains. */}
         <div style={{ flex: 1, minHeight: 0, padding: "6px 5px", display: "flex", alignItems: "stretch" }}>
-          <MasterVU fill />
+          <MasterMeters rail />
         </div>
         <div style={{ padding: "6px 4px", borderTop: "1px solid var(--border-primary)", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
           <div title={onAir ? "ON AIR" : "STANDBY"} style={{ width: 8, height: 8, borderRadius: "50%", background: onAir ? "var(--status-live)" : "var(--status-offline)", boxShadow: onAir ? "0 0 6px var(--status-live)" : "none" }} />
@@ -943,8 +763,8 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
 
       {/* VU meters */}
       <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0 }}>
-        <div style={{ fontSize: 11, color: "var(--text-secondary)", letterSpacing: "0.02em", marginBottom: 6, opacity: 0.5 }}>Output level</div>
-        <MasterVU />
+        <div style={{ fontSize: 11, color: "var(--text-secondary)", letterSpacing: "0.02em", marginBottom: 6, opacity: 0.5 }}>Bus meters — post-fader · Wild Meter spot-checks any source</div>
+        <MasterMeters />
         <LimiterGR />
       </div>
 

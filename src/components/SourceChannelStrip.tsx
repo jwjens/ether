@@ -279,10 +279,9 @@ export default function SourceChannelStrip({
           label={label}
           color="#8868D8"
           volume={volume}
-          // deckId makes ConsoleStrip drive its meter from the audio:levels IPC and explicitly hide
-          // the level-prop meter (ConsoleStrip.tsx:425, display: deckId ? "none" : ...). A patched
-          // input has no engine slot to report, so for mic we withhold deckId and feed `level`
-          // instead. Every other source kind keeps the IPC meter exactly as before.
+          // deckId makes ConsoleStrip meter this slot's PRE-FADER engine tap (Slice 2 meter bus). A
+          // patched input has no engine slot to report, so for mic we withhold deckId and feed `level`
+          // (already pre-fader) instead. Every other source kind reads its own slot's tap.
           deckId={config.kind === "mic" ? undefined : config.slot}
           level={config.kind === "mic" ? micLevel : undefined}
           // Read this slot's OWN level, on any slot letter — D/E/F today, S1..S5 once the pool fills.

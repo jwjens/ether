@@ -360,7 +360,8 @@ export default function FaderSection({
             label={config?.label || `GUEST ${slot}`}
             color="#a78bfa"
             volume={guestVol}
-            level={guestIsOn ? guestLevel : 0}
+            // Pre-cut (Slice 2 ruling 1): the meter shows the guest whether or not the channel is ON.
+            level={guestLevel}
             isPlaying={guestIsOn && guestLevel > 0.02}
             isOn={guestIsOn}
             onVolumeChange={v => {

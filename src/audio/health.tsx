@@ -7,6 +7,8 @@ import { levelColor, type HealthLevel as CanonicalLevel } from "../components/he
 import { StatTile, PanelStack, HealthPanel, PanelMeter } from "../components/health/sectionChrome";
 // Same mapping the dashboard meters use, so a peak reads the same in both places.
 import { ampToDbfs, dbToPercent } from "../components/health/meterScale";
+import PeakAvgMeter from "../components/meter/PeakAvgMeter";
+import { BUS, useMeterSubscription } from "../components/meter/meterStore";
 
 /** The WIRE format of the `audio:health` feed — the main process emits these uppercase (see the
  *  snapshot builder in electron/audio-health.js). It stays uppercase here because that is what
@@ -177,6 +179,11 @@ function hhmmss(iso: string): string { try { return new Date(iso).toLocaleTimeSt
 // second off the same feed as the mini panel. Display only.
 export function LiveHealthMonitor() {
   const snap = useAudioHealth();
+  // SLICE 2 — every station card's PGM meter reads the meter bus. While this panel is open it subscribes
+  // to all reporting stations (the daemon emits meters only for subscribed stations; closing the panel
+  // lets the subscription lapse in 5 s). The ballistics are wall-time based, so it moves exactly like
+  // the strip and master meters.
+  useMeterSubscription(snap ? snap.stations.map(s => s.stationId) : []);
   // 13px, not 12: this is a reading on a panel meant to be scanned, in some cases from across a
   // studio. The whole bottom half sat at 9–12px, which is why it read as a developer log next to the
   // dashboard above it.
@@ -271,7 +278,16 @@ export function LiveHealthMonitor() {
                 being perfectly legible six inches above. */}
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--s-3, 6px)", marginTop: "var(--s-4, 8px)" }}>
               <StationMeter label="rate" frac={framesFrac(s.framesPerSec)} color={LEVEL_COLOR[s.level]} read={rateLabel(s.framesPerSec)} />
-              <StationMeter label="peak" frac={s.peak} color="#38bdf8" read={peakLabel(s.peak)} scale="audio" />
+              {/* PGM — the programme bus, post-fader: the same meter (average bar, peak dot, hold, OVER,
+                  −18 mark) as the master column, at compact size. It replaced the 10 Hz post-fader
+                  `peak` bar (Slice 2, docs/dsp-meter-bus.md §3). */}
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--s-3, 6px)" }}>
+                <span style={{ width: 52, flexShrink: 0, fontSize: "var(--t-body, 12px)", fontWeight: 700, color: "var(--text-secondary)" }}>PGM</span>
+                <div style={{ flex: 1, minWidth: 60, height: 14, border: "1px solid var(--border-primary)" }}>
+                  <PeakAvgMeter source={{ stationUuid: s.uuid, bus: BUS.PGM }} orientation="h" size="compact"
+                    title="PGM — the programme bus after the master fader: average bar, white peak dot, hold tick, OVER, −18 mark" />
+                </div>
+              </div>
             </div>
           </div>
         ))}

@@ -62,8 +62,9 @@ level ahead of time and it takes effect the moment you turn the channel back on.
 
 1. **Check its ON button first.** Unlit means you cut that channel — press it to restore.
 2. **Check the fader** — it may simply be parked at the bottom.
-3. **Check the meter.** A cut channel shows no movement at all; a channel that is on but very low shows
-   movement down at the bottom of the meter.
+3. **Check the meter.** The strip meter shows the SOURCE, before the fader and before ON/OFF. If it is
+   moving, the source is alive — so a silent channel with a moving meter is cut (ON unlit) or faded down.
+   If it is not moving, the source itself is silent. See **Reading the Meters**.
 
 ## Not in this version (by design)
 
