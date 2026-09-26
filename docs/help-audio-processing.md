@@ -42,7 +42,8 @@ on is always your choice, per station.
    unaffected. Use this to monitor the processed sound.
 3. **Process stream** — apply processing to the Icecast stream — **what your listeners hear**.
 4. **Target loudness** — the loudness the ride aims for. **−14 LUFS** is the streaming standard; louder
-   (e.g. −12) is more aggressive, quieter (e.g. −16) is gentler. The limiter always holds −1 dBTP regardless.
+   (e.g. −12) is more aggressive, quieter (e.g. −16) is gentler. The limiter holds its ceiling regardless
+   (see **The ceiling** below).
 
 Each setting is **per station** and takes effect within a few seconds — no restart. Switch stations and set
 each one independently.
@@ -52,9 +53,12 @@ each one independently.
 When either toggle is on, a **Live meters** panel appears:
 
 - **IN LOUDNESS / OUT LOUDNESS** — the LUFS before and after processing. OUT should sit near your target.
+  OUT is **measured** on what the output actually sent, after the limiter. (Earlier versions showed an
+  estimate here — the input plus the ride's gain — that never saw the limiter. It is now a real measurement.)
 - **peak (dBFS)** — the loudest sample at each stage.
-- **GAIN REDUCTION** — how hard the limiter is working right now (in dB). A little movement on peaks is
-  normal; constant heavy reduction means your target is set too loud.
+- **GAIN REDUCTION** — how hard the limiter is working (in dB). A little movement on peaks is normal;
+  constant heavy reduction means your target is set too loud. On the Processor page the **ride** and the
+  **limiter** each have their own meter — see **Loudness Meter**.
 
 The meters read live off the engine — they show what's **actually** happening on air, not a prediction. If
 they say "waiting for audio…", nothing is playing yet.
@@ -76,9 +80,17 @@ they say "waiting for audio…", nothing is playing yet.
 
 - No multiband / EQ / compression curves — this is a **loudness ride + true-peak limiter**, not a full
   processing chain.
-- The limiter ceiling (−1 dBTP) is fixed; only the loudness **target** is adjustable.
+
+## The ceiling
+
+The **Ceiling** is adjustable on the Processor page (−3 to −0.1 dBTP; −1.0 unless you change it). The label
+under it says what the limiter **does**, not only what it is set to — for example
+**"−1.0 dBTP set · limits at −2.2 dBTP"**. The limiter detects peaks with a safety margin (×1.15, about
+1.2 dB), so it holds the output that much below the setting. The **True peak max** reading on the loudness
+panel shows where your output really lands.
 
 ## Related
 
+- **Loudness Meter** (`docs/help-loudness-meter.md`) — M / S / I / LRA / true peak for each output.
 - **Broadcast delay & DUMP** (Settings → Broadcast) — profanity delay on the stream path.
 - **Categories / Clocks** — programming that feeds the program bus this processes.

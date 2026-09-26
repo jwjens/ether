@@ -98,9 +98,9 @@ The difference matters: an empty bar is evidence of silence; hatching is not.
 
 ## Not in this version (by design)
 
-- **No loudness (LUFS) on these meters.** The average bar is an RMS level, not loudness. Loudness lives in
-  the Audio Processing section of the Health Monitor.
-- **No true-peak.** The white dot is the sample peak. True-peak metering is on the loudness panel.
+- **No loudness (LUFS) on these meters.** The average bar is an RMS level, not loudness. Loudness (M / S /
+  Integrated / LRA) for each output is on the Processor's **Loudness** card — see **Loudness Meter**.
+- **No true-peak.** The white dot is the sample peak. **True peak max** is on the same Loudness card.
 - **One meter per strip.** A strip does not show before- and after-fader side by side; the after-fader
   level of the whole mix is on the master meters.
 
@@ -109,3 +109,4 @@ The difference matters: an empty bar is evidence of silence; hatching is not.
 - **Channel Faders and Channel Cut (ON/OFF)** — `docs/help-channel-faders.md`
 - **Master and Monitor Faders** — `docs/help-master-monitor-faders.md`
 - **Health Monitor** — `docs/help-health-monitor.md`
+- **Loudness Meter** — `docs/help-loudness-meter.md`

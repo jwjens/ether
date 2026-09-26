@@ -6,11 +6,20 @@
 // requestAnimationFrame loop. Nothing re-renders React at meter rate (the lesson in MasterOutput.tsx's
 // LimiterGR note: a meter-rate subscription at a panel root repainted the whole tree).
 import { useEffect } from "react";
+import type { LoudBranch, GrBranch, CeilBranch, LoudBranchName } from "./loudnessWire";
 
 export interface MeterFrameMsg {
   v: number; e: number; n: number;
   ch: number[][]; bus: number[][]; live: number;
   stationUuid?: string | null;
+  /** SLICE 3 — per-branch loudness (the engine's meter thread), ride/limiter per window, the ceiling as set
+   *  and as it acts, the limiter's detection margin (dB) and the loudness frame's sequence. Absent from an
+   *  engine that predates slice 3. docs/dsp-loudness-meter.md §4.1. */
+  ld?: Record<LoudBranchName, LoudBranch>;
+  gr?: Record<LoudBranchName, GrBranch>;
+  ceil?: Record<LoudBranchName, CeilBranch>;
+  margin?: number;
+  ldSeq?: number;
 }
 export interface HeldFrame extends MeterFrameMsg { at: number }
 

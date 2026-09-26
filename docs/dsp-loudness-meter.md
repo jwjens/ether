@@ -576,3 +576,44 @@ Built on Jeff's GO with rulings 1–7:
 - AUX is `M | TRUE_PEAK` only (no I/LRA), as §7 Q4(a) proposed.
 - **Memory:** each LOCAL/STREAM meter preallocates its 24 h history when the cap is set, about 6.9 MB. That
   is ~14 MB per running station, on the meter thread, never in the callback.
+
+---
+
+## 9 · Build report — UI
+
+- **`src/components/meter/loudnessWire.ts`:** the wire types and the panel's arithmetic, pinned by
+  `loudnessWire.test.ts` (5 tests).
+  - Scales are centred on the branch's own target (ruling 5): +9 = −18…+9 LU, +18 = −36…+18 LU. With a
+    −23 target they are exactly the EBU +9 / +18 scales.
+  - The exact ruling-3 label: `"−1.0 dBTP set · limits at −2.2 dBTP"`.
+  - "24 h window" once the cap is reached (ruling 1).
+  - `LOUD_KEYS` / `GR_KEYS` / `CEIL_KEYS` are checked against the engine's json! by contract RULE 8.
+- **`LoudnessPanel.tsx`** (per branch, reading frames outside React):
+  - M and S bars on the target-centred scale, with the target line; colour and word from the existing
+    `loudnessLevel` band (ok ±1 / hot ±3 / over);
+  - Integrated, LRA and True peak max numbers;
+  - RESET, which calls `resetLoudness(stationId, branch)` and surfaces a refusal rather than looking like
+    it worked;
+  - "since hh:mm:ss" / "24 h window";
+  - "incomplete: N s not measured";
+  - "encoder not connected — metering what would be sent";
+  - NOT FED hatching.
+- **`GrMeter.tsx`:**
+  - RIDE is bipolar around 0 across ±clamp; it is never drawn as a reduction.
+  - LIMITER shows the window max, the shared 2 s hold, and "max 10 s". The old panel-level MAX 10s moved
+    here and now reads the per-window max, not the last sample.
+  - OFF (hatched) when that branch's processor isn't running.
+  - On LOCAL it says "room chain" when an aux deck is live.
+- **`ProcessorRack.tsx`:**
+  - the ceiling label under the Ceiling slider, from the engine's reported margin (no literal in the UI);
+  - each branch row: IN, OUT (measured), RIDE and LIMITER meters;
+  - a new Loudness card with both branches.
+  - The single last-sample GR bar is removed.
+- **`PopoutRenderer.tsx`:** the pop-out passes the station it resolved; it still refuses to guess.
+- **Help:**
+  - `docs/help-loudness-meter.md` (new);
+  - `help-audio-processing.md` corrected (OUT is measured; the ceiling is adjustable and says where it
+    limits; the stale "fixed −1 dBTP" line removed);
+  - `help-meters.md` points loudness and true peak at the new card.
+- **Door:** Master Out → Processor, the existing pop-out; no new door.
+- **Runtime: UNVERIFIED** until Jeff sees it on screen.

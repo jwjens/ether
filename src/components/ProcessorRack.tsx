@@ -19,7 +19,15 @@
 //   · Look-ahead, attack, the ×1.15 detection headroom and the 4× oversampling are NOT controls. The
 //     first three would change the delay-line size or let peaks past the ceiling; the last is a
 //     CPU/quality tradeoff, not a sound anyone chooses. They are shown read-only so the chain is legible.
-import { useEffect, useRef, useState } from "react";
+//   · SLICE 3 (docs/dsp-loudness-meter.md): the ceiling label says what the limiter DOES ("−1.0 dBTP set ·
+//     limits at −2.2 dBTP" — the ×1.15 margin, from the engine); ride and limiter are metered SEPARATELY per
+//     branch; and each branch's loudness (M/S/I/LRA/TP, measured on what it sent) sits beside them. OUT is
+//     now a measurement — the estimate it used to be is deleted in the engine.
+import { useState } from "react";
+import LoudnessPanel from "./meter/LoudnessPanel";
+import GrMeter from "./meter/GrMeter";
+import { latestMeters } from "./meter/meterStore";
+import { ceilingLabel } from "./meter/loudnessWire";
 
 // THE SHIPPED CHAIN. These are the values ProgramProcessor::new uses, mirrored here so an unstored
 // setting can render its real current value. Keep in step with native/src/program_processor.rs and the
@@ -76,6 +84,9 @@ interface Props {
   sendError?: string | null;
   /** The operator engaged a bypass the engine has not confirmed. Never left silent. */
   bypassPending?: boolean;
+  /** SLICE 3 — the station these meters are for (the pop-out resolves it and refuses to guess). */
+  stationId?: number | null;
+  stationUuid?: string | null;
 }
 
 const LABEL: React.CSSProperties = { fontSize: 11, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.06em" };
@@ -125,22 +136,11 @@ export default function ProcessorRack(p: Props) {
   const active = p.presets.find(x => x.name === p.activePreset) || null;
   const modified = !!active && !paramsEqual(active.params, prm);
   const [saveName, setSaveName] = useState("");
-  const grPeak = useRef(0);
-  const [grHold, setGrHold] = useState(0);
-  const grWindow = useRef<{ t: number; v: number }[]>([]);
-  const [gr10s, setGr10s] = useState(0);
-
-  // Peak-hold with decay, and MAX GR OVER 10s as a number. A 5-second seam on a 15 Hz needle is not
-  // something anyone can read while it happens; the held number is what you look at afterwards.
-  useEffect(() => {
-    const gr = p.meters[b]?.grDb ?? 0;
-    grPeak.current = Math.max(gr, grPeak.current * 0.97);
-    setGrHold(grPeak.current);
-    const now = Date.now();
-    grWindow.current.push({ t: now, v: gr });
-    grWindow.current = grWindow.current.filter(x => now - x.t <= 10_000);
-    setGr10s(grWindow.current.reduce((m, x) => Math.max(m, x.v), 0));
-  }, [p.meters, b]);
+  // SLICE 3 — the limiter's detection margin, as the ENGINE reports it (it limits `margin` dB below the
+  // ceiling you set). Read from the meter bus, never a literal here; absent from an engine older than slice 3.
+  // (The GR peak-hold and MAX 10 s number that lived here moved into GrMeter, fed by the per-window maximum
+  // the engine now reports instead of the last sample of a buffer.)
+  const margin = latestMeters(p.stationUuid)?.margin;
 
   return (
     <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 12, height: "100%", boxSizing: "border-box", overflowY: "auto" }}>
@@ -270,6 +270,15 @@ export default function ProcessorRack(p: Props) {
             <Row label="Ceiling" value={prm.ceilingDbtp} unit=" dBTP" min={-3} max={-0.1} step={0.1}
               shipped={!st.ceilingDbtp} onChange={v => p.onChange(b, { ceilingDbtp: v })}
               hint="Never reaches 0. Above about −0.3 dBTP the stream's encoder makes inter-sample overs that clip on the listener's decoder — distortion you cannot hear locally." />
+            {/* WHAT IT DOES, not only what it is set to (Jeff's ruling 3): the limiter detects with a margin, so
+                it holds the output that far BELOW the setting. The True peak max in the loudness panel shows
+                where the output really lands. */}
+            <div data-ceiling-label style={{ fontSize: 11, color: "var(--text-secondary)", margin: "-4px 0 8px 88px" }}
+              title="The limiter detects true peaks with a 1.15× margin, so it holds the output that much below the ceiling you set. Whether the margin stays is decided once the true-peak meter shows where the output lands.">
+              {typeof margin === "number"
+                ? ceilingLabel(prm.ceilingDbtp, prm.ceilingDbtp - margin)
+                : `${prm.ceilingDbtp.toFixed(1)} dBTP set · the engine has not reported where it limits`}
+            </div>
             <Row label="Release" value={prm.releaseMs} unit=" ms" min={30} max={500} step={10}
               shipped={!st.releaseMs} onChange={v => p.onChange(b, { releaseMs: v })}
               hint="How quickly it lets go after a peak. Short distorts bass and pumps; long leaves the programme ducked after a transient." />
@@ -301,28 +310,25 @@ export default function ProcessorRack(p: Props) {
                                color: (p.split ? p.branch : "local") === x ? "#8868D8" : "var(--text-tertiary)" }}>
                   {BRANCH_LABEL[x]}
                 </span>
-                <span><span style={LABEL}>IN </span>{m ? m.inLufs.toFixed(1) : "—"}</span>
-                <span>
-                  <span style={LABEL}>RIDE </span>
-                  {m ? (m.rideGainDb >= 0 ? "+" : "") + m.rideGainDb.toFixed(1) : "—"} dB
-                  {bp.ride && wr != null && (
-                    <span style={{ color: "var(--text-tertiary)", marginLeft: 7 }}
-                          title="What this branch's ride would apply at this input loudness if it were not bypassed. A projection from the target and clamp - not a measurement of anything happening.">
-                      (would ride {wr >= 0 ? "+" : ""}{wr.toFixed(1)} dB)
-                    </span>
-                  )}
+                <span title="The ride's input: momentary loudness of the programme before it is processed. Runs only while this branch's processing is on.">
+                  <span style={LABEL}>IN </span>{m ? m.inLufs.toFixed(1) : "—"}
                 </span>
-                <span style={{ flex: 1, display: "flex", alignItems: "center", gap: 7, minWidth: 90 }}>
-                  <span style={LABEL}>GR</span>
-                  <span style={{ flex: 1, height: 9, background: "var(--bg-tertiary)", position: "relative", minWidth: 60 }}>
-                    <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${Math.min(100, (m?.grDb ?? 0) / 12 * 100)}%`, background: "#8868D8" }} />
-                    {(p.split ? p.branch : "local") === x && (
-                      <span style={{ position: "absolute", top: -1, bottom: -1, left: `${Math.min(100, grHold / 12 * 100)}%`, width: 2, background: "#f59e0b" }} />
+                <span title="MEASURED: momentary loudness of what this output actually sent (after the limiter), from the engine's loudness meter.">
+                  <span style={LABEL}>OUT </span>{m ? m.outLufs.toFixed(1) : "—"}
+                </span>
+                {/* RIDE and LIMITER, separately (slice 3) — per-window values from the meter bus. */}
+                <span style={{ flex: 1, display: "flex", flexDirection: "column", gap: 3, minWidth: 180 }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ flex: 1, minWidth: 0 }}><GrMeter stationUuid={p.stationUuid} branch={x} kind="ride" clampDb={p.params[x].rideClamp} /></span>
+                    {bp.ride && wr != null && (
+                      <span style={{ color: "var(--text-tertiary)", fontSize: 10 }}
+                            title="What this branch's ride would apply at this input loudness if it were not bypassed. A projection from the target and clamp - not a measurement of anything happening.">
+                        (would ride {wr >= 0 ? "+" : ""}{wr.toFixed(1)} dB)
+                      </span>
                     )}
                   </span>
-                  <span style={{ minWidth: 34, textAlign: "right" }}>{(m?.grDb ?? 0).toFixed(1)}</span>
+                  <GrMeter stationUuid={p.stationUuid} branch={x} kind="lim" />
                 </span>
-                <span><span style={LABEL}>OUT </span>{m ? m.outLufs.toFixed(1) : "—"}</span>
                 {(bp.ride || bp.limiter) && (
                   <span style={{ fontSize: 10, fontWeight: 800, color: "#f59e0b" }}>
                     {bp.ride && bp.limiter ? "BOTH BYP" : bp.ride ? "RIDE BYP" : "LIM BYP"}
@@ -331,11 +337,24 @@ export default function ProcessorRack(p: Props) {
               </div>
             );
           })}
-          <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 7 }}>
-            <span title="The deepest gain reduction on the selected branch in the last 10 seconds - a seam lasts about five, and a 15 Hz needle cannot be read while it happens.">
-              MAX 10s ({BRANCH_LABEL[p.split ? p.branch : "local"].toLowerCase()}) {gr10s.toFixed(1)} dB
-            </span>
-            {!p.meters.local && !p.meters.stream && " · waiting for audio — meters run only while processing is on"}
+          {!p.meters.local && !p.meters.stream && (
+            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 7 }}>
+              IN, RIDE and LIMITER run only while processing is on · the loudness below always runs
+            </div>
+          )}
+        </div>
+
+        {/* LOUDNESS, PER OUTPUT (slice 3) — BS.1770 measured on what each branch actually sent: Monitor = the
+            local device feed before the monitor knobs, Stream = exactly what the encoder gets. Scales are
+            centred on each branch's own target. Reset restarts Integrated, LRA and True peak max. */}
+        <div style={{ ...CARD, flex: "0 0 auto" }}>
+          <div style={{ display: "flex", gap: 18 }}>
+            {(["local", "stream"] as Branch[]).map(x => (
+              <div key={x} style={{ flex: 1, minWidth: 0 }}>
+                <LoudnessPanel stationId={p.stationId} stationUuid={p.stationUuid} branch={x}
+                               target={p.params[x].targetLufs} label={BRANCH_LABEL[x]} />
+              </div>
+            ))}
           </div>
         </div>
     </div>

@@ -116,7 +116,7 @@ function StudioProPopout() {
 // listening to another. Until the active station resolves, this window says so and renders no controls.
 // (Same rule the Jukebox pop-out follows — see its header.)
 function ProcessorPopout() {
-  const { stationId, isReady } = useActiveStation();
+  const { stationId, stationUuid, isReady } = useActiveStation();
   const proc = useProcessorParams(stationId ?? null);
   // Which branch the CONTROLS are editing. Purely a view choice, so it lives here rather than in the
   // hook — the meters show both branches regardless.
@@ -153,6 +153,8 @@ function ProcessorPopout() {
       sendError={proc.sendError}
       bypassPending={proc.bypassPending}
       streamBranchUnreported={proc.streamBranchUnreported}
+      stationId={stationId}
+      stationUuid={stationUuid}
     />
   );
 }
