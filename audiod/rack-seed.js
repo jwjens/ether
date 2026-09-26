@@ -124,4 +124,37 @@ function legacyWrites(doc) {
   return out.map(([k, v]) => [k, String(v)]);
 }
 
-module.exports = { SHIPPED, RACK_KEYS, seedMasterRack, branchParams, geqOf, legacyWrites };
+// ── SLICE 5 — the channel racks (docs/dsp-channel-rack-eq.md §3) ─────────────────────────────────────────
+// One per fader: station_config_kv `rack_ch_<slot>`. NO seed and NO write-back — no earlier build stored a
+// channel EQ that anything reads (the deck EQ drawer's `eq_deck_*` keys never reached audio and are discarded,
+// Jeff's ruling 4). A fader with no document has an EMPTY rack: nothing runs, today's exact arithmetic.
+
+/** The engine's faders, in engine slot order (native/src/audio.rs deck_index). */
+const CHANNEL_SLOTS = ["A", "B", "C", "D", "E", "F", "CART", "S1", "S2", "S3", "S4", "S5"];
+const channelKey = (slot) => `rack_ch_${slot}`;
+const CHANNEL_KEYS = CHANNEL_SLOTS.map(channelKey);
+const emptyChannelRack = () => ({ v: 1, sections: { ch: [] } });
+
+/**
+ * A fader's channel rack document.
+ * @param {(key: string) => string | undefined} get
+ * @returns {{ doc: object, source: "stored" | "empty" }}
+ */
+function channelRack(get, slot) {
+  const stored = get(channelKey(slot));
+  if (stored) {
+    try {
+      const d = JSON.parse(stored);
+      if (d && d.v === 1 && d.sections && Array.isArray(d.sections.ch)) return { doc: d, source: "stored" };
+    } catch { /* malformed → empty: a bad document must never put processing on a fader */ }
+  }
+  return { doc: emptyChannelRack(), source: "empty" };
+}
+
+/** Does anything in this channel rack run? (a module present AND in) */
+function channelRackActive(doc) {
+  return !!(doc && doc.sections && Array.isArray(doc.sections.ch) && doc.sections.ch.some(s => s && s.module && s.in !== false));
+}
+
+module.exports = { SHIPPED, RACK_KEYS, seedMasterRack, branchParams, geqOf, legacyWrites,
+  CHANNEL_SLOTS, CHANNEL_KEYS, channelKey, channelRack, channelRackActive, emptyChannelRack };

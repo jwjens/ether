@@ -80,6 +80,14 @@ pub struct RenderCfg {
     /// Never serialized: the goldens' manifest cfg is unchanged by its existence.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub via_rack: bool,
+    /// SLICE 5 — give EVERY fader a channel rack that is present but OUT (Filters with HPF+LPF on, a non-flat PEQ,
+    /// both slots OUT), through the callback's command queue. The harness must still null: an OUT rack runs
+    /// nothing. Never serialized.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub ch_racks_out: bool,
+    /// SLICE 5 — a channel rack document for deck A (the measurement renders). Never serialized when absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ch_rack_a: Option<String>,
 }
 
 /// The aux deck of a render: its file, whether its duck is armed, and its monitor-slot level (which, as
@@ -101,6 +109,7 @@ impl Default for RenderCfg {
             stream_ride_rate: None, stream_ride_clamp: None,
             master_vol: 1.0, gain_db: 0.0, eq_bands: None,
             block_frames: None, device_rate: None, monitor_vol: None, aux: None, via_rack: false,
+            ch_racks_out: false, ch_rack_a: None,
         }
     }
 }
@@ -169,6 +178,13 @@ pub fn rack_doc_json(cfg: &RenderCfg) -> String {
         }
     }).to_string()
 }
+
+/// SLICE 5 — the "present but OUT" channel rack every fader gets in the null run: HPF and LPF switched on inside
+/// the Filters module, a non-flat PEQ — and both SLOTS OUT. It must run nothing.
+pub const CH_RACK_OUT_DOC: &str = r#"{"v":1,"sections":{"ch":[
+    {"id":"s-flt","module":{"type":"filters","hpf":{"in":true,"freq":120},"lpf":{"in":true,"freq":9000}},"in":false},
+    {"id":"s-peq","module":{"type":"peq","bands":[{"freq":80,"gain":6,"width":1,"shelf":true},{"freq":1000,"gain":-4,"width":1},
+      {"freq":3000,"gain":3,"width":2},{"freq":10000,"gain":-6,"width":1,"shelf":true}]},"in":false}]}}"#;
 
 /// Render one file through the live mixer. Deck A, fader at unity, channel ON; optionally an aux deck D.
 pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
@@ -256,6 +272,22 @@ pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
             r.eq_version = b.eq_version_applied.wrapping_add(1);
             params.rack = r;
             h.cmd_prod.try_push(crate::rt::RtCmd::Params(Box::new(params))).map_err(|_| "rack command queue full".to_string())?;
+        }
+        if cfg.ch_racks_out || cfg.ch_rack_a.is_some() {
+            // SLICE 5 — channel racks through the same queue, planned exactly as the dispatch thread plans them.
+            let mut params = b.params();
+            let fs = RATE as f64;   // the program rate (44 100) — the rate the dispatch thread plans at
+            if cfg.ch_racks_out {
+                let r = crate::rack::ChannelRack::from_doc_json(CH_RACK_OUT_DOC)?;
+                for i in 0..params.ch_rack.len() {
+                    params.ch_rack[i] = crate::rack::ChannelRackParams { rack: r, plan: r.plan(fs), version: 1 };
+                }
+            }
+            if let Some(ref d) = cfg.ch_rack_a {
+                let r = crate::rack::ChannelRack::from_doc_json(d)?;
+                params.ch_rack[0] = crate::rack::ChannelRackParams { rack: r, plan: r.plan(fs), version: 2 };
+            }
+            h.cmd_prod.try_push(crate::rt::RtCmd::Params(Box::new(params))).map_err(|_| "channel rack command queue full".to_string())?;
         }
         crate::loudness::LoudnessMeters::new(h.loud_cons, h.loud_shared, RATE)
     };
@@ -704,6 +736,30 @@ mod parity {
         assert_eq!(allocs, 0, "the callback allocated on the rack path");
     }
 
+    // ── 1c · SLICE 5 — EVERY FADER WITH A RACK PRESENT BUT OUT NULLS AGAINST THE EXISTING GOLDENS ─────────
+    #[test]
+    fn channel_racks_present_but_out_null_against_existing_goldens() {
+        let m = manifest().expect("native/goldens/manifest.json missing");
+        let renders = m["renders"].as_object().expect("manifest.renders");
+        let (mut exact, mut fails, mut allocs) = (0usize, Vec::new(), 0u64);
+        let plan = plan();
+        for (id, path, cfg) in &plan {
+            let cfg = RenderCfg { ch_racks_out: true, ..cfg.clone() };
+            let a0 = crate::rt::tl_rt_allocs();
+            let r = render_offline(path.to_str().unwrap(), &cfg).unwrap_or_else(|e| panic!("{}: {}", id, e));
+            allocs += crate::rt::tl_rt_allocs() - a0;
+            let g = &renders[id.as_str()];
+            let h = |v: &[f32]| format!("{:016x}", fnv_bits(v));
+            let ok = h(&r.monitor) == g["monitor"]["hash"].as_str().unwrap_or("")
+                  && h(&r.stream) == g["stream"]["hash"].as_str().unwrap_or("")
+                  && (cfg.aux.is_none() || h(&r.aux) == g["aux"]["hash"].as_str().unwrap_or(""));
+            if ok { exact += 1 } else { fails.push(id.clone()) }
+        }
+        println!("[ch-out-null] {}/{} renders bit-exact with a Filters+PEQ rack present but OUT on all 12 faders · {} allocations inside the callback", exact, plan.len(), allocs);
+        assert!(fails.is_empty(), "an OUT channel rack changed the audio: {:?}", fails);
+        assert_eq!(allocs, 0);
+    }
+
     // ── 2 · LINKED ⇒ monitor == stream, bit-exact (and OFF, and EQ which is LINKED + GEQ) ────────────
     #[test]
     fn linked_off_and_eq_taps_identical() {
@@ -1036,5 +1092,95 @@ mod loudness_path {
                  a.fed, a.m, a.tp_max, ind_tp.unwrap_or(f64::NAN), a.measured_frames);
         assert!(a.measured_frames > 0, "the aux feed was never measured");
         assert!((a.tp_max - ind_tp.unwrap()).abs() < 0.05, "aux TP {} vs the aux ring {}", a.tp_max, ind_tp.unwrap());
+    }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// SLICE 5 — THE CHANNEL EQ MEASURED THROUGH THE REAL CALLBACK (docs/dsp-channel-rack-eq.md §5): steady sines on
+// deck A with a channel rack IN, the level of the monitor tap (dl/dr at unity) compared to the input, against the
+// values COMPUTED from the same biquads (and those against the spec's numbers). Plus the spec's own receipt: the
+// corpus sweep through an HPF at 100 Hz.
+//   cd native && cargo test --release --lib offline_render::channel_eq -- --nocapture --test-threads=2
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+#[cfg(test)]
+mod channel_eq {
+    use super::*;
+    use std::path::{Path, PathBuf};
+
+    const A: f64 = 0.251_188_643;   // −12 dBFS
+    fn inputs_dir() -> PathBuf { Path::new(env!("CARGO_MANIFEST_DIR")).join("goldens").join("inputs") }
+    /// A 6 s stereo sine (16-bit, f64-synthesized), rewritten only if it differs.
+    fn tone(f: f64) -> PathBuf {
+        let p = inputs_dir().join(format!("ch_tone_{}.wav", f as u32));
+        let n = RATE as usize * 6;
+        let mut v = Vec::with_capacity(n * 2);
+        for i in 0..n { let x = (A * (2.0 * std::f64::consts::PI * f * i as f64 / RATE as f64).sin()) as f32; v.push(x); v.push(x); }
+        let want = wav_pcm16_bytes(&v);
+        if std::fs::read(&p).ok().as_deref() != Some(&want[..]) { std::fs::write(&p, &want).unwrap(); }
+        p
+    }
+    /// The level of the last 2 s of the monitor tap relative to the input tone, dB (filters settled, fades done).
+    fn level_db(f: f64, rack: &str) -> f64 {
+        let r = render_offline(tone(f).to_str().unwrap(), &RenderCfg { ch_rack_a: Some(rack.to_string()), ..RenderCfg::default() }).unwrap();
+        let frames = r.monitor.len() / 2;
+        let (lo, hi) = (frames - RATE as usize * 2 - TAIL_BUFFERS * BLOCK, frames - TAIL_BUFFERS * BLOCK);
+        let rms = (r.monitor[lo * 2..hi * 2].iter().step_by(2).map(|&x| (x as f64) * (x as f64)).sum::<f64>() / (hi - lo) as f64).sqrt();
+        20.0 * (rms / (A / 2f64.sqrt())).log10()
+    }
+    fn doc(module: &str) -> String { format!(r#"{{"v":1,"sections":{{"ch":[{{"module":{},"in":true}}]}}}}"#, module) }
+
+    #[test]
+    fn hpf_peq_lpf_measured_against_the_computed_values() {
+        let fs = RATE as f64;
+        let hpf = doc(r#"{"type":"filters","hpf":{"in":true,"freq":100},"lpf":{"in":false,"freq":20000}}"#);
+        let peq = doc(r#"{"type":"peq","bands":[{"freq":100,"gain":0,"width":1},{"freq":1000,"gain":6,"width":1},{"freq":3000,"gain":0,"width":1},{"freq":8000,"gain":0,"width":1}]}"#);
+        let lpf = doc(r#"{"type":"filters","hpf":{"in":false,"freq":16.1},"lpf":{"in":true,"freq":2000}}"#);
+        let h = crate::rack::butter4(100.0, fs, true);
+        let b = crate::rack::rbj_peak(1000.0, 6.0, 1.0, fs);
+        let l = crate::rack::butter4(2000.0, fs, false);
+        let cases: Vec<(&str, &String, f64, f64, f64)> = vec![
+            ("HPF 100 Hz", &hpf, 100.0, h[0].mag_db(100.0, fs) + h[1].mag_db(100.0, fs), 0.1),
+            ("HPF 100 Hz", &hpf, 50.0, h[0].mag_db(50.0, fs) + h[1].mag_db(50.0, fs), 0.3),
+            ("HPF 100 Hz", &hpf, 25.0, h[0].mag_db(25.0, fs) + h[1].mag_db(25.0, fs), 0.5),
+            ("PEQ 1 kHz +6, 1 oct", &peq, 1000.0, b.mag_db(1000.0, fs), 0.1),
+            ("PEQ 1 kHz +6, 1 oct", &peq, 100.0, b.mag_db(100.0, fs), 0.1),
+            ("PEQ 1 kHz +6, 1 oct", &peq, 10_000.0, b.mag_db(10_000.0, fs), 0.1),
+            ("LPF 2 kHz", &lpf, 2000.0, l[0].mag_db(2000.0, fs) + l[1].mag_db(2000.0, fs), 0.1),
+            ("LPF 2 kHz", &lpf, 4000.0, l[0].mag_db(4000.0, fs) + l[1].mag_db(4000.0, fs), 0.3),
+        ];
+        let mut fails = Vec::new();
+        for (name, rack, f, want, tol) in cases {
+            let got = level_db(f, rack);
+            let ok = (got - want).abs() <= tol;
+            println!("[ch-eq-callback] {:<22} at {:>6} Hz: measured {:>8.3} dB · computed {:>8.3} dB · tol ±{}  {}", name, f, got, want, tol, if ok { "PASS" } else { "FAIL" });
+            if !ok { fails.push(format!("{} at {} Hz", name, f)); }
+        }
+        assert!(fails.is_empty(), "{:?}", fails);
+    }
+
+    #[test]
+    fn the_spec_receipt_the_sweep_through_an_hpf_at_100_hz() {
+        // The corpus sweep (log 20 Hz → 20 kHz over 10 s, −18 dBFS). Its instantaneous frequency is
+        // f(t) = 20·1000^(t/10), so it passes f at t = 10·ln(f/20)/ln(1000). Level = the output/input RMS ratio in a
+        // ±25 ms window there — coarser than steady tones, hence ±0.5 dB.
+        let sweep = inputs_dir().join("sweep_20_20k_m18.wav");
+        let hpf = doc(r#"{"type":"filters","hpf":{"in":true,"freq":100},"lpf":{"in":false,"freq":20000}}"#);
+        let r = render_offline(sweep.to_str().unwrap(), &RenderCfg { ch_rack_a: Some(hpf), ..RenderCfg::default() }).unwrap();
+        let dry = render_offline(sweep.to_str().unwrap(), &RenderCfg::default()).unwrap();
+        let fs = RATE as f64;
+        let h = crate::rack::butter4(100.0, fs, true);
+        let mut fails = Vec::new();
+        for (f, tol) in [(100.0, 0.5), (50.0, 0.5)] {
+            let t = 10.0 * (f / 20.0f64).ln() / 1000f64.ln();
+            let (lo, hi) = (((t - 0.025) * fs) as usize, ((t + 0.025) * fs) as usize);
+            let rms = |v: &[f32]| (v[lo * 2..hi * 2].iter().step_by(2).map(|&x| (x as f64) * (x as f64)).sum::<f64>() / (hi - lo) as f64).sqrt();
+            let got = 20.0 * (rms(&r.monitor) / rms(&dry.monitor)).log10();
+            let want = h[0].mag_db(f, fs) + h[1].mag_db(f, fs);
+            let ok = (got - want).abs() <= tol;
+            println!("[ch-eq-sweep] HPF 100 Hz on the corpus sweep at {:>4} Hz (t = {:.3} s): {:>8.3} dB · computed {:>8.3} dB · tol ±{}  {}", f, t, got, want, tol, if ok { "PASS" } else { "FAIL" });
+            if !ok { fails.push(f); }
+        }
+        assert!(fails.is_empty(), "{:?}", fails);
     }
 }

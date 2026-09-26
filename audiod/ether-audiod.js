@@ -325,6 +325,12 @@ const handlers = {
     try { return JSON.parse(A.audioSetMasterRack(Number(m.stationId), String(m.rack))); }
     catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
   },
+  // SLICE 5 — one fader's channel rack. Same answer shape as the master: { ok, reason }.
+  setChannelRack:     (m) => {
+    if (typeof A.audioSetChannelRack !== "function") return { ok: false, reason: "this audio engine predates the channel EQ — fully close and reopen Ether" };
+    try { return JSON.parse(A.audioSetChannelRack(Number(m.stationId), String(m.slot), String(m.rack))); }
+    catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+  },
   getState:           (m) => JSON.parse(A.audioGetState(m.stationId)),
   getLevels:          (m) => JSON.parse(A.audioGetLevels(m.stationId)),
   // SLICE 2 — the meter bus. A renderer names the stations it is drawing meters for; the daemon emits their
@@ -563,7 +569,8 @@ const meterTimer = setInterval(() => {
     try { mt = JSON.parse(A.audioGetMeters(sid)); } catch { continue; }
     // SLICE 3 — loudness per branch (ld), ride/limiter per branch (gr), the ceiling as set and as it acts
     // (ceil, margin), and the loudness frame's sequence (ldSeq). docs/dsp-loudness-meter.md §4.1.
-    broadcast({ event: "meters", stationUuid: sub.uuid, v: mt.v, e: mt.e, n: mt.n, ch: mt.ch, bus: mt.bus, live: mt.live,
+    // SLICE 5 — chPost: each channel after its rack (docs/dsp-channel-rack-eq.md §2).
+    broadcast({ event: "meters", stationUuid: sub.uuid, v: mt.v, e: mt.e, n: mt.n, ch: mt.ch, chPost: mt.chPost, bus: mt.bus, live: mt.live,
                 ld: mt.ld, gr: mt.gr, ceil: mt.ceil, margin: mt.margin, ldSeq: mt.ldSeq });
   }
 }, 33);

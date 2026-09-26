@@ -398,6 +398,8 @@ pub enum AudioCmd {
     /// SLICE 4 — the whole master rack, parsed and validated (rack.rs). The live-only bypasses are NOT taken
     /// from it: the ride/limiter IN the engine is running is kept (Jeff's 2026-09-07 ruling).
     SetMasterRack(crate::rack::MasterRack),
+    /// SLICE 5 — one fader's channel rack (parsed and clamped in rack.rs); `slot` is the engine slot index.
+    SetChannelRack { slot: usize, rack: crate::rack::ChannelRack },
     /// Choose the output device for the AUX monitor bus. Empty string = none = the aux stream is
     /// closed and the bus is silent.
     SetAuxDevice(String),
@@ -758,6 +760,10 @@ pub struct BusState {
     /// callback folds each buffer's taps into it; the reader acknowledges an epoch; the callback then starts
     /// the next window. Published inside every MeterFrame.
     pub(crate) meters_acc: MeterBlock,
+    /// SLICE 5 — one channel rack per fader: its DSP state (preallocated; biquads + crossfade) and the rack
+    /// params the callback last adopted (by version).
+    pub(crate) chdsp: [crate::chdsp::ChannelDsp; SLOT_COUNT],
+    pub(crate) ch_rack: [crate::rack::ChannelRackParams; SLOT_COUNT],
     /// SLICE 3 — the callback end of the loudness rings (loudness.rs). push() is a copy; the BS.1770 state
     /// lives on the station's meter thread. Dropping this stops that thread.
     pub(crate) loud: LoudTaps,
@@ -872,6 +878,8 @@ impl BusState {
             eq_bypass_applied: false,
             handles: None,
             meters_acc: MeterBlock { epoch: 1, ..MeterBlock::default() },
+            chdsp: [crate::chdsp::ChannelDsp::default(); SLOT_COUNT],
+            ch_rack: [crate::rack::ChannelRackParams::default(); SLOT_COUNT],
             loud,
         };
         // The meter channel starts on THIS state's own first frame, so the first read is the truth.
@@ -897,6 +905,7 @@ impl BusState {
             proc_local: self.proc_local,
             proc_stream: self.proc_stream,
             rack: self.rack_from_fields(),
+            ch_rack: self.ch_rack,
             duck_threshold: self.duck_threshold,
             duck_depth_db: self.duck_depth_db,
             duck_attack_ms: self.duck_attack_ms,
@@ -991,6 +1000,14 @@ impl BusState {
             }
         }
         self.rack = p.rack;
+        // SLICE 5 — a channel's rack is adopted only when its version changes: the DSP then crossfades to the new
+        // plan (coefficients were computed on the dispatch thread; nothing here does trigonometry).
+        for i in 0..SLOT_COUNT {
+            if p.ch_rack[i].version != self.ch_rack[i].version {
+                self.chdsp[i].set(p.ch_rack[i].plan);
+                self.ch_rack[i] = p.ch_rack[i];
+            }
+        }
     }
 
     /// Free `g` OFF the audio thread. If the garbage queue is full it is leaked and counted, never dropped here.
@@ -1292,6 +1309,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::SetProcessorParams { .. } => {}
                             AudioCmd::SetProcessorBypass { .. } => {}
                             AudioCmd::SetMasterRack(_) => {}
+                            AudioCmd::SetChannelRack { .. } => {}
                             AudioCmd::StartStream { server, port, mount, station_name, .. } => {
                                 eprintln!("Stream: {}:{}{} ({})", server, port, mount, station_name);
                             }
@@ -2955,6 +2973,15 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 p.rack.set_ride(crate::rack::BRANCH_LOCAL, crate::rack::clamp_ride(ride));
                                 ctl.params_changed();
                             }
+                            AudioCmd::SetChannelRack { slot, rack } => {
+                                // SLICE 5 — the coefficients are computed HERE (dispatch thread, f64) and ride the
+                                // Params block; the callback adopts them by version and crossfades.
+                                if slot < SLOT_COUNT {
+                                    let v = ctl.params.ch_rack[slot].version.wrapping_add(1);
+                                    ctl.params.ch_rack[slot] = crate::rack::ChannelRackParams { rack, plan: rack.plan(PROGRAM_RATE as f64), version: v };
+                                    ctl.params_changed();
+                                }
+                            }
                             AudioCmd::SetMasterRack(new_rack) => {
                                 // SLICE 4 — the whole master rack (already parsed and clamped in rack.rs). The
                                 // live-only bypasses are kept as the engine is running them; the GEQ's
@@ -3278,6 +3305,7 @@ pub(crate) struct Scratch {
     str_l: Box<[f32]>, str_r: Box<[f32]>,            // STREAM-branch processed
     room_out_l: Box<[f32]>, room_out_r: Box<[f32]>,  // the room chain's output
     dev_l: Box<[f32]>, dev_r: Box<[f32]>,            // the clamped clean tap to the device
+    rack_l: Box<[f32]>, rack_r: Box<[f32]>,          // SLICE 5 — one channel's post-trim frames through its rack
     feed: Box<[f32]>,                                // S4 — one deck's interleaved frames popped from its ring
     /// S6 — the station's health counters (underruns, lock misses, overruns, …). Shared with the station's
     /// BusState and every Scratch it opens, so a device reopen does not reset them.
@@ -3297,7 +3325,7 @@ impl Scratch {
             imm_l: lane(), imm_r: lane(), det_l: lane(), det_r: lane(),
             out_l: lane(), out_r: lane(), loc_l: lane(), loc_r: lane(),
             str_l: lane(), str_r: lane(), room_out_l: lane(), room_out_r: lane(),
-            dev_l: lane(), dev_r: lane(),
+            dev_l: lane(), dev_r: lane(), rack_l: lane(), rack_r: lane(),
             feed: vec![0f32; MAX_PROG_FRAMES * 2].into_boxed_slice(),
             counters,
             events: None,
@@ -3356,7 +3384,7 @@ pub(crate) fn mixer_callback(
     let Scratch {
         mix_l, mix_r, room_l, room_r, imm_room_l, imm_room_r, core_l, core_r, aux_l, aux_r,
         src_l, src_r, imm_l, imm_r, det_l, det_r, out_l, out_r, loc_l, loc_r, str_l, str_r,
-        room_out_l, room_out_r, dev_l, dev_r, feed, counters, events,
+        room_out_l, room_out_r, dev_l, dev_r, rack_l, rack_r, feed, counters, events,
     } = sc;
     let counters: &RtCounters = counters;
 
@@ -3407,8 +3435,12 @@ pub(crate) fn mixer_callback(
     // SLICE 2 — this buffer's PRE-FADER taps per channel (post-trim, pre-cut). On the stack; folded into
     // bus.meters_acc after the deck loop releases its borrow.
     let mut ch_meter = [MeterTap::default(); SLOT_COUNT];
+    // SLICE 5 — this buffer's POST-RACK taps (after the channel's EQ, still pre-fader).
+    let mut ch_post = [MeterTap::default(); SLOT_COUNT];
+    // Disjoint borrows of the state for the deck loop: the decks, and the channel racks' DSP.
+    let bs: &mut BusState = &mut *bus;
 
-    for (i, deck) in bus.decks.iter_mut().enumerate() {
+    for (i, deck) in bs.decks.iter_mut().enumerate() {
         if !deck.active || deck.paused { continue; }
         let Some(ref mut src) = deck.source else {
             // active=true but source=None is a stuck state — self-heal so GetLevel
@@ -3497,13 +3529,26 @@ pub(crate) fn mixer_callback(
             t.sumsq[0] += sl;
             t.sumsq[1] += sr;
         }
+        // SLICE 5 — THE CHANNEL RACK: post-trim, pre-fader, pre-duck (docs/dsp-channel-rack-eq.md §2).
+        // A channel whose rack runs NOTHING (empty, every module OUT, no fade in progress) keeps today's exact
+        // arithmetic below — `feed × (volume × trim)` — so every existing golden is bit-identical by construction.
+        // Only a channel with a module IN takes `((feed × trim) → EQ) × fader`, which rounds differently: that is
+        // the processing the operator asked for.
+        let rack_on = bs.chdsp[i].active();
+        let fader = if deck.muted { 0.0 } else { deck.volume };
+        if rack_on {
+            let (rl, rr) = (&mut rack_l[..take], &mut rack_r[..take]);
+            for f in 0..take { rl[f] = feed[2 * f] * trim; rr[f] = feed[2 * f + 1] * trim; }
+            bs.chdsp[i].process(rl, rr);
+            ch_post[i].add(rl, rr);
+        } else {
+            ch_post[i] = ch_meter[i];   // nothing ran: post-rack IS pre-rack
+        }
         for f in 0..take {
             {
                 {
-                    let l = feed[2 * f];
-                    let r = feed[2 * f + 1];
-                    let lv = l * vol;
-                    let rv = r * vol;
+                    let (lv, rv) = if rack_on { (rack_l[f] * fader, rack_r[f] * fader) }
+                                   else { (feed[2 * f] * vol, feed[2 * f + 1] * vol) };
                     mix_l[f] += lv;                       // AIR — every slot, unchanged
                     mix_r[f] += rv;
                     if !is_aux {                          // programme base — aux decks excluded entirely
@@ -3564,6 +3609,10 @@ pub(crate) fn mixer_callback(
     bus.meters_acc.frames += prog_frames as u64;
     for i in 0..SLOT_COUNT {
         let (a, t) = (&mut bus.meters_acc.ch[i], &ch_meter[i]);
+        a.peak = [a.peak[0].max(t.peak[0]), a.peak[1].max(t.peak[1])];
+        a.sumsq[0] += t.sumsq[0];
+        a.sumsq[1] += t.sumsq[1];
+        let (a, t) = (&mut bus.meters_acc.ch_post[i], &ch_post[i]);
         a.peak = [a.peak[0].max(t.peak[0]), a.peak[1].max(t.peak[1])];
         a.sumsq[0] += t.sumsq[0];
         a.sumsq[1] += t.sumsq[1];
@@ -4299,5 +4348,149 @@ fn drain_program_bus(
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
+    }
+}
+
+// ── SLICE 5 — the channel racks' cost on the audio thread (docs/dsp-channel-rack-eq.md §1.4, §7) ──────────────
+// The callback with 0, 1 and 12 faders playing, their racks IN (Filters: HPF + LPF; PEQ: 4 non-zero bands = the
+// full 8 biquads, stereo, f64), steady or CROSSFADING CONTINUOUSLY (a new rack version to every fader every
+// buffer, so each fade is followed at once by the held one). Jeff's gate: the 12-channel crossfading worst case
+// must stay ≤ 1 ms (p99) per 10 ms buffer — otherwise stop and report.
+#[cfg(test)]
+mod channel_rack_timing {
+    use super::*;
+    use crate::rack::{ChannelRack, ChannelRackParams};
+
+    struct Sine(u64);
+    impl Iterator for Sine {
+        type Item = f32;
+        fn next(&mut self) -> Option<f32> { let i = self.0 / 2; self.0 += 1; Some(0.3 * (i as f32 * 0.0712).sin()) }
+    }
+    fn rack(g: f32) -> ChannelRack {
+        ChannelRack::from_doc_json(&format!(r#"{{"v":1,"sections":{{"ch":[
+            {{"module":{{"type":"filters","hpf":{{"in":true,"freq":80}},"lpf":{{"in":true,"freq":12000}}}},"in":true}},
+            {{"module":{{"type":"peq","bands":[{{"freq":120,"gain":{g},"width":1,"shelf":true}},{{"freq":900,"gain":-3,"width":1}},
+              {{"freq":3000,"gain":2,"width":2}},{{"freq":9000,"gain":-2,"width":1,"shelf":true}}]}},"in":true}}]}}}}"#)).unwrap()
+    }
+
+    /// One measured scenario: the buffer (median, p99, worst), allocations in the callback, and the channel-rack
+    /// work ALONE — its wall max and its thread-CPU max per buffer, its wall time inside the slowest buffer, and
+    /// the per-channel wall times of the buffer where the rack's wall time peaked.
+    struct Row { med: f64, p99: f64, max: f64, allocs: u64, rk_wall_max: f64, rk_cpu_max: f64, rk_in_slowest: f64,
+                 worst_calls: Vec<f64>, worst_calls_cpu: f64 }
+
+    /// ms per CPU cycle of this thread (QueryThreadCycleTime), calibrated against wall time on a 200 ms busy loop.
+    fn ms_per_cycle() -> f64 {
+        let (t0, c0) = (std::time::Instant::now(), crate::chdsp::thread_cycles());
+        let mut x = 1.0f64;
+        while t0.elapsed().as_millis() < 200 { for _ in 0..1000 { x = (x * 1.000001).sin() + 1.0; } }
+        std::hint::black_box(x);
+        let cyc = crate::chdsp::thread_cycles().saturating_sub(c0) as f64;
+        t0.elapsed().as_secs_f64() * 1000.0 / cyc.max(1.0)
+    }
+
+    /// `n_active` faders playing, racks IN on all of them if `racks`; the first `n_fading` get a new rack version
+    /// EVERY buffer (so each fade is followed at once by the held one — crossfading continuously).
+    fn measure(n_active: usize, racks: bool, n_fading: usize, mpc: f64) -> Row {
+        let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
+        let (prod, mut stream_cons) = rb.split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)));
+        let h = b.handles.take().unwrap();
+        for i in 0..n_active {
+            b.decks[i].source = Some(DeckFeed::prefilled(Sine(0), 480 * 2 * 2100));
+            b.decks[i].active = true; b.decks[i].paused = false; b.decks[i].volume = 0.5;
+        }
+        let mut cur = b.params();
+        let bus = Arc::new(Mutex::new(b));
+        let (mut cmd, mut garbage) = (h.cmd_prod, h.garbage_cons);
+        let fin = FinishedFlags::new();
+        let playing = Arc::new(AtomicBool::new(true));
+        let mut sc = Scratch::new();
+        let mut data = vec![0f32; 480 * 2];
+        let mut pop = vec![0f32; PROGRAM_BUS_BUF];
+        let (ra, rb2) = (rack(3.0), rack(-3.0));
+        let (pa, pb) = (ra.plan(44_100.0), rb2.plan(44_100.0));
+        let (mut ns, mut rk_w, mut rk_c, mut calls) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut allocs = 0u64;
+        for k in 0..2000u64 {
+            if racks && (k == 0 || n_fading > 0) {
+                for i in 0..n_active {
+                    if k == 0 || i < n_fading {
+                        let (r, pl) = if k % 2 == 0 { (ra, pa) } else { (rb2, pb) };
+                        cur.ch_rack[i] = ChannelRackParams { rack: r, plan: pl, version: k + 1 };
+                    }
+                }
+                let _ = cmd.try_push(RtCmd::Params(Box::new(cur)));
+            }
+            let a0 = crate::rt::tl_rt_allocs();
+            crate::chdsp::RACK_NS.with(|c| c.set(0));
+            crate::chdsp::RACK_CYC.with(|c| c.set(0));
+            crate::chdsp::RACK_NCALLS.with(|c| c.set(0));
+            let t0 = std::time::Instant::now();
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+            let dt = t0.elapsed().as_nanos() as f64 / 1e6;
+            allocs += crate::rt::tl_rt_allocs() - a0;
+            if k >= 100 {   // skip the first 100 buffers (warm-up, first fade)
+                ns.push(dt);
+                rk_w.push(crate::chdsp::RACK_NS.with(|c| c.get()) as f64 / 1e6);
+                rk_c.push(crate::chdsp::RACK_CYC.with(|c| c.get()) as f64 * mpc);
+                let n = crate::chdsp::RACK_NCALLS.with(|c| c.get()).min(12);
+                calls.push(crate::chdsp::RACK_CALLS.with(|a| a.borrow()[..n].iter().map(|&x| x as f64 / 1e6).collect::<Vec<f64>>()));
+            }
+            while garbage.try_pop().is_some() {}
+            while stream_cons.pop_slice(&mut pop) > 0 {}
+        }
+        let argmax = |v: &Vec<f64>| (0..v.len()).max_by(|&a, &b| v[a].partial_cmp(&v[b]).unwrap()).unwrap_or(0);
+        let (slowest, worst_rack) = (argmax(&ns), argmax(&rk_w));
+        let mut sorted = ns.clone();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let q = |f: f64| sorted[((sorted.len() - 1) as f64 * f) as usize];
+        Row {
+            med: q(0.5), p99: q(0.99), max: q(1.0), allocs,
+            rk_wall_max: rk_w.iter().cloned().fold(0.0, f64::max),
+            rk_cpu_max: rk_c.iter().cloned().fold(0.0, f64::max),
+            rk_in_slowest: rk_w.get(slowest).copied().unwrap_or(0.0),
+            worst_calls: calls.get(worst_rack).cloned().unwrap_or_default(),
+            worst_calls_cpu: rk_c.get(worst_rack).copied().unwrap_or(0.0),
+        }
+    }
+
+    #[test]
+    fn channel_rack_cost_one_and_twelve_channels() {
+        let mpc = ms_per_cycle();
+        // (name, playing, racks, crossfading, gated)
+        let rows = [
+            ("12 faders playing, no racks (baseline)", 12, false, 0, false),
+            (" 1 fader, rack IN, steady", 1, true, 0, false),
+            (" 1 fader, rack IN, crossfading", 1, true, 1, false),
+            (" 4 faders, racks IN, steady            (a)", 4, true, 0, true),
+            (" 4 faders, racks IN, 1 crossfading     (b)", 4, true, 1, true),
+            ("12 faders, racks IN, steady", 12, true, 0, false),
+            ("12 faders, racks IN, ALL CROSSFADING (extreme)", 12, true, 12, false),
+        ];
+        let mut fails = Vec::new();
+        for (name, n, racks, fading, gated) in rows {
+            let r = measure(n, racks, fading, mpc);
+            let rk = if racks {
+                let c = &r.worst_calls;
+                let (mx, sum) = (c.iter().cloned().fold(0.0, f64::max), c.iter().sum::<f64>());
+                let mut sc = c.clone();
+                sc.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                format!("\n    rack alone: WALL max {:.3} ms · CPU max {:.3} ms · wall in the slowest buffer {:.3} ms\n    the buffer where rack wall peaked, per channel (wall ms): [{}] — largest {:.3} = {:.0}% of {:.3}; median channel {:.3}; that buffer's rack CPU {:.3} ms",
+                        r.rk_wall_max, r.rk_cpu_max, r.rk_in_slowest,
+                        c.iter().map(|x| format!("{:.3}", x)).collect::<Vec<_>>().join(" "),
+                        mx, if sum > 0.0 { mx / sum * 100.0 } else { 0.0 }, sum, sc.get(sc.len() / 2).copied().unwrap_or(0.0), r.worst_calls_cpu)
+            } else { String::new() };
+            println!("[ch-rack-timing] {:<48} median {:.4} ms · p99 {:.4} ms · worst {:.3} ms · {} allocations{}", name, r.med, r.p99, r.max, r.allocs, rk);
+            assert_eq!(r.allocs, 0, "{}: the callback allocated", name);
+            if gated {
+                if r.p99 > 1.0 { fails.push(format!("{}: p99 {:.4} ms > 1 ms", name.trim(), r.p99)); }
+                if r.rk_cpu_max > 0.5 { fails.push(format!("{}: rack CPU max {:.3} ms > 0.5 ms", name.trim(), r.rk_cpu_max)); }
+            }
+        }
+        println!("[ch-rack-timing] thread CPU = QueryThreadCycleTime × {:.4e} ms/cycle (calibrated on a 200 ms busy loop)", mpc);
+        // JEFF'S GATE (ruling 2026-09-26): rows (a) and (b) — what OV runs — p99 ≤ 1 ms AND rack CPU max ≤ 0.5 ms.
+        // The 12-all-crossfading row is the recorded extreme, not gated.
+        assert!(fails.is_empty(), "GATE: {:?} — stop and report", fails);
     }
 }

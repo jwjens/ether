@@ -51,6 +51,10 @@ pub(crate) struct Params {
     /// bypasses per branch (now the ride/limiter slots' IN) and eq_bands/eq_version (now the GEQ slot and
     /// rack.eq_version). One typed block, one path: the legacy commands edit this same field.
     pub rack: crate::rack::MasterRack,
+    /// SLICE 5 — one channel rack per fader (docs/dsp-channel-rack-eq.md): the rack (echo), its PLAN (the
+    /// biquads it runs — coefficients computed on the dispatch thread, f64) and a version the callback adopts
+    /// on change. Default: empty — nothing runs, today's exact arithmetic.
+    pub ch_rack: [crate::rack::ChannelRackParams; SLOT_COUNT],
     pub duck_threshold: f32,
     pub duck_depth_db: f32,
     pub duck_attack_ms: f32,
@@ -312,6 +316,9 @@ pub(crate) struct MeterBlock {
     pub bus_live: u8,
     /// SLICE 3 — ride and limiter per branch (LOCAL, STREAM, AUX).
     pub gr: [GrTap; 3],
+    /// SLICE 5 — per channel, POST-RACK (after the channel's EQ, still pre-fader, pre-cut). Equal to `ch` when a
+    /// channel's rack runs nothing. The strips keep `ch` (pre-rack, the spec); the rack view shows both.
+    pub ch_post: [MeterTap; SLOT_COUNT],
 }
 
 /// One buffer's observed state, published by the callback at the end of every buffer. Everything GetLevel
@@ -602,9 +609,10 @@ mod meter_layout_tests {
     fn meter_block_layout_is_pinned() {
         // docs/dsp-meter-bus.md §1.3: 24-byte taps; 16 + 12×24 + 6×24 + 1 = 449.
         // SLICE 3 (docs/dsp-loudness-meter.md §3.2): + 3 × 12-byte GrTap at 4-byte alignment (452..488) = 488.
+        // SLICE 5 (docs/dsp-channel-rack-eq.md §2): + 12 × 24-byte post-rack taps (488..776) = 776.
         assert_eq!(std::mem::size_of::<MeterTap>(), 24);
         assert_eq!(std::mem::size_of::<GrTap>(), 12);
-        assert_eq!(std::mem::size_of::<MeterBlock>(), 488);
+        assert_eq!(std::mem::size_of::<MeterBlock>(), 776);
         println!("[meters] MeterTap {} B · MeterBlock {} B · MeterFrame {} B",
                  std::mem::size_of::<MeterTap>(), std::mem::size_of::<MeterBlock>(), std::mem::size_of::<MeterFrame>());
     }

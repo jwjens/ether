@@ -135,5 +135,38 @@ console.log("\n5 - write-back: a rack write also writes the keys an older daemon
         "round trip: the written-back keys seed the same ride/limiter numbers");
 }
 
+console.log("\n6 - SLICE 5: a fader's channel rack reaches THIS station's engine, on its slot; empty racks are never sent");
+{
+  const ch = [];
+  A.audioSetChannelRack = (sid, slot, json) => { ch.push({ sid, slot, doc: JSON.parse(json) });
+    return JSON.stringify(slot === "B" ? { ok: false, reason: "a channel rack holds one Filters and one PEQ" } : { ok: true }); };
+  const peq = { id: "c1", in: true, module: { type: "peq", bands: [
+    { freq: 100, gain: 0, width: 1 }, { freq: 1000, gain: 4, width: 1 }, { freq: 3000, gain: 0, width: 1 }, { freq: 8000, gain: 0, width: 1 }] } };
+  kv[4].rack_ch_S2 = JSON.stringify({ v: 1, sections: { ch: [peq] } });
+  kv[4].rack_ch_B = JSON.stringify({ v: 1, sections: { ch: [peq, peq] } });   // refused by the engine
+  kv[1].rack_ch_A = JSON.stringify({ v: 1, sections: { ch: [peq] } });        // another station's: never ours
+  const e4 = mk(4);
+  e4._applyChannelRacksFromKv(100_000);
+  check(ch.length === 2 && ch.every(c => c.sid === 4), "the first poll delivers station 4's two stored channel racks to station 4's engine", JSON.stringify(ch.map(c => [c.sid, c.slot])));
+  check(ch.some(c => c.slot === "S2" && c.doc.sections.ch[0].module.bands[1].gain === 4), "…S2's rack on slot S2");
+  check(!ch.some(c => c.slot === "A"), "station 1's rack_ch_A is not sent to station 4 (and no empty fader is sent anything)");
+  ch.length = 0;
+  e4._applyChannelRacksFromKv(100_000 + 3_001);
+  check(ch.length === 0, "nothing changed → nothing sent (a refused rack is not retried every 3 s)");
+  kv[4].rack_ch_S2 = JSON.stringify({ v: 1, sections: { ch: [{ ...peq, in: false }] } });   // the operator switches it OUT
+  e4._applyChannelRacksFromKv(100_000 + 6_002);
+  check(ch.length === 1 && ch[0].slot === "S2" && ch[0].doc.sections.ch[0].in === false, "a change lands within one poll");
+  ch.length = 0;
+  e4._applyChannelRacksFromKv(100_000 + 22_000);
+  check(!ch.some(c => c.slot === "S2"), "a rack with nothing IN is not re-asserted");
+  ch.length = 0;
+  const fresh = mk(4);
+  fresh._applyChannelRacksFromKv(200_000);
+  check(ch.some(c => c.slot === "S2" && c.sid === 4), "a fresh engine (respawn / restart) re-applies the stored channel racks on its first poll");
+  const main = fs.readFileSync(path.join(__dirname, "..", "electron", "main.js"), "utf8");
+  check(/rack:set[\s\S]{0,900}setChannelRack", \{ stationId: sid, slot/.test(main), "main's rack:set delivers a channel rack to the named station's engine, by slot");
+  delete kv[4].rack_ch_S2; delete kv[4].rack_ch_B; delete kv[1].rack_ch_A;
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILED"}  (${pass} passed, ${fail} failed)`);
 process.exit(fail === 0 ? 0 : 1);

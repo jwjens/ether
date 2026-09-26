@@ -11,6 +11,7 @@ pub mod eq;
 mod lufs;
 mod clock;
 mod program_processor;   // Audio Processing v1 — per-station program-bus loudness (bench-gated before ship)
+mod chdsp;               // Slice 5 — the channel rack DSP (biquads + crossfade) on the audio thread
 pub mod rack;            // Slice 4 — the rack model; pub so the type-rule doctests (compile_fail) can see it
 mod rt;                  // Slice 1 S3 — lock-free channels between the audio callback and everything else
 mod loudness;           // Slice 3 — BS.1770 loudness per branch, on a meter thread — docs/dsp-loudness-meter.md
@@ -293,6 +294,26 @@ pub fn audio_set_master_rack(station_id: u32, rack_json: String) -> String {
     }
 }
 
+/// SLICE 5 — deliver one fader's channel rack (station_config_kv `rack_ch_<slot>`, docs/dsp-channel-rack-eq.md
+/// §3). `slot` is the fader's letter (A–F, CART, S1–S5). Parsed and validated here; the coefficients are computed
+/// on the dispatch thread. {"ok":false,"reason":…} for a refused rack or an unknown slot.
+#[napi]
+pub fn audio_set_channel_rack(station_id: u32, slot: String, rack_json: String) -> String {
+    let Some(idx) = audio::deck_index(&slot) else {
+        return serde_json::json!({ "ok": false, "reason": format!("`{}` is not a fader (A–F, CART, S1–S5)", slot) }).to_string();
+    };
+    let r = match rack::ChannelRack::from_doc_json(&rack_json) {
+        Ok(r) => r,
+        Err(e) => return serde_json::json!({ "ok": false, "reason": e }).to_string(),
+    };
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return serde_json::json!({ "ok": false, "reason": "engine busy" }).to_string() };
+    match audio.sender.send(AudioCmd::SetChannelRack { slot: idx, rack: r }) {
+        Ok(()) => serde_json::json!({ "ok": true }).to_string(),
+        Err(_) => serde_json::json!({ "ok": false, "reason": "the station's engine is not running" }).to_string(),
+    }
+}
+
 #[napi]
 pub fn audio_get_state(station_id: Option<u32>) -> String {
     let engine = get_or_create_engine(station_id.unwrap_or(1), None);
@@ -516,6 +537,8 @@ pub fn audio_get_meters(station_id: u32) -> String {
     };
     let ch: Vec<[f32; 4]> = b.ch.iter().map(quad).collect();
     let bus: Vec<[f32; 4]> = b.bus.iter().map(quad).collect();
+    // SLICE 5 — each channel after its rack (equal to `ch` when a rack runs nothing).
+    let ch_post: Vec<[f32; 4]> = b.ch_post.iter().map(quad).collect();
     // SLICE 3 — loudness per branch (docs/dsp-loudness-meter.md §4.1). No reading (below the gate, not yet
     // measured, not fed) is null — never −70 presented as a measurement.
     let num = |v: f64| -> serde_json::Value {
@@ -541,7 +564,7 @@ pub fn audio_get_meters(station_id: u32) -> String {
     let ceil_of = |set: f32| serde_json::json!({ "set": ((set as f64) * 100.0).round() / 100.0,
                                                    "eff": ((set as f64 - margin) * 100.0).round() / 100.0 });
     serde_json::json!({
-        "v": 1, "e": b.epoch, "n": b.frames, "ch": ch, "bus": bus, "live": b.bus_live,
+        "v": 1, "e": b.epoch, "n": b.frames, "ch": ch, "chPost": ch_post, "bus": bus, "live": b.bus_live,
         "ld": {
             "local": ld_of(&lf.b[loudness::LOUD_LOCAL]),
             "stream": ld_of(&lf.b[loudness::LOUD_STREAM]),

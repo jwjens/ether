@@ -61,8 +61,9 @@ contextBridge.exposeInMainWorld("ether", {
     subscribeMeters: (stationIds) => ipcRenderer.invoke("audio:subscribe-meters", stationIds),
     // SLICE 4 — the master rack: read the station's rack (stored, or seeded from the legacy keys) and write it
     // (the engine must accept it before it is stored). docs/dsp-rack-framework.md.
-    getRack: (stationId) => ipcRenderer.invoke("rack:get", stationId),
-    setRack: (stationId, doc) => ipcRenderer.invoke("rack:set", { stationId, doc }),
+    // SLICE 5 — `rack` names which rack: "master" (default) or "ch:<slot>" (a fader's channel rack).
+    getRack: (stationId, rack) => ipcRenderer.invoke("rack:get", stationId, rack),
+    setRack: (stationId, doc, rack) => ipcRenderer.invoke("rack:set", { stationId, doc, rack }),
     // SLICE 3 — reset a branch's integrated loudness / LRA / TP max: branch "local" | "stream" | "aux" | "all".
     resetLoudness: (stationId, branch) => ipcRenderer.invoke("audio:loudness-reset", { stationId, branch }),
     onMeters:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:meters", h); return h; },

@@ -369,6 +369,50 @@ class DaemonEngine {
     } catch (e) { this._log("processing apply ✗", String(e)); }
   }
 
+  // SLICE 5 — THE CHANNEL RACKS (docs/dsp-channel-rack-eq.md §3). THIS station's `rack_ch_<slot>` documents,
+  // read on the same 3 s cadence as the master rack and delivered with audioSetChannelRack when one changes —
+  // so they land on connect and re-land on every fresh engine (a new engine object starts with nothing
+  // applied). A rack with anything IN is re-asserted every 15 s, like the master: a command sent in a
+  // no-device window is dropped by the engine, and an identical re-send is a no-op there (same plan → no fade).
+  // A fader with no document is never sent anything: its rack stays empty — today's exact arithmetic.
+  _applyChannelRacksFromKv(now) {
+    if (now - (this._chRackCheckedAt || 0) < 3000) return;
+    this._chRackCheckedAt = now;
+    if (typeof A.audioSetChannelRack !== "function") return;   // an engine older than slice 5
+    let rows;
+    try {
+      const keys = RackSeed.CHANNEL_KEYS;
+      rows = this.db.prepare(
+        `SELECT key, value FROM station_config_kv WHERE station_id=? AND key IN (${keys.map(k => `'${k}'`).join(",")}) AND deleted_at IS NULL`
+      ).all(this.stationId);
+    } catch (e) {
+      if (!this._chRackErrAt || (now - this._chRackErrAt) > 60000) { this._chRackErrAt = now; this._log("channel racks kv ✗", String(e && e.message || e)); }
+      return;
+    }
+    const get = (k) => { const r = rows.find(x => x.key === k); return r ? r.value : undefined; };
+    if (!this._chApplied) this._chApplied = {};
+    const reassert = now - (this._chAssertedAt || 0) > 15000;
+    if (reassert) this._chAssertedAt = now;
+    for (const slot of RackSeed.CHANNEL_SLOTS) {
+      const { doc, source } = RackSeed.channelRack(get, slot);
+      const docStr = JSON.stringify(doc);
+      const prev = this._chApplied[slot];
+      // Never-applied + empty = nothing to send (the engine's rack is already empty).
+      if (prev === undefined && source === "empty") continue;
+      const changed = prev !== docStr;
+      if (!changed && !(reassert && RackSeed.channelRackActive(doc))) continue;
+      let res = null;
+      try { res = JSON.parse(A.audioSetChannelRack(this.stationId, slot, docStr)); } catch (e) { res = { ok: false, reason: String(e && e.message || e) }; }
+      if (res && res.ok === true) {
+        this._chApplied[slot] = docStr;
+        if (changed) this._log("channel rack", `${slot}: ${RackSeed.channelRackActive(doc) ? "IN" : "nothing IN"} (${doc.sections.ch.length} slot(s))`);
+      } else {
+        this._chApplied[slot] = docStr;   // do not retry a refused document every 3 s; a new edit re-sends
+        this._log("channel rack refused ✗", `${slot}: ${(res && res.reason) || "no answer from the engine"}`);
+      }
+    }
+  }
+
   // Dedicated processing-meters emit (~15Hz). Its OWN event ("procmeters"), NOT the levels channel —
   // levels already runs ~90/s and is implicated in a renderer OOM, so this rides a separate, lower-rate
   // channel gated to ON. Quiet unless processing is on AND automation is engaged (no silence spam). The
@@ -552,6 +596,7 @@ class DaemonEngine {
     const lv = this._readLevels(now);
     this._mixHeartbeat(now, s, lv);   // v4.4.46: diagnostic [mix sN] line every 5s while playing (no-op otherwise)
     this._applyProcessingFromKv(now);   // Audio Processing v1: deliver proc_local/proc_stream/target from KV (segue pattern)
+    this._applyChannelRacksFromKv(now); // SLICE 5: each fader's channel rack (rack_ch_<slot>)
     this._applySegueOverlapFromKv(now); // the operator's segue overlap, stored with the station
 
     const prev = { A: this.stateA.status, B: this.stateB.status, C: this.stateC.status };

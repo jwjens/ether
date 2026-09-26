@@ -62,19 +62,33 @@ pub enum BranchModule { Ride(RideParams), Limiter(LimiterParams) }
 /// // A loudness module is unrepresentable in a channel rack. If this ever compiles, the type rule is gone.
 /// let _ride = ChannelModule::Ride(RideParams { target: -14.0, rate: 1.5, clamp: 12.0 });
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ChannelModule {}
-
-impl<'de> Deserialize<'de> for ChannelModule {
-    // Slice 4 has no channel modules, so every channel module in a document is refused — by name, so the
-    // reason reaches the operator ("`ride` is not a channel module").
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        struct Tag { #[serde(rename = "type")] ty: String }
-        let t = Tag::deserialize(d)?;
-        Err(serde::de::Error::custom(format!("`{}` is not a channel module (channel racks hold no modules yet; a loudness module never belongs in one)", t.ty)))
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum ChannelModule {
+    /// SLICE 5 — HPF + LPF, each a 24 dB/oct Butterworth with its own IN (docs/dsp-channel-rack-eq.md §1.1).
+    Filters(FilterParams),
+    /// SLICE 5 — the 4-band parametric EQ; bands 1 and 4 can be shelves. The slot's IN is the PEQ's IN.
+    Peq(PeqParams),
+    // slice 6: Gate(..), Comp(..). NEVER a loudness module.
 }
+
+/// One filter of the Filters module: its own IN and its corner frequency.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FilterStage { #[serde(rename = "in")] pub on: bool, pub freq: f32 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FilterParams { pub hpf: FilterStage, pub lpf: FilterStage }
+
+/// One PEQ band. `width` is in OCTAVES (Wheatstone's unit); `shelf` is honoured on bands 1 and 4 only.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeqBand { pub freq: f32, pub gain: f32, pub width: f32, #[serde(default)] pub shelf: bool }
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeqParams { pub bands: [PeqBand; 4] }
 
 /// One slot: a module or nothing, and its IN switch.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -94,9 +108,11 @@ pub struct MasterRack {
     pub eq_version: u64,
 }
 
-/// A channel rack (slices 5–6). In slice 4 it can only be empty — which is what slice 4 promises.
+/// A channel rack, one per fader (docs/dsp-channel-rack-eq.md). Default: empty — the harness nulls and nothing
+/// changes on air until an operator adds a module (Jeff's ruling).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ChannelRack { pub slots: [Slot<ChannelModule>; CHANNEL_SLOTS] }
+impl Default for ChannelRack { fn default() -> Self { ChannelRack { slots: [Slot::default(); CHANNEL_SLOTS] } } }
 
 // ── The shipped chain: "Ether v1 (shipped)" — the exact constants ProgramProcessor::new, the daemon and the
 //    Processor panel have always used. A station with nothing stored runs this.
@@ -249,9 +265,220 @@ impl MasterRack {
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// SLICE 5 — the channel rack document, its clamps, and the DSP PLAN the engine runs
+// (docs/dsp-channel-rack-eq.md §1). Coefficients are computed HERE — on the dispatch thread, in f64 — and
+// delivered in the Params block. The audio thread only ever runs biquads.
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+
+/// Ranges (spec §2, Wheatstone E-6 family values — "not confirmed Strata specs").
+pub const HPF_HZ: (f32, f32) = (16.1, 500.0);
+pub const LPF_HZ: (f32, f32) = (1_000.0, 20_200.0);
+pub const PEQ_HZ: (f32, f32) = (16.1, 20_200.0);
+pub const PEQ_GAIN_DB: f32 = 14.0;
+pub const PEQ_WIDTH_OCT: (f32, f32) = (0.2, 3.0);
+/// Centres and corners above this fraction of the sample rate are clamped (a biquad cannot sit AT Nyquist).
+pub const NYQUIST_FRACTION: f64 = 0.45;
+
+fn clamp_channel_module(m: ChannelModule) -> ChannelModule {
+    let fin = |v: f32, d: f32| if v.is_finite() { v } else { d };
+    match m {
+        ChannelModule::Filters(f) => ChannelModule::Filters(FilterParams {
+            hpf: FilterStage { on: f.hpf.on, freq: fin(f.hpf.freq, 100.0).clamp(HPF_HZ.0, HPF_HZ.1) },
+            lpf: FilterStage { on: f.lpf.on, freq: fin(f.lpf.freq, 10_000.0).clamp(LPF_HZ.0, LPF_HZ.1) },
+        }),
+        ChannelModule::Peq(p) => ChannelModule::Peq(PeqParams { bands: std::array::from_fn(|i| {
+            let b = p.bands[i];
+            PeqBand {
+                freq: fin(b.freq, 1_000.0).clamp(PEQ_HZ.0, PEQ_HZ.1),
+                gain: fin(b.gain, 0.0).clamp(-PEQ_GAIN_DB, PEQ_GAIN_DB),
+                width: fin(b.width, 1.0).clamp(PEQ_WIDTH_OCT.0, PEQ_WIDTH_OCT.1),
+                shelf: b.shelf && (i == 0 || i == 3),
+            }
+        }) }),
+    }
+}
+
+impl ChannelRack {
+    /// Parse and validate a stored channel document (`rack_ch_<slot>`). At most one Filters and one PEQ.
+    pub fn from_doc_json(json: &str) -> Result<ChannelRack, String> {
+        let doc: ChannelRackDoc = serde_json::from_str(json).map_err(|e| format!("channel rack document: {}", e))?;
+        if doc.v != 1 { return Err(format!("channel rack document version {} is not understood by this engine", doc.v)); }
+        if doc.sections.ch.len() > CHANNEL_SLOTS { return Err(format!("{} slots (a channel rack holds {})", doc.sections.ch.len(), CHANNEL_SLOTS)); }
+        let mut r = ChannelRack::default();
+        let (mut f, mut q) = (0, 0);
+        for (i, d) in doc.sections.ch.iter().enumerate() {
+            match d.module { Some(ChannelModule::Filters(_)) => f += 1, Some(ChannelModule::Peq(_)) => q += 1, None => {} }
+            r.slots[i] = Slot { module: d.module.map(clamp_channel_module), input: d.input };
+        }
+        if f > 1 || q > 1 { return Err("a channel rack holds one Filters and one PEQ".into()); }
+        Ok(r)
+    }
+    /// The DSP plan: the active biquads in slot order (HPF sections, LPF sections, PEQ bands), each with its
+    /// stable stage id. An empty plan = nothing runs (the callback keeps today's exact arithmetic).
+    pub fn plan(&self, fs: f64) -> ChainSpec {
+        let mut c = ChainSpec::default();
+        for s in self.slots.iter() {
+            if !s.input { continue; }
+            match s.module {
+                Some(ChannelModule::Filters(f)) => {
+                    if f.hpf.on { for (k, b) in butter4(f.hpf.freq as f64, fs, true).iter().enumerate() { c.push(STAGE_HPF + k as u8, *b); } }
+                    if f.lpf.on { for (k, b) in butter4(f.lpf.freq as f64, fs, false).iter().enumerate() { c.push(STAGE_LPF + k as u8, *b); } }
+                }
+                Some(ChannelModule::Peq(p)) => {
+                    for (k, b) in p.bands.iter().enumerate() {
+                        if b.gain.abs() < 1e-6 { continue; }   // a 0 dB band is an exact identity: skipped
+                        let bq = if b.shelf && k == 0 { rbj_low_shelf(b.freq as f64, b.gain as f64, b.width as f64, fs) }
+                                 else if b.shelf && k == 3 { rbj_high_shelf(b.freq as f64, b.gain as f64, b.width as f64, fs) }
+                                 else { rbj_peak(b.freq as f64, b.gain as f64, b.width as f64, fs) };
+                        c.push(STAGE_PEQ + k as u8, bq);
+                    }
+                }
+                None => {}
+            }
+        }
+        c
+    }
+}
+
+/// A normalized biquad (a0 = 1), f64.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Biquad { pub b0: f64, pub b1: f64, pub b2: f64, pub a1: f64, pub a2: f64 }
+impl Biquad {
+    fn norm(b0: f64, b1: f64, b2: f64, a0: f64, a1: f64, a2: f64) -> Biquad {
+        Biquad { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0 }
+    }
+    /// |H(e^{jω})| in dB at `f` — the analytic response (tests, and the TS curve's parity fixture).
+    pub fn mag_db(&self, f: f64, fs: f64) -> f64 {
+        let w = 2.0 * std::f64::consts::PI * f / fs;
+        let (c1, s1, c2, s2) = (w.cos(), w.sin(), (2.0 * w).cos(), (2.0 * w).sin());
+        let (nr, ni) = (self.b0 + self.b1 * c1 + self.b2 * c2, -(self.b1 * s1 + self.b2 * s2));
+        let (dr, di) = (1.0 + self.a1 * c1 + self.a2 * c2, -(self.a1 * s1 + self.a2 * s2));
+        10.0 * ((nr * nr + ni * ni) / (dr * dr + di * di)).log10()
+    }
+}
+
+/// Stage ids — stable across a change, so a crossfade can seed the new chain's state from the old one.
+pub const STAGE_HPF: u8 = 0;   // 0, 1
+pub const STAGE_LPF: u8 = 2;   // 2, 3
+pub const STAGE_PEQ: u8 = 4;   // 4..7
+pub const CHAIN_MAX: usize = 8;
+
+/// The biquads a channel runs, in order. Copy and fixed-size: it rides the Params block.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ChainSpec { pub n: usize, pub id: [u8; CHAIN_MAX], pub bq: [Biquad; CHAIN_MAX] }
+impl ChainSpec {
+    fn push(&mut self, id: u8, bq: Biquad) { if self.n < CHAIN_MAX { self.id[self.n] = id; self.bq[self.n] = bq; self.n += 1; } }
+}
+
+fn w0(f: f64, fs: f64) -> f64 { 2.0 * std::f64::consts::PI * f.min(fs * NYQUIST_FRACTION) / fs }
+/// Width in octaves → Q (the RBJ cookbook's bandwidth relation): Q = √(2^BW) / (2^BW − 1).
+pub fn width_to_q(bw_oct: f64) -> f64 { let p = 2f64.powf(bw_oct); p.sqrt() / (p - 1.0) }
+
+/// RBJ peaking EQ.
+pub fn rbj_peak(f: f64, gain_db: f64, bw_oct: f64, fs: f64) -> Biquad {
+    let a = 10f64.powf(gain_db / 40.0); let w = w0(f, fs); let al = w.sin() / (2.0 * width_to_q(bw_oct)); let c = w.cos();
+    Biquad::norm(1.0 + al * a, -2.0 * c, 1.0 - al * a, 1.0 + al / a, -2.0 * c, 1.0 - al / a)
+}
+/// RBJ low shelf, with the band's Q.
+pub fn rbj_low_shelf(f: f64, gain_db: f64, bw_oct: f64, fs: f64) -> Biquad {
+    let a = 10f64.powf(gain_db / 40.0); let w = w0(f, fs); let c = w.cos(); let al = w.sin() / (2.0 * width_to_q(bw_oct));
+    let t = 2.0 * a.sqrt() * al;
+    Biquad::norm(a * ((a + 1.0) - (a - 1.0) * c + t), 2.0 * a * ((a - 1.0) - (a + 1.0) * c), a * ((a + 1.0) - (a - 1.0) * c - t),
+                 (a + 1.0) + (a - 1.0) * c + t, -2.0 * ((a - 1.0) + (a + 1.0) * c), (a + 1.0) + (a - 1.0) * c - t)
+}
+/// RBJ high shelf, with the band's Q.
+pub fn rbj_high_shelf(f: f64, gain_db: f64, bw_oct: f64, fs: f64) -> Biquad {
+    let a = 10f64.powf(gain_db / 40.0); let w = w0(f, fs); let c = w.cos(); let al = w.sin() / (2.0 * width_to_q(bw_oct));
+    let t = 2.0 * a.sqrt() * al;
+    Biquad::norm(a * ((a + 1.0) + (a - 1.0) * c + t), -2.0 * a * ((a - 1.0) + (a + 1.0) * c), a * ((a + 1.0) + (a - 1.0) * c - t),
+                 (a + 1.0) - (a - 1.0) * c + t, 2.0 * ((a - 1.0) - (a + 1.0) * c), (a + 1.0) - (a - 1.0) * c - t)
+}
+/// RBJ 2nd-order high-pass / low-pass section.
+pub fn rbj_pass(f: f64, q: f64, fs: f64, high: bool) -> Biquad {
+    let w = w0(f, fs); let c = w.cos(); let al = w.sin() / (2.0 * q);
+    if high { Biquad::norm((1.0 + c) / 2.0, -(1.0 + c), (1.0 + c) / 2.0, 1.0 + al, -2.0 * c, 1.0 - al) }
+    else    { Biquad::norm((1.0 - c) / 2.0, 1.0 - c, (1.0 - c) / 2.0, 1.0 + al, -2.0 * c, 1.0 - al) }
+}
+/// 4th-order Butterworth = two cascaded sections, Q = 1/(2 cos π/8) and 1/(2 cos 3π/8).
+pub fn butter4(f: f64, fs: f64, high: bool) -> [Biquad; 2] {
+    let q1 = 1.0 / (2.0 * (std::f64::consts::PI / 8.0).cos());
+    let q2 = 1.0 / (2.0 * (3.0 * std::f64::consts::PI / 8.0).cos());
+    [rbj_pass(f, q1, fs, high), rbj_pass(f, q2, fs, high)]
+}
+
+/// A channel rack as the Params block carries it: the rack (echo), its plan (what runs) and a version the
+/// callback adopts on change.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ChannelRackParams { pub rack: ChannelRack, pub plan: ChainSpec, pub version: u64 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn chan_doc(on: bool) -> String {
+        format!(r#"{{"v":1,"sections":{{"ch":[
+            {{"id":"s-flt","module":{{"type":"filters","hpf":{{"in":true,"freq":100}},"lpf":{{"in":false,"freq":10000}}}},"in":{on}}},
+            {{"id":"s-peq","module":{{"type":"peq","bands":[
+                {{"freq":100,"gain":0,"width":1,"shelf":false}},{{"freq":1000,"gain":6,"width":1}},
+                {{"freq":3000,"gain":0,"width":1}},{{"freq":8000,"gain":0,"width":1,"shelf":false}}]}},"in":{on}}}]}}}}"#)
+    }
+
+    #[test]
+    fn channel_filters_and_peq_measure_the_computed_values() {
+        let fs = 44_100.0;
+        // HPF 100 Hz, 24 dB/oct Butterworth — the values computed for the proposal (§5)
+        let h = butter4(100.0, fs, true);
+        let hm = |f: f64| h[0].mag_db(f, fs) + h[1].mag_db(f, fs);
+        println!("[ch-eq] HPF4 100 Hz: 100 Hz {:.3} dB · 50 Hz {:.3} dB · 25 Hz {:.3} dB", hm(100.0), hm(50.0), hm(25.0));
+        assert!((hm(100.0) + 3.010).abs() < 0.001 && (hm(50.0) + 24.100).abs() < 0.001 && (hm(25.0) + 48.165).abs() < 0.001);
+        // PEQ 1 kHz +6 dB, 1 octave
+        let b = rbj_peak(1000.0, 6.0, 1.0, fs);
+        println!("[ch-eq] PEQ 1 kHz +6 dB 1 oct: 1 kHz {:.4} · 100 Hz {:.4} · 10 kHz {:.4}", b.mag_db(1000.0, fs), b.mag_db(100.0, fs), b.mag_db(10_000.0, fs));
+        assert!((b.mag_db(1000.0, fs) - 6.0).abs() < 1e-9);
+        assert!((b.mag_db(100.0, fs) - 0.0328).abs() < 0.0005 && (b.mag_db(10_000.0, fs) - 0.0224).abs() < 0.0005);
+        // LPF 10 kHz mirrors the HPF
+        // LPF mirrors the HPF one octave up from a corner well below Nyquist. (At a 10 kHz corner, 20 kHz is
+        // near Nyquist and the bilinear transform's warping makes it far steeper: −71.7 dB, not −24.1 — the
+        // proposal's LPF bar was wrong for a digital filter and is corrected here.)
+        let l = butter4(2_000.0, fs, false);
+        let lm = |f: f64| l[0].mag_db(f, fs) + l[1].mag_db(f, fs);
+        let l10 = butter4(10_000.0, fs, false);
+        println!("[ch-eq] LPF4 2 kHz: 2 kHz {:.3} dB · 4 kHz {:.3} dB   (LPF4 10 kHz at 20 kHz: {:.1} dB, bilinear warping near Nyquist)",
+                 lm(2_000.0), lm(4_000.0), l10[0].mag_db(20_000.0, fs) + l10[1].mag_db(20_000.0, fs));
+        assert!((lm(2_000.0) + 3.010).abs() < 0.01);
+        assert!((lm(4_000.0) + 24.819).abs() < 0.001, "the computed digital value (warping adds 0.7 dB to the analog 24.1)");
+        assert!((width_to_q(0.2) - 7.21).abs() < 0.01 && (width_to_q(3.0) - 0.404).abs() < 0.001);
+        // Shelves reach their gain away from the corner and are flat on the other side. The shelf uses the band's
+        // width → Q; above Q 0.707 (a width under ~1.9 octaves) an RBJ shelf BUMPS near its corner — the
+        // cookbook's own behaviour, drawn by the curve. At width 2.0 oct (Q 0.667) there is no bump:
+        let ls = rbj_low_shelf(200.0, 6.0, 2.0, fs);
+        let bump = rbj_low_shelf(200.0, 6.0, 1.0, fs);
+        println!("[ch-eq] low shelf 200 Hz +6, width 2 oct (Q {:.3}): 40 Hz {:.3} · 4 kHz {:.3} · (width 1 oct, Q {:.3}: 40 Hz {:.3} — the bump)",
+                 width_to_q(2.0), ls.mag_db(40.0, fs), ls.mag_db(4000.0, fs), width_to_q(1.0), bump.mag_db(40.0, fs));
+        assert!((ls.mag_db(40.0, fs) - 6.0).abs() < 0.1 && ls.mag_db(4000.0, fs).abs() < 0.1);
+        let hs = rbj_high_shelf(4000.0, -6.0, 2.0, fs);
+        println!("[ch-eq] high shelf 4 kHz −6, width 2 oct: 16 kHz {:.3} · 200 Hz {:.3}", hs.mag_db(16_000.0, fs), hs.mag_db(200.0, fs));
+        assert!((hs.mag_db(16_000.0, fs) + 6.0).abs() < 0.15 && hs.mag_db(200.0, fs).abs() < 0.1);
+    }
+
+    #[test]
+    fn a_channel_plan_runs_only_what_is_in() {
+        let on = ChannelRack::from_doc_json(&chan_doc(true)).unwrap();
+        let p = on.plan(44_100.0);
+        assert_eq!(p.n, 3, "HPF (2 sections) + one non-zero PEQ band; LPF off, 0 dB bands skipped");
+        assert_eq!(&p.id[..3], &[STAGE_HPF, STAGE_HPF + 1, STAGE_PEQ + 1]);
+        let off = ChannelRack::from_doc_json(&chan_doc(false)).unwrap();
+        assert_eq!(off.plan(44_100.0).n, 0, "modules present but OUT run nothing");
+        assert_eq!(ChannelRack::default().plan(44_100.0).n, 0);
+        // clamps: the Wheatstone ranges
+        let wild = chan_doc(true).replace(r#""freq":100}"#, r#""freq":5}"#).replace(r#""gain":6"#, r#""gain":40"#);
+        let r = ChannelRack::from_doc_json(&wild).unwrap();
+        match (r.slots[0].module, r.slots[1].module) {
+            (Some(ChannelModule::Filters(f)), Some(ChannelModule::Peq(q))) => { assert_eq!(f.hpf.freq, 16.1); assert_eq!(q.bands[1].gain, 14.0); }
+            x => panic!("{:?}", x),
+        }
+    }
 
     fn shipped_json() -> String {
         r#"{"v":1,"link":true,"sections":{
@@ -272,14 +499,15 @@ mod tests {
         let doc = r#"{"v":1,"sections":{"ch":[{"module":{"type":"ride","target":-14,"rate":1.5,"clamp":12},"in":true}]}}"#;
         let e = serde_json::from_str::<ChannelRackDoc>(doc).unwrap_err().to_string();
         println!("[type-rule] channel rack with a ride → {}", e);
-        assert!(e.contains("`ride` is not a channel module"), "{}", e);
+        assert!(e.contains("unknown variant `ride`"), "{}", e);
         // and the PGM section cannot hold one either (loudness is per branch)
         let pgm = shipped_json().replace(r#"{"type":"geq","bands":[0,0,0,0,0,0,0,0,0,0]}"#, r#"{"type":"ride","target":-14,"rate":1.5,"clamp":12}"#);
         let e2 = MasterRack::from_doc_json(&pgm).unwrap_err();
         println!("[type-rule] PGM section with a ride → {}", e2);
         assert!(e2.contains("unknown variant `ride`"), "{}", e2);
-        // an empty channel rack is fine — the only kind slice 4 has
+        // an empty channel rack is fine, and so are the slice 5 modules
         assert!(serde_json::from_str::<ChannelRackDoc>(r#"{"v":1,"sections":{"ch":[{"module":null}]}}"#).is_ok());
+        assert!(ChannelRack::from_doc_json(&chan_doc(true)).is_ok());
     }
 
     #[test]

@@ -5156,6 +5156,8 @@ ipcMain.handle("audio:getState", (_, stationId) => AUDIO_DAEMON ? audiodClient.c
 // ── SLICE 4 — THE MASTER RACK (docs/dsp-rack-framework.md) ────────────────────────────────────────────────
 // ONE reader and ONE writer for the rack document, shared with the daemon through audiod/rack-seed.js.
 //   rack:get  → the station's rack: its stored `rack_master`, or the rack SEEDED from the legacy keys.
+//   SLICE 5 (docs/dsp-channel-rack-eq.md §3) — both take a rack NAME: "master" (the default) or "ch:<slot>"
+//   (a fader: A–F, CART, S1–S5), stored as `rack_ch_<slot>`. A channel rack has no seed and no write-back.
 //   rack:set  → deliver to THIS station's engine FIRST; only if the engine accepts it is it stored
 //               (`rack_master`) and WRITTEN BACK to the legacy keys (Jeff's ruling 3), so a refused rack never
 //               becomes stored state and older daemons/installs keep running the same chain.
@@ -5166,20 +5168,52 @@ function _rackRows(stationId) {
     `SELECT key, value FROM station_config_kv WHERE station_id = ? AND key IN (${keys.map(() => "?").join(",")}) AND deleted_at IS NULL`
   ).all(stationId, ...keys);
 }
-ipcMain.handle("rack:get", (_, stationId) => {
+/** "master" → null; "ch:<slot>" → the slot; anything else → false. */
+function _rackChannel(rack) {
+  if (rack == null || rack === "master") return null;
+  const m = /^ch:(.+)$/.exec(String(rack));
+  return m && RackSeed.CHANNEL_SLOTS.includes(m[1]) ? m[1] : false;
+}
+ipcMain.handle("rack:get", (_, stationId, rack) => {
   const sid = Number(stationId);
   if (!Number.isFinite(sid)) return { ok: false, reason: "no station" };
+  const slot = _rackChannel(rack);
+  if (slot === false) return { ok: false, reason: `\`${rack}\` is not a rack (master, or ch:A–F, CART, S1–S5)` };
   try {
+    if (slot) {
+      const row = getDb().prepare(
+        `SELECT value FROM station_config_kv WHERE station_id = ? AND key = ? AND deleted_at IS NULL`
+      ).get(sid, RackSeed.channelKey(slot));
+      return { ok: true, ...RackSeed.channelRack(k => (k === RackSeed.channelKey(slot) && row ? row.value : undefined), slot) };
+    }
     const rows = _rackRows(sid);
     const get = (k) => { const r = rows.find(x => x.key === k); return r ? r.value : undefined; };
     return { ok: true, ...RackSeed.seedMasterRack(get) };
   } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
 });
-ipcMain.handle("rack:set", async (_, { stationId, doc } = {}) => {
+ipcMain.handle("rack:set", async (_, { stationId, doc, rack } = {}) => {
   const sid = Number(stationId);
   if (!Number.isFinite(sid) || !doc) return { ok: false, reason: "no station or no rack" };
   const json = JSON.stringify(doc);
+  const slot = _rackChannel(rack);
+  if (slot === false) return { ok: false, reason: `\`${rack}\` is not a rack (master, or ch:A–F, CART, S1–S5)` };
   let res;
+  if (slot) {
+    // A fader's channel rack: the engine answers first; stored only if accepted. No legacy keys.
+    try {
+      if (AUDIO_DAEMON) res = await audiodClient.cmd("setChannelRack", { stationId: sid, slot, rack: json });
+      else if (typeof audio.audioSetChannelRack === "function") res = JSON.parse(audio.audioSetChannelRack(sid, slot, json));
+      else res = { ok: false, reason: "this audio engine predates the channel EQ — fully close and reopen Ether" };
+    } catch (e) { res = { ok: false, reason: String(e && e.message || e) }; }
+    if (!res || res.ok !== true) return res || { ok: false, reason: "no answer from the engine" };
+    try {
+      const { stationConfigKvUpsertByKey } = require("./sync/handlers/station_config_kv");
+      stationConfigKvUpsertByKey(getDb(), sid, RackSeed.channelKey(slot), json);
+    } catch (e) {
+      return { ok: false, reason: `the engine accepted the rack but it was not saved: ${String(e && e.message || e)}` };
+    }
+    return { ok: true };
+  }
   try {
     if (AUDIO_DAEMON) res = await audiodClient.cmd("setMasterRack", { stationId: sid, rack: json });
     else if (typeof audio.audioSetMasterRack === "function") res = JSON.parse(audio.audioSetMasterRack(sid, json));

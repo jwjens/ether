@@ -20,6 +20,9 @@ export interface MeterFrameMsg {
   ceil?: Record<LoudBranchName, CeilBranch>;
   margin?: number;
   ldSeq?: number;
+  /** SLICE 5 — each channel AFTER its rack (equal to `ch` when a rack runs nothing); `ch` stays pre-rack.
+   *  Absent from an engine that predates slice 5. docs/dsp-channel-rack-eq.md §2. */
+  chPost?: number[][];
 }
 export interface HeldFrame extends MeterFrameMsg { at: number }
 
