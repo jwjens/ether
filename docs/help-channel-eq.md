@@ -50,7 +50,6 @@ On the **on-air decks A/B/C**, the deck's **EQ** button opens the same rack.
      Or pick **BAND 1–4** and use the sliders.
    - **Filters:** drag the green **HPF / LPF** line sideways. **HPF IN** and **LPF IN** switch each one on its
      own.
-   - **FLAT** puts every band back to 0 dB.
 4. **Every change is smooth.** Each edit crossfades over 20 ms, so dragging a node never clicks on air.
 5. **Changes are saved for this station** as soon as the engine accepts them.
 
@@ -61,6 +60,21 @@ On the **on-air decks A/B/C**, the deck's **EQ** button opens the same rack.
 
 **The two meters on the right** are this fader before (**IN**) and after (**OUT**) its rack, both before the
 fader. They show what the EQ did.
+
+## Starting over
+
+These reset buttons change the sound smoothly (20 ms crossfade), like any other edit. They take effect
+straight away and are saved.
+
+| Button | Where | What it does |
+|---|---|---|
+| **FLAT** | the PEQ controls | Every band goes to **0 dB**. Frequencies, widths and shelf settings are kept, so you can bring a band back up where it was. PEQ IN is not changed. |
+| **RESET FILTERS** | the Filters controls | **HPF and LPF both OUT**, back to 80 Hz and 18 kHz. The FILTERS tile's IN is not changed. |
+| **CLEAR RACK** | the right of the strip | **Empties this fader's rack**: Filters and PEQ are removed, and the fader is untouched again. |
+
+**Clearing a rack:**
+1. Press **CLEAR RACK**. It asks first: *"Clear S2's rack?"*
+2. Press **CLEAR** to empty the rack, or **CANCEL** to keep it.
 
 **Moving a module:** the **⋯** menu on a tile has **Move earlier / Move later**, so Filters can go after the PEQ.
 It also has **Remove**.

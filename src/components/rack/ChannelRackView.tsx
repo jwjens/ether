@@ -12,7 +12,7 @@ import React, { useState } from "react";
 import type { ChannelModule, ChannelModuleType, FilterModule, PeqModule, Slot } from "./rackTypes";
 import {
   CHANNEL_LABEL, CHANNEL_RACK_SLOTS, addChannelModule, canMoveChannel, channelAddable, channelRackAudible, editChannelModule,
-  moveChannelSlot, removeChannelSlot, setChannelIn, findChannel, type ChannelSlot,
+  moveChannelSlot, removeChannelSlot, setChannelIn, findChannel, flatPeq, resetFilters, clearChannelRack, type ChannelSlot,
 } from "./channelRack";
 import { SLOT_COLOR } from "./rackModel";
 import { HPF_HZ, LPF_HZ, PEQ_HZ, PEQ_GAIN_DB, PEQ_WIDTH_OCT } from "./eqMath";
@@ -61,6 +61,7 @@ export default function ChannelRackView({ stationId, stationUuid, slot }: { stat
   const [selMod, setSelMod] = useState<ChannelModuleType | null>(null);
   const [band, setBand] = useState<number | null>(null);
   const [menu, setMenu] = useState<string | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
   const doc = rack.doc;
 
   if (!doc) {
@@ -149,6 +150,21 @@ export default function ChannelRackView({ stationId, stationUuid, slot }: { stat
                 </div>
               </div>
             )}
+            {doc.sections.ch.length > 0 && (
+              <div style={{ alignSelf: "center", marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
+                {!confirmClear ? (
+                  <button style={BTN()} onClick={() => setConfirmClear(true)}
+                    title={`Empty ${slot}'s rack — removes Filters and PEQ. Asks first.`}>CLEAR RACK</button>
+                ) : (
+                  <div role="alertdialog" aria-label={`Clear ${slot}'s rack?`}
+                       style={{ display: "flex", gap: 6, alignItems: "center", padding: "6px 8px", border: "1px solid #ef4444", background: "rgba(239,68,68,0.10)" }}>
+                    <span style={{ fontSize: 12, fontWeight: 700 }}>Clear {slot}'s rack? Filters and PEQ are removed; {slot} is untouched again.</span>
+                    <button style={BTN(true, "#ef4444")} onClick={() => { setConfirmClear(false); setBand(null); rack.update(clearChannelRack(doc)); }}>CLEAR</button>
+                    <button style={BTN()} onClick={() => setConfirmClear(false)} autoFocus>CANCEL</button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* ── EDITOR ── */}
@@ -180,6 +196,8 @@ export default function ChannelRackView({ stationId, stationUuid, slot }: { stat
                       <div style={{ flex: 1 }}><FreqKnob label="LPF" value={filters.module.lpf.freq} lo={LPF_HZ[0]} hi={LPF_HZ[1]} color="var(--slot-filter)"
                         onChange={v => editF({ ...filters.module!, lpf: { ...filters.module!.lpf, freq: v } })} hint="Low-pass corner (−3 dB), 24 dB/octave above it." /></div>
                     </div>
+                    <button style={{ ...BTN(), alignSelf: "flex-start" }} onClick={() => rack.update(resetFilters(doc))}
+                      title="HPF and LPF both OUT, back to 80 Hz / 18 kHz. The FILTERS tile's IN is kept. Crossfaded (20 ms), no click.">RESET FILTERS</button>
                   </div>
                 )}
                 {peq?.module && (shown === "peq" || !filters) && (
@@ -189,7 +207,8 @@ export default function ChannelRackView({ stationId, stationUuid, slot }: { stat
                       {peq.module.bands.map((b, i) => (
                         <button key={i} style={{ ...BTN(band === i, BAND_COLOR[i]), borderBottom: `3px solid ${BAND_COLOR[i]}` }} onClick={() => setBand(band === i ? null : i)}>BAND {i + 1}</button>
                       ))}
-                      <button style={BTN()} onClick={() => editQ({ ...peq.module!, bands: peq.module!.bands.map(b => ({ ...b, gain: 0 })) as PeqModule["bands"] })} title="Every band to 0 dB">FLAT</button>
+                      <button style={BTN()} onClick={() => rack.update(flatPeq(doc))}
+                        title="Every band to 0 dB — frequency and width are kept. Crossfaded (20 ms), no click.">FLAT</button>
                     </div>
                     {band != null && (() => {
                       const b = peq.module!.bands[band]; const c = BAND_COLOR[band];

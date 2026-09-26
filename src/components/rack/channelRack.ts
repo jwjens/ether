@@ -94,5 +94,26 @@ export function channelRackAudible(d: ChannelRackDoc | null | undefined): boolea
   });
 }
 
+// ── SLICE 5b — resets. Each returns a new document; the caller sends it through rack:set like any edit, so the
+// engine crossfades it (20 ms) — a reset never clicks.
+
+/** FLAT: every PEQ band to 0 dB; frequency, width and shelf are kept (and the PEQ's IN is untouched). */
+export function flatPeq(d: ChannelRackDoc): ChannelRackDoc {
+  const next = clone(d);
+  next.sections.ch = next.sections.ch.map(s => (s.module?.type === "peq"
+    ? { ...s, module: { ...s.module, bands: s.module.bands.map(b => ({ ...b, gain: 0 })) as PeqModule["bands"] } }
+    : s));
+  return next;
+}
+/** The Filters RESET: HPF and LPF both OUT, at the new-module frequencies (80 Hz / 18 kHz). The module's IN is kept. */
+export const FILTERS_RESET: FilterModule = { type: "filters", hpf: { in: false, freq: 80 }, lpf: { in: false, freq: 18000 } };
+export function resetFilters(d: ChannelRackDoc): ChannelRackDoc {
+  const next = clone(d);
+  next.sections.ch = next.sections.ch.map(s => (s.module?.type === "filters" ? { ...s, module: { ...FILTERS_RESET, hpf: { ...FILTERS_RESET.hpf }, lpf: { ...FILTERS_RESET.lpf } } } : s));
+  return next;
+}
+/** CLEAR RACK: the empty rack — the fader is untouched again. (The UI confirms first.) */
+export function clearChannelRack(_d: ChannelRackDoc): ChannelRackDoc { return emptyChannelRack(); }
+
 /** The rack name rack:get / rack:set take for a fader. */
 export const rackName = (slot: ChannelSlot) => `ch:${slot}`;
