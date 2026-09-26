@@ -20,7 +20,7 @@
 
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::AtomicBool;
-use ringbuf::{HeapRb, traits::{Consumer, Split}};
+use ringbuf::{HeapRb, traits::{Consumer, Producer, Split}};
 use serde::{Deserialize, Serialize};
 use crate::audio::{BusState, FinishedFlags, SharedBusState, Scratch, mixer_callback, build_source, PROGRAM_BUS_BUF, AUX_BUS_BUF};
 use crate::rt::{deck_feed, Feeder, DECK_RING_SAMPLES};
@@ -74,6 +74,12 @@ pub struct RenderCfg {
     pub monitor_vol: Option<f32>,
     /// A second, AUX deck (slot 3 = D, SlotKind::Source) playing alongside deck A.
     pub aux: Option<AuxCfg>,
+    /// SLICE 4 — deliver the processor and GEQ settings as a RACK DOCUMENT (the `rack_master` JSON the daemon
+    /// stores), parsed by rack.rs and pushed through the callback's own command queue as a Params block —
+    /// after every processor value and both EQs have been scrambled, so only the rack path can restore them.
+    /// Never serialized: the goldens' manifest cfg is unchanged by its existence.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub via_rack: bool,
 }
 
 /// The aux deck of a render: its file, whether its duck is armed, and its monitor-slot level (which, as
@@ -94,7 +100,7 @@ impl Default for RenderCfg {
             stream_target_lufs: None, stream_ceiling_dbtp: None, stream_release_ms: None,
             stream_ride_rate: None, stream_ride_clamp: None,
             master_vol: 1.0, gain_db: 0.0, eq_bands: None,
-            block_frames: None, device_rate: None, monitor_vol: None, aux: None,
+            block_frames: None, device_rate: None, monitor_vol: None, aux: None, via_rack: false,
         }
     }
 }
@@ -141,6 +147,27 @@ fn configure(bus: &mut BusState, cfg: &RenderCfg) {
         if let Ok(mut eq) = bus.eq.lock() { eq.set_bands(bands); }
         if let Ok(mut eqr) = bus.eq_room.lock() { eqr.set_bands(bands); }
     }
+}
+
+/// SLICE 4 — the rack document a daemon would store for this render's settings (docs/dsp-rack-framework.md
+/// §1.1): the GEQ in PGM, ride → limiter per branch, the stream mirrored while linked.
+pub fn rack_doc_json(cfg: &RenderCfg) -> String {
+    let pick = |own: Option<f32>, local: f32| if cfg.proc_split { own.unwrap_or(local) } else { local };
+    let bands: Vec<f32> = cfg.eq_bands.clone().unwrap_or_else(|| vec![0.0; 10]);
+    let branch = |t: f32, rate: f32, clamp: f32, ceil: f32, rel: f32| serde_json::json!([
+        { "id": "s-ride", "module": { "type": "ride", "target": t, "rate": rate, "clamp": clamp }, "in": true },
+        { "id": "s-lim",  "module": { "type": "limiter", "ceiling": ceil, "release": rel }, "in": true },
+    ]);
+    serde_json::json!({
+        "v": 1, "link": !cfg.proc_split,
+        "sections": {
+            "pgm": [ { "id": "s-geq", "module": { "type": "geq", "bands": bands }, "in": true } ],
+            "local": branch(cfg.target_lufs, cfg.ride_rate, cfg.ride_clamp, cfg.ceiling_dbtp, cfg.release_ms),
+            "stream": branch(pick(cfg.stream_target_lufs, cfg.target_lufs), pick(cfg.stream_ride_rate, cfg.ride_rate),
+                             pick(cfg.stream_ride_clamp, cfg.ride_clamp), pick(cfg.stream_ceiling_dbtp, cfg.ceiling_dbtp),
+                             pick(cfg.stream_release_ms, cfg.release_ms)),
+        }
+    }).to_string()
 }
 
 /// Render one file through the live mixer. Deck A, fader at unity, channel ON; optionally an aux deck D.
@@ -210,7 +237,26 @@ pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
     // product drains on its meter thread every 20 ms; the order of samples is the same, so is the reading).
     let (mut loud, loud_r) = {
         let mut b = bus.lock().map_err(|_| "bus lock poisoned".to_string())?;
-        let h = b.handles.take().ok_or("state has no handles")?;
+        let mut h = b.handles.take().ok_or("state has no handles")?;
+        if cfg.via_rack {
+            // SLICE 4 — the rack path. Scramble every value the rack carries (both branches' ride and limiter,
+            // the live bypasses, and both EQs back to flat), then deliver the render's settings ONLY as a rack
+            // document: parsed by rack.rs, placed in a Params block, and pushed through the callback's command
+            // queue — the same block and queue the daemon's rack reaches the callback through.
+            let rack = crate::rack::MasterRack::from_doc_json(&rack_doc_json(cfg))?;
+            b.proc_target_lufs = -6.0; b.proc_ceiling_dbtp = -12.0; b.proc_release_ms = 5.0; b.proc_ride_rate = 12.0; b.proc_ride_clamp = 0.0;
+            b.proc_stream_target_lufs = -6.0; b.proc_stream_ceiling_dbtp = -12.0; b.proc_stream_release_ms = 5.0;
+            b.proc_stream_ride_rate = 12.0; b.proc_stream_ride_clamp = 0.0;
+            b.proc_ride_bypass = true; b.proc_limiter_bypass = true; b.proc_stream_ride_bypass = true; b.proc_stream_limiter_bypass = true;
+            if let Ok(mut eq) = b.eq.lock() { eq.set_bands(&[0.0; 10]); }
+            if let Ok(mut eqr) = b.eq_room.lock() { eqr.set_bands(&[0.0; 10]); }
+            b.eq_bands = [0.0; 10];
+            let mut params = b.params();
+            let mut r = rack;
+            r.eq_version = b.eq_version_applied.wrapping_add(1);
+            params.rack = r;
+            h.cmd_prod.try_push(crate::rt::RtCmd::Params(Box::new(params))).map_err(|_| "rack command queue full".to_string())?;
+        }
         crate::loudness::LoudnessMeters::new(h.loud_cons, h.loud_shared, RATE)
     };
 
@@ -626,6 +672,36 @@ mod parity {
         if std::env::var("ETHER_NULL_ALLOW_INEXACT").ok().as_deref() != Some("1") {
             assert!(not_exact.is_empty(), "taps within the bar but not bit-exact: {:?}", not_exact);
         }
+    }
+
+    // ── 1b · SLICE 4 — THE RACK PATH NULLS AGAINST THE EXISTING GOLDENS ─────────────────────────────────
+    // Every render in the golden set, with its settings delivered ONLY as a rack document (RenderCfg::via_rack:
+    // scrambled first, then parsed by rack.rs and pushed through the callback's command queue). Compared to the
+    // manifest hashes captured at 6bd33e6 / cd8862d — NOT re-captured. Allocations inside the callback: 0.
+    #[test]
+    fn rack_path_nulls_against_existing_goldens() {
+        let m = manifest().expect("native/goldens/manifest.json missing");
+        let renders = m["renders"].as_object().expect("manifest.renders");
+        let (mut exact, mut fails, mut allocs) = (0usize, Vec::new(), 0u64);
+        let plan = plan();
+        for (id, path, cfg) in &plan {
+            let cfg = RenderCfg { via_rack: true, ..cfg.clone() };
+            let a0 = crate::rt::tl_rt_allocs();
+            let r = render_offline(path.to_str().unwrap(), &cfg).unwrap_or_else(|e| panic!("{}: {}", id, e));
+            allocs += crate::rt::tl_rt_allocs() - a0;
+            let g = &renders[id.as_str()];
+            let h = |v: &[f32]| format!("{:016x}", fnv_bits(v));
+            let ok_m = h(&r.monitor) == g["monitor"]["hash"].as_str().unwrap_or("");
+            let ok_s = h(&r.stream) == g["stream"]["hash"].as_str().unwrap_or("");
+            let ok_a = cfg.aux.is_none() || h(&r.aux) == g["aux"]["hash"].as_str().unwrap_or("");
+            println!("[rack-null] {:<36} monitor {} stream {} aux {}", id,
+                     if ok_m { "BIT-EXACT" } else { "DIFFERS" }, if ok_s { "BIT-EXACT" } else { "DIFFERS" },
+                     if cfg.aux.is_none() { "—" } else if ok_a { "BIT-EXACT" } else { "DIFFERS" });
+            if ok_m && ok_s && ok_a { exact += 1 } else { fails.push(id.clone()) }
+        }
+        println!("[rack-null] {}/{} renders bit-exact through the rack path to the EXISTING goldens · {} allocations inside the callback", exact, plan.len(), allocs);
+        assert!(fails.is_empty(), "rack path differs from the goldens: {:?}", fails);
+        assert_eq!(allocs, 0, "the callback allocated on the rack path");
     }
 
     // ── 2 · LINKED ⇒ monitor == stream, bit-exact (and OFF, and EQ which is LINKED + GEQ) ────────────

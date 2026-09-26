@@ -57,6 +57,10 @@ contextBridge.exposeInMainWorld("ether", {
     // SLICE 2 — the meter bus: ~30 Hz raw windows (pre-fader channels + buses), only for stations you
     // subscribe to. Renew the subscription at least every 5 s (usePeakMeters does this).
     subscribeMeters: (stationIds) => ipcRenderer.invoke("audio:subscribe-meters", stationIds),
+    // SLICE 4 — the master rack: read the station's rack (stored, or seeded from the legacy keys) and write it
+    // (the engine must accept it before it is stored). docs/dsp-rack-framework.md.
+    getRack: (stationId) => ipcRenderer.invoke("rack:get", stationId),
+    setRack: (stationId, doc) => ipcRenderer.invoke("rack:set", { stationId, doc }),
     // SLICE 3 — reset a branch's integrated loudness / LRA / TP max: branch "local" | "stream" | "aux" | "all".
     resetLoudness: (stationId, branch) => ipcRenderer.invoke("audio:loudness-reset", { stationId, branch }),
     onMeters:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:meters", h); return h; },

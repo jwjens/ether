@@ -109,6 +109,10 @@ pub struct EqChain {
     pub sample_rate: f32,
     /// Cached "active" flag — skip EQ processing entirely if all bands are zero
     pub active: bool,
+    /// SLICE 4 — the master rack's GEQ slot is OUT (or removed): the filters are skipped exactly as they are
+    /// for flat bands (`active == false`), so a bypassed GEQ is bit-identical to a flat one. The spectrum tap
+    /// below still runs — it is a meter, not DSP. Default false (every non-rack user of EqChain unchanged).
+    pub bypass: bool,
 
     // ── Spectrum analyzer ──
     ring:       Vec<f32>,       // Mono downmix ring buffer
@@ -145,6 +149,7 @@ impl EqChain {
             bands_db: [0.0; 10],
             sample_rate,
             active: false,
+            bypass: false,
             ring: vec![0.0; FFT_SIZE],
             ring_pos: 0,
             fft_plan,
@@ -237,7 +242,7 @@ impl EqChain {
     /// post-EQ mono downmix into the spectrum analyzer ring buffer.
     #[inline]
     pub fn process_stereo(&mut self, l: f32, r: f32) -> (f32, f32) {
-        let (out_l, out_r) = if self.active {
+        let (out_l, out_r) = if self.active && !self.bypass {
             let mut lo = l;
             let mut ro = r;
             for f in self.filters.iter_mut() {

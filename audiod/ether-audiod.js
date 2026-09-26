@@ -318,6 +318,13 @@ const handlers = {
   // AUX output device. "" = none = the aux stream closes and the bus is silent. Never falls back.
   setAuxDevice:       (m) => A.audioSetAuxDevice(m.stationId, m.device || ""),
   setEq:              (m) => A.audioSetEq(m.stationId, JSON.stringify(m.bands || [])),
+  // SLICE 4 — the whole master rack for one station. The engine parses and validates it and answers
+  // { ok, reason } — a refused rack is reported, never silently dropped.
+  setMasterRack:      (m) => {
+    if (typeof A.audioSetMasterRack !== "function") return { ok: false, reason: "this audio engine predates the rack — fully close and reopen Ether" };
+    try { return JSON.parse(A.audioSetMasterRack(Number(m.stationId), String(m.rack))); }
+    catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+  },
   getState:           (m) => JSON.parse(A.audioGetState(m.stationId)),
   getLevels:          (m) => JSON.parse(A.audioGetLevels(m.stationId)),
   // SLICE 2 — the meter bus. A renderer names the stations it is drawing meters for; the daemon emits their

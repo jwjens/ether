@@ -542,16 +542,21 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
   const [eqBands, setEqBands] = useState<number[]>(EQ_DEFAULT);
   const eqActive = eqBands.some(g => Math.abs(g) > 0.05);
 
+  // SLICE 4 (docs/dsp-rack-framework.md §8) — THIS station's EQ. The query had no station filter and read
+  // whichever station's row came first; it now reads the active station's, and re-reads on a station switch.
   useEffect(() => {
-    query<{ value: string }>("SELECT value FROM station_config_kv WHERE key='eq_master'", [])
+    if (stationId == null) return;
+    setEqBands(EQ_DEFAULT);
+    query<{ value: string }>("SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'eq_master' AND deleted_at IS NULL", [stationId])
       .then(rows => { if (rows[0]?.value) { try { setEqBands(JSON.parse(rows[0].value)); } catch {} } })
       .catch(() => {});
-  }, []);
+  }, [stationId]);
 
   const handleMasterEqChange = useCallback((bands: number[]) => {
     setEqBands(bands);
     (window as any).ether.stationConfigKv.upsertByKey(stationId, 'eq_master', JSON.stringify(bands));
-    try { const w = window as any; if (w.ether?.audio?.setEq) w.ether.audio.setEq("master", bands); } catch {}
+    // …and to THIS station's engine (it used to name no station, so main sent it to station 1).
+    try { const w = window as any; if (w.ether?.audio?.setEq) w.ether.audio.setEq("master", bands, stationId); } catch {}
   }, [stationId]);
 
   // Session uptime

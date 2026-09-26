@@ -5141,6 +5141,51 @@ ipcMain.handle("audio:setVolume", (_, deck, volume, stationId) => AUDIO_DAEMON ?
 ipcMain.handle("audio:setMuted", (_, deck, muted, stationId) => AUDIO_DAEMON ? audiodClient.cmd("setMuted", { deck, muted, stationId }) : audio.audioSetMuted(deck, muted, stationId));
 ipcMain.handle("audio:getState", (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("getState", { stationId }) : JSON.parse(audio.audioGetState(stationId)));
 // SLICE 2 — a renderer names the stations it draws meters for (renew every ≤ 5 s or it lapses).
+// ── SLICE 4 — THE MASTER RACK (docs/dsp-rack-framework.md) ────────────────────────────────────────────────
+// ONE reader and ONE writer for the rack document, shared with the daemon through audiod/rack-seed.js.
+//   rack:get  → the station's rack: its stored `rack_master`, or the rack SEEDED from the legacy keys.
+//   rack:set  → deliver to THIS station's engine FIRST; only if the engine accepts it is it stored
+//               (`rack_master`) and WRITTEN BACK to the legacy keys (Jeff's ruling 3), so a refused rack never
+//               becomes stored state and older daemons/installs keep running the same chain.
+const RackSeed = require(path.join(__dirname, "..", "audiod", "rack-seed.js"));
+function _rackRows(stationId) {
+  const keys = RackSeed.RACK_KEYS;
+  return getDb().prepare(
+    `SELECT key, value FROM station_config_kv WHERE station_id = ? AND key IN (${keys.map(() => "?").join(",")}) AND deleted_at IS NULL`
+  ).all(stationId, ...keys);
+}
+ipcMain.handle("rack:get", (_, stationId) => {
+  const sid = Number(stationId);
+  if (!Number.isFinite(sid)) return { ok: false, reason: "no station" };
+  try {
+    const rows = _rackRows(sid);
+    const get = (k) => { const r = rows.find(x => x.key === k); return r ? r.value : undefined; };
+    return { ok: true, ...RackSeed.seedMasterRack(get) };
+  } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+});
+ipcMain.handle("rack:set", async (_, { stationId, doc } = {}) => {
+  const sid = Number(stationId);
+  if (!Number.isFinite(sid) || !doc) return { ok: false, reason: "no station or no rack" };
+  const json = JSON.stringify(doc);
+  let res;
+  try {
+    if (AUDIO_DAEMON) res = await audiodClient.cmd("setMasterRack", { stationId: sid, rack: json });
+    else if (typeof audio.audioSetMasterRack === "function") res = JSON.parse(audio.audioSetMasterRack(sid, json));
+    else res = { ok: false, reason: "this audio engine predates the rack — fully close and reopen Ether" };
+  } catch (e) { res = { ok: false, reason: String(e && e.message || e) }; }
+  if (!res || res.ok !== true) return res || { ok: false, reason: "no answer from the engine" };
+  try {
+    const { stationConfigKvUpsertByKey } = require("./sync/handlers/station_config_kv");
+    const db = getDb();
+    stationConfigKvUpsertByKey(db, sid, "rack_master", json);
+    for (const [k, v] of RackSeed.legacyWrites(doc)) stationConfigKvUpsertByKey(db, sid, k, v);
+  } catch (e) {
+    // The engine is running it; say that it was not stored rather than pretending.
+    return { ok: false, reason: `the engine accepted the rack but it was not saved: ${String(e && e.message || e)}` };
+  }
+  return { ok: true };
+});
+
 // SLICE 3 — the loudness panel's Reset: integrated loudness, LRA and TP max for a branch start again.
 ipcMain.handle("audio:loudness-reset", (_, { stationId, branch } = {}) => {
   const sid = Number(stationId);
@@ -5257,8 +5302,16 @@ ipcMain.handle("audio:broadcastDelayState", async (_, stationId) => {
 });
 // EQ — sends 10 band gains (f32[]) to the station's EQ chain in the BusMixer.
 ipcMain.handle("audio:setEq", (_, deck, bands, stationId) => {
-  if (AUDIO_DAEMON) return audiodClient.cmd("setEq", { stationId: stationId ?? 1, bands });
-  try { if (typeof audio.audioSetEq === "function") return audio.audioSetEq(stationId ?? 1, JSON.stringify(bands)); }
+  // SLICE 4 (docs/dsp-rack-framework.md §8) — NO STATION, NO EQ. This used to default a missing station to 1, so
+  // a master EQ change made while any other station was active went to station 1's engine. A caller that does
+  // not name its station is refused, and says so.
+  const sid = Number(stationId);
+  if (stationId == null || !Number.isFinite(sid)) {
+    console.warn("[EQ] audio:setEq refused — no station named (the EQ would have gone to station 1)");
+    return { ok: false, reason: "no station" };
+  }
+  if (AUDIO_DAEMON) return audiodClient.cmd("setEq", { stationId: sid, bands });
+  try { if (typeof audio.audioSetEq === "function") return audio.audioSetEq(sid, JSON.stringify(bands)); }
   catch(e) { console.warn("[EQ] audioSetEq error:", e.message); }
   return true;
 });

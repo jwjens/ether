@@ -1205,3 +1205,25 @@ whether they are all behind features that are themselves unfinished. `StudioPro.
 reachable.
 
 **Teardown note:** none — a code finding, not tooling.
+
+---
+
+## DSP — stop writing the legacy processor keys (its own slice) · filed 2026-09-26
+
+**What:** since Slice 4 (docs/dsp-rack-framework.md §1.2, §10) every master-rack write ALSO writes the
+legacy keys `proc_target_lufs`, `proc_ride_rate`, `proc_ride_clamp`, `proc_ceiling_dbtp`, `proc_release_ms`,
+the `proc_stream_*` set, `proc_split` and `eq_master` (`audiod/rack-seed.js` `legacyWrites`, called from
+main's `rack:set`), and the daemon seeds a station's rack from them when it has no `rack_master`.
+
+**Why it exists:** a running daemon does not reload on auto-update, and older installs on the same account
+read those keys. Removing the write-back early hands an older daemon the shipped chain.
+
+**When it can go (Jeff's slice 4 ruling 3):** once the release AFTER the one that ships Slice 4 is installed
+on BOTH machines (OV and jensj) with their daemons restarted. Then: stop the write-back, keep the seed for a
+station with no `rack_master`, and decide whether the old keys are deleted or left inert.
+
+**Also open from the same slice:** `OnAirDeck.tsx:90` and `MicDeck.tsx:67` call `setEq` with no station.
+Main has always applied every `setEq` as the MASTER EQ, so those deck/mic EQ controls changed station 1's
+master GEQ. Since Slice 4 they are refused (logged). What those controls should do is a decision of its own.
+
+**Teardown note:** none — a code change to schedule, not tooling.

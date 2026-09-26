@@ -42,31 +42,20 @@ pub(crate) struct Params {
     pub monitor_vol: f32,
     pub master_vol: f32,
     pub master_monitor_vol: f32,
+    /// Branch POWER — "Process local output" / "Process stream" (Settings). Not modules, and never part of
+    /// a preset (Jeff's slice 4 ruling 2): recall never turns processing on or off.
     pub proc_local: bool,
     pub proc_stream: bool,
-    pub proc_target_lufs: f32,
-    pub proc_ceiling_dbtp: f32,
-    pub proc_release_ms: f32,
-    pub proc_ride_rate: f32,
-    pub proc_ride_clamp: f32,
-    pub proc_ride_bypass: bool,
-    pub proc_limiter_bypass: bool,
-    pub proc_stream_target_lufs: f32,
-    pub proc_stream_ceiling_dbtp: f32,
-    pub proc_stream_release_ms: f32,
-    pub proc_stream_ride_rate: f32,
-    pub proc_stream_ride_clamp: f32,
-    pub proc_stream_ride_bypass: bool,
-    pub proc_stream_limiter_bypass: bool,
+    /// SLICE 4 — THE MASTER RACK (rack.rs, docs/dsp-rack-framework.md §1.3): every module the master runs,
+    /// in slot order, with its parameters and IN. It REPLACES the fourteen proc_* scalars, the two live-only
+    /// bypasses per branch (now the ride/limiter slots' IN) and eq_bands/eq_version (now the GEQ slot and
+    /// rack.eq_version). One typed block, one path: the legacy commands edit this same field.
+    pub rack: crate::rack::MasterRack,
     pub duck_threshold: f32,
     pub duck_depth_db: f32,
     pub duck_attack_ms: f32,
     pub duck_hold_ms: f32,
     pub duck_release_ms: f32,
-    /// Master GEQ band gains. Applied to both EQs (air + room) only when eq_version changes, exactly as
-    /// SetEq applied them — set_bands recomputes coefficients and never touches filter state (eq.rs).
-    pub eq_bands: [f32; 10],
-    pub eq_version: u64,
 }
 
 /// A decoder — the iterator build_source returns (rodio Decoder → 2 ch / 44.1 kHz). S4: it lives on a

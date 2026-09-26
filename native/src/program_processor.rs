@@ -350,12 +350,40 @@ impl ProgramProcessor {
     /// GREW (allocated) on the audio thread for any buffer over 4 096 frames, is gone.
     #[inline]
     pub fn process_planar(&mut self, l: &mut [f32], r: &mut [f32]) {
+        self.ride_stage(l, r);
+        self.limiter_stage(l, r);
+    }
+    /// SLICE 4 — MODULE 1, the loudness ride, as a rack slot: meter the input, advance the gain, and apply it
+    /// in place. This used to be fused with the limiter as `limiter.process(l[i] * g, r[i] * g)`; storing the
+    /// product in the lane and limiting it next computes the SAME f32 product, so the split is bit-identical
+    /// (pinned by `the_split_stages_are_bit_identical_to_the_fused_chain`). A bypassed ride returns g = 1.0,
+    /// and x * 1.0 == x exactly.
+    #[inline]
+    pub fn ride_stage(&mut self, l: &mut [f32], r: &mut [f32]) {
+        let n = l.len().min(r.len());
+        let g = self.ride.update_planar(&l[..n], &r[..n]);
+        for i in 0..n { l[i] *= g; r[i] *= g; }
+    }
+    /// SLICE 4 — MODULE 2, the true-peak limiter, as a rack slot (always the last slot of a branch).
+    #[inline]
+    pub fn limiter_stage(&mut self, l: &mut [f32], r: &mut [f32]) {
         let n = l.len().min(r.len());
         self.limiter.gr_buf_max = 0.0;
-        let g = self.ride.update_planar(&l[..n], &r[..n]);
         for i in 0..n {
-            let (ol, or) = self.limiter.process(l[i] * g, r[i] * g);
+            let (ol, or) = self.limiter.process(l[i], r[i]);
             l[i] = ol; r[i] = or;
+        }
+    }
+    /// SLICE 4 — run a branch's slots in slot order. Parameters and the live bypasses reach the instance
+    /// through set_params, exactly as before; the slots decide which stage runs, and in what order.
+    #[inline]
+    pub fn process_slots(&mut self, slots: &[crate::rack::Slot<crate::rack::BranchModule>], l: &mut [f32], r: &mut [f32]) {
+        for s in slots {
+            match s.module {
+                Some(crate::rack::BranchModule::Ride(_)) => self.ride_stage(l, r),
+                Some(crate::rack::BranchModule::Limiter(_)) => self.limiter_stage(l, r),
+                None => {}
+            }
         }
     }
     /// Process an interleaved-stereo buffer IN PLACE. Caller invokes this ONLY when at least one branch
@@ -680,5 +708,58 @@ mod bench {
         println!("[C4] OUT true-peak overall = {:.2} dBTP   cart-region = {:.2} dBTP   (ceiling -1.0)", overall_tp, cart_tp);
         assert!(overall_tp <= -0.95, "ceiling exceeded overall: {:.2} dBTP", overall_tp);
         assert!(cart_tp   <= -0.95, "cart not limited like music: {:.2} dBTP", cart_tp);
+    }
+}
+
+// ── SLICE 4 — the ride and limiter as two rack slots, proven identical to the chain they were split from ──
+#[cfg(test)]
+mod rack_split_tests {
+    use super::*;
+
+    /// The pre-slice-4 fused chain, verbatim: one gain per buffer, applied inside the limiter's input.
+    fn fused(p: &mut ProgramProcessor, l: &mut [f32], r: &mut [f32]) {
+        let n = l.len().min(r.len());
+        p.limiter.gr_buf_max = 0.0;
+        let g = p.ride.update_planar(&l[..n], &r[..n]);
+        for i in 0..n {
+            let (ol, or) = p.limiter.process(l[i] * g, r[i] * g);
+            l[i] = ol; r[i] = or;
+        }
+    }
+
+    #[test]
+    fn the_split_stages_are_bit_identical_to_the_fused_chain() {
+        const FS: f32 = 44_100.0;
+        // 60 s: quiet then hot then quiet, with peaks over the ceiling so the limiter works and the ride moves.
+        let n = FS as usize * 60;
+        let sig: Vec<f32> = (0..n).map(|i| {
+            let t = i as f32 / FS;
+            let a = if t < 20.0 { 0.05 } else if t < 40.0 { 1.3 } else { 0.1 };
+            a * (2.0 * std::f32::consts::PI * 220.0 * t).sin() + 0.3 * a * (2.0 * std::f32::consts::PI * 3100.0 * t).sin()
+        }).collect();
+        let mut cases = 0;
+        for (ride_byp, lim_byp) in [(false, false), (true, false), (false, true), (true, true)] {
+            for block in [441usize, 480, 128, 1024] {
+                let mut a = ProgramProcessor::new(FS, -14.0);
+                let mut b = ProgramProcessor::new(FS, -14.0);
+                a.set_params(-1.0, 120.0, 6.0, 18.0, ride_byp, lim_byp);
+                b.set_params(-1.0, 120.0, 6.0, 18.0, ride_byp, lim_byp);
+                let (mut al, mut ar, mut bl, mut br) = (sig.clone(), sig.clone(), sig.clone(), sig.clone());
+                let mut k = 0;
+                while k < n {
+                    let e = (k + block).min(n);
+                    fused(&mut a, &mut al[k..e], &mut ar[k..e]);
+                    b.process_planar(&mut bl[k..e], &mut br[k..e]);
+                    assert_eq!(a.gain_reduction_max_db().to_bits(), b.gain_reduction_max_db().to_bits());
+                    k = e;
+                }
+                let same = al.iter().zip(&bl).all(|(x, y)| x.to_bits() == y.to_bits())
+                        && ar.iter().zip(&br).all(|(x, y)| x.to_bits() == y.to_bits());
+                assert!(same, "split stages differ from the fused chain (ride_byp {}, lim_byp {}, block {})", ride_byp, lim_byp, block);
+                assert_eq!(a.ride_gain_db().to_bits(), b.ride_gain_db().to_bits());
+                cases += 1;
+            }
+        }
+        println!("[rack-split] ride → limiter as two slots: bit-identical to the fused chain in {} cases (4 bypass combinations × 4 block sizes, 60 s each)", cases);
     }
 }

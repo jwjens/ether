@@ -5,7 +5,7 @@ edition = "2021"
 description = "Ether native audio engine — NAPI addon for Electron"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # NAPI — Node.js native addon interface

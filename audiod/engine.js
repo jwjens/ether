@@ -17,6 +17,8 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const A = require(path.join(__dirname, "..", "native", "ether-audio.node"));
+// SLICE 4 — the master rack document: seeded from the legacy keys, written back to them (docs/dsp-rack-framework.md).
+const RackSeed = require(path.join(__dirname, "rack-seed.js"));
 const loggen = require("./loggen");
 const autofit = require("./autofit");   // §2.7 auto-fitter — OBSERVATION ONLY this release (writes nothing)
 const playlog = require("./playlog");
@@ -303,37 +305,18 @@ class DaemonEngine {
   _applyProcessingFromKv(now) {
     if (now - (this._procCheckedAt || 0) < 3000) return;
     this._procCheckedAt = now;
-    let local = false, stream = false, target = -14.0;
-    // The operator's processor numbers. Defaults are THE SHIPPED CHAIN — the same values
-    // ProgramProcessor::new uses — so a station with no rows runs exactly what it ran before, and the
-    // panel shows these greyed as the current value rather than a blank box.
-    // The two bypasses are deliberately absent: they are a live test tool and are never persisted.
-    let ceiling = -1.0, release = 120.0, rideRate = 1.5, rideClamp = 12.0;
-    // THE STREAM BRANCH. `proc_split` off (the default, and the only state a station that has never
-    // opened the rack can be in) MIRRORS the local values into the stream branch, so the two instances
-    // carry identical parameters and produce identical audio - C7 asserts that on the sample bits.
-    // Only when the operator explicitly splits them do the stream keys take over.
-    let split = false;
-    let sTarget = null, sCeiling = null, sRelease = null, sRate = null, sClamp = null;
+    // Branch POWER — "Process local output" / "Process stream". Not modules, never part of a preset.
+    let local = false, stream = false;
+    let rows;
     try {
-      const rows = this.db.prepare(
-        "SELECT key, value FROM station_config_kv WHERE station_id=? AND key IN ('proc_local','proc_stream','proc_target_lufs','proc_ceiling_dbtp','proc_release_ms','proc_ride_rate','proc_ride_clamp','proc_split','proc_stream_target_lufs','proc_stream_ceiling_dbtp','proc_stream_release_ms','proc_stream_ride_rate','proc_stream_ride_clamp') AND deleted_at IS NULL"
+      // THIS station's rows only (WHERE station_id = this engine's station) — the rack, and the legacy keys it
+      // is seeded from. SLICE 4: the master GEQ is now read here too, so it is delivered to THIS station's
+      // engine and RE-APPLIED whenever an engine starts (it used to be applied only when someone moved a
+      // slider, to whichever station the renderer defaulted to — docs/dsp-rack-framework.md §8).
+      const keys = ["proc_local", "proc_stream", ...RackSeed.RACK_KEYS];
+      rows = this.db.prepare(
+        `SELECT key, value FROM station_config_kv WHERE station_id=? AND key IN (${keys.map(k => `'${k}'`).join(",")}) AND deleted_at IS NULL`
       ).all(this.stationId);
-      for (const r of rows) {
-        if (r.key === "proc_local") local = (r.value === "1" || r.value === "true");
-        else if (r.key === "proc_stream") stream = (r.value === "1" || r.value === "true");
-        else if (r.key === "proc_target_lufs") { const t = parseFloat(r.value); if (!isNaN(t)) target = Math.max(-30, Math.min(-6, t)); }
-        else if (r.key === "proc_ceiling_dbtp") { const v = parseFloat(r.value); if (!isNaN(v)) ceiling  = Math.max(-12, Math.min(-0.1, v)); }
-        else if (r.key === "proc_release_ms")   { const v = parseFloat(r.value); if (!isNaN(v)) release  = Math.max(5, Math.min(2000, v)); }
-        else if (r.key === "proc_ride_rate")    { const v = parseFloat(r.value); if (!isNaN(v)) rideRate = Math.max(0.1, Math.min(12, v)); }
-        else if (r.key === "proc_ride_clamp")   { const v = parseFloat(r.value); if (!isNaN(v)) rideClamp= Math.max(0, Math.min(24, v)); }
-        else if (r.key === "proc_split")  split = (r.value === "1" || r.value === "true");
-        else if (r.key === "proc_stream_target_lufs")  { const v = parseFloat(r.value); if (!isNaN(v)) sTarget  = Math.max(-30, Math.min(-6, v)); }
-        else if (r.key === "proc_stream_ceiling_dbtp") { const v = parseFloat(r.value); if (!isNaN(v)) sCeiling = Math.max(-12, Math.min(-0.1, v)); }
-        else if (r.key === "proc_stream_release_ms")   { const v = parseFloat(r.value); if (!isNaN(v)) sRelease = Math.max(5, Math.min(2000, v)); }
-        else if (r.key === "proc_stream_ride_rate")    { const v = parseFloat(r.value); if (!isNaN(v)) sRate    = Math.max(0.1, Math.min(12, v)); }
-        else if (r.key === "proc_stream_ride_clamp")   { const v = parseFloat(r.value); if (!isNaN(v)) sClamp   = Math.max(0, Math.min(24, v)); }
-      }
     } catch (e) {
       // Leave the last-applied state untouched — never disturb playout for a read failure. But SAY SO:
       // this used to return silently, so a station whose KV could not be read looked identical to one
@@ -344,39 +327,45 @@ class DaemonEngine {
       }
       return;
     }
-    // MIRROR WHILE LINKED. This is where "bit-identical for a station that stored nothing" is enforced:
-    // with the split off, the stream branch is handed exactly the local numbers, whatever they are.
-    const st = {
-      target:  split && sTarget  !== null ? sTarget  : target,
-      ceiling: split && sCeiling !== null ? sCeiling : ceiling,
-      release: split && sRelease !== null ? sRelease : release,
-      rate:    split && sRate    !== null ? sRate    : rideRate,
-      clamp:   split && sClamp   !== null ? sClamp   : rideClamp,
-    };
+    const get = (k) => { const r = rows.find(x => x.key === k); return r ? r.value : undefined; };
+    local = get("proc_local") === "1" || get("proc_local") === "true";
+    stream = get("proc_stream") === "1" || get("proc_stream") === "true";
+    // SLICE 4 — THE MASTER RACK: the stored `rack_master` document, or — for a station that has never opened
+    // the rack — the rack SEEDED from the keys every earlier build wrote (audiod/rack-seed.js). A station with
+    // nothing stored runs the shipped chain, bit-identical to before. While LINKED the stream branch runs the
+    // monitor's modules (the document says so; the engine is handed both branches).
+    const { doc, source } = RackSeed.seedMasterRack(get);
+    const L = RackSeed.branchParams(doc, "local");
+    const geq = RackSeed.geqOf(doc);
+    const docStr = JSON.stringify(doc);
+    const eqActive = !!(geq.on && geq.bands && geq.bands.some(g => Math.abs(g) > 0.05));
     const prev = this._procApplied;
-    const changed = !prev || prev.local !== local || prev.stream !== stream || prev.target !== target
-      || prev.ceiling !== ceiling || prev.release !== release || prev.rideRate !== rideRate || prev.rideClamp !== rideClamp
-      || prev.split !== split || prev.sTarget !== st.target || prev.sCeiling !== st.ceiling
-      || prev.sRelease !== st.release || prev.sRate !== st.rate || prev.sClamp !== st.clamp;
-    const reassert = (local || stream) && (now - (this._procAssertedAt || 0) > 15000);
+    const changed = !prev || prev.local !== local || prev.stream !== stream || prev.docStr !== docStr;
+    const reassert = (local || stream || eqActive) && (now - (this._procAssertedAt || 0) > 15000);
     if (!changed && !reassert) return;
-    this._procApplied = { local, stream, target, ceiling, release, rideRate, rideClamp,
-                          split, sTarget: st.target, sCeiling: st.ceiling, sRelease: st.release,
-                          sRate: st.rate, sClamp: st.clamp };
+    this._procApplied = { local, stream, docStr };
     this._procOn = local || stream;
     this._procAssertedAt = now;
     try {
-      A.audioSetProcessing(this.stationId, local, stream, target);
-      // THE NUMBERS ONLY — and now that is enforced by the signature, not by care. This call used to
-      // take two trailing bypass booleans and passed `false, false`, so every ~15s re-assert silently
-      // un-bypassed whatever the operator had engaged in the rack. Bypass moved to its own command
-      // (audioSetProcessorBypass); this path cannot express it and therefore cannot clear it.
-      if (typeof A.audioSetProcessorParams === "function") {
-        A.audioSetProcessorParams(this.stationId, 0, target,    ceiling,    release,    rideRate, rideClamp);
-        A.audioSetProcessorParams(this.stationId, 1, st.target, st.ceiling, st.release, st.rate,  st.clamp);
+      A.audioSetProcessing(this.stationId, local, stream, L.target);
+      if (typeof A.audioSetMasterRack === "function") {
+        // THE RACK — one document, one Params block. The live-only bypasses are not in it (the engine keeps
+        // what it is running), so this ~15 s re-assert can never clear a bypass the operator engaged.
+        let res = null;
+        try { res = JSON.parse(A.audioSetMasterRack(this.stationId, docStr)); } catch { res = null; }
+        if (!res || res.ok !== true) this._log("rack refused ✗", (res && res.reason) || "no answer from the engine");
+      } else {
+        // An engine older than slice 4 (the daemon and the addon normally ship together): the legacy numbers,
+        // and the GEQ — which the legacy path never re-applied at all.
+        const S = RackSeed.branchParams(doc, "stream");
+        if (typeof A.audioSetProcessorParams === "function") {
+          A.audioSetProcessorParams(this.stationId, 0, L.target, L.ceiling, L.release, L.rate, L.clamp);
+          A.audioSetProcessorParams(this.stationId, 1, S.target, S.ceiling, S.release, S.rate, S.clamp);
+        }
+        if (typeof A.audioSetEq === "function") A.audioSetEq(this.stationId, JSON.stringify(geq.on && geq.bands ? geq.bands : new Array(10).fill(0)));
       }
-      if (changed) this._log("processing", `local=${local} stream=${stream} | monitor target=${target} ceiling=${ceiling} release=${release} rate=${rideRate} clamp=${rideClamp}` +
-        ` | stream ${split ? "SPLIT" : "linked"} target=${st.target} ceiling=${st.ceiling} release=${st.release} rate=${st.rate} clamp=${st.clamp}`);
+      if (changed) this._log("processing", `local=${local} stream=${stream} | rack (${source}) link=${doc.link} ` +
+        `monitor target=${L.target} ceiling=${L.ceiling} | GEQ ${geq.bands ? (geq.on ? (eqActive ? "on" : "flat") : "OUT") : "removed"}`);
     } catch (e) { this._log("processing apply ✗", String(e)); }
   }
 

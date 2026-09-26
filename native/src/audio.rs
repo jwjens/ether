@@ -395,6 +395,9 @@ pub enum AudioCmd {
     /// command means the re-assert has no way to express bypass and therefore cannot clear it. A
     /// structural guarantee, not a rule someone has to remember. 2026-09-07.
     SetProcessorBypass { branch: u8, ride_bypass: bool, limiter_bypass: bool },
+    /// SLICE 4 — the whole master rack, parsed and validated (rack.rs). The live-only bypasses are NOT taken
+    /// from it: the ride/limiter IN the engine is running is kept (Jeff's 2026-09-07 ruling).
+    SetMasterRack(crate::rack::MasterRack),
     /// Choose the output device for the AUX monitor bus. Empty string = none = the aux stream is
     /// closed and the bus is silent.
     SetAuxDevice(String),
@@ -744,6 +747,11 @@ pub struct BusState {
     /// The GEQ bands the callback last applied, and the version they came with.
     pub(crate) eq_bands: [f32; 10],
     pub(crate) eq_version_applied: u64,
+    /// SLICE 4 — the master rack the callback last adopted (slot order, presence, IN), and whether it has set
+    /// the GEQ's bypass on both EQ instances. The processor scalars above stay the callback's working copy,
+    /// filled from this rack in apply_params.
+    pub(crate) rack: crate::rack::MasterRack,
+    pub(crate) eq_bypass_applied: bool,
     /// The dispatch-side ends, created with the state and taken once by start_station_mixer.
     pub(crate) handles: Option<BusHandles>,
     /// SLICE 2 — the meter bus's current read window (docs/dsp-meter-bus.md §1.2). A fixed field: the
@@ -860,6 +868,8 @@ impl BusState {
             shared: shared.clone(),
             eq_bands: [0.0; 10],
             eq_version_applied: 0,
+            rack: crate::rack::MasterRack::shipped(),
+            eq_bypass_applied: false,
             handles: None,
             meters_acc: MeterBlock { epoch: 1, ..MeterBlock::default() },
             loud,
@@ -886,28 +896,28 @@ impl BusState {
             master_monitor_vol: self.master_monitor_vol,
             proc_local: self.proc_local,
             proc_stream: self.proc_stream,
-            proc_target_lufs: self.proc_target_lufs,
-            proc_ceiling_dbtp: self.proc_ceiling_dbtp,
-            proc_release_ms: self.proc_release_ms,
-            proc_ride_rate: self.proc_ride_rate,
-            proc_ride_clamp: self.proc_ride_clamp,
-            proc_ride_bypass: self.proc_ride_bypass,
-            proc_limiter_bypass: self.proc_limiter_bypass,
-            proc_stream_target_lufs: self.proc_stream_target_lufs,
-            proc_stream_ceiling_dbtp: self.proc_stream_ceiling_dbtp,
-            proc_stream_release_ms: self.proc_stream_release_ms,
-            proc_stream_ride_rate: self.proc_stream_ride_rate,
-            proc_stream_ride_clamp: self.proc_stream_ride_clamp,
-            proc_stream_ride_bypass: self.proc_stream_ride_bypass,
-            proc_stream_limiter_bypass: self.proc_stream_limiter_bypass,
+            rack: self.rack_from_fields(),
             duck_threshold: self.duck_threshold,
             duck_depth_db: self.duck_depth_db,
             duck_attack_ms: self.duck_attack_ms,
             duck_hold_ms: self.duck_hold_ms,
             duck_release_ms: self.duck_release_ms,
-            eq_bands: self.eq_bands,
-            eq_version: self.eq_version_applied,
         }
+    }
+
+    /// SLICE 4 — the rack this state is running: its adopted slots, with the working values written in.
+    fn rack_from_fields(&self) -> crate::rack::MasterRack {
+        use crate::rack::{RideParams, LimiterParams, BRANCH_LOCAL, BRANCH_STREAM};
+        let mut r = self.rack;
+        r.set_ride(BRANCH_LOCAL, RideParams { target: self.proc_target_lufs, rate: self.proc_ride_rate, clamp: self.proc_ride_clamp });
+        r.set_limiter(BRANCH_LOCAL, LimiterParams { ceiling: self.proc_ceiling_dbtp, release: self.proc_release_ms });
+        r.set_ride(BRANCH_STREAM, RideParams { target: self.proc_stream_target_lufs, rate: self.proc_stream_ride_rate, clamp: self.proc_stream_ride_clamp });
+        r.set_limiter(BRANCH_STREAM, LimiterParams { ceiling: self.proc_stream_ceiling_dbtp, release: self.proc_stream_release_ms });
+        r.set_branch_in(BRANCH_LOCAL, !self.proc_ride_bypass, !self.proc_limiter_bypass);
+        r.set_branch_in(BRANCH_STREAM, !self.proc_stream_ride_bypass, !self.proc_stream_limiter_bypass);
+        if r.geq().0.is_some() { r.set_geq_bands(self.eq_bands); }
+        r.eq_version = self.eq_version_applied;
+        r
     }
 
     /// Adopt a parameter block (callback, top of buffer). Plain field copies; the GEQ is re-tuned only when
@@ -927,37 +937,60 @@ impl BusState {
         self.master_monitor_vol = p.master_monitor_vol;
         self.proc_local = p.proc_local;
         self.proc_stream = p.proc_stream;
-        self.proc_target_lufs = p.proc_target_lufs;
-        self.proc_ceiling_dbtp = p.proc_ceiling_dbtp;
-        self.proc_release_ms = p.proc_release_ms;
-        self.proc_ride_rate = p.proc_ride_rate;
-        self.proc_ride_clamp = p.proc_ride_clamp;
-        self.proc_ride_bypass = p.proc_ride_bypass;
-        self.proc_limiter_bypass = p.proc_limiter_bypass;
-        self.proc_stream_target_lufs = p.proc_stream_target_lufs;
-        self.proc_stream_ceiling_dbtp = p.proc_stream_ceiling_dbtp;
-        self.proc_stream_release_ms = p.proc_stream_release_ms;
-        self.proc_stream_ride_rate = p.proc_stream_ride_rate;
-        self.proc_stream_ride_clamp = p.proc_stream_ride_clamp;
-        self.proc_stream_ride_bypass = p.proc_stream_ride_bypass;
-        self.proc_stream_limiter_bypass = p.proc_stream_limiter_bypass;
+        // SLICE 4 — the master rack: every module's parameters and IN, from the one block.
+        {
+            use crate::rack::{BRANCH_LOCAL, BRANCH_STREAM};
+            let (rl, ril) = p.rack.ride(BRANCH_LOCAL);
+            let (ll, lil) = p.rack.limiter(BRANCH_LOCAL);
+            let (rs, ris) = p.rack.ride(BRANCH_STREAM);
+            let (ls, lis) = p.rack.limiter(BRANCH_STREAM);
+            self.proc_target_lufs = rl.target;
+            self.proc_ride_rate = rl.rate;
+            self.proc_ride_clamp = rl.clamp;
+            self.proc_ceiling_dbtp = ll.ceiling;
+            self.proc_release_ms = ll.release;
+            self.proc_ride_bypass = !ril;
+            self.proc_limiter_bypass = !lil;
+            self.proc_stream_target_lufs = rs.target;
+            self.proc_stream_ride_rate = rs.rate;
+            self.proc_stream_ride_clamp = rs.clamp;
+            self.proc_stream_ceiling_dbtp = ls.ceiling;
+            self.proc_stream_release_ms = ls.release;
+            self.proc_stream_ride_bypass = !ris;
+            self.proc_stream_limiter_bypass = !lis;
+        }
         self.duck_threshold = p.duck_threshold;
         self.duck_depth_db = p.duck_depth_db;
         self.duck_attack_ms = p.duck_attack_ms;
         self.duck_hold_ms = p.duck_hold_ms;
         self.duck_release_ms = p.duck_release_ms;
-        if p.eq_version != self.eq_version_applied {
+        // The GEQ slot: bands on a version change (a removed GEQ is flat), exactly as SetEq always applied them.
+        let (geq_bands, geq_in) = p.rack.geq();
+        let bands = geq_bands.unwrap_or([0.0; 10]);
+        if p.rack.eq_version != self.eq_version_applied {
             // Only the callback ever locks these (S3), so try_lock cannot miss; if it ever did, the version
             // is left unapplied and the next buffer tries again rather than dropping the change.
             if let (Ok(mut a), Ok(mut r)) = (self.eq.try_lock(), self.eq_room.try_lock()) {
-                r.set_bands(&p.eq_bands);
-                a.set_bands(&p.eq_bands);
-                self.eq_bands = p.eq_bands;
-                self.eq_version_applied = p.eq_version;
+                r.set_bands(&bands);
+                a.set_bands(&bands);
+                self.eq_bands = bands;
+                self.eq_version_applied = p.rack.eq_version;
             } else {
                 RtCounters::bump(&self.counters.lock_misses, 1);
             }
         }
+        // …and its IN: an OUT (or removed) GEQ takes the flat passthrough on both instances.
+        let byp = geq_bands.is_none() || !geq_in;
+        if byp != self.eq_bypass_applied {
+            if let (Ok(mut a), Ok(mut r)) = (self.eq.try_lock(), self.eq_room.try_lock()) {
+                a.bypass = byp;
+                r.bypass = byp;
+                self.eq_bypass_applied = byp;
+            } else {
+                RtCounters::bump(&self.counters.lock_misses, 1);
+            }
+        }
+        self.rack = p.rack;
     }
 
     /// Free `g` OFF the audio thread. If the garbage queue is full it is leaked and counted, never dropped here.
@@ -1258,6 +1291,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             // here would silently swallow the next one.
                             AudioCmd::SetProcessorParams { .. } => {}
                             AudioCmd::SetProcessorBypass { .. } => {}
+                            AudioCmd::SetMasterRack(_) => {}
                             AudioCmd::StartStream { server, port, mount, station_name, .. } => {
                                 eprintln!("Stream: {}:{}{} ({})", server, port, mount, station_name);
                             }
@@ -1712,6 +1746,13 @@ mod rt_command_path {
                     if done2.load(Ordering::Acquire) { break; }
                     match cmd.try_push(c) { Ok(()) => break, Err(back) => { c = back; while garbage.try_pop().is_some() {} std::thread::yield_now(); } }
                 }
+                // ONE BLOCK IN FLIGHT (slice 4, 2026-09-26): wait until the callback has taken this block before
+                // sending the next. Unpaced, the sender pushed all 20 000 blocks within the first few buffers,
+                // so nearly every buffer rendered the final block — the liveness half of this test passed with
+                // 2 of 1 000 buffers at 0.0 in the slice 3 run and failed with 0 in the first slice 4 run. The
+                // property under test (a block never changes mid-buffer) is unchanged; this only guarantees
+                // both states are actually exercised.
+                while cmd.occupied_len() > 0 && !done2.load(Ordering::Acquire) { while garbage.try_pop().is_some() {} std::thread::yield_now(); }
                 sent += 1;
                 while garbage.try_pop().is_some() {}
             }
@@ -2776,7 +2817,13 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     // Audio Processing v1 meters (observed at the taps).
                                     lvl.proc_local       = p.proc_local;
                                     lvl.proc_stream      = p.proc_stream;
-                                    lvl.proc_target_lufs = p.proc_target_lufs;
+                                    // SLICE 4 — the echo reads the RACK the callback adopted.
+                                    use crate::rack::{BRANCH_LOCAL, BRANCH_STREAM};
+                                    let (rl, ril) = p.rack.ride(BRANCH_LOCAL);
+                                    let (ll, lil) = p.rack.limiter(BRANCH_LOCAL);
+                                    let (rs, ris) = p.rack.ride(BRANCH_STREAM);
+                                    let (ls, lis) = p.rack.limiter(BRANCH_STREAM);
+                                    lvl.proc_target_lufs = rl.target;
                                     lvl.proc_in_lufs     = m.proc_in_lufs;
                                     // proc_* describes LOCAL, falling back to STREAM when only the stream
                                     // processes — the rule the processor meters have always followed.
@@ -2787,25 +2834,25 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     lvl.proc_out_peak    = m.proc_out_peak;
                                     // THE ECHO — the parameters the ENGINE ran this buffer (the block the
                                     // callback adopted), not what this thread last sent.
-                                    lvl.proc_ceiling_dbtp   = p.proc_ceiling_dbtp;
-                                    lvl.proc_release_ms     = p.proc_release_ms;
-                                    lvl.proc_ride_rate      = p.proc_ride_rate;
-                                    lvl.proc_ride_clamp     = p.proc_ride_clamp;
-                                    lvl.proc_ride_bypass    = p.proc_ride_bypass;
-                                    lvl.proc_limiter_bypass = p.proc_limiter_bypass;
+                                    lvl.proc_ceiling_dbtp   = ll.ceiling;
+                                    lvl.proc_release_ms     = ll.release;
+                                    lvl.proc_ride_rate      = rl.rate;
+                                    lvl.proc_ride_clamp     = rl.clamp;
+                                    lvl.proc_ride_bypass    = !ril;
+                                    lvl.proc_limiter_bypass = !lil;
                                     lvl.proc_stream_in_lufs      = m.proc_stream_in_lufs;
                                     lvl.proc_stream_out_lufs     = out_m(LOUD_STREAM);
                                     lvl.proc_stream_gr_db        = m.proc_stream_gr_db;
                                     lvl.proc_stream_ride_gain_db = m.proc_stream_ride_gain_db;
                                     lvl.proc_stream_in_peak      = m.proc_stream_in_peak;
                                     lvl.proc_stream_out_peak     = m.proc_stream_out_peak;
-                                    lvl.proc_stream_target_lufs  = p.proc_stream_target_lufs;
-                                    lvl.proc_stream_ceiling_dbtp = p.proc_stream_ceiling_dbtp;
-                                    lvl.proc_stream_release_ms   = p.proc_stream_release_ms;
-                                    lvl.proc_stream_ride_rate    = p.proc_stream_ride_rate;
-                                    lvl.proc_stream_ride_clamp   = p.proc_stream_ride_clamp;
-                                    lvl.proc_stream_ride_bypass    = p.proc_stream_ride_bypass;
-                                    lvl.proc_stream_limiter_bypass = p.proc_stream_limiter_bypass;
+                                    lvl.proc_stream_target_lufs  = rs.target;
+                                    lvl.proc_stream_ceiling_dbtp = ls.ceiling;
+                                    lvl.proc_stream_release_ms   = ls.release;
+                                    lvl.proc_stream_ride_rate    = rs.rate;
+                                    lvl.proc_stream_ride_clamp   = rs.clamp;
+                                    lvl.proc_stream_ride_bypass    = !ris;
+                                    lvl.proc_stream_limiter_bypass = !lis;
                                     let mut active = 0u32;
                                     // Explicit literals, never an index into DECK_LETTERS — the 2026-07-15
                                     // panic rule (docs/incident-jingle-cart-panic-2026-07-15.md) still holds.
@@ -2863,8 +2910,11 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::SetEq(gains) => {
                                 // One control, both EQ instances (air + room) — the callback applies the
                                 // new bands to both when it adopts this block, as SetEq always did.
-                                for i in 0..10 { ctl.params.eq_bands[i] = gains.get(i).copied().unwrap_or(0.0); }
-                                ctl.params.eq_version = ctl.params.eq_version.wrapping_add(1);
+                                // SLICE 4 — the legacy SetEq edits the rack's GEQ slot (one block, one path).
+                                let mut b = [0.0f32; 10];
+                                for i in 0..10 { let g = gains.get(i).copied().unwrap_or(0.0); b[i] = if g.is_finite() { g } else { 0.0 }; }
+                                ctl.params.rack.set_geq_bands(b);
+                                ctl.params.rack.eq_version = ctl.params.rack.eq_version.wrapping_add(1);
                                 ctl.params_changed();
                             }
                             AudioCmd::SetMonitorVolume(v) => {
@@ -2882,43 +2932,40 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 ctl.params_changed();
                             }
                             AudioCmd::SetProcessorBypass { branch, ride_bypass, limiter_bypass } => {
-                                let p = &mut ctl.params;
-                                if branch == 1 {
-                                    p.proc_stream_ride_bypass    = ride_bypass;
-                                    p.proc_stream_limiter_bypass = limiter_bypass;
-                                } else {
-                                    p.proc_ride_bypass    = ride_bypass;
-                                    p.proc_limiter_bypass = limiter_bypass;
-                                }
+                                // SLICE 4 — the live-only bypasses ARE the ride/limiter slots' IN.
+                                let br = if branch == 1 { crate::rack::BRANCH_STREAM } else { crate::rack::BRANCH_LOCAL };
+                                ctl.params.rack.set_branch_in(br, !ride_bypass, !limiter_bypass);
                                 ctl.params_changed();
                             }
                             AudioCmd::SetProcessorParams { branch, target_lufs, ceiling_dbtp, release_ms, ride_rate_db_s, ride_clamp_db } => {
-                                let p = &mut ctl.params;
-                                if branch == 1 {
-                                    // Same edge clamps as the local branch — every value between is a
-                                    // legitimate operator choice.
-                                    p.proc_stream_target_lufs  = target_lufs.clamp(-30.0, -6.0);
-                                    p.proc_stream_ceiling_dbtp = ceiling_dbtp.clamp(-12.0, -0.1);
-                                    p.proc_stream_release_ms   = release_ms.clamp(5.0, 2000.0);
-                                    p.proc_stream_ride_rate    = ride_rate_db_s.clamp(0.1, 12.0);
-                                    p.proc_stream_ride_clamp   = ride_clamp_db.clamp(0.0, 24.0);
-                                } else {
-                                    p.proc_target_lufs = target_lufs.clamp(-30.0, -6.0);
-                                    // The ceiling is never allowed to reach 0 dBTP — above about -0.3 the
-                                    // stream's encoder produces inter-sample overs that clip on the
-                                    // listener's decoder.
-                                    p.proc_ceiling_dbtp   = ceiling_dbtp.clamp(-12.0, -0.1);
-                                    p.proc_release_ms     = release_ms.clamp(5.0, 2000.0);
-                                    p.proc_ride_rate      = ride_rate_db_s.clamp(0.1, 12.0);
-                                    p.proc_ride_clamp     = ride_clamp_db.clamp(0.0, 24.0);
-                                }
+                                // SLICE 4 — the legacy numbers command edits the rack's ride and limiter slots,
+                                // through the same edge clamps (rack.rs) it has always applied.
+                                let br = if branch == 1 { crate::rack::BRANCH_STREAM } else { crate::rack::BRANCH_LOCAL };
+                                let r = &mut ctl.params.rack;
+                                r.set_ride(br, crate::rack::clamp_ride(crate::rack::RideParams { target: target_lufs, rate: ride_rate_db_s, clamp: ride_clamp_db }));
+                                r.set_limiter(br, crate::rack::clamp_limiter(crate::rack::LimiterParams { ceiling: ceiling_dbtp, release: release_ms }));
                                 ctl.params_changed();
                             }
                             AudioCmd::SetProcessing { local, stream, target_lufs } => {
                                 let p = &mut ctl.params;
                                 p.proc_local  = local;
                                 p.proc_stream = stream;
-                                p.proc_target_lufs = target_lufs.clamp(-30.0, -6.0);
+                                let (mut ride, _) = p.rack.ride(crate::rack::BRANCH_LOCAL);
+                                ride.target = target_lufs;
+                                p.rack.set_ride(crate::rack::BRANCH_LOCAL, crate::rack::clamp_ride(ride));
+                                ctl.params_changed();
+                            }
+                            AudioCmd::SetMasterRack(new_rack) => {
+                                // SLICE 4 — the whole master rack (already parsed and clamped in rack.rs). The
+                                // live-only bypasses are kept as the engine is running them; the GEQ's
+                                // coefficient version moves only if its bands actually changed.
+                                use crate::rack::{BRANCH_LOCAL, BRANCH_STREAM};
+                                let cur = ctl.params.rack;
+                                let mut r = new_rack;
+                                r.set_branch_in(BRANCH_LOCAL, cur.ride(BRANCH_LOCAL).1, cur.limiter(BRANCH_LOCAL).1);
+                                r.set_branch_in(BRANCH_STREAM, cur.ride(BRANCH_STREAM).1, cur.limiter(BRANCH_STREAM).1);
+                                r.eq_version = if r.geq().0 != cur.geq().0 { cur.eq_version.wrapping_add(1) } else { cur.eq_version };
+                                ctl.params.rack = r;
                                 ctl.params_changed();
                             }
                             AudioCmd::Ping
@@ -3736,7 +3783,8 @@ pub(crate) fn mixer_callback(
     // lane holds a copy of the clean bus and is never read, exactly as the old None buffers were never read.
     let run_branch = |proc: &Arc<Mutex<crate::program_processor::ProgramProcessor>>,
                       target: f32, ceiling: f32, release: f32, rate: f32, clamp: f32,
-                      ride_byp: bool, lim_byp: bool, pl: &mut [f32], pr: &mut [f32]|
+                      ride_byp: bool, lim_byp: bool, slots: [crate::rack::Slot<crate::rack::BranchModule>; crate::rack::MASTER_SLOTS],
+                      pl: &mut [f32], pr: &mut [f32]|
      -> Option<(f32, f32, f32, f32, f32)> {   // (in LUFS, GR last sample, GR buffer max, ride dB, out peak)
         pl.copy_from_slice(out_l);
         pr.copy_from_slice(out_r);
@@ -3748,7 +3796,8 @@ pub(crate) fn mixer_callback(
             // cannot fight. The meter still runs; only the corrective gain is held. Both branches, since
             // the duck applies to the programme both of them carry.
             p.set_ride_hold(duck_active);
-            p.process_planar(pl, pr);
+            // SLICE 4 — the branch's slots, in slot order (ride → limiter; the limiter is pinned last).
+            p.process_slots(&slots, pl, pr);
             let op = pl.iter().chain(pr.iter()).map(|&s| s.abs()).fold(0.0f32, f32::max);
             Some((p.in_lufs(), p.gain_reduction_db(), p.gain_reduction_max_db(), p.ride_gain_db(), op))
         } else { RtCounters::bump(&counters.lock_misses, 1); None }
@@ -3761,13 +3810,13 @@ pub(crate) fn mixer_callback(
     let local_m = if bus.proc_local {
         run_branch(&bus.processor.clone(), bus.proc_target_lufs, bus.proc_ceiling_dbtp,
                    bus.proc_release_ms, bus.proc_ride_rate, bus.proc_ride_clamp,
-                   bus.proc_ride_bypass, bus.proc_limiter_bypass, loc_l, loc_r)
+                   bus.proc_ride_bypass, bus.proc_limiter_bypass, bus.rack.branch[crate::rack::BRANCH_LOCAL], loc_l, loc_r)
     } else { None };
 
     let stream_m = if bus.proc_stream {
         run_branch(&bus.processor_stream.clone(), bus.proc_stream_target_lufs, bus.proc_stream_ceiling_dbtp,
                    bus.proc_stream_release_ms, bus.proc_stream_ride_rate, bus.proc_stream_ride_clamp,
-                   bus.proc_stream_ride_bypass, bus.proc_stream_limiter_bypass, str_l, str_r)
+                   bus.proc_stream_ride_bypass, bus.proc_stream_limiter_bypass, bus.rack.branch[crate::rack::BRANCH_STREAM], str_l, str_r)
     } else { None };
     // SLICE 2 — LOCAL tap: the LOCAL branch's processed output, when that branch ran.
     if local_m.is_some() {

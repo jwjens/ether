@@ -11,6 +11,7 @@ pub mod eq;
 mod lufs;
 mod clock;
 mod program_processor;   // Audio Processing v1 — per-station program-bus loudness (bench-gated before ship)
+pub mod rack;            // Slice 4 — the rack model; pub so the type-rule doctests (compile_fail) can see it
 mod rt;                  // Slice 1 S3 — lock-free channels between the audio callback and everything else
 mod loudness;           // Slice 3 — BS.1770 loudness per branch, on a meter thread — docs/dsp-loudness-meter.md
 mod offline_render;      // DSP parity harness — docs/dsp-parity-harness.md (diagnostic; never on the audio path)
@@ -274,6 +275,24 @@ pub fn audio_set_processor_bypass(station_id: u32, branch: u32, ride_bypass: boo
     audio.sender.send(AudioCmd::SetProcessorBypass { branch: branch as u8, ride_bypass, limiter_bypass }).is_ok()
 }
 
+/// SLICE 4 — deliver a station's whole master rack (the station_config_kv `rack_master` document,
+/// docs/dsp-rack-framework.md §1.1). Parsed and validated HERE, so a refused rack comes back with its reason
+/// ({"ok":false,"reason":…}) instead of being silently ignored; an accepted one rides the one Params block.
+/// The live-only ride/limiter bypasses are not taken from the document (the engine keeps what it runs).
+#[napi]
+pub fn audio_set_master_rack(station_id: u32, rack_json: String) -> String {
+    let r = match rack::MasterRack::from_doc_json(&rack_json) {
+        Ok(r) => r,
+        Err(e) => return serde_json::json!({ "ok": false, "reason": e }).to_string(),
+    };
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return serde_json::json!({ "ok": false, "reason": "engine busy" }).to_string() };
+    match audio.sender.send(AudioCmd::SetMasterRack(r)) {
+        Ok(()) => serde_json::json!({ "ok": true }).to_string(),
+        Err(_) => serde_json::json!({ "ok": false, "reason": "the station's engine is not running" }).to_string(),
+    }
+}
+
 #[napi]
 pub fn audio_get_state(station_id: Option<u32>) -> String {
     let engine = get_or_create_engine(station_id.unwrap_or(1), None);
@@ -534,9 +553,9 @@ pub fn audio_get_meters(station_id: u32) -> String {
             "aux": gr_of(&b.gr[loudness::LOUD_AUX]),
         },
         "ceil": {
-            "local": ceil_of(p.proc_ceiling_dbtp),
-            "stream": ceil_of(p.proc_stream_ceiling_dbtp),
-            "aux": ceil_of(p.proc_ceiling_dbtp),
+            "local": ceil_of(p.rack.limiter(rack::BRANCH_LOCAL).0.ceiling),
+            "stream": ceil_of(p.rack.limiter(rack::BRANCH_STREAM).0.ceiling),
+            "aux": ceil_of(p.rack.limiter(rack::BRANCH_LOCAL).0.ceiling),
         },
         "margin": (margin * 1000.0).round() / 1000.0,
         // publishes since the station's meter thread started — a frame that stops advancing is stale
