@@ -12,6 +12,7 @@ mod lufs;
 mod clock;
 mod program_processor;   // Audio Processing v1 — per-station program-bus loudness (bench-gated before ship)
 mod chdsp;               // Slice 5 — the channel rack DSP (biquads + crossfade) on the audio thread
+mod micin;               // The mic as an engine input — docs/dsp-mic-in-engine.md
 pub mod rack;            // Slice 4 — the rack model; pub so the type-rule doctests (compile_fail) can see it
 mod rt;                  // Slice 1 S3 — lock-free channels between the audio callback and everything else
 mod loudness;           // Slice 3 — BS.1770 loudness per branch, on a meter thread — docs/dsp-loudness-meter.md
@@ -315,6 +316,37 @@ pub fn audio_set_channel_rack(station_id: u32, slot: String, rack_json: String) 
         Err(_) => serde_json::json!({ "ok": false, "reason": "the station's engine is not running" }).to_string(),
     }
 }
+
+/// THE MIC (docs/dsp-mic-in-engine.md) — the input devices on this machine (shared-mode WASAPI on Windows).
+#[napi]
+pub fn audio_list_input_devices() -> String { micin::list_input_devices().to_string() }
+
+/// Patch an input device onto a SOURCE channel (D–F, S1–S5): `channel` 1-based, `gain_db` −10…+40 dB.
+/// `device` empty = unpatch. {"ok":false,"reason":…} for a slot that cannot carry a mic.
+#[napi]
+pub fn audio_set_mic_input(station_id: u32, slot: String, device: String, channel: u32, gain_db: f64) -> String {
+    let Some(idx) = audio::deck_index(&slot) else {
+        return serde_json::json!({ "ok": false, "reason": format!("`{}` is not a fader", slot) }).to_string();
+    };
+    if audio::default_kind_for(idx) != audio::SlotKind::Source {
+        return serde_json::json!({ "ok": false, "reason": format!("{} is a rotation/sweeper channel — a mic goes on a source channel (D–F, S1–S5)", slot) }).to_string();
+    }
+    if !device.is_empty() && channel == 0 {
+        return serde_json::json!({ "ok": false, "reason": "input channels are numbered from 1" }).to_string();
+    }
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return serde_json::json!({ "ok": false, "reason": "engine busy" }).to_string() };
+    let cmd = AudioCmd::SetMicInput { slot: idx, device, channel: channel.saturating_sub(1).min(u16::MAX as u32) as u16, gain_db: gain_db as f32 };
+    match audio.sender.send(cmd) {
+        Ok(()) => serde_json::json!({ "ok": true }).to_string(),
+        Err(_) => serde_json::json!({ "ok": false, "reason": "the station's engine is not running" }).to_string(),
+    }
+}
+
+/// Every patched mic on a station: device, state (running / not_found / lost / digital_silence / …), the ring
+/// fill and drift, and every counter. Read from the station's mic board — never blocks on the engine.
+#[napi]
+pub fn audio_mic_state(station_id: u32) -> String { micin::state_json(station_id).to_string() }
 
 #[napi]
 pub fn audio_get_state(station_id: Option<u32>) -> String {

@@ -79,7 +79,10 @@ const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'ki
 
 // Prefixes, for families of per-machine keys. `grid_widths_<pane>` is one key per grid, so it cannot
 // be enumerated — column widths had been written and refused on every resize since 4.4.177.
-const LOCAL_ONLY_PREFIXES = ['grid_widths_'];
+//
+// mic_input_<slot> (2026-09-26) — which input DEVICE a source channel's mic is patched to, on THIS machine
+// (docs/dsp-mic-in-engine.md §4). A device name belongs to one machine; the same rule as audio_output_device.
+const LOCAL_ONLY_PREFIXES = ['grid_widths_', 'mic_input_'];
 const isLocalOnlyKey = (k) =>
   typeof k === 'string' && (LOCAL_ONLY_KEYS.has(k) || LOCAL_ONLY_PREFIXES.some((p) => k.startsWith(p)));
 

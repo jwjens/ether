@@ -19,6 +19,7 @@ const crypto = require("crypto");
 const A = require(path.join(__dirname, "..", "native", "ether-audio.node"));
 // SLICE 4 — the master rack document: seeded from the legacy keys, written back to them (docs/dsp-rack-framework.md).
 const RackSeed = require(path.join(__dirname, "rack-seed.js"));
+const MicInput = require(path.join(__dirname, "mic-input.js"));
 const loggen = require("./loggen");
 const autofit = require("./autofit");   // §2.7 auto-fitter — OBSERVATION ONLY this release (writes nothing)
 const playlog = require("./playlog");
@@ -375,6 +376,42 @@ class DaemonEngine {
   // applied). A rack with anything IN is re-asserted every 15 s, like the master: a command sent in a
   // no-device window is dropped by the engine, and an identical re-send is a no-op there (same plan → no fade).
   // A fader with no document is never sent anything: its rack stays empty — today's exact arithmetic.
+  // THE MIC (docs/dsp-mic-in-engine.md §4) — THIS station's `mic_input_<slot>` patches (machine-local), read on
+  // the same 3 s cadence and delivered with audioSetMicInput when one changes: so a patch lands on connect,
+  // re-lands on every fresh engine (a new engine object starts with nothing applied), and an unpatch (the row
+  // removed or emptied) unpatches. The ENGINE opens, watches and re-opens the device; this only says what is
+  // patched where. A slot never patched is never sent anything.
+  _applyMicInputsFromKv(now) {
+    if (now - (this._micCheckedAt || 0) < 3000) return;
+    this._micCheckedAt = now;
+    if (typeof A.audioSetMicInput !== "function") return;   // an engine older than the mic input
+    let rows;
+    try {
+      const keys = MicInput.MIC_KEYS;
+      rows = this.db.prepare(
+        `SELECT key, value FROM station_config_kv WHERE station_id=? AND key IN (${keys.map(k => `'${k}'`).join(",")}) AND deleted_at IS NULL`
+      ).all(this.stationId);
+    } catch (e) {
+      if (!this._micErrAt || (now - this._micErrAt) > 60000) { this._micErrAt = now; this._log("mic inputs kv ✗", String(e && e.message || e)); }
+      return;
+    }
+    if (!this._micApplied) this._micApplied = {};
+    for (const slot of MicInput.MIC_SLOTS) {
+      const r = rows.find(x => x.key === MicInput.micKey(slot));
+      const p = MicInput.parseMicInput(r && r.value);
+      const want = p ? MicInput.serializeMicInput(p) : "";
+      const prev = this._micApplied[slot];
+      if (prev === undefined && !want) continue;   // never patched, nothing to unpatch
+      if (prev === want) continue;
+      let res = null;
+      try { res = JSON.parse(A.audioSetMicInput(this.stationId, slot, p ? p.device : "", p ? p.channel : 0, p ? p.gainDb : 0)); }
+      catch (e) { res = { ok: false, reason: String(e && e.message || e) }; }
+      this._micApplied[slot] = want;   // a refused patch is not retried every 3 s; a new edit re-sends
+      if (res && res.ok === true) this._log("mic input", `${slot}: ${p ? `${p.device} · input ${p.channel} · ${p.gainDb >= 0 ? "+" : ""}${p.gainDb} dB` : "unpatched"}`);
+      else this._log("mic input refused ✗", `${slot}: ${(res && res.reason) || "no answer from the engine"}`);
+    }
+  }
+
   _applyChannelRacksFromKv(now) {
     if (now - (this._chRackCheckedAt || 0) < 3000) return;
     this._chRackCheckedAt = now;
@@ -597,6 +634,7 @@ class DaemonEngine {
     this._mixHeartbeat(now, s, lv);   // v4.4.46: diagnostic [mix sN] line every 5s while playing (no-op otherwise)
     this._applyProcessingFromKv(now);   // Audio Processing v1: deliver proc_local/proc_stream/target from KV (segue pattern)
     this._applyChannelRacksFromKv(now); // SLICE 5: each fader's channel rack (rack_ch_<slot>)
+    this._applyMicInputsFromKv(now);    // THE MIC: each source channel's input patch (mic_input_<slot>, machine-local)
     this._applySegueOverlapFromKv(now); // the operator's segue overlap, stored with the station
 
     const prev = { A: this.stateA.status, B: this.stateB.status, C: this.stateC.status };

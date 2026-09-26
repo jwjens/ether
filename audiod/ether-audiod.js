@@ -350,6 +350,15 @@ const handlers = {
   getSpectrum:        (m) => JSON.parse(A.audioGetSpectrum(m.stationId)),
   getFileDuration:    (m) => A.getFileDuration(m.filePath),
   listOutputDevices:  ()  => JSON.parse(A.audioListOutputDevices()),
+  // THE MIC (docs/dsp-mic-in-engine.md) — the daemon's engine owns the input streams, so the device list and the
+  // mic state come from HERE (this process's cpal), never from the renderer's Web Audio.
+  listInputDevices:   ()  => (typeof A.audioListInputDevices === "function" ? JSON.parse(A.audioListInputDevices()) : []),
+  setMicInput:        (m) => {
+    if (typeof A.audioSetMicInput !== "function") return { ok: false, reason: "this audio engine predates the mic input — fully close and reopen Ether" };
+    try { return JSON.parse(A.audioSetMicInput(Number(m.stationId), String(m.slot), String(m.device || ""), Number(m.channel) || 0, Number(m.gainDb) || 0)); }
+    catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+  },
+  micState:           (m) => (typeof A.audioMicState === "function" ? JSON.parse(A.audioMicState(Number(m.stationId))) : { v: 0, mics: [] }),
   setOutputDevice:    (m) => A.audioSetOutputDevice(m.stationId, m.device),
   setMonitorVolume:   (m) => A.audioSetMonitorVolume(m.stationId, m.volume),
   // MASTER OUT — the broadcast gain (rides air + the master VU). Distinct from setMonitorVolume,

@@ -5362,6 +5362,65 @@ ipcMain.handle("audio:setEq", (_, deck, bands, stationId) => {
   return true;
 });
 
+// ── THE MIC AS AN ENGINE INPUT (docs/dsp-mic-in-engine.md) ─────────────────────────────────────────────────
+//   mic:list-devices → the input devices THIS machine's engine can open (the daemon's cpal, not Web Audio).
+//   mic:get          → each source channel's stored patch (mic_input_<slot>, machine-local).
+//   mic:set          → deliver to THIS station's engine FIRST; store (set-local) only if it accepted.
+//   mic:state        → the engine's live state per patched mic: running / not_found / lost / digital_silence…,
+//                      the ring fill, the drift, and every counter.
+const MicInput = require(path.join(__dirname, "..", "audiod", "mic-input.js"));
+ipcMain.handle("mic:list-devices", async () => {
+  try {
+    if (AUDIO_DAEMON) return await audiodClient.cmd("listInputDevices");
+    return typeof audio.audioListInputDevices === "function" ? JSON.parse(audio.audioListInputDevices()) : [];
+  } catch { return []; }
+});
+ipcMain.handle("mic:get", (_, stationId) => {
+  const sid = Number(stationId);
+  if (!Number.isFinite(sid)) return { ok: false, reason: "no station" };
+  try {
+    const rows = getDb().prepare(
+      `SELECT key, value FROM station_config_kv WHERE station_id = ? AND key IN (${MicInput.MIC_KEYS.map(() => "?").join(",")}) AND deleted_at IS NULL`
+    ).all(sid, ...MicInput.MIC_KEYS);
+    const patches = {};
+    for (const slot of MicInput.MIC_SLOTS) {
+      const r = rows.find(x => x.key === MicInput.micKey(slot));
+      const p = MicInput.parseMicInput(r && r.value);
+      if (p) patches[slot] = p;
+    }
+    return { ok: true, slots: MicInput.MIC_SLOTS, patches, gainRange: MicInput.GAIN_DB };
+  } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+});
+ipcMain.handle("mic:set", async (_, { stationId, slot, device, channel, gainDb } = {}) => {
+  const sid = Number(stationId);
+  if (!Number.isFinite(sid)) return { ok: false, reason: "no station" };
+  if (!MicInput.MIC_SLOTS.includes(slot)) return { ok: false, reason: `a mic goes on a source channel (${MicInput.MIC_SLOTS.join(", ")})` };
+  const p = device ? MicInput.parseMicInput(MicInput.serializeMicInput({ device, channel, gainDb })) : null;
+  let res;
+  try {
+    const args = { stationId: sid, slot, device: p ? p.device : "", channel: p ? p.channel : 0, gainDb: p ? p.gainDb : 0 };
+    if (AUDIO_DAEMON) res = await audiodClient.cmd("setMicInput", args);
+    else if (typeof audio.audioSetMicInput === "function") res = JSON.parse(audio.audioSetMicInput(sid, slot, args.device, args.channel, args.gainDb));
+    else res = { ok: false, reason: "this audio engine predates the mic input — fully close and reopen Ether" };
+  } catch (e) { res = { ok: false, reason: String(e && e.message || e) }; }
+  if (!res || res.ok !== true) return res || { ok: false, reason: "no answer from the engine" };
+  try {
+    const { stationConfigKvSetLocal } = require("./sync/handlers/station_config_kv");
+    stationConfigKvSetLocal(getDb(), sid, MicInput.micKey(slot), p ? MicInput.serializeMicInput(p) : "");
+  } catch (e) {
+    return { ok: false, reason: `the engine took the patch but it was not saved: ${String(e && e.message || e)}` };
+  }
+  return { ok: true };
+});
+ipcMain.handle("mic:state", async (_, stationId) => {
+  const sid = Number(stationId);
+  if (!Number.isFinite(sid)) return { v: 0, mics: [] };
+  try {
+    if (AUDIO_DAEMON) return await audiodClient.cmd("micState", { stationId: sid });
+    return typeof audio.audioMicState === "function" ? JSON.parse(audio.audioMicState(sid)) : { v: 0, mics: [] };
+  } catch { return { v: 0, mics: [] }; }
+});
+
 ipcMain.handle("audio:listOutputDevices", async () => {
   if (AUDIO_DAEMON) { try { return await audiodClient.cmd("listOutputDevices"); } catch { return []; } }
   try {

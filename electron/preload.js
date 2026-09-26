@@ -49,6 +49,12 @@ contextBridge.exposeInMainWorld("ether", {
     watchdogSet: (a, t, stationId) => ipcRenderer.invoke("audio:watchdogSet", a, t, stationId),
     setEq: (deck, bands, stationId) => ipcRenderer.invoke("audio:setEq", deck, bands, stationId),
     listOutputDevices: () => ipcRenderer.invoke("audio:listOutputDevices"),
+    // THE MIC AS AN ENGINE INPUT (docs/dsp-mic-in-engine.md): the engine's input devices, the stored patches,
+    // patch/unpatch (engine first, then stored machine-local), and the live state per mic.
+    listInputDevices: () => ipcRenderer.invoke("mic:list-devices"),
+    getMicInputs: (stationId) => ipcRenderer.invoke("mic:get", stationId),
+    setMicInput: (stationId, slot, patch) => ipcRenderer.invoke("mic:set", { stationId, slot, ...(patch || {}) }),
+    micState: (stationId) => ipcRenderer.invoke("mic:state", stationId),
     setOutputDevice: (stationId, deviceName) => ipcRenderer.invoke("audio:setOutputDevice", stationId, deviceName),
     setMonitorVolume: (stationId, volume) => ipcRenderer.invoke("audio:setMonitorVolume", stationId, volume),
     setMasterVolume:  (stationId, volume) => ipcRenderer.invoke("audio:setMasterVolume", stationId, volume),

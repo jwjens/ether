@@ -400,6 +400,9 @@ pub enum AudioCmd {
     SetMasterRack(crate::rack::MasterRack),
     /// SLICE 5 — one fader's channel rack (parsed and clamped in rack.rs); `slot` is the engine slot index.
     SetChannelRack { slot: usize, rack: crate::rack::ChannelRack },
+    /// THE MIC (docs/dsp-mic-in-engine.md) — patch an input device onto a source slot. `device` empty =
+    /// unpatch; `channel` 0-based; `gain_db` −10…+40 (clamped in micin.rs).
+    SetMicInput { slot: usize, device: String, channel: u16, gain_db: f32 },
     /// Choose the output device for the AUX monitor bus. Empty string = none = the aux stream is
     /// closed and the bus is silent.
     SetAuxDevice(String),
@@ -1337,6 +1340,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::SetProcessorBypass { .. } => {}
                             AudioCmd::SetMasterRack(_) => {}
                             AudioCmd::SetChannelRack { .. } => {}
+                            AudioCmd::SetMicInput { .. } => {}
                             AudioCmd::StartStream { server, port, mount, station_name, .. } => {
                                 eprintln!("Stream: {}:{}{} ({})", server, port, mount, station_name);
                             }
@@ -2595,6 +2599,10 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
         let cb_seq = Arc::new(AtomicU64::new(0));
         let mut seen_seq = 0u64;
         let mut ev_cons: Option<ringbuf::HeapCons<RtEvent>> = None;
+        // THE MIC — this station's input streams. Owned by THIS thread (each cpal input Stream is built and
+        // dropped here), and it outlives an output-device reopen: the live feed stays in its deck slot.
+        let mut mics = crate::micin::MicInputs::new(station_id);
+        let mut mic_out: Vec<crate::micin::MicAction> = Vec::new();
 
         'outer: loop {
             // Find and open output device
@@ -2684,6 +2692,9 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                 // S2 — the audio thread's work that is not audio: its log lines and its liveness stamp.
                 // At the TOP of the loop so no `continue` in a command arm can skip it.
                 if let Some(ref mut c) = ev_cons { drain_rt_events(station_id, c); }
+                // THE MIC — loss / stall / digital silence, and re-open (every ≤ 50 ms tick).
+                mics.tick(std::time::Instant::now(), &mut mic_out);
+                apply_mic_actions(&mut ctl, &mut mic_out);
                 // S3 — free what the callback let go of, and hand it whatever is waiting.
                 ctl.drain_garbage();
                 ctl.flush();
@@ -2697,6 +2708,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             // applies these at the top of its next buffer (docs/dsp-rt-callback.md §4).
                             AudioCmd::Load { deck, file_path, title, artist, gain_db } => {
                                 let Some(idx) = deck_index(&deck) else { continue };
+                                if mics.is_live(idx) { mics.refused(idx, "load"); continue; }
                                 // Decode setup off the audio thread, as always.
                                 let src = build_source(&file_path, sr).map(|d| ctl.feed_for(idx, d));
                                 let has = src.is_some();
@@ -2716,6 +2728,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             }
                             AudioCmd::Play(deck) => {
                                 let Some(idx) = deck_index(&deck) else { continue };
+                                if mics.is_live(idx) { mics.refused(idx, "play"); continue; }
                                 finished_clone.clear(&deck);
                                 // "Does this deck hold a source?" — answered from what the callback has
                                 // actually applied (ctl.present), with any not-yet-applied Load/Stop/reload
@@ -2747,10 +2760,12 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             }
                             AudioCmd::Pause(deck) => {
                                 let Some(idx) = deck_index(&deck) else { continue };
+                                if mics.is_live(idx) { mics.refused(idx, "pause"); continue; }
                                 ctl.enqueue(RtCmd::Pause { slot: idx as u8 });
                             }
                             AudioCmd::Stop(deck) => {
                                 let Some(idx) = deck_index(&deck) else { continue };
+                                if mics.is_live(idx) { mics.refused(idx, "stop"); continue; }
                                 finished_clone.clear(&deck);
                                 let seq = ctl.enqueue(RtCmd::Stop { slot: idx as u8 });
                                 let d = &mut ctl.decks[idx];
@@ -3000,6 +3015,12 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 p.rack.set_ride(crate::rack::BRANCH_LOCAL, crate::rack::clamp_ride(ride));
                                 ctl.params_changed();
                             }
+                            AudioCmd::SetMicInput { slot, device, channel, gain_db } => {
+                                // Opening a device happens HERE (dispatch thread) — never on the audio thread.
+                                // Only source slots carry a mic (lib.rs refuses A/B/C/CART before this).
+                                mics.set(slot, device, channel, gain_db, std::time::Instant::now(), &mut mic_out);
+                                apply_mic_actions(&mut ctl, &mut mic_out);
+                            }
                             AudioCmd::SetChannelRack { slot, rack } => {
                                 // SLICE 5 — the coefficients are computed HERE (dispatch thread, f64) and ride the
                                 // Params block; the callback adopts them by version and crossfades.
@@ -3135,6 +3156,31 @@ impl Control {
         let d = &self.decks[idx];
         if d.src_msg_seq > self.shared.applied_seq.load(Ordering::Acquire) { d.src_expected }
         else { self.shared.src_gen[idx].load(Ordering::Acquire) != 0 }
+    }
+}
+
+/// THE MIC — install a live feed on a slot (one RtCmd: Play with the feed as its reload, so it is loaded and
+/// running in the same buffer), or empty the slot when the mic is unpatched. The deck shadow is kept honest
+/// (no path: restore_decks_after_switch never touches a live slot).
+fn apply_mic_actions(ctl: &mut Control, out: &mut Vec<crate::micin::MicAction>) {
+    for a in out.drain(..) {
+        match a {
+            crate::micin::MicAction::Install(idx, feed) => {
+                let gen = ctl.next_gen();
+                let seq = ctl.enqueue(RtCmd::Play { slot: idx as u8, reload: Some(feed), gen });
+                let d = &mut ctl.decks[idx];
+                d.path = String::new();
+                d.src_expected = true;
+                d.src_msg_seq = seq;
+            }
+            crate::micin::MicAction::Release(idx) => {
+                let seq = ctl.enqueue(RtCmd::Stop { slot: idx as u8 });
+                let d = &mut ctl.decks[idx];
+                d.path = String::new();
+                d.src_expected = false;
+                d.src_msg_seq = seq;
+            }
+        }
     }
 }
 
@@ -3530,11 +3576,20 @@ pub(crate) fn mixer_callback(
         //                 only; they are not counted into its position, nothing ends, and it is counted +
         //                 reported (Scratch::underruns, RtEvent::Underrun). Never silent, never an ending.
         let want = prog_frames * 2;
-        let mut got = src.cons.pop_slice(&mut feed[..want]);
+        let mut got;
         let mut ended = false;
-        if got < want && src.eof.load(Ordering::Acquire) {
-            got += src.cons.pop_slice(&mut feed[got..want]);
-            ended = got < want;
+        if let Some(li) = src.live.as_mut() {
+            // A LIVE input (the mic — docs/dsp-mic-in-engine.md): the resampling consumer fills every frame
+            // (silence it could not supply is counted in its own MicShared counters, not as a file underrun),
+            // and it never ends. From here on the slot is every other channel: meter, rack, fader, cut, duck.
+            li.pull(&mut feed[..want], prog_frames);
+            got = want;
+        } else {
+            got = src.cons.pop_slice(&mut feed[..want]);
+            if got < want && src.eof.load(Ordering::Acquire) {
+                got += src.cons.pop_slice(&mut feed[got..want]);
+                ended = got < want;
+            }
         }
         let take = got / 2;
         // SLICE 2 — PRE-FADER METER: the frames this deck actually supplied, × its trim, BEFORE the cut and
@@ -4378,6 +4433,88 @@ fn drain_program_bus(
     }
 }
 
+// ── THE MIC through the real mixer callback (docs/dsp-mic-in-engine.md §6, §7) ───────────────────────────────
+// A live feed on S1 (slot 7) from a 48 kHz "device" (a synthetic producer standing in for the cpal input
+// callback): the pre-fader meter reads the level that went in; a PEQ +6 dB at 1 kHz on S1's rack reads +6 on
+// the programme; two identical runs are bit-identical.
+#[cfg(test)]
+mod mic_through_the_mixer {
+    use super::*;
+    use crate::rack::{ChannelRack, ChannelRackParams};
+
+    /// Run `buffers` 480-frame buffers with a 1 kHz −18 dBFS mic on S1 at `gain_db` input gain, optionally a
+    /// PEQ `peq_db` at 1 kHz on its rack. Returns (programme output L, the last meter window's S1 RMS dBFS).
+    fn run(buffers: usize, gain_db: f32, peq_db: Option<f32>) -> (Vec<f32>, f64, u64) {
+        let (prod, mut stream_cons) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)));
+        let h = b.handles.take().unwrap();
+        let (meters, _loud) = MetersHandle::from_parts(Arc::new(Mutex::new(h.meter_r)), h.shared.clone(), h.loud_cons, h.loud_shared);
+        let sh = Arc::new(crate::micin::MicShared::default());
+        sh.gain_bits.store(crate::micin::db_to_lin(gain_db).to_bits(), Ordering::Relaxed);
+        let (mut p, c) = crate::micin::mic_ring(48_000);
+        b.decks[7].source = Some(DeckFeed::live(Box::new(crate::micin::LiveIn::new(c, 48_000, sh.clone()))));
+        b.decks[7].active = true; b.decks[7].paused = false; b.decks[7].volume = 1.0;
+        let mut cur = b.params();
+        if let Some(g) = peq_db {
+            let r = ChannelRack::from_doc_json(&format!(r#"{{"v":1,"sections":{{"ch":[{{"module":{{"type":"peq","bands":[
+                {{"freq":100,"gain":0,"width":1}},{{"freq":1000,"gain":{g},"width":1}},{{"freq":3000,"gain":0,"width":1}},{{"freq":8000,"gain":0,"width":1}}]}},"in":true}}]}}}}"#)).unwrap();
+            cur.ch_rack[7] = ChannelRackParams { rack: r, plan: r.plan(44_100.0), version: 1 };
+        }
+        let bus = Arc::new(Mutex::new(b));
+        let (mut cmd, mut garbage) = (h.cmd_prod, h.garbage_cons);
+        let _ = cmd.try_push(RtCmd::Params(Box::new(cur)));
+        let (fin, playing) = (FinishedFlags::new(), Arc::new(AtomicBool::new(true)));
+        let mut sc = Scratch::new();
+        let (mut data, mut pop) = (vec![0f32; 960], vec![0f32; 960]);
+        let mut g = crate::micin::tests::Gen { rate: 48_000.0, freq: 1000.0, amp: 10f64.powf(-18.0 / 20.0), n: 0 };
+        let (mut blk, mut acc, mut out) = (Vec::new(), 0.0f64, Vec::new());
+        let mut last = None;
+        let mut allocs = 0u64;
+        for k in 0..buffers {
+            acc += 480.0 * 48_000.0 / 44_100.0;
+            let n = acc as usize; acc -= n as f64;
+            g.block(&mut blk, n);
+            crate::micin::input_block(&blk, 1, 0, &mut p, &sh, |x| x);
+            let a0 = crate::rt::tl_rt_allocs();
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+            allocs += crate::rt::tl_rt_allocs() - a0;
+            if k == buffers - 2 { let _ = meters.read_and_ack(); }   // open a fresh window for the last buffer
+            if k == buffers - 1 { last = meters.read_and_ack(); }
+            while garbage.try_pop().is_some() {}
+            // THE PROGRAMME = what the stream gets (a source channel is on air and on the AUX monitor, not in
+            // the local device's room path — the existing routing, unchanged).
+            loop {
+                let got = stream_cons.pop_slice(&mut pop);
+                if got == 0 { break; }
+                for f in 0..got / 2 { out.push(pop[2 * f]); }
+            }
+        }
+        let w = last.unwrap();
+        let rms = (w.ch[7].sumsq[0] / w.frames.max(1) as f64).sqrt();
+        (out, 20.0 * rms.log10(), allocs)
+    }
+    fn rms_db(x: &[f32]) -> f64 { 20.0 * (x.iter().map(|&v| (v as f64) * (v as f64)).sum::<f64>() / x.len() as f64).sqrt().log10() }
+
+    #[test]
+    fn a_mic_on_s1_meters_right_takes_its_rack_and_is_deterministic() {
+        let n = 600;   // 6.5 s
+        let (dry, meter_db, allocs) = run(n, 0.0, None);
+        let (wet, _, _) = run(n, 0.0, Some(6.0));
+        let (boost, meter_boost, _) = run(n, 12.0, None);
+        let (dry2, _, _) = run(n, 0.0, None);
+        let tail = |x: &Vec<f32>| rms_db(&x[x.len() - 44_100..]);
+        let (d, w, bo) = (tail(&dry), tail(&wet), tail(&boost));
+        let same = dry.iter().zip(&dry2).all(|(a, b)| a.to_bits() == b.to_bits());
+        println!("[mic-mixer] 1 kHz −18 dBFS on S1 (48 k → 44.1 k): pre-fader meter {:.3} dBFS RMS (want −21.010) · programme {:.3} ·                   rack PEQ +6 @ 1 kHz → programme {:+.3} dB · input gain +12 → meter {:+.3} dB, programme {:+.3} dB · two runs bit-identical: {} · {} allocations in the callback",
+                 meter_db, d, w - d, meter_boost - meter_db, bo - d, same, allocs);
+        assert!((meter_db + 21.010).abs() < 0.05, "the mic's pre-fader meter reads {:.3}", meter_db);
+        assert!((w - d - 6.0).abs() < 0.1, "the rack did not apply: {:+.3} dB", w - d);
+        assert!((meter_boost - meter_db - 12.0).abs() < 0.05 && (bo - d - 12.0).abs() < 0.05, "input gain is not pre-meter, pre-mix");
+        assert!(same, "the live path is not deterministic");
+        assert_eq!(allocs, 0);
+    }
+}
+
 // ── SLICE 5 — the channel racks' cost on the audio thread (docs/dsp-channel-rack-eq.md §1.4, §7) ──────────────
 // The callback with 0, 1 and 12 faders playing, their racks IN (Filters: HPF + LPF; PEQ: 4 non-zero bands = the
 // full 8 biquads, stereo, f64), steady or CROSSFADING CONTINUOUSLY (a new rack version to every fader every
@@ -4418,7 +4555,7 @@ mod channel_rack_timing {
 
     /// `n_active` faders playing, racks IN on all of them if `racks`; the first `n_fading` get a new rack version
     /// EVERY buffer (so each fade is followed at once by the held one — crossfading continuously).
-    fn measure(n_active: usize, racks: bool, n_fading: usize, mpc: f64) -> Row {
+    fn measure(n_active: usize, racks: bool, n_fading: usize, mics: usize, mpc: f64) -> Row {
         let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
         let (prod, mut stream_cons) = rb.split();
         let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)));
@@ -4427,6 +4564,17 @@ mod channel_rack_timing {
             b.decks[i].source = Some(DeckFeed::prefilled(Sine(0), 480 * 2 * 2100));
             b.decks[i].active = true; b.decks[i].paused = false; b.decks[i].volume = 0.5;
         }
+        // THE MIC — `mics` live inputs on S1.. (slots 7..), each a 48 kHz device resampled to 44.1 kHz. Their
+        // producers are fed between buffers (the input callback's work is its own thread's, not the mixer's).
+        let mut mic_in: Vec<(ringbuf::HeapProd<f32>, std::sync::Arc<crate::micin::MicShared>, crate::micin::tests::Gen, f64)> = Vec::new();
+        for m in 0..mics {
+            let sh = std::sync::Arc::new(crate::micin::MicShared::default());
+            let (p, c) = crate::micin::mic_ring(48_000);
+            b.decks[7 + m].source = Some(DeckFeed::live(Box::new(crate::micin::LiveIn::new(c, 48_000, sh.clone()))));
+            b.decks[7 + m].active = true; b.decks[7 + m].paused = false; b.decks[7 + m].volume = 0.5;
+            mic_in.push((p, sh, crate::micin::tests::Gen { rate: 48_000.0, freq: 300.0 + 100.0 * m as f64, amp: 0.2, n: 0 }, 0.0));
+        }
+        let mut blk: Vec<f32> = Vec::with_capacity(1024);
         let mut cur = b.params();
         let bus = Arc::new(Mutex::new(b));
         let (mut cmd, mut garbage) = (h.cmd_prod, h.garbage_cons);
@@ -4441,13 +4589,20 @@ mod channel_rack_timing {
         let mut allocs = 0u64;
         for k in 0..2000u64 {
             if racks && (k == 0 || n_fading > 0) {
-                for i in 0..n_active {
+                for i in (0..n_active).chain(7..7 + mics) {
                     if k == 0 || i < n_fading {
                         let (r, pl) = if k % 2 == 0 { (ra, pa) } else { (rb2, pb) };
                         cur.ch_rack[i] = ChannelRackParams { rack: r, plan: pl, version: k + 1 };
                     }
                 }
                 let _ = cmd.try_push(RtCmd::Params(Box::new(cur)));
+            }
+            for (p, sh, g, acc) in mic_in.iter_mut() {
+                *acc += 480.0 * 48_000.0 / 44_100.0;
+                let n = *acc as usize;
+                *acc -= n as f64;
+                g.block(&mut blk, n);
+                crate::micin::input_block(&blk, 1, 0, p, sh, |x| x);
             }
             let a0 = crate::rt::tl_rt_allocs();
             crate::chdsp::RACK_NS.with(|c| c.set(0));
@@ -4485,19 +4640,21 @@ mod channel_rack_timing {
     #[test]
     fn channel_rack_cost_one_and_twelve_channels() {
         let mpc = ms_per_cycle();
-        // (name, playing, racks, crossfading, gated)
+        // (name, playing, racks, crossfading, mics, gated)
         let rows = [
-            ("12 faders playing, no racks (baseline)", 12, false, 0, false),
-            (" 1 fader, rack IN, steady", 1, true, 0, false),
-            (" 1 fader, rack IN, crossfading", 1, true, 1, false),
-            (" 4 faders, racks IN, steady            (a)", 4, true, 0, true),
-            (" 4 faders, racks IN, 1 crossfading     (b)", 4, true, 1, true),
-            ("12 faders, racks IN, steady", 12, true, 0, false),
-            ("12 faders, racks IN, ALL CROSSFADING (extreme)", 12, true, 12, false),
+            ("12 faders playing, no racks (baseline)", 12, false, 0, 0, false),
+            (" 1 fader, rack IN, steady", 1, true, 0, 0, false),
+            (" 1 fader, rack IN, crossfading", 1, true, 1, 0, false),
+            (" 4 faders, racks IN, steady            (a)", 4, true, 0, 0, true),
+            (" 4 faders, racks IN, 1 crossfading     (b)", 4, true, 1, 0, true),
+            (" 4 faders + 1 MIC (48 k), racks IN", 4, true, 0, 1, true),
+            (" 4 faders + 5 MICS (48 k), racks IN", 4, true, 0, 5, true),
+            ("12 faders, racks IN, steady", 12, true, 0, 0, false),
+            ("12 faders, racks IN, ALL CROSSFADING (extreme)", 12, true, 12, 0, false),
         ];
         let mut fails = Vec::new();
-        for (name, n, racks, fading, gated) in rows {
-            let r = measure(n, racks, fading, mpc);
+        for (name, n, racks, fading, mics, gated) in rows {
+            let r = measure(n, racks, fading, mics, mpc);
             let rk = if racks {
                 let c = &r.worst_calls;
                 let (mx, sum) = (c.iter().cloned().fold(0.0, f64::max), c.iter().sum::<f64>());

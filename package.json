@@ -23,6 +23,7 @@
     "check:audio-isolation": "node scripts/check-no-global-audio-statics.js",
     "test:rust": "cd native && cargo test --release --lib -- --nocapture --test-threads=2 --skip program_processor::bench && cargo test --release --lib program_processor::bench -- --nocapture --test-threads=1 && cargo test --release --doc",
     "test:rack-eq": "node audiod/smoke-rack-eq.js",
+    "test:mic-input": "node audiod/smoke-mic-input.js",
     "test:sync": "electron --no-sandbox scripts/run-sync-tests.js",
     "test:designation": "cross-env ELECTRON_RUN_AS_NODE=1 electron electron/smoke-designation-write.js",
     "test:programlog-reads": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-programlog-reads.js",

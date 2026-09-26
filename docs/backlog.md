@@ -1227,3 +1227,20 @@ Main has always applied every `setEq` as the MASTER EQ, so those deck/mic EQ con
 master GEQ. Since Slice 4 they are refused (logged). What those controls should do is a decision of its own.
 
 **Teardown note:** none — a code change to schedule, not tooling.
+
+
+## Record voicetracks from the engine mic, post-rack (follow-up) · filed 2026-09-26
+
+**Filed at Jeff's ruling 8 on `docs/dsp-mic-in-engine.md`.** Show+ and the voicetracker stay on browser audio in
+v1.
+
+**What it would give:** once the mic is an engine input, the voicetracker can record the **post-rack** mic tap
+(`chPost` of the mic's source channel), written to WAV by a non-RT thread. A voicetrack then carries **the same
+EQ, gate and compression as the live mic**, so a VT and a live break sound alike.
+
+**Needs:**
+- an engine-side recorder: a lock-free tap → a writer thread;
+- a `vt:record-start` / `stop` IPC;
+- VoiceTracker switching from MediaRecorder to it.
+
+Show+ stays separate: it needs a MediaStream with the camera.

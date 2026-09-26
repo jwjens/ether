@@ -39,6 +39,11 @@ describe("LOCAL_ONLY_KEYS", () => {
     expect(accepts("audio_output_device")).toBe(true);
   });
 
+  it("mic_input_<slot> is machine-local by prefix — the mic's input device (2026-09-26)", () => {
+    for (const k of ["mic_input_D", "mic_input_S1", "mic_input_S5"]) expect(accepts(k), `${k} would be REFUSED`).toBe(true);
+    expect(accepts("mic_inputD")).toBe(false);
+  });
+
   it("NEVER accepts designated_generator — it is the one key that must sync", () => {
     // Designation exists to arbitrate BETWEEN machines. Local-only would give each machine its own
     // private designation and break Phase B enforcement against a record the other has never seen.

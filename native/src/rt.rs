@@ -87,6 +87,17 @@ pub(crate) struct DeckFeed {
     /// Ring empty + !eof = an UNDERRUN: the worker is late. The two are never confused.
     pub eof: Arc<AtomicBool>,
     cancel: Arc<AtomicBool>,
+    /// A LIVE input (the mic — docs/dsp-mic-in-engine.md): when present the callback fills the deck from this
+    /// resampling consumer instead of `cons`, and the feed never ends. None for every file.
+    pub live: Option<Box<crate::micin::LiveIn>>,
+}
+impl DeckFeed {
+    /// A live feed around a mic consumer (built on the dispatch thread).
+    pub(crate) fn live(li: Box<crate::micin::LiveIn>) -> DeckFeed {
+        use ringbuf::traits::Split;
+        let (_p, cons) = ringbuf::HeapRb::<f32>::new(2).split();
+        DeckFeed { cons, eof: Arc::new(AtomicBool::new(false)), cancel: Arc::new(AtomicBool::new(false)), live: Some(li) }
+    }
 }
 impl Drop for DeckFeed {
     /// A replaced or stopped feed is dropped on the dispatch thread (it travels there as Garbage); this
@@ -146,7 +157,7 @@ pub(crate) fn deck_feed_with_capacity(src: DeckSource, capacity: usize) -> (Deck
     let (prod, cons) = ringbuf::HeapRb::<f32>::new(capacity).split();
     let eof = Arc::new(AtomicBool::new(false));
     let cancel = Arc::new(AtomicBool::new(false));
-    (DeckFeed { cons, eof: eof.clone(), cancel: cancel.clone() },
+    (DeckFeed { cons, eof: eof.clone(), cancel: cancel.clone(), live: None },
      Feeder { src, prod, eof, cancel, pushed: 0, chunk: Vec::with_capacity(FEED_CHUNK) })
 }
 /// A deck ring of the station size (DECK_RING_SAMPLES).
