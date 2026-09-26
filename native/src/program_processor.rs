@@ -18,6 +18,14 @@
 use ebur128::{EbuR128, Mode};
 
 const CEILING_DBTP: f32 = -1.0; // true-peak ceiling
+/// DETECTION MARGIN: the limiter holds `ceiling` against `true_peak × DETECT_MARGIN`, i.e. it limits
+/// 20·log10(1.15) = 1.214 dB BELOW the ceiling the operator sets (−1.0 set → acts at −2.21 dBTP). The one
+/// place this number lives: the limiter uses it and the meter bus reports the effective ceiling from it
+/// (docs/dsp-loudness-meter.md §3.3). Whether the margin stays is Jeff's call once the slice 3 true-peak
+/// meter shows where the output really lands — the label says what it does until then.
+pub(crate) const DETECT_MARGIN: f32 = 1.15;
+/// The margin in dB (≈ 1.214).
+pub(crate) fn detect_margin_db() -> f32 { 20.0 * DETECT_MARGIN.log10() }
 fn db_to_lin(db: f32) -> f32 { 10.0_f32.powf(db / 20.0) }
 fn lin_to_db(x: f32) -> f32 { if x <= 1e-9 { -120.0 } else { 20.0 * x.log10() } }
 
@@ -94,6 +102,7 @@ struct TruePeakLimiter {
     atk: f32, rel: f32,    // per-sample smoothing coeffs (attack completes within `la`)
     os: Oversampler4x,
     gr_db: f32,            // metering: current gain reduction (dB, >= 0)
+    gr_buf_max: f32,       // SLICE 3 — the largest gr_db since the buffer began (process_planar/process_block reset it)
     // ── SLIDING-WINDOW MINIMUM (monotonic deque) ─────────────────────────────────────────────────
     // The look-ahead target is min(req) over the window. That was a full scan of req_ring EVERY
     // SAMPLE — 72 comparisons per sample at 48 kHz, ~34,560 per 10 ms block, roughly half the
@@ -120,7 +129,7 @@ impl TruePeakLimiter {
         TruePeakLimiter {
             ceiling: db_to_lin(CEILING_DBTP), fs: sample_rate, bypass: false, la,
             delay_l: vec![0.0; la], delay_r: vec![0.0; la], req_ring: vec![1.0; la],
-            dpos: 0, gain: 1.0, atk, rel, os: Oversampler4x::new(), gr_db: 0.0,
+            dpos: 0, gain: 1.0, atk, rel, os: Oversampler4x::new(), gr_db: 0.0, gr_buf_max: 0.0,
             dq_idx: vec![0; la], dq_head: 0, dq_len: 0, n: 0,
         }
     }
@@ -139,7 +148,7 @@ impl TruePeakLimiter {
         // and the reason this must never be a persisted setting.
         if self.bypass { self.gr_db = 0.0; return (l, r); }
         // 1) True-peak of the incoming sample; required instantaneous gain to hold the ceiling.
-        let tp = self.os.push_peak(l, r) * 1.15; // detection headroom: hold the ceiling vs a full BS.1770 true-peak measurement
+        let tp = self.os.push_peak(l, r) * DETECT_MARGIN; // detection headroom: hold the ceiling vs a full BS.1770 true-peak measurement
         let req = if tp > self.ceiling { self.ceiling / tp } else { 1.0 };
         // 2) Look-ahead target = min required-gain across the window (duck BEFORE the peak arrives).
         //    Sliding-window minimum via the monotonic deque — same answer as the old full scan of
@@ -174,6 +183,7 @@ impl TruePeakLimiter {
         self.dpos = (self.dpos + 1) % self.la;
         self.n = self.n.wrapping_add(1);
         self.gr_db = -lin_to_db(self.gain); // >= 0
+        if self.gr_db > self.gr_buf_max { self.gr_buf_max = self.gr_db; }
         (ol, or)
     }
 }
@@ -188,7 +198,7 @@ struct LoudnessRide {
     clamp_db: f32,         // ±12
     since_eval: usize,     // frames since last loudness evaluation
     eval_every: usize,     // ~100 ms
-    in_lufs: f32, out_lufs_est: f32,
+    in_lufs: f32,
     /// DUCK HOLD (slice 3, 2026-08-22) — while the ducker has the music down, the ride's gain does
     /// NOT move.
     ///
@@ -209,8 +219,10 @@ struct LoudnessRide {
     hold: bool,
     /// BYPASS — a test tool, never persisted (see TruePeakLimiter::bypass). The meter keeps running so
     /// in_lufs stays honest; the corrective gain is PINNED AT ZERO (not merely unapplied) so that
-    /// gain_db and out_lufs_est, which both feed meters, cannot report a correction that is not
-    /// happening. See the bypass branch in update().
+    /// gain_db, which feeds the meters, cannot report a correction that is not happening. See the bypass
+    /// branch in update(). (Slice 3 deleted the OUT LOUDNESS ESTIMATE this field used to sit beside —
+    /// `in_lufs + gain_db`, pre-limiter, never measured. OUT is now MEASURED on each branch's output by
+    /// loudness.rs.)
     bypass: bool,
 }
 impl LoudnessRide {
@@ -220,7 +232,7 @@ impl LoudnessRide {
             meter, fs: sample_rate, target, gain_db: 0.0,
             rate_db_per_s: 1.5, clamp_db: 12.0,
             since_eval: 0, eval_every: (sample_rate * 0.100) as usize,
-            in_lufs: -70.0, out_lufs_est: -70.0,
+            in_lufs: -70.0,
             hold: false, bypass: false,
         }
     }
@@ -262,7 +274,6 @@ impl LoudnessRide {
                         // deliberately NOT carried on this field, so nothing downstream can mistake a
                         // projection for an applied gain.
                         self.gain_db = 0.0;
-                        self.out_lufs_est = self.in_lufs;   // the output IS the input
                     } else {
                         // HELD: the meter above still ran, so in_lufs is current — but the corrective
                         // gain stays exactly where the duck found it. Nothing to claw back with.
@@ -272,7 +283,6 @@ impl LoudnessRide {
                             let delta = (desired - self.gain_db).clamp(-max_step, max_step);
                             self.gain_db = (self.gain_db + delta).clamp(-self.clamp_db, self.clamp_db);
                         }
-                        self.out_lufs_est = self.in_lufs + self.gain_db;
                     }
                 }
             }
@@ -320,7 +330,7 @@ impl ProgramProcessor {
         // A bypassed ride must not hold a stale corrective gain: unity in, unity out. update() also
         // pins it at zero, but only on an eval tick (~100 ms) — this makes the meter honest on the
         // same buffer the operator clicks BYPASS, with no visible decay.
-        if ride_bypass { self.ride.gain_db = 0.0; self.ride.out_lufs_est = self.ride.in_lufs; }
+        if ride_bypass { self.ride.gain_db = 0.0; }
     }
 
     // Observed parameter readback — so the panel can show what the ENGINE is running, not what the UI
@@ -341,6 +351,7 @@ impl ProgramProcessor {
     #[inline]
     pub fn process_planar(&mut self, l: &mut [f32], r: &mut [f32]) {
         let n = l.len().min(r.len());
+        self.limiter.gr_buf_max = 0.0;
         let g = self.ride.update_planar(&l[..n], &r[..n]);
         for i in 0..n {
             let (ol, or) = self.limiter.process(l[i] * g, r[i] * g);
@@ -352,6 +363,7 @@ impl ProgramProcessor {
     #[inline]
     pub fn process_block(&mut self, buf: &mut [f32]) {
         let g = self.ride.update(buf);
+        self.limiter.gr_buf_max = 0.0;
         let mut i = 0;
         while i + 1 < buf.len() {
             let (l, r) = (buf[i] * g, buf[i + 1] * g);
@@ -362,9 +374,12 @@ impl ProgramProcessor {
     }
     // Metering taps (observed, never inferred) — for the dedicated processing-meters event.
     pub fn in_lufs(&self) -> f32 { self.ride.in_lufs }
-    pub fn out_lufs(&self) -> f32 { self.ride.out_lufs_est }
     pub fn ride_gain_db(&self) -> f32 { self.ride.gain_db }
     pub fn gain_reduction_db(&self) -> f32 { self.limiter.gr_db }
+    /// SLICE 3 — the limiter's LARGEST gain reduction during the last processed buffer (dB, ≥ 0). The
+    /// legacy gain_reduction_db() is the last sample's, which misses every transient the limiter caught and
+    /// released inside the buffer; the meter bus reports this one.
+    pub fn gain_reduction_max_db(&self) -> f32 { self.limiter.gr_buf_max }
     /// The fixed processing latency (limiter look-ahead), in samples. Zero when a branch is bypassed.
     pub fn latency_samples(&self) -> usize { self.limiter.la }
 }
@@ -519,8 +534,9 @@ mod bench {
         p.process_block(&mut out);
         println!("[C6] limiter bypassed -> OUT true-peak {:.2} dBTP (ceiling NOT held, by design)", max_true_peak_dbtp(&out));
 
-        // (d) A BYPASSED RIDE REPORTS NOTHING. Both meter fields it feeds must say "not acting":
-        //     gain 0.00 dB, and out_lufs == in_lufs. The control is that the SAME signal through an
+        // (d) A BYPASSED RIDE REPORTS NOTHING: its gain meter says "not acting", 0.00 dB. (Until slice 3 this
+        //     also checked the OUT estimate equalled IN; the estimate is deleted — OUT is measured on the
+        //     branch output by loudness.rs.) The control is that the SAME signal through an
         //     un-bypassed ride winds up a large correction — so this pins the fix, not the silence.
         //     Fed in REAL BLOCKS: the ride evaluates once per update() call, so one giant block would
         //     grant the acting ride a single 0.6 dB step and prove nothing.
@@ -540,14 +556,11 @@ mod bench {
         let acting = run(false);
         let byp = run(true);
 
-        println!("[C6] ride acting  -> gain {:>6.2} dB   in {:>6.1} out {:>6.1} LUFS",
-                 acting.ride_gain_db(), acting.in_lufs(), acting.out_lufs());
-        println!("[C6] ride bypassed-> gain {:>6.2} dB   in {:>6.1} out {:>6.1} LUFS",
-                 byp.ride_gain_db(), byp.in_lufs(), byp.out_lufs());
+        println!("[C6] ride acting  -> gain {:>6.2} dB   in {:>6.1} LUFS", acting.ride_gain_db(), acting.in_lufs());
+        println!("[C6] ride bypassed-> gain {:>6.2} dB   in {:>6.1} LUFS", byp.ride_gain_db(), byp.in_lufs());
         assert!(acting.ride_gain_db().abs() > 1.0,
                 "control failed: an acting ride applied no correction, so (d) proves nothing");
         assert_eq!(byp.ride_gain_db(), 0.0, "a bypassed ride reported a corrective gain");
-        assert_eq!(byp.out_lufs(), byp.in_lufs(), "a bypassed ride reported a ridden output level");
     }
 
     /// C7 — THE SPLIT DOES NOT CHANGE A STATION THAT HAS NOT USED IT.

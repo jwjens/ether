@@ -6,7 +6,10 @@ use ringbuf::{HeapRb, HeapProd, HeapCons, traits::{Producer, Consumer, Observer,
 use crate::rt::{Params, RtCmd, AuxCmd, Garbage, MeterFrame, DeckMeter, RtShared, TripleWriter, TripleReader,
                 RT_CMD_QUEUE, RT_CMD_PER_BUFFER, RT_GARBAGE_QUEUE, triple, DeckFeed, Feeder, DeckSource,
                 deck_feed, deck_worker, DECK_REFILL_BELOW, RtCounters, RtScope, rt_allocs, FtzScope,
-                MeterBlock, MeterTap, BUS_PGM, BUS_LOCAL, BUS_STREAM, BUS_MONITOR, BUS_ROOM, BUS_AUX};
+                MeterBlock, MeterTap, BUS_PGM, BUS_LOCAL, BUS_STREAM, BUS_MONITOR, BUS_ROOM, BUS_AUX,
+                GR_SRC_OWN, GR_SRC_ROOM};
+use crate::loudness::{LoudTaps, LoudCons, LoudShared, LoudReader, LoudnessMeters, loud_channels,
+                      LOUD_LOCAL, LOUD_STREAM, LOUD_AUX};
 
 // ── Per-station audio-thread liveness (HA health signal) ──────────────────────
 // Each station stamps ITS OWN clock on every cpal output callback — there is no
@@ -427,13 +430,33 @@ pub struct AudioState {
 pub struct MetersHandle {
     pub(crate) reader: Arc<Mutex<TripleReader<MeterFrame>>>,
     pub(crate) shared: Arc<RtShared>,
+    /// SLICE 3 — the station's loudness frame (published by its meter thread) and its reset epochs.
+    pub(crate) loud: LoudReader,
+    pub(crate) loud_shared: Arc<LoudShared>,
 }
 impl MetersHandle {
     /// Read the newest meter window and acknowledge it. Returns the block (raw peaks + Σ² + frame count).
+    /// (The product reads through read_all since slice 3; the slice 2 tests read windows through this.)
+    #[cfg(test)]
     pub(crate) fn read_and_ack(&self) -> Option<MeterBlock> {
         let f = self.reader.lock().ok()?.read();
         self.shared.meter_ack.store(f.meters.epoch, Ordering::Release);
         Some(f.meters)
+    }
+    /// SLICE 2 + 3 — the newest meter window (acknowledged, as read_and_ack), the parameters the callback ran
+    /// with in the same frame (for the ceiling echo), and the newest loudness frame.
+    pub(crate) fn read_all(&self) -> Option<(MeterBlock, Params, crate::loudness::LoudnessFrame)> {
+        let f = self.reader.lock().ok()?.read();
+        self.shared.meter_ack.store(f.meters.epoch, Ordering::Release);
+        let lf = self.loud.lock().ok()?.read();
+        Some((f.meters, f.params, lf))
+    }
+    /// SLICE 3 — Build a station's meter handle from its state's handles, with the loudness meter that feeds
+    /// it (the caller runs that meter: a thread in the product, inline in the offline harness).
+    pub(crate) fn from_parts(reader: Arc<Mutex<TripleReader<MeterFrame>>>, shared: Arc<RtShared>,
+                             loud_cons: LoudCons, loud_shared: Arc<LoudShared>) -> (MetersHandle, LoudnessMeters) {
+        let (lm, loud) = LoudnessMeters::new(loud_cons, loud_shared.clone(), PROGRAM_RATE);
+        (MetersHandle { reader, shared, loud, loud_shared }, lm)
     }
 }
 
@@ -589,7 +612,6 @@ pub struct BusState {
     /// instant. The legacy proc_* fields keep describing the LOCAL branch, and mirror the stream branch
     /// when only the stream is processing, so every existing reader keeps working unchanged.
     pub proc_stream_in_lufs: f32,
-    pub proc_stream_out_lufs: f32,
     pub proc_stream_gr_db: f32,
     pub proc_stream_ride_gain_db: f32,
     pub proc_stream_in_peak: f32,
@@ -684,11 +706,10 @@ pub struct BusState {
     /// room chains are already using theirs on different sums this callback.
     pub processor_aux: Arc<Mutex<crate::program_processor::ProgramProcessor>>,
     /// The AUX processor's OBSERVED meters — the same four the station's processor reports
-    /// (proc_in_lufs / proc_out_lufs / proc_gr_db / proc_ride_gain_db), taken at the same taps on the
+    /// (proc_in_lufs / proc_gr_db / proc_ride_gain_db), taken at the same taps on the
     /// same processor type. They exist so the Health Monitor can show deck processing with the same
     /// meters and the same grammar as a station, rather than a parallel readout.
     pub aux_proc_in_lufs:  f32,
-    pub aux_proc_out_lufs: f32,
     pub aux_proc_gr_db:    f32,
     pub aux_proc_ride_db:  f32,
     /// PEAK OF THE AUX FEED — the level actually being sent to the aux device, after the deck's
@@ -703,9 +724,10 @@ pub struct BusState {
     pub proc_in_peak:  f32,
     pub proc_out_peak: f32,
     pub proc_in_lufs:  f32,
-    pub proc_out_lufs: f32,
     pub proc_gr_db:    f32,
     pub proc_ride_gain_db: f32,
+    // (SLICE 3) No *_out_lufs fields: the OUT LOUDNESS ESTIMATE (in + ride gain, pre-limiter, never measured)
+    // is deleted. OUT is measured on each branch's output by loudness.rs, fed through `loud` below.
 
     // ── SLICE 1 S3 — the callback's ends of its lock-free channels (rt.rs). ─────────────────────────
     /// Commands from the dispatch thread, applied at the top of each buffer (≤ RT_CMD_PER_BUFFER).
@@ -728,6 +750,9 @@ pub struct BusState {
     /// callback folds each buffer's taps into it; the reader acknowledges an epoch; the callback then starts
     /// the next window. Published inside every MeterFrame.
     pub(crate) meters_acc: MeterBlock,
+    /// SLICE 3 — the callback end of the loudness rings (loudness.rs). push() is a copy; the BS.1770 state
+    /// lives on the station's meter thread. Dropping this stops that thread.
+    pub(crate) loud: LoudTaps,
 }
 
 /// The non-callback ends of BusState's channels (see BusState::handles).
@@ -737,6 +762,9 @@ pub(crate) struct BusHandles {
     pub garbage_cons: HeapCons<Garbage>,
     pub meter_r: TripleReader<MeterFrame>,
     pub shared: Arc<RtShared>,
+    /// SLICE 3 — the meter-thread end of the loudness rings.
+    pub loud_cons: LoudCons,
+    pub loud_shared: Arc<LoudShared>,
 }
 
 impl BusState {
@@ -747,6 +775,7 @@ impl BusState {
         let (cmd_prod, cmd_cons) = HeapRb::<RtCmd>::new(RT_CMD_QUEUE).split();
         let (aux_cmd_prod, aux_cmd_cons) = HeapRb::<AuxCmd>::new(16).split();
         let (garbage, garbage_cons) = HeapRb::<Garbage>::new(RT_GARBAGE_QUEUE).split();
+        let (loud, loud_cons, loud_shared) = loud_channels();
         let shared = RtShared::new();
         let mut b = BusState {
             // SLICE 1 — SLOT_COUNT slots, each stamped with what it IS. Indices 0..6 keep their
@@ -792,7 +821,7 @@ impl BusState {
             proc_stream_ride_bypass: false,
             proc_stream_limiter_bypass: false,
             processor_stream: Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
-            proc_stream_in_lufs: -70.0, proc_stream_out_lufs: -70.0,
+            proc_stream_in_lufs: -70.0,
             proc_stream_gr_db: 0.0, proc_stream_ride_gain_db: 0.0,
             proc_stream_in_peak: 0.0, proc_stream_out_peak: 0.0,
             aux_monitor_gain: [0.0; SLOT_COUNT],   // nothing selected → aux decks silent in the room
@@ -816,14 +845,13 @@ impl BusState {
             aux_peak: 0.0,
             processor_aux: Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
             aux_proc_in_lufs: -70.0,
-            aux_proc_out_lufs: -70.0,
             aux_proc_gr_db: 0.0,
             aux_proc_ride_db: 0.0,
             room_peak: 0.0,
             eq_room:        crate::eq::new_shared_eq(sample_rate as f32),
             processor_room: Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
             proc_in_peak: 0.0, proc_out_peak: 0.0,
-            proc_in_lufs: -70.0, proc_out_lufs: -70.0, proc_gr_db: 0.0, proc_ride_gain_db: 0.0,
+            proc_in_lufs: -70.0, proc_gr_db: 0.0, proc_ride_gain_db: 0.0,
             cmd_cons,
             aux_cmd_cons,
             garbage,
@@ -834,11 +862,12 @@ impl BusState {
             eq_version_applied: 0,
             handles: None,
             meters_acc: MeterBlock { epoch: 1, ..MeterBlock::default() },
+            loud,
         };
         // The meter channel starts on THIS state's own first frame, so the first read is the truth.
         let (w, meter_r) = triple(b.meter_frame());
         b.meter_w = Some(w);
-        b.handles = Some(BusHandles { cmd_prod, aux_cmd_prod, garbage_cons, meter_r, shared });
+        b.handles = Some(BusHandles { cmd_prod, aux_cmd_prod, garbage_cons, meter_r, shared, loud_cons, loud_shared });
         b
     }
 
@@ -1008,12 +1037,12 @@ impl BusState {
             spectrum: self.spectrum,
             frames_consumed: self.frames_consumed,
             duck_gain: self.duck_gain,
-            aux_proc_in_lufs: self.aux_proc_in_lufs, aux_proc_out_lufs: self.aux_proc_out_lufs,
+            aux_proc_in_lufs: self.aux_proc_in_lufs,
             aux_proc_gr_db: self.aux_proc_gr_db, aux_proc_ride_db: self.aux_proc_ride_db,
-            proc_in_lufs: self.proc_in_lufs, proc_out_lufs: self.proc_out_lufs,
+            proc_in_lufs: self.proc_in_lufs,
             proc_gr_db: self.proc_gr_db, proc_ride_gain_db: self.proc_ride_gain_db,
             proc_in_peak: self.proc_in_peak, proc_out_peak: self.proc_out_peak,
-            proc_stream_in_lufs: self.proc_stream_in_lufs, proc_stream_out_lufs: self.proc_stream_out_lufs,
+            proc_stream_in_lufs: self.proc_stream_in_lufs,
             proc_stream_gr_db: self.proc_stream_gr_db, proc_stream_ride_gain_db: self.proc_stream_ride_gain_db,
             proc_stream_in_peak: self.proc_stream_in_peak, proc_stream_out_peak: self.proc_stream_out_peak,
             meters: self.meters_acc,
@@ -1909,6 +1938,63 @@ mod meter_bus {
         assert!(med < 1.0, "callback median {:.4} ms is over 10% of the buffer budget", med);
     }
 
+    /// SLICE 3 — timing with the loudness taps (docs/dsp-loudness-meter.md §5.3). The callback's only new work
+    /// is the ring copy of each branch's output and the GR fold; the BS.1770 state is on the meter thread.
+    /// The rings are drained between buffers (outside the timed region), exactly as the meter thread keeps
+    /// them from filling in the product — a never-drained ring would turn every push into a cheap drop.
+    #[test]
+    fn callback_timing_with_loudness() {
+        let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
+        let (prod, mut stream_cons) = rb.split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)));
+        let h = b.handles.take().unwrap();
+        let (_meters, mut loud) = MetersHandle::from_parts(Arc::new(Mutex::new(h.meter_r)), h.shared.clone(), h.loud_cons, h.loud_shared);
+        for i in [0usize, 1, 2, 6] {
+            b.decks[i].source = Some(DeckFeed::prefilled(sine(), 480 * 2 * 2100));
+            b.decks[i].active = true; b.decks[i].paused = false; b.decks[i].volume = 0.5;
+        }
+        b.proc_local = true; b.proc_stream = true;
+        let bus = Arc::new(Mutex::new(b));
+        let fin = FinishedFlags::new();
+        let playing = Arc::new(AtomicBool::new(true));
+        let mut sc = Scratch::new();
+        let mut data = vec![0f32; 480 * 2];
+        let mut pop = vec![0f32; PROGRAM_BUS_BUF];
+        let mut ns: Vec<u128> = Vec::with_capacity(2000);
+        let a0 = crate::rt::tl_rt_allocs();
+        for _ in 0..2000 {
+            let t0 = std::time::Instant::now();
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+            ns.push(t0.elapsed().as_nanos());
+            loud.drain();
+            while stream_cons.pop_slice(&mut pop) > 0 {}
+        }
+        let allocs = crate::rt::tl_rt_allocs() - a0;
+        ns.sort();
+        let q = |f: f64| ns[((ns.len() - 1) as f64 * f) as usize] as f64 / 1e6;
+        // The added work alone: three ring copies of one 480-frame buffer + three GR folds (drained between).
+        let (mut taps, cons, shared) = crate::loudness::loud_channels();
+        let (mut lm, _r) = LoudnessMeters::new(cons, shared, 44100);
+        let l = vec![0.25f32; 480]; let r = vec![0.25f32; 480];
+        let mut gr = [crate::rt::GrTap::default(); 3];
+        let mut added: Vec<u128> = Vec::with_capacity(2000);
+        for i in 0..2000 {
+            let t0 = std::time::Instant::now();
+            for br in 0..3 { taps.push(br, std::hint::black_box(&l), std::hint::black_box(&r)); }
+            for g in gr.iter_mut() { g.fold(std::hint::black_box(0.5), std::hint::black_box(i as f32 * 1e-4), GR_SRC_OWN); }
+            added.push(t0.elapsed().as_nanos());
+            lm.drain();
+        }
+        added.sort();
+        let aq = |f: f64| added[((added.len() - 1) as f64 * f) as usize] as f64 / 1e6;
+        println!("[loud-timing] callback (A,B,C,CART playing, LOCAL+STREAM processing, loudness taps on): median {:.4} ms, p99 {:.4} ms, worst {:.3} ms per 10 ms buffer · {} allocations",
+                 q(0.5), q(0.99), q(1.0), allocs);
+        println!("[loud-timing] added work alone (3 ring copies x 480 frames + 3 GR folds): median {:.4} ms, p99 {:.4} ms ({:.3}% of the 10 ms budget at the median)",
+                 aq(0.5), aq(0.99), aq(0.5) / 10.0 * 100.0);
+        assert_eq!(allocs, 0, "the callback allocated with the loudness taps on");
+        assert!(q(0.5) < 1.0, "callback median {:.4} ms is over 10% of the buffer budget", q(0.5));
+    }
+
     /// A burst lasting ONE buffer between two reads must appear in the next read — the case a latest-wins
     /// buffer alone would drop. And after the read acknowledges it, the next window starts clean.
     #[test]
@@ -1927,7 +2013,7 @@ mod meter_bus {
         let (prod, _cons) = rb.split();
         let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(false)));
         let h = b.handles.take().unwrap();
-        let meters = MetersHandle { reader: Arc::new(Mutex::new(h.meter_r)), shared: h.shared.clone() };
+        let (meters, _loud) = MetersHandle::from_parts(Arc::new(Mutex::new(h.meter_r)), h.shared.clone(), h.loud_cons, h.loud_shared);
         b.decks[0].source = Some(DeckFeed::prefilled(Burst { n: 0 }, 480 * 2 * 40));
         b.decks[0].active = true;
         b.decks[0].paused = false;
@@ -2226,9 +2312,14 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     let aux_frames_ctr_shared = bus_init.aux_out_frames.clone();
     let station_counters = bus_init.counters.clone();
     let meter_reader = Arc::new(Mutex::new(handles.meter_r));
-    let meters_handle = MetersHandle { reader: meter_reader.clone(), shared: handles.shared.clone() };
-    let ctl_init = Control::new(&bus_init, handles.cmd_prod, handles.garbage_cons, meter_reader,
+    // SLICE 3 — the station's loudness meter thread: BS.1770 per branch, off the audio thread
+    // (docs/dsp-loudness-meter.md §1.4). It exits when this station's state is dropped.
+    let (meters_handle, loud_meters) = MetersHandle::from_parts(meter_reader.clone(), handles.shared.clone(),
+                                                                handles.loud_cons, handles.loud_shared);
+    crate::loudness::spawn_meter_thread(station_id, loud_meters);
+    let mut ctl_init = Control::new(&bus_init, handles.cmd_prod, handles.garbage_cons, meter_reader,
                                 handles.shared, aux_frames_ctr_shared.clone(), station_id, station_counters.clone());
+    ctl_init.loud = Some(meters_handle.loud.clone());
     let aux_cmd_prod = handles.aux_cmd_prod;
     let bus_state: SharedBusState = Arc::new(Mutex::new(bus_init));
     let bus_cmd = bus_state.clone(); // device-open / device-switch only (no callback running then)
@@ -2656,6 +2747,14 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 // triple buffer; this no longer holds anything the callback needs).
                                 let Some(m) = ctl.meter.lock().ok().map(|mut r| r.read()) else { continue };
                                 let p = &m.params;
+                                // SLICE 3 — OUT is MEASURED (loudness.rs momentary on the branch output). The
+                                // legacy fields keep their -70 floor for "no reading" (their readers treat
+                                // anything <= -69 as no signal); the meter bus carries the exact values.
+                                let lf = ctl.loud.as_ref().and_then(|r| r.lock().ok().map(|mut r| r.read())).unwrap_or_default();
+                                let out_m = |b: usize| -> f32 {
+                                    let v = lf.b[b].m;
+                                    if lf.b[b].fed && v.is_finite() && v > -70.0 { v as f32 } else { -70.0 }
+                                };
                                 if let Ok(mut lvl) = levels_clone.lock() {
                                     lvl.level_a      = m.peaks[0];
                                     lvl.level_b      = m.peaks[1];
@@ -2666,7 +2765,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     lvl.aux_frames   = ctl.aux_frames.load(Ordering::Relaxed);
                                     lvl.aux_peak     = m.aux_peak;
                                     lvl.aux_proc_in_lufs  = m.aux_proc_in_lufs;
-                                    lvl.aux_proc_out_lufs = m.aux_proc_out_lufs;
+                                    lvl.aux_proc_out_lufs = out_m(LOUD_AUX);
                                     lvl.aux_proc_gr_db    = m.aux_proc_gr_db;
                                     lvl.aux_proc_ride_db  = m.aux_proc_ride_db;
                                     lvl.duck_gain         = m.duck_gain;
@@ -2679,7 +2778,9 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     lvl.proc_stream      = p.proc_stream;
                                     lvl.proc_target_lufs = p.proc_target_lufs;
                                     lvl.proc_in_lufs     = m.proc_in_lufs;
-                                    lvl.proc_out_lufs    = m.proc_out_lufs;
+                                    // proc_* describes LOCAL, falling back to STREAM when only the stream
+                                    // processes — the rule the processor meters have always followed.
+                                    lvl.proc_out_lufs    = if !p.proc_local && p.proc_stream { out_m(LOUD_STREAM) } else { out_m(LOUD_LOCAL) };
                                     lvl.proc_gr_db       = m.proc_gr_db;
                                     lvl.proc_ride_gain_db = m.proc_ride_gain_db;
                                     lvl.proc_in_peak     = m.proc_in_peak;
@@ -2693,7 +2794,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     lvl.proc_ride_bypass    = p.proc_ride_bypass;
                                     lvl.proc_limiter_bypass = p.proc_limiter_bypass;
                                     lvl.proc_stream_in_lufs      = m.proc_stream_in_lufs;
-                                    lvl.proc_stream_out_lufs     = m.proc_stream_out_lufs;
+                                    lvl.proc_stream_out_lufs     = out_m(LOUD_STREAM);
                                     lvl.proc_stream_gr_db        = m.proc_stream_gr_db;
                                     lvl.proc_stream_ride_gain_db = m.proc_stream_ride_gain_db;
                                     lvl.proc_stream_in_peak      = m.proc_stream_in_peak;
@@ -2874,6 +2975,8 @@ pub(crate) struct Control {
     workers: Vec<std::sync::mpsc::Sender<Feeder>>,
     /// S6 — the station's callback health counters, read for GetLevel.
     pub counters: Arc<RtCounters>,
+    /// SLICE 3 — the station's loudness frame: GetLevel fills the legacy OUT fields from the MEASUREMENT.
+    pub loud: Option<LoudReader>,
 }
 impl Control {
     pub(crate) fn new(bus: &BusState, cmd: HeapProd<RtCmd>, garbage: HeapCons<Garbage>,
@@ -2889,7 +2992,7 @@ impl Control {
         Control {
             cmd, pending: std::collections::VecDeque::new(), seq: 0, params: bus.params(),
             garbage, meter, shared, decks: std::array::from_fn(|_| DeckShadow::default()), gen: 0, aux_frames,
-            workers, counters,
+            workers, counters, loud: None,
         }
     }
     /// Turn a decoder into a deck feed: PREFILL its ring to the refill mark here (1.5 s, on this thread —
@@ -3634,7 +3737,7 @@ pub(crate) fn mixer_callback(
     let run_branch = |proc: &Arc<Mutex<crate::program_processor::ProgramProcessor>>,
                       target: f32, ceiling: f32, release: f32, rate: f32, clamp: f32,
                       ride_byp: bool, lim_byp: bool, pl: &mut [f32], pr: &mut [f32]|
-     -> Option<(f32, f32, f32, f32, f32)> {
+     -> Option<(f32, f32, f32, f32, f32)> {   // (in LUFS, GR last sample, GR buffer max, ride dB, out peak)
         pl.copy_from_slice(out_l);
         pr.copy_from_slice(out_r);
         // try_lock only, never blocks air; a missed lock falls back to the clean tap, as before.
@@ -3647,7 +3750,7 @@ pub(crate) fn mixer_callback(
             p.set_ride_hold(duck_active);
             p.process_planar(pl, pr);
             let op = pl.iter().chain(pr.iter()).map(|&s| s.abs()).fold(0.0f32, f32::max);
-            Some((p.in_lufs(), p.out_lufs(), p.gain_reduction_db(), p.ride_gain_db(), op))
+            Some((p.in_lufs(), p.gain_reduction_db(), p.gain_reduction_max_db(), p.ride_gain_db(), op))
         } else { RtCounters::bump(&counters.lock_misses, 1); None }
     };
 
@@ -3676,18 +3779,20 @@ pub(crate) fn mixer_callback(
     // describe the LOCAL instance, and fall back to the stream instance when only the stream is
     // processing — so every existing reader (Settings, the Health Monitor) shows the same numbers it
     // showed before the split in every configuration that existed before the split.
-    if let Some((il, ol, gr, ride, op)) = local_m {
-        bus.proc_in_lufs = il; bus.proc_out_lufs = ol; bus.proc_gr_db = gr; bus.proc_ride_gain_db = ride;
+    if let Some((il, gr, _, ride, op)) = local_m {
+        bus.proc_in_lufs = il; bus.proc_gr_db = gr; bus.proc_ride_gain_db = ride;
         bus.proc_in_peak  = peak.max(bus.proc_in_peak * VU_RELEASE);
         bus.proc_out_peak = op.max(bus.proc_out_peak * VU_RELEASE);
     }
-    if let Some((il, ol, gr, ride, op)) = stream_m {
-        bus.proc_stream_in_lufs = il; bus.proc_stream_out_lufs = ol;
+    if let Some((il, gr, gmax, ride, op)) = stream_m {
+        bus.proc_stream_in_lufs = il;
         bus.proc_stream_gr_db = gr; bus.proc_stream_ride_gain_db = ride;
+        // SLICE 3 — STREAM dynamics for the meter bus: the stream instance is what the stream carries.
+        bus.meters_acc.gr[LOUD_STREAM].fold(ride, gmax, GR_SRC_OWN);
         bus.proc_stream_in_peak  = peak.max(bus.proc_stream_in_peak * VU_RELEASE);
         bus.proc_stream_out_peak = op.max(bus.proc_stream_out_peak * VU_RELEASE);
         if local_m.is_none() {
-            bus.proc_in_lufs = il; bus.proc_out_lufs = ol; bus.proc_gr_db = gr; bus.proc_ride_gain_db = ride;
+            bus.proc_in_lufs = il; bus.proc_gr_db = gr; bus.proc_ride_gain_db = ride;
             bus.proc_in_peak  = bus.proc_stream_in_peak;
             bus.proc_out_peak = bus.proc_stream_out_peak;
         }
@@ -3701,22 +3806,25 @@ pub(crate) fn mixer_callback(
     // Program Bus: write 44100 Hz samples directly — ffmpeg always reads 44100 Hz.
     // Per-station stream-client flag (DESIGN-TRUTH §2) — only THIS station's Icecast
     // client presence gates THIS station's push; never a sibling's.
+    // Stream drain taps PROCESSED when "Process stream" is on and the processed buffer exists, else clean.
+    // The stream taps the STREAM processor now, not the shared one.
+    let use_proc = bus.proc_stream && stream_m.is_some();
+    // SLICE 3 — THE STREAM BRANCH'S OUTPUT, built every buffer into its own lane: the processed samples as
+    // they are, or the clean bus clamped HERE. PROCESSED audio is already ceiling-controlled by the limiter
+    // and passes through untouched; the CLEAN tap has no limiter in front of it, so it is clamped at the
+    // point of use, for an unprocessed station only, instead of on the way in where it also clipped the
+    // processor's input. Same arithmetic as the per-sample clamp that used to live in the push loop — built
+    // once so the loudness meter measures exactly what the encoder gets, connected or not (a rehearsal with
+    // no encoder still meters).
+    if !use_proc {
+        for f in 0..prog_frames { str_l[f] = out_l[f].clamp(-1.0, 1.0); str_r[f] = out_r[f].clamp(-1.0, 1.0); }
+    }
+    bus.loud.push(LOUD_STREAM, str_l, str_r);
     if bus.stream_connected.load(Ordering::Relaxed) {
-        // Stream drain taps PROCESSED when "Process stream" is on and the processed buffer exists, else clean.
-        // The stream taps the STREAM processor now, not the shared one.
-        let use_proc = bus.proc_stream && stream_m.is_some();
         // SLICE 2 — STREAM tap: exactly the samples pushed to the ring below.
         let (mut spl, mut spr, mut ssl, mut ssr) = (bus.meters_acc.bus[BUS_STREAM].peak[0], bus.meters_acc.bus[BUS_STREAM].peak[1], 0.0f64, 0.0f64);
         for f in 0..prog_frames {
-            // PROCESSED audio is already ceiling-controlled by the -1 dBTP limiter and passes through
-            // untouched. The CLEAN tap has no limiter in front of it, so it is clamped HERE — at the
-            // point of use, for an unprocessed station only, instead of on the way in where it also
-            // clipped the processor's input.
-            let (l, r) = if use_proc {
-                (str_l[f], str_r[f])
-            } else {
-                (out_l[f].clamp(-1.0, 1.0), out_r[f].clamp(-1.0, 1.0))
-            };
+            let (l, r) = (str_l[f], str_r[f]);
             let _ = bus.ring_prod.try_push(l);
             let _ = bus.ring_prod.try_push(r);
             spl = spl.max(l.abs()); spr = spr.max(r.abs());
@@ -3744,6 +3852,9 @@ pub(crate) fn mixer_callback(
     // nothing until the feature is in use.
     let rl = &mut room_out_l[..prog_frames];
     let rr = &mut room_out_r[..prog_frames];
+    // SLICE 3 — the room processor's dynamics, when it ran: while an aux deck is live the device plays the
+    // ROOM chain, so LOCAL's ride/limiter meter must describe this instance, not the LOCAL one.
+    let mut room_m: Option<(f32, f32)> = None;   // (ride dB, GR buffer max)
     let room_owned: bool = if aux_present {
         // The room's programme base is core_* (aux decks excluded), run through the room's OWN EQ and
         // master gain so A/B/C local monitoring is unchanged. Separate instances because both stages
@@ -3772,6 +3883,7 @@ pub(crate) fn mixer_callback(
             p.set_params(bus.proc_ceiling_dbtp, bus.proc_release_ms, bus.proc_ride_rate,
                          bus.proc_ride_clamp, bus.proc_ride_bypass, bus.proc_limiter_bypass);
                 p.process_planar(rl, rr);
+                room_m = Some((p.ride_gain_db(), p.gain_reduction_max_db()));
             } else { RtCounters::bump(&counters.lock_misses, 1); }
         }
         // NOTE: the aux sum is NOT added here. It has exactly ONE destination — the device chosen in
@@ -3803,6 +3915,15 @@ pub(crate) fn mixer_callback(
     // it owns the device feed (an aux deck is live).
     bus.meters_acc.bus[BUS_MONITOR].add(dl, dr);
     bus.meters_acc.bus_live |= 1 << BUS_MONITOR;
+    // SLICE 3 — LOCAL loudness: the device feed, before the monitor knobs (Jeff's ruling 6 — the harness's
+    // monitor tap). And LOCAL's dynamics from WHICHEVER processor fed it: the room chain while an aux deck
+    // is live, else the LOCAL instance; neither when the feed is clean.
+    bus.loud.push(LOUD_LOCAL, dl, dr);
+    if room_owned {
+        if let Some((ride, gmax)) = room_m { bus.meters_acc.gr[LOUD_LOCAL].fold(ride, gmax, GR_SRC_ROOM); }
+    } else if let Some((_, _, gmax, ride, _)) = local_m {
+        if bus.proc_local { bus.meters_acc.gr[LOUD_LOCAL].fold(ride, gmax, GR_SRC_OWN); }
+    }
     if room_owned {
         bus.meters_acc.bus[BUS_ROOM].add(dl, dr);
         bus.meters_acc.bus_live |= 1 << BUS_ROOM;
@@ -3846,19 +3967,21 @@ pub(crate) fn mixer_callback(
             p.set_params(bus.proc_ceiling_dbtp, bus.proc_release_ms, bus.proc_ride_rate,
                          bus.proc_ride_clamp, bus.proc_ride_bypass, bus.proc_limiter_bypass);
             p.process_planar(aux_l, aux_r);
-            Some((p.in_lufs(), p.out_lufs(), p.gain_reduction_db(), p.ride_gain_db()))
+            Some((p.in_lufs(), p.gain_reduction_db(), p.gain_reduction_max_db(), p.ride_gain_db()))
         } else { RtCounters::bump(&counters.lock_misses, 1); None };
-        if let Some((il, ol, gr, ride)) = meters {
+        if let Some((il, gr, gmax, ride)) = meters {
             bus.aux_proc_in_lufs = il;
-            bus.aux_proc_out_lufs = ol;
             bus.aux_proc_gr_db = gr;
             bus.aux_proc_ride_db = ride;
+            bus.meters_acc.gr[LOUD_AUX].fold(ride, gmax, GR_SRC_OWN);
         }
     }
     // SLICE 2 — AUX tap: the aux monitor feed as it leaves (after its processor when that is on).
     if aux_present {
         bus.meters_acc.bus[BUS_AUX].add(aux_l, aux_r);
         bus.meters_acc.bus_live |= 1 << BUS_AUX;
+        // SLICE 3 — AUX OUT is measured too (Jeff's ruling 4), at the same point.
+        bus.loud.push(LOUD_AUX, aux_l, aux_r);
     }
 
     // AUX FEED VU — the peak of what the aux bus is sending, with the same release ballistics as the

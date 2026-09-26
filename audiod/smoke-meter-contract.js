@@ -199,7 +199,7 @@ console.log("\nRULE 6 - every mt.<key> read in JS is emitted by audio_get_meters
     const j = body.lastIndexOf("serde_json::json!(");
     const keys = new Set();
     if (j >= 0) for (const m of blockFrom(body, body.indexOf("{", j)).matchAll(/"([a-z0-9_]+)"\s*:/gi)) keys.add(m[1]);
-    const reads = new Set([...daemonJs.matchAll(/\bmt\.([a-z0-9_]+)/g)].map(m => m[1]));
+    const reads = new Set([...daemonJs.matchAll(/\bmt\.([A-Za-z0-9_]+)/g)].map(m => m[1]));   // camelCase too (ldSeq)
     if (!reads.size) bad("the daemon reads no mt.* keys - is the meters emitter gone?");
     const orphans = [...reads].filter(k => !keys.has(k)).sort();
     if (!orphans.length) ok(`all ${reads.size} keys the daemon forwards (${[...reads].sort().join(", ")}) are emitted by audio_get_meters`);
@@ -221,6 +221,79 @@ console.log("\nRULE 7 - meter frame shape matches the engine constants");
   else if (!chArr || !busArr) bad("MeterBlock no longer sizes ch/bus from SLOT_COUNT/METER_BUSES");
   else if (!quad) bad("audio_get_meters no longer emits [pkL, pkR, rmsL, rmsR] per tap");
   else ok("ch = 12 taps, bus = 6 taps, each [pkL, pkR, rmsL, rmsR] — as the renderer reads them");
+}
+
+// ── RULE 8 — the loudness / GR / ceiling objects carry exactly the documented keys (slice 3) ──────────
+// docs/dsp-loudness-meter.md §4.1. The per-branch objects are built by three closures in audio_get_meters;
+// a key added or dropped there without the doc (and, from the UI commit, the renderer's wire type) knowing
+// is how a panel ends up reading `undefined` as silence.
+console.log("\nRULE 8 - ld / gr / ceil objects carry exactly the documented keys");
+{
+  const want = {
+    ld_of: ["m", "s", "i", "lra", "tp", "tpMax", "fed", "full", "since", "epoch", "dropSec", "measuredSec", "capped"],
+    gr_of: ["ride", "lim", "run", "src"],
+    ceil_of: ["set", "eff"],
+  };
+  for (const [fn, keys] of Object.entries(want)) {
+    const i = libRs.indexOf(`let ${fn} = `);
+    if (i < 0) { bad(`${fn} not found in lib.rs audio_get_meters`); continue; }
+    const j = libRs.indexOf("serde_json::json!(", i);
+    const body = blockFrom(libRs, libRs.indexOf("{", j));
+    const got = [...new Set([...body.matchAll(/"([A-Za-z0-9_]+)"\s*:/g)].map(m => m[1]))].sort();
+    const exp = [...keys].sort();
+    if (JSON.stringify(got) === JSON.stringify(exp)) ok(`${fn}: ${got.join(", ")}`);
+    else bad(`${fn} emits [${got.join(", ")}] but the doc's wire (§4.1) is [${exp.join(", ")}]`);
+  }
+  // …and the renderer's wire type lists exactly those keys (src/components/meter/loudnessWire.ts), so a key the
+  // loudness panel reads can never be one the engine stopped sending.
+  let wireTs = null;
+  try { wireTs = read("src/components/meter/loudnessWire.ts"); } catch { /* the UI commit adds it */ }
+  if (wireTs) {
+    for (const [list, fn] of [["LOUD_KEYS", "ld_of"], ["GR_KEYS", "gr_of"], ["CEIL_KEYS", "ceil_of"]]) {
+      const m = new RegExp(`export const ${list}[^=]*=\\s*\\[([^\\]]*)\\]`).exec(wireTs);
+      const tsKeys = m ? [...m[1].matchAll(/"([A-Za-z0-9_]+)"/g)].map(x => x[1]).sort() : null;
+      const exp = [...want[fn]].sort();
+      if (tsKeys && JSON.stringify(tsKeys) === JSON.stringify(exp)) ok(`renderer ${list} matches ${fn}`);
+      else bad(`renderer ${list} is [${(tsKeys || []).join(", ")}] but the engine's ${fn} emits [${exp.join(", ")}]`);
+    }
+  }
+  const fwd = /broadcast\(\{\s*event:\s*"meters"[\s\S]*?\}\);/.exec(daemonJs);
+  const need = ["ld", "gr", "ceil", "margin", "ldSeq"];
+  const missing = fwd ? need.filter(k => !new RegExp(`\\b${k}:\\s*mt\\.${k}\\b`).test(fwd[0])) : need;
+  if (!missing.length) ok(`the daemon's meters event forwards ${need.join(", ")}`);
+  else bad(`the daemon's meters event does not forward: ${missing.join(", ")}`);
+}
+
+// ── RULE 9 — the OUT loudness ESTIMATE stays dead (slice 3) ──────────────────────────────────────────
+// It was `in_lufs + gain_db`, pre-limiter, never measured, and five screens showed it as OUT. OUT is now the
+// measured momentary loudness of each branch's output (loudness.rs), joined in GetLevel.
+console.log("\nRULE 9 - no OUT loudness estimate anywhere in the engine");
+{
+  const pp = read("native/src/program_processor.rs");
+  const code = (src) => src.split("\n").filter(l => !/^\s*\/\//.test(l)).join("\n");
+  if (/out_lufs_est/.test(code(pp)) || /fn\s+out_lufs\s*\(/.test(code(pp))) bad("program_processor.rs still has out_lufs_est / fn out_lufs");
+  else ok("program_processor.rs has no out_lufs_est and no out_lufs()");
+  const est = /in_lufs\s*\+\s*(self\.)?(ride\.)?gain_db|in_lufs\(\)\s*\+/;
+  const hits = ["native/src/program_processor.rs", "native/src/audio.rs", "native/src/lib.rs"].filter(f => est.test(code(read(f))));
+  if (!hits.length) ok("no line computes an OUT loudness as IN + ride gain");
+  else bad(`an IN + gain loudness computation is back in: ${hits.join(", ")}`);
+  const fills = ["lvl.proc_out_lufs", "lvl.proc_stream_out_lufs", "lvl.aux_proc_out_lufs"]
+    .filter(k => !new RegExp(`${k.replace(/\./g, "\\.")}\\s*=[^;]*out_m\\(`).test(audioRs));
+  if (!fills.length) ok("GetLevel fills proc_out_lufs / proc_stream_out_lufs / aux_proc_out_lufs from the MEASUREMENT (out_m)");
+  else bad(`GetLevel does not fill from the measurement: ${fills.join(", ")}`);
+}
+
+// ── RULE 10 — the ceiling's effective value comes from the ONE named margin (slice 3) ───────────────────
+console.log("\nRULE 10 - the limiter's detection margin lives in one place and the wire derives from it");
+{
+  const pp = read("native/src/program_processor.rs");
+  const lits = pp.split("\n").filter(l => !/^\s*\/\//.test(l) && !/^\s*\/\/\//.test(l) && /\b1\.15\b/.test(l.replace(/\/\/.*$/, "")));
+  if (lits.length === 1 && /const DETECT_MARGIN: f32 = 1\.15/.test(lits[0])) ok("1.15 appears once in code: the DETECT_MARGIN constant");
+  else bad(`expected exactly the DETECT_MARGIN constant to hold 1.15, found ${lits.length} code line(s): ${lits.map(l => l.trim()).join(" | ")}`);
+  if (/tp\s*=\s*self\.os\.push_peak\(l, r\)\s*\*\s*DETECT_MARGIN/.test(pp)) ok("the limiter detects with DETECT_MARGIN");
+  else bad("the limiter no longer detects with DETECT_MARGIN");
+  if (/detect_margin_db\(\)/.test(libRs) && /"eff":\s*\(\(set as f64 - margin\)/.test(libRs)) ok("ceil.*.eff = set − detect_margin_db()");
+  else bad("ceil.*.eff is not derived from detect_margin_db()");
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILED"}  (${pass} passed, ${fail} failed)`);

@@ -12,6 +12,7 @@ mod lufs;
 mod clock;
 mod program_processor;   // Audio Processing v1 — per-station program-bus loudness (bench-gated before ship)
 mod rt;                  // Slice 1 S3 — lock-free channels between the audio callback and everything else
+mod loudness;           // Slice 3 — BS.1770 loudness per branch, on a meter thread — docs/dsp-loudness-meter.md
 mod offline_render;      // DSP parity harness — docs/dsp-parity-harness.md (diagnostic; never on the audio path)
 
 use napi_derive::napi;
@@ -489,14 +490,79 @@ pub fn audio_get_meters(station_id: u32) -> String {
         let Ok(audio) = engine.lock() else { return r#"{"v":1,"e":0,"n":0,"ch":[],"bus":[],"live":0}"#.to_string() };
         audio.meters.clone()
     };
-    let Some(b) = handle.read_and_ack() else { return r#"{"v":1,"e":0,"n":0,"ch":[],"bus":[],"live":0}"#.to_string() };
+    let Some((b, p, lf)) = handle.read_all() else { return r#"{"v":1,"e":0,"n":0,"ch":[],"bus":[],"live":0}"#.to_string() };
     let n = b.frames.max(1) as f64;
     let quad = |t: &rt::MeterTap| -> [f32; 4] {
         [t.peak[0], t.peak[1], (t.sumsq[0] / n).sqrt() as f32, (t.sumsq[1] / n).sqrt() as f32]
     };
     let ch: Vec<[f32; 4]> = b.ch.iter().map(quad).collect();
     let bus: Vec<[f32; 4]> = b.bus.iter().map(quad).collect();
-    serde_json::json!({ "v": 1, "e": b.epoch, "n": b.frames, "ch": ch, "bus": bus, "live": b.bus_live }).to_string()
+    // SLICE 3 — loudness per branch (docs/dsp-loudness-meter.md §4.1). No reading (below the gate, not yet
+    // measured, not fed) is null — never −70 presented as a measurement.
+    let num = |v: f64| -> serde_json::Value {
+        if v.is_finite() { serde_json::json!((v * 1000.0).round() / 1000.0) } else { serde_json::Value::Null }
+    };
+    let rate = 44_100.0f64;
+    let ld_of = |x: &loudness::BranchLoud| serde_json::json!({
+        "m": num(x.m), "s": num(x.s), "i": num(x.i), "lra": num(x.lra),
+        "tp": [num(x.tp[0]), num(x.tp[1])], "tpMax": num(x.tp_max),
+        "fed": x.fed, "full": x.full, "since": x.since_ms, "epoch": x.epoch,
+        "dropSec": (x.drop_frames as f64 / rate * 10.0).round() / 10.0,
+        "measuredSec": (x.measured_frames as f64 / rate * 10.0).round() / 10.0,
+        "capped": x.capped,
+    });
+    let gr_of = |g: &rt::GrTap| serde_json::json!({
+        "ride": ((g.ride_db * 100.0).round() / 100.0), "lim": ((g.lim_max_db * 100.0).round() / 100.0),
+        "run": g.ran != 0,
+        "src": match g.src { rt::GR_SRC_ROOM => "room", rt::GR_SRC_OWN => "own", rt::GR_SRC_CLEAN => "clean", _ => "clean" },
+    });
+    // The label says what the limiter does: it holds `set` against true peak × DETECT_MARGIN, so it acts at
+    // `eff` (Jeff's ruling 3 — label only; the margin is decided after this meter shows where output lands).
+    let margin = program_processor::detect_margin_db() as f64;
+    let ceil_of = |set: f32| serde_json::json!({ "set": ((set as f64) * 100.0).round() / 100.0,
+                                                   "eff": ((set as f64 - margin) * 100.0).round() / 100.0 });
+    serde_json::json!({
+        "v": 1, "e": b.epoch, "n": b.frames, "ch": ch, "bus": bus, "live": b.bus_live,
+        "ld": {
+            "local": ld_of(&lf.b[loudness::LOUD_LOCAL]),
+            "stream": ld_of(&lf.b[loudness::LOUD_STREAM]),
+            "aux": ld_of(&lf.b[loudness::LOUD_AUX]),
+        },
+        "gr": {
+            "local": gr_of(&b.gr[loudness::LOUD_LOCAL]),
+            "stream": gr_of(&b.gr[loudness::LOUD_STREAM]),
+            "aux": gr_of(&b.gr[loudness::LOUD_AUX]),
+        },
+        "ceil": {
+            "local": ceil_of(p.proc_ceiling_dbtp),
+            "stream": ceil_of(p.proc_stream_ceiling_dbtp),
+            "aux": ceil_of(p.proc_ceiling_dbtp),
+        },
+        "margin": (margin * 1000.0).round() / 1000.0,
+        // publishes since the station's meter thread started — a frame that stops advancing is stale
+        "ldSeq": lf.seq,
+    }).to_string()
+}
+
+/// SLICE 3 — reset a branch's integrated loudness, LRA, true-peak max and drop count ("local", "stream",
+/// "aux" or "all"). The meter thread applies it on its next drain (≤ 20 ms); the audio thread is not
+/// involved. The frame echoes the new epoch and the reset time. Returns false for an unknown branch.
+#[napi]
+pub fn audio_loudness_reset(station_id: u32, branch: String) -> bool {
+    let shared = {
+        let engine = get_or_create_engine(station_id, None);
+        let Ok(audio) = engine.lock() else { return false };
+        audio.meters.loud_shared.clone()
+    };
+    let which: Vec<usize> = match branch.as_str() {
+        "local" => vec![loudness::LOUD_LOCAL],
+        "stream" => vec![loudness::LOUD_STREAM],
+        "aux" => vec![loudness::LOUD_AUX],
+        "all" => (0..loudness::LOUD_BRANCHES).collect(),
+        _ => return false,
+    };
+    for b in which { loudness::request_reset(&shared, b); }
+    true
 }
 
 /// DSP PARITY HARNESS — render one file through the REAL mixer callback with no device, faster than

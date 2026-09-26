@@ -57,6 +57,8 @@ contextBridge.exposeInMainWorld("ether", {
     // SLICE 2 — the meter bus: ~30 Hz raw windows (pre-fader channels + buses), only for stations you
     // subscribe to. Renew the subscription at least every 5 s (usePeakMeters does this).
     subscribeMeters: (stationIds) => ipcRenderer.invoke("audio:subscribe-meters", stationIds),
+    // SLICE 3 — reset a branch's integrated loudness / LRA / TP max: branch "local" | "stream" | "aux" | "all".
+    resetLoudness: (stationId, branch) => ipcRenderer.invoke("audio:loudness-reset", { stationId, branch }),
     onMeters:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:meters", h); return h; },
     offMeters: (h)  => ipcRenderer.removeListener("audio:meters", h),
     // Audio Processing v1 — dedicated processing-meter channel (~15Hz, ONLY while a toggle is on).

@@ -107,6 +107,10 @@ pub struct Render {
     pub monitor: Vec<f32>,
     pub stream: Vec<f32>,
     pub aux: Vec<f32>,
+    /// SLICE 3 — the ENGINE'S OWN loudness meter over this render (loudness.rs), driven inline after every
+    /// buffer exactly as the product's meter thread drains it: LOCAL = the device feed (the monitor tap
+    /// here), STREAM = the stream tap, AUX = the aux feed. Published once, at the end.
+    pub loud: crate::loudness::LoudnessFrame,
 }
 
 /// Build a bus in the state `cfg` describes, through the SAME clamps the live command arms apply
@@ -202,11 +206,19 @@ pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
     let mut tail_left: Option<usize> = None;
     let max_buffers = device_rate as usize * MAX_SECONDS / block;
     let mut sc = Scratch::new();
+    // SLICE 3 — the loudness meter, fed by the callback's own rings and drained after every buffer (the
+    // product drains on its meter thread every 20 ms; the order of samples is the same, so is the reading).
+    let (mut loud, loud_r) = {
+        let mut b = bus.lock().map_err(|_| "bus lock poisoned".to_string())?;
+        let h = b.handles.take().ok_or("state has no handles")?;
+        crate::loudness::LoudnessMeters::new(h.loud_cons, h.loud_shared, RATE)
+    };
 
     for _ in 0..max_buffers {
         data.iter_mut().for_each(|s| *s = 0.0);
         for f in feeders.iter_mut() { f.fill(DECK_RING_SAMPLES); }   // the synchronous pump
         mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+        loud.drain();
         monitor.extend_from_slice(&data);
         // Drain EVERY call so neither ring can fill and drop samples (try_push at :2717, :2879).
         loop {
@@ -233,7 +245,9 @@ pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
     if device_rate == RATE && monitor.len() != stream.len() {
         return Err(format!("tap length mismatch: monitor {} vs stream {} samples", monitor.len(), stream.len()));
     }
-    Ok(Render { monitor, stream, aux })
+    loud.publish();
+    let lf = loud_r.lock().map_err(|_| "loudness reader poisoned".to_string())?.read();
+    Ok(Render { monitor, stream, aux, loud: lf })
 }
 
 // ── Measurements (for the manifest and the report) ──────────────────────────────────────────────────
@@ -365,6 +379,11 @@ pub fn render_to_dir(path: &str, cfg_json: &str, out_dir: &str) -> Result<String
         "monitor": { "hash": format!("{:016x}", fnv_bits(&r.monitor)), "peak": sample_peak(&r.monitor), "lufs_i": mi, "tp_dbtp": mtp },
         "stream":  { "hash": format!("{:016x}", fnv_bits(&r.stream)),  "peak": sample_peak(&r.stream),  "lufs_i": si, "tp_dbtp": stp },
         "taps_bit_identical": r.monitor.len() == r.stream.len() && bits_equal(&r.monitor, &r.stream),
+        // SLICE 3 — what the ENGINE'S meter read over the same render (branch order local, stream, aux).
+        "meter": r.loud.b.iter().map(|b| serde_json::json!({
+            "i": if b.i.is_finite() { Some(b.i) } else { None }, "lra": if b.lra.is_finite() { Some(b.lra) } else { None },
+            "tp_max": if b.tp_max.is_finite() { Some(b.tp_max) } else { None }, "measured_frames": b.measured_frames,
+        })).collect::<Vec<_>>(),
         "cfg": cfg,
     });
     if cfg.aux.is_some() {
@@ -812,5 +831,134 @@ mod parity {
             "inputs": inputs, "renders": renders,
         });
         std::fs::write(goldens_dir().join("manifest.json"), serde_json::to_string_pretty(&manifest).unwrap()).unwrap();
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+// SLICE 3 — LOUDNESS THROUGH THE REAL CALLBACK (docs/dsp-loudness-meter.md §5.2). The engine's own meter
+// (Render::loud) over signals rendered through mixer_callback: Tech 3341 cases with processing OFF (both
+// branches carry the clean signal, so the tolerance applies unchanged), the ffmpeg-referenced −23 LUFS file,
+// and with processing ON the identity check — the meter reads the samples that actually left.
+//   cd native && cargo test --release --lib offline_render::loudness_path -- --nocapture --test-threads=2
+// ══════════════════════════════════════════════════════════════════════════════════════════════════════
+#[cfg(test)]
+mod loudness_path {
+    use super::*;
+    use crate::loudness::tests::{tones, tp_sine};
+    use crate::loudness::{LOUD_LOCAL, LOUD_STREAM, LOUD_AUX};
+    use std::path::{Path, PathBuf};
+
+    fn goldens_dir() -> PathBuf { Path::new(env!("CARGO_MANIFEST_DIR")).join("goldens") }
+    fn inputs_dir() -> PathBuf { goldens_dir().join("inputs") }
+    fn manifest() -> serde_json::Value {
+        let p = goldens_dir().join("manifest-loudness.json");
+        serde_json::from_str(&std::fs::read_to_string(&p).unwrap_or_else(|_| panic!("{} missing — run node scripts/make-loudness-corpus.js", p.display()))).unwrap()
+    }
+    /// A synthesized Tech 3341 signal as a 16-bit stereo WAV (L = R), rewritten only if it differs.
+    fn input(name: &str, mono: &[f32]) -> PathBuf {
+        let p = inputs_dir().join(format!("{}.wav", name));
+        let inter: Vec<f32> = mono.iter().flat_map(|&s| [s, s]).collect();
+        let want = wav_pcm16_bytes(&inter);
+        if std::fs::read(&p).ok().as_deref() != Some(&want[..]) { std::fs::write(&p, &want).unwrap(); }
+        p
+    }
+    fn ref_m23() -> (PathBuf, f64) {
+        let m = manifest();
+        let r = &m["ref_m23"];
+        let p = inputs_dir().join(r["file"].as_str().unwrap());
+        let got = format!("{:016x}", fnv_bytes(&std::fs::read(&p).unwrap_or_else(|_| panic!("{} missing — run node scripts/make-loudness-corpus.js", p.display()))));
+        assert_eq!(got, r["fnv"].as_str().unwrap(), "ref_m23.wav is not the file manifest-loudness.json was made from");
+        (p, r["ffmpeg_i"].as_f64().unwrap())
+    }
+    fn render(p: &Path, cfg: &RenderCfg) -> Render { render_offline(p.to_str().unwrap(), cfg).unwrap() }
+    fn within(got: f64, want: f64, tol: f64) -> bool { got.is_finite() && (got - want).abs() <= tol }
+
+    #[test]
+    fn tech3341_integrated_and_true_peak_through_the_callback() {
+        let fs = RATE;
+        let off = RenderCfg::default();
+        let mut fails = Vec::new();
+        for (name, sig, want_i) in [
+            ("loud_3341_01", tones(fs, &[(20.0, -23.0)]), -23.0),
+            ("loud_3341_03", tones(fs, &[(10.0, -36.0), (60.0, -23.0), (10.0, -36.0)]), -23.0),
+            ("loud_3341_05", tones(fs, &[(20.0, -26.0), (20.1, -20.0), (20.0, -26.0)]), -23.0),
+        ] {
+            let r = render(&input(name, &sig), &off);
+            for b in [LOUD_LOCAL, LOUD_STREAM] {
+                let i = r.loud.b[b].i;
+                let ok = within(i, want_i, 0.1);
+                println!("[path] {} OFF  {:6}  I {:8.3} LUFS  want {:.1} ±0.1  {}", name, ["LOCAL", "STREAM", "AUX"][b], i, want_i, if ok { "PASS" } else { "FAIL" });
+                if !ok { fails.push(format!("{} branch {}", name, b)); }
+            }
+        }
+        let r = render(&input("loud_3341_15", &tp_sine(fs, 4.0, 0.50, 0.0)), &off);
+        for b in [LOUD_LOCAL, LOUD_STREAM] {
+            let tp = r.loud.b[b].tp_max;
+            let ok = tp.is_finite() && tp <= -6.0 + 0.2 && tp >= -6.0 - 0.4;
+            println!("[path] loud_3341_15 OFF  {:6}  TP {:7.3} dBTP  want −6.0 +0.2/−0.4  {}", ["LOCAL", "STREAM", "AUX"][b], tp, if ok { "PASS" } else { "FAIL" });
+            if !ok { fails.push(format!("3341 #15 TP branch {}", b)); }
+        }
+        assert!(fails.is_empty(), "through the callback: {:?}", fails);
+    }
+
+    #[test]
+    fn the_ffmpeg_referenced_minus_23_file_reads_minus_23() {
+        let (p, ff) = ref_m23();
+        // The METER alone: the engine's meter (the same LoudnessMeters, fed through its callback end) on the
+        // file's own samples at the file's own rate — no decoder, no resampler. This separates "does the meter
+        // agree with the independent reference" from "what does the product's path do to the programme".
+        let (rate, ch) = crate::loudness::tests::read_wav(&p);
+        let mut rg = crate::loudness::tests::rig(rate);
+        rg.feed(LOUD_LOCAL, &ch[0], &ch[1], &[480], |_, _| {});
+        let direct = rg.last(LOUD_LOCAL).i;
+        println!("[ref_m23] meter on the file itself ({} Hz, no decoder/resampler) I {:8.3} LUFS · ffmpeg {:.3} · Δ {:+.3} LU", rate, direct, ff, direct - ff);
+        assert!(within(direct, -23.0, 0.1), "the meter read the known −23 LUFS file itself as {:.3}", direct);
+        // THROUGH THE PRODUCT: decoded and resampled to the program rate by the deck path, mixed, and measured on
+        // each branch's output by the engine's own meter.
+        let r = render(&p, &RenderCfg::default());
+        for b in [LOUD_LOCAL, LOUD_STREAM] {
+            let i = r.loud.b[b].i;
+            println!("[ref_m23] {:6} through the callback ({} Hz → 44100 Hz) I {:8.3} LUFS · ffmpeg {:.3} · Δ {:+.3} LU · vs the file itself {:+.3} LU · want −23.0 ±0.1",
+                     ["LOCAL", "STREAM", "AUX"][b], rate, i, ff, i - ff, i - direct);
+            assert!(within(i, -23.0, 0.1), "the known −23 LUFS file read {:.3} on branch {}", i, b);
+        }
+    }
+
+    #[test]
+    fn processed_branches_meter_what_actually_left() {
+        // With processing ON the output is no longer −23 (the ride drives it to target, the limiter holds the
+        // ceiling). The check is IDENTITY: the engine's meter reads the same programme as an independent
+        // BS.1770 measurement of the tap each branch actually delivered (monitor = dl/dr, stream = the ring).
+        let (p, _) = ref_m23();
+        for (cname, cfg) in [
+            ("LINKED", RenderCfg { proc_local: true, proc_stream: true, ..RenderCfg::default() }),
+            ("SPLIT", RenderCfg { proc_local: true, proc_stream: true, proc_split: true,
+                                  stream_target_lufs: Some(-16.0), stream_ceiling_dbtp: Some(-2.0), ..RenderCfg::default() }),
+        ] {
+            let r = render(&p, &cfg);
+            for (b, tap) in [(LOUD_LOCAL, &r.monitor), (LOUD_STREAM, &r.stream)] {
+                let (ind_i, ind_tp) = loudness(tap);
+                let (ind_i, ind_tp) = (ind_i.unwrap(), ind_tp.unwrap());
+                let m = &r.loud.b[b];
+                println!("[identity] {} {:6}  meter I {:8.3} TPmax {:7.3} · independent I {:8.3} TP {:7.3}",
+                         cname, ["LOCAL", "STREAM", "AUX"][b], m.i, m.tp_max, ind_i, ind_tp);
+                assert!((m.i - ind_i).abs() < 0.01, "{} branch {}: meter I {} vs tap {}", cname, b, m.i, ind_i);
+                assert!((m.tp_max - ind_tp).abs() < 0.01, "{} branch {}: meter TP {} vs tap {}", cname, b, m.tp_max, ind_tp);
+            }
+        }
+    }
+
+    #[test]
+    fn aux_out_is_measured_on_the_aux_feed() {
+        let (p, _) = ref_m23();
+        let speech = inputs_dir().join("speech.wav");
+        let cfg = RenderCfg { aux: Some(AuxCfg { path: speech.to_string_lossy().into_owned(), duck: false, aux_gain: 1.0 }), ..RenderCfg::default() };
+        let r = render(&p, &cfg);
+        let (_, ind_tp) = loudness(&r.aux);
+        let a = &r.loud.b[LOUD_AUX];
+        println!("[aux] meter fed={} M(last) {:.3} TPmax {:.3} · aux ring TP {:.3} · {} frames measured",
+                 a.fed, a.m, a.tp_max, ind_tp.unwrap_or(f64::NAN), a.measured_frames);
+        assert!(a.measured_frames > 0, "the aux feed was never measured");
+        assert!((a.tp_max - ind_tp.unwrap()).abs() < 0.05, "aux TP {} vs the aux ring {}", a.tp_max, ind_tp.unwrap());
     }
 }

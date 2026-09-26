@@ -326,6 +326,9 @@ const handlers = {
   // The subscriber names each station by BOTH ids: the integer to read the engine with (per-machine, never
   // leaves this process pair) and the UUID the event carries across the boundary (station-identity rule,
   // scripts/test-station-identity-leak.js — the daemon itself has no UUIDs, so main supplies them here).
+  // SLICE 3 — reset a branch's integrated loudness / LRA / TP max ("local" | "stream" | "aux" | "all"). The
+  // engine's meter thread applies it (the audio thread is not involved); the next meters frame echoes it.
+  loudnessReset:      (m) => (typeof A.audioLoudnessReset === "function" ? A.audioLoudnessReset(m.stationId, String(m.branch || "all")) : false),
   metersSubscribe:    (m) => {
     const now = Date.now();
     for (const s of (m.stations || [])) if (s && s.uuid) meterSubs.set(Number(s.id), { at: now, uuid: String(s.uuid) });
@@ -551,7 +554,10 @@ const meterTimer = setInterval(() => {
     if (!stations.has(sid)) continue;
     let mt;
     try { mt = JSON.parse(A.audioGetMeters(sid)); } catch { continue; }
-    broadcast({ event: "meters", stationUuid: sub.uuid, v: mt.v, e: mt.e, n: mt.n, ch: mt.ch, bus: mt.bus, live: mt.live });
+    // SLICE 3 — loudness per branch (ld), ride/limiter per branch (gr), the ceiling as set and as it acts
+    // (ceil, margin), and the loudness frame's sequence (ldSeq). docs/dsp-loudness-meter.md §4.1.
+    broadcast({ event: "meters", stationUuid: sub.uuid, v: mt.v, e: mt.e, n: mt.n, ch: mt.ch, bus: mt.bus, live: mt.live,
+                ld: mt.ld, gr: mt.gr, ceil: mt.ceil, margin: mt.margin, ldSeq: mt.ldSeq });
   }
 }, 33);
 if (meterTimer.unref) meterTimer.unref();

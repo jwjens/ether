@@ -5141,6 +5141,14 @@ ipcMain.handle("audio:setVolume", (_, deck, volume, stationId) => AUDIO_DAEMON ?
 ipcMain.handle("audio:setMuted", (_, deck, muted, stationId) => AUDIO_DAEMON ? audiodClient.cmd("setMuted", { deck, muted, stationId }) : audio.audioSetMuted(deck, muted, stationId));
 ipcMain.handle("audio:getState", (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("getState", { stationId }) : JSON.parse(audio.audioGetState(stationId)));
 // SLICE 2 — a renderer names the stations it draws meters for (renew every ≤ 5 s or it lapses).
+// SLICE 3 — the loudness panel's Reset: integrated loudness, LRA and TP max for a branch start again.
+ipcMain.handle("audio:loudness-reset", (_, { stationId, branch } = {}) => {
+  const sid = Number(stationId);
+  const br = String(branch || "all");
+  if (!Number.isFinite(sid)) return false;
+  if (AUDIO_DAEMON) return audiodClient.cmd("loudnessReset", { stationId: sid, branch: br }).catch(() => false);
+  return typeof audio.audioLoudnessReset === "function" ? audio.audioLoudnessReset(sid, br) : false;
+});
 ipcMain.handle("audio:subscribe-meters", (_, stationIds) => {
   const ids = (Array.isArray(stationIds) ? stationIds : []).map(Number).filter(Number.isFinite);
   const now = Date.now();

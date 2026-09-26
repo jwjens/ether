@@ -275,6 +275,36 @@ impl MeterTap {
     }
 }
 
+/// SLICE 3 — one branch's dynamics for a read window (docs/dsp-loudness-meter.md §3). Branch order is
+/// loudness.rs's: LOCAL, STREAM, AUX.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct GrTap {
+    /// The ride's applied gain at the end of the window, dB, SIGNED (a boost is +). 0 when it did not run.
+    pub ride_db: f32,
+    /// The limiter's LARGEST gain reduction during the window, dB (≥ 0) — not the last sample's.
+    pub lim_max_db: f32,
+    /// 1 = the branch's processor ran at some point in this window; 0 = the branch was clean (processing
+    /// off, or its lock was missed every buffer).
+    pub ran: u8,
+    /// Which processor fed this branch: 0 clean, 1 its own, 2 the ROOM chain (LOCAL only — an aux deck is
+    /// live and the device plays the room chain, not the LOCAL instance).
+    pub src: u8,
+    pub _pad: [u8; 2],
+}
+pub(crate) const GR_SRC_CLEAN: u8 = 0;
+pub(crate) const GR_SRC_OWN: u8 = 1;
+pub(crate) const GR_SRC_ROOM: u8 = 2;
+impl GrTap {
+    #[inline]
+    pub fn fold(&mut self, ride_db: f32, lim_max_db: f32, src: u8) {
+        self.ride_db = ride_db;
+        self.lim_max_db = self.lim_max_db.max(lim_max_db);
+        self.ran = 1;
+        self.src = src;
+    }
+}
+
 /// Every meter tap for one read window. `epoch` names the window; the reader acknowledges it through
 /// RtShared::meter_ack and the callback then starts the next one — so each read covers exactly the audio
 /// since the previous read, and no buffer's peak is lost between two ~30 Hz reads (a latest-wins buffer
@@ -291,6 +321,8 @@ pub(crate) struct MeterBlock {
     pub bus: [MeterTap; METER_BUSES],
     /// Bit n set = bus n was actually fed during this window (LOCAL/STREAM/ROOM/AUX can be absent).
     pub bus_live: u8,
+    /// SLICE 3 — ride and limiter per branch (LOCAL, STREAM, AUX).
+    pub gr: [GrTap; 3],
 }
 
 /// One buffer's observed state, published by the callback at the end of every buffer. Everything GetLevel
@@ -306,10 +338,11 @@ pub(crate) struct MeterFrame {
     pub spectrum: [f32; 10],
     pub frames_consumed: u64,
     pub duck_gain: f32,
-    pub aux_proc_in_lufs: f32, pub aux_proc_out_lufs: f32, pub aux_proc_gr_db: f32, pub aux_proc_ride_db: f32,
-    pub proc_in_lufs: f32, pub proc_out_lufs: f32, pub proc_gr_db: f32, pub proc_ride_gain_db: f32,
+    // No *_out_lufs here: slice 3 deleted the estimate; OUT is measured by loudness.rs and joined in GetLevel.
+    pub aux_proc_in_lufs: f32, pub aux_proc_gr_db: f32, pub aux_proc_ride_db: f32,
+    pub proc_in_lufs: f32, pub proc_gr_db: f32, pub proc_ride_gain_db: f32,
     pub proc_in_peak: f32, pub proc_out_peak: f32,
-    pub proc_stream_in_lufs: f32, pub proc_stream_out_lufs: f32, pub proc_stream_gr_db: f32,
+    pub proc_stream_in_lufs: f32, pub proc_stream_gr_db: f32,
     pub proc_stream_ride_gain_db: f32, pub proc_stream_in_peak: f32, pub proc_stream_out_peak: f32,
     pub decks: [DeckMeter; SLOT_COUNT],
     /// SLICE 2 — the meter bus: the current read window's taps.
@@ -578,9 +611,11 @@ mod meter_layout_tests {
     use super::*;
     #[test]
     fn meter_block_layout_is_pinned() {
-        // docs/dsp-meter-bus.md §1.3: 24-byte taps; 16 + 12×24 + 6×24 + 1, padded to 8 = 456.
+        // docs/dsp-meter-bus.md §1.3: 24-byte taps; 16 + 12×24 + 6×24 + 1 = 449.
+        // SLICE 3 (docs/dsp-loudness-meter.md §3.2): + 3 × 12-byte GrTap at 4-byte alignment (452..488) = 488.
         assert_eq!(std::mem::size_of::<MeterTap>(), 24);
-        assert_eq!(std::mem::size_of::<MeterBlock>(), 456);
+        assert_eq!(std::mem::size_of::<GrTap>(), 12);
+        assert_eq!(std::mem::size_of::<MeterBlock>(), 488);
         println!("[meters] MeterTap {} B · MeterBlock {} B · MeterFrame {} B",
                  std::mem::size_of::<MeterTap>(), std::mem::size_of::<MeterBlock>(), std::mem::size_of::<MeterFrame>());
     }
