@@ -23,3 +23,11 @@ export const inPgm: Slot<PgmModule> = {
 };
 
 export const emptyChannelRack: ChannelRackDoc = { v: 1, sections: { ch: [{ id: "c0", in: true, module: null }] } };
+
+// SLICE 5 — the channel modules ARE accepted in a channel slot (so the error above is about the ride, not the slot).
+export const filtersInChannel: Slot<ChannelModule> = { id: "f", in: false, module: { type: "filters", hpf: { in: true, freq: 80 }, lpf: { in: false, freq: 18000 } } };
+export const peqInBranch: Slot<BranchModule> = {
+  id: "q", in: true,
+  // @ts-expect-error — and a channel EQ is not a branch module
+  module: { type: "peq", bands: [{ freq: 100, gain: 0, width: 1 }, { freq: 400, gain: 0, width: 1 }, { freq: 2500, gain: 0, width: 1 }, { freq: 8000, gain: 0, width: 1 }] },
+};

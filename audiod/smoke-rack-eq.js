@@ -166,6 +166,15 @@ console.log("\n6 - SLICE 5: a fader's channel rack reaches THIS station's engine
   const main = fs.readFileSync(path.join(__dirname, "..", "electron", "main.js"), "utf8");
   check(/rack:set[\s\S]{0,900}setChannelRack", \{ stationId: sid, slot/.test(main), "main's rack:set delivers a channel rack to the named station's engine, by slot");
   delete kv[4].rack_ch_S2; delete kv[4].rack_ch_B; delete kv[1].rack_ch_A;
+  // The dead deck/mic EQ (docs/dsp-channel-rack-eq.md §6): their sends landed on station 1's MASTER EQ.
+  const src = (f) => fs.readFileSync(path.join(__dirname, "..", "src", "components", f), "utf8");
+  const code = (t) => t.split("\n").filter(l => !/^\s*\/\//.test(l)).join("\n");
+  const deck = code(src("OnAirDeck.tsx")), mic = code(src("MicDeck.tsx")), strip = code(src("ConsoleStrip.tsx"));
+  check(!/setEq\(/.test(deck) && !/eq_deck_/.test(deck) && !/GraphicEQ/.test(deck), "the on-air deck no longer has the dead EQ drawer, its eq_deck_* read or its setEq send");
+  check(/openChannelRack\(deckId\)/.test(deck), "…its EQ button opens that deck's channel rack");
+  check(!/setEq\(/.test(mic), "the mic's EQ no longer sends setEq(\"mic\") (station 1's master EQ)");
+  check(/mic input EQ \(browser audio\)/.test(mic), "…and is labelled \"mic input EQ (browser audio)\" (ruling 1)");
+  check(/openChannelRack\(/.test(strip), "every fader strip with an engine slot has the EQ door");
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILED"}  (${pass} passed, ${fail} failed)`);

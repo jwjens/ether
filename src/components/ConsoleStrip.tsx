@@ -13,6 +13,8 @@ import PeakAvgMeter, { type MeterSource } from "./meter/PeakAvgMeter";
 import { CH_INDEX, useMeterSubscription } from "./meter/meterStore";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { useSongMenu } from "../lib/songActions";
+import { openChannelRack, useChannelRackLamps } from "../hooks/useChannelRack";
+import { isChannelSlot } from "./rack/channelRack";
 
 interface Props {
   label: string;
@@ -154,6 +156,12 @@ export default function ConsoleStrip({
   const meterTitle = deckId
     ? (slotIndex !== undefined ? `${label} — pre-fader level (moves with the source, not the fader or ON)` : `${label} — no engine meter for this channel`)
     : `${label} — input level, pre-fader`;
+
+  // SLICE 5 — THE EQ DOOR (docs/dsp-channel-rack-eq.md §4): every strip with an engine slot opens its own
+  // channel rack. Lit = that fader's rack has something IN (read from the stored rack, shared per station).
+  const rackSlot = deckId && isChannelSlot(deckId.toUpperCase()) ? deckId.toUpperCase() : null;
+  const lamps = useChannelRackLamps(rackSlot && isReady ? stationId : null);
+  const eqLit = rackSlot ? (lamps as Record<string, boolean | undefined>)[rackSlot] === true : false;
 
   // MIDI hardware fader sync
   const midiKey = `deck_${label.toLowerCase().replace(/[^a-z]/g, "")}_volume`;
@@ -349,6 +357,24 @@ export default function ConsoleStrip({
         </div>
 
       </div>{/* end main area */}
+
+      {/* ── EQ — the door to this fader's channel rack (Slice 5) ── */}
+      {rackSlot && (
+        <div style={{ padding: "8px 8px 0", borderTop: "1px solid var(--strip-divider, #303040)" }}>
+          <button onClick={() => { playClick(); openChannelRack(rackSlot as any); }}
+            title={`${label}'s channel EQ — Filters and PEQ${eqLit ? " (something is IN)" : " (nothing IN — the audio is untouched)"}. Opens the rack window at ${rackSlot}.`}
+            style={{
+              width: "100%", height: 32, borderRadius: 3, cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              background: eqLit ? "color-mix(in srgb, var(--slot-eq) 22%, transparent)" : "var(--bg-tertiary, #232330)",
+              border: `1px solid ${eqLit ? "var(--slot-eq)" : "var(--border-primary, #333)"}`,
+            }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: eqLit ? "var(--slot-eq)" : "transparent",
+                           border: `1px solid ${eqLit ? "var(--slot-eq)" : "var(--text-tertiary, #666)"}` }} />
+            <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.12em", color: eqLit ? "var(--slot-eq)" : "var(--text-tertiary, #666)" }}>EQ</span>
+          </button>
+        </div>
+      )}
 
       {/* ── ON / PFL — flat ── */}
       <div style={{

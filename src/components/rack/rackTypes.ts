@@ -1,8 +1,8 @@
 // ── rackTypes — the rack document, typed (Slice 4, docs/dsp-rack-framework.md §1.1, §5) ────────────────────
 //
 // The same model as native/src/rack.rs. THE TYPE RULE: a loudness module (the ride) is unrepresentable in a
-// channel rack. `ChannelModule` does not include `RideModule` — today it is `never` (slice 4 has no channel
-// modules); slices 5–6 widen it to filters / PEQ / gate / compressor, and never to the ride. The proof is
+// channel rack. `ChannelModule` does not include `RideModule` — slice 5 makes it filters / PEQ, slice 6 adds
+// gate / compressor, and never the ride. The proof is
 // rackTypes.typetest.ts, checked by `tsc --noEmit` (the zero-errors gate).
 
 export type GeqModule = { type: "geq"; bands: number[] };
@@ -14,9 +14,16 @@ export type LimiterModule = { type: "limiter"; ceiling: number; release: number 
 export type PgmModule = GeqModule;
 /** What a master BRANCH (monitor / stream) slot can hold — the only home of a loudness module. */
 export type BranchModule = RideModule | LimiterModule;
+/** SLICE 5 — Filters: a 24 dB/oct high-pass and low-pass, each with its own IN (docs/dsp-channel-rack-eq.md §1). */
+export type FilterStage = { in: boolean; freq: number };
+export type FilterModule = { type: "filters"; hpf: FilterStage; lpf: FilterStage };
+/** SLICE 5 — the 4-band parametric EQ. `shelf` is honoured on bands 1 and 4 only. */
+export type PeqBand = { freq: number; gain: number; width: number; shelf?: boolean };
+export type PeqModule = { type: "peq"; bands: [PeqBand, PeqBand, PeqBand, PeqBand] };
 /** What a CHANNEL rack slot can hold. Slice 5: FilterModule | PeqModule; slice 6: | GateModule | CompModule.
  *  Never RideModule. */
-export type ChannelModule = never;
+export type ChannelModule = FilterModule | PeqModule;
+export type ChannelModuleType = ChannelModule["type"];
 
 export type AnyModule = PgmModule | BranchModule;
 export type ModuleType = AnyModule["type"];

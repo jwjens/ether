@@ -63,8 +63,9 @@ export default function MicDeck({ inputDeviceId }: Props) {
   const handleEqChange = useCallback((bands: number[]) => {
     setEqBands(bands);
     (window as any).ether.stationConfigKv.upsertByKey(stationId, 'eq_deck_mic', JSON.stringify(bands));
-    // Also send to native engine for actual broadcast path
-    try { const w = window as any; if (w.ether?.audio?.setEq) w.ether.audio.setEq("mic", bands); } catch {}
+    // SLICE 5 (docs/dsp-channel-rack-eq.md §6, Jeff's ruling 1): this IS the mic's EQ — Web Audio biquads on the
+    // mic's own graph, below. The send that used to follow (`setEq("mic")`) landed on station 1's MASTER EQ; it is
+    // removed. The mic never enters the engine, so a channel rack cannot process it until it becomes an engine input.
   }, [stationId]);
 
   // ── Build Web Audio EQ filter chain ──────────────────────────
@@ -204,7 +205,7 @@ export default function MicDeck({ inputDeviceId }: Props) {
         {/* EQ toggle button */}
         <button
           onClick={() => setEqOpen(o => !o)}
-          title="Mono EQ"
+          title="Mic input EQ (browser audio) — the mic's own EQ, in its Web Audio chain. It is not the engine's channel EQ."
           style={{
             width: 28, height: 28, borderRadius: 0, flexShrink: 0,
             background: eqOpen ? "rgb(from var(--accent-blue) r g b / 0.18)" : "var(--bg-tertiary)",
@@ -313,7 +314,7 @@ export default function MicDeck({ inputDeviceId }: Props) {
         transition: "max-height 0.25s cubic-bezier(0.4,0,0.2,1)",
         flexShrink: 0,
       }}>
-        <GraphicEQ bands={eqBands} onChange={handleEqChange} label="MONO EQ" />
+        <GraphicEQ bands={eqBands} onChange={handleEqChange} label="mic input EQ (browser audio)" />
       </div>
 
       {/* Controls */}

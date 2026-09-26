@@ -28,6 +28,12 @@
   --slot-loudness: #22d3ee;
   --slot-dynamics: #e0409e;
   --slot-filter: #34d399;
+  /* SLICE 5 — the channel PEQ's four bands, one colour each (docs/dsp-channel-rack-eq.md §4). Distinct from each
+     other and from the slot colours they are drawn over (the EQ curve is --slot-eq, the filter regions --slot-filter). */
+  --band-1: #fb923c;
+  --band-2: #facc15;
+  --band-3: #c084fc;
+  --band-4: #f472b6;
   --accent-green: #34d399;
   --accent-red: #f87171;
   --accent-amber: #fbbf24;
@@ -218,6 +224,12 @@
   --slot-loudness: #22d3ee;
   --slot-dynamics: #e0409e;
   --slot-filter: #34d399;
+  /* SLICE 5 — the channel PEQ's four bands, one colour each (docs/dsp-channel-rack-eq.md §4). Distinct from each
+     other and from the slot colours they are drawn over (the EQ curve is --slot-eq, the filter regions --slot-filter). */
+  --band-1: #fb923c;
+  --band-2: #facc15;
+  --band-3: #c084fc;
+  --band-4: #f472b6;
   --accent-green: #34d399;
   --accent-red: #f87171;
   --accent-amber: #fbbf24;
@@ -340,6 +352,11 @@
   --slot-loudness: #0e7490;
   --slot-dynamics: #b0247a;
   --slot-filter: #047857;
+  /* SLICE 5 — the PEQ band colours (see the dark block): deeper hues for contrast on a light ground. */
+  --band-1: #c2410c;
+  --band-2: #a16207;
+  --band-3: #7e22ce;
+  --band-4: #be185d;
   --accent-green: #059669;
   --accent-red: #dc2626;
   --accent-amber: #d97706;
@@ -472,6 +489,11 @@
   --slot-loudness: #0e7490;
   --slot-dynamics: #b0247a;
   --slot-filter: #047857;
+  /* SLICE 5 — the PEQ band colours (see the dark block): deeper hues for contrast on a light ground. */
+  --band-1: #c2410c;
+  --band-2: #a16207;
+  --band-3: #7e22ce;
+  --band-4: #be185d;
   --accent-red:   #c82535;
   --accent-amber: #c87815;
 

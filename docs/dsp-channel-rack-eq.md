@@ -435,3 +435,126 @@ The no-click tests, the goldens and the ch-OUT null all still pass.
 - undefined-calls, preload-bridge and ipc-contract all PASS;
 - leak guard 13/13 (baseline holds);
 - meter contract 30/30.
+
+---
+
+## Build — UI (2026-09-26)
+
+**Status:** the on-screen behaviour is UNVERIFIED until Jeff's screen check. Everything below is what the tree
+does and what the tests prove.
+
+### The window
+
+- **One rack window, parameterized by rack kind.** `Rack.tsx` has a selector row: MASTER | A B C D E F | CART
+  | S1–S5.
+  - Each channel tab has a lamp, lit when that fader's stored rack has something IN.
+  - MASTER renders the Slice 4 rack, unchanged.
+  - A channel tab renders `ChannelRackView.tsx`.
+- **The shared visual language** (`rackUi.tsx`) is the Slice 4 styles, moved out of `Rack.tsx`, not changed.
+
+### The doors
+
+- **Fader strips:** every strip with an engine slot has an **EQ** button (`ConsoleStrip.tsx`) with a lamp.
+- **On-air decks:** the A/B/C deck's EQ button (`OnAirDeck.tsx`) is the same door.
+- **The canonical navigation** already reaches this window: hamburger → **Processor**.
+- **How they work:** `openChannelRack(slot)` writes `ether.rack.view = ch:<slot>` and opens or focuses the
+  rack window.
+- **Master Out's doors** now also write `ether.rack.view = master`, so they always open the master rack.
+
+### The lamps (`useChannelRack.ts`)
+
+- **One shared reader per station**, not one per strip: 12 `rack:get` calls.
+- **When it re-reads:**
+  - on every rack write, through the `ether.rack.rev` bump (the same window directly, other windows by the
+    storage event);
+  - every 15 s, for a rack synced in from another install.
+
+### The channel rack (`ChannelRackView.tsx`, `channelRack.ts`)
+
+**Strip:**
+- starts "empty · add";
+- Add offers Filters and PEQ only, one of each;
+- a new module starts **OUT** (ruling 5);
+- slot IN is saved;
+- the ⋯ menu has Move earlier / later (nothing pinned) and Remove.
+
+**Editor:**
+- the header reads "editing: S2 · PEQ";
+- separate HPF IN, LPF IN and PEQ IN;
+- shelf toggles on bands 1 and 4;
+- per-band Freq / Gain / Width;
+- FLAT;
+- the empty state explains itself.
+
+**Pinned meters:** IN = `ch[i]` (pre-rack) and OUT = `chPost[i]` (post-rack).
+- `PeakAvgMeter` gains a `{ ch, post: true }` source.
+- A pre-slice-5 engine sends no `chPost`, and the OUT meter draws NOT FED, never silence.
+
+**Writes:** `rack:set` `ch:<slot>`, coalesced to 120 ms. A refused rack shows its reason and reverts.
+
+### The curve (`EqCurve.tsx`)
+
+- SVG, 20 Hz–20 kHz log × ±15 dB.
+- **The thick line is what the engine runs:** `planChannel`, the same biquads and the same f32-stored
+  numbers.
+- **What is set but OUT is dashed.**
+- **Bands:** each has its own colour (`--band-1…4`, four themes) and a 44 px node. Drag sideways for
+  frequency, up and down for gain.
+- **Width:** mouse wheel, a trackpad pinch (it arrives as ctrl+wheel), or a two-finger touch pinch on the
+  selected band.
+- **HPF / LPF:** an opaque region when IN, an outline when OUT. The corner drags sideways.
+- Every node carries its numbers.
+
+### TS curve = engine
+
+`eqMath.ts` is a line-for-line port of the `rack.rs` coefficient functions and clamps. The clamps use
+`Math.fround`, because the engine stores the numbers as f32.
+
+**One committed fixture** (`src/components/rack/eqCoeffs.fixture.json`) holds 50 deterministic parameter sets
+across peak, low shelf, high shelf, HPF and LPF, including frequencies past the 0.45·fs clamp:
+
+| Test | Result |
+|---|---|
+| Rust `rack::ts_parity` | the fixture equals the engine's coefficients: 350 coefficients, **worst relative 2.0e-16** (bar 4 ulp — serde_json's default float parser) |
+| vitest `eqMath.test.ts` | the TS port matches the fixture: **worst relative 3.9e-16** (bar 1e-9); the drawn magnitude matches at 4 frequencies per case to 1e-9 dB |
+
+### The dead deck/mic EQ (§6, rulings 1 and 4)
+
+- **`OnAirDeck.tsx`:**
+  - removed: the GraphicEQ drawer, the `eq_deck_<X>` read and write, and the `setEq(deckId)` send (station 1's
+    master EQ);
+  - stored `eq_deck_*` values are not migrated;
+  - the EQ button opens the deck's channel rack.
+- **`MicDeck.tsx`:**
+  - the Web Audio EQ is kept (it really EQs the mic);
+  - the `setEq("mic")` send is removed;
+  - it is labelled "mic input EQ (browser audio)".
+
+### Type rule
+
+- `ChannelModule = FilterModule | PeqModule`.
+- `rackTypes.typetest.ts` keeps "a ride in a channel slot" as an `@ts-expect-error`, and adds two twins:
+  - Filters **is** accepted in a channel slot;
+  - a PEQ is **not** a branch module.
+- Checked by `tsc --noEmit`.
+
+### Help
+
+- `docs/help-channel-eq.md` (new).
+- `help-processor-rack.md` (channel racks, green = filters, reordering) updated.
+- `help-meters.md` (the strip meter is pre-EQ; the rack's IN/OUT meters) updated.
+
+### Gates
+
+- `tsc --noEmit`: 0 errors.
+- vitest: 463/463, including `channelRack.test.ts` (7) and `eqMath.test.ts` (4).
+- `npm run test:rack-eq`: 31/31. The new static checks: the deck has no drawer, no `eq_deck_*` and no
+  `setEq`; its EQ button is the door; the mic has no `setEq`, and has its label; every strip has the door.
+- undefined-calls, preload-bridge and ipc-contract: PASS.
+- Leak guard: 13/13.
+- `npm run build`: OK.
+
+### Incidental, not touched
+
+`MicDeck.tsx` loads `eq_deck_mic` with no `station_id` filter (`WHERE key='eq_deck_mic'`), so it can read
+another station's row. It predates this slice and is outside the ruling.

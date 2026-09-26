@@ -54,6 +54,9 @@ A strip's meter shows **the source**, not what the fader lets through:
   contribution to the mix; it does not stop the source. A cut channel whose meter is dancing is a
   channel that is live and cut — press **ON** to put it on the air.
 - A mic or guest strip shows the input level the same way: before its fader, whether ON or OFF.
+- **A strip's meter is also BEFORE its channel EQ** — it shows the source as it arrives. To see what the EQ
+  did, open the fader's rack (the strip's **EQ** button): its **IN** and **OUT** meters are before and after
+  the rack. See **Channel EQ**.
 
 ## Master meters are AFTER the fader
 
@@ -106,6 +109,7 @@ The difference matters: an empty bar is evidence of silence; hatching is not.
 
 ## Related
 
+- **Channel EQ** — `docs/help-channel-eq.md` (the before/after-EQ meters)
 - **Channel Faders and Channel Cut (ON/OFF)** — `docs/help-channel-faders.md`
 - **Master and Monitor Faders** — `docs/help-master-monitor-faders.md`
 - **Health Monitor** — `docs/help-health-monitor.md`

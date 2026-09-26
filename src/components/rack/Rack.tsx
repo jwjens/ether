@@ -1,4 +1,5 @@
-// ── Rack — the master processing rack, as a live instrument (Slice 4, docs/dsp-rack-framework.md §2) ────────
+// ── Rack — the processing racks, as a live instrument (Slice 4, docs/dsp-rack-framework.md §2; Slice 5 adds
+//    the channel racks behind the selector row — ChannelRackView.tsx) ─────────────────────────────────────────
 //
 // Jeff's ruling: an operator looks at this while on air, in the Wheatstone Strata / Virtual Strata language —
 // not a settings page. Layout (spec §5):
@@ -32,18 +33,14 @@ import LoudnessPanel from "../meter/LoudnessPanel";
 import { BUS, latestMeters, useMeterSubscription } from "../meter/meterStore";
 import { ceilingLabel } from "../meter/loudnessWire";
 import { EQ_LABELS } from "../GraphicEQ";
+import { LABEL, MONO, TOUCH, BTN, Knob } from "./rackUi";
+import ChannelRackView from "./ChannelRackView";
+import { CHANNEL_SLOTS, isChannelSlot, type ChannelSlot } from "./channelRack";
+import { RACK_VIEW_KEY, useChannelRackLamps } from "../../hooks/useChannelRack";
 
 interface Props { stationId: number; stationUuid: string | null | undefined }
 
 const SECTION_LABEL: Record<SectionName, string> = { pgm: "PGM", local: "MONITOR", stream: "STREAM" };
-const LABEL: React.CSSProperties = { fontSize: 11, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.06em" };
-const MONO: React.CSSProperties = { fontFamily: "'JetBrains Mono', ui-monospace, monospace", fontVariantNumeric: "tabular-nums" };
-const TOUCH = 44;
-const BTN = (on = false, tone = "#8868D8"): React.CSSProperties => ({
-  minHeight: TOUCH, minWidth: TOUCH, padding: "0 14px", fontSize: 12, fontWeight: 800, letterSpacing: "0.06em",
-  cursor: "pointer", border: `1px solid ${on ? tone : "var(--border-primary)"}`,
-  background: on ? `color-mix(in srgb, ${tone} 18%, transparent)` : "var(--bg-tertiary)", color: on ? tone : "var(--text-secondary)",
-});
 const SELECT_KEY = "ether.rack.select";
 
 type Sel = { section: SectionName; slotId: string };
@@ -57,26 +54,64 @@ function readSel(): Sel | null {
   return null;
 }
 
-/** A range control sized for a finger. */
-function Knob({ label, value, unit, min, max, step, onChange, hint, vertical = false }: {
-  label: string; value: number; unit: string; min: number; max: number; step: number;
-  onChange: (v: number) => void; hint: string; vertical?: boolean;
-}) {
+// ── SLICE 5 — ONE rack window, parameterized by rack kind: MASTER, or a fader's channel rack ────────────────
+// (docs/dsp-channel-rack-eq.md §4). The selector row names every rack; a channel tab's lamp is lit when that
+// fader's rack has something IN. The doors — Master Out's EQ / OPEN, each fader strip's EQ, the on-air decks'
+// EQ — write `ether.rack.view` (and the master's `ether.rack.select`) and open or re-focus this window.
+function readView(): "master" | ChannelSlot {
+  try {
+    const v = localStorage.getItem(RACK_VIEW_KEY);
+    const m = v ? /^ch:(.+)$/.exec(v) : null;
+    if (m && isChannelSlot(m[1])) return m[1];
+  } catch { /* per-viewer convenience only */ }
+  return "master";
+}
+
+export default function Rack({ stationId, stationUuid }: Props) {
+  const [view, setView] = useState<"master" | ChannelSlot>(() => readView());
+  const lamps = useChannelRackLamps(stationId);
+  useEffect(() => {
+    const on = (e: StorageEvent) => { if (e.key === RACK_VIEW_KEY) setView(readView()); };
+    window.addEventListener("storage", on);
+    return () => window.removeEventListener("storage", on);
+  }, []);
+  const pick = (v: "master" | ChannelSlot) => {
+    setView(v);
+    try { localStorage.setItem(RACK_VIEW_KEY, v === "master" ? "master" : `ch:${v}`); } catch { /* per-viewer */ }
+  };
+  const tab = (v: "master" | ChannelSlot, label: string) => {
+    const on = view === v;
+    const lit = v !== "master" && lamps[v] === true;
+    return (
+      <button key={v} onClick={() => pick(v)}
+        title={v === "master" ? "The master rack — GEQ, loudness ride, limiter" : `${v}'s channel rack (Filters, PEQ)${lit ? " — something is IN" : lamps[v] === false ? " — nothing IN" : ""}`}
+        style={{ ...BTN(on), minWidth: v === "master" ? 96 : 52, padding: "0 10px", position: "relative" }}>
+        {label}
+        {v !== "master" && (
+          <span style={{ position: "absolute", top: 5, right: 5, width: 7, height: 7, borderRadius: "50%",
+                         background: lit ? "var(--slot-eq)" : "transparent", border: `1px solid ${lit ? "var(--slot-eq)" : "var(--border-primary)"}` }} />
+        )}
+      </button>
+    );
+  };
   return (
-    <div title={hint} style={{ display: "flex", flexDirection: vertical ? "column" : "row", alignItems: "center", gap: 10, minHeight: TOUCH }}>
-      <span style={{ ...LABEL, width: vertical ? "auto" : 78, flexShrink: 0 }}>{label}</span>
-      <input className="rack-range" type="range" min={min} max={max} step={step} value={value}
-        onChange={e => onChange(Number(e.target.value))}
-        style={vertical ? { writingMode: "vertical-lr" as any, direction: "rtl", height: 160, width: TOUCH }
-                        : { flex: 1, height: TOUCH }} />
-      <span style={{ ...MONO, fontSize: 14, fontWeight: 800, minWidth: 70, textAlign: vertical ? "center" : "right", color: "#8868D8" }}>
-        {value > 0 && unit === " dB" ? "+" : ""}{value}{unit}
-      </span>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, padding: "8px 12px 0" }}>
+        <span style={{ ...LABEL, marginRight: 4 }}>Rack</span>
+        {tab("master", "MASTER")}
+        <span style={{ width: 8 }} />
+        {CHANNEL_SLOTS.map(s => tab(s, s))}
+      </div>
+      <div style={{ flex: 1, minHeight: 0 }}>
+        {view === "master"
+          ? <MasterRack stationId={stationId} stationUuid={stationUuid} />
+          : <ChannelRackView key={view} stationId={stationId} stationUuid={stationUuid} slot={view} />}
+      </div>
     </div>
   );
 }
 
-export default function Rack({ stationId, stationUuid }: Props) {
+function MasterRack({ stationId, stationUuid }: Props) {
   const rack = useMasterRack(stationId);
   const proc = useProcessorParams(stationId);
   useMeterSubscription([stationId]);

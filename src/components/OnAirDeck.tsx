@@ -1,13 +1,12 @@
 import VUMeter from "./VUMeter";
 import ArtistCard from "./ArtistCard";
-import GraphicEQ, { EQ_DEFAULT } from "./GraphicEQ";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { DeckState } from "../audio/engine-rodio";
 import type { DeckRole } from "../lib/deckRole";
-import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { resolveArtwork, isImagingClass } from "../lib/albumArt";
+import { openChannelRack, useChannelRackLamps } from "../hooks/useChannelRack";
 
 interface Props {
   deck: DeckState | null;
@@ -37,11 +36,11 @@ export default function OnAirDeck({ deck, label, deckId, role = "third", onPlay,
   const [categoryColor, setCategoryColor] = useState<string | null>(null);
   const [categoryName, setCategoryName] = useState<string | null>(null);
 
-  // ── EQ state ─────────────────────────────────────────────────
-  const [eqOpen,  setEqOpen]  = useState(false);
-  const [eqBands, setEqBands] = useState<number[]>(EQ_DEFAULT);
-  const eqActive = eqBands.some(g => Math.abs(g) > 0.05);
-  const eqKey = `eq_deck_${deckId}`;
+  // ── EQ — SLICE 5 (docs/dsp-channel-rack-eq.md §6): this deck's EQ is its CHANNEL RACK. The old 10-band
+  // drawer stored `eq_deck_<X>` and sent it as station 1's MASTER EQ — it never processed the deck. Removed; its
+  // stored values are not migrated (they never affected audio — Jeff's slice 5 ruling 4). The button is the door.
+  const eqLamps = useChannelRackLamps(stationId);
+  const eqActive = eqLamps[deckId] === true;
 
   // Deck values — must be declared before any useEffect that references them
   const status = deck?.status || "idle";
@@ -68,28 +67,6 @@ export default function OnAirDeck({ deck, label, deckId, role = "third", onPlay,
       setCategoryName(rows[0]?.name || rows[0]?.code || null);
     }).catch(() => {});
   }, [title]);
-
-  // ── EQ load from DB on mount ─────────────────────────────────
-  useEffect(() => {
-    query<{ value: string }>(
-      "SELECT value FROM station_config_kv WHERE key=?", [eqKey]
-    ).then(rows => {
-      if (rows[0]?.value) {
-        try { setEqBands(JSON.parse(rows[0].value)); } catch {}
-      }
-    }).catch(() => {});
-  }, [eqKey]);
-
-  // ── EQ save + send to engine ──────────────────────────────────
-  const handleEqChange = useCallback((bands: number[]) => {
-    setEqBands(bands);
-    (window as any).ether.stationConfigKv.upsertByKey(stationId, eqKey, JSON.stringify(bands));
-    // Send to native audio engine (audioSetEq added in native addon)
-    try {
-      const w = window as any;
-      if (w.ether?.audio?.setEq) w.ether.audio.setEq(deckId, bands);
-    } catch {}
-  }, [stationId, eqKey, deckId]);
 
   const remaining = Math.max(0, dur - pos);
   const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
@@ -650,16 +627,6 @@ export default function OnAirDeck({ deck, label, deckId, role = "third", onPlay,
         )}
       </div>
 
-      {/* ── EQ panel — slides up from bottom ── */}
-      <div style={{
-        maxHeight: eqOpen ? 130 : 0,
-        overflow: "hidden",
-        transition: "max-height 0.25s cubic-bezier(0.4,0,0.2,1)",
-        flexShrink: 0,
-      }}>
-        <GraphicEQ bands={eqBands} onChange={handleEqChange} label="EQ" />
-      </div>
-
       {/* ── Controls ── */}
       <div style={{
         padding: "10px 16px 14px",
@@ -729,16 +696,16 @@ export default function OnAirDeck({ deck, label, deckId, role = "third", onPlay,
           {playBtnLabel}
         </button>
 
-        {/* EQ toggle */}
+        {/* EQ — the door to this deck's channel rack (Slice 5) */}
         <button
-          onClick={() => setEqOpen(o => !o)}
-          title={eqOpen ? "Close EQ" : "Open graphic EQ"}
+          onClick={() => openChannelRack(deckId)}
+          title={`Deck ${deckId}'s channel EQ — Filters and PEQ${eqActive ? " (something is IN)" : " (nothing IN — the audio is untouched)"}. Opens the rack window at ${deckId}.`}
           style={{
             width: 36, height: 36,
             borderRadius: 0,
-            background: eqOpen ? "rgb(from var(--accent-blue) r g b / 0.18)" : "var(--bg-secondary)",
-            border: `1px solid ${eqOpen ? "var(--accent-blue)" : "var(--border-secondary)"}`,
-            color: eqOpen ? "#8060e0" : "var(--text-tertiary)",
+            background: eqActive ? "color-mix(in srgb, var(--slot-eq) 18%, transparent)" : "var(--bg-secondary)",
+            border: `1px solid ${eqActive ? "var(--slot-eq)" : "var(--border-secondary)"}`,
+            color: eqActive ? "var(--slot-eq)" : "var(--text-tertiary)",
             cursor: "pointer",
             display: "flex", alignItems: "center", justifyContent: "center",
             flexDirection: "column" as const,
@@ -755,8 +722,8 @@ export default function OnAirDeck({ deck, label, deckId, role = "third", onPlay,
               position: "absolute",
               top: 3, right: 3,
               width: 4, height: 4, borderRadius: "50%",
-              background: "#c07820",
-              boxShadow: "0 0 4px #c07820",
+              background: "var(--slot-eq)",
+              boxShadow: "0 0 4px var(--slot-eq)",
             }} />
           )}
         </button>

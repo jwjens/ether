@@ -559,6 +559,8 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
   /** Open the rack pop-out with a slot selected (it re-selects if the window is already open). */
   const openRackAt = (slot: string) => {
     try { localStorage.setItem("ether.rack.select", slot); } catch { /* the rack opens on its default slot */ }
+    // SLICE 5 — the rack window also hosts the channel racks: these doors open the MASTER rack.
+    try { localStorage.setItem("ether.rack.view", "master"); } catch { /* per-viewer */ }
     try { (window as any).ether?.invoke("window:popout", "processor"); } catch { /* not in electron */ }
   };
 

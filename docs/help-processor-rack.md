@@ -23,7 +23,7 @@ While **LINKED**, the stream runs exactly the monitor's settings. **SPLIT** give
 changes nothing by itself; the stream starts as a copy of the monitor.
 
 Each kind of module always has the same colour: **blue** for EQ, **cyan** for loudness, **magenta** for dynamics
-(the limiter). The channel racks that come later use the same colours.
+(the limiter), and **green** for filters. Each fader's own channel rack uses the same colours (see **Channel EQ**).
 
 ## Open it
 
@@ -83,15 +83,17 @@ Each kind of module always has the same colour: **blue** for EQ, **cyan** for lo
 ## Not in this version (by design)
 
 - **Nothing in the master rack can be moved.** The EQ comes first, and in each output the limiter is always
-  last: it is what holds the ceiling. Reordering arrives with the channel racks.
+  last: it is what holds the ceiling. (Channel racks can be reordered.)
 - **The ride and the limiter cannot be removed** (bypass is the test tool). The GEQ can be removed and added
   back.
-- **No channel racks yet.** EQ, filters and dynamics per channel come in the next slices.
+- **Channel racks live in the same window.** The selector row at the top (MASTER | A–F | CART | S1–S5) goes to a
+  fader's own rack. See **Channel EQ** (`docs/help-channel-eq.md`).
 - **No show presets, and no protection for live channels during recall.** Those come later; today Take
   applies at once, because the master rack has no channels to protect.
 
 ## Related
 
+- **Channel EQ** (`docs/help-channel-eq.md`) — Filters and PEQ on each fader
 - **Loudness Meter** (`docs/help-loudness-meter.md`)
 - **Audio Processing** (`docs/help-audio-processing.md`) — turning processing on for each output
 - **Reading the Meters** (`docs/help-meters.md`)

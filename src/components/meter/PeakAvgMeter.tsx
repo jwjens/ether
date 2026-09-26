@@ -6,6 +6,8 @@
 // It reads its own source every animation frame and writes the DOM through refs, so a meter moving at
 // 30 Hz never re-renders React. Sources:
 //   • { stationUuid, ch }   — a channel's PRE-FADER tap (ruling 1: it moves while the channel is OFF)
+//   • { stationUuid, ch, post: true } — SLICE 5: the same channel AFTER its rack (still pre-fader). An engine
+//                             that predates the channel EQ sends no chPost: drawn NOT FED, never as silence.
 //   • { stationUuid, bus }  — a bus tap (post-fader: PGM / LOCAL / STREAM / MONITOR / ROOM / AUX)
 //   • { external }          — a level the renderer already has (a patched mic's Web Audio level, which is
 //                             already pre-fader). It is ONE number, so the bar and the dot both draw it.
@@ -20,7 +22,7 @@ import {
 import { latestMeters } from "./meterStore";
 
 export type MeterSource =
-  | { stationUuid: string | null | undefined; ch: number; bus?: undefined; external?: undefined }
+  | { stationUuid: string | null | undefined; ch: number; post?: boolean; bus?: undefined; external?: undefined }
   | { stationUuid: string | null | undefined; bus: number; ch?: undefined; external?: undefined }
   | { external: number; stationUuid?: undefined; ch?: undefined; bus?: undefined };
 
@@ -73,7 +75,7 @@ export default function PeakAvgMeter({ source, stereo = true, size = "strip", or
         }
       } else {
         const f = latestMeters(s.stationUuid);
-        const tap = f ? (s.ch !== undefined ? f.ch?.[s.ch] : f.bus?.[s.bus!]) : undefined;
+        const tap = f ? (s.ch !== undefined ? ("post" in s && s.post ? f.chPost?.[s.ch] : f.ch?.[s.ch]) : f.bus?.[s.bus!]) : undefined;
         const busLive = s.bus === undefined || !f ? true : ((f.live >> s.bus) & 1) === 1;
         fed = !!f && !!tap && now - f.at < STALE_MS && busLive;
         if (fed && f!.at !== lastAt) {
