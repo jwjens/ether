@@ -3,9 +3,8 @@
 
 import React, { useState, useEffect } from "react";
 import PopoutShell from "./PopoutShell";
-import ProcessorRack from "./ProcessorRack";
+import Rack from "./rack/Rack";
 import ImagingPanel from "./ImagingPanel";
-import { useProcessorParams } from "../hooks/useProcessorParams";
 import FaderSection from "./FaderSection";
 import MasterOutput from "./MasterOutput";
 import MicDeck from "./MicDeck";
@@ -117,10 +116,6 @@ function StudioProPopout() {
 // (Same rule the Jukebox pop-out follows — see its header.)
 function ProcessorPopout() {
   const { stationId, stationUuid, isReady } = useActiveStation();
-  const proc = useProcessorParams(stationId ?? null);
-  // Which branch the CONTROLS are editing. Purely a view choice, so it lives here rather than in the
-  // hook — the meters show both branches regardless.
-  const [branch, setBranch] = React.useState<"local" | "stream">("local");
 
   if (!isReady || stationId == null) {
     return (
@@ -133,30 +128,8 @@ function ProcessorPopout() {
       </div>
     );
   }
-  return (
-    <ProcessorRack
-      branch={branch}
-      onBranch={setBranch}
-      split={proc.split}
-      onSplit={proc.setSplit}
-      params={proc.params}
-      stored={proc.stored}
-      onChange={proc.patch}
-      presets={proc.presets}
-      activePreset={proc.activePreset}
-      onSelectPreset={(name) => proc.selectPreset(proc.split ? branch : "local", name)}
-      onSavePreset={(name) => proc.savePreset(proc.split ? branch : "local", name)}
-      bypass={proc.bypass}
-      onBypass={proc.setBypass}
-      meters={proc.meters}
-      wouldRideDb={proc.wouldRideDb}
-      sendError={proc.sendError}
-      bypassPending={proc.bypassPending}
-      streamBranchUnreported={proc.streamBranchUnreported}
-      stationId={stationId}
-      stationUuid={stationUuid}
-    />
-  );
+  // SLICE 4 — the Processor window IS the master rack (docs/dsp-rack-framework.md §2).
+  return <Rack stationId={stationId} stationUuid={stationUuid} />;
 }
 
 // Library pop-out handlers — cue a track onto a deck via the shared engine (daemon-backed,

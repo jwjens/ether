@@ -3,14 +3,11 @@
 // Dark steel: #0e0e12 bg, #1e1e28 borders, zero border-radius.
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { matchesStation } from "../lib/levelsScope";
-import MasterEQRack from "./MasterEQRack";
 import { useProcessorParams } from "../hooks/useProcessorParams";
 import { useAudioHealth, HealthDot, HealthStyles, HealthModeBanner, rateLabel, peakLabel, LEVEL_COLOR } from "../audio/health";
-import { EQ_DEFAULT } from "./GraphicEQ";
 import StationMonitorMixer from "./StationMonitorMixer";
 import MasterMeters from "./meter/MasterMeters";
 import AuxMonitorSlots from "./AuxMonitorSlots";
@@ -537,27 +534,33 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
     (proc.bypass.stream.ride || proc.bypass.stream.limiter) ? "stream" : null,
   ].filter(Boolean).join(" + ");
 
-  // ── Master EQ ────────────────────────────────────────────────
-  const [eqOpen,  setEqOpen]  = useState(false);
-  const [eqBands, setEqBands] = useState<number[]>(EQ_DEFAULT);
-  const eqActive = eqBands.some(g => Math.abs(g) > 0.05);
-
-  // SLICE 4 (docs/dsp-rack-framework.md §8) — THIS station's EQ. The query had no station filter and read
-  // whichever station's row came first; it now reads the active station's, and re-reads on a station switch.
+  // ── Master EQ (SLICE 4, docs/dsp-rack-framework.md) — the GEQ is a slot in the MASTER RACK now: one EQ home.
+  // This row is its door (OPEN → the rack, GEQ selected) and its lamp (the rack's GEQ is IN and not flat). It
+  // no longer reads or writes the EQ itself — the rack writes it through rack:set, per station.
+  const [eqActive, setEqActive] = useState(false);
   useEffect(() => {
     if (stationId == null) return;
-    setEqBands(EQ_DEFAULT);
-    query<{ value: string }>("SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'eq_master' AND deleted_at IS NULL", [stationId])
-      .then(rows => { if (rows[0]?.value) { try { setEqBands(JSON.parse(rows[0].value)); } catch {} } })
-      .catch(() => {});
+    let alive = true;
+    setEqActive(false);
+    const read = async () => {
+      try {
+        const r = await (window as any).ether?.audio?.getRack?.(stationId);
+        if (!alive || !r || r.ok !== true) return;
+        const g = (r.doc?.sections?.pgm || []).find((s: any) => s?.module?.type === "geq");
+        setEqActive(!!g && g.in !== false && (g.module.bands || []).some((x: number) => Math.abs(x) > 0.05));
+      } catch { /* the lamp stays off rather than guessing */ }
+    };
+    read();
+    // The rack window bumps this when it saves (a storage event reaches the OTHER windows — this one).
+    const onStore = (e: StorageEvent) => { if (e.key === "ether.rack.rev") read(); };
+    window.addEventListener("storage", onStore);
+    return () => { alive = false; window.removeEventListener("storage", onStore); };
   }, [stationId]);
-
-  const handleMasterEqChange = useCallback((bands: number[]) => {
-    setEqBands(bands);
-    (window as any).ether.stationConfigKv.upsertByKey(stationId, 'eq_master', JSON.stringify(bands));
-    // …and to THIS station's engine (it used to name no station, so main sent it to station 1).
-    try { const w = window as any; if (w.ether?.audio?.setEq) w.ether.audio.setEq("master", bands, stationId); } catch {}
-  }, [stationId]);
+  /** Open the rack pop-out with a slot selected (it re-selects if the window is already open). */
+  const openRackAt = (slot: string) => {
+    try { localStorage.setItem("ether.rack.select", slot); } catch { /* the rack opens on its default slot */ }
+    try { (window as any).ether?.invoke("window:popout", "processor"); } catch { /* not in electron */ }
+  };
 
   // Session uptime
   useEffect(() => {
@@ -798,17 +801,17 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
           <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase" as const }}>Master EQ</span>
         </div>
         <button
-          onClick={() => setEqOpen(o => !o)}
-          title="Open the live 10-band master EQ"
+          onClick={() => openRackAt("pgm:s-geq")}
+          title="The 10-band master EQ — opens the master rack with the GEQ selected"
           style={{
             fontSize: 13, fontWeight: 800, letterSpacing: "0.1em",
             padding: "4px 14px", borderRadius: 4,
-            background: eqOpen ? "rgb(from var(--accent-cyan) r g b / 0.2)" : "rgb(from var(--accent-cyan) r g b / 0.1)",
+            background: "rgb(from var(--accent-cyan) r g b / 0.1)",
             border: "1px solid rgb(from var(--accent-cyan) r g b / 0.45)",
             color: "var(--accent-cyan)",
             cursor: "pointer", transition: "all 0.15s",
           }}
-        >{eqOpen ? "CLOSE" : "OPEN"}</button>
+        >OPEN</button>
       </div>
 
       {/* PROCESSOR — beside the EQ. The chain has always run; this is the door to it. OPEN is a REAL
@@ -831,21 +834,14 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
                   title="The monitor and the stream are running different chains.">SPLIT</span>
           )}
         </div>
-        <button onClick={() => { try { (window as any).ether?.invoke("window:popout", "processor"); } catch { /* not in electron */ } }}
-          title="Loudness ride and true-peak limiter — opens in its own window"
+        <button onClick={() => openRackAt("local:s-ride")}
+          title="The master rack — GEQ, loudness ride and true-peak limiter, with the loudness meters. Opens in its own window."
           style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.1em", padding: "4px 14px", borderRadius: 4,
             background: "rgba(136,104,216,0.1)",
             border: "1px solid rgba(136,104,216,0.45)", color: "#8868D8", cursor: "pointer", transition: "all 0.15s" }}
         >OPEN</button>
       </div>
 
-      {eqOpen && (
-        <MasterEQRack
-          bands={eqBands}
-          onChange={handleMasterEqChange}
-          onClose={() => setEqOpen(false)}
-        />
-      )}
 
       {/* Station status — collapsible */}
       <div style={{ flexShrink: 0 }}>

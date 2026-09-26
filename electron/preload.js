@@ -31,6 +31,8 @@ contextBridge.exposeInMainWorld("ether", {
     setSlotKind: (stationId, deck, kind) => ipcRenderer.invoke("audio:set-slot-kind", stationId, deck, kind),
     setDuckParams: (stationId, params) => ipcRenderer.invoke("audio:set-duck-params", stationId, params),
     setProcessorParams: (stationId, params) => ipcRenderer.invoke("audio:set-processor-params", stationId, params),
+    // SLICE 4 — the live-only bypass on its own route (no numbers ride along).
+    setProcessorBypass: (stationId, p) => ipcRenderer.invoke("audio:set-processor-bypass", stationId, p),
     setDuckable: (stationId, deck, duckable) => ipcRenderer.invoke("audio:set-duckable", stationId, deck, duckable),
     setAuxDevice:  (stationId, device)      => ipcRenderer.invoke("audio:set-aux-device", stationId, device),
     getSpectrum: (stationId) => ipcRenderer.invoke("audio:getSpectrum", stationId),

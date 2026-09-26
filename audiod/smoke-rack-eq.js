@@ -106,9 +106,13 @@ console.log("\n4 - static: nothing on the renderer → main EQ path falls back t
   const h = main.slice(main.indexOf('ipcMain.handle("audio:setEq"'), main.indexOf('ipcMain.handle("audio:setEq"') + 900);
   check(!/stationId\s*\?\?\s*1/.test(h), "audio:setEq has no `stationId ?? 1` fallback");
   check(/return \{ ok: false, reason: "no station" \}/.test(h), "audio:setEq refuses a call that names no station");
+  // Since the slice 4 UI commit the master EQ has ONE home — the rack's GEQ slot, written only through rack:set
+  // (per station, engine first). Master Out is its door and lamp and must not write the EQ any other way.
   const mo = fs.readFileSync(path.join(__dirname, "..", "src", "components", "MasterOutput.tsx"), "utf8");
-  check(/WHERE station_id = \? AND key = 'eq_master'/.test(mo), "the Master Out EQ reads THIS station's eq_master");
-  check(/setEq\("master", bands, stationId\)/.test(mo), "the Master Out EQ sends its station");
+  check(!/audio\.setEq\(|audio\?\.setEq\(/.test(mo) && !/'eq_master'/.test(mo), "Master Out no longer reads or writes the EQ itself (one home: the rack)");
+  check(/openRackAt\("pgm:s-geq"\)/.test(mo), "Master Out's EQ button opens the rack with the GEQ selected");
+  const rk = fs.readFileSync(path.join(__dirname, "..", "src", "hooks", "useMasterRack.ts"), "utf8");
+  check(/setRack\?\.\(stationId, next\)/.test(rk), "the rack writes through setRack with its station");
 }
 
 console.log("\n5 - write-back: a rack write also writes the keys an older daemon / install reads (ruling 3)");

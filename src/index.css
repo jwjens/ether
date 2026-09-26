@@ -21,6 +21,13 @@
   --border-secondary: #1e1e2e;
   --accent-blue: #6040c0;
   --accent-cyan: #8868D8;
+  /* SLICE 4 — rack slot colours: a FIXED colour per slot TYPE, the same in master and channel racks
+     (docs/dsp-rack-framework.md §2). Real hues on purpose: this theme maps --accent-blue/--accent-cyan to the
+     brand purple, and a slot colour that matches the brand accent (or another slot) says nothing. */
+  --slot-eq: #3b82f6;
+  --slot-loudness: #22d3ee;
+  --slot-dynamics: #e0409e;
+  --slot-filter: #34d399;
   --accent-green: #34d399;
   --accent-red: #f87171;
   --accent-amber: #fbbf24;
@@ -204,6 +211,13 @@
   --border-secondary: #1e1e2e;
   --accent-blue: #6040c0;
   --accent-cyan: #8868D8;
+  /* SLICE 4 — rack slot colours: a FIXED colour per slot TYPE, the same in master and channel racks
+     (docs/dsp-rack-framework.md §2). Real hues on purpose: this theme maps --accent-blue/--accent-cyan to the
+     brand purple, and a slot colour that matches the brand accent (or another slot) says nothing. */
+  --slot-eq: #3b82f6;
+  --slot-loudness: #22d3ee;
+  --slot-dynamics: #e0409e;
+  --slot-filter: #34d399;
   --accent-green: #34d399;
   --accent-red: #f87171;
   --accent-amber: #fbbf24;
@@ -321,6 +335,11 @@
   --border-secondary: #c8c2ba;
   --accent-blue: #6040c0;
   --accent-cyan: #6040c0;
+  /* SLICE 4 — rack slot colours (see the dark block): deeper hues for contrast on a light ground. */
+  --slot-eq: #1d4ed8;
+  --slot-loudness: #0e7490;
+  --slot-dynamics: #b0247a;
+  --slot-filter: #047857;
   --accent-green: #059669;
   --accent-red: #dc2626;
   --accent-amber: #d97706;
@@ -448,6 +467,11 @@
   --accent-blue:  #6040c0;
   --accent-green: #1a9048;
   --accent-cyan:  #6040c0;
+  /* SLICE 4 — rack slot colours (see the dark block): deeper hues for contrast on a light ground. */
+  --slot-eq: #1d4ed8;
+  --slot-loudness: #0e7490;
+  --slot-dynamics: #b0247a;
+  --slot-filter: #047857;
   --accent-red:   #c82535;
   --accent-amber: #c87815;
 

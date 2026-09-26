@@ -2,7 +2,7 @@
 feature: loudness-meter
 title: Loudness Meter (M / S / I / LRA / True Peak)
 summary: For each output — the Monitor (your local output) and the Stream — EtherCast measures the loudness of what that output actually sent, the way broadcast loudness is judged (ITU-R BS.1770 / EBU R128). Integrated loudness, loudness range and true-peak max run from the last Reset. The ride and the limiter each have their own meter.
-where: Master Out → Processor (pop-out) → the Loudness card, and the RIDE / LIMITER meters beside each output
+where: Master Out → Processor → OPEN (the master rack) → the pinned meter column on the right
 since: slice 3 (DSP)
 audience: operator
 tour: true
@@ -26,9 +26,10 @@ EBU's own test signals (Tech 3341 and 3342) and against an independent meter.
 ## Where to find it
 
 1. Open **Master Out** (right side).
-2. Open the **Processor** (it opens in its own window you can move to another screen).
-3. The **Loudness** card shows both outputs side by side. Above it, each output's row has a **RIDE** meter
-   and a **LIMITER** meter.
+2. Next to **Processor**, press **OPEN**. The master rack opens in its own window, which you can move to
+   another screen.
+3. The **meter column on the right** of the rack shows, for each output, a **RIDE** and a **LIMITER** meter
+   and a loudness panel. It stays visible while you edit and while you arm presets.
 
 ## Reading it
 

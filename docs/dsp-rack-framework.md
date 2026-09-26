@@ -1,6 +1,6 @@
 # DSP slice 4 — the rack framework (PROPOSAL)
 
-**Status:** proposed 2026-09-26; GO with rulings 1–5; engine BUILT 2026-09-26 (§10). UI: §11 when committed.
+**Status:** proposed 2026-09-26; GO with rulings 1–5; engine BUILT 2026-09-26 (§10); UI BUILT 2026-09-26 (§11).
 **Branch:** `log-reader-flip`, dev only. No push, no tag.
 
 **Governing sources:**
@@ -556,3 +556,73 @@ components):
   those controls need their own decision.
 - **Write-back limitation:** `eq_master` carries the GEQ's bands even when its slot is OUT, because the
   legacy key cannot express IN. An older build would show and apply those bands.
+
+---
+
+## 11 · Build report — UI (2026-09-26)
+
+### Built
+- **`src/components/rack/`:**
+  - `rackTypes.ts`, the typed document. `ChannelModule = never` today; slices 5–6 widen it, never to `RideModule`.
+  - `rackTypes.typetest.ts`, the TS type rule, as `@ts-expect-error` under `tsc`.
+  - `rackModel.ts`, pure: the shipped chain and built-in presets; the derived "modified" badge; the Arm
+    diff; legacy `proc_presets` conversion; link/split; pinning, reorder, add and remove rules; slot colours;
+    the would-ride projection. 9 vitest cases.
+  - `Rack.tsx`, the Processor window as the rack:
+    - the preset bar (active preset, derived "· modified", Arm → shows what TAKE would change → TAKE /
+      DISARM, SAVE, SAVE AS);
+    - the signal-flow strip (PGM → split LINKED/SPLIT → MONITOR / STREAM), with a colour per slot type, IN
+      per tile (GEQ saved; ride/limiter = the live bypass), and live GR on the tiles;
+    - the editor ("editing: MONITOR · RIDE"): GEQ = ten touch faders over the live spectrum with IN and
+      FLAT; RIDE; LIMITER with the ceiling label;
+    - the pinned meter column: IN/OUT `PeakAvgMeter`, `GrMeter` ×2 per branch, `LoudnessPanel` per branch,
+      all unchanged Slice 2/3 components;
+    - touch-sized controls (≥ 44 px).
+- **`src/hooks/useMasterRack.ts`:**
+  - rack:get / rack:set, with a 120 ms coalesce on slider drags;
+  - a refused rack shows its reason and the panel returns to what is running;
+  - presets are stored as `rack_presets` / `rack_preset_active`;
+  - `applyPreset(station, rack, { protect })` is the one place a preset is applied. Its `protect` branch
+    (slice 7) is empty.
+- **`useProcessorParams.ts`** is trimmed to meters, the observed live bypass, and the split flag. **Its
+  processor-number and preset writers are removed**, so the rack is the one writer.
+  - The bypass now travels on a new bypass-only route (`audio:set-processor-bypass`, preload
+    `setProcessorBypass`). The old combined call re-sent the branch's numbers from state loaded at mount,
+    which after a rack edit would have overwritten the rack in the engine.
+- **Master Out:**
+  - The EQ row is the GEQ slot's **door** (OPEN → the rack with the GEQ selected) and **lamp** (the rack's
+    GEQ is IN and not flat, refreshed when any window saves the rack).
+  - `MasterEQRack.tsx` and `ProcessorRack.tsx` are **deleted**: one EQ home, one Processor page.
+  - Processor OPEN opens the rack.
+- **`src/index.css`:** `--slot-eq`, `--slot-loudness`, `--slot-dynamics`, `--slot-filter` in all four theme
+  blocks.
+  - **Deviation:** the proposal named `--accent-blue` / `--accent-cyan` / `--accent-magenta`, but this theme
+    maps `--accent-blue` and `--accent-cyan` both to the brand purple. EQ and loudness would have been the
+    same colour as each other and as the brand accent, so the slot colours are real hues on their own tokens.
+- **Help:**
+  - `docs/help-processor-rack.md` (new);
+  - `help-loudness-meter.md` points at the rack's meter column;
+  - `help-audio-processing.md` points at the rack.
+- **`smoke-rack-eq.js` §4** now asserts the UI invariant: Master Out neither reads nor writes the EQ; its
+  button opens the rack at the GEQ; the rack writes through setRack with its station.
+
+### Receipts
+- `tsc --noEmit` 0 errors, including the type-rule typetest. The negative check: with the directive
+  removed, tsc fails with *TS2322 … "ride" … is not assignable to type 'null'*.
+- vitest: 35 files / 452 tests, including rackModel 9 and loudnessWire 5.
+- `smoke-rack-eq` 18/18. `smoke-meter-contract` 30/30. undefined-calls, preload-bridge and ipc-contract
+  PASS. Leak guard 13/13.
+- **Runtime: UNVERIFIED** — Jeff verifies on screen.
+
+### Deviations, stated
+- **No React component tests.** `@testing-library/react` and jsdom are not installed, and adding
+  dependencies is a decision of its own. The rules the proposal listed for UI tests (seed and legacy
+  conversion, pinned limiter, reorder legality, Arm diff, derived "modified", link/split) are in `rackModel`
+  and covered by vitest. The components are verified on screen.
+- **Drag-to-reorder is not wired to pointer gestures.** Nothing in the master rack can move (the proposal
+  said so), and a drag handle that does nothing would be decoration. `canMove` / `moveSlot` are built and
+  tested, ready for slice 5's channel racks. The tile's ⋯ menu says why nothing moves.
+- **Found (not fixed):** the daemon's `procmeters` event defines `stream` twice (`ether-audiod.js`
+  `local: …, stream: !!lv.proc_stream,` and later `stream: { …branch object… }`). The second wins, so the
+  stream-power boolean never reaches the renderer. The rack shows branch activity from the meter bus
+  (`gr.<branch>.run`) instead.

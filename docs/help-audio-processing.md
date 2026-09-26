@@ -83,7 +83,7 @@ they say "waiting for audio…", nothing is playing yet.
 
 ## The ceiling
 
-The **Ceiling** is adjustable on the Processor page (−3 to −0.1 dBTP; −1.0 unless you change it). The label
+The **Ceiling** is adjustable in the master rack (Master Out → Processor → OPEN) (−3 to −0.1 dBTP; −1.0 unless you change it). The label
 under it says what the limiter **does**, not only what it is set to — for example
 **"−1.0 dBTP set · limits at −2.2 dBTP"**. The limiter detects peaks with a safety margin (×1.15, about
 1.2 dB), so it holds the output that much below the setting. The **True peak max** reading on the loudness
@@ -91,6 +91,7 @@ panel shows where your output really lands.
 
 ## Related
 
+- **The Master Rack** (`docs/help-processor-rack.md`) — the GEQ, ride and limiter as a rack, with presets.
 - **Loudness Meter** (`docs/help-loudness-meter.md`) — M / S / I / LRA / true peak for each output.
 - **Broadcast delay & DUMP** (Settings → Broadcast) — profanity delay on the stream path.
 - **Categories / Clocks** — programming that feeds the program bus this processes.

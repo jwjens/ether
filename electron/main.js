@@ -5132,6 +5132,18 @@ ipcMain.handle("audio:set-processor-params", async (_, stationId, p) => {
     return { numbers: false, bypass: false, reason: String(e && e.message || e) };
   }
 });
+// SLICE 4 — the live-only bypass test tool, on its OWN route: it carries no numbers, so a bypass click can
+// never overwrite the ride/limiter values the master rack is running (the old combined call re-sent them).
+ipcMain.handle("audio:set-processor-bypass", async (_, stationId, p = {}) => {
+  const sid = Number(stationId);
+  if (!Number.isFinite(sid)) return { ok: false, reason: "no station" };
+  const branch = p.branch | 0;
+  try {
+    if (AUDIO_DAEMON) return { ok: !!(await audiodClient.cmd("setProcessorBypass", { stationId: sid, branch, rideBypass: !!p.rideBypass, limiterBypass: !!p.limiterBypass })) };
+    if (!audio || typeof audio.audioSetProcessorBypass !== "function") return { ok: false, reason: "no audio engine" };
+    return { ok: !!audio.audioSetProcessorBypass(sid, branch, !!p.rideBypass, !!p.limiterBypass) };
+  } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+});
 ipcMain.handle("audio:set-aux-monitor", (_, stationId, deck, gain) =>
   AUDIO_DAEMON ? audiodClient.cmd("setAuxMonitor", { stationId, deck, gain })
                : audio.audioSetAuxMonitor(stationId, deck, gain));
