@@ -128,7 +128,10 @@ export function AudioRoutingPicker({ onApplied }: { onApplied: () => void }) {
   const applyRouting = useCallback(async (sid: number, device: string) => {
     setApplying(true);
     try {
-      await (window as any).ether.stationConfigKv.upsertByKey(sid, 'audio_output_device', device);
+      // Machine-local (LOCAL_ONLY_KEYS, 2026-09-26): a device name belongs to this machine and never syncs.
+      // set-local is its only writer — upsertByKey would silently skip it.
+      const w = await (window as any).ether.invoke("station_config_kv:set-local", sid, 'audio_output_device', device);
+      if (!w || w.ok !== true) throw new Error(`the device choice was not saved: ${(w && w.error) || "no answer"}`);
       await (window as any).ether.audio.setOutputDevice(sid, device);
       setSuccessMsg("✓ Routing updated");
       setTimeout(() => setSuccessMsg(""), 3000);

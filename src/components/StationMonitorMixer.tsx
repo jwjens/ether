@@ -72,7 +72,10 @@ export default function StationMonitorMixer() {
   const setDevice = useCallback((sid: number, device: string) => {
     setDev(prev => ({ ...prev, [sid]: device }));
     (window as any).ether?.audio?.setOutputDevice?.(sid, device);
-    (window as any).ether?.stationConfigKv?.upsertByKey?.(sid, "audio_output_device", device);
+    // Machine-local (LOCAL_ONLY_KEYS, 2026-09-26) — set-local is its only writer; upsertByKey would skip it.
+    Promise.resolve((window as any).ether?.invoke?.("station_config_kv:set-local", sid, "audio_output_device", device))
+      .then((w: any) => { if (!w || w.ok !== true) console.warn(`[monitor-mixer] output device for station ${sid} not saved:`, w && w.error); })
+      .catch((e: any) => console.warn("[monitor-mixer] output device not saved:", e));
   }, []);
 
   return (

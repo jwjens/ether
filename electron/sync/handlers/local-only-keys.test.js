@@ -24,13 +24,19 @@ const accepts = (k) => typeof k === "string" && (keys.includes(k) || prefixes.so
 
 describe("LOCAL_ONLY_KEYS", () => {
   it("accepts every key the UI writes with set-local", () => {
-    for (const k of ["log_reader_flip", "auto_generate_enabled", "kill_designation", "schedule_layout_v1"])
+    for (const k of ["log_reader_flip", "auto_generate_enabled", "kill_designation", "schedule_layout_v1", "audio_output_device"])
       expect(accepts(k), `${k} would be REFUSED`).toBe(true);
   });
 
   it("accepts grid_widths_* by prefix — one key per grid, so it cannot be enumerated", () => {
     for (const k of ["grid_widths_traffic", "grid_widths_rotation_spins", "grid_widths_rotation_hourly"])
       expect(accepts(k), `${k} would be REFUSED`).toBe(true);
+  });
+
+  it("audio_output_device is machine-local — a device NAME belongs to one machine (2026-09-26)", () => {
+    // While it synced, a peer's choice re-routed this machine's playout: the engine falls back to the
+    // default device when the name is not found here.
+    expect(accepts("audio_output_device")).toBe(true);
   });
 
   it("NEVER accepts designated_generator — it is the one key that must sync", () => {

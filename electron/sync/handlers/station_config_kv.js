@@ -66,7 +66,16 @@ const PATCHABLE          = ["value","updated_at"];
 //
 // ai_voice_config (2026-09-11) — holds the provider API KEY. A credential must not enter the
 // mutation stream, which is a durable journal that travels to every peer on the account.
-const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_designation', 'schedule_layout_v1', 'sweep_last_run', 'music_dir', 'cloud_backup_config', 'ai_voice_config']);
+//
+// audio_output_device (2026-09-26) — the NAME of this machine's sound card for the station's playout.
+// A device name belongs to one machine. While it synced, one install's choice was pushed to every peer,
+// and each peer's next launch applied it (AudioRoutingPanel / StationMonitorMixer → setOutputDevice).
+// The engine resolves the name and, when this machine has no device by that name, FALLS BACK TO THE
+// SYSTEM DEFAULT (audio.rs open_output_device: `found.or_else(default_dev)`) — so another install's
+// choice could silently re-route this machine's on-air output to its default device (or to a different
+// card that happens to share the name). docs/dsp-mic-in-engine.md §4 (decision 6). Rows already synced
+// in stay as they are until the operator picks a device here again.
+const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_designation', 'schedule_layout_v1', 'sweep_last_run', 'music_dir', 'cloud_backup_config', 'ai_voice_config', 'audio_output_device']);
 
 // Prefixes, for families of per-machine keys. `grid_widths_<pane>` is one key per grid, so it cannot
 // be enumerated — column widths had been written and refused on every resize since 4.4.177.
