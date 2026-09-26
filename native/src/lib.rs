@@ -43,6 +43,8 @@ fn get_or_create_engine(station_id: u32, device_name: Option<String>) -> SharedA
             deck_e: DeckMeta::new(),
             deck_f: DeckMeta::new(),
             deck_cart: DeckMeta::new(),
+            deck_s: std::array::from_fn(|_| DeckMeta::new()),
+            deck_unknown: DeckMeta::new(),
             sender,
             is_playing,
             levels,
@@ -922,14 +924,103 @@ pub fn audio_set_eq(station_id: u32, bands_json: String) -> bool {
     true
 }
 
+/// The reported-state record for a deck name. EVERY fader has its own; nothing falls through to a real deck.
+/// (Until 2026-09-26 the last arm was `_ => deck_b`: S1–S5 had no record, so a load / play / stop / fader /
+/// cut on a source channel wrote DECK B's reported state — docs/source-slot-meta-falls-to-deck-b-2026-09-26.md.)
+/// S1–S5 are resolved by audio::deck_index, the same mapping the mixer uses, so the two can never disagree.
 fn deck_meta_mut<'a>(audio: &'a mut AudioState, deck: &str) -> &'a mut DeckMeta {
     match deck {
         "A" => &mut audio.deck_a,
+        "B" => &mut audio.deck_b,
         "C" => &mut audio.deck_c,
         "D" => &mut audio.deck_d,
         "E" => &mut audio.deck_e,
         "F" => &mut audio.deck_f,
         "CART" => &mut audio.deck_cart,
-        _   => &mut audio.deck_b,
+        _ => match audio::deck_index(deck) {
+            Some(i @ 7..=11) => &mut audio.deck_s[i - 7],
+            _ => { warn_unknown_deck(deck); &mut audio.deck_unknown }
+        },
+    }
+}
+
+/// A name that is not a fader gets a throwaway record — said once per name, so a misrouted caller is visible
+/// without flooding the log (a fader drag is ~60 calls a second).
+fn warn_unknown_deck(deck: &str) {
+    static SEEN: std::sync::OnceLock<Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+    let seen = SEEN.get_or_init(|| Mutex::new(std::collections::HashSet::new()));
+    if let Ok(mut s) = seen.lock() {
+        if s.insert(deck.to_string()) {
+            eprintln!("[RUST] deck `{}` is not a fader (A–F, CART, S1–S5) — its state goes to a throwaway record, never deck B (logged once)", deck);
+        }
+    }
+}
+
+// ── The source-slot records (2026-09-26) — the REAL NAPI functions, on a device-free engine ────────────────
+#[cfg(test)]
+mod source_slot_meta {
+    use super::*;
+
+    /// Register a device-free engine under a test station id; keep the command receiver alive for the test.
+    fn engine(id: u32) -> std::sync::mpsc::Receiver<AudioCmd> {
+        let (st, rx) = audio::test_audio_state();
+        ENGINES.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap().insert(id, Arc::new(Mutex::new(st)));
+        rx
+    }
+    fn with<R>(id: u32, f: impl FnOnce(&AudioState) -> R) -> R {
+        let e = get_or_create_engine(id, None);
+        let a = e.lock().unwrap();
+        f(&a)
+    }
+
+    #[test]
+    fn a_source_fader_never_moves_deck_b() {
+        let _rx = engine(9101);
+        assert!(audio_set_volume("B".into(), 0.8, Some(9101)));
+        assert!(audio_set_volume("S3".into(), 0.25, Some(9101)));   // the mic's fader, on S3
+        let (b, s3) = with(9101, |a| (a.deck_b.volume, a.deck_s[2].volume));
+        println!("[src-meta] set B 0.80, then S3 0.25 -> B reports {:.2}, S3 reports {:.2}", b, s3);
+        assert_eq!(b, 0.8, "deck B's reported volume moved with S3's fader");
+        assert_eq!(s3, 0.25);
+        // and the cut, for every source slot
+        for (k, s) in ["S1", "S2", "S3", "S4", "S5"].iter().enumerate() {
+            audio_set_muted((*s).into(), true, Some(9101));
+            assert!(with(9101, |a| a.deck_s[k].muted) && !with(9101, |a| a.deck_b.muted), "{}'s cut landed on B", s);
+        }
+    }
+
+    #[test]
+    fn play_on_a_source_slot_checks_its_own_file_not_bs() {
+        let _rx = engine(9102);
+        // B has content; S2 does not -> S2's play is refused (it used to pass on B's file path)
+        audio_load("B".into(), "b.mp3".into(), "Song B".into(), "Artist".into(), None, Some(9102));
+        assert!(!audio_play("S2".into(), Some(9102)), "S2 played on deck B's file path");
+        assert_eq!(with(9102, |a| a.deck_b.status.clone()), "idle", "S2's refused play touched B");
+        // S2 loaded -> S2 plays; B's title is still B's
+        audio_load("S2".into(), "cart.wav".into(), "Cart".into(), "".into(), None, Some(9102));
+        assert!(audio_play("S2".into(), Some(9102)));
+        let (bt, s2t, s2s) = with(9102, |a| (a.deck_b.title.clone(), a.deck_s[1].title.clone(), a.deck_s[1].status.clone()));
+        assert_eq!((bt.as_str(), s2t.as_str(), s2s.as_str()), ("Song B", "Cart", "playing"));
+        // stopping S2 clears S2 — and leaves B's file, so B can still play
+        audio_stop("S2".into(), Some(9102));
+        assert_eq!(with(9102, |a| a.deck_b.file_path.clone()), "b.mp3", "a stop on S2 cleared deck B's file path");
+        assert!(audio_play("B".into(), Some(9102)));
+        audio_pause("S2".into(), Some(9102));
+        assert_eq!(with(9102, |a| a.deck_b.status.clone()), "playing", "a pause on S2 paused B's reported state");
+        println!("[src-meta] S2 play refused on B's file; S2 load/play/stop/pause each stay on S2; B still plays");
+    }
+
+    #[test]
+    fn an_unknown_name_never_touches_deck_b() {
+        let _rx = engine(9103);
+        let before = with(9103, |a| (a.deck_b.volume, a.deck_b.title.clone(), a.deck_b.file_path.clone(), a.deck_b.muted));
+        audio_set_volume("MIC".into(), 0.1, Some(9103));
+        audio_load("s1".into(), "x.wav".into(), "X".into(), "".into(), None, Some(9103));   // wrong case is not S1
+        audio_set_muted("ZZ".into(), true, Some(9103));
+        let after = with(9103, |a| (a.deck_b.volume, a.deck_b.title.clone(), a.deck_b.file_path.clone(), a.deck_b.muted));
+        assert_eq!(before, after, "an unknown deck name wrote deck B's record");
+        assert_eq!(with(9103, |a| a.deck_unknown.volume), 0.1);
+        assert!(with(9103, |a| a.deck_s.iter().all(|m| m.file_path.is_empty())), "`s1` must not be taken for S1");
+        println!("[src-meta] MIC / s1 / ZZ -> the throwaway record; deck B unchanged");
     }
 }

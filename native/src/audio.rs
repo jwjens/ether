@@ -415,6 +415,12 @@ pub struct AudioState {
     /// Dedicated cart channel — mixer slot 6, never in the assignable deck pool.
     /// Always summed to the program bus so carts fire out of master over the music.
     pub deck_cart: DeckMeta,
+    /// The source channels S1–S5 (mixer slots 7–11) — each its OWN reported state. (2026-09-26: they had no
+    /// record and fell through to deck B, so a mic fader on S3 moved deck B's fader, and a stop on an S slot
+    /// cleared B's file path. docs/source-slot-meta-falls-to-deck-b-2026-09-26.md)
+    pub deck_s: [DeckMeta; 5],
+    /// Any name that is not a fader: a throwaway record — NEVER a real deck's. deck_meta_mut logs it once.
+    pub deck_unknown: DeckMeta,
     pub sender: std::sync::mpsc::Sender<AudioCmd>,
     pub is_playing: Arc<AtomicBool>,
     pub levels: SharedLevels,
@@ -426,6 +432,27 @@ pub struct AudioState {
     pub program_bus_port: u16,
     /// SLICE 2 — the meter bus reader (shared with the station's dispatch thread) and the ack atomic.
     pub meters: MetersHandle,
+}
+
+/// TEST-ONLY — a station's AudioState with NO device and no mixer thread (the meter handle from a BusState's
+/// handles, as the slice 2/3 tests build it), and the receiving end of its command channel. Lets the NAPI
+/// functions be exercised end to end without opening audio hardware.
+#[cfg(test)]
+pub(crate) fn test_audio_state() -> (AudioState, std::sync::mpsc::Receiver<AudioCmd>) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (prod, _cons) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
+    let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(false)));
+    let h = b.handles.take().unwrap();
+    let (meters, _loud) = MetersHandle::from_parts(Arc::new(Mutex::new(h.meter_r)), h.shared.clone(), h.loud_cons, h.loud_shared);
+    (AudioState {
+        deck_a: DeckMeta::new(), deck_b: DeckMeta::new(), deck_c: DeckMeta::new(), deck_d: DeckMeta::new(),
+        deck_e: DeckMeta::new(), deck_f: DeckMeta::new(), deck_cart: DeckMeta::new(),
+        deck_s: std::array::from_fn(|_| DeckMeta::new()), deck_unknown: DeckMeta::new(),
+        sender: tx, is_playing: Arc::new(AtomicBool::new(false)),
+        levels: Arc::new(Mutex::new(AudioLevels::default())), delay: Arc::new(DelayControl::new()),
+        finished: FinishedFlags::new(), watchdog_active: false, watchdog_threshold_sec: 10.0, watchdog_triggered_count: 0,
+        program_bus_port: 0, meters,
+    }, rx)
 }
 
 /// SLICE 2 — what audio_get_meters needs: the station's ONE meter-frame reader (the same triple buffer
