@@ -96,5 +96,24 @@ console.log("\n4 - static: machine-local, engine first, set-local only");
   check(/fn audio_set_mic_input[\s\S]{0,400}default_kind_for\(idx\) != audio::SlotKind::Source/.test(nat), "the engine refuses a mic on a rotation/sweeper slot");
 }
 
+console.log("\n5 - static: the browser mic path is gone; the UI goes through the engine");
+{
+  const C = (f) => path.join(__dirname, "..", "src", "components", f);
+  const read = (f) => fs.readFileSync(f, "utf8");
+  const code = (t) => t.split("\n").filter(l => !/^\s*\/\//.test(l)).join("\n");
+  check(!fs.existsSync(C("MicChannel.tsx")) && !fs.existsSync(C("MicDeck.tsx")), "MicChannel.tsx and MicDeck.tsx are removed");
+  const strip = code(read(C("SourceChannelStrip.tsx")));
+  check(!/getUserMedia|AudioContext|enumerateDevices/.test(strip), "the source strip captures nothing in the browser (no getUserMedia / AudioContext)");
+  check(/deckId=\{config\.slot\}/.test(strip), "a mic channel meters its OWN engine slot");
+  check(/useInputDevices/.test(strip), "the strip's input list is the ENGINE's devices");
+  const fader = code(read(C("FaderSection.tsx")));
+  check(!/MicChannel/.test(fader), "the board renders no MicChannel");
+  const cfg = code(read(C("DeckConfigurator.tsx")));
+  check(/\.filter\(type => type !== "mic"\)/.test(cfg), "Configure Decks no longer creates the old mic deck type");
+  const app = code(read(path.join(__dirname, "..", "src", "App.tsx")));
+  check(/useMicMigration\(stationId, stationReady\)/.test(app), "App runs the one-time mic migration (one writer)");
+  check(fs.existsSync(path.join(__dirname, "..", "docs", "help-mic-input.md")), "docs/help-mic-input.md exists");
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILED"}  (${pass} passed, ${fail} failed)`);
 process.exit(fail === 0 ? 0 : 1);

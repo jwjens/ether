@@ -65,11 +65,10 @@ export const SOURCE_KINDS: SourceKindMeta[] = [
   // what ends that: the sweeper keeps the overlay bus it is built around, and carts move off it.
   { kind: "cart",         label: "Cart / SFX rack",      family: "file",
     state: "Hand-fired sound effects, on this channel instead of the sweeper's overlay bus." },
-  // Mic is a STREAM source but is NOT Phase 2: MicChannel has done getUserMedia + Web Audio per slot
-  // since 52d33bb (own device, meter, cue). SourceChannelStrip enables it explicitly; only Network
-  // below is still gated on the engine capture path.
+  // Mic is an ENGINE input since 2026-09-26 (docs/dsp-mic-in-engine.md): the audio engine captures the device and
+  // the channel goes on air like any other. Only Network below is still gated on a capture path.
   { kind: "mic",          label: "Mic (device…)",        family: "stream",
-    state: "Live microphone on this channel — pick the device on the strip." },
+    state: "Live microphone on this channel, on air — pick the input on the strip or in Preferences → Audio." },
   { kind: "network",      label: "Network (IP / Zephyr / AoIP)", family: "stream",
     state: "Needs the engine capture path — Phase 2." },
 ];
@@ -329,7 +328,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
 
         {/* Summary pills */}
         <div style={{ padding: "12px 24px", borderBottom: "1px solid var(--border-primary)", display: "flex", gap: 8, flexShrink: 0 }}>
-          {([["music", musicCount], ["mic", micCount], ["guest", guestCount], ["cart", cartCount], ["desk", deskCount], ["video", videoCount]] as [DeckType, number][]).map(([type, count]) => (
+          {([["music", musicCount], ["guest", guestCount], ["cart", cartCount], ["desk", deskCount], ["video", videoCount]] as [DeckType, number][]).map(([type, count]) => (
             <div key={type} style={{
               display: "flex", alignItems: "center", gap: 5,
               padding: "4px 10px", borderRadius: 0,
@@ -375,6 +374,9 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
                         deck with the public request jukebox. See canHostJukebox and the DeckType note. */}
                     {(Object.keys(TYPE_META) as DeckType[])
                       .filter(type => type !== "jukebox" || canHostJukebox(c.slot))
+                      // No "Mic" deck type any more: a mic is a SOURCE channel patched to Mic, which the engine
+                      // captures and puts on air (docs/dsp-mic-in-engine.md). The old type never reached air.
+                      .filter(type => type !== "mic")
                       .map(type => (
                       <button
                         key={type}
@@ -389,7 +391,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
                               enabled: true,
                               type,
                               color: TYPE_META[type].color,
-                              label: type === "mic" ? "Mic" : type === "jukebox" ? "Jukebox" : type === "guest" ? `Guest ${p.filter(g => g.type === "guest" && g.slot !== c.slot).length + 1}` : type === "cart" ? `Cart ${p.filter(g => g.type === "cart" && g.slot !== c.slot).length + 1}` : type === "desk" ? "Desk" : `Deck ${x.slot}`,
+                              label: type === "jukebox" ? "Jukebox" : type === "guest" ? `Guest ${p.filter(g => g.type === "guest" && g.slot !== c.slot).length + 1}` : type === "cart" ? `Cart ${p.filter(g => g.type === "cart" && g.slot !== c.slot).length + 1}` : type === "desk" ? "Desk" : `Deck ${x.slot}`,
                             } : x);
                           });
                         }}

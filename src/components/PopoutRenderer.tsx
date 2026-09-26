@@ -7,7 +7,7 @@ import Rack from "./rack/Rack";
 import ImagingPanel from "./ImagingPanel";
 import FaderSection from "./FaderSection";
 import MasterOutput from "./MasterOutput";
-import MicDeck from "./MicDeck";
+import MicStatusPanel from "./MicStatusPanel";
 import PhoneDesk from "./PhoneDesk";
 import VoiceTracker from "./VoiceTracker";
 import UpNext from "./UpNext";
@@ -228,7 +228,7 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
       content = <ImagingPanel />;
       break;
     case "mic":
-      content = <MicDeck />;
+      content = <MicStatusPanel />;   // the mic is an engine channel now — docs/dsp-mic-in-engine.md
       break;
     case "phone":
       content = <PhoneDesk onClose={() => window.close()} />;

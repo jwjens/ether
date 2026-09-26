@@ -89,7 +89,6 @@ import { SOURCE_SLOTS, isSweeperKind, type SourceKind, type DeckType } from "./c
 import { matchesStation } from "./lib/levelsScope";
 // A slot the engine is carrying is always on the board — the invariant, with its test.
 import { boardSlots } from "./lib/boardSlots";
-import MicChannel from "./components/MicChannel";
 import RulesEditor from "./components/RulesEditor";
 import ProcessingPanel from "./components/ProcessingPanel";
 import NowPlayingSettings from "./components/NowPlayingSettings";
@@ -115,7 +114,8 @@ import DaemonVersionBanner from "./components/DaemonVersionBanner";
 import { EtherErrorBoundary, SessionRestoreToast, HealthMonitor, HealthStatusDot, ContentStatusDot } from "./components/HealthMonitor";
 import { importIntoAudioLibrary, fileLocationItem, changeFileLocationItem, checkFilePresence, type FilePresence } from "./lib/fileLocation";
 import WidgetCanvas from "./canvas/WidgetCanvas";
-import MicDeck from "./components/MicDeck";
+import { useMicMigration } from "./hooks/useMicMigration";
+import { OPEN_PREFS_KEY } from "./hooks/useMicInputs";
 import TrackEditor from "./components/TrackEditor";
 import AboutPanel from "./components/AboutPanel";
 import ListenerAnalytics from "./components/ListenerAnalytics";
@@ -1200,6 +1200,25 @@ export default function App() {
     ether?.invoke?.("sync:set-active", !!currentUser)?.catch?.(() => {});
     if (currentUser && apiKeyRef.current) pushInstallUsers(apiKeyRef.current);
   }, [currentUser]);
+
+  // THE MIC MOVED INTO THE ENGINE (docs/dsp-mic-in-engine.md §3): the one-time board + device migration. Here and
+  // only here (one window writes); it reads and writes THIS station's rows itself.
+  useMicMigration(stationId, stationReady);
+
+  // "Open Preferences → Audio" — the mic strip's door, from this window (event) or a pop-out (storage).
+  const [prefsTick, setPrefsTick] = useState(0);
+  useEffect(() => {
+    const open = (cat: string) => {
+      try { window.location.hash = `#settings/${cat || "audio"}`; } catch { /* the panel still opens */ }
+      setPanel("settings");
+      setPrefsTick(t => t + 1);
+    };
+    const onEv = (e: any) => open(e?.detail?.category || "audio");
+    const onSt = (e: StorageEvent) => { if (e.key === OPEN_PREFS_KEY && e.newValue) open(e.newValue.split(":")[0]); };
+    window.addEventListener("ether:open-preferences", onEv as EventListener);
+    window.addEventListener("storage", onSt);
+    return () => { window.removeEventListener("ether:open-preferences", onEv as EventListener); window.removeEventListener("storage", onSt); };
+  }, []);
 
   // Native menu IPC handler
   useEffect(() => {
@@ -3113,7 +3132,7 @@ export default function App() {
               {panel === "announce" && <Announcements />}
               {panel === "voicetrack" && <VoiceTracker inputDeviceId={inputDevice || undefined} />}
               {panel === "showprep" && <ShowPrep onGoLive={() => setPanel("live")} />}
-              {panel === "settings" && <SettingsPanel key={stationId} segueOverlap={segueOverlap} setSegueOverlap={setSegueOverlap} />}
+              {panel === "settings" && <SettingsPanel key={`${stationId}:${prefsTick}`} segueOverlap={segueOverlap} setSegueOverlap={setSegueOverlap} />}
               {panel === "trackedit" && <TrackEditor song={editSong} onClose={() => setPanel("library")} onSaved={(s) => { setEditSong(s); }} />}
               {panel === "phonedesk" && <PhoneDesk onClose={() => setPanel("live")} />}
               {panel === "subscription" && <SubscriptionPanel />}

@@ -1,6 +1,6 @@
 // ── QueueWidget ───────────────────────────────────────────────
 import UpNext from "../../components/UpNext";
-import MicDeck from "../../components/MicDeck";
+import MicStatusPanel from "../../components/MicStatusPanel";
 import { LiveHourClock, SongHistoryStrip } from "../../components/LiveFeatures";
 import { DeckState } from "../../audio/engine-rodio";
 import { WidgetInstance } from "../WidgetRegistry";
@@ -24,7 +24,7 @@ export function QueueWidget({ instance, engine }: EngineProps) {
 export function MicWidget({ instance }: BaseProps) {
   return (
     <div style={{ height: "100%", overflow: "hidden" }}>
-      <MicDeck />
+      <MicStatusPanel />
     </div>
   );
 }

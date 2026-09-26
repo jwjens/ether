@@ -5,6 +5,7 @@ import { query, execute } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import DuckerSection from "./DuckerSection";
 import { useActiveStation } from "../hooks/useActiveStation";
+import MicInputsSettings from "./MicInputsSettings";
 import { usePlan } from "../hooks/usePlan";
 import { useStreaming } from "../hooks/useStreaming";
 import { getStationTimezone, setStationTimezone, COMMON_TIMEZONES } from "../utils/timezone";
@@ -3135,8 +3136,8 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
           </div>
           {/* Input */}
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>Your microphone</div>
-            <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 10 }}>For voice tracking and live mic breaks</div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>Voice-tracking microphone</div>
+            <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 10 }}>For recording voice tracks (browser audio). The ON-AIR mic is patched in <b>Mic Inputs</b> below.</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {inputs.length === 0 ? <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>No microphones found</div> :
                 inputs.map(d => (
@@ -3348,6 +3349,11 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
       </Section>
 
       {/* ── Loudness ── */}
+      {/* THE MIC AS AN ENGINE INPUT (docs/dsp-mic-in-engine.md §4) — the on-air mic's input, per machine. */}
+      <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>} title="Mic Inputs (on air)" description="Which input on this computer feeds each mic channel on the board — the input number, the input gain, and the engine's live state">
+        <MicInputsSettings />
+      </Section>
+
       <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>} title="Loudness Normalization" description="Make every song play at the same volume — no more jarring jumps between quiet and loud tracks">
         {processingStats && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>

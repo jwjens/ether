@@ -53,7 +53,9 @@ A strip's meter shows **the source**, not what the fader lets through:
 - **Switch a channel OFF and its meter keeps moving.** OFF (the channel cut) silences the channel's
   contribution to the mix; it does not stop the source. A cut channel whose meter is dancing is a
   channel that is live and cut — press **ON** to put it on the air.
-- A mic or guest strip shows the input level the same way: before its fader, whether ON or OFF.
+- A mic or guest strip shows the input level the same way: before its fader, whether ON or OFF. A **mic** is
+  metered by the audio engine like every channel; when it isn't live (no input, disconnected, lost, or pure
+  digital silence) its meter is hatched **NOT FED** instead of reading zero. See **Mic on Air**.
 - **A strip's meter is also BEFORE its channel EQ** — it shows the source as it arrives. To see what the EQ
   did, open the fader's rack (the strip's **EQ** button): its **IN** and **OUT** meters are before and after
   the rack. See **Channel EQ**.

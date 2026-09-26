@@ -37,7 +37,6 @@ import { useDeckConfig } from "./DeckConfigurator";
 import type { DeckConfig, DeckType, SourceKind } from "./DeckConfigurator";
 import ConsoleStrip from "./ConsoleStrip";
 import SourceChannelStrip from "./SourceChannelStrip";
-import MicChannel from "./MicChannel";
 import MasterOutput from "./MasterOutput";
 import { InlineProducerDesk } from "./ProducerDesk";
 import VideoStudio from "./ShowPlus";
@@ -332,12 +331,21 @@ export default function FaderSection({
       );
     }
 
-    // Mic decks → independent MicChannel: own device + capture + meter + output gate per slot.
-    // Up to 6 mics, each on a different physical input (device saved per slot).
+    // A leftover "mic"-TYPE channel (docs/dsp-mic-in-engine.md §3). The mic is an ENGINE input now: a source
+    // channel patched to Mic. The migration (src/lib/micMigration.ts, run by App) moves every mic channel onto a
+    // source slot; one that is still here had NO FREE SOURCE SLOT. It is shown — never silently dropped — with
+    // the reason and what frees it. (It used to be MicChannel: getUserMedia to the browser's default output,
+    // never on air.)
     if (deckType === "mic" || slot === "mic") {
       return (
-        <div key={slot} style={{ flex: 1, display: "flex", minWidth: 0 }}>
-          <MicChannel slot={slot} label={config?.label || "MIC"} />
+        <div key={slot} style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 120, padding: 10,
+                                 background: "var(--bg-secondary)", borderRight: "1px solid var(--border-primary)" }}>
+          <b style={{ fontSize: 11, letterSpacing: "0.12em", color: "#ef4444" }}>{config?.label || "MIC"}</b>
+          <div style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.45 }}>
+            The mic is now a <b>source channel</b> that goes on air. This one could not move: every source channel
+            (D–F, S1–S5) is in use. Remove one with its <b>−</b>, and this mic moves there on the next start — or set any
+            source channel's source to <b>Mic</b>.
+          </div>
         </div>
       );
     }

@@ -507,3 +507,109 @@ talent hears their own voice through the interface's hardware direct monitor.
 - unplugging.
 
 These are Jeff's hardware test on the dev app.
+
+
+## Build — the UI
+
+**Status:** what the mic looks and sounds like on screen and on air is UNVERIFIED until Jeff's hardware test.
+
+### Preferences → Audio → **Mic Inputs** (`MicInputsSettings.tsx`, new)
+
+- One row per source channel patched to Mic, plus any slot that still holds a stored patch, so a patch can
+  always be removed.
+- Each row has:
+  - the **input device** (the engine's list: this computer's inputs, and "(not connected)" when the saved one
+    is missing);
+  - the **input number** (1 to N, from the device);
+  - **input gain** −10 to +40 dB;
+  - the engine's **live state** in words, with its buffer, clock drift, dropouts and losses.
+- The section explains monitoring (ruling 3): **use your interface's direct monitor**; the engine's PFL is for
+  hearing the processed sound.
+- The old "Your microphone" picker in Audio Devices is relabelled **Voice-tracking microphone** (browser
+  audio, ruling 8) and points to Mic Inputs.
+
+### The strip (`SourceChannelStrip.tsx`)
+
+- **The browser capture is gone:** no getUserMedia, no AudioContext, no `micLevel`.
+- **The source dropdown still lists input devices by name** (Jeff's 2026-09-02 ruling). They are now the
+  **engine's** devices, and picking one **patches the engine**: input number and gain are kept, and the patch
+  goes through the same `mic:set`.
+- **Leaving Mic for another source unpatches the input.**
+- **"Mic — pick an input…"** marks a mic channel with no patch yet.
+- **A state line under the dropdown** (IN n · gain · live / device not connected / lost / digital silence /
+  no input) opens Preferences → Audio.
+- **Metering:** the strip meters **its own engine slot**. A mic that isn't live draws **NOT FED** (a new
+  `ConsoleStrip` `meterNotFed` prop), not a flat zero.
+
+### The door to Preferences
+
+`openMicPreferences()` fires an `ether:open-preferences` event (same window) and an `ether.openPrefs` storage
+key (reaches the main window from a pop-out). App sets `#settings/audio` and opens Preferences.
+
+### The migration (`useMicMigration.ts` + `lib/micMigration.ts`)
+
+It runs in App only (one writer).
+- **It reads THIS station's rows itself.** A hook's list can briefly still hold the previous station's rows
+  after a switch, and writing those back would copy one board onto another.
+- **The board:**
+  - a `mic`-type channel on a source slot is re-typed in place;
+  - one on the dedicated `mic` slot (or A/B/C) moves to the **first free source slot**, and the old row is
+    disabled, not deleted;
+  - with no free slot it **stays, and says so on the board** (`FaderSection`): what to free, and that it moves
+    on the next start.
+- **The device:** the old channel's browser `deviceId` label is matched to the engine's names (`matchDeviceLabel`:
+  exact after removing Chromium's USB id and "Default - " prefixes), or it is **left unpatched**. Never a guess.
+- **`eq_deck_mic` is not carried over** (ruling 5).
+
+### Removed
+
+- **`MicChannel.tsx` and `MicDeck.tsx`**, along with the browser "mic input EQ".
+- **The configurator's "Mic" deck type** is no longer offered. A mic is a source channel patched to Mic.
+- **The canvas "mic" widget and the "mic" pop-out** render `MicStatusPanel` (each mic channel, its input, the
+  engine's state, and the Preferences door), so a saved layout still shows something that works.
+
+### The senses
+
+- **Health Monitor → Mic Inputs** (`health/MicInputsHealth.tsx`): every patched mic, with the engine's state
+  and all counters (dropouts, lost, re-opened, overruns, stale, digital-zero seconds, buffer, drift). "Patch…"
+  opens Preferences.
+- Plus the strip's state line and NOT FED meter.
+
+### Help
+
+- `docs/help-mic-input.md` (new): put a mic on the board, set the input and gain, hearing yourself, what each
+  state means (including the Windows privacy fix), turning off Windows enhancements.
+- `help-channel-eq.md`: the mic now takes the channel EQ.
+- `help-meters.md`: a mic's meter is the engine's, and it shows NOT FED when not live.
+
+### Tests
+
+- **vitest `micMigration.test.ts` (6):**
+  - in place;
+  - first free slot, with the old row disabled;
+  - no free slot → left and reported;
+  - two mics, two slots;
+  - no-op board;
+  - device label match: USB id and Default/Communications prefixes; no match → null; ambiguous → null.
+- **`test:mic-input` §5 (8 static checks):**
+  - MicChannel and MicDeck removed;
+  - the strip has no browser capture, meters its own slot, and lists the engine's devices;
+  - no MicChannel on the board;
+  - the configurator no longer creates the mic type;
+  - App runs the migration;
+  - the help exists.
+- **`test:rack-eq`:** the Slice 5 mic checks now assert the browser mic is gone.
+
+### Gates
+
+- tsc 0 errors; vitest 475/475;
+- `test:mic-input` 25/25; `test:rack-eq` 30/30; meter contract 30/30;
+- undefined-calls, preload-bridge, ipc-contract and one-switch PASS;
+- leak guard 13/13;
+- `npm run build` OK.
+
+### Left on browser audio (ruling 8, and out of scope)
+
+- The voicetracker, Show+ and StudioPro recording, Captions, the Phone Desk hybrid input, and the podcast
+  mixer's `MixerChannelStrip`. Each still opens the mic through the browser.
+- On Windows that coexists with the engine's shared-mode stream. **UNVERIFIED on OV's managed box.**

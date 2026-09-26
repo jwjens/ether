@@ -169,11 +169,13 @@ console.log("\n6 - SLICE 5: a fader's channel rack reaches THIS station's engine
   // The dead deck/mic EQ (docs/dsp-channel-rack-eq.md §6): their sends landed on station 1's MASTER EQ.
   const src = (f) => fs.readFileSync(path.join(__dirname, "..", "src", "components", f), "utf8");
   const code = (t) => t.split("\n").filter(l => !/^\s*\/\//.test(l)).join("\n");
-  const deck = code(src("OnAirDeck.tsx")), mic = code(src("MicDeck.tsx")), strip = code(src("ConsoleStrip.tsx"));
+  const deck = code(src("OnAirDeck.tsx")), strip = code(src("ConsoleStrip.tsx"));
+  const micGone = !fs.existsSync(path.join(__dirname, "..", "src", "components", "MicDeck.tsx"));
   check(!/setEq\(/.test(deck) && !/eq_deck_/.test(deck) && !/GraphicEQ/.test(deck), "the on-air deck no longer has the dead EQ drawer, its eq_deck_* read or its setEq send");
   check(/openChannelRack\(deckId\)/.test(deck), "…its EQ button opens that deck's channel rack");
-  check(!/setEq\(/.test(mic), "the mic's EQ no longer sends setEq(\"mic\") (station 1's master EQ)");
-  check(/mic input EQ \(browser audio\)/.test(mic), "…and is labelled \"mic input EQ (browser audio)\" (ruling 1)");
+  // Since the mic became an ENGINE input (docs/dsp-mic-in-engine.md) the browser mic and its EQ are gone entirely —
+  // the mic takes the channel EQ like every fader. (Slice 5 had kept it, labelled, without the station-1 send.)
+  check(micGone, "MicDeck.tsx (the browser mic and its station-1 setEq send) is gone — the mic is an engine channel");
   check(/openChannelRack\(/.test(strip), "every fader strip with an engine slot has the EQ door");
 }
 

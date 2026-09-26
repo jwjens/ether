@@ -41,6 +41,9 @@ interface Props {
   jingle?: string | null;
   /** Overlay class ('SWP') so the indicator names what's armed/firing (v2). */
   jingleClass?: string | null;
+  /** The source is known NOT to be delivering (a mic that is unpatched, disconnected, lost or digitally silent):
+   *  the meter draws NOT FED instead of a flat zero. docs/dsp-mic-in-engine.md §4. */
+  meterNotFed?: boolean;
 }
 
 // Fader cap: wide flat horizontal bar, like a real broadcast console cap
@@ -62,6 +65,7 @@ const DB_MARKS: { label: string; db: number; isUnity?: boolean }[] = [
 
 export default function ConsoleStrip({
   label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId, hideLabel, sourceChannel = false, role = "third", jingle = null, jingleClass = null,
+  meterNotFed = false,
 }: Props) {
   const engine = useAudioEngine();
   const midi = useMidiState();
@@ -150,7 +154,8 @@ export default function ConsoleStrip({
   //
   // An id with no engine slot (the old "MIC" id faked `master × 0.6`) is drawn NOT FED — never a fake level.
   const slotIndex = deckId ? CH_INDEX[deckId.toUpperCase()] : undefined;
-  const meterSource: MeterSource = deckId
+  const meterSource: MeterSource = meterNotFed ? { stationUuid: null, ch: -1 }
+    : deckId
     ? (slotIndex !== undefined ? { stationUuid, ch: slotIndex } : { stationUuid: null, ch: -1 })
     : { external: level };
   const meterTitle = deckId

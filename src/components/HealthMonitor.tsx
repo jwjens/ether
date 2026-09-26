@@ -3,6 +3,7 @@ import { parseKvFlag } from "../lib/kvFlag";
 import { designationView, refreshBanner, type RefreshBanner } from "../lib/designationRow";
 import { HealthDashboard } from "./health/HealthDashboard";
 import { PanelStack, HealthPanel, PanelMeter, StatTile } from "./health/sectionChrome";
+import MicInputsHealth from "./health/MicInputsHealth";
 import { dbToPercent } from "./health/meterScale";
 import { SpotTimeline } from "./health/SpotTimeline";
 import { useContainerSize, WALL_W, WALL_H } from "./health/useContainerWidth";
@@ -1301,6 +1302,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         <PanelStack stack="health-monitor">
 
         <AudioProcessingPanel id="audio-processing" stationId={stationId} stationUuid={stationUuid} />
+        <MicInputsHealth id="mic-inputs" stationId={stationId ?? null} />
 
         {/* ── SPOT SCHEDULE — anchors vs what actually airs. Display-only. ────────────────────────
             The point of this table is the PROJECTED column: a spot that is going to miss its anchor

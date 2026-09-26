@@ -94,10 +94,10 @@ itself OUT. A new PEQ starts with every band at 0 dB.
 
 ## The mic
 
-- **The mic's EQ is separate.** The mic runs in the browser's audio (Web Audio), not in the audio engine, so a
-  channel rack cannot process it.
-- The mic's own 10-band EQ is labelled **"mic input EQ (browser audio)"** and still works on the mic.
-- It used to also send its settings to the master EQ of one station by mistake. That send is removed.
+- **A mic is a channel like any other now.** Patch a source channel to your mic (see **Mic on Air**), and its
+  channel EQ works exactly as described here: Filters to cut rumble and hiss, and a PEQ to shape the voice.
+- The old 10-band "mic input EQ (browser audio)" is gone, and its settings were not carried over. Use the
+  channel EQ.
 
 ## If something looks wrong
 
@@ -114,9 +114,9 @@ itself OUT. A new PEQ starts with every band at 0 dB.
 
 - No gate or compressor on a channel yet (the next slice).
 - No presets that follow a source or a show yet (a later slice). The rack belongs to the fader.
-- The mic is not an engine channel yet.
 
 ## Related
 
 - **The Master Rack** (`docs/help-processor-rack.md`)
 - **Reading the Meters** (`docs/help-meters.md`)
+- **Mic on Air** (`docs/help-mic-input.md`)
