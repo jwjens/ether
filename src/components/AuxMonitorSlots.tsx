@@ -187,7 +187,11 @@ export default function AuxMonitorSlots() {
     // "" closes the aux stream in the engine — no device, no sound. Persisted so it survives a
     // restart rather than silently reopening on something the operator never picked.
     try { (window as any).ether.audio.setAuxDevice(stationId, dev); } catch { /* engine not up */ }
-    try { (window as any).ether.stationConfigKv.upsertByKey(stationId, DEV_KEY, dev); } catch { /* non-fatal */ }
+    // Machine-local (LOCAL_ONLY_KEYS, 2026-09-26): a device name belongs to this machine. set-local is its only
+    // writer — upsertByKey would silently skip it — and its verdict is read.
+    Promise.resolve((window as any).ether?.invoke?.("station_config_kv:set-local", stationId, DEV_KEY, dev))
+      .then((w: any) => { if (!w || w.ok !== true) console.warn(`[aux-monitor] device for station ${stationId} not saved:`, w && w.error); })
+      .catch((e: any) => console.warn("[aux-monitor] device not saved:", e));
   }, [stationId]);
 
   const setLevel = useCallback((slot: string, v: number) => {

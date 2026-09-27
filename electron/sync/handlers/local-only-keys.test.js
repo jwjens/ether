@@ -39,6 +39,10 @@ describe("LOCAL_ONLY_KEYS", () => {
     expect(accepts("audio_output_device")).toBe(true);
   });
 
+  it("aux_monitor_device is machine-local — the AUX monitor's device NAME (2026-09-26)", () => {
+    expect(accepts("aux_monitor_device")).toBe(true);
+  });
+
   it("mic_input_<slot> is machine-local by prefix — the mic's input device (2026-09-26)", () => {
     for (const k of ["mic_input_D", "mic_input_S1", "mic_input_S5"]) expect(accepts(k), `${k} would be REFUSED`).toBe(true);
     expect(accepts("mic_inputD")).toBe(false);

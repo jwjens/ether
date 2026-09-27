@@ -75,7 +75,12 @@ const PATCHABLE          = ["value","updated_at"];
 // choice could silently re-route this machine's on-air output to its default device (or to a different
 // card that happens to share the name). docs/dsp-mic-in-engine.md §4 (decision 6). Rows already synced
 // in stay as they are until the operator picks a device here again.
-const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_designation', 'schedule_layout_v1', 'sweep_last_run', 'music_dir', 'cloud_backup_config', 'ai_voice_config', 'audio_output_device']);
+//
+// aux_monitor_device (2026-09-26) — the same thing for the AUX monitor's sound card. Seen on this machine:
+// "Speakers/Headphones (Realtek(R) Audio)" stored, and the engine logging `AUX monitor device not found` every
+// retry — a name this machine does not have. (The AUX path does NOT fall back to the default — it stays silent
+// by design — so a synced name here silenced this machine's AUX monitor instead of re-routing it.)
+const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_designation', 'schedule_layout_v1', 'sweep_last_run', 'music_dir', 'cloud_backup_config', 'ai_voice_config', 'audio_output_device', 'aux_monitor_device']);
 
 // Prefixes, for families of per-machine keys. `grid_widths_<pane>` is one key per grid, so it cannot
 // be enumerated — column widths had been written and refused on every resize since 4.4.177.
