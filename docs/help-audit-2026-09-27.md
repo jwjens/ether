@@ -64,62 +64,62 @@ house template's own title.
 - several `since:` values were slice names, not versions. They are now the first release tag containing the feature.
   The DSP slices after `ad12300` say `unreleased (log-reader-flip, after 4.6.50)`.
 
-## Code defects for Jeff (not fixed — "no code")
+## Code defects for Jeff (numbered — each fix commit is prefixed "fix: <n>")
 
 **On air**
-- **Pop-out MASTER fader is not wired to the engine.** It only sets display state and resets to 1.0 on open.
-  `BroadcastMonitor.tsx:381,533,587` (compare `MasterOutput.tsx:598-601`).
-- **Space and B start/pause decks directly,** outside the ON button and the daemon's serialized path.
-  `App.tsx:1899-1918`.
-- **The shortcut list is stale:** "X Crossfade" (removed) and "Esc Stop all decks" (Esc never kills audio).
-  `KeyboardHelp.tsx:23-25`, `App.tsx:3242-3243`.
-- **No crossfade-time control exists in Settings,** though the engine uses `crossfadeDuration`. `engine.js:1222`,
-  `SettingsPanel.tsx:29-37`.
+1. **Pop-out MASTER fader is not wired to the engine.** It only sets display state and resets to 1.0 on open.
+   `BroadcastMonitor.tsx:381,533,587` (compare `MasterOutput.tsx:598-601`).
+2. **Space and B start/pause decks directly,** outside the ON button and the daemon's serialized path.
+   `App.tsx:1899-1918`.
+3. **The shortcut list is stale:** "X Crossfade" (removed) and "Esc Stop all decks" (Esc never kills audio).
+   `KeyboardHelp.tsx:23-25`, `App.tsx:3242-3243`.
+4. **No crossfade-time control exists in Settings,** though the engine uses `crossfadeDuration`. `engine.js:1222`,
+   `SettingsPanel.tsx:29-37`.
 
 **Library, logs, exports**
-- **Library Delete may never run in the packaged app.** It asks with `window.confirm`, which the code's own comments
-  say no-ops in this Electron build. `App.tsx:5741,5351`; comment `main.js:1265`. **UNVERIFIED — one right-click →
-  Delete on an installed build settles it.**
-- **BMI/ASCAP exports write a fixed duration on every row** ("3:30" / "3.5"). `Logs.tsx:306,312`.
-- **BMI, ASCAP and PDF exports read the on-screen list, capped at 200 rows,** whatever the period. `Logs.tsx:110,304,310,351`.
-- **A renamed song probably keeps its old title in already-filled Program Log rows** (rows carry their own title).
-  `main.js:9811`. UNVERIFIED.
+5. **Library Delete may never run in the packaged app.** It asks with `window.confirm`, which the code's own comments
+   say no-ops in this Electron build. `App.tsx:5741,5351`; comment `main.js:1265`. **UNVERIFIED — one right-click →
+   Delete on an installed build settles it.**
+6. **BMI/ASCAP exports write a fixed duration on every row** ("3:30" / "3.5"). `Logs.tsx:306,312`.
+7. **BMI, ASCAP and PDF exports read the on-screen list, capped at 200 rows,** whatever the period. `Logs.tsx:110,304,310,351`.
+8. **A renamed song probably keeps its old title in already-filled Program Log rows** (rows carry their own title).
+   `main.js:9811`. UNVERIFIED.
 
 **Imaging, spots, sweepers**
-- **Edit Spot has no cart / ISCI fields.** They can only come from Import Traffic CSV, which writes the same value
-  into both. `Spots.tsx:536-608,321`.
-- **Deck / Up Next "Mark as Spot" skips the category dialog and creates no spots record,** so a break can't pull it.
-  `songActions.tsx:134`.
-- **AUTO-POST can't be switched on from the app.** The engine reads `overlay_chain_type`; nothing writes it.
-  `main.js:9475`.
-- **The sweeper pool LEAD-IN box is never read,** and the "UNDERLAP s" header has no column. `SweepersPanel.tsx:337-356`.
-- **SweepersPanel imports InlineNameEditor but never renders it.** No sweeper rename in the push-up.
-  `SweepersPanel.tsx:22`.
-- **"Set up sweepers →" affordance is dead:** props passed, never used. `App.tsx:3076-3077,3881-3882`.
-- **No sweeper armed/firing sense in the Health Monitor.**
-- **The Schedule Manager pane is still titled "Jingles."** `layoutStore.ts:35`.
-- **The Spots empty state still says "Import jingles…".** `Spots.tsx:619`.
+9. **Edit Spot has no cart / ISCI fields.** They can only come from Import Traffic CSV, which writes the same value
+   into both. `Spots.tsx:536-608,321`.
+10. **Deck / Up Next "Mark as Spot" skips the category dialog and creates no spots record,** so a break can't pull it.
+   `songActions.tsx:134`.
+11. **AUTO-POST can't be switched on from the app.** The engine reads `overlay_chain_type`; nothing writes it.
+   `main.js:9475`.
+12. **The sweeper pool LEAD-IN box is never read,** and the "UNDERLAP s" header has no column. `SweepersPanel.tsx:337-356`.
+13. **SweepersPanel imports InlineNameEditor but never renders it.** No sweeper rename in the push-up.
+   `SweepersPanel.tsx:22`.
+14. **"Set up sweepers →" affordance is dead:** props passed, never used. `App.tsx:3076-3077,3881-3882`.
+15. **No sweeper armed/firing sense in the Health Monitor.**
+16. **The Schedule Manager pane is still titled "Jingles."** `layoutStore.ts:35`.
+17. **The Spots empty state still says "Import jingles…".** `Spots.tsx:619`.
 
 **Rotation, generation**
-- **Per-row pick reasons are recorded but shown nowhere.** `RotationAnalytics.tsx:233-235`.
-- **The per-station AUTO ON (auto-generate) toggle only exists inside the "Log-Reader Flip — Canary" panel.**
-  `HealthMonitor.tsx:1811-1829`.
-- **The designation bypass (`kill_designation`) has no door in the app.**
+18. **Per-row pick reasons are recorded but shown nowhere.** `RotationAnalytics.tsx:233-235`.
+19. **The per-station AUTO ON (auto-generate) toggle only exists inside the "Log-Reader Flip — Canary" panel.**
+   `HealthMonitor.tsx:1811-1829`.
+20. **The designation bypass (`kill_designation`) has no door in the app.**
 
 **Accounts, backup, navigation**
-- **A failed profile migration is only written to the console;** `profile:list` is never called. `main.js:233-237,6303-6309`.
-- **The backup screen contradicts itself:** "both directions" vs "audio goes up only when you press Send just the
-  audio". `SettingsPanel.tsx:3638` vs `3735-3736`.
-- **The ☰ menu has no Health Monitor or Announcements entry.** Native menus only. `App.tsx:2929-2945`.
-- **The in-app HelpPanel's Schedule Manager text is stale.** `HelpPanel.tsx:285`.
+21. **A failed profile migration is only written to the console;** `profile:list` is never called. `main.js:233-237,6303-6309`.
+22. **The backup screen contradicts itself:** "both directions" vs "audio goes up only when you press Send just the
+   audio". `SettingsPanel.tsx:3638` vs `3735-3736`.
+23. **The ☰ menu has no Health Monitor or Announcements entry.** Native menus only. `App.tsx:2929-2945`.
+24. **The in-app HelpPanel's Schedule Manager text is stale.** `HelpPanel.tsx:285`.
 
 **Engine ids shown to operators (breaks one-name-per-fader)**
-- **The Wild meter picker shows "S1 … S5".** `MasterMeters.tsx:18-21`.
-- **Preferences → Mic Inputs row labels show "S1 · …".** `MicInputsSettings.tsx:30,63`.
+25. **The Wild meter picker shows "S1 … S5".** `MasterMeters.tsx:18-21`.
+26. **Preferences → Mic Inputs row labels show "S1 · …".** `MicInputsSettings.tsx:30,63`.
 
 **Show+ DAW**
-- **G toggles snap instead of selecting Grab.** `StudioPro.tsx:1766-1770`.
-- **C splices instead of selecting Splice** (the tooltip says "Splice (C)"). `StudioPro.tsx:1812-1815,3988`.
+27. **G toggles snap instead of selecting Grab.** `StudioPro.tsx:1766-1770`.
+28. **C splices instead of selecting Splice** (the tooltip says "Splice (C)"). `StudioPro.tsx:1812-1815,3988`.
 
 ## Runtime checks only the running app can settle
 
