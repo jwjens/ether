@@ -33,6 +33,7 @@
     "test:programlog-reads": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-programlog-reads.js",
     "test:programlog-writes": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-programlog-writes.js",
     "test:rename-log": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-rename-log.js",
+    "test:autopost-switch": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-autopost-switch.js",
     "test:programlog-popout": "node scripts/smoke-programlog-popout.js",
     "test:window-station": "node scripts/smoke-window-station.js",
     "test:copy-on-import": "node scripts/smoke-copy-on-import.js",

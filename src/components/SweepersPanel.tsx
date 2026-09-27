@@ -89,6 +89,8 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
   const [addQuery, setAddQuery] = useState("");
   const [cats, setCats] = useState<MusicCat[]>([]);
   const [fallbackId, setFallbackId] = useState<number | null>(null);
+  // AUTO-POST — the station switch (audit 11). Placement reads the same key (electron/auto-post-switch.js).
+  const [autoPost, setAutoPost] = useState(false);
   const [newName, setNewName] = useState("");
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<"manage" | "create">("manage");   // push-up: Manage vs Add imaging (reel splitter)
@@ -124,6 +126,7 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
       const rows = (r?.rows || []) as { key: string; value: string }[];
       const v = rows.find(x => x.key === "overlay_fallback_category_id")?.value;
       setFallbackId(v ? (parseInt(v, 10) || null) : null);
+      setAutoPost(rows.find(x => x.key === "overlay_auto_post")?.value === "1");
       const so = parseInt(rows.find(x => x.key === "segue_overlap_sec")?.value ?? "", 10);
       setSegueOverlap(isNaN(so) ? 0 : Math.max(0, Math.min(10, so)));
     } catch { setFallbackId(null); }
@@ -163,6 +166,11 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
       }
       await reload();
     } catch {}
+  };
+  const toggleAutoPost = async () => {
+    if (ro) return;
+    const next = !autoPost;
+    try { await ether()?.stationConfigKv?.upsertByKey(stationId, "overlay_auto_post", next ? "1" : "0"); setAutoPost(next); } catch {}
   };
   const setFallback = async (poolId: number | null) => { if (ro) return; try { await ether()?.stationConfigKv?.upsertByKey(stationId, "overlay_fallback_category_id", poolId != null ? String(poolId) : ""); setFallbackId(poolId); } catch {} };
 
@@ -311,6 +319,19 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
           <option value="">None (clean segue — silence is fine)</option>
           {pools.map(p => <option key={p.id} value={p.id}>{p.type} · {p.name}</option>)}
         </select>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: -12, marginBottom: 22, fontSize: "var(--t-body)", color: "var(--text-secondary)" }}>
+        <button onClick={toggleAutoPost} disabled={ro} aria-pressed={autoPost}
+          title="AUTO-POST: the sweeper ends exactly where the next song's vocal starts (its post). Takes effect on the next Fill Day."
+          style={{ minWidth: 64, padding: "var(--s-1) var(--s-2)", borderRadius: "var(--r-0)", fontWeight: 800, fontSize: "var(--t-small)", letterSpacing: "0.06em", cursor: ro ? "default" : "pointer",
+                   border: `1px solid ${autoPost ? "var(--accent-green)" : "var(--border-primary)"}`, background: autoPost ? "var(--accent-green)" : "var(--bg-tertiary)", color: autoPost ? "#fff" : "var(--text-secondary)" }}>
+          AUTO-POST {autoPost ? "ON" : "OFF"}
+        </button>
+        <span style={{ color: "var(--text-tertiary)" }}>
+          {autoPost
+            ? "Pool sweepers end where the next song's vocal starts. A song with no post marked uses LEAD; a seam where no cut in the pool is short enough gets no sweeper."
+            : "Sweepers start LEAD seconds before the seam (the category's LEAD)."}
+        </span>
       </div>
 
       </>)}

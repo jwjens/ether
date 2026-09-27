@@ -22,6 +22,11 @@ ones. **If the gesture is wrong, we find out here, at the cost of ten minutes.**
 
 ### Step 1 — one build
 
+> **Superseded opt-in (Jeff's ruling, 2026-09-27, help-audit item 11):** the opt-in is now a **station
+> setting**, the AUTO-POST switch in the Sweepers panel — station key `overlay_auto_post`
+> (`electron/auto-post-switch.js`). `categories.overlay_chain_type` is no longer read: nothing in the app could
+> write it, and "a behaviour with no switch is a hidden number." Selection, placement row and fire are unchanged.
+
 | piece | what it is |
 |---|---|
 | **The opt-in** | `categories.overlay_chain_type`, unset everywhere. **Unset = today's behaviour, byte for byte.** Exactly one category gets `'auto_post'`. |

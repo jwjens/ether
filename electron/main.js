@@ -9347,6 +9347,8 @@ function _placeJingles(db, stationId, rows) {
     const fb = db.prepare("SELECT value FROM station_config_kv WHERE key='overlay_fallback_category_id' AND station_id = ? AND deleted_at IS NULL").get(stationId);
     if (fb && fb.value) fallbackCatId = parseInt(fb.value, 10) || null;
   } catch {}
+  // AUTO-POST is a STATION setting, switched in the Sweepers panel (audit 11). Off → the LEAD path, unchanged.
+  const stationAutoPost = require('./auto-post-switch').readAutoPost(db, stationId);
   // Prepared reads (defensive — a pre-v32 DB lacks the overlay columns → skip, byte-identical prior behavior).
   let stmtAssign, stmtItem, stmtPoolType, poolReader;
   try {
@@ -9474,8 +9476,9 @@ function _placeJingles(db, stationId, rows) {
       const itemId = a ? a.overlay_song_id : null;
       let leadOverride = a ? a.overlay_lead_in_sec : null;
       let activeHours = (a && a.overlay_active_hours != null) ? a.overlay_active_hours : 16777215;
-      // THE OPT-IN. NULL — every category today — takes the LEAD path below, unchanged.
-      const wantsAutoPost = !!(a && a.overlay_chain_type === 'auto_post');
+      // THE OPT-IN — the station switch (Sweepers panel). It replaced categories.overlay_chain_type, which nothing in
+      // the app could write: a behaviour with no switch is a hidden number (Jeff, 2026-09-27). Off → LEAD, unchanged.
+      const wantsAutoPost = stationAutoPost;
       // Unassigned → station fallback pool (no hours gate), else a clean dead segue (deliberate, not an error).
       if (!kind) {
         if (fallbackCatId) { kind = 'pool'; poolId = fallbackCatId; leadOverride = null; activeHours = 16777215; }

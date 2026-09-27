@@ -92,6 +92,20 @@ didn't assign. Leave it **None (clean segue — silence is fine)** and unassigne
 segue** — silence between songs is a legitimate programming choice here, **never an error**. Nothing warns
 you; nothing is placed.
 
+## AUTO-POST (station switch)
+
+Under the fallback, **AUTO-POST** is one switch for the whole station. **OFF** (the default): sweepers
+start **LEAD** seconds before the seam, as above. **ON**: a sweeper from a **pool** is timed to **end
+exactly where the next song's vocal starts** — its **post**, the intro marker you set in the cue editor —
+and Ether picks a cut from the pool short enough to fit.
+
+- A song with **no post marked** uses LEAD instead.
+- A category assigned a **specific sweeper** (not a pool) uses LEAD.
+- A seam where **no cut in the pool is short enough** gets **no sweeper** — a cut that doesn't fit would
+  have to talk over one of the two songs.
+
+Like LEAD, it takes effect on the **next Fill Day**.
+
 ## How it behaves on air
 
 - In **Up Next**, a scheduled sweeper appears as **its own row, directly above the song it introduces**,
