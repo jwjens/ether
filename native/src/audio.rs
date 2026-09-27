@@ -177,10 +177,6 @@ pub struct AudioLevels {
     /// DUCKER (slice 3) — the gain currently applied to this station's programme. 1.0 = not ducking.
     /// Per station, like everything else on this bus: one station ducking says nothing about another.
     #[serde(default)] pub duck_gain: f32,
-    /// 10-band post-EQ master spectrum (0..~1 normalized magnitude), computed by the
-    /// master EQ analyzer and surfaced for the Master EQ rack's live FFT display.
-    #[serde(default)]
-    pub spectrum: [f32; 10],
     // ── v4.4.46 mix telemetry (diagnostic only; all #[serde(default)] so older readers/paths are
     // unaffected). Populated by the live GetLevel handler from BusState, which it already locks. ──
     /// Monotonic count of PROGRAM-RATE frames the mixer callback has consumed. The daemon's
@@ -409,6 +405,8 @@ pub enum AudioCmd {
     /// SLICE 7 — a show Take (show.rs): every channel the blade hands over and the master, written into the Params
     /// copy in ONE arm and sent as ONE block, so the whole show lands in the same buffer or none of it does.
     ApplyShow(Box<crate::show::ShowApply>),
+    /// SLICE 8 — what the RTA listens to: a channel, the master, or nothing (docs/dsp-channel-rta.md §1).
+    SetRta(crate::rta::RtaTarget),
     /// THE MIC (docs/dsp-mic-in-engine.md) — patch an input device onto a source slot. `device` empty =
     /// unpatch; `channel` 0-based; `gain_db` −10…+40 (clamped in micin.rs).
     SetMicInput { slot: usize, device: String, channel: u16, gain_db: f32 },
@@ -477,6 +475,8 @@ pub struct MetersHandle {
     /// SLICE 3 — the station's loudness frame (published by its meter thread) and its reset epochs.
     pub(crate) loud: LoudReader,
     pub(crate) loud_shared: Arc<LoudShared>,
+    /// SLICE 8 — the station's RTA frame (published by its meter thread). None where no meter thread runs it.
+    pub(crate) rta: Option<crate::rta::RtaReader>,
 }
 impl MetersHandle {
     /// Read the newest meter window and acknowledge it. Returns the block (raw peaks + Σ² + frame count).
@@ -500,7 +500,7 @@ impl MetersHandle {
     pub(crate) fn from_parts(reader: Arc<Mutex<TripleReader<MeterFrame>>>, shared: Arc<RtShared>,
                              loud_cons: LoudCons, loud_shared: Arc<LoudShared>) -> (MetersHandle, LoudnessMeters) {
         let (lm, loud) = LoudnessMeters::new(loud_cons, loud_shared.clone(), PROGRAM_RATE);
-        (MetersHandle { reader, shared, loud, loud_shared }, lm)
+        (MetersHandle { reader, shared, loud, loud_shared, rta: None }, lm)
     }
 }
 
@@ -582,9 +582,6 @@ pub struct BusState {
     /// written by mixer_callback each buffer with VU release ballistics; read by GetLevel.
     pub peaks:       [f32; SLOT_COUNT],
     pub master_peak: f32,
-    /// 10-band post-EQ master spectrum snapshot, written by mixer_callback from the
-    /// EQ analyzer each buffer; read by GetLevel into AudioLevels.spectrum.
-    pub spectrum:    [f32; 10],
     /// Local studio-monitor gain applied to the DEVICE (speaker) output only — never the
     /// program bus. 1.0 = unity; 0.0 = silent speakers while the station keeps broadcasting.
     pub monitor_vol: f32,
@@ -813,6 +810,9 @@ pub struct BusState {
     /// while the channel sounds (ramp.rs). At rest they equal the adopted level and the arithmetic is today's.
     pub(crate) vol_ramp: [crate::ramp::LevelRamp; SLOT_COUNT],
     pub(crate) master_ramp: crate::ramp::LevelRamp,
+    /// SLICE 8 — the RTA target this state is running (from Params) and the callback end of its rings (rta.rs).
+    pub(crate) rta_target: crate::rta::RtaTarget,
+    pub(crate) rta: crate::rta::RtaTaps,
     /// SLICE 3 — the callback end of the loudness rings (loudness.rs). push() is a copy; the BS.1770 state
     /// lives on the station's meter thread. Dropping this stops that thread.
     pub(crate) loud: LoudTaps,
@@ -828,6 +828,9 @@ pub(crate) struct BusHandles {
     /// SLICE 3 — the meter-thread end of the loudness rings.
     pub loud_cons: LoudCons,
     pub loud_shared: Arc<LoudShared>,
+    /// SLICE 8 — the meter-thread end of the RTA rings.
+    pub rta_cons: crate::rta::RtaCons,
+    pub rta_shared: Arc<crate::rta::RtaShared>,
 }
 
 impl BusState {
@@ -839,6 +842,7 @@ impl BusState {
         let (aux_cmd_prod, aux_cmd_cons) = HeapRb::<AuxCmd>::new(16).split();
         let (garbage, garbage_cons) = HeapRb::<Garbage>::new(RT_GARBAGE_QUEUE).split();
         let (loud, loud_cons, loud_shared) = loud_channels();
+        let (rta, rta_cons, rta_shared) = crate::rta::rta_channels();
         let shared = RtShared::new();
         let mut b = BusState {
             // SLICE 1 — SLOT_COUNT slots, each stamped with what it IS. Indices 0..6 keep their
@@ -854,7 +858,6 @@ impl BusState {
             sample_rate,
             peaks:       [0.0; SLOT_COUNT],
             master_peak: 0.0,
-            spectrum:    [0.0; 10],
             monitor_vol: 1.0,
             master_vol:  1.0,
             master_monitor_vol: 1.0,
@@ -935,12 +938,14 @@ impl BusState {
             ch_rack: [crate::rack::ChannelRackParams::default(); SLOT_COUNT],
             vol_ramp: [crate::ramp::LevelRamp::default(); SLOT_COUNT],
             master_ramp: crate::ramp::LevelRamp::default(),
+            rta_target: crate::rta::RtaTarget::None,
+            rta,
             loud,
         };
         // The meter channel starts on THIS state's own first frame, so the first read is the truth.
         let (w, meter_r) = triple(b.meter_frame());
         b.meter_w = Some(w);
-        b.handles = Some(BusHandles { cmd_prod, aux_cmd_prod, garbage_cons, meter_r, shared, loud_cons, loud_shared });
+        b.handles = Some(BusHandles { cmd_prod, aux_cmd_prod, garbage_cons, meter_r, shared, loud_cons, loud_shared, rta_cons, rta_shared });
         b
     }
 
@@ -969,6 +974,7 @@ impl BusState {
             pfl: self.pfl,
             pfl_dim_db: self.pfl_dim_db,
             pfl_to_device: self.pfl_to_device,
+            rta: self.rta_target,
         }
     }
 
@@ -1034,6 +1040,7 @@ impl BusState {
         self.pfl = p.pfl;
         self.pfl_dim_db = p.pfl_dim_db;
         self.pfl_to_device = p.pfl_to_device;
+        self.rta_target = p.rta;
         // The GEQ slot: bands on a version change (a removed GEQ is flat), exactly as SetEq always applied them.
         let (geq_bands, geq_in) = p.rack.geq();
         let bands = geq_bands.unwrap_or([0.0; 10]);
@@ -1147,7 +1154,6 @@ impl BusState {
             master_peak: self.master_peak,
             room_peak: self.room_peak,
             aux_peak: self.aux_peak,
-            spectrum: self.spectrum,
             frames_consumed: self.frames_consumed,
             duck_gain: self.duck_gain,
             aux_proc_in_lufs: self.aux_proc_in_lufs,
@@ -1374,6 +1380,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::SetMasterRack(_) => {}
                             AudioCmd::SetChannelRack { .. } => {}
                             AudioCmd::ApplyShow(_) => {}
+                            AudioCmd::SetRta(_) => {}
                             AudioCmd::SetMicInput { .. } => {}
                             AudioCmd::StartStream { server, port, mount, station_name, .. } => {
                                 eprintln!("Stream: {}:{}{} ({})", server, port, mount, station_name);
@@ -2448,9 +2455,12 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
     let meter_reader = Arc::new(Mutex::new(handles.meter_r));
     // SLICE 3 — the station's loudness meter thread: BS.1770 per branch, off the audio thread
     // (docs/dsp-loudness-meter.md §1.4). It exits when this station's state is dropped.
-    let (meters_handle, loud_meters) = MetersHandle::from_parts(meter_reader.clone(), handles.shared.clone(),
+    let (mut meters_handle, loud_meters) = MetersHandle::from_parts(meter_reader.clone(), handles.shared.clone(),
                                                                 handles.loud_cons, handles.loud_shared);
-    crate::loudness::spawn_meter_thread(station_id, loud_meters);
+    // SLICE 8 — the RTA's analysis rides the same meter thread (docs/dsp-channel-rta.md §2).
+    let (rta_an, rta_reader) = crate::rta::RtaAnalyzer::new(handles.rta_cons, handles.rta_shared);
+    meters_handle.rta = Some(rta_reader);
+    crate::loudness::spawn_meter_thread(station_id, loud_meters, Some(rta_an));
     let mut ctl_init = Control::new(&bus_init, handles.cmd_prod, handles.garbage_cons, meter_reader,
                                 handles.shared, aux_frames_ctr_shared.clone(), station_id, station_counters.clone());
     ctl_init.loud = Some(meters_handle.loud.clone());
@@ -2797,7 +2807,6 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     lvl.aux_proc_gr_db    = m.aux_proc_gr_db;
                                     lvl.aux_proc_ride_db  = m.aux_proc_ride_db;
                                     lvl.duck_gain         = m.duck_gain;
-                                    lvl.spectrum     = m.spectrum;
                                     // v4.4.46 mix telemetry.
                                     lvl.frames_total = m.frames_consumed;
                                     lvl.mon_vol      = p.monitor_vol;
@@ -2960,6 +2969,10 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 // SLICE 7 — the whole Take in ONE block (docs/dsp-show-presets.md §3.4). Which channels
                                 // are in it is the blade's live rule; this arm applies exactly what it was given.
                                 show.apply(&mut ctl.params, PROGRAM_RATE as f64);
+                                ctl.params_changed();
+                            }
+                            AudioCmd::SetRta(t) => {
+                                ctl.params.rta = t;
                                 ctl.params_changed();
                             }
                             AudioCmd::SetMasterRack(new_rack) => {
@@ -3520,6 +3533,10 @@ pub(crate) fn mixer_callback(
     // S3 — adopt queued parameter blocks and deck commands BEFORE anything reads them. The whole buffer
     // then runs on this one state; a block that arrives meanwhile waits for the next buffer.
     bus.apply_commands();
+    // SLICE 8 — tell the RTA's meter thread which target this buffer serves (a store only when it changes).
+    let rta_t = bus.rta_target;
+    bus.rta.serve(rta_t);
+    let rta_slot = match rta_t { crate::rta::RtaTarget::Channel(s) => Some(s as usize), _ => None };
     // SLICE 2 — the reader has consumed the current meter window: start the next one (one Acquire load).
     if bus.shared.meter_ack.load(Ordering::Acquire) >= bus.meters_acc.epoch {
         let e = bus.meters_acc.epoch + 1;
@@ -3731,6 +3748,18 @@ pub(crate) fn mixer_callback(
             if rack_on { for f in 0..take { cl[f] += rack_l[f]; cr[f] += rack_r[f]; } }
             else { for f in 0..take { cl[f] += feed[2 * f] * trim; cr[f] += feed[2 * f + 1] * trim; } }
         }
+        // SLICE 8 — THE RTA TAP, only for the ONE channel a rack view is listening to (rta.rs). Both lanes PRE-FADER
+        // (Jeff's ruling 5): pre = the same samples the pre-fader meter reads; post = the rack's output (= pre when the
+        // rack runs nothing). Read-only: the mix below is untouched.
+        if rta_slot == Some(i) {
+            let fd = &feed[..2 * take];
+            if rack_on {
+                let (rl, rr) = (&rack_l[..take], &rack_r[..take]);
+                bs.rta.push(take, |f| (fd[2 * f] * trim, fd[2 * f + 1] * trim), |f| (rl[f], rr[f]));
+            } else {
+                bs.rta.push(take, |f| (fd[2 * f] * trim, fd[2 * f + 1] * trim), |f| (fd[2 * f] * trim, fd[2 * f + 1] * trim));
+            }
+        }
         // SLICE 7 — while the fader is ramping, its gain moves per frame (cut still wins: 0). At rest this is None and
         // the arithmetic below is exactly today's.
         let ramp = if bs.vol_ramp[i].ramping() { Some(bs.vol_ramp[i]) } else { None };
@@ -3844,7 +3873,6 @@ pub(crate) fn mixer_callback(
     }
 
     // Apply EQ to the 44100 Hz stereo mix
-    let mut eq_spectrum: Option<[f32; 10]> = None;
     // ── THE DUCKER (slice 3) ─────────────────────────────────────────────────────────────────────
     //
     // mix == core + src by construction (the loop adds every slot to mix, non-Source to core, Source
@@ -3970,16 +3998,19 @@ pub(crate) fn mixer_callback(
             out_l[f] = l;
             out_r[f] = r;
         }
-        // Snapshot the analyzer spectrum while we hold the lock; published to bus below.
-        eq_spectrum = Some(eq.spectrum());
     } else {
         RtCounters::bump(&counters.lock_misses, 1);   // S6 — uncontended by construction; counted if not
         out_l.copy_from_slice(mix_l);
         out_r.copy_from_slice(mix_r);
     }
 
-    // Publish the EQ analyzer spectrum (lock already released) for GetLevel → AudioLevels.
-    if let Some(spec) = eq_spectrum { bus.spectrum = spec; }
+    // SLICE 8 — the MASTER's RTA tap (the master GEQ view): pre = the programme mix before the GEQ, post = after it,
+    // both before the master fader (ruling 5). The analyser that used to run HERE (eq.rs: a ring write per sample and a
+    // 2048-point FFT every 1024 samples, in this EQ and the room's) is gone — the RTA runs on the meter thread.
+    if rta_t == crate::rta::RtaTarget::Master {
+        let (ml, mr, ol, or) = (&mix_l[..prog_frames], &mix_r[..prog_frames], &*out_l, &*out_r);
+        bus.rta.push(prog_frames, |f| (ml[f], mr[f]), |f| (ol[f], or[f]));
+    }
 
     // ── MASTER OUT ────────────────────────────────────────────────────────────────────────────────
     // Applied HERE: after the mix + EQ, BEFORE the VU peak below and before the stream/device split.
@@ -5369,5 +5400,321 @@ mod show_through_the_mixer {
                  ds, hs.len(), dl, hl.len(), energy, n / 480);
         assert!(energy > 1.0, "the null compared silence");
         assert_eq!((ds, dl), (0, 0), "a restored show does not null against the hand-set board");
+    }
+}
+
+// ── SLICE 8 — THE MASTER EQ STAGE'S COST, BEFORE AND AFTER THE ANALYSER LEAVES THE CALLBACK ─────────────────
+// Run on the tree before slice 8 (the eq.rs analyser in the callback: a mono ring write per sample and a 2048-point
+// FFT every 1024 samples, in the air EQ AND the room EQ) and after (the analyser gone; the RTA runs on the meter
+// thread). Same rows both times, so the difference is the analyser. Recorded, not gated (the existing gates stand).
+#[cfg(test)]
+mod eq_stage_timing {
+    use super::*;
+
+    struct Tone { n: u64, f: f64 }
+    impl Iterator for Tone {
+        type Item = f32;
+        fn next(&mut self) -> Option<f32> { let i = self.n / 2; self.n += 1; Some((0.2 * (2.0 * std::f64::consts::PI * self.f * i as f64 / 44_100.0).sin()) as f32) }
+    }
+    fn q(v: &mut Vec<u128>, f: f64) -> f64 { v.sort(); v[((v.len() - 1) as f64 * f) as usize] as f64 / 1e6 }
+
+    /// The whole callback with `slots` playing (D in the room when listed). `tap` = the RTA on S1, its analyser
+    /// draining OFF the clock (slice 8's own cost; absent in the pre-slice-8 tree).
+    fn callback_ms(slots: &[usize], tap: bool) -> (f64, f64, f64, u64) {
+        let (prod, mut stream_cons) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)));
+        let h = b.handles.take().unwrap();
+        let (_meters, mut loud) = MetersHandle::from_parts(Arc::new(Mutex::new(h.meter_r)), h.shared.clone(), h.loud_cons, h.loud_shared);
+        let (mut an, _rr) = crate::rta::RtaAnalyzer::new(h.rta_cons, h.rta_shared);
+        if tap { b.rta_target = crate::rta::RtaTarget::Channel(7); }
+        for &i in slots {
+            b.decks[i].source = Some(DeckFeed::prefilled(Tone { n: 0, f: 220.0 * (i + 1) as f64 }, 480 * 2 * 3200));
+            b.decks[i].active = true; b.decks[i].paused = false; b.decks[i].volume = 0.5;
+        }
+        if slots.contains(&3) { b.aux_monitor_gain[3] = 1.0; }
+        let bus = Arc::new(Mutex::new(b));
+        let (fin, playing) = (FinishedFlags::new(), Arc::new(AtomicBool::new(true)));
+        let mut sc = Scratch::new();
+        let (mut data, mut pop) = (vec![0f32; 960], vec![0f32; PROGRAM_BUS_BUF]);
+        let mut ns = Vec::with_capacity(3000);
+        let a0 = crate::rt::tl_rt_allocs();
+        for _ in 0..3000 {
+            let t0 = std::time::Instant::now();
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+            ns.push(t0.elapsed().as_nanos());
+            loud.drain();
+            an.drain();
+            while stream_cons.pop_slice(&mut pop) > 0 {}
+        }
+        let allocs = crate::rt::tl_rt_allocs() - a0;
+        (q(&mut ns, 0.5), q(&mut ns, 0.99), q(&mut ns, 1.0), allocs)
+    }
+
+    #[test]
+    fn the_master_eq_stage_cost() {
+        // The EQ stage alone: one EqChain, 480 stereo frames per call, flat GEQ (the filters are skipped, so what is
+        // left is the analyser's work before slice 8 and nothing after). The input is made OFF the clock.
+        let mut eq = crate::eq::EqChain::new(44100.0);
+        let input: Vec<f32> = (0..480 * 3000).map(|i| (i as f32 * 0.0137).sin() * 0.3).collect();
+        let (mut ns, mut acc) = (Vec::with_capacity(3000), 0.0f32);
+        for k in 0..3000usize {
+            let blk = &input[k * 480..(k + 1) * 480];
+            let t0 = std::time::Instant::now();
+            for &x in blk { let (l, r) = eq.process_stereo(std::hint::black_box(x), std::hint::black_box(x)); acc += l + r; }
+            ns.push(t0.elapsed().as_nanos());
+        }
+        std::hint::black_box(acc);
+        println!("[eq-timing] the master EQ stage alone (one EqChain, 480 frames, flat GEQ): median {:.4} ms · p99 {:.4} ms", q(&mut ns, 0.5), q(&mut ns, 0.99));
+        let mut total = 0;
+        for (name, slots, tap) in [("A/B/C playing", &[0usize, 1, 2][..], false), ("A/B/C + aux D (room chain + its EQ)", &[0, 1, 2, 3][..], false),
+                                   ("A/B/C + S1, no tap", &[0, 1, 2, 7][..], false), ("A/B/C + S1, the RTA tap ON S1", &[0, 1, 2, 7][..], true)] {
+            let (m, p, w, a) = callback_ms(slots, tap);
+            total += a;
+            println!("[eq-timing] callback, {:<40} median {:.4} ms · p99 {:.4} ms · worst {:.3} ms · {} allocations", name, m, p, w, a);
+        }
+        assert_eq!(total, 0);
+    }
+}
+
+// ── SLICE 8 — the RTA through the real mixer callback and the real analyser (docs/dsp-channel-rta.md §4) ─────────
+#[cfg(test)]
+mod rta_through_the_mixer {
+    use super::*;
+    use crate::rta::{RtaAnalyzer, RtaTarget, RTA_BANDS, RTA_CENTRES, RTA_HOP, RTA_FFT, band_edges, coarse_below_hz};
+
+    const FS: f64 = 44_100.0;
+    /// A −18 dBFS (sine peak) log sweep f0→f1 over `secs`, the same sample on L and R.
+    struct Sweep { n: u64, f0: f64, f1: f64, secs: f64, amp: f64 }
+    impl Iterator for Sweep {
+        type Item = f32;
+        fn next(&mut self) -> Option<f32> {
+            let i = (self.n / 2) as f64 / FS; self.n += 1;
+            let k = self.f1 / self.f0;
+            let ph = 2.0 * std::f64::consts::PI * self.f0 * self.secs / k.ln() * (k.powf(i / self.secs) - 1.0);
+            Some((self.amp * ph.sin()) as f32)
+        }
+    }
+    fn sweep_freq(t: f64, f0: f64, f1: f64, secs: f64) -> f64 { f0 * (f1 / f0).powf(t / secs) }
+    /// Deterministic pink noise (Paul Kellett's filter on an LCG), the same sample on L and R.
+    struct Pink { s: u64, b: [f64; 7], cur: f32, half: bool }
+    fn pink() -> Pink { Pink { s: 99, b: [0.0; 7], cur: 0.0, half: false } }
+    impl Iterator for Pink {
+        type Item = f32;
+        fn next(&mut self) -> Option<f32> {
+            if self.half { self.half = false; return Some(self.cur); }
+            self.s = self.s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let w = ((self.s >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0;
+            let b = &mut self.b;
+            b[0] = 0.99886 * b[0] + w * 0.0555179; b[1] = 0.99332 * b[1] + w * 0.0750759; b[2] = 0.96900 * b[2] + w * 0.1538520;
+            b[3] = 0.86650 * b[3] + w * 0.3104856; b[4] = 0.55000 * b[4] + w * 0.5329522; b[5] = -0.7616 * b[5] - w * 0.0168980;
+            let p = b[0] + b[1] + b[2] + b[3] + b[4] + b[5] + b[6] + w * 0.5362;
+            b[6] = w * 0.115926;
+            self.cur = (p * 0.05) as f32; self.half = true;
+            Some(self.cur)
+        }
+    }
+
+    struct Rig { bus: SharedBusState, cmd: HeapProd<RtCmd>, garbage: HeapCons<Garbage>, stream: HeapCons<f32>, an: RtaAnalyzer,
+                 fin: FinishedFlags, playing: Arc<AtomicBool>, sc: Box<Scratch>, data: Vec<f32>, pop: Vec<f32>, allocs: u64 }
+    fn rig(setup: impl FnOnce(&mut BusState, &mut Params)) -> Rig {
+        let (prod, stream) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)));
+        let h = b.handles.take().unwrap();
+        let (an, _r) = RtaAnalyzer::new(h.rta_cons, h.rta_shared);
+        let mut p = b.params();
+        setup(&mut b, &mut p);
+        let mut cmd = h.cmd_prod;
+        let _ = cmd.try_push(RtCmd::Params(Box::new(p)));
+        Rig { bus: Arc::new(Mutex::new(b)), cmd, garbage: h.garbage_cons, stream, an, fin: FinishedFlags::new(),
+              playing: Arc::new(AtomicBool::new(true)), sc: Scratch::new(), data: vec![0f32; 960], pop: vec![0f32; PROGRAM_BUS_BUF], allocs: 0 }
+    }
+    impl Rig {
+        /// One buffer through the real callback, then the meter thread's drain. Returns the frames analysed.
+        fn step(&mut self) -> usize {
+            let a0 = crate::rt::tl_rt_allocs();
+            mixer_callback(&mut self.data, 2, &self.bus, &self.fin, &self.playing, &mut self.sc);
+            self.allocs += crate::rt::tl_rt_allocs() - a0;
+            while self.stream.pop_slice(&mut self.pop) > 0 {}
+            while self.garbage.try_pop().is_some() {}
+            self.an.drain()
+        }
+    }
+    fn play(b: &mut BusState, i: usize, src: impl Iterator<Item = f32> + Send + 'static, frames: usize) {
+        b.decks[i].source = Some(DeckFeed::prefilled(src, frames * 2 + 4800));
+        b.decks[i].active = true; b.decks[i].paused = false; b.decks[i].volume = 1.0;
+    }
+    fn is_coarse(b: usize) -> bool { (RTA_CENTRES[b] as f64) < coarse_below_hz() as f64 - 1.0 }
+
+    #[test]
+    fn a_minus_18_dbfs_sweep_lands_in_the_right_band_at_minus_18() {
+        let (f0, f1, secs) = (20.0, 20_000.0, 60.0);
+        let frames = (secs * FS) as usize;
+        let amp = 10f64.powf(-18.0 / 20.0);
+        let mut r = rig(|b, p| { play(b, 7, Sweep { n: 0, f0, f1, secs, amp }, frames); p.rta = RtaTarget::Channel(7); });
+        let (mut best, mut when) = ([f32::MIN; RTA_BANDS], [0usize; RTA_BANDS]);
+        let mut analysed = 0usize;
+        for _ in 0..frames / 480 {
+            if r.step() > 0 {
+                analysed += 1;
+                for b in 0..RTA_BANDS { if r.an.raw[0][b] > best[b] { best[b] = r.an.raw[0][b]; when[b] = analysed; } }
+            }
+        }
+        let (mut worst_lvl, mut misses) = (0.0f64, Vec::new());
+        let mut lines = Vec::new();
+        for b in 0..RTA_BANDS {
+            // the analysis window of that frame: the last RTA_FFT samples ending at frame `when[b]`'s hop
+            let t = ((when[b] * RTA_HOP) as f64 - RTA_FFT as f64 / 2.0) / FS;
+            let f = sweep_freq(t, f0, f1, secs);
+            let (lo, hi) = band_edges(b);
+            let inside = f >= lo * 0.99 && f <= hi * 1.01;
+            let dev = best[b] as f64 + 18.0;
+            lines.push(format!("{}:{:+.2}{}", RTA_CENTRES[b], best[b], if is_coarse(b) { "c" } else { "" }));
+            if !is_coarse(b) {
+                if dev.abs() > worst_lvl.abs() { worst_lvl = dev; }
+                if !inside { misses.push(format!("{} Hz peaked at {:.0} Hz", RTA_CENTRES[b], f)); }
+            }
+        }
+        println!("[rta-sweep] −18 dBFS log sweep 20 Hz→20 kHz over 60 s on S1, RTA on S1, through the real callback + meter-thread analysis ({} frames): each band's peak (dB; c = coarse, below {} Hz): {}",
+                 analysed, coarse_below_hz(), lines.join(" "));
+        println!("[rta-sweep] every band ≥ {} Hz: peak −18 {:+.2} dB at worst (bar ±0.5), and it peaked while the sweep was inside it: {}",
+                 coarse_below_hz(), worst_lvl, if misses.is_empty() { "all 31 − coarse".to_string() } else { misses.join("; ") });
+        assert!(misses.is_empty(), "a band peaked while the sweep was elsewhere: {:?}", misses);
+        assert!(worst_lvl.abs() <= 0.5, "a band read {:+.2} dB off −18", worst_lvl);
+        assert_eq!(r.allocs, 0);
+    }
+
+    /// |H|² of a channel-rack plan at f (its biquad stages — Filters here).
+    fn plan_power(spec: &crate::rack::ChainSpec, f: f64) -> f64 {
+        let w = 2.0 * std::f64::consts::PI * f / FS;
+        let (c1, s1, c2, s2) = (w.cos(), -w.sin(), (2.0 * w).cos(), -(2.0 * w).sin());
+        let mut p = 1.0;
+        for k in 0..spec.n {
+            if spec.kind[k] != crate::rack::KIND_BQ { continue; }
+            let q = spec.bq[k];
+            let (nr, ni) = (q.b0 + q.b1 * c1 + q.b2 * c2, q.b1 * s1 + q.b2 * s2);
+            let (dr, di) = (1.0 + q.a1 * c1 + q.a2 * c2, q.a1 * s1 + q.a2 * s2);
+            p *= (nr * nr + ni * ni) / (dr * dr + di * di);
+        }
+        p
+    }
+    /// A band's expected level change from a response: pink noise = equal power per log frequency, so the band's power
+    /// ratio is the response averaged uniformly in log f across the band.
+    fn band_expect(b: usize, mut h2: impl FnMut(f64) -> f64) -> f64 {
+        let (lo, hi) = band_edges(b);
+        let n = 64;
+        let m: f64 = (0..n).map(|i| h2(lo * (hi / lo).powf((i as f64 + 0.5) / n as f64))).sum::<f64>() / n as f64;
+        10.0 * m.log10()
+    }
+    /// Run pink noise with RTA on `target` for `secs`; return the time-averaged (power) post−pre per band, dB.
+    fn post_minus_pre(mut r: Rig, secs: f64) -> ([f64; RTA_BANDS], u64) {
+        let (mut sp, mut sq) = ([0.0f64; RTA_BANDS], [0.0f64; RTA_BANDS]);
+        let settle = 20;
+        let mut k = 0;
+        for _ in 0..(secs * FS / 480.0) as usize {
+            if r.step() > 0 {
+                k += 1;
+                if k > settle { for b in 0..RTA_BANDS { sp[b] += 10f64.powf(r.an.raw[0][b] as f64 / 10.0); sq[b] += 10f64.powf(r.an.raw[1][b] as f64 / 10.0); } }
+            }
+        }
+        (std::array::from_fn(|b| 10.0 * (sq[b] / sp[b]).log10()), r.allocs)
+    }
+
+    #[test]
+    fn hpf_100_hz_post_minus_pre_is_the_filters_own_curve() {
+        let doc = r#"{"v":1,"sections":{"ch":[{"module":{"type":"filters","hpf":{"in":true,"freq":100},"lpf":{"in":false,"freq":10000}},"in":true}]}}"#;
+        let rack = crate::rack::ChannelRack::from_doc_json(doc).unwrap();
+        let plan = rack.plan(FS);
+        let secs = 40.0;
+        let r = rig(|b, p| {
+            play(b, 7, pink(), (secs * FS) as usize);
+            crate::show::set_channel_rack(p, 7, rack, FS);
+            p.rta = RtaTarget::Channel(7);
+        });
+        let (d, allocs) = post_minus_pre(r, secs);
+        let (mut worst, mut worst_hi) = (0.0f64, 0.0f64);
+        let mut lines = Vec::new();
+        for b in 0..RTA_BANDS {
+            let e = band_expect(b, |f| plan_power(&plan, f));
+            let err = d[b] - e;
+            lines.push(format!("{}:{:+.1}/{:+.1}{}", RTA_CENTRES[b], d[b], e, if is_coarse(b) { "c" } else { "" }));
+            if !is_coarse(b) { if err.abs() > worst.abs() { worst = err; } }
+            if RTA_CENTRES[b] >= 200.0 && d[b].abs() > worst_hi.abs() { worst_hi = d[b]; }
+        }
+        println!("[rta-hpf] pink noise on S1, Filters HPF 100 Hz IN, 40 s: post−pre measured/expected (the filter's own curve over each band), dB: {}", lines.join(" "));
+        println!("[rta-hpf] bands ≥ {} Hz: worst error {:+.2} dB (bar ±1) · at and above 200 Hz post−pre stays within {:+.2} dB of 0 · {} allocations",
+                 coarse_below_hz(), worst, worst_hi, allocs);
+        assert!(worst.abs() <= 1.0, "post−pre is {:+.2} dB off the filter's own curve", worst);
+        assert!(worst_hi.abs() <= 0.3, "above 200 Hz the HPF should be ~0 dB, read {:+.2}", worst_hi);
+        assert_eq!(allocs, 0);
+    }
+
+    #[test]
+    fn geq_plus_6_at_1_khz_shows_plus_6_on_the_master() {
+        let secs = 30.0;
+        let mut bands = [0.0f32; 10];
+        bands[5] = 6.0;   // 1 kHz
+        let r = rig(|b, p| {
+            play(b, 0, pink(), (secs * FS) as usize);
+            p.rack.set_geq_bands(bands);
+            p.rack.eq_version = p.rack.eq_version.wrapping_add(1);
+            p.rta = RtaTarget::Master;
+        });
+        let (d, allocs) = post_minus_pre(r, secs);
+        // The GEQ's own response, measured by running its EqChain on steady sines (the engine's filters, no model).
+        let mut eq = crate::eq::EqChain::new(44100.0);
+        eq.set_bands(&bands);
+        let mut gain2 = |f: f64| -> f64 {
+            let n = 44_100 / 5;
+            let (mut si, mut so) = (0.0f64, 0.0f64);
+            for i in 0..n { let x = (2.0 * std::f64::consts::PI * f * i as f64 / FS).sin() as f32 * 0.1; let (y, _) = eq.process_stereo(x, x); if i > n / 2 { si += (x as f64).powi(2); so += (y as f64).powi(2); } }
+            so / si
+        };
+        let b1k = 17;
+        let e1k = band_expect(b1k, &mut gain2);
+        let lines: Vec<String> = (12..24).map(|b| format!("{}:{:+.2}", RTA_CENTRES[b], d[b])).collect();
+        println!("[rta-geq] pink noise on A, master GEQ 1 kHz +6 dB IN, RTA on the MASTER, 30 s: post−pre around it: {} · the 1 kHz band reads {:+.2} dB (the GEQ's own curve over that band: {:+.2}; its peak at 1 kHz: {:+.2}) · {} allocations",
+                 lines.join(" "), d[b1k], e1k, 10.0 * gain2(1000.0).log10(), allocs);
+        assert!((d[b1k] - e1k).abs() <= 0.5, "the master RTA read {:+.2} at 1 kHz, the GEQ's curve says {:+.2}", d[b1k], e1k);
+        assert!((d[b1k] - 6.0).abs() <= 0.5, "GEQ +6 at 1 kHz read {:+.2}", d[b1k]);
+        assert_eq!(allocs, 0);
+    }
+
+    #[test]
+    fn nothing_is_copied_when_nothing_is_subscribed_and_only_the_chosen_channel_when_one_is() {
+        // Every fader playing; RTA None.
+        let mut r = rig(|b, _p| { for i in 0..SLOT_COUNT { play(b, i, pink(), 480 * 3100); } });
+        for _ in 0..3000 { r.step(); }
+        let sh = { let b = r.bus.lock().unwrap(); (b.rta.shared.pushed.load(Ordering::Relaxed), b.rta.shared.dropped.load(Ordering::Relaxed)) };
+        // S1 chosen but silent; S2 loud: nothing of S2 may reach the rings.
+        let mut r2 = rig(|b, p| {
+            play(b, 7, std::iter::repeat(0.0f32), 480 * 1100);
+            play(b, 8, pink(), 480 * 1100);
+            p.rta = RtaTarget::Channel(7);
+        });
+        for _ in 0..1000 { r2.step(); }
+        let loudest = r2.an.raw[0].iter().chain(r2.an.raw[1].iter()).cloned().fold(f32::MIN, f32::max);
+        let pushed2 = r2.bus.lock().unwrap().rta.shared.pushed.load(Ordering::Relaxed);
+        println!("[rta-idle] 12 faders playing, RTA unsubscribed, 3000 buffers: {} frames pushed, {} dropped, {} allocations · S1 chosen (silent) with S2 playing pink noise: {} frames pushed, loudest band {:.1} dB (the floor is -120)",
+                 sh.0, sh.1, r.allocs, pushed2, loudest);
+        assert_eq!(sh, (0, 0), "the callback copied audio with nothing subscribed");
+        assert!(pushed2 > 0 && loudest <= -119.9, "another channel reached the RTA");
+        assert_eq!(r.allocs + r2.allocs, 0);
+    }
+
+    #[test]
+    fn the_tap_never_allocates_with_every_rack_crossfading() {
+        let peq = crate::rack::ChannelRack::from_doc_json(r#"{"v":1,"sections":{"ch":[{"module":{"type":"peq","bands":[{"freq":100,"gain":3,"width":1},{"freq":1000,"gain":-3,"width":1},{"freq":3000,"gain":2,"width":1},{"freq":8000,"gain":0,"width":1}]},"in":true}]}}"#).unwrap();
+        let mut r = rig(|b, p| { for i in 0..SLOT_COUNT { play(b, i, pink(), 480 * 700); } p.rta = RtaTarget::Channel(7); });
+        for k in 0..600 {
+            if k % 20 == 0 {
+                let mut p = r.bus.lock().unwrap().params();
+                for i in 0..SLOT_COUNT { crate::show::set_channel_rack(&mut p, i, if (k / 20) % 2 == 0 { peq } else { crate::rack::ChannelRack::default() }, FS); }
+                p.rta = if (k / 100) % 2 == 0 { RtaTarget::Channel(7) } else { RtaTarget::Master };
+                let _ = r.cmd.try_push(RtCmd::Params(Box::new(p)));
+            }
+            r.step();
+        }
+        println!("[rta-trap] 12 faders playing, all 12 racks crossfading every 20 buffers, the RTA switching between S1 and the master: {} allocations in the callback over 600 buffers", r.allocs);
+        assert_eq!(r.allocs, 0);
     }
 }

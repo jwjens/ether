@@ -99,10 +99,7 @@ impl Biquad {
 
 // ── EQ Chain (10 bands) ─────────────────────────────────────────
 //
-// Also maintains a ring buffer of the post-EQ mono signal + an FFT-based
-// spectrum analyzer output. Spectrum bins are in 0..1 normalized magnitude
-// at the 10 EQ band center frequencies, with an attack/release envelope
-// follower so the UI bars look musical rather than jittery.
+// (Slice 8: no analyser here any more — the RTA is on the meter thread.)
 pub struct EqChain {
     pub filters: [Biquad; 10],
     pub bands_db: [f32; 10],
@@ -114,109 +111,20 @@ pub struct EqChain {
     /// below still runs — it is a meter, not DSP. Default false (every non-rack user of EqChain unchanged).
     pub bypass: bool,
 
-    // ── Spectrum analyzer ──
-    ring:       Vec<f32>,       // Mono downmix ring buffer
-    ring_pos:   usize,           // Write index
-    fft_plan:   std::sync::Arc<dyn rustfft::Fft<f32>>,
-    fft_scratch: Vec<rustfft::num_complex::Complex<f32>>, // Pre-allocated to avoid audio-thread allocation
-    /// SLICE 1 S6 — the FFT's own working space. rustfft's plain `process()` allocates this on EVERY call
-    /// (rustfft-6 lib.rs: `let mut scratch = vec![...; get_inplace_scratch_len()]`), which this analyser ran
-    /// every 1024 samples on the audio thread. Preallocated once; `process_with_scratch` uses it.
-    fft_work: Vec<rustfft::num_complex::Complex<f32>>,
-    window:     Vec<f32>,        // Hann window (precomputed)
-    spectrum:   [f32; 10],       // Smoothed band magnitudes (0..1+)
-    peak:       f32,             // Running peak for normalization
-    samples_since_fft: usize,
+    // SLICE 8 — the spectrum analyser that lived here (a mono ring written every sample and a 2048-point FFT every
+    // 1024 samples, ON THE AUDIO THREAD, in every instance — the room chain's result was never even read) is gone.
+    // The RTA runs on the meter thread (rta.rs, docs/dsp-channel-rta.md); EqChain is the ten filters and nothing else.
 }
 
-const FFT_SIZE: usize = 2048;       // ~46ms window at 44.1kHz
-const FFT_INTERVAL: usize = 1024;   // Run FFT every ~23ms (≈43fps)
 
 impl EqChain {
     pub fn new(sample_rate: f32) -> Self {
-        let mut planner = rustfft::FftPlanner::new();
-        let fft_plan = planner.plan_fft_forward(FFT_SIZE);
-        let fft_work_len = fft_plan.get_inplace_scratch_len();
-        // Precompute Hann window
-        let window: Vec<f32> = (0..FFT_SIZE)
-            .map(|n| {
-                let x = (n as f32) / (FFT_SIZE as f32 - 1.0);
-                0.5 - 0.5 * (2.0 * std::f32::consts::PI * x).cos()
-            })
-            .collect();
         Self {
             filters: [Biquad::identity(); 10],
             bands_db: [0.0; 10],
             sample_rate,
             active: false,
             bypass: false,
-            ring: vec![0.0; FFT_SIZE],
-            ring_pos: 0,
-            fft_plan,
-            fft_scratch: vec![rustfft::num_complex::Complex::new(0.0, 0.0); FFT_SIZE],
-            fft_work: vec![rustfft::num_complex::Complex::new(0.0, 0.0); fft_work_len],
-            window,
-            spectrum: [0.0; 10],
-            peak: 0.05,
-            samples_since_fft: 0,
-        }
-    }
-
-    /// Read the current smoothed spectrum bins (0..~1 range).
-    pub fn spectrum(&self) -> [f32; 10] { self.spectrum }
-
-    /// FFT the ring buffer, bin magnitudes into the 10 EQ bands,
-    /// apply attack/release smoothing to the output. Called internally
-    /// every FFT_INTERVAL samples.
-    fn update_spectrum(&mut self) {
-        use rustfft::num_complex::Complex;
-        // Copy ring into pre-allocated scratch buffer (oldest sample first)
-        for i in 0..FFT_SIZE {
-            let idx = (self.ring_pos + i) % FFT_SIZE;
-            self.fft_scratch[i] = Complex::new(self.ring[idx] * self.window[i], 0.0);
-        }
-        self.fft_plan.process_with_scratch(&mut self.fft_scratch, &mut self.fft_work);
-
-        let half = FFT_SIZE / 2;
-        let bin_hz = self.sample_rate / FFT_SIZE as f32;
-
-        // Pre-compute all bin magnitudes into a local array so we can
-        // drop the borrow on self.fft_scratch before mutating self.peak/spectrum.
-        // half == 1024 which fits comfortably on the stack as a Vec alloc once.
-        let mut mags = [0.0f32; FFT_SIZE / 2];
-        let mut frame_peak = 0.0f32;
-        for i in 0..half {
-            let c = self.fft_scratch[i];
-            let m = (c.re * c.re + c.im * c.im).sqrt();
-            mags[i] = m;
-            if m > frame_peak { frame_peak = m; }
-        }
-        // Running peak for normalization (slow release)
-        self.peak = (self.peak * 0.995).max(frame_peak * 0.7).max(0.05);
-
-        // Bin magnitudes into the 10 EQ center-frequency bands (1-octave window),
-        // convert to log scale, apply envelope follower for musical ballistics.
-        for (band_idx, &f0) in EQ_FREQS.iter().enumerate() {
-            let low  = f0 / std::f32::consts::SQRT_2;   // -0.5 octave
-            let high = f0 * std::f32::consts::SQRT_2;   // +0.5 octave
-            let bin_lo = ((low  / bin_hz) as usize).max(1);
-            let bin_hi = ((high / bin_hz) as usize).min(half - 1).max(bin_lo);
-
-            let mut sum = 0.0f32;
-            let mut count = 0usize;
-            for bi in bin_lo..=bin_hi {
-                sum += mags[bi];
-                count += 1;
-            }
-            let avg = if count > 0 { sum / count as f32 } else { 0.0 };
-            let norm = (avg / self.peak).clamp(0.0, 4.0);
-            let db = 20.0 * (norm + 1e-6).log10();
-            let level = ((db + 60.0) / 60.0).clamp(0.0, 1.2);
-
-            // Classic VU ballistics: fast attack, slower release
-            let prev = self.spectrum[band_idx];
-            let coeff = if level > prev { 0.6 } else { 0.15 };
-            self.spectrum[band_idx] = prev + (level - prev) * coeff;
         }
     }
 
@@ -238,8 +146,7 @@ impl EqChain {
         self.set_bands(&bands);
     }
 
-    /// Process one stereo sample pair in-place. Also feeds the
-    /// post-EQ mono downmix into the spectrum analyzer ring buffer.
+    /// Process one stereo sample pair.
     #[inline]
     pub fn process_stereo(&mut self, l: f32, r: f32) -> (f32, f32) {
         let (out_l, out_r) = if self.active && !self.bypass {
@@ -255,15 +162,6 @@ impl EqChain {
             (l, r)
         };
 
-        // Feed into spectrum ring buffer (mono downmix)
-        let mono = 0.5 * (out_l + out_r);
-        self.ring[self.ring_pos] = mono;
-        self.ring_pos = (self.ring_pos + 1) % FFT_SIZE;
-        self.samples_since_fft += 1;
-        if self.samples_since_fft >= FFT_INTERVAL {
-            self.samples_since_fft = 0;
-            self.update_spectrum();
-        }
 
         (out_l, out_r)
     }

@@ -69,6 +69,8 @@ pub(crate) struct Params {
     /// A PFL cue DEVICE is chosen on this machine (not "same as main output"): PFL goes ONLY to it — the main
     /// output is untouched — whether or not that device is present (a missing one = PFL silent, never a fallback).
     pub pfl_to_device: bool,
+    /// SLICE 8 — what the RTA listens to (rta.rs). None = the callback does nothing for it.
+    pub rta: crate::rta::RtaTarget,
 }
 
 /// A decoder — the iterator build_source returns (rodio Decoder → 2 ch / 44.1 kHz). S4: it lives on a
@@ -372,7 +374,6 @@ pub(crate) struct MeterFrame {
     pub master_peak: f32,
     pub room_peak: f32,
     pub aux_peak: f32,
-    pub spectrum: [f32; 10],
     pub frames_consumed: u64,
     pub duck_gain: f32,
     // No *_out_lufs here: slice 3 deleted the estimate; OUT is measured by loudness.rs and joined in GetLevel.

@@ -12,6 +12,7 @@ mod lufs;
 mod clock;
 mod program_processor;   // Audio Processing v1 — per-station program-bus loudness (bench-gated before ship)
 mod show;                // Slice 7 — a show preset as the engine applies it (one Params block)
+mod rta;                 // Slice 8 — the live RTA behind the rack's EQ curve (docs/dsp-channel-rta.md)
 mod ramp;                // Slice 7 — the fader level ramp (docs/dsp-show-presets.md, ruling 4)
 mod chdsp;               // Slice 5 — the channel rack DSP (biquads + crossfade) on the audio thread
 mod micin;               // The mic as an engine input — docs/dsp-mic-in-engine.md
@@ -539,10 +540,6 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
     }).to_string()
 }
 
-/// 10-band post-EQ master spectrum (0..~1 normalized magnitude), for the Master EQ
-/// rack's live FFT display. Mirrors audio_get_levels: nudges the audio thread to
-/// refresh AudioLevels (GetLevel also copies the latest bus spectrum) then reads it.
-/// Returns a JSON array of 10 floats, e.g. "[0.12,0.34,...]".
 /// C5, MEASURED ON THE SHIPPED MODULE — one ProgramProcessor instance versus two.
 ///
 /// The bench in program_processor.rs answers this too, but it is a different binary: the cargo test
@@ -738,21 +735,48 @@ pub fn audio_render_offline(path: String, cfg_json: String, out_dir: String) -> 
     }
 }
 
+/// SLICE 8 — what the station's RTA listens to (docs/dsp-channel-rta.md): "" = nothing (the callback does nothing
+/// for it), "master", or a fader (A–F, CART, S1–S5). One target at a time per station. The daemon holds it on a
+/// lease: a rack view renews it, and an unrenewed lease sends "". (audio_get_spectrum is retired — ruling 4.)
 #[napi]
-pub fn audio_get_spectrum(station_id: Option<u32>) -> String {
-    let levels_arc = {
-        let engine = get_or_create_engine(station_id.unwrap_or(1), None);
-        let Ok(audio) = engine.lock() else {
-            return "[0,0,0,0,0,0,0,0,0,0]".to_string();
-        };
-        let _ = audio.sender.send(AudioCmd::GetLevel);
-        audio.levels.clone()
+pub fn audio_set_rta(station_id: u32, target: String) -> String {
+    let t = match target.as_str() {
+        "" => rta::RtaTarget::None,
+        "master" => rta::RtaTarget::Master,
+        s => match audio::deck_index(s) {
+            Some(i) => rta::RtaTarget::Channel(i as u8),
+            None => return serde_json::json!({ "ok": false, "reason": format!("`{}` is not a fader (A–F, CART, S1–S5) or master", s) }).to_string(),
+        },
     };
-    let spec: [f32; 10] = match levels_arc.lock() {
-        Ok(lvl) => lvl.spectrum,
-        Err(_)  => [0.0; 10],
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return serde_json::json!({ "ok": false, "reason": "engine busy" }).to_string() };
+    match audio.sender.send(AudioCmd::SetRta(t)) {
+        Ok(()) => serde_json::json!({ "ok": true }).to_string(),
+        Err(_) => serde_json::json!({ "ok": false, "reason": "the station's engine is not running" }).to_string(),
+    }
+}
+
+/// SLICE 8 — the station's newest RTA frame: 31 ISO third-octave bands (dBFS, a full-scale sine = 0 dB), pre-rack
+/// and post-rack, both pre-fader. `target` = "" | "master" | the fader; `fed` = frames arrived in the last 500 ms;
+/// `coarseBelowHz` = bands below this are narrower than 3 FFT bins (the view hatches them).
+#[napi]
+pub fn audio_get_rta(station_id: u32) -> String {
+    let reader = {
+        let engine = get_or_create_engine(station_id, None);
+        let Ok(audio) = engine.lock() else { return serde_json::json!({ "v": 1, "fed": false }).to_string() };
+        audio.meters.rta.clone()
     };
-    serde_json::to_string(&spec).unwrap_or_else(|_| "[0,0,0,0,0,0,0,0,0,0]".to_string())
+    let Some(reader) = reader else { return serde_json::json!({ "v": 1, "fed": false, "target": "" }).to_string() };
+    let Ok(mut r) = reader.lock() else { return serde_json::json!({ "v": 1, "fed": false }).to_string() };
+    let f = r.read();
+    const NAMES: [&str; 12] = ["A", "B", "C", "D", "E", "F", "CART", "S1", "S2", "S3", "S4", "S5"];
+    let target = match f.target { t if (0..12).contains(&t) => NAMES[t as usize], 12 => "master", _ => "" };
+    let r1 = |v: &[f32]| v.iter().map(|x| (x * 10.0).round() / 10.0).collect::<Vec<f32>>();
+    serde_json::json!({
+        "v": 1, "seq": f.seq, "target": target, "fed": f.fed,
+        "centres": rta::RTA_CENTRES, "coarseBelowHz": rta::coarse_below_hz(),
+        "pre": r1(&f.pre), "post": r1(&f.post), "pushed": f.pushed, "dropped": f.dropped,
+    }).to_string()
 }
 
 // ── Broadcast (profanity) delay + dump ────────────────────────────────────────

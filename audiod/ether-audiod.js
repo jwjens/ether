@@ -372,7 +372,7 @@ const handlers = {
     for (const s of (m.stations || [])) if (s && s.uuid) meterSubs.set(Number(s.id), { at: now, uuid: String(s.uuid) });
     return [...meterSubs.keys()];
   },
-  getSpectrum:        (m) => JSON.parse(A.audioGetSpectrum(m.stationId)),
+  getSpectrum:        () => [],   // RETIRED (slice 8, ruling 4): the engine has no in-callback spectrum; see audio_get_rta
   getFileDuration:    (m) => A.getFileDuration(m.filePath),
   listOutputDevices:  ()  => JSON.parse(A.audioListOutputDevices()),
   // THE MIC (docs/dsp-mic-in-engine.md) — the daemon's engine owns the input streams, so the device list and the

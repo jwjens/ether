@@ -273,13 +273,15 @@ impl LoudnessMeters {
 
 /// The live meter thread: drain every LOUD_TICK_MS, publish every LOUD_PUBLISH_MS, exit when the station's
 /// state (and with it the callback end) is dropped.
-pub(crate) fn spawn_meter_thread(station_id: u32, mut m: LoudnessMeters) {
+pub(crate) fn spawn_meter_thread(station_id: u32, mut m: LoudnessMeters, mut rta: Option<crate::rta::RtaAnalyzer>) {
     let _ = std::thread::Builder::new()
         .name(format!("ether-loudness-{}", station_id))
         .spawn(move || {
             let mut last = std::time::Instant::now();
             while !m.shared.stop.load(Ordering::Acquire) {
                 m.drain();
+                // SLICE 8 — the RTA: whatever the callback pushed for the one target a rack view listens to.
+                if let Some(r) = rta.as_mut() { r.drain(); }
                 if last.elapsed() >= std::time::Duration::from_millis(LOUD_PUBLISH_MS) {
                     m.publish();
                     last = std::time::Instant::now();

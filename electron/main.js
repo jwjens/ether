@@ -5405,9 +5405,10 @@ ipcMain.handle("audio:subscribe-meters", (_, stationIds) => {
   return ids;
 });
 ipcMain.handle("audio:getLevels", (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("getLevels", { stationId }) : JSON.parse(audio.audioGetLevels(stationId)));
-// 10-band post-EQ master spectrum for the Master EQ rack's live FFT display. Routes to the
-// daemon when it owns playout (it has the live audio), else the in-process addon.
-ipcMain.handle("audio:getSpectrum", (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("getSpectrum", { stationId }) : JSON.parse(audio.audioGetSpectrum(stationId)));
+// RETIRED (slice 8, ruling 4): the in-callback master spectrum is gone — the engine no longer has audio_get_spectrum.
+// The master GEQ view reads the RTA (docs/dsp-channel-rta.md). Kept one step as an inert answer (an empty array, which
+// the old view ignores) so a renderer that still polls it gets no error; removed with that view.
+ipcMain.handle("audio:getSpectrum", () => []);
 ipcMain.handle("audio:getFileDuration", (_, filePath) => audio.getFileDuration(filePath));
 // Cover art is DOWNSCALED before it crosses to the renderer. Full-size embedded art on this library
 // runs 150-230KB per image, which as a base64 data URL is ~200-310K CHARACTERS. The Jukebox wall puts
