@@ -45,7 +45,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { matchesStation } from "../lib/levelsScope";
-import { deckLetter, sourceKindMeta, isSweeperKind } from "./DeckConfigurator";
+import { sourceKindMeta, isSweeperKind, compareSlots } from "./DeckConfigurator";
+import { boardName } from "../lib/boardName";
 
 const MAIN_DECKS = ["A", "B", "C"];        // the main faders — they have their own strips and monitoring
 const KEY = "aux_monitor_slots";            // legacy positional slot->deck map; read once, to migrate
@@ -99,6 +100,8 @@ export default function AuxMonitorSlots() {
       try {
         const r: any = await (window as any).ether.deckConfigs.list(stationId);
         const rows: any[] = (r && r.rows) || [];
+        // ONE NAME PER FADER — each row is named by its board letter, from this board's own order (src/lib/boardName.ts).
+        const order = [...rows].filter(c => c && c.slot).sort(compareSlots).map(c => String(c.slot));
         const next: AuxDeck[] = rows
           // EVERY AUX DECK GETS A ROW. One row per deck, whatever is dialled into it — including
           // nothing. A row that disappears when a source is selected is not "treated the same"; it
@@ -108,7 +111,7 @@ export default function AuxMonitorSlots() {
             const slot = String(c.slot);
             // The name the operator gave it wins; otherwise what is patched in; otherwise the type.
             const kindLabel = c.kind ? (sourceKindMeta(c.kind)?.label || String(c.kind)) : "";
-            return { slot, letter: deckLetter(slot), kind: String(c.kind || ""),
+            return { slot, letter: boardName(slot, order), kind: String(c.kind || ""),
                      source: String(c.label || kindLabel || c.type || "unpatched") };
           })
           .sort((a, b) => a.letter.localeCompare(b.letter));

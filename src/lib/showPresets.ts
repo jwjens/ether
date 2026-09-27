@@ -4,6 +4,7 @@
 // ("· modified", derived value by value — never a flag). The blade (audiod/show-presets.js) owns the real state:
 // which channels are waiting, the levels, the current show. The Arm preview uses the blade's live rule on what the
 // board shows (Jeff's ruling 1: live = ON; for A/B/C ON = playing); the Take's own answer says what actually waited.
+import { boardName } from "./boardName";
 
 export const SHOW_SLOTS = ["A", "B", "C", "D", "E", "F", "CART", "S1", "S2", "S3", "S4", "S5"] as const;
 export const ROTATION = new Set(["A", "B", "C"]);
@@ -29,7 +30,8 @@ export interface ShowState {
 }
 export const EMPTY_SHOW_STATE: ShowState = { current: null, armed: null, pending: [], levels: {} };
 
-export interface ShowChange { where: string; what: string; from: string; to: string }
+/** `where` is what the operator reads (the board letter — ONE NAME PER FADER); `slot` is the engine slot it is about. */
+export interface ShowChange { where: string; what: string; from: string; to: string; slot?: string }
 
 const LEVEL_EPS = 0.005;
 const pct = (v: number | undefined) => (v == null ? "—" : v <= 0.0005 ? "−∞" : `${(20 * Math.log10(v)).toFixed(1)} dB`);
@@ -53,22 +55,22 @@ const rackWords = (doc: any): string => {
  * Every value the preset names that differs from the live board. A field the preset does not name is not compared
  * (Flat names faders and racks, not layout). `live` is a snapshot of the board (show:snapshot).
  */
-export function diffShow(live: ShowPreset | null, preset: ShowPreset | null): ShowChange[] {
+export function diffShow(live: ShowPreset | null, preset: ShowPreset | null, name: (slot: string) => string = (s) => boardName(s)): ShowChange[] {
   if (!live || !preset) return [];
   const out: ShowChange[] = [];
   const lc = live.board.channels, pc = preset.board.channels;
   for (const slot of SHOW_SLOTS) {
     const p = pc[slot]; if (!p) continue;
     const l = lc[slot] || {};
-    const w = `Ch ${slot}`;
-    if (p.enabled !== undefined && !ROTATION.has(slot) && !!p.enabled !== !!l.enabled) out.push({ where: w, what: "on the board", from: yn(l.enabled), to: yn(p.enabled) });
+    const w = `Ch ${name(slot)}`;
+    if (p.enabled !== undefined && !ROTATION.has(slot) && !!p.enabled !== !!l.enabled) out.push({ where: w, slot, what: "on the board", from: yn(l.enabled), to: yn(p.enabled) });
     if (p.enabled === false) continue;
-    if (p.kind !== undefined && !ROTATION.has(slot) && (p.kind || "") !== (l.kind || "")) out.push({ where: w, what: "source", from: l.kind || "—", to: p.kind || "—" });
-    if (p.fader != null && Math.abs(p.fader - (l.fader ?? 1)) > LEVEL_EPS) out.push({ where: w, what: "fader", from: pct(l.fader ?? 1), to: pct(p.fader) });
-    if (p.duck !== undefined && !ROTATION.has(slot) && !!p.duck !== !!l.duck) out.push({ where: w, what: "duck", from: yn(l.duck), to: yn(p.duck) });
-    if (p.duckable !== undefined && !!p.duckable !== (l.duckable ?? true)) out.push({ where: w, what: "ducks under sources", from: yn(l.duckable ?? true), to: yn(p.duckable) });
-    if (p.roomLevel != null && Math.abs(p.roomLevel - (l.roomLevel ?? -1)) > LEVEL_EPS) out.push({ where: w, what: "room level", from: l.roomLevel == null ? "—" : `${Math.round(l.roomLevel * 100)}%`, to: `${Math.round(p.roomLevel * 100)}%` });
-    if (p.rack && rackKey(p.rack) !== rackKey(l.rack || { v: 1, sections: { ch: [] } })) out.push({ where: w, what: "channel rack", from: rackWords(l.rack), to: rackWords(p.rack) });
+    if (p.kind !== undefined && !ROTATION.has(slot) && (p.kind || "") !== (l.kind || "")) out.push({ where: w, slot, what: "source", from: l.kind || "—", to: p.kind || "—" });
+    if (p.fader != null && Math.abs(p.fader - (l.fader ?? 1)) > LEVEL_EPS) out.push({ where: w, slot, what: "fader", from: pct(l.fader ?? 1), to: pct(p.fader) });
+    if (p.duck !== undefined && !ROTATION.has(slot) && !!p.duck !== !!l.duck) out.push({ where: w, slot, what: "duck", from: yn(l.duck), to: yn(p.duck) });
+    if (p.duckable !== undefined && !!p.duckable !== (l.duckable ?? true)) out.push({ where: w, slot, what: "ducks under sources", from: yn(l.duckable ?? true), to: yn(p.duckable) });
+    if (p.roomLevel != null && Math.abs(p.roomLevel - (l.roomLevel ?? -1)) > LEVEL_EPS) out.push({ where: w, slot, what: "room level", from: l.roomLevel == null ? "—" : `${Math.round(l.roomLevel * 100)}%`, to: `${Math.round(p.roomLevel * 100)}%` });
+    if (p.rack && rackKey(p.rack) !== rackKey(l.rack || { v: 1, sections: { ch: [] } })) out.push({ where: w, slot, what: "channel rack", from: rackWords(l.rack), to: rackWords(p.rack) });
   }
   const pm = preset.board.master || {}, lm = live.board.master || {};
   if (pm.fader != null && Math.abs(pm.fader - (lm.fader ?? 1)) > LEVEL_EPS) out.push({ where: "Master", what: "fader", from: pct(lm.fader ?? 1), to: pct(pm.fader) });
@@ -97,9 +99,9 @@ export function liveSlots(onBoard: string[], deckStatus: Record<string, string |
 
 /** The Arm preview: what a Take would change, split into "now" and "waits (live)". */
 export function armPreview(changes: ShowChange[], live: string[]): { now: ShowChange[]; waits: ShowChange[]; waitingSlots: string[] } {
-  const isWaiting = (c: ShowChange) => c.where.startsWith("Ch ") && live.includes(c.where.slice(3));
+  const isWaiting = (c: ShowChange) => !!c.slot && live.includes(c.slot);
   const waits = changes.filter(isWaiting);
-  return { now: changes.filter(c => !isWaiting(c)), waits, waitingSlots: [...new Set(waits.map(c => c.where.slice(3)))] };
+  return { now: changes.filter(c => !isWaiting(c)), waits, waitingSlots: [...new Set(waits.map(c => c.slot as string))] };
 }
 
 /** The strip's PENDING: which show this slot is waiting for, from the blade's state (never local state). */

@@ -196,12 +196,28 @@ console.log("\nSLICE 7 — the blade: live = ON, pending until OFF, one engine c
   check(/show\.state\(stationId\)/.test(hook) && /onState/.test(hook) && /onLevels/.test(hook) && !/localStorage/.test(hook), "the board's show state is READ BACK from the blade (state + events), never held locally");
   check(/show\.levels\.master/.test(src("src/components/MasterOutput.tsx")), "the master fader reads back too");
   const bar = src("src/components/ShowPresetBar.tsx");
-  check(/diffShow\(live, current\)/.test(bar) && /show\.snapshot/.test(bar), "· modified is derived from a live snapshot, value by value (never a flag)");
+  check(/diffShow\(live, current[,)]/.test(bar) && /show\.snapshot/.test(bar), "· modified is derived from a live snapshot, value by value (never a flag)");
   check(/CHANGES NOW/.test(bar) && /WAITS — ON NOW/.test(bar) && /never switches a channel ON/.test(bar), "Arm says what changes now, what waits (live), and that a Take never switches a channel ON");
   const pre = src("electron/preload.js");
   check(["list", "snapshot", "save", "delete", "state", "arm", "disarm", "take", "force"].every(v => new RegExp(`"show:${v}"`).test(pre)), "the preload bridge carries every show verb");
   check(/sendToAllWindows\("show:levels", \{ stationUuid/.test(src("electron/main.js")), "fader levels reach every window by station UUID");
   check(fs.existsSync(path.join(__dirname, "..", "docs", "help-show-presets.md")) && /Show Presets/.test(src("docs/help-channel-faders.md")), "help: docs/help-show-presets.md exists and the faders help links it");
+}
+
+// 10 · ONE NAME PER FADER (Jeff's ruling): every place that names a fader asks src/lib/boardName.ts.
+{
+  const uses = {
+    "rack window tabs": "src/components/rack/Rack.tsx", "rack editing header + meter labels": "src/components/rack/ChannelRackView.tsx",
+    "Aux Monitors rows": "src/components/AuxMonitorSlots.tsx", "Health Monitor mic panel": "src/components/health/MicInputsHealth.tsx",
+    "show preset bar + preview": "src/components/ShowPresetBar.tsx", "source strip": "src/components/SourceChannelStrip.tsx",
+  };
+  const missing = Object.entries(uses).filter(([, f]) => !/useBoardName|boardName\(/.test(src(f))).map(([k]) => k);
+  check(missing.length === 0, `every fader name comes from the one helper (${missing.join(", ") || "all 6 sites"})`);
+  check(!/deckLetter\s*[(=]/.test(src("src/components/DeckConfigurator.tsx") + src("src/components/AuxMonitorSlots.tsx") + src("src/components/SourceChannelStrip.tsx")), "the old fixed-arithmetic deckLetter is gone — one helper, not two");
+  check(!/\{slot\}|\$\{slot\}/.test(src("src/components/rack/ChannelRackView.tsx")), "the rack view never prints the engine slot id");
+  const helps = fs.readdirSync(path.join(__dirname, "..", "docs")).filter(f => /^help-.*\.md$/.test(f));
+  const leaks = helps.filter(f => /\bS[1-5]\b/.test(src(`docs/${f}`)));
+  check(leaks.length === 0, `no help doc names an engine slot S1–S5 (${leaks.join(", ") || "none"})`);
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILED"}  (${pass} passed, ${fail} failed)`);

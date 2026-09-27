@@ -73,19 +73,10 @@ export const SOURCE_KINDS: SourceKindMeta[] = [
     state: "Needs the engine capture path — Phase 2." },
 ];
 
-// ONE ALPHABET. Storage and the Rust engine still say "S1".."S5" for the slots added by slice 1
-// (native/src/audio.rs:632 "S1" => Some(7), SOURCE_IDS, and the deck_configs PK (station_id, slot)),
-// but an operator should never meet a second naming series: decks are A, B, C, D, E, F, G, H, I...
-// This maps the stored id to the letter shown EVERYWHERE — board strip and aux monitor row — so a
-// deck is called the same thing in both places. Renaming the stored ids is a separate change: it
-// needs a Rust constant change plus a deck_configs migration, and is not worth risking inside a UI
-// pass. S1 -> G because F is the last of the original letters.
-export const deckLetter = (slot: string): string => {
-  const m = /^S(\d+)$/.exec(String(slot || ""));
-  if (!m) return String(slot || "");
-  const n = Number(m[1]);
-  return n >= 1 ? String.fromCharCode("F".charCodeAt(0) + n) : String(slot);
-};
+// ONE NAME PER FADER. Storage and the Rust engine say "S1".."S5" for the slots added by slice 1 (native/src/audio.rs
+// deck_index, the deck_configs PK (station_id, slot)); an operator never meets that series. The board letter is the
+// fader's only display name, and ONE helper gives it everywhere — src/lib/boardName.ts (useBoardName in a component).
+// The fixed-arithmetic deckLetter that lived here is gone: it could not follow this board's own deck_configs order.
 
 /** Is this channel dialled to sweepers?
  *

@@ -1,7 +1,7 @@
 // ── ChannelRackView — one fader's channel rack (Slice 5, docs/dsp-channel-rack-eq.md §4) ─────────────────────
 //
 // The same language as the master rack (rackUi, the slot colours): a SIGNAL-FLOW STRIP of this fader's slots,
-// the EDITOR for the selected module ("editing: S2 · PEQ" — the channel is always named), and a PINNED METER
+// the EDITOR for the selected module ("editing: G · PEQ" — the channel is always named, by its board letter), and a PINNED METER
 // column: IN (pre-rack) and OUT (post-rack) for this fader — what the EQ did.
 //
 // RULES IT KEEPS (channelRack.ts, enforced again by the engine): Add offers Filters and PEQ only, one of each;
@@ -12,6 +12,7 @@ import React, { useEffect, useState } from "react";
 import type { ChannelModule, ChannelModuleType, FilterModule, PeqModule, GateModule, CompModule, ChannelRackDoc, Slot } from "./rackTypes";
 import DynCurve from "./DynCurve";
 import { COMP, GATE } from "./dynMath";
+import { useBoardName } from "../../hooks/useBoardName";
 import { BUILT_IN_CHANNEL_PRESETS, channelRacksEqual, type ChannelPreset } from "./channelRack";
 import { latestMeters } from "../meter/meterStore";
 import {
@@ -105,6 +106,8 @@ function Num({ label, value, unit, min, max, step, onChange, color, hint }: {
 
 export default function ChannelRackView({ stationId, stationUuid, slot }: { stationId: number; stationUuid: string | null | undefined; slot: ChannelSlot }) {
   const rack = useChannelRack(stationId, slot);
+  // ONE NAME PER FADER — the operator sees the board letter, never the engine slot id (src/lib/boardName.ts).
+  const slotName = useBoardName()(slot);
   const [selMod, setSelMod] = useState<ChannelModuleType | null>(null);
   const [band, setBand] = useState<number | null>(null);
   const [menu, setMenu] = useState<string | null>(null);
@@ -132,7 +135,7 @@ export default function ChannelRackView({ stationId, stationUuid, slot }: { stat
   if (!doc) {
     return (
       <div style={{ padding: 24, color: "var(--text-tertiary)", fontSize: 13 }}>
-        {rack.error ? <>⚠ {slot}'s rack could not be read — {rack.error}</> : `Reading ${slot}'s rack…`}
+        {rack.error ? <>⚠ {slotName}'s rack could not be read — {rack.error}</> : `Reading ${slotName}'s rack…`}
       </div>
     );
   }
@@ -174,7 +177,7 @@ export default function ChannelRackView({ stationId, stationUuid, slot }: { stat
           <span style={{ fontSize: 13, fontWeight: 900, letterSpacing: "0.08em", color }}>{CHANNEL_LABEL[m.type]}</span>
           <div style={{ flex: 1 }} />
           <button onClick={e => { e.stopPropagation(); rack.update(setChannelIn(doc, s.id, !s.in)); }}
-            title={`${CHANNEL_LABEL[m.type]} IN / OUT — saved with ${slot}'s rack. OUT = this module does nothing to ${slot}.`}
+            title={`${CHANNEL_LABEL[m.type]} IN / OUT — saved with ${slotName}'s rack. OUT = this module does nothing to ${slotName}.`}
             style={{ ...BTN(s.in, color), minWidth: 56, padding: "0 8px" }}>{s.in ? "IN" : "OUT"}</button>
           <button onClick={e => { e.stopPropagation(); setMenu(menu === key ? null : key); }} title="More" style={{ ...BTN(), minWidth: TOUCH, padding: 0 }}>⋯</button>
         </div>
@@ -273,10 +276,10 @@ export default function ChannelRackView({ stationId, stationUuid, slot }: { stat
             {armed && (
               <>
                 <button style={BTN(true, "#f59e0b")} onClick={() => { rack.update(JSON.parse(JSON.stringify(armed.doc))); setArmed(null); setBand(null); }}
-                  title={armed.doc.sections.ch.length ? `Replace ${slot}'s rack with ${armed.name} — its modules go IN (crossfaded, no click)` : `Empty ${slot}'s rack — nothing runs`}>TAKE ▸ {armed.name}</button>
+                  title={armed.doc.sections.ch.length ? `Replace ${slotName}'s rack with ${armed.name} — its modules go IN (crossfaded, no click)` : `Empty ${slotName}'s rack — nothing runs`}>TAKE ▸ {armed.name}</button>
                 <button style={BTN()} onClick={() => setArmed(null)}>DISARM</button>
                 <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-                  {armed.doc.sections.ch.length ? `replaces ${slot}'s rack: ${armed.doc.sections.ch.map(s => s.module ? CHANNEL_LABEL[s.module.type] : "").join(" → ")}, all IN` : `empties ${slot}'s rack`}
+                  {armed.doc.sections.ch.length ? `replaces ${slotName}'s rack: ${armed.doc.sections.ch.map(s => s.module ? CHANNEL_LABEL[s.module.type] : "").join(" → ")}, all IN` : `empties ${slotName}'s rack`}
                 </span>
               </>
             )}
@@ -289,7 +292,7 @@ export default function ChannelRackView({ stationId, stationUuid, slot }: { stat
 
           {/* ── STRIP ── */}
           <div style={{ display: "flex", alignItems: "stretch", gap: 8, padding: 10, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", flexWrap: "wrap" }}>
-            <span style={{ ...LABEL, width: 74, alignSelf: "center", fontWeight: 900, color: "var(--text-secondary)" }}>{slot}</span>
+            <span style={{ ...LABEL, width: 74, alignSelf: "center", fontWeight: 900, color: "var(--text-secondary)" }}>{slotName}</span>
             {doc.sections.ch.map((s, i) => s.module ? tile(s, i) : null)}
             {doc.sections.ch.length < CHANNEL_RACK_SLOTS && (
               <div style={{ minWidth: 190, minHeight: 84, border: "1px dashed var(--border-primary)", display: "flex", flexDirection: "column",
@@ -307,11 +310,11 @@ export default function ChannelRackView({ stationId, stationUuid, slot }: { stat
               <div style={{ alignSelf: "center", marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
                 {!confirmClear ? (
                   <button style={BTN()} onClick={() => setConfirmClear(true)}
-                    title={`Empty ${slot}'s rack — removes every module. Asks first.`}>CLEAR RACK</button>
+                    title={`Empty ${slotName}'s rack — removes every module. Asks first.`}>CLEAR RACK</button>
                 ) : (
-                  <div role="alertdialog" aria-label={`Clear ${slot}'s rack?`}
+                  <div role="alertdialog" aria-label={`Clear ${slotName}'s rack?`}
                        style={{ display: "flex", gap: 6, alignItems: "center", padding: "6px 8px", border: "1px solid #ef4444", background: "rgba(239,68,68,0.10)" }}>
-                    <span style={{ fontSize: 12, fontWeight: 700 }}>Clear {slot}'s rack? Every module is removed; {slot} is untouched again.</span>
+                    <span style={{ fontSize: 12, fontWeight: 700 }}>Clear {slotName}'s rack? Every module is removed; {slotName} is untouched again.</span>
                     <button style={BTN(true, "#ef4444")} onClick={() => { setConfirmClear(false); setBand(null); rack.update(clearChannelRack(doc)); }}>CLEAR</button>
                     <button style={BTN()} onClick={() => setConfirmClear(false)} autoFocus>CANCEL</button>
                   </div>
@@ -323,12 +326,12 @@ export default function ChannelRackView({ stationId, stationUuid, slot }: { stat
           {/* ── EDITOR ── */}
           <div style={{ padding: 12, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", display: "flex", flexDirection: "column", gap: 10 }}>
             <div style={{ ...LABEL, fontSize: 12 }}>
-              editing: <b style={{ color: "var(--text-primary)" }}>{slot} · {shown ? CHANNEL_LABEL[shown] : "—"}</b>
-              {(filters || peq) && !channelRackAudible(doc) && <span style={{ marginLeft: 10, textTransform: "none", letterSpacing: 0 }}>· nothing IN changes the sound — {slot} is untouched</span>}
+              editing: <b style={{ color: "var(--text-primary)" }}>{slotName} · {shown ? CHANNEL_LABEL[shown] : "—"}</b>
+              {(filters || peq) && !channelRackAudible(doc) && <span style={{ marginLeft: 10, textTransform: "none", letterSpacing: 0 }}>· nothing IN changes the sound — {slotName} is untouched</span>}
             </div>
             {doc.sections.ch.length === 0 ? (
               <div style={{ color: "var(--text-tertiary)", fontSize: 13, lineHeight: 1.5 }}>
-                {slot}'s rack is empty — the audio on this fader is untouched. Add <b>Filters</b> (a high-pass and low-pass), a <b>Gate</b>,
+                {slotName}'s rack is empty — the audio on this fader is untouched. Add <b>Filters</b> (a high-pass and low-pass), a <b>Gate</b>,
                 a <b>PEQ</b> (four bands) or a <b>Comp</b>ressor — or take the <b>Voice</b> preset above. A new module starts <b>OUT</b>, so nothing
                 changes on air until you press <b>IN</b>.
               </div>
@@ -390,13 +393,13 @@ export default function ChannelRackView({ stationId, stationUuid, slot }: { stat
 
         {/* ── PINNED METERS: IN (pre-rack) and OUT (post-rack) ── */}
         <div style={{ flex: "0 1 220px", minWidth: 180, display: "flex", flexDirection: "column", gap: 8, padding: 10, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)" }}>
-          <span style={{ ...LABEL, fontWeight: 800 }}>{slot} · pre-fader</span>
+          <span style={{ ...LABEL, fontWeight: 800 }}>{slotName} · pre-fader</span>
           <div style={{ display: "flex", gap: 8, height: 180 }}>
             <div style={{ flex: 1, display: "flex" }}>
-              <PeakAvgMeter source={{ stationUuid, ch: idx }} size="master" label="IN" title={`${slot} before its rack (what the strip meter shows)`} />
+              <PeakAvgMeter source={{ stationUuid, ch: idx }} size="master" label="IN" title={`${slotName} before its rack (what the strip meter shows)`} />
             </div>
             <div style={{ flex: 1, display: "flex" }}>
-              <PeakAvgMeter source={{ stationUuid, ch: idx, post: true }} size="master" label="OUT" title={`${slot} after its rack — what the EQ did. Hatched = the running engine predates the channel EQ.`} />
+              <PeakAvgMeter source={{ stationUuid, ch: idx, post: true }} size="master" label="OUT" title={`${slotName} after its rack — what the EQ did. Hatched = the running engine predates the channel EQ.`} />
             </div>
           </div>
           <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.4 }}>

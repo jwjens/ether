@@ -35,7 +35,7 @@ and the master at Ether's standard chain. It's always there as a known clean sta
 The **SHOW** bar sits **above the faders**, in the dashboard and in the pop-out board. It shows:
 - **SHOW: Morning Drive**, the show you last took;
 - **· modified**, when the board no longer matches it (you moved a fader, changed an EQ, and so on);
-- **· waiting: A, S1**, the channels still waiting for the show (see PENDING below).
+- **· waiting: A, G**, the channels still waiting for the show (see PENDING below).
 
 ## Take a show
 

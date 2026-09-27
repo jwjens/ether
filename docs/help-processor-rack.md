@@ -86,7 +86,7 @@ Each kind of module always has the same colour: **blue** for EQ, **cyan** for lo
   last: it is what holds the ceiling. (Channel racks can be reordered.)
 - **The ride and the limiter cannot be removed** (bypass is the test tool). The GEQ can be removed and added
   back.
-- **Channel racks live in the same window.** The selector row at the top (MASTER | A–F | CART | S1–S5) goes to a
+- **Channel racks live in the same window.** The selector row at the top (MASTER | A–F | CART | G–K, every fader by its board letter) goes to a
   fader's own rack. See **Channel EQ** (`docs/help-channel-eq.md`).
 - **No show presets, and no protection for live channels during recall.** Those come later; today Take
   applies at once, because the master rack has no channels to protect.

@@ -6,11 +6,14 @@
 import React from "react";
 import { HealthPanel } from "./sectionChrome";
 import { micStateWords, openMicPreferences, useMicInputs } from "../../hooks/useMicInputs";
+import { useBoardName } from "../../hooks/useBoardName";
 
 const TONE: Record<string, string> = { ok: "var(--accent-green)", warn: "var(--accent-amber, #f59e0b)", bad: "var(--accent-red, #ef4444)", off: "var(--text-tertiary)" };
 
 export default function MicInputsHealth({ id, stationId }: { id: string; stationId: number | null }) {
   const mic = useMicInputs(stationId);
+  // ONE NAME PER FADER — each mic is named by its board letter, never the engine slot id (src/lib/boardName.ts).
+  const name = useBoardName();
   const slots = Array.from(new Set([...Object.keys(mic.patches), ...Object.keys(mic.states)])).sort();
   return (
     <HealthPanel id={id} title="Mic Inputs" right={
@@ -27,7 +30,7 @@ export default function MicInputsHealth({ id, stationId }: { id: string; station
             const w = micStateWords(s, !!p);
             return (
               <div key={slot} style={{ fontSize: 12, display: "flex", flexWrap: "wrap", gap: "2px 12px", alignItems: "baseline" }}>
-                <b style={{ minWidth: 28 }}>{slot}</b>
+                <b style={{ minWidth: 28 }}>{name(slot)}</b>
                 <span style={{ minWidth: 200 }}>{p ? `${p.device} · input ${p.channel} · ${p.gainDb >= 0 ? "+" : ""}${p.gainDb} dB` : "—"}</span>
                 <span style={{ color: TONE[w.tone], fontWeight: 700 }}>● {w.text}</span>
                 {s && (

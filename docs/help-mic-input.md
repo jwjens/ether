@@ -22,7 +22,7 @@ tour: true
 **It goes on air**, through the same engine as the music. Before this, the mic only played on this computer's
 speakers and never reached listeners.
 
-You can have a mic on any source channel: D, E, F, or S1–S5. Each mic has its own input.
+You can have a mic on any source channel: D, E, F, and the extra source channels the + button adds (G onward). Each mic has its own input.
 
 ## Put a mic on the board
 

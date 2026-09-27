@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useShowState } from "../hooks/useShowState";
 import { useDeckConfig } from "./DeckConfigurator";
 import { FLAT, armPreview, diffShow, liveSlots, type ShowPreset } from "../lib/showPresets";
+import { useBoardName } from "../hooks/useBoardName";
 
 const H = 30;
 const btn = (tone?: string, on = false): React.CSSProperties => ({
@@ -22,6 +23,8 @@ const AMBER = "var(--accent-amber, #f59e0b)";
 export default function ShowPresetBar({ deckStatus }: { deckStatus: Record<string, string | undefined> }) {
   const { state, reload, stationId } = useShowState();
   const { configs } = useDeckConfig();
+  // ONE NAME PER FADER — the bar names channels by board letter, never the engine slot id (src/lib/boardName.ts).
+  const name = useBoardName();
   const [presets, setPresets] = useState<ShowPreset[]>([]);
   const [flat, setFlat] = useState<ShowPreset | null>(null);
   const [foreign, setForeign] = useState(0);
@@ -59,7 +62,7 @@ export default function ShowPresetBar({ deckStatus }: { deckStatus: Record<strin
   const all = useMemo(() => [...(flat ? [flat] : []), ...presets], [flat, presets]);
   const byName = (n: string | null) => all.find(p => p.name === n) || null;
   const current = byName(state.current);
-  const modified = !!(current && live && diffShow(live, current).length);
+  const modified = !!(current && live && diffShow(live, current, name).length);
   const armed = byName(state.armed);
 
   const onBoard = useMemo(() => {
@@ -69,8 +72,8 @@ export default function ShowPresetBar({ deckStatus }: { deckStatus: Record<strin
   const channelOn = useMemo(() => Object.fromEntries((configs || []).map(c => [c.slot, (c as any).channelOn ?? true])), [configs]);
   const preview = useMemo(() => {
     if (!armed || !live) return null;
-    return armPreview(diffShow(live, armed), liveSlots(onBoard, deckStatus, channelOn));
-  }, [armed, live, onBoard, deckStatus, channelOn]);
+    return armPreview(diffShow(live, armed, name), liveSlots(onBoard, deckStatus, channelOn));
+  }, [armed, live, onBoard, deckStatus, channelOn, name]);
 
   const arm = async (name: string) => {
     setMsg(null);
@@ -84,7 +87,7 @@ export default function ShowPresetBar({ deckStatus }: { deckStatus: Record<strin
     const r = await show?.take?.(stationId, armed.name);
     if (r?.ok) {
       const waiting = r.pending || [];
-      setMsg({ tone: "ok", text: `Taken: ${armed.name}${waiting.length ? ` — ${waiting.join(", ")} ${waiting.length === 1 ? "is" : "are"} ON and will change when switched OFF (or TAKE NOW)` : ""}${r.stripped?.length ? ` · ignored ${r.stripped.length} setting(s) that belong to one computer` : ""}` });
+      setMsg({ tone: "ok", text: `Taken: ${armed.name}${waiting.length ? ` — ${waiting.map((s: string) => name(s)).join(", ")} ${waiting.length === 1 ? "is" : "are"} ON and will change when switched OFF (or TAKE NOW)` : ""}${r.stripped?.length ? ` · ignored ${r.stripped.length} setting(s) that belong to one computer` : ""}` });
       setOpen(false);
     } else setMsg({ tone: "bad", text: `Not taken — ${r?.reason || "no answer from the audio engine"}` });
     void reload(); void loadLive();
@@ -109,7 +112,7 @@ export default function ShowPresetBar({ deckStatus }: { deckStatus: Record<strin
         {modified && <span style={{ fontSize: 11, color: AMBER }} title="The board no longer matches this show — a fader, a rack, the ducker or the layout has changed since it was Taken">· modified</span>}
         {state.pending.length > 0 && (
           <span style={{ fontSize: 11, color: AMBER, fontWeight: 700 }} title="These channels were ON when the show was Taken. They keep what they have until they are switched OFF, or you press TAKE NOW on the channel.">
-            · waiting: {state.pending.map(p => p.slot).join(", ")}
+            · waiting: {state.pending.map(p => name(p.slot)).join(", ")}
           </span>
         )}
         <div style={{ flex: 1 }} />
@@ -151,7 +154,7 @@ export default function ShowPresetBar({ deckStatus }: { deckStatus: Record<strin
           </div>
           <div>
             <div style={{ fontWeight: 800, letterSpacing: "0.08em", color: AMBER, marginBottom: 2 }}>
-              WAITS — ON NOW{preview.waitingSlots.length ? ` (${preview.waitingSlots.join(", ")})` : ""}
+              WAITS — ON NOW{preview.waitingSlots.length ? ` (${preview.waitingSlots.map(name).join(", ")})` : ""}
             </div>
             {preview.waits.length === 0 ? <div>nothing — no channel that changes is ON</div> : preview.waits.map((c, i) => <div key={i}>{c.where} · {c.what}: {c.from} → <b>{c.to}</b></div>)}
             <div style={{ marginTop: 4, color: "var(--text-tertiary)" }}>A Take never switches a channel ON.</div>

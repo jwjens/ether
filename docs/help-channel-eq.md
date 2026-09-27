@@ -2,7 +2,7 @@
 feature: channel-eq
 title: Channel EQ (Filters and PEQ on a fader)
 summary: Every fader has its own rack — a high-pass and low-pass filter, and a 4-band parametric EQ — drawn as a curve you can drag, with IN and OUT meters so you can see what it did.
-where: The EQ button on any fader strip (and on the on-air decks A/B/C). In the rack window, the selector row: MASTER | A B C D E F | CART | S1…S5.
+where: The EQ button on any fader strip (and on the on-air decks A/B/C). In the rack window, the selector row: MASTER | A B C D E F | CART | G…K (each fader by its board letter).
 since: slice 5 (DSP)
 audience: operator
 tour: true
@@ -12,7 +12,7 @@ tour: true
 
 ## What it is
 
-**Each fader has its own rack**, separate from the master rack: A–F, CART and S1–S5. It can hold:
+**Each fader has its own rack**, separate from the master rack: every fader on the board, by the letter the board shows it (A–F, CART, and the extra source channels G onward). It can hold:
 
 - **FILTERS** (green):
   - a **high-pass** (HPF), to cut rumble below it;
@@ -34,7 +34,7 @@ before channel EQ existed.
 2. The rack window opens at that fader. If it is already open, it switches to that fader.
 3. Inside the window, the **selector row** at the top goes to any rack:
    - **MASTER**;
-   - **A B C D E F**, **CART**, **S1…S5**. A dot on a tab means that fader's rack has something IN.
+   - **A B C D E F**, **CART**, **G…K**, the same letters as the board. A dot on a tab means that fader's rack has something IN.
 
 On the **on-air decks A/B/C**, the deck's **EQ** button opens the same rack.
 
@@ -45,7 +45,7 @@ On the **on-air decks A/B/C**, the deck's **EQ** button opens the same rack.
      the gate and compressor are in **Gate and Compressor**). Or take the **Voice** preset.
    - **A new module starts OUT**, so adding one changes nothing on air.
 2. **Press IN** on the module's tile when you want to hear it.
-3. **Shape it on the curve.** The editor names what you are editing, for example *"editing: S2 · PEQ"*.
+3. **Shape it on the curve.** The editor names what you are editing, for example *"editing: H · PEQ"*.
    - **Drag a numbered node**: sideways sets the frequency, up and down sets the gain.
    - **Width:** use the mouse wheel over the curve, a trackpad pinch, or a two-finger pinch on a touch screen.
      Or pick **BAND 1–4** and use the sliders.
@@ -74,7 +74,7 @@ straight away and are saved.
 | **CLEAR RACK** | the right of the strip | **Empties this fader's rack**: Filters and PEQ are removed, and the fader is untouched again. |
 
 **Clearing a rack:**
-1. Press **CLEAR RACK**. It asks first: *"Clear S2's rack?"*
+1. Press **CLEAR RACK**. It asks first: *"Clear H's rack?"*
 2. Press **CLEAR** to empty the rack, or **CANCEL** to keep it.
 
 **Moving a module:** the **⋯** menu on a tile has **Move earlier / Move later**, so Filters can go after the PEQ.

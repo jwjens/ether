@@ -35,6 +35,7 @@ import { ceilingLabel } from "../meter/loudnessWire";
 import { EQ_LABELS } from "../GraphicEQ";
 import { LABEL, MONO, TOUCH, BTN, Knob } from "./rackUi";
 import ChannelRackView from "./ChannelRackView";
+import { useBoardName } from "../../hooks/useBoardName";
 import { CHANNEL_SLOTS, isChannelSlot, type ChannelSlot } from "./channelRack";
 import { RACK_VIEW_KEY, useChannelRackLamps } from "../../hooks/useChannelRack";
 
@@ -79,12 +80,14 @@ export default function Rack({ stationId, stationUuid }: Props) {
     setView(v);
     try { localStorage.setItem(RACK_VIEW_KEY, v === "master" ? "master" : `ch:${v}`); } catch { /* per-viewer */ }
   };
+  // ONE NAME PER FADER — tabs carry the board letter, never the engine slot id (src/lib/boardName.ts).
+  const name = useBoardName();
   const tab = (v: "master" | ChannelSlot, label: string) => {
     const on = view === v;
     const lit = v !== "master" && lamps[v] === true;
     return (
       <button key={v} onClick={() => pick(v)}
-        title={v === "master" ? "The master rack — GEQ, loudness ride, limiter" : `${v}'s channel rack (Filters, PEQ)${lit ? " — something is IN" : lamps[v] === false ? " — nothing IN" : ""}`}
+        title={v === "master" ? "The master rack — GEQ, loudness ride, limiter" : `${name(v)}'s channel rack (Filters, PEQ)${lit ? " — something is IN" : lamps[v] === false ? " — nothing IN" : ""}`}
         style={{ ...BTN(on), minWidth: v === "master" ? 96 : 52, padding: "0 10px", position: "relative" }}>
         {label}
         {v !== "master" && (
@@ -100,7 +103,7 @@ export default function Rack({ stationId, stationUuid }: Props) {
         <span style={{ ...LABEL, marginRight: 4 }}>Rack</span>
         {tab("master", "MASTER")}
         <span style={{ width: 8 }} />
-        {CHANNEL_SLOTS.map(s => tab(s, s))}
+        {CHANNEL_SLOTS.map(s => tab(s, name(s)))}
       </div>
       <div style={{ flex: 1, minHeight: 0 }}>
         {view === "master"

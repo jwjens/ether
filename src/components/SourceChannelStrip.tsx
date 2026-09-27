@@ -17,7 +17,8 @@ import { useMemo, useState } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { useMicInputs, useInputDevices, micStateWords, openMicPreferences } from "../hooks/useMicInputs";
 import ConsoleStrip from "./ConsoleStrip";
-import { SOURCE_KINDS, sourceKindMeta, deckLetter, type SourceKind, type DeckConfig } from "./DeckConfigurator";
+import { SOURCE_KINDS, sourceKindMeta, type SourceKind, type DeckConfig } from "./DeckConfigurator";
+import { useBoardName } from "../hooks/useBoardName";
 import { canHostJukebox } from "./DeckConfigurator";
 
 interface Props {
@@ -53,6 +54,8 @@ export default function SourceChannelStrip({
   config, volume, isOn, onVolumeChange, onToggleOn, onPfl, onKindChange, duck, onDuckChange, onRemove, compact, pendingShow = null, onTakeNow,
 }: Props) {
   const meta = sourceKindMeta(config.kind);
+  // ONE NAME PER FADER — the board letter, never the engine slot id (src/lib/boardName.ts).
+  const letter = useBoardName()(config.slot);
 
   // ── INPUT DEVICES IN THE SOURCE LIST ──────────────────────────────────────────────────────────
   // Jeff, 2026-09-02: "all device inputs discoverable should be in the one dropdown source list". Still true —
@@ -94,7 +97,7 @@ export default function SourceChannelStrip({
 
   // A patched input names itself on the channel — "Focusrite", not "Mic".
   const label = (isMic && patch) ? patch.device
-    : meta ? meta.label : `SOURCE ${deckLetter(config.slot)}`;
+    : meta ? meta.label : `SOURCE ${letter}`;
   const TONE: Record<string, string> = { ok: "var(--accent-green)", warn: "var(--accent-amber, #f59e0b)", bad: "var(--accent-red, #ef4444)", off: "var(--text-tertiary)" };
 
   return (
@@ -106,12 +109,12 @@ export default function SourceChannelStrip({
             fontSize: 8, fontWeight: 700, letterSpacing: "0.12em",
             color: "var(--text-tertiary)", flex: 1, minWidth: 0,
           }}>
-            SOURCE {deckLetter(config.slot)}
+            SOURCE {letter}
           </span>
           <button
             onClick={onRemove}
-            title={`Remove source channel ${config.slot} from the board`}
-            aria-label={`Remove source channel ${config.slot}`}
+            title={`Remove source channel ${letter} from the board`}
+            aria-label={`Remove source channel ${letter}`}
             style={{
               width: 14, height: 14, lineHeight: "12px", padding: 0,
               border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)",
@@ -134,7 +137,7 @@ export default function SourceChannelStrip({
             if (isMic && patch) patchTo(null);
             onKindChange(v as SourceKind | "");
           }}
-          aria-label={`Source for channel ${deckLetter(config.slot)}`}
+          aria-label={`Source for channel ${letter}`}
           style={{
             width: "100%", fontSize: 10, padding: "3px 4px", borderRadius: 2,
             background: "var(--bg-tertiary)", color: "var(--text-primary)",

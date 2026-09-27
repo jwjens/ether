@@ -20,7 +20,7 @@ describe("show presets — the board side (slice 7)", () => {
     expect(isModified(live, board())).toBe(false);
     const moved = board({ S1: { ...live.board.channels.S1, fader: 0.25 } });
     const d = diffShow(moved, live);
-    expect(d).toEqual([{ where: "Ch S1", what: "fader", from: "-12.0 dB", to: "-6.0 dB" }]);
+    expect(d).toEqual([{ where: "Ch G", slot: "S1", what: "fader", from: "-12.0 dB", to: "-6.0 dB" }]);   // S1 is G on the board
   });
 
   it("racks compare by what runs — a module id is bookkeeping, not sound", () => {
@@ -50,7 +50,7 @@ describe("show presets — the board side (slice 7)", () => {
     const target = board({ A: { enabled: true, fader: 0.5, rack: rack(0) }, S1: { enabled: true, kind: "mic", fader: 0.9, rack: rack(3) } }, { fader: 0.8 });
     const p = armPreview(diffShow(board(), target), ["S1"]);
     expect(p.waitingSlots).toEqual(["S1"]);
-    expect(p.waits.map(c => c.where)).toEqual(["Ch S1"]);
+    expect(p.waits.map(c => c.where)).toEqual(["Ch G"]);
     expect(p.now.map(c => `${c.where} ${c.what}`)).toEqual(["Ch A fader", "Master fader"]);
   });
 
