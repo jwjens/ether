@@ -258,7 +258,7 @@ console.log("\nRULE 8 - ld / gr / ceil objects carry exactly the documented keys
     }
   }
   const fwd = /broadcast\(\{\s*event:\s*"meters"[\s\S]*?\}\);/.exec(daemonJs);
-  const need = ["ld", "gr", "ceil", "margin", "ldSeq", "chPost"];   // chPost: slice 5
+  const need = ["ld", "gr", "ceil", "margin", "ldSeq", "chPost", "pfl", "pflDimDb"];   // chPost: slice 5 · pfl: PFL echo
   const missing = fwd ? need.filter(k => !new RegExp(`\\b${k}:\\s*mt\\.${k}\\b`).test(fwd[0])) : need;
   if (!missing.length) ok(`the daemon's meters event forwards ${need.join(", ")}`);
   else bad(`the daemon's meters event does not forward: ${missing.join(", ")}`);

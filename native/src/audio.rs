@@ -381,6 +381,10 @@ pub enum AudioCmd {
     /// DUCKER tuning, per STATION — there is ONE duck envelope per bus, so every one of these is
     /// station-wide by construction, never per channel. Dialled by ear from Preferences.
     SetDuckParams { depth_db: f32, threshold_db: f32, attack_ms: f32, hold_ms: f32, release_ms: f32 },
+    /// PFL on/off for one channel (docs/help-channel-faders.md). Momentary operator state: never persisted.
+    SetPfl { deck: String, on: bool },
+    /// The programme dim in the local output while any PFL is on, dB (clamped to PFL_DIM_DB_RANGE).
+    SetPflDim(f32),
     /// The program processor's operator-settable NUMBERS. Separate from SetProcessing (the two on/off
     /// toggles and the loudness target) so a station that never sends this is bit-identical to before.
     /// `branch`: 0 = LOCAL (studio monitor), 1 = STREAM. Every parameter is independent per branch;
@@ -705,6 +709,9 @@ pub struct BusState {
     pub duck_hold_ms: f32,
     /// Come back like a house system returning, not a lurch.
     pub duck_release_ms: f32,
+    /// PFL — per slot, and the programme dim in the local output while any is on (Params.pfl / pfl_dim_db).
+    pub pfl: [bool; SLOT_COUNT],
+    pub pfl_dim_db: f32,
     /// LIVE STATE — the smoothed gain currently applied to the music (1.0 = no duck) and the
     /// milliseconds of hold still owed. Persist across buffers; written only by the callback.
     pub duck_gain: f32,
@@ -882,6 +889,8 @@ impl BusState {
             duck_attack_ms: 30.0,
             duck_hold_ms: 700.0,
             duck_release_ms: 500.0,
+            pfl: [false; SLOT_COUNT],
+            pfl_dim_db: PFL_DIM_DB_DEFAULT,
             duck_gain: 1.0,
             duck_hold_left_ms: 0.0,
             aux_ring_prod: None,          // no aux device open → nowhere to send, by construction
@@ -941,6 +950,8 @@ impl BusState {
             duck_attack_ms: self.duck_attack_ms,
             duck_hold_ms: self.duck_hold_ms,
             duck_release_ms: self.duck_release_ms,
+            pfl: self.pfl,
+            pfl_dim_db: self.pfl_dim_db,
         }
     }
 
@@ -1003,6 +1014,8 @@ impl BusState {
         self.duck_attack_ms = p.duck_attack_ms;
         self.duck_hold_ms = p.duck_hold_ms;
         self.duck_release_ms = p.duck_release_ms;
+        self.pfl = p.pfl;
+        self.pfl_dim_db = p.pfl_dim_db;
         // The GEQ slot: bands on a version change (a removed GEQ is flat), exactly as SetEq always applied them.
         let (geq_bands, geq_in) = p.rack.geq();
         let bands = geq_bands.unwrap_or([0.0; 10]);
@@ -1369,6 +1382,8 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::SetDuck { .. } => {}
                             AudioCmd::SetDuckable { .. } => {}
                             AudioCmd::SetDuckParams { .. } => {}
+                            AudioCmd::SetPfl { .. } => {}
+                            AudioCmd::SetPflDim(_) => {}
                             // Superseded no-device path (see start_station_mixer's header): it owns no
                             // aux stream, so there is nothing here to open or close.
                             AudioCmd::SetAuxDevice(_) => {}
@@ -1426,6 +1441,12 @@ const DECK_LETTERS:   [&str; 6] = ["A", "B", "C", "D", "E", "F"];
 ///     7..11   SOURCE channels          (new — surfaced by the +/- strip in slice 2)
 /// Indices 0..6 are UNCHANGED so every existing consumer keeps working.
 pub const SLOT_COUNT: usize = 12;
+/// PFL (Jeff's ruling 2): the programme dim in the local output while any PFL is on. The station's setting
+/// (station_config_kv `pfl_dim_db`, Preferences → Audio) replaces this; it is the value that setting SHOWS until
+/// the operator changes it — not a hidden number.
+pub const PFL_DIM_DB_DEFAULT: f32 = -12.0;
+/// The range the setting may take: 0 dB = no dim, −60 dB = the programme all but gone while listening.
+pub const PFL_DIM_DB_RANGE: (f32, f32) = (-60.0, 0.0);
 /// Telemetry / finished-flag ids for the new source channels. Deliberately NOT more letters:
 /// DECK_LETTERS is len 6 and indexing it out of range is what killed the output thread on
 /// 2026-07-15. These are their own namespace.
@@ -2813,6 +2834,15 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 ctl.params.duck_duckable[idx] = duckable;
                                 ctl.params_changed();
                             }
+                            AudioCmd::SetPfl { deck, on } => {
+                                let Some(idx) = deck_index(&deck) else { continue };
+                                ctl.params.pfl[idx] = on;
+                                ctl.params_changed();
+                            }
+                            AudioCmd::SetPflDim(db) => {
+                                ctl.params.pfl_dim_db = db.clamp(PFL_DIM_DB_RANGE.0, PFL_DIM_DB_RANGE.1);
+                                ctl.params_changed();
+                            }
                             AudioCmd::SetDuckParams { depth_db, threshold_db, attack_ms, hold_ms, release_ms } => {
                                 // Clamped at the edges only — every value in between is a
                                 // legitimate operator choice. 0 dB depth means "armed but not
@@ -3379,6 +3409,8 @@ pub(crate) struct Scratch {
     room_out_l: Box<[f32]>, room_out_r: Box<[f32]>,  // the room chain's output
     dev_l: Box<[f32]>, dev_r: Box<[f32]>,            // the clamped clean tap to the device
     rack_l: Box<[f32]>, rack_r: Box<[f32]>,          // SLICE 5 — one channel's post-trim frames through its rack
+    cue_l: Box<[f32]>, cue_r: Box<[f32]>,            // PFL — the pre-fader, post-rack sum of every PFL'd channel
+    pfl_l: Box<[f32]>, pfl_r: Box<[f32]>,            // PFL — the local output while PFL is on (dimmed programme + cue)
     feed: Box<[f32]>,                                // S4 — one deck's interleaved frames popped from its ring
     /// S6 — the station's health counters (underruns, lock misses, overruns, …). Shared with the station's
     /// BusState and every Scratch it opens, so a device reopen does not reset them.
@@ -3399,6 +3431,7 @@ impl Scratch {
             out_l: lane(), out_r: lane(), loc_l: lane(), loc_r: lane(),
             str_l: lane(), str_r: lane(), room_out_l: lane(), room_out_r: lane(),
             dev_l: lane(), dev_r: lane(), rack_l: lane(), rack_r: lane(),
+            cue_l: lane(), cue_r: lane(), pfl_l: lane(), pfl_r: lane(),
             feed: vec![0f32; MAX_PROG_FRAMES * 2].into_boxed_slice(),
             counters,
             events: None,
@@ -3457,9 +3490,13 @@ pub(crate) fn mixer_callback(
     let Scratch {
         mix_l, mix_r, room_l, room_r, imm_room_l, imm_room_r, core_l, core_r, aux_l, aux_r,
         src_l, src_r, imm_l, imm_r, det_l, det_r, out_l, out_r, loc_l, loc_r, str_l, str_r,
-        room_out_l, room_out_r, dev_l, dev_r, rack_l, rack_r, feed, counters, events,
+        room_out_l, room_out_r, dev_l, dev_r, rack_l, rack_r, cue_l, cue_r, pfl_l, pfl_r, feed, counters, events,
     } = sc;
     let counters: &RtCounters = counters;
+    // PFL — is any channel's PFL on this buffer? (the block adopted at the top of the buffer). The cue lanes are
+    // touched only then, so a buffer with no PFL does no extra work at all.
+    let pfl_any = bus.pfl.iter().any(|&b| b);
+    if pfl_any { cue_l[..prog_frames].fill(0.0); cue_r[..prog_frames].fill(0.0); }
 
     let mix_l = &mut mix_l[..prog_frames]; mix_l.fill(0.0);
     let mix_r = &mut mix_r[..prog_frames]; mix_r.fill(0.0);
@@ -3625,6 +3662,13 @@ pub(crate) fn mixer_callback(
             ch_post[i].add(rl, rr);
         } else {
             ch_post[i] = ch_meter[i];   // nothing ran: post-rack IS pre-rack
+        }
+        // PFL — this channel's PRE-FADER, PRE-CUT, POST-RACK signal (the processed sound, Jeff's ruling 3) into the
+        // cue sum. It reaches ONLY the local output (below); never mix_*, so never air, stream or PGM.
+        if pfl_any && bs.pfl[i] {
+            let (cl, cr) = (&mut cue_l[..take], &mut cue_r[..take]);
+            if rack_on { for f in 0..take { cl[f] += rack_l[f]; cr[f] += rack_r[f]; } }
+            else { for f in 0..take { cl[f] += feed[2 * f] * trim; cr[f] += feed[2 * f + 1] * trim; } }
         }
         for f in 0..take {
             {
@@ -4203,6 +4247,20 @@ pub(crate) fn mixer_callback(
         }
     }
 
+    // ── PFL OVER MONITOR (Jeff's rulings 1–2, 2026-09-26) ────────────────────────────────────────────
+    // While any channel's PFL is on, the station's MAIN LOCAL OUTPUT becomes the programme DIMMED by the station's
+    // setting (pfl_dim_db) plus the cue sum — the console "PFL over monitor". Everything above — the MONITOR and
+    // LOCAL loudness taps, PGM, the stream, the AUX send — is already done, so none of them ever carries PFL.
+    // With no PFL on, this block is skipped and the output is bit-identical to before.
+    let (dl, dr): (&[f32], &[f32]) = if pfl_any {
+        let dim = 10f32.powf(bus.pfl_dim_db / 20.0);
+        let (pl, pr) = (&mut pfl_l[..prog_frames], &mut pfl_r[..prog_frames]);
+        for f in 0..prog_frames {
+            pl[f] = (dl[f] * dim + cue_l[f]).clamp(-1.0, 1.0);
+            pr[f] = (dr[f] * dim + cue_r[f]).clamp(-1.0, 1.0);
+        }
+        (&*pl, &*pr)
+    } else { (dl, dr) };
     // ROOM VU — the peak of what the speakers are about to get, with the same release ballistics as
     // the air meters. Taken BEFORE the monitor gains so it reads the content, not the knob.
     {
@@ -4430,6 +4488,115 @@ fn drain_program_bus(
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
+    }
+}
+
+// ── PFL through the real mixer callback (Jeff's PFL rulings, 2026-09-26) ───────────────────────────────────
+// Programme on deck A; S1 (a source channel) playing a 1 kHz tone with its channel OFF and its fader at 0.3.
+// PFL on S1 → S1 is in the LOCAL output at its pre-fader level, the programme there dimmed by the station's
+// setting; the STREAM and the PGM / MONITOR taps are bit-identical to PFL off. Post-rack: S1's rack is heard.
+#[cfg(test)]
+mod pfl_over_monitor {
+    use super::*;
+    use crate::rack::{ChannelRack, ChannelRackParams};
+
+    struct Tone { n: u64, freq: f64, amp: f64 }
+    impl Iterator for Tone {
+        type Item = f32;
+        fn next(&mut self) -> Option<f32> {
+            let i = self.n / 2; self.n += 1;
+            Some((self.amp * (2.0 * std::f64::consts::PI * self.freq * i as f64 / 44_100.0).sin()) as f32)
+        }
+    }
+    struct Out { local: Vec<f32>, stream: Vec<f32>, pgm: f64, monitor: f64, allocs: u64 }
+
+    fn run(buffers: usize, pfl: bool, dim_db: f32, peq_db: Option<f32>) -> Out {
+        let (prod, mut stream_cons) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)));
+        let h = b.handles.take().unwrap();
+        let (meters, _loud) = MetersHandle::from_parts(Arc::new(Mutex::new(h.meter_r)), h.shared.clone(), h.loud_cons, h.loud_shared);
+        let cap = 480 * 2 * (buffers + 2);
+        b.decks[0].source = Some(DeckFeed::prefilled(Tone { n: 0, freq: 220.0, amp: 0.2 }, cap));
+        b.decks[0].active = true; b.decks[0].paused = false; b.decks[0].volume = 1.0;
+        b.decks[7].source = Some(DeckFeed::prefilled(Tone { n: 0, freq: 1000.0, amp: 0.1 }, cap));
+        b.decks[7].active = true; b.decks[7].paused = false;
+        let mut cur = b.params();
+        cur.volume[7] = 0.3;        // the fader — PFL is PRE-fader, so it must not matter
+        cur.muted[7] = true;        // channel OFF — PFL is PRE-cut, so it must not matter either
+        cur.pfl[7] = pfl;
+        cur.pfl_dim_db = dim_db;
+        if let Some(g) = peq_db {
+            let r = ChannelRack::from_doc_json(&format!(r#"{{"v":1,"sections":{{"ch":[{{"module":{{"type":"peq","bands":[
+                {{"freq":100,"gain":0,"width":1}},{{"freq":1000,"gain":{g},"width":1}},{{"freq":3000,"gain":0,"width":1}},{{"freq":8000,"gain":0,"width":1}}]}},"in":true}}]}}}}"#)).unwrap();
+            cur.ch_rack[7] = ChannelRackParams { rack: r, plan: r.plan(44_100.0), version: 1 };
+        }
+        let bus = Arc::new(Mutex::new(b));
+        let (mut cmd, mut garbage) = (h.cmd_prod, h.garbage_cons);
+        let _ = cmd.try_push(RtCmd::Params(Box::new(cur)));
+        let (fin, playing) = (FinishedFlags::new(), Arc::new(AtomicBool::new(true)));
+        let mut sc = Scratch::new();
+        let (mut data, mut pop) = (vec![0f32; 960], vec![0f32; 960]);
+        let mut o = Out { local: Vec::new(), stream: Vec::new(), pgm: 0.0, monitor: 0.0, allocs: 0 };
+        for _ in 0..buffers {
+            let a0 = crate::rt::tl_rt_allocs();
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+            o.allocs += crate::rt::tl_rt_allocs() - a0;
+            for f in 0..480 { o.local.push(data[2 * f]); }
+            loop {
+                let got = stream_cons.pop_slice(&mut pop);
+                if got == 0 { break; }
+                for f in 0..got / 2 { o.stream.push(pop[2 * f]); }
+            }
+            while garbage.try_pop().is_some() {}
+        }
+        let w = meters.read_and_ack().unwrap();
+        o.pgm = w.bus[crate::rt::BUS_PGM].sumsq[0];
+        o.monitor = w.bus[crate::rt::BUS_MONITOR].sumsq[0];
+        o
+    }
+    fn rms_db(x: &[f64]) -> f64 { 20.0 * (x.iter().map(|v| v * v).sum::<f64>() / x.len() as f64).sqrt().log10() }
+
+    #[test]
+    fn pfl_puts_the_channel_in_the_local_output_only_pre_fader_pre_cut_and_dims_the_programme() {
+        let n = 300;
+        let off = run(n, false, -12.0, None);
+        let on = run(n, true, -12.0, None);
+        let on20 = run(n, true, -20.0, None);
+        // S1's pre-fader, pre-cut signal: the tone itself (trim 0 dB, no rack)
+        let s1: Vec<f32> = (0..n * 480).map(|i| (0.1 * (2.0 * std::f64::consts::PI * 1000.0 * i as f64 / 44_100.0).sin()) as f32).collect();
+        let expect = |dim_db: f32, f: usize| -> f32 { (off.local[f] * 10f32.powf(dim_db / 20.0) + s1[f]).clamp(-1.0, 1.0) };
+        let err12 = (0..n * 480).map(|f| (on.local[f] - expect(-12.0, f)).abs()).fold(0f32, f32::max);
+        let err20 = (0..n * 480).map(|f| (on20.local[f] - expect(-20.0, f)).abs()).fold(0f32, f32::max);
+        let stream_same = off.stream.len() == on.stream.len() && off.stream.iter().zip(&on.stream).all(|(a, b)| a.to_bits() == b.to_bits());
+        // the PFL'd component alone, recovered from the local output
+        let cue: Vec<f64> = (0..n * 480).map(|f| on.local[f] as f64 - off.local[f] as f64 * 10f64.powf(-12.0 / 20.0)).collect();
+        let s1db = rms_db(&s1.iter().map(|&x| x as f64).collect::<Vec<_>>());
+        // with PFL OFF, how much of S1 is in the local output (least-squares coefficient; 0 = absent)
+        let proj = (0..n * 480).map(|f| off.local[f] as f64 * s1[f] as f64).sum::<f64>() / s1.iter().map(|&x| (x as f64) * (x as f64)).sum::<f64>();
+        println!("[pfl] S1 OFF, fader 0.3, PFL on: its component in the LOCAL output {:.3} dBFS RMS (pre-fader level {:.3}) · local = programme × dim + S1 to {:.1e} (−12 dB), {:.1e} (−20 dB) · \
+                  PFL off: S1 in local ×{:.1e} (absent) · STREAM bit-identical: {} · PGM tap equal: {} · MONITOR tap equal: {} · {} allocations",
+                 rms_db(&cue), s1db, err12, err20, proj, stream_same, off.pgm == on.pgm, off.monitor == on.monitor, on.allocs + on20.allocs);
+        assert!(err12 < 1e-6 && err20 < 1e-6, "the local output is not programme × dim + the pre-fader channel");
+        assert!((rms_db(&cue) - s1db).abs() < 0.01, "PFL is not at the pre-fader level");
+        assert!(proj.abs() < 1e-3, "S1 is in the local output with PFL off");
+        assert!(stream_same, "PFL reached the stream");
+        assert_eq!(off.pgm, on.pgm, "PFL reached the PGM tap");
+        assert_eq!(off.monitor, on.monitor, "PFL reached the MONITOR tap");
+        assert_eq!(on.allocs + on20.allocs, 0);
+    }
+
+    #[test]
+    fn pfl_is_post_rack_the_processed_sound() {
+        let n = 300;
+        let off = run(n, false, -12.0, Some(6.0));
+        let on = run(n, true, -12.0, Some(6.0));
+        let tail = 44_100usize;   // the last second, after the rack's fade-in
+        let len = n * 480;
+        let cue: Vec<f64> = (len - tail..len).map(|f| on.local[f] as f64 - off.local[f] as f64 * 10f64.powf(-12.0 / 20.0)).collect();
+        let pre_db = 20.0 * (0.1f64 / 2f64.sqrt()).log10();
+        println!("[pfl] S1 with PEQ +6 dB @ 1 kHz, PFL on: cue {:.3} dBFS RMS vs the dry channel {:.3} → {:+.3} dB (the rack is heard)",
+                 rms_db(&cue), pre_db, rms_db(&cue) - pre_db);
+        assert!((rms_db(&cue) - pre_db - 6.0).abs() < 0.1, "PFL is not post-rack");
     }
 }
 

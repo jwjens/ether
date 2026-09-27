@@ -58,6 +58,29 @@ level ahead of time and it takes effect the moment you turn the channel back on.
   they still fire on schedule. See **Sweepers & Sweepers** for that channel specifically.
 - **Silence a guest or mic channel** between segments.
 
+## Listening to a channel off air (PFL)
+
+**PFL** ("pre-fader listen") lets you hear a channel **without putting it on air**: check a mic before you open
+it, or cue a cart.
+
+1. Press **PFL** on the channel's strip. The button lights **amber** once the audio engine is doing it. The lamp
+   is the engine's answer, not just your press.
+2. You hear that channel in **this station's local output** (the speakers or headphones the music plays through
+   here):
+   - **before its fader and before ON/OFF**, so it works with the channel OFF and the fader down;
+   - **after its channel EQ**, so you hear the processed sound.
+3. **While any PFL is on, the programme in that output dips** so you can hear what you're checking.
+   - How far is a station setting: **Preferences → Audio → PFL → Programme dip** (−60 to 0 dB).
+   - **−12 dB** until someone changes it.
+4. Press **PFL** again to stop.
+
+**Nothing on air changes.** The stream, the programme and every on-air meter are exactly as they were. PFL only
+ever reaches the local output.
+
+**A mic on PFL arrives about 40 ms late.** That's the time through the computer and back. It's fine for
+checking how the mic *sounds*, but it's too late to talk against. **To hear yourself while you speak, use your
+audio interface's direct-monitor.** See **Mic on Air**.
+
 ## If a channel has gone silent
 
 1. **Check its ON button first.** Unlit means you cut that channel — press it to restore.
@@ -73,6 +96,8 @@ level ahead of time and it takes effect the moment you turn the channel back on.
   and mic cuts start every session ON.
 
 ## Related
+
+- **Mic on Air** (`docs/help-mic-input.md`) — the mic as a channel, and hearing yourself
 
 - **Starting a Deck — the ON button** — the deck ON button also starts and stops playout
 - **Sweepers & Sweepers** — cutting the imaging channel, remembered per station

@@ -5438,6 +5438,29 @@ ipcMain.handle("audio:setOutputDevice", (_, stationId, deviceName) => {
 
 // Per-station LOCAL monitor (speaker) gain — never touches the Icecast broadcast. Lets the
 // operator blend/mute what they HEAR across stations while every station keeps airing.
+// PFL (docs/help-channel-faders.md) — a channel's pre-fader, post-rack sound into this station's MAIN LOCAL OUTPUT,
+// the programme there dimmed while any PFL is on. Never air, never stream. Momentary: not stored. The strip's lamp
+// shows the engine's echo (the meters frame `pfl`), not this call's return.
+ipcMain.handle("audio:set-pfl", async (_, stationId, slot, on) => {
+  const sid = Number(stationId);
+  if (!Number.isFinite(sid)) return false;
+  try {
+    if (AUDIO_DAEMON) return await audiodClient.cmd("setPfl", { stationId: sid, slot: String(slot), on: !!on });
+    return typeof audio.audioSetPfl === "function" ? audio.audioSetPfl(sid, String(slot), !!on) : false;
+  } catch { return false; }
+});
+// The station's PFL dim (dB, −60…0): applied to the engine now; the daemon re-applies the stored value
+// (station_config_kv `pfl_dim_db`, written by Preferences) to every fresh engine.
+ipcMain.handle("audio:set-pfl-dim", async (_, stationId, dimDb) => {
+  const sid = Number(stationId);
+  if (!Number.isFinite(sid)) return false;
+  const v = Math.max(-60, Math.min(0, Number(dimDb)));
+  if (!Number.isFinite(v)) return false;
+  try {
+    if (AUDIO_DAEMON) return await audiodClient.cmd("setPflDim", { stationId: sid, dimDb: v });
+    return typeof audio.audioSetPflDim === "function" ? audio.audioSetPflDim(sid, v) : false;
+  } catch { return false; }
+});
 ipcMain.handle("audio:setMonitorVolume", (_, stationId, volume) => {
   if (AUDIO_DAEMON) return audiodClient.cmd("setMonitorVolume", { stationId, volume });
   try {

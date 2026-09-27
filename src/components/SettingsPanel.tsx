@@ -6,6 +6,7 @@ import { queryScoped } from "../db/stationScoped";
 import DuckerSection from "./DuckerSection";
 import { useActiveStation } from "../hooks/useActiveStation";
 import MicInputsSettings from "./MicInputsSettings";
+import PflSettings from "./PflSettings";
 import { usePlan } from "../hooks/usePlan";
 import { useStreaming } from "../hooks/useStreaming";
 import { getStationTimezone, setStationTimezone, COMMON_TIMEZONES } from "../utils/timezone";
@@ -3349,6 +3350,11 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
       </Section>
 
       {/* ── Loudness ── */}
+      {/* PFL (docs/help-channel-faders.md) — the programme dip in the local output while a PFL is on. */}
+      <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1v-6h3z"/><path d="M3 19a2 2 0 0 0 2 2h1v-6H3z"/></svg>} title="PFL (pre-fader listen)" description="How far the programme dips in this station's local output while a channel's PFL is on">
+        <PflSettings />
+      </Section>
+
       {/* THE MIC AS AN ENGINE INPUT (docs/dsp-mic-in-engine.md §4) — the on-air mic's input, per machine. */}
       <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>} title="Mic Inputs (on air)" description="Which input on this computer feeds each mic channel on the board — the input number, the input gain, and the engine's live state">
         <MicInputsSettings />

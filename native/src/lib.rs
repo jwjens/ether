@@ -209,6 +209,25 @@ pub fn audio_set_duck_params(station_id: u32, depth_db: f64, threshold_db: f64,
     }).is_ok()
 }
 
+/// PFL on/off for one channel (A–F, CART, S1–S5): its pre-fader, pre-cut, post-rack sound into the station's main
+/// local output, the programme there dimmed while any PFL is on. Never air, never stream. The meters frame
+/// echoes what the engine is running (`pfl`).
+#[napi]
+pub fn audio_set_pfl(station_id: u32, deck: String, on: bool) -> bool {
+    if audio::deck_index(&deck).is_none() { return false; }
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetPfl { deck, on }).is_ok()
+}
+
+/// The programme dim in the local output while any PFL is on, dB (−60…0). A station setting.
+#[napi]
+pub fn audio_set_pfl_dim(station_id: u32, dim_db: f64) -> bool {
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetPflDim(dim_db as f32)).is_ok()
+}
+
 /// Local studio-monitor (speaker) gain for one station — 0.0 = silent speakers, 1.0 = unity.
 /// Affects ONLY the local device output; the program bus → Icecast stream is untouched, so an
 /// operator can mute/blend what they HEAR without changing what any station BROADCASTS.
@@ -599,6 +618,10 @@ pub fn audio_get_meters(station_id: u32) -> String {
                                                    "eff": ((set as f64 - margin) * 100.0).round() / 100.0 });
     serde_json::json!({
         "v": 1, "e": b.epoch, "n": b.frames, "ch": ch, "chPost": ch_post, "bus": bus, "live": b.bus_live,
+        // PFL — the ENGINE's echo: the flags this window actually ran with (bit n = slot n), and the dim. A strip's
+        // PFL lamp shows this, never its own guess.
+        "pfl": p.pfl.iter().enumerate().fold(0u32, |m, (i, &on)| if on { m | (1 << i) } else { m }),
+        "pflDimDb": p.pfl_dim_db,
         "ld": {
             "local": ld_of(&lf.b[loudness::LOUD_LOCAL]),
             "stream": ld_of(&lf.b[loudness::LOUD_STREAM]),

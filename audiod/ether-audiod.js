@@ -361,6 +361,9 @@ const handlers = {
   micState:           (m) => (typeof A.audioMicState === "function" ? JSON.parse(A.audioMicState(Number(m.stationId))) : { v: 0, mics: [] }),
   setOutputDevice:    (m) => A.audioSetOutputDevice(m.stationId, m.device),
   setMonitorVolume:   (m) => A.audioSetMonitorVolume(m.stationId, m.volume),
+  // PFL — one channel on/off (momentary, never stored) and the station's programme dim while any is on.
+  setPfl:             (m) => (typeof A.audioSetPfl === "function" ? A.audioSetPfl(Number(m.stationId), String(m.slot), !!m.on) : false),
+  setPflDim:          (m) => (typeof A.audioSetPflDim === "function" ? A.audioSetPflDim(Number(m.stationId), Number(m.dimDb)) : false),
   // MASTER OUT — the broadcast gain (rides air + the master VU). Distinct from setMonitorVolume,
   // which trims the room speakers only. docs/master-monitor-faders-dead-2026-08-06.md
   setMasterVolume:    (m) => A.audioSetMasterVolume(m.stationId, m.volume),
@@ -579,8 +582,9 @@ const meterTimer = setInterval(() => {
     // SLICE 3 — loudness per branch (ld), ride/limiter per branch (gr), the ceiling as set and as it acts
     // (ceil, margin), and the loudness frame's sequence (ldSeq). docs/dsp-loudness-meter.md §4.1.
     // SLICE 5 — chPost: each channel after its rack (docs/dsp-channel-rack-eq.md §2).
+    // PFL — the engine's echo (bit n = slot n) and the dim: a strip's PFL lamp shows THIS, never its own guess.
     broadcast({ event: "meters", stationUuid: sub.uuid, v: mt.v, e: mt.e, n: mt.n, ch: mt.ch, chPost: mt.chPost, bus: mt.bus, live: mt.live,
-                ld: mt.ld, gr: mt.gr, ceil: mt.ceil, margin: mt.margin, ldSeq: mt.ldSeq });
+                ld: mt.ld, gr: mt.gr, ceil: mt.ceil, margin: mt.margin, ldSeq: mt.ldSeq, pfl: mt.pfl, pflDimDb: mt.pflDimDb });
   }
 }, 33);
 if (meterTimer.unref) meterTimer.unref();

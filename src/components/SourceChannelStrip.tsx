@@ -34,7 +34,7 @@ interface Props {
    *  board; this strip only renders it. */
   isOn: boolean;
   onToggleOn: () => void;
-  onPfl?: () => void;
+  onPfl?: (on: boolean) => void;
   /** Persist a new patch point for this slot. */
   onKindChange: (kind: SourceKind | "") => void;
   /** DUCK — when this channel has audio, the programme drops under it and rises back after.

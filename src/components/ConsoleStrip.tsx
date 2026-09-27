@@ -10,7 +10,7 @@ import { useMidiState } from "./MidiEngine";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { playClick } from "../lib/uiSound";
 import PeakAvgMeter, { type MeterSource } from "./meter/PeakAvgMeter";
-import { CH_INDEX, useMeterSubscription } from "./meter/meterStore";
+import { CH_INDEX, useMeterSubscription, latestMeters } from "./meter/meterStore";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { useSongMenu } from "../lib/songActions";
 import { openChannelRack, useChannelRackLamps } from "../hooks/useChannelRack";
@@ -25,7 +25,8 @@ interface Props {
   isOn: boolean;
   onVolumeChange: (v: number) => void;
   onToggleOn: () => void;
-  onPfl?: () => void;
+  /** PFL pressed. `on` = the state the operator is asking for (the opposite of what the lamp shows now). */
+  onPfl?: (on: boolean) => void;
   compact?: boolean;
   /** When provided the strip subscribes to audio:levels IPC directly
    *  and updates the VU bar without triggering React state. */
@@ -88,7 +89,11 @@ export default function ConsoleStrip({
   // for the audio-engine state to round-trip back into `volume` (which ticks, so the knob
   // would skip between positions). Null when not dragging → fall back to the real volume.
   const [dragVol, setDragVol] = useState<number | null>(null);
-  const [pflActive, setPflActive] = useState(false);
+  // PFL LAMP — for an engine channel it shows the ENGINE's echo (the meters frame's `pfl` bit for this slot),
+  // never a local guess: a lamp that lit without the engine doing it is the defect this board keeps paying for.
+  // A strip with no engine slot (a guest line) keeps a local lamp: its owner decides what PFL means.
+  const [pflLocal, setPflLocal] = useState(false);
+  const [pflEcho, setPflEcho] = useState(false);
   // trackRef: the invisible full-area mouse capture overlay
   const trackRef = useRef<HTMLDivElement>(null);
   // faderAreaRef: the flex container we measure for faderH
@@ -154,6 +159,16 @@ export default function ConsoleStrip({
   //
   // An id with no engine slot (the old "MIC" id faked `master × 0.6`) is drawn NOT FED — never a fake level.
   const slotIndex = deckId ? CH_INDEX[deckId.toUpperCase()] : undefined;
+  useEffect(() => {
+    if (slotIndex === undefined) return;
+    const id = setInterval(() => {
+      const m = latestMeters(stationUuid);
+      const on = !!m && typeof m.pfl === "number" && ((m.pfl >> slotIndex) & 1) === 1;
+      setPflEcho(prev => (prev === on ? prev : on));
+    }, 100);
+    return () => clearInterval(id);
+  }, [slotIndex, stationUuid]);
+  const pflActive = slotIndex !== undefined ? pflEcho : pflLocal;
   const meterSource: MeterSource = meterNotFed ? { stationUuid: null, ch: -1 }
     : deckId
     ? (slotIndex !== undefined ? { stationUuid, ch: slotIndex } : { stationUuid: null, ch: -1 })
@@ -401,7 +416,9 @@ export default function ConsoleStrip({
         </button>
 
         {/* PFL — solid amber when active, flat */}
-        <button onClick={() => { playClick(); setPflActive(!pflActive); onPfl?.(); }} style={{
+        <button onClick={() => { playClick(); if (slotIndex === undefined) setPflLocal(!pflActive); onPfl?.(!pflActive); }}
+          title={slotIndex !== undefined ? `PFL — hear ${label} before its fader and ON, after its channel EQ, in this station's local output (the programme there dips). Never on air.` : "PFL"}
+          style={{
           flex: 1, height: 38, borderRadius: 3,
           background: pflActive ? "#b8860b" : "var(--bg-tertiary, #232330)",
           border: `1px solid ${pflActive ? "#d4a017" : "var(--border-primary, #333)"}`,

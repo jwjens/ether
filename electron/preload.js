@@ -57,6 +57,9 @@ contextBridge.exposeInMainWorld("ether", {
     micState: (stationId) => ipcRenderer.invoke("mic:state", stationId),
     setOutputDevice: (stationId, deviceName) => ipcRenderer.invoke("audio:setOutputDevice", stationId, deviceName),
     setMonitorVolume: (stationId, volume) => ipcRenderer.invoke("audio:setMonitorVolume", stationId, volume),
+    // PFL — one channel on/off (the lamp follows the engine's echo on the meters frame), and the station's dim.
+    setPfl: (stationId, slot, on) => ipcRenderer.invoke("audio:set-pfl", stationId, slot, on),
+    setPflDim: (stationId, dimDb) => ipcRenderer.invoke("audio:set-pfl-dim", stationId, dimDb),
     setMasterVolume:  (stationId, volume) => ipcRenderer.invoke("audio:setMasterVolume", stationId, volume),
     setMasterMonitorVolume: (volume) => ipcRenderer.invoke("audio:setMasterMonitorVolume", volume),
     // Push-based level subscription — 30fps from main process, no polling

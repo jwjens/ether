@@ -71,6 +71,12 @@ export default function FaderSection({
 }: FaderSectionProps) {
   const engine = useAudioEngine();
   const { stationId, stationUuid } = useActiveStation();
+  // PFL — every engine channel's PFL goes to the ENGINE (its pre-fader, post-rack sound into this station's main
+  // local output; the programme there dips). The strip's lamp follows the engine's echo, not this call.
+  const pflFor = (slot: string) => (on: boolean) => {
+    if (stationId == null) return;
+    try { (window as any).ether?.audio?.setPfl?.(stationId, slot, on); } catch { /* engine not up — the lamp stays dark */ }
+  };
   const { configs: deckConfigs, save: saveDeckConfigs } = useDeckConfig();
 
   // ── WHICH SLOTS ARE ON THE BOARD ────────────────────────────────────────────────────────────
@@ -281,6 +287,7 @@ export default function FaderSection({
             duck={!!config.duck}
             onDuckChange={d => onSetSourceDuck?.(slot, d)}
             onRemove={() => onRemoveSourceChannel?.(slot)}
+            onPfl={pflFor(slot)}
           />
         </div>
       );
@@ -300,6 +307,7 @@ export default function FaderSection({
             isPlaying={deck?.status === "playing"}
             isOn={true}
             onVolumeChange={v => engine.getDeck(slot)?.setVolume(v)}
+            onPfl={pflFor(slot)}
             // ── DECK ON — the board's start control, and the ONLY one (2026-08-02) ──────────
             // This used to be a solo play/pause: `getDeck(slot).play()` → a RAW audioPlay
             // straight to Rust, outside the advance chain. No serialization, no guards, no stop
@@ -412,6 +420,7 @@ export default function FaderSection({
           isPlaying={deck?.status === "playing"}
           isOn={true}
           onVolumeChange={v => engine.getDeck(slot)?.setVolume(v)}
+          onPfl={pflFor(slot)}
           onToggleOn={() => {
             if (deck?.status === "playing") engine.getDeck(slot)?.pause();
             else engine.getDeck(slot)?.play();

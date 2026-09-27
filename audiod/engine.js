@@ -636,6 +636,7 @@ class DaemonEngine {
     this._applyChannelRacksFromKv(now); // SLICE 5: each fader's channel rack (rack_ch_<slot>)
     this._applyMicInputsFromKv(now);    // THE MIC: each source channel's input patch (mic_input_<slot>, machine-local)
     this._applySegueOverlapFromKv(now); // the operator's segue overlap, stored with the station
+    this._applyPflDimFromKv(now);       // PFL: the programme dim in the local output while a PFL is on
 
     const prev = { A: this.stateA.status, B: this.stateB.status, C: this.stateC.status };
     // ── IDENTITY-KEYED CARRY (2026-08-02) ───────────────────────────────────────────────────────────
@@ -1125,6 +1126,26 @@ class DaemonEngine {
       if (next === this.segueOverlap) return;
       this.segueOverlap = next;
       this._log(`segue overlap = ${next}s (from the station's settings)`);
+    } catch { /* KV unreadable → keep the last value; never disturb playout */ }
+  }
+
+  // PFL (docs/help-channel-faders.md) — the station's `pfl_dim_db`: how far the programme in the local output
+  // drops while any channel's PFL is on. Delivered on change AND to every fresh engine (a new engine object
+  // starts with nothing applied). Unset → the engine keeps PFL_DIM_DB_DEFAULT, which is what Preferences shows.
+  _applyPflDimFromKv(now) {
+    if (now - (this._pflDimAt || 0) < 3000) return;
+    this._pflDimAt = now;
+    if (typeof A.audioSetPflDim !== "function") return;
+    try {
+      const row = this.db.prepare(
+        "SELECT value FROM station_config_kv WHERE station_id=? AND key='pfl_dim_db' AND deleted_at IS NULL"
+      ).get(this.stationId);
+      if (!row || row.value == null || row.value === "") return;
+      const v = parseFloat(row.value);
+      if (!Number.isFinite(v)) return;
+      const next = Math.max(-60, Math.min(0, v));
+      if (next === this._pflDimApplied) return;
+      if (A.audioSetPflDim(this.stationId, next)) { this._pflDimApplied = next; this._log(`PFL dim = ${next} dB (from the station's settings)`); }
     } catch { /* KV unreadable → keep the last value; never disturb playout */ }
   }
 
