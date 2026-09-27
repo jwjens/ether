@@ -17,7 +17,7 @@ Each export button makes a different document. They are not variations of one fi
 | **Export CSV** | The as-run affidavit — everything that aired, with times and lengths | Advertisers, proof of performance |
 | **BMI** | Every play in the period: title, performer, date, time, and its **real length** (m:ss) | BMI reporting |
 | **ASCAP** | Every play in the period: title, artist, date, start time, **real length** in minutes, source | ASCAP reporting |
-| **PDF** | A printable list of the plays on screen: date, time, title, artist | A quick printed log |
+| **PDF** | A printable list of every play in the period: date, time, title, artist, category, show | A quick printed log |
 | **Export Traffic CSV** (Traffic view) | Every **scheduled spot**, aired or not | Traffic reconciliation |
 
 ## The as-run affidavit — Export CSV
@@ -49,10 +49,10 @@ An empty cell means Ether does not know, and it will not invent a value:
 > been filled in on your spots yet. They are the two an advertiser is most likely to ask for, so they
 > are worth entering once per spot in Spots & Promos.
 
-## Known issue
+## Good to know
 
-- **PDF** is built from the list on screen, which holds at most the **200 most recent plays** of the
-  period. **Export CSV**, **BMI** and **ASCAP** cover the whole period.
+**Every export covers the whole period** you picked — not just the plays shown on screen (the screen lists the 200
+most recent).
 
 **BMI and ASCAP lengths** come from the play log. A play whose length was never recorded has an **empty**
 duration rather than a guessed one — check those rows before you file.

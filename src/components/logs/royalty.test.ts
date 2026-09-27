@@ -49,3 +49,15 @@ describe("royalty exports — real durations, every play (audit 6, 7)", () => {
     expect(src).toMatch(/royaltyCsv\(/);
   });
 });
+
+// fix 7 (PDF): the printable log was the on-screen list too — the 200 most recent plays, whatever the period.
+describe("the PDF log covers the whole period (audit 7)", () => {
+  it("exportPDF reads the whole-period query (no LIMIT), not the 200-row screen list", async () => {
+    const { PERIOD_PLAYS_SQL } = await import("./royalty");
+    expect(PERIOD_PLAYS_SQL).not.toMatch(/LIMIT/i);
+    const src = fs.readFileSync(path.join(__dirname, "..", "Logs.tsx"), "utf8");
+    const pdf = src.slice(src.indexOf("const exportPDF"), src.indexOf("const visible"));
+    expect(pdf).toMatch(/PERIOD_PLAYS_SQL/);
+    expect(pdf).not.toMatch(/entries\.(map|length)/);
+  });
+});

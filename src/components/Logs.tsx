@@ -6,7 +6,7 @@ import { DataGrid } from "./grid/DataGrid";
 import { toCsv, downloadCsv } from "./grid/csv";
 import { trafficColumns, statusOf, deltaSec, actualTs as actualTsOf, aired as airedOf, type TrafficRow } from "./traffic/columns";
 import { AS_RUN_COLUMNS, type AsRunRow } from "./logs/columns";
-import { royaltyCsv, ROYALTY_SQL, type RoyaltyRow } from "./logs/royalty";
+import { royaltyCsv, ROYALTY_SQL, PERIOD_PLAYS_SQL, type RoyaltyRow } from "./logs/royalty";
 
 interface LogEntry {
   id: number;
@@ -334,9 +334,14 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
     }
   };
 
-  const exportPDF = () => {
+  const exportPDF = async () => {
+    // Open the print window inside the click (before any await), then fill it from its own whole-period query — not
+    // the 200-row list on screen (audit 7).
+    const win = window.open("", "_blank");
     const dateRange = filter === "today" ? "Today" : filter === "week" ? "Last 7 Days" : filter === "month" ? "Last 30 Days" : "All Time";
-    const rows = entries.map((e, i) => {
+    const [from, to] = rangeEpochs();
+    const plays = (await queryScoped<LogEntry>(PERIOD_PLAYS_SQL, [stationId, from, to], stationId, { skipScoping: true })) || [];
+    const rows = plays.map((e, i) => {
       const d = new Date(e.played_at * 1000);
       return `<tr style="background:${i % 2 === 0 ? "#f9f9f9" : "#fff"}">
         <td>${i+1}</td><td>${d.toLocaleDateString()}</td><td>${d.toLocaleTimeString()}</td>
@@ -348,10 +353,9 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
 <style>body{font-family:Arial,sans-serif;font-size:11px;color:#333;margin:20px}h1{font-size:18px;margin-bottom:4px}.meta{color:#666;font-size:10px;margin-bottom:16px}table{width:100%;border-collapse:collapse}th{background:#1e293b;color:#fff;padding:6px 8px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.05em}td{padding:5px 8px;border-bottom:1px solid #e5e7eb}</style>
 </head><body>
 <h1>${stationName ? stationName + " — " : ""}Traffic Log</h1>
-<div class="meta">Period: ${dateRange} | Generated: ${new Date().toLocaleString()} | Total: ${entries.length} plays</div>
+<div class="meta">Period: ${dateRange} | Generated: ${new Date().toLocaleString()} | Total: ${plays.length} plays</div>
 <table><thead><tr><th>#</th><th>Date</th><th>Time</th><th>Title</th><th>Artist</th><th>Cat</th><th>Show</th></tr></thead>
 <tbody>${rows}</tbody></table></body></html>`;
-    const win = window.open("", "_blank");
     if (win) { win.document.write(html); win.document.close(); setTimeout(() => win.print(), 500); }
   };
 

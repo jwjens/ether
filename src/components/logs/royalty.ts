@@ -12,6 +12,12 @@ export const ROYALTY_SQL =
     WHERE station_id = ? AND played_at >= ? AND played_at <= ?
     ORDER BY played_at DESC`;
 
+/** Every play in the period, all columns — the printable (PDF) log. No LIMIT (audit 7: it printed the 200 on screen). */
+export const PERIOD_PLAYS_SQL =
+  `SELECT * FROM play_log
+    WHERE station_id = ? AND played_at >= ? AND played_at <= ?
+    ORDER BY played_at DESC`;
+
 /** m:ss (BMI). */
 export function fmtMinSec(ms: number | null): string {
   if (ms == null || !(ms > 0)) return "";
