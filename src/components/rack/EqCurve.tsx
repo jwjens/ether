@@ -8,12 +8,18 @@
 //     vertical = gain; the mouse wheel — or a trackpad pinch (it arrives as ctrl+wheel) or a two-finger pinch on
 //     a touch screen — sets the width. Nodes are 44 px targets.
 //   · HPF and LPF: an opaque shaded region when IN, an outline when OUT; the corner is draggable sideways.
+//   · SLICE 8 — the LIVE RTA behind it all (docs/dsp-channel-rta.md §3): the channel's spectrum BEFORE its rack
+//     (faint) and AFTER it (brighter), both pre-fader, 31 third-octave bands on THIS curve's own x (the same
+//     function, never a copy), on their own dBFS scale (0 at the top, −90 at the bottom, labelled on the right).
+//     Bands narrower than 3 FFT bins are hatched COARSE; a channel sending nothing says NOT FED. The curve stays on
+//     top and the spectrum takes no pointer events.
 //   · numbers beside every node: frequency, gain, width in octaves.
-import React, { useMemo, useRef, useState } from "react";
+import React, { useId, useMemo, useRef, useState } from "react";
 import type { FilterModule, PeqModule, ChannelRackDoc } from "./rackTypes";
 import {
   planChannel, sumDb, bandBiquad, filterBiquads, clampChannelModule, HPF_HZ, LPF_HZ, PEQ_HZ, PEQ_GAIN_DB, PEQ_WIDTH_OCT,
 } from "./eqMath";
+import { rtaPath, coarseSpan, RTA_RANGE_DB, type RtaFrame } from "./rta";
 
 const W = 800, H = 280, PL = 40, PR = 12, PT = 12, PB = 26;
 const F0 = 20, F1 = 20000, DB = 15;
@@ -36,9 +42,12 @@ interface Props {
   onPeq: (m: PeqModule) => void;
   selected: number | null;
   onSelect: (band: number | null) => void;
+  /** SLICE 8 — the live RTA for this channel (null = not listening), and the held peaks when PEAK HOLD is on. */
+  rta?: { frame: RtaFrame | null; held: { pre: number[]; post: number[] } | null } | null;
 }
 
-export default function EqCurve({ doc, filters, peq, onFilters, onPeq, selected, onSelect }: Props) {
+export default function EqCurve({ doc, filters, peq, onFilters, onPeq, selected, onSelect, rta = null }: Props) {
+  const hatchId = `rta-coarse-${useId().replace(/:/g, "")}`;
   const svgRef = useRef<SVGSVGElement>(null);
   const [drag, setDrag] = useState<null | { kind: "band"; i: number } | { kind: "hpf" | "lpf" }>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
@@ -143,6 +152,28 @@ export default function EqCurve({ doc, filters, peq, onFilters, onPeq, selected,
           <text x={PL - 6} y={y(d) + 4} fontSize={10} textAnchor="end" fill="var(--text-tertiary)">{d > 0 ? `+${d}` : d}</text>
         </g>
       ))}
+      {/* SLICE 8 — the live spectrum, under everything that can be touched */}
+      {rta?.frame && (
+        <g pointerEvents="none">
+          <defs>
+            <pattern id={hatchId} width={6} height={6} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <line x1={0} y1={0} x2={0} y2={6} stroke="var(--text-tertiary)" strokeWidth={1} opacity={0.35} />
+            </pattern>
+          </defs>
+          {rta.frame.fed ? (
+            <>
+              <path d={rtaPath(rta.frame.pre, x, PT, H - PB, F0, F1)} fill="var(--rta-pre)" stroke="none" />
+              <path d={rtaPath(rta.frame.post, x, PT, H - PB, F0, F1)} fill="var(--rta-post)" stroke="none" />
+              {rta.held && <path d={rtaPath(rta.held.post, x, PT, H - PB, F0, F1)} fill="none" stroke="var(--rta-post-line)" strokeWidth={1} strokeDasharray="3 3" />}
+              {(() => { const c = coarseSpan(rta.frame.coarseBelowHz, x, F0); return c ? <rect x={c[0]} y={PT} width={c[1] - c[0]} height={H - PT - PB} fill={`url(#${hatchId})`} /> : null; })()}
+            </>
+          ) : (
+            <text x={(PL + W - PR) / 2} y={H - PB - 10} fontSize={11} fontWeight={800} textAnchor="middle" fill="var(--text-tertiary)">SPECTRUM — NOT FED (nothing is playing on this channel)</text>
+          )}
+          <text x={W - PR - 4} y={PT + 10} fontSize={9} textAnchor="end" fill="var(--text-tertiary)">0 dBFS</text>
+          <text x={W - PR - 4} y={H - PB - 3} fontSize={9} textAnchor="end" fill="var(--text-tertiary)">−{RTA_RANGE_DB}</text>
+        </g>
+      )}
       {fShade("hpf")}
       {fShade("lpf")}
       {/* each band's own contribution, in its colour */}

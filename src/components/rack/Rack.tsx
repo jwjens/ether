@@ -34,7 +34,9 @@ import { BUS, latestMeters, useMeterSubscription } from "../meter/meterStore";
 import { ceilingLabel } from "../meter/loudnessWire";
 import { EQ_LABELS } from "../GraphicEQ";
 import { LABEL, MONO, TOUCH, BTN, Knob } from "./rackUi";
-import ChannelRackView from "./ChannelRackView";
+import ChannelRackView, { RtaBar } from "./ChannelRackView";
+import { useRta } from "../../hooks/useRta";
+import { rtaPath, coarseSpan, geqX, GEQ_F_MIN, GEQ_F_MAX } from "./rta";
 import { useBoardName } from "../../hooks/useBoardName";
 import { CHANNEL_SLOTS, isChannelSlot, type ChannelSlot } from "./channelRack";
 import { RACK_VIEW_KEY, useChannelRackLamps } from "../../hooks/useChannelRack";
@@ -388,22 +390,18 @@ function MasterRack({ stationId, stationUuid }: Props) {
   );
 }
 
-/** The GEQ slot's editor: ten touch-sized band faders over the live spectrum, IN/OUT, and FLAT. */
+/** The GEQ slot's editor: ten touch-sized band faders over the live spectrum, IN/OUT, and FLAT.
+ *  SLICE 8 — the spectrum is the RTA (docs/dsp-channel-rta.md): the programme BEFORE the GEQ (faint) and AFTER it
+ *  (brighter), 31 third-octave bands on a log axis where each fader sits over its own octave. It replaces the old
+ *  in-callback analyser (ruling 4), which drew ten 0…1 bars normalised to a running peak. */
 function GeqEditor({ stationId, geq, on, onBands, onIn }: {
   stationId: number; geq: GeqModule; on: boolean; onBands: (b: number[]) => void; onIn: (v: boolean) => void;
 }) {
-  const [spec, setSpec] = useState<number[]>(new Array(10).fill(0));
-  const alive = useRef(true);
-  useEffect(() => {
-    alive.current = true;
-    const id = setInterval(async () => {
-      try {
-        const s = await (window as any).ether?.audio?.getSpectrum?.(stationId);
-        if (alive.current && Array.isArray(s) && s.length === 10) setSpec(s.map((x: number) => Math.max(0, Math.min(1, Number(x) || 0))));
-      } catch { /* the faders still work without the spectrum */ }
-    }, 100);
-    return () => { alive.current = false; clearInterval(id); };
-  }, [stationId]);
+  void stationId;   // the RTA follows the active station (useRta)
+  const rta = useRta("master");
+  const gx = geqX(1000);
+  const f = rta.frame;
+  const coarse = f ? coarseSpan(f.coarseBelowHz, gx, GEQ_F_MIN) : null;
   const set = (i: number, v: number) => { const next = [...geq.bands]; next[i] = Math.round(v * 10) / 10; onBands(next); };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -412,11 +410,20 @@ function GeqEditor({ stationId, geq, on, onBands, onIn }: {
         <button style={BTN()} onClick={() => onBands(new Array(10).fill(0))} title="All bands to 0 dB">FLAT</button>
         <span style={{ fontSize: 11, color: "var(--text-tertiary)", alignSelf: "center" }}>10-band master GEQ · ±12 dB · drives the air and the room EQ</span>
       </div>
-      <div style={{ display: "flex", gap: 6, alignItems: "flex-end", opacity: on ? 1 : 0.55 }}>
+      <RtaBar rta={rta} />
+      <div style={{ position: "relative", display: "flex", gap: 6, alignItems: "flex-end", opacity: on ? 1 : 0.55 }}>
+        {f?.fed && (
+          <svg viewBox="0 0 1000 160" preserveAspectRatio="none" aria-hidden
+               style={{ position: "absolute", left: 0, right: 0, top: 0, height: 160, width: "100%", pointerEvents: "none" }}>
+            <path d={rtaPath(f.pre, gx, 0, 160, GEQ_F_MIN, GEQ_F_MAX)} fill="var(--rta-pre)" />
+            <path d={rtaPath(f.post, gx, 0, 160, GEQ_F_MIN, GEQ_F_MAX)} fill="var(--rta-post)" />
+            {rta.held && <path d={rtaPath(rta.held.post, gx, 0, 160, GEQ_F_MIN, GEQ_F_MAX)} fill="none" stroke="var(--rta-post-line)" strokeWidth={1.5} strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />}
+            {coarse && <rect x={coarse[0]} y={0} width={coarse[1] - coarse[0]} height={160} fill="var(--text-tertiary)" opacity={0.08} />}
+          </svg>
+        )}
         {geq.bands.map((g, i) => (
           <div key={i} style={{ flex: 1, minWidth: TOUCH, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
             <div style={{ position: "relative", height: 160, width: TOUCH, display: "flex", justifyContent: "center" }}>
-              <div title="live spectrum" style={{ position: "absolute", bottom: 0, left: 6, right: 6, height: `${spec[i] * 100}%`, background: "var(--slot-eq)", opacity: 0.18 }} />
               <input className="rack-range" type="range" min={-12} max={12} step={0.5} value={g}
                 onChange={e => set(i, Number(e.target.value))}
                 style={{ writingMode: "vertical-lr" as any, direction: "rtl", height: 160, width: TOUCH }} />

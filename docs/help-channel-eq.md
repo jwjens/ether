@@ -62,6 +62,21 @@ On the **on-air decks A/B/C**, the deck's **EQ** button opens the same rack.
 **The two meters on the right** are this fader before (**IN**) and after (**OUT**) its rack, both before the
 fader. They show what the EQ did.
 
+## Reading the spectrum
+
+Behind the EQ curve is a **live spectrum of this channel**, so you can see the sound change as you move a band.
+- **Faint:** the channel **before** its rack.
+- **Brighter:** **after** it, which is what the EQ, filters, gate and compressor did.
+- Both are taken **before the fader**, so moving the fader doesn't change them. The spectrum shows the EQ, not
+  your level.
+- The scale is on the right: **0 dBFS at the top, −90 at the bottom**. 31 third-octave bands, 20 Hz to 20 kHz.
+- **Hatched at the far left (below 160 Hz):** those bands are too narrow for the analyser to split finely. They're
+  shown, but read them as a guide.
+- **NOT FED:** nothing is playing on this channel.
+- **PEAK HOLD** (off by default) keeps each band's highest level for 2 seconds, as a dashed line.
+
+It runs only while this rack window shows the curve, one channel at a time. Close the window and it stops.
+
 ## Starting over
 
 These reset buttons change the sound smoothly (20 ms crossfade), like any other edit. They take effect

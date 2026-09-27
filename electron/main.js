@@ -876,6 +876,8 @@ if (AUDIO_DAEMON_DESIRED) {
         const { stationId: _procIntId, ...procFrame } = m;
         sendToAllWindows("audio:proc-meters", { ...procFrame, stationUuid: _procUuid });
         try { _noteProcSample(m); } catch {}   // 1s decimated retention for the fleet health frame
+      } else if (m.event === "rta") {
+        sendToAllWindows("audio:rta", m);   // SLICE 8 — carries stationUuid, never the integer
       } else if (m.event === "showstate") {
         _showOnState(m);        // SLICE 7 — the blade's show state (UUID-scoped) + show_pending
       } else if (m.event === "showapplied") {
@@ -5405,10 +5407,12 @@ ipcMain.handle("audio:subscribe-meters", (_, stationIds) => {
   return ids;
 });
 ipcMain.handle("audio:getLevels", (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("getLevels", { stationId }) : JSON.parse(audio.audioGetLevels(stationId)));
-// RETIRED (slice 8, ruling 4): the in-callback master spectrum is gone — the engine no longer has audio_get_spectrum.
-// The master GEQ view reads the RTA (docs/dsp-channel-rta.md). Kept one step as an inert answer (an empty array, which
-// the old view ignores) so a renderer that still polls it gets no error; removed with that view.
-ipcMain.handle("audio:getSpectrum", () => []);
+// SLICE 8 — the live RTA behind a rack view's curve (docs/dsp-channel-rta.md). The view renews its subscription every
+// 2 s; the daemon holds it on a lease and emits `rta` frames, forwarded below as audio:rta by station UUID. The
+// in-callback master spectrum (audio:getSpectrum) is RETIRED (ruling 4).
+ipcMain.handle("audio:rta-subscribe", (_, stationId, target) => AUDIO_DAEMON
+  ? audiodClient.cmd("rtaSubscribe", { stationId: Number(stationId), stationUuid: _stationUuidById(Number(stationId)), target: String(target || "") })
+  : { ok: false, reason: "the live spectrum needs the audio engine service — fully close and reopen Ether" });
 ipcMain.handle("audio:getFileDuration", (_, filePath) => audio.getFileDuration(filePath));
 // Cover art is DOWNSCALED before it crosses to the renderer. Full-size embedded art on this library
 // runs 150-230KB per image, which as a base64 data URL is ~200-310K CHARACTERS. The Jukebox wall puts

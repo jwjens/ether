@@ -54,7 +54,10 @@ contextBridge.exposeInMainWorld("ether", {
     setProcessorBypass: (stationId, p) => ipcRenderer.invoke("audio:set-processor-bypass", stationId, p),
     setDuckable: (stationId, deck, duckable) => ipcRenderer.invoke("audio:set-duckable", stationId, deck, duckable),
     setAuxDevice:  (stationId, device)      => ipcRenderer.invoke("audio:set-aux-device", stationId, device),
-    getSpectrum: (stationId) => ipcRenderer.invoke("audio:getSpectrum", stationId),
+    // SLICE 8 — the live RTA (a lease: renew every 2 s; target = a fader, "master", or "" to stop).
+    rtaSubscribe: (stationId, target) => ipcRenderer.invoke("audio:rta-subscribe", stationId, target),
+    onRta:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("audio:rta", h); return h; },
+    offRta: (h)  => ipcRenderer.removeListener("audio:rta", h),
     getFileDuration: (fp) => ipcRenderer.invoke("audio:getFileDuration", fp),
     embeddedArt: (fp) => ipcRenderer.invoke("audio:embeddedArt", fp),
     // Music-store cover art (iTunes fallback). Resolved in MAIN so the disk cache, the provenance

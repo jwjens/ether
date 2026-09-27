@@ -22,6 +22,7 @@ import {
 import { SLOT_COLOR } from "./rackModel";
 import { HPF_HZ, LPF_HZ, PEQ_HZ, PEQ_GAIN_DB, PEQ_WIDTH_OCT } from "./eqMath";
 import EqCurve from "./EqCurve";
+import { useRta } from "../../hooks/useRta";
 import { LABEL, MONO, TOUCH, BTN } from "./rackUi";
 import { useChannelRack } from "../../hooks/useChannelRack";
 import PeakAvgMeter from "../meter/PeakAvgMeter";
@@ -104,6 +105,23 @@ function Num({ label, value, unit, min, max, step, onChange, color, hint }: {
   );
 }
 
+/** SLICE 8 — the RTA's legend and its PEAK HOLD toggle (ruling 3: off by default), above the curve. */
+export function RtaBar({ rta }: { rta: ReturnType<typeof useRta> }) {
+  const f = rta.frame;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: "var(--text-tertiary)", flexWrap: "wrap" }}
+         title="The live spectrum of this channel, before its fader: faint = before the rack, bright = after it. 31 third-octave bands; the hatched region is too narrow to resolve finely.">
+      <span style={{ fontWeight: 800, letterSpacing: "0.08em" }}>SPECTRUM</span>
+      <span><span style={{ display: "inline-block", width: 12, height: 8, background: "var(--rta-pre)", marginRight: 4 }} />before the rack</span>
+      <span><span style={{ display: "inline-block", width: 12, height: 8, background: "var(--rta-post)", marginRight: 4 }} />after it</span>
+      <span>{rta.unavailable ? `— ${rta.unavailable}` : !f ? "— waiting for the engine" : !f.fed ? "— nothing playing on this channel" : ""}</span>
+      <div style={{ flex: 1 }} />
+      <button onClick={() => rta.setPeakHold(!rta.peakHold)} style={{ ...BTN(rta.peakHold), minHeight: 30, padding: "0 10px", fontSize: 11 }}
+              title="PEAK HOLD — each band's highest level, held 2 s (off by default)">PEAK HOLD {rta.peakHold ? "ON" : "OFF"}</button>
+    </div>
+  );
+}
+
 export default function ChannelRackView({ stationId, stationUuid, slot }: { stationId: number; stationUuid: string | null | undefined; slot: ChannelSlot }) {
   const rack = useChannelRack(stationId, slot);
   // ONE NAME PER FADER — the operator sees the board letter, never the engine slot id (src/lib/boardName.ts).
@@ -130,6 +148,11 @@ export default function ChannelRackView({ stationId, stationUuid, slot }: { stat
     }, 100);
     return () => clearInterval(id);
   }, [stationUuid, idx0]);
+  // SLICE 8 — the live RTA, only while the EQ curve is on screen (the tap costs nothing when nobody listens).
+  const d0 = rack.doc;
+  const shown0 = d0 ? (selMod && findChannel(d0, selMod) ? selMod : (d0.sections.ch[0]?.module?.type ?? null)) : null;
+  const curveShown = !!d0 && !!(findChannel(d0, "filters") || findChannel(d0, "peq")) && shown0 !== "gate" && shown0 !== "comp";
+  const rta = useRta(curveShown ? slot : null);
   const doc = rack.doc;
 
   if (!doc) {
@@ -339,8 +362,9 @@ export default function ChannelRackView({ stationId, stationUuid, slot }: { stat
               <div style={{ color: "var(--text-tertiary)", fontSize: 13 }}>Pick a module above to edit it.</div>
             ) : (
               <>
+                <RtaBar rta={rta} />
                 <EqCurve doc={doc} filters={filters as any} peq={peq as any} onFilters={editF} onPeq={editQ} selected={band}
-                         onSelect={b => { setBand(b); if (b != null) setSelMod("peq"); }} />
+                         onSelect={b => { setBand(b); if (b != null) setSelMod("peq"); }} rta={{ frame: rta.frame, held: rta.held }} />
                 {filters?.module && (shown === "filters" || !peq) && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>

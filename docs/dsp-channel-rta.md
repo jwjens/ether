@@ -1,6 +1,6 @@
 # Slice 8 — live RTA behind the channel EQ (proposal, 2026-09-26)
 
-**Status:** GO given 2026-09-26. Engine built; UI to follow. Dev only, branch `log-reader-flip`.
+**Status:** GO given 2026-09-26. Engine and views built; on screen UNVERIFIED until Jeff's check. Dev only, branch `log-reader-flip`.
 
 ## Jeff's rulings (verbatim)
 
@@ -325,3 +325,94 @@ the full suite run on a mic row: rack CPU max 0.550 ms.
 
 It is a worst-case CPU figure that is noisy on this box today, not a slice 8 regression. **Reported, not
 loosened.** Because `test:rust` stops at the first failure, the bench and doctests were run on their own.
+
+---
+
+## Build — the views (UI) (2026-09-26)
+
+**Status:** built. **What it looks like on screen is UNVERIFIED until Jeff's check.** That includes the two
+spectrums moving under the curve while a band is dragged, and the master GEQ's spectrum under its faders.
+
+### The lease and the wire
+
+- **`audiod/rta-lease.js` (new, pure):**
+  - one lease per station, keyed by what the view asks for (a fader, `"master"`, or `""` to stop);
+  - the engine's target is sent only when it **changes**;
+  - `expire()` returns the stations whose last renewal is more than **5 s** old.
+- **`ether-audiod.js`:**
+  - `rtaSubscribe` holds the lease;
+  - a 47 ms timer clears lapsed leases (`audioSetRta(sid, "")`, logged);
+  - it emits an **`rta` event per new analysis frame**, by station UUID, only for stations with a lease, and never
+    the same frame twice.
+  - **Changed from the proposal:** the proposal put `rta` on the ~30 Hz meter-bus frame. It is its own event
+    instead, so a view that isn't metering still gets it, and the meter frame's contract (`smoke-meter-contract`)
+    is untouched.
+- **main:** `audio:rta-subscribe` → the daemon, with the station UUID. `rta` events are forwarded as
+  **`audio:rta`**, carrying the UUID and never the integer. Without the audio service the view says the spectrum
+  needs it.
+- **preload:** `audio.rtaSubscribe / onRta / offRta`.
+- **Retired end to end (ruling 4):** the `audio:getSpectrum` route, the daemon's `getSpectrum` and the preload's
+  `getSpectrum` are gone.
+
+### Drawing
+
+- **`src/components/rack/rta.ts` (new):**
+  - the engine's band edges (the exact base-2 series);
+  - `rtaPath`: a step outline across each band's edges, closed to the floor, **on the caller's own x**;
+  - `dbfsY`: 0 dBFS at the top, −90 at the bottom;
+  - `coarseSpan` for the hatch; `holdStep` for PEAK HOLD (2 s);
+  - `geqX`: the master GEQ's log axis, which puts each of its ten faders over its own octave.
+- **`useRta(target)`:**
+  - subscribes while mounted with a target, renews every **2 s**, and sends `""` on unmount;
+  - takes only this station's frames for this target;
+  - **PEAK HOLD** is off unless the viewer turns it on (remembered per viewer, ruling 3).
+- **`EqCurve`:**
+  - under everything touchable: **pre (faint, `--rta-pre`)** and **post (brighter, `--rta-post`)**, on the
+    curve's own `x`;
+  - held peaks as a dashed line (`--rta-post-line`);
+  - the coarse bands (below 160 Hz) hatched;
+  - **NOT FED** when nothing plays;
+  - the dBFS scale labelled on the right;
+  - `pointerEvents="none"`. **The curve and its handles stay on top.**
+- **`ChannelRackView`:**
+  - it listens **only while the EQ curve is on screen** (Filters or PEQ shown, not Gate/Comp);
+  - an **`RtaBar`** above the curve: the legend, its state (waiting / nothing playing / unavailable) and
+    **PEAK HOLD ON/OFF**.
+  - **Named, not built:** a rack with no Filters or PEQ has no curve, so it shows no spectrum. Adding Filters
+    shows both.
+- **The master GEQ view (`Rack.tsx`):** the same `RtaBar`, and the same two layers behind the ten faders on
+  `geqX`. The 100 ms `getSpectrum` poll and its ten 0…1 bars are gone.
+- **Tokens** `--rta-pre`, `--rta-post` and `--rta-post-line` in all four themes.
+
+### Help
+
+- **`help-channel-eq.md`:** a new **Reading the spectrum** section (faint = before the rack, bright = after it,
+  pre-fader, 0 to −90 dBFS, the hatched lows, NOT FED, PEAK HOLD, runs only while shown).
+- **`help-processor-rack.md`:** the GEQ's spectrum (before/after the GEQ, each fader over its octave).
+
+### Receipts
+
+- **vitest `rta.test.ts`, 6/6:**
+  - band edges are the engine's, and adjacent bands share an edge;
+  - the dBFS mapping;
+  - the step outline lands a band's level across its own edges on the caller's x;
+  - peak hold holds 2 s, then follows;
+  - the coarse hatch;
+  - the GEQ axis puts each fader over its octave.
+  - **Total: 500/500.**
+- **`test:rta`, 22/22:**
+  - **the lease:** a first subscription sets the target, a renewal sends nothing, a new target replaces it,
+    renewed within 5 s it stays live, **more than 5 s without a renewal lapses it**, a returning view re-arms it,
+    `""` stops it at once;
+  - **the wiring:** the daemon clears the target on a lapse; frames go out by UUID; the old spectrum is retired end
+    to end; main routes and forwards;
+  - **the view:** it renews every 2 s and says `""` on unmount; the channel spectrum is on the curve's own `x` and
+    under the curve; NOT FED and the hatch; it listens only while the curve shows; PEAK HOLD is off by default;
+    the master reads the RTA;
+  - tokens in 4 themes; `eq.rs` has no FFT; the help exists.
+- **Gates:**
+  - tsc 0;
+  - show-presets 52, rack-eq 30, mic-input 25, pfl 22, dynamics 10, meter contract 30;
+  - undefined-calls, preload-bridge, ipc-contract, one-switch, audio-isolation PASS;
+  - cmd-routing 7, enginestate-wire 15;
+  - leak guard OK; `npm run build` OK.

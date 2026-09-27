@@ -372,7 +372,19 @@ const handlers = {
     for (const s of (m.stations || [])) if (s && s.uuid) meterSubs.set(Number(s.id), { at: now, uuid: String(s.uuid) });
     return [...meterSubs.keys()];
   },
-  getSpectrum:        () => [],   // RETIRED (slice 8, ruling 4): the engine has no in-callback spectrum; see audio_get_rta
+  // SLICE 8 — the RTA behind a rack view's EQ curve (docs/dsp-channel-rta.md). A LEASE: the view renews every 2 s;
+  // `target` = a fader, "master", or "" (stop). The engine's target follows the lease; a lapsed one is cleared below.
+  rtaSubscribe:       (m) => {
+    if (typeof A.audioSetRta !== "function") return { ok: false, reason: "this audio engine predates the RTA — fully close and reopen Ether" };
+    const sid = Number(m.stationId);
+    stations.add(sid);
+    const send = rtaLeases.subscribe(sid, m.stationUuid ? String(m.stationUuid) : null, m.target, Date.now());
+    if (send === null) return { ok: true };
+    let res = null;
+    try { res = JSON.parse(A.audioSetRta(sid, send)); } catch (e) { res = { ok: false, reason: String(e && e.message || e) }; }
+    if (!res || !res.ok) log(`[rta s${sid}] target ${send || "(none)"} refused ✗ ${(res && res.reason) || ""}`);
+    return res || { ok: false };
+  },
   getFileDuration:    (m) => A.getFileDuration(m.filePath),
   listOutputDevices:  ()  => JSON.parse(A.audioListOutputDevices()),
   // THE MIC (docs/dsp-mic-in-engine.md) — the daemon's engine owns the input streams, so the device list and the
@@ -606,6 +618,28 @@ let tick = 0;
 // Reading a window ACKNOWLEDGES it (the engine then starts the next), so this is the one meter reader per
 // station.
 const meterSubs = new Map();          // stationId → { at: last subscribe time, uuid }
+// SLICE 8 — the RTA leases, and the RTA frames' own ~21 Hz event (one per new analysis frame, subscribed stations only).
+const { RtaLeases } = require("./rta-lease");
+const rtaLeases = new RtaLeases();
+const rtaSeq = new Map();             // stationId → the last frame seq sent
+const rtaTimer = setInterval(() => {
+  const now = Date.now();
+  for (const sid of rtaLeases.expire(now)) {
+    try { A.audioSetRta(sid, ""); } catch { /* the engine is gone — nothing to stop */ }
+    rtaSeq.delete(sid);
+    log(`[rta s${sid}] lease lapsed — tap off`);
+  }
+  if (clients.size === 0 || typeof A.audioGetRta !== "function") return;
+  for (const [sid, l] of rtaLeases.entries()) {
+    let f;
+    try { f = JSON.parse(A.audioGetRta(sid)); } catch { continue; }
+    const key = `${f.seq}:${f.fed}:${f.target}`;   // a new frame, or a change in fed/target — never the same one twice
+    if (rtaSeq.get(sid) === key) continue;
+    rtaSeq.set(sid, key);
+    broadcast({ event: "rta", stationUuid: l.uuid, ...f });
+  }
+}, 47);
+if (rtaTimer.unref) rtaTimer.unref();
 const METER_SUB_TTL_MS = 5000;
 const meterTimer = setInterval(() => {
   if (clients.size === 0 || meterSubs.size === 0 || typeof A.audioGetMeters !== "function") return;
