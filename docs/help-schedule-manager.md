@@ -155,11 +155,6 @@ whichever suits the task.
   clock beside it does not change those numbers. Hit Refresh after you generate.
 - **Your layout is not your colleague's.** It is stored per station on this machine and never synced.
 
-## Known issue
-
-The Sweepers pane's tab (and its entry in the Panels menu) still reads **"Jingles"**. It is the same
-Sweepers panel described above.
-
 ## Related
 
 **Station Health → Library & Rotation → Rotation goals** — the same advisor, for every clock at once.

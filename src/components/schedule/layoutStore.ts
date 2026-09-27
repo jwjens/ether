@@ -32,7 +32,8 @@ export const PANELS = [
   { id: "clocks", title: "Clocks" },
   { id: "categories", title: "Categories" },
   { id: "spots", title: "Spots" },
-  { id: "jingles", title: "Jingles" },
+  // id "jingles" is stored in saved layouts, so it stays; the operator reads "Sweepers" (audit 16).
+  { id: "jingles", title: "Sweepers" },
   { id: "rotation", title: "Rotation Analytics" },
   // The Calendar's day log, hosted. Rotation Analytics says what aired in aggregate; this is the
   // hour-by-hour log itself — the thing you generate, pin and edit. Same component as the Calendar
