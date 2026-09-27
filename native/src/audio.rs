@@ -3598,6 +3598,8 @@ pub(crate) fn mixer_callback(
     let mut ch_meter = [MeterTap::default(); SLOT_COUNT];
     // SLICE 5 — this buffer's POST-RACK taps (after the channel's EQ, still pre-fader).
     let mut ch_post = [MeterTap::default(); SLOT_COUNT];
+    // SLICE 6 — this buffer's per-channel dynamics taps.
+    let mut ch_dyn = [crate::rt::DynTap::default(); SLOT_COUNT];
     // Disjoint borrows of the state for the deck loop: the decks, and the channel racks' DSP.
     let bs: &mut BusState = &mut *bus;
 
@@ -3711,6 +3713,9 @@ pub(crate) fn mixer_callback(
             for f in 0..take { rl[f] = feed[2 * f] * trim; rr[f] = feed[2 * f + 1] * trim; }
             bs.chdsp[i].process(rl, rr);
             ch_post[i].add(rl, rr);
+            // SLICE 6 — this buffer's dynamics (the running chain's GR since the last take)
+            let (gg, cg, open) = bs.chdsp[i].take_gr();
+            ch_dyn[i].fold(gg, cg, open);
         } else {
             ch_post[i] = ch_meter[i];   // nothing ran: post-rack IS pre-rack
         }
@@ -3793,6 +3798,13 @@ pub(crate) fn mixer_callback(
         a.peak = [a.peak[0].max(t.peak[0]), a.peak[1].max(t.peak[1])];
         a.sumsq[0] += t.sumsq[0];
         a.sumsq[1] += t.sumsq[1];
+        let (a, t) = (&mut bus.meters_acc.ch_dyn[i], &ch_dyn[i]);
+        if t.runs > 0 {
+            a.gate_gr = a.gate_gr.max(t.gate_gr);
+            a.comp_gr = a.comp_gr.max(t.comp_gr);
+            a.gate_open += t.gate_open;
+            a.runs += t.runs;
+        }
     }
 
     for (i, done) in exhausted.iter().enumerate() {
@@ -4560,6 +4572,117 @@ fn drain_program_bus(
     }
 }
 
+// ── SLICE 6 — channel dynamics through the real mixer callback (docs/dsp-channel-dynamics.md §4) ─────────────
+#[cfg(test)]
+mod dynamics_through_the_mixer {
+    use super::*;
+    use crate::rack::{ChannelRack, ChannelRackParams};
+
+    struct Tone { n: u64, freq: f64, amp: f64 }
+    impl Iterator for Tone {
+        type Item = f32;
+        fn next(&mut self) -> Option<f32> { let i = self.n / 2; self.n += 1; Some((self.amp * (2.0 * std::f64::consts::PI * self.freq * i as f64 / 44_100.0).sin()) as f32) }
+    }
+    /// Deterministic Gaussian noise at a given RMS (dBFS), the same sample on L and R.
+    struct Noise { s: u64, rms: f64, cur: f32, half: bool }
+    impl Iterator for Noise {
+        type Item = f32;
+        fn next(&mut self) -> Option<f32> {
+            if self.half { self.half = false; return Some(self.cur); }
+            let mut u = || { self.s = self.s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); ((self.s >> 11) as f64 + 0.5) / (1u64 << 53) as f64 };
+            let (u1, u2) = (u(), u());
+            let g = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
+            self.cur = (g * self.rms) as f32; self.half = true;
+            Some(self.cur)
+        }
+    }
+    struct Out { stream: Vec<f32>, dyn_: crate::rt::DynTap, duck_min_after: f32 }
+
+    /// S1 (slot 7) carries `src`; its rack is `rack_json` (None = no rack). Optionally programme on deck A and S1's
+    /// DUCK on. Returns S1's programme (the stream), the last meter window's dynamics tap for S1, and the lowest duck
+    /// gain seen after `settle` buffers.
+    fn run(buffers: usize, src: impl Iterator<Item = f32> + Send + 'static, rack_json: Option<&str>, programme: bool, duck: bool, settle: usize) -> Out {
+        let (prod, mut stream_cons) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)));
+        let h = b.handles.take().unwrap();
+        let (meters, _loud) = MetersHandle::from_parts(Arc::new(Mutex::new(h.meter_r)), h.shared.clone(), h.loud_cons, h.loud_shared);
+        let cap = 480 * 2 * (buffers + 2);
+        if programme {
+            b.decks[0].source = Some(DeckFeed::prefilled(Tone { n: 0, freq: 220.0, amp: 0.2 }, cap));
+            b.decks[0].active = true; b.decks[0].paused = false; b.decks[0].volume = 1.0;
+        }
+        b.decks[7].source = Some(DeckFeed::prefilled(src, cap));
+        b.decks[7].active = true; b.decks[7].paused = false; b.decks[7].volume = 1.0;
+        let mut cur = b.params();
+        cur.duck_enabled[7] = duck;
+        if let Some(j) = rack_json {
+            let r = ChannelRack::from_doc_json(j).unwrap();
+            cur.ch_rack[7] = ChannelRackParams { rack: r, plan: r.plan(44_100.0), version: 1 };
+        }
+        let bus = Arc::new(Mutex::new(b));
+        let (mut cmd, mut garbage) = (h.cmd_prod, h.garbage_cons);
+        let _ = cmd.try_push(RtCmd::Params(Box::new(cur)));
+        let (fin, playing) = (FinishedFlags::new(), Arc::new(AtomicBool::new(true)));
+        let mut sc = Scratch::new();
+        let (mut data, mut pop) = (vec![0f32; 960], vec![0f32; 960]);
+        let mut o = Out { stream: Vec::new(), dyn_: Default::default(), duck_min_after: 1.0 };
+        for k in 0..buffers {
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+            loop { let got = stream_cons.pop_slice(&mut pop); if got == 0 { break; } for f in 0..got / 2 { o.stream.push(pop[2 * f]); } }
+            while garbage.try_pop().is_some() {}
+            if k >= settle { let g = bus.lock().unwrap().duck_gain; if g < o.duck_min_after { o.duck_min_after = g; } }
+            if k == buffers - 2 { let _ = meters.read_and_ack(); }
+            if k == buffers - 1 { o.dyn_ = meters.read_and_ack().unwrap().ch_dyn[7]; }
+        }
+        o
+    }
+    fn rms_db(x: &[f32]) -> f64 { 20.0 * (x.iter().map(|&v| (v as f64) * (v as f64)).sum::<f64>() / x.len() as f64).sqrt().log10() }
+    const COMP: &str = r#"{"v":1,"sections":{"ch":[{"module":{"type":"comp","threshold":-20,"ratio":4,"attack":10,"release":150,"makeup":0,"knee":6},"in":true}]}}"#;
+    fn gate(thr: f32) -> String { format!(r#"{{"v":1,"sections":{{"ch":[{{"module":{{"type":"gate","threshold":{thr},"ratio":5,"depth":15,"attack":1,"hold":100,"release":150,"hysteresis":3}},"in":true}}]}}}}"#) }
+
+    #[test]
+    fn the_spec_case_minus_10_over_4_to_1_at_minus_20_reads_7_5_db_of_gr() {
+        // a 1 kHz sine at −10 dBFS RMS (the RMS detector's level — ruling 1)
+        let amp = 10f64.powf(-10.0 / 20.0) * 2f64.sqrt();
+        let o = run(300, Tone { n: 0, freq: 1000.0, amp }, Some(COMP), false, false, 0);
+        let out = rms_db(&o.stream[o.stream.len() - 22_050..]);
+        println!("[dyn-comp] 1 kHz −10 dBFS RMS on S1, 4:1 at −20 dB, knee 6 dB, through the real callback: GR tap {:.3} dB (spec ~7.5; bar 7.50 ± 0.1) · output {:.3} dBFS RMS (want −17.5)",
+                 o.dyn_.comp_gr, out);
+        assert!((o.dyn_.comp_gr - 7.5).abs() < 0.1, "GR {:.3} dB", o.dyn_.comp_gr);
+        assert!((out + 17.5).abs() < 0.1, "output {:.3} dBFS", out);
+    }
+
+    #[test]
+    fn the_gate_drops_idle_room_noise_by_its_depth_and_leaves_speech_alone() {
+        let noise = Noise { s: 7, rms: 10f64.powf(-60.0 / 20.0), cur: 0.0, half: false };
+        let dry = run(300, Noise { s: 7, rms: 10f64.powf(-60.0 / 20.0), cur: 0.0, half: false }, None, false, false, 0);
+        let o = run(300, noise, Some(&gate(-45.0)), false, false, 0);
+        let (n0, n1) = (rms_db(&dry.stream[dry.stream.len() - 44_100..]), rms_db(&o.stream[o.stream.len() - 44_100..]));
+        // speech-level tone through the same gate: open, untouched
+        let t_amp = 10f64.powf(-20.0 / 20.0) * 2f64.sqrt();
+        let td = run(200, Tone { n: 0, freq: 500.0, amp: t_amp }, None, false, false, 0);
+        let tg = run(200, Tone { n: 0, freq: 500.0, amp: t_amp }, Some(&gate(-45.0)), false, false, 0);
+        let (s0, s1) = (rms_db(&td.stream[td.stream.len() - 22_050..]), rms_db(&tg.stream[tg.stream.len() - 22_050..]));
+        println!("[dyn-gate] room noise −60 dBFS RMS on S1, gate −45 / depth 15 / 1:5: {:.2} → {:.2} dBFS (want −75 ± 0.5; GR tap {:.2} dB, open {:.0}%) · speech tone −20 dBFS: {:.3} → {:.3} (Δ {:+.3} dB)",
+                 n0, n1, o.dyn_.gate_gr, 100.0 * o.dyn_.gate_open as f32 / o.dyn_.runs.max(1) as f32, s0, s1, s1 - s0);
+        assert!((n1 + 75.0).abs() < 0.5, "gated noise {:.2} dBFS", n1);
+        assert!((s1 - s0).abs() < 0.1, "the gate touched speech: {:+.3} dB", s1 - s0);
+    }
+
+    #[test]
+    fn a_gated_mic_does_not_duck_the_music_and_an_ungated_one_does() {
+        // S1 = room noise at −52 dBFS RMS (peaks above the ducker's −45 dBFS threshold), DUCK ON, programme on A.
+        let mk = || Noise { s: 11, rms: 10f64.powf(-52.0 / 20.0), cur: 0.0, half: false };
+        let settle = 300;   // 3.3 s: past the gate's first close and the ducker's hold + release
+        let ungated = run(600, mk(), None, true, true, settle);
+        let gated = run(600, mk(), Some(&gate(-40.0)), true, true, settle);
+        println!("[dyn-duck] mic room noise −52 dBFS RMS, DUCK ON, programme on A — lowest duck gain after {:.1} s: ungated {:.3} (ducks) · gate −40 IN {:.3} (does not)",
+                 settle as f64 * 480.0 / 44_100.0, ungated.duck_min_after, gated.duck_min_after);
+        assert!(ungated.duck_min_after < 0.5, "the ungated mic did not duck — the test cannot see ducking");
+        assert!(gated.duck_min_after > 0.999, "the gated mic's room noise ducked the music");
+    }
+}
+
 // ── PFL through the real mixer callback (Jeff's PFL rulings, 2026-09-26) ───────────────────────────────────
 // Programme on deck A; S1 (a source channel) playing a 1 kHz tone with its channel OFF and its fader at 0.3.
 // PFL on S1 → S1 is in the LOCAL output at its pre-fader level, the programme there dimmed by the station's
@@ -4814,6 +4937,15 @@ mod channel_rack_timing {
             {{"module":{{"type":"peq","bands":[{{"freq":120,"gain":{g},"width":1,"shelf":true}},{{"freq":900,"gain":-3,"width":1}},
               {{"freq":3000,"gain":2,"width":2}},{{"freq":9000,"gain":-2,"width":1,"shelf":true}}]}},"in":true}}]}}}}"#)).unwrap()
     }
+    /// SLICE 6 — the WHOLE channel rack, all IN: Filters → Gate → PEQ → Comp (the Voice starting point's shape).
+    fn rack_full(g: f32) -> ChannelRack {
+        ChannelRack::from_doc_json(&format!(r#"{{"v":1,"sections":{{"ch":[
+            {{"module":{{"type":"filters","hpf":{{"in":true,"freq":80}},"lpf":{{"in":true,"freq":12000}}}},"in":true}},
+            {{"module":{{"type":"gate","threshold":-45,"ratio":4,"depth":15,"attack":1,"hold":100,"release":150,"hysteresis":3}},"in":true}},
+            {{"module":{{"type":"peq","bands":[{{"freq":120,"gain":{g},"width":1,"shelf":true}},{{"freq":900,"gain":-3,"width":1}},
+              {{"freq":3000,"gain":2,"width":2}},{{"freq":9000,"gain":-2,"width":1,"shelf":true}}]}},"in":true}},
+            {{"module":{{"type":"comp","threshold":-20,"ratio":3,"attack":10,"release":150,"makeup":0,"knee":6}},"in":true}}]}}}}"#)).unwrap()
+    }
 
     /// One measured scenario: the buffer (median, p99, worst), allocations in the callback, and the channel-rack
     /// work ALONE — its wall max and its thread-CPU max per buffer, its wall time inside the slowest buffer, and
@@ -4833,7 +4965,9 @@ mod channel_rack_timing {
 
     /// `n_active` faders playing, racks IN on all of them if `racks`; the first `n_fading` get a new rack version
     /// EVERY buffer (so each fade is followed at once by the held one — crossfading continuously).
-    fn measure(n_active: usize, racks: bool, n_fading: usize, mics: usize, mpc: f64) -> Row {
+    fn measure(n_active: usize, racks: bool, n_fading: usize, mics: usize, mpc: f64) -> Row { measure_x(n_active, racks, n_fading, mics, false, mpc) }
+    /// `full`: every rack is the whole Filters → Gate → PEQ → Comp chain (SLICE 6).
+    fn measure_x(n_active: usize, racks: bool, n_fading: usize, mics: usize, full: bool, mpc: f64) -> Row {
         let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
         let (prod, mut stream_cons) = rb.split();
         let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)));
@@ -4861,7 +4995,7 @@ mod channel_rack_timing {
         let mut sc = Scratch::new();
         let mut data = vec![0f32; 480 * 2];
         let mut pop = vec![0f32; PROGRAM_BUS_BUF];
-        let (ra, rb2) = (rack(3.0), rack(-3.0));
+        let (ra, rb2) = if full { (rack_full(3.0), rack_full(-3.0)) } else { (rack(3.0), rack(-3.0)) };
         let (pa, pb) = (ra.plan(44_100.0), rb2.plan(44_100.0));
         let (mut ns, mut rk_w, mut rk_c, mut calls) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         let mut allocs = 0u64;
@@ -4927,12 +5061,14 @@ mod channel_rack_timing {
             (" 4 faders, racks IN, 1 crossfading     (b)", 4, true, 1, 0, true),
             (" 4 faders + 1 MIC (48 k), racks IN", 4, true, 0, 1, true),
             (" 4 faders + 5 MICS (48 k), racks IN", 4, true, 0, 5, true),
+            (" 4 faders + 1 MIC, FULL rack IN (flt+gate+peq+comp)", 4, true, 0, 1, true),
+            ("12 faders, FULL rack IN, ALL CROSSFADING (extreme)", 12, true, 12, 0, false),
             ("12 faders, racks IN, steady", 12, true, 0, 0, false),
             ("12 faders, racks IN, ALL CROSSFADING (extreme)", 12, true, 12, 0, false),
         ];
         let mut fails = Vec::new();
         for (name, n, racks, fading, mics, gated) in rows {
-            let r = measure(n, racks, fading, mics, mpc);
+            let r = measure_x(n, racks, fading, mics, name.contains("FULL"), mpc);
             let rk = if racks {
                 let c = &r.worst_calls;
                 let (mx, sum) = (c.iter().cloned().fold(0.0, f64::max), c.iter().sum::<f64>());

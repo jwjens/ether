@@ -69,8 +69,23 @@ pub enum ChannelModule {
     Filters(FilterParams),
     /// SLICE 5 — the 4-band parametric EQ; bands 1 and 4 can be shelves. The slot's IN is the PEQ's IN.
     Peq(PeqParams),
-    // slice 6: Gate(..), Comp(..). NEVER a loudness module.
+    /// SLICE 6 — the downward expander / gate (docs/dsp-channel-dynamics.md §1).
+    Gate(GateParams),
+    /// SLICE 6 — the feed-forward, soft-knee, RMS compressor. Channel DYNAMICS — never a loudness module.
+    Comp(CompParams),
 }
+
+/// SLICE 6 — the expander/gate. `ratio` is the expansion ratio 1:ratio (1…5; 1:3–1:5 gates). `attack` = open time,
+/// `release` = close time, `hold` keeps it open between words, `hysteresis` = how far below the threshold it must
+/// fall before it closes (so it does not chatter). dB / ms.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GateParams { pub threshold: f32, pub ratio: f32, pub depth: f32, pub attack: f32, pub hold: f32, pub release: f32, pub hysteresis: f32 }
+
+/// SLICE 6 — the compressor. dB / ms. Knee = the width of the soft knee, centred on the threshold.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompParams { pub threshold: f32, pub ratio: f32, pub attack: f32, pub release: f32, pub makeup: f32, pub knee: f32 }
 
 /// One filter of the Filters module: its own IN and its corner frequency.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -280,9 +295,42 @@ pub const PEQ_WIDTH_OCT: (f32, f32) = (0.2, 3.0);
 /// Centres and corners above this fraction of the sample rate are clamped (a biquad cannot sit AT Nyquist).
 pub const NYQUIST_FRACTION: f64 = 0.45;
 
+/// SLICE 6 ranges (spec §2, Jeff's rulings: makeup 0–24, knee 0–12, hysteresis 0–10, hold 0–500).
+pub const COMP_THRESHOLD_DB: (f32, f32) = (-40.0, 10.0);
+pub const COMP_RATIO: (f32, f32) = (1.0, 20.0);
+pub const COMP_ATTACK_MS: (f32, f32) = (0.1, 330.0);
+pub const COMP_RELEASE_MS: (f32, f32) = (50.0, 3000.0);
+pub const COMP_MAKEUP_DB: (f32, f32) = (0.0, 24.0);
+pub const COMP_KNEE_DB: (f32, f32) = (0.0, 12.0);
+pub const GATE_THRESHOLD_DB: (f32, f32) = (-80.0, 0.0);
+pub const GATE_RATIO: (f32, f32) = (1.0, 5.0);
+pub const GATE_DEPTH_DB: (f32, f32) = (0.0, 40.0);
+pub const GATE_ATTACK_MS: (f32, f32) = (0.1, 50.0);
+pub const GATE_HOLD_MS: (f32, f32) = (0.0, 500.0);
+pub const GATE_RELEASE_MS: (f32, f32) = (50.0, 3000.0);
+pub const GATE_HYSTERESIS_DB: (f32, f32) = (0.0, 10.0);
+/// The compressor's RMS window and the gate's detector (docs/dsp-channel-dynamics.md §1, ruling 1).
+pub const COMP_RMS_MS: f64 = 5.0;
+pub const GATE_DET_ATTACK_MS: f64 = 1.0;
+pub const GATE_DET_DECAY_MS: f64 = 50.0;
+/// The gain is recomputed every DYN_BLOCK samples and interpolated between (ruling 3).
+pub const DYN_BLOCK: u32 = 4;
+
 fn clamp_channel_module(m: ChannelModule) -> ChannelModule {
     let fin = |v: f32, d: f32| if v.is_finite() { v } else { d };
+    let c = |v: f32, d: f32, r: (f32, f32)| fin(v, d).clamp(r.0, r.1);
     match m {
+        ChannelModule::Gate(g) => ChannelModule::Gate(GateParams {
+            threshold: c(g.threshold, -45.0, GATE_THRESHOLD_DB), ratio: c(g.ratio, 4.0, GATE_RATIO),
+            depth: c(g.depth, 15.0, GATE_DEPTH_DB), attack: c(g.attack, 1.0, GATE_ATTACK_MS),
+            hold: c(g.hold, 100.0, GATE_HOLD_MS), release: c(g.release, 150.0, GATE_RELEASE_MS),
+            hysteresis: c(g.hysteresis, 3.0, GATE_HYSTERESIS_DB),
+        }),
+        ChannelModule::Comp(p) => ChannelModule::Comp(CompParams {
+            threshold: c(p.threshold, -20.0, COMP_THRESHOLD_DB), ratio: c(p.ratio, 3.0, COMP_RATIO),
+            attack: c(p.attack, 10.0, COMP_ATTACK_MS), release: c(p.release, 150.0, COMP_RELEASE_MS),
+            makeup: c(p.makeup, 0.0, COMP_MAKEUP_DB), knee: c(p.knee, 6.0, COMP_KNEE_DB),
+        }),
         ChannelModule::Filters(f) => ChannelModule::Filters(FilterParams {
             hpf: FilterStage { on: f.hpf.on, freq: fin(f.hpf.freq, 100.0).clamp(HPF_HZ.0, HPF_HZ.1) },
             lpf: FilterStage { on: f.lpf.on, freq: fin(f.lpf.freq, 10_000.0).clamp(LPF_HZ.0, LPF_HZ.1) },
@@ -306,12 +354,15 @@ impl ChannelRack {
         if doc.v != 1 { return Err(format!("channel rack document version {} is not understood by this engine", doc.v)); }
         if doc.sections.ch.len() > CHANNEL_SLOTS { return Err(format!("{} slots (a channel rack holds {})", doc.sections.ch.len(), CHANNEL_SLOTS)); }
         let mut r = ChannelRack::default();
-        let (mut f, mut q) = (0, 0);
+        let (mut f, mut q, mut g, mut c) = (0, 0, 0, 0);
         for (i, d) in doc.sections.ch.iter().enumerate() {
-            match d.module { Some(ChannelModule::Filters(_)) => f += 1, Some(ChannelModule::Peq(_)) => q += 1, None => {} }
+            match d.module {
+                Some(ChannelModule::Filters(_)) => f += 1, Some(ChannelModule::Peq(_)) => q += 1,
+                Some(ChannelModule::Gate(_)) => g += 1, Some(ChannelModule::Comp(_)) => c += 1, None => {}
+            }
             r.slots[i] = Slot { module: d.module.map(clamp_channel_module), input: d.input };
         }
-        if f > 1 || q > 1 { return Err("a channel rack holds one Filters and one PEQ".into()); }
+        if f > 1 || q > 1 || g > 1 || c > 1 { return Err("a channel rack holds one each of Filters, Gate, PEQ and Compressor".into()); }
         Ok(r)
     }
     /// The DSP plan: the active biquads in slot order (HPF sections, LPF sections, PEQ bands), each with its
@@ -334,6 +385,8 @@ impl ChannelRack {
                         c.push(STAGE_PEQ + k as u8, bq);
                     }
                 }
+                Some(ChannelModule::Gate(g)) => c.push_dyn(STAGE_GATE, KIND_GATE, DynCoef::gate(&g, fs)),
+                Some(ChannelModule::Comp(p)) => c.push_dyn(STAGE_COMP, KIND_COMP, DynCoef::comp(&p, fs)),
                 None => {}
             }
         }
@@ -362,14 +415,70 @@ impl Biquad {
 pub const STAGE_HPF: u8 = 0;   // 0, 1
 pub const STAGE_LPF: u8 = 2;   // 2, 3
 pub const STAGE_PEQ: u8 = 4;   // 4..7
-pub const CHAIN_MAX: usize = 8;
+pub const STAGE_GATE: u8 = 8;  // SLICE 6
+pub const STAGE_COMP: u8 = 9;  // SLICE 6
+pub const CHAIN_MAX: usize = 10;
+/// What a stage is: a biquad, or a dynamics block (SLICE 6).
+pub const KIND_BQ: u8 = 0;
+pub const KIND_GATE: u8 = 1;
+pub const KIND_COMP: u8 = 2;
 
-/// The biquads a channel runs, in order. Copy and fixed-size: it rides the Params block.
+/// The stages a channel runs, in order. Copy and fixed-size: it rides the Params block. A biquad stage uses `bq`,
+/// a dynamics stage `dy`; `kind` says which.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct ChainSpec { pub n: usize, pub id: [u8; CHAIN_MAX], pub bq: [Biquad; CHAIN_MAX] }
+pub struct ChainSpec { pub n: usize, pub id: [u8; CHAIN_MAX], pub kind: [u8; CHAIN_MAX], pub bq: [Biquad; CHAIN_MAX], pub dy: [DynCoef; CHAIN_MAX] }
 impl ChainSpec {
-    fn push(&mut self, id: u8, bq: Biquad) { if self.n < CHAIN_MAX { self.id[self.n] = id; self.bq[self.n] = bq; self.n += 1; } }
+    fn push(&mut self, id: u8, bq: Biquad) {
+        if self.n < CHAIN_MAX { self.id[self.n] = id; self.kind[self.n] = KIND_BQ; self.bq[self.n] = bq; self.n += 1; }
+    }
+    fn push_dyn(&mut self, id: u8, kind: u8, dy: DynCoef) {
+        if self.n < CHAIN_MAX { self.id[self.n] = id; self.kind[self.n] = kind; self.dy[self.n] = dy; self.n += 1; }
+    }
 }
+
+// ── SLICE 6 — the dynamics coefficients (dispatch thread, f64) and the static gain computers ─────────────────
+/// Everything a dynamics stage needs at run time, computed here so the audio thread does no exp() for timing.
+/// `atk` / `rel` are one-pole coefficients PER CONTROL BLOCK (DYN_BLOCK samples) on the gain reduction in dB.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DynCoef {
+    pub det_a: f64, pub det_d: f64,
+    pub atk: f64, pub rel: f64,
+    pub thr: f64, pub ratio: f64, pub knee: f64, pub makeup: f64,
+    pub depth: f64, pub hyst: f64, pub hold_blocks: u32,
+}
+fn one_pole(ms: f64, samples_per_step: f64, fs: f64) -> f64 { 1.0 - (-samples_per_step / (ms.max(1e-3) * 1e-3 * fs)).exp() }
+impl DynCoef {
+    pub fn comp(p: &CompParams, fs: f64) -> DynCoef {
+        let b = DYN_BLOCK as f64;
+        DynCoef {
+            det_a: one_pole(COMP_RMS_MS, 1.0, fs), det_d: 0.0,
+            atk: one_pole(p.attack as f64, b, fs), rel: one_pole(p.release as f64, b, fs),
+            thr: p.threshold as f64, ratio: p.ratio as f64, knee: p.knee as f64, makeup: p.makeup as f64,
+            ..DynCoef::default()
+        }
+    }
+    pub fn gate(g: &GateParams, fs: f64) -> DynCoef {
+        let b = DYN_BLOCK as f64;
+        DynCoef {
+            det_a: one_pole(GATE_DET_ATTACK_MS, 1.0, fs), det_d: one_pole(GATE_DET_DECAY_MS, 1.0, fs),
+            atk: one_pole(g.attack as f64, b, fs), rel: one_pole(g.release as f64, b, fs),
+            thr: g.threshold as f64, ratio: g.ratio as f64, depth: g.depth as f64, hyst: g.hysteresis as f64,
+            hold_blocks: ((g.hold as f64) * 1e-3 * fs / b).round() as u32,
+            ..DynCoef::default()
+        }
+    }
+}
+/// The compressor's static curve: gain reduction (dB, ≥ 0) at input level `x` dB — threshold `t`, ratio `r`, soft
+/// knee `w` dB wide centred on `t` (Giannoulis–Massberg–Reiss). The TS transfer graph is pinned to this.
+pub fn comp_gr_db(x: f64, t: f64, r: f64, w: f64) -> f64 {
+    let d = x - t;
+    let y = if w > 0.0 && 2.0 * d.abs() <= w { x + (1.0 / r - 1.0) * (d + w / 2.0).powi(2) / (2.0 * w) }
+            else if 2.0 * d > w { t + d / r }
+            else { x };
+    x - y
+}
+/// The expander's static curve below threshold: (t − x)(r − 1) dB of reduction, capped at `depth`.
+pub fn gate_gr_db(x: f64, t: f64, r: f64, depth: f64) -> f64 { if x >= t { 0.0 } else { ((t - x) * (r - 1.0)).min(depth) } }
 
 fn w0(f: f64, fs: f64) -> f64 { 2.0 * std::f64::consts::PI * f.min(fs * NYQUIST_FRACTION) / fs }
 /// Width in octaves → Q (the RBJ cookbook's bandwidth relation): Q = √(2^BW) / (2^BW − 1).
@@ -637,5 +746,55 @@ mod ts_parity {
             n += x["bq"].as_array().unwrap().len() * 5;
         }
         println!("[ts-parity] {} cases, {} coefficients: the committed fixture equals the engine's (worst relative {:.1e}, bar 4 ulp)", a.len(), n, worst);
+    }
+}
+
+// ── SLICE 6 — THE TS TRANSFER GRAPH = THE ENGINE (docs/dsp-channel-dynamics.md §2) ─────────────────────────────
+// The dynamics editor draws the static curves from a TS port of comp_gr_db / gate_gr_db (src/components/rack/
+// dynMath.ts). Pinned here to ONE committed fixture (dynCurve.fixture.json): 50 parameter sets × 9 input levels;
+// vitest pins TS to it at 1e-9. Regenerate only on purpose: ETHER_WRITE_DYN_FIXTURE=1.
+#[cfg(test)]
+mod ts_dyn_parity {
+    use super::*;
+    const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/components/rack/dynCurve.fixture.json");
+    fn cases() -> serde_json::Value {
+        let mut s: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut rnd = move || { s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); (s >> 11) as f64 / (1u64 << 53) as f64 };
+        let xs = [-80.0, -60.0, -45.5, -30.0, -21.0, -20.0, -17.25, -5.0, 10.0];
+        let mut out = Vec::new();
+        for i in 0..50 {
+            if i % 2 == 0 {
+                let (t, r, w) = (-40.0 + 50.0 * rnd(), 1.0 + 19.0 * rnd(), 12.0 * rnd());
+                let gr: Vec<f64> = xs.iter().map(|&x| comp_gr_db(x, t, r, w)).collect();
+                out.push(serde_json::json!({ "kind": "comp", "t": t, "r": r, "w": w, "x": xs, "gr": gr }));
+            } else {
+                let (t, r, d) = (-80.0 + 80.0 * rnd(), 1.0 + 4.0 * rnd(), 40.0 * rnd());
+                let gr: Vec<f64> = xs.iter().map(|&x| gate_gr_db(x, t, r, d)).collect();
+                out.push(serde_json::json!({ "kind": "gate", "t": t, "r": r, "depth": d, "x": xs, "gr": gr }));
+            }
+        }
+        serde_json::json!({ "about": "SLICE 6 — the engine's static dynamics curves (native/src/rack.rs comp_gr_db / gate_gr_db). Generated by rack::ts_dyn_parity; the TS port (dynMath.ts) must match to 1e-9. Do not edit by hand.", "cases": out })
+    }
+    #[test]
+    fn the_ts_dynamics_fixture_is_the_engines_curves() {
+        let want = cases();
+        if std::env::var("ETHER_WRITE_DYN_FIXTURE").ok().as_deref() == Some("1") {
+            std::fs::write(FIXTURE, serde_json::to_string_pretty(&want).unwrap() + "\n").unwrap();
+        }
+        let have: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(FIXTURE).expect("fixture missing")).unwrap();
+        let (a, b) = (want["cases"].as_array().unwrap(), have["cases"].as_array().unwrap());
+        assert_eq!(a.len(), b.len());
+        let mut worst = 0f64;
+        for (x, y) in a.iter().zip(b) {
+            for (p, q) in x["gr"].as_array().unwrap().iter().zip(y["gr"].as_array().unwrap()) {
+                let (p, q) = (p.as_f64().unwrap(), q.as_f64().unwrap());
+                worst = worst.max((p - q).abs());
+            }
+        }
+        println!("[ts-dyn-parity] {} cases × 9 levels: the committed fixture equals the engine's curves (worst |Δ| {:.1e} dB)", a.len(), worst);
+        assert!(worst < 1e-12);
+        // the spec's case, exactly
+        assert!((comp_gr_db(-10.0, -20.0, 4.0, 6.0) - 7.5).abs() < 1e-12);
+        assert_eq!(gate_gr_db(-60.0, -45.0, 5.0, 15.0), 15.0);
     }
 }

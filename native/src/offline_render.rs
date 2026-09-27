@@ -184,7 +184,9 @@ pub fn rack_doc_json(cfg: &RenderCfg) -> String {
 pub const CH_RACK_OUT_DOC: &str = r#"{"v":1,"sections":{"ch":[
     {"id":"s-flt","module":{"type":"filters","hpf":{"in":true,"freq":120},"lpf":{"in":true,"freq":9000}},"in":false},
     {"id":"s-peq","module":{"type":"peq","bands":[{"freq":80,"gain":6,"width":1,"shelf":true},{"freq":1000,"gain":-4,"width":1},
-      {"freq":3000,"gain":3,"width":2},{"freq":10000,"gain":-6,"width":1,"shelf":true}]},"in":false}]}}"#;
+      {"freq":3000,"gain":3,"width":2},{"freq":10000,"gain":-6,"width":1,"shelf":true}]},"in":false},
+    {"id":"s-gate","module":{"type":"gate","threshold":-45,"ratio":4,"depth":15,"attack":1,"hold":100,"release":150,"hysteresis":3},"in":false},
+    {"id":"s-comp","module":{"type":"comp","threshold":-20,"ratio":3,"attack":10,"release":150,"makeup":6,"knee":6},"in":false}]}}"#;
 
 /// Render one file through the live mixer. Deck A, fader at unity, channel ON; optionally an aux deck D.
 pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
@@ -755,7 +757,7 @@ mod parity {
                   && (cfg.aux.is_none() || h(&r.aux) == g["aux"]["hash"].as_str().unwrap_or(""));
             if ok { exact += 1 } else { fails.push(id.clone()) }
         }
-        println!("[ch-out-null] {}/{} renders bit-exact with a Filters+PEQ rack present but OUT on all 12 faders · {} allocations inside the callback", exact, plan.len(), allocs);
+        println!("[ch-out-null] {}/{} renders bit-exact with a Filters+Gate+PEQ+Comp rack present but OUT on all 12 faders · {} allocations inside the callback", exact, plan.len(), allocs);
         assert!(fails.is_empty(), "an OUT channel rack changed the audio: {:?}", fails);
         assert_eq!(allocs, 0);
     }

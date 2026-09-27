@@ -586,7 +586,7 @@ const meterTimer = setInterval(() => {
     // (ceil, margin), and the loudness frame's sequence (ldSeq). docs/dsp-loudness-meter.md §4.1.
     // SLICE 5 — chPost: each channel after its rack (docs/dsp-channel-rack-eq.md §2).
     // PFL — the engine's echo (bit n = slot n) and the dim: a strip's PFL lamp shows THIS, never its own guess.
-    broadcast({ event: "meters", stationUuid: sub.uuid, v: mt.v, e: mt.e, n: mt.n, ch: mt.ch, chPost: mt.chPost, bus: mt.bus, live: mt.live,
+    broadcast({ event: "meters", stationUuid: sub.uuid, v: mt.v, e: mt.e, n: mt.n, ch: mt.ch, chPost: mt.chPost, chDyn: mt.chDyn, bus: mt.bus, live: mt.live,
                 ld: mt.ld, gr: mt.gr, ceil: mt.ceil, margin: mt.margin, ldSeq: mt.ldSeq, pfl: mt.pfl, pflDimDb: mt.pflDimDb, cueState: mt.cueState });
   }
 }, 33);

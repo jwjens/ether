@@ -14,7 +14,7 @@
 // f64 STATE (Jeff's ruling 3): a 16 Hz HPF at 44.1 kHz puts its poles ~0.002 from the unit circle; f32 there
 // drifts and adds noise on the very rumble it removes. Denormals: the callback runs under FtzScope (Slice 1).
 
-use crate::rack::{ChainSpec, CHAIN_MAX};
+use crate::rack::{ChainSpec, CHAIN_MAX, DynCoef, KIND_BQ, KIND_COMP, DYN_BLOCK, comp_gr_db, gate_gr_db};
 
 // TEST-ONLY attribution (Jeff, 2026-09-26): the time spent in ChannelDsp::process on this thread, so the timing
 // test can tell the channel-rack work apart from everything else in a slow buffer. Not compiled into the product.
@@ -45,8 +45,55 @@ pub(crate) fn thread_cycles() -> u64 { 0 }
 pub const EQ_XFADE_MS: f64 = 20.0;
 pub const EQ_XFADE_FRAMES: usize = (44_100.0 * EQ_XFADE_MS / 1000.0) as usize;   // 882
 
-#[derive(Clone, Copy, Default)]
-struct St { s1: [f64; 2], s2: [f64; 2] }
+/// One stage's state. A biquad uses s1/s2; a dynamics block (SLICE 6) uses the rest: `det` the detector (mean-square
+/// for the compressor, a peak envelope for the gate), `gr` the smoothed gain reduction (dB), `g0 → g1` the linear gain
+/// interpolated across the current control block, `grmax` the largest GR since the meter last took it, `k` the sample
+/// within the block, and the gate's open/hold. Seeded across a crossfade by stage id like a biquad's.
+#[derive(Clone, Copy)]
+struct St { s1: [f64; 2], s2: [f64; 2], det: f64, gr: f64, g0: f64, g1: f64, grmax: f64, k: u32, open: bool, hold: u32 }
+impl Default for St {
+    fn default() -> Self { St { s1: [0.0; 2], s2: [0.0; 2], det: 0.0, gr: 0.0, g0: 1.0, g1: 1.0, grmax: 0.0, k: 0, open: false, hold: 0 } }
+}
+
+/// One sample through a dynamics stage. The detector runs every sample; the gain computer every DYN_BLOCK samples
+/// (ruling 3), and the linear gain is interpolated between. Linked stereo: one gain for both channels.
+#[inline(always)]
+fn dyn_step(c: &DynCoef, kind: u8, s: &mut St, x: [f64; 2]) -> [f64; 2] {
+    if kind == KIND_COMP {
+        let p = 0.5 * (x[0] * x[0] + x[1] * x[1]);            // RMS detector (ruling 1): a one-pole mean square
+        s.det += c.det_a * (p - s.det);
+    } else {
+        let e = x[0].abs().max(x[1].abs());                     // the gate: a fast peak envelope
+        s.det += (if e > s.det { c.det_a } else { c.det_d }) * (e - s.det);
+    }
+    s.k += 1;
+    let g = s.g0 + (s.g1 - s.g0) * (s.k as f64 / DYN_BLOCK as f64);
+    if s.k == DYN_BLOCK { s.k = 0; dyn_control(c, kind, s); }
+    [x[0] * g, x[1] * g]
+}
+#[inline(always)]
+fn dyn_control(c: &DynCoef, kind: u8, s: &mut St) {
+    let (target, rising_is_attack, makeup) = if kind == KIND_COMP {
+        let lvl = 10.0 * s.det.max(1e-20).log10();
+        (comp_gr_db(lvl, c.thr, c.ratio, c.knee), true, c.makeup)
+    } else {
+        let lvl = 20.0 * s.det.max(1e-10).log10();
+        // HYSTERESIS + HOLD: open at the threshold; close only after falling below (threshold − hysteresis) for
+        // the hold time — so a level hovering at the threshold does not chatter.
+        if lvl >= c.thr { s.open = true; s.hold = c.hold_blocks; }
+        else if s.open {
+            if lvl < c.thr - c.hyst { if s.hold == 0 { s.open = false; } else { s.hold -= 1; } }
+            else { s.hold = c.hold_blocks; }
+        }
+        (if s.open { 0.0 } else { gate_gr_db(lvl, c.thr, c.ratio, c.depth) }, false, 0.0)
+    };
+    // compressor: GR rising = attack. gate: GR falling = OPENING = its attack; rising = closing = its release.
+    let a = if (target > s.gr) == rising_is_attack { c.atk } else { c.rel };
+    s.gr += a * (target - s.gr);
+    if s.gr > s.grmax { s.grmax = s.gr; }
+    s.g0 = s.g1;
+    s.g1 = 10f64.powf((makeup - s.gr) / 20.0);
+}
 
 #[derive(Clone, Copy)]
 pub struct ChannelDsp {
@@ -77,6 +124,7 @@ fn run(spec: &ChainSpec, st: &mut [St; CHAIN_MAX], x: [f64; 2]) -> [f64; 2] { ru
 #[inline(always)]
 fn run_from(spec: &ChainSpec, st: &mut [St; CHAIN_MAX], from: usize, to: usize, mut x: [f64; 2]) -> [f64; 2] {
     for k in from..to {
+        if spec.kind[k] != KIND_BQ { x = dyn_step(&spec.dy[k], spec.kind[k], &mut st[k], x); continue; }
         let b = &spec.bq[k];
         let s = &mut st[k];
         for c in 0..2 {
@@ -124,9 +172,25 @@ impl ChannelDsp {
         self.cur_st = st;
         self.fade = if self.old.n == 0 && spec.n == 0 { 0 } else { self.fade_len };
         self.ph = (1.0, 0.0);
-        self.shared = (0..self.old.n.min(spec.n)).take_while(|&k| self.old.id[k] == spec.id[k] && self.old.bq[k] == spec.bq[k]).count();
+        self.shared = (0..self.old.n.min(spec.n)).take_while(|&k| self.old.id[k] == spec.id[k] && self.old.kind[k] == spec.kind[k]
+            && self.old.bq[k] == spec.bq[k] && self.old.dy[k] == spec.dy[k]).count();
         #[cfg(test)]
         if self.no_share { self.shared = 0; }
+    }
+
+    /// SLICE 6 — the meter's take: (gate GR max, comp GR max, gate open) since the last take, from the RUNNING chain
+    /// (the new one during a fade). No dynamics stage → (0, 0, true). Allocation-free.
+    #[inline]
+    pub fn take_gr(&mut self) -> (f32, f32, bool) {
+        let (mut g, mut c, mut open) = (0.0f64, 0.0f64, true);
+        for k in 0..self.cur.n {
+            let kind = self.cur.kind[k];
+            if kind == KIND_BQ { continue; }
+            let s = &mut self.cur_st[k];
+            if kind == KIND_COMP { c = s.grmax; } else { g = s.grmax; open = s.open; }
+            s.grmax = s.gr;
+        }
+        (g as f32, c as f32, open)
     }
 
     /// Process a channel's lanes in place (post-trim, pre-fader).
@@ -348,6 +412,97 @@ mod tests {
         println!("[shared-front] {} leading stages shared during a PEQ fade; 3 s, a change every 7 buffers: bit-identical to both chains in full = {}", sh, same);
         assert!(sh >= 4, "the HPF/LPF front was not shared ({})", sh);
         assert!(same);
+    }
+
+    // ── SLICE 6 — dynamics ─────────────────────────────────────────────────────────────────────────────────
+    fn comp_rack(thr: f32, makeup: f32, attack: f32) -> ChannelRack {
+        ChannelRack::from_doc_json(&format!(r#"{{"v":1,"sections":{{"ch":[{{"module":{{"type":"comp","threshold":{thr},"ratio":4,
+            "attack":{attack},"release":150,"makeup":{makeup},"knee":6}},"in":true}}]}}}}"#)).unwrap()
+    }
+    fn gate_rack(thr: f32, hyst: f32, hold: f32) -> ChannelRack {
+        ChannelRack::from_doc_json(&format!(r#"{{"v":1,"sections":{{"ch":[{{"module":{{"type":"gate","threshold":{thr},"ratio":5,
+            "depth":15,"attack":1,"hold":{hold},"release":150,"hysteresis":{hyst}}},"in":true}}]}}}}"#)).unwrap()
+    }
+    /// A 1 kHz −12 dBFS tone through a compressor at the FASTEST attack (0.1 ms — the worst case); at 1.0 s the rack
+    /// steps from `a` to `b`. Returns the 8 kHz high-passed residual around the step (dBFS).
+    fn dyn_step_residual(fade_len: usize, a: ChannelRack, b: ChannelRack) -> f64 {
+        let n = FS as usize * 2;
+        let mut l: Vec<f32> = tone(10f32.powf(-12.0 / 20.0), n);
+        let mut r = l.clone();
+        let mut dsp = ChannelDsp::with_fade(fade_len);
+        dsp.set(a.plan(FS));
+        let (buf, step_at) = (441, FS as usize);
+        let mut k = 0;
+        while k < n {
+            let e = (k + buf).min(n);
+            if k == (step_at / buf) * buf { dsp.set(b.plan(FS)); }
+            dsp.process(&mut l[k..e], &mut r[k..e]);
+            k = e;
+        }
+        let hp = hp8(&l);
+        let pk = hp[step_at - 4410..step_at + 8820].iter().fold(0.0f64, |m, v| m.max(v.abs()));
+        20.0 * pk.max(1e-12).log10()
+    }
+
+    #[test]
+    fn a_threshold_or_makeup_step_does_not_click() {
+        let fl = floor_db(FS as usize * 2, FS as usize - 4410, FS as usize + 8820);
+        // threshold −10 → −30 at 4:1 on a −15 dBFS-RMS tone: 0 → 11.25 dB of GR
+        let t_smooth = dyn_step_residual(EQ_XFADE_FRAMES, comp_rack(-10.0, 0.0, 0.1), comp_rack(-30.0, 0.0, 0.1));
+        let t_hard = dyn_step_residual(0, comp_rack(-10.0, 0.0, 0.1), comp_rack(-30.0, 0.0, 0.1));
+        // makeup 0 → +12 dB (no ballistics of its own — only the crossfade smooths it)
+        let m_smooth = dyn_step_residual(EQ_XFADE_FRAMES, comp_rack(-30.0, 0.0, 0.1), comp_rack(-30.0, 12.0, 0.1));
+        let m_hard = dyn_step_residual(0, comp_rack(-30.0, 0.0, 0.1), comp_rack(-30.0, 12.0, 0.1));
+        println!("[dyn-no-click] 1 kHz −12 dBFS, attack 0.1 ms · threshold −10 → −30 (11.25 dB GR step): crossfaded {:.1} dBFS, hard (twin) {:.1} · makeup 0 → +12 dB: crossfaded {:.1}, hard (twin) {:.1} · floor {:.1} · bar −80",
+                 t_smooth, t_hard, m_smooth, m_hard, fl);
+        assert!(t_smooth < -80.0 && m_smooth < -80.0, "a crossfaded dynamics step clicked");
+        assert!(t_hard > -80.0 && m_hard > -80.0, "the twin did not click — the test cannot see a click");
+    }
+
+    #[test]
+    fn the_gate_does_not_chatter_around_its_threshold() {
+        // a 1 kHz tone whose level wanders ±1 dB around the gate's threshold (−30 dBFS peak), 0.5 Hz, for 10 s
+        let run = |hyst: f32, hold: f32| -> usize {
+            let n = FS as usize * 10;
+            let mut l: Vec<f32> = (0..n).map(|i| {
+                let t = i as f64 / FS;
+                let db = -30.0 + (2.0 * std::f64::consts::PI * 0.5 * t).sin();
+                (10f64.powf(db / 20.0) * (2.0 * std::f64::consts::PI * 1000.0 * t).sin()) as f32
+            }).collect();
+            let mut r = l.clone();
+            let mut dsp = ChannelDsp::default();
+            dsp.set(gate_rack(-30.0, hyst, hold).plan(FS));
+            let (mut k, mut last, mut flips) = (0, false, 0usize);
+            while k < n {
+                let e = (k + 441).min(n);
+                dsp.process(&mut l[k..e], &mut r[k..e]);
+                let (_, _, open) = dsp.take_gr();
+                if k > 0 && open != last { flips += 1; }
+                last = open; k = e;
+            }
+            flips
+        };
+        let with = run(3.0, 100.0);
+        let without = run(0.0, 0.0);
+        println!("[gate-chatter] level wandering ±1 dB around the threshold for 10 s: hysteresis 3 dB + hold 100 ms → {} open/close transition(s) · the twin with neither → {}", with, without);
+        assert!(with <= 1, "the gate chattered: {} transitions", with);
+        assert!(without > with, "the twin did not chatter — the test cannot see chatter");
+    }
+
+    #[test]
+    fn the_dynamics_never_allocate() {
+        let mut d = ChannelDsp::default();
+        let (a, b) = (gate_rack(-45.0, 3.0, 100.0), comp_rack(-20.0, 6.0, 10.0));
+        let (pa, pb) = (a.plan(FS), b.plan(FS));
+        let mut l = tone(0.3, 441); let mut r = l.clone();
+        let a0 = crate::rt::tl_rt_allocs();
+        {
+            let _rt = crate::rt::RtScope::enter();
+            for k in 0..3000 { if k % 7 == 0 { d.set(if (k / 7) % 2 == 0 { pa } else { pb }); } d.process(&mut l, &mut r); let _ = d.take_gr(); }
+        }
+        let n = crate::rt::tl_rt_allocs() - a0;
+        println!("[trap] gate/comp set + process + take_gr × 3000 buffers inside RtScope: {} allocations", n);
+        assert_eq!(n, 0);
     }
 
     #[test]

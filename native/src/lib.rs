@@ -614,6 +614,10 @@ pub fn audio_get_meters(station_id: u32) -> String {
     let bus: Vec<[f32; 4]> = b.bus.iter().map(quad).collect();
     // SLICE 5 — each channel after its rack (equal to `ch` when a rack runs nothing).
     let ch_post: Vec<[f32; 4]> = b.ch_post.iter().map(quad).collect();
+    // SLICE 6 — each channel's dynamics: [gate GR max dB, comp GR max dB, fraction of the window the gate was open]
+    // (the fraction is 1 when the rack did not run — nothing gated).
+    let ch_dyn: Vec<[f32; 3]> = b.ch_dyn.iter().map(|d| [d.gate_gr, d.comp_gr,
+        if d.runs > 0 { d.gate_open as f32 / d.runs as f32 } else { 1.0 }]).collect();
     // SLICE 3 — loudness per branch (docs/dsp-loudness-meter.md §4.1). No reading (below the gate, not yet
     // measured, not fed) is null — never −70 presented as a measurement.
     let num = |v: f64| -> serde_json::Value {
@@ -639,7 +643,7 @@ pub fn audio_get_meters(station_id: u32) -> String {
     let ceil_of = |set: f32| serde_json::json!({ "set": ((set as f64) * 100.0).round() / 100.0,
                                                    "eff": ((set as f64 - margin) * 100.0).round() / 100.0 });
     serde_json::json!({
-        "v": 1, "e": b.epoch, "n": b.frames, "ch": ch, "chPost": ch_post, "bus": bus, "live": b.bus_live,
+        "v": 1, "e": b.epoch, "n": b.frames, "ch": ch, "chPost": ch_post, "chDyn": ch_dyn, "bus": bus, "live": b.bus_live,
         // PFL — the ENGINE's echo: the flags this window actually ran with (bit n = slot n), and the dim. A strip's
         // PFL lamp shows this, never its own guess.
         "pfl": p.pfl.iter().enumerate().fold(0u32, |m, (i, &on)| if on { m | (1 << i) } else { m }),

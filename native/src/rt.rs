@@ -325,6 +325,21 @@ impl GrTap {
 /// RtShared::meter_ack and the callback then starts the next one — so each read covers exactly the audio
 /// since the previous read, and no buffer's peak is lost between two ~30 Hz reads (a latest-wins buffer
 /// alone would drop two of every three).
+/// SLICE 6 — one channel's dynamics for a window: the largest gate and compressor gain reduction (dB), the buffers the
+/// gate was open, and the buffers the rack ran.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct DynTap { pub gate_gr: f32, pub comp_gr: f32, pub gate_open: u32, pub runs: u32 }
+impl DynTap {
+    #[inline]
+    pub(crate) fn fold(&mut self, gate_gr: f32, comp_gr: f32, open: bool) {
+        if gate_gr > self.gate_gr { self.gate_gr = gate_gr; }
+        if comp_gr > self.comp_gr { self.comp_gr = comp_gr; }
+        if open { self.gate_open += 1; }
+        self.runs += 1;
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct MeterBlock {
@@ -342,6 +357,9 @@ pub(crate) struct MeterBlock {
     /// SLICE 5 — per channel, POST-RACK (after the channel's EQ, still pre-fader, pre-cut). Equal to `ch` when a
     /// channel's rack runs nothing. The strips keep `ch` (pre-rack, the spec); the rack view shows both.
     pub ch_post: [MeterTap; SLOT_COUNT],
+    /// SLICE 6 — per channel, the rack's dynamics this window: gate and compressor GR max (dB) and the buffers the
+    /// gate was open, out of the buffers the rack ran (docs/dsp-channel-dynamics.md §2).
+    pub ch_dyn: [DynTap; SLOT_COUNT],
 }
 
 /// One buffer's observed state, published by the callback at the end of every buffer. Everything GetLevel
@@ -633,9 +651,11 @@ mod meter_layout_tests {
         // docs/dsp-meter-bus.md §1.3: 24-byte taps; 16 + 12×24 + 6×24 + 1 = 449.
         // SLICE 3 (docs/dsp-loudness-meter.md §3.2): + 3 × 12-byte GrTap at 4-byte alignment (452..488) = 488.
         // SLICE 5 (docs/dsp-channel-rack-eq.md §2): + 12 × 24-byte post-rack taps (488..776) = 776.
+        // SLICE 6 (docs/dsp-channel-dynamics.md §2): + 12 × 16-byte dynamics taps (776..968) = 968.
         assert_eq!(std::mem::size_of::<MeterTap>(), 24);
         assert_eq!(std::mem::size_of::<GrTap>(), 12);
-        assert_eq!(std::mem::size_of::<MeterBlock>(), 776);
+        assert_eq!(std::mem::size_of::<DynTap>(), 16);
+        assert_eq!(std::mem::size_of::<MeterBlock>(), 968);
         println!("[meters] MeterTap {} B · MeterBlock {} B · MeterFrame {} B",
                  std::mem::size_of::<MeterTap>(), std::mem::size_of::<MeterBlock>(), std::mem::size_of::<MeterFrame>());
     }
