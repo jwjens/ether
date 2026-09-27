@@ -18,8 +18,6 @@ export default function KeyboardHelp() {
   if (!show) return null;
 
   const shortcuts = [
-    { key: "Space", action: "Play / Pause Deck A" },
-    { key: "B", action: "Play / Pause Deck B" },
     { key: "X", action: "Crossfade A ↔ B" },
     { key: "A", action: "Toggle AUTO mode" },
     { key: "Esc", action: "Stop all decks" },

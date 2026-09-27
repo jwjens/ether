@@ -78,13 +78,12 @@ If nothing is playing at all, press ON on any cued deck. It simply starts. Nothi
 
 - **No fade on the takeover.** It is a hard 300 ms cut. Automation never moves your faders — those are
   your controls, and ON does not touch them.
-- **No keyboard shortcut** for ON.
+- **No keyboard shortcut** for ON, and **no key starts, pauses or resumes a deck**: the board is the only way.
 - **No undo.** Channel OFF is immediate and final; reload the track if you need it back.
 
 ## Known issue
 
-- The **Space** and **B** keys still pause, resume or start a deck directly, outside the ON button, and
-  the keyboard shortcut list still shows **X** (crossfade) and **Esc** (stop all decks), which no longer
+- The keyboard shortcut list still shows **X** (crossfade) and **Esc** (stop all decks), which no longer
   do that. Use **ON** to start and stop decks.
 
 ## Related

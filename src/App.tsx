@@ -1894,29 +1894,11 @@ export default function App() {
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || (e.target as HTMLElement).isContentEditable) return;
-      const dA = engine.getDeck("A"); const dB = engine.getDeck("B");
       switch(e.code) {
-        case "Space": {
-          e.preventDefault();
-          if (panelRef.current === "trackedit") break;
-          const decks = ["A", "B", "C"] as const;
-          let onAirSlot: "A" | "B" | "C" | null = null;
-          for (const slot of decks) {
-            const d = engine.getDeck(slot);
-            if (!d) continue;
-            const status = d.getState().status;
-            if (status === "playing" || status === "paused") { onAirSlot = slot; break; }
-          }
-          if (onAirSlot) {
-            const d = engine.getDeck(onAirSlot)!;
-            if (d.getState().status === "playing") d.pause();
-            else d.resume();
-          } else if (!autoAdv) {
-            engine.getDeck("A")?.play();
-          }
-          break;
-        }
-        case "KeyB": if (dB) { if (dB.getState().status === "playing") dB.pause(); else if (dB.getState().status === "paused") dB.resume(); else dB.play(); } break;
+        // Space and B REMOVED (audit 2, 2026-09-27). They played / paused / resumed decks straight from the keyboard —
+        // outside the board's ON button and the daemon's serialized path (the same class of defect as KeyX below).
+        // Jeff's ruling: the board is the sole gate; a key goes through ON or does not exist. No key starts, pauses or
+        // resumes a deck (src/lib/deckKeys.test.ts).
         // KeyX REMOVED (2026-09-07). It was the last caller of the renderer's own crossfade path and a
         // leftover of the XFADE button, which was retired on 2026-08-02 as redundant: pressing ON on the
         // next deck already hands over through the daemon (deckCrossfade -> intentCrossfade -> the
@@ -3238,8 +3220,6 @@ export default function App() {
             </div>
             {[
               { group: "Playback", items: [
-                { key: "Space", desc: "Play / Pause Deck A" },
-                { key: "B", desc: "Play / Pause Deck B" },
                 { key: "X", desc: "Crossfade to next loaded deck" },
                 { key: "Esc", desc: "Stop all decks" },
               ]},
