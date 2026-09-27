@@ -73,3 +73,13 @@ fix here; they are still open.
   cart clash, bulk category, CloudBackup, Settings, schedulers and more. If the browser confirm no-ops in the
   packaged build (main.js says it does; runtime check 1 settles it), each is the same defect as item 5. The in-app
   confirm (`useConfirm`, `src/components/ConfirmDialog.tsx`) is ready to take them.
+
+## Rulings applied (2026-09-27, second pass)
+
+- **4** — CLOSED, no change (Jeff: "the setting times no audio").
+- **11** — built: `40cad13` — AUTO-POST station switch in the Sweepers panel (`overlay_auto_post`), with its help section.
+  Screen check: Sweepers → AUTO-POST ON → Fill Day → a pool sweeper ends where the next song's vocal starts.
+- **12** — LEAD-IN box removed: `a119e8c`. "Pool lead-in, pool wins over category" is filed in `docs/backlog.md`.
+- **15, 18, 19, 20** — proposals in `docs/held-items-proposals-2026-09-27.md`, awaiting one ruling.
+- **41 other confirm() calls** — wait on Jeff's check #1. If the browser confirm is dead in the packaged app, one
+  commit replaces all of them, with a grep test that no `window.confirm` remains.
