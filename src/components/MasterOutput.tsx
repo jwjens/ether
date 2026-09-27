@@ -12,6 +12,7 @@ import StationMonitorMixer from "./StationMonitorMixer";
 import MasterMeters from "./meter/MasterMeters";
 import AuxMonitorSlots from "./AuxMonitorSlots";
 import { useAudioEngine } from "../audio/AudioEngineContext";
+import { useShowState } from "../hooks/useShowState";
 
 // ── Constants ────────────────────────────────────────────────
 // Fallback values only — resolved via CSS custom properties at runtime
@@ -598,6 +599,10 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
     setMasterVol(v);
     try { engine?.setMasterVolume?.(v); } catch { /* engine absent */ }
   }, [engine]);
+  // SLICE 7 — the master fader READS BACK what the engine was last given (a drag in either window, a Take, the
+  // restore at start), instead of starting at unity every launch (docs/dsp-show-presets.md, ruling 2).
+  const { state: show } = useShowState();
+  useEffect(() => { if (show.levels.master != null) setMasterVol(show.levels.master); }, [show.levels.master]);
 
   useEffect(() => {
     try { localStorage.setItem('ether_monitor_vol', String(monitorVol)); } catch {}

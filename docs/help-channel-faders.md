@@ -1,7 +1,7 @@
 ---
 feature: channel-faders
 title: Channel Faders and Channel Cut (ON/OFF)
-summary: Your fader is your level and nothing moves it but your hand — not a track load, not a device change, not the ON/OFF switch. ON/OFF is a channel cut that silences the channel without touching where you set the fader.
+summary: Your fader is your level and nothing moves it but your hand — or a show you TAKE — not a track load, not a device change, not the ON/OFF switch. Your faders come back after a restart, and every level change is smooth. ON/OFF is a channel cut that silences the channel without touching where you set the fader.
 where: Live panel → the mixer strips (decks, SWEEPERS, guest, mic)
 since: 4.4.146
 audience: operator
@@ -22,7 +22,8 @@ the door never changes the level you set.
 
 ## Your fader stays where you put it
 
-**Nothing moves your fader but your hand.** Specifically:
+**Nothing moves your fader but your hand** — and a **show preset you TAKE**, because pressing TAKE is your hand
+too (see **Show Presets**). Specifically:
 
 - **Loading a track does not move it.** Ride a deck down, and the next song into that deck plays at the
   level you set — it does not jump back to full.
@@ -30,8 +31,26 @@ the door never changes the level you set.
 - **A sound-card change does not move it.** If the station fails over to another output device mid-show,
   your levels come back untouched.
 
+- **A restart does not move it.** Ether remembers every fader (and the master) for the station and puts them
+  back when it starts.
+
 Before 4.4.146 a track load reset the channel to full — a song could undo the level a jock had just set.
 That is fixed: only you move your faders.
+
+### Every level change is smooth
+
+When a level changes — your drag, a show you TAKE, TAKE NOW, or the levels coming back at start — the engine
+glides it over **20 milliseconds** instead of jumping. A jump in level makes a click on air; the glide doesn't,
+and it is too short to hear as a fade. A level that isn't changing is untouched.
+
+### PENDING on a channel
+
+After you **TAKE** a show, a channel that was **ON** keeps what it has, so nothing changes under a live voice or
+a playing song. Its ON button **flashes amber and says PENDING**, with the show's name above it.
+- Switch it **OFF** (or let the deck finish) and the show's settings land.
+- Or press **TAKE NOW** on that strip to apply them while it stays ON. The level glides; it doesn't jump.
+
+See **Show Presets** (`docs/help-show-presets.md`).
 
 ### What about tracks that are too loud or too quiet?
 
@@ -121,6 +140,7 @@ audio interface's direct-monitor.** See **Mic on Air**.
 ## Related
 
 - **Mic on Air** (`docs/help-mic-input.md`) — the mic as a channel, and hearing yourself
+- **Show Presets** (`docs/help-show-presets.md`) — the whole board saved and recalled, PENDING, TAKE NOW
 
 - **Starting a Deck — the ON button** — the deck ON button also starts and stops playout
 - **Sweepers & Sweepers** — cutting the imaging channel, remembered per station

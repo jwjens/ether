@@ -57,6 +57,25 @@ export default function StationMonitorMixer() {
 
   useEffect(() => { try { localStorage.setItem("ether_monitor_open", JSON.stringify(open)); } catch {} }, [open]);
 
+  // SLICE 7 — a Take sets the station's monitor level in the engine and writes monitor_volume; re-read the stored
+  // levels so the knobs show what is running. DISPLAY ONLY: the load above also (re)applies output devices, which a
+  // Take must never do, so it is deliberately not re-run.
+  useEffect(() => {
+    const show = (window as any).ether?.show;
+    const h = show?.onApplied?.(async () => {
+      try {
+        const rows = await query<{ station_id: number; value: string }>(
+          "SELECT station_id, value FROM station_config_kv WHERE key='monitor_volume' AND deleted_at IS NULL", []);
+        setVol(prev => {
+          const next = { ...prev };
+          for (const r of rows) { const n = parseFloat(r.value); if (Number.isFinite(n)) next[r.station_id] = Math.max(0, Math.min(1, n)); }
+          return next;
+        });
+      } catch { /* keep what is shown */ }
+    });
+    return () => { if (h) show.offApplied?.(h); };
+  }, []);
+
   const setMonitor = useCallback((sid: number, value: number) => {
     setVol(prev => ({ ...prev, [sid]: value }));
     // Tell the ENGINE the operator owns this level (2026-08-03). Without this,

@@ -120,6 +120,15 @@ export default function AuxMonitorSlots() {
     return () => { stop = true; clearInterval(t); };
   }, [stationId]);
 
+  // SLICE 7 — a Take writes the room levels (aux_monitor_levels) and has already set them in the engine; the panel
+  // re-reads the store so it shows what is running (docs/dsp-show-presets.md).
+  const [showTick, setShowTick] = useState(0);
+  useEffect(() => {
+    const show = (window as any).ether?.show;
+    const h = show?.onApplied?.((m: any) => { if (!m?.stationUuid || m.stationUuid === uuidRef.current) setShowTick(t => t + 1); });
+    return () => { if (h) show.offApplied?.(h); };
+  }, []);
+
   // ── Levels + output device: load, migrate, and assert downward ───────────────────────────────
   useEffect(() => {
     if (stationId == null) return;
@@ -164,7 +173,7 @@ export default function AuxMonitorSlots() {
       } catch { /* config unreadable — defaults stand */ }
     })();
     return () => { stop = true; };
-  }, [stationId]);
+  }, [stationId, showTick]);
 
   // ASSERT DOWNWARD, per deck, once each. The engine boots with every aux gain at 0, so the panel
   // states the operator's saved position rather than assuming the engine already has it. A deck with

@@ -15,6 +15,25 @@ contextBridge.exposeInMainWorld("ether", {
       return () => ipcRenderer.removeListener("debug:popout-log", h);
     },
   },
+  // SLICE 7 — SHOW PRESETS (docs/dsp-show-presets.md). The blade (the audio service) holds the pending set and the
+  // levels; the board reads them back (state + the two events), never keeps its own.
+  show: {
+    list:     (stationId)       => ipcRenderer.invoke("show:list", stationId),
+    snapshot: (stationId)       => ipcRenderer.invoke("show:snapshot", stationId),
+    save:     (stationId, name) => ipcRenderer.invoke("show:save", stationId, name),
+    delete:   (stationId, name) => ipcRenderer.invoke("show:delete", stationId, name),
+    state:    (stationId)       => ipcRenderer.invoke("show:state", stationId),
+    arm:      (stationId, name) => ipcRenderer.invoke("show:arm", stationId, name),
+    disarm:   (stationId)       => ipcRenderer.invoke("show:disarm", stationId),
+    take:     (stationId, name) => ipcRenderer.invoke("show:take", stationId, name),
+    force:    (stationId, slot) => ipcRenderer.invoke("show:force", stationId, slot),
+    onState:    (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("show:state", h); return h; },
+    offState:   (h)  => ipcRenderer.removeListener("show:state", h),
+    onLevels:   (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("show:levels", h); return h; },
+    offLevels:  (h)  => ipcRenderer.removeListener("show:levels", h),
+    onApplied:  (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("show:applied", h); return h; },
+    offApplied: (h)  => ipcRenderer.removeListener("show:applied", h),
+  },
   audio: {
     load: (deck, fp, title, artist, gainDb, stationId) => ipcRenderer.invoke("audio:load", deck, fp, title, artist, gainDb, stationId),
     play: (deck, stationId) => ipcRenderer.invoke("audio:play", deck, stationId),

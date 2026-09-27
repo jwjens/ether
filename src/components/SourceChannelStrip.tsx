@@ -44,10 +44,13 @@ interface Props {
   /** Remove this channel from the board (the − control). */
   onRemove: () => void;
   compact?: boolean;
+  /** SLICE 7 — the show this channel is waiting for (the blade's state), and TAKE NOW. */
+  pendingShow?: string | null;
+  onTakeNow?: () => void;
 }
 
 export default function SourceChannelStrip({
-  config, volume, isOn, onVolumeChange, onToggleOn, onPfl, onKindChange, duck, onDuckChange, onRemove, compact,
+  config, volume, isOn, onVolumeChange, onToggleOn, onPfl, onKindChange, duck, onDuckChange, onRemove, compact, pendingShow = null, onTakeNow,
 }: Props) {
   const meta = sourceKindMeta(config.kind);
 
@@ -244,6 +247,8 @@ export default function SourceChannelStrip({
           onPfl={onPfl}
           compact={compact}
           hideLabel={false}
+          pendingShow={pendingShow}
+          onTakeNow={onTakeNow}
         />
       </div>
     </div>

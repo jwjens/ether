@@ -33,6 +33,9 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import type { DeckState } from "../audio/engine-rodio";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { useShowState } from "../hooks/useShowState";
+import { pendingFor } from "../lib/showPresets";
+import ShowPresetBar from "./ShowPresetBar";
 import { useDeckConfig } from "./DeckConfigurator";
 import type { DeckConfig, DeckType, SourceKind } from "./DeckConfigurator";
 import ConsoleStrip from "./ConsoleStrip";
@@ -78,6 +81,17 @@ export default function FaderSection({
     try { (window as any).ether?.audio?.setPfl?.(stationId, slot, on); } catch { /* engine not up — the lamp stays dark */ }
   };
   const { configs: deckConfigs, save: saveDeckConfigs } = useDeckConfig();
+
+  // ── SLICE 7 — THE BOARD READS ITS LEVELS AND ITS PENDING STATE BACK FROM THE BLADE ────────────────────────
+  // (docs/dsp-show-presets.md). A fader shows the level the engine was last given — by a drag in either window,
+  // MIDI, a Take, TAKE NOW or the restore at start — not a value this window happens to hold. A source channel used
+  // to show `?? 1` (no deck state exists for D–S5), so a restored or Taken level could never be seen.
+  const { state: show } = useShowState();
+  const lvl = (slot: string, fallback: number) => show.levels[slot] ?? fallback;
+  const takeNow = (slot: string) => () => {
+    if (stationId == null) return;
+    try { (window as any).ether?.show?.force?.(stationId, slot); } catch { /* the service answers with its state */ }
+  };
 
   // ── WHICH SLOTS ARE ON THE BOARD ────────────────────────────────────────────────────────────
   // Configuration decides ORDER and LABEL. The engine decides EXISTENCE: anything it is carrying and
@@ -196,10 +210,11 @@ export default function FaderSection({
       } catch { /* no config yet — stays OFF, the safe direction */ }
       if (stop) return;
       setJukeboxOn(on);
-      // Assert BOTH downward: the engine boots un-muted and at its own level.
+      // Assert the cut downward: the engine boots un-muted. The LEVEL is not asserted any more (slice 7): the engine
+      // restores the saved faders at start (board_levels), and pushing this window's unity here undid that on every
+      // launch. The fader reads the level back from the blade.
       try {
         (engine.getDeck(jukeboxSlot as any) as any)?.setMuted?.(!on);
-        engine.getDeck(jukeboxSlot as any)?.setVolume(jukeboxVol);
       } catch { /* engine not ready */ }
     })();
     return () => { stop = true; };
@@ -234,6 +249,9 @@ export default function FaderSection({
   const toggleMasterCollapsed = onToggleMasterCollapsed || (() => {});
 
   return (
+<div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
+  {/* SLICE 7 — the show preset bar, on the board itself (so it is in the dashboard AND the pop-out board). */}
+  <ShowPresetBar deckStatus={{ A: deckA?.status, B: deckB?.status, C: deckC?.status }} />
 <div style={{ display: "flex", gap: 0, flex: 1, minHeight: 0, overflow: "hidden" }}>
   {activeDeckOrder.map((slot) => {
     const stored = deckConfigs?.find(d => d.slot === slot);
@@ -273,7 +291,9 @@ export default function FaderSection({
             // A jukebox-patched channel IS the jukebox channel: same persisted cut, same
             // default-OFF, same fader the retired legacy branch drove. Anything else is an
             // ordinary channel. One strip, two owners of state — never two strips.
-            volume={isJukeboxSrc ? jukeboxVol : (dk?.volume ?? 1)}
+            volume={lvl(slot, isJukeboxSrc ? jukeboxVol : (dk?.volume ?? 1))}
+            pendingShow={pendingFor(show, slot)}
+            onTakeNow={takeNow(slot)}
             isOn={isJukeboxSrc ? jukeboxOn : (srcChannelOn[slot] ?? true)}
             onVolumeChange={v => {
               if (isJukeboxSrc) setJukeboxVol(v);
@@ -300,7 +320,9 @@ export default function FaderSection({
           <ConsoleStrip
             label={config?.label || `DECK ${slot}`}
             color={deckColor}
-            volume={deck?.volume ?? 1}
+            volume={lvl(slot, deck?.volume ?? 1)}
+            pendingShow={pendingFor(show, slot)}
+            onTakeNow={takeNow(slot)}
             deckId={slot}
             hideLabel={["A","B","C"].includes(slot)}
             role={["A","B","C"].includes(slot) ? computeDeckRole(slot as "A"|"B"|"C", { A: deckA, B: deckB, C: deckC }) : "third"}
@@ -414,7 +436,9 @@ export default function FaderSection({
         <ConsoleStrip
           label={config?.label || slot}
           color={deckColor}
-          volume={deck?.volume ?? 1}
+          volume={lvl(slot, deck?.volume ?? 1)}
+          pendingShow={pendingFor(show, slot)}
+          onTakeNow={takeNow(slot)}
           deckId={slot}
           hideLabel={["A","B","C"].includes(slot)}
           isPlaying={deck?.status === "playing"}
@@ -461,6 +485,7 @@ export default function FaderSection({
     collapsed={masterCollapsed}
     onToggleCollapsed={toggleMasterCollapsed}
   />
+</div>
 </div>
   );
 }

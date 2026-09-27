@@ -5356,6 +5356,8 @@ function _showOnState(m) {
 function _showOnLevels(m) {
   const sid = Number(m.stationId);
   const levels = m.levels || {};
+  // Every window's board reads the levels back from here (a fader released after a drag stays where the engine is).
+  sendToAllWindows("show:levels", { stationUuid: _stationUuidById(sid), levels });
   clearTimeout(_showLevelTimers.get(sid));
   _showLevelTimers.set(sid, setTimeout(() => {
     _showLevelTimers.delete(sid);

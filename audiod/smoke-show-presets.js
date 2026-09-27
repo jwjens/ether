@@ -180,5 +180,29 @@ console.log("\nSLICE 7 — the blade: live = ON, pending until OFF, one engine c
   check(/preset\.stationUuid !== uuid/.test(m), "main checks the preset's UUID before the blade does");
 }
 
+// 9 · The board (UI commit).
+{
+  const fs_ = src("src/components/FaderSection.tsx");
+  check(/<ShowPresetBar /.test(fs_), "the SHOW bar is on the board itself (FaderSection — so the dashboard AND the pop-out board)");
+  check((fs_.match(/pendingShow=\{pendingFor\(show, slot\)\}/g) || []).length === 3 && (fs_.match(/onTakeNow=\{takeNow\(slot\)\}/g) || []).length === 3,
+        "every strip kind (source, music deck, fallback) gets PENDING + TAKE NOW from the blade's state");
+  check((fs_.match(/volume=\{lvl\(slot,/g) || []).length === 3, "every strip's fader reads its level back from the blade");
+  check(!/setVolume\(jukeboxVol\)/.test(fs_), "the jukebox no longer forces unity on mount (it undid the restored fader)");
+  const strip = src("src/components/ConsoleStrip.tsx");
+  check(/className=\{pendingShow \? "on-pending"/.test(strip) && /PENDING/.test(strip) && /TAKE NOW/.test(strip), "the ON button flashes amber (on-pending) and says PENDING; the strip carries TAKE NOW");
+  const css = src("src/index.css");
+  check(/@keyframes on-pending-flash/.test(css) && /prefers-reduced-motion[\s\S]{0,80}on-pending/.test(css), "the flash exists, and holds steady under reduced motion");
+  const hook = src("src/hooks/useShowState.ts");
+  check(/show\.state\(stationId\)/.test(hook) && /onState/.test(hook) && /onLevels/.test(hook) && !/localStorage/.test(hook), "the board's show state is READ BACK from the blade (state + events), never held locally");
+  check(/show\.levels\.master/.test(src("src/components/MasterOutput.tsx")), "the master fader reads back too");
+  const bar = src("src/components/ShowPresetBar.tsx");
+  check(/diffShow\(live, current\)/.test(bar) && /show\.snapshot/.test(bar), "· modified is derived from a live snapshot, value by value (never a flag)");
+  check(/CHANGES NOW/.test(bar) && /WAITS — ON NOW/.test(bar) && /never switches a channel ON/.test(bar), "Arm says what changes now, what waits (live), and that a Take never switches a channel ON");
+  const pre = src("electron/preload.js");
+  check(["list", "snapshot", "save", "delete", "state", "arm", "disarm", "take", "force"].every(v => new RegExp(`"show:${v}"`).test(pre)), "the preload bridge carries every show verb");
+  check(/sendToAllWindows\("show:levels", \{ stationUuid/.test(src("electron/main.js")), "fader levels reach every window by station UUID");
+  check(fs.existsSync(path.join(__dirname, "..", "docs", "help-show-presets.md")) && /Show Presets/.test(src("docs/help-channel-faders.md")), "help: docs/help-show-presets.md exists and the faders help links it");
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILED"}  (${pass} passed, ${fail} failed)`);
 process.exit(fail === 0 ? 0 : 1);

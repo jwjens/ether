@@ -45,6 +45,10 @@ interface Props {
   /** The source is known NOT to be delivering (a mic that is unpatched, disconnected, lost or digitally silent):
    *  the meter draws NOT FED instead of a flat zero. docs/dsp-mic-in-engine.md §4. */
   meterNotFed?: boolean;
+  /** SLICE 7 — this channel was ON when a show was Taken: the show it is waiting for (from the blade's state). The ON
+   *  button flashes amber and says PENDING; the change lands when the channel goes OFF, or on TAKE NOW. */
+  pendingShow?: string | null;
+  onTakeNow?: () => void;
 }
 
 // Fader cap: wide flat horizontal bar, like a real broadcast console cap
@@ -65,7 +69,7 @@ const DB_MARKS: { label: string; db: number; isUnity?: boolean }[] = [
 ];
 
 export default function ConsoleStrip({
-  label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId, hideLabel, sourceChannel = false, role = "third", jingle = null, jingleClass = null,
+  label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId, hideLabel, sourceChannel = false, role = "third", jingle = null, jingleClass = null, pendingShow = null, onTakeNow,
   meterNotFed = false,
 }: Props) {
   const engine = useAudioEngine();
@@ -427,6 +431,23 @@ export default function ConsoleStrip({
         </div>
       )}
 
+      {/* ── SLICE 7 — PENDING: a show is waiting for this channel to go OFF (docs/help-show-presets.md) ── */}
+      {pendingShow && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px 0" }}
+             title={`"${pendingShow}" was Taken while this channel was ON. It keeps its settings until you switch it OFF — then the show's settings land. TAKE NOW applies them immediately.`}>
+          <span style={{ flex: 1, minWidth: 0, fontSize: 9, fontWeight: 800, letterSpacing: "0.1em", color: "var(--accent-amber, #f59e0b)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            PENDING · {pendingShow}
+          </span>
+          {onTakeNow && (
+            <button onClick={() => { playClick(); onTakeNow(); }}
+              title={`Apply "${pendingShow}" to this channel now, while it is ON (its level moves smoothly — no click). It stays ON.`}
+              style={{ height: 24, padding: "0 8px", fontSize: 9, fontWeight: 800, letterSpacing: "0.08em", borderRadius: 2, cursor: "pointer",
+                       border: "1px solid var(--accent-amber, #f59e0b)", background: "color-mix(in srgb, var(--accent-amber, #f59e0b) 18%, transparent)",
+                       color: "var(--accent-amber, #f59e0b)" }}>TAKE NOW</button>
+          )}
+        </div>
+      )}
+
       {/* ── ON / PFL — flat ── */}
       <div style={{
         display: "flex", flexDirection: "row", alignItems: "stretch",
@@ -434,8 +455,9 @@ export default function ConsoleStrip({
         borderTop: "1px solid var(--strip-divider, #303040)",
       }}>
 
-        {/* ON — solid fill when active (brighter while playing), flat */}
-        <button onClick={() => { playClick(); onToggleOn(); }} style={{
+        {/* ON — solid fill when active (brighter while playing), flat. SLICE 7: flashes amber while a show waits. */}
+        <button onClick={() => { playClick(); onToggleOn(); }} className={pendingShow ? "on-pending" : undefined}
+          title={pendingShow ? `PENDING — "${pendingShow}" lands when this channel goes OFF` : undefined} style={{
           flex: 1, height: 38, borderRadius: 3,
           background: isOn ? (isPlaying ? "#2563eb" : "#1e3358") : "var(--bg-tertiary, #232330)",
           border: `1px solid ${isOn ? (isPlaying ? "#3b82f6" : "#2a4a7a") : "var(--border-primary, #333)"}`,
@@ -443,7 +465,7 @@ export default function ConsoleStrip({
           display: "flex", alignItems: "center", justifyContent: "center",
           transition: "all 0.12s",
         }}>
-          <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.12em", color: isOn ? "#fff" : "var(--text-tertiary, #666)" }}>ON</span>
+          <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.12em", color: isOn ? "#fff" : "var(--text-tertiary, #666)" }}>{pendingShow ? "PENDING" : "ON"}</span>
         </button>
 
         {/* PFL — solid amber when active, flat */}

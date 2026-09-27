@@ -476,3 +476,98 @@ to do. **The blade never sends a cut.** Main's deck_configs writes never include
   in use.
 - **Room/aux and monitor levels are applied as steps.** They never reach air. The fader ramp (engine) covers the
   channel faders and the master.
+
+---
+
+## Build — the board (UI) (2026-09-26)
+
+**Status:** built. **What it looks like on screen is UNVERIFIED until Jeff's check.** That includes the amber
+flash, a Take mid-show, and the faders coming back after a restart.
+
+### The SHOW bar (`src/components/ShowPresetBar.tsx`)
+
+- It sits in `FaderSection` **above the faders**, so it's in the dashboard and the pop-out board.
+- **What it shows:**
+  - **SHOW: *name***;
+  - **· modified**, derived value by value (`diffShow`) from a live snapshot (`show:snapshot`), refreshed on a
+    Take, a board change, and every 3 s;
+  - **· waiting: A, S1**, from the blade's state.
+- **Arm a show…:** Flat plus the station's shows. Arming goes to the blade (`show:arm`), so both windows show the
+  same armed show.
+- **TAKE ▸ *name***, **▾** (the preview) and **DISARM**.
+- **The preview** splits **CHANGES NOW** from **WAITS — ON NOW (A, S1)** and says "A Take never switches a channel
+  ON". It applies the blade's live rule to what the board shows. The Take's own answer names what actually waited.
+- **SAVE** overwrites the current show (disabled for Flat). **SAVE AS…** is an inline name field.
+- **Other outcomes:**
+  - a refused Take says why;
+  - a stripped machine-local value is reported;
+  - another station's presets are counted, never offered.
+
+### The strips
+
+`ConsoleStrip` gains `pendingShow` / `onTakeNow`, passed through `SourceChannelStrip`:
+- the ON button **flashes amber** (`.on-pending`, `@keyframes on-pending-flash`) and reads **PENDING**;
+- a **PENDING · *show*** line sits above it, with **TAKE NOW** (`show:force`);
+- under reduced motion it holds steady amber;
+- all three strip kinds (source, music deck, fallback) get it, from the blade's state.
+
+### Reading back from the blade
+
+**`useShowState`** reads `show:state` on mount and on a station switch, then follows the `show:state` and
+`show:levels` events (both by station UUID).
+
+**Faders:**
+- **Every fader's level** is `levels[slot] ?? what it showed before`. A source channel used to show `?? 1` (no
+  deck state exists for D–S5), so a restored or Taken level could never appear. It can now.
+- **The master fader** reads `levels.master`.
+- **The jukebox** no longer pushes its unity level on mount. That push undid the restored fader on every launch.
+  It still asserts its cut.
+
+**The room and monitor panels:**
+- **AuxMonitorSlots** re-reads `aux_monitor_levels` after a Take.
+- **StationMonitorMixer** re-reads `monitor_volume`, **display only**. Its loader also re-applies output devices,
+  which a Take must never do, so that loader is not re-run.
+
+**main** forwards the blade's `boardlevels` as **`show:levels`** (by UUID).
+
+**The preload bridge** carries `show.list / snapshot / save / delete / state / arm / disarm / take / force` and
+`onState / onLevels / onApplied`.
+
+### Help
+
+- **`docs/help-show-presets.md` (new):** what a show holds and deliberately doesn't, Take, PENDING and TAKE NOW,
+  Save / Save As, Flat, faders after a restart.
+- **`docs/help-channel-faders.md`:**
+  - "nothing moves your fader but your hand — and a show you TAKE";
+  - a restart restores the faders;
+  - every level change glides over 20 ms;
+  - PENDING on a channel.
+
+### Receipts
+
+- **vitest `showPresets.test.ts`, 7/7:**
+  - a matching board isn't modified, a moved fader is;
+  - racks compare by what runs, not by module id;
+  - a field the preset doesn't name isn't compared;
+  - the ducker and monitor are in the show;
+  - the live rule;
+  - Arm's now/waits split;
+  - PENDING comes from the blade's state.
+- **`test:show-presets` 48/48:** the blade's 35 plus 13 board checks:
+  - the bar is on the board;
+  - PENDING and TAKE NOW on all three strip kinds;
+  - three faders read back;
+  - no jukebox unity push;
+  - the flash and its reduced-motion hold;
+  - the state is read back, never kept locally;
+  - the master reads back;
+  - "· modified" is derived;
+  - the Arm wording;
+  - every preload verb;
+  - `show:levels` by UUID;
+  - the help exists.
+- **Gates:**
+  - tsc 0; vitest 490/490;
+  - rack-eq 30, mic-input 25, pfl 22, dynamics 10, meter contract 30;
+  - undefined-calls, preload-bridge, ipc-contract, one-switch PASS; audio-isolation PASS;
+  - leak guard OK; `npm run build` OK.
