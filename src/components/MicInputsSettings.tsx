@@ -8,6 +8,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { useDeckConfig } from "./DeckConfigurator";
+import { useBoardName } from "../hooks/useBoardName";
+import { micChannelRows } from "../lib/boardLabels";
 import { MIC_GAIN_DB, micStateWords, useInputDevices, useMicInputs, type MicPatch } from "../hooks/useMicInputs";
 
 const TONE: Record<string, string> = { ok: "var(--accent-green)", warn: "var(--accent-amber, #f59e0b)", bad: "var(--accent-red, #ef4444)", off: "var(--text-tertiary)" };
@@ -26,8 +28,9 @@ export default function MicInputsSettings() {
 
   // The channels that carry a mic: every enabled source channel patched to "mic", plus any slot that still has a
   // stored patch (so a patch can always be removed, even from a channel that was re-dialled to something else).
-  const micChannels = configs.filter(c => c.enabled && c.type === "source" && c.kind === "mic").map(c => ({ slot: c.slot, label: c.label || c.slot }));
-  for (const s of Object.keys(mic.patches)) if (!micChannels.some(m => m.slot === s)) micChannels.push({ slot: s, label: `${s} (not a mic channel)` });
+  // Headed by board letter, never the engine id (audit 26).
+  const boardName = useBoardName();
+  const micChannels = micChannelRows(configs as any, Object.keys(mic.patches), boardName);
 
   useEffect(() => () => { Object.values(gainTimer.current).forEach(clearTimeout); }, []);
 
@@ -50,7 +53,7 @@ export default function MicInputsSettings() {
         <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic", padding: 8, border: "1px dashed var(--border-primary)" }}>
           No mic channels yet. On the board, set a source channel's source to <b>Mic</b> (or add a channel with + and choose Mic), then pick its input here.
         </div>
-      ) : micChannels.map(({ slot, label }) => {
+      ) : micChannels.map(({ slot, heading }) => {
         const p = mic.patches[slot];
         const st = mic.states[slot];
         const w = micStateWords(st, !!p);
@@ -60,7 +63,7 @@ export default function MicInputsSettings() {
         return (
           <div key={slot} style={{ padding: 10, border: "1px solid var(--border-primary)", background: "var(--bg-secondary)", display: "flex", flexDirection: "column", gap: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <b style={{ fontSize: 13, minWidth: 90 }}>{slot} · {label}</b>
+              <b style={{ fontSize: 13, minWidth: 90 }}>{heading}</b>
               <span style={{ fontSize: 12, fontWeight: 700, color: TONE[w.tone] }}>● {w.text}</span>
               {st && st.state === "running" && (
                 <span style={{ fontSize: 11, color: "var(--text-tertiary)" }} title="The engine's live numbers for this input">
