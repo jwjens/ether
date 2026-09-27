@@ -22,6 +22,8 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { query } from "../db/client";
 import { checkFilePresence, fileLocationItem, changeFileLocationItem, type FilePresence } from "./fileLocation";
+import { useActiveStation } from "../hooks/useActiveStation";
+import SpotMarkDialog from "../components/SpotMarkDialog";
 
 /** What a surface knows about a song it is displaying. */
 export interface SongRef {
@@ -86,6 +88,9 @@ export function useSongMenu() {
   >(null);
 
   const close = useCallback(() => setMenu(null), []);
+  // Mark as Spot opens the Library's own dialog (category + type → spots record), not a bare class flip (audit 10).
+  const { stationId } = useActiveStation();
+  const [spotMarkFor, setSpotMarkFor] = useState<ResolvedSong | null>(null);
 
   const open = useCallback((e: React.MouseEvent, ref: SongRef, extras: SongMenuItem[] = []) => {
     e.preventDefault();
@@ -132,7 +137,7 @@ export function useSongMenu() {
       { label: cls === "SWP" ? "Unmark Sweeper (→ Music)" : "Mark as Sweeper",
         run: () => setClass(cls === "SWP" ? "MUSIC" : "SWP"), disabled: song ? undefined : why },
       { label: cls === "SPOT" ? "Unmark Spot (→ Music)" : "Mark as Spot",
-        run: () => setClass(cls === "SPOT" ? "MUSIC" : "SPOT"), disabled: song ? undefined : why },
+        run: () => { if (cls === "SPOT") return setClass("MUSIC"); if (song) setSpotMarkFor(song); }, disabled: song ? undefined : why },
       { divider: true, label: "" },
       // Deliberately NOT gated on the library row. This one needs only a file path, so it works for
       // the cart file and the one-off import that every action above is correctly disabled for.
@@ -189,5 +194,10 @@ export function useSongMenu() {
     );
   }
 
-  return { open, close, node };
+  const dialog = spotMarkFor ? (
+    <SpotMarkDialog song={spotMarkFor} stationId={stationId}
+      onClose={marked => { setSpotMarkFor(null); if (marked) window.dispatchEvent(new CustomEvent("ether:songs-changed")); }} />
+  ) : null;
+
+  return { open, close, node: <>{node}{dialog}</> };
 }

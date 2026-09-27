@@ -2,7 +2,7 @@
 feature: spots
 title: Spots & Promos
 summary: Commercials, promos, PSAs and sponsorships — scheduled into timed breaks on your clocks, kept out of music rotation and reporting.
-where: Bottom bar → SPOTS · Library right-click → Mark as Spot
+where: Bottom bar → SPOTS · right-click a track (Library, a deck or Up Next) → Mark as Spot
 since: 4.4.79
 audience: operator
 tour: true
@@ -38,6 +38,8 @@ The quickest way to turn an existing audio file into a spot:
    the dialog won't let you finish until one is set.
 4. The track gets an amber **SPOT** badge, leaves music rotation, and a spot record is created carrying its
    title and file. Fine-tune dates, caps and advertiser later in the panel.
+
+The same **Mark as Spot** is on a deck's and Up Next's right-click menu, with the same dialog.
 
 *(To undo: right-click → **Unmark Spot (→ Music)** returns it to music rotation.)*
 
@@ -136,12 +138,6 @@ need it gone immediately, remove that entry in the Program Log's hour editor (�
   boundary so a song is never cut off mid-play.
 - Spots are excluded from music-rotation separation and from the music/plays reporting — they have their own
   play logging for advertiser affidavits.
-
-## Known issues
-
-- Use **Mark as Spot** from the **Library** right-click menu. The same item on a deck or Up Next
-  right-click menu tags the track as a spot without the category dialog and without creating the spot
-  record, so a break cannot pull it.
 
 ## Related
 
