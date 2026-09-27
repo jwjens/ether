@@ -3636,7 +3636,8 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
             says what it does. The accessible name is on the button itself via aria-label. */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" as any, padding: "13px 16px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", marginBottom: 8 }}>
           <div style={{ minWidth: 240, fontSize: 12.5, color: "var(--text-tertiary)", maxWidth: 520, lineHeight: 1.55 }}>
-            Your setup and your audio, both directions, kept current on every computer signed into your account. Leave it on.
+            Your setup, both directions, kept current on every computer signed into your account. New audio comes down on its
+            own; audio you add here goes up when you press <b>Send just the audio</b> (Advanced). Leave it on.
           </div>
           <button onClick={toggleKeepSynced} aria-label="Keep my stuff synced"
             style={{ position: "relative", width: 46, height: 26, borderRadius: 999, border: "none", flexShrink: 0, cursor: "pointer", background: (syncOn && r2Enabled) ? "var(--accent-green)" : "var(--bg-tertiary)", boxShadow: (syncOn && r2Enabled) ? "none" : "inset 0 0 0 1px var(--border-primary)" }}>
