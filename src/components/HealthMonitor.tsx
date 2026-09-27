@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, Component, ReactNode } from "react";
 import { parseKvFlag } from "../lib/kvFlag";
 import { designationView, refreshBanner, type RefreshBanner } from "../lib/designationRow";
+import { verifyAdminPin } from "../lib/adminPin";
 import { HealthDashboard } from "./health/HealthDashboard";
 import { PanelStack, HealthPanel, PanelMeter, StatTile } from "./health/sectionChrome";
 import MicInputsHealth from "./health/MicInputsHealth";
@@ -90,10 +91,26 @@ function RefreshAgo({ at }: { at: number | null }) {
   );
 }
 
-function DesignationRows({ d, busy, onRefresh, readAt, err, autoOn, banner }: {
+function DesignationRows({ d, busy, onRefresh, readAt, err, autoOn, banner, onBypass }: {
   d: any; busy: boolean; onRefresh: () => void; readAt: number | null; err?: string | null;
   autoOn: boolean | null; banner?: RefreshBanner | null;
+  onBypass: (on: boolean, pin: string) => Promise<string | null>;
 }) {
+  // THE BYPASS DOOR (audit 20): ON asks for the admin PIN and is refused by the main process while the designated
+  // machine is seen online; OFF needs no PIN — ending an override is always safe.
+  const bypassed = !!(d && d.state === "bypassed");
+  const [pinOpen, setPinOpen] = useState(false);
+  const [pin, setPin] = useState("");
+  const [bypassErr, setBypassErr] = useState<string | null>(null);
+  const [bypassBusy, setBypassBusy] = useState(false);
+  const runBypass = async (on: boolean) => {
+    setBypassBusy(true); setBypassErr(null);
+    try {
+      const e = await onBypass(on, pin);
+      setBypassErr(e);
+      if (!e) { setPinOpen(false); setPin(""); }
+    } finally { setBypassBusy(false); }
+  };
   // Every rule below lives in src/lib/designationRow.ts so it can be tested without a DOM.
   const v = designationView(d, autoOn, busy);
   const { value, status, blocked, sub } = v;
@@ -131,7 +148,36 @@ function DesignationRows({ d, busy, onRefresh, readAt, err, autoOn, banner }: {
           <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-tertiary)" }} title={v.buttonTitle}>{v.note}</span>
         )}
         <RefreshAgo at={readAt} />
+        {bypassed ? (
+          <button onClick={() => runBypass(false)} disabled={bypassBusy}
+            title="End the bypass: designation applies again on this machine."
+            style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", padding: "3px 10px", background: "var(--accent-red, #ef4444)", border: "none", color: "#fff", cursor: bypassBusy ? "wait" : "pointer" }}>
+            END BYPASS
+          </button>
+        ) : (
+          <button onClick={() => { setPinOpen(o => !o); setBypassErr(null); }} disabled={bypassBusy}
+            title="For a DEAD designated machine only: lets this machine generate this station although another machine holds the designation. Admin PIN. Refused while the designated machine is online."
+            style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", padding: "3px 10px", background: "transparent", border: "1px solid var(--accent-red, #ef4444)", color: "var(--accent-red, #ef4444)", cursor: "pointer" }}>
+            BYPASS…
+          </button>
+        )}
       </div>
+      {pinOpen && !bypassed && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 0 6px", flexWrap: "wrap" as const }}>
+          <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>Bypass the designation for a dead generator — admin PIN:</span>
+          <input type="password" inputMode="numeric" maxLength={4} value={pin} autoFocus
+            onChange={e => setPin(e.target.value.replace(/\D/g, ""))}
+            onKeyDown={e => { if (e.key === "Enter") void runBypass(true); if (e.key === "Escape") { setPinOpen(false); setPin(""); } }}
+            style={{ width: 70, padding: "3px 6px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
+          <button onClick={() => runBypass(true)} disabled={bypassBusy}
+            style={{ fontSize: 12, fontWeight: 800, padding: "3px 10px", background: "var(--accent-red, #ef4444)", border: "none", color: "#fff", cursor: bypassBusy ? "wait" : "pointer" }}>
+            TURN BYPASS ON
+          </button>
+          <button onClick={() => { setPinOpen(false); setPin(""); setBypassErr(null); }}
+            style={{ fontSize: 12, padding: "3px 10px", background: "transparent", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}>Cancel</button>
+        </div>
+      )}
+      {bypassErr && <div style={{ fontSize: 12, color: "var(--accent-red)", padding: "0 0 6px" }}>{bypassErr}</div>}
       {/* The click's OWN evidence. The read stamp above cannot serve this purpose: it also resets on
           the 30-second background poll, so it says nothing about whether the button did anything. */}
       {banner && (
@@ -756,7 +802,8 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   const loadDesigEvents = useCallback(async () => {
     try {
       const r = await (window as any).ether?.invoke?.("health:recent-events", {
-        kinds: ["designation-refreshed", "station-designation-changed", "station-designation-write-failed"],
+        kinds: ["designation-refreshed", "station-designation-changed", "station-designation-write-failed",
+                "designation-bypass-on", "designation-bypass-off", "designation-bypass-refused"],
         limit: 12,
       });
       if (r && r.ok) { setDesigEvents(r.rows || []); setDesigEventsErr(null); }
@@ -780,6 +827,23 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   }, [loadMissedSpots]);
   // Clear pending banner timers on unmount — a timer firing into an unmounted tree is a leak.
   useEffect(() => () => { for (const t of Object.values(bannerTimers.current)) clearTimeout(t); }, []);
+
+  // Returns an error to show under the row, or null on success. The main process re-checks everything (mayBypass).
+  const bypassDesig = async (sid: number, on: boolean, pin: string): Promise<string | null> => {
+    let operator: string | null = null;
+    if (on) {
+      const v = await verifyAdminPin(pin);
+      if (!v.ok) return v.error;
+      operator = v.operator;
+    }
+    try {
+      const r = await (window as any).ether?.invoke?.("designation:bypass", sid, on, operator);
+      if (r && Array.isArray(r.rows) && r.rows.length) applyDesig(r.rows);
+      loadDesigEvents();
+      try { window.dispatchEvent(new CustomEvent("ether:designation-changed")); } catch { /* non-Electron */ }
+      return r && r.ok ? null : ((r && r.error) || "no response from designation:bypass");
+    } catch (e: any) { return e?.message || String(e); }
+  };
 
   const refreshDesig = async (sid: number) => {
     setDesigBusy(sid);
@@ -1478,7 +1542,8 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                     onRefresh={() => refreshDesig(st.stationId)} readAt={desigAt}
                     err={desigErr[st.stationId] || desigLoadErr}
                     autoOn={autoGen[st.stationId] === undefined ? null : autoGen[st.stationId]}
-                    banner={desigBanner[st.stationId] || null} />
+                    banner={desigBanner[st.stationId] || null}
+                    onBypass={(on, pin) => bypassDesig(st.stationId, on, pin)} />
                   {/* SCHEDULE RUNWAY — the fuel gauge. First row on purpose: "how long until this
                       station runs out of log" is the most urgent thing this panel can answer, and on
                       a flipped station a dry log is dead air. Distance to the first GAP, not to the
@@ -1710,11 +1775,16 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
             )}
             {desigEvents.map((e: any, i: number) => {
               const when = (() => { try { return new Date(e.t).toLocaleString(); } catch { return String(e.t || ""); } })();
-              const failed = e.kind === "station-designation-write-failed";
+              const failed = e.kind === "station-designation-write-failed" || e.kind === "designation-bypass-on";
               const label = e.kind === "designation-refreshed" ? "Last refreshed"
                           : e.kind === "station-designation-changed" ? "Designation changed"
+                          : e.kind === "designation-bypass-on" ? "Bypass ON"
+                          : e.kind === "designation-bypass-off" ? "Bypass OFF"
+                          : e.kind === "designation-bypass-refused" ? "Bypass refused"
                           : "Designation NOT SAVED";
-              const detail = e.kind === "designation-refreshed"
+              const detail = e.kind.startsWith("designation-bypass-")
+                ? `${e.station || "station"} — on ${e.machine || "this machine"}${e.operator ? ` by ${e.operator}` : ""}${e.reason ? ` · ${e.reason}` : ""}`
+                : e.kind === "designation-refreshed"
                 ? `${e.station || "station"} — ${e.state === "mine" ? "this machine is designated"
                     : e.state === "other" ? `${e.holderName || e.holder || "another machine"} is designated`
                     : e.state === "bypassed" ? "designation bypassed"

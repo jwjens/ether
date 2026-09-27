@@ -10288,6 +10288,44 @@ try {
   });
 } catch (e) { console.error('[designation] handler registration failed:', e.message); }
 
+// designation:bypass — THE DOOR to kill_designation (audit 20; Jeff's GO 2026-09-27). The renderer has already checked
+// the admin PIN and passes the operator it matched. ON is REFUSED while the designated machine is seen online
+// (_desig.mayBypass): the bypass is for a dead designated machine, not a second generator. Who / where / when is
+// stored in the local-only kill_designation_by so the banner can name the machine and the operator; both edges go to
+// the ledger. Returns the fresh rows, like designation:refresh.
+try {
+  ipcMain.handle("designation:bypass", (_evt, stationId, on, operator) => {
+    try {
+      const sid = Number(stationId);
+      const st = db.prepare("SELECT id, name FROM stations WHERE id = ? AND deleted_at IS NULL").get(sid);
+      if (!st) return { ok: false, error: 'that station is not on this machine', rows: [] };
+      const me = _machineIdentity();
+      const now = Math.floor(Date.now() / 1000);
+      if (on) {
+        const verdict = _desig.mayBypass({ record: _desig.parseRecord(_kvGet(sid, _desig.KEY)), machineId: me.id, now });
+        if (!verdict.allow) {
+          _healthEvent('designation-bypass-refused', { stationId: sid, station: st.name, machine: me.name, operator: operator || null, reason: verdict.reason });
+          return { ok: false, refused: true, error: verdict.reason, rows: [..._desigStatus.values()] };
+        }
+        const { stationConfigKvSetLocal } = require('./sync/handlers/station_config_kv');
+        stationConfigKvSetLocal(db, sid, 'kill_designation_by', JSON.stringify({ machine: me.name || me.id, operator: operator || null, at: now }));
+        _killDesignationWriteLocal(sid, '1');
+        _healthEvent('designation-bypass-on', { stationId: sid, station: st.name, machine: me.name, machineId: me.id, operator: operator || null, basis: verdict.reason });
+      } else {
+        _killDesignationWriteLocal(sid, '0');
+        _healthEvent('designation-bypass-off', { stationId: sid, station: st.name, machine: me.name, machineId: me.id, operator: operator || null });
+      }
+      _designationTick(new Set(), on ? 'bypass on (operator)' : 'bypass off (operator)');
+      const stored = String(_kvGet(sid, 'kill_designation') || '') === '1';
+      if (stored !== !!on) return { ok: false, error: `the switch did not stick — still ${stored ? 'ON' : 'OFF'}`, rows: [..._desigStatus.values()] };
+      return { ok: true, rows: [..._desigStatus.values()] };
+    } catch (e) {
+      console.error('[designation] bypass failed:', e.message);
+      return { ok: false, error: e.message, rows: [] };
+    }
+  });
+} catch (e) { console.error('[designation] bypass handler registration failed:', e.message); }
+
 // health:runway-history — the trend series for the dashboard chart.
 //
 // Returns one point per hour for the window, INCLUDING hours with no sample, so the chart can tell
@@ -10619,7 +10657,9 @@ function _designationTick(generatedFor, label) {
     // instead of the renderer re-deriving a reason from a second read that can disagree with the one
     // that actually made the decision. "None" with no explanation is the state Jeff saw and read as
     // a broken button.
-    _desigStatus.set(st.id, { ..._desig.status({ record: after, now, machineId: me.id, killSwitch: kill }),
+    let bypass = null;
+    if (kill) { try { bypass = JSON.parse(_kvGet(st.id, 'kill_designation_by') || 'null'); } catch { bypass = null; } }
+    _desigStatus.set(st.id, { ..._desig.status({ record: after, now, machineId: me.id, killSwitch: kill, bypass }),
                               stationId: st.id, station: st.name, machineId: me.id, at: now,
                               autoOn, action: d.action, reason: d.reason,
                               writeError: _desigWriteErr.get(st.id) || null });

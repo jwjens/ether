@@ -96,6 +96,8 @@ first:
 - **Last refreshed** — someone pressed REFRESH NOW, and what the answer was.
 - **Designation changed** — the station moved from one computer to another, and why.
 - **Designation NOT SAVED** — a computer could not write the record, with the reason.
+- **Bypass ON / Bypass OFF / Bypass refused** — who turned the bypass on or off on which computer, and why a
+  request was refused.
 
 Only deliberate actions and real changes are recorded. The half-hourly check-in is not, or this list
 would fill with dozens of identical lines a day and tell you nothing.
@@ -130,12 +132,32 @@ Three exceptions, all deliberate:
    assigned.
 2. **Pressing Generate yourself always works.** The rule applies only to the *automatic* top-up. If
    you are sitting at a computer and press **Generate**, it generates — you are there, and you asked.
-3. **The bypass still bypasses.** When the bypass is on for a station (set by support), every
-   switched-on computer generates, and the row reads **Bypassed**.
+3. **The bypass still bypasses.** When the bypass is on for a station, every computer with **Keep the
+   log filled** ON generates it, and the row reads **Bypassed** (see below).
 
 When a computer skips a station for this reason it says so — in the log, in the health ledger as
 `auto-extend-skipped-not-designated`, and on the row itself, which reads *"…· this machine will not
 auto-generate it"*. Recorded once when it starts, not every half hour.
+
+## When the designated computer is dead — BYPASS
+
+If the designated computer has died (a failed drive, a stolen laptop) and the log will run dry, you can
+let **this** computer generate the station anyway:
+
+1. Health Monitor → the station's **Designated generator** row → **BYPASS…**
+2. Enter your **4-digit admin PIN** and press **TURN BYPASS ON**.
+
+It is **refused while the designated computer is online** — meaning it checked in within the last
+**65 minutes** (two of its 30-minute check-ins, plus 5 minutes of slack). The message names the computer
+and when it last checked in. The bypass is for a dead generator, not a way to run two. A computer with
+no admin PIN set can't turn the bypass on at all — set a PIN on an admin profile first.
+
+While it is on, a **red banner across the top of Ether** names the station, the computer it is on, the
+admin who turned it on, and since when. Every turn on, turn off and refusal is written to the health
+ledger (**Designation Activity**).
+
+**To end it:** the same row → **END BYPASS** (no PIN needed). Do this as soon as the designated computer is
+back or a new one has been designated — two generators writing one log is exactly what designation prevents.
 
 ## What this does NOT do
 

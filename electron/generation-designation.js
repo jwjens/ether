@@ -23,6 +23,11 @@ const KEY = 'designated_generator';
 const HOUR = 3600;
 const STALE_YELLOW_SEC = 6 * HOUR;    // checked in within 6h: healthy
 const STALE_RED_SEC = 24 * HOUR;      // nothing for a day: the designated machine is not watching
+// BYPASS GUARD (audit 20, Jeff 2026-09-27): the bypass is for a DEAD designated machine, not a second generator.
+// "Seen online" = the holder stamped its heartbeat (last_checked, every 30-min tick, synced) within two ticks plus
+// 5 minutes of slack. Derived from the tick, and stated in the refusal — not a hidden number.
+const TICK_SEC = 30 * 60;
+const BYPASS_ONLINE_WINDOW_SEC = 2 * TICK_SEC + 5 * 60;
 
 /** A malformed record is ABSENT, never a valid designation belonging to someone else. */
 function parseRecord(raw) {
@@ -79,6 +84,22 @@ function mayAutoGenerate({ record, machineId, killSwitch }) {
   return { allow: false, reason: `designated to ${record.machine_name || record.machine_id}`, holder: record.machine_id };
 }
 
+/**
+ * May this machine turn the designation bypass ON for a station? Pure.
+ * @returns {{ allow: boolean, reason: string }}
+ */
+function mayBypass({ record, machineId, now }) {
+  if (!record) return { allow: false, reason: 'No machine holds the designation for this station — there is nothing to bypass. A machine with Keep the log filled ON will claim it on its next check.' };
+  if (machineId && record.machine_id === machineId) return { allow: false, reason: 'This machine is the designated generator — there is nothing to bypass.' };
+  const name = record.machine_name || record.machine_id;
+  const age = record.last_checked != null ? Math.max(0, now - record.last_checked) : null;
+  if (age != null && age <= BYPASS_ONLINE_WINDOW_SEC) {
+    return { allow: false, reason: `${name} checked in ${fmtAgo(age)} — it is online. The bypass is for a dead designated machine, not a second generator. ` +
+      `It becomes available once ${name} has been silent for more than ${Math.round(BYPASS_ONLINE_WINDOW_SEC / 60)} minutes.` };
+  }
+  return { allow: true, reason: age == null ? `${name} has never checked in` : `${name} last checked in ${fmtAgo(age)}` };
+}
+
 function fmtAgo(sec) {
   if (sec < 90) return `${sec}s ago`;
   if (sec < 5400) return `${Math.round(sec / 60)} min ago`;
@@ -87,10 +108,14 @@ function fmtAgo(sec) {
 }
 
 /** Operator-facing state for the Health Monitor. */
-function status({ record, now, machineId, killSwitch }) {
+function status({ record, now, machineId, killSwitch, bypass }) {
   if (killSwitch) {
+    // WHO and WHERE (audit 20): the banner names the machine the bypass is on and the operator who turned it on.
+    const by = bypass && (bypass.machine || bypass.operator)
+      ? ` on ${bypass.machine || 'this machine'} by ${bypass.operator || 'an unnamed operator'}` : '';
     return { level: 'yellow', state: 'bypassed', holder: null, lastChecked: null, lastGenerated: null,
-             text: 'Designation bypassed (kill_designation) — every switched-on machine generates' };
+             bypass: bypass || null,
+             text: `Designation bypassed${by} — every machine with Keep the log filled ON generates this station` };
   }
   if (!record) {
     // STILL NEUTRAL UNDER PHASE B, and that is a deliberate choice in the gate rather than an
@@ -135,5 +160,5 @@ function nextRecord({ record, now, machineId, machineName, generated }) {
   });
 }
 
-module.exports = { KEY, decide, status, parseRecord, nextRecord, mayAutoGenerate, fmtAgo,
-                   STALE_YELLOW_SEC, STALE_RED_SEC };
+module.exports = { KEY, decide, status, parseRecord, nextRecord, mayAutoGenerate, mayBypass, fmtAgo,
+                   STALE_YELLOW_SEC, STALE_RED_SEC, BYPASS_ONLINE_WINDOW_SEC };

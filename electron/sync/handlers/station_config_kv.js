@@ -88,7 +88,7 @@ const PATCHABLE          = ["value","updated_at"];
 // ruling 6). Pending is about the board in front of this operator; a peer syncing it would apply a Take to channels
 // that are live on a different machine's board. show_presets, show_current and board_levels are NOT here: they are
 // the station's, and sync (docs/dsp-show-presets.md §2).
-const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_designation', 'schedule_layout_v1', 'sweep_last_run', 'music_dir', 'cloud_backup_config', 'ai_voice_config', 'audio_output_device', 'aux_monitor_device', 'pfl_cue_device', 'show_pending']);
+const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_designation', 'kill_designation_by', 'schedule_layout_v1', 'sweep_last_run', 'music_dir', 'cloud_backup_config', 'ai_voice_config', 'audio_output_device', 'aux_monitor_device', 'pfl_cue_device', 'show_pending']);
 
 // Prefixes, for families of per-machine keys. `grid_widths_<pane>` is one key per grid, so it cannot
 // be enumerated — column widths had been written and refused on every resize since 4.4.177.
