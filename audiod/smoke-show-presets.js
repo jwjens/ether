@@ -215,7 +215,8 @@ console.log("\nSLICE 7 — the blade: live = ON, pending until OFF, one engine c
   check(missing.length === 0, `every fader name comes from the one helper (${missing.join(", ") || "all 6 sites"})`);
   check(!/deckLetter\s*[(=]/.test(src("src/components/DeckConfigurator.tsx") + src("src/components/AuxMonitorSlots.tsx") + src("src/components/SourceChannelStrip.tsx")), "the old fixed-arithmetic deckLetter is gone — one helper, not two");
   check(!/\{slot\}|\$\{slot\}/.test(src("src/components/rack/ChannelRackView.tsx")), "the rack view never prints the engine slot id");
-  const helps = fs.readdirSync(path.join(__dirname, "..", "docs")).filter(f => /^help-.*\.md$/.test(f));
+  // Operator help only: docs/help-audit-*.md is an engineering report that must name the ids it found.
+  const helps = fs.readdirSync(path.join(__dirname, "..", "docs")).filter(f => /^help-.*\.md$/.test(f) && !/^help-audit-/.test(f));
   const leaks = helps.filter(f => /\bS[1-5]\b/.test(src(`docs/${f}`)));
   check(leaks.length === 0, `no help doc names an engine slot S1–S5 (${leaks.join(", ") || "none"})`);
 }
