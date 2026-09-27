@@ -23,3 +23,14 @@ describe("Show+ G picks the Grab tool (audit 27)", () => {
   });
   it("G toggles grab", () => { expect(handler).toMatch(/if \(k === "g"\) \{ toggleTool\("grab"\);\s+return; \}/); });
 });
+
+describe("Show+ C picks the Splice tool (audit 28)", () => {
+  const toolBlock = handler.slice(handler.indexOf('if (k === "v" || k === "g" || k === "c"'));
+  it("C toggles the Splice (blade) tool", () => {
+    expect(toolBlock).toMatch(/if \(k === "c"\) \{ toggleTool\("blade"\);\s+return; \}/);
+  });
+  it("C no longer splices — the tool keys cut nothing (splitting at the playhead stays on S)", () => {
+    expect(toolBlock).not.toMatch(/splitRegion\(/);
+    expect(handler).toMatch(/if \(k === "s" && !mod && selection\?\.regionId && selection\.trackId\) \{[\s\S]{0,120}splitRegion\(/);
+  });
+});

@@ -67,7 +67,7 @@ Four gestures, one slide, no toolbar. That is the feature.
 
 The five named tools are still there, and they still win when you pick one:
 
-**Select (V) · Grab (G) · Splice · Trim (T) · Fade (F)**
+**Select (V) · Grab (G) · Splice (C) · Trim (T) · Fade (F)**
 
 Click one and it applies everywhere on every clip, exactly as before — useful when you're doing one
 thing fifty times and don't want the pointer making decisions for you.
@@ -76,10 +76,7 @@ thing fifty times and don't want the pointer making decisions for you.
 while Trim is lit and you're back to Smart). The **Smart** button at the left of the row does the same
 thing and shows you which mode you're in.
 
-### Known issue
-
-**C** does not pick Splice: it splices the selected clip at the playhead. Click the **Splice** button in
-the row instead.
+To cut the selected clip at the playhead without changing tools, press **S**.
 
 ## Undo
 

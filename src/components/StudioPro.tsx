@@ -1805,23 +1805,9 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         if (k === "g") { toggleTool("grab");   return; }
         if (k === "t") { toggleTool("trim");   return; }
         if (k === "f") { toggleTool("fade");   return; }
-        // "c" = splice. In the Blade tool, cut at the hovered point; in any
-        // other tool, splice the selected clip at the playhead.
-        if (tool === "blade") {
-          const hv = bladeHover;
-          if (!hv) { setStatus("Hover a region to cut"); return; }
-          splitRegion(hv.trackId, hv.regionId, hv.ms);
-          return;
-        }
-        if (!selection?.regionId) { setStatus("Select a clip, then press C to splice at the playhead"); return; }
-        const tk = stateRef.current.tracks.find(x => x.id === selection.trackId);
-        const rg = tk?.regions.find(x => x.id === selection.regionId);
-        const head = playheadMsRef.current;
-        if (rg && head > rg.offsetMs && head < rg.offsetMs + regionDurMs(rg)) {
-          splitRegion(selection.trackId, selection.regionId!, head);
-        } else {
-          setStatus("Move the playhead inside the selected clip, then press C to splice");
-        }
+        // C picks the Splice (blade) tool, as its button says — it used to splice the selected clip at the playhead
+        // instead (audit 28). Splitting the selected clip at the playhead is S; in Splice, click a clip to cut it.
+        if (k === "c") { toggleTool("blade");  return; }
       }
     };
     window.addEventListener("keydown", onKey, true);
@@ -7601,7 +7587,7 @@ function KeyboardHelpOverlay({ onClose }: { onClose: () => void }) {
       rows: [
         ["V",             "Select tool"],
         ["G",             "Grab tool — drag clips to move them"],
-        ["C",             "Blade tool — click region to cut, or press C while hovering"],
+        ["C",             "Splice tool — click a clip to cut it there"],
         ["T",             "Trim tool — drag region edges or body half"],
         ["F",             "Fade tool — drag corners for fade-in/out"],
       ],
