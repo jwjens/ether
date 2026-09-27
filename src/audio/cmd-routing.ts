@@ -69,3 +69,14 @@ export function resolveCommandTarget(
   const match = localStations.find((s) => (s.uuid || "") === uuid);
   return match ? { kind: "target", stationId: match.id } : { kind: "ignore" };
 }
+
+/** The command-bus SSE URL (web-remote slice 2, docs/web-remote-design-2026-09-16.md §2). Carries the license key AND
+ *  this machine's id, so the bus knows which machine is on each connection and can deliver a station control to the
+ *  one machine sourcing the stream. Null until BOTH are known — the caller retries, exactly as it already did for
+ *  the key: a connection without a machine id could never be a target. */
+export function cmdStreamUrl(base: string, key: string | null | undefined, machineId: string | null | undefined): string | null {
+  const k = typeof key === "string" ? key.trim() : "";
+  const m = typeof machineId === "string" ? machineId.trim() : "";
+  if (!k || !m) return null;
+  return `${base}?key=${encodeURIComponent(k)}&machine_id=${encodeURIComponent(m)}`;
+}

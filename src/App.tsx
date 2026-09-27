@@ -56,7 +56,7 @@ import { ClassFilter, passesClassFilter } from "./lib/contentClass";
 import { StreamStatusProvider } from "./contexts/StreamStatusContext";
 import { AudioEngineProvider, useAudioEngine } from "./audio/AudioEngineContext";
 import { getEngine, getAllEngines } from "./audio/engine-registry";
-import { resolveCommandTarget, isStationScopedCommand, commandTargetsThisMachine } from "./audio/cmd-routing";
+import { resolveCommandTarget, isStationScopedCommand, commandTargetsThisMachine, cmdStreamUrl } from "./audio/cmd-routing";
 import { computeDeckRole } from "./lib/deckRole";
 import GlobalOnAirBadge from "./components/GlobalOnAirBadge";
 import EtherLogo from "./components/EtherLogo";
@@ -1698,17 +1698,25 @@ export default function App() {
 
     const connect = () => {
       if (destroyed) return;
-      const key = apiKeyRef.current;
-      if (!key) {
-        // License key loads a beat after boot (async config read). connect() runs
-        // once at mount and there's no key-arrival trigger otherwise, so retry until
-        // the key is present — without this the command channel never connects and
-        // no dashboard/companion command (incl. Control Center db:apply) ever arrives.
+      // License key loads a beat after boot (async config read), and so does this machine's id (identity:get).
+      // connect() runs once at mount and there's no arrival trigger for either, so retry until BOTH are
+      // present — without the key the command channel never connects; without the machine id the bus cannot
+      // know which machine this connection is, so it could never deliver a station control here (web-remote
+      // slice 2, docs/web-remote-design-2026-09-16.md §2).
+      const url = cmdStreamUrl(STREAM_BASE, apiKeyRef.current, machineIdRef.current);
+      if (!url) {
+        // The id is read ONCE at mount (the identity effect below). If that read came back empty — identity not
+        // seeded yet — ask again on every retry, or the channel would wait on it for ever.
+        if (!machineIdRef.current) {
+          try {
+            (window as any).ether?.identity?.get?.()
+              .then((r: any) => { if (r?.ok && r.machine_id && !machineIdRef.current) machineIdRef.current = r.machine_id; })
+              .catch(() => { /* not seeded yet — the next retry asks again */ });
+          } catch { /* not in electron */ }
+        }
         reconnectTimer = setTimeout(connect, 1500);
         return;
       }
-
-      const url = `${STREAM_BASE}?key=${encodeURIComponent(key)}`;
       es = new EventSource(url);
 
       es.addEventListener("cmd", (e: MessageEvent) => {
