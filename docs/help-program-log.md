@@ -83,6 +83,18 @@ them. If you have the Program Log open in both the dock and its own window, both
 > rather than double-booking your slot — so the number shown can be slightly higher than the number of
 > new rows actually in the log. Your rows are the ones that win.
 
+## Keep the log filled (automatic)
+
+Under Fill Day and Fill Week, **Keep the log filled: ON / OFF** is this station's auto-generate switch.
+
+- **ON** — this computer extends the station's log on its own as the runway drops, so it never runs dry.
+- **OFF** (the default) — the log is filled only when someone presses Fill Day or Fill Week.
+
+It is **per station and local to this computer**: turning it on here does not turn it on at another studio. A
+computer with it ON is the one that can become the station's **designated generator**. The button shows what is
+actually stored — if a change doesn't stick, it says so in red underneath. The Health Monitor shows the same
+state (read-only) and links back here.
+
 ## Clear Day and the hour ✕
 
 **Clear Day** removes what has **not yet aired**: pending items from the next top-of-hour to the end of

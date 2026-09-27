@@ -110,12 +110,12 @@ export function designationView(
   const sub =
     state === "none" && blocked
       ? "Auto-generate is off for this station on this machine, so it will not take the designation. " +
-        "Nothing is wrong — turn AUTO ON for this station to designate this machine."
+        "Nothing is wrong — turn Keep the log filled ON in the Program Log to designate this machine."
       : (d && d.text) || fallback;
 
   const buttonTitle = blocked
     ? "Auto-gen off – cannot designate. A machine with auto-generate off never takes the designation, " +
-      "so there is nothing to check in. Turn AUTO ON for this station first."
+      "so there is nothing to check in. Turn Keep the log filled ON in the Program Log first."
     : busy
       ? "Re-reading the designation record…"
       : "Re-read the designation record and check in now. Refreshes ownership state; it does not force a full sync cycle.";

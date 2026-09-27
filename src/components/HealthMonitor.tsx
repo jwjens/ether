@@ -695,8 +695,6 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   // log, so the tri-state here is (true = on, false = off, null = unreadable) and null renders as ON
   // with a warning rather than as OFF.
   const [autoGen, setAutoGen] = useState<Record<number, boolean | null>>({});
-  const [autoBusy, setAutoBusy] = useState<number | null>(null);
-  const [autoErr, setAutoErr] = useState<Record<number, string>>({});
   // Generation designation (Phase A: observe only — it reports, it does not gate generation).
   const [desig, setDesig] = useState<Record<number, any>>({});
   // The same rows, unkeyed. This panel needs them by station id; the dashboard's designationFor()
@@ -868,44 +866,6 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     }
   }, [libHealth, readFlip, readAutoGen]);
   useEffect(() => { refreshFlipFlags(); }, [refreshFlipFlags]);
-
-  /** Flip a station. Reads the stored value, writes its opposite, then renders the read-back. */
-  const toggleAutoGen = async (sid: number) => {
-    // CONTROLLED: the button renders the STORED value only. No optimistic paint — 4.4.183/184
-    // painted first and then reconciled, so a refused write showed the new state for a frame and
-    // snapped back. That looked like a race and was actually the write being rejected every time
-    // (the key was missing from LOCAL_ONLY_KEYS, so set-local returned ok:false and the UI ignored
-    // the verdict). Paint only what the store confirms and a refusal can never masquerade as a flip.
-    const shown = autoGen[sid] === true;
-    const target = !shown;
-    const seq = ++autoSeqNext.current;
-    autoSeq.current[sid] = seq;
-    setAutoBusy(sid);
-    setAutoErr(prev => { const n = { ...prev }; delete n[sid]; return n; });
-    try {
-      console.log(`[auto-generate] write station=${sid} key="${AUTO_KEY}" value="${target ? "1" : "0"}"`);
-      const w = await (window as any).ether?.invoke?.("station_config_kv:set-local", sid, AUTO_KEY, target ? "1" : "0");
-      const refused = !w || w.ok === false;
-      if (refused) console.error(`[auto-generate] write REFUSED station=${sid}:`, (w && w.error) || "no response");
-
-      const after = await readAutoGen(sid);
-      const stuck = after === target;
-      console.log(`[auto-generate] verify station=${sid} wanted=${target ? "ON" : "OFF"} stored=${after === null ? "UNREADABLE" : after ? "ON" : "OFF"} -> ${stuck ? "OK" : "MISMATCH"}`);
-
-      if (autoSeq.current[sid] === seq) {
-        setAutoGen(prev => ({ ...prev, [sid]: after }));      // the store's word, always
-        if (refused) setAutoErr(prev => ({ ...prev, [sid]: `write refused: ${(w && w.error) || "no response"}` }));
-        else if (!stuck) setAutoErr(prev => ({ ...prev, [sid]: `write did not stick — still ${after === null ? "unreadable" : after ? "ON" : "OFF"}` }));
-      }
-    } catch (e: any) {
-      console.error(`[auto-generate] write THREW station=${sid}`, e);
-      const after = await readAutoGen(sid);
-      if (autoSeq.current[sid] === seq) {
-        setAutoGen(prev => ({ ...prev, [sid]: after }));
-        setAutoErr(prev => ({ ...prev, [sid]: e?.message || String(e) }));
-      }
-    } finally { setAutoBusy(null); }
-  };
 
   const toggleFlip = async (sid: number) => {
     setFlipBusy(sid);
@@ -1808,29 +1768,19 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                       }}
                     >{label}</button>
                   </div>
-                  {/* Auto-generation, per station and per machine. Off is silent by design: a station
-                      that is hand-programmed is a legitimate choice, not a fault to nag about. */}
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4 }}>
+                  {/* Auto-generation — a READ-ONLY mirror (audit 19). The switch lives in the Program Log beside Fill Day;
+                      this row only says what is stored and where to change it. */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 4 }}>
                     <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
-                      Auto-generate {autoGen[st.stationId] === true ? "— this machine keeps the log topped up" : "— off; this machine will not extend the log"}
+                      Auto-generate {autoGen[st.stationId] === true ? "ON — this machine keeps the log topped up" : autoGen[st.stationId] === false ? "OFF — this machine will not extend the log" : "— can't read the stored value"}
+                      {" · "}switch it in the Program Log (Keep the log filled)
                     </span>
-                    <button
-                      onClick={() => toggleAutoGen(st.stationId)}
-                      disabled={autoBusy === st.stationId}
-                      title="Local to this machine. When on, this machine extends the log automatically as the runway drops."
-                      style={{
-                        fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", padding: "3px 10px", borderRadius: 0,
-                        cursor: autoBusy === st.stationId ? "wait" : "pointer",
-                        background: autoGen[st.stationId] === true ? "var(--accent-green)" : "transparent",
-                        border: `1px solid ${autoGen[st.stationId] === true ? "var(--accent-green)" : "var(--border-primary)"}`,
-                        color: autoGen[st.stationId] === true ? "#062" : "var(--text-tertiary)",
-                        opacity: autoBusy === st.stationId ? 0.6 : 1,
-                      }}
-                    >{autoGen[st.stationId] === true ? "AUTO ON" : "AUTO OFF"}</button>
+                    <button onClick={() => { try { window.dispatchEvent(new CustomEvent("ether:open-programlog")); } catch { /* non-Electron */ } }}
+                      title="Open the Program Log — the Keep the log filled switch is under Fill Day"
+                      style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 0, cursor: "pointer", background: "transparent", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", whiteSpace: "nowrap" as const }}>
+                      Program Log →
+                    </button>
                   </div>
-                  {autoErr[st.stationId] && (
-                    <div style={{ fontSize: 11, color: "var(--accent-red)", marginTop: 2 }}>{autoErr[st.stationId]}</div>
-                  )}
                   {err && (
                     <div style={{ fontSize: 11, color: "#f87171", marginTop: 3, textAlign: "right" as const }}>{err}</div>
                   )}

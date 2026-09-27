@@ -7,6 +7,7 @@ import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { usePlan } from "../hooks/usePlan";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { useAutoGenerate } from "../hooks/useAutoGenerate";
 import {
   dayWindow, localDateStr, fmtClock, toEntries, showForHour, hoursToRender,
   type ProgramLogEntry, type ScheduleGetRow, type CategoryRef,
@@ -96,6 +97,9 @@ interface Props {
 
 export default function ProgramLog({ onClose, embedded = false }: Props) {
   const { stationId, stationUuid } = useActiveStation();
+  // AUTO — keep the log filled (auto-generate), per station, local to this machine. Lives here, beside Fill Day,
+  // where runway is read (audit 19); the Health Monitor's Canary panel only mirrors it.
+  const autoGen = useAutoGenerate(stationId);
   const [selectedDate, setSelectedDateState] = useState<string>(() => readSharedDate(stationId) || todayStr());
   const [currentMonth, setCurrentMonth] = useState(() => {
     const [y, m] = (readSharedDate(stationId) || todayStr()).split("-").map(Number);
@@ -807,6 +811,16 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
               {filling ? "⏳ …" : "⚡ Fill Week"}
             </button>
           </div>
+          <button onClick={autoGen.toggle} disabled={autoGen.busy} aria-pressed={autoGen.on === true}
+            title="Local to this machine. When ON, this machine extends this station's log automatically as the runway drops. OFF means the log is only filled when someone presses Fill Day / Fill Week."
+            style={{ padding: "6px 4px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 800, letterSpacing: "0.04em",
+                     cursor: autoGen.busy ? "wait" : "pointer", opacity: autoGen.busy ? 0.6 : 1,
+                     background: autoGen.on === true ? "var(--accent-green)" : "transparent",
+                     color: autoGen.on === true ? "#062" : autoGen.on === null ? "var(--accent-amber, #fbbf24)" : "var(--text-tertiary)",
+                     border: `1px solid ${autoGen.on === true ? "var(--accent-green)" : autoGen.on === null ? "var(--accent-amber, #fbbf24)" : "var(--border-primary)"}` }}>
+            Keep the log filled: {autoGen.on === null ? "— (can't read)" : autoGen.on ? "ON" : "OFF"}
+          </button>
+          {autoGen.error && <div style={{ fontSize: "var(--t-micro)", color: "var(--accent-red)" }}>{autoGen.error}</div>}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 }}>
             <button onClick={exportCSV}
               style={{ padding: "6px 4px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 700, cursor: "pointer", background: "rgb(from var(--accent-blue) r g b / 0.1)", color: "var(--accent-blue)", border: "1px solid rgb(from var(--accent-blue) r g b / 0.25)" }}>

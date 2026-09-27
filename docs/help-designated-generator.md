@@ -111,8 +111,8 @@ This is not a fault. A computer with auto-generation switched off must never tak
 it would then own a station it has been told not to build. So there is genuinely nothing to check
 in, and the button says so rather than looking live and doing nothing.
 
-**To designate this computer:** turn **AUTO ON** for the station (Health Monitor → **Log-Reader Flip —
-Canary** → the station's **Auto-generate** row), then press REFRESH NOW. The row
+**To designate this computer:** turn **Keep the log filled** ON for the station (Program Log → under
+**Fill Day**), then press REFRESH NOW. The row
 flips to **This machine** in green and stays there.
 
 The rows keep updating on their own every 30 seconds regardless, so nothing is hidden from you while
