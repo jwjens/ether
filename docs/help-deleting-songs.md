@@ -32,12 +32,11 @@ are for. Delete is permanent.
 1. Open the **Library**.
 2. Find the song. (Search matches title, artist, and cart number.)
 3. **Right-click** it and choose **Delete**.
-4. Confirm.
+4. Ether asks **Delete "(song title)"?** Click **Delete** (or press **Enter**). **Cancel** (or **Esc**) keeps
+   the song.
 
-That's it. There is no second step and nothing to clean up afterwards.
-
-> **Known issue:** if no confirmation appears after you choose **Delete**, the song has not been
-> deleted. Search the Library for it to check, and report it to support.
+The song leaves the list as soon as you click Delete. There is no second step and nothing to clean up
+afterwards. The ✕ button on a row, and **Delete** for several selected songs, ask the same way.
 
 ## What happens the moment you delete
 

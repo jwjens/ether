@@ -46,6 +46,7 @@ import FaderSection from "./components/FaderSection";
 import MasterOutput, { consoleLog } from "./components/MasterOutput";
 import SmartScheduler from "./components/SmartScheduler";
 import ImportDialog from "./components/ImportDialog";
+import { useConfirm } from "./components/ConfirmDialog";
 import NexGenImport from "./components/NexGenImport";
 import SettingsPanel from "./components/SettingsPanel";
 import SweepersPanel from "./components/SweepersPanel";
@@ -4714,6 +4715,8 @@ function LibStatusChip({ status }: { status: string }) {
 export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSendToStudio }: { onLoadA: (s: SongRow) => void; onLoadB: (s: SongRow) => void; onLoadC: (s: SongRow) => void; onQueue: (s: SongRow) => void; onEdit?: (s: SongRow) => void; onSendToStudio: (s: SongRow) => void }) {
   const engine = useAudioEngine();
   const { stationId } = useActiveStation();
+  // Every Library delete asks in-app (audit 5): window.confirm no-ops in the packaged build, so Delete never ran.
+  const [askConfirm, confirmDialog] = useConfirm();
   // Slice C: per-song rotation eligibility (plays + last-played + rest + status) from library-health —
   // the station-scoped play_log join that repairs the empty PLAYS column. Refreshed every 30s so the
   // RESTING countdown ticks down.
@@ -5328,7 +5331,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
   const toggleSelect = (id: number) => { setSelectedIds(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; }); };
   const selectAll = () => { setSelectedIds(prev => prev.size === filtered.length ? new Set() : new Set(filtered.map(s => s.id))); };
   const deleteSelected = async () => {
-    if (!confirm("Delete " + selectedIds.size + " item(s)?")) return;
+    if (!(await askConfirm("Delete " + selectedIds.size + " item(s)?", { confirmLabel: "Delete", danger: true }))) return;
     // Per row, by source, and COUNTED — a bulk delete that half-worked used to look identical to one
     // that fully worked.
     const chosen = songs.filter(x => selectedIds.has(x.id));
@@ -5343,7 +5346,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
     setSelectedIds(new Set()); load();
   };
   const deleteAll = async () => {
-    if (!confirm("Delete ALL " + count + " songs?")) return;
+    if (!(await askConfirm("Delete ALL " + count + " songs?", { confirmLabel: "Delete all", danger: true }))) return;
     await (window as any).ether.songs.deleteByStation(stationId); setSelectedIds(new Set()); load();
   };
   const analyzeLufs = async () => {
@@ -5718,7 +5721,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
               action: () => { const song = ctxMenu.song; setCtxMenu(null);
                               void changeFileLocationItem({ table: "songs", id: song.id }, song.file_path, load).run?.(); } },
             null,
-            { label: "Delete", action: async () => { const row = ctxMenu.song; setCtxMenu(null); if (confirm("Delete " + row.title + "?")) { await deleteLibraryRow(row); load(); } }, danger: true },
+            { label: "Delete", action: async () => { const row = ctxMenu.song; setCtxMenu(null); if (await askConfirm("Delete " + row.title + "?", { confirmLabel: "Delete", danger: true })) { await deleteLibraryRow(row); load(); } }, danger: true },
           ].map((item, idx) => item === null
             ? <div key={idx} style={{ height: 1, background: "var(--border-primary)", margin: "2px 0" }} />
             : <div key={item.label} onMouseDown={() => item.action()} style={{ padding: "9px 16px", fontSize: 13, cursor: "pointer", color: (item as any).danger ? "var(--accent-red)" : "var(--text-primary)", userSelect: "none" as any }}
@@ -6166,7 +6169,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                 <button onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setCueMenu({ song: s, x: r.right, y: r.bottom + 4 }); }} title="Cue…" className="ether-action-btn" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "rgba(167,139,250,0.15)", color: "#a78bfa", border: "none", cursor: "pointer" }}>
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="10" y1="15" x2="20" y2="5"/><line x1="17" y1="2" x2="22" y2="7"/><polyline points="20 12 20 22 4 22 4 6 14 6"/></svg>
                 </button>
-                <button onClick={async () => { if (confirm("Delete " + (s.title || "this track") + "?")) { await deleteLibraryRow(s); load(); } }} title="Delete" className="ether-action-btn" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
+                <button onClick={async () => { if (await askConfirm("Delete " + (s.title || "this track") + "?", { confirmLabel: "Delete", danger: true })) { await deleteLibraryRow(s); load(); } }} title="Delete" className="ether-action-btn" style={{ padding: "4px 8px", borderRadius: 0, fontSize: 12, fontWeight: 700, background: "transparent", color: "var(--text-tertiary)", border: "none", cursor: "pointer" }}>✕</button>
               </div>
             </div>
           ))}
@@ -6227,6 +6230,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
           </div>
         </div>
       )}
+      {confirmDialog}
     </div>
   );
 }
