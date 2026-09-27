@@ -7,17 +7,14 @@ import React, { useState } from "react";
 import PeakAvgMeter, { type MeterSource } from "./PeakAvgMeter";
 import { BUS, CH_INDEX, useMeterSubscription } from "./meterStore";
 import { useActiveStation } from "../../hooks/useActiveStation";
+import { useBoardName } from "../../hooks/useBoardName";
+import { wildChoices } from "../../lib/boardLabels";
 
 const COLUMN: { name: keyof typeof BUS; title: string }[] = [
   { name: "PGM",     title: "PGM — the programme mix after the master fader (what the station is putting out)" },
   { name: "LOCAL",   title: "LOCAL — the local air output (not fed when no local output device is set)" },
   { name: "STREAM",  title: "STREAM — exactly what is sent to the stream encoder" },
   { name: "MONITOR", title: "MONITOR — the studio monitor output, after the monitor fader" },
-];
-
-const WILD_CHOICES: { key: string; label: string }[] = [
-  ...Object.keys(BUS).map(b => ({ key: `bus:${b}`, label: `${b} (bus, post-fader)` })),
-  ...Object.keys(CH_INDEX).map(c => ({ key: `ch:${c}`, label: `${c.length === 1 ? "Deck " + c : c} (channel, pre-fader)` })),
 ];
 
 function sourceOf(key: string, stationUuid: string | null | undefined): MeterSource {
@@ -29,6 +26,8 @@ function sourceOf(key: string, stationUuid: string | null | undefined): MeterSou
 export default function MasterMeters({ rail = false }: { rail?: boolean }) {
   const { stationId, stationUuid, isReady } = useActiveStation();
   useMeterSubscription([isReady ? stationId : null]);
+  // Audit 25: channels are named by board letter (S1 → its letter), never by engine id. Keys are unchanged.
+  const wildList = wildChoices(useBoardName(), Object.keys(CH_INDEX), Object.keys(BUS));
   const [wild, setWild] = useState<string>(() => {
     try { return localStorage.getItem("ether.wildMeter") || "ch:A"; } catch { return "ch:A"; }
   });
@@ -55,7 +54,7 @@ export default function MasterMeters({ rail = false }: { rail?: boolean }) {
             width: "100%", fontSize: 9, padding: "1px 2px", background: "var(--bg-tertiary)",
             color: "var(--text-secondary)", border: "1px solid var(--border-primary)", borderRadius: 2,
           }}>
-          {WILD_CHOICES.map(w => <option key={w.key} value={w.key}>{w.label}</option>)}
+          {wildList.map(w => <option key={w.key} value={w.key}>{w.label}</option>)}
         </select>
       </div>
     </div>
