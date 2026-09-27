@@ -9709,6 +9709,8 @@ function _scheduleChanged(stationId, reason, extra) {
     sendToAllWindows("schedule:changed", { stationUuid: _uuid, reason, at: Date.now(), ...(extra || {}) });
   } catch {}
 }
+// A song rename retitles its pending log rows in the songs writer (audit 8); the Program Log re-reads on this.
+try { require("./sync/handlers/songs").onLogRetitled(sids => { for (const s of sids) _scheduleChanged(s, 'song-renamed'); }); } catch {}
 function _commitDayRows(stationId, effStart, dayEnd, rows) {
   const { generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
   const { filterToGaps, NOT_OPERATOR_OWNED_SQL } = require('./log-edit-core');

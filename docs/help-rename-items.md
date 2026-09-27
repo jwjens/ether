@@ -45,5 +45,6 @@ When you cut a reel into pieces, each cut in the list has a name **before** you 
   won't appear — the owning account controls that name.
 - Renaming only changes the display name. It does not move the audio file or change which pool/category the
   item belongs to.
-- Rows already filled into the **Program Log** keep their own copy of the title, so they may still show
-  the old name.
+- The new name also reaches the **Program Log** rows that haven't aired yet, on every station whose log
+  has the song. Rows that already aired keep the name they aired under — the log is the record of what
+  happened.

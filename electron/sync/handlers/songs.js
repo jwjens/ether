@@ -122,8 +122,34 @@ function songsUpdate(db, uuid, patch) {
   // Title and path changes ride along too, so a rename does not leave the asset showing the old one.
   const updatedRow = songsGet(db, uuid);
   mirrorAsset(db, TABLE, updatedRow, { type: assetTypeForContentClass(updatedRow && updatedRow.content_class) });
+  // A RENAME REACHES THE LOG IT IS ALREADY IN (audit 8). generated_schedule rows carry their own title and the
+  // Program Log shows it, so a renamed song kept its old name in every day already filled.
+  if (patchFields.includes('title') && patch.title !== existing.title) {
+    const sids = retitleSongFuture(db, existing.id, patch.title, now);
+    if (sids.length && _logRetitled) { try { _logRetitled(sids); } catch { /* the log still changed; the refresh is best-effort */ } }
+  }
   return updatedRow;
 }
+
+// The song's FUTURE only — the delete contract's rule (retractSongReferences below): 'pending' rows take the new
+// title; played / missed / playing rows are the record of what went to air under the old one and never change.
+// Unlogged for the same reason as the retraction: local log hygiene on top of the replicated songs mutation.
+// Returns the stations whose log changed, so main.js can fire schedule:changed for each.
+function retitleSongFuture(db, songId, title, nowIso) {
+  try {
+    const sids = db.prepare(
+      `SELECT DISTINCT station_id FROM generated_schedule WHERE song_id = ? AND state = 'pending' AND deleted_at IS NULL`
+    ).all(songId).map(r => r.station_id);
+    if (!sids.length) return [];
+    db.prepare(
+      `UPDATE generated_schedule SET title = ?, updated_at = ? WHERE song_id = ? AND state = 'pending' AND deleted_at IS NULL`
+    ).run(title, nowIso, songId);
+    return sids;
+  } catch { return []; }
+}
+let _logRetitled = null;
+/** main.js registers the schedule:changed broadcast here — the handler has no window access of its own. */
+function onLogRetitled(fn) { _logRetitled = fn; }
 
 function songsDelete(db, uuid) {
   validateScope();
@@ -466,6 +492,7 @@ module.exports = {
   songsCreate,
   songsUpdate,
   songsUpdateById,
+  onLogRetitled,
   songsDelete,
   songsDeleteById,
   songsDeleteByStation,
