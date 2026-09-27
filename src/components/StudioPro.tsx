@@ -1763,12 +1763,8 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         setZoom(zv => clamp(e.key === "-" ? zv / 1.25 : zv * 1.25, MIN_ZOOM, maxZoomRef.current));
         return;
       }
-      // G — toggle snap
-      if (k === "g" && !mod) {
-        e.preventDefault(); e.stopImmediatePropagation();
-        setSnapMs(v => (v == null ? 250 : null));
-        return;
-      }
+      // G is the Grab tool (the tool keys below). A "toggle snap" branch here took it first and only drew the
+      // snap-guide line at 250 ms — snapMs is the drag's guide position, not snap (gridEnabled is). Audit 27.
       // 1..9 — focus the Nth track
       if (!mod && /^[1-9]$/.test(e.key)) {
         const idx = parseInt(e.key, 10) - 1;
@@ -7604,6 +7600,7 @@ function KeyboardHelpOverlay({ onClose }: { onClose: () => void }) {
       name: "Tools",
       rows: [
         ["V",             "Select tool"],
+        ["G",             "Grab tool — drag clips to move them"],
         ["C",             "Blade tool — click region to cut, or press C while hovering"],
         ["T",             "Trim tool — drag region edges or body half"],
         ["F",             "Fade tool — drag corners for fade-in/out"],
