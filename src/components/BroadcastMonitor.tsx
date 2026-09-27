@@ -2,8 +2,10 @@
 // Shown when the pop-out icon is clicked on the inline Master Out panel.
 // Default window size: 800×600 (resizable). All colors via CSS variables.
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { query } from "../db/client";
+import { useAudioEngine } from "../audio/AudioEngineContext";
+import { useShowState } from "../hooks/useShowState";
 
 const TEAL = "#00c8a8";
 const AMB  = "#c07820";
@@ -424,6 +426,18 @@ export default function BroadcastMonitor() {
     try { (window as any).ether?.audio?.setMasterMonitorVolume?.(v); } catch { /* engine absent */ }
   };
 
+  // ── MASTER OUT = the broadcast — the same path as the inline panel (MasterOutput.tsx applyMaster) ──────────────
+  // Audit 1 (docs/help-audit-2026-09-27.md): this fader only set display state and opened at 1.0. It now drives the
+  // program bus through this window's engine (main.tsx mounts AudioEngineProvider over every pop-out) and reads back
+  // the level the engine was last given, so both boards show the same MASTER.
+  const engine = useAudioEngine();
+  const applyMaster = useCallback((v: number) => {
+    setMasterVol(v);
+    try { engine?.setMasterVolume?.(v); } catch { /* engine absent */ }
+  }, [engine]);
+  const { state: show } = useShowState();
+  useEffect(() => { if (show.levels.master != null) setMasterVol(show.levels.master); }, [show.levels.master]);
+
   // ── Now-playing updates from main window ──────────────────────
   useEffect(() => {
     const ether = (window as any).ether;
@@ -530,7 +544,8 @@ export default function BroadcastMonitor() {
     return () => ether.off("stream:status", h);
   }, []);
 
-  const effectiveMaster = masterLevel * masterVol;
+  // The master gain rides the program bus BEFORE the meter, so the metered level already carries it (audit 1).
+  const effectiveMaster = masterLevel;
 
   return (
     <div style={{
@@ -584,7 +599,7 @@ export default function BroadcastMonitor() {
           flex: 1, padding: "16px 28px",
           display: "flex", flexDirection: "column", justifyContent: "center", gap: 20,
         }}>
-          <BigFader label="Master"  value={masterVol}  onChange={setMasterVol}  />
+          <BigFader label="Master"  value={masterVol}  onChange={applyMaster}  />
           <BigFader label="Monitor" value={monitorVol} onChange={applyMonitor} />
 
           {/* Limiter indicator */}

@@ -2,7 +2,7 @@
 feature: master-monitor-faders
 title: Master and Monitor Faders
 summary: MASTER sets what your listeners hear. MONITOR sets how loud it is in your room. They are separate — turning your speakers down never turns the broadcast down.
-where: Right-hand Master Out panel (MONITOR also in the pop-out Master Output window)
+where: Right-hand Master Out panel (both also in the pop-out Master Output window)
 since: 4.4.154
 audience: operator
 tour: true
@@ -68,11 +68,8 @@ How to read the bar, the peak dot and OVER: see **Reading the Meters** (`docs/he
   the top (unity).
 - **My speakers are silent but the station is still on the air.** That is MONITOR at zero — which is the
   safe direction. Drag it up.
-- **Moving MASTER doesn't change the meter.** Make sure you are moving MASTER in the **Master Out panel**,
-  not the pop-out (see Known issue). If it still does nothing, check **Help → About** for your version and
-  fully close and reopen Ether after an update.
+- **Moving MASTER doesn't change the meter.** Check **Help → About** for your version and fully close and
+  reopen Ether after an update.
 
-## Known issue
-
-- **The MASTER fader in the pop-out Master Output window is not connected to the on-air level in this
-  build.** Set MASTER in the Master Out panel. The pop-out's MONITOR fader is connected.
+MASTER and MONITOR in the **pop-out Master Output window** are the same controls as the ones in the
+Master Out panel: move one and the other follows.
