@@ -111,6 +111,23 @@ on the card after that, in grey. Hover the line for the full detail (callbacks r
 - **Core Systems**, **High Availability**, **Library & Rotation**, **Designation Activity**, the
   **Log-Reader** panels and **DMCA Play Log Export** — the underlying detail behind the cards above.
 
+### Library & Rotation — the Sweepers row
+
+Each station, right under **Schedule runway**, has a **Sweepers** row:
+
+- **placed · fired · skipped today** — how many sweepers the log has in it today, how many actually went to
+  air (counted only when the engine heard the sweeper's audio), and how many seams got none. The small
+  print says why each skip happened: *outside active hours*, *no cut short enough* (AUTO-POST) or
+  *pool empty / no file*.
+- **now SCHEDULED / ARMED / FIRING** — what the engine is doing with the next sweeper, live.
+- **Red** only when sweepers are assigned and **none fired in the last hour of air** — the last 60 minutes
+  of the station's own audio, not the last 60 minutes on the clock, so a station that was off overnight
+  isn't flagged. Less than an hour aired, nothing assigned, or no assignment covering the hours that just
+  aired shows grey, never red. The change to red, and back, is written to the event ledger.
+
+If it goes red, work through **If you don't see any imaging** in the Sweepers help — start with the
+imaging channel's **ON** button.
+
 ### High Availability — what the rows mean
 
 - **Watchdog Process** — whether a watchdog (the "Keep My Station On Air" supervisor) is running.

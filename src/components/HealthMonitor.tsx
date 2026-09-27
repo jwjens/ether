@@ -769,6 +769,23 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   const bannerTimers = useRef<Record<number, any>>({});
   // Recent designation history, read back from the honest ledger (health-events.jsonl).
   const [desigEvents, setDesigEvents] = useState<any[]>([]);
+  // SWEEPERS — the live state per station (SCHEDULED → ARMED → FIRING), straight from the daemon's own events
+  // (audio:daemon-jingle, keyed by stationUuid). CLEARED / ARMED_CANCELLED → idle. Observed, never inferred (audit 15).
+  const [sweepLive, setSweepLive] = useState<Record<string, { state: string; title: string | null }>>({});
+  useEffect(() => {
+    const audio = (window as any).ether?.audio;
+    if (!audio?.onJingle) return;
+    const h = audio.onJingle((m: any) => {
+      if (!m || !m.stationUuid) return;
+      setSweepLive(prev => {
+        const n = { ...prev };
+        if (m.state === "CLEARED" || m.state === "ARMED_CANCELLED") delete n[m.stationUuid];
+        else n[m.stationUuid] = { state: String(m.state), title: m.title || null };
+        return n;
+      });
+    });
+    return () => { try { audio.offJingle?.(h); } catch { /* ignore */ } };
+  }, []);
   const [desigEventsErr, setDesigEventsErr] = useState<string | null>(null);
   // A COMMERCIAL THAT DID NOT AIR. Jeff, 2026-09-14: "A missed spot must be loud — Health Monitor,
   // naming the spot and the time. Six today and I only found out by asking."
@@ -1562,6 +1579,26 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                           : `no gap within ${30} days`}
                     />
                   )}
+                  {st.sweepers && (() => {
+                    const sw = st.sweepers;
+                    const live = sw.stationUuid ? sweepLive[sw.stationUuid] : undefined;
+                    const sk = sw.skipped || {};
+                    const skips = [sk.off_hours ? `${sk.off_hours} outside active hours` : "", sk.no_fit ? `${sk.no_fit} no cut short enough (AUTO-POST)` : "",
+                                   sk.no_file ? `${sk.no_file} pool empty / no file` : ""].filter(Boolean);
+                    const nSkip = (sk.off_hours || 0) + (sk.no_fit || 0) + (sk.no_file || 0);
+                    return (
+                      <HealthRow
+                        label="Sweepers"
+                        value={sw.assigned ? `placed ${sw.placed} · fired ${sw.fired} · skipped ${nSkip} today` : "none assigned"}
+                        status={(sw.level === "red" ? "error" : "ok") as any}
+                        sub={[
+                          live ? `now ${live.state}${live.title ? ` — ${live.title}` : ""}` : "",
+                          sw.reason,
+                          skips.length ? `skipped: ${skips.join(", ")}` : "",
+                        ].filter(Boolean).join(" · ")}
+                      />
+                    );
+                  })()}
                   <HealthRow
                     label="Materialization"
                     value={`${st.materialization.resolvable}/${st.materialization.total} resolvable`}

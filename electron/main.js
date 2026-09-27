@@ -9466,6 +9466,13 @@ function _placeJingles(db, stationId, rows) {
     return pick;
   };
   const jinRows = [];
+  // SKIPS ARE COUNTED, NOT DROPPED (audit 15). Each seam an assignment asked for that gets no sweeper is tallied by
+  // reason, per local date, into the Health Monitor's sweeper sense. An UNASSIGNED category is a deliberate clean
+  // segue, never a skip, and is not counted.
+  const _ss = require('./sweeper-sense');
+  const placeTally = {};
+  const tallyOf = (t) => { const d = _ss.localDate(t); return (placeTally[d] = placeTally[d] || { placed: 0, off_hours: 0, no_fit: 0, no_file: 0 }); };
+  const skip = (why, t) => { tallyOf(t)[why]++; };
   try {
     for (const incoming of music) {
       const catId = incoming.category_id;
@@ -9486,7 +9493,7 @@ function _placeJingles(db, stationId, rows) {
       }
       // Active-hours gate — the seam's LOCAL hour must be enabled (keeps imaging out of hours it shouldn't be in).
       const seamHour = new Date(incoming.scheduled_at * 1000).getHours();
-      if (((activeHours >> seamHour) & 1) !== 1) continue;
+      if (((activeHours >> seamHour) & 1) !== 1) { skip('off_hours', incoming.scheduled_at); continue; }
       // Resolve the overlay item: a specific song, or LRP rotation within the assigned pool.
       let pick = null;
       if (kind === 'item' && itemId != null) {
@@ -9506,7 +9513,7 @@ function _placeJingles(db, stationId, rows) {
       if (wantsAutoPost && postMs != null && kind === 'pool' && poolId != null) {
         const all = resolvePoolCands(poolId);
         const fits = qualifyingCandidates(all, postMs, segueOverlapSec);
-        if (!fits.length) continue;   // NOTHING SHORT ENOUGH → no imaging on this seam. Jeff's ruling:
+        if (!fits.length) { skip('no_fit', incoming.scheduled_at); continue; }   // NOTHING SHORT ENOUGH → no imaging on this seam. Jeff's ruling:
                                       // strict rather than clever. A cut that does not fit would have to
                                       // talk over one of the two songs, and neither is acceptable.
         pick = pickFrom(poolId, fits);
@@ -9514,7 +9521,8 @@ function _placeJingles(db, stationId, rows) {
       }
       else if (kind === 'item' && itemId != null) { /* already resolved above */ }
       else if (kind === 'pool' && poolId != null) { pick = resolvePool(poolId); }
-      if (!pick || !pick.file_path) continue;
+      if (!pick || !pick.file_path) { skip('no_file', incoming.scheduled_at); continue; }
+      tallyOf(incoming.scheduled_at).placed++;
       const cls = 'SWP';                       // v52: the only imaging class
       const def = SWEEPER_DEFAULT;
       jinRows.push({
@@ -9536,6 +9544,10 @@ function _placeJingles(db, stationId, rows) {
     }
   } catch (e) { console.error('[schedule] overlay placement error (music unaffected):', e.message); return; }
   if (jinRows.length) { rows.push(...jinRows); console.log(`[schedule] placed ${jinRows.length} overlay(s) (jingles/sweepers) across ${music.length} music elements`); }
+  if (Object.keys(placeTally).length) {
+    _ss.recordPlacement(db, stationId, placeTally);
+    _healthEvent('sweeper-placement', { stationId, days: placeTally });
+  }
 }
 
 // Generate one day's 24 hours into ctx.generatedRows (same picking logic as schedule:generate).

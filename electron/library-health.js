@@ -720,12 +720,17 @@ function createLibraryHealth(opts) {
     const skipLevel = skipped > 0 ? 'red' : 'green';
     // A station about to run out of log is the most urgent thing this monitor can report — a dry log
     // on a flipped station is dead air — so runway drives the row colour like any other red.
-    const level = [materialLevel, poolLevel, skipLevel, runway.level].includes('red') ? 'red'
+    // SWEEPERS (audit 15): red only when assigned and none fired in the last hour of AIR (electron/sweeper-sense.js).
+    let sweepers = null;
+    try { sweepers = require('./sweeper-sense').senseStation(db, sid, nowSec()); } catch { sweepers = null; }
+    const sweepLevel = sweepers && sweepers.level === 'red' ? 'red' : 'green';
+    const level = [materialLevel, poolLevel, skipLevel, runway.level, sweepLevel].includes('red') ? 'red'
                 : [materialLevel, poolLevel, uncat.level, runway.level].includes('yellow') ? 'yellow' : 'green';
     return {
       stationId: sid, name, level,
       uncategorised: uncat,                       // music that can never air (2026-08-11 ruling)
       runway,                                     // fuel gauge — days to the first gap (see electron/runway.js)
+      sweepers: sweepers,                         // placed / fired / skipped today + level (sweeper-sense.js)
       materialization: { ...materialization, level: materialLevel },
       pool: { librarySize: total, spunPool24h: spun.length, topSpins24h: topSpins, level: poolLevel },
       skipped: { thisHour: skipped, level: skipLevel },
@@ -778,6 +783,7 @@ function createLibraryHealth(opts) {
   }
 
   const _lintSeen = new Set();   // rowIds already event-logged, so a violation is reported once
+  const _sweepSeen = new Map();       // stationId -> last sweeper level, for transition-only ledger events
   function computeAll() {
     const _sweepStart = Date.now();
     // One directory walk and one stat per distinct directory for the WHOLE sweep, then thrown away.
@@ -796,6 +802,16 @@ function createLibraryHealth(opts) {
           if (_lintSeen.has(v.rowId)) continue;
           _lintSeen.add(v.rowId);
           appendJsonl({ kind: 'queue-lint', stationId: sid, title: v.title, scheduledAt: v.scheduledAt, earlyBySec: v.violatesBySec, ruleKind: v.kind });
+        }
+        // Sweeper sense → the ledger on TRANSITION only (red ↔ not red), never every sweep.
+        const sw = st.sweepers && st.sweepers.level;
+        if (sw) {
+          const prev = _sweepSeen.get(sid);
+          if (prev !== undefined && prev !== sw && (prev === 'red' || sw === 'red')) {
+            appendJsonl({ kind: sw === 'red' ? 'sweepers-not-firing' : 'sweepers-firing-again', stationId: sid, station: st.name,
+                          reason: st.sweepers.reason, placed: st.sweepers.placed, fired: st.sweepers.fired });
+          }
+          _sweepSeen.set(sid, sw);
         }
         snap.stations.push(st);
       } catch (e) { /* one station never breaks the rest */ }

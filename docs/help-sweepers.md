@@ -142,6 +142,9 @@ works on every channel strip.
 
 ## If you don't see any imaging
 
+**Look at the Health Monitor first.** Each station's **Sweepers** row counts what was placed, fired and skipped
+today, and says why each skip happened; it turns red if none fired in the last hour of air.
+
 - **Nothing assigned?** A category with **OVERLAY = none** and no station fallback plays a clean segue by
   design.
 - **No tagged cuts / empty pool?** Mark cuts as sweepers in the Library and put them in a pool.
