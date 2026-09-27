@@ -40,7 +40,8 @@ The **SWEEPERS** button in the bottom bar (next to CATEGORIES) opens this home. 
 2. **Build pools (optional but recommended).** Type a name in **New sweeper pool** (e.g. "Legal IDs"),
    add it, and put several tagged cuts into it. A pool **rotates least-recently-played**, so the same cut
    doesn't repeat too soon — that's your burnout protection. Cuts of different lengths can share a pool
-   freely; length is never an input to the seam.
+   freely; length is never an input to the seam. To rename a cut, pick its pool and press **EDIT** beside
+   the cut's name — the new name shows everywhere, the Library included.
 3. **Assign per category — the core.** In **Category assignments**, each music category has an **OVERLAY**
    dropdown: pick **— none (clean segue) —**, a **specific sweeper**, or a **sweeper pool**. Set
    **LEAD (s)** for that category (see below) and **ACTIVE HOURS** (default **Always**) to keep imaging

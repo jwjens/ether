@@ -392,9 +392,15 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
                 {inThis.map(x => (
                   <div key={x.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 8px", background: "var(--bg-secondary)", borderRadius: "var(--r-0)" }}>
                     <span style={{ width: 6, height: 6, borderRadius: "50%", background: accent, flexShrink: 0 }} />
-                    <span style={{ flex: 1, fontSize: "var(--t-lead)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {x.title}{x.artist_name ? ` — ${x.artist_name}` : ""}
-                    </span>
+                    {/* Rename here (audit 13) — the Library's own rename path; songsUpdate mirrors the title onto
+                        library_asset, which is what this list reads. */}
+                    <InlineNameEditor
+                      value={x.title || ""}
+                      readOnly={ro}
+                      compact
+                      display={<span style={{ fontSize: "var(--t-lead)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.title}{x.artist_name ? ` — ${x.artist_name}` : ""}</span>}
+                      onSave={async (next) => { await ether()?.songs?.updateById(x.id, { title: next }); reload(); }}
+                    />
                     {!ro && (
                       <button onClick={() => toggleMember(x, selPool, false)} title="Remove from this pool — the cut stays in the library and in any other pool"
                         style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-lead)" }}>✕</button>
