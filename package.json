@@ -26,6 +26,7 @@
     "test:mic-input": "node audiod/smoke-mic-input.js",
     "test:pfl": "node audiod/smoke-pfl.js",
     "test:dynamics": "node audiod/smoke-dynamics.js",
+    "test:show-presets": "node audiod/smoke-show-presets.js",
     "test:sync": "electron --no-sandbox scripts/run-sync-tests.js",
     "test:designation": "cross-env ELECTRON_RUN_AS_NODE=1 electron electron/smoke-designation-write.js",
     "test:programlog-reads": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-programlog-reads.js",

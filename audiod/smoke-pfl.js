@@ -92,7 +92,8 @@ console.log("\n3 - the PFL output device: machine-local, delivered to THIS stati
   mk(4)._applyCueDeviceFromKv(50_000);
   check(calls2.length === 1, "a fresh engine gets the stored cue device");
   const src = (f) => fs.readFileSync(path.join(__dirname, "..", f), "utf8");
-  check(/'pfl_cue_device'\]\)/.test(src("electron/sync/handlers/station_config_kv.js")), "pfl_cue_device is LOCAL_ONLY (never synced)");
+  // Asked of the real predicate, not a regex on the set's last entry (slice 7 appended show_pending after it).
+  check(require("../electron/sync/handlers/station_config_kv").isLocalOnlyKey("pfl_cue_device"), "pfl_cue_device is LOCAL_ONLY (never synced)");
   const main = src("electron/main.js");
   const set = /ipcMain\.handle\("audio:set-cue-device"[\s\S]*?\n\}\);/.exec(main);
   check(!!set && set[0].indexOf("setCueDevice") < set[0].indexOf("stationConfigKvSetLocal") && !/upsertByKey/.test(set[0]), "audio:set-cue-device: engine first, then set-local (never upsertByKey)");

@@ -344,3 +344,135 @@ half is the restore receipt below: faders reached by hand and faders restored in
 - **JS gates** (unaffected, run anyway): tsc 0; vitest 483/483; rack-eq 30, mic-input 25, pfl 22, dynamics 10,
   meter contract 30; undefined-calls, preload-bridge, ipc-contract, one-switch PASS; audio-isolation PASS; leak
   guard OK; `npm run build` OK.
+
+---
+
+## Build — the daemon (the blade) and main's stores (2026-09-26)
+
+**Status:** built and tested against a recorded engine. Nothing on the board uses it yet (UI commit).
+
+### Where the blade lives
+
+**`audiod/show-presets.js`** holds `ShowBlade`, one per station, created by `ether-audiod.js`. It sits beside the
+engine and is **independent of automation**: the proposal said `engine.js`, but a station with no `DaemonEngine`
+(the jukebox alone) still has a board.
+
+**What passes through it:**
+- `setMuted` → `noteMuted`
+- `stop` → `noteStopped`
+- `setVolume` → `noteVolume`
+- `setMasterVolume` → `noteMaster`
+- **`init` boots it:** the saved faders, then the saved pending set.
+- **The station loop ticks it at ~2 Hz**, so a deck that ends or stops inside the engine goes OFF there.
+
+**The verbs:** `showTake`, `showForce`, `showArm`, `showDisarm`, `showState`.
+
+### The live rule (ruling 1)
+
+- **A/B/C:** live = the engine reports `playing`.
+- **Every other slot:** live = not cut.
+  - For D/E/F/CART: the cut that passed through the blade, else the engine's `muted`.
+  - The engine starts un-muted, so a slot never cut since the engine started counts as ON.
+- **A slot not on the board right now** (deck_configs not enabled) has no ON button, so it is never live.
+- **What the preset says about a slot never decides liveness.** A preset that removes a channel still waits for
+  that channel to go OFF.
+
+### A Take never turns a channel ON, and never needs to cut (ruling 3)
+
+Under ruling 1 every channel a Take touches is already OFF, so "may turn non-live channels OFF" never has anything
+to do. **The blade never sends a cut.** Main's deck_configs writes never include `channel_on`.
+
+### Take, pending and OFF
+
+- **Take:** one `audioApplyShow` covers every non-live named slot plus the master (fader, rack, ducker, monitor).
+  The live slots go into the pending set, with their values.
+- **On OFF:** that slot's pending goes in its own `audioApplyShow`, for that slot only and without the master.
+- **TAKE NOW:** the same, immediately.
+- **Store writes:**
+  - `showapplied` carries exactly the applied part.
+  - **main** writes it through **`planStoreWrites`**, the one planner the smoke also asserts over:
+    - `deck_configs` enabled/type/kind/duck/duckable (never `channel_on`; A/B/C never re-patched);
+    - `rack_ch_<slot>`, `aux_monitor_levels` (merged);
+    - `rack_master` plus its legacy keys, `duck_*`, `monitor_volume`.
+  - **A waiting channel's stores are never written**, so the 3 s rack poll can't apply them behind the
+    protection.
+
+### Storage (ruling 6)
+
+- **Synced:** `show_presets` (the list), `show_current` (written by main on a Take), `board_levels` (written by
+  main at most once a second from the blade's `boardlevels`).
+- **LOCAL_ONLY:** **`show_pending`**, added to `LOCAL_ONLY_KEYS` and written with set-local from the blade's
+  `showstate`.
+- **At boot** the blade reads all of these itself (read-only). The engine starts open, so on a fresh daemon:
+  - a pending A/B/C slot applies (nothing is playing);
+  - a pending source channel waits until the renderer asserts its stored cut.
+
+### UUID (station identity)
+
+- **main** looks the preset up, compares its `stationUuid` with the station's, and refuses a mismatch.
+- **The blade** checks again against the UUID main vouches for. A mismatch is refused with a log line, and the
+  engine is never called.
+- `show:list` lists another station's preset as **foreign** and never offers it for a Take.
+
+### Flat (ruling 7)
+
+- Every channel rack empty; 12 faders at unity; the ducker at main's defaults (−22 / −45 / 30 / 700 / 500).
+- **The master is the shipped chain:** flat GEQ, with the ride and limiter kept. "Every rack empty" is read as the
+  channel racks. An empty master would drop the limiter whenever processing is on.
+- Flat names no layout, no duck toggles and no room levels.
+
+### Never a machine-local value
+
+- **Presets are rebuilt from a whitelist** (`sanitizePreset`): a device, a mic patch, the mic gain, processing
+  on/off or the PFL settings can't ride one. Whatever is dropped is logged.
+- **The snapshot** reads only board keys.
+- **The engine** refuses unknown fields as well.
+
+### main (`electron/main.js`)
+
+- **IPC:** `show:list`, `show:snapshot`, `show:save` (also Save As; "Flat" can't be overwritten), `show:delete`,
+  `show:state`, `show:arm`, `show:disarm`, `show:force`, `show:take`.
+- **Events:** `showstate` → `show:state` to every window **by station UUID**; `showapplied` → the stores, then
+  `show:applied` and `deck_configs:changed`, both carrying the UUID, never the integer; `boardlevels` →
+  `board_levels`.
+- **Without the audio service** (the in-process fallback), show presets say so and do nothing.
+
+### Receipts
+
+- **`npm run test:show-presets` → ALL PASS (35/35).** It covers:
+  - Take while A plays and S1 (a mic) is ON: **one** engine call, A and S1 out, D and the master in; the store
+    request covers D and the master only;
+  - S1 cut → one call for S1 alone, and its store request only then;
+  - A ends → the tick applies A alone;
+  - no engine call ever carries a cut;
+  - TAKE NOW;
+  - a respawn restores the faders only, applies A's pending, keeps S1 waiting, and boots once;
+  - the snapshot carries no device, mic patch or mic gain;
+  - a preset carrying 5 machine-local values is stripped with a log line, and none reaches the engine or a store
+    request;
+  - every planned store key is synced (asked of the real `isLocalOnlyKey`), and no deck write touches
+    `channel_on`;
+  - `show_pending` is LOCAL_ONLY while `show_presets`, `show_current` and `board_levels` sync;
+  - the UUID guard; Flat; the wiring.
+- **grep receipt:** in `audiod/show-presets.js` and main's show section, the machine-local key names appear only
+  in the lists that **exclude** them (`MACHINE_LOCAL_KEYS`, `MACHINE_LOCAL_PREFIXES`). No write path names them.
+- **Gates:**
+  - tsc 0; vitest 483/483;
+  - rack-eq 30, mic-input 25, pfl 22, dynamics 10, meter contract 30;
+  - undefined-calls, preload-bridge, ipc-contract, one-switch PASS; audio-isolation PASS;
+  - cmd-routing 7, enginestate-wire 15, manual-mode 30, deck-identity 22, shutdown ✅;
+  - leak guard OK (13, baseline held); `npm run build` OK.
+- **Two gates changed:**
+  - `smoke-pfl`'s "pfl_cue_device is LOCAL_ONLY" check matched the set's *last entry* by regex. It now asks the
+    real `isLocalOnlyKey`.
+  - The leak guard caught my first `deck_configs:changed` send, which carried the integer. It now carries the UUID
+    instead; the baseline was not raised.
+
+### Known limits (named, not built)
+
+- A pending source channel that is **removed from the board** while it waits (not cut first) stays pending until
+  its engine slot is cut.
+- The blade's tick runs only while the app is connected to the daemon. That is always the case when the board is
+  in use.
+- **Room/aux and monitor levels are applied as steps.** They never reach air. The fader ramp (engine) covers the
+  channel faders and the master.

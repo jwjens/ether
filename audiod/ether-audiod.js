@@ -198,6 +198,30 @@ function getEngine(stationId) {
   return e;
 }
 
+// ── SLICE 7 — THE BLADE (docs/dsp-show-presets.md) ─────────────────────────────────────────────────────────────
+// One per station, beside the engine and independent of automation (a station with no DaemonEngine — the jukebox
+// alone — still has a board). It sees every fader move, cut and stop that passes through here, holds the channels
+// waiting for a Take, and applies each the moment it goes OFF. It READS the station's kv (board_levels, show_pending,
+// show_current) and never writes it: main is the one writer, told through the `showapplied` / `showstate` /
+// `boardlevels` events.
+const ShowPresets = (() => { try { return require("./show-presets"); } catch (e) { log("show presets unavailable:", e && e.message); return null; } })();
+const blades = new Map(); // stationId → ShowBlade
+function getBlade(stationId) {
+  if (!ShowPresets) return null;
+  const sid = Number(stationId);
+  let b = blades.get(sid);
+  if (!b) {
+    const readKv = (key) => {
+      try { const r = getDb().prepare("SELECT value FROM station_config_kv WHERE station_id=? AND key=? AND deleted_at IS NULL").get(sid, key); return r ? r.value : undefined; }
+      catch { return undefined; }
+    };
+    b = new ShowPresets.ShowBlade({ stationId: sid, addon: A, readKv, emit: (event, payload) => broadcast({ event, ...payload }), log });
+    blades.set(sid, b);
+  }
+  return b;
+}
+const bladeDo = (stationId, fn) => { try { const b = getBlade(stationId); if (b) fn(b); } catch (e) { log("show blade ✗", String(e && e.message || e)); } };
+
 // Step 5 — Icecast streamer per station. Reads the station's program-bus port; status events
 // broadcast as { event: "stream", ... } → main → renderer.
 const streams = new Map(); // stationId → StreamSupervisor
@@ -257,7 +281,7 @@ function jukeboxDeckInfo(stationId, deck) {
 }
 
 const handlers = {
-  init:               (m) => { A.initAudioEngine(m.stationId); stations.add(m.stationId); return true; },
+  init:               (m) => { A.initAudioEngine(m.stationId); stations.add(m.stationId); bladeDo(m.stationId, b => b.boot()); return true; },
   // Quiesce for a database swap. This process holds openair.db open in WAL mode, which locks
   // -wal/-shm — so a restore cannot replace the file while we are running. The app calls this,
   // waits for the reply, then swaps. Everything that reads the database stops first; the handle is
@@ -288,12 +312,13 @@ const handlers = {
     return ok;
   },
   pause:              (m) => A.audioPause(m.deck, m.stationId),
-  stop:               (m) => A.audioStop(m.deck, m.stationId),
-  setVolume:          (m) => A.audioSetVolume(m.deck, m.volume, m.stationId),
+  stop:               (m) => { const r = A.audioStop(m.deck, m.stationId); bladeDo(m.stationId, b => b.noteStopped(m.deck)); return r; },
+  setVolume:          (m) => { const r = A.audioSetVolume(m.deck, m.volume, m.stationId); bladeDo(m.stationId, b => b.noteVolume(m.deck, m.volume)); return r; },
   // Console channel cut. MUST live here as well as in-process: main.js routes audio:setMuted to the
   // daemon whenever AUDIO_DAEMON is on (the default on Windows), so a renderer-only or in-process-only
   // mute would be a silent no-op on exactly the setup most operators run.
-  setMuted:           (m) => A.audioSetMuted(m.deck, !!m.muted, m.stationId),
+  // SLICE 7 — every cut passes the blade: a channel that goes OFF takes the show waiting for it.
+  setMuted:           (m) => { const r = A.audioSetMuted(m.deck, !!m.muted, m.stationId); bladeDo(m.stationId, b => b.noteMuted(m.deck, !!m.muted)); return r; },
   // DUCKER (slice 3) — arm/disarm one channel's duck. MUST live here as well as in-process for the
   // same reason setMuted does: main.js routes to the daemon whenever AUDIO_DAEMON is on, which is
   // the default on Windows, so a renderer-only path would be a silent no-op on most installs.
@@ -369,7 +394,15 @@ const handlers = {
   cueState:           (m) => (typeof A.audioCueState === "function" ? JSON.parse(A.audioCueState(Number(m.stationId))) : { device: "", state: "same_as_main" }),
   // MASTER OUT — the broadcast gain (rides air + the master VU). Distinct from setMonitorVolume,
   // which trims the room speakers only. docs/master-monitor-faders-dead-2026-08-06.md
-  setMasterVolume:    (m) => A.audioSetMasterVolume(m.stationId, m.volume),
+  setMasterVolume:    (m) => { const r = A.audioSetMasterVolume(m.stationId, m.volume); bladeDo(m.stationId, b => b.noteMaster(m.volume)); return r; },
+  // SLICE 7 — show presets (docs/dsp-show-presets.md §3). main reads the preset and checks its UUID; the blade checks
+  // it again against the UUID main vouches for, sorts the channels by the live rule and applies the rest in ONE
+  // engine block. `onBoard` = the slots on the board right now.
+  showTake:           (m) => { const b = getBlade(m.stationId); return b ? b.take(m.preset, String(m.stationUuid || ""), m.onBoard) : { ok: false, reason: "show presets unavailable in this engine service" }; },
+  showForce:          (m) => { const b = getBlade(m.stationId); return b ? b.force(String(m.slot)) : { ok: false, reason: "show presets unavailable" }; },
+  showArm:            (m) => { const b = getBlade(m.stationId); return b ? b.arm(m.name) : null; },
+  showDisarm:         (m) => { const b = getBlade(m.stationId); return b ? b.disarm() : null; },
+  showState:          (m) => { const b = getBlade(m.stationId); return b ? b.state() : { current: null, armed: null, pending: [], levels: {} }; },
   // MASTER MONITOR — ONE room level for all stations. No stationId: it is global by design, so it
   // can never grab an individual station strip. docs/master-monitor-faders-dead-2026-08-06.md §7
   setMasterMonitorVolume: (m) => A.audioSetMasterMonitorVolume(m.stationId, m.volume),
@@ -651,6 +684,7 @@ const eventTimer = setInterval(() => {
         });
       }
     }
+    if (tick % 5 === 0) { const b = blades.get(sid); if (b) { try { b.tick(); } catch (e) { log("show blade tick ✗", String(e && e.message || e)); } } }
     // Engine-owned stations emit their own per-deck `deck` events from poll(); only emit the
     // generic full-state deck snapshot for stations WITHOUT an automation engine.
     if (tick % 3 === 0 && !engines.has(sid)) { // ~4 Hz

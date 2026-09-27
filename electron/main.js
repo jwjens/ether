@@ -876,6 +876,12 @@ if (AUDIO_DAEMON_DESIRED) {
         const { stationId: _procIntId, ...procFrame } = m;
         sendToAllWindows("audio:proc-meters", { ...procFrame, stationUuid: _procUuid });
         try { _noteProcSample(m); } catch {}   // 1s decimated retention for the fleet health frame
+      } else if (m.event === "showstate") {
+        _showOnState(m);        // SLICE 7 — the blade's show state (UUID-scoped) + show_pending
+      } else if (m.event === "showapplied") {
+        _showOnApplied(m);      // SLICE 7 — write the stores for exactly what the blade applied
+      } else if (m.event === "boardlevels") {
+        _showOnLevels(m);       // SLICE 7 — board_levels, at most once a second
       } else if (m.event === "deck") {
         // Per-deck state change from the daemon's poll → renderer proxy (Step 2).
         // Stage 0: forward deckReady (cued) so the renderer mirrors it instead of guessing.
@@ -5231,6 +5237,150 @@ ipcMain.handle("rack:set", async (_, { stationId, doc, rack } = {}) => {
   }
   return { ok: true };
 });
+
+// ── SLICE 7 — SHOW PRESETS (docs/dsp-show-presets.md) ─────────────────────────────────────────────────────────
+//
+// The BLADE (the audio daemon, audiod/show-presets.js ShowBlade) decides which channels are live, holds what waits
+// for them and applies it; MAIN is the one writer of the stores. So:
+//   show:take   → main reads the preset, checks its UUID, hands it to the blade with the board's slots;
+//   showapplied → main writes the stores for exactly what the blade applied (planStoreWrites — never a machine-
+//                 local key, never channel_on), and never for a channel still waiting (the 3 s rack poll would
+//                 otherwise apply it behind the protection);
+//   showstate   → forwarded to every window by station UUID; the pending set persisted as show_pending
+//                 (LOCAL_ONLY — pending is about THIS machine's live board);
+//   boardlevels → board_levels (synced), written at most once a second, applied by the blade at engine start.
+// Presets live in show_presets (synced), the last Take in show_current (synced). One built-in: "Flat".
+const ShowPresets = require(path.join(__dirname, "..", "audiod", "show-presets.js"));
+const _showKv = (sid) => {
+  const rows = getDb().prepare("SELECT key, value FROM station_config_kv WHERE station_id=? AND deleted_at IS NULL").all(sid);
+  const m = new Map(rows.map(r => [r.key, r.value]));
+  return (k) => m.get(k);
+};
+const _showStored = (sid) => {
+  try { const a = JSON.parse(_showKv(sid)("show_presets") || "[]"); return Array.isArray(a) ? a : []; } catch { return []; }
+};
+const _showNoDaemon = { ok: false, reason: "show presets need the audio engine service — fully close and reopen Ether" };
+const _showDeckRows = (sid) => getDb().prepare(
+  "SELECT slot, type, COALESCE(kind,'') AS kind, enabled, COALESCE(channel_on,1) AS channel_on, COALESCE(duck,0) AS duck, COALESCE(duckable,1) AS duckable " +
+  "FROM deck_configs WHERE station_id = ? AND deleted_at IS NULL").all(sid);
+
+async function _showSnapshot(sid, name) {
+  const uuid = _stationUuidById(sid);
+  let levels = {};
+  try { const st = await audiodClient.cmd("showState", { stationId: sid }); levels = (st && st.levels) || {}; } catch { /* unity */ }
+  return ShowPresets.snapshotBoard({ name, stationUuid: uuid, deckConfigs: _showDeckRows(sid), get: _showKv(sid), levels });
+}
+function _showWritePresets(sid, list) {
+  const { stationConfigKvUpsertByKey } = require("./sync/handlers/station_config_kv");
+  stationConfigKvUpsertByKey(getDb(), sid, "show_presets", JSON.stringify(list));
+}
+
+ipcMain.handle("show:list", (_, stationId) => {
+  const sid = Number(stationId);
+  const uuid = _stationUuidById(sid);
+  const all = _showStored(sid);
+  // A preset keyed to another station (a misrouted sync row) is listed as foreign, never offered for a Take.
+  const presets = all.filter(p => p && p.stationUuid === uuid);
+  return { ok: true, presets, foreign: all.length - presets.length, builtIns: [ShowPresets.flatPreset(uuid)],
+           current: _showKv(sid)("show_current") || null };
+});
+// The live board as a preset — what Arm compares against, and what "· modified" is derived from.
+ipcMain.handle("show:snapshot", async (_, stationId) => {
+  if (!AUDIO_DAEMON) return _showNoDaemon;
+  try { return { ok: true, preset: await _showSnapshot(Number(stationId), "(live board)") }; }
+  catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+});
+// Save (overwrite the named show) and Save As (a new name) are the same write; the built-in can't be overwritten.
+ipcMain.handle("show:save", async (_, stationId, name) => {
+  if (!AUDIO_DAEMON) return _showNoDaemon;
+  const sid = Number(stationId);
+  const n = String(name || "").trim();
+  if (!n) return { ok: false, reason: "a show needs a name" };
+  if (n.toLowerCase() === ShowPresets.FLAT.toLowerCase()) return { ok: false, reason: `"${ShowPresets.FLAT}" is built in and can't be overwritten — Save As a new name` };
+  try {
+    const preset = await _showSnapshot(sid, n);
+    const list = _showStored(sid).filter(p => p && p.name !== n);
+    list.push(preset);
+    _showWritePresets(sid, list);
+    return { ok: true, preset };
+  } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+});
+ipcMain.handle("show:delete", (_, stationId, name) => {
+  const sid = Number(stationId);
+  const list = _showStored(sid);
+  const next = list.filter(p => p && p.name !== name);
+  if (next.length === list.length) return { ok: false, reason: `no show called "${name}"` };
+  try { _showWritePresets(sid, next); return { ok: true }; } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+});
+ipcMain.handle("show:state", async (_, stationId) => {
+  if (!AUDIO_DAEMON) return { current: null, armed: null, pending: [], levels: {}, unavailable: _showNoDaemon.reason };
+  try { return await audiodClient.cmd("showState", { stationId: Number(stationId) }); } catch (e) { return { current: null, armed: null, pending: [], levels: {}, unavailable: String(e && e.message || e) }; }
+});
+ipcMain.handle("show:arm", async (_, stationId, name) => AUDIO_DAEMON ? audiodClient.cmd("showArm", { stationId: Number(stationId), name }) : _showNoDaemon);
+ipcMain.handle("show:disarm", async (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("showDisarm", { stationId: Number(stationId) }) : _showNoDaemon);
+ipcMain.handle("show:force", async (_, stationId, slot) => AUDIO_DAEMON ? audiodClient.cmd("showForce", { stationId: Number(stationId), slot }) : _showNoDaemon);
+ipcMain.handle("show:take", async (_, stationId, name) => {
+  if (!AUDIO_DAEMON) return _showNoDaemon;
+  const sid = Number(stationId);
+  const uuid = _stationUuidById(sid);
+  if (!uuid) return { ok: false, reason: "this station has no identity yet — it can't take a show" };
+  const preset = name === ShowPresets.FLAT ? ShowPresets.flatPreset(uuid) : _showStored(sid).find(p => p && p.name === name);
+  if (!preset) return { ok: false, reason: `no show called "${name}"` };
+  if (preset.stationUuid !== uuid) return { ok: false, reason: `"${name}" belongs to another station — it was not taken` };
+  const onBoard = _showDeckRows(sid).filter(r => r.enabled === 1).map(r => String(r.slot));
+  let res;
+  try { res = await audiodClient.cmd("showTake", { stationId: sid, stationUuid: uuid, preset, onBoard }); }
+  catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+  if (res && res.ok) {
+    try { require("./sync/handlers/station_config_kv").stationConfigKvUpsertByKey(getDb(), sid, "show_current", String(preset.name)); }
+    catch (e) { console.warn("[show] show_current not saved:", e.message); }
+  }
+  return res;
+});
+
+// The blade's events (routed from audiodClient's handler).
+const _showPendingSaved = new Map();   // sid → the show_pending string last written
+const _showLevelTimers = new Map();    // sid → the pending board_levels write
+function _showOnState(m) {
+  const sid = Number(m.stationId);
+  const stationUuid = _stationUuidById(sid);
+  sendToAllWindows("show:state", { stationUuid, current: m.current, armed: m.armed, pending: m.pending, levels: m.levels });
+  const doc = JSON.stringify(m.pendingDoc || { v: 1, slots: {} });
+  if (_showPendingSaved.get(sid) === doc) return;
+  try {
+    const { stationConfigKvSetLocal } = require("./sync/handlers/station_config_kv");
+    stationConfigKvSetLocal(getDb(), sid, "show_pending", doc);
+    _showPendingSaved.set(sid, doc);
+  } catch (e) { console.warn("[show] show_pending not saved:", e.message); }
+}
+function _showOnLevels(m) {
+  const sid = Number(m.stationId);
+  const levels = m.levels || {};
+  clearTimeout(_showLevelTimers.get(sid));
+  _showLevelTimers.set(sid, setTimeout(() => {
+    _showLevelTimers.delete(sid);
+    try { require("./sync/handlers/station_config_kv").stationConfigKvUpsertByKey(getDb(), sid, "board_levels", JSON.stringify(levels)); }
+    catch (e) { console.warn("[show] board_levels not saved:", e.message); }
+  }, 1000));
+}
+function _showOnApplied(m) {
+  const sid = Number(m.stationId);
+  let plan;
+  try { plan = ShowPresets.planStoreWrites(m.stores, _showKv(sid)); }
+  catch (e) { console.warn("[show] store plan failed:", e.message); return; }
+  const db = getDb();
+  const { stationConfigKvUpsertByKey } = require("./sync/handlers/station_config_kv");
+  const { deckConfigsUpdateBySlot } = require("./sync/handlers/deck_configs");
+  const failed = [];
+  for (const [key, value] of plan.kv) { try { stationConfigKvUpsertByKey(db, sid, key, value); } catch (e) { failed.push(`${key}: ${e.message}`); } }
+  for (const [slot, patch] of plan.deck) { try { deckConfigsUpdateBySlot(db, sid, slot, patch); } catch (e) { failed.push(`${slot}: ${e.message}`); } }
+  console.log(`[show] s${sid} stores written (${m.reason}): ${plan.kv.map(([k]) => k).join(", ") || "no kv"} · deck ${plan.deck.map(([s]) => s).join(",") || "none"}` +
+              (failed.length ? ` · FAILED ${failed.join("; ")}` : ""));
+  // By UUID, never the integer (the leak guard). useDeckConfig re-reads on a frame with no integer station — one
+  // scoped query per board, and never a stale one.
+  if (plan.deck.length) sendToAllWindows("deck_configs:changed", { stationUuid: _stationUuidById(sid) });
+  sendToAllWindows("show:applied", { stationUuid: _stationUuidById(sid), reason: m.reason, show: m.show || null, shows: m.shows || null, failed });
+}
 
 // SLICE 3 — the loudness panel's Reset: integrated loudness, LRA and TP max for a branch start again.
 ipcMain.handle("audio:loudness-reset", (_, { stationId, branch } = {}) => {
