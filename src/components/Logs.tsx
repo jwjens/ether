@@ -6,6 +6,7 @@ import { DataGrid } from "./grid/DataGrid";
 import { toCsv, downloadCsv } from "./grid/csv";
 import { trafficColumns, statusOf, deltaSec, actualTs as actualTsOf, aired as airedOf, type TrafficRow } from "./traffic/columns";
 import { AS_RUN_COLUMNS, type AsRunRow } from "./logs/columns";
+import { royaltyCsv, ROYALTY_SQL, type RoyaltyRow } from "./logs/royalty";
 
 interface LogEntry {
   id: number;
@@ -297,20 +298,13 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
   };
 
   const exportCSV = async (format: "standard" | "bmi" | "ascap" = "standard") => {
-    let header = "";
-    let rows: string[] = [];
-    if (format === "bmi") {
-      header = "Title,Performer,Date Of Use,Time Of Use,Duration";
-      rows = entries.map(e => {
-        const d = new Date(e.played_at * 1000);
-        return [e.title, e.artist || "Unknown", d.toLocaleDateString("en-US"), d.toLocaleTimeString("en-US", { hour12: false }), "3:30"].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(",");
-      });
-    } else if (format === "ascap") {
-      header = "Title,Artist,Date,Start Time,Duration (min),Source";
-      rows = entries.map(e => {
-        const d = new Date(e.played_at * 1000);
-        return [e.title, e.artist || "Unknown", (d.getMonth()+1)+"/"+d.getDate()+"/"+d.getFullYear(), d.toLocaleTimeString("en-US", { hour12: false }), "3.5", stationName].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(",");
-      });
+    if (format === "bmi" || format === "ascap") {
+      // Royalty reports: every play in the period (its own query — not the 200-row screen list) with each play's REAL
+      // length from play_log; an unrecorded length stays blank (audit 6, 7 — it used to write one fixed placeholder duration on every row).
+      const [from, to] = rangeEpochs();
+      const plays = await queryScoped<RoyaltyRow>(ROYALTY_SQL, [stationId, from, to], stationId, { skipScoping: true });
+      downloadCsv("ether-" + format + "-" + new Date().toISOString().split("T")[0] + ".csv", royaltyCsv(format, plays || [], stationName));
+      return;
     } else {
       // Standard = the as-run affidavit. Its own query, NOT `entries`:
       //
@@ -338,12 +332,6 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
                   toCsv(AS_RUN_COLUMNS, rows2 || []));
       return;
     }
-    const csv = header + "\n" + rows.join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = "ether-" + format + "-" + new Date().toISOString().split("T")[0] + ".csv"; a.click();
-    URL.revokeObjectURL(url);
   };
 
   const exportPDF = () => {

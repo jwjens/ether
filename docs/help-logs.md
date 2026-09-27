@@ -15,8 +15,8 @@ Each export button makes a different document. They are not variations of one fi
 | Button | Produces | For |
 |---|---|---|
 | **Export CSV** | The as-run affidavit — everything that aired, with times and lengths | Advertisers, proof of performance |
-| **BMI** | Title, performer, date, time, duration | BMI reporting |
-| **ASCAP** | Title, artist, date, start time, duration, source | ASCAP reporting |
+| **BMI** | Every play in the period: title, performer, date, time, and its **real length** (m:ss) | BMI reporting |
+| **ASCAP** | Every play in the period: title, artist, date, start time, **real length** in minutes, source | ASCAP reporting |
 | **PDF** | A printable list of the plays on screen: date, time, title, artist | A quick printed log |
 | **Export Traffic CSV** (Traffic view) | Every **scheduled spot**, aired or not | Traffic reconciliation |
 
@@ -51,10 +51,11 @@ An empty cell means Ether does not know, and it will not invent a value:
 
 ## Known issue
 
-- **BMI, ASCAP and PDF** are built from the list on screen, which holds at most the **200 most
-  recent plays** of the period. The **BMI and ASCAP duration column is not the real length** — every
-  row carries the same fixed value. Check both before you file a report. **Export CSV** (the as-run
-  affidavit) has neither problem: it covers the whole period with real lengths.
+- **PDF** is built from the list on screen, which holds at most the **200 most recent plays** of the
+  period. **Export CSV**, **BMI** and **ASCAP** cover the whole period.
+
+**BMI and ASCAP lengths** come from the play log. A play whose length was never recorded has an **empty**
+duration rather than a guessed one — check those rows before you file.
 
 ## Related
 
