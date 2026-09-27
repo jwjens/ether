@@ -242,6 +242,9 @@ try {
 }
 const ACTIVE_PROFILE = P.resolveActive({ freshPending: true });
 console.log(`[profiles] active=${ACTIVE_PROFILE.key}${ACTIVE_PROFILE.pending ? " (PENDING — sign-in required)" : ""}`);
+// A refused migration also goes to the health ledger — the Health Monitor timeline reads it (audit 21). Here, not
+// above: the ledger lives in the active profile, which is only known now.
+try { const ev = require("./profile-migrate").migrationLedgerEvent(PROFILE_MIGRATION); if (ev) { const { kind, ...data } = ev; _healthEvent(kind, data); } } catch {}
 
 // ── THE IDENTITY RECEIPT (4.4.220) ─────────────────────────────────────────────────────────────
 // ONE line, written to the startup log on every launch, naming exactly who this install woke up as.

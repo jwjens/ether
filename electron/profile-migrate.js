@@ -186,4 +186,11 @@ function migrateToProfiles(opts = {}) {
   return { status: "migrated", key, from: legacyDir, to: target, moved };
 }
 
-module.exports = { migrateToProfiles, readLicenseKeyFrom, USERDATA_ITEMS };
+/** The health-ledger line for a migration result (audit 21): a refusal is an event the operator can see in the
+ *  Health Monitor timeline, not only a console line. Any other outcome records nothing. */
+function migrationLedgerEvent(result) {
+  if (!result || result.status !== "refused") return null;
+  return { kind: "profile-migration-failed", reason: String(result.reason || "no reason given") };
+}
+
+module.exports = { migrateToProfiles, readLicenseKeyFrom, USERDATA_ITEMS, migrationLedgerEvent };

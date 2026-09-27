@@ -184,6 +184,9 @@ with other local preferences.
 - **Live Activity shows hours-old lines and says STALE.** The feed is honest: the engine has not
   written anything for that long. If the station should be playing, look at the decks and the
   Audio Output row before assuming the feed is broken.
+- **Live events shows "Profile migration failed".** Ether tried to move this computer's older data into
+  its profile folder and refused. Nothing was moved or lost — Ether keeps running on the older location. The row gives the reason; report it to support with your version
+  (**Help → About**).
 
 ## Related
 
