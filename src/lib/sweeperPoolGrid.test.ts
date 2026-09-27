@@ -1,7 +1,6 @@
 // fix 12, header part (docs/help-audit-2026-09-27.md): the sweeper pool grid declared four columns and a
 // "UNDERLAP s" header, but each row renders three cells (name, LEAD-IN, delete) — so the header named a column that
 // does not exist and every row after the first slid one cell out of line. The grid now declares the columns it draws.
-// (The LEAD-IN box itself is still not read by the engine — that needs Jeff's ruling on lead precedence; see the report.)
 import { describe, it, expect } from "vitest";
 import fs from "fs";
 import path from "path";
@@ -11,6 +10,12 @@ const grid = src.slice(src.indexOf("{tabPools.length > 0 && ("), src.indexOf("WH
 
 describe("the sweeper pool grid's header matches its rows (audit 12)", () => {
   it("no UNDERLAP header", () => { expect(grid).not.toMatch(/UNDERLAP/); });
+  // Jeff's ruling 2026-09-27: the pool LEAD-IN box is removed — the engine never read it (a control that lies).
+  // "Pool lead-in, pool wins over category" is filed as a later ruling (docs/backlog.md).
+  it("no LEAD-IN box on a pool row", () => {
+    expect(grid).not.toMatch(/LEAD-IN/);
+    expect(grid).not.toMatch(/lead_in_sec/);
+  });
   it("as many declared columns as header cells as cells per row", () => {
     const cols = (grid.match(/gridTemplateColumns: "([^"]+)"/) || [])[1] || "";
     const declared = cols.trim().split(/\s+/).length;

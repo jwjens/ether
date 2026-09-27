@@ -1,5 +1,14 @@
 # Backlog
 
+## Pool lead-in — pool wins over category (filed 2026-09-27, for a later ruling)
+**Jeff's instruction, verbatim:** *"remove the box now, since the engine doesn't read it. File "pool lead-in, pool
+wins over category" as a later ruling."*
+- The sweeper pool's LEAD-IN box was removed (help-audit item 12): nothing read `jingle_categories.lead_in_sec` —
+  `_placeJingles` takes lead from `categories.overlay_lead_in_sec` only.
+- The column stays in the schema (synced table; new pools still write the default). A later ruling decides whether
+  a pool carries its own lead that WINS over the category's, and if so the box comes back wired to placement.
+- Receipt: `docs/help-audit-fixes-2026-09-27.md`.
+
 ## ether-startup.log never rotates — 1.6 GB on OVEVENTS (filed 2026-09-15)
 **Jeff's instruction, verbatim:** *"File the 1.6 GB startup log … Not tonight."*
 - `%APPDATA%\Ether\ether-startup.log` is 1,606,809,965 bytes on OVEVENTS. Every SESSION START appends;

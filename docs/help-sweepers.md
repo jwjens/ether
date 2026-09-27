@@ -160,11 +160,6 @@ works on every channel strip.
 - **Produced / semi / dry variants** — a production practice: drop the different cuts into one pool and
   rotation handles the variety. No separate setting.
 
-## Known issue
-
-Each pool row also shows a **LEAD-IN s** box. It has no effect on air — the category's **LEAD (s)** is the
-number the schedule uses.
-
 ## Related
 
 - **Spots** (`docs/help-spots.md`) — scheduled commercials/breaks (different from imaging).

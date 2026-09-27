@@ -353,11 +353,11 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
       )}
 
       {tabPools.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: "6px 12px", alignItems: "center", marginBottom: 16 }}>
-          {/* Three columns — name, LEAD-IN, delete — as each row draws. A fourth header (the overlap one) named a
-              column no row has, so every row after the first slid out of line (audit 12). */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "6px 12px", alignItems: "center", marginBottom: 16 }}>
+          {/* Two columns — name, delete — as each row draws (audit 12). The pool's lead box is gone: the engine never
+              read it, so it was a control that lied (Jeff, 2026-09-27). The category's LEAD is the one lead. "Pool
+              lead-in, pool wins over category" is a later ruling (docs/backlog.md). */}
           <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>POOL</div>
-          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>LEAD-IN s</div>
           <div />
           {tabPools.map(p => (
             <Fragment key={p.id}>
@@ -371,11 +371,6 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
                   style={{ flex: 1, background: "transparent", color: "var(--text-primary)", border: "1px solid transparent", borderRadius: "var(--r-0)", padding: "2px 4px", fontSize: "var(--t-lead)", fontWeight: 600 }} />
                 <span style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>{members.filter(m => m.pool_id === p.id).length} in pool</span>
               </div>
-              {/* Bounded at the same ceiling as the category LEAD. Nothing reads jingle_categories.lead_in_sec
-                  today — _placeJingles takes its lead from categories.overlay_lead_in_sec only, and that is
-                  filed separately — but an unbounded input is a control that lies whether or not anything
-                  is listening. */}
-              <input key={p.id + "l"} type="number" disabled={ro} min={0} max={maxLead} step={0.5} title={`Maximum ${maxLead}s — the engine cannot honour a longer lead.`} defaultValue={p.lead_in_sec} onBlur={e => patchPool(p, { lead_in_sec: Math.max(0, Math.min(maxLead, parseFloat(e.target.value) || p.lead_in_sec)) })} style={inp} />
               {ro ? <span key={p.id + "d"} /> :
               <button key={p.id + "d"} onClick={() => delPool(p)} title="Delete pool" style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-lead)" }}>✕</button>}
             </Fragment>
