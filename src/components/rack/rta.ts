@@ -1,8 +1,8 @@
 // rta.ts — SLICE 8: the live RTA, the board side (docs/dsp-channel-rta.md §3).
 //
-// The engine publishes, pre-rack and post-rack (both pre-fader, dBFS with a full-scale sine = 0 dB — native/src/rta.rs),
-// a 241-point FINE wave (24 per octave) and 31 ISO third-octave bands. The views draw the fine wave as the old master
-// rack's level-coloured bars (RtaBars.tsx): this file holds the geometry (point frequencies, bar edges), the level
+// SLICE 8 (reworked 2026-09-27 to the Behringer X32 RTA look). The engine publishes, pre-rack and post-rack (both pre-fader, dBFS with a full-scale sine = 0 dB — native/src/rta.rs),
+// a 241-point FINE wave (24 per octave) and 31 ISO third-octave bands. The views group the fine wave into ~120
+// 1/12-octave X32 bars (RtaBars.tsx): this file holds the geometry (point frequencies, bar edges), the level
 // colours, the running-peak range (autoTop — the old analyser's normaliser), peak hold, the coarse hatch and the GEQ's
 // octave axis. Every drawing uses the CALLER'S own x, so a spectrum and its curve never disagree about a frequency.
 
@@ -38,19 +38,39 @@ export function fineEdges(k: number, n = FINE_N): [number, number] {
   return [lo, hi];
 }
 /**
- * THE LEVEL COLOURS — the old MasterEQRack's (git 7089096~1). Its bars were 0…1 of a range normalised to a RUNNING PEAK
- * (the loudest recent bin), coloured cyan → green (> 0.5) → amber (> 0.75) → red (> 0.9). The fine bars do the same:
- * the view's top follows the running peak (autoTop), and the colour is set by HEIGHT within that range, so every bar is
- * green at its base and only the loudest reach yellow, amber and red. Stops as a fraction of the height (1 = top).
+ * THE LEVEL COLOURS — the Behringer X32 RTA (Jeff's reference, 2026-09-27): blue at the bottom of the range → teal →
+ * green → yellow → RED only at the very top (Jeff's correction: "red only at the top of the scale"). Set by HEIGHT in
+ * the range, so every bar is blue at its base and only a hot one reaches red. Stops as a fraction of the height.
  */
 export const LEVEL_STOPS: { at: number; color: string }[] = [
-  { at: 1.0, color: "#ef4444" },   // red — the top
-  { at: 0.9, color: "#ef4444" },
-  { at: 0.8, color: "#f59e0b" },   // amber
-  { at: 0.68, color: "#facc15" },  // yellow
-  { at: 0.5, color: "#22c55e" },   // green
-  { at: 0.0, color: "#15803d" },   // deep green at the floor
+  { at: 1.0, color: "#ef4444" },    // red — the very top only
+  { at: 0.94, color: "#ef4444" },
+  { at: 0.88, color: "#facc15" },   // yellow — hot
+  { at: 0.72, color: "#a3e635" },   // yellow-green
+  { at: 0.56, color: "#22c55e" },   // green
+  { at: 0.4, color: "#14b8a6" },    // teal
+  { at: 0.22, color: "#0ea5e9" },   // light blue
+  { at: 0.0, color: "#1d4ed8" },    // blue — low
 ];
+
+// ── THE X32 BARS: the fine wave grouped into 1/12-octave bars (≈120 across 20 Hz–20 kHz), each the loudest fine point
+//    inside it (a bar shows what is in its slice, as a hardware RTA does) ───────────────────────────────────────────
+export const BARS_PER_OCTAVE = 12;
+export interface RtaBar { lo: number; hi: number; level: number }
+export function groupBars(fine: number[], n = FINE_N, lo = 20, hi = 20000, perOct = BARS_PER_OCTAVE): RtaBar[] {
+  const out: RtaBar[] = [];
+  const count = Math.ceil(perOct * Math.log2(hi / lo) - 1e-9);
+  let k = 0;
+  for (let i = 0; i < count; i++) {
+    const bLo = lo * Math.pow(2, i / perOct), bHi = Math.min(hi, lo * Math.pow(2, (i + 1) / perOct));
+    let level = -Infinity;
+    while (k < n && fineFreq(k, n, lo, hi) < bHi - 1e-9) { level = Math.max(level, fine[k] ?? -120); k++; }
+    if (level === -Infinity) level = fine[Math.min(n - 1, k)] ?? -120;   // (never: 1/12-oct bars hold ≥ 1 fine point)
+    out.push({ lo: bLo, hi: bHi, level });
+  }
+  return out;
+}
+
 /** The fine bars' range under their top (the old rack's 60 dB). */
 export const BARS_RANGE_DB = 60;
 /**

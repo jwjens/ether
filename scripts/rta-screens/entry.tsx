@@ -13,6 +13,8 @@ import { GeqPanel } from "../../src/components/rack/Rack";
 import EqCurve from "../../src/components/rack/EqCurve";
 
 declare const FIXTURE: any;
+declare const LAYOUT: string;          // "old" (old vs new) or "x32" (Jeff's X32 reference vs new)
+declare const X32_IMG: string;         // the reference photo, as a data URL
 const fx = FIXTURE;
 
 // ── OLD — MasterEQRack's bar block, verbatim from git 7089096~1 (only the data source is the fixture) ─────────────
@@ -98,5 +100,38 @@ function Page() {
   );
 }
 
-createRoot(document.getElementById("root")!).render(<Page />);
+// ── Jeff's X32 reference beside the new graphs (2026-09-27) ──────────────────────────────────────────────────────
+function X32Page() {
+  const doc = fx.channel.doc;
+  const filters = doc.sections.ch.find((s: any) => s.module?.type === "filters");
+  const peq = doc.sections.ch.find((s: any) => s.module?.type === "peq");
+  return (
+    <div style={{ background: "var(--bg-primary)", color: "var(--text-primary)", fontFamily: "Inter, system-ui, sans-serif", width: 1480, padding: 12 }}>
+      <div style={{ fontSize: 12, color: "var(--text-tertiary)", padding: "0 12px 8px" }}>
+        Left: Jeff's reference, a Behringer X32 EQ page with its RTA. Right: the new graphs — the real components, unmodified — on the same
+        moment of music ({fx.source} at {fx.atSeconds} s) through the engine.
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "start" }}>
+        <div style={{ border: "1px solid var(--border-primary)" }}>
+          <H t="REFERENCE — Behringer X32 (Jeff's photo)" s="~1/12-octave bars with gaps, blue → green → yellow by level, a grid, the EQ curve in yellow, numbered band markers." />
+          <img src={X32_IMG} style={{ width: "100%", display: "block" }} />
+        </div>
+        <div style={{ border: "1px solid var(--border-primary)" }}>
+          <H t="NEW — a channel rack (EqCurve): HPF 100 Hz + PEQ (−5 @ 250, +4 @ 2.5k, +3 shelf @ 10k)" s="120 bars (1/12 octave), blue → teal → green → yellow → red at the very top; before the rack dimmed, after it full; white peak markers; the yellow curve and numbered band markers on top." />
+          <div style={{ padding: 10 }}>
+            <EqCurve doc={doc} filters={filters} peq={peq} onFilters={() => {}} onPeq={() => {}} selected={null} onSelect={() => {}} rta={{ frame: { ...frame(fx.channel), target: "S1" } as any, held: fx.channel.finePost }} />
+          </div>
+        </div>
+      </div>
+      <div style={{ border: "1px solid var(--border-primary)", marginTop: 12 }}>
+        <H t="NEW — the master GEQ view (GeqPanel): the same component set — GEQ +3 @ 63 · −4 @ 250 · +6 @ 1k · −3 @ 8k" s="The graph above the faders: the same bars and grid, the GEQ's own curve in yellow, a numbered marker at each fader's position." />
+        <div style={{ padding: 12, maxWidth: 1100 }}>
+          <GeqPanel geq={{ type: "geq", bands: fx.geq } as any} on={true} onBands={() => {}} onIn={() => {}} rta={rtaOf(fx.new) as any} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+createRoot(document.getElementById("root")!).render(LAYOUT === "x32" ? <X32Page /> : <Page />);
 (window as any).__rendered = true;

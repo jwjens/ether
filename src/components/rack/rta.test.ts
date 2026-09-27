@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { bandEdges, dbfsY, holdStep, coarseSpan, geqX, fineFreq, fineEdges, autoTop, barY, LEVEL_STOPS, FINE_N, RTA_BANDS } from "./rta";
+import { bandEdges, dbfsY, holdStep, coarseSpan, geqX, fineFreq, fineEdges, autoTop, barY, groupBars, LEVEL_STOPS, FINE_N } from "./rta";
+import { geqResponseDb, x as axisX, FREQ_GRID, DB_GRID } from "./scopeAxis";
 
 describe("the RTA drawing (slice 8)", () => {
   it("band edges are the engine's: exact base-2 third octaves around 1 kHz", () => {
@@ -24,11 +25,40 @@ describe("the RTA drawing (slice 8)", () => {
     for (let k = 1; k < FINE_N; k++) expect(fineEdges(k)[0] / fineEdges(k - 1)[1]).toBeCloseTo(1, 12);   // no gaps, no overlaps
   });
 
-  it("the level colours run green at the base to red at the top — never one colour", () => {
+  it("the X32 colours: blue at the base → green → yellow, RED only at the very top", () => {
     const at = LEVEL_STOPS.map(s => s.at);
     expect([...at].sort((a, b) => b - a)).toEqual(at);
-    expect(new Set(LEVEL_STOPS.map(s => s.color)).size).toBeGreaterThanOrEqual(4);
-    expect(LEVEL_STOPS[0].color).toBe("#ef4444");
+    expect(LEVEL_STOPS[LEVEL_STOPS.length - 1]).toEqual({ at: 0, color: "#1d4ed8" });          // blue at the floor
+    const reds = LEVEL_STOPS.filter(s => s.color === "#ef4444");
+    expect(Math.min(...reds.map(s => s.at))).toBeGreaterThanOrEqual(0.94);                      // red only at the top
+    expect(LEVEL_STOPS.some(s => s.color === "#22c55e") && LEVEL_STOPS.some(s => s.color === "#facc15")).toBe(true);
+  });
+
+  it("the X32 bars: 1/12 octave, ~120 across 20 Hz–20 kHz, edge to edge, each the loudest fine point inside it", () => {
+    const fine = Array.from({ length: FINE_N }, (_, k) => -60 + (k % 7));
+    const bars = groupBars(fine);
+    expect(bars.length).toBe(120);
+    expect(bars[0].lo).toBe(20);
+    expect(bars[bars.length - 1].hi).toBeCloseTo(20000, 6);
+    for (let i = 1; i < bars.length; i++) expect(bars[i].lo / bars[i - 1].hi).toBeCloseTo(1, 12);
+    // every fine point lands in exactly one bar, and a bar shows its loudest
+    const b = bars[60];
+    const inside = fine.filter((_, k) => fineFreq(k) >= b.lo - 1e-9 && fineFreq(k) < b.hi - 1e-9);
+    expect(inside.length).toBeGreaterThanOrEqual(1);
+    expect(b.level).toBe(Math.max(...inside));
+  });
+
+  it("the master GEQ curve is the engine's filters: +6 at 1 kHz reads +6.00 there, flat reads 0", () => {
+    const bands = [0, 0, 0, 0, 0, 6, 0, 0, 0, 0];
+    expect(geqResponseDb(bands, 1000)).toBeCloseTo(6, 2);
+    expect(geqResponseDb(bands, 250)).toBeLessThan(1);
+    expect(geqResponseDb(new Array(10).fill(0), 1000)).toBe(0);
+  });
+
+  it("the X32 grid: the frequency lines and dB lines, on the one shared axis", () => {
+    expect(FREQ_GRID).toEqual([20, 40, 60, 80, 100, 200, 400, 600, 800, 1000, 2000, 4000, 6000, 8000, 10000, 20000]);
+    expect(DB_GRID).toEqual([15, 10, 5, 0, -5, -10, -15]);
+    expect(axisX(20)).toBeLessThan(axisX(20000));
   });
 
   it("the range follows the running peak like the old analyser: instant up, 2 dB/s down, 3 dB steps", () => {

@@ -41,11 +41,18 @@ console.log("\nthe wiring");
   // Jeff's ruling (2026-09-26): the old master rack's level-coloured bars, glow and peak-hold markers — never one flat colour.
   const bars = src("src/components/rack/RtaBars.tsx");
   check(/fill=\{`url\(#\$\{id\}-lvl\)`\}/.test(bars) && /LEVEL_STOPS\.map/.test(bars) && !/fill="var\(--rta-/.test(bars), "the bars are filled with the LEVEL gradient (green → yellow → amber → red by height) — never one flat colour");
-  check(/filter=\{`url\(#\$\{id\}-glow\)`\}/.test(bars) && /feGaussianBlur/.test(bars), "post-rack bars glow (the old rack's box-shadow)");
-  check(/stroke="#ffffff"/.test(bars) && /held &&/.test(bars), "peak hold is the old rack's white markers, per point");
-  check(/opacity=\{0\.2\}/.test(bars) && /opacity=\{0\.95\}/.test(bars), "pre-rack faint, post-rack full colour");
+  // Jeff's X32 reference (2026-09-27): ~120 discrete 1/12-octave bars with gaps, blue → green → yellow → red at the top.
+  check(/groupBars\(frame\.finePost/.test(bars) && /groupBars\(frame\.finePre/.test(bars) && /const gap = /.test(bars), "the fine wave is grouped into discrete 1/12-octave bars with a small gap (the X32's bars, not a dense wave)");
+  check(/stroke="#ffffff"/.test(bars) && /hold &&/.test(bars), "peak hold: a thin white marker per bar");
+  check(/opacity=\{0\.32\}/.test(bars) && /<g fill=\{`url\(#\$\{id\}-lvl\)`\}>/.test(bars), "pre-rack the same colours dimmed, post-rack full");
+  const axis = src("src/components/rack/scopeAxis.ts");
+  check(/FREQ_GRID = \[20, 40, 60, 80, 100, 200, 400, 600, 800, 1000, 2000, 4000, 6000, 8000, 10000, 20000\]/.test(axis) && /DB_GRID = \[15, 10, 5, 0, -5, -10, -15\]/.test(axis), "the X32 grid: frequency lines 20…20k, EQ dB lines −15…+15");
+  check(/<RtaGrid /.test(crv) && /stroke=\{CURVE_COLOR\}/.test(crv) && /numbered band markers/.test(crv), "the channel curve: the grid, the EQ curve in X32 yellow on top, numbered band markers");
+  const gg = src("src/components/rack/GeqGraph.tsx");
+  check(/<RtaGrid /.test(gg) && /<RtaBars /.test(gg) && /geqResponseDb/.test(gg) && /GEQ_FREQS\.map/.test(gg), "the master GEQ graph: the SAME grid and bars, its own curve from the engine's filters, a numbered marker per fader");
+  check(/from "\.\/scopeAxis"/.test(crv) && /from "\.\/scopeAxis"/.test(gg), "one shared axis for both graphs");
   check(/autoTop\(/.test(bars) && /BARS_RANGE_DB/.test(bars), "the range follows the running peak like the old analyser's normaliser (60 dB), labelled in real dBFS");
-  check(/<RtaBars /.test(src("src/components/rack/Rack.tsx")), "the master GEQ uses the SAME component as the channel curve");
+  check(/<GeqGraph /.test(src("src/components/rack/Rack.tsx")), "the master GEQ view draws GeqGraph (RtaBars + RtaGrid, as the channel curve)");
   const view = src("src/components/rack/ChannelRackView.tsx");
   check(/useRta\(curveShown \? slot : null\)/.test(view) && /PEAK HOLD/.test(view), "the channel view listens only while the curve is on screen, with PEAK HOLD");
   const rack = src("src/components/rack/Rack.tsx");
@@ -54,7 +61,7 @@ console.log("\nthe wiring");
   check(/finePost/.test(hook) && /fineN/.test(src("native/src/lib.rs")), "the views draw the fine wave (241 points), not the 31 bands");
   const eq = src("native/src/eq.rs");
   check(!/rustfft|update_spectrum|fn spectrum/.test(eq), "eq.rs has no FFT left: the master analyser is off the audio thread entirely");
-  check(/Reading the spectrum/.test(src("docs/help-channel-eq.md")) && /before\*\* the GEQ/.test(src("docs/help-processor-rack.md")), "help: channel EQ and the processor rack explain the spectrum");
+  check(/Reading the spectrum/.test(src("docs/help-channel-eq.md")) && /before the GEQ/.test(src("docs/help-processor-rack.md")), "help: channel EQ and the processor rack explain the spectrum");
 }
 
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILED"}  (${pass} passed, ${fail} failed)`);

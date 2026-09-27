@@ -533,3 +533,89 @@ in the doc."
   - the views draw the fine wave.
 - **Gates:** tsc 0; show-presets 52; rack-eq 30, mic-input 25, pfl 22, dynamics 10, meter contract 30;
   undefined-calls, preload-bridge, ipc-contract, one-switch, audio-isolation PASS; leak guard OK; build OK.
+
+---
+
+## Rework: the Behringer X32 RTA look (2026-09-27)
+
+**Jeff's brief (verbatim):** "Rework the spectrum drawing to the Behringer X32 RTA look (Jeff's screenshot attached):
+- ~100 discrete bars (1/12-octave, 20 Hz–20 kHz) with a small gap between bars, not a dense wave; the fine bins are
+  already there, group them.
+- A visible grid: horizontal dB lines (−15…+15 for the EQ axis, and the RTA's own dBFS scale on the right) and
+  vertical frequency lines at 20/40/60/80/100/200/400/600/800/1k/2k/4k/6k/8k/10k/20k with labels along the bottom.
+- Bar colour by level: blue (low) → green → yellow (hot), the X32 mapping; pre-rack in the same colours dimmed,
+  post-rack full.
+- The EQ curve in a contrasting colour (X32 uses yellow) drawn on top, with numbered band markers at each band's
+  frequency on the channel PEQ and the fader positions on the master GEQ.
+- Peak hold as a thin marker per bar, toggle as now.
+Same component for master and channel."
+
+**Jeff's correction (verbatim):** "Correction to the colour mapping: blue (low) → green → yellow → RED (hot), red only
+at the top of the scale. Same for pre (dimmed) and post."
+
+**Status:** built. What it looks like live is UNVERIFIED until Jeff's check.
+
+### Jeff's X32 reference beside the new graphs
+
+![X32 reference vs new](dsp-channel-rta-x32-vs-new.png)
+
+`docs/dsp-channel-rta-x32-vs-new.png`:
+- **Left:** Jeff's photo (`docs/dsp-channel-rta-x32-reference.jpg`).
+- **Right and below:** the **real components, unmodified** (the channel `EqCurve` and the master `GeqPanel`), on the
+  same moment of `music.wav` through the engine. The same fixture and harness as before, now with
+  `capture.js … x32`.
+- **`docs/dsp-channel-rta-old-vs-new.png`** is regenerated too, so its "new" panel shows this look.
+
+### What changed
+
+- **Bars (`rta.ts` `groupBars`):**
+  - the meter thread's fine wave grouped into **120 bars of 1/12 octave** from 20 Hz to 20 kHz, edge to edge;
+  - each bar shows the loudest fine point inside it;
+  - a small gap between bars (≤ 1.6 px);
+  - **no engine change:** the fine points were already there.
+- **Colours (`LEVEL_STOPS`), by height in the range:**
+  - blue at the floor → light blue → teal → green → yellow-green → yellow → **red only at the top 6 %**
+    (Jeff's correction);
+  - the same gradient for pre and post: **pre dimmed** (0.32) under **post full**;
+  - no glow: the X32's bars are flat.
+- **Peak hold:** a thin white marker per bar (the max of its fine points). The toggle is as before, and the default
+  stays **on**.
+- **Grid (`RtaGrid`, the one grid both graphs draw):**
+  - vertical lines at 20/40/60/80/100/200/400/600/800/1k/2k/4k/6k/8k/10k/20k, labelled along the bottom;
+  - horizontal EQ lines at −15…+15 every 5 dB, labelled on the left (`0dB` like the X32);
+  - the RTA's own dBFS scale on the right, every 12 dB (the top follows the running peak, 60 dB range, as
+    before).
+- **One axis (`scopeAxis.ts`):** width, height, margins, the frequency→x and dB→y functions, the grid frequencies,
+  and the curve colour are defined once and imported by `EqCurve` and `GeqGraph`. A frequency or a dB lands in the
+  same place in both.
+- **Curve:** the EQ curve in X32 yellow (`--eq-curve`, all four themes), drawn over the bars.
+- **Channel (`EqCurve`):** numbered boxes along the top at each PEQ band's frequency, in the band's colour, with a
+  thin guide line. The draggable numbered nodes are unchanged.
+- **Master (`GeqGraph`, new; in `GeqPanel` above the faders):**
+  - the same grid and bars;
+  - **the GEQ's response curve, computed from the engine's own filters.** `geqResponseDb` mirrors `eq.rs
+    set_peaking`: RBJ peaking, Q 1, f32 coefficients at 44.1 kHz, identity under 0.05 dB;
+  - a numbered marker at every fader's position (its frequency, the curve's level there);
+  - the fader labels carry the same numbers.
+  - The strip that drew bars behind the faders is gone.
+- **Legend** (`RtaBar`): dimmed / full / the EQ, in the X32 colours.
+
+### Receipts
+
+- **vitest 510/510**, including `rta.test.ts` 11/11:
+  - the X32 colours (blue at the floor; red only at ≥ 0.94 of the height; green and yellow present);
+  - the bars (120, 1/12 octave, 20 Hz → 20 kHz edge to edge; each shows its loudest fine point);
+  - the master GEQ curve (+6 @ 1 kHz reads **+6.00** there, flat reads 0);
+  - the X32 grid on the shared axis.
+- **`test:rta` 32/32:**
+  - discrete 1/12-octave bars with gaps;
+  - a white marker per bar;
+  - pre dimmed and post full;
+  - the grid, the yellow curve and numbered markers on the channel;
+  - the master `GeqGraph` with the same grid and bars, its curve from the engine's filters, and a marker per fader;
+  - one shared axis;
+  - plus everything before (the lease, the retirement, the fine wave).
+- **Gates:** tsc 0; show-presets 52, rack-eq 30, mic-input 25, pfl 22, dynamics 10, meter contract 30;
+  undefined-calls, preload-bridge, ipc-contract, one-switch, audio-isolation PASS; leak guard OK; build OK.
+- **No engine code changed** in this rework. The engine receipts of `e5f1be7` stand for the build that is swapped in
+  (sha256 `ba72bf47…`): 43 goldens bit-exact, NAPI 43/43, trap 0, `test:rust` 111 + 7 + 2.

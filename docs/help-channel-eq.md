@@ -64,19 +64,20 @@ fader. They show what the EQ did.
 
 ## Reading the spectrum
 
-Behind the EQ curve is a **live spectrum of this channel**, drawn the way the old master rack drew it: glowing
-bars, coloured by level, with white peak markers.
-- **24 bars per octave**, from 20 Hz to 20 kHz.
-- **Faint bars:** the channel **before** its rack. **Bright bars:** **after** it, which is what the EQ, filters,
+Behind the EQ curve is a **live spectrum of this channel**, drawn like a Behringer X32's RTA.
+- **12 bars per octave**, from 20 Hz to 20 kHz, with a small gap between them.
+- **Dimmed bars:** the channel **before** its rack. **Full bars:** **after** it, which is what the EQ, filters,
   gate and compressor did.
-- Both are taken **before the fader**, so moving the fader doesn't change them. The spectrum shows the EQ, not your
-  level.
-- **The colours:** every bar is green at its base and turns yellow, amber and then red as it gets taller. Only the
-  loudest parts reach red.
-- **The scale follows the music,** like the old rack: the top sits a little above the loudest recent level and
-  eases down when the music gets quieter. The label on the right says what the top is, in dBFS; the view shows the
-  60 dB below it.
-- **The white markers** are PEAK HOLD: each point's highest level for 2 seconds. They're on by default; the
+- Both are taken **before the fader**, so moving the fader doesn't change them.
+- **The colours:** every bar is **blue** at its base, then turns teal, green and **yellow** as it gets taller.
+  **Red** only appears at the very top of the scale.
+- **The yellow line is the EQ.** Numbered boxes along the top mark each PEQ band's frequency; the numbered dots on
+  the line are the bands you drag.
+- **The grid:** frequencies along the bottom (20, 40, 60, 80, 100, 200 … 10k, 20k); EQ gain on the left
+  (−15 to +15 dB); the spectrum's own level on the right, in dBFS.
+- **The level scale follows the music:** its top sits a little above the loudest recent level and eases down when
+  the music gets quieter, showing the 60 dB below it.
+- **The white markers** are PEAK HOLD: each bar's highest level for 2 seconds. They're on by default; the
   **PEAK HOLD** button turns them off.
 - **Hatched at the far left (below 160 Hz):** too narrow for the analyser to split finely. Read it as a guide.
 - **NOT FED:** nothing is playing on this channel.

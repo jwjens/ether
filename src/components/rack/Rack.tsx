@@ -36,8 +36,7 @@ import { EQ_LABELS } from "../GraphicEQ";
 import { LABEL, MONO, TOUCH, BTN, Knob } from "./rackUi";
 import ChannelRackView, { RtaBar } from "./ChannelRackView";
 import { useRta } from "../../hooks/useRta";
-import { geqX, GEQ_F_MIN, GEQ_F_MAX, type RtaFrame } from "./rta";
-import RtaBars from "./RtaBars";
+import GeqGraph from "./GeqGraph";
 import { useBoardName } from "../../hooks/useBoardName";
 import { CHANNEL_SLOTS, isChannelSlot, type ChannelSlot } from "./channelRack";
 import { RACK_VIEW_KEY, useChannelRackLamps } from "../../hooks/useChannelRack";
@@ -391,23 +390,9 @@ function MasterRack({ stationId, stationUuid }: Props) {
   );
 }
 
-/** SLICE 8 — the master GEQ's spectrum strip behind its faders: RtaBars (the SAME component as the channel curve) on the
- *  GEQ's octave axis, so each fader stands over its own octave. Presentational — the screenshot harness renders it with
- *  the engine's recorded frame (scripts/rta-screens). */
-export function GeqSpectrum({ frame, held }: { frame: RtaFrame | null; held: number[] | null }) {
-  if (!frame?.fed) return null;
-  return (
-    <svg viewBox="0 0 1000 160" preserveAspectRatio="none" aria-hidden
-         style={{ position: "absolute", left: 0, right: 0, top: 0, height: 160, width: "100%", pointerEvents: "none" }}>
-      <RtaBars frame={frame} held={held} x={geqX(1000)} top={0} bottom={160} fMin={GEQ_F_MIN} fMax={GEQ_F_MAX} hatch={false} />
-    </svg>
-  );
-}
-
 /** The GEQ slot's editor: ten touch-sized band faders over the live spectrum, IN/OUT, and FLAT.
- *  SLICE 8 — the spectrum is the RTA (docs/dsp-channel-rta.md): the programme BEFORE the GEQ (faint) and AFTER it
- *  (brighter), 31 third-octave bands on a log axis where each fader sits over its own octave. It replaces the old
- *  in-callback analyser (ruling 4), which drew ten 0…1 bars normalised to a running peak. */
+ *  SLICE 8 — above the faders, GeqGraph: the RTA (before the GEQ dimmed, after it full) in the X32 look, the GEQ's
+ *  curve and a numbered marker per fader — the same component set as the channel curve (docs/dsp-channel-rta.md). */
 function GeqEditor({ stationId, geq, on, onBands, onIn }: {
   stationId: number; geq: GeqModule; on: boolean; onBands: (b: number[]) => void; onIn: (v: boolean) => void;
 }) {
@@ -429,8 +414,10 @@ export function GeqPanel({ geq, on, onBands, onIn, rta }: {
         <span style={{ fontSize: 11, color: "var(--text-tertiary)", alignSelf: "center" }}>10-band master GEQ · ±12 dB · drives the air and the room EQ</span>
       </div>
       <RtaBar rta={rta} />
+      {/* SLICE 8 — the X32-look graph (the same axis, grid and RTA bars as the channel curve): the GEQ curve in yellow
+          and a numbered marker at every fader's position; the faders below are the controls. */}
+      <GeqGraph bands={geq.bands} on={on} frame={rta.frame} held={rta.held} />
       <div style={{ position: "relative", display: "flex", gap: 6, alignItems: "flex-end", opacity: on ? 1 : 0.55 }}>
-        <GeqSpectrum frame={rta.frame} held={rta.held} />
         {geq.bands.map((g, i) => (
           <div key={i} style={{ flex: 1, minWidth: TOUCH, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
             <div style={{ position: "relative", height: 160, width: TOUCH, display: "flex", justifyContent: "center" }}>
@@ -439,7 +426,7 @@ export function GeqPanel({ geq, on, onBands, onIn, rta }: {
                 style={{ writingMode: "vertical-lr" as any, direction: "rtl", height: 160, width: TOUCH }} />
             </div>
             <span style={{ ...MONO, fontSize: 12, fontWeight: 800, color: Math.abs(g) > 0.05 ? "var(--slot-eq)" : "var(--text-tertiary)" }}>{g > 0 ? "+" : ""}{g.toFixed(1)}</span>
-            <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>{EQ_LABELS[i]}</span>
+            <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}><b style={{ color: "var(--eq-curve)" }}>{i + 1}</b> · {EQ_LABELS[i]}</span>
           </div>
         ))}
       </div>

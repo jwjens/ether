@@ -20,15 +20,9 @@ import {
   planChannel, sumDb, bandBiquad, filterBiquads, clampChannelModule, HPF_HZ, LPF_HZ, PEQ_HZ, PEQ_GAIN_DB, PEQ_WIDTH_OCT,
 } from "./eqMath";
 import type { RtaFrame } from "./rta";
-import RtaBars from "./RtaBars";
-
-const W = 800, H = 280, PL = 40, PR = 12, PT = 12, PB = 26;
-const F0 = 20, F1 = 20000, DB = 15;
-const x = (f: number) => PL + (Math.log10(f / F0) / Math.log10(F1 / F0)) * (W - PL - PR);
-const fOf = (px: number) => F0 * Math.pow(F1 / F0, Math.max(0, Math.min(1, (px - PL) / (W - PL - PR))));
-const y = (db: number) => PT + ((DB - Math.max(-DB, Math.min(DB, db))) / (2 * DB)) * (H - PT - PB);
-const dbOf = (py: number) => DB - ((py - PT) / (H - PT - PB)) * 2 * DB;
-const FREQS = Array.from({ length: 240 }, (_, i) => F0 * Math.pow(F1 / F0, i / 239));
+import RtaBars, { RtaGrid } from "./RtaBars";
+// The ONE axis (shared with the master GEQ graph): the curve, the RTA bars and the grid all use these x / y.
+import { W, H, PL, PR, PT, PB, F0, F1, x, fOf, y, dbOf, FREQS, CURVE_COLOR } from "./scopeAxis";
 const BAND_COLOR = ["var(--band-1)", "var(--band-2)", "var(--band-3)", "var(--band-4)"];
 const fmtF = (f: number) => (f >= 1000 ? `${(f / 1000).toFixed(f >= 10000 ? 1 : 2)}k` : `${Math.round(f)}`);
 const fmtG = (g: number) => `${g > 0 ? "+" : g < 0 ? "−" : ""}${Math.abs(g).toFixed(1)}`;
@@ -110,7 +104,6 @@ export default function EqCurve({ doc, filters, peq, onFilters, onPeq, selected,
     setWidth(selected, w * Math.pow(1.1, e.deltaY > 0 ? 1 : -1));   // ctrl+wheel = a trackpad pinch, same meaning
   };
 
-  const grid = [50, 100, 200, 500, 1000, 2000, 5000, 10000];
   const fShade = (which: "hpf" | "lpf") => {
     if (!filters) return null;
     const st = filters.module[which];
@@ -144,19 +137,13 @@ export default function EqCurve({ doc, filters, peq, onFilters, onPeq, selected,
            pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
            if (pointers.current.size === 1) onSelect(null);
          }}>
-      {grid.map(f => <line key={f} x1={x(f)} x2={x(f)} y1={PT} y2={H - PB} stroke="var(--border-primary)" strokeWidth={1} />)}
-      {grid.map(f => <text key={`t${f}`} x={x(f)} y={H - 8} fontSize={10} textAnchor="middle" fill="var(--text-tertiary)">{fmtF(f)}</text>)}
-      {[-12, -6, 0, 6, 12].map(d => (
-        <g key={d}>
-          <line x1={PL} x2={W - PR} y1={y(d)} y2={y(d)} stroke="var(--border-primary)" strokeWidth={d === 0 ? 1.5 : 1} />
-          <text x={PL - 6} y={y(d) + 4} fontSize={10} textAnchor="end" fill="var(--text-tertiary)">{d > 0 ? `+${d}` : d}</text>
-        </g>
-      ))}
+      {/* the X32 grid: frequency lines labelled along the bottom, EQ dB −15…+15 on the left */}
+      <RtaGrid x={x} y={y} left={PL} right={W - PR} top={PT} bottom={H - PB} />
       {/* SLICE 8 — the live spectrum, under everything that can be touched */}
       {rta?.frame && (
         <g pointerEvents="none">
           {rta.frame.fed ? (
-            <RtaBars frame={rta.frame} held={rta.held} x={x} top={PT} bottom={H - PB} fMin={F0} fMax={F1} labelX={W - PR - 4} />
+            <RtaBars frame={rta.frame} held={rta.held} x={x} top={PT} bottom={H - PB} fMin={F0} fMax={F1} labelX={W - 3} />
           ) : (
             <text x={(PL + W - PR) / 2} y={H - PB - 10} fontSize={11} fontWeight={800} textAnchor="middle" fill="var(--text-tertiary)">SPECTRUM — NOT FED (nothing is playing on this channel)</text>
           )}
@@ -172,7 +159,16 @@ export default function EqCurve({ doc, filters, peq, onFilters, onPeq, selected,
                      strokeDasharray={peq.in ? undefined : "5 4"} />;
       })}
       {differs && <path d={path(asSet)} fill="none" stroke="var(--text-tertiary)" strokeWidth={1.5} strokeDasharray="6 5" />}
-      <path d={path(running)} fill="none" stroke="var(--slot-eq)" strokeWidth={3} />
+      {/* the EQ curve — X32 yellow, on top of the bars */}
+      <path d={path(running)} fill="none" stroke={CURVE_COLOR} strokeWidth={2.5} />
+      {/* numbered band markers along the top, at each band's frequency (the X32's) */}
+      {peq && peq.module.bands.map((b, i) => (
+        <g key={`m${i}`} pointerEvents="none">
+          <line x1={x(b.freq)} x2={x(b.freq)} y1={PT} y2={H - PB} stroke={BAND_COLOR[i]} strokeWidth={1} opacity={peq.in ? 0.45 : 0.2} strokeDasharray={peq.in ? undefined : "3 3"} />
+          <rect x={x(b.freq) - 7} y={3} width={14} height={14} fill="var(--bg-primary)" stroke={BAND_COLOR[i]} strokeWidth={1.5} />
+          <text x={x(b.freq)} y={14} fontSize={10} fontWeight={900} textAnchor="middle" fill={BAND_COLOR[i]}>{i + 1}</text>
+        </g>
+      ))}
       {/* the band nodes */}
       {peq && peq.module.bands.map((b, i) => {
         const cx = x(b.freq), cy = y(b.gain), sel = selected === i;

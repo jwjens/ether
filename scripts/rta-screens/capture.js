@@ -1,7 +1,7 @@
 // scripts/rta-screens/capture.js — render OLD vs NEW spectrum (entry.tsx) and save the screenshot for the doc.
 //
 //   1. cd native && ETHER_WRITE_RTA_SCREENS=<fixture.json> cargo test --release --lib write_the_rta_screens_fixture
-//   2. npx electron scripts/rta-screens/capture.js <fixture.json> <out.png>
+//   2. npx electron scripts/rta-screens/capture.js <fixture.json> <out.png> [old|x32]   (x32 = Jeff's X32 reference vs new)
 //
 // Bundles entry.tsx with esbuild (the fixture inlined), loads it in an offscreen window with the app's own CSS
 // (src/index.css, minus the Tailwind and font directives), and writes the capture. Diagnostic tooling: nothing here
@@ -12,8 +12,8 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const [fixture, outPng] = process.argv.slice(2).filter(a => !a.startsWith("--"));
-if (!fixture || !outPng) { console.error("usage: electron capture.js <fixture.json> <out.png>"); process.exit(2); }
+const [fixture, outPng, layout = "old"] = process.argv.slice(2).filter(a => !a.startsWith("--"));
+if (!fixture || !outPng) { console.error("usage: electron capture.js <fixture.json> <out.png> [old|x32]"); process.exit(2); }
 
 app.whenReady().then(async () => {
   const root = path.join(__dirname, "..", "..");
@@ -22,7 +22,9 @@ app.whenReady().then(async () => {
     entryPoints: [path.join(__dirname, "entry.tsx")], bundle: true, outfile: path.join(tmp, "page.js"),
     jsx: "automatic", format: "iife", loader: { ".tsx": "tsx", ".ts": "ts" }, logLevel: "error",
     define: { FIXTURE: fs.readFileSync(fixture, "utf8"), "process.env.NODE_ENV": '"production"',
-              "import.meta.env": '{"DEV":false,"PROD":true,"MODE":"production"}' },
+              "import.meta.env": '{"DEV":false,"PROD":true,"MODE":"production"}',
+              LAYOUT: JSON.stringify(layout),
+              X32_IMG: JSON.stringify("data:image/jpeg;base64," + fs.readFileSync(path.join(root, "docs", "dsp-channel-rta-x32-reference.jpg")).toString("base64")) },
   });
   const css = fs.readFileSync(path.join(root, "src", "index.css"), "utf8").split("\n").filter(l => !/^@tailwind|^@import/.test(l)).join("\n");
   fs.writeFileSync(path.join(tmp, "index.html"),
