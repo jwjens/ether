@@ -26,6 +26,8 @@ export interface MeterFrameMsg {
   /** PFL — the engine's echo: bit n set = slot n's PFL is on in the block the callback ran; and the dim (dB). */
   pfl?: number;
   pflDimDb?: number;
+  /** PFL OUTPUT DEVICE — same_as_main | opening | open | not_found | failed. */
+  cueState?: string;
 }
 export interface HeldFrame extends MeterFrameMsg { at: number }
 

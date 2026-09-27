@@ -220,6 +220,28 @@ pub fn audio_set_pfl(station_id: u32, deck: String, on: bool) -> bool {
     audio.sender.send(AudioCmd::SetPfl { deck, on }).is_ok()
 }
 
+/// The PFL cue output device on THIS machine ("" = same as the main output). A chosen device takes PFL off the
+/// main output entirely; a missing one leaves PFL silent (never a fallback). Machine-local (pfl_cue_device).
+#[napi]
+pub fn audio_set_cue_device(station_id: u32, device: String) -> bool {
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetCueDevice(device)).is_ok()
+}
+
+/// Where PFL is going on this station: {device, state, rate, frames}.
+#[napi]
+pub fn audio_cue_state(station_id: u32) -> String {
+    let c = audio::cue_status(station_id);
+    let device = c.req.lock().map(|r| r.clone()).unwrap_or_default();
+    serde_json::json!({
+        "device": device,
+        "state": audio::cue_state_name(c.state.load(std::sync::atomic::Ordering::Relaxed)),
+        "rate": c.rate.load(std::sync::atomic::Ordering::Relaxed),
+        "frames": c.frames.load(std::sync::atomic::Ordering::Relaxed),
+    }).to_string()
+}
+
 /// The programme dim in the local output while any PFL is on, dB (−60…0). A station setting.
 #[napi]
 pub fn audio_set_pfl_dim(station_id: u32, dim_db: f64) -> bool {
@@ -622,6 +644,8 @@ pub fn audio_get_meters(station_id: u32) -> String {
         // PFL lamp shows this, never its own guess.
         "pfl": p.pfl.iter().enumerate().fold(0u32, |m, (i, &on)| if on { m | (1 << i) } else { m }),
         "pflDimDb": p.pfl_dim_db,
+        // PFL OUTPUT DEVICE — where PFL is going: same_as_main | opening | open | not_found | failed.
+        "cueState": audio::cue_state_name(audio::cue_status(station_id).state.load(std::sync::atomic::Ordering::Relaxed)),
         "ld": {
             "local": ld_of(&lf.b[loudness::LOUD_LOCAL]),
             "stream": ld_of(&lf.b[loudness::LOUD_STREAM]),

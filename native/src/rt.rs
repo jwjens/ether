@@ -66,6 +66,9 @@ pub(crate) struct Params {
     /// While any PFL is on, the programme in the local output is dimmed by this much (dB, ≤ 0). A STATION
     /// SETTING (station_config_kv `pfl_dim_db`, Preferences → Audio); PFL_DIM_DB_DEFAULT until it is delivered.
     pub pfl_dim_db: f32,
+    /// A PFL cue DEVICE is chosen on this machine (not "same as main output"): PFL goes ONLY to it — the main
+    /// output is untouched — whether or not that device is present (a missing one = PFL silent, never a fallback).
+    pub pfl_to_device: bool,
 }
 
 /// A decoder — the iterator build_source returns (rodio Decoder → 2 ch / 44.1 kHz). S4: it lives on a
@@ -225,6 +228,9 @@ pub(crate) enum RtCmd {
 pub(crate) enum AuxCmd {
     Attach(ringbuf::HeapProd<f32>),
     Detach,
+    /// PFL cue output (its own device, chosen in Preferences → Audio): the ring the callback writes the cue mix to.
+    AttachCue(ringbuf::HeapProd<f32>),
+    DetachCue,
 }
 
 /// Callback → dispatch: things to FREE off the audio thread.

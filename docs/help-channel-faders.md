@@ -77,6 +77,29 @@ it, or cue a cart.
 **Nothing on air changes.** The stream, the programme and every on-air meter are exactly as they were. PFL only
 ever reaches the local output.
 
+### PFL in headphones (a separate PFL output)
+
+By default PFL plays through the **main local output**, and the programme there dips. To keep PFL off the
+speakers:
+
+1. Go to **Preferences → Audio → PFL → PFL output**.
+2. Pick your **headphones** (or any output on this computer). The default is **Same as main output**.
+
+**Then, while any PFL is on:**
+- **the headphones** carry the channel you're checking, plus the programme at the dip level so you keep your
+  place;
+- **the main speakers are left completely alone.**
+
+With no PFL on, the headphones are silent.
+
+**The PFL output belongs to this computer.** Each computer picks its own; it never syncs.
+
+**If the chosen headphones aren't connected, PFL is silent.** It never falls back to the speakers, where it
+would surprise you.
+- The strip shows **⚠ cue device not found — PFL silent** while its PFL is on.
+- **Health Monitor → PFL Output** says the same.
+- Plug the headphones back in and PFL returns by itself within a few seconds.
+
 **A mic on PFL arrives about 40 ms late.** That's the time through the computer and back. It's fine for
 checking how the mic *sounds*, but it's too late to talk against. **To hear yourself while you speak, use your
 audio interface's direct-monitor.** See **Mic on Air**.

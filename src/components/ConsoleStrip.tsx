@@ -94,6 +94,9 @@ export default function ConsoleStrip({
   // A strip with no engine slot (a guest line) keeps a local lamp: its owner decides what PFL means.
   const [pflLocal, setPflLocal] = useState(false);
   const [pflEcho, setPflEcho] = useState(false);
+  // PFL OUTPUT DEVICE — when a cue device is chosen but not there, PFL is SILENT (never the speakers); the strip
+  // says so while its PFL is on.
+  const [cueBad, setCueBad] = useState<string | null>(null);
   // trackRef: the invisible full-area mouse capture overlay
   const trackRef = useRef<HTMLDivElement>(null);
   // faderAreaRef: the flex container we measure for faderH
@@ -165,6 +168,9 @@ export default function ConsoleStrip({
       const m = latestMeters(stationUuid);
       const on = !!m && typeof m.pfl === "number" && ((m.pfl >> slotIndex) & 1) === 1;
       setPflEcho(prev => (prev === on ? prev : on));
+      const cs = m?.cueState;
+      const bad = cs === "not_found" ? "cue device not found — PFL silent" : cs === "failed" ? "cue device failed — PFL silent" : null;
+      setCueBad(prev => (prev === bad ? prev : bad));
     }, 100);
     return () => clearInterval(id);
   }, [slotIndex, stationUuid]);
@@ -393,6 +399,14 @@ export default function ConsoleStrip({
                            border: `1px solid ${eqLit ? "var(--slot-eq)" : "var(--text-tertiary, #666)"}` }} />
             <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.12em", color: eqLit ? "var(--slot-eq)" : "var(--text-tertiary, #666)" }}>EQ</span>
           </button>
+        </div>
+      )}
+
+      {/* PFL has nowhere to go: the chosen cue device is missing (Preferences → Audio → PFL) */}
+      {pflActive && cueBad && slotIndex !== undefined && (
+        <div style={{ padding: "4px 8px 0", fontSize: 10, fontWeight: 700, color: "var(--accent-red, #ef4444)", lineHeight: 1.2 }}
+             title="PFL is set to a separate output device on this computer, and that device is not there. PFL stays silent — it never falls back to the speakers. Preferences → Audio → PFL.">
+          ⚠ {cueBad}
         </div>
       )}
 

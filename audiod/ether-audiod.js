@@ -364,6 +364,9 @@ const handlers = {
   // PFL — one channel on/off (momentary, never stored) and the station's programme dim while any is on.
   setPfl:             (m) => (typeof A.audioSetPfl === "function" ? A.audioSetPfl(Number(m.stationId), String(m.slot), !!m.on) : false),
   setPflDim:          (m) => (typeof A.audioSetPflDim === "function" ? A.audioSetPflDim(Number(m.stationId), Number(m.dimDb)) : false),
+  // PFL OUTPUT DEVICE — this machine's cue device ("" = same as main) and where PFL is going right now.
+  setCueDevice:       (m) => (typeof A.audioSetCueDevice === "function" ? A.audioSetCueDevice(Number(m.stationId), String(m.device || "")) : false),
+  cueState:           (m) => (typeof A.audioCueState === "function" ? JSON.parse(A.audioCueState(Number(m.stationId))) : { device: "", state: "same_as_main" }),
   // MASTER OUT — the broadcast gain (rides air + the master VU). Distinct from setMonitorVolume,
   // which trims the room speakers only. docs/master-monitor-faders-dead-2026-08-06.md
   setMasterVolume:    (m) => A.audioSetMasterVolume(m.stationId, m.volume),
@@ -584,7 +587,7 @@ const meterTimer = setInterval(() => {
     // SLICE 5 — chPost: each channel after its rack (docs/dsp-channel-rack-eq.md §2).
     // PFL — the engine's echo (bit n = slot n) and the dim: a strip's PFL lamp shows THIS, never its own guess.
     broadcast({ event: "meters", stationUuid: sub.uuid, v: mt.v, e: mt.e, n: mt.n, ch: mt.ch, chPost: mt.chPost, bus: mt.bus, live: mt.live,
-                ld: mt.ld, gr: mt.gr, ceil: mt.ceil, margin: mt.margin, ldSeq: mt.ldSeq, pfl: mt.pfl, pflDimDb: mt.pflDimDb });
+                ld: mt.ld, gr: mt.gr, ceil: mt.ceil, margin: mt.margin, ldSeq: mt.ldSeq, pfl: mt.pfl, pflDimDb: mt.pflDimDb, cueState: mt.cueState });
   }
 }, 33);
 if (meterTimer.unref) meterTimer.unref();

@@ -60,6 +60,9 @@ contextBridge.exposeInMainWorld("ether", {
     // PFL — one channel on/off (the lamp follows the engine's echo on the meters frame), and the station's dim.
     setPfl: (stationId, slot, on) => ipcRenderer.invoke("audio:set-pfl", stationId, slot, on),
     setPflDim: (stationId, dimDb) => ipcRenderer.invoke("audio:set-pfl-dim", stationId, dimDb),
+    // PFL OUTPUT DEVICE — this machine's cue device ("" = same as main), and where PFL is going now.
+    setCueDevice: (stationId, device) => ipcRenderer.invoke("audio:set-cue-device", stationId, device),
+    cueState: (stationId) => ipcRenderer.invoke("audio:cue-state", stationId),
     setMasterVolume:  (stationId, volume) => ipcRenderer.invoke("audio:setMasterVolume", stationId, volume),
     setMasterMonitorVolume: (volume) => ipcRenderer.invoke("audio:setMasterMonitorVolume", volume),
     // Push-based level subscription — 30fps from main process, no polling

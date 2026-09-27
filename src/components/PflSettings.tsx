@@ -10,11 +10,53 @@ import { useActiveStation } from "../hooks/useActiveStation";
 export const PFL_DIM_DB_DEFAULT = -12;
 const RANGE: [number, number] = [-60, 0];
 
+/** Where PFL is going, in words (the Health Monitor says the same). */
+export function cueWords(state: string | undefined, device: string): { text: string; bad: boolean } {
+  switch (state) {
+    case "open": return { text: `PFL → ${device}`, bad: false };
+    case "opening": return { text: `opening ${device}…`, bad: false };
+    case "not_found": return { text: `"${device}" is not connected — PFL is silent (it never falls back to the speakers)`, bad: true };
+    case "failed": return { text: `"${device}" could not be opened — PFL is silent`, bad: true };
+    default: return { text: "PFL → the main output (the programme there dips)", bad: false };
+  }
+}
+
 export default function PflSettings() {
   const { stationId } = useActiveStation();
+  // PFL OUTPUT DEVICE — machine-local (pfl_cue_device): "" = same as the main output, else a named device.
+  const [outs, setOuts] = useState<string[]>([]);
+  const [cueDev, setCueDev] = useState<string>("");
+  const [cue, setCue] = useState<{ device: string; state: string } | null>(null);
+  useEffect(() => {
+    (async () => { try { const d = await (window as any).ether?.audio?.listOutputDevices?.(); setOuts(Array.isArray(d) ? d : []); } catch { setOuts([]); } })();
+  }, []);
+  useEffect(() => {
+    if (stationId == null) return;
+    let alive = true;
+    const poll = async () => {
+      try { const c = await (window as any).ether?.audio?.cueState?.(stationId); if (alive && c) { setCue(c); } } catch { /* keep the last */ }
+    };
+    (async () => {
+      try {
+        const r = await (window as any).ether?.invoke?.("station_config_kv:get-value", stationId, "pfl_cue_device");
+        if (alive && r && r.ok) setCueDev(String(r.value || ""));
+      } catch { /* same as main */ }
+      poll();
+    })();
+    const id = setInterval(poll, 2000);
+    return () => { alive = false; clearInterval(id); };
+  }, [stationId]);
+  const chooseCue = async (dev: string) => {
+    if (stationId == null) return;
+    setErr(null);
+    const r = await (window as any).ether?.audio?.setCueDevice?.(stationId, dev);
+    if (r && r.ok) { setCueDev(dev); setTimeout(async () => { try { setCue(await (window as any).ether?.audio?.cueState?.(stationId)); } catch { /* next poll */ } }, 600); }
+    else setErr(`PFL output not changed: ${(r && r.reason) || "no answer"}`);
+  };
   const [dim, setDim] = useState<number>(PFL_DIM_DB_DEFAULT);
   const [stored, setStored] = useState<boolean>(false);
   const [err, setErr] = useState<string | null>(null);
+
   useEffect(() => {
     if (stationId == null) return;
     (async () => {
@@ -40,9 +82,22 @@ export default function PflSettings() {
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ fontSize: 13, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
         <b>PFL</b> on a channel plays that channel — before its fader and ON, after its channel EQ — in this station's
-        <b> local output</b>. While any PFL is on, the programme there dips by this much so you can hear what you're checking.
-        Air and the stream are never affected.
+        <b> local output</b>, or in a separate <b>PFL output</b> (headphones) if you pick one below. While any PFL is on, the
+        programme there dips by this much so you can hear what you're checking. Air and the stream are never affected.
       </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11, color: "var(--text-tertiary)", width: 120, textTransform: "uppercase", letterSpacing: "0.06em" }}>PFL output</span>
+        <select value={cueDev} onChange={e => chooseCue(e.target.value)}
+          style={{ flex: "1 1 260px", minHeight: 36, background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", padding: "0 8px", fontSize: 12 }}
+          title="Where PFL plays on THIS computer (never synced). A named device gets PFL — and the programme at the dip level for context — and the main output is left alone.">
+          <option value="">Same as main output</option>
+          {cueDev && !outs.includes(cueDev) && <option value={cueDev}>{cueDev} (not connected)</option>}
+          {outs.map(n => <option key={n} value={n}>{n}</option>)}
+        </select>
+      </div>
+      {(() => { const w = cueWords(cue?.state, cue?.device || cueDev); return (
+        <div style={{ fontSize: 12, fontWeight: 700, color: w.bad ? "var(--accent-red, #ef4444)" : "var(--text-secondary)" }}>● {w.text}</div>
+      ); })()}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <span style={{ fontSize: 11, color: "var(--text-tertiary)", width: 120, textTransform: "uppercase", letterSpacing: "0.06em" }}>Programme dip</span>
         <input type="range" min={RANGE[0]} max={RANGE[1]} step={1} value={dim} style={{ flex: 1, height: 36 }}

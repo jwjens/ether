@@ -80,7 +80,10 @@ const PATCHABLE          = ["value","updated_at"];
 // "Speakers/Headphones (Realtek(R) Audio)" stored, and the engine logging `AUX monitor device not found` every
 // retry — a name this machine does not have. (The AUX path does NOT fall back to the default — it stays silent
 // by design — so a synced name here silenced this machine's AUX monitor instead of re-routing it.)
-const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_designation', 'schedule_layout_v1', 'sweep_last_run', 'music_dir', 'cloud_backup_config', 'ai_voice_config', 'audio_output_device', 'aux_monitor_device']);
+//
+// pfl_cue_device (2026-09-26) — the PFL cue output device (headphones) on THIS machine; "" = same as the main output.
+// Machine-local from its first day, for the same reason (docs/dsp-pfl-2026-09-26.md).
+const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'kill_designation', 'schedule_layout_v1', 'sweep_last_run', 'music_dir', 'cloud_backup_config', 'ai_voice_config', 'audio_output_device', 'aux_monitor_device', 'pfl_cue_device']);
 
 // Prefixes, for families of per-machine keys. `grid_widths_<pane>` is one key per grid, so it cannot
 // be enumerated — column widths had been written and refused on every resize since 4.4.177.

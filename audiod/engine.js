@@ -637,6 +637,7 @@ class DaemonEngine {
     this._applyMicInputsFromKv(now);    // THE MIC: each source channel's input patch (mic_input_<slot>, machine-local)
     this._applySegueOverlapFromKv(now); // the operator's segue overlap, stored with the station
     this._applyPflDimFromKv(now);       // PFL: the programme dim in the local output while a PFL is on
+    this._applyCueDeviceFromKv(now);    // PFL: the cue output device on this machine (machine-local)
 
     const prev = { A: this.stateA.status, B: this.stateB.status, C: this.stateC.status };
     // ── IDENTITY-KEYED CARRY (2026-08-02) ───────────────────────────────────────────────────────────
@@ -1146,6 +1147,27 @@ class DaemonEngine {
       const next = Math.max(-60, Math.min(0, v));
       if (next === this._pflDimApplied) return;
       if (A.audioSetPflDim(this.stationId, next)) { this._pflDimApplied = next; this._log(`PFL dim = ${next} dB (from the station's settings)`); }
+    } catch { /* KV unreadable → keep the last value; never disturb playout */ }
+  }
+
+  // PFL OUTPUT DEVICE — this machine's `pfl_cue_device` ("" = same as the main output). Delivered on change and to
+  // every fresh engine; the ENGINE opens it (the AUX monitor's device path), never falls back, and reports its state.
+  // A station never set is never sent anything (the engine starts at "same as main").
+  _applyCueDeviceFromKv(now) {
+    if (now - (this._cueDevAt || 0) < 3000) return;
+    this._cueDevAt = now;
+    if (typeof A.audioSetCueDevice !== "function") return;
+    try {
+      const row = this.db.prepare(
+        "SELECT value FROM station_config_kv WHERE station_id=? AND key='pfl_cue_device' AND deleted_at IS NULL"
+      ).get(this.stationId);
+      const want = row && row.value != null ? String(row.value) : "";
+      if (this._cueDevApplied === undefined && !want) return;
+      if (want === this._cueDevApplied) return;
+      if (A.audioSetCueDevice(this.stationId, want)) {
+        this._cueDevApplied = want;
+        this._log(`PFL output = ${want ? `"${want}"` : "same as the main output"} (this machine's setting)`);
+      }
     } catch { /* KV unreadable → keep the last value; never disturb playout */ }
   }
 

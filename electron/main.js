@@ -5461,6 +5461,32 @@ ipcMain.handle("audio:set-pfl-dim", async (_, stationId, dimDb) => {
     return typeof audio.audioSetPflDim === "function" ? audio.audioSetPflDim(sid, v) : false;
   } catch { return false; }
 });
+// PFL OUTPUT DEVICE (docs/dsp-pfl-2026-09-26.md) — the cue device on THIS machine ("" = same as the main output).
+// Engine first; stored machine-local (pfl_cue_device, set-local) only if the engine took it.
+ipcMain.handle("audio:set-cue-device", async (_, stationId, device) => {
+  const sid = Number(stationId);
+  if (!Number.isFinite(sid)) return { ok: false, reason: "no station" };
+  const name = String(device || "");
+  let ok = false;
+  try {
+    if (AUDIO_DAEMON) ok = await audiodClient.cmd("setCueDevice", { stationId: sid, device: name });
+    else ok = typeof audio.audioSetCueDevice === "function" ? audio.audioSetCueDevice(sid, name) : false;
+  } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+  if (!ok) return { ok: false, reason: "the audio engine did not take it — fully close and reopen Ether if it just updated" };
+  try {
+    const { stationConfigKvSetLocal } = require("./sync/handlers/station_config_kv");
+    stationConfigKvSetLocal(getDb(), sid, "pfl_cue_device", name);
+  } catch (e) { return { ok: false, reason: `the engine took it but it was not saved: ${String(e && e.message || e)}` }; }
+  return { ok: true };
+});
+ipcMain.handle("audio:cue-state", async (_, stationId) => {
+  const sid = Number(stationId);
+  if (!Number.isFinite(sid)) return { device: "", state: "same_as_main" };
+  try {
+    if (AUDIO_DAEMON) return await audiodClient.cmd("cueState", { stationId: sid });
+    return typeof audio.audioCueState === "function" ? JSON.parse(audio.audioCueState(sid)) : { device: "", state: "same_as_main" };
+  } catch { return { device: "", state: "same_as_main" }; }
+});
 ipcMain.handle("audio:setMonitorVolume", (_, stationId, volume) => {
   if (AUDIO_DAEMON) return audiodClient.cmd("setMonitorVolume", { stationId, volume });
   try {

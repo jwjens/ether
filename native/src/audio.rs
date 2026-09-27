@@ -385,6 +385,8 @@ pub enum AudioCmd {
     SetPfl { deck: String, on: bool },
     /// The programme dim in the local output while any PFL is on, dB (clamped to PFL_DIM_DB_RANGE).
     SetPflDim(f32),
+    /// The PFL cue output device on THIS machine; "" = same as the main output.
+    SetCueDevice(String),
     /// The program processor's operator-settable NUMBERS. Separate from SetProcessing (the two on/off
     /// toggles and the loudness target) so a station that never sends this is bit-identical to before.
     /// `branch`: 0 = LOCAL (studio monitor), 1 = STREAM. Every parameter is independent per branch;
@@ -712,6 +714,7 @@ pub struct BusState {
     /// PFL — per slot, and the programme dim in the local output while any is on (Params.pfl / pfl_dim_db).
     pub pfl: [bool; SLOT_COUNT],
     pub pfl_dim_db: f32,
+    pub pfl_to_device: bool,
     /// LIVE STATE — the smoothed gain currently applied to the music (1.0 = no duck) and the
     /// milliseconds of hold still owed. Persist across buffers; written only by the callback.
     pub duck_gain: f32,
@@ -739,6 +742,8 @@ pub struct BusState {
     /// silent. This is the single gate that makes "no device chosen = silence" true in the audio path
     /// rather than in a comment.
     pub aux_ring_prod:  Option<HeapProd<f32>>,
+    /// PFL cue output ring — Some only while the chosen cue device is OPEN (installed by the monitor-output thread).
+    pub cue_ring_prod: Option<HeapProd<f32>>,
     /// Frames the AUX output callback has actually written to its device. "The stream opened" is not
     /// evidence that audio is flowing; this is. Surfaced as `aux_frames` in getLevels so the panel —
     /// and any probe — can tell a live aux feed from an open-but-starved one.
@@ -891,9 +896,11 @@ impl BusState {
             duck_release_ms: 500.0,
             pfl: [false; SLOT_COUNT],
             pfl_dim_db: PFL_DIM_DB_DEFAULT,
+            pfl_to_device: false,
             duck_gain: 1.0,
             duck_hold_left_ms: 0.0,
             aux_ring_prod: None,          // no aux device open → nowhere to send, by construction
+            cue_ring_prod: None,          // no cue device open → the cue goes nowhere (or to the main output — see pfl_to_device)
             aux_out_frames: Arc::new(AtomicU64::new(0)),
             aux_peak: 0.0,
             processor_aux: Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
@@ -952,6 +959,7 @@ impl BusState {
             duck_release_ms: self.duck_release_ms,
             pfl: self.pfl,
             pfl_dim_db: self.pfl_dim_db,
+            pfl_to_device: self.pfl_to_device,
         }
     }
 
@@ -1016,6 +1024,7 @@ impl BusState {
         self.duck_release_ms = p.duck_release_ms;
         self.pfl = p.pfl;
         self.pfl_dim_db = p.pfl_dim_db;
+        self.pfl_to_device = p.pfl_to_device;
         // The GEQ slot: bands on a version change (a removed GEQ is flat), exactly as SetEq always applied them.
         let (geq_bands, geq_in) = p.rack.geq();
         let bands = geq_bands.unwrap_or([0.0; 10]);
@@ -1115,6 +1124,8 @@ impl BusState {
             match a {
                 AuxCmd::Attach(p) => { if let Some(o) = self.aux_ring_prod.replace(p) { self.discard(Garbage::AuxProd(o)); } }
                 AuxCmd::Detach    => { if let Some(o) = self.aux_ring_prod.take()     { self.discard(Garbage::AuxProd(o)); } }
+                AuxCmd::AttachCue(p) => { if let Some(o) = self.cue_ring_prod.replace(p) { self.discard(Garbage::AuxProd(o)); } }
+                AuxCmd::DetachCue    => { if let Some(o) = self.cue_ring_prod.take()     { self.discard(Garbage::AuxProd(o)); } }
             }
         }
     }
@@ -1384,6 +1395,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::SetDuckParams { .. } => {}
                             AudioCmd::SetPfl { .. } => {}
                             AudioCmd::SetPflDim(_) => {}
+                            AudioCmd::SetCueDevice(_) => {}
                             // Superseded no-device path (see start_station_mixer's header): it owns no
                             // aux stream, so there is nothing here to open or close.
                             AudioCmd::SetAuxDevice(_) => {}
@@ -2445,163 +2457,37 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
         drain_program_bus(station_id, listener, ring_cons, delay_drain, stream_connected);
     });
 
-    // ── AUX MONITOR OUTPUT THREAD ────────────────────────────────────────────────────────────────
-    // Owns the second cpal stream: opens it when the operator picks a device, closes it when they
-    // clear the choice, reopens it when they switch. It is the ONLY thing that installs the ring
-    // producer into BusState, so "no device chosen = silence" is true in the audio path itself and
-    // not merely in a comment.
+    // ── MONITOR OUTPUT THREAD — the AUX monitor AND the PFL cue output ─────────────────────────────────────
+    // Each owns its own cpal stream on a device the OPERATOR chose: opened when picked, closed when cleared,
+    // reopened when switched, retried slowly while absent — never a fallback to another device. It is the ONLY
+    // thing that installs either ring producer into BusState, so "no device chosen = silence" is true in the
+    // audio path itself. One thread for both (they share the one AuxCmd queue into the callback — one producer).
     //
-    // Its own clock: the aux device runs independently of the station device. The callback drains
-    // what the mixer produced and resamples 44100 -> the aux rate with a persistent phase; on
-    // underrun it writes silence rather than stretching, and the writer bounds the ring so latency
-    // cannot creep. Two clocks always drift; this bounds the consequence to an occasional tick on a
-    // MONITOR feed, and it never touches air.
+    // Its own clock per device: the stream's callback drains what the mixer produced and resamples 44100 -> the
+    // device rate with a persistent phase and a sub-audible ratio nudge toward a target fill; on underrun it
+    // decays to silence rather than stretching. Two clocks always drift; this bounds the consequence to an
+    // occasional tick on a MONITOR feed, and it never touches air.
     {
-        let req_aux = aux_req.clone();
         let mut aux_tx = aux_cmd_prod;
-        let aux_frames = aux_frames_ctr_shared;
-        // Deliver an aux command to the callback. The queue holds 16 and these happen when an operator
-        // picks a device, so a full queue means the callback is not running; retry briefly, then give up
-        // loudly (the next device change or retry sends it again).
-        let mut send_aux = move |c: AuxCmd| {
+        // Deliver a command to the callback. The queue holds 16 and these happen when an operator picks a
+        // device, so a full queue means the callback is not running; retry briefly, then give up loudly.
+        let mut send = move |c: AuxCmd| {
             let mut c = c;
             for _ in 0..200 {
                 match aux_tx.try_push(c) { Ok(()) => return, Err(back) => { c = back; std::thread::sleep(std::time::Duration::from_millis(5)); } }
             }
-            eprintln!("[RUST] Station {} AUX command not delivered (callback not running)", station_id);
+            eprintln!("[RUST] Station {} monitor-output command not delivered (callback not running)", station_id);
         };
+        let cue = cue_status(station_id);
+        let aux_req_t = aux_req.clone();
         std::thread::spawn(move || {
-            use cpal::traits::{DeviceTrait, StreamTrait};
-            let mut open_name = String::new();
-            let mut _stream: Option<cpal::Stream> = None;
-            // A REQUESTED-BUT-ABSENT device is a normal state, not an error to hammer: the operator may
-            // have picked headphones that are currently unplugged. Retry slowly and log once, instead
-            // of re-attempting every poll (which logged 4x/second) or giving up forever (which would
-            // never notice the device coming back).
-            let mut retry_at: Option<std::time::Instant> = None;
+            // Built HERE: a cpal Stream is not Send, so each output's stream lives and dies on this thread.
+            let mut outs = [
+                MonOut::new("AUX monitor", "aux", aux_req_t, aux_frames_ctr_shared, None, AuxCmd::Attach, || AuxCmd::Detach),
+                MonOut::new("PFL cue", "cue", cue.req.clone(), cue.frames.clone(), Some(cue.clone()), AuxCmd::AttachCue, || AuxCmd::DetachCue),
+            ];
             loop {
-                let want = req_aux.lock().map(|r| r.clone()).unwrap_or_default();
-                let retry_due = retry_at.map(|t| std::time::Instant::now() >= t).unwrap_or(false);
-                if want != open_name || (retry_due && !want.is_empty() && _stream.is_none()) {
-                    // Tear down first, always: clearing the producer stops the mixer writing before
-                    // the stream that drains it goes away.
-                    let changed = want != open_name;
-                    send_aux(AuxCmd::Detach);
-                    if _stream.is_some() || (changed && !open_name.is_empty()) {
-                        eprintln!("[RUST] Station {} AUX monitor output closed", station_id);
-                    }
-                    _stream = None;
-                    open_name = want.clone();
-                    retry_at = None;
-
-                    if !open_name.is_empty() {
-                        match open_named_output_device(station_id, &open_name) {
-                            Some((device, sr, ch)) => {
-                                let rb = HeapRb::<f32>::new(AUX_BUS_BUF);
-                                let (prod, mut cons) = rb.split();
-                                send_aux(AuxCmd::Attach(prod));
-                                let frames_ctr = aux_frames.clone();
-
-                                let cfg = cpal::StreamConfig {
-                                    channels: ch,
-                                    sample_rate: cpal::SampleRate(sr),
-                                    buffer_size: cpal::BufferSize::Default,
-                                };
-                                let mut phase: f64 = 0.0;
-                                let base_step: f64 = PROGRAM_RATE as f64 / sr as f64;
-                                let mut cur = (0.0f32, 0.0f32);
-                                let mut nxt = (0.0f32, 0.0f32);
-                                let mut primed = false;
-                                // Target ring fill (stereo samples). The two device clocks never agree
-                                // exactly, so SOMETHING has to absorb the difference. Dropping samples
-                                // does it audibly; nudging the resample ratio by a fraction of a
-                                // percent does it inaudibly, which is how a monitor bus should behave.
-                                let target_fill: f64 = (sr as f64 * 0.04 * 2.0).max(256.0); // ~40 ms
-
-                                let built = device.build_output_stream::<f32, _, _>(
-                                    &cfg,
-                                    move |data: &mut [f32], _| {
-                                        let _rt = RtScope::enter();   // S6 — trap scope (no-op in release)
-                                        let _ftz = FtzScope::enter(); // S7 — denormals flushed (the underrun decay below generates them)
-                                        let frames = data.len() / ch as usize;
-                                        if !primed {
-                                            let a = cons.try_pop().and_then(|l| cons.try_pop().map(|r| (l, r)));
-                                            let b = cons.try_pop().and_then(|l| cons.try_pop().map(|r| (l, r)));
-                                            match (a, b) {
-                                                (Some(x), Some(y)) => { cur = x; nxt = y; primed = true; }
-                                                _ => { data.iter_mut().for_each(|x| *x = 0.0); return; }
-                                            }
-                                        }
-                                        // DRIFT CORRECTION, not sample dropping. Nudge the resample
-                                        // ratio by at most ±0.3% toward the target fill — well under
-                                        // the ~1% where pitch shift becomes audible, and it removes
-                                        // the need to throw samples away at all.
-                                        let fill = cons.occupied_len() as f64;
-                                        let err = (fill - target_fill) / target_fill;          // -1..+n
-                                        let step = base_step * (1.0 + err.clamp(-1.0, 1.0) * 0.003);
-                                        for f in 0..frames {
-                                            while phase >= 1.0 {
-                                                cur = nxt;
-                                                nxt = match cons.try_pop() {
-                                                    Some(l) => (l, cons.try_pop().unwrap_or(l)),
-                                                    None => {
-                                                        // UNDERRUN: fade toward silence instead of
-                                                        // stepping to zero. A hard jump to 0 mid-wave
-                                                        // is itself a click — the very artifact this
-                                                        // path is supposed to avoid. Never repeats a
-                                                        // tail: it decays and stays there.
-                                                        (cur.0 * 0.5, cur.1 * 0.5)
-                                                    }
-                                                };
-                                                phase -= 1.0;
-                                            }
-                                            let t = phase as f32;
-                                            let l = cur.0 + (nxt.0 - cur.0) * t;
-                                            let r = cur.1 + (nxt.1 - cur.1) * t;
-                                            if ch == 2 { data[f * 2] = l; data[f * 2 + 1] = r; }
-                                            else { data[f] = (l + r) * 0.5; }
-                                            phase += step;
-                                        }
-                                        // Proof of flow, not merely of opening.
-                                        frames_ctr.fetch_add(frames as u64, Ordering::Relaxed);
-                                    },
-                                    |err| eprintln!("[cpal aux] {}", err),
-                                    None,
-                                );
-                                match built {
-                                    Ok(st) => {
-                                        if let Err(e) = st.play() {
-                                            eprintln!("[RUST] Station {} AUX stream.play(): {}", station_id, e);
-                                            send_aux(AuxCmd::Detach);
-                                            retry_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
-                                        } else {
-                                            eprintln!("[RUST] Station {} AUX monitor output opened ({}Hz {}ch)", station_id, sr, ch);
-                                            _stream = Some(st);
-                                        }
-                                    }
-                                    Err(e) => {
-                                        eprintln!("[RUST] Station {} AUX build_output_stream: {}", station_id, e);
-                                        send_aux(AuxCmd::Detach);
-                                        retry_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
-                                    }
-                                }
-                            }
-                            None => {
-                                // NO FALLBACK. A named device that is not present stays unopened and
-                                // the bus stays silent. Substituting a different output for the
-                                // operator is the unsafe behaviour this whole path exists to avoid.
-                                // Logged ONCE per change; the slow retry below is silent until it
-                                // succeeds, so an unplugged headphone does not fill the log.
-                                if changed {
-                                    eprintln!("[RUST] Station {} AUX monitor device not found: {:?} — staying silent (will retry)", station_id, open_name);
-                                }
-                                retry_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
-                            }
-                        }
-                    } else {
-                        eprintln!("[RUST] Station {} AUX monitor output closed (no device selected)", station_id);
-                    }
-                }
+                for o in outs.iter_mut() { o.service(station_id, &mut send); }
                 std::thread::sleep(std::time::Duration::from_millis(250));
             }
         });
@@ -2838,6 +2724,13 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 let Some(idx) = deck_index(&deck) else { continue };
                                 ctl.params.pfl[idx] = on;
                                 ctl.params_changed();
+                            }
+                            AudioCmd::SetCueDevice(name) => {
+                                // The monitor-output thread opens / closes the device; the callback learns the MODE
+                                // from the Params block: a chosen device takes PFL off the main output entirely.
+                                ctl.params.pfl_to_device = !name.is_empty();
+                                ctl.params_changed();
+                                if let Ok(mut r) = cue_status(station_id).req.lock() { *r = name; }
                             }
                             AudioCmd::SetPflDim(db) => {
                                 ctl.params.pfl_dim_db = db.clamp(PFL_DIM_DB_RANGE.0, PFL_DIM_DB_RANGE.1);
@@ -3301,6 +3194,164 @@ fn open_output_device(
 /// system default: the aux monitor bus must only ever reach a device the operator chose. "No device
 /// picked" has to mean silence, not "whatever was default" — on a broadcast machine the default could
 /// be anything, including the very speakers feeding a mic.
+// ── PFL CUE OUTPUT — its status, per station (docs/dsp-pfl-2026-09-26.md "PFL output device") ───────────────
+// What the operator chose (`req`, "" = same as the main output), where it stands (`state`), and proof of flow
+// (`frames`). Read by audio_cue_state and the meters frame; written by the monitor-output thread.
+pub(crate) const CUE_SAME_AS_MAIN: u8 = 0;
+pub(crate) const CUE_OPENING: u8 = 1;
+pub(crate) const CUE_OPEN: u8 = 2;
+pub(crate) const CUE_NOT_FOUND: u8 = 3;
+pub(crate) const CUE_FAILED: u8 = 4;
+pub(crate) struct CueStatus {
+    pub req: Arc<Mutex<String>>,
+    pub state: std::sync::atomic::AtomicU8,
+    pub frames: Arc<AtomicU64>,
+    pub rate: std::sync::atomic::AtomicU32,
+}
+static CUE_STATUS: std::sync::OnceLock<Mutex<HashMap<u32, Arc<CueStatus>>>> = std::sync::OnceLock::new();
+pub(crate) fn cue_status(station_id: u32) -> Arc<CueStatus> {
+    let m = CUE_STATUS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut g = m.lock().unwrap_or_else(|e| e.into_inner());
+    g.entry(station_id).or_insert_with(|| Arc::new(CueStatus {
+        req: Arc::new(Mutex::new(String::new())), state: std::sync::atomic::AtomicU8::new(CUE_SAME_AS_MAIN),
+        frames: Arc::new(AtomicU64::new(0)), rate: std::sync::atomic::AtomicU32::new(0),
+    })).clone()
+}
+pub(crate) fn cue_state_name(v: u8) -> &'static str {
+    match v { CUE_SAME_AS_MAIN => "same_as_main", CUE_OPENING => "opening", CUE_OPEN => "open", CUE_NOT_FOUND => "not_found", _ => "failed" }
+}
+
+/// One monitor output on its OWN device — the AUX monitor, or the PFL cue. The device-open path the AUX monitor
+/// has always had, generalised so the cue reuses it exactly (open by the chosen name, no fallback, slow retry,
+/// consumer-side drift correction, underrun decays to silence).
+struct MonOut {
+    label: &'static str,
+    tag: &'static str,
+    req: Arc<Mutex<String>>,
+    frames: Arc<AtomicU64>,
+    status: Option<Arc<CueStatus>>,
+    attach: fn(HeapProd<f32>) -> AuxCmd,
+    detach: fn() -> AuxCmd,
+    open_name: String,
+    stream: Option<cpal::Stream>,
+    retry_at: Option<std::time::Instant>,
+}
+impl MonOut {
+    fn new(label: &'static str, tag: &'static str, req: Arc<Mutex<String>>, frames: Arc<AtomicU64>, status: Option<Arc<CueStatus>>,
+           attach: fn(HeapProd<f32>) -> AuxCmd, detach: fn() -> AuxCmd) -> MonOut {
+        MonOut { label, tag, req, frames, status, attach, detach, open_name: String::new(), stream: None, retry_at: None }
+    }
+    fn set_state(&self, v: u8) { if let Some(s) = &self.status { s.state.store(v, Ordering::Relaxed); } }
+    fn service(&mut self, station_id: u32, send: &mut dyn FnMut(AuxCmd)) {
+        use cpal::traits::{DeviceTrait, StreamTrait};
+        let want = self.req.lock().map(|r| r.clone()).unwrap_or_default();
+        // A REQUESTED-BUT-ABSENT device is a normal state, not an error to hammer: the operator may have picked
+        // headphones that are currently unplugged. Retry slowly and log once.
+        let retry_due = self.retry_at.map(|t| std::time::Instant::now() >= t).unwrap_or(false);
+        if !(want != self.open_name || (retry_due && !want.is_empty() && self.stream.is_none())) { return; }
+        // Tear down first, always: clearing the producer stops the mixer writing before the stream that
+        // drains it goes away.
+        let changed = want != self.open_name;
+        send((self.detach)());
+        if self.stream.is_some() || (changed && !self.open_name.is_empty()) {
+            eprintln!("[RUST] Station {} {} output closed", station_id, self.label);
+        }
+        self.stream = None;
+        self.open_name = want.clone();
+        self.retry_at = None;
+        if self.open_name.is_empty() {
+            self.set_state(CUE_SAME_AS_MAIN);
+            if changed { eprintln!("[RUST] Station {} {} output closed (no device selected)", station_id, self.label); }
+            return;
+        }
+        self.set_state(CUE_OPENING);
+        let Some((device, sr, ch)) = open_named_output_device(station_id, &self.open_name) else {
+            // NO FALLBACK. A named device that is not present stays unopened and the bus stays silent.
+            // Substituting a different output for the operator is the unsafe behaviour this path exists to avoid.
+            if changed { eprintln!("[RUST] Station {} {} device not found: {:?} — staying silent (will retry)", station_id, self.label, self.open_name); }
+            self.set_state(CUE_NOT_FOUND);
+            self.retry_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+            return;
+        };
+        let rb = HeapRb::<f32>::new(AUX_BUS_BUF);
+        let (prod, mut cons) = rb.split();
+        send((self.attach)(prod));
+        let frames_ctr = self.frames.clone();
+        let cfg = cpal::StreamConfig { channels: ch, sample_rate: cpal::SampleRate(sr), buffer_size: cpal::BufferSize::Default };
+        let mut phase: f64 = 0.0;
+        let base_step: f64 = PROGRAM_RATE as f64 / sr as f64;
+        let mut cur = (0.0f32, 0.0f32);
+        let mut nxt = (0.0f32, 0.0f32);
+        let mut primed = false;
+        // Target ring fill (stereo samples). The two device clocks never agree exactly, so SOMETHING has to absorb
+        // the difference; nudging the resample ratio by a fraction of a percent does it inaudibly.
+        let target_fill: f64 = (sr as f64 * 0.04 * 2.0).max(256.0); // ~40 ms
+        let tag = self.tag;
+        let built = device.build_output_stream::<f32, _, _>(
+            &cfg,
+            move |data: &mut [f32], _| {
+                let _rt = RtScope::enter();   // S6 — trap scope (no-op in release)
+                let _ftz = FtzScope::enter(); // S7 — denormals flushed (the underrun decay below generates them)
+                let frames = data.len() / ch as usize;
+                if !primed {
+                    let a = cons.try_pop().and_then(|l| cons.try_pop().map(|r| (l, r)));
+                    let b = cons.try_pop().and_then(|l| cons.try_pop().map(|r| (l, r)));
+                    match (a, b) {
+                        (Some(x), Some(y)) => { cur = x; nxt = y; primed = true; }
+                        _ => { data.iter_mut().for_each(|x| *x = 0.0); return; }
+                    }
+                }
+                // DRIFT CORRECTION, not sample dropping: nudge the resample ratio by at most ±0.3% toward the
+                // target fill — well under the ~1% where pitch shift becomes audible.
+                let fill = cons.occupied_len() as f64;
+                let err = (fill - target_fill) / target_fill;
+                let step = base_step * (1.0 + err.clamp(-1.0, 1.0) * 0.003);
+                for f in 0..frames {
+                    while phase >= 1.0 {
+                        cur = nxt;
+                        nxt = match cons.try_pop() {
+                            Some(l) => (l, cons.try_pop().unwrap_or(l)),
+                            // UNDERRUN: fade toward silence instead of stepping to zero (a step is a click).
+                            None => (cur.0 * 0.5, cur.1 * 0.5),
+                        };
+                        phase -= 1.0;
+                    }
+                    let t = phase as f32;
+                    let l = cur.0 + (nxt.0 - cur.0) * t;
+                    let r = cur.1 + (nxt.1 - cur.1) * t;
+                    if ch == 2 { data[f * 2] = l; data[f * 2 + 1] = r; } else { data[f] = (l + r) * 0.5; }
+                    phase += step;
+                }
+                // Proof of flow, not merely of opening.
+                frames_ctr.fetch_add(frames as u64, Ordering::Relaxed);
+            },
+            move |err| eprintln!("[cpal {}] {}", tag, err),
+            None,
+        );
+        match built {
+            Ok(st) => {
+                if let Err(e) = st.play() {
+                    eprintln!("[RUST] Station {} {} stream.play(): {}", station_id, self.label, e);
+                    send((self.detach)());
+                    self.set_state(CUE_FAILED);
+                    self.retry_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+                } else {
+                    eprintln!("[RUST] Station {} {} output opened ({}Hz {}ch)", station_id, self.label, sr, ch);
+                    if let Some(s) = &self.status { s.rate.store(sr, Ordering::Relaxed); }
+                    self.set_state(CUE_OPEN);
+                    self.stream = Some(st);
+                }
+            }
+            Err(e) => {
+                eprintln!("[RUST] Station {} {} build_output_stream: {}", station_id, self.label, e);
+                send((self.detach)());
+                self.set_state(CUE_FAILED);
+                self.retry_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+            }
+        }
+    }
+}
+
 fn open_named_output_device(station_id: u32, name: &str) -> Option<(cpal::Device, u32, u16)> {
     use cpal::traits::{DeviceTrait, HostTrait};
     let device = cpal::available_hosts().into_iter().find_map(|host_id| {
@@ -4252,7 +4303,25 @@ pub(crate) fn mixer_callback(
     // setting (pfl_dim_db) plus the cue sum — the console "PFL over monitor". Everything above — the MONITOR and
     // LOCAL loudness taps, PGM, the stream, the AUX send — is already done, so none of them ever carries PFL.
     // With no PFL on, this block is skipped and the output is bit-identical to before.
-    let (dl, dr): (&[f32], &[f32]) = if pfl_any {
+    //
+    // PFL OUTPUT DEVICE (a cue device chosen on this machine — pfl_to_device): PFL goes ONLY there, the main output
+    // is left exactly as it is. The cue device carries the programme at the dim level plus the cue while any PFL is
+    // on (the operator hears context), and silence otherwise (the stream keeps flowing, so its clock stays locked).
+    // A chosen device that is not open has no ring: PFL is then silent — never a fallback to the speakers.
+    if bus.pfl_to_device {
+        let dim = 10f32.powf(bus.pfl_dim_db / 20.0);
+        if let Some(ref mut prod) = bus.cue_ring_prod {
+            if pfl_any {
+                for f in 0..prog_frames {
+                    let _ = prod.try_push((dl[f] * dim + cue_l[f]).clamp(-1.0, 1.0));
+                    let _ = prod.try_push((dr[f] * dim + cue_r[f]).clamp(-1.0, 1.0));
+                }
+            } else {
+                for _ in 0..prog_frames { let _ = prod.try_push(0.0); let _ = prod.try_push(0.0); }
+            }
+        }
+    }
+    let (dl, dr): (&[f32], &[f32]) = if pfl_any && !bus.pfl_to_device {
         let dim = 10f32.powf(bus.pfl_dim_db / 20.0);
         let (pl, pr) = (&mut pfl_l[..prog_frames], &mut pfl_r[..prog_frames]);
         for f in 0..prog_frames {
@@ -4508,9 +4577,12 @@ mod pfl_over_monitor {
             Some((self.amp * (2.0 * std::f64::consts::PI * self.freq * i as f64 / 44_100.0).sin()) as f32)
         }
     }
-    struct Out { local: Vec<f32>, stream: Vec<f32>, pgm: f64, monitor: f64, allocs: u64 }
+    struct Out { local: Vec<f32>, stream: Vec<f32>, cue: Vec<f32>, pgm: f64, monitor: f64, allocs: u64 }
+    /// The PFL output device: none chosen (same as main), chosen and OPEN (a ring), chosen but MISSING (no ring).
+    #[derive(Clone, Copy, PartialEq)] enum Cue { Main, Open, Missing }
 
-    fn run(buffers: usize, pfl: bool, dim_db: f32, peq_db: Option<f32>) -> Out {
+    fn run(buffers: usize, pfl: bool, dim_db: f32, peq_db: Option<f32>) -> Out { run_cue(buffers, pfl, dim_db, peq_db, Cue::Main) }
+    fn run_cue(buffers: usize, pfl: bool, dim_db: f32, peq_db: Option<f32>, cue: Cue) -> Out {
         let (prod, mut stream_cons) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
         let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)));
         let h = b.handles.take().unwrap();
@@ -4520,7 +4592,11 @@ mod pfl_over_monitor {
         b.decks[0].active = true; b.decks[0].paused = false; b.decks[0].volume = 1.0;
         b.decks[7].source = Some(DeckFeed::prefilled(Tone { n: 0, freq: 1000.0, amp: 0.1 }, cap));
         b.decks[7].active = true; b.decks[7].paused = false;
+        // the cue device's ring, as the monitor-output thread installs it when the chosen device OPENS
+        let mut cue_cons = None;
+        if cue == Cue::Open { let (p, c) = HeapRb::<f32>::new(AUX_BUS_BUF * 16).split(); b.cue_ring_prod = Some(p); cue_cons = Some(c); }
         let mut cur = b.params();
+        cur.pfl_to_device = cue != Cue::Main;
         cur.volume[7] = 0.3;        // the fader — PFL is PRE-fader, so it must not matter
         cur.muted[7] = true;        // channel OFF — PFL is PRE-cut, so it must not matter either
         cur.pfl[7] = pfl;
@@ -4536,7 +4612,7 @@ mod pfl_over_monitor {
         let (fin, playing) = (FinishedFlags::new(), Arc::new(AtomicBool::new(true)));
         let mut sc = Scratch::new();
         let (mut data, mut pop) = (vec![0f32; 960], vec![0f32; 960]);
-        let mut o = Out { local: Vec::new(), stream: Vec::new(), pgm: 0.0, monitor: 0.0, allocs: 0 };
+        let mut o = Out { local: Vec::new(), stream: Vec::new(), cue: Vec::new(), pgm: 0.0, monitor: 0.0, allocs: 0 };
         for _ in 0..buffers {
             let a0 = crate::rt::tl_rt_allocs();
             mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
@@ -4546,6 +4622,9 @@ mod pfl_over_monitor {
                 let got = stream_cons.pop_slice(&mut pop);
                 if got == 0 { break; }
                 for f in 0..got / 2 { o.stream.push(pop[2 * f]); }
+            }
+            if let Some(c) = cue_cons.as_mut() {
+                loop { let got = c.pop_slice(&mut pop); if got == 0 { break; } for f in 0..got / 2 { o.cue.push(pop[2 * f]); } }
             }
             while garbage.try_pop().is_some() {}
         }
@@ -4583,6 +4662,38 @@ mod pfl_over_monitor {
         assert_eq!(off.pgm, on.pgm, "PFL reached the PGM tap");
         assert_eq!(off.monitor, on.monitor, "PFL reached the MONITOR tap");
         assert_eq!(on.allocs + on20.allocs, 0);
+    }
+
+    #[test]
+    fn a_cue_device_takes_pfl_off_the_main_output_and_carries_the_dimmed_programme() {
+        let n = 300;
+        let off = run(n, false, -12.0, None);
+        let on = run_cue(n, true, -12.0, None, Cue::Open);
+        let idle = run_cue(n, false, -12.0, None, Cue::Open);
+        let s1: Vec<f32> = (0..n * 480).map(|i| (0.1 * (2.0 * std::f64::consts::PI * 1000.0 * i as f64 / 44_100.0).sin()) as f32).collect();
+        let main_same = off.local.iter().zip(&on.local).all(|(a, b)| a.to_bits() == b.to_bits());
+        let dim = 10f32.powf(-12.0 / 20.0);
+        let err = (0..n * 480).map(|f| (on.cue[f] - (off.local[f] * dim + s1[f]).clamp(-1.0, 1.0)).abs()).fold(0f32, f32::max);
+        let idle_silent = idle.cue.len() == n * 480 && idle.cue.iter().all(|&x| x == 0.0);
+        let stream_same = off.stream.iter().zip(&on.stream).all(|(a, b)| a.to_bits() == b.to_bits());
+        println!("[pfl-cue] cue device OPEN, PFL on S1: MAIN output bit-identical to PFL off: {} · cue device = programme × dim + S1 to {:.1e} ({} frames) · no PFL: cue device silent ({} frames of 0) · stream bit-identical: {} · {} allocations",
+                 main_same, err, on.cue.len(), idle.cue.len(), stream_same, on.allocs + idle.allocs);
+        assert!(main_same, "PFL reached the main output with a cue device chosen");
+        assert_eq!(on.cue.len(), n * 480);
+        assert!(err < 1e-6, "the cue device is not programme × dim + the pre-fader channel");
+        assert!(idle_silent, "the cue device carried something with no PFL on");
+        assert!(stream_same);
+        assert_eq!(on.allocs + idle.allocs, 0);
+    }
+
+    #[test]
+    fn a_missing_cue_device_leaves_pfl_silent_never_the_speakers() {
+        let n = 200;
+        let off = run(n, false, -12.0, None);
+        let missing = run_cue(n, true, -12.0, None, Cue::Missing);
+        let main_same = off.local.iter().zip(&missing.local).all(|(a, b)| a.to_bits() == b.to_bits());
+        println!("[pfl-cue] cue device chosen but MISSING, PFL on S1: main output bit-identical to PFL off (no fallback to the speakers): {}", main_same);
+        assert!(main_same, "a missing cue device fell back to the main output");
     }
 
     #[test]

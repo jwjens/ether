@@ -4,6 +4,7 @@ import { designationView, refreshBanner, type RefreshBanner } from "../lib/desig
 import { HealthDashboard } from "./health/HealthDashboard";
 import { PanelStack, HealthPanel, PanelMeter, StatTile } from "./health/sectionChrome";
 import MicInputsHealth from "./health/MicInputsHealth";
+import PflCueHealth from "./health/PflCueHealth";
 import { dbToPercent } from "./health/meterScale";
 import { SpotTimeline } from "./health/SpotTimeline";
 import { useContainerSize, WALL_W, WALL_H } from "./health/useContainerWidth";
@@ -1303,6 +1304,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
 
         <AudioProcessingPanel id="audio-processing" stationId={stationId} stationUuid={stationUuid} />
         <MicInputsHealth id="mic-inputs" stationId={stationId ?? null} />
+        <PflCueHealth id="pfl-output" stationId={stationId ?? null} />
 
         {/* ── SPOT SCHEDULE — anchors vs what actually airs. Display-only. ────────────────────────
             The point of this table is the PROJECTED column: a spot that is going to miss its anchor

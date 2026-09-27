@@ -74,5 +74,33 @@ console.log("\n2 - static: every engine strip sends PFL to the engine, and its l
   check(fs.readFileSync(path.join(__dirname, "..", "docs", "help-channel-faders.md"), "utf8").includes("## Listening to a channel off air (PFL)"), "help-channel-faders.md has the PFL section");
 }
 
+console.log("\n3 - the PFL output device: machine-local, delivered to THIS station's engine, never a fallback");
+{
+  const calls2 = [];
+  A.audioSetCueDevice = (sid, dev) => { calls2.push({ sid, dev }); return true; };
+  const e4 = mk(4);
+  e4._applyCueDeviceFromKv(10_000);
+  check(calls2.length === 0, "never set → nothing sent (the engine starts at 'same as main')");
+  kv[4].pfl_cue_device = "Headphones (USB Audio)"; kv[1].pfl_cue_device = "Other Station Phones";
+  e4._applyCueDeviceFromKv(13_001);
+  check(calls2.length === 1 && calls2[0].sid === 4 && calls2[0].dev === "Headphones (USB Audio)", "station 4's cue device goes to station 4 only", JSON.stringify(calls2));
+  kv[4].pfl_cue_device = "";
+  e4._applyCueDeviceFromKv(16_002);
+  check(calls2.length === 2 && calls2[1].dev === "", "back to 'same as main' is delivered");
+  kv[4].pfl_cue_device = "Headphones (USB Audio)";
+  calls2.length = 0;
+  mk(4)._applyCueDeviceFromKv(50_000);
+  check(calls2.length === 1, "a fresh engine gets the stored cue device");
+  const src = (f) => fs.readFileSync(path.join(__dirname, "..", f), "utf8");
+  check(/'pfl_cue_device'\]\)/.test(src("electron/sync/handlers/station_config_kv.js")), "pfl_cue_device is LOCAL_ONLY (never synced)");
+  const main = src("electron/main.js");
+  const set = /ipcMain\.handle\("audio:set-cue-device"[\s\S]*?\n\}\);/.exec(main);
+  check(!!set && set[0].indexOf("setCueDevice") < set[0].indexOf("stationConfigKvSetLocal") && !/upsertByKey/.test(set[0]), "audio:set-cue-device: engine first, then set-local (never upsertByKey)");
+  check(/cue device not found — PFL silent/.test(src("src/components/ConsoleStrip.tsx")), "the strip says 'cue device not found — PFL silent'");
+  check(/<PflCueHealth /.test(src("src/components/HealthMonitor.tsx")), "Health Monitor → PFL Output");
+  const rs = src("native/src/audio.rs");
+  check(/NO FALLBACK/.test(rs) && /MonOut::new\("PFL cue"/.test(rs) && /MonOut::new\("AUX monitor"/.test(rs), "the cue reuses the AUX monitor's device-open path (MonOut), which has no fallback");
+}
+
 console.log(`\n${fail === 0 ? "ALL PASS" : "FAILED"}  (${pass} passed, ${fail} failed)`);
 process.exit(fail === 0 ? 0 : 1);
