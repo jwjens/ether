@@ -416,3 +416,120 @@ spectrums moving under the curve while a band is dragged, and the master GEQ's s
   - undefined-calls, preload-bridge, ipc-contract, one-switch, audio-isolation PASS;
   - cmd-routing 7, enginestate-wire 15;
   - leak guard OK; `npm run build` OK.
+
+---
+
+## Regression: the master GEQ's spectrum (2026-09-26)
+
+**Jeff's report (verbatim):** "the master GEQ view's spectrum is now 31 flat one-colour bars — the old analyser drew a
+smooth, detailed, colour-coded wave; this is worse and the proposal said "reuse"."
+
+**Jeff's ruling (verbatim), with the old master rack on screen:** "bring back its level-coloured bars with glow and
+peak-hold markers — green/yellow/red by level, per band — at the new fine resolution (the ~240 smoothed points from
+the meter thread, drawn as fine bars or a filled wave with the same level colouring). Never one flat colour.
+Pre-rack faint, post-rack full colour, curve on top. Same component for master and channel. Screenshot old vs new
+in the doc."
+
+**Status:** fixed as ruled. What it looks like live is UNVERIFIED until Jeff's check.
+
+### What the old view was (from git)
+
+- **The rack's GEQ editor at 2b9f1cf** drew **ten translucent bars in one colour** (`--slot-eq` at 0.18
+  opacity) behind its faders.
+- **Before slice 4, the master rack was `MasterEQRack.tsx`** (deleted in 7089096). **That is the view in Jeff's
+  image:**
+  - ten bars, coloured by level (cyan → green → amber → red on a 0–1 scale normalised to a running peak);
+  - a gradient and a glow on each bar;
+  - a white peak-hold line.
+- **The analyser behind both** was `eq.rs`'s: a 2048-point FFT, octave bands, normalised to a running peak.
+- **No view in the history drew a continuous wave** from the engine's spectrum. StudioPro's EQ and the mixer strip
+  use their own Web Audio analysers, and they draw bars.
+
+**What slice 8 had broken:**
+- it drew the 31 bands in one flat colour;
+- it measured in absolute dBFS, so music never climbed the colour scale;
+- it dropped the glow;
+- it hid the peak markers behind a toggle that defaulted off.
+
+### What was built
+
+- **The engine publishes a fine wave** besides the 31 bands (`native/src/rta.rs`):
+  - 241 points, 20 Hz × 1000^(k/240), about 24 per octave;
+  - each is the power sum of the FFT bins in a window 1/24 octave wide, **never narrower than 3 bins**;
+  - so a tone reads its level at the point nearest it at every frequency. Below ~1.1 kHz that window is a constant
+    32 Hz: smoother there than 1/24 octave, with position resolved to one 10.8 Hz bin;
+  - the same calibration and ballistics as the bands;
+  - on the wire as `finePre` / `finePost`. **The bands stay** as the numeric readout.
+- **`RtaBars` (new), the one component both views draw:**
+  - one bar per fine point, on the caller's own x (the channel curve's, or the GEQ's octave axis);
+  - **coloured by height through the old rack's levels:** green at the base, then yellow, amber and red. Only the
+    loudest bars reach red;
+  - post-rack **glowing** (the old box-shadow); pre-rack **faint**; **white peak-hold markers** per point.
+- **The range follows the running peak** like the old analyser's normaliser (`autoTop`):
+  - the top sits about 6 dB above the loudest recent point, released at 2 dB/s, in 3 dB steps so it doesn't
+    shimmer;
+  - the view covers the 60 dB below it;
+  - **the label on the right says what the top really is in dBFS.** The old 0–1 scale never said.
+- **The channel view** (`EqCurve`) and **the master GEQ view** (`GeqPanel`, split out of `GeqEditor` so the
+  harness can render it) both draw `RtaBars`, with the curve and the faders on top.
+- **PEAK HOLD is now ON by default** (toggle kept). ⚠ **This supersedes ruling 3's "off by default":** the old rack
+  always showed its markers and the new ruling brings them back. Say if the default should go back to off.
+- **Retired:** the unused 31-band step outline (`rtaPath`) and the three `--rta-*` colour tokens.
+
+### Old vs new: the same moment of the same music
+
+![old vs new spectrum](dsp-channel-rta-old-vs-new.png)
+
+`docs/dsp-channel-rta-old-vs-new.png`. **How it was made:**
+- **Data:** `native/goldens/inputs/music.wav` at 22 s, through the **real callback**, with the master GEQ at
+  +3 @ 63 · −4 @ 250 · +6 @ 1k · −3 @ 8k. Recorded by the engine test `rta_screens_fixture`, which runs only when
+  `ETHER_WRITE_RTA_SCREENS` is set.
+- **OLD:** `MasterEQRack`'s bar block **verbatim from git 7089096~1**, fed the old analyser's **own output**. The
+  analyser is `eq.rs@2b9f1cf`'s `update_spectrum`, its maths copied verbatim into the test, run on the same post-GEQ
+  samples. The peak hold is `MasterEQRack`'s.
+- **NEW:** the **real components, unmodified**. `GeqPanel` (master) and `EqCurve` (a channel: the same music on S1
+  through HPF 100 Hz + a PEQ) draw the meter thread's frames for the same samples.
+- **Rendered** by `scripts/rta-screens/capture.js` (esbuild bundle of `entry.tsx`, the app's own CSS, an offscreen
+  Electron capture). **Re-run:** the two commands in its header.
+- **What it is not:** a screenshot of the running app. That is Jeff's screen check.
+
+**Jeff decides which is better.**
+
+### Receipts
+
+- **`[rta-fine]`** a −18 dBFS tone peaks at the fine point nearest it, at −18 −0.29 dB at worst:
+
+  | Tone | Peak point | Level |
+  |---|---|---|
+  | 60 Hz | 63.2 Hz (+3.2, within one 10.8 Hz bin) | −18.07 |
+  | 125 Hz | 126.2 Hz | −18.08 |
+  | 440 Hz | 435.0 Hz | −18.29 |
+  | 1 kHz | 1002.4 Hz | −18.11 |
+  | 3150 Hz | 3169.8 Hz | −18.00 |
+  | 9 kHz | 8933.7 Hz | −18.00 |
+  | 16 kHz | 15886.6 Hz | −18.00 |
+
+  **Fixed in the test:** it first demanded 1/24 octave everywhere. Below ~1 kHz that is finer than one FFT bin, so
+  the bar is now max(1/24 octave, one bin).
+- **The channel frame in the screenshot** (post − pre, the HPF's cut): 30 Hz −30.4 dB, 50 Hz −15.9, 71 Hz −9.8,
+  100 Hz −4.4; 1 kHz +0.2; 2.5 kHz +3.9 (the +4 PEQ band).
+- **Unchanged and still passing:** the sweep (every band ≥ 160 Hz at −18, worst −0.03 dB), HPF post−pre (0.02 dB),
+  GEQ +6 → +5.89, nothing copied when unsubscribed, trap 0.
+- **Suite:** `npm run test:rust` 111 lib + 7 bench + 2 doctests pass, **including the rack-CPU gate this run**.
+- **Goldens:** 43/43 `[null]`, `[rack-null]`, `[ch-out-null]`; trap 43 renders 0; NAPI 43/43 on the fresh build
+  (sha256 `ba72bf47…`).
+- **vitest 507/507**, including `rta.test.ts` 8/8:
+  - the fine points are the engine's, bars edge to edge;
+  - the level colours run green to red, four or more colours, never one;
+  - `autoTop`: instant up, 2 dB/s down, 3 dB steps, never above 0 dBFS;
+  - peak hold per point.
+- **`test:rta` 28/28:**
+  - the channel spectrum is `RtaBars` on the curve's own x;
+  - it is filled with the level gradient, never a flat `--rta-*` colour;
+  - post glows; white peak markers; pre faint and post full;
+  - the running-peak range, labelled in dBFS;
+  - the master uses the same component;
+  - PEAK HOLD on by default;
+  - the views draw the fine wave.
+- **Gates:** tsc 0; show-presets 52; rack-eq 30, mic-input 25, pfl 22, dynamics 10, meter contract 30;
+  undefined-calls, preload-bridge, ipc-contract, one-switch, audio-isolation PASS; leak guard OK; build OK.

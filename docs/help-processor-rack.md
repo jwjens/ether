@@ -36,9 +36,10 @@ Each kind of module always has the same colour: **blue** for EQ, **cyan** for lo
 1. **Tap a module** in the strip. The editor below says what you are editing, for example
    *"editing: MONITOR · RIDE"*.
 2. Move the controls. The change is on air straight away, and saved for this station.
-   - **GEQ:** ten band faders over a live spectrum, **FLAT**, and **IN/OUT**. The spectrum shows the programme
-     **before** the GEQ (faint) and **after** it (brighter), both before the master fader. Each fader sits over its
-     own octave. **PEAK HOLD** holds each band's top for 2 s. It's the same analyser as the channel EQ (see
+   - **GEQ:** ten band faders over a live spectrum, **FLAT**, and **IN/OUT**. The spectrum is the old master
+     rack's glowing, level-coloured bars (green, then yellow and red as they rise) with white peak markers, now 24
+     per octave. **Faint bars:** the programme **before** the GEQ. **Bright bars:** **after** it. Both are before
+     the master fader, and each fader stands over its own octave. It's the same display as the channel EQ (see
      **Channel EQ → Reading the spectrum**), and it runs only while this view is open.
    - **RIDE:** Target (the loudness it aims for), Rate (how fast it moves), Clamp (how far it may go).
    - **LIMITER:** Ceiling and Release. The line under the ceiling says where it really limits, for example

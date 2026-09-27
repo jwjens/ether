@@ -110,14 +110,14 @@ export function RtaBar({ rta }: { rta: ReturnType<typeof useRta> }) {
   const f = rta.frame;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 11, color: "var(--text-tertiary)", flexWrap: "wrap" }}
-         title="The live spectrum of this channel, before its fader: faint = before the rack, bright = after it. 31 third-octave bands; the hatched region is too narrow to resolve finely.">
+         title="The live spectrum of this channel, before its fader: faint bars = before the rack, bright bars = after it, coloured green → yellow → red by level; white markers = peak hold. 24 points per octave; the hatched lows are too narrow to resolve finely.">
       <span style={{ fontWeight: 800, letterSpacing: "0.08em" }}>SPECTRUM</span>
-      <span><span style={{ display: "inline-block", width: 12, height: 8, background: "var(--rta-pre)", marginRight: 4 }} />before the rack</span>
-      <span><span style={{ display: "inline-block", width: 12, height: 8, background: "var(--rta-post)", marginRight: 4 }} />after it</span>
+      <span><span style={{ display: "inline-block", width: 12, height: 8, background: "linear-gradient(0deg, #22c55e, #facc15, #ef4444)", opacity: 0.3, marginRight: 4 }} />before the rack (faint)</span>
+      <span><span style={{ display: "inline-block", width: 12, height: 8, background: "linear-gradient(0deg, #22c55e, #facc15, #ef4444)", marginRight: 4, boxShadow: "0 0 5px #22c55e" }} />after it</span>
       <span>{rta.unavailable ? `— ${rta.unavailable}` : !f ? "— waiting for the engine" : !f.fed ? "— nothing playing on this channel" : ""}</span>
       <div style={{ flex: 1 }} />
       <button onClick={() => rta.setPeakHold(!rta.peakHold)} style={{ ...BTN(rta.peakHold), minHeight: 30, padding: "0 10px", fontSize: 11 }}
-              title="PEAK HOLD — each band's highest level, held 2 s (off by default)">PEAK HOLD {rta.peakHold ? "ON" : "OFF"}</button>
+              title="PEAK HOLD — the white markers: each point's highest level, held 2 s">PEAK HOLD {rta.peakHold ? "ON" : "OFF"}</button>
     </div>
   );
 }

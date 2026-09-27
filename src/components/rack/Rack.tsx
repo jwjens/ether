@@ -36,7 +36,8 @@ import { EQ_LABELS } from "../GraphicEQ";
 import { LABEL, MONO, TOUCH, BTN, Knob } from "./rackUi";
 import ChannelRackView, { RtaBar } from "./ChannelRackView";
 import { useRta } from "../../hooks/useRta";
-import { rtaPath, coarseSpan, geqX, GEQ_F_MIN, GEQ_F_MAX } from "./rta";
+import { geqX, GEQ_F_MIN, GEQ_F_MAX, type RtaFrame } from "./rta";
+import RtaBars from "./RtaBars";
 import { useBoardName } from "../../hooks/useBoardName";
 import { CHANNEL_SLOTS, isChannelSlot, type ChannelSlot } from "./channelRack";
 import { RACK_VIEW_KEY, useChannelRackLamps } from "../../hooks/useChannelRack";
@@ -390,6 +391,19 @@ function MasterRack({ stationId, stationUuid }: Props) {
   );
 }
 
+/** SLICE 8 — the master GEQ's spectrum strip behind its faders: RtaBars (the SAME component as the channel curve) on the
+ *  GEQ's octave axis, so each fader stands over its own octave. Presentational — the screenshot harness renders it with
+ *  the engine's recorded frame (scripts/rta-screens). */
+export function GeqSpectrum({ frame, held }: { frame: RtaFrame | null; held: number[] | null }) {
+  if (!frame?.fed) return null;
+  return (
+    <svg viewBox="0 0 1000 160" preserveAspectRatio="none" aria-hidden
+         style={{ position: "absolute", left: 0, right: 0, top: 0, height: 160, width: "100%", pointerEvents: "none" }}>
+      <RtaBars frame={frame} held={held} x={geqX(1000)} top={0} bottom={160} fMin={GEQ_F_MIN} fMax={GEQ_F_MAX} hatch={false} />
+    </svg>
+  );
+}
+
 /** The GEQ slot's editor: ten touch-sized band faders over the live spectrum, IN/OUT, and FLAT.
  *  SLICE 8 — the spectrum is the RTA (docs/dsp-channel-rta.md): the programme BEFORE the GEQ (faint) and AFTER it
  *  (brighter), 31 third-octave bands on a log axis where each fader sits over its own octave. It replaces the old
@@ -399,9 +413,13 @@ function GeqEditor({ stationId, geq, on, onBands, onIn }: {
 }) {
   void stationId;   // the RTA follows the active station (useRta)
   const rta = useRta("master");
-  const gx = geqX(1000);
-  const f = rta.frame;
-  const coarse = f ? coarseSpan(f.coarseBelowHz, gx, GEQ_F_MIN) : null;
+  return <GeqPanel geq={geq} on={on} onBands={onBands} onIn={onIn} rta={rta} />;
+}
+
+/** The GEQ editor's body, presentational (the screenshot harness renders it with the engine's recorded frame). */
+export function GeqPanel({ geq, on, onBands, onIn, rta }: {
+  geq: GeqModule; on: boolean; onBands: (b: number[]) => void; onIn: (v: boolean) => void; rta: ReturnType<typeof useRta>;
+}) {
   const set = (i: number, v: number) => { const next = [...geq.bands]; next[i] = Math.round(v * 10) / 10; onBands(next); };
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -412,15 +430,7 @@ function GeqEditor({ stationId, geq, on, onBands, onIn }: {
       </div>
       <RtaBar rta={rta} />
       <div style={{ position: "relative", display: "flex", gap: 6, alignItems: "flex-end", opacity: on ? 1 : 0.55 }}>
-        {f?.fed && (
-          <svg viewBox="0 0 1000 160" preserveAspectRatio="none" aria-hidden
-               style={{ position: "absolute", left: 0, right: 0, top: 0, height: 160, width: "100%", pointerEvents: "none" }}>
-            <path d={rtaPath(f.pre, gx, 0, 160, GEQ_F_MIN, GEQ_F_MAX)} fill="var(--rta-pre)" />
-            <path d={rtaPath(f.post, gx, 0, 160, GEQ_F_MIN, GEQ_F_MAX)} fill="var(--rta-post)" />
-            {rta.held && <path d={rtaPath(rta.held.post, gx, 0, 160, GEQ_F_MIN, GEQ_F_MAX)} fill="none" stroke="var(--rta-post-line)" strokeWidth={1.5} strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />}
-            {coarse && <rect x={coarse[0]} y={0} width={coarse[1] - coarse[0]} height={160} fill="var(--text-tertiary)" opacity={0.08} />}
-          </svg>
-        )}
+        <GeqSpectrum frame={rta.frame} held={rta.held} />
         {geq.bands.map((g, i) => (
           <div key={i} style={{ flex: 1, minWidth: TOUCH, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
             <div style={{ position: "relative", height: 160, width: TOUCH, display: "flex", justifyContent: "center" }}>

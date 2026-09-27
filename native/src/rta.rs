@@ -11,6 +11,13 @@
 // 0 dB in its band (the Hann window's power gain is corrected). Instant attack, 300 ms release (exponential in power).
 // Peak hold is the view's (ruling 3: off by default, a toggle) — it needs no engine state.
 //
+// THE FINE WAVE (2026-09-26, Jeff: "31 flat one-colour bars … is worse"): besides the 31 bands, every frame also carries
+// RTA_FINE = 241 points log-spaced 20 Hz–20 kHz (24 per octave). Each is the power sum of the bins in a window 1/24
+// octave wide — never narrower than 3 bins (a Hann main lobe), so a tone reads its level at the point nearest it at
+// every frequency; below ~1.1 kHz that makes the window a constant 32 Hz (smoother there than 1/24 octave, and noise
+// reads a little higher). Same calibration (a full-scale sine = 0 dB) and the same ballistics as the bands. The view
+// draws these as the wave; the bands stay as the numeric readout.
+//
 // THE HONEST LIMIT: bins are 10.8 Hz wide. A band narrower than 3 bins cannot hold a Hann main lobe, so it reads low
 // for a pure tone and is published as COARSE (`coarse_below_hz`) — the view hatches it rather than claim precision.
 
@@ -22,6 +29,11 @@ use crate::rt::{triple, TripleReader, TripleWriter};
 pub(crate) const RTA_FFT: usize = 4096;
 pub(crate) const RTA_HOP: usize = 2048;
 pub(crate) const RTA_BANDS: usize = 31;
+/// The fine wave: 241 points, 20 Hz × 1000^(k/240) — 24 per octave.
+pub(crate) const RTA_FINE: usize = 241;
+pub(crate) fn fine_freq(k: usize) -> f64 { 20.0 * 1000f64.powf(k as f64 / (RTA_FINE - 1) as f64) }
+/// The fine point nearest a frequency.
+pub(crate) fn fine_index(f: f64) -> usize { (((f / 20.0).ln() / 1000f64.ln()) * (RTA_FINE - 1) as f64).round().clamp(0.0, (RTA_FINE - 1) as f64) as usize }
 pub(crate) const RTA_RING: usize = 16_384;
 pub(crate) const RTA_RATE: f64 = 44_100.0;
 pub(crate) const RTA_FLOOR_DB: f32 = -120.0;
@@ -99,11 +111,15 @@ pub(crate) struct RtaFrame {
     pub fed: bool,
     pub pre: [f32; RTA_BANDS],
     pub post: [f32; RTA_BANDS],
+    /// The fine wave (RTA_FINE points), pre and post.
+    pub fine_pre: [f32; RTA_FINE],
+    pub fine_post: [f32; RTA_FINE],
     pub pushed: u64,
     pub dropped: u64,
 }
 impl Default for RtaFrame {
-    fn default() -> Self { RtaFrame { seq: 0, target: -1, fed: false, pre: [RTA_FLOOR_DB; RTA_BANDS], post: [RTA_FLOOR_DB; RTA_BANDS], pushed: 0, dropped: 0 } }
+    fn default() -> Self { RtaFrame { seq: 0, target: -1, fed: false, pre: [RTA_FLOOR_DB; RTA_BANDS], post: [RTA_FLOOR_DB; RTA_BANDS],
+                                      fine_pre: [RTA_FLOOR_DB; RTA_FINE], fine_post: [RTA_FLOOR_DB; RTA_FINE], pushed: 0, dropped: 0 } }
 }
 pub(crate) type RtaReader = Arc<std::sync::Mutex<TripleReader<RtaFrame>>>;
 
@@ -121,10 +137,14 @@ pub(crate) struct RtaAnalyzer {
     norm: f64,               // 2 / (N · Σw²): one-sided |X|² → mean-square
     /// Per band: the bins it touches and each bin's overlap weight (precomputed).
     band_bins: Vec<Vec<(usize, f64)>>,
+    /// Per fine point: its window's bins and weights (precomputed).
+    fine_bins: Vec<Vec<(usize, f64)>>,
     decay_db: f32,
     pub(crate) disp: [[f32; RTA_BANDS]; 2],
     /// The last frame's bands BEFORE the ballistics (dB) — what the tests average.
     pub(crate) raw: [[f32; RTA_BANDS]; 2],
+    pub(crate) fine_disp: [[f32; RTA_FINE]; 2],
+    pub(crate) fine_raw: [[f32; RTA_FINE]; 2],
     frames: u64,
     target: i32,
     last_frame: Option<std::time::Instant>,
@@ -151,6 +171,20 @@ impl RtaAnalyzer {
             }
             v
         }).collect();
+        let fine_bins = (0..RTA_FINE).map(|k| {
+            let f = fine_freq(k);
+            let half = (f * (2f64.powf(1.0 / 48.0) - 2f64.powf(-1.0 / 48.0)) / 2.0).max(1.5 * df);   // ≥ 3 bins wide
+            let (lo, hi) = (f - half, f + half);
+            let mut v = Vec::new();
+            let k0 = ((lo / df) - 0.5).floor().max(1.0) as usize;
+            let k1 = (((hi / df) + 0.5).ceil() as usize).min(RTA_FFT / 2);
+            for b in k0..=k1 {
+                let (a, z) = ((b as f64 - 0.5) * df, (b as f64 + 0.5) * df);
+                let ov = (z.min(hi) - a.max(lo)).max(0.0) / df;
+                if ov > 0.0 { v.push((b, ov)); }
+            }
+            v
+        }).collect();
         let hop_s = RTA_HOP as f64 / RTA_RATE;
         let (w, r) = triple(RtaFrame::default());
         (RtaAnalyzer {
@@ -160,9 +194,10 @@ impl RtaAnalyzer {
             got: 0, fft,
             buf: vec![rustfft::num_complex::Complex::new(0.0, 0.0); RTA_FFT],
             work: vec![rustfft::num_complex::Complex::new(0.0, 0.0); work_len],
-            window, norm: 2.0 / (RTA_FFT as f64 * sum_w2), band_bins,
+            window, norm: 2.0 / (RTA_FFT as f64 * sum_w2), band_bins, fine_bins,
             decay_db: (10.0 * std::f64::consts::LOG10_E * hop_s * 1000.0 / RTA_RELEASE_MS) as f32,
             disp: [[RTA_FLOOR_DB; RTA_BANDS]; 2], raw: [[RTA_FLOOR_DB; RTA_BANDS]; 2],
+            fine_disp: [[RTA_FLOOR_DB; RTA_FINE]; 2], fine_raw: [[RTA_FLOOR_DB; RTA_FINE]; 2],
             frames: 0, target: -1, last_frame: None, writer: w,
         }, Arc::new(std::sync::Mutex::new(r)))
     }
@@ -178,6 +213,8 @@ impl RtaAnalyzer {
             self.got = 0;
             self.disp = [[RTA_FLOOR_DB; RTA_BANDS]; 2];
             self.raw = [[RTA_FLOOR_DB; RTA_BANDS]; 2];
+            self.fine_disp = [[RTA_FLOOR_DB; RTA_FINE]; 2];
+            self.fine_raw = [[RTA_FLOOR_DB; RTA_FINE]; 2];
             self.last_frame = None;
             // What is already in the rings belongs to the old target: discard it.
             let mut tmp = [0f32; 256];
@@ -225,6 +262,15 @@ impl RtaAnalyzer {
             let d = &mut self.disp[lane][b];
             *d = if db >= *d { db } else { (*d - self.decay_db).max(db) };   // instant attack, 300 ms release
         }
+        for k in 0..RTA_FINE {
+            let mut p = 0.0f64;
+            for &(b, w) in self.fine_bins[k].iter() { p += self.buf[b].norm_sqr() as f64 * w; }
+            let ms = p * self.norm;
+            let db = (if ms > 0.0 { (10.0 * (2.0 * ms).log10()) as f32 } else { RTA_FLOOR_DB }).max(RTA_FLOOR_DB);
+            self.fine_raw[lane][k] = db;
+            let d = &mut self.fine_disp[lane][k];
+            *d = if db >= *d { db } else { (*d - self.decay_db).max(db) };
+        }
     }
 
     fn publish(&mut self) {
@@ -235,6 +281,8 @@ impl RtaAnalyzer {
         f.fed = fed;
         f.pre = self.disp[0];
         f.post = self.disp[1];
+        f.fine_pre = self.fine_disp[0];
+        f.fine_post = self.fine_disp[1];
         f.pushed = self.shared.pushed.load(Ordering::Relaxed);
         f.dropped = self.shared.dropped.load(Ordering::Relaxed);
         self.writer.publish();
@@ -263,6 +311,29 @@ mod tests {
             println!("[rta-cal] {:.0} Hz sine at {:+.0} dBFS reads {:+.3} dB in its band ({} Hz)", f, amp_db, r, RTA_CENTRES[b]);
             assert!((r as f64 - amp_db).abs() < 0.2, "{f} Hz at {amp_db} read {r}");
         }
+    }
+
+    #[test]
+    fn a_tone_peaks_at_its_own_fine_point_at_its_level() {
+        let (mut taps, cons, shared) = rta_channels();
+        let (mut an, _r) = RtaAnalyzer::new(cons, shared);
+        taps.serve(RtaTarget::Channel(7));
+        let mut worst = 0.0f64;
+        let mut lines = Vec::new();
+        for f in [60.0f64, 125.0, 440.0, 1000.0, 3150.0, 9000.0, 16000.0] {
+            let a = 10f64.powf(-18.0 / 20.0);
+            let x: Vec<f32> = (0..44_100).map(|i| (a * (2.0 * std::f64::consts::PI * f * i as f64 / RTA_RATE).sin()) as f32).collect();
+            feed(&mut an, &mut taps, &x);
+            let (k, v) = an.fine_raw[0].iter().enumerate().fold((0, f32::MIN), |m, (i, &v)| if v > m.1 { (i, v) } else { m });
+            // Where it can land: within 1/24 octave, or within one FFT bin where a bin is wider than that (below ~1 kHz,
+            // 1/24 octave is narrower than the 10.8 Hz bin — position there is resolved to a bin, no finer).
+            let tol_hz = (f * (2f64.powf(1.0 / 24.0) - 1.0)).max(RTA_RATE / RTA_FFT as f64);
+            lines.push(format!("{f:.0} Hz → peak at {:.1} Hz ({:+.1} Hz, tol {:.1}), {:+.2} dB", fine_freq(k), fine_freq(k) - f, tol_hz, v));
+            assert!((fine_freq(k) - f).abs() <= tol_hz + 1e-9, "{f} Hz peaked at {} Hz", fine_freq(k));
+            if (v as f64 + 18.0).abs() > worst.abs() { worst = v as f64 + 18.0; }
+        }
+        println!("[rta-fine] a −18 dBFS tone peaks at the fine point nearest it (within 1/24 octave, or one 10.8 Hz bin where that is wider) at −18 {:+.2} dB at worst: {}", worst, lines.join(" · "));
+        assert!(worst.abs() < 0.5);
     }
 
     #[test]

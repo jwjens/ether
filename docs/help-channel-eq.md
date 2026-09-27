@@ -64,16 +64,22 @@ fader. They show what the EQ did.
 
 ## Reading the spectrum
 
-Behind the EQ curve is a **live spectrum of this channel**, so you can see the sound change as you move a band.
-- **Faint:** the channel **before** its rack.
-- **Brighter:** **after** it, which is what the EQ, filters, gate and compressor did.
-- Both are taken **before the fader**, so moving the fader doesn't change them. The spectrum shows the EQ, not
-  your level.
-- The scale is on the right: **0 dBFS at the top, −90 at the bottom**. 31 third-octave bands, 20 Hz to 20 kHz.
-- **Hatched at the far left (below 160 Hz):** those bands are too narrow for the analyser to split finely. They're
-  shown, but read them as a guide.
+Behind the EQ curve is a **live spectrum of this channel**, drawn the way the old master rack drew it: glowing
+bars, coloured by level, with white peak markers.
+- **24 bars per octave**, from 20 Hz to 20 kHz.
+- **Faint bars:** the channel **before** its rack. **Bright bars:** **after** it, which is what the EQ, filters,
+  gate and compressor did.
+- Both are taken **before the fader**, so moving the fader doesn't change them. The spectrum shows the EQ, not your
+  level.
+- **The colours:** every bar is green at its base and turns yellow, amber and then red as it gets taller. Only the
+  loudest parts reach red.
+- **The scale follows the music,** like the old rack: the top sits a little above the loudest recent level and
+  eases down when the music gets quieter. The label on the right says what the top is, in dBFS; the view shows the
+  60 dB below it.
+- **The white markers** are PEAK HOLD: each point's highest level for 2 seconds. They're on by default; the
+  **PEAK HOLD** button turns them off.
+- **Hatched at the far left (below 160 Hz):** too narrow for the analyser to split finely. Read it as a guide.
 - **NOT FED:** nothing is playing on this channel.
-- **PEAK HOLD** (off by default) keeps each band's highest level for 2 seconds, as a dashed line.
 
 It runs only while this rack window shows the curve, one channel at a time. Close the window and it stops.
 

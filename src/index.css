@@ -36,10 +36,6 @@
   --band-4: #f472b6;
   /* SLICE 6 — the dynamics transfer graph's resulting curve: ORANGE (the spec's Wheatstone dynamics view). */
   --dyn-curve: #fb923c;
-  /* SLICE 8 — the live RTA behind the EQ curves: before the rack (faint), after it (brighter), peak hold (line) */
-  --rta-pre: rgba(148, 163, 184, 0.20);
-  --rta-post: rgba(136, 104, 216, 0.38);
-  --rta-post-line: #a78bfa;
   --accent-green: #34d399;
   --accent-red: #f87171;
   --accent-amber: #fbbf24;
@@ -238,10 +234,6 @@
   --band-4: #f472b6;
   /* SLICE 6 — the dynamics transfer graph's resulting curve: ORANGE (the spec's Wheatstone dynamics view). */
   --dyn-curve: #fb923c;
-  /* SLICE 8 — the live RTA behind the EQ curves: before the rack (faint), after it (brighter), peak hold (line) */
-  --rta-pre: rgba(148, 163, 184, 0.20);
-  --rta-post: rgba(136, 104, 216, 0.38);
-  --rta-post-line: #a78bfa;
   --accent-green: #34d399;
   --accent-red: #f87171;
   --accent-amber: #fbbf24;
@@ -371,10 +363,6 @@
   --band-4: #be185d;
   /* SLICE 6 — the dynamics transfer curve (see the dark block). */
   --dyn-curve: #c2410c;
-  /* SLICE 8 — the live RTA behind the EQ curves: before the rack (faint), after it (brighter), peak hold (line) */
-  --rta-pre: rgba(100, 116, 139, 0.18);
-  --rta-post: rgba(96, 64, 192, 0.30);
-  --rta-post-line: #6040c0;
   --accent-green: #059669;
   --accent-red: #dc2626;
   --accent-amber: #d97706;
@@ -514,10 +502,6 @@
   --band-4: #be185d;
   /* SLICE 6 — the dynamics transfer curve (see the dark block). */
   --dyn-curve: #c2410c;
-  /* SLICE 8 — the live RTA behind the EQ curves: before the rack (faint), after it (brighter), peak hold (line) */
-  --rta-pre: rgba(100, 116, 139, 0.18);
-  --rta-post: rgba(96, 64, 192, 0.30);
-  --rta-post-line: #6040c0;
   --accent-red:   #c82535;
   --accent-amber: #c87815;
 

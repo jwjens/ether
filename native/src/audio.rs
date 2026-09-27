@@ -5718,3 +5718,147 @@ mod rta_through_the_mixer {
         assert_eq!(r.allocs, 0);
     }
 }
+
+// ── SLICE 8 — OLD vs NEW spectrum, for the screenshots in docs/dsp-channel-rta.md (run on demand) ────────────────
+// The same music (goldens/inputs/music.wav) through the real callback, RTA on the MASTER, a GEQ setting IN. At one
+// moment it writes (ETHER_WRITE_RTA_SCREENS = the output path):
+//   · NEW — the real meter-thread frame (fine wave + bands, pre and post), as the views get it;
+//   · OLD — what the pre-slice-8 analyser showed for the same post-GEQ samples: its update_spectrum, VERBATIM from
+//     eq.rs at 2b9f1cf (2048-point FFT every 1024 samples, octave bands, normalised to a running peak, 0…1.2), and
+//     the deleted MasterEQRack's peak hold (max(s, p × 0.985) per update).
+#[cfg(test)]
+mod rta_screens_fixture {
+    use super::*;
+    use crate::rta::{RtaAnalyzer, RtaTarget};
+
+    /// eq.rs@2b9f1cf's analyser, kept verbatim in its maths (only the struct around it is local).
+    struct OldAnalyser { ring: Vec<f32>, pos: usize, since: usize, fft: Arc<dyn rustfft::Fft<f32>>, scratch: Vec<rustfft::num_complex::Complex<f32>>,
+                         work: Vec<rustfft::num_complex::Complex<f32>>, window: Vec<f32>, spectrum: [f32; 10], peak: f32, sr: f32 }
+    const OLD_FFT: usize = 2048;
+    const OLD_INTERVAL: usize = 1024;
+    impl OldAnalyser {
+        fn new(sr: f32) -> Self {
+            let mut p = rustfft::FftPlanner::new();
+            let fft = p.plan_fft_forward(OLD_FFT);
+            let wl = fft.get_inplace_scratch_len();
+            let window = (0..OLD_FFT).map(|n| { let x = n as f32 / (OLD_FFT as f32 - 1.0); 0.5 - 0.5 * (2.0 * std::f32::consts::PI * x).cos() }).collect();
+            OldAnalyser { ring: vec![0.0; OLD_FFT], pos: 0, since: 0, fft, scratch: vec![Default::default(); OLD_FFT], work: vec![Default::default(); wl],
+                          window, spectrum: [0.0; 10], peak: 0.05, sr }
+        }
+        /// Returns true when it updated (every 1024 samples).
+        fn push(&mut self, mono: f32) -> bool {
+            self.ring[self.pos] = mono; self.pos = (self.pos + 1) % OLD_FFT; self.since += 1;
+            if self.since >= OLD_INTERVAL { self.since = 0; self.update(); true } else { false }
+        }
+        fn update(&mut self) {
+            use rustfft::num_complex::Complex;
+            for i in 0..OLD_FFT { let idx = (self.pos + i) % OLD_FFT; self.scratch[i] = Complex::new(self.ring[idx] * self.window[i], 0.0); }
+            self.fft.process_with_scratch(&mut self.scratch, &mut self.work);
+            let half = OLD_FFT / 2;
+            let bin_hz = self.sr / OLD_FFT as f32;
+            let mut mags = [0.0f32; OLD_FFT / 2];
+            let mut frame_peak = 0.0f32;
+            for i in 0..half { let c = self.scratch[i]; let m = (c.re * c.re + c.im * c.im).sqrt(); mags[i] = m; if m > frame_peak { frame_peak = m; } }
+            self.peak = (self.peak * 0.995).max(frame_peak * 0.7).max(0.05);
+            for (band_idx, &f0) in crate::eq::EQ_FREQS.iter().enumerate() {
+                let low = f0 / std::f32::consts::SQRT_2;
+                let high = f0 * std::f32::consts::SQRT_2;
+                let bin_lo = ((low / bin_hz) as usize).max(1);
+                let bin_hi = ((high / bin_hz) as usize).min(half - 1).max(bin_lo);
+                let (mut sum, mut count) = (0.0f32, 0usize);
+                for bi in bin_lo..=bin_hi { sum += mags[bi]; count += 1; }
+                let avg = if count > 0 { sum / count as f32 } else { 0.0 };
+                let norm = (avg / self.peak).clamp(0.0, 4.0);
+                let db = 20.0 * (norm + 1e-6).log10();
+                let level = ((db + 60.0) / 60.0).clamp(0.0, 1.2);
+                let prev = self.spectrum[band_idx];
+                let coeff = if level > prev { 0.6 } else { 0.15 };
+                self.spectrum[band_idx] = prev + (level - prev) * coeff;
+            }
+        }
+    }
+
+    #[test]
+    fn write_the_rta_screens_fixture() {
+        let Ok(out) = std::env::var("ETHER_WRITE_RTA_SCREENS") else { return; };
+        let wav = crate::offline_render::read_wav_f32(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("goldens").join("inputs").join("music.wav")).unwrap();
+        let at_s = 22.0f64;                                // the moment captured
+        let frames = ((at_s + 0.5) * 44_100.0) as usize;
+        let (prod, mut stream) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)));
+        let h = b.handles.take().unwrap();
+        let (mut an, reader) = RtaAnalyzer::new(h.rta_cons, h.rta_shared);
+        let src: Vec<f32> = wav[..(frames * 2).min(wav.len())].to_vec();
+        b.decks[0].source = Some(DeckFeed::prefilled(src.into_iter(), frames * 2 + 4800));
+        b.decks[0].active = true; b.decks[0].paused = false; b.decks[0].volume = 1.0;
+        let geq = [0.0f32, 3.0, 0.0, -4.0, 0.0, 6.0, 0.0, 0.0, -3.0, 0.0];   // shown in both views
+        let mut p = b.params();
+        p.rack.set_geq_bands(geq);
+        p.rack.eq_version = p.rack.eq_version.wrapping_add(1);
+        p.rta = RtaTarget::Master;
+        let mut cmd = h.cmd_prod;
+        let _ = cmd.try_push(RtCmd::Params(Box::new(p)));
+        let bus = Arc::new(Mutex::new(b));
+        let (fin, playing) = (FinishedFlags::new(), Arc::new(AtomicBool::new(true)));
+        let mut sc = Scratch::new();
+        let (mut data, mut pop) = (vec![0f32; 960], vec![0f32; PROGRAM_BUS_BUF]);
+        // The OLD analyser listens to the same post-GEQ programme: the stream ring carries it (processing off,
+        // master at unity), so it hears exactly what the old one did.
+        let mut old = OldAnalyser::new(44_100.0);
+        let mut old_peak = [0.0f32; 10];
+        let mut garbage = h.garbage_cons;
+        for _ in 0..(at_s * 44_100.0 / 480.0) as usize {
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+            loop {
+                let got = stream.pop_slice(&mut pop);
+                if got == 0 { break; }
+                for fr in 0..got / 2 {
+                    if old.push(0.5 * (pop[2 * fr] + pop[2 * fr + 1])) {
+                        for i in 0..10 { old_peak[i] = old.spectrum[i].max(old_peak[i] * 0.985); }
+                    }
+                }
+            }
+            while garbage.try_pop().is_some() {}
+            an.drain();
+        }
+        let f = reader.lock().unwrap().read();
+        // …and a CHANNEL: the same music on S1 through its rack (HPF 100 Hz + a PEQ), RTA on S1 — pre vs post-rack.
+        let ch_doc = r#"{"v":1,"sections":{"ch":[{"id":"f","module":{"type":"filters","hpf":{"in":true,"freq":100},"lpf":{"in":false,"freq":12000}},"in":true},{"id":"q","module":{"type":"peq","bands":[{"freq":250,"gain":-5,"width":1.2},{"freq":2500,"gain":4,"width":1},{"freq":5000,"gain":0,"width":1},{"freq":10000,"gain":3,"width":1,"shelf":true}]},"in":true}]}}"#;
+        let cf = {
+            let (prod, mut stream) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
+            let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)));
+            let h = b.handles.take().unwrap();
+            let (mut an, reader) = RtaAnalyzer::new(h.rta_cons, h.rta_shared);
+            let src: Vec<f32> = wav[..(frames * 2).min(wav.len())].to_vec();
+            b.decks[7].source = Some(DeckFeed::prefilled(src.into_iter(), frames * 2 + 4800));
+            b.decks[7].active = true; b.decks[7].paused = false; b.decks[7].volume = 1.0;
+            let mut p = b.params();
+            crate::show::set_channel_rack(&mut p, 7, crate::rack::ChannelRack::from_doc_json(ch_doc).unwrap(), 44_100.0);
+            p.rta = RtaTarget::Channel(7);
+            let mut cmd = h.cmd_prod;
+            let _ = cmd.try_push(RtCmd::Params(Box::new(p)));
+            let bus = Arc::new(Mutex::new(b));
+            let mut garbage = h.garbage_cons;
+            let mut sc = Scratch::new();
+            for _ in 0..(at_s * 44_100.0 / 480.0) as usize {
+                mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+                while stream.pop_slice(&mut pop) > 0 {}
+                while garbage.try_pop().is_some() {}
+                an.drain();
+            }
+            let r = reader.lock().unwrap().read(); r
+        };
+        let j = serde_json::json!({
+            "source": "native/goldens/inputs/music.wav", "atSeconds": at_s, "geq": geq, "eqFreqs": crate::eq::EQ_FREQS,
+            "old": { "spectrum": old.spectrum, "peaks": old_peak, "note": "eq.rs@2b9f1cf update_spectrum on the post-GEQ programme; MasterEQRack peak hold" },
+            "new": { "fed": f.fed, "coarseBelowHz": crate::rta::coarse_below_hz(), "finePre": f.fine_pre.to_vec(), "finePost": f.fine_post.to_vec(),
+                     "pre": f.pre.to_vec(), "post": f.post.to_vec(), "fineN": crate::rta::RTA_FINE, "fineLoHz": 20, "fineHiHz": 20000 },
+            "channel": { "doc": serde_json::from_str::<serde_json::Value>(ch_doc).unwrap(), "fed": cf.fed, "coarseBelowHz": crate::rta::coarse_below_hz(),
+                         "finePre": cf.fine_pre.to_vec(), "finePost": cf.fine_post.to_vec(), "pre": cf.pre.to_vec(), "post": cf.post.to_vec(),
+                         "fineN": crate::rta::RTA_FINE, "fineLoHz": 20, "fineHiHz": 20000 },
+        });
+        std::fs::write(&out, serde_json::to_string_pretty(&j).unwrap()).unwrap();
+        println!("[rta-screens] wrote {} (music.wav at {} s, GEQ {:?}; new fed {})", out, at_s, geq, f.fed);
+        assert!(f.fed && cf.fed);
+    }
+}

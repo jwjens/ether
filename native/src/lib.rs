@@ -758,7 +758,9 @@ pub fn audio_set_rta(station_id: u32, target: String) -> String {
 
 /// SLICE 8 — the station's newest RTA frame: 31 ISO third-octave bands (dBFS, a full-scale sine = 0 dB), pre-rack
 /// and post-rack, both pre-fader. `target` = "" | "master" | the fader; `fed` = frames arrived in the last 500 ms;
-/// `coarseBelowHz` = bands below this are narrower than 3 FFT bins (the view hatches them).
+/// `coarseBelowHz` = bands below this are narrower than 3 FFT bins (the view hatches them). `finePre` / `finePost`:
+/// the 241-point wave (24 per octave, windows ≥ 3 bins) the views draw; the 31 bands are the numeric readout. `finePre` / `finePost`:
+/// the 241-point wave (24 per octave, windows ≥ 3 bins) the views draw; the 31 bands are the numeric readout.
 #[napi]
 pub fn audio_get_rta(station_id: u32) -> String {
     let reader = {
@@ -776,6 +778,10 @@ pub fn audio_get_rta(station_id: u32) -> String {
         "v": 1, "seq": f.seq, "target": target, "fed": f.fed,
         "centres": rta::RTA_CENTRES, "coarseBelowHz": rta::coarse_below_hz(),
         "pre": r1(&f.pre), "post": r1(&f.post), "pushed": f.pushed, "dropped": f.dropped,
+        // The fine wave the views draw: rta::RTA_FINE points, 20 Hz × 1000^(k/(n−1)) — 24 per octave.
+        "fineN": rta::RTA_FINE, "fineLoHz": 20, "fineHiHz": 20000, "finePre": r1(&f.fine_pre), "finePost": r1(&f.fine_post),
+        // The fine wave the views draw: rta::RTA_FINE points, 20 Hz × 1000^(k/(n−1)) — 24 per octave.
+        "fineN": rta::RTA_FINE, "fineLoHz": 20, "fineHiHz": 20000, "finePre": r1(&f.fine_pre), "finePost": r1(&f.fine_post),
     }).to_string()
 }
 
