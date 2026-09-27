@@ -626,7 +626,7 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
         <div style={{ textAlign: "center" as any, padding: "64px 24px" }}>
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.4 }}><path d="M3 11l19-9-9 19-2-8-8-2z"/></svg>
           <div style={{ fontSize: "var(--t-head)", fontWeight: 600, color: "var(--text-primary)", marginBottom: 6 }}>No spots yet</div>
-          <div style={{ fontSize: "var(--t-lead)", color: "var(--text-tertiary)", marginBottom: 20 }}>Import jingles, promos, PSAs, and liners — pick individual files or a whole folder</div>
+          <div style={{ fontSize: "var(--t-lead)", color: "var(--text-tertiary)", marginBottom: 20 }}>Import commercials, promos, PSAs and liners — pick individual files or a whole folder</div>
           <div style={{ display: "flex", gap: 8, justifyContent: "center" as any }}>
             <button onClick={handleImport} style={{ padding: "9px 20px", borderRadius: 0, fontSize: "var(--t-lead)", fontWeight: 700, background: "var(--accent-green)", color: "#fff", border: "none", cursor: "pointer" }}>Add Files</button>
             <button onClick={handleImportFolder} style={{ padding: "9px 20px", borderRadius: 0, fontSize: "var(--t-lead)", fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer" }}>Import Folder</button>
