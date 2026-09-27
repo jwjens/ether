@@ -46,9 +46,10 @@ Open **SPOTS** in the bottom bar (or **Library → Spots & Promos** in the top m
 
 1. **Add Files** or **Import Folder** to bring in your commercials/promos — or use the Mark-as-Spot fast
    path above. **Import Traffic CSV** reads a traffic system's export (cart/ISCI, title, advertiser,
-   agency, length, dates, type) and is the way to bring in cart and ISCI numbers.
+   agency, length, dates, type). It fills the spot's cart number and ISCI from the one cart/ISCI column;
+   correct either one in **Edit Spot**.
 2. Organize them into **spot categories** (create categories like *Local Sponsors* or *Station Promos*).
-3. Set each spot's **type**, **advertiser**, **flight dates** (start/end), and **max plays per day**.
+3. Set each spot's **type**, **advertiser**, **cart #**, **ISCI**, **flight dates** (start/end), and **max plays per day**.
 
 ## Scheduling the breaks (on your clocks)
 
@@ -138,7 +139,6 @@ need it gone immediately, remove that entry in the Program Log's hour editor (�
 
 ## Known issues
 
-- The **Edit Spot** form has no cart number or ISCI field. To set them, use **Import Traffic CSV**.
 - Use **Mark as Spot** from the **Library** right-click menu. The same item on a deck or Up Next
   right-click menu tags the track as a spot without the category dialog and without creating the spot
   record, so a break cannot pull it.

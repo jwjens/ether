@@ -10,6 +10,7 @@ const readDir = (p: string) => (window as any).ether.fs.readDir(p);
 const toFileUrl = (p: string) => p.startsWith("http") || p.startsWith("blob:") ? p : `file:///${p.replace(/\\/g, "/")}`;
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { clearSpotArtCache } from "../lib/albumArt";
+import { spotEditPatch } from "../lib/spotEditPatch";
 
 interface Spot {
   id: number; title: string; file_path: string | null;
@@ -23,6 +24,8 @@ interface Spot {
   // v36 — operator-chosen artwork, a base64 data URL stored in the row (the station-logo
   // pattern). NULL = no override. Local: choosing an image makes no network call.
   art_image: string | null;
+  cart_number?: string | null;
+  isci_code?: string | null;
 }
 
 interface SpotCategory { id: number; name: string; color: string | null; uuid: string; }
@@ -335,7 +338,7 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
     if (editing.id) {
       // Switching a spot inactive takes it off the air, so the save reports what it pulled exactly
       // as the delete does -- and reports a failure instead of closing the editor as if it worked.
-      const res = await (window as any).ether.spots.updateById(editing.id, { title: editing.title, spot_type: editing.spot_type || "promo", advertiser: editing.advertiser || null, start_date: editing.start_date || null, end_date: editing.end_date || null, max_plays_day: editing.max_plays_day || 999, is_active: editing.is_active ?? 1, notes: editing.notes || null, spot_category_id: editing.spot_category_id ?? null, art_image: editing.art_image || null });
+      const res = await (window as any).ether.spots.updateById(editing.id, spotEditPatch(editing));
       if (!res?.ok) { setStatus(`Could not save "${editing.title}": ${res?.error ?? "no reason given"}`); return; }
       const pulled = res.retracted?.pendingLog ?? 0;
       if (pulled > 0) setStatus(`"${editing.title}" is now inactive - ${pulled} future airing${pulled === 1 ? "" : "s"} pulled from the log`);
@@ -556,6 +559,13 @@ export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) =
             <input type="date" value={editing.start_date || ""} onChange={e => setEditing({...editing, start_date: e.target.value})}
               style={{ padding: "8px 12px", borderRadius: 0, fontSize: "var(--t-lead)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
             <input type="date" value={editing.end_date || ""} onChange={e => setEditing({...editing, end_date: e.target.value})}
+              style={{ padding: "8px 12px", borderRadius: 0, fontSize: "var(--t-lead)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+          </div>
+          {/* Cart # and ISCI — each its own value (audit 9). Import Traffic CSV fills both from one column. */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+            <input placeholder="Cart #" title="The spot's cart number" value={editing.cart_number || ""} onChange={e => setEditing({...editing, cart_number: e.target.value})}
+              style={{ padding: "8px 12px", borderRadius: 0, fontSize: "var(--t-lead)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+            <input placeholder="ISCI" title="The spot's ISCI code (from the agency or traffic system)" value={editing.isci_code || ""} onChange={e => setEditing({...editing, isci_code: e.target.value})}
               style={{ padding: "8px 12px", borderRadius: 0, fontSize: "var(--t-lead)", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 8 }}>
