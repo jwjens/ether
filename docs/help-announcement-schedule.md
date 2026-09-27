@@ -2,7 +2,7 @@
 feature: announcement-schedule
 title: Scheduling Announcements
 summary: Select dates, build the list, press Apply — Apply commits the editor to the selected date(s), then clears.
-where: Schedule menu → Announcements → the Schedule column
+where: ☰ Menu → Announcements (or Schedule menu → Announcements) → the Schedule column
 since: 4.4.230
 audience: operator
 tour: true

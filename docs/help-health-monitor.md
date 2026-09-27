@@ -2,7 +2,7 @@
 feature: health-monitor
 title: Health Monitor
 summary: One screen that says whether the station is healthy — runway, levels, rotation, breaks and the event ledger — with panels you can rearrange and collapse.
-where: Tools → System Health (pop-out window for a wall display: Tools → Monitors → Station Health)
+where: ☰ Menu → Health Monitor · or Tools → System Health (pop-out window for a wall display: Tools → Monitors → Station Health)
 since: 4.4.208
 audience: operator
 tour: true

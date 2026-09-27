@@ -2917,6 +2917,9 @@ export default function App() {
                   { key: "logs",           emoji: "📜", label: "Play Log",           panel: "logs" },
                   { key: "schedulehub",    emoji: "🗂", label: "Schedule Manager",   panel: "schedulehub" },
                   { key: "rotation",       emoji: "📊", label: "Rotation Analytics", panel: "rotation" },
+                  // Health Monitor and Announcements were native-menu-only (audit 23) — doors before rooms.
+                  { key: "health",         emoji: "🩺", label: "Health Monitor",     panel: "health" },
+                  { key: "announce",       emoji: "📢", label: "Announcements",      panel: "announce" },
                   { key: "cartwall",       emoji: "🎛️", label: "Carts",              panel: "carts" },
                   { key: "po-decks",       emoji: "🎚", label: "Decks",              panel: "decks" },
                   { key: "po-processor",   emoji: "🎛", label: "Processor",          panel: "processor" },
