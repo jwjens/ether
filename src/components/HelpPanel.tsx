@@ -250,17 +250,21 @@ The top-right pill shows the active station. Single-station installs hide it. Mu
   },
   {
     id: "schedule-manager", category: "Scheduling", tags: ["schedule", "manager", "hub", "shows", "clocks", "categories", "panes", "advisor", "goals", "linking"],
-    title: "Schedule Manager (Shows, Clocks, Categories together)",
+    title: "Schedule Manager (every programming pane together)",
     body: `
 # What it is
 
-Menu → **Schedule Manager**. Shows, Clocks and Categories side by side in one window instead of three tabs, and linked to each other.
+Menu → **Schedule Manager**. Eight panes in one window, linked to each other: **Shows, Clocks, Categories, Spots, Sweepers, Rotation Analytics, Program Log and Play Log.**
+
+# Arranging it
+
+The panes are dockable: drag a tab to move a pane, drop it beside or on another, drag the dividers to resize. **Panels** in the header brings back any pane you closed; **Reset layout** puts the default back; **Layouts** (Programming, Traffic, Analysis, Live) are ready arrangements. Your layout is saved per station, on this machine only. **Fixed layout** switches to the older non-dockable view.
 
 # The linking is the point
 
 - **Click a category** — the strip at the top names its target and library depth; clocks that use it get an amber border.
 - **Click a show** — the Clock pane focuses that show's clock.
-- **Edit anything** — all three panes refresh from one store.
+- **Edit anything** — every pane refreshes from one store.
 
 The panes are the SAME editors as the tabs and popouts. Nothing was rebuilt, and anything you can do in one you can do in the other.
 
@@ -282,7 +286,7 @@ Schedule → Clocks / Shows & Dayparts / Categories still opens the tabbed panel
 
 # What it does not do
 
-It does not change what airs — same shows, same clocks, same write paths. The three-pane layout is fixed in this version (no docking). Rotation Analytics is a link in the header, not an embedded pane.
+It does not change what airs — same shows, same clocks, same write paths. Rotation Analytics reads what already aired; press Refresh after you generate.
 `,
   },
   {
