@@ -57,6 +57,7 @@ import { StreamStatusProvider } from "./contexts/StreamStatusContext";
 import { AudioEngineProvider, useAudioEngine } from "./audio/AudioEngineContext";
 import { getEngine, getAllEngines } from "./audio/engine-registry";
 import { resolveCommandTarget, isStationScopedCommand, commandTargetsThisMachine, cmdStreamUrl } from "./audio/cmd-routing";
+import { restartStream, type StreamIo } from "./audio/streamRestart";
 import { computeDeckRole } from "./lib/deckRole";
 import GlobalOnAirBadge from "./components/GlobalOnAirBadge";
 import EtherLogo from "./components/EtherLogo";
@@ -1473,6 +1474,29 @@ export default function App() {
           case "stream:stop":
             await (window as any).ether?.invoke?.("stream:stop-live", { stationId: targetId });
             break;
+          // Web Restart = a STREAM restart on this (the target) machine — web-remote slice 4. Same on-air lifecycle
+          // as stream:start / stream:stop; automation and the decks are not touched, so the song plays on through
+          // the encoder restart. The result is the stream's real end state (live, or the Icecast error).
+          case "stream:restart": {
+            const ether = (window as any).ether;
+            const io: StreamIo = {
+              stopLive: () => ether?.invoke?.("stream:stop-live", { stationId: targetId }),
+              goLive: () => ether?.invoke?.("stream:go-live", { stationId: targetId }),
+              status: async () => {
+                if (useDaemon) {
+                  const r: any = await dcmd("streamStatus");
+                  return { state: String(r?.result?.state || "unknown"), error: r?.result?.errorMsg ?? null };
+                }
+                const r: any = await ether?.invoke?.("stream:get-status", { stationId: targetId });
+                return { state: r?.live ? "live" : "idle", error: null };
+              },
+              sleep: (ms: number) => new Promise(res => setTimeout(res, ms)),
+              now: () => Date.now(),
+            };
+            const r = await restartStream(io);
+            console.log(`[RemoteCmd] stream:restart station ${targetId}: ${r.ok ? "live again" : `FAILED — ${r.error}`}`);
+            break;
+          }
 
           // ── Other station-scoped commands — ACTIVE station only (existing behavior, now fan-out-
           //    protected by the ignore-gate). Routing to a non-active station needs that station's
