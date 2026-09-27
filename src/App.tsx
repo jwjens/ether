@@ -3220,10 +3220,6 @@ export default function App() {
               <button onClick={() => setShowShortcuts(false)} style={{ background: "transparent", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 18, lineHeight: 1 }}>✕</button>
             </div>
             {[
-              { group: "Playback", items: [
-                { key: "X", desc: "Crossfade to next loaded deck" },
-                { key: "Esc", desc: "Stop all decks" },
-              ]},
               { group: "Navigation", items: [
                 { key: "N", desc: "Live Assist view" },
                 { key: "L", desc: "Library" },

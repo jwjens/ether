@@ -80,11 +80,7 @@ If nothing is playing at all, press ON on any cued deck. It simply starts. Nothi
   your controls, and ON does not touch them.
 - **No keyboard shortcut** for ON, and **no key starts, pauses or resumes a deck**: the board is the only way.
 - **No undo.** Channel OFF is immediate and final; reload the track if you need it back.
-
-## Known issue
-
-- The keyboard shortcut list still shows **X** (crossfade) and **Esc** (stop all decks), which no longer
-  do that. Use **ON** to start and stop decks.
+- **No crossfade key**, and **Esc never stops audio** — it only closes lists and drawers.
 
 ## Related
 

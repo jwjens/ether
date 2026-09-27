@@ -18,9 +18,7 @@ export default function KeyboardHelp() {
   if (!show) return null;
 
   const shortcuts = [
-    { key: "X", action: "Crossfade A ↔ B" },
     { key: "A", action: "Toggle AUTO mode" },
-    { key: "Esc", action: "Stop all decks" },
     { key: "N / F1", action: "Go to Live Assist" },
     { key: "L / F2", action: "Go to Library" },
     { key: "S / F3", action: "Go to Scheduler" },
