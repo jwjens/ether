@@ -9908,7 +9908,7 @@ ipcMain.handle('schedule:editRowFields', (_e, uuid, patch) => {
       const now = new Date().toISOString();
       db.prepare(
         `UPDATE generated_schedule SET song_id = ?, title = ?, artist = ?, duration_s = ?, file_key = ?, file_path = NULL,
-                category_id = ?, source = 'operator', updated_at = ? WHERE uuid = ?`
+                category_id = ?, source = 'operator', pick_reason = NULL, updated_at = ? WHERE uuid = ?`
       ).run(song.id, song.title, song.artist || '', Math.round((song.duration_ms || 0) / 1000),
             song.file_path ? path.basename(song.file_path) : song.file_key, song.category_id ?? row.category_id, now, uuid);
       _healthEvent('log-edit', { action: 'swap-song', stationId: row.station_id, at: row.scheduled_at,

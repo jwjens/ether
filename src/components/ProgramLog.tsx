@@ -8,6 +8,7 @@ import { queryScoped } from "../db/stationScoped";
 import { usePlan } from "../hooks/usePlan";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { useAutoGenerate } from "../hooks/useAutoGenerate";
+import { whyThisSongText } from "../lib/whyThisSong";
 import {
   dayWindow, localDateStr, fmtClock, toEntries, showForHour, hoursToRender,
   type ProgramLogEntry, type ScheduleGetRow, type CategoryRef,
@@ -100,6 +101,20 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
   // AUTO — keep the log filled (auto-generate), per station, local to this machine. Lives here, beside Fill Day,
   // where runway is read (audit 19); the Health Monitor's Canary panel only mirrors it.
   const autoGen = useAutoGenerate(stationId);
+  // WHY THIS SONG (audit 18): click a music row → the generator's recorded reason under its title. Fetched once per
+  // row from rotation:explain; a second click hides it.
+  const [whyOpen, setWhyOpen] = useState<number | null>(null);
+  const [whyText, setWhyText] = useState<Record<number, string>>({});
+  const toggleWhy = useCallback(async (entry: { id: number; slot_type: string }) => {
+    if (entry.slot_type !== "music") return;
+    if (whyOpen === entry.id) { setWhyOpen(null); return; }
+    setWhyOpen(entry.id);
+    if (whyText[entry.id] != null) return;
+    let res: any = null;
+    try { res = await (window as any).ether?.invoke?.("rotation:explain", stationId, entry.id); } catch (e: any) { res = { ok: false, error: e?.message || String(e) }; }
+    setWhyText(prev => ({ ...prev, [entry.id]: whyThisSongText(res) }));
+  }, [whyOpen, whyText, stationId]);
+  useEffect(() => { setWhyOpen(null); setWhyText({}); }, [stationId]);
   const [selectedDate, setSelectedDateState] = useState<string>(() => readSharedDate(stationId) || todayStr());
   const [currentMonth, setCurrentMonth] = useState(() => {
     const [y, m] = (readSharedDate(stationId) || todayStr()).split("-").map(Number);
@@ -1002,7 +1017,10 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
                       const isUnfilled = entry.status === "unfilled";
                       const isOverflow = entry.overflow === 1;
                       return (
-                        <div key={entry.id} style={{
+                        <div key={entry.id} onClick={() => { void toggleWhy(entry); }}
+                          title={entry.slot_type === "music" ? "Click to see why the generator picked this song" : undefined}
+                          style={{
+                          cursor: entry.slot_type === "music" ? "pointer" : undefined,
                           display: "grid", gridTemplateColumns: "64px 48px 1fr 160px 56px 52px",
                           padding: "0 12px", minHeight: isOverflow ? 36 : 30, alignItems: "center",
                           background: isOverflow ? "rgba(167,139,250,0.06)" : i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)",
@@ -1024,6 +1042,11 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
                             {isOverflow && (
                               <span style={{ fontSize: "var(--t-micro)", color: "rgba(167,139,250,0.6)" }}>
                                 Fades out at {fmtMs(entry.fade_out_at_ms)} · {fmtMs(entry.fade_duration_ms)} crossfade into next hour
+                              </span>
+                            )}
+                            {whyOpen === entry.id && (
+                              <span style={{ display: "block", fontSize: "var(--t-micro)", color: "var(--text-secondary)", whiteSpace: "normal" as const, padding: "2px 0 4px" }}>
+                                <b style={{ color: "var(--text-tertiary)" }}>Why this song: </b>{whyText[entry.id] ?? "reading…"}
                               </span>
                             )}
                           </div>

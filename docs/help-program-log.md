@@ -34,6 +34,10 @@ day is a row you can open.
   air time appears underneath in green. That is the as-run receipt.
 - **Status** — `pending` (not yet), **`playing`** (on air now, highlighted), `played` (aired, green),
   `missed` (a spot or item that did not air, red).
+- **Why this song** — click a song and the generator's reason appears under its title: its category, how
+  many songs were in the pool, how many were ruled out and by which rule, and whether any rule had to be
+  relaxed. Click again to hide it. A song placed by hand (swapped in) or generated before reasons were
+  kept says so instead — a reason is never made up afterwards.
 
 The summary at the top — *N of M hours scheduled · total programming* — is counted from these rows. M is
 the number of hours listed: the hours your shows cover, plus any hour that already has rows.

@@ -233,7 +233,13 @@ export default function RotationAnalytics({ hideHeader }: RotationAnalyticsProps
             ) : (
               <div style={{ fontSize: "var(--t-body)", color: "var(--text-secondary)" }}>
                 <strong style={{ color: "var(--accent-green)" }}>{snap.reasonCoverage.withReason} of {snap.reasonCoverage.total}</strong> rows ({snap.reasonCoverage.pct}%) carry a recorded reason.
-                <div style={{ marginTop: 6, color: "var(--text-tertiary)" }}>Reasons are recorded per row in the log (pick_reason); the Program Log does not show them yet.</div>
+                <div style={{ marginTop: 6, color: "var(--text-tertiary)" }}>
+                  Each row's reason is in the Program Log — click a song there to see why it was picked.{" "}
+                  <button onClick={() => { try { window.dispatchEvent(new CustomEvent("ether:open-programlog")); } catch { /* non-Electron */ } }}
+                    style={{ padding: "2px 8px", borderRadius: 0, cursor: "pointer", background: "transparent", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", fontSize: "var(--t-micro)", fontWeight: 700 }}>
+                    Program Log →
+                  </button>
+                </div>
               </div>
             )}
           </div>

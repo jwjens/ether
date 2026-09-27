@@ -67,8 +67,8 @@ Reasons are written **as the log is generated** — the category, how many songs
 many were vetoed and by which rule, and whether any rule had to be relaxed.
 
 This section tells you **how many rows in the window carry a recorded reason** (for example
-"412 of 430 rows carry a recorded reason"). The individual reasons are stored on each log row, but
-they are not shown on screen yet — not here and not in the Program Log.
+"412 of 430 rows carry a recorded reason"). Each row's own reason is in the **Program Log**: click a
+song there and **Why this song** appears under its title. The **Program Log →** button here opens it.
 
 **Reasons cannot be reconstructed afterwards.** The vetoed and losing candidates only exist during
 the pick, so rows generated before this feature existed show **"0 of N rows carry a reason"** rather
