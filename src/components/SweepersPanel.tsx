@@ -332,10 +332,11 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
       )}
 
       {tabPools.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto", gap: "6px 12px", alignItems: "center", marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto", gap: "6px 12px", alignItems: "center", marginBottom: 16 }}>
+          {/* Three columns — name, LEAD-IN, delete — as each row draws. A fourth header (the overlap one) named a
+              column no row has, so every row after the first slid out of line (audit 12). */}
           <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>POOL</div>
           <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>LEAD-IN s</div>
-          <div style={{ fontSize: "var(--t-micro)", color: "var(--text-tertiary)" }}>UNDERLAP s</div>
           <div />
           {tabPools.map(p => (
             <Fragment key={p.id}>
