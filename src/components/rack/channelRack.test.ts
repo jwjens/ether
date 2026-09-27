@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   emptyChannelRack, channelAddable, addChannelModule, removeChannelSlot, canMoveChannel, moveChannelSlot, setChannelIn,
   editChannelModule, findChannel, channelRackActive, channelRackAudible, CHANNEL_MODULE_TYPES, CHANNEL_SLOTS, rackName,
-  flatPeq, resetFilters, clearChannelRack, FILTERS_RESET,
+  flatPeq, resetFilters, clearChannelRack, FILTERS_RESET, BUILT_IN_CHANNEL_PRESETS, channelRacksEqual, VOICE_GATE, VOICE_COMP,
 } from "./channelRack";
 import type { PeqModule, FilterModule } from "./rackTypes";
 
@@ -14,13 +14,13 @@ describe("channelRack", () => {
     expect(channelRackActive(d)).toBe(false);
   });
 
-  it("Add offers Filters and PEQ only — the ride can never be offered — one of each", () => {
-    expect(CHANNEL_MODULE_TYPES).toEqual(["filters", "peq"]);
+  it("Add offers Filters, Gate, PEQ and Comp only — the ride can never be offered — one of each (slice 6)", () => {
+    expect(CHANNEL_MODULE_TYPES).toEqual(["filters", "gate", "peq", "comp"]);
     let d = emptyChannelRack();
-    expect(channelAddable(d)).toEqual(["filters", "peq"]);
+    expect(channelAddable(d)).toEqual(["filters", "gate", "peq", "comp"]);
     d = addChannelModule(d, "peq");
-    expect(channelAddable(d)).toEqual(["filters"]);
-    d = addChannelModule(d, "filters");
+    expect(channelAddable(d)).toEqual(["filters", "gate", "comp"]);
+    for (const t of ["filters", "gate", "comp"] as const) d = addChannelModule(d, t);
     expect(channelAddable(d)).toEqual([]);
     expect(addChannelModule(d, "peq")).toBe(d);   // a second PEQ is refused (the engine refuses it too)
   });
@@ -106,5 +106,32 @@ describe("channelRack", () => {
     expect(resetFilters(d)).toEqual(d);
     const f = addChannelModule(emptyChannelRack(), "filters");
     expect(flatPeq(f)).toEqual(f);
+  });
+
+  // SLICE 6 — dynamics, presets (docs/dsp-channel-dynamics.md §3; rulings 6, 8, 9)
+  it("a new Gate / Comp goes in the spec's order (Filters → Gate → PEQ → Comp), OUT, at the Voice values", () => {
+    let d = addChannelModule(addChannelModule(emptyChannelRack(), "comp"), "filters");
+    d = addChannelModule(d, "peq");
+    d = addChannelModule(d, "gate");
+    expect(d.sections.ch.map(s => s.module?.type)).toEqual(["filters", "gate", "peq", "comp"]);
+    expect(d.sections.ch.every(s => s.in === false)).toBe(true);
+    expect(findChannel(d, "gate")!.module).toEqual(VOICE_GATE);
+    expect(findChannel(d, "comp")!.module).toEqual(VOICE_COMP);
+  });
+
+  it("Voice: Filters (HPF 80) → Gate −45/15/1:4 → PEQ flat → Comp 3:1 at −20, all IN; Off = the EMPTY rack", () => {
+    const voice = BUILT_IN_CHANNEL_PRESETS.find(p => p.name === "Voice")!.doc;
+    expect(voice.sections.ch.map(s => [s.module?.type, s.in])).toEqual([["filters", true], ["gate", true], ["peq", true], ["comp", true]]);
+    expect(VOICE_GATE).toMatchObject({ threshold: -45, depth: 15, ratio: 4, attack: 1, hold: 100, release: 150, hysteresis: 3 });
+    expect(VOICE_COMP).toMatchObject({ threshold: -20, ratio: 3, attack: 10, release: 150, makeup: 0, knee: 6 });
+    const off = BUILT_IN_CHANNEL_PRESETS.find(p => p.name === "Off")!.doc;
+    expect(off).toEqual(emptyChannelRack());
+    expect(channelRackActive(off)).toBe(false);
+    expect(channelRacksEqual(off, emptyChannelRack())).toBe(true);
+  });
+
+  it("a Gate or Comp that is IN changes the sound (it is level-dependent)", () => {
+    const d = setChannelIn(addChannelModule(emptyChannelRack(), "comp"), "c-comp", true);
+    expect(channelRackAudible(d)).toBe(true);
   });
 });

@@ -6,6 +6,7 @@
 // pins to Rust) at 1e-9 relative. The engine stores a channel's numbers as f32, so `clampChannelModule` rounds
 // them the same way (Math.fround) — the curve is computed from the numbers the engine actually runs.
 import type { ChannelModule, FilterModule, PeqModule, PeqBand, ChannelRackDoc } from "./rackTypes";
+import { clampGate, clampComp } from "./dynMath";
 
 /** The engine's program rate (the curve is drawn at the rate the filters run at). */
 export const FS = 44_100;
@@ -74,6 +75,8 @@ export function clampBand(b: PeqBand, i: number): PeqBand {
   };
 }
 export function clampChannelModule(m: ChannelModule): ChannelModule {
+  if (m.type === "gate") return clampGate(m);
+  if (m.type === "comp") return clampComp(m);
   if (m.type === "filters") return {
     type: "filters",
     hpf: { in: !!m.hpf.in, freq: f32(clamp(f32(fin(m.hpf.freq, 100)), f32(HPF_HZ[0]), f32(HPF_HZ[1]))) },
@@ -101,7 +104,8 @@ export function planChannel(doc: ChannelRackDoc, fs = FS): Bq[] {
   for (const s of doc.sections.ch) {
     if (!s.in || !s.module) continue;
     if (s.module.type === "filters") out.push(...filterBiquads(s.module, "hpf", fs), ...filterBiquads(s.module, "lpf", fs));
-    else s.module.bands.forEach((b, i) => { const q = bandBiquad(b, i, fs); if (q) out.push(q); });
+    else if (s.module.type === "peq") s.module.bands.forEach((b, i) => { const q = bandBiquad(b, i, fs); if (q) out.push(q); });
+    // gate / comp: level-dependent, not a frequency response — drawn on the transfer graph, not the EQ curve
   }
   return out.slice(0, 8);
 }

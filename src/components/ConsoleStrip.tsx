@@ -97,6 +97,9 @@ export default function ConsoleStrip({
   // PFL OUTPUT DEVICE — when a cue device is chosen but not there, PFL is SILENT (never the speakers); the strip
   // says so while its PFL is on.
   const [cueBad, setCueBad] = useState<string | null>(null);
+  // SLICE 6 — THE COMPRESSOR LAMP (Jeff's ruling 7): an operator reads the compressor from the board. The engine's
+  // comp GR for this channel this window (meters chDyn); lit from 1 dB.
+  const [compGr, setCompGr] = useState(0);
   // trackRef: the invisible full-area mouse capture overlay
   const trackRef = useRef<HTMLDivElement>(null);
   // faderAreaRef: the flex container we measure for faderH
@@ -171,6 +174,9 @@ export default function ConsoleStrip({
       const cs = m?.cueState;
       const bad = cs === "not_found" ? "cue device not found — PFL silent" : cs === "failed" ? "cue device failed — PFL silent" : null;
       setCueBad(prev => (prev === bad ? prev : bad));
+      const gr = m?.chDyn?.[slotIndex]?.[1] ?? 0;
+      const q = Math.round(gr * 2) / 2;   // 0.5 dB steps: no re-render per meter window
+      setCompGr(prev => (prev === q ? prev : q));
     }, 100);
     return () => clearInterval(id);
   }, [slotIndex, stationUuid]);
@@ -399,6 +405,17 @@ export default function ConsoleStrip({
                            border: `1px solid ${eqLit ? "var(--slot-eq)" : "var(--text-tertiary, #666)"}` }} />
             <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.12em", color: eqLit ? "var(--slot-eq)" : "var(--text-tertiary, #666)" }}>EQ</span>
           </button>
+        </div>
+      )}
+
+      {/* THE COMPRESSOR LAMP — lit while this channel's compressor is reducing gain (≥ 1 dB), with how much */}
+      {slotIndex !== undefined && compGr >= 1 && (
+        <div title={`${label}'s compressor is reducing the level by ${compGr.toFixed(1)} dB right now (channel EQ → Comp)`}
+             style={{ margin: "4px 8px 0", padding: "1px 4px", display: "flex", alignItems: "center", gap: 4, fontSize: 9, fontWeight: 800,
+                      letterSpacing: "0.06em", color: "var(--slot-dynamics)", border: "1px solid var(--slot-dynamics)",
+                      background: "color-mix(in srgb, var(--slot-dynamics) 14%, transparent)" }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--slot-dynamics)" }} />
+          COMP −{compGr.toFixed(1)} dB
         </div>
       )}
 

@@ -14,7 +14,8 @@ tour: true
 
 **A mic is a source channel on the board patched to Mic.** It works like every other channel:
 - **its own meter**, showing the mic before its fader;
-- **its own channel EQ** (Filters and PEQ; see **Channel EQ**);
+- **its own channel rack:** Filters, a **Gate**, the PEQ and a **Compressor** (see **Channel EQ** and **Gate and
+  Compressor**). **Start from the Voice preset**: open the rack (EQ on the strip) → Preset → Voice → TAKE;
 - **its fader and ON**;
 - **the ducker**: switch DUCK ON and the music drops under your voice.
 
@@ -45,6 +46,12 @@ channel you can set:
 **Mic settings belong to this computer.** Another computer on the same station picks its own mic: device
 names are different on every machine, so they never sync. The board layout itself (which channel is the mic)
 is shared as usual.
+
+## An open mic and the ducker
+
+If the mic channel's **DUCK** is on, anything it picks up (the room, a fan) can hold the music down. **Put a Gate
+on the mic** (the Voice preset has one): the ducker listens *after* the gate, so a closed gate means the room noise
+doesn't duck the music, and your voice still does.
 
 ## Hearing yourself
 
@@ -89,5 +96,6 @@ and the clock difference the engine is absorbing.
 ## Related
 
 - **Channel EQ** (`docs/help-channel-eq.md`)
+- **Gate and Compressor** (`docs/help-channel-dynamics.md`)
 - **Reading the Meters** (`docs/help-meters.md`)
 - **Health Monitor** (`docs/help-health-monitor.md`)

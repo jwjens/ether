@@ -20,9 +20,12 @@ export type FilterModule = { type: "filters"; hpf: FilterStage; lpf: FilterStage
 /** SLICE 5 — the 4-band parametric EQ. `shelf` is honoured on bands 1 and 4 only. */
 export type PeqBand = { freq: number; gain: number; width: number; shelf?: boolean };
 export type PeqModule = { type: "peq"; bands: [PeqBand, PeqBand, PeqBand, PeqBand] };
+/** SLICE 6 — the expander/gate (ratio = 1:ratio) and the RMS soft-knee compressor. dB / ms. */
+export type GateModule = { type: "gate"; threshold: number; ratio: number; depth: number; attack: number; hold: number; release: number; hysteresis: number };
+export type CompModule = { type: "comp"; threshold: number; ratio: number; attack: number; release: number; makeup: number; knee: number };
 /** What a CHANNEL rack slot can hold. Slice 5: FilterModule | PeqModule; slice 6: | GateModule | CompModule.
  *  Never RideModule. */
-export type ChannelModule = FilterModule | PeqModule;
+export type ChannelModule = FilterModule | PeqModule | GateModule | CompModule;
 export type ChannelModuleType = ChannelModule["type"];
 
 export type AnyModule = PgmModule | BranchModule;

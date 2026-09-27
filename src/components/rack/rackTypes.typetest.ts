@@ -26,6 +26,13 @@ export const emptyChannelRack: ChannelRackDoc = { v: 1, sections: { ch: [{ id: "
 
 // SLICE 5 — the channel modules ARE accepted in a channel slot (so the error above is about the ride, not the slot).
 export const filtersInChannel: Slot<ChannelModule> = { id: "f", in: false, module: { type: "filters", hpf: { in: true, freq: 80 }, lpf: { in: false, freq: 18000 } } };
+// SLICE 6 — a channel compressor is channel DYNAMICS, never a master branch module (and a ride never a channel one).
+export const compInChannel: Slot<ChannelModule> = { id: "k", in: false, module: { type: "comp", threshold: -20, ratio: 3, attack: 10, release: 150, makeup: 0, knee: 6 } };
+export const compInBranch: Slot<BranchModule> = {
+  id: "k2", in: true,
+  // @ts-expect-error — a channel compressor is not a branch module
+  module: { type: "comp", threshold: -20, ratio: 3, attack: 10, release: 150, makeup: 0, knee: 6 },
+};
 export const peqInBranch: Slot<BranchModule> = {
   id: "q", in: true,
   // @ts-expect-error — and a channel EQ is not a branch module

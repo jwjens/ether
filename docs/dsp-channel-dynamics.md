@@ -354,3 +354,79 @@ reported here so it isn't discovered later.
 - rack-eq, mic-input and pfl smokes pass;
 - undefined-calls, preload-bridge, ipc-contract and one-switch PASS;
 - leak guard 13/13.
+
+
+## Build — the UI
+
+**Status:** what it looks like on screen with the internal mic is UNVERIFIED until Jeff's check.
+
+### The model
+
+- **`rackTypes.ts`:**
+  - `GateModule` and `CompModule` join `ChannelModule`;
+  - the type test gains "a channel comp is not a branch module" (`@ts-expect-error`) and "a comp IS a channel
+    module".
+- **`dynMath.ts`:** the TS port of `comp_gr_db` / `gate_gr_db`, the ranges and the engine's clamps (f32), and
+  `chainOutDb` (gate → comp → makeup).
+  - **vitest against the shared fixture: worst |Δ| 0.0 dB** (bar 1e-9);
+  - the spec case → 7.5 dB;
+  - the clamps (makeup 0–24).
+- **`channelRack.ts`:**
+  - Add offers **Filters, Gate, PEQ, Comp**, one of each, each **inserted in the spec's order**, OUT (ruling 9),
+    at the Voice values;
+  - **`BUILT_IN_CHANNEL_PRESETS`:** **Voice** (Filters HPF 80 → Gate −45/15/1:4/1/100/150/3 → PEQ flat → Comp
+    3:1/−20/10/150/knee 6/makeup 0, all IN) and **Off** (the empty rack, ruling 6);
+  - `channelRacksEqual`.
+- **`eqMath.ts`:** the clamps cover gate and comp. `planChannel` (the EQ curve) skips the level-dependent modules.
+
+### The rack window (`ChannelRackView.tsx`)
+
+**Channel presets** — the master rack's shape:
+- **Arm → TAKE** (it says what TAKE will do; taking switches the preset's modules IN), DISARM, **Save as**;
+- stored per station in **`rack_ch_presets`**, like the master's `rack_presets`;
+- the active preset is derived by comparing the running rack with each preset.
+
+**GATE / COMP tiles:**
+- the settings summary, IN/OUT, the ⋯ menu (move, remove);
+- a live magenta **GR bar**;
+- the gate says **OPEN / CLOSED**.
+
+**The dynamics editor:**
+- **The transfer graph (`DynCurve.tsx`):**
+  - input dB against output dB, −70…+10;
+  - the **grey unity diagonal**;
+  - the gate and comp curves each faint in magenta (dashed when OUT);
+  - the **resulting curve in orange** (`--dyn-curve`, all four themes);
+  - **draggable thresholds**, the 14 / 20 dB depth guidance;
+  - the **live operating point**: the channel's pre-rack RMS level, and the engine's gate + comp GR from
+    `chDyn`, ~10 Hz.
+- **The controls:**
+  - separate GATE IN and COMP IN, each with its live GR;
+  - log sliders for the times;
+  - every parameter with its number, and the ruled ranges.
+- **CLEAR RACK** now reads "removes every module".
+
+### The board
+
+**The fader strip's COMP lamp (ruling 7):** a magenta "COMP −x dB" while the engine's comp GR for that channel is
+≥ 1 dB. It reads the meters' `chDyn`, quantised to 0.5 dB, so it doesn't re-render every meter window.
+
+### Help
+
+- `docs/help-channel-dynamics.md` (new): what the gate and compressor do, the Voice preset, the transfer graph,
+  reading it from the board.
+- `help-channel-eq.md`: Add offers four modules, plus the Voice preset.
+- `help-mic-input.md`: start from Voice; **an open mic and the ducker** (a gate keeps room noise from ducking the
+  music).
+
+### Gates
+
+- tsc 0 errors; **vitest 483/483**;
+- **`test:dynamics` 10/10** (new static smoke: module order, Off = empty, Voice values, the rack view reads
+  `chDyn`, presets per station, the orange curve is `dynMath`'s chain, the COMP lamp reads the engine's GR,
+  `--dyn-curve` in 4 themes, the daemon forwards `chDyn`, the help exists);
+- meter contract 30/30;
+- `test:rack-eq`, `test:mic-input` and `test:pfl` pass;
+- undefined-calls, preload-bridge, ipc-contract and one-switch PASS;
+- leak guard 13/13;
+- `npm run build` OK.

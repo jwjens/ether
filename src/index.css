@@ -34,6 +34,8 @@
   --band-2: #facc15;
   --band-3: #c084fc;
   --band-4: #f472b6;
+  /* SLICE 6 — the dynamics transfer graph's resulting curve: ORANGE (the spec's Wheatstone dynamics view). */
+  --dyn-curve: #fb923c;
   --accent-green: #34d399;
   --accent-red: #f87171;
   --accent-amber: #fbbf24;
@@ -230,6 +232,8 @@
   --band-2: #facc15;
   --band-3: #c084fc;
   --band-4: #f472b6;
+  /* SLICE 6 — the dynamics transfer graph's resulting curve: ORANGE (the spec's Wheatstone dynamics view). */
+  --dyn-curve: #fb923c;
   --accent-green: #34d399;
   --accent-red: #f87171;
   --accent-amber: #fbbf24;
@@ -357,6 +361,8 @@
   --band-2: #a16207;
   --band-3: #7e22ce;
   --band-4: #be185d;
+  /* SLICE 6 — the dynamics transfer curve (see the dark block). */
+  --dyn-curve: #c2410c;
   --accent-green: #059669;
   --accent-red: #dc2626;
   --accent-amber: #d97706;
@@ -494,6 +500,8 @@
   --band-2: #a16207;
   --band-3: #7e22ce;
   --band-4: #be185d;
+  /* SLICE 6 — the dynamics transfer curve (see the dark block). */
+  --dyn-curve: #c2410c;
   --accent-red:   #c82535;
   --accent-amber: #c87815;
 

@@ -41,7 +41,8 @@ On the **on-air decks A/B/C**, the deck's **EQ** button opens the same rack.
 ## Using it
 
 1. **Add a module.**
-   - An empty rack says **"empty · add"**. Press **+ FILTERS** or **+ PEQ** (one of each).
+   - An empty rack says **"empty · add"**. Press **+ FILTERS**, **+ GATE**, **+ PEQ** or **+ COMP** (one of each;
+     the gate and compressor are in **Gate and Compressor**). Or take the **Voice** preset.
    - **A new module starts OUT**, so adding one changes nothing on air.
 2. **Press IN** on the module's tile when you want to hear it.
 3. **Shape it on the curve.** The editor names what you are editing, for example *"editing: S2 · PEQ"*.
@@ -112,10 +113,11 @@ itself OUT. A new PEQ starts with every band at 0 dB.
 
 ## Not in this version (by design)
 
-- No gate or compressor on a channel yet (the next slice).
 - No presets that follow a source or a show yet (a later slice). The rack belongs to the fader.
 
 ## Related
+
+- **Gate and Compressor** (`docs/help-channel-dynamics.md`)
 
 - **The Master Rack** (`docs/help-processor-rack.md`)
 - **Reading the Meters** (`docs/help-meters.md`)
