@@ -3,7 +3,7 @@ feature: meters
 title: Reading the Meters
 summary: Every meter in EtherCast is the same meter — a coloured average bar with a white peak dot riding above it, a hold tick, an OVER light and a mark at −18. Channel meters show the source before the fader; the master meters show each output after it.
 where: Live panel → every mixer strip; Master Out → Bus meters and the Wild Meter; Health Monitor → each station card (PGM)
-since: 4.4 (meter bus, slice 2)
+since: 4.6.50
 audience: operator
 tour: true
 ---
@@ -98,14 +98,15 @@ The difference matters: an empty bar is evidence of silence; hatching is not.
   the Health Monitor.
 - **Every meter says NOT FED.** The audio engine is not reporting. Check the Health Monitor's Engine
   section; if the engine has just updated, fully close EtherCast and reopen it.
-- **The Health Monitor card and the master meter disagree.** Check **Help → About** — both read the same
-  PGM tap from this version on.
+- **The Health Monitor card and the master meter disagree.** Both read the same PGM tap, so they should
+  match. Check **Help → About** for your version, and fully close and reopen EtherCast after an update.
 
 ## Not in this version (by design)
 
 - **No loudness (LUFS) on these meters.** The average bar is an RMS level, not loudness. Loudness (M / S /
-  Integrated / LRA) for each output is on the Processor's **Loudness** card — see **Loudness Meter**.
-- **No true-peak.** The white dot is the sample peak. **True peak max** is on the same Loudness card.
+  Integrated / LRA) for each output is in the master rack (**Master Out → Processor → OPEN**), in the meter
+  column on the right — see **Loudness Meter**.
+- **No true-peak.** The white dot is the sample peak. **True peak max** is in the same loudness panels.
 - **One meter per strip.** A strip does not show before- and after-fader side by side; the after-fader
   level of the whole mix is on the master meters.
 

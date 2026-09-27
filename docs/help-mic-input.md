@@ -3,7 +3,7 @@ feature: mic-input
 title: Mic on Air (the mic as a channel)
 summary: A microphone is a channel on the board like any other — patch it to an input on this computer, set its gain, and it goes on air with its own meter, channel EQ, fader, ON and ducking.
 where: On the board, a source channel's source dropdown → an input device (or "Mic — pick an input…"). Input number and gain: Preferences → Audio → Mic Inputs. Its live state: the strip, and Health Monitor → Mic Inputs.
-since: DSP — mic in the engine (2026-09-26)
+since: unreleased (log-reader-flip, after 4.6.50)
 audience: operator
 tour: true
 ---
@@ -28,7 +28,8 @@ You can have a mic on any source channel: D, E, F, and the extra source channels
 
 1. Find a source channel (a strip with a **SOURCE** dropdown), or add one with **+**.
 2. In its **SOURCE** dropdown, under **INPUT DEVICES (this computer)**, choose your microphone or interface.
-   - Picking a device patches it at once, on input 1 at 0 dB.
+   - Picking a device patches it at once — on input 1 at 0 dB the first time. Changing to another device later
+     keeps your input number and gain.
 3. The strip names the device, and the line under the dropdown says how it is: **● IN 1 · +0 dB · live**.
 4. Bring the fader up and press **ON**. You're on air.
 
@@ -65,12 +66,14 @@ how the mic *sounds* through its EQ, but it's too late to talk against: you'd he
 | It says | What it means |
 |---|---|
 | **live** | The mic is running and on this channel. |
-| **starting** | It has just opened and is filling its buffer; a moment. |
+| **opening** / **starting** | It is opening, then filling its buffer; a moment. |
+| **waiting for the engine** | The audio engine has not reported this mic yet. If it stays, fully close and reopen Ether. |
 | **device not connected** | The chosen device isn't plugged into this computer. The channel is silent. It never switches to a different mic on its own: a wrong mic on air is worse than none. |
 | **device lost — retrying** | It was unplugged or failed. The channel is silent, **the music keeps playing**, and Ether re-opens it by itself when it comes back. |
 | **pure digital silence — Windows mic privacy?** | Windows is handing over exact silence. Almost always, Windows **Settings → Privacy → Microphone → "Let desktop apps access your microphone"** is off. It can also be a muted input. |
 | **that input is not on this device** | The input number is higher than the device has. Pick another in Preferences. |
-| **no input — Preferences → Audio** | The channel is set to Mic but no input is patched yet. |
+| **could not open** | The device would not open. The channel is silent. Pick the device again in Preferences, or choose another. |
+| **no input — Preferences → Audio** / **no input patched** | The channel is set to Mic but no input is patched yet. |
 
 When a mic isn't live, its meter is **hatched (NOT FED)** instead of reading zero, so you can't mistake a dead
 mic for a quiet one.

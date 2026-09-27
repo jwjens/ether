@@ -1,8 +1,8 @@
 ---
 feature: multi-machine-sync
 title: Multi-Machine Sync
-summary: Engineering controls for keeping two Ether installs in step — station UUIDs, the pending queue, and forced push/pull.
-where: Preferences → Backup & Restore → Multi-Machine Sync
+summary: Engineering view of sync between two Ether installs — station UUIDs, what is waiting to sync, whether the sync engine is running, and manual push/pull overrides.
+where: Preferences → Backup & Restore → Advanced — sync diagnostics
 since: 4.4.210
 audience: engineer
 tour: false
@@ -13,48 +13,49 @@ tour: false
 ## What it is
 
 The engineering view of sync between two installs of Ether on the same account. It shows what is
-**actually stored and running** — not what is supposed to be — and lets an engineer force one sync
-cycle in either direction.
+**actually stored and running** — not what is supposed to be — and gives an engineer manual overrides
+to force one sync cycle in either direction.
 
-This sits below the cloud backup controls on the same page, because both answer the same question:
-is this machine's work safely somewhere else.
+It sits in **Preferences → Backup & Restore**, below the cloud backup controls, under the heading
+**Advanced — sync diagnostics**, because both answer the same question: is this machine's work safely
+somewhere else. It is not needed in normal use.
 
 ## When to use it
 
 When two machines that share an account disagree — different libraries, different logs, or a
 song deleted on one that is still present on the other.
 
-## Nothing here happens on its own
+## Sync runs on its own once it is on
 
-**Every transfer is manual.** There is no timer, no background push, and no automatic pull. Data
-moves between machines only when someone presses a button on this panel.
+Sync is switched on and off with **Keep my stuff synced**, higher up on the same page (it needs a
+Network licence). Once it is on, sync runs **continuously in the background** — pushing about every
+10 seconds and pulling about every 30. Enable it once and leave it.
 
-That is deliberate. An earlier version of this panel had a five-second automatic push/pull toggle,
-and it was removed. Continuous sync between two installs means a change made on a secondary
-machine — a wrong delete, a bad category edit, a half-finished import — can reach the main studio
-machine before anyone notices it was made. There is no window in which to catch it. Requiring a
-button press keeps that window open, and keeps the decision with the operator.
+This panel does not switch sync on or off. It shows its state, and its buttons are **manual
+overrides** for when a transfer has to land now.
 
-## Read this before you push
+## Read this before you enable sync on a second machine
 
-**Run Preflight on BOTH machines and compare the station UUIDs first.**
+**Compare the station UUIDs on BOTH machines first** (press Preflight on each).
 
-If the UUIDs do not match, UUID-based identity cannot merge the two installs, and pushing will
-**mix the stations up rather than reconcile them**. That is a much worse problem than the one you
-started with, and it affects both machines. Compare first, push second.
+If the UUIDs do not match, UUID-based identity cannot merge the two installs, and continuous sync will
+**mix the stations up rather than reconcile them — unattended**. That is a much worse problem than the
+one you started with, and it affects both machines. Compare first, enable second.
 
 ## What each reading means
 
 - **This machine** — the stable machine id. It is here so you can tell the two dumps apart.
 - **Stations — id ↔ UUID** — the comparison above. The number is this machine's *local* id and can
   legitimately differ between installs; the UUID is the one that must match.
-- **Pending mutations** — changes written on this machine that have not been sent anywhere. Green at
-  zero, amber otherwise.
-- **Scheduler** — whether the sync engine is actually running. It is only built at startup, and only
-  when `sync_enabled` is true *and* an account session and licence resolve. `sync_enabled` is shown
-  beside it, so "enabled but not running" is visible rather than confusing.
+- **Waiting to sync** — changes written on this machine that can go up and have not yet. Green at
+  zero, amber otherwise, with a progress bar while there is a backlog.
+- **Journal only** — shown only when there are some. Local-only records that never leave this
+  computer. **Not a backlog** — nothing is stuck.
+- **Sync engine** — whether the sync engine is actually running. It is only built when Ether starts,
+  and only when sync is enabled *and* an account session and licence resolve. The stored setting
+  (`sync_enabled`) is shown beside it, so "enabled but not running" is visible rather than confusing.
 - **Ever received** — whether this install has ever taken in a single row **from** another machine.
-  This is the reading people miss: an install can have a clean queue and still have never received
+  This is the reading people miss: an install can have nothing waiting and still have never received
   anything, which means it has never really been in a pair.
 
 ## The controls
@@ -63,8 +64,8 @@ started with, and it affects both machines. Compare first, push second.
 - **PUSH NOW** — forces one immediate push. Reports how many were sent, accepted and rejected, and
   the pending count **before and after**, so you can see the scale of what moved.
 - **PULL NOW** — forces one immediate pull and reports how many mutations were applied.
-- **UUID-based station identity** — routes station-scoped rows by station UUID instead of by this
-  machine's local integer id.
+- **Enable UUID-based station identity** — routes station-scoped rows by station UUID instead of by
+  this machine's local integer id.
 
 ## About the UUID toggle and the restart
 
@@ -73,28 +74,31 @@ The panel shows this setting twice on purpose: **Stored** and **in the running e
 The sync engine reads this flag **once, when it is built at startup**. So the moment you tick the
 box, the stored value changes and the running value does not — and the panel says so in amber until
 you restart. That is not a warning to be safe; the setting genuinely has no effect on any push or
-pull until Ether is restarted.
+pull until Ether is restarted. The same is true of **Keep my stuff synced**: the Sync engine reading
+changes only after a restart.
 
 **Quit Ether fully from the tray and reopen it.** A window reload is not enough, and the audio
 daemon does not reload on its own.
 
 ## Troubleshooting
 
-- **"sync is not running on this install"** — the engine was never built. Check `sync_enabled`
-  beside the Scheduler reading, and that the machine is signed in with a licence that resolves.
-- **Push reports `sent: 0`** — there was nothing pending. Check the pending count.
-- **Everything pending, "Ever received: never"** — this install has never synced in either
-  direction. Nothing about deletions or any single table explains that; the engine is not running or
-  has never successfully reached the backend.
+- **"sync is not running on this install"** — the engine was never built. Check that **Keep my stuff
+  synced** is on, that the machine is signed in with a licence that resolves, and that Ether has been
+  restarted since you turned it on.
+- **Push reports `sent: 0`** — there was nothing waiting. Check **Waiting to sync**.
+- **A large Waiting to sync count, and "Ever received: never"** — this install has never synced in
+  either direction. Nothing about deletions or any single table explains that; the engine is not
+  running or has never successfully reached the backend.
 - **A deleted song is still on the other machine** — check that the delete produced a mutation
   before assuming deletion is broken. On an installed copy of Ether, Preflight is the way to check:
-  if **Ever received** says *never* and the pending count is large, nothing has ever synced in
-  either direction and no deletion-specific problem is involved. (On a machine with the source tree,
+  if **Ever received** says *never* and Waiting to sync is large, nothing has ever synced in either
+  direction and no deletion-specific problem is involved. (On a machine with the source tree,
   `scripts/diag-song-delete-sync.js` gives the same answer in more detail. It is a local diagnostic
   and is not shipped with the app.)
   Note that deleting a song **never removes its audio from R2**; that is deliberate.
 
 ## Related
 
-- [Backup and Restore](help-backup-and-restore.md) — the cloud backup controls above this section
+- [Backup and Restore](help-backup-and-restore.md) — the cloud backup controls and **Keep my stuff
+  synced**, above this section
 - `docs/song-delete-sync-diagnosis-2026-08-14.md` — why this panel exists

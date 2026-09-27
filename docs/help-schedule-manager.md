@@ -1,8 +1,8 @@
 ---
 feature: schedule-manager
 title: Schedule Manager
-summary: Shows, Clocks, Categories, Spots and Sweepers side by side in one window, linked — pick a category and the clocks using it light up; edit anything and every pane refreshes.
-where: Menu → Schedule Manager · or Schedule → Schedule Manager in the menubar
+summary: Shows, Clocks, Categories, Spots, Sweepers, Rotation Analytics, Program Log and Play Log side by side in one window, linked — pick a category and the clocks using it light up; edit anything and every pane refreshes.
+where: ≡ Menu → Schedule Manager (opens in its own window) · or Schedule → Schedule Manager in the menubar
 since: 4.4.172 (Spots and Sweepers panes added 4.4.176)
 audience: programmer
 tour: true
@@ -16,20 +16,22 @@ Shows, Clocks and Categories have always been **tabs** — you could look at one
 fine for editing one thing and useless for the question programming actually asks: *does my clock
 match what I said I wanted?*
 
-The Schedule Manager puts the whole picture in one window and links it:
+The Schedule Manager puts the whole picture in one window and links it. The default arrangement:
 
 ```
-┌──────────────┬────────────────────────────┬──────────────────────────────┐
-│ SHOWS        │ CLOCK                      │ CATEGORIES │ SPOTS │ SWEEPERS │
-│ which clock  │ the hour grid for the      │ ───────────┴───────┴──────── │
-│ airs when    │ selected show's clock      │ targets and library depth    │
-└──────────────┴────────────────────────────┴──────────────────────────────┘
+┌──────────────┬────────────────────────────┬──────────────────────────────────────────┐
+│ SHOWS        │ CLOCKS │ PROGRAM LOG       │ CATEGORIES │ SWEEPERS │ SPOTS │          │
+│              │                            │ ROTATION ANALYTICS │ PLAY LOG            │
+│ which clock  │ the hour grid for the      │ targets, imaging, breaks, what aired     │
+│ airs when    │ selected show's clock      │                                          │
+└──────────────┴────────────────────────────┴──────────────────────────────────────────┘
 ```
 
-**Categories, Spots, Sweepers and Rotation Analytics share the right-hand column as tabs.** Click a tab to switch. Five
-columns side by side would leave every one of them too narrow to use, and Spots and Sweepers are
-things you consult while building a clock rather than watch continuously. Drag any tab out if you
-want it as its own column — see *Arranging it*.
+There are eight panes: **Shows, Clocks, Categories, Spots, Sweepers, Rotation Analytics, Program Log
+and Play Log.** Every one is open in the default arrangement. Program Log rides as a tab behind Clocks
+in the middle column; Categories, Sweepers, Spots, Rotation Analytics and Play Log share the
+right-hand column as tabs. Click a tab to switch. Drag any tab out if you want it as its own
+column — see *Arranging it*.
 
 ## Arranging it
 
@@ -42,11 +44,12 @@ something that should rearrange a colleague's.
 
 **Layouts**, at the bottom of the Panels menu, are named arrangements for a particular job:
 
-| Layout | Opens | For |
+| Layout | Opens (columns, left to right) | For |
 |---|---|---|
-| **Programming** | Shows · Clocks · Categories (+ Sweepers, Spots) | Building the hour |
+| **Programming** | Shows · Clocks + Program Log · Categories, Sweepers, Spots, Rotation Analytics, Play Log | Building the hour (the default) |
 | **Traffic** | Spots · Clocks · Sweepers, Categories | Spot and break work |
-| **Analysis** | Rotation Analytics · Categories, Shows · Clocks | Reading what aired |
+| **Analysis** | Rotation Analytics, Play Log · Categories, Shows · Clocks | Reading what aired |
+| **Live** | Shows · Program Log | Reading the hour you are in |
 
 Picking one **replaces your current arrangement** — same as Reset layout, and just as harmless: it
 moves panes, nothing else. From that moment it is simply your layout again. Drag it, resize it,
@@ -60,9 +63,8 @@ button turns amber and says how many are hidden, so a missing pane reads as reco
 **Reset layout** in the header puts everything back to the default arrangement. No confirmation, no
 data affected, and **you stay signed in** — it only moves panes.
 
-> **After updating to 4.4.176 your saved arrangement is rebuilt once.** Two new panes exist that
-> your old layout had never heard of; restoring it would have left Spots and Sweepers invisible with
-> no way to reach them. Arrange it again and it will stick.
+When an update adds a new pane, your saved arrangement is rebuilt once so the new pane is not left
+invisible. Arrange it again and it will stick.
 
 **Fixed layout** switches to the older non-dockable three-pane view if you prefer it.
 
@@ -92,22 +94,21 @@ generate. Its tables sort and resize like a spreadsheet — see its own help ent
 
 ## Spots and Sweepers
 
-**Spots** is the full *Spots & Promos* manager — the same one on the main menu, hosted here so you
-can build a break without leaving the clock you are building it for. Spot categories are created,
-renamed and deleted here.
+**Spots** is the full *Spots & Promos* manager — the same one the SPOTS button in the bottom bar
+opens, hosted here so you can build a break without leaving the clock you are building it for. Spot
+categories are created, renamed and deleted here.
 
 **Sweepers** is the same panel as the SWEEPERS push-up at the bottom of the screen, which remains its
 home. Use it here to see which music categories carry imaging while you look at the clock.
 
-### Where spot categories moved, and what did not move
+### Where spot categories live, and what did not move
 
 | Thing | Where it lives | Why |
 |---|---|---|
 | **Spot categories** (the buckets) | **Spots** pane | They belong to the station, not to any one clock |
 | **Timed breaks** ("3 spots at :20") | **Clocks** pane, unchanged | A break belongs to the clock it is on |
 
-The Clocks pane used to carry a Spot Categories card beside the breaks editor, and it crowded the
-part of the pane you actually work in. In this window that card is gone and the Spots pane owns it.
+In this window the Clocks pane does not carry a Spot Categories card — the Spots pane owns it.
 **In the tabbed view and the Fixed layout the card is still there**, because neither of those has a
 Spots pane to send you to.
 
@@ -141,9 +142,10 @@ fill the hour.
 
 ## The old surfaces still work
 
-Nothing was taken away. `Schedule → Clocks / Shows & Dayparts / Categories` still opens the tabbed
-panel, the three popout windows still work, and the embedded programming panel is unchanged. The
-Schedule Manager is an additional door onto the same rooms — use whichever suits the task.
+Nothing was taken away. `Schedule → Clocks / Shows & Dayparts / Categories` in the menubar still
+opens the tabbed panel, the Shows and Categories windows in the ≡ menu still work, and the embedded
+programming panel is unchanged. The Schedule Manager is an additional door onto the same rooms — use
+whichever suits the task.
 
 ## What it does NOT do
 
@@ -153,9 +155,15 @@ Schedule Manager is an additional door onto the same rooms — use whichever sui
   clock beside it does not change those numbers. Hit Refresh after you generate.
 - **Your layout is not your colleague's.** It is stored per station on this machine and never synced.
 
+## Known issue
+
+The Sweepers pane's tab (and its entry in the Panels menu) still reads **"Jingles"**. It is the same
+Sweepers panel described above.
+
 ## Related
 
-**Station Health → Rotation goals** — the same advisor, for every clock at once.
+**Station Health → Library & Rotation → Rotation goals** — the same advisor, for every clock at once.
+Open Station Health from the health dot in the bottom bar, or Tools → System Health in the menubar.
 **Rotation Analytics** — what the log actually did, after generation.
 **Spots & Promos** — the same manager the Spots pane hosts.
-**Sweepers & Sweepers** — the same panel the Sweepers pane hosts; the push-up is its home.
+**Sweepers** — the same panel the Sweepers pane hosts; the push-up is its home.

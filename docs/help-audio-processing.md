@@ -41,9 +41,10 @@ on is always your choice, per station.
 2. **Process local output** — apply processing to THIS machine's speaker/monitor output only. The stream is
    unaffected. Use this to monitor the processed sound.
 3. **Process stream** — apply processing to the Icecast stream — **what your listeners hear**.
-4. **Target loudness** — the loudness the ride aims for. **−14 LUFS** is the streaming standard; louder
-   (e.g. −12) is more aggressive, quieter (e.g. −16) is gentler. The limiter holds its ceiling regardless
-   (see **The ceiling** below).
+4. **Target loudness** — the loudness the ride aims for (−30 to −6 LUFS). **−14 LUFS** is the streaming
+   standard; louder (e.g. −12) is more aggressive, quieter (e.g. −16) is gentler. The limiter holds its
+   ceiling regardless (see **The ceiling** below). If the stream is split from the monitor in the
+   Processor rack, the stream's target is set there instead.
 
 Each setting is **per station** and takes effect within a few seconds — no restart. Switch stations and set
 each one independently.
@@ -53,19 +54,19 @@ each one independently.
 When either toggle is on, a **Live meters** panel appears:
 
 - **IN LOUDNESS / OUT LOUDNESS** — the LUFS before and after processing. OUT should sit near your target.
-  OUT is **measured** on what the output actually sent, after the limiter. (Earlier versions showed an
-  estimate here — the input plus the ride's gain — that never saw the limiter. It is now a real measurement.)
-- **peak (dBFS)** — the loudest sample at each stage.
-- **GAIN REDUCTION** — how hard the limiter is working (in dB). A little movement on peaks is normal;
-  constant heavy reduction means your target is set too loud. On the Processor page the **ride** and the
-  **limiter** each have their own meter — see **Loudness Meter**.
+  OUT is **measured** on what the output actually sent, after the limiter.
+- **peak … dBFS** (under each loudness figure) — the loudest sample at that stage.
+- **RIDE GAIN** — how far the ride is lifting (bar to the right) or lowering (bar to the left) the level,
+  in dB. Under it, **limiter clamping −x dB** shows the limiter at work, or **idle** when it is not. A
+  little clamping on peaks is normal; constant heavy clamping means your target is set too loud. On the
+  Processor page the **ride** and the **limiter** each have their own meter — see **Loudness Meter**.
 
 The meters read live off the engine — they show what's **actually** happening on air, not a prediction. If
 they say "waiting for audio…", nothing is playing yet.
 
 ## How it behaves on air
 
-- Processing runs on the program bus, so it covers **everything** — songs, sweepers, sweepers, spots.
+- Processing runs on the program bus, so it covers **everything** — songs, sweepers, announcements, spots.
 - It does **not** move any deck fader or change your mix; it only shapes the final program level.
 - Changing the target or a toggle applies on the fly; the ride eases in, it doesn't jump.
 
@@ -78,8 +79,8 @@ they say "waiting for audio…", nothing is playing yet.
 
 ## Not in this version (by design)
 
-- No multiband / EQ / compression curves — this is a **loudness ride + true-peak limiter**, not a full
-  processing chain.
+- No multiband compression — this is a **loudness ride + true-peak limiter**, not a full processing
+  chain. The master **GEQ** lives in the Processor rack (see **The Master Rack**).
 
 ## The ceiling
 

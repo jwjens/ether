@@ -3,7 +3,7 @@ feature: show-presets
 title: Show Presets (save and recall the whole board)
 summary: Save the whole board as a show — every fader, channel EQ, gate and compressor, the ducker, the room and monitor levels, the master rack — and TAKE it back in one press. Channels that are ON keep what they have until you switch them OFF, so nothing changes under a live voice.
 where: On the board, the SHOW bar above the faders (the dashboard and the pop-out board) → Arm a show… → TAKE. Save / Save As on the same bar.
-since: slice 7 (DSP)
+since: unreleased (log-reader-flip, after 4.6.50)
 audience: operator
 tour: true
 ---
@@ -33,7 +33,7 @@ and the master at Ether's standard chain. It's always there as a known clean sta
 ## Find it
 
 The **SHOW** bar sits **above the faders**, in the dashboard and in the pop-out board. It shows:
-- **SHOW: Morning Drive**, the show you last took;
+- **SHOW Morning Drive**, the show you last took (**—** if you haven't taken one);
 - **· modified**, when the board no longer matches it (you moved a fader, changed an EQ, and so on);
 - **· waiting: A, G**, the channels still waiting for the show (see PENDING below).
 

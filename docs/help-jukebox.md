@@ -2,8 +2,8 @@
 feature: jukebox
 title: Jukebox (public request wall)
 summary: A fullscreen wall of album art the public can browse and request from — each request shows the requester's name and its place in line.
-where: ☰ menu (top right) → Windows → Jukebox
-since: unreleased (Phase 1 build, 2026-08-17)
+where: ☰ menu (top right) → Jukebox
+since: 4.4.156
 audience: operator
 tour: true
 ---
@@ -43,15 +43,14 @@ settings, edit your library, or stop what is on air.
    empty and the Jukebox simply doesn't show a code.
    - Type a **name**, not a web address. A bare word on its own is not a link — the app adds the rest.
      (If you'd rather paste a full `https://` address, that works too and is used exactly as given.)
-   - The same page works on a **phone** and fullscreen on a **tablet** at a stand — it's one page that
-     fits whatever it's opened on.
+   - Guests who scan the code can request from their **phone**. Their requests join the same queue,
+     under the same rules, as requests typed at the jukebox screen.
 3. **Patch it into a deck.** On the dashboard open the deck configurator and set the source of
    **deck D, E or F** to **Jukebox**. That is the jukebox's channel on your board — bring the fader up
    and it is on air, exactly like a microphone.
    - Only D, E and F are offered on purpose. Automation runs decks A, B and C, so a jukebox deck is
      one your scheduler never touches. Your log, your AUTO/MANUAL state and your clocks are unaffected.
-4. **Open the display.** Click the **☰ menu** at the top right → under **Windows**, choose
-   **Jukebox**. It opens as its own window, **fullscreen**, ready to face the public.
+4. **Open the display.** Click the **☰ menu** at the top right → **Jukebox**. It opens as its own window, **fullscreen**, ready to face the public.
 
 ## Using it
 
@@ -81,6 +80,9 @@ settings, edit your library, or stop what is on air.
   requesting it, the name line reads **Unknown** — that is normal, not a fault.
 - Requests play **in the order they arrived**, and a request **never cuts a song that is already
   playing** — it starts when the current one finishes.
+- **One song at a time per person.** Someone with a request still waiting is told *"You already have …
+  waiting"* and can pick another once it has played. A song that played recently can't be requested
+  again straight away — the jukebox says roughly how many minutes to wait.
 - **Operator controls are off the public face.** Routing ("which deck this jukebox feeds"), the ON AIR
   lamp and the AUTO switch live behind the small **OPERATOR** button at the right of the top strip.
   Click it to open them; it stays shut otherwise, so the public sees a jukebox and not a console. The
@@ -119,24 +121,30 @@ can tell a public pick from rotation.
 - **"No station selected"** — this install has no active station. Sign in and pick a station in the
   main window, then reopen the jukebox. The jukebox will never guess a station for you.
 - **The wall is empty but categories are ticked** — the ticked categories have no songs with playable
-  files on this machine. Check Settings → Catalogue Folder & Sync.
+  files on this machine. Check Settings → Audio → Catalogue Folder & Sync.
 - **"The queue is full right now"** — the number of waiting requests hit the cap. It clears as songs
-  play.
+  play. The cap (12 by default) and how soon a song can come round again (60 minutes by default; 0
+  allows it straight back) are set in **Settings → Programming → Jukebox → Request limits**, then
+  **Save**. They apply to phone requests and the jukebox screen alike.
 - **"Not routed to a deck"** — no deck has Jukebox as its source. Set deck D, E or F to Jukebox.
   Requests keep being collected in the meantime.
 - **"The fader is down"** — the jukebox is patched in but its channel is not up, so nothing is
   reaching air. The queue keeps filling; bring the fader up when you want it heard.
-- **The VU meter on a jukebox deck sits at zero** — decks D, E and F do not have level meters yet
-  (this affects any source on those decks, not just the jukebox). The audio is playing and mixed
-  normally; only the meter is missing.
 - **A song won't queue twice** — if it's already coming up, the jukebox says so rather than stacking
   duplicates.
 
+## Donations (optional)
+
+In **Settings → Programming → Jukebox → Donations** you can connect your organisation's own Stripe
+account. The money goes to your Stripe account — Ether takes no cut. The panel shows what Stripe still
+needs before it can accept donations. Once connected, pick one:
+
+- **Don't ask for anything** — requests are free.
+- **Ask for a donation — the song plays either way** — guests are invited to give after requesting;
+  nobody is turned away.
+- **Require payment before the request goes through** — a sale, not a donation. Until Stripe can take
+  payments, requests go through free.
+
 ## Not included yet
 
-- **Requesting from a phone.** The QR code shows the link you provide; the public page it points to is
-  the next phase of this feature and isn't built yet.
-- **Payments or donations.** There is no charge for a request and no payment step anywhere in this
-  build.
-- **Paying to skip the line.** Requests are strictly first-come, first-served. Priority is a future
-  design that belongs with donations.
+- **Paying to skip the line.** Requests are strictly first-come, first-served, paid or not.

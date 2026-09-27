@@ -27,7 +27,7 @@ park.ether-cast.com/<your-station-slug>
 ```
 
 For HalloVeen that is **park.ether-cast.com/halloween** — the same slug the public listener page uses
-at `listen.ether-cast.com/halloween`.
+at `listen.ether-technologies.com/halloween`.
 
 **The page is hosted, so the address always works.** It does not matter whether the studio machine is
 switched on, whether Ether is running, or whether the station is on air. If the station is dark the
@@ -114,4 +114,4 @@ You're using the link without the `?k=` token. Get the full one from the studio 
 ## Related
 
 - Announcements and their schedule: the **Announcements** panel in EtherCast.
-- The public listener page for the same station: `listen.ether-cast.com/<slug>`.
+- The public listener page for the same station: `listen.ether-technologies.com/<slug>`.

@@ -1,8 +1,8 @@
 ---
 feature: rotation-analytics
 title: Rotation Analytics
-summary: See how your rotation is actually behaving — spins vs target, artist burn, turnover, and why each song was picked. Read-only; it never changes what airs.
-where: Menu → Rotation Analytics · or as a pane in Schedule Manager
+summary: See how your rotation is actually behaving — spins vs target, artist burn, turnover, and how many log rows carry a recorded pick reason. Read-only; it never changes what airs.
+where: ≡ Menu → Rotation Analytics (opens in its own window) · Schedule → Rotation Analytics in the menubar · or as a pane in Schedule Manager
 since: 4.4.169 (sortable/resizable tables and the Schedule Manager pane, 4.4.177)
 audience: programmer
 tour: true
@@ -12,13 +12,13 @@ tour: true
 
 ## What it is
 
-Four questions a PD asks about rotation, answered from the log itself:
+Five questions a PD asks about rotation, answered from the log itself:
 
 - **Spins** — how often is each category airing, against the target you declared?
 - **Hourly grid** — which hours does each category own?
 - **Burn** — which artists are on too often, and how tightly spaced?
 - **Turnover** — how much of the library is actually in play, or is a handful of songs carrying it?
-- **Why** — for any scheduled row, why *that* song?
+- **Why** — how many rows in the log carry a recorded reason for their pick?
 
 It reports only. Nothing in this panel changes what plays.
 
@@ -30,13 +30,13 @@ It reports only. Nothing in this panel changes what plays.
 |---|---|
 | **Target/hr** | The `spins/hr` you set on the category. **—** means no target declared |
 | **Actual/hr** | What the log actually contains, averaged over the window |
-| **Δ/hr** | Actual minus target. Amber past ±1 |
-| **Share** | This category's percentage of all music. Amber past 50% |
+| **Δ/hr** | Actual minus target. Amber at ±1 or more |
+| **Share** | This category's percentage of all music. Amber at 50% or more |
 
 A category with **no target shows —** and is never counted as a miss. Not declaring a goal is a
 legitimate choice, and the panel treats it as one.
 
-A **share above 50%** is worth a look. If one category is most of your day, that is your format
+A **share of 50% or more** is worth a look. If one category is most of your day, that is your format
 whether you intended it or not.
 
 ### Artist burn
@@ -66,13 +66,17 @@ actually airing.
 Reasons are written **as the log is generated** — the category, how many songs were in the pool, how
 many were vetoed and by which rule, and whether any rule had to be relaxed.
 
-**They cannot be reconstructed afterwards.** The vetoed and losing candidates only exist during the
-pick, so rows generated before this feature existed will honestly say *"not recorded"* rather than
-being given a plausible-sounding guess. Run **Generate** and new rows will carry their reasons.
+This section tells you **how many rows in the window carry a recorded reason** (for example
+"412 of 430 rows carry a recorded reason"). The individual reasons are stored on each log row, but
+they are not shown on screen yet — not here and not in the Program Log.
+
+**Reasons cannot be reconstructed afterwards.** The vetoed and losing candidates only exist during
+the pick, so rows generated before this feature existed show **"0 of N rows carry a reason"** rather
+than being given a plausible-sounding guess. Run **Generate** and new rows will carry their reasons.
 
 ## Working the tables
 
-The three tables are a spreadsheet-style grid:
+The four tables (Spins, Hourly grid, Artist burn, Turnover) are a spreadsheet-style grid:
 
 - **Click a header to sort.** Click again to reverse it.
 - **Shift-click a second header** to sort by that as a tiebreak. The little ▲1 ▼2 marks show which
@@ -92,18 +96,12 @@ Each section has its own **Export CSV** button, directly under the table it expo
 directly in Excel, Sheets or Numbers.
 
 **Sorting and resizing do not change the file.** The export is defined by the report, not by how you
-happen to be looking at it, so two people exporting the same window get the same file. The exports
-are byte-for-byte what they were before the tables became sortable — an archived file from an
-earlier version still lines up with a new one.
-
-The **Hourly grid** now has a table of its own. It used to be export-only — the button existed, the
-view never did — so what you exported could not be checked against anything on screen. Every export
-in this panel now sits under the table it describes.
+happen to be looking at it, so two people exporting the same window get the same file.
 
 ## Time range
 
 24 Hours / 7 Days / 30 Days, across the whole panel. Longer ranges are slower on a big library —
-30 days on a full station takes a moment.
+30 days on a full station takes a moment. **Refresh** re-reads the log for the current range.
 
 ## What it does NOT do
 
@@ -117,13 +115,13 @@ in this panel now sits under the table it describes.
 Rotation Analytics is also a **pane** in Schedule Manager, beside Categories, Spots and Sweepers. That
 completes the loop in one window: declare a target on a category, shape the clock against the
 advisor, then read here what actually aired. It is the same panel — the menu entry still opens it
-full-screen, and nothing was moved.
+in its own window.
 
 It takes no part in the editing around it. These numbers are **history**, read from the log; editing
 a clock beside it does not change them. Re-run the range with **Refresh** after you generate.
 
 ## Related
 
-**Station Health → Rotation goals** shows the other half: whether your *clocks* match your declared
-targets, before a single song is scheduled. This panel shows what the log actually did.
+**Station Health → Library & Rotation → Rotation goals** shows the other half: whether your *clocks*
+match your declared targets, before a single song is scheduled. This panel shows what the log actually did.
 **Schedule Manager** — the workspace this panel can live in.

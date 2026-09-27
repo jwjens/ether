@@ -3,7 +3,7 @@ feature: program-log
 title: "The Program Log"
 summary: One day of the station's real log — what aired, what is on air, what is coming — with Fill Day, Fill Week, Clear Day and CSV / Print / PDF export.
 where: ≡ menu → Program Log, Schedule → Program Log (its own window), or the PROGRAM LOG tab at the bottom of the dashboard (docked)
-since: unreleased (branch log-reader-flip, after 4.6.45)
+since: 4.6.49
 audience: operator
 tour: true
 ---
@@ -35,7 +35,8 @@ day is a row you can open.
 - **Status** — `pending` (not yet), **`playing`** (on air now, highlighted), `played` (aired, green),
   `missed` (a spot or item that did not air, red).
 
-The summary at the top — *N of 24 hours scheduled · total programming* — is counted from these rows.
+The summary at the top — *N of M hours scheduled · total programming* — is counted from these rows. M is
+the number of hours listed: the hours your shows cover, plus any hour that already has rows.
 
 ## Fill Day
 
@@ -111,8 +112,7 @@ there is no Save button, and what you see after each change is what the log now 
   title or song too close to another play). It tells you; it does not stop you.
 
 **Rows that have aired or are on air cannot be changed.** They are dimmed, cannot be dragged or
-deleted, and if you try, the reason is shown: *already aired — the log is a record of what happened,
-not a plan.*
+deleted, and if you try, the reason is shown: *Already aired — a record, not a plan.*
 
 ## If something looks wrong
 

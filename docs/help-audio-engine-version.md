@@ -14,8 +14,8 @@ tour: true
 
 An amber bar across the top of the screen:
 
-> ⚠ The audio engine is running an older build — **fully close and reopen Ether**. Until then some
-> readings may be missing or out of date.
+> ⚠ The audio engine is running an older build (engine v…, app v…) — **fully close and reopen
+> Ether**. Until then some readings may be missing or out of date.
 
 ## Why this happens
 
@@ -25,11 +25,16 @@ why closing the window never takes you off the air.
 
 When Ether updates itself, the window gets the new version. **The audio engine does not** — it is
 busy playing, and swapping it mid-song would put dead air to air. So it keeps running the old build
-until it is stopped and started again.
+while audio is playing.
+
+If nothing is playing, Ether replaces the engine by itself after a few seconds of silence. While
+anything is on air it waits — it will not cut your audio to update itself.
 
 Most of the time the two builds agree and you never see this bar. When they do not, you get told.
 
 ## What to do
+
+If you do not want to wait for a quiet moment:
 
 1. Finish or hand off what is on air — this restarts the audio.
 2. **Fully close Ether.** Not just the window: quit it from the tray icon as well, so the audio
@@ -65,8 +70,8 @@ version, it says **version unknown** instead of printing a number nobody can sta
 ## What it does NOT mean
 
 - **It is not a crash**, and it is not dead air. Your station is playing.
-- **It is not an update prompt.** Updating again will not clear it — only stopping and starting the
-  engine will.
+- **It is not an update prompt.** Updating again will not clear it — only a new engine will: either
+  the automatic swap during silence, or a full close and reopen.
 - **It is not permanent.** One full close and reopen resolves it.
 
 ## Related

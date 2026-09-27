@@ -10,13 +10,14 @@ tour: true
 
 # Play Log exports
 
-Four buttons, four different documents. They are not variations of one file.
+Each export button makes a different document. They are not variations of one file.
 
 | Button | Produces | For |
 |---|---|---|
 | **Export CSV** | The as-run affidavit — everything that aired, with times and lengths | Advertisers, proof of performance |
 | **BMI** | Title, performer, date, time, duration | BMI reporting |
 | **ASCAP** | Title, artist, date, start time, duration, source | ASCAP reporting |
+| **PDF** | A printable list of the plays on screen: date, time, title, artist | A quick printed log |
 | **Export Traffic CSV** (Traffic view) | Every **scheduled spot**, aired or not | Traffic reconciliation |
 
 ## The as-run affidavit — Export CSV
@@ -41,26 +42,19 @@ An empty cell means Ether does not know, and it will not invent a value:
 | Column | Empty when |
 |---|---|
 | **Advertiser, ISCI, Cart Number** | The spot's record has no such value. Fill them in on **Spots & Promos** and every export after that carries them. |
-| **Category** | The item is not a library song in a category — a sweeper, a sweeper or a cart. |
+| **Category** | The item is not a library song in a category — a sweeper, a spot or a cart. |
 | **End Time, Duration** | The length was never recorded. These stay blank rather than showing `0:00`, which would claim a zero-length airing. |
 
 > **If ISCI and Cart Number are empty across the board**, nothing is broken — those fields have not
 > been filled in on your spots yet. They are the two an advertiser is most likely to ask for, so they
 > are worth entering once per spot in Spots & Promos.
 
-### What changed in 4.4.180
+## Known issue
 
-The old file had eight columns — `Date, Time, Title, Artist, Category, Show, Clock, Deck` — and
-three of them could never contain anything:
-
-- **Clock** had no underlying field at all.
-- **Show** and **Category** were recorded as empty on every play, always.
-
-It also stopped at **200 rows** no matter which period you picked, which for an affidavit is the
-serious one: it silently left airings out of a document whose job is to prove they happened.
-
-Now it runs its own query over the full period, Show and Clock are gone, Category comes from the
-song, and Start/End/Duration and the advertiser fields are included.
+- **BMI, ASCAP and PDF** are built from the list on screen, which holds at most the **200 most
+  recent plays** of the period. The **BMI and ASCAP duration column is not the real length** — every
+  row carries the same fixed value. Check both before you file a report. **Export CSV** (the as-run
+  affidavit) has neither problem: it covers the whole period with real lengths.
 
 ## Related
 

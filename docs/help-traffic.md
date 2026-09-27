@@ -2,7 +2,7 @@
 feature: traffic
 title: Traffic & As-Run
 summary: Prove your spots aired. Scheduled vs actual time for every commercial, with advertiser, cart and ISCI — exported as the CSV your billing runs on.
-where: Menu → Logs → Traffic tab (keyboard: G)
+where: ≡ Menu → Play Log → Traffic tab · Schedule → Play Log in the menubar · keyboard G
 since: 4.4.166
 audience: operator
 tour: true
@@ -29,7 +29,8 @@ For every spot the log placed, Traffic shows the time it was **scheduled**, the 
 
 ## How to get there
 
-Open the menu and choose **Logs** (or press **G**), then click the **Traffic** tab beside the title.
+Open the **≡** menu and choose **Play Log** (it opens in its own window), or press **G** on the main
+screen. Then click the **Traffic** tab beside the title.
 The date buttons — Today / 7 Days / 30 Days / All, or a custom from–to range — control both tabs.
 
 ## Reading the table
@@ -68,7 +69,7 @@ The button is greyed out when there are no spots in the period — that is the h
 
 Traffic reads the **generated log**, not your spot library. If this is empty but you have spots loaded:
 
-1. Check your **clock** actually contains **spot breaks** (Clocks → the clock → a break element).
+1. Check your **clock** actually contains **spot breaks** (Clocks → the clock → **Timed Spot Breaks**).
 2. Open the **Program Log** and press **Fill Day** for the day(s) you want.
 3. Come back — the spots will be listed with the time they are due.
 
@@ -76,12 +77,21 @@ Traffic reads the **generated log**, not your spot library. If this is empty but
 
 If you see the amber notice saying spots have no identifiers on file, they will still export, but with
 those columns blank — which most billing systems will reject. Fill them in under **Spots & Promos**:
-select the spot and add the **advertiser**, **cart number** and **ISCI**. Traffic picks them up
-immediately; you do not need to regenerate.
+
+- **Advertiser** — click **Edit** on the spot and type it in.
+- **Cart number and ISCI** — bring them in with **Import Traffic CSV** (a cart/ISCI column in your
+  traffic system's export). The import reads one identifier column and fills both Cart and ISCI with it.
+
+Traffic reads these from the spot, so you do not need to regenerate.
+
+### Known issue
+
+The **Edit Spot** form has no cart number or ISCI field, so a single spot's cart or ISCI can't be typed
+in by hand yet. Use **Import Traffic CSV**.
 
 ## As-Run (all content, not just spots)
 
-The **As-Run** button on the Play Log tab reconciles the *whole* log — music included — showing matched,
+The **As-Run** button reconciles the *whole* log — music included — showing matched,
 missed, unscheduled and pending items with a match percentage. Use Traffic for billing; use As-Run when
 you want to see how faithfully the whole day followed the log.
 

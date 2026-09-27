@@ -2,7 +2,7 @@
 feature: rotation-goals
 title: Rotation Goals
 summary: Declare how often each category should air, and see where your clocks disagree with you. Reports only — it does not change what plays.
-where: Menu → Station Health → LIBRARY section → "Rotation goals" · targets are set in Categories
+where: Station Health (the health dot in the bottom bar, or Tools → System Health in the menubar) → Library & Rotation → "Rotation goals" · targets are set in Categories
 since: 4.4.167
 audience: programmer
 tour: true
@@ -12,10 +12,9 @@ tour: true
 
 ## What it is
 
-Every category can carry a **spins per hour** target — how often you want it to air. Ether has always
-had the field; nothing ever read it.
+Every category can carry a **spins per hour** target — how often you want it to air.
 
-**Rotation goals** is the first thing that does. It compares the target you declared against what your
+**Rotation goals** compares the target you declared against what your
 **clocks actually ask for**, and tells you where the two disagree:
 
 > Morning Drive — Gold target 4/hr, 2 slots (under by 2)
@@ -29,7 +28,8 @@ Today a clock controls rotation *positionally*: if you want Gold four times an h
 Gold slots. The spins-per-hour field is a *statement of intent* that has never been enforced — so
 nothing has kept your clocks and your intent aligned, and they drift apart silently.
 
-This panel is the first place that drift becomes visible.
+This panel makes that drift visible. (The same verdict also appears on each clock in the Schedule
+Manager, and Rotation Analytics shows what the log actually aired against the target.)
 
 ## Reading it
 
@@ -37,7 +37,7 @@ This panel is the first place that drift becomes visible.
 |---|---|
 | **none declared · 10 categories** | No targets set yet. It shows what your clock actually does instead — e.g. *"Open Format is 73% Feel Good (11 of 15 music slots)"* |
 | **12 declared · all clocks match** | Every clock's composition matches its targets |
-| **3 mismatches across 2 clocks** | The worst offender is named underneath |
+| **3 mismatches across 2 clocks** | The clocks that disagree are listed underneath (the first few; the rest are counted) |
 
 **under by N** — the clock has fewer slots for that category than the target.
 **over by N** — it has more.
@@ -45,7 +45,7 @@ This panel is the first place that drift becomes visible.
 
 ## Setting targets
 
-Menu → **Schedule → Categories** (or the Scheduler panel) → pick a category → set **Spins/hr**.
+**Schedule → Categories** in the menubar, or **≡ → Categories** → pick a category → set **Spins/hr**.
 
 Start from what your clock already does. If the panel says a clock is *73% Feel Good (11 of 15
 slots)*, and that isn't what you intended, it just told you something worth knowing.

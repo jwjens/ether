@@ -3,7 +3,7 @@ feature: loudness-meter
 title: Loudness Meter (M / S / I / LRA / True Peak)
 summary: For each output — the Monitor (your local output) and the Stream — EtherCast measures the loudness of what that output actually sent, the way broadcast loudness is judged (ITU-R BS.1770 / EBU R128). Integrated loudness, loudness range and true-peak max run from the last Reset. The ride and the limiter each have their own meter.
 where: Master Out → Processor → OPEN (the master rack) → the pinned meter column on the right
-since: slice 3 (DSP)
+since: unreleased (log-reader-flip, after 4.6.50)
 audience: operator
 tour: true
 ---

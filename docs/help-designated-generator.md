@@ -2,7 +2,7 @@
 feature: designated-generator
 title: "Designated generator — which computer builds this station's log"
 summary: What the Designated generator rows in the Health Monitor mean, what "None" and "NOT SAVED" tell you, and when to press REFRESH NOW.
-where: Health Monitor → per station, under the auto-generate section
+where: Health Monitor → Library & Rotation → each station
 since: 4.4.193
 audience: operator
 tour: true
@@ -12,7 +12,7 @@ tour: true
 
 ## What you are seeing
 
-In the **Health Monitor**, under each station:
+In the **Health Monitor**, in the **Library & Rotation** panel, under each station:
 
 > **Designated generator** — This machine
 > *This machine — checked in 12 min ago*
@@ -67,11 +67,6 @@ What to do:
 3. If it comes back, send the reason text to support. It is also written to the health ledger as
    `station-designation-write-failed`, so a look-back can see exactly when it started.
 
-> This row exists because of a real defect. In 4.4.188–4.4.192 the record could not be written on
-> **any** computer, and this panel showed a calm "None" the whole time — identical to the perfectly
-> normal "nothing has happened yet". A failure that looks like a healthy state is worse than an
-> error, so it now says so out loud.
-
 ## REFRESH NOW
 
 Re-reads the designation record and checks in immediately, rather than waiting for the next
@@ -116,16 +111,16 @@ This is not a fault. A computer with auto-generation switched off must never tak
 it would then own a station it has been told not to build. So there is genuinely nothing to check
 in, and the button says so rather than looking live and doing nothing.
 
-**To designate this computer:** turn **AUTO ON** for the station, then press REFRESH NOW. The row
+**To designate this computer:** turn **AUTO ON** for the station (Health Monitor → **Log-Reader Flip —
+Canary** → the station's **Auto-generate** row), then press REFRESH NOW. The row
 flips to **This machine** in green and stays there.
 
 The rows keep updating on their own every 30 seconds regardless, so nothing is hidden from you while
 the button is greyed out — if another computer takes the designation, you will still see it appear.
 
-## This is now enforced (since 4.4.201)
+## It is enforced
 
-Earlier versions only *reported* who was designated. Now the software obeys it: **a computer that is
-not the designated generator will not automatically build that station's log.** It checks in, it
+**A computer that is not the designated generator will not automatically build that station's log.** It checks in, it
 shows you the state, and it leaves the log alone.
 
 Three exceptions, all deliberate:
@@ -135,8 +130,8 @@ Three exceptions, all deliberate:
    assigned.
 2. **Pressing Generate yourself always works.** The rule applies only to the *automatic* top-up. If
    you are sitting at a computer and press **Generate**, it generates — you are there, and you asked.
-3. **The bypass still bypasses.** With `kill_designation` set, every switched-on computer generates,
-   as before.
+3. **The bypass still bypasses.** When the bypass is on for a station (set by support), every
+   switched-on computer generates, and the row reads **Bypassed**.
 
 When a computer skips a station for this reason it says so — in the log, in the health ledger as
 `auto-extend-skipped-not-designated`, and on the row itself, which reads *"…· this machine will not

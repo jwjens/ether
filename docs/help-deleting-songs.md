@@ -36,6 +36,9 @@ are for. Delete is permanent.
 
 That's it. There is no second step and nothing to clean up afterwards.
 
+> **Known issue:** if no confirmation appears after you choose **Delete**, the song has not been
+> deleted. Search the Library for it to check, and report it to support.
+
 ## What happens the moment you delete
 
 **Removed — the song's future:**
@@ -70,17 +73,14 @@ That's it. There is no second step and nothing to clean up afterwards.
   comes back as a new library entry — fresh, with none of its old tags or category.
 - **On more than one machine?** The delete travels with your account. Other installs signed into the same
   account stop playing the song too, as soon as they sync.
-- **Deleting a whole station's library** (Preferences) follows the same rules: the future is cleared, the
-  airplay history is kept.
 
 ## If something looks wrong
 
 - **The song is still in the queue right after deleting.** The queue on screen may show what was already
   handed to the audio engine. It clears at the next break; nothing new will be loaded from that song.
-- **A song you deleted seems to still be playing.** Check **Help → About** for your version — this behavior
-  arrived in **4.4.151**. On older builds, deleted songs could be picked up again by Generate. Update, then
-  regenerate the day.
-- **You deleted the wrong song.** There's no undo. Re-import the file from the **Library → Import** button
+- **A song you deleted seems to still be playing.** If it was already on the air, it finishes normally.
+  If it airs again after that, note your version (**Help → About**) and report it to support.
+- **You deleted the wrong song.** There's no undo. Re-import the file with the Library's **+ Import Music** button
   and re-tag it.
 
 ## Deleting things that aren't songs (spots, announcements)
@@ -93,14 +93,10 @@ commercial from the Library is the same as deleting it from the Spots panel, and
 same things: it stops being scheduled, and **it is pulled out of the log that was already written**
 so it stops airing. Ether tells you what it pulled.
 
-This arrived in **4.6.34**. Before that, Delete on a commercial or announcement in the Library did
-nothing at all — no error, no message, the row simply stayed. If you are on an older build, that is
-what you are seeing; update.
-
 ### "It's in the Library but not in the Spots panel"
 
-That means the commercial's traffic record is gone but its library entry was left behind — a stray.
-Builds before 4.6.34 left one behind every time something was deleted.
+That means the commercial's traffic record is gone but its library entry was left behind — a stray,
+left over from older builds.
 
 **Deleting the stray from the Library clears it**, and the removal travels to your other machines.
 If you have a lot of them, ask for the one-off cleanup rather than clicking through them — it can

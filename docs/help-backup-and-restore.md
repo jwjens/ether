@@ -1,3 +1,13 @@
+---
+feature: backup-and-restore
+title: Backing up your station, and putting it on another computer
+summary: One switch — Keep my stuff synced — keeps your setup and your audio in the cloud. The status card says exactly what is safe and shows the one button you need; any computer you sign into can become your station.
+where: Settings → Backup & Restore
+since: 4.6.49
+audience: operator
+tour: true
+---
+
 # Backing up your station, and putting it on another computer
 
 Your station lives in two parts, and both matter:
@@ -12,35 +22,35 @@ perfectly normal, and then the songs won't play.
 
 ## Backing up
 
-**Settings → Backup & Restore → Back up now.**
+Open **Settings → Backup & Restore**. The status card at the top tells you exactly where you stand, and
+shows the one button you need:
 
-That one button does everything: it saves your setup to the cloud, then sends any songs that aren't in
-the cloud yet. You don't have to run anything else.
-
-When it finishes, the panel tells you exactly where you stand:
-
-- **✓ Your station is backed up** — *"Setup and all 511 songs"*. Everything is safe. This is the only
-  state that means you can rebuild on another computer.
-- **⚠ Music files unfinished** — *"137 of 511 songs aren't in the cloud — they'd arrive on another
-  computer with no audio."* Your setup is saved, but some audio hasn't been sent. Press **Finish backing
-  up** to send the rest.
+- **✓** *"Everything on this computer is in the cloud — your whole setup and all 511 audio files, as of
+  …"*. Everything is safe. This is the only state that means you can rebuild on another computer. There
+  is no button, because there is nothing to do.
+- **!** *"Your setup is safe. 137 of 511 audio files haven't gone up yet — on another computer those
+  would arrive with no sound."* Press **Finish sending** to send the rest.
+- *"Nothing is in the cloud yet."*, or *"All 511 audio files are safe. Your setup hasn't gone up yet."*
+  Press **Back up now**. It saves your setup to the cloud, then sends any audio that isn't there yet.
 
 The count is read from your actual library every time, so it always reflects what is really in the cloud.
 
-**Songs you've deleted are not backed up.** Deleting a song removes it from your library, your schedule
-and the cloud. It won't reappear on another computer.
+**Songs you've deleted are not backed up.** Deleting a song removes it from your library and your
+schedule, so it won't reappear on another computer. The audio file itself stays in the cloud.
 
 ### Automatic backups
 
 There is no separate switch for this. **Keep my stuff synced** is the one switch, and while it is on Ether
-keeps your cloud copy current on its own — your setup and your audio, both directions, on every computer
-signed into your account. Leave it on.
+sends your setup to the cloud on a schedule and brings new audio down from your other computers, on
+every computer signed into your account. Audio added on *this* computer goes up when you send it (see
+**Audio arriving from your other computers** below). Leave the switch on.
 
 To change how often your setup goes up, open **Advanced** and use **How often to send your setup** (every
 hour up to once a day), then press **Save**. That row only sets the schedule; on and off is the switch
-above it. Your audio goes up as it changes, not on that schedule.
+above it. It covers your **setup** only — audio goes up when you send it (see below), not on a timer.
 
-If you've just imported a big batch and don't want to wait, press **Back up now**.
+If you've just imported a big batch, send it straight away: press the button on the status card, or
+**Send just the audio** under **Advanced**.
 
 ### Checking it really is on (or really is off)
 
@@ -73,9 +83,9 @@ check ran and what it found.
 
 ### Sending just the music
 
-**Back up now** already includes your music, so you rarely need anything else. If you want to force the
-audio up on its own — say you're not sure an import made it — open **Advanced** and press **Re-send every
-file, even ones already uploaded**.
+**Back up now** and **Finish sending** already include your music. To send the audio on its own, open
+**Advanced** and press **Send just the audio**. If you're not sure an import made it, tick **Re-send
+every file, even ones already uploaded** first, then press **Send just the audio**.
 
 **WHERE YOUR AUDIO LIVES** (under **Advanced**) shows the folder Ether keeps your library in. **Change
 folder** moves it. This is
@@ -91,7 +101,8 @@ cloud. It pulls your setup first, then downloads your music, and tells you when 
 Everything comes from your account, so any computer you sign into can become your station. You don't move
 files by hand.
 
-**Make sure the first computer says "backed up — setup and all songs"** before you set up the second one.
+**Make sure the first computer says "Everything on this computer is in the cloud"** before you set up
+the second one.
 If the music never finished uploading, the new computer gets a station it can't play.
 
 ---
@@ -99,8 +110,9 @@ If the music never finished uploading, the new computer gets a station it can't 
 ## Save a copy on this computer
 
 **Save a snapshot** keeps a copy of your setup on this PC only — handy right before a big change so you can
-roll back. Audio files aren't included, and it doesn't protect you if the computer dies. It's a quick
-undo, not a backup.
+roll back (Settings → Backup & Restore → **Roll back this computer**). Audio files aren't included, and it
+doesn't protect you if the computer dies. It's a quick undo, not a backup. Snapshots older than 7 days
+are removed automatically.
 
 ---
 
@@ -126,6 +138,6 @@ retry.
 | | Covers your setup | Covers your music | Survives the computer dying |
 |---|---|---|---|
 | **Back up now** (cloud) | yes | yes | yes |
-| **Keep my stuff synced** (the switch) | yes | yes | yes |
-| **Re-send every file** (Advanced) | no | yes | yes |
+| **Keep my stuff synced** (the switch) | yes | downloads only — send new audio up yourself | yes |
+| **Send just the audio** (Advanced) | no | yes | yes |
 | **Save a snapshot** | yes | no | no |

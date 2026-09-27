@@ -3,7 +3,7 @@ feature: log-editing
 title: "Editing the log by hand"
 summary: How to swap a song, trade two rows' times and remove rows in the Program Log's hour editor, what the YOURS badge means, and why Fill Day never undoes your work.
 where: Program Log → open an hour → ✎ Edit
-since: 4.4.196 (moved from the Calendar to the Program Log in the log-reader-flip build, 2026-09-20)
+since: 4.4.196 (in the Program Log since 4.6.49)
 audience: operator
 tour: true
 ---
@@ -70,7 +70,7 @@ what it noticed and then gets out of your way. The warning uses the same rules F
 **Rows that have already aired or are on air now.** They are dimmed, cannot be dragged, swapped or
 removed, and if you try, the reason is shown at the top of the editor:
 
-> *"…" has already aired — the log is a record of what happened, not a plan.*
+> *"…" — Already aired — a record, not a plan*
 
 This is deliberate and it is not negotiable: that row is the **record of what your station actually
 broadcast**. It feeds your as-run log and your advertiser affidavits. A log you can edit after the

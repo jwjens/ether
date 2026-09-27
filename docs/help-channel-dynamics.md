@@ -3,7 +3,7 @@ feature: channel-dynamics
 title: Gate and Compressor on a channel (and the Voice preset)
 summary: Every fader's rack can hold a Gate (turns the room down when nobody is talking) and a Compressor (evens out a voice) — with a transfer graph, live gain-reduction meters, a COMP lamp on the fader, and a Voice preset to start from.
 where: The EQ button on any fader strip → the rack window at that fader → + GATE / + COMP, or Preset → Voice → TAKE.
-since: slice 6 (DSP)
+since: unreleased (log-reader-flip, after 4.6.50)
 audience: operator
 tour: true
 ---

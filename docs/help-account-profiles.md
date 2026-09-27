@@ -1,3 +1,13 @@
+---
+feature: account-profiles
+title: Switching accounts on one computer
+summary: Every account that signs in on this computer gets its own private folder — its own stations, library, logs and settings. Signing out closes Ether; signing back in reopens that account exactly as it was.
+where: File ▸ Sign Out (to switch); Settings ▸ System ▸ Factory reset this computer (to start over)
+since: 4.4.229
+audience: operator
+tour: true
+---
+
 # Switching accounts on one computer
 
 **What this is:** every account that signs in on this computer gets its own private folder — its own
@@ -59,8 +69,11 @@ automatically, the first time you open the app. It is a move, not a copy, so it 
 extra disk space, and your data is never duplicated.
 
 **If the move cannot finish** — usually because the audio engine still has the database open — Ether
-says so and carries on exactly as before, with nothing moved and nothing lost. Close Ether completely
-(including the audio engine in the system tray), reopen it, and it will try again.
+leaves everything where it was and carries on exactly as before, with nothing moved and nothing lost.
+Close Ether completely (including the audio engine in the system tray), reopen it, and it will try again.
+
+> **Known issue:** a move that could not finish is not shown on screen — it is only written to Ether's
+> log. If your data does not seem to have moved, close Ether completely and reopen it.
 
 ## If you are asked to sign in when you did not expect it
 
@@ -70,11 +83,14 @@ open the right one.
 
 ## Starting an account completely over
 
-**Settings ▸ Danger zone ▸ Factory Reset.** You must type your account email twice to confirm.
+**Settings ▸ System ▸ Factory reset this computer ▸ Factory reset…** You must type your account email
+twice to confirm (or the word **RESET**, twice, if no account email is on file). Then press
+**Erase & close Ether**.
 
 This erases **only the account you are signed into** — its database, library records, logs and
-settings on this computer. Other accounts on the same computer are untouched. This is the only thing
-in Ether that deletes account data, and it never happens on its own.
+settings on this computer — then closes Ether completely. Other accounts on the same computer, and
+this account on your other computers, are untouched. It is the only thing in Ether that erases a whole
+account's data on this computer, and it never happens on its own.
 
 ---
 

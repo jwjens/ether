@@ -2,8 +2,8 @@
 feature: announcement-schedule
 title: Scheduling Announcements
 summary: Select dates, build the list, press Apply — Apply commits the editor to the selected date(s), then clears.
-where: Announcements panel → Schedule
-since: 4.4.x
+where: Schedule menu → Announcements → the Schedule column
+since: 4.4.230
 audience: operator
 tour: true
 ---
@@ -38,6 +38,9 @@ After Apply, the selection and the editor clear, so what you are editing is neve
      one of them in the visible month.
    - The selection survives moving between months with **‹ ›**, so a whole season can be picked.
 2. Build the list on the right: **＋ Add Announcement**, pick the announcement, set its time.
+   - Each line plays either **at a set time** or **before closing**. If any line is timed from
+     closing, a **close at** time appears above the list — set the closing time there. It is saved
+     with the lines when you press Apply, for the selected dates only.
 3. Press **APPLY**. Every selected date is set to that list, then the panel clears, ready for the
    next batch.
 
@@ -47,8 +50,9 @@ then Apply.
 ## What Apply does
 
 **Apply makes each selected date's schedule exactly what is in the editor.** Anything on those dates
-that is not in the editor is removed — the line above the button spells this out before you press it,
-including how many of the selected dates already have entries.
+that is not in the editor is removed — the line under the button says so. If any selected date already
+has announcements, pressing APPLY first asks you to confirm (**Replace** / **Cancel**) and says how many
+of the selected dates it would replace.
 
 Applying an **empty** editor clears the selected dates, so nothing plays on them. The panel says so
 before you do it.

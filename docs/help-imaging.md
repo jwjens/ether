@@ -2,7 +2,7 @@
 feature: imaging
 title: Imaging
 summary: The home for everything that fires between songs — the cuts, the pools they sit in, what is assigned where, and what will fire ahead of you.
-where: Hamburger menu → Imaging (or bottom bar → SWEEPERS → OPEN IMAGING)
+where: Hamburger menu → Imaging, opens in its own window (or bottom bar → SWEEPERS → OPEN IMAGING, or Tools → Monitors → Imaging)
 since: 4.6.13
 audience: operator
 tour: true
@@ -16,14 +16,13 @@ tour: true
 "you're listening to…" drops, and announcements. It never sits on a deck and never interrupts the music:
 it fires on the **seam** between two songs.
 
-Until now the only way in was a push-up at the bottom of the screen. That push-up still works and is
-unchanged — but IMAGING is now a place of its own in the menu, where you can see and set all of it in
-one screen, including two things you could not see anywhere before: every cut in one list, and what is
-about to fire.
+IMAGING shows all of it in one screen, including every cut in one list and what is about to fire. The
+SWEEPERS push-up at the bottom of the screen is the quick way to the same settings mid-show.
 
 ## How to get there
 
-- **Hamburger menu → Imaging.** This is the main door.
+- **Hamburger menu → Imaging.** This is the main door. It opens in its own window, beside the mixer.
+  (Also **Tools → Monitors → Imaging**.)
 - **Bottom bar → SWEEPERS → OPEN IMAGING.** The push-up is the quick way in mid-show; this button
   walks you from it to the full picture.
 
@@ -67,8 +66,8 @@ disagree about what is set.
 you do (swap a placement, write a ban) is not built, so there is nothing there to press.
 
 **Song timing is not set here.** A song's intro is marked where songs are edited: right-click the song
-anywhere in the Library and choose **Open in Cue Editor**, then drag **INTRO END** to the first word and
-Save. That is the mark imaging is measured against — see "How imaging fits a song" below.
+in the Library and choose **Edit Cue Points** (or use the row's **Cue…** button → **Open in Cue
+Editor**), then drag **INTRO END** to the first word and Save. See "How imaging fits a song" below.
 
 ## If ON DECK is empty
 
@@ -99,16 +98,15 @@ see it take effect.
 
 ## How imaging fits a song
 
-When a music category is set to **AUTO-POST**, the song decides the timing and the sweeper either fits
-or is not chosen:
+Imaging fires by the category's fixed **LEAD**: that many seconds before the next song starts.
 
-1. The song's **post** (INTRO END in the cue editor) says how much room there is before the vocal.
-2. Only cuts **shorter than that room** are candidates. A cut that would run past the vocal is never
-   selected.
-3. The chosen cut is fired so its last moment lands **on** the first word.
+Marking each song's **post** (INTRO END in the cue editor) is still worth doing, starting with the songs
+that play most — it records how much room each song has before the vocal.
 
-A song you have not marked keeps the fixed **LEAD** behaviour, unchanged — so marking is worth doing one
-song at a time, starting with the ones that play most, and nothing breaks while the rest wait.
+## Not in this version
+
+- **Letting the song's post decide the timing** (a cut chosen to fit the intro and landing on the first
+  word) cannot be switched on from the app yet. Every category uses the fixed LEAD.
 
 ## Related
 

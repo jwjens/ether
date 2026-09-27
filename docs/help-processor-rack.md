@@ -3,7 +3,7 @@ feature: processor-rack
 title: The Master Rack (Processor)
 summary: The master processing chain as a rack you can see and play while on air — the master EQ, then for each output (Monitor and Stream) the loudness ride and the true-peak limiter — with the meters pinned beside it and presets you Arm and Take.
 where: Master Out → Processor → OPEN (its own window). Master Out → Master EQ → OPEN opens it with the EQ selected.
-since: slice 4 (DSP)
+since: unreleased (log-reader-flip, after 4.6.50)
 audience: operator
 tour: true
 ---
@@ -72,7 +72,7 @@ Each kind of module always has the same colour: **blue** for EQ, **cyan** for lo
 
   Only the target and the ceiling differ between them.
 - **A preset never turns processing on or off.** "Process local output" and "Process stream" stay where you
-  set them (Settings → Audio Processing).
+  set them (Preferences → Broadcast → Audio Processing).
 
 ## If something looks wrong
 
@@ -92,8 +92,8 @@ Each kind of module always has the same colour: **blue** for EQ, **cyan** for lo
   back.
 - **Channel racks live in the same window.** The selector row at the top (MASTER | A–F | CART | G–K, every fader by its board letter) goes to a
   fader's own rack. See **Channel EQ** (`docs/help-channel-eq.md`).
-- **No show presets, and no protection for live channels during recall.** Those come later; today Take
-  applies at once, because the master rack has no channels to protect.
+- **A rack preset's Take applies at once**, because the master rack has no channels to protect. Presets for
+  the whole board, which do protect live channels, are **Show Presets** — see `docs/help-show-presets.md`.
 
 ## Related
 
@@ -101,3 +101,4 @@ Each kind of module always has the same colour: **blue** for EQ, **cyan** for lo
 - **Loudness Meter** (`docs/help-loudness-meter.md`)
 - **Audio Processing** (`docs/help-audio-processing.md`) — turning processing on for each output
 - **Reading the Meters** (`docs/help-meters.md`)
+- **Show Presets** (`docs/help-show-presets.md`) — presets for the whole board

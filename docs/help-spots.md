@@ -44,7 +44,9 @@ The quickest way to turn an existing audio file into a spot:
 ### Full manager — the Spots & Promos panel
 Open **SPOTS** in the bottom bar (or **Library → Spots & Promos** in the top menu):
 
-1. **Import** your commercials/promos (single files or a folder) — or use the Mark-as-Spot fast path above.
+1. **Add Files** or **Import Folder** to bring in your commercials/promos — or use the Mark-as-Spot fast
+   path above. **Import Traffic CSV** reads a traffic system's export (cart/ISCI, title, advertiser,
+   agency, length, dates, type) and is the way to bring in cart and ISCI numbers.
 2. Organize them into **spot categories** (create categories like *Local Sponsors* or *Station Promos*).
 3. Set each spot's **type**, **advertiser**, **flight dates** (start/end), and **max plays per day**.
 
@@ -70,7 +72,7 @@ Spots don't rotate like music — they air in **timed breaks** you place on a cl
   warning inline, and each category in its dropdown shows its eligible count. A break that would air silence
   is never a silent fact.
 - Once a spot is scheduled, its rows render **gold/amber** everywhere the log shows — in the **Program Log**
-  (a red **SPOT** chip) and in the **live Up Next queue** (amber left-edge + **SPOT** chip) — so a
+  (a **SPOT** chip) and in the **live Up Next queue** (amber left-edge + **SPOT** chip) — so a
   commercial break is instantly distinct from music at a glance.
 
 ## How spots air (exclusive program, clean edges)
@@ -133,3 +135,15 @@ need it gone immediately, remove that entry in the Program Log's hour editor (�
   boundary so a song is never cut off mid-play.
 - Spots are excluded from music-rotation separation and from the music/plays reporting — they have their own
   play logging for advertiser affidavits.
+
+## Known issues
+
+- The **Edit Spot** form has no cart number or ISCI field. To set them, use **Import Traffic CSV**.
+- Use **Mark as Spot** from the **Library** right-click menu. The same item on a deck or Up Next
+  right-click menu tags the track as a spot without the category dialog and without creating the spot
+  record, so a break cannot pull it.
+
+## Related
+
+- **Spot Artwork** (`docs/help-spot-artwork.md`) — your own image on a spot.
+- **Traffic & As-Run** (`docs/help-traffic.md`) — proof each spot aired, exported for billing.

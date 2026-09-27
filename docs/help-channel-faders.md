@@ -2,7 +2,7 @@
 feature: channel-faders
 title: Channel Faders and Channel Cut (ON/OFF)
 summary: Your fader is your level and nothing moves it but your hand — or a show you TAKE — not a track load, not a device change, not the ON/OFF switch. Your faders come back after a restart, and every level change is smooth. ON/OFF is a channel cut that silences the channel without touching where you set the fader.
-where: Live panel → the mixer strips (decks, SWEEPERS, guest, mic)
+where: Live panel → the mixer strips (decks A–F, CART, SWEEPERS, and the source channels G onward)
 since: 4.4.146
 audience: operator
 tour: true
@@ -33,9 +33,6 @@ too (see **Show Presets**). Specifically:
 
 - **A restart does not move it.** Ether remembers every fader (and the master) for the station and puts them
   back when it starts.
-
-Before 4.4.146 a track load reset the channel to full — a song could undo the level a jock had just set.
-That is fixed: only you move your faders.
 
 ### Every level change is smooth
 
@@ -74,7 +71,7 @@ level ahead of time and it takes effect the moment you turn the channel back on.
 
 - **Kill a channel's audio without losing your level** — you'll want it back at the same setting.
 - **Run a clean segment with no imaging** — cut the SWEEPERS channel and sweepers stay off air even though
-  they still fire on schedule. See **Sweepers & Sweepers** for that channel specifically.
+  they still fire on schedule. See **Sweepers** for that channel specifically.
 - **Silence a guest or mic channel** between segments.
 
 ## Listening to a channel off air (PFL)
@@ -134,8 +131,10 @@ audio interface's direct-monitor.** See **Mic on Air**.
 ## Not in this version (by design)
 
 - **The cut is not a fade.** OFF is immediate and ON is immediate — use the fader if you want to ride it.
-- **No per-channel cut memory except the SWEEPERS channel**, which is remembered per station. Deck, guest
-  and mic cuts start every session ON.
+- **Not every channel remembers its cut.** The SWEEPERS channel, the source channels (G onward) and the
+  jukebox channel remember ON/OFF per station — the jukebox channel starts OFF, so a public jukebox is
+  never audible until you switch it on. Other channels may start a new session ON; check the ON lamps
+  after a restart.
 
 ## Related
 
@@ -143,5 +142,5 @@ audio interface's direct-monitor.** See **Mic on Air**.
 - **Show Presets** (`docs/help-show-presets.md`) — the whole board saved and recalled, PENDING, TAKE NOW
 
 - **Starting a Deck — the ON button** — the deck ON button also starts and stops playout
-- **Sweepers & Sweepers** — cutting the imaging channel, remembered per station
+- **Sweepers** — cutting the imaging channel, remembered per station
 - **Audio Processing** — station-wide loudness on the program bus, after all the faders

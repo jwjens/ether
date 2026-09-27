@@ -2,7 +2,7 @@
 feature: health-monitor
 title: Health Monitor
 summary: One screen that says whether the station is healthy — runway, levels, rotation, breaks and the event ledger — with panels you can rearrange and collapse.
-where: Menu → Tools → Health Monitor (also available as a pop-out window for a wall display)
+where: Tools → System Health (pop-out window for a wall display: Tools → Monitors → Station Health)
 since: 4.4.208
 audience: operator
 tour: true
@@ -24,8 +24,8 @@ and they never look alike.
 
 - **Every morning**, as a thirty-second check before the day gets going.
 - **When something sounds wrong** on air and you want to know what changed.
-- **On a wall display** in the studio, left up all day. Pop it out into its own window and
-  full-screen it.
+- **On a wall display** in the studio, left up all day. Pop it out into its own window
+  (**Tools → Monitors → Station Health**) and full-screen it.
 
 ## The top half — at a glance
 
@@ -55,7 +55,7 @@ The station's card turns red for about a minute and names it — *play refused o
 play a deck that had nothing loaded (or a queued song whose file is missing) and **refused**, and
 playout moved on to the next queued song instead. Nothing was aired from the refused deck.
 
-- It is counted in **Library & Rotation → skipped this hour** (red on any skip) and written to the
+- It is counted in **Library & Rotation → Skipped at load** (*N this hour*) (red on any skip) and written to the
   health ledger with the station, deck, song, file and time, so you can see it in **Live events** and
   find it later.
 - One or two in a day after a re-cue is the engine protecting air. A run of them, or the same song
@@ -63,6 +63,11 @@ playout moved on to the next queued song instead. Nothing was aired from the ref
   Activity**, filter **Warnings**, and read the lines around it.
 - If the card says *unplayable row skipped*, the song's file could not be found on this machine:
   check the library entry and whether the file has been fetched from the cloud.
+
+### The station cards
+
+Under the four panels, the live section shows **Engine** (uptime, restarts), **Stations (live)** — one
+card per station — and **Level transitions**, the last 20 warning/critical changes.
 
 ### The PGM meter on each station
 
@@ -101,6 +106,8 @@ on the card after that, in grey. Hover the line for the full detail (callbacks r
   Underneath, a **drift bar** per break: centre is on time, right is late. Green within 15 seconds,
   amber within a minute, red beyond. A break that is *going* to be late turns amber **before** it
   misses, not after.
+- **Mic Inputs** and **PFL Output** — whether each mic and the headphone (PFL) output are working.
+- **Spots that did not air** — breaks that were due and did not play.
 - **Core Systems**, **High Availability**, **Library & Rotation**, **Designation Activity**, the
   **Log-Reader** panels and **DMCA Play Log Export** — the underlying detail behind the cards above.
 
@@ -132,7 +139,7 @@ Nothing is restarted and nothing goes off air: the running app is adopted, not r
 
 ## Rearranging the panels
 
-Every panel on this screen can be moved and hidden, so you can make the top of the screen show what
+Every panel below the four cards can be moved and hidden, so you can make the top of the screen show what
 *your* station worries about.
 
 1. **To move a panel**, click and hold its **header bar** — the strip with the title and the ⠿ handle
@@ -146,10 +153,10 @@ Two things worth knowing:
 
 - **Drag by the header only.** The body of a panel holds real controls — switches, REFRESH NOW, the
   export button — so dragging from inside a panel would make those unusable.
-- **The top four and the sections below are two separate groups.** You can reorder within each group,
-  but not move a panel from one into the other. They are laid out differently — the top four sit
-  side by side on a wide screen, the ones below stack — so a panel moved across would land in a
-  layout it was not built for.
+- **Panels move only within their own group.** There are three: the four panels under the cards, the
+  live Engine / Stations / Level transitions panels, and the detail sections below. You can reorder
+  within a group, but not move a panel from one into another. **The four cards at the very top stay
+  fixed.**
 
 ## Putting it back
 

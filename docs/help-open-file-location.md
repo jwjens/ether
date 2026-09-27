@@ -1,11 +1,21 @@
+---
+feature: open-file-location
+title: Open File Location
+summary: Right-click an item with audio behind it and jump straight to its file in Explorer or Finder — or see why the file isn't on this machine.
+where: Right-click a song in the Library, Up Next or on a deck; a cart tile; a spot; an announcement → Open File Location
+since: 4.6.0
+audience: operator
+tour: true
+---
+
 # Open File Location
 
 Every item in Ether that plays audio is backed by a real file on your computer. **Open File Location**
 takes you straight to it — it opens the folder that contains the file, with the file already
 selected, so you can copy it, check it, move it, or see where it actually lives.
 
-It works the same way everywhere an item can be right-clicked, because it belongs to the item, not to
-the screen you happen to be looking at.
+It works the same way on every screen that offers it, because it belongs to the item, not to the
+screen you happen to be looking at.
 
 ## How to use it
 
@@ -15,11 +25,14 @@ the screen you happen to be looking at.
 
 ## Where you can do it
 
+- **Library** — right-click any song row.
 - **Up Next** — right-click any queued song.
-- **A deck** — right-click a song loaded on a deck.
-- **The cart wall** — right-click a cart tile, then **OPEN FILE LOCATION**.
+- **A deck** — right-click a song loaded on a deck. (An empty deck has no menu.)
+- **The cart wall** — right-click a cart tile, then **OPEN FILE LOCATION**. (An empty tile has no menu.)
+- **Spots** and **Announcements** — right-click an item.
 
-Anywhere else that gets a right-click menu will carry this action automatically.
+The Library, Up Next, deck and cart menus also have **Change File Location…**, which points the item at
+a different file — the one to use when the audio has moved. It stays available when the file is missing.
 
 ## When it's greyed out
 
@@ -28,7 +41,7 @@ The menu entry is sometimes greyed. Hover it and it tells you why:
 | What it says | What it means | What to do |
 |---|---|---|
 | *the audio isn't on this machine — this item needs re-importing* | The item's row still points at a file, but that file is not on this computer. It may have been moved, deleted, or it may exist only in your cloud library and never have been downloaded here. | Re-import the audio, or wait for the library to finish downloading from the cloud. |
-| *this item has no file* | The item has no audio attached at all — for example an empty cart slot. | Assign a file to it first (on a cart tile, use **REPLACE FILE…**). |
+| *this item has no file* | The item has no audio attached at all. | Assign a file to it first. |
 | *checking for the file…* | Ether is still looking. | Wait a moment — it resolves immediately. |
 
 **Ether deliberately will not open a folder it knows the file isn't in.** Doing that looks like the app

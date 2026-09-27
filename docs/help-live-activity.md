@@ -2,7 +2,7 @@
 feature: live-activity
 title: Live Activity
 summary: A running terminal in the Health Monitor showing what Ether is doing right now — every rotation, segue, stop, spot and warning, as it happens, per station.
-where: Footer → NOMINAL (Health Monitor) → right-hand column
+where: Footer → the health status (NOMINAL when all is well) → Health Monitor → right-hand column
 since: 4.4.107
 audience: operator
 tour: true
@@ -28,7 +28,8 @@ changes what is on air.
 
 ## How to use it
 
-1. Open the **Health Monitor** — click **NOMINAL** in the bottom-right footer.
+1. Open the **Health Monitor** — click the health status in the bottom-right footer. It reads **NOMINAL**
+   when all is well, and **WARN**, **ERROR** or **ALARM** when something needs a look.
 2. The terminal is the **right-hand column**. On a narrow window it moves **below** the health sections
    instead.
 3. Watch it. Newest lines appear at the bottom and it scrolls itself.
@@ -46,8 +47,9 @@ Three buttons across the middle:
 
 ### Watching one station
 
-The row of buttons above — **All**, **s1**, **s2**, **s3**, **s4** — filters to a single station. Each station
-also has its own colour, so you can pick one out at a glance without filtering.
+The row of buttons above — **All**, plus one button per station that has appeared in the feed (**s1**, **s2** …)
+— filters to a single station. Each station also has its own colour, so you can pick one out at a glance
+without filtering.
 
 ### Reading without it jumping
 
@@ -68,13 +70,13 @@ Each line is: **time · station · what happened**.
 | `advance → stop:A` | Deck A was stopped and cleared after handing over. |
 | `segue overlap: A→B` | The next song started early over the tail of the last one — a normal segue. |
 | `clean spot edge` | A commercial is playing on its own, with no overlap. That's deliberate. |
-| `sweeper FIRING` | A sweeper or sweeper is playing over the seam. |
+| `jingle FIRING on …` | A sweeper is playing over the seam. (The engine's log still calls it a jingle.) |
 | `top-of-hour HARD CUT` | The top of the hour arrived and the schedule was re-synced to the clock. |
-| `liveDeck OBSERVER — TWO DECKS ON AIR` | **Two songs are playing at once.** Report this. |
+| `liveDeck GUARD — TWO DECKS ON AIR` | **Two songs are playing at once.** Report this. |
 | `watchdog: STALL` | Nothing was playing and the engine forced a recovery. |
-| `resume-playout: deck B REFUSED by the engine` | The recovery tried deck B but the deck had nothing loaded, so the engine refused to play it. **Nothing went to air from that deck** — the recovery moves on to the next queued song on deck A. Shown in red under **Warnings**; it is also counted in the Health Monitor (see *Library & Rotation* → skipped this hour, and the station's red line). |
+| `resume-playout: deck B REFUSED by the engine` | The recovery tried deck B but the deck had nothing loaded, so the engine refused to play it. **Nothing went to air from that deck** — the recovery moves on to the next queued song on deck A. Shown in red under **Warnings**; it is also counted in the Health Monitor (see *Library & Rotation* → **Skipped at load · N this hour**, and the station's red line). |
 | `[RUST] Play deck B: REFUSED — no content loaded` | The audio engine's own line for the same refusal. |
-| `LOGREADER-SHADOW: behind` | The station is running later than its scheduled log. |
+| `LOG-READER: behind Nm` | The station is running later than its log; the rows it skipped past were marked missed. |
 
 ## Good to know
 

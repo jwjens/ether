@@ -3,7 +3,7 @@ feature: channel-eq
 title: Channel EQ (Filters and PEQ on a fader)
 summary: Every fader has its own rack — a high-pass and low-pass filter, and a 4-band parametric EQ — drawn as a curve you can drag, with IN and OUT meters so you can see what it did.
 where: The EQ button on any fader strip (and on the on-air decks A/B/C). In the rack window, the selector row: MASTER | A B C D E F | CART | G…K (each fader by its board letter).
-since: slice 5 (DSP)
+since: unreleased (log-reader-flip, after 4.6.50)
 audience: operator
 tour: true
 ---
@@ -93,7 +93,7 @@ straight away and are saved.
 |---|---|---|
 | **FLAT** | the PEQ controls | Every band goes to **0 dB**. Frequencies, widths and shelf settings are kept, so you can bring a band back up where it was. PEQ IN is not changed. |
 | **RESET FILTERS** | the Filters controls | **HPF and LPF both OUT**, back to 80 Hz and 18 kHz. The FILTERS tile's IN is not changed. |
-| **CLEAR RACK** | the right of the strip | **Empties this fader's rack**: Filters and PEQ are removed, and the fader is untouched again. |
+| **CLEAR RACK** | the right of the strip | **Empties this fader's rack**: every module (Filters, Gate, PEQ, Comp) is removed, and the fader is untouched again. |
 
 **Clearing a rack:**
 1. Press **CLEAR RACK**. It asks first: *"Clear H's rack?"*

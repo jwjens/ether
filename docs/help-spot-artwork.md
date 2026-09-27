@@ -49,7 +49,7 @@ Two practical consequences:
 1. Open **SPOTS** from the bottom bar.
 2. Find the spot in the list and click **Edit**. The **Edit Spot** form opens.
 3. Look to the right of the **Notes** box — that's the **Artwork** panel. A spot with no image shows an empty
-   square reading **"No artwork."**
+   square reading **"No artwork"**.
 4. Click **Choose image…** and pick your picture. PNG, JPG, WEBP and SVG all work.
 5. The thumbnail updates immediately so you can see what you picked.
 6. Click **Save**. Nothing is stored until you save.

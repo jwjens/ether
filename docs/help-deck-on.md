@@ -55,8 +55,8 @@ If nothing is playing at all, press ON on any cued deck. It simply starts. Nothi
   after about 300 milliseconds. That is deliberate: the reasons you reach for this button in a hurry —
   profanity, the wrong song, a garbled file — are all reasons the current audio needs to be **gone**, not
   fading underneath the new track for another three seconds.
-- **Your normal automatic song-to-song segues are unchanged.** Those still use the smooth overlap set by
-  your crossfade time in Settings. The quick cut applies only when *you* press ON.
+- **Your normal automatic song-to-song segues are unchanged.** Those still use the station's normal
+  smooth overlap. The quick cut applies only when *you* press ON.
 - **Automation absorbs it and keeps going.** In AUTO, after you take over, the next tracks re-cue behind
   you automatically and the program log continues from where you skipped to. You do not have to re-arm
   anything.
@@ -81,8 +81,13 @@ If nothing is playing at all, press ON on any cued deck. It simply starts. Nothi
 - **No keyboard shortcut** for ON.
 - **No undo.** Channel OFF is immediate and final; reload the track if you need it back.
 
+## Known issue
+
+- The **Space** and **B** keys still pause, resume or start a deck directly, outside the ON button, and
+  the keyboard shortcut list still shows **X** (crossfade) and **Esc** (stop all decks), which no longer
+  do that. Use **ON** to start and stop decks.
+
 ## Related
 
-- Automatic segues and crossfade time — Settings → Playout
 - **MANUAL vs AUTO** — what automation does and does not decide for you
 - Health Monitor → Live Activity — the running log of every start, segue and stop
