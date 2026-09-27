@@ -15,6 +15,10 @@ export interface ConfirmController {
 
 export function createConfirmController(): ConfirmController {
   let current: (ConfirmRequest & { resolve: (v: boolean) => void }) | null = null;
+  // THE SNAPSHOT IS BUILT ONCE PER QUESTION and handed out by reference. useSyncExternalStore requires getSnapshot to
+  // return the same value until the store changes; a fresh object per read made React re-render forever the moment a
+  // question was pending — "Maximum update depth exceeded" on Library → Delete (Jeff's screen, 2026-09-27).
+  let snapshot: ConfirmRequest | null = null;
   const subs = new Set<() => void>();
   const emit = () => subs.forEach(f => f());
   return {
@@ -23,16 +27,17 @@ export function createConfirmController(): ConfirmController {
       if (current) current.resolve(false);
       return new Promise<boolean>(resolve => {
         current = { message, confirmLabel: opts.confirmLabel ?? "OK", danger: !!opts.danger, resolve };
+        snapshot = { message: current.message, confirmLabel: current.confirmLabel, danger: current.danger };
         emit();
       });
     },
     answer(yes) {
       if (!current) return;
-      const c = current; current = null;
+      const c = current; current = null; snapshot = null;
       c.resolve(!!yes);
       emit();
     },
-    pending: () => (current ? { message: current.message, confirmLabel: current.confirmLabel, danger: current.danger } : null),
+    pending: () => snapshot,
     subscribe(fn) { subs.add(fn); return () => { subs.delete(fn); }; },
   };
 }
