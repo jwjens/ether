@@ -11,6 +11,8 @@ pub mod eq;
 mod lufs;
 mod clock;
 mod program_processor;   // Audio Processing v1 — per-station program-bus loudness (bench-gated before ship)
+mod show;                // Slice 7 — a show preset as the engine applies it (one Params block)
+mod ramp;                // Slice 7 — the fader level ramp (docs/dsp-show-presets.md, ruling 4)
 mod chdsp;               // Slice 5 — the channel rack DSP (biquads + crossfade) on the audio thread
 mod micin;               // The mic as an engine input — docs/dsp-mic-in-engine.md
 pub mod rack;            // Slice 4 — the rack model; pub so the type-rule doctests (compile_fail) can see it
@@ -354,6 +356,35 @@ pub fn audio_set_channel_rack(station_id: u32, slot: String, rack_json: String) 
     let Ok(audio) = engine.lock() else { return serde_json::json!({ "ok": false, "reason": "engine busy" }).to_string() };
     match audio.sender.send(AudioCmd::SetChannelRack { slot: idx, rack: r }) {
         Ok(()) => serde_json::json!({ "ok": true }).to_string(),
+        Err(_) => serde_json::json!({ "ok": false, "reason": "the station's engine is not running" }).to_string(),
+    }
+}
+
+/// SLICE 7 — a show Take (docs/dsp-show-presets.md §3): every channel the blade hands over, and the master, in ONE
+/// Params block — the whole show lands in the same buffer or none of it does. `show_json` =
+/// `{ slots: { "<A–F|CART|S1–S5>": { fader?, cut?: true, duck?, duckable?, room?, rack? } }, master?: { fader?, rack?,
+/// duck?: { depthDb, thresholdDb, attackMs, holdMs, releaseMs }, monitor? } }`. Refused WHOLE on any bad field, on
+/// anything that would turn a channel ON, and on any field this engine doesn't know (a device name, processing
+/// on/off): {"ok":false,"reason":…}. Which channels are live is not decided here — the blade sends only the others.
+#[napi]
+pub fn audio_apply_show(station_id: u32, show_json: String) -> String {
+    let show = match show::ShowApply::from_json(&show_json) {
+        Ok(s) => s,
+        Err(e) => return serde_json::json!({ "ok": false, "reason": e }).to_string(),
+    };
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(mut audio) = engine.lock() else { return serde_json::json!({ "ok": false, "reason": "engine busy" }).to_string() };
+    // Explicit literals, never an index into DECK_LETTERS (the 2026-07-15 panic rule).
+    const NAMES: [&str; 12] = ["A", "B", "C", "D", "E", "F", "CART", "S1", "S2", "S3", "S4", "S5"];
+    let applied: Vec<&str> = show.slot_indices().map(|i| NAMES[i]).collect();
+    for i in show.slot_indices() {
+        let s = show.slots[i].unwrap();
+        let m = deck_meta_mut(&mut audio, NAMES[i]);
+        if let Some(v) = s.fader { m.volume = v; }
+        if s.cut { m.muted = true; }
+    }
+    match audio.sender.send(AudioCmd::ApplyShow(Box::new(show))) {
+        Ok(()) => serde_json::json!({ "ok": true, "slots": applied }).to_string(),
         Err(_) => serde_json::json!({ "ok": false, "reason": "the station's engine is not running" }).to_string(),
     }
 }

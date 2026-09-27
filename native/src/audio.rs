@@ -406,6 +406,9 @@ pub enum AudioCmd {
     SetMasterRack(crate::rack::MasterRack),
     /// SLICE 5 — one fader's channel rack (parsed and clamped in rack.rs); `slot` is the engine slot index.
     SetChannelRack { slot: usize, rack: crate::rack::ChannelRack },
+    /// SLICE 7 — a show Take (show.rs): every channel the blade hands over and the master, written into the Params
+    /// copy in ONE arm and sent as ONE block, so the whole show lands in the same buffer or none of it does.
+    ApplyShow(Box<crate::show::ShowApply>),
     /// THE MIC (docs/dsp-mic-in-engine.md) — patch an input device onto a source slot. `device` empty =
     /// unpatch; `channel` 0-based; `gain_db` −10…+40 (clamped in micin.rs).
     SetMicInput { slot: usize, device: String, channel: u16, gain_db: f32 },
@@ -806,6 +809,10 @@ pub struct BusState {
     /// params the callback last adopted (by version).
     pub(crate) chdsp: [crate::chdsp::ChannelDsp; SLOT_COUNT],
     pub(crate) ch_rack: [crate::rack::ChannelRackParams; SLOT_COUNT],
+    /// SLICE 7 — the level each fader and the master are ACTUALLY at: a 20 ms ramp whenever the adopted level moves
+    /// while the channel sounds (ramp.rs). At rest they equal the adopted level and the arithmetic is today's.
+    pub(crate) vol_ramp: [crate::ramp::LevelRamp; SLOT_COUNT],
+    pub(crate) master_ramp: crate::ramp::LevelRamp,
     /// SLICE 3 — the callback end of the loudness rings (loudness.rs). push() is a copy; the BS.1770 state
     /// lives on the station's meter thread. Dropping this stops that thread.
     pub(crate) loud: LoudTaps,
@@ -926,6 +933,8 @@ impl BusState {
             meters_acc: MeterBlock { epoch: 1, ..MeterBlock::default() },
             chdsp: [crate::chdsp::ChannelDsp::default(); SLOT_COUNT],
             ch_rack: [crate::rack::ChannelRackParams::default(); SLOT_COUNT],
+            vol_ramp: [crate::ramp::LevelRamp::default(); SLOT_COUNT],
+            master_ramp: crate::ramp::LevelRamp::default(),
             loud,
         };
         // The meter channel starts on THIS state's own first frame, so the first read is the truth.
@@ -1364,6 +1373,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::SetProcessorBypass { .. } => {}
                             AudioCmd::SetMasterRack(_) => {}
                             AudioCmd::SetChannelRack { .. } => {}
+                            AudioCmd::ApplyShow(_) => {}
                             AudioCmd::SetMicInput { .. } => {}
                             AudioCmd::StartStream { server, port, mount, station_name, .. } => {
                                 eprintln!("Stream: {}:{}{} ({})", server, port, mount, station_name);
@@ -1794,8 +1804,9 @@ mod rt_command_path {
     }
 
     /// A parameter block that arrives while a buffer is being rendered takes effect on the NEXT buffer,
-    /// never partway through one. One thread fires 20 000 master-fader blocks (alternating 0.0 / 1.0) as fast
-    /// as it can; another renders a constant 0.5 source. Every rendered buffer must be uniform — all 0.0 or
+    /// never partway through one. One thread fires 20 000 channel-cut blocks (alternating cut / open) as fast
+    /// as it can; another renders a constant 0.5 source. (The probe was the master fader until slice 7 gave every
+    /// fader a 20 ms ramp by design — ramp.rs, proven on its own; the cut is still a hard switch, so it is the probe.) Every rendered buffer must be uniform — all 0.0 or
     /// all 0.5 — and both values must actually occur (so the test is not passing on one static state).
     #[test]
     fn a_param_block_never_changes_mid_buffer() {
@@ -1822,7 +1833,7 @@ mod rt_command_path {
             let mut sent = 0u32;
             while sent < 20_000 && !done2.load(Ordering::Acquire) {
                 let mut p = base;
-                p.master_vol = if sent % 2 == 0 { 0.0 } else { 1.0 };
+                p.muted[0] = sent % 2 == 0;
                 let mut c = RtCmd::Params(Box::new(p));
                 loop {
                     if done2.load(Ordering::Acquire) { break; }
@@ -1856,8 +1867,8 @@ mod rt_command_path {
         }
         done.store(true, Ordering::Release);
         sender.join().unwrap();
-        println!("[rt-cmd] {} buffers, all uniform: {} at master 0.0, {} at master 1.0", buffers, zeros, halves);
-        assert!(zeros > 0 && halves > 0, "both fader states must have been rendered");
+        println!("[rt-cmd] {} buffers, all uniform: {} with the channel cut, {} open", buffers, zeros, halves);
+        assert!(zeros > 0 && halves > 0, "both channel states must have been rendered");
     }
 }
 
@@ -2741,12 +2752,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 // legitimate operator choice. 0 dB depth means "armed but not
                                 // ducking", and a 0 ms hold means "release the moment the source
                                 // stops", both of which someone may genuinely want to hear.
-                                let p = &mut ctl.params;
-                                p.duck_depth_db   = depth_db.clamp(-60.0, 0.0);
-                                p.duck_threshold  = 10f32.powf(threshold_db.clamp(-90.0, 0.0) / 20.0);
-                                p.duck_attack_ms  = attack_ms.clamp(1.0, 1000.0);
-                                p.duck_hold_ms    = hold_ms.clamp(0.0, 5000.0);
-                                p.duck_release_ms = release_ms.clamp(1.0, 5000.0);
+                                crate::show::set_duck_params(&mut ctl.params, crate::show::DuckParams { depth_db, threshold_db, attack_ms, hold_ms, release_ms });
                                 ctl.params_changed();
                             }
                             AudioCmd::SetAuxMonitor { deck, gain } => {
@@ -2755,15 +2761,13 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 // caller can accidentally route a programme deck through the aux path.
                                 let Some(idx) = deck_index(&deck) else { continue };
                                 if !(3..=5).contains(&idx) { continue; }
-                                ctl.params.aux_monitor_gain[idx] = gain.clamp(0.0, 4.0);
+                                crate::show::set_room(&mut ctl.params, idx, gain);
                                 // The SAME row drives both, because it is one control: "how loud
                                 // is this deck in the room". Which buffer it reaches depends on
                                 // the slot's bus — an aux deck through the aux tap, a sweeper
                                 // through the room sum — and the operator should not have to know
                                 // which. Rotation decks never get here, so they keep unity.
-                                if ctl.params.kind[idx] != SlotKind::Rotation {
-                                    ctl.params.room_gain[idx] = gain.clamp(0.0, 4.0);
-                                }
+                                // (show::set_room — the one setter a Take also uses.)
                                 ctl.params_changed();
                             }
                             AudioCmd::GetLevel => {
@@ -2901,13 +2905,13 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 ctl.params_changed();
                             }
                             AudioCmd::SetMonitorVolume(v) => {
-                                ctl.params.monitor_vol = v.clamp(0.0, 4.0);
+                                crate::show::set_monitor(&mut ctl.params, v);
                                 ctl.params_changed();
                             }
                             AudioCmd::SetMasterVolume(v) => {
                                 // Clamped 0..=1: master is an attenuator on air. >1 would let the operator
                                 // push the program bus into clipping ahead of the limiter.
-                                ctl.params.master_vol = v.clamp(0.0, 1.0);
+                                crate::show::set_master_fader(&mut ctl.params, v);
                                 ctl.params_changed();
                             }
                             AudioCmd::SetMasterMonitorVolume(v) => {
@@ -2948,22 +2952,21 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 // SLICE 5 — the coefficients are computed HERE (dispatch thread, f64) and ride the
                                 // Params block; the callback adopts them by version and crossfades.
                                 if slot < SLOT_COUNT {
-                                    let v = ctl.params.ch_rack[slot].version.wrapping_add(1);
-                                    ctl.params.ch_rack[slot] = crate::rack::ChannelRackParams { rack, plan: rack.plan(PROGRAM_RATE as f64), version: v };
+                                    crate::show::set_channel_rack(&mut ctl.params, slot, rack, PROGRAM_RATE as f64);
                                     ctl.params_changed();
                                 }
+                            }
+                            AudioCmd::ApplyShow(show) => {
+                                // SLICE 7 — the whole Take in ONE block (docs/dsp-show-presets.md §3.4). Which channels
+                                // are in it is the blade's live rule; this arm applies exactly what it was given.
+                                show.apply(&mut ctl.params, PROGRAM_RATE as f64);
+                                ctl.params_changed();
                             }
                             AudioCmd::SetMasterRack(new_rack) => {
                                 // SLICE 4 — the whole master rack (already parsed and clamped in rack.rs). The
                                 // live-only bypasses are kept as the engine is running them; the GEQ's
                                 // coefficient version moves only if its bands actually changed.
-                                use crate::rack::{BRANCH_LOCAL, BRANCH_STREAM};
-                                let cur = ctl.params.rack;
-                                let mut r = new_rack;
-                                r.set_branch_in(BRANCH_LOCAL, cur.ride(BRANCH_LOCAL).1, cur.limiter(BRANCH_LOCAL).1);
-                                r.set_branch_in(BRANCH_STREAM, cur.ride(BRANCH_STREAM).1, cur.limiter(BRANCH_STREAM).1);
-                                r.eq_version = if r.geq().0 != cur.geq().0 { cur.eq_version.wrapping_add(1) } else { cur.eq_version };
-                                ctl.params.rack = r;
+                                crate::show::set_master_rack(&mut ctl.params, new_rack);
                                 ctl.params_changed();
                             }
                             AudioCmd::Ping
@@ -3604,6 +3607,8 @@ pub(crate) fn mixer_callback(
     let bs: &mut BusState = &mut *bus;
 
     for (i, deck) in bs.decks.iter_mut().enumerate() {
+        // SLICE 7 — the fader ramp follows the adopted level; a channel making no sound snaps (nothing can click).
+        bs.vol_ramp[i].follow(deck.volume, deck.active && !deck.paused && deck.source.is_some());
         if !deck.active || deck.paused { continue; }
         let Some(ref mut src) = deck.source else {
             // active=true but source=None is a stuck state — self-heal so GetLevel
@@ -3726,10 +3731,18 @@ pub(crate) fn mixer_callback(
             if rack_on { for f in 0..take { cl[f] += rack_l[f]; cr[f] += rack_r[f]; } }
             else { for f in 0..take { cl[f] += feed[2 * f] * trim; cr[f] += feed[2 * f + 1] * trim; } }
         }
+        // SLICE 7 — while the fader is ramping, its gain moves per frame (cut still wins: 0). At rest this is None and
+        // the arithmetic below is exactly today's.
+        let ramp = if bs.vol_ramp[i].ramping() { Some(bs.vol_ramp[i]) } else { None };
         for f in 0..take {
             {
                 {
-                    let (lv, rv) = if rack_on { (rack_l[f] * fader, rack_r[f] * fader) }
+                    let (lv, rv) = if let Some(rp) = ramp {
+                                       let g = if deck.muted { 0.0 } else { rp.at(f) };
+                                       if rack_on { (rack_l[f] * g, rack_r[f] * g) }
+                                       else { let gt = g * trim; (feed[2 * f] * gt, feed[2 * f + 1] * gt) }
+                                   }
+                                   else if rack_on { (rack_l[f] * fader, rack_r[f] * fader) }
                                    else { (feed[2 * f] * vol, feed[2 * f + 1] * vol) };
                     mix_l[f] += lv;                       // AIR — every slot, unchanged
                     mix_r[f] += rv;
@@ -3786,6 +3799,7 @@ pub(crate) fn mixer_callback(
         // out with it, or the countdown lies about a track that is genuinely ending.
         deck.frames_played = deck.frames_played.wrapping_add(pulled);
         frame_peaks[i] = pk;
+        bs.vol_ramp[i].advance(prog_frames);
     }
     // SLICE 2 — fold this buffer's channel taps into the window.
     bus.meters_acc.frames += prog_frames as u64;
@@ -3975,7 +3989,14 @@ pub(crate) fn mixer_callback(
     //     exactly like a console, and monitor still never touches air.
     // Unity is a no-op multiply, so an untouched station is bit-identical to the previous build.
     let master_vol = bus.master_vol;
-    if master_vol != 1.0 {
+    // SLICE 7 — the master fader ramps too (a Take or a restore moves it); a silent programme snaps.
+    bus.master_ramp.follow(master_vol, any_playing);
+    let mramp = bus.master_ramp;
+    bus.master_ramp.advance(prog_frames);
+    if mramp.ramping() {
+        for (f, s) in out_l.iter_mut().enumerate() { *s = *s * mramp.at(f); }
+        for (f, s) in out_r.iter_mut().enumerate() { *s = *s * mramp.at(f); }
+    } else if master_vol != 1.0 {
         for s in out_l.iter_mut() { *s = *s * master_vol; }
         for s in out_r.iter_mut() { *s = *s * master_vol; }
     }
@@ -4157,7 +4178,9 @@ pub(crate) fn mixer_callback(
             RtCounters::bump(&counters.lock_misses, 1);
             for f in 0..prog_frames { rl[f] = room_l[f].clamp(-1.0, 1.0); rr[f] = room_r[f].clamp(-1.0, 1.0); }
         }
-        if master_vol != 1.0 {
+        if mramp.ramping() {
+            for f in 0..prog_frames { let g = mramp.at(f); rl[f] *= g; rr[f] *= g; }
+        } else if master_vol != 1.0 {
             for f in 0..prog_frames { rl[f] *= master_vol; rr[f] *= master_vol; }
         }
         // Same PRE/POST monitor choice the operator already has for the room.
@@ -5090,5 +5113,261 @@ mod channel_rack_timing {
         // JEFF'S GATE (ruling 2026-09-26): rows (a) and (b) — what OV runs — p99 ≤ 1 ms AND rack CPU max ≤ 0.5 ms.
         // The 12-all-crossfading row is the recorded extreme, not gated.
         assert!(fails.is_empty(), "GATE: {:?} — stop and report", fails);
+    }
+}
+
+// ── SLICE 7 — show presets through the real mixer callback (docs/dsp-show-presets.md §5) ─────────────────────
+// The engine half of the receipts: a fader step no longer clicks (and its hard twin does); a Take that leaves the
+// live deck out leaves it bit-identical; one Take lands in one buffer; a restored show nulls against the same board
+// set by hand; nothing allocates.
+#[cfg(test)]
+mod show_through_the_mixer {
+    use super::*;
+    use crate::ramp::LevelRamp;
+    use crate::show::ShowApply;
+
+    const FS: f64 = 44_100.0;
+    struct Tone { n: u64, freq: f64, amp: f64 }
+    impl Iterator for Tone {
+        type Item = f32;
+        fn next(&mut self) -> Option<f32> { let i = self.n / 2; self.n += 1; Some((self.amp * (2.0 * std::f64::consts::PI * self.freq * i as f64 / FS).sin()) as f32) }
+    }
+    fn tone(freq: f64, amp: f64) -> Tone { Tone { n: 0, freq, amp } }
+
+    struct Rig {
+        bus: SharedBusState,
+        cmd: HeapProd<RtCmd>,
+        garbage: HeapCons<Garbage>,
+        stream_cons: HeapCons<f32>,
+        meters: MetersHandle,
+        fin: FinishedFlags,
+        playing: Arc<AtomicBool>,
+        sc: Box<Scratch>,
+        data: Vec<f32>,
+        pop: Vec<f32>,
+        stream: Vec<f32>,
+        local: Vec<f32>,
+        allocs: u64,
+    }
+    const CAP: usize = 480 * 2 * 700;
+    fn rig(setup: impl FnOnce(&mut BusState)) -> Rig {
+        let (prod, stream_cons) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)));
+        let h = b.handles.take().unwrap();
+        let (meters, _loud) = MetersHandle::from_parts(Arc::new(Mutex::new(h.meter_r)), h.shared.clone(), h.loud_cons, h.loud_shared);
+        setup(&mut b);
+        Rig { bus: Arc::new(Mutex::new(b)), cmd: h.cmd_prod, garbage: h.garbage_cons, stream_cons, meters,
+              fin: FinishedFlags::new(), playing: Arc::new(AtomicBool::new(true)), sc: Scratch::new(),
+              data: vec![0f32; 960], pop: vec![0f32; 960], stream: Vec::new(), local: Vec::new(), allocs: 0 }
+    }
+    fn play(b: &mut BusState, i: usize, src: impl Iterator<Item = f32> + Send + 'static, paused: bool) {
+        b.decks[i].source = Some(DeckFeed::prefilled(src, CAP));
+        b.decks[i].active = true; b.decks[i].paused = paused; b.decks[i].volume = 1.0;
+    }
+    impl Rig {
+        fn params(&self) -> Params { self.bus.lock().unwrap().params() }
+        fn push(&mut self, p: Params) { assert!(self.cmd.try_push(RtCmd::Params(Box::new(p))).is_ok()); }
+        /// One buffer through the real callback; returns that buffer's meter window.
+        fn step(&mut self) -> MeterBlock {
+            let a0 = crate::rt::tl_rt_allocs();
+            mixer_callback(&mut self.data, 2, &self.bus, &self.fin, &self.playing, &mut self.sc);
+            self.allocs += crate::rt::tl_rt_allocs() - a0;
+            for f in 0..480 { self.local.push(self.data[2 * f]); }
+            loop { let got = self.stream_cons.pop_slice(&mut self.pop); if got == 0 { break; } for f in 0..got / 2 { self.stream.push(self.pop[2 * f]); } }
+            while self.garbage.try_pop().is_some() {}
+            self.meters.read_and_ack().unwrap_or_default()
+        }
+    }
+
+    fn hp8(x: &[f32]) -> Vec<f64> {
+        let q = [0.5098, 0.6013, 0.9000, 2.5629];   // 8th-order Butterworth section Qs (chdsp's click detector)
+        let bq: Vec<_> = q.iter().map(|&qq| crate::rack::rbj_pass(8_000.0, qq, FS, true)).collect();
+        let mut st = [[0.0f64; 2]; 4];
+        x.iter().map(|&v| {
+            let mut y = v as f64;
+            for (k, b) in bq.iter().enumerate() {
+                let o = b.b0 * y + st[k][0];
+                st[k][0] = b.b1 * y - b.a1 * o + st[k][1];
+                st[k][1] = b.b2 * y - b.a2 * o;
+                y = o;
+            }
+            y
+        }).collect()
+    }
+    fn residual_db(x: &[f32], at: usize) -> f64 {
+        let hp = hp8(x);
+        20.0 * hp[at - 4410..at + 8820].iter().fold(0.0f64, |m, v| m.max(v.abs())).max(1e-12).log10()
+    }
+
+    /// A 1 kHz tone at −12 dBFS on deck A; at buffer 92 (~1.0 s) the fader (or the master) steps 1.0 → 0.25.
+    /// `ramp_len` 0 = the twin: a hard step.
+    fn level_step(master: bool, ramp_len: Option<u32>, step: bool) -> f64 {
+        let mut r = rig(|b| {
+            play(b, 0, tone(1000.0, 10f64.powf(-12.0 / 20.0)), false);
+            if let Some(n) = ramp_len { if master { b.master_ramp = LevelRamp::with_len(n); } else { b.vol_ramp[0] = LevelRamp::with_len(n); } }
+        });
+        let at_buf = 92;
+        for k in 0..200 {
+            if k == at_buf && step {
+                let mut p = r.params();
+                if master { crate::show::set_master_fader(&mut p, 0.25); } else { p.volume[0] = 0.25; }
+                r.push(p);
+            }
+            r.step();
+        }
+        residual_db(&r.stream, at_buf * 480)
+    }
+
+    #[test]
+    fn a_level_step_does_not_click_and_its_hard_twin_does() {
+        let floor = level_step(false, None, false);
+        let fader = level_step(false, None, true);
+        let fader_hard = level_step(false, Some(0), true);
+        let master = level_step(true, None, true);
+        let master_hard = level_step(true, Some(0), true);
+        println!("[level-no-click] 1 kHz −12 dBFS on A, level 1.0 → 0.25 (−12 dB) at a buffer boundary, through the real callback · 8 kHz-HP residual: fader ramped {:.1} dBFS, hard (twin) {:.1} · master ramped {:.1}, hard (twin) {:.1} · floor {:.1} · bar −80",
+                 fader, fader_hard, master, master_hard, floor);
+        assert!(fader < -80.0 && master < -80.0, "a ramped level step clicked");
+        assert!(fader_hard > -80.0 && master_hard > -80.0, "the twin did not click — the test cannot see a click");
+    }
+
+    const PEQ_A: &str = r#"{"v":1,"sections":{"ch":[{"module":{"type":"peq","bands":[{"freq":100,"gain":0,"width":1},{"freq":1000,"gain":-4,"width":1},{"freq":3000,"gain":0,"width":1},{"freq":8000,"gain":0,"width":1}]},"in":true}]}}"#;
+    const PEQ_220: &str = r#"{"v":1,"sections":{"ch":[{"module":{"type":"peq","bands":[{"freq":100,"gain":0,"width":1},{"freq":220,"gain":6,"width":1},{"freq":3000,"gain":0,"width":1},{"freq":8000,"gain":0,"width":1}]},"in":true}]}}"#;
+    const COMP: &str = r#"{"v":1,"sections":{"ch":[{"module":{"type":"comp","threshold":-20,"ratio":4,"attack":10,"release":150,"makeup":3,"knee":6},"in":true}]}}"#;
+    const GATE: &str = r#"{"v":1,"sections":{"ch":[{"module":{"type":"gate","threshold":-45,"ratio":4,"depth":15,"attack":1,"hold":100,"release":150,"hysteresis":3},"in":true}]}}"#;
+
+    /// A plays (ON, rack PEQ_A); D plays but is cut (OFF); S1 is idle. The Take at buffer 60 leaves A out (the blade's
+    /// live rule) and changes D, S1, the ducker, the monitor — and, when `master_rack`, the master GEQ.
+    fn mid_song(take: bool, master_rack: bool) -> (Rig, Vec<(MeterTap, MeterTap)>) {
+        let mut r = rig(|b| {
+            play(b, 0, tone(220.0, 0.3), false);
+            play(b, 3, tone(700.0, 0.2), false);
+        });
+        let mut p = r.params();
+        crate::show::set_channel_rack(&mut p, 0, crate::rack::ChannelRack::from_doc_json(PEQ_A).unwrap(), FS);
+        p.muted[3] = true;
+        r.push(p);
+        let geq = r#","rack":{"v":1,"link":true,"sections":{"pgm":[{"module":{"type":"geq","bands":[0,0,3,0,0,0,0,-2,0,0]},"in":true}],"local":[{"module":{"type":"ride","target":-14,"rate":1.5,"clamp":12},"in":true},{"module":{"type":"limiter","ceiling":-1,"release":120},"in":true}]}}"#;
+        let show = format!(r#"{{"slots":{{"D":{{"fader":0.3,"duck":true,"room":0.5,"rack":{COMP}}},"S1":{{"fader":0.7,"duckable":false,"rack":{PEQ_220}}}}},
+                              "master":{{"monitor":0.6,"duck":{{"depthDb":-9,"thresholdDb":-40,"attackMs":20,"holdMs":300,"releaseMs":600}}{}}}}}"#,
+                           if master_rack { geq } else { "" });
+        let show = ShowApply::from_json(&show).unwrap();
+        let mut taps = Vec::new();
+        for k in 0..200 {
+            if k == 60 && take { let mut p = r.params(); show.apply(&mut p, FS); r.push(p); }
+            let w = r.step();
+            taps.push((w.ch[0], w.ch_post[0]));
+        }
+        (r, taps)
+    }
+    fn same_taps(a: &[(MeterTap, MeterTap)], b: &[(MeterTap, MeterTap)]) -> bool {
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.0.peak == y.0.peak && x.0.sumsq == y.0.sumsq && x.1.peak == y.1.peak && x.1.sumsq == y.1.sumsq)
+    }
+
+    #[test]
+    fn a_take_mid_song_leaves_the_live_deck_bit_identical_and_its_pending_lands_when_it_goes_off() {
+        let (reference, ref_taps) = mid_song(false, false);
+        let (mut took, took_taps) = mid_song(true, false);
+        let air_same = reference.stream == took.stream;
+        let taps_same = same_taps(&ref_taps, &took_taps);
+        // …and with a new master rack in the Take: air changes (the Take landed), A's own taps do not.
+        let (geq, geq_taps) = mid_song(true, true);
+        let geq_air_differs = geq.stream != reference.stream;
+        let geq_taps_same = same_taps(&ref_taps, &geq_taps);
+        {
+            let b = took.bus.lock().unwrap();
+            assert_eq!((b.decks[3].volume, b.decks[7].volume, b.monitor_vol, b.duck_depth_db), (0.3, 0.7, 0.6, -9.0), "the Take did not land");
+            assert_eq!(b.decks[0].volume, 1.0, "the live deck's fader moved");
+        }
+        // A goes OFF (the operator cuts it); the blade then sends A's pending values for A only.
+        let mut p = took.params(); p.muted[0] = true; took.push(p);
+        took.step();
+        let pend = ShowApply::from_json(&format!(r#"{{"slots":{{"A":{{"fader":0.5,"rack":{PEQ_220}}}}}}}"#)).unwrap();
+        let mut p = took.params(); pend.apply(&mut p, FS); took.push(p);
+        let mut last = MeterBlock::default();
+        for _ in 0..60 { last = took.step(); }
+        let lift = 10.0 * (last.ch_post[0].sumsq[0] / last.ch[0].sumsq[0]).log10();
+        let (vol, cut) = { let b = took.bus.lock().unwrap(); (b.decks[0].volume, b.decks[0].muted) };
+        println!("[show-live] Take at buffer 60 leaving A (playing, ON) out · air {} over 200 buffers · A's pre- and post-rack taps {} per buffer · with a new master GEQ in the Take: air {} (the Take landed), A's taps {} · A cut, then its pending sent: fader {} (cut {}), rack post/pre {:+.2} dB at 220 Hz (preset +6)",
+                 if air_same { "BIT-IDENTICAL" } else { "DIFFERS" }, if taps_same { "bit-identical" } else { "DIFFER" },
+                 if geq_air_differs { "changes" } else { "UNCHANGED" }, if geq_taps_same { "bit-identical" } else { "DIFFER" }, vol, cut, lift);
+        assert!(air_same, "a Take that left the live deck out changed the air");
+        assert!(taps_same && geq_taps_same, "the live deck's own taps changed");
+        assert!(geq_air_differs, "the master GEQ in the Take never landed — the comparison proves nothing");
+        assert_eq!(vol, 0.5);
+        assert!((lift - 6.0).abs() < 0.2, "A's pending rack is not running: {lift:+.2} dB");
+    }
+
+    #[test]
+    fn one_take_lands_in_one_buffer_and_allocates_nothing() {
+        let mut r = rig(|b| { for i in 0..SLOT_COUNT { play(b, i, tone(200.0 + 50.0 * i as f64, 0.05), false); } });
+        for _ in 0..20 { r.step(); }
+        const N: [&str; 12] = ["A", "B", "C", "D", "E", "F", "CART", "S1", "S2", "S3", "S4", "S5"];
+        let racks = [PEQ_A, COMP, GATE, PEQ_220];
+        let slots: Vec<String> = (0..SLOT_COUNT).map(|i| format!(r#""{}":{{"fader":{},"rack":{}}}"#, N[i], 0.3 + 0.05 * i as f32, racks[i % 4])).collect();
+        let show = ShowApply::from_json(&format!(r#"{{"slots":{{{}}},"master":{{"fader":0.8,"monitor":0.9,"duck":{{"depthDb":-6,"thresholdDb":-50,"attackMs":10,"holdMs":200,"releaseMs":400}}}}}}"#, slots.join(","))).unwrap();
+        let v0: Vec<u64> = { let b = r.bus.lock().unwrap(); (0..SLOT_COUNT).map(|i| b.ch_rack[i].version).collect() };
+        let mut p = r.params(); show.apply(&mut p, FS); r.push(p);
+        // Queued, not yet adopted: nothing has changed.
+        let before = { let b = r.bus.lock().unwrap(); (0..SLOT_COUNT).filter(|&i| b.decks[i].volume != 1.0 || b.ch_rack[i].version != v0[i]).count() + (b.master_vol != 1.0) as usize };
+        r.allocs = 0;
+        r.step();
+        let (vols, racks_moved, master, depth) = {
+            let b = r.bus.lock().unwrap();
+            ((0..SLOT_COUNT).filter(|&i| (b.decks[i].volume - (0.3 + 0.05 * i as f32)).abs() < 1e-6).count(),
+             (0..SLOT_COUNT).filter(|&i| b.ch_rack[i].version != v0[i]).count(), b.master_vol, b.duck_depth_db)
+        };
+        // 12 ramps + 12 rack crossfades + the master ramp all running, then settled.
+        for _ in 0..60 { r.step(); }
+        println!("[show-atomic] one Take: 12 faders + 12 racks + master fader + ducker + monitor → 1 Params block · changed before the buffer: {} · after ONE buffer: {}/12 faders, {}/12 racks, master {}, duck depth {} · allocations in the callback over 61 buffers of ramps and crossfades: {}",
+                 before, vols, racks_moved, master, depth, r.allocs);
+        assert_eq!(before, 0);
+        assert_eq!((vols, racks_moved, master, depth), (12, 12, 0.8, -6.0));
+        assert_eq!(r.allocs, 0);
+    }
+
+    #[test]
+    fn a_restored_show_nulls_against_the_same_board_set_by_hand() {
+        let setup = |b: &mut BusState| {
+            play(b, 0, tone(220.0, 0.3), true);
+            play(b, 3, tone(700.0, 0.1), true);
+            play(b, 7, tone(1300.0, 0.2), true);
+        };
+        let go = |r: &mut Rig| { { let mut b = r.bus.lock().unwrap(); for i in [0, 3, 7] { b.decks[i].paused = false; } } for _ in 0..150 { r.step(); } };
+        // By hand: one command per buffer, as the operator's drags and clicks arrive — including a fader dragged twice.
+        let mut hand = rig(setup);
+        let peq = crate::rack::ChannelRack::from_doc_json(PEQ_A).unwrap();
+        let comp = crate::rack::ChannelRack::from_doc_json(COMP).unwrap();
+        let cmds: Vec<Box<dyn Fn(&mut Params)>> = vec![
+            Box::new(|p| p.volume[0] = 0.5),
+            Box::new(|p| p.volume[0] = 0.8),
+            Box::new(|p| p.volume[3] = 0.6),
+            Box::new(move |p| crate::show::set_channel_rack(p, 0, peq, FS)),
+            Box::new(move |p| crate::show::set_channel_rack(p, 7, comp, FS)),
+            Box::new(|p| p.volume[7] = 0.4),
+            Box::new(|p| p.duck_enabled[3] = true),
+            Box::new(|p| crate::show::set_master_fader(p, 0.9)),
+            Box::new(|p| crate::show::set_duck_params(p, crate::show::DuckParams { depth_db: -9.0, threshold_db: -40.0, attack_ms: 20.0, hold_ms: 300.0, release_ms: 600.0 })),
+            Box::new(|p| crate::show::set_monitor(p, 0.7)),
+            Box::new(|p| crate::show::set_room(p, 3, 0.5)),
+        ];
+        for c in cmds.iter() { let mut p = hand.params(); c(&mut p); hand.push(p); hand.step(); }
+        go(&mut hand);
+        // Cold restart: a fresh engine, the saved show as ONE ApplyShow.
+        let mut restored = rig(setup);
+        let show = ShowApply::from_json(&format!(r#"{{"slots":{{"A":{{"fader":0.8,"rack":{PEQ_A}}},"D":{{"fader":0.6,"duck":true,"room":0.5}},"S1":{{"fader":0.4,"rack":{COMP}}}}},
+            "master":{{"fader":0.9,"monitor":0.7,"duck":{{"depthDb":-9,"thresholdDb":-40,"attackMs":20,"holdMs":300,"releaseMs":600}}}}}}"#)).unwrap();
+        let mut p = restored.params(); show.apply(&mut p, FS); restored.push(p); restored.step();
+        go(&mut restored);
+        let n = hand.stream.len().min(restored.stream.len());
+        let tail = |v: &Vec<f32>| v[v.len() - 150 * 480..].to_vec();
+        let (hs, rs, hl, rl) = (tail(&hand.stream), tail(&restored.stream), tail(&hand.local), tail(&restored.local));
+        let diff = |a: &[f32], b: &[f32]| a.iter().zip(b).filter(|(x, y)| x.to_bits() != y.to_bits()).count();
+        let (ds, dl) = (diff(&hs, &rs), diff(&hl, &rl));
+        let energy = hs.iter().map(|&v| (v as f64).powi(2)).sum::<f64>();
+        println!("[show-restore] board set by hand (11 commands, one per buffer, a fader dragged twice) vs a fresh engine given the saved show as ONE ApplyShow, same input, 150 buffers: stream {} of {} samples differ, local {} of {} · stream energy {:.1} (not silence) · (buffers compared from the stream: {})",
+                 ds, hs.len(), dl, hl.len(), energy, n / 480);
+        assert!(energy > 1.0, "the null compared silence");
+        assert_eq!((ds, dl), (0, 0), "a restored show does not null against the hand-set board");
     }
 }
