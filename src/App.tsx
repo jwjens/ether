@@ -700,9 +700,6 @@ export default function App() {
   // JINGLES overlay v1: live overlay state for the ACTIVE station, from the daemon (observed, not claimed).
   // { deck: the deck whose seam the jingle bridges, state: 'SCHEDULED'|'ARMED'|'FIRING', title }. null when idle.
   const [jingleOverlay, setJingleOverlay] = useState<{ deck: string | null; state: string; title: string | null; contentClass: string | null; jinDurSec: number | null } | null>(null);
-  // Discoverability (4.4.56): does this station have any jingle pool? Drives the "Set up jingles →"
-  // affordance on the JINGLES fader when the feature is unconfigured (its owner couldn't find it).
-  const [hasJinglePool, setHasJinglePool] = useState<boolean>(true);   // assume yes until known → no flash
   // AUTO state persists across restarts — broadcasters expect their automation
   // to remain in whatever state they left it in, especially after a power cycle
   // or app restart. Default false on first install.
@@ -2496,19 +2493,6 @@ export default function App() {
     return () => { try { au.offJingle?.(h); } catch { /* ignore */ } };
   }, [stationUuid]);
 
-  // Discoverability: check whether the active station has any jingle pool (re-checked when leaving Settings
-  // so creating one hides the "Set up jingles →" affordance). Read-only, best-effort.
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const r = await (window as any).ether?.jingleCategories?.list(stationId);
-        if (alive) setHasJinglePool(((r?.rows || []) as any[]).length > 0);
-      } catch { if (alive) setHasJinglePool(true); }   // on error, don't nag
-    })();
-    return () => { alive = false; };
-  }, [stationId, panel]);
-
   // Public listener page: forward live now-playing to MAIN on a heartbeat; main owns the
   // single /api/now-playing poster (4.4.54). This effect runs in EVERY renderer window
   // (main + popouts), so it must NOT POST to the backend directly — that produced a
@@ -3059,8 +3043,6 @@ export default function App() {
                 <LivePanel
                   deckA={deckA} deckB={deckB} deckC={deckC}
                   jingleOverlay={jingleOverlay}
-                  hasJinglePool={hasJinglePool}
-                  onOpenJingleSettings={() => { setPanel("live"); setShowCarts(false); setProgPanel("jingles"); }}
                   onCloseDock={() => setProgPanel(null)}
                   onOpenImaging={() => { setProgPanel(null); setPanel("imaging"); }}
                   autoAdv={autoAdv} shuffle={shuffle}
@@ -3838,7 +3820,7 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, onOpenCarts, libraryDock, jingleOverlay, hasJinglePool, onOpenJingleSettings, onCloseDock, onOpenImaging }: {
+function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, onOpenCarts, libraryDock, jingleOverlay, onCloseDock, onOpenImaging }: {
   deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
   autoAdv: boolean | null; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
@@ -3858,8 +3840,6 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   onOpenCarts: () => void;
   libraryDock: JSX.Element;
   jingleOverlay: { deck: string | null; state: string; title: string | null; contentClass: string | null; jinDurSec: number | null } | null;
-  hasJinglePool: boolean;
-  onOpenJingleSettings: () => void;
   onCloseDock: () => void;
   /** Door from the imaging EDITOR (this push-up) into the IMAGING surface. */
   onOpenImaging: () => void;
