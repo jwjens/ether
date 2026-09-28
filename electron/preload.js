@@ -77,6 +77,12 @@ contextBridge.exposeInMainWorld("ether", {
     getMicInputs: (stationId) => ipcRenderer.invoke("mic:get", stationId),
     setMicInput: (stationId, slot, patch) => ipcRenderer.invoke("mic:set", { stationId, slot, ...(patch || {}) }),
     micState: (stationId) => ipcRenderer.invoke("mic:state", stationId),
+    // THE REMOTE LINK (docs/remote-link-design-2026-09-28.md)
+    linkGet: (stationId) => ipcRenderer.invoke("link:get", stationId),
+    linkSetInput: (stationId, input) => ipcRenderer.invoke("link:set-input", stationId, input),
+    linkSetSend: (stationId, send) => ipcRenderer.invoke("link:set-send", stationId, send),
+    linkMintKey: (stationId) => ipcRenderer.invoke("link:mint-key", stationId),
+    linkState: (stationId) => ipcRenderer.invoke("link:state", stationId),
     setOutputDevice: (stationId, deviceName) => ipcRenderer.invoke("audio:setOutputDevice", stationId, deviceName),
     setMonitorVolume: (stationId, volume) => ipcRenderer.invoke("audio:setMonitorVolume", stationId, volume),
     // PFL — one channel on/off (the lamp follows the engine's echo on the meters frame), and the station's dim.

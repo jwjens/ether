@@ -198,6 +198,108 @@ function getEngine(stationId) {
   return e;
 }
 
+// ── THE REMOTE LINK (docs/remote-link-design-2026-09-28.md) ─────────────────────────────────────────────────────
+// The ENGINE sends, listens, buffers and decodes (native/src/linknet.rs); this says what is patched where, from the
+// station's machine-local keys (audiod/link.js): on a command from main (the operator's edit, applied BEFORE main
+// stores it, so a refused edit is never stored), and every 3 s from the stored keys — so the Link re-lands on a
+// fresh engine and follows a key change. Not tied to automation: a station with no DaemonEngine still links.
+const LinkCfg = (() => { try { return require("./link"); } catch (e) { log("remote link settings unavailable:", e && e.message); return null; } })();
+const linkApplied = new Map();   // stationId → { input: "<want>", inputSlot, send: "<want>" }
+const linkEngineHas = () => typeof A.audioSetLinkInput === "function" && typeof A.audioSetLinkSend === "function";
+const LINK_OLD_ENGINE = "this audio engine predates the Remote Link — fully close and reopen Ether";
+function linkDefaults() {
+  try { if (typeof A.audioLinkDefaults === "function") return JSON.parse(A.audioLinkDefaults()); } catch {}
+  return LinkCfg ? LinkCfg.FALLBACK_DEFAULTS : null;
+}
+function linkKv(sid, key) {
+  try { const r = getDb().prepare("SELECT value FROM station_config_kv WHERE station_id=? AND key=? AND deleted_at IS NULL").get(sid, key); return r ? r.value : null; }
+  catch { return null; }
+}
+function linkStation(sid) {
+  try { const r = getDb().prepare("SELECT id, name, uuid FROM stations WHERE id=? AND deleted_at IS NULL").get(sid); return r ? { id: r.id, name: r.name, uuid: String(r.uuid || "").toLowerCase() } : null; }
+  catch { return null; }
+}
+function linkStationByUuid(uuid) {
+  try { const r = getDb().prepare("SELECT id, name, uuid FROM stations WHERE lower(uuid)=lower(?) AND deleted_at IS NULL").get(uuid); return r ? { id: r.id, name: r.name, uuid: String(r.uuid).toLowerCase() } : null; }
+  catch { return null; }
+}
+function linkDesignatedHere(sid) {
+  try {
+    const me = getDb().prepare("SELECT client_id FROM client_identity LIMIT 1").get();
+    const rec = JSON.parse(linkKv(sid, "designated_generator") || "null");
+    return !!(me && me.client_id && rec && rec.machine_id === me.client_id);
+  } catch { return false; }
+}
+/** What the engine should run for this station's RECEIVE side: a want-string (to compare) and the call. */
+function linkInputPlan(sid, input) {
+  const d = linkDefaults();
+  const p = input === undefined ? LinkCfg.parseInput(linkKv(sid, LinkCfg.KEY_INPUT), d) : (input ? LinkCfg.parseInput(input, d) : null);
+  const key = LinkCfg.parseKey(linkKv(sid, LinkCfg.KEY_KEY));
+  const st = linkStation(sid);
+  const want = p ? `${LinkCfg.serializeInput(p)}|${LinkCfg.keyFingerprint(key)}|${st ? st.uuid : ""}` : "";
+  return { p, key, st, want };
+}
+function linkApplyInput(sid, plan) {
+  const { p, key, st } = plan;
+  const prevSlot = (linkApplied.get(sid) || {}).inputSlot;
+  if (prevSlot && (!p || p.slot !== prevSlot)) { try { A.audioSetLinkInput(sid, prevSlot, "", "", 0, 0); } catch {} }
+  if (!p) return { ok: true, slot: null };
+  if (typeof A.audioLinkSetPort === "function") A.audioLinkSetPort(p.port);
+  if (!st || !LinkCfg.isUuid(st.uuid)) return { ok: false, reason: "this station has no UUID yet — sign in so the account can name it" };
+  if (!key) return { ok: false, reason: "this station has no link key — make one in Preferences → Remote Link" };
+  const r = JSON.parse(A.audioSetLinkInput(sid, p.slot, st.uuid, key.key, key.id, p.jitterMs));
+  return r && r.ok ? { ok: true, slot: p.slot } : r;
+}
+/** The SEND side: where to, with which key (the TARGET station's — local in this build), and the refusals. */
+function linkSendPlan(sid, send) {
+  const d = linkDefaults();
+  const p = send === undefined ? LinkCfg.parseSend(linkKv(sid, LinkCfg.KEY_SEND), d) : (send ? LinkCfg.parseSend(send, d) : null);
+  if (!p) return { p: null, want: "" };
+  const own = linkStation(sid);
+  const tgt = linkStationByUuid(p.target);
+  const key = tgt ? LinkCfg.parseKey(linkKv(tgt.id, LinkCfg.KEY_KEY)) : null;
+  const tgtSend = tgt ? LinkCfg.parseSend(linkKv(tgt.id, LinkCfg.KEY_SEND), d) : null;
+  const refusal = LinkCfg.sendRefusal({
+    ownUuid: own && own.uuid, target: p.target, targetName: tgt ? tgt.name : null,
+    designatedHere: tgt ? linkDesignatedHere(tgt.id) : false,
+    targetSendsToOwn: !!(tgtSend && own && tgtSend.target === own.uuid),
+  });
+  const want = `${LinkCfg.serializeSend(p)}|${LinkCfg.keyFingerprint(key)}|${refusal || ""}`;
+  return { p, tgt, key, refusal, want };
+}
+function linkApplySend(sid, plan) {
+  const { p, tgt, key, refusal } = plan;
+  if (!p) { JSON.parse(A.audioSetLinkSend(sid, "", "", 0, "", 0, 0, false)); return { ok: true }; }
+  if (refusal) { try { A.audioSetLinkSend(sid, "", "", 0, "", 0, 0, false); } catch {} return { ok: false, reason: refusal }; }
+  if (!key) {
+    try { A.audioSetLinkSend(sid, "", "", 0, "", 0, 0, false); } catch {}
+    return { ok: false, reason: `${tgt ? tgt.name : "that station"} has no link key on this machine. In this build the key is made on the receiving station's machine; carrying it to other machines through the account is the next slice.` };
+  }
+  return JSON.parse(A.audioSetLinkSend(sid, p.target, key.key, key.id, p.host, p.port, p.bitrate, !!p.fec));
+}
+/** Every 3 s per station: re-land the stored Link when what is stored (or the key) differs from what was applied. */
+function linkReapply(sid) {
+  if (!LinkCfg || !linkEngineHas()) return;
+  const a = linkApplied.get(sid) || {};
+  try {
+    const ip = linkInputPlan(sid);
+    if ((a.input === undefined && ip.want) || (a.input !== undefined && a.input !== ip.want)) {
+      const r = linkApplyInput(sid, ip);
+      a.input = ip.want; a.inputSlot = r && r.ok ? r.slot : null;
+      log(r && r.ok ? `[link s${sid}] input ${ip.p ? `${ip.p.slot} · buffer ${ip.p.jitterMs} ms · UDP ${ip.p.port}` : "unpatched"}`
+                    : `[link s${sid}] input refused ✗ ${(r && r.reason) || "no answer from the engine"}`);
+    }
+    const sp = linkSendPlan(sid);
+    if ((a.send === undefined && sp.want) || (a.send !== undefined && a.send !== sp.want)) {
+      const r = linkApplySend(sid, sp);
+      a.send = sp.want;
+      log(r && r.ok ? `[link s${sid}] send ${sp.p ? `→ ${sp.tgt ? sp.tgt.name : sp.p.target} at ${sp.p.host}:${sp.p.port}` : "off"}`
+                    : `[link s${sid}] send refused ✗ ${(r && r.reason) || "no answer from the engine"}`);
+    }
+  } catch (e) { log(`[link s${sid}] apply ✗`, String(e && e.message || e)); }
+  linkApplied.set(sid, a);
+}
+
 // ── SLICE 7 — THE BLADE (docs/dsp-show-presets.md) ─────────────────────────────────────────────────────────────
 // One per station, beside the engine and independent of automation (a station with no DaemonEngine — the jukebox
 // alone — still has a board). It sees every fader move, cut and stop that passes through here, holds the channels
@@ -396,6 +498,34 @@ const handlers = {
     catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
   },
   micState:           (m) => (typeof A.audioMicState === "function" ? JSON.parse(A.audioMicState(Number(m.stationId))) : { v: 0, mics: [] }),
+  // THE REMOTE LINK — main hands the edit (serialized, or "" to clear); the engine runs it FIRST, main stores it
+  // only on ok. The applied-cache is updated so the 3 s re-apply sees nothing to do once main has stored it.
+  setLinkInput:       (m) => {
+    if (!LinkCfg || !linkEngineHas()) return { ok: false, reason: LINK_OLD_ENGINE };
+    const sid = Number(m.stationId);
+    stations.add(sid);
+    try {
+      const plan = linkInputPlan(sid, String(m.input || ""));
+      const r = linkApplyInput(sid, plan);
+      if (r && r.ok) { const a = linkApplied.get(sid) || {}; a.input = plan.want; a.inputSlot = r.slot; linkApplied.set(sid, a); }
+      return r;
+    } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+  },
+  setLinkSend:        (m) => {
+    if (!LinkCfg || !linkEngineHas()) return { ok: false, reason: LINK_OLD_ENGINE };
+    const sid = Number(m.stationId);
+    stations.add(sid);
+    try {
+      const plan = linkSendPlan(sid, String(m.send || ""));
+      const r = linkApplySend(sid, plan);
+      if (r && r.ok) { const a = linkApplied.get(sid) || {}; a.send = plan.want; linkApplied.set(sid, a); }
+      return r;
+    } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+  },
+  // The key changed (minted / rotated) — re-apply on the next pass (both this station's input and any sender here).
+  linkKeyChanged:     () => { for (const a of linkApplied.values()) { a.input = "\u0000"; a.send = "\u0000"; } return true; },
+  linkState:          (m) => (typeof A.audioLinkState === "function" ? JSON.parse(A.audioLinkState(Number(m.stationId))) : { v: 0, rx: null, tx: null }),
+  linkDefaults:       ()  => linkDefaults(),
   setOutputDevice:    (m) => A.audioSetOutputDevice(m.stationId, m.device),
   setMonitorVolume:   (m) => A.audioSetMonitorVolume(m.stationId, m.volume),
   // PFL — one channel on/off (momentary, never stored) and the station's programme dim while any is on.
@@ -719,6 +849,7 @@ const eventTimer = setInterval(() => {
       }
     }
     if (tick % 5 === 0) { const b = blades.get(sid); if (b) { try { b.tick(); } catch (e) { log("show blade tick ✗", String(e && e.message || e)); } } }
+    if (tick % 30 === 0) linkReapply(sid);   // THE REMOTE LINK — every 3 s from the stored keys
     // Engine-owned stations emit their own per-deck `deck` events from poll(); only emit the
     // generic full-state deck snapshot for stations WITHOUT an automation engine.
     if (tick % 3 === 0 && !engines.has(sid)) { // ~4 Hz

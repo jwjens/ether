@@ -95,7 +95,11 @@ const LOCAL_ONLY_KEYS = new Set(['log_reader_flip', 'auto_generate_enabled', 'ki
 //
 // mic_input_<slot> (2026-09-26) — which input DEVICE a source channel's mic is patched to, on THIS machine
 // (docs/dsp-mic-in-engine.md §4). A device name belongs to one machine; the same rule as audio_output_device.
-const LOCAL_ONLY_PREFIXES = ['grid_widths_', 'mic_input_'];
+//
+// link_ (2026-09-28) — THE REMOTE LINK (docs/remote-link-design-2026-09-28.md, audiod/link.js): which slot takes the
+// Link on THIS machine, where THIS machine sends, the port it listens on — and, in this build, the station's link
+// key. The key must NOT ride the mutation log: delivering it to the account's other machines is a backend slice.
+const LOCAL_ONLY_PREFIXES = ['grid_widths_', 'mic_input_', 'link_'];
 const isLocalOnlyKey = (k) =>
   typeof k === 'string' && (LOCAL_ONLY_KEYS.has(k) || LOCAL_ONLY_PREFIXES.some((p) => k.startsWith(p)));
 

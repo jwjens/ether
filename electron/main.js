@@ -5581,6 +5581,147 @@ ipcMain.handle("mic:state", async (_, stationId) => {
   } catch { return { v: 0, mics: [] }; }
 });
 
+// ── THE REMOTE LINK (docs/remote-link-design-2026-09-28.md) ────────────────────────────────────────────────────
+//   link:get        → this station's stored Link (receive side, send side), its key's fingerprint (never the key),
+//                     the D5 defaults from the ENGINE, and the account's stations to send to (with the refusals).
+//   link:set-input  → the Link patch on a source channel: delivered to the engine FIRST, stored (set-local) on ok.
+//   link:set-send   → SEND TO: the same order.
+//   link:mint-key   → a new key for this station (OS randomness); the engine re-keys within 3 s.
+//   link:state      → the engine's live Link state, both directions (every counter).
+// Everything is machine-local (link_ prefix): what slot takes the Link and where this machine sends are this
+// machine's. The key is local IN THIS BUILD — delivering it through the account is the next slice.
+const LinkCfg = require(path.join(__dirname, "..", "audiod", "link.js"));
+const _linkNoDaemon = { ok: false, reason: "the Remote Link needs the audio engine service — fully close and reopen Ether" };
+function _linkKv(sid, key) {
+  try { const r = getDb().prepare("SELECT value FROM station_config_kv WHERE station_id=? AND key=? AND deleted_at IS NULL").get(sid, key); return r ? r.value : null; }
+  catch { return null; }
+}
+function _linkSetLocal(sid, key, value) {
+  const { stationConfigKvSetLocal } = require("./sync/handlers/station_config_kv");
+  stationConfigKvSetLocal(getDb(), sid, key, value);
+}
+async function _linkDefaults() {
+  try { if (AUDIO_DAEMON) { const d = await audiodClient.cmd("linkDefaults"); if (d) return d; } } catch {}
+  return LinkCfg.FALLBACK_DEFAULTS;
+}
+function _linkDesignatedHere(sid) {
+  try {
+    const me = _machineIdentity();
+    const rec = JSON.parse(_linkKv(sid, "designated_generator") || "null");
+    return !!(me.id && rec && rec.machine_id === me.id);
+  } catch { return false; }
+}
+ipcMain.handle("link:get", async (_, stationId) => {
+  const sid = Number(stationId);
+  if (!Number.isFinite(sid)) return { ok: false, reason: "no station" };
+  try {
+    const d = await _linkDefaults();
+    const ownUuid = String(_stationUuidById(sid) || "").toLowerCase();
+    const key = LinkCfg.parseKey(_linkKv(sid, LinkCfg.KEY_KEY));
+    const send = LinkCfg.parseSend(_linkKv(sid, LinkCfg.KEY_SEND), d);
+    const stations = getDb().prepare("SELECT id, name, uuid FROM stations WHERE deleted_at IS NULL ORDER BY name").all().map(r => {
+      const uuid = String(r.uuid || "").toLowerCase();
+      const tSend = LinkCfg.parseSend(_linkKv(r.id, LinkCfg.KEY_SEND), d);
+      const tKey = LinkCfg.parseKey(_linkKv(r.id, LinkCfg.KEY_KEY));
+      return {
+        id: r.id, name: r.name, uuid, hasKeyHere: !!tKey, keyFingerprint: LinkCfg.keyFingerprint(tKey),
+        refusal: LinkCfg.sendRefusal({ ownUuid, target: uuid, targetName: r.name, designatedHere: _linkDesignatedHere(r.id),
+                                       targetSendsToOwn: !!(tSend && tSend.target === ownUuid) }),
+      };
+    });
+    return {
+      ok: true, defaults: d, stationUuid: ownUuid, machineName: require("os").hostname(),
+      input: LinkCfg.parseInput(_linkKv(sid, LinkCfg.KEY_INPUT), d),
+      send, key: key ? { fingerprint: LinkCfg.keyFingerprint(key), id: key.id, mintedAt: key.mintedAt } : null,
+      stations, slots: LinkCfg.LINK_SLOTS, autoCutDefault: LinkCfg.AUTO_CUT_DEFAULT, srtFallbackProposedSec: LinkCfg.SRT_FALLBACK_PROPOSED_SEC,
+      daemon: !!AUDIO_DAEMON,
+    };
+  } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+});
+ipcMain.handle("link:set-input", async (_, stationId, input) => {
+  const sid = Number(stationId);
+  if (!Number.isFinite(sid)) return { ok: false, reason: "no station" };
+  if (!AUDIO_DAEMON) return _linkNoDaemon;
+  const d = await _linkDefaults();
+  const p = input ? LinkCfg.parseInput(JSON.stringify(input), d) : null;
+  if (input && !p) return { ok: false, reason: `the Link goes on a source channel (${LinkCfg.LINK_SLOTS.join(", ")})` };
+  const value = p ? LinkCfg.serializeInput(p) : "";
+  let res;
+  try { res = await audiodClient.cmd("setLinkInput", { stationId: sid, input: value }); }
+  catch (e) { res = { ok: false, reason: String(e && e.message || e) }; }
+  if (!res || res.ok !== true) return res || { ok: false, reason: "no answer from the engine" };
+  try { _linkSetLocal(sid, LinkCfg.KEY_INPUT, value); }
+  catch (e) { return { ok: false, reason: `the engine took the Link but it was not saved: ${String(e && e.message || e)}` }; }
+  _healthEvent(p ? "link-patched" : "link-unpatched", { stationId: sid, slot: p ? p.slot : null, jitterMs: p ? p.jitterMs : null, port: p ? p.port : null });
+  return { ok: true, input: p };
+});
+ipcMain.handle("link:set-send", async (_, stationId, send) => {
+  const sid = Number(stationId);
+  if (!Number.isFinite(sid)) return { ok: false, reason: "no station" };
+  if (!AUDIO_DAEMON) return _linkNoDaemon;
+  const d = await _linkDefaults();
+  const p = send ? LinkCfg.parseSend(JSON.stringify(send), d) : null;
+  if (send && !p) return { ok: false, reason: "pick a station and an address to send to" };
+  const value = p ? LinkCfg.serializeSend(p) : "";
+  let res;
+  try { res = await audiodClient.cmd("setLinkSend", { stationId: sid, send: value }); }
+  catch (e) { res = { ok: false, reason: String(e && e.message || e) }; }
+  if (!res || res.ok !== true) return res || { ok: false, reason: "no answer from the engine" };
+  try { _linkSetLocal(sid, LinkCfg.KEY_SEND, value); }
+  catch (e) { return { ok: false, reason: `the engine is sending but the setting was not saved: ${String(e && e.message || e)}` }; }
+  _healthEvent(p ? "link-send-on" : "link-send-off", { stationId: sid, target: p ? p.target : null, host: p ? p.host : null, port: p ? p.port : null });
+  return { ok: true, send: p };
+});
+ipcMain.handle("link:mint-key", async (_, stationId) => {
+  const sid = Number(stationId);
+  if (!Number.isFinite(sid)) return { ok: false, reason: "no station" };
+  try {
+    const prev = LinkCfg.parseKey(_linkKv(sid, LinkCfg.KEY_KEY));
+    const k = { key: require("crypto").randomBytes(32).toString("hex"), id: prev ? prev.id + 1 : 1, mintedAt: new Date().toISOString() };
+    _linkSetLocal(sid, LinkCfg.KEY_KEY, LinkCfg.serializeKey(k));
+    try { if (AUDIO_DAEMON) await audiodClient.cmd("linkKeyChanged", {}); } catch {}
+    _healthEvent(prev ? "link-key-rotated" : "link-key-made", { stationId: sid, keyId: k.id, fingerprint: LinkCfg.keyFingerprint(k) });
+    return { ok: true, key: { fingerprint: LinkCfg.keyFingerprint(k), id: k.id, mintedAt: k.mintedAt } };
+  } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+});
+ipcMain.handle("link:state", async (_, stationId) => {
+  const sid = Number(stationId);
+  if (!Number.isFinite(sid) || !AUDIO_DAEMON) return { v: 0, rx: null, tx: null };
+  try { return await audiodClient.cmd("linkState", { stationId: sid }); } catch { return { v: 0, rx: null, tx: null }; }
+});
+// THE LEDGER — transitions only (never a heartbeat): the Link came up, went lost, a key was refused, a sender was
+// refused as a second sender; the send side answered / stopped answering / was refused. Every 2 s, only for
+// stations that have a Link stored on this machine.
+const _linkSeen = new Map();   // stationId → { rx, tx, authFailures, busyRefusals }
+setInterval(async () => {
+  if (!AUDIO_DAEMON) return;
+  let rows = [];
+  try { rows = getDb().prepare("SELECT DISTINCT station_id FROM station_config_kv WHERE key IN (?, ?) AND deleted_at IS NULL AND value <> ''").all(LinkCfg.KEY_INPUT, LinkCfg.KEY_SEND); }
+  catch { return; }
+  for (const { station_id: sid } of rows) {
+    let st;
+    try { st = await audiodClient.cmd("linkState", { stationId: sid }); } catch { continue; }
+    if (!st) continue;
+    const prev = _linkSeen.get(sid) || {};
+    const rx = st.rx || null, tx = st.tx || null;
+    if (rx && prev.rx !== undefined && rx.state !== prev.rx) {
+      _healthEvent("link-rx-" + rx.state, { stationId: sid, from: prev.rx, slot: rx.slot, sender: rx.sender, latencyMs: rx.latencyMs,
+        lost: rx.lost, concealed: rx.concealed, underruns: rx.underruns, reason: rx.reason || null });
+    }
+    if (rx && prev.authFailures !== undefined && rx.authFailures > prev.authFailures) {
+      _healthEvent("link-key-rejected", { stationId: sid, count: rx.authFailures - prev.authFailures, total: rx.authFailures });
+    }
+    if (rx && prev.busyRefusals !== undefined && rx.busyRefusals > prev.busyRefusals && !prev.busyNoted) {
+      _healthEvent("link-second-sender-refused", { stationId: sid, holder: rx.sender, refused: rx.busySender });
+    }
+    if (tx && prev.tx !== undefined && tx.state !== prev.tx) {
+      _healthEvent("link-send-" + tx.state, { stationId: sid, from: prev.tx, target: tx.target, host: tx.host, rttMs: tx.rttMs, reason: tx.reason || null });
+    }
+    _linkSeen.set(sid, { rx: rx ? rx.state : null, tx: tx ? tx.state : null, authFailures: rx ? rx.authFailures : 0,
+                         busyRefusals: rx ? rx.busyRefusals : 0, busyNoted: rx ? rx.busyRefusals > (prev.busyRefusals || 0) || prev.busyNoted : false });
+  }
+}, 2000).unref?.();
+
 ipcMain.handle("audio:listOutputDevices", async () => {
   if (AUDIO_DAEMON) { try { return await audiodClient.cmd("listOutputDevices"); } catch { return []; } }
   try {
