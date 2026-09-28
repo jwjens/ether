@@ -143,6 +143,18 @@ impl SincTable {
     }
     #[inline(always)]
     fn row(&self, q: usize) -> &[f32] { &self.c[q * TAPS..(q + 1) * TAPS] }
+    /// One output sample from a TAPS-long window at fractional position `phase` (0 ≤ phase < 1) — the same
+    /// arithmetic as `LiveIn::interp`, for the Remote Link's fixed-ratio sender resampler (link.rs).
+    #[inline(always)]
+    pub(crate) fn interp(&self, w: &[f32], phase: f64) -> f32 {
+        let qf = phase * PHASES as f64;
+        let q = (qf as usize).min(PHASES - 1);
+        let a = (qf - q as f64) as f32;
+        let (r0, r1) = (self.row(q), self.row(q + 1));
+        let (mut y0, mut y1) = (0f32, 0f32);
+        for j in 0..TAPS { y0 += w[j] * r0[j]; y1 += w[j] * r1[j]; }
+        y0 + a * (y1 - y0)
+    }
 }
 
 // ── the consumer (mixer callback) ──────────────────────────────────────────────────────────────────────

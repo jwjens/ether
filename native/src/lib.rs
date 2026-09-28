@@ -16,6 +16,7 @@ mod rta;                 // Slice 8 — the live RTA behind the rack's EQ curve 
 mod ramp;                // Slice 7 — the fader level ramp (docs/dsp-show-presets.md, ruling 4)
 mod chdsp;               // Slice 5 — the channel rack DSP (biquads + crossfade) on the audio thread
 mod micin;               // The mic as an engine input — docs/dsp-mic-in-engine.md
+mod link;                // The Remote Link core (wire, keys, jitter buffer, clocks) — docs/remote-link-design-2026-09-28.md
 pub mod rack;            // Slice 4 — the rack model; pub so the type-rule doctests (compile_fail) can see it
 mod rt;                  // Slice 1 S3 — lock-free channels between the audio callback and everything else
 mod loudness;           // Slice 3 — BS.1770 loudness per branch, on a meter thread — docs/dsp-loudness-meter.md
