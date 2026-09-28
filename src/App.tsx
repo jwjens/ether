@@ -57,7 +57,8 @@ import { StreamStatusProvider } from "./contexts/StreamStatusContext";
 import { AudioEngineProvider, useAudioEngine } from "./audio/AudioEngineContext";
 import { getEngine, getAllEngines } from "./audio/engine-registry";
 import { resolveCommandTarget, isStationScopedCommand, commandTargetsThisMachine, cmdStreamUrl } from "./audio/cmd-routing";
-import { restartStream, type StreamIo } from "./audio/streamRestart";
+import { restartStream, confirmLive, type StreamIo } from "./audio/streamRestart";
+import { outcomeOf, ackBody, postCmdAck, type CmdOutcome } from "./audio/cmd-ack";
 import { computeDeckRole } from "./lib/deckRole";
 import GlobalOnAirBadge from "./components/GlobalOnAirBadge";
 import EtherLogo from "./components/EtherLogo";
@@ -1322,7 +1323,31 @@ export default function App() {
       } catch { return null; }
     };
 
+    // The stream's live state for one station, for stream:start's confirm and stream:restart (slices 4-5).
+    const streamIo = (stationId: number, useDaemon: boolean): StreamIo => {
+      const ether = (window as any).ether;
+      return {
+        stopLive: () => ether?.invoke?.("stream:stop-live", { stationId }),
+        goLive: () => ether?.invoke?.("stream:go-live", { stationId }),
+        status: async () => {
+          if (useDaemon) {
+            const r: any = await ether?.audio?.daemon?.("streamStatus", { stationId });
+            return { state: String(r?.result?.state || "unknown"), error: r?.result?.errorMsg ?? null };
+          }
+          const r: any = await ether?.invoke?.("stream:get-status", { stationId });
+          return { state: r?.live ? "live" : "idle", error: null };
+        },
+        sleep: (ms: number) => new Promise(res => setTimeout(res, ms)),
+        now: () => Date.now(),
+      };
+    };
+
     const execCmd = async (cmd: string, data: any) => {
+      // SLICE 5 — no silent success. `outcome` is what really happened; `accepted` = a station-scoped command this
+      // machine took (routed here, not ignored). Acked in the finally below, never awaited (web-remote §5).
+      let outcome: CmdOutcome = { ok: true, error: null };
+      let accepted = false;
+      const refuse = (why: string) => { console.log(`[RemoteCmd] ${why}`); outcome = { ok: false, error: why }; };
       try {
         // ── Slice 4: station-route the command ──────────────────────────────────────────────────
         // The bus is per-license (fans to every desktop on the license). A station-scoped command must
@@ -1344,6 +1369,7 @@ export default function App() {
             console.log(`[RemoteCmd] ${cmd} ignored — targets machine ${data?.target_machine_id}, not this one`);
             return;
           }
+          accepted = true;
         }
         const isActive = targetId === activeId;
         const activeEngine = getEngine(activeId);             // fresh active engine (replaces the stale closure `engine`)
@@ -1351,8 +1377,12 @@ export default function App() {
         // Daemon-direct: act on the TARGET station by id, independent of which station is the active
         // view. We never call getEngine(targetId).* for a non-active station — those engines are created
         // but never init()-ed, so their daemonDriven is false and they'd misfire (the doc's gotcha).
-        const dcmd = (c: string, args: Record<string, unknown> = {}) =>
-          (window as any).ether?.audio?.daemon?.(c, { stationId: targetId, ...args });
+        const dcmd = async (c: string, args: Record<string, unknown> = {}) => {
+          const r = await (window as any).ether?.audio?.daemon?.(c, { stationId: targetId, ...args });
+          const o = outcomeOf(r);
+          if (!o.ok) outcome = o;                       // a daemon refusal is the result (slice 5)
+          return r;
+        };
 
         switch (cmd) {
           // ── JUKEBOX REQUEST from a guest's phone (Phase 2) ──
@@ -1468,32 +1498,22 @@ export default function App() {
           //    stop releases the mount cleanly (ffmpeg SIGTERM → Icecast source disconnects) so another
           //    machine can then source it. Going on-air while the mount is held elsewhere fails at the
           //    Icecast layer (403) — the dashboard pre-empts that with the source-attribution check.
-          case "stream:start":
-            await (window as any).ether?.invoke?.("stream:go-live", { stationId: targetId });
+          case "stream:start": {
+            const go = outcomeOf(await (window as any).ether?.invoke?.("stream:go-live", { stationId: targetId }));
+            if (!go.ok) { outcome = go; break; }
+            // go-live answers as soon as the encoder is spawned; an Icecast 403 shows up after, as the stream's error.
+            outcome = await confirmLive(streamIo(targetId, useDaemon));
             break;
+          }
           case "stream:stop":
-            await (window as any).ether?.invoke?.("stream:stop-live", { stationId: targetId });
+            outcome = outcomeOf(await (window as any).ether?.invoke?.("stream:stop-live", { stationId: targetId }));
             break;
           // Web Restart = a STREAM restart on this (the target) machine — web-remote slice 4. Same on-air lifecycle
           // as stream:start / stream:stop; automation and the decks are not touched, so the song plays on through
           // the encoder restart. The result is the stream's real end state (live, or the Icecast error).
           case "stream:restart": {
-            const ether = (window as any).ether;
-            const io: StreamIo = {
-              stopLive: () => ether?.invoke?.("stream:stop-live", { stationId: targetId }),
-              goLive: () => ether?.invoke?.("stream:go-live", { stationId: targetId }),
-              status: async () => {
-                if (useDaemon) {
-                  const r: any = await dcmd("streamStatus");
-                  return { state: String(r?.result?.state || "unknown"), error: r?.result?.errorMsg ?? null };
-                }
-                const r: any = await ether?.invoke?.("stream:get-status", { stationId: targetId });
-                return { state: r?.live ? "live" : "idle", error: null };
-              },
-              sleep: (ms: number) => new Promise(res => setTimeout(res, ms)),
-              now: () => Date.now(),
-            };
-            const r = await restartStream(io);
+            const r = await restartStream(streamIo(targetId, useDaemon));
+            outcome = r;
             console.log(`[RemoteCmd] stream:restart station ${targetId}: ${r.ok ? "live again" : `FAILED — ${r.error}`}`);
             break;
           }
@@ -1502,21 +1522,26 @@ export default function App() {
           //    protected by the ignore-gate). Routing to a non-active station needs that station's
           //    renderer/queue state; deferred (see docs/slice4-desktop-station-routing.md). ──
           case "set_volume":
-            if (isActive && data.volume !== undefined) (activeEngine as any).setMasterVolume?.(data.volume);
+            if (!isActive) { refuse("set_volume skipped — non-active station"); break; }
+            if (data.volume === undefined) { refuse("set_volume without a volume"); break; }
+            (activeEngine as any).setMasterVolume?.(data.volume);
             break;
           case "play_emergency_cart":
-            if (isActive) (activeEngine as any).playEmergencyCart?.();
+            if (!isActive) { refuse("play_emergency_cart skipped — non-active station"); break; }
+            (activeEngine as any).playEmergencyCart?.();
             break;
           case "mic_on":
-            if (isActive) (activeEngine as any).openMic?.();
+            if (!isActive) { refuse("mic_on skipped — non-active station"); break; }
+            (activeEngine as any).openMic?.();
             break;
           case "deck:load": {
             // Dashboard "A/B/C" — CUE a library song onto a deck (READY, never playing).
             const deck = String(data.deck || "A").toUpperCase() as "A" | "B" | "C";
-            if (!["A", "B", "C"].includes(deck)) break;
-            if (!isActive) { console.log("[RemoteCmd] deck:load skipped — non-active station (deferred)"); break; }
+            if (!["A", "B", "C"].includes(deck)) { refuse(`deck:load — no deck ${deck}`); break; }
+            if (!isActive) { refuse("deck:load skipped — non-active station (deferred)"); break; }
             const song = await resolveSong(data.song_id, data.file_key);
-            if (song) {
+            if (!song) { refuse("deck:load — that song is not playable on this machine"); break; }
+            {
               if (useDaemon) {
                 await activeEngine.deckCue(deck, { filePath: song.filePath, title: song.title, artist: song.artist, durationMs: song.durationMs });
               } else {
@@ -1542,9 +1567,9 @@ export default function App() {
             const date = String(data.date || "");
             const time = String(data.time || "");
             if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{1,2}:\d{2}$/.test(time)) {
-              console.warn("[RemoteCmd] ops:set-closing — bad date or time", date, time); break;
+              refuse(`ops:set-closing — bad date or time (${date} ${time})`); break;
             }
-            if (targetId == null) { console.error("[RemoteCmd] ops:set-closing — no target station"); break; }
+            if (targetId == null) { refuse("ops:set-closing — no target station"); break; }
             try {
               const ether = (window as any).ether;
               const res: any = await ether?.stationConfigKv?.list?.(targetId);
@@ -1560,6 +1585,7 @@ export default function App() {
               window.dispatchEvent(new CustomEvent("ether:ops-push"));
             } catch (e) {
               console.error("[RemoteCmd] ops:set-closing failed:", e);
+              outcome = { ok: false, error: `ops:set-closing failed: ${(e as any)?.message || e}` };
             }
             break;
           }
@@ -1580,13 +1606,13 @@ export default function App() {
           // police the routing.
           case "cart:fire": {
             const slot = Number(data.slot);
-            if (!Number.isFinite(slot)) { console.warn("[RemoteCmd] cart:fire without a slot"); break; }
-            if (!isActive) { console.log("[RemoteCmd] cart:fire skipped — non-active station"); break; }
+            if (!Number.isFinite(slot)) { refuse("cart:fire without a slot"); break; }
+            if (!isActive) { refuse("cart:fire skipped — non-active station"); break; }
             try {
               const res: any = await (window as any).ether?.cartSlots?.list?.(targetId);
               const rows: any[] = Array.isArray(res) ? res : (res?.rows ?? []);
               const row = rows.find(r => Number(r?.slot_number) === slot && !r?.deleted_at);
-              if (!row?.file_path) { console.warn(`[RemoteCmd] cart:fire slot ${slot} is empty on this station`); break; }
+              if (!row?.file_path) { refuse(`cart:fire slot ${slot} is empty on this station`); break; }
               // THE SAME CHANNEL THE LOCAL WALL USES. This hardcoded "CART" while the wall resolved
               // its patched deck, so one cart button had two destinations depending on whether the
               // thumb was in the studio or in the park — and the remote one landed on the sweeper's
@@ -1606,13 +1632,15 @@ export default function App() {
               console.log(`[RemoteCmd] cart:fire slot ${slot} → ${row.title || "(untitled)"} on ${cartCh}`);
             } catch (e) {
               console.error("[RemoteCmd] cart:fire failed:", e);
+              outcome = { ok: false, error: `cart:fire failed: ${(e as any)?.message || e}` };
             }
             break;
           }
           case "queue:enqueue": {
-            if (!isActive) { console.log("[RemoteCmd] queue:enqueue skipped — non-active station (deferred)"); break; }
+            if (!isActive) { refuse("queue:enqueue skipped — non-active station (deferred)"); break; }
             const song = await resolveSong(data.song_id, data.file_key);
-            if (song) {
+            if (!song) { refuse("queue:enqueue — that song is not playable on this machine"); break; }
+            {
               const item = { filePath: song.filePath, title: song.title, artist: song.artist, durationMs: song.durationMs };
               if (useDaemon) activeEngine.queueEnqueue([item]); else activeEngine.addToQueue([item]);
               window.dispatchEvent(new CustomEvent("ether:queue-changed"));
@@ -1620,11 +1648,13 @@ export default function App() {
             break;
           }
           case "queue:reorder": {
-            if (!isActive) { console.log("[RemoteCmd] queue:reorder skipped — non-active station (deferred)"); break; }
+            if (!isActive) { refuse("queue:reorder skipped — non-active station (deferred)"); break; }
             const order: number[] = Array.isArray(data.order) ? data.order : [];
             if (order.length) {
               const q = activeEngine.getQueue();
-              if (order.length <= q.length && order.every(i => Number.isInteger(i) && i >= 0 && i < q.length)) {
+              if (!(order.length <= q.length && order.every(i => Number.isInteger(i) && i >= 0 && i < q.length))) {
+                refuse("queue:reorder — the order no longer matches this machine's queue");
+              } else {
                 if (useDaemon) {
                   const qids = order.map(i => q[i]?.qid).filter(Boolean) as string[];
                   for (let k = 0; k < qids.length; k++) await activeEngine.queueReorder(qids[k], k);
@@ -1645,28 +1675,31 @@ export default function App() {
           //    entries already declared in cmd-routing.ts STATION_SCOPED. ──
           case "deck:cue": {
             const deck = String((data as any).deck || "").toUpperCase();
-            if (!["A", "B", "C"].includes(deck)) break;
+            if (!["A", "B", "C"].includes(deck)) { refuse(`deck:cue — no deck ${deck}`); break; }
             const songRef = (data as any).songRef ?? (data as any).song_ref ??
               (((data as any).song_id != null || (data as any).file_key != null)
                 ? { songId: (data as any).song_id, fileKey: (data as any).file_key } : {});
             if (useDaemon) await dcmd("deck:cue", { deck, songRef });
-            else console.log("[RemoteCmd] deck:cue needs the daemon — skipped (in-process)");
+            else refuse("deck:cue needs the daemon — skipped (in-process)");
             break;
           }
           case "deck:crossfade":
             if (useDaemon) await dcmd("deck:crossfade", { from: String((data as any).from || "A").toUpperCase(), to: String((data as any).to || "B").toUpperCase() });
-            else console.log("[RemoteCmd] deck:crossfade needs the daemon — skipped (in-process)");
+            else refuse("deck:crossfade needs the daemon — skipped (in-process)");
             break;
           case "queue:remove":
-            if ((data as any).qid == null) break;
+            if ((data as any).qid == null) { refuse("queue:remove without a qid"); break; }
             if (useDaemon) await dcmd("queue:remove", { qid: String((data as any).qid) });
+            else refuse("queue:remove needs the daemon — skipped (in-process)");
             break;
           case "queue:move":
-            if ((data as any).qid == null) break;
+            if ((data as any).qid == null) { refuse("queue:move without a qid"); break; }
             if (useDaemon) await dcmd("queue:move", { qid: String((data as any).qid), where: (data as any).where ?? (data as any).toIndex ?? (data as any).to_index });
+            else refuse("queue:move needs the daemon — skipped (in-process)");
             break;
           case "queue:clear":
             if (useDaemon) await dcmd("queue:clear");
+            else refuse("queue:clear needs the daemon — skipped (in-process)");
             break;
 
           // ── License-scoped — install-wide, NEVER gated by station_uuid ──
@@ -1712,6 +1745,14 @@ export default function App() {
         }
       } catch (e) {
         console.error("[RemoteCmd] Exec failed:", cmd, e);
+        outcome = { ok: false, error: `${cmd} failed: ${(e as any)?.message || e}` };
+      } finally {
+        // SLICE 5: tell the web what really happened. Only for a station-scoped command this machine accepted —
+        // an ignored command is not ours to answer. Fire-and-forget: the ack can never hold up playout.
+        if (accepted) {
+          console.log(`[RemoteCmd] ${cmd} -> ack ${outcome.ok ? "ok" : `FAILED — ${outcome.error}`}`);
+          void postCmdAck(fetch, `${ETHER_BACKEND_URL}/api/cmd/ack`, apiKeyRef.current, ackBody(data, machineIdRef.current, outcome));
+        }
       }
     };
 
