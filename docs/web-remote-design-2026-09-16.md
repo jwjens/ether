@@ -412,3 +412,27 @@ Options, for Jeff:
 - **B:** the desktop exempts `cart:fire` and `ops:set-closing` from "target required" until A lands. They stay
   station-routed, so every machine running that station acts: the closing time is an idempotent write, but a cart
   would fire on each such machine's own output.
+
+## Backend for slices 2–5 — built (2026-09-27, `C:\ether-backend` main, local; NOT deployed)
+
+Rulings: slice 3 (desktop) waits for this deploy (option A); the 8 s live/error confirm stays as `CONFIRM_MS`, defined
+once in `src/audio/streamRestart.ts`.
+
+| Item | Commit | What |
+|---|---|---|
+| 2 | `057c23f` | `stream:restart` in `src/lib/station-commands.js`. A shared-list test compares the list with the desktop's `STATION_SCOPED`, read from `C:/openair/src/audio/cmd-routing.ts` when present (or `OPENAIR_CMD_ROUTING`), and skips where the desktop isn't on disk. |
+| 3 | `ef8911b` | `/api/cmd-stream` stores `?machine_id` on the client. Delivery lives in `src/lib/cmd-bus.js`: a command with `target_machine_id` is written only to that machine's client(s). No match → not queued (`target_connected:false`) → `/api/cmd` answers `409 { error:"target_offline", machine, offline_since }`. Untargeted commands fan out and queue as before. |
+| 5 | `da95571` | `cmd_id` on every emitted station command (on `data`). `POST /api/cmd/ack` (x-license-key) goes into a per-license ring of 200. `GET /api/cmd/ack/:cmd_id` (requireAuth) returns it, or `404 no_ack_yet`. `/api/cmd` returns `{ ok, cmd_id, delivered, target_machine_id, target_machine_name, target_connected }`. |
+| 1 | `4ffeac3` | Park Ops `ops:set-closing` / `cart:fire` stamp through the same `stampStationCommand()` as `/api/cmd` (raw `source_machine_id`). Refusals: `409` with code `no_source_machine` / `target_offline`, and a sentence in `error` (the Park Ops page shows `error` verbatim). |
+| 4 | `bfaf25b` | Both station lists spread `sourceFields(r)`: the fresh `source_machine_*` plus `last_source_machine_id` / `last_source_machine_name` / `last_source_at`. |
+
+**Behaviour change (item 1 × item 3):** a closing time set on the phone while the park's computer is offline used to
+be queued and land on reconnect. It is now refused ("<machine> is not connected right now — nothing was sent"), and
+the display mirror is written only after the command was delivered. `cart:fire` is never fired late either.
+
+**Deploy order:** this backend → the desktop release carrying slices 2, 4, 5 → desktop slice 3. A desktop that
+connects without `machine_id` (pre-slice-2) receives no station controls once this deploys: they are delivered only
+to the named machine's client.
+
+Tests: `node --test src/lib/*.test.js src/slug.test.js` → 38/38 (cmd-bus 10, park-ops-target 4, station-commands
+12, station-source 4, slug 8). `node --check src/index.js` ok. No route was run against a database.
