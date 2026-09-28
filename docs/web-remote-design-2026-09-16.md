@@ -380,3 +380,35 @@ until slice 5.
 
 **Not done here:** deploy (Jeff GOs Railway separately), the desktop `machine_id` on the SSE connect
 and targeted delivery (slice 2), the shared-list test, any dashboard change.
+
+## Slices 2–5 desktop — built (2026-09-27, `C:\openair` branch `log-reader-flip`, local; not pushed, not tagged, no bump)
+
+Backend slice 1 (`5d0157e`) deployed and confirmed per Jeff. Slice 3 is **HELD**, see below; 2, 4 and 5 are built.
+
+| Slice | Commit | What changed on the desktop |
+|---|---|---|
+| 2 | `e20a70e` | The command SSE opens `?key=<license>&machine_id=<id>` via `cmdStreamUrl` (`src/audio/cmd-routing.ts`), null until both are known; `connect()` retries on null exactly as it did for the key, and re-asks `identity:get` while the id is missing (the mount-time read was one-shot). A machine with no identity row does not connect at all (the design's stated consequence). |
+| 4 | `0425389` | `execCmd` case `stream:restart`: `stream:stop-live` → wait until the stream is not live (daemon `streamStatus` / in-process `stream:get-status`) or 2 s → `stream:go-live`. Automation and decks untouched; `_streamIntent` deleted by stop-live, re-set by go-live. Added to `STATION_SCOPED` in the same commit (unscoped it would run on every machine's active station). |
+| 5 | `edcc61e` | After an ACCEPTED station-scoped command runs, `POST /api/cmd/ack {cmd_id, station_uuid, machine_id, ok, error}` (x-license-key) in a `finally`: fire-and-forget, 4 s timeout, never throws, never awaited. `ok`/`error` are the real result: a daemon refusal, go-live's `{ok:false,error}`, a throw, and every former silent "skipped" branch. |
+
+**Found while building (receipts):**
+- **go-live's answer is not the stream's answer in daemon mode.** `stream:go-live` (`electron/main.js` go-live handler) returns `ok:true` once `startStream` has spawned ffmpeg; an Icecast 403 arrives later as the stream's `error` state (`audiod/stream.js` `statusState`). So `stream:start` and `stream:restart` confirm `live | error` for up to 8 s (`src/audio/streamRestart.ts` `CONFIRM_MS`) before acking; still `connecting` at 8 s is acked as not confirmed, never as success.
+- **Backend halves not yet built:** `emitCommand` does not stamp `cmd_id` yet, and there is no `/api/cmd/ack` route. Until they exist, acks carry `cmd_id: null` and are answered 404, harmlessly. The backend mirror `ether-backend/src/lib/station-commands.js` needs `"stream:restart"`; without it the backend does not stamp a target on it, but the dashboard does not send it yet (dashboard slice 4 unbuilt).
+- **In-process mode (daemon off):** `stop_all` / `play` / `pause` / `skip` / `play_now` on a NON-active station still do nothing and ack ok. This is the legacy fallback only; the daemon is default-on.
+
+### Slice 3 — HELD: it would switch off Park Ops the moment it ships
+
+The rule "a station-scoped command with an absent target does nothing" is right, but two station-scoped commands
+reach the desktop **without** going through `/api/cmd`, so slice 1 never stamps a target on them:
+- `ops:set-closing`: `ether-backend/src/index.js:5628`, `emitCommand(…, "ops:set-closing", {station_uuid, date, time})`.
+- `cart:fire`: `ether-backend/src/index.js:5701`, `emitCommand(…, "cart:fire", {station_uuid, slot})`.
+
+Both are in `STATION_SCOPED`. With slice 3 as specified, every desktop ignores them: the Park Ops phone's cart wall and
+closing time stop working on OV, with no error on the phone (it answers `{ok:true}` before delivery).
+
+Options, for Jeff:
+- **A (recommended):** the backend stamps `target_machine_id` on those two routes the same way `/api/cmd` does
+  (`stampTarget`, sticky `source_machine_id`). Deploy that first, then slice 3 exactly as specified.
+- **B:** the desktop exempts `cart:fire` and `ops:set-closing` from "target required" until A lands. They stay
+  station-routed, so every machine running that station acts: the closing time is an idempotent write, but a cart
+  would fire on each such machine's own output.
