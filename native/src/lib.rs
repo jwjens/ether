@@ -17,6 +17,7 @@ mod ramp;                // Slice 7 — the fader level ramp (docs/dsp-show-pres
 mod chdsp;               // Slice 5 — the channel rack DSP (biquads + crossfade) on the audio thread
 mod micin;               // The mic as an engine input — docs/dsp-mic-in-engine.md
 mod link;                // The Remote Link core (wire, keys, jitter buffer, clocks) — docs/remote-link-design-2026-09-28.md
+mod linknet;             // The Remote Link's sockets and threads (sender, listener) — same doc
 pub mod rack;            // Slice 4 — the rack model; pub so the type-rule doctests (compile_fail) can see it
 mod rt;                  // Slice 1 S3 — lock-free channels between the audio callback and everything else
 mod loudness;           // Slice 3 — BS.1770 loudness per branch, on a meter thread — docs/dsp-loudness-meter.md
@@ -421,6 +422,78 @@ pub fn audio_set_mic_input(station_id: u32, slot: String, device: String, channe
 /// fill and drift, and every counter. Read from the station's mic board — never blocks on the engine.
 #[napi]
 pub fn audio_mic_state(station_id: u32) -> String { micin::state_json(station_id).to_string() }
+
+// ── THE REMOTE LINK (docs/remote-link-design-2026-09-28.md) ─────────────────────────────────────────────
+
+/// Patch this station's Link input onto a SOURCE channel (D–F, S1–S5). `station_uuid` is THIS station's UUID
+/// (the tag senders address), `key_hex` its link key (64 hex). `station_uuid` empty = unpatch the slot.
+#[napi]
+pub fn audio_set_link_input(station_id: u32, slot: String, station_uuid: String, key_hex: String, key_id: u32, jitter_ms: u32) -> String {
+    let Some(idx) = audio::deck_index(&slot) else {
+        return serde_json::json!({ "ok": false, "reason": format!("`{}` is not a fader", slot) }).to_string();
+    };
+    if audio::default_kind_for(idx) != audio::SlotKind::Source {
+        return serde_json::json!({ "ok": false, "reason": format!("{} is a rotation/sweeper channel — the Link goes on a source channel (D–F, S1–S5)", slot) }).to_string();
+    }
+    let cfg = if station_uuid.is_empty() { None } else {
+        if link::station_tag(&station_uuid).is_none() {
+            return serde_json::json!({ "ok": false, "reason": format!("`{}` is not a station UUID", station_uuid) }).to_string();
+        }
+        if link::LinkKey::from_hex(&key_hex, key_id).is_none() {
+            return serde_json::json!({ "ok": false, "reason": "this station has no valid link key" }).to_string();
+        }
+        Some(linknet::RxCfg { uuid: station_uuid, key_hex, key_id, jitter_ms })
+    };
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return serde_json::json!({ "ok": false, "reason": "engine busy" }).to_string() };
+    match audio.sender.send(AudioCmd::SetLinkInput { slot: idx, slot_name: slot, cfg }) {
+        Ok(()) => serde_json::json!({ "ok": true }).to_string(),
+        Err(_) => serde_json::json!({ "ok": false, "reason": "the station's engine is not running" }).to_string(),
+    }
+}
+
+/// SEND TO: send this station's programme bus (pre-processor) to `target_uuid` at `host:port`, sealed with the
+/// target's link key. `target_uuid` empty = stop sending.
+#[napi]
+pub fn audio_set_link_send(station_id: u32, target_uuid: String, key_hex: String, key_id: u32, host: String, port: u32, bitrate: u32, fec: bool) -> String {
+    let cfg = if target_uuid.is_empty() { None } else {
+        if host.trim().is_empty() {
+            return serde_json::json!({ "ok": false, "reason": "no address to send to" }).to_string();
+        }
+        if port == 0 || port > 65535 {
+            return serde_json::json!({ "ok": false, "reason": format!("{} is not a UDP port", port) }).to_string();
+        }
+        let br = bitrate.clamp(link::BITRATE_RANGE.0, link::BITRATE_RANGE.1);
+        Some(linknet::SendCfg { target_uuid, key_hex, key_id, host: host.trim().into(), port: port as u16, bitrate: br, fec })
+    };
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return serde_json::json!({ "ok": false, "reason": "engine busy" }).to_string() };
+    match audio.sender.send(AudioCmd::SetLinkSend(cfg)) {
+        Ok(()) => serde_json::json!({ "ok": true }).to_string(),
+        Err(_) => serde_json::json!({ "ok": false, "reason": "the station's engine is not running" }).to_string(),
+    }
+}
+
+/// The station's Link, both directions: {v, port, rx: {state, sender, counters, latency…} | null, tx: {…} | null}.
+/// Read from the link boards — never blocks on the engine.
+#[napi]
+pub fn audio_link_state(station_id: u32) -> String { linknet::state_json(station_id).to_string() }
+
+/// This machine's Link listening port (D5: 9760 by default). The listener rebinds within one tick.
+#[napi]
+pub fn audio_link_set_port(port: u32) -> bool {
+    if port == 0 || port > 65535 { return false; }
+    linknet::set_listen_port(port as u16);
+    true
+}
+
+/// D5 defaults and ranges (bitrate, jitter buffer, port) — the one source Preferences reads.
+#[napi]
+pub fn audio_link_defaults() -> String { linknet::defaults_json().to_string() }
+
+/// A new random link key (64 hex) from the OS's randomness, or "" if the OS refused.
+#[napi]
+pub fn audio_link_mint_key() -> String { link::LinkKey::mint_hex().unwrap_or_default() }
 
 #[napi]
 pub fn audio_get_state(station_id: Option<u32>) -> String {

@@ -88,6 +88,11 @@ pub(crate) struct MicShared {
     pub fill_bits: AtomicU64,
     pub target_bits: AtomicU64,
     pub nudge_bits: AtomicU64,
+    // REMOTE LINK only (linknet.rs; zero and unread for a mic): what the link holds UPSTREAM of this ring, in
+    // input-rate frames (f64 bits) — the jitter buffer + the decoded-but-not-pushed frames — and the TOTAL the
+    // link is to hold (the operator's jitter buffer). The drift controller of a link steers on ring + upstream.
+    pub extra_fill_bits: AtomicU64,
+    pub extra_target_bits: AtomicU64,
 }
 impl Default for MicShared {
     fn default() -> Self {
@@ -99,6 +104,7 @@ impl Default for MicShared {
             underruns: AtomicU64::new(0), starved_frames: AtomicU64::new(0), stale_flushes: AtomicU64::new(0),
             primed: AtomicBool::new(false), fill_bits: AtomicU64::new(0), target_bits: AtomicU64::new(0),
             nudge_bits: AtomicU64::new(0),
+            extra_fill_bits: AtomicU64::new(0), extra_target_bits: AtomicU64::new(0),
         }
     }
 }
@@ -173,6 +179,11 @@ pub(crate) struct LiveIn {
     gain: f32,
     last: f32,
     shared: Arc<MicShared>,
+    /// REMOTE LINK — a STEREO live feed (interleaved L/R in the ring) whose drift controller steers on the
+    /// link's total buffer (MicShared::extra_*). False for every mic: `pull` is the mic path, untouched.
+    link: bool,
+    hist_r: [f32; 2 * TAPS],
+    last_r: f32,
 }
 impl LiveIn {
     /// Built on the dispatch thread (the table and history are allocated here, never in the callback).
@@ -181,8 +192,14 @@ impl LiveIn {
         LiveIn {
             cons, table: SincTable::new(in_rate, PROGRAM_RATE), hist: [0.0; 2 * TAPS], hpos: 0, phase: 0.0,
             base_step: in_rate as f64 / PROGRAM_RATE as f64, in_rate: in_rate as f64, fill_avg: 0.0,
-            primed: false, gain: g, last: 0.0, shared,
+            primed: false, gain: g, last: 0.0, shared, link: false, hist_r: [0.0; 2 * TAPS], last_r: 0.0,
         }
+    }
+    /// REMOTE LINK — the same consumer over a STEREO ring (linknet.rs decodes the link into it).
+    pub(crate) fn new_link(cons: HeapCons<f32>, in_rate: u32, shared: Arc<MicShared>) -> LiveIn {
+        let mut li = LiveIn::new(cons, in_rate, shared);
+        li.link = true;
+        li
     }
     #[inline(always)]
     fn push_hist(&mut self, x: f32) {
@@ -209,6 +226,7 @@ impl LiveIn {
     /// Fill `feed` (interleaved stereo, `frames` frames at PROGRAM_RATE). Always writes every frame: what the
     /// input could not supply is silence (a decay from the last sample, never a step), counted, never an end.
     pub(crate) fn pull(&mut self, feed: &mut [f32], frames: usize) {
+        if self.link { return self.pull_link(feed, frames); }
         let target = self.target(frames);
         let mut fill = self.cons.occupied_len() as f64;
         // STALE: the output stopped while the input kept writing — throw away down to the target.
@@ -268,6 +286,83 @@ impl LiveIn {
             if self.last.abs() < 1e-20 { self.last = 0.0; }
             feed[2 * f] = self.last;
             feed[2 * f + 1] = self.last;
+        }
+    }
+    /// REMOTE LINK — `pull` for a stereo ring. Identical rules (prime at target, stale flush, starve = one EVENT
+    /// then a decay, gain ramp, ±0.3 % drift nudge), with two differences:
+    ///   · the ring holds interleaved L/R: fill and every skip are in FRAMES, each channel has its own history;
+    ///   · the drift controller steers the link's TOTAL buffer (this ring + the jitter buffer upstream, published
+    ///     by the link thread in MicShared::extra_fill_bits) to the operator's jitter target (extra_target_bits).
+    ///     A remote clock that runs fast fills the jitter buffer; this consumes a hair faster. Nothing is dropped.
+    fn pull_link(&mut self, feed: &mut [f32], frames: usize) {
+        let target = self.target(frames);
+        let mut fill = (self.cons.occupied_len() / 2) as f64;
+        if fill > target + STALE_MS * self.in_rate / 1000.0 {
+            let n = (fill - target) as usize;
+            self.cons.skip(n * 2);
+            fill -= n as f64;
+            self.shared.stale_flushes.fetch_add(1, Ordering::Relaxed);
+        }
+        let extra = bits_f64(self.shared.extra_fill_bits.load(Ordering::Relaxed));
+        let extra_target = bits_f64(self.shared.extra_target_bits.load(Ordering::Relaxed));
+        let (total, total_target) = (fill + extra, if extra_target > 0.0 { extra_target } else { target });
+        if !self.primed {
+            if fill >= target { self.primed = true; self.fill_avg = total; self.shared.primed.store(true, Ordering::Relaxed); }
+            else {
+                self.fade_out_link(feed, 0, frames);
+                self.shared.starved_frames.fetch_add(frames as u64, Ordering::Relaxed);
+                self.publish(fill, target, 0.0);
+                return;
+            }
+        }
+        let alpha = (frames as f64 / PROGRAM_RATE as f64 / FILL_TAU_S).min(1.0);
+        self.fill_avg += (total - self.fill_avg) * alpha;
+        let err = ((self.fill_avg - total_target) / total_target).clamp(-1.0, 1.0);
+        let nudge = err * NUDGE_MAX;
+        let step = self.base_step * (1.0 + nudge);
+        let g1 = f32::from_bits(self.shared.gain_bits.load(Ordering::Relaxed));
+        let (g0, dg) = (self.gain, (g1 - self.gain) / frames.max(1) as f32);
+        for f in 0..frames {
+            self.phase += step;
+            while self.phase >= 1.0 {
+                if self.cons.occupied_len() < 2 {
+                    self.phase -= step;
+                    self.primed = false;
+                    self.shared.primed.store(false, Ordering::Relaxed);
+                    self.shared.underruns.fetch_add(1, Ordering::Relaxed);
+                    self.shared.starved_frames.fetch_add((frames - f) as u64, Ordering::Relaxed);
+                    self.gain = g1;
+                    self.fade_out_link(feed, f, frames);
+                    self.publish(fill, target, nudge);
+                    return;
+                }
+                let l = self.cons.try_pop().unwrap_or(0.0);
+                let r = self.cons.try_pop().unwrap_or(0.0);
+                self.hist[self.hpos] = l; self.hist[self.hpos + TAPS] = l;
+                self.hist_r[self.hpos] = r; self.hist_r[self.hpos + TAPS] = r;
+                self.hpos += 1;
+                if self.hpos == TAPS { self.hpos = 0; }
+                self.phase -= 1.0;
+            }
+            let g = g0 + dg * (f + 1) as f32;
+            let yl = self.table.interp(&self.hist[self.hpos..self.hpos + TAPS], self.phase) * g;
+            let yr = self.table.interp(&self.hist_r[self.hpos..self.hpos + TAPS], self.phase) * g;
+            self.last = yl;
+            self.last_r = yr;
+            feed[2 * f] = yl;
+            feed[2 * f + 1] = yr;
+        }
+        self.gain = g1;
+        self.publish(fill, target, nudge);
+    }
+    fn fade_out_link(&mut self, feed: &mut [f32], from: usize, to: usize) {
+        for f in from..to {
+            self.last *= 0.5;
+            self.last_r *= 0.5;
+            if self.last.abs() < 1e-20 { self.last = 0.0; }
+            if self.last_r.abs() < 1e-20 { self.last_r = 0.0; }
+            feed[2 * f] = self.last;
+            feed[2 * f + 1] = self.last_r;
         }
     }
     fn publish(&self, fill: f64, target: f64, nudge: f64) {
@@ -636,6 +731,76 @@ pub(crate) mod tests {
             }
         }
         (out, sh, fills)
+    }
+
+    /// REMOTE LINK — the stereo live feed under a WRONG REMOTE CLOCK, for 10 simulated minutes. The sender makes a
+    /// 20 ms frame every 20 ms of ITS clock (off by ±300 ppm); frames land in an upstream buffer (the jitter
+    /// buffer); the link thread moves 480-frame blocks into the ring only while the ring is below LiveIn's target
+    /// (linknet.rs RxStation::service); the mixer pulls at 44.1 kHz. After settling: no underrun, the link's
+    /// TOTAL buffer (upstream + ring) held at the 120 ms target, the nudge equal to the clock error — and L and R
+    /// still two different signals at the right level.
+    #[test]
+    fn link_stereo_feed_absorbs_a_wrong_remote_clock() {
+        for &ppm in &[300.0f64, -300.0, 0.0] {
+            let sh = Arc::new(MicShared::default());
+            sh.in_block_max.store(480, Ordering::Relaxed);
+            let (mut prod, cons) = HeapRb::<f32>::new(48_000).split();
+            let mut li = LiveIn::new_link(cons, 48_000, sh.clone());
+            let total_target = 6.0 * 960.0;                    // 120 ms at 48 kHz
+            sh.extra_target_bits.store(f64_bits(total_target), Ordering::Relaxed);
+            let (mut gl, mut gr) = (Gen { rate: 48_000.0, freq: 1000.0, amp: 0.1, n: 0 }, Gen { rate: 48_000.0, freq: 1500.0, amp: 0.05, n: 0 });
+            let mut upstream: std::collections::VecDeque<f32> = std::collections::VecDeque::new();
+            let (fr_dt, out_dt) = (960.0 / (48_000.0 * (1.0 + ppm * 1e-6)), 480.0 / PROGRAM_RATE as f64);
+            let (mut t_fr, mut t_out) = (0.0f64, out_dt * 0.37);
+            let (mut bl, mut br) = (Vec::new(), Vec::new());
+            let mut feed = vec![0f32; 480 * 2];
+            let (mut out_l, mut out_r) = (Vec::new(), Vec::new());
+            let mut totals = Vec::new();
+            let (mut jb_primed, mut jb_starves) = (false, 0u64);
+            // prime: 6 frames upstream before the first pull (the jitter buffer primes at its target)
+            let seconds = 600.0;
+            while t_out < seconds {
+                if t_fr <= t_out {
+                    gl.block(&mut bl, 960); gr.block(&mut br, 960);
+                    for i in 0..960 { upstream.push_back(bl[i]); upstream.push_back(br[i]); }
+                    t_fr += fr_dt;
+                } else {
+                    // the link thread: top the ring up, demand-driven
+                    let target = bits_f64(sh.target_bits.load(Ordering::Relaxed));
+                    if !jb_primed && upstream.len() / 2 >= 6 * 960 { jb_primed = true; }
+                    while jb_primed && target > 0.0 && ((prod.occupied_len() / 2) as f64) < target + 480.0 {
+                        if upstream.len() / 2 < 480 { jb_primed = false; jb_starves += 1; break; }
+                        let blk: Vec<f32> = upstream.drain(..960).collect();
+                        prod.push_slice(&blk);
+                    }
+                    sh.extra_fill_bits.store(f64_bits((upstream.len() / 2) as f64), Ordering::Relaxed);
+                    li.pull(&mut feed, 480);
+                    if t_out > seconds - 4.0 { for f in 0..480 { out_l.push(feed[2 * f]); out_r.push(feed[2 * f + 1]); } }
+                    totals.push((upstream.len() / 2) as f64 + (prod.occupied_len() / 2) as f64);
+                    t_out += out_dt;
+                }
+            }
+            let settle = (60.0 / out_dt) as usize;   // the 4 s controller needs ~a minute to settle a 300 ppm error
+            let tail = &totals[settle..];
+            let (lo, hi) = tail.iter().fold((f64::MAX, 0f64), |(a, b), &x| (a.min(x), b.max(x)));
+            let mean = tail.iter().sum::<f64>() / tail.len() as f64;
+            let nudge_ppm = bits_f64(sh.nudge_bits.load(Ordering::Relaxed)) * 1e6;
+            let u = sh.underruns.load(Ordering::Relaxed);
+            let (sl, lvl_l) = spur_db(&out_l, PROGRAM_RATE as f64, 1000.0);
+            let (sr, lvl_r) = spur_db(&out_r, PROGRAM_RATE as f64, 1500.0);
+            println!("[link-stereo] remote clock {:+.0} ppm, 10 min: underruns {} · total buffer {:.1}–{:.1} ms (mean {:.1}, target 120.0) · nudge {:+.0} ppm · L 1 kHz {:.2} dBFS spurs {:.1} dB · R 1.5 kHz {:.2} dBFS spurs {:.1} dB",
+                     ppm, u, lo / 48.0, hi / 48.0, mean / 48.0, nudge_ppm, lvl_l, sl, lvl_r, sr);
+            assert_eq!(u, 0, "underrun under a {} ppm remote clock", ppm);
+            assert_eq!(jb_starves, 0, "the upstream buffer ran dry under a {} ppm remote clock", ppm);
+            // A PROPORTIONAL controller (the mic's): to run at +300 ppm it must sit 300/3000 = 10 % above target, so
+            // the settled buffer is 120 × (1 + ppm/3000) ms — ±12 ms at ±300 ppm, ±2 ms at a typical ±50 ppm. This
+            // model samples just AFTER each pull (one 480-frame pull ≈ 11 ms lower than the controller sees).
+            let expect = 120.0 * (1.0 + ppm / 3000.0) - 480.0 * (48_000.0 / 44_100.0) / 48.0;
+            assert!((mean / 48.0 - expect).abs() < 5.0, "the total buffer settled at {:.1} ms (expected {:.1})", mean / 48.0, expect);
+            assert!((nudge_ppm - ppm).abs() < 60.0, "the controller settled at {:+.0} ppm for {:+.0} ppm", nudge_ppm, ppm);
+            assert!((lvl_l - (-20.0 - 3.0103)).abs() < 0.1 && (lvl_r - (-26.02 - 3.0103)).abs() < 0.1, "levels L {:.2} R {:.2}", lvl_l, lvl_r);
+            assert!(sl < -60.0 && sr < -60.0, "a channel carries the other (or the resampler is dirty)");
+        }
     }
 
     #[test]

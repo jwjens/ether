@@ -224,6 +224,9 @@ pub(crate) enum RtCmd {
     Play { slot: u8, reload: Option<DeckFeed>, gen: u64 },
     Pause { slot: u8 },
     Stop { slot: u8 },
+    /// REMOTE LINK (linknet.rs) — install (Some) or remove (None) the SEND tap: the clean programme, post-master,
+    /// pre-processor, into the sender thread's ring. The replaced tap travels back as Garbage.
+    LinkTap(Option<crate::linknet::LinkTap>),
 }
 
 /// Aux thread → callback.
@@ -240,6 +243,7 @@ pub(crate) enum Garbage {
     Source(DeckFeed),
     Params(Box<Params>),
     AuxProd(ringbuf::HeapProd<f32>),
+    LinkTap(crate::linknet::LinkTap),
 }
 
 /// Per-slot telemetry in a meter frame.

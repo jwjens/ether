@@ -88,6 +88,10 @@ pub struct RenderCfg {
     /// SLICE 5 — a channel rack document for deck A (the measurement renders). Never serialized when absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ch_rack_a: Option<String>,
+    /// REMOTE LINK — attach a SEND tap through the callback's command queue (RtCmd::LinkTap, exactly as SEND TO
+    /// does) and capture what it carries into Render::link. Never serialized.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub link_tap: bool,
 }
 
 /// The aux deck of a render: its file, whether its duck is armed, and its monitor-slot level (which, as
@@ -109,7 +113,7 @@ impl Default for RenderCfg {
             stream_ride_rate: None, stream_ride_clamp: None,
             master_vol: 1.0, gain_db: 0.0, eq_bands: None,
             block_frames: None, device_rate: None, monitor_vol: None, aux: None, via_rack: false,
-            ch_racks_out: false, ch_rack_a: None,
+            ch_racks_out: false, ch_rack_a: None, link_tap: false,
         }
     }
 }
@@ -122,6 +126,8 @@ pub struct Render {
     pub monitor: Vec<f32>,
     pub stream: Vec<f32>,
     pub aux: Vec<f32>,
+    /// REMOTE LINK — what the SEND tap carried (empty unless cfg.link_tap), 44.1 kHz interleaved stereo.
+    pub link: Vec<f32>,
     /// SLICE 3 — the ENGINE'S OWN loudness meter over this render (loudness.rs), driven inline after every
     /// buffer exactly as the product's meter thread drains it: LOCAL = the device feed (the monitor tap
     /// here), STREAM = the stream tap, AUX = the aux feed. Published once, at the end.
@@ -246,6 +252,7 @@ pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
     let mut monitor: Vec<f32> = Vec::new();
     let mut stream: Vec<f32> = Vec::new();
     let mut aux: Vec<f32> = Vec::new();
+    let mut link_cons: Option<ringbuf::HeapCons<f32>> = None;
     let mut data = vec![0f32; block * 2];
     let mut pop = vec![0f32; PROGRAM_BUS_BUF];
     let mut tail_left: Option<usize> = None;
@@ -291,8 +298,14 @@ pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
             }
             h.cmd_prod.try_push(crate::rt::RtCmd::Params(Box::new(params))).map_err(|_| "channel rack command queue full".to_string())?;
         }
+        if cfg.link_tap {
+            let (tap, lc, _sh) = crate::linknet::tap();
+            h.cmd_prod.try_push(crate::rt::RtCmd::LinkTap(Some(tap))).map_err(|_| "link tap command queue full".to_string())?;
+            link_cons = Some(lc);
+        }
         crate::loudness::LoudnessMeters::new(h.loud_cons, h.loud_shared, RATE)
     };
+    let mut link: Vec<f32> = Vec::new();
 
     for _ in 0..max_buffers {
         data.iter_mut().for_each(|s| *s = 0.0);
@@ -313,6 +326,13 @@ pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
                 aux.extend_from_slice(&pop[..n]);
             }
         }
+        if let Some(ref mut lc) = link_cons {
+            loop {
+                let n = lc.pop_slice(&mut pop);
+                if n == 0 { break; }
+                link.extend_from_slice(&pop[..n]);
+            }
+        }
         // Exactly TAIL_BUFFERS buffers are rendered after the one in which deck A finished.
         match tail_left {
             None => if fin.take("A") { tail_left = Some(TAIL_BUFFERS); },
@@ -327,7 +347,7 @@ pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
     }
     loud.publish();
     let lf = loud_r.lock().map_err(|_| "loudness reader poisoned".to_string())?.read();
-    Ok(Render { monitor, stream, aux, loud: lf })
+    Ok(Render { monitor, stream, aux, link, loud: lf })
 }
 
 // ── Measurements (for the manifest and the report) ──────────────────────────────────────────────────
@@ -883,6 +903,41 @@ mod parity {
         }
         println!("[ring] 20 threaded runs x {} samples: bit-identical to the direct decode ({} dry polls - this consumer is not paced; realtime underruns are measured in the soak)",
                  direct.len(), dry_polls_total);
+    }
+
+    // ── 1d · REMOTE LINK — A SEND TAP ATTACHED CHANGES NOTHING ON AIR, AND CARRIES THE CLEAN PROGRAMME ─────────
+    // Every render in the golden set with a link tap installed through the callback's command queue. The three
+    // taps must still hash to the EXISTING goldens (not re-captured), the callback must not allocate, and the link
+    // tap must carry the clean programme: for a render with the stream processor OFF and no sample past full
+    // scale, the stream is exactly clamp(programme) = the link tap, bit for bit.
+    #[test]
+    fn link_tap_attached_nulls_against_existing_goldens() {
+        let m = manifest().expect("native/goldens/manifest.json missing");
+        let renders = m["renders"].as_object().expect("manifest.renders");
+        let (mut exact, mut fails, mut allocs, mut carried) = (0usize, Vec::new(), 0u64, 0usize);
+        let plan = plan();
+        for (id, path, cfg) in &plan {
+            let cfg = RenderCfg { link_tap: true, ..cfg.clone() };
+            let a0 = crate::rt::tl_rt_allocs();
+            let r = render_offline(path.to_str().unwrap(), &cfg).unwrap_or_else(|e| panic!("{}: {}", id, e));
+            allocs += crate::rt::tl_rt_allocs() - a0;
+            let g = &renders[id.as_str()];
+            let h = |v: &[f32]| format!("{:016x}", fnv_bits(v));
+            let ok = h(&r.monitor) == g["monitor"]["hash"].as_str().unwrap_or("")
+                  && h(&r.stream) == g["stream"]["hash"].as_str().unwrap_or("")
+                  && (cfg.aux.is_none() || h(&r.aux) == g["aux"]["hash"].as_str().unwrap_or(""));
+            if ok { exact += 1 } else { fails.push(id.clone()) }
+            assert_eq!(r.link.len(), r.stream.len(), "{}: the link tap carries one frame per programme frame", id);
+            if !cfg.proc_stream && r.link.iter().all(|s| s.abs() <= 1.0) {
+                assert!(bits_equal(&r.link, &r.stream), "{}: link tap != clean programme", id);
+                carried += 1;
+            }
+        }
+        println!("[link-null] {}/{} renders bit-exact with a link SEND tap attached · link tap == clean programme on {} unprocessed renders · {} allocations inside the callback",
+                 exact, plan.len(), carried, allocs);
+        assert!(fails.is_empty(), "a link tap changed a golden: {:?}", fails);
+        assert_eq!(allocs, 0, "the callback allocated with a link tap attached");
+        assert!(carried > 0);
     }
 
     // ── 8 · THE CALLBACK NEVER ALLOCATES (slice 1 S6) ─────────────────────────────────────────────────

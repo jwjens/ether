@@ -410,6 +410,10 @@ pub enum AudioCmd {
     /// THE MIC (docs/dsp-mic-in-engine.md) — patch an input device onto a source slot. `device` empty =
     /// unpatch; `channel` 0-based; `gain_db` −10…+40 (clamped in micin.rs).
     SetMicInput { slot: usize, device: String, channel: u16, gain_db: f32 },
+    /// REMOTE LINK — patch (Some) or unpatch (None) this station's Link input on a source slot (linknet.rs).
+    SetLinkInput { slot: usize, slot_name: String, cfg: Option<crate::linknet::RxCfg> },
+    /// REMOTE LINK — SEND TO another station (Some) or stop (None).
+    SetLinkSend(Option<crate::linknet::SendCfg>),
     /// Choose the output device for the AUX monitor bus. Empty string = none = the aux stream is
     /// closed and the bus is silent.
     SetAuxDevice(String),
@@ -744,6 +748,9 @@ pub struct BusState {
     pub aux_ring_prod:  Option<HeapProd<f32>>,
     /// PFL cue output ring — Some only while the chosen cue device is OPEN (installed by the monitor-output thread).
     pub cue_ring_prod: Option<HeapProd<f32>>,
+    /// REMOTE LINK — the SEND tap (linknet.rs). Some only while this station is sending to another station
+    /// (SEND TO); None = no link = the callback does nothing for it (docs/remote-link-design-2026-09-28.md).
+    pub link_tap: Option<crate::linknet::LinkTap>,
     /// Frames the AUX output callback has actually written to its device. "The stream opened" is not
     /// evidence that audio is flowing; this is. Surfaced as `aux_frames` in getLevels so the panel —
     /// and any probe — can tell a live aux feed from an open-but-starved one.
@@ -911,6 +918,7 @@ impl BusState {
             duck_hold_left_ms: 0.0,
             aux_ring_prod: None,          // no aux device open → nowhere to send, by construction
             cue_ring_prod: None,          // no cue device open → the cue goes nowhere (or to the main output — see pfl_to_device)
+            link_tap: None,               // not sending (SEND TO off) → the link tap does not exist
             aux_out_frames: Arc::new(AtomicU64::new(0)),
             aux_peak: 0.0,
             processor_aux: Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
@@ -1122,6 +1130,10 @@ impl BusState {
                     self.decks[i].active = true;
                 }
                 RtCmd::Pause { slot } => { self.decks[slot as usize].paused = true; }
+                RtCmd::LinkTap(t) => {
+                    let old = std::mem::replace(&mut self.link_tap, t);
+                    if let Some(o) = old { self.discard(Garbage::LinkTap(o)); }
+                }
                 RtCmd::Stop { slot } => {
                     let i = slot as usize;
                     let d = &mut self.decks[i];
@@ -1382,6 +1394,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::ApplyShow(_) => {}
                             AudioCmd::SetRta(_) => {}
                             AudioCmd::SetMicInput { .. } => {}
+                            AudioCmd::SetLinkInput { .. } | AudioCmd::SetLinkSend(_) => {}
                             AudioCmd::StartStream { server, port, mount, station_name, .. } => {
                                 eprintln!("Stream: {}:{}{} ({})", server, port, mount, station_name);
                             }
@@ -2531,6 +2544,9 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
         // dropped here), and it outlives an output-device reopen: the live feed stays in its deck slot.
         let mut mics = crate::micin::MicInputs::new(station_id);
         let mut mic_out: Vec<crate::micin::MicAction> = Vec::new();
+        // REMOTE LINK — this station's Link input (which slot) and its sender (while SEND TO is on).
+        let mut links = crate::linknet::LinkInputs::new(station_id);
+        let mut _link_sender: Option<crate::linknet::Sender> = None;
 
         'outer: loop {
             // Find and open output device
@@ -2637,6 +2653,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::Load { deck, file_path, title, artist, gain_db } => {
                                 let Some(idx) = deck_index(&deck) else { continue };
                                 if mics.is_live(idx) { mics.refused(idx, "load"); continue; }
+                                if links.is_live(idx) { links.refused(idx, "load"); continue; }
                                 // Decode setup off the audio thread, as always.
                                 let src = build_source(&file_path, sr).map(|d| ctl.feed_for(idx, d));
                                 let has = src.is_some();
@@ -2657,6 +2674,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::Play(deck) => {
                                 let Some(idx) = deck_index(&deck) else { continue };
                                 if mics.is_live(idx) { mics.refused(idx, "play"); continue; }
+                                if links.is_live(idx) { links.refused(idx, "play"); continue; }
                                 finished_clone.clear(&deck);
                                 // "Does this deck hold a source?" — answered from what the callback has
                                 // actually applied (ctl.present), with any not-yet-applied Load/Stop/reload
@@ -2689,11 +2707,13 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::Pause(deck) => {
                                 let Some(idx) = deck_index(&deck) else { continue };
                                 if mics.is_live(idx) { mics.refused(idx, "pause"); continue; }
+                                if links.is_live(idx) { links.refused(idx, "pause"); continue; }
                                 ctl.enqueue(RtCmd::Pause { slot: idx as u8 });
                             }
                             AudioCmd::Stop(deck) => {
                                 let Some(idx) = deck_index(&deck) else { continue };
                                 if mics.is_live(idx) { mics.refused(idx, "stop"); continue; }
+                                if links.is_live(idx) { links.refused(idx, "stop"); continue; }
                                 finished_clone.clear(&deck);
                                 let seq = ctl.enqueue(RtCmd::Stop { slot: idx as u8 });
                                 let d = &mut ctl.decks[idx];
@@ -2954,8 +2974,40 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::SetMicInput { slot, device, channel, gain_db } => {
                                 // Opening a device happens HERE (dispatch thread) — never on the audio thread.
                                 // Only source slots carry a mic (lib.rs refuses A/B/C/CART before this).
+                                // A mic patched onto the Link's slot replaces the Link (one patch per fader).
+                                if !device.is_empty() && links.is_live(slot) {
+                                    links.set(slot, "", None, &mut mic_out);
+                                    apply_mic_actions(&mut ctl, &mut mic_out);
+                                }
                                 mics.set(slot, device, channel, gain_db, std::time::Instant::now(), &mut mic_out);
                                 apply_mic_actions(&mut ctl, &mut mic_out);
+                            }
+                            AudioCmd::SetLinkInput { slot, slot_name, cfg } => {
+                                // The Link replaces a mic on the same slot (one patch per fader).
+                                if cfg.is_some() && mics.is_live(slot) {
+                                    mics.set(slot, String::new(), 0, 0.0, std::time::Instant::now(), &mut mic_out);
+                                    apply_mic_actions(&mut ctl, &mut mic_out);
+                                }
+                                links.set(slot, &slot_name, cfg, &mut mic_out);
+                                apply_mic_actions(&mut ctl, &mut mic_out);
+                            }
+                            AudioCmd::SetLinkSend(cfg) => {
+                                // Stop first (drops the thread; the callback's tap is replaced below).
+                                _link_sender = None;
+                                match cfg {
+                                    None => { ctl.enqueue(RtCmd::LinkTap(None)); }
+                                    Some(c) => {
+                                        let (tap, cons, tsh) = crate::linknet::tap();
+                                        match crate::linknet::start_sender(station_id, c, cons, tsh) {
+                                            Ok(s) => { _link_sender = Some(s); ctl.enqueue(RtCmd::LinkTap(Some(tap))); }
+                                            Err(e) => {
+                                                eprintln!("[LINK] Station {} SEND TO refused: {}", station_id, e);
+                                                crate::linknet::refuse_send(station_id, &e);
+                                                ctl.enqueue(RtCmd::LinkTap(None));
+                                            }
+                                        }
+                                    }
+                                }
                             }
                             AudioCmd::SetChannelRack { slot, rack } => {
                                 // SLICE 5 — the coefficients are computed HERE (dispatch thread, f64) and ride the
@@ -4036,6 +4088,9 @@ pub(crate) fn mixer_callback(
     // SLICE 2 — PGM tap: the clean programme, post-EQ, post-master, pre-processor.
     bus.meters_acc.bus[BUS_PGM].add(out_l, out_r);
     bus.meters_acc.bus_live |= 1 << BUS_PGM;
+    // REMOTE LINK — the SEND tap, at the same point (ruling D3: before this station's processing, so the station
+    // it feeds processes once). None unless SEND TO is on: then nothing here runs.
+    if let Some(ref mut t) = bus.link_tap { t.push(out_l, out_r); }
 
     // Program/master peak for VU (functional — feeds master_peak below).
     let peak = out_l.iter().chain(out_r.iter())

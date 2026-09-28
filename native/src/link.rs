@@ -511,8 +511,6 @@ impl Resampler48 {
         Resampler48 { table: SincTable::new(in_rate, LINK_RATE), hist: [[0.0; 2 * TAPS]; CHANNELS], hpos: 0, phase: 0.0,
                       step: in_rate as f64 / LINK_RATE as f64 }
     }
-    /// The filter's delay, in input samples (the output lags the input by this much).
-    pub(crate) fn delay_in_samples() -> f64 { TAPS as f64 / 2.0 }
     /// Feed interleaved stereo input; append interleaved stereo 48 kHz output to `out` (up to its capacity;
     /// returns frames written). Every input frame is consumed.
     pub(crate) fn process(&mut self, input: &[f32], out: &mut Vec<f32>) -> usize {
