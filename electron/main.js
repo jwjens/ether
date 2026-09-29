@@ -586,49 +586,45 @@ const _lastReopenAt = new Map();         // per-station reopen cooldown
 // station's OWN cpal output-callback stamp (authoritative) over the VU-levels hint; enginestate=live
 // (rotation bookkeeping, not PCM proof) may suppress only up to a persistence ceiling (jensj's diff),
 // then we stop believing it and reopen the card.
+const WedgeJudge = require("./wedge-judge");
 function startAudioLivenessWatchdog() {
   if (_audioWatchdogTimer) return;
-  const WEDGE_CEILING_MS   = 12000;   // enginestate=live is trusted only this long into a wedge
   const REOPEN_COOLDOWN_MS = 30000;   // per-station: don't re-reopen a still-recovering card in a tight loop
   _audioWatchdogTimer = setInterval(async () => {
     try {
       if (!audiodClient.isConnected()) return;
       const sids = _automationIntent.size > 0 ? [..._automationIntent.keys()] : [1];
       for (const sid of sids) {
-        // Wedge candidate only if THIS station's levels have been silent a while.
-        if (_stationAudioAgeMs(sid) < 6000) { _wedgeAt.delete(sid); continue; }
-        const st = await audiodClient.cmd("getState", { stationId: sid }).catch(() => null);
-        const playing = st && [st.deckA, st.deckB, st.deckC].some((d) => d && d.status === "playing");
-        if (!playing) { _wedgeAt.delete(sid); continue; }   // genuinely idle/off-air — not a wedge
-
-        const silentMs = _stationAudioAgeMs(sid);
-        const esSnap = [...sids].map(s => `${s}:${_daemonEngineState.get(s) || "?"}`).join(",");
-
-        // AUTHORITATIVE per-station signal: this station's OWN cpal output-callback stamp, independent
-        // of the VU pipeline and of every sibling. Fresh → output genuinely alive → false positive.
+        // THE CALLBACK STAMP FIRST (electron/wedge-judge.js). OV 4.6.51: the output callback stopped, the engine kept
+        // re-publishing the last meter frame, levels looked fresh, and the old first line here — "levels fresh →
+        // skip" — suppressed a 19.5-minute dead air before the stamp was ever read. Levels are now consulted only
+        // when the engine cannot report a stamp.
         let cbStaleMs = null;
         try { const cb = Number(await audiodClient.cmd("lastCallbackMs", { stationId: sid })); if (cb > 0) cbStaleMs = Date.now() - cb; } catch {}
-        if (cbStaleMs !== null && cbStaleMs < 3000) {
-          logStartup(`[AUDIO] wedge SUPPRESSED — station ${sid} cpal callback FRESH (${cbStaleMs}ms) despite levels stale ${silentMs}ms (enginestate=[${esSnap}])`);
-          _noteStationAudio(sid); _wedgeAt.delete(sid);
-          continue;
+        const levelsAgeMs = _stationAudioAgeMs(sid);
+        let playing = false;
+        if (cbStaleMs == null) {
+          const st = await audiodClient.cmd("getState", { stationId: sid }).catch(() => null);
+          playing = !!(st && [st.deckA, st.deckB, st.deckC].some((d) => d && d.status === "playing"));
         }
-
-        // Per-station output stale/unknown = a real wedge. Anchor it (jensj's persistence ceiling) so
-        // enginestate="live" can suppress only briefly, then we escalate regardless of its lie.
+        const esSnap = [...sids].map(s => `${s}:${_daemonEngineState.get(s) || "?"}`).join(",");
+        const engineLive = _daemonEngineState.get(sid) === "live";
+        const held = _wedgeAt.has(sid) ? Date.now() - _wedgeAt.get(sid) : 0;
+        const v = WedgeJudge.judge({ cbStaleMs, levelsAgeMs, playing, engineLive, wedgeMs: held });
+        if (v.verdict === "healthy" || v.verdict === "idle") { _wedgeAt.delete(sid); continue; }
         if (!_wedgeAt.has(sid)) _wedgeAt.set(sid, Date.now());
         const wedgeMs = Date.now() - _wedgeAt.get(sid);
-        const engineLive = _daemonEngineState.get(sid) === "live";
-        if (engineLive && wedgeMs < WEDGE_CEILING_MS) {
-          logStartup(`[AUDIO] wedge SUPPRESSED — station ${sid} enginestate=live, wedge ${wedgeMs}ms < ceiling (cpal-stale ${cbStaleMs == null ? "unknown" : cbStaleMs + "ms"}, levels ${silentMs}ms; [${esSnap}])`);
-          continue;   // hold — but keep the anchor so it grows and we escalate
+        if (v.verdict === "held") {
+          logStartup(`[AUDIO] wedge SUPPRESSED — station ${sid} ${v.reason} ([${esSnap}])`);
+          continue;   // hold — the anchor grows and the ceiling ends the hold
         }
+        const silentMs = levelsAgeMs;
 
         // Escalate: recover THIS station only (reopen its own cpal stream). Never touches siblings.
         if (Date.now() - (_lastReopenAt.get(sid) || 0) < REOPEN_COOLDOWN_MS) continue;
         _lastReopenAt.set(sid, Date.now());
         _wedgeAt.delete(sid);
-        logStartup(`[AUDIO] REOPEN station ${sid} output — per-station wedge ${wedgeMs}ms (cpal-stale ${cbStaleMs == null ? "unknown" : cbStaleMs + "ms"}, levels ${silentMs}ms, enginestate=${engineLive ? "live(lying)" : (_daemonEngineState.get(sid) || "?")}; on-air=[${[...sids].join(",")}])`);
+        logStartup(`[AUDIO] REOPEN station ${sid} output — WEDGE: ${v.reason} (held ${wedgeMs}ms, cpal-stale ${cbStaleMs == null ? "unknown" : cbStaleMs + "ms"}, levels ${silentMs === Infinity ? "never" : silentMs + "ms"}, enginestate=${engineLive ? "live(lying)" : (_daemonEngineState.get(sid) || "?")}; on-air=[${[...sids].join(",")}])`);
         try { await audiodClient.cmd("reopenOutput", { stationId: sid }); }
         catch (e) { logStartup(`[AUDIO] reopenOutput station ${sid} failed: ${e && e.message}`); }
         // no break: each station is judged and recovered independently

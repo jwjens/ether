@@ -25,6 +25,7 @@
     "test:rack-eq": "node audiod/smoke-rack-eq.js",
     "test:mic-input": "node audiod/smoke-mic-input.js",
     "test:link": "node audiod/smoke-link.js",
+    "test:wedge": "node scripts/smoke-wedge-judge.js",
     "test:pfl": "node audiod/smoke-pfl.js",
     "test:dynamics": "node audiod/smoke-dynamics.js",
     "test:show-presets": "node audiod/smoke-show-presets.js",
