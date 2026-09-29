@@ -13,9 +13,10 @@
 // let the operator infer it from silence, the strip SAYS which it is, underneath the dropdown.
 // A control that looks live and is not is the defect this project keeps paying for.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { useMicInputs, useInputDevices, micStateWords, openMicPreferences } from "../hooks/useMicInputs";
+import { useRemoteLink, rxWords, linkNotFed, openLinkPreferences } from "../hooks/useRemoteLink";
 import ConsoleStrip from "./ConsoleStrip";
 import { SOURCE_KINDS, sourceKindMeta, type SourceKind, type DeckConfig } from "./DeckConfigurator";
 import { useBoardName } from "../hooks/useBoardName";
@@ -35,6 +36,9 @@ interface Props {
    *  board; this strip only renders it. */
   isOn: boolean;
   onToggleOn: () => void;
+  /** SET the channel switch (idempotent — the Link's auto-cut uses it: two windows both saying OFF is still OFF,
+   *  where two toggles would turn it back ON). The same writer as the ON button. */
+  onSetOn?: (on: boolean) => void;
   onPfl?: (on: boolean) => void;
   /** Persist a new patch point for this slot. */
   onKindChange: (kind: SourceKind | "") => void;
@@ -51,7 +55,7 @@ interface Props {
 }
 
 export default function SourceChannelStrip({
-  config, volume, isOn, onVolumeChange, onToggleOn, onPfl, onKindChange, duck, onDuckChange, onRemove, compact, pendingShow = null, onTakeNow,
+  config, volume, isOn, onVolumeChange, onToggleOn, onSetOn, onPfl, onKindChange, duck, onDuckChange, onRemove, compact, pendingShow = null, onTakeNow,
 }: Props) {
   const meta = sourceKindMeta(config.kind);
   // ONE NAME PER FADER — the board letter, never the engine slot id (src/lib/boardName.ts).
@@ -79,6 +83,38 @@ export default function SourceChannelStrip({
     if (!r.ok) setPatchErr(r.reason || "not applied");
   };
 
+  // ── THE REMOTE LINK (docs/remote-link-design-2026-09-28.md) ─────────────────────────────────────────────
+  // Picking "Link" patches this slot in the engine (engine first, stored machine-local); leaving it unpatches.
+  // The key, buffer, port and auto-cut live in Preferences → Broadcast → Remote Link; the strip shows the state.
+  const link = useRemoteLink(stationId);
+  const isLink = config.kind === "link";
+  const linkInput = link.cfg?.input && link.cfg.input.slot === config.slot ? link.cfg.input : null;
+  const linkRx = link.state?.rx ?? null;
+  const linkW = rxWords(linkInput ? linkRx : null, !!linkInput);
+  const linkTo = async (on: boolean) => {
+    setPatchErr(null);
+    if (!link.cfg) return;
+    const cur = link.cfg.input;
+    if (!on) { if (cur && cur.slot === config.slot) { const r = await link.setInput(null); if (!r.ok) setPatchErr(r.reason || "not applied"); } return; }
+    const d = link.cfg.defaults;
+    const r = await link.setInput({ slot: config.slot, jitterMs: cur?.jitterMs ?? d.jitterMs, port: cur?.port ?? d.port,
+                                    autoCut: cur?.autoCut ?? link.cfg.autoCutDefault.autoCut, autoCutSec: cur?.autoCutSec ?? link.cfg.autoCutDefault.autoCutSec });
+    if (!r.ok) setPatchErr(r.reason || "not applied");
+  };
+  // D4 — AUTO-CUT (off by default, per station, its delay shown in Preferences): lost for autoCutSec → the channel
+  // is turned OFF through the ON button's own writer, ONCE per loss, so the remote never returns to air unannounced.
+  const cutFor = useRef<number | null>(null);
+  useEffect(() => {
+    if (!isLink || !linkInput || !linkInput.autoCut || !onSetOn || !linkRx) return;
+    const lostMs = linkRx.state === "lost" ? (linkRx.lastPacketAgoMs ?? 0) : 0;
+    if (linkRx.state === "receiving") { cutFor.current = null; return; }
+    if (lostMs >= linkInput.autoCutSec * 1000 && isOn && cutFor.current !== linkRx.reconnects) {
+      cutFor.current = linkRx.reconnects;
+      onSetOn(false);
+      console.warn(`[LINK] auto-cut: channel ${config.slot} turned OFF after ${Math.round(lostMs / 1000)} s of loss`);
+    }
+  }, [isLink, linkInput, linkRx, isOn, onSetOn, config.slot]);
+
   // Jukebox is offerable only where it can actually be routed. Automation enumerates A/B/C and
   // nothing else, so the jukebox has always been restricted to the aux slots; the new engine slots
   // (S1..) are not wired to it yet. Offering it where it cannot play would be exactly the decorative
@@ -87,9 +123,9 @@ export default function SourceChannelStrip({
     if (k.kind === "jukebox" && !canHostJukebox(config.slot)) {
       return { ...k, disabled: true, why: `Jukebox routes on D/E/F only — not ${config.slot}` };
     }
-    // MIC is an ENGINE input since 2026-09-26 (docs/dsp-mic-in-engine.md). Network stays disabled — it genuinely
-    // has no path yet.
-    if (k.family === "stream" && k.kind !== "mic") {
+    // MIC is an ENGINE input since 2026-09-26 (docs/dsp-mic-in-engine.md), the LINK since 2026-09-28. Network stays
+    // disabled — it genuinely has no path yet.
+    if (k.family === "stream" && k.kind !== "mic" && k.kind !== "link") {
       return { ...k, disabled: true, why: "Phase 2 — needs the engine capture path" };
     }
     return { ...k, disabled: false, why: "" };
@@ -97,6 +133,7 @@ export default function SourceChannelStrip({
 
   // A patched input names itself on the channel — "Focusrite", not "Mic".
   const label = (isMic && patch) ? patch.device
+    : (isLink && linkRx?.state === "receiving" && linkRx.sender) ? `LINK · ${linkRx.sender}`
     : meta ? meta.label : `SOURCE ${letter}`;
   const TONE: Record<string, string> = { ok: "var(--accent-green)", warn: "var(--accent-amber, #f59e0b)", bad: "var(--accent-red, #ef4444)", off: "var(--text-tertiary)" };
 
@@ -135,6 +172,9 @@ export default function SourceChannelStrip({
             if (v === "mic") { if (!isMic) onKindChange("mic"); return; }
             // leaving the mic: unpatch the input so the engine closes it and the slot is free for the new source
             if (isMic && patch) patchTo(null);
+            // the Link: patch it in the engine on the way in, unpatch it on the way out
+            if (v === "link") { onKindChange("link"); linkTo(true); return; }
+            if (isLink) linkTo(false);
             onKindChange(v as SourceKind | "");
           }}
           aria-label={`Source for channel ${letter}`}
@@ -173,6 +213,17 @@ export default function SourceChannelStrip({
                      border: `1px solid ${words.tone === "bad" ? TONE.bad : "var(--border-primary)"}`, color: TONE[words.tone],
                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             ● {patch ? `IN ${patch.channel} · ${patch.gainDb >= 0 ? "+" : ""}${patch.gainDb} dB · ${words.text}` : "no input — Preferences → Audio"}
+          </button>
+        )}
+        {/* THE LINK'S STATE — the engine's, in words; the key, buffer, port and auto-cut live in Preferences. */}
+        {isLink && (
+          <button onClick={openLinkPreferences}
+            title={`Remote Link: ${linkW.text}${linkRx?.reason ? ` — ${linkRx.reason}` : ""}. Key, buffer, port and auto-cut: Preferences → Broadcast → Remote Link.`}
+            style={{ width: "100%", padding: "2px 4px", borderRadius: 2, cursor: "pointer", fontSize: 8, fontWeight: 700,
+                     letterSpacing: "0.04em", textAlign: "left", background: "var(--bg-tertiary)",
+                     border: `1px solid ${linkW.tone === "bad" ? TONE.bad : "var(--border-primary)"}`, color: TONE[linkW.tone],
+                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            ● LINK · {linkInput ? linkW.text : "not patched — pick Link again"}
           </button>
         )}
         {patchErr && <div style={{ fontSize: 8, color: TONE.bad }}>⚠ {patchErr}</div>}
@@ -229,7 +280,8 @@ export default function SourceChannelStrip({
           // since it is an engine input. A mic that is not live (unpatched, not connected, lost, digital
           // silence) draws NOT FED rather than a flat zero: its silence is a fault, not a level.
           deckId={config.slot}
-          meterNotFed={isMic && words.tone !== "ok"}
+          // THE LINK: nothing arriving (no sender, buffering, lost) draws NOT FED — never a flat zero.
+          meterNotFed={(isMic && words.tone !== "ok") || (isLink && (!linkInput || linkNotFed(linkRx)))}
           // Read this slot's OWN level, on any slot letter — D/E/F today, S1..S5 once the pool fills.
           sourceChannel
           // ON COLOUR — the same two colours every other channel uses, via the same code path.

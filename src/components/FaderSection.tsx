@@ -303,6 +303,8 @@ export default function FaderSection({
               if (isJukeboxSrc) { toggleJukeboxChannel(); return; }
               void onSetSourceChannelOn?.(slot, !(srcChannelOn[slot] ?? true));
             }}
+            // SET, not toggle — the Remote Link's auto-cut (D4). Same writer as the ON button; idempotent across windows.
+            onSetOn={isJukeboxSrc ? undefined : (on => { void onSetSourceChannelOn?.(slot, on); })}
             onKindChange={k => onSetSourceKind?.(slot, k)}
             duck={!!config.duck}
             onDuckChange={d => onSetSourceDuck?.(slot, d)}

@@ -26,7 +26,7 @@ export type DeckType = "music" | "mic" | "guest" | "cart" | "desk" | "video" | "
 //               does not have. Mic and network are ONE build, and that build is Phase 2.
 // Phase 2 entries are shown DISABLED rather than hidden: a door that says "not yet" beats a door
 // that is not there.
-export type SourceKind = "jukebox" | "announcement" | "jingle" | "cart" | "mic" | "network";
+export type SourceKind = "jukebox" | "announcement" | "jingle" | "cart" | "mic" | "link" | "network";
 
 export interface SourceKindMeta {
   kind: SourceKind;
@@ -69,6 +69,10 @@ export const SOURCE_KINDS: SourceKindMeta[] = [
   // the channel goes on air like any other. Only Network below is still gated on a capture path.
   { kind: "mic",          label: "Mic (device…)",        family: "stream",
     state: "Live microphone on this channel, on air — pick the input on the strip or in Preferences → Audio." },
+  // THE REMOTE LINK (docs/remote-link-design-2026-09-28.md, ruling D1): Ether-to-Ether, its own patch type. Network below
+  // stays the placeholder for third-party codecs (Zephyr, AoIP), which are a different protocol.
+  { kind: "link",         label: "Link (remote Ether)",  family: "stream",
+    state: "A remote Ether computer's programme, straight to this channel — key, buffer and port in Preferences → Broadcast → Remote Link." },
   { kind: "network",      label: "Network (IP / Zephyr / AoIP)", family: "stream",
     state: "Needs the engine capture path — Phase 2." },
 ];

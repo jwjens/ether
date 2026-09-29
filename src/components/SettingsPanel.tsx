@@ -6,6 +6,7 @@ import { queryScoped } from "../db/stationScoped";
 import DuckerSection from "./DuckerSection";
 import { useActiveStation } from "../hooks/useActiveStation";
 import MicInputsSettings from "./MicInputsSettings";
+import RemoteLinkSettings from "./RemoteLinkSettings";
 import PflSettings from "./PflSettings";
 import { usePlan } from "../hooks/usePlan";
 import { useStreaming } from "../hooks/useStreaming";
@@ -3282,6 +3283,11 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
       </Section>
 
       {/* ── Connections ── */}
+      {/* THE REMOTE LINK (docs/remote-link-design-2026-09-28.md) — a remote Ether box feeds this station directly. */}
+      <Section category="broadcast" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h10"/><path d="M14 9l3 3-3 3"/></svg>} title="Remote Link" description="A remote broadcast: another Ether computer sends its board straight to a channel here in about a fifth of a second — or this station sends to another (SEND TO)">
+        <RemoteLinkSettings />
+      </Section>
+
       <Section category="broadcast" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>} title="Remote Access & Website" description="Control Ether from your phone, or show what's playing on your website">
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div>

@@ -119,6 +119,7 @@ import DesignationBypassBanner from "./components/DesignationBypassBanner";
 import { EtherErrorBoundary, SessionRestoreToast, HealthMonitor, HealthStatusDot, ContentStatusDot } from "./components/HealthMonitor";
 import { importIntoAudioLibrary, fileLocationItem, changeFileLocationItem, checkFilePresence, type FilePresence } from "./lib/fileLocation";
 import WidgetCanvas from "./canvas/WidgetCanvas";
+import { openLinkPreferences } from "./hooks/useRemoteLink";
 import { useMicMigration } from "./hooks/useMicMigration";
 import { OPEN_PREFS_KEY } from "./hooks/useMicInputs";
 import TrackEditor from "./components/TrackEditor";
@@ -3016,6 +3017,18 @@ export default function App() {
                     below keep their own buttons because each has a bespoke action — Desk opens the
                     desk window, Now Playing asks which station first — but they are the same kind of
                     thing as every row above: a window, opened beside the dashboard. */}
+                {/* THE REMOTE LINK — its door (doors before rooms): Preferences → Broadcast → Remote Link. */}
+                <button
+                  onClick={() => drawerClick("remotelink", () => { openLinkPreferences(); setDrawerOpen(false); })}
+                  style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 13, fontWeight: (drawerUsage["remotelink"] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                  title="Take a remote broadcast from another Ether computer, or send this station to another (SEND TO)"
+                >
+                  <span style={{ fontSize: 15, lineHeight: 1 }}>🔗</span>
+                  <span style={{ flex: 1 }}>Remote Link</span>
+                  {(drawerUsage["remotelink"] || 0) >= 3 && <span style={{ fontSize: 12, fontWeight: 800, color: "var(--accent-cyan)", opacity: 0.7 }}>★</span>}
+                </button>
                 <button
                   onClick={() => drawerClick("desk", openDeskWindow)}
                   style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 13, fontWeight: (drawerUsage["desk"] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
