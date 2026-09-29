@@ -44,7 +44,7 @@ export interface HealthStation {
   // Slice 1 S8: the audio callback's own counters (cumulative since the engine started; null from an engine
   // that does not report them) and when one last rose. docs/dsp-rt-callback.md §6.
   rt?: { underruns: number; underrunFrames: number; overruns: number; lockMisses: number; eventsDropped: number; callbacks: number;
-         stalls?: number; stallFallbacks?: number } | null;
+         stalls?: number; stallFallbacks?: number; deviceErrors?: number } | null;
   rtIssueAt?: string | null;
 }
 
@@ -261,13 +261,13 @@ export function LiveHealthMonitor() {
                 const rt = s.rt;
                 if (!rt) return <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>audio engine · not reported by this engine</div>;
                 const recent = !!s.rtIssueAt && (Date.now() - new Date(s.rtIssueAt).getTime()) < RT_RECENT_MS;
-                const stalls = rt.stalls || 0, fallbacks = rt.stallFallbacks || 0;
+                const stalls = rt.stalls || 0, fallbacks = rt.stallFallbacks || 0, devErrs = rt.deviceErrors || 0;
                 const clean = rt.underruns === 0 && rt.overruns === 0 && rt.lockMisses === 0 && stalls === 0;
                 return (
-                  <div title={`since the engine started · ${rt.callbacks.toLocaleString()} callbacks · ${rt.underrunFrames.toLocaleString()} silent frames from underruns · ${rt.eventsDropped} events dropped · output stalls ${stalls} (the output callback stopped for over 1 s; the engine reopened the output) · fallbacks to the system default ${fallbacks}`}
+                  <div title={`since the engine started · ${rt.callbacks.toLocaleString()} callbacks · ${rt.underrunFrames.toLocaleString()} silent frames from underruns · ${rt.eventsDropped} events dropped · output stalls ${stalls} (the output callback stopped for over 1 s; the engine reopened the output) · fallbacks to the system default ${fallbacks} · device errors reported by the audio driver ${devErrs}`}
                        style={{ fontSize: 12, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                                 color: recent ? LEVEL_COLOR.YELLOW : clean ? "var(--text-tertiary)" : "var(--text-secondary)" }}>
-                    {`audio engine · underruns ${rt.underruns} · overruns ${rt.overruns} · lock misses ${rt.lockMisses} · output stalls ${stalls}${fallbacks ? ` (${fallbacks} to the default)` : ""}`}
+                    {`audio engine · underruns ${rt.underruns} · overruns ${rt.overruns} · lock misses ${rt.lockMisses} · output stalls ${stalls}${fallbacks ? ` (${fallbacks} to the default)` : ""}${devErrs ? ` · device errors ${devErrs}` : ""}`}
                     {s.rtIssueAt ? ` · last ${new Date(s.rtIssueAt).toLocaleTimeString()}` : ""}
                   </div>
                 );

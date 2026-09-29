@@ -613,7 +613,7 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
         "rt_lock_misses": rt.lock_misses, "rt_overruns": rt.overruns, "rt_events_dropped": rt.events_dropped,
         "rt_buffer_clamped": rt.buffer_clamped, "rt_garbage_leaked": rt.garbage_leaked, "rt_allocs": rt.allocs,
         // OUTPUT LIVENESS (outwatch.rs) — the output callback stopped and the stream was reopened; fallbacks to the default.
-        "rt_stalls": rt.stalls, "rt_stall_fallbacks": rt.stall_fallbacks
+        "rt_stalls": rt.stalls, "rt_stall_fallbacks": rt.stall_fallbacks, "rt_device_errors": rt.device_errors
     }).to_string()
 }
 

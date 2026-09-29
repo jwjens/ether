@@ -253,6 +253,9 @@ pub struct RtLevels {
     pub stalls: u64,
     #[serde(default)]
     pub stall_fallbacks: u64,
+    /// Errors cpal reported on the output stream (each one reopened the output, like a stall).
+    #[serde(default)]
+    pub device_errors: u64,
     /// Allocations inside the callback — Some in a debug build (the trap), None in the shipped release.
     pub allocs: Option<u64>,
 }
@@ -2618,6 +2621,10 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
             sc.events = Some(ev_p);
             ev_cons = Some(ev_c);
 
+            // cpal's ERROR callback (rare; not the audio callback): said with the station, the device and the time,
+            // counted, and handed to the dispatch thread, which treats it exactly as a stall (reopen, decks restored).
+            let dev_err: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+            let (err_slot, err_dev, err_counters) = (dev_err.clone(), dev_name.clone(), station_counters.clone());
             let stream = device.build_output_stream::<f32, _, _>(
                 &stream_config,
                 move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
@@ -2635,7 +2642,12 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                     // Per-station liveness — THIS station's counter only (stamped to wall time off-thread).
                     cb_seq_cb.fetch_add(1, Ordering::Relaxed);
                 },
-                |err| eprintln!("[cpal] {}", err),
+                move |err| {
+                    RtCounters::bump(&err_counters.device_errors, 1);
+                    eprintln!("[RUST] {} Station {} cpal ERROR on \"{}\": {} — treating it as a stall (reopen)",
+                              crate::outwatch::iso_now(), station_id, err_dev, err);
+                    if let Ok(mut g) = err_slot.try_lock() { if g.is_none() { *g = Some(err.to_string()); } }
+                },
                 None,
             );
 
@@ -2674,7 +2686,8 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                 if seq != seen_seq { seen_seq = seq; last_cb.store(now_ms(), Ordering::Relaxed); }
                 // OUTPUT LIVENESS — the callback stopped while the stream is open: log, count, reopen (break →
                 // 'outer reopens and restores the decks, exactly as ReopenOutput does).
-                if let Some(why) = watch.observe(std::time::Instant::now(), seq, None) {
+                let device_error = dev_err.try_lock().ok().and_then(|mut g| g.take());
+                if let Some(why) = watch.observe(std::time::Instant::now(), seq, device_error) {
                     RtCounters::bump(&ctl.counters.stalls, 1);
                     let what = match &why {
                         crate::outwatch::Stall::NoCallbacks { ms } => format!("no output callback for {} ms", ms),
@@ -2951,6 +2964,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                         garbage_leaked: ld(&c.garbage_leaked),
                                         stalls: ld(&c.stalls),
                                         stall_fallbacks: ld(&c.stall_fallbacks),
+                                        device_errors: ld(&c.device_errors),
                                         allocs: rt_allocs(),
                                     };
                                 }

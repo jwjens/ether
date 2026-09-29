@@ -110,12 +110,12 @@ function createHealthMonitor(opts) {
           overruns: lv.rt_overruns || 0, lockMisses: lv.rt_lock_misses || 0, eventsDropped: lv.rt_events_dropped || 0,
           bufferClamped: lv.rt_buffer_clamped || 0, garbageLeaked: lv.rt_garbage_leaked || 0,
           // OUTPUT LIVENESS (native outwatch.rs): the output callback stopped → reopened; fallbacks to the default.
-          stalls: lv.rt_stalls || 0, stallFallbacks: lv.rt_stall_fallbacks || 0,
+          stalls: lv.rt_stalls || 0, stallFallbacks: lv.rt_stall_fallbacks || 0, deviceErrors: lv.rt_device_errors || 0,
         };
         const prev = r.rt;
         r.rt = cur;
         if (prev && cur.callbacks >= prev.callbacks) {
-          const keys = ["underruns", "underrunFrames", "overruns", "lockMisses", "eventsDropped", "bufferClamped", "garbageLeaked", "stalls", "stallFallbacks"];
+          const keys = ["underruns", "underrunFrames", "overruns", "lockMisses", "eventsDropped", "bufferClamped", "garbageLeaked", "stalls", "stallFallbacks", "deviceErrors"];
           const delta = {}; let any = false;
           for (const k of keys) { delta[k] = Math.max(0, cur[k] - prev[k]); if (delta[k] > 0 && k !== "underrunFrames") any = true; }
           if (any) {

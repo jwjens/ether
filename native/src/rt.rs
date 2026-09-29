@@ -484,6 +484,8 @@ pub(crate) struct RtCounters {
     /// the chosen device kept stalling or would not open. Both should read 0.
     pub stalls: AtomicU64,
     pub stall_fallbacks: AtomicU64,
+    /// Errors cpal reported on this station's output stream (each is also a stall: the stream is reopened).
+    pub device_errors: AtomicU64,
 }
 impl RtCounters {
     pub fn new() -> Arc<RtCounters> {
@@ -498,6 +500,7 @@ impl RtCounters {
             garbage_leaked: AtomicU64::new(0),
             stalls: AtomicU64::new(0),
             stall_fallbacks: AtomicU64::new(0),
+            device_errors: AtomicU64::new(0),
         })
     }
     #[inline] pub fn bump(c: &AtomicU64, n: u64) { c.fetch_add(n, Ordering::Relaxed); }
