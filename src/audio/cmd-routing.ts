@@ -44,13 +44,15 @@ export function isStationScopedCommand(cmd: string): boolean {
   return STATION_SCOPED.has(cmd);
 }
 
-/** Per-machine targeting for the guided broadcast handoff (move-broadcast). A command may carry a
- *  target_machine_id to aim at ONE specific machine (e.g. "release on jensj", "grab on studio-D"); only
- *  that machine acts. No target_machine_id → every station-matched machine acts as before (back-compat).
+/** Per-machine targeting (web-remote slice 3, docs/web-remote-design-2026-09-16.md §3). The backend stamps
+ *  target_machine_id on EVERY station-scoped command (/api/cmd and the Park Ops routes), so a station control
+ *  acts on exactly ONE machine — the named one. A station-scoped command with an absent/blank target was
+ *  never stamped: nobody acts (otherwise every machine running the station would, e.g. a cart firing on each
+ *  one's output). License-scoped commands are never machine-targeted: absent target → applies here.
  *  Returns true if THIS machine should act on it. */
-export function commandTargetsThisMachine(targetMachineId: string | null | undefined, thisMachineId: string | null | undefined): boolean {
+export function commandTargetsThisMachine(targetMachineId: string | null | undefined, thisMachineId: string | null | undefined, cmd: string): boolean {
   const t = typeof targetMachineId === "string" ? targetMachineId.trim() : "";
-  if (!t) return true;                                   // not machine-targeted → applies here
+  if (!t) return !isStationScopedCommand(cmd);           // unstamped station control → nobody acts
   return !!thisMachineId && t === thisMachineId;         // machine-targeted → only the named machine
 }
 

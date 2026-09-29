@@ -436,3 +436,16 @@ to the named machine's client.
 
 Tests: `node --test src/lib/*.test.js src/slug.test.js` → 38/38 (cmd-bus 10, park-ops-target 4, station-commands
 12, station-source 4, slug 8). `node --check src/index.js` ok. No route was run against a database.
+
+## Slice 3 desktop — built (2026-09-29, `C:\openair` branch `log-reader-flip`, local; not pushed, not tagged, no bump)
+
+Unheld per Jeff: the backend now stamps `target_machine_id` on every station-control route (option A, `4ffeac3`).
+- `commandTargetsThisMachine(targetMachineId, thisMachineId, cmd)` (`src/audio/cmd-routing.ts`): for a command in
+  `STATION_SCOPED` an absent/blank target returns **false**; license-scoped commands with no target still return true.
+  A present target still has to equal this machine's id.
+- `App.tsx` passes `cmd`; the ignore line now prints `(none)` for a missing target and this machine's id; new accept line
+  `[RemoteCmd] <cmd> accepted for station <uuid> on this machine <id>`.
+- Tests: `src/audio/cmd-routing.test.ts` 15/15; `npx tsc --noEmit` 0 errors.
+- **Consequence:** a desktop on this build ignores every station control from a backend that does not stamp (i.e. pre-`4ffeac3`).
+- **UNVERIFIED at runtime.** Jeff verifies (per §3): drag a row in Up Next on the web → OV reorders and logs `accepted`,
+  OVEVENTS logs `ignored`; Skip on the web → OV skips, OVEVENTS does not.

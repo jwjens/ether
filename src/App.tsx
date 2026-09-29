@@ -1363,13 +1363,14 @@ export default function App() {
           const t = resolveCommandTarget(data?.station_uuid, activeId, localStations);
           if (t.kind === "ignore") { console.log(`[RemoteCmd] ${cmd} ignored — station ${data?.station_uuid} not run on this machine`); return; }
           targetId = t.stationId;
-          // Guided handoff (move-broadcast): a command may also target a SPECIFIC machine. Only that
-          // machine acts — so "release on jensj" / "grab on studio-D" hit exactly one machine, not every
-          // machine that runs the station. No target_machine_id → unchanged.
-          if (!commandTargetsThisMachine(data?.target_machine_id, machineIdRef.current)) {
-            console.log(`[RemoteCmd] ${cmd} ignored — targets machine ${data?.target_machine_id}, not this one`);
+          // Web-remote slice 3: the backend stamps target_machine_id on every station control, and only
+          // the named machine acts. No target → it was never stamped → nobody acts (not every machine
+          // that runs the station).
+          if (!commandTargetsThisMachine(data?.target_machine_id, machineIdRef.current, cmd)) {
+            console.log(`[RemoteCmd] ${cmd} ignored — targets machine ${data?.target_machine_id || "(none)"}, not this one (${machineIdRef.current})`);
             return;
           }
+          console.log(`[RemoteCmd] ${cmd} accepted for station ${data?.station_uuid} on this machine ${machineIdRef.current}`);
           accepted = true;
         }
         const isActive = targetId === activeId;

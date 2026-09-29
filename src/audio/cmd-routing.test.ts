@@ -45,23 +45,36 @@ describe("resolveCommandTarget", () => {
   });
 });
 
-describe("commandTargetsThisMachine (guided handoff per-machine gate)", () => {
-  it("no target_machine_id → applies to this machine (back-compat)", () => {
-    expect(commandTargetsThisMachine(undefined, "mid-jensj")).toBe(true);
-    expect(commandTargetsThisMachine(null, "mid-jensj")).toBe(true);
-    expect(commandTargetsThisMachine("", "mid-jensj")).toBe(true);
-    expect(commandTargetsThisMachine("   ", "mid-jensj")).toBe(true);
+describe("commandTargetsThisMachine (web-remote slice 3 per-machine gate)", () => {
+  const SCOPED = ["skip", "automation_on", "stop_all", "play_now", "queue:reorder", "deck:load",
+    "stream:start", "stream:restart", "cart:fire", "ops:set-closing"];
+  it("station-scoped command with NO target_machine_id → does NOT apply (unstamped = nobody acts)", () => {
+    for (const c of SCOPED) {
+      expect(commandTargetsThisMachine(undefined, "mid-jensj", c)).toBe(false);
+      expect(commandTargetsThisMachine(null, "mid-jensj", c)).toBe(false);
+      expect(commandTargetsThisMachine("", "mid-jensj", c)).toBe(false);
+      expect(commandTargetsThisMachine("   ", "mid-jensj", c)).toBe(false);
+    }
+  });
+  it("station-scoped, no target, this machine's id unknown → does not apply", () => {
+    expect(commandTargetsThisMachine(undefined, null, "skip")).toBe(false);
+  });
+  it("license-scoped command with no target → still applies (never machine-targeted)", () => {
+    for (const c of ["db:apply", "library:addSong", "library:syncDownload", "health:watch", "jukebox:request"]) {
+      expect(commandTargetsThisMachine(undefined, "mid-jensj", c)).toBe(true);
+      expect(commandTargetsThisMachine("", "mid-jensj", c)).toBe(true);
+    }
   });
   it("target matches this machine → applies", () => {
-    expect(commandTargetsThisMachine("mid-jensj", "mid-jensj")).toBe(true);
-    expect(commandTargetsThisMachine("  mid-jensj  ", "mid-jensj")).toBe(true);
+    expect(commandTargetsThisMachine("mid-jensj", "mid-jensj", "skip")).toBe(true);
+    expect(commandTargetsThisMachine("  mid-jensj  ", "mid-jensj", "cart:fire")).toBe(true);
   });
   it("target is a DIFFERENT machine → does NOT apply (only the named machine acts)", () => {
-    expect(commandTargetsThisMachine("mid-studioD", "mid-jensj")).toBe(false);
+    expect(commandTargetsThisMachine("mid-studioD", "mid-jensj", "skip")).toBe(false);
   });
   it("target set but this machine's id unknown → does not apply (never act on an unknown identity)", () => {
-    expect(commandTargetsThisMachine("mid-studioD", null)).toBe(false);
-    expect(commandTargetsThisMachine("mid-studioD", "")).toBe(false);
+    expect(commandTargetsThisMachine("mid-studioD", null, "skip")).toBe(false);
+    expect(commandTargetsThisMachine("mid-studioD", "", "skip")).toBe(false);
   });
 });
 
