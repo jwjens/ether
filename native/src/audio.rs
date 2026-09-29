@@ -247,6 +247,12 @@ pub struct RtLevels {
     pub events_dropped: u64,
     pub buffer_clamped: u64,
     pub garbage_leaked: u64,
+    /// OUTPUT LIVENESS — stalls (the output callback stopped; the stream was reopened) and fallbacks to the
+    /// system default. Written by the dispatch thread (outwatch.rs).
+    #[serde(default)]
+    pub stalls: u64,
+    #[serde(default)]
+    pub stall_fallbacks: u64,
     /// Allocations inside the callback — Some in a debug build (the trap), None in the shipped release.
     pub allocs: Option<u64>,
 }
@@ -2539,6 +2545,10 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
         let last_cb = station_cb_clock(station_id);
         let cb_seq = Arc::new(AtomicU64::new(0));
         let mut seen_seq = 0u64;
+        // OUTPUT LIVENESS (outwatch.rs; OV dead air on 4.6.51): an OPEN stream whose callback stops for > 1 s is a
+        // STALL — logged with the time and the device, counted, and the stream reopened through the device-switch
+        // path below (same device, decks restored). A device that keeps stalling → the system default, said aloud.
+        let mut watch = crate::outwatch::StallWatch::new(std::time::Instant::now());
         let mut ev_cons: Option<ringbuf::HeapCons<RtEvent>> = None;
         // THE MIC — this station's input streams. Owned by THIS thread (each cpal input Stream is built and
         // dropped here), and it outlives an output-device reopen: the live feed stays in its deck slot.
@@ -2549,14 +2559,29 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
         let mut _link_sender: Option<crate::linknet::Sender> = None;
 
         'outer: loop {
-            // Find and open output device
-            let (device, sr, ch) = match open_output_device(station_id, &current_device) {
+            // A card that keeps failing is retried with a pause, never in a tight loop.
+            let pause = watch.backoff();
+            if !pause.is_zero() { std::thread::sleep(pause); }
+            // Find and open output device — the CHOSEN one, unless it has stalled or failed FALLBACK_AFTER times in
+            // a row: then the system default, and the log says so (a silent station is worse than the wrong card).
+            let fallback = watch.use_default_next() && current_device.is_some();
+            let want = if fallback { None } else { current_device.clone() };
+            let (device, sr, ch) = match open_output_device(station_id, &want) {
                 Some(d) => d,
                 None => {
+                    watch.open_failed();
+                    eprintln!("[RUST] {} Station {} output: no device to open ({:?}) — attempt {} failed, retrying",
+                              crate::outwatch::iso_now(), station_id, want, watch.consecutive);
                     std::thread::sleep(std::time::Duration::from_secs(2));
                     continue 'outer;
                 }
             };
+            let dev_name = device.name().unwrap_or_default();
+            if fallback {
+                RtCounters::bump(&ctl.counters.stall_fallbacks, 1);
+                eprintln!("[RUST] {} Station {} output: {:?} stalled or failed {} times in a row — opening the SYSTEM DEFAULT \"{}\" instead",
+                          crate::outwatch::iso_now(), station_id, current_device, watch.consecutive, dev_name);
+            }
 
             // Update BusState with actual sample rate
             if let Ok(mut bus) = bus_cmd.lock() {
@@ -2617,16 +2642,19 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
             let stream = match stream {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("[RUST] Station {} build_output_stream: {} — retrying", station_id, e);
+                    watch.open_failed();
+                    eprintln!("[RUST] {} Station {} build_output_stream on \"{}\": {} — retrying", crate::outwatch::iso_now(), station_id, dev_name, e);
                     std::thread::sleep(std::time::Duration::from_secs(2));
                     continue 'outer;
                 }
             };
             if let Err(e) = stream.play() {
-                eprintln!("[RUST] Station {} stream.play(): {} — retrying", station_id, e);
+                watch.open_failed();
+                eprintln!("[RUST] {} Station {} stream.play() on \"{}\": {} — retrying", crate::outwatch::iso_now(), station_id, dev_name, e);
                 std::thread::sleep(std::time::Duration::from_secs(2));
                 continue 'outer;
             }
+            watch.stream_opened(std::time::Instant::now(), cb_seq.load(Ordering::Relaxed));
 
             eprintln!("[RUST] Station {} audio output opened ({}Hz {}ch)",
                 station_id, sr, ch);
@@ -2644,6 +2672,19 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                 ctl.flush();
                 let seq = cb_seq.load(Ordering::Relaxed);
                 if seq != seen_seq { seen_seq = seq; last_cb.store(now_ms(), Ordering::Relaxed); }
+                // OUTPUT LIVENESS — the callback stopped while the stream is open: log, count, reopen (break →
+                // 'outer reopens and restores the decks, exactly as ReopenOutput does).
+                if let Some(why) = watch.observe(std::time::Instant::now(), seq, None) {
+                    RtCounters::bump(&ctl.counters.stalls, 1);
+                    let what = match &why {
+                        crate::outwatch::Stall::NoCallbacks { ms } => format!("no output callback for {} ms", ms),
+                        crate::outwatch::Stall::DeviceError(e) => format!("the device reported an error: {}", e),
+                    };
+                    eprintln!("[RUST] {} Station {} output STALL on \"{}\": {} ({} callbacks so far, stall #{}) — reopening the output, decks restored",
+                              crate::outwatch::iso_now(), station_id, dev_name, what, ctl.counters.callbacks.load(Ordering::Relaxed),
+                              ctl.counters.stalls.load(Ordering::Relaxed));
+                    break;
+                }
                 match rx.recv_timeout(std::time::Duration::from_millis(50)) {
                     Ok(cmd) => {
                         match cmd {
@@ -2908,6 +2949,8 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                         events_dropped: ld(&c.events_dropped),
                                         buffer_clamped: ld(&c.buffer_clamped),
                                         garbage_leaked: ld(&c.garbage_leaked),
+                                        stalls: ld(&c.stalls),
+                                        stall_fallbacks: ld(&c.stall_fallbacks),
                                         allocs: rt_allocs(),
                                     };
                                 }
@@ -2915,6 +2958,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::SwitchDevice(name) => {
                                 eprintln!("[RUST] Station {} SwitchDevice → {:?}", station_id, name);
                                 current_device = if name.is_empty() { None } else { Some(name) };
+                                watch.consecutive = 0;   // the operator chose a device: judge it fresh
                                 break; // drop stream → 'outer reopens device
                             }
                             AudioCmd::ReopenOutput => {
@@ -3045,6 +3089,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                 }
             }
             // stream drops here → cpal callback stops → device released
+            watch.stream_closed();
         }
     });
 

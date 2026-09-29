@@ -479,6 +479,11 @@ pub(crate) struct RtCounters {
     pub buffer_clamped: AtomicU64,
     /// Objects leaked (not freed) because the garbage queue was full.
     pub garbage_leaked: AtomicU64,
+    /// OUTPUT LIVENESS (outwatch.rs) — written by the DISPATCH thread, never the callback: an open stream whose
+    /// callback stopped (a stall → the stream is reopened), and opens that went to the system default because
+    /// the chosen device kept stalling or would not open. Both should read 0.
+    pub stalls: AtomicU64,
+    pub stall_fallbacks: AtomicU64,
 }
 impl RtCounters {
     pub fn new() -> Arc<RtCounters> {
@@ -491,6 +496,8 @@ impl RtCounters {
             events_dropped: AtomicU64::new(0),
             buffer_clamped: AtomicU64::new(0),
             garbage_leaked: AtomicU64::new(0),
+            stalls: AtomicU64::new(0),
+            stall_fallbacks: AtomicU64::new(0),
         })
     }
     #[inline] pub fn bump(c: &AtomicU64, n: u64) { c.fetch_add(n, Ordering::Relaxed); }

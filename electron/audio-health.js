@@ -109,11 +109,13 @@ function createHealthMonitor(opts) {
           callbacks: lv.rt_callbacks, underruns: lv.rt_underruns || 0, underrunFrames: lv.rt_underrun_frames || 0,
           overruns: lv.rt_overruns || 0, lockMisses: lv.rt_lock_misses || 0, eventsDropped: lv.rt_events_dropped || 0,
           bufferClamped: lv.rt_buffer_clamped || 0, garbageLeaked: lv.rt_garbage_leaked || 0,
+          // OUTPUT LIVENESS (native outwatch.rs): the output callback stopped → reopened; fallbacks to the default.
+          stalls: lv.rt_stalls || 0, stallFallbacks: lv.rt_stall_fallbacks || 0,
         };
         const prev = r.rt;
         r.rt = cur;
         if (prev && cur.callbacks >= prev.callbacks) {
-          const keys = ["underruns", "underrunFrames", "overruns", "lockMisses", "eventsDropped", "bufferClamped", "garbageLeaked"];
+          const keys = ["underruns", "underrunFrames", "overruns", "lockMisses", "eventsDropped", "bufferClamped", "garbageLeaked", "stalls", "stallFallbacks"];
           const delta = {}; let any = false;
           for (const k of keys) { delta[k] = Math.max(0, cur[k] - prev[k]); if (delta[k] > 0 && k !== "underrunFrames") any = true; }
           if (any) {

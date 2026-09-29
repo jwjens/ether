@@ -16,6 +16,7 @@ mod rta;                 // Slice 8 — the live RTA behind the rack's EQ curve 
 mod ramp;                // Slice 7 — the fader level ramp (docs/dsp-show-presets.md, ruling 4)
 mod chdsp;               // Slice 5 — the channel rack DSP (biquads + crossfade) on the audio thread
 mod micin;               // The mic as an engine input — docs/dsp-mic-in-engine.md
+mod outwatch;            // Output-callback liveness: stall → log, count, reopen (OV dead air, 4.6.52)
 mod link;                // The Remote Link core (wire, keys, jitter buffer, clocks) — docs/remote-link-design-2026-09-28.md
 mod linknet;             // The Remote Link's sockets and threads (sender, listener) — same doc
 pub mod rack;            // Slice 4 — the rack model; pub so the type-rule doctests (compile_fail) can see it
@@ -610,7 +611,9 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
         // SLICE 1 S6 — every one should read 0 on a healthy station; the Health Monitor shows them.
         "rt_callbacks": rt.callbacks, "rt_underruns": rt.underruns, "rt_underrun_frames": rt.underrun_frames,
         "rt_lock_misses": rt.lock_misses, "rt_overruns": rt.overruns, "rt_events_dropped": rt.events_dropped,
-        "rt_buffer_clamped": rt.buffer_clamped, "rt_garbage_leaked": rt.garbage_leaked, "rt_allocs": rt.allocs
+        "rt_buffer_clamped": rt.buffer_clamped, "rt_garbage_leaked": rt.garbage_leaked, "rt_allocs": rt.allocs,
+        // OUTPUT LIVENESS (outwatch.rs) — the output callback stopped and the stream was reopened; fallbacks to the default.
+        "rt_stalls": rt.stalls, "rt_stall_fallbacks": rt.stall_fallbacks
     }).to_string()
 }
 
