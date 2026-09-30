@@ -183,19 +183,37 @@ jobs:
         shell: pwsh
 
       - name: Build native audio addon
+        if: matrix.platform != 'mac'
         working-directory: native
         run: cargo build --release
+
+      # MAC: ONE ENGINE PER ARCH. 4.6.52 built once on the arm64 runner and packed that arm64 engine into the
+      # x64 DMG too. Each arch is built for its own Rust target; electron-builder's beforePack hook
+      # (build-resources/engine-pack.js) puts the matching one at native/ether-audio.node for each arch it
+      # packs, and afterPack fails the build if app.asar.unpacked/native/ether-audio.node is missing or the
+      # wrong CPU. MACOSX_DEPLOYMENT_TARGET pins the C deps (opus via cmake) to the same floor as Rust.
+      - name: Build native audio addon (Mac, x64 + arm64)
+        if: matrix.platform == 'mac'
+        working-directory: native
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          file target/aarch64-apple-darwin/release/libether_audio.dylib target/x86_64-apple-darwin/release/libether_audio.dylib
+        shell: bash
 
       - name: Copy native addon (Windows)
         if: matrix.platform == 'win'
         run: Copy-Item native/target/release/ether_audio.dll native/ether-audio.node
         shell: pwsh
 
-      - name: Copy native addon (Mac/Linux)
-        if: matrix.platform != 'win'
-        run: |
-          cp native/target/release/libether_audio.dylib native/ether-audio.node 2>/dev/null || \
-          cp native/target/release/libether_audio.so native/ether-audio.node 2>/dev/null || true
+      # No `|| true`: a missing engine fails here, not silently in the field.
+      - name: Copy native addon (Linux)
+        if: matrix.platform == 'linux'
+        run: cp native/target/release/libether_audio.so native/ether-audio.node
         shell: bash
 
       # WHY NOT A PLAIN `npm install`: better-sqlite3 13 ships N-API prebuilds for all eight

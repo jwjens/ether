@@ -178,5 +178,48 @@ The goldens (`native/goldens/manifest.json`) were captured on Windows x64 and st
 - `scripts/make-loudness-corpus.js` on this Mac (ffmpeg 6.0 vs 6.1.1 on Windows) writes a byte-different
   `ref_m23.wav` that measures the same −23.000 LUFS. The tracked `manifest-loudness.json` was **not** changed.
 
+## 6. Mac packaging — the engine lands where it is loaded, per arch, or the build fails
+
+### Why the engine was missing from `app.asar.unpacked`
+electron-builder turns every `extraResources` pattern into an **exclude** for the app files
+(`app-builder-lib/out/platformPackager.js:190-219`, v26.8.1). The `{ "from": "native", "to": "native" }`
+entry therefore removed `native/*.node` from `app.asar.unpacked`, and copied it (plus any stray
+`native/target/**/*.node`) to `Resources/native`, which nothing loads. Proven by a scratch config with that one
+entry removed: `app.asar.unpacked/native/ether-audio.node` appeared. The same exclusion applies on Windows
+packaging, so whether Windows installers carry the engine in `app.asar.unpacked` is **UNVERIFIED** (the
+`afterPack` check below settles it on the next Windows build).
+
+### Fix
+- `electron-builder.json`: the `native` `extraResources` entry is gone; `!native/target/**` keeps build output
+  out of the app; `beforePack`/`afterPack` hooks (`build-resources/engine-pack.js`).
+- `beforePack` (macOS): copies `native/target/<triple>/release/libether_audio.dylib` for the arch being packed to
+  `native/ether-audio.node`, after checking it is a Mach-O for that CPU. Missing → build fails.
+- `afterPack` (every platform): `app.asar.unpacked/native/ether-audio.node` must exist and be the right format
+  (Mach-O of the packed CPU / PE / ELF) → otherwise the build fails before anything is published.
+- CI (`build.yml`): macOS builds `aarch64-apple-darwin` and `x86_64-apple-darwin` separately
+  (`MACOSX_DEPLOYMENT_TARGET=11.0`); the `cp … || true` is gone (Linux copies plainly and fails if missing).
+- `audiod/verify-packaged.js` (the release gate) now runs on macOS too, against a private DB path and log.
+
+### Receipts (this Mac)
+- **Negative:** with no arm64 engine built, `electron-builder --mac --arm64` → exit 1,
+  `ENGINE MISSING for macOS arm64: …/native/target/aarch64-apple-darwin/release/libether_audio.dylib`, no app.
+- **Positive:** `[engine-pack] packaged engine OK: Ether.app/Contents/Resources/app.asar.unpacked/native/ether-audio.node (macho:arm64)`
+  and the same for x64 (`macho:x64`). `Resources/native` no longer exists.
+- Signature: `flags=0x2(adhoc)`, no `runtime` (§3).
+- `node audiod/verify-packaged.js`: `packaged daemon answered ping: true` … `✅ RELEASE GATE PASS`.
+- Offline render against the packaged arm64 engine (SHA-256 `4b9dbab3…421d`): 30/43, **all 43 hashes identical
+  to the pre-RtMutex engine** (§4 changed no output).
+- **Launch:** `open dist-electron/mac-arm64/Ether.app` → `ether-startup.log` 16:02:38Z, v4.6.52 packaged, pid 66618:
+  `[audiod-client] connected to daemon (after spawn)` · `daemon pid 66625` ·
+  **`[AUDIO] daemon ACTIVE — out-of-process engine (connected in 847ms)`**; daemon log: both stations
+  `audio output opened (48000Hz 2ch)` on MacBook Pro Speakers.
+- The screen itself: **UNVERIFIED** (no screen-recording permission for a screenshot) — Jeff's look settles it.
+
+### Local Mac build toolchain (this machine)
+Rust stable (targets aarch64 + x86_64), Node 22.23.3 and CMake 4.4.3 in `~/.local`. The CLT's stray
+`MacOSX27.0.sdk` breaks `ld` (`unknown architecture arm64e.x1-macos`), so local builds set
+`SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk`. `beforePack` overwrites the tracked Windows
+DLL `native/ether-audio.node` (as CI always did) — `git checkout native/ether-audio.node` after a local build.
+
 ## Side note (not investigated)
 `ether-startup.log` on this Mac is 2.4 MB — the never-rotating log already on the backlog.

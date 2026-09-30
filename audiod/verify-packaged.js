@@ -5,14 +5,26 @@
 // →synced-tables, stream→ffmpeg-static, and the native addon — i.e. the asarUnpack config is
 // correct and the daemon will actually run for users (not silently fall back). No audio.
 //   node audiod/verify-packaged.js
-const net = require("net"), path = require("path"), fs = require("fs"), cp = require("child_process");
-const ROOT = path.join(__dirname, "..", "dist-electron", "win-unpacked");
-const EXE = path.join(ROOT, "Ether.exe");
-const DAEMON = path.join(ROOT, "resources", "app.asar.unpacked", "audiod", "ether-audiod.js");
-const PIPE = "\\\\.\\pipe\\ether-audiod-pkgverify-" + process.pid;
+//
+// macOS (2026-09-30): the same check against dist-electron/mac-arm64 (or mac/ for x64) — the packaged
+// Contents/MacOS/Ether runs the packaged daemon over a Unix socket. 4.6.52 shipped a Mac whose daemon died on
+// MODULE_NOT_FOUND (no engine in app.asar.unpacked/native); this is the runtime receipt that it can't again.
+const net = require("net"), path = require("path"), fs = require("fs"), cp = require("child_process"), os = require("os");
+const MAC = process.platform === "darwin";
+const ROOT = MAC
+  ? path.join(__dirname, "..", "dist-electron", process.arch === "arm64" ? "mac-arm64" : "mac", "Ether.app", "Contents")
+  : path.join(__dirname, "..", "dist-electron", "win-unpacked");
+const EXE = MAC ? path.join(ROOT, "MacOS", "Ether") : path.join(ROOT, "Ether.exe");
+const DAEMON = path.join(ROOT, MAC ? "Resources" : "resources", "app.asar.unpacked", "audiod", "ether-audiod.js");
+const PIPE = MAC
+  ? path.join(os.tmpdir(), "ether-audiod-pkgverify-" + process.pid + ".sock")
+  : "\\\\.\\pipe\\ether-audiod-pkgverify-" + process.pid;
 
 for (const p of [EXE, DAEMON]) if (!fs.existsSync(p)) { console.error("missing:", p); process.exit(1); }
-const daemon = cp.spawn(EXE, [DAEMON], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ETHER_AUDIOD_PIPE: PIPE }, stdio: "ignore" });
+// A private DB path and log: a release gate must never open or append to the installed station's files.
+const GATE_TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ether-pkgverify-"));
+const daemon = cp.spawn(EXE, [DAEMON], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ETHER_AUDIOD_PIPE: PIPE,
+  ETHER_DB_PATH: path.join(GATE_TMP, "openair.db"), ETHER_AUDIOD_LOG: path.join(GATE_TMP, "ether-audiod.log") }, stdio: "ignore" });
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 function ping() { return new Promise((res) => { const s = net.connect(PIPE); let done = false; const fin = (v) => { if (done) return; done = true; try { s.destroy(); } catch {} res(v); }; s.once("connect", () => { s.write(JSON.stringify({ id: 1, cmd: "ping" }) + "\n"); }); s.on("data", (d) => { fin(d.toString().includes("pong")); }); s.once("error", () => fin(false)); setTimeout(() => fin(false), 1200); }); }
 
@@ -57,6 +69,10 @@ function checkStaging() {
   try { daemon.kill(); } catch {}
   console.log("packaged daemon spawned under: " + path.basename(EXE));
   console.log("packaged daemon answered ping: " + ok);
+  try {
+    const lines = fs.readFileSync(path.join(GATE_TMP, "ether-audiod.log"), "utf8").trim().split("\n");
+    console.log("packaged daemon log (last 6 lines):\n   " + lines.slice(-6).join("\n   "));
+  } catch { console.log("packaged daemon log: (none written)"); }
   console.log("\n→ PACKAGING: " + (ok
     ? "✅ the shipped daemon loads + runs — all require chains resolved in app.asar.unpacked (feature works for users, not a silent fallback)"
     : "❌ packaged daemon did not respond — a require/path is wrong in the package (would silently fall back to in-process)"));

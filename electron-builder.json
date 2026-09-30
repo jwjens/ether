@@ -22,6 +22,7 @@
     "scripts/**/*.js",
     "!**/scripts/diag-*.js",
     "native/**/*.node",
+    "!native/target/**",
     "watchdog/**/*",
     "!watchdog/test/**",
     "!audiod/**/*.test.js",
@@ -39,16 +40,13 @@
   ],
   "extraResources": [
     {
-      "from": "native",
-      "to": "native",
-      "filter": ["**/*.node"]
-    },
-    {
       "from": "native/ha-setup/target/release/ha-setup.exe",
       "to": "ha-setup.exe"
     }
   ],
   "npmRebuild": false,
+  "beforePack": "build-resources/engine-before-pack.js",
+  "afterPack": "build-resources/engine-after-pack.js",
   "win": {
     "target": [
       { "target": "nsis", "arch": ["x64"] }
