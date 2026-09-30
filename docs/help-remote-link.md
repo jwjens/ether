@@ -50,7 +50,8 @@ that receives** is given that key. That fader then takes **that computer's feed 
 3. **Cut a sender off**: press the **✕** next to its name on the strip (or **Forget key** in Preferences). Only
    that fader stops taking that computer's feed; every other fader is untouched.
 4. **Replace key…** at the venue makes a new key: every fader holding the old one stops taking that computer's
-   feed until the new line is pasted.
+   feed until the new line is pasted — and the moment it is pasted, the feed comes back (within a second or two).
+   Copying the line again never interrupts a feed that is running.
 
 ## Set it up — at the station (the one that stays on air)
 

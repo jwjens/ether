@@ -352,3 +352,24 @@ that moment (the patch follows the pick and keeps the pasted key). UNVERIFIED wh
 (`linknet.rs` `RELEASE_AFTER`). After Replace key + re-paste, the same machine's new session was refused as a second
 sender. The fader was also re-patched S5 → S1 during this window, so the cause is not isolated. Check: with nobody
 touching the board, feed → Replace key → wait 6 s → paste → does `receiving` return, and does the log say `busy`?
+
+### FIXED 2026-09-30 — BUSY after a re-key
+
+Jeff's ruling: *"after Replace key, a fader that refuses the old key must drop that session so the new key's sender is
+accepted at once ('busy' must never be held by a session whose key was refused)."*
+
+**Two causes, both fixed:**
+1. **Engine** (`linknet.rs`, `RxReg::Update`): a key change on a patched fader only swapped the key, so the session
+   sealed under the old key kept holding the fader for up to `RELEASE_AFTER` (5 s) after its last packet, and the new
+   key's sender was answered BUSY. Now, when the new key is not `LinkKey::same_as` the old one (key bytes, key id and
+   pairing), `drop_session` forgets that session at once, logging `session … dropped — the fader's key was replaced`.
+2. **main** (`link:key-line`): every *copy* of the key line sent `linkKeyChanged`, which restarted every sender on a
+   new session. In the self-test that restart landed right after the paste, and the fader answered it BUSY behind its
+   own previous session. Now the service is told to re-key only when a key was actually made.
+
+**Test** (`linknet::tests::replace_key_then_paste_resumes_within_2s`, real UDP, `--ignored`): feed → Replace key (the
+sender restarts on the new key) → fader refuses it → paste → resumed. Round 1, Jeff's test, wait 6 s: 310 refused,
+**resumed in 0.33 s**. Round 2, wait 0.3 s (inside the 5 s hold): 10 refused, `session … dropped`, **resumed in
+0.47 s**, 0 busy refusals. **Negative control** (the drop disabled, same test): round 2 **FAILED** — sender `busy`,
+fader `lost`, 210 busy refusals, not resumed in 4 s. That is the self-test symptom, reproduced and then removed.
+Round 1 alone would pass without the fix (the 5 s release covers a 6 s wait); round 2 is the one that exercises it.

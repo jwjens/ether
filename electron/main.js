@@ -5672,8 +5672,13 @@ ipcMain.handle("link:key-line", async () => {
   try {
     const me = _linkMe();
     if (!me.id) return { ok: false, reason: "this computer has no machine id yet — restart Ether" };
-    const k = _linkMachineKey() || _linkMintMachineKey();
-    try { if (AUDIO_DAEMON) await audiodClient.cmd("linkKeyChanged", {}); } catch {}
+    // Copying the line must never restart a running feed: the service re-keys only when a key was actually MADE.
+    // (Signalling it on every copy restarted the sender on a new session, which the fader then held "busy".)
+    let k = _linkMachineKey();
+    if (!k) {
+      k = _linkMintMachineKey();
+      try { if (AUDIO_DAEMON) await audiodClient.cmd("linkKeyChanged", {}); } catch {}
+    }
     return { ok: true, line: LinkCfg.makeToken({ machine: me.id, name: me.name, key: k }), fingerprint: LinkCfg.keyFingerprint(k), id: k.id };
   } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
 });

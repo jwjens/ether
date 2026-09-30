@@ -138,7 +138,7 @@ pub(crate) const MAX_PAIR: usize = 96;
 /// (it follows the header in the associated data, never sent): a packet opens only on the machine it was sealed
 /// for, and only from the machine that fader's key names — even under the same key.
 #[derive(Clone)]
-pub(crate) struct LinkKey { cipher: ChaCha20Poly1305, pub id: u32, pair: [u8; MAX_PAIR], pair_len: usize }
+pub(crate) struct LinkKey { cipher: ChaCha20Poly1305, pub id: u32, raw: [u8; 32], pair: [u8; MAX_PAIR], pair_len: usize }
 impl LinkKey {
     /// `pairing` = "<receiving machine id>|<sending machine id>", the same string on both ends. Trimmed and
     /// lower-cased, so a UUID typed in either case pairs. None if the key is not 64 hex, or the pairing is empty/too long.
@@ -151,7 +151,12 @@ impl LinkKey {
         if m.is_empty() || m.len() > MAX_PAIR { return None; }
         let mut pair = [0u8; MAX_PAIR];
         pair[..m.len()].copy_from_slice(m.as_bytes());
-        Some(LinkKey { cipher: ChaCha20Poly1305::new(Key::from_slice(&k)), id, pair, pair_len: m.len() })
+        Some(LinkKey { cipher: ChaCha20Poly1305::new(Key::from_slice(&k)), id, raw: k, pair, pair_len: m.len() })
+    }
+    /// The same key: the same 32 bytes, the same key id, the same pairing. A fader whose key is replaced by one that
+    /// is not `same_as` it can no longer vouch for the session it was carrying (linknet.rs drops that session).
+    pub(crate) fn same_as(&self, o: &LinkKey) -> bool {
+        self.id == o.id && self.raw == o.raw && self.pair[..self.pair_len] == o.pair[..o.pair_len]
     }
     /// The associated data: the 32-byte header, then the pairing. On the stack — no allocation.
     fn aad<'a>(&self, header: &[u8], buf: &'a mut [u8; HEADER + MAX_PAIR]) -> &'a [u8] {
@@ -622,6 +627,15 @@ mod tests {
         assert!(LinkKey::from_hex(&"ab".repeat(32), 7, "").is_none());
         assert!(LinkKey::from_hex(&"ab".repeat(32), 7, "   ").is_none());
         assert!(LinkKey::from_hex(&"ab".repeat(32), 7, &"x".repeat(MAX_PAIR + 1)).is_none());
+    }
+
+    #[test]
+    fn same_as_is_bytes_and_id_and_pairing() {
+        let a = key();
+        assert!(a.same_as(&LinkKey::from_hex(&"AB".repeat(32), 7, &MACHINE.to_uppercase()).unwrap()), "case of hex and pairing does not matter");
+        assert!(!a.same_as(&LinkKey::from_hex(&"cd".repeat(32), 7, MACHINE).unwrap()), "other bytes");
+        assert!(!a.same_as(&LinkKey::from_hex(&"ab".repeat(32), 8, MACHINE).unwrap()), "other key id");
+        assert!(!a.same_as(&LinkKey::from_hex(&"ab".repeat(32), 7, "x|y").unwrap()), "other pairing");
     }
 
     #[test]

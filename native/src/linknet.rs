@@ -610,6 +610,24 @@ impl RxStation {
         eprintln!("[LINK] Station {}: sender connected from {} (session {:016x})", self.station_id, addr, session);
     }
 
+    /// Forget the session this fader is carrying — at once, not after RELEASE_AFTER of silence. Used when the fader's
+    /// key changes: the session was sealed under the key it no longer holds, so it can never be heard again and must
+    /// not hold the fader "busy" against the sender of the new key (Jeff, 2026-09-30).
+    fn drop_session(&mut self, why: &str) {
+        let Some(s) = self.session.take() else { return };
+        self.replay = ReplayWindow::default();
+        self.jb.reset();
+        let _ = self.dec.reset_state();
+        self.staging.clear();
+        self.staged_from = 0;
+        self.last_packet = None;
+        self.last_busy_reply = None;
+        self.offset_us = None;
+        self.one_way.clear();
+        self.st.busy_sender.clear();
+        eprintln!("[LINK] Station {}: session {:016x} from {} dropped — {}", self.station_id, s, self.sender_name, why);
+    }
+
     fn reply(&mut self, sock: &UdpSocket, kind: Kind, payload: &[u8], to: SocketAddr) {
         let Some(session) = self.session else { return };
         self.seq_out = self.seq_out.wrapping_add(1);
@@ -808,7 +826,13 @@ impl Listener {
                     });
                 }
                 RxReg::Update { station_id, key, jitter_ms } => {
-                    if let Some(s) = self.stations.get_mut(&station_id) { s.key = key; s.jb.set_target_ms(jitter_ms); }
+                    if let Some(s) = self.stations.get_mut(&station_id) {
+                        // A NEW key: the session being carried was sealed under the old one — drop it now, so the
+                        // new key's sender is accepted on its first packet ("busy" is never held by a refused key).
+                        if !s.key.same_as(&key) { s.drop_session("the fader's key was replaced; the session was sealed under the old key"); }
+                        s.key = key;
+                        s.jb.set_target_ms(jitter_ms);
+                    }
                 }
                 RxReg::Remove { station_id } => {
                     if let Some(s) = self.stations.remove(&station_id) {
@@ -948,5 +972,82 @@ mod tests {
         assert_eq!(st["rx"]["lost"], 0);
         assert_eq!(st["rx"]["authFailures"], 0);
         assert_eq!(tx["tx"]["state"], "receiving");
+    }
+
+    /// REPLACE KEY → PASTE (Jeff, 2026-09-30): feed → the sending machine replaces its key (the sender restarts on the
+    /// new key, a new session) → the fader still holds the old key and refuses it → wait → the new line is pasted into
+    /// the fader → the feed resumes within 2 s. Run twice: after 6 s (Jeff's test) and after 0.3 s — inside the 5 s
+    /// RELEASE_AFTER, where only dropping the old session on the key change can let the new sender in.
+    #[test]
+    #[ignore] // real time (≈ 14 s) and a real UDP port: `cargo test --release --lib linknet::tests::replace_key -- --ignored --nocapture`
+    fn replace_key_then_paste_resumes_within_2s() {
+        let port = 39_762u16;
+        set_listen_port(port);
+        let (rx_st, tx_st) = (9101u32, 9102u32);
+        let uuid = "22222222-3333-4444-8555-666666666666";
+        let pairing = "8e8f6181-b68a-433f-a93d-8005787b641b|041ceb96-3d66-4d39-85c0-e2f5aa6e3b1e";
+        let rx_cfg = |key: &str, id: u32| RxCfg { uuid: uuid.into(), key_hex: key.into(), key_id: id, jitter_ms: 120, pairing: pairing.into() };
+        let send = |key: &str, id: u32| {
+            let (t, cons, tsh) = tap();
+            let s = start_sender(tx_st, SendCfg { target_uuid: uuid.into(), pairing: pairing.into(), key_hex: key.into(), key_id: id,
+                                                  host: "127.0.0.1".into(), port, bitrate: DEFAULT_BITRATE, fec: true }, cons, tsh).unwrap();
+            (t, s)
+        };
+        let mut links = LinkInputs::new(rx_st);
+        let mut acts = Vec::new();
+        let k1 = LinkKey::mint_hex().unwrap();
+        links.set(7, "S1", Some(rx_cfg(&k1, 1)), &mut acts);
+        let mut feed = match acts.pop() { Some(crate::micin::MicAction::Install(_, f)) => f, _ => panic!("no feed installed") };
+        let (mut tap_now, mut sender) = send(&k1, 1);
+        // Real time in 10 ms blocks: the tap is fed and the slot pulled, as the engine does. Stops early when `done`.
+        let block = 441usize;
+        let tone: Vec<f32> = (0..block).map(|f| 0.125 * (2.0 * std::f64::consts::PI * 1000.0 * f as f64 / 44_100.0).sin() as f32).collect();
+        let mut out = vec![0f32; block * 2];
+        let mut run = |tap: &mut LinkTap, feed: &mut crate::rt::DeckFeed, max: Duration, done: &dyn Fn() -> bool| -> Duration {
+            let t0 = Instant::now();
+            let mut b = 0u64;
+            loop {
+                let due = t0 + Duration::from_micros(b * 10_000);
+                while Instant::now() < due { std::thread::sleep(Duration::from_micros(200)); }
+                tap.push(&tone, &tone);
+                feed.live.as_mut().unwrap().pull(&mut out, block);
+                b += 1;
+                let el = t0.elapsed();
+                if done() || el >= max { return el; }
+            }
+        };
+        let rx = || state_json(rx_st)["rx"].clone();
+        let tx = || state_json(tx_st)["tx"].clone();
+        let flowing = || rx()["state"] == "receiving" && tx()["state"] == "receiving";
+
+        let up = run(&mut tap_now, &mut feed, Duration::from_secs(3), &flowing);
+        assert!(flowing(), "the feed came up (rx {} · tx {})", rx(), tx());
+        println!("[replace-key] feed up after {:.2} s", up.as_secs_f64());
+
+        for (round, (wait, id)) in [(Duration::from_secs(6), 2u32), (Duration::from_millis(300), 3u32)].into_iter().enumerate() {
+            // Replace key on the sending machine: the sender restarts on the new key (a new session).
+            let kn = LinkKey::mint_hex().unwrap();
+            drop(sender);
+            let (t, s) = send(&kn, id);
+            tap_now = t; sender = s;
+            let refused0 = rx()["authFailures"].as_u64().unwrap_or(0);
+            run(&mut tap_now, &mut feed, wait, &|| false);
+            let refused = rx()["authFailures"].as_u64().unwrap_or(0) - refused0;
+            println!("[replace-key] round {} · waited {:.1} s on the old key: fader {} · key refused {} · sender {}",
+                     round + 1, wait.as_secs_f64(), rx()["state"], refused, tx()["state"]);
+            assert!(refused > 0, "the fader refused the new key's packets while it held the old key");
+            // Paste the new line into the fader (the same slot: an Update with a new key).
+            let mut acts = Vec::new();
+            links.set(7, "S1", Some(rx_cfg(&kn, id)), &mut acts);
+            assert!(acts.is_empty(), "a key change on the same slot keeps the fader's feed");
+            let recv0 = rx()["received"].as_u64().unwrap_or(0);
+            let back = run(&mut tap_now, &mut feed, Duration::from_secs(4), &flowing);
+            println!("[replace-key] round {} · after the paste: resumed in {:.2} s · fader {} (received {} → {}) · sender {} · busy refusals {}",
+                     round + 1, back.as_secs_f64(), rx()["state"], recv0, rx()["received"], tx()["state"], rx()["busyRefusals"]);
+            assert!(flowing(), "the feed resumed (rx {} · tx {})", rx(), tx());
+            assert!(back <= Duration::from_secs(2), "the feed must resume within 2 s of the paste — took {:.2} s", back.as_secs_f64());
+            assert_ne!(tx()["state"], "busy");
+        }
+        drop(sender);
     }
 }
