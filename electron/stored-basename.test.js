@@ -72,7 +72,9 @@ describe("Re-sync re-points Windows-path rows to this machine's files by name", 
   fs.mkdirSync(lib, { recursive: true });
   for (const f of ["ABC.mp3", "Legal ID.wav", "Pool Sweep.mp3"]) fs.writeFileSync(path.join(lib, f), "x");
 
-  const WIN = "C:\\Users\\jensj\\AppData\\Local\\Ether\\catalogue\\";
+  // A Windows-shaped path that exists on NO machine. It was jensj's real catalogue — and on jensj's own Windows box
+  // ABC.mp3 is really there, so Re-sync (rightly) kept that row and this test failed there only.
+  const WIN = "C:\\Users\\ether-test-nobody\\AppData\\Local\\Ether\\catalogue\\";
   const db = new Database(":memory:");
   db.exec(`
     CREATE TABLE songs (id INTEGER PRIMARY KEY, title TEXT, file_path TEXT, file_key TEXT, category_id INTEGER,
