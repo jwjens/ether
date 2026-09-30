@@ -274,7 +274,23 @@ it already resolves these rows by name.)
 - **3 dead** (unchanged, not a path problem): Mac-path rows whose files never reached this Mac — the Ariana
   Grande "Hate That I Made You Love Me" live edit (songs 1104 / library_asset 1016, and the halloVeen miss,
   song 1105) and "GC Sponsorship EnglishVersion 15 Secs Normalized" (spots 7 / library_asset 1015).
-- What the Health Monitor shows on screen: **UNVERIFIED** until the app is opened.
+- What the Health Monitor shows on screen: **UNVERIFIED** (no screenshot permission). The app's own ledger is
+  the runtime receipt, below.
+
+## 8. The package for Jeff — built from HEAD, launched from its DMG
+
+`dist-electron/Ether-4.6.52-arm64.dmg` (SHA-256 `78337054a7ec11a1400e2065f27e41cb528ad5225566de23799d84e0cb988dbd`),
+built from `9df359d` with every fix above. The version is still 4.6.52 — no bump without Jeff's say-so.
+
+- Mounted and launched **from the DMG**: signature `flags=0x2(adhoc)`, engine `Mach-O … arm64` in
+  `app.asar.unpacked/native`. No dyld crash.
+- `ether-startup.log` 16:15:17Z, pid 76660: `[audiod-client] connected to daemon (after spawn)` ·
+  **`[AUDIO] daemon ACTIVE — out-of-process engine (connected in 835ms)`**.
+- `health-events.jsonl` 16:17:18Z (`library-health`, written by the app): **`foreign` (OUTSIDE) 48 on all five
+  stations**; halloVeen `dead 1` (the missing Ariana file, §7).
+- Literally-named files in the catalogue after the session: **0** (the fixed materializer wrote none).
+- `node audiod/verify-packaged.js`: `✅ RELEASE GATE PASS`.
+- App quit and DMG unmounted afterwards. **Not installed** — Jeff installs.
 
 ## Side notes (not investigated)
 - `ether-startup.log` on this Mac is 2.4 MB — the never-rotating log already on the backlog.
