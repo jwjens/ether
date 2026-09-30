@@ -142,7 +142,7 @@ const sandbox = new Function(
   "ipcMain", "db", "require", "getActiveStationId", "_healthEvent", "_genEmit", "_placeJingles",
   "finishGenerateRun", "retireStaleScheduleRows", "_hourRanges", "_fmtHour", "buildScheduleCtx",
   "generateDayRows", "resetGenSlice", "Date", "console", "sendToAllWindows", "path",
-  "_stationUuidById",
+  "_stationUuidById", "storedBasename",
   src
 );
 const handlers = {};
@@ -154,7 +154,10 @@ sandbox(
   (set) => [...set], (h) => String(h), gc.buildScheduleCtx, gc.generateDayRows, gc.resetGenSlice, FakeDate,
   { log: () => {}, error: (...a) => origLog("  [handler error]", ...a) },
   (channel, payload) => broadcasts.push({ channel, payload }), path,
-  (id) => db.prepare("SELECT uuid FROM stations WHERE id = ?").get(id)?.uuid || null
+  (id) => db.prepare("SELECT uuid FROM stations WHERE id = ?").get(id)?.uuid || null,
+  // main.js imports it at the top level (electron/main.js: `const { storedBasename } = require('./audio-library-index')`);
+  // the lifted handlers use it (editRowFields' swap), so the sandbox passes the real one.
+  require(path.join(root, "electron", "audio-library-index.js")).storedBasename
 );
 check("handlers registered: generateDay, generateDays, clearDay, get, moveRow, deleteRow, editRowFields, checkRow", ["schedule:generateDay", "schedule:generateDays", "schedule:clearDay", "schedule:get", "schedule:moveRow", "schedule:deleteRow", "schedule:editRowFields", "schedule:checkRow"].every(k => !!handlers[k]));
 const get = (from, to, sid = 1) => { const r = handlers["schedule:get"](null, from, to, sid); if (r.error) throw new Error("schedule:get → " + r.error); return r.data; };
