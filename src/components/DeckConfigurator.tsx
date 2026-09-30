@@ -71,8 +71,8 @@ export const SOURCE_KINDS: SourceKindMeta[] = [
     state: "Live microphone on this channel, on air — pick the input on the strip or in Preferences → Audio." },
   // THE REMOTE LINK (docs/remote-link-design-2026-09-28.md, ruling D1): Ether-to-Ether, its own patch type. Network below
   // stays the placeholder for third-party codecs (Zephyr, AoIP), which are a different protocol.
-  { kind: "link",         label: "Link (remote Ether)",  family: "stream",
-    state: "A remote Ether computer's programme, straight to this channel — key, buffer and port in Preferences → Broadcast → Remote Link." },
+  { kind: "link",         label: "Link (network feed)",  family: "stream",
+    state: "A feed over the network from another Ether computer, into this fader — paste that computer's link key on the strip; buffer and port in Preferences → Broadcast → Remote Link." },
   { kind: "network",      label: "Network (IP / Zephyr / AoIP)", family: "stream",
     state: "Needs the engine capture path — Phase 2." },
 ];

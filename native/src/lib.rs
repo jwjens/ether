@@ -427,9 +427,10 @@ pub fn audio_mic_state(station_id: u32) -> String { micin::state_json(station_id
 // ── THE REMOTE LINK (docs/remote-link-design-2026-09-28.md) ─────────────────────────────────────────────
 
 /// Patch this station's Link input onto a SOURCE channel (D–F, S1–S5). `station_uuid` is THIS station's UUID
-/// (the tag senders address), `key_hex` its link key (64 hex). `station_uuid` empty = unpatch the slot.
+/// (the tag senders address), `key_hex` the SENDING computer's link key pasted into this fader (64 hex), `pairing`
+/// "<this machine id>|<sending machine id>". `station_uuid` empty = unpatch the slot.
 #[napi]
-pub fn audio_set_link_input(station_id: u32, slot: String, station_uuid: String, key_hex: String, key_id: u32, jitter_ms: u32) -> String {
+pub fn audio_set_link_input(station_id: u32, slot: String, station_uuid: String, key_hex: String, key_id: u32, jitter_ms: u32, pairing: String) -> String {
     let Some(idx) = audio::deck_index(&slot) else {
         return serde_json::json!({ "ok": false, "reason": format!("`{}` is not a fader", slot) }).to_string();
     };
@@ -440,10 +441,10 @@ pub fn audio_set_link_input(station_id: u32, slot: String, station_uuid: String,
         if link::station_tag(&station_uuid).is_none() {
             return serde_json::json!({ "ok": false, "reason": format!("`{}` is not a station UUID", station_uuid) }).to_string();
         }
-        if link::LinkKey::from_hex(&key_hex, key_id).is_none() {
-            return serde_json::json!({ "ok": false, "reason": "this station has no valid link key" }).to_string();
+        if link::LinkKey::from_hex(&key_hex, key_id, &pairing).is_none() {
+            return serde_json::json!({ "ok": false, "reason": "this fader has no valid link key from the sending computer" }).to_string();
         }
-        Some(linknet::RxCfg { uuid: station_uuid, key_hex, key_id, jitter_ms })
+        Some(linknet::RxCfg { uuid: station_uuid, key_hex, key_id, jitter_ms, pairing })
     };
     let engine = get_or_create_engine(station_id, None);
     let Ok(audio) = engine.lock() else { return serde_json::json!({ "ok": false, "reason": "engine busy" }).to_string() };
@@ -453,10 +454,11 @@ pub fn audio_set_link_input(station_id: u32, slot: String, station_uuid: String,
     }
 }
 
-/// SEND TO: send this station's programme bus (pre-processor) to `target_uuid` at `host:port`, sealed with the
-/// target's link key. `target_uuid` empty = stop sending.
+/// SEND TO: send this station's programme bus (pre-processor) as a feed to the Link fader of station `target_uuid`
+/// on another machine, at `host:port`, sealed with THIS machine's link key; `pairing` "<receiving machine id>|<this
+/// machine id>". `target_uuid` empty = stop.
 #[napi]
-pub fn audio_set_link_send(station_id: u32, target_uuid: String, key_hex: String, key_id: u32, host: String, port: u32, bitrate: u32, fec: bool) -> String {
+pub fn audio_set_link_send(station_id: u32, target_uuid: String, key_hex: String, key_id: u32, host: String, port: u32, bitrate: u32, fec: bool, pairing: String) -> String {
     let cfg = if target_uuid.is_empty() { None } else {
         if host.trim().is_empty() {
             return serde_json::json!({ "ok": false, "reason": "no address to send to" }).to_string();
@@ -465,7 +467,10 @@ pub fn audio_set_link_send(station_id: u32, target_uuid: String, key_hex: String
             return serde_json::json!({ "ok": false, "reason": format!("{} is not a UDP port", port) }).to_string();
         }
         let br = bitrate.clamp(link::BITRATE_RANGE.0, link::BITRATE_RANGE.1);
-        Some(linknet::SendCfg { target_uuid, key_hex, key_id, host: host.trim().into(), port: port as u16, bitrate: br, fec })
+        if link::LinkKey::from_hex(&key_hex, key_id, &pairing).is_none() {
+            return serde_json::json!({ "ok": false, "reason": "this computer's link key (or the pairing) is missing or malformed" }).to_string();
+        }
+        Some(linknet::SendCfg { target_uuid, pairing, key_hex, key_id, host: host.trim().into(), port: port as u16, bitrate: br, fec })
     };
     let engine = get_or_create_engine(station_id, None);
     let Ok(audio) = engine.lock() else { return serde_json::json!({ "ok": false, "reason": "engine busy" }).to_string() };

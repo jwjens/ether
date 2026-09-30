@@ -289,3 +289,36 @@ compiles libopus with CMake. This machine has no CMake on PATH, but Visual Studi
 (`…\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe`, 3.31). Local builds set
 `CMAKE` to it (nothing installed); GitHub's Windows and macOS runners have CMake on PATH. A deep target directory
 trips MSBuild's path-length limit; `native/target` is short enough (probe build: libopus compiled in 45 s).
+
+## Ruling 2026-09-29 — a FEED into a FADER; the SENDING machine makes the key ("B")
+
+Jeff, verbatim: *"its just a source feed thats being sent to an aux deck fader input should be in the dropdown just
+like the knob setting at the top of a wheatstone board its not station to station its feed over network"* — and
+*"B. The sending machine makes the key (Preferences → Broadcast → Remote Link, one copyable line with its machine
+name); the receiving side pastes it into the fader's Link input next to the source dropdown. Override my earlier
+'key belongs to the receiver.'"* — *"just like telling a codec which caller to accept. Each fader can be cut off on
+its own."* This supersedes the per-station receive key of steps 3–5 and the earlier same-day ruling that the key
+belongs to the receiving machine.
+
+| | Before (steps 3–5) | Now |
+|---|---|---|
+| Destination | a station | **computer · station · the fader set to Link** (the computer per station from `designated_generator`, synced) |
+| Key made by | the receiving station | **the sending machine** — `EtherMachine/link-key` beside `machine-id` (survives wipes) |
+| Key shown as | fingerprint only | **one copyable line** `ether-link:1:<machine id>:<key id>:<64 hex>:<machine name>` (Preferences → Broadcast → Remote Link → Copy link key) |
+| Receiving side | station key in `link_key` | the pasted line lives on the fader: `link_input.from {machine, name, keyId, key}`; **✕ / Forget key** cuts that sender off, that fader only |
+| Wire | station tag + AEAD(header) | station tag unchanged (routing); AEAD associated data = header ‖ **"<receiving machine id>\|<sending machine id>"** — a packet opens only on the machine it was sealed for, only from the machine the fader's key names |
+| Refusals | to itself; a station this machine airs; a two-way loop | **one**: a feed to THIS SAME machine (a loop), refused on both ends (send list greyed; a fader refuses its own computer's key). A station this machine also airs is the normal case. |
+| Self-test | — | `ETHER_LINK_SELF_TEST=1` (env; never set by the UI) lifts the same-machine refusal; a station still never feeds its own board |
+
+Where: `native/src/link.rs` (`LinkKey::from_hex(hex, id, pairing)`, `MAX_PAIR` 96, AAD on the stack), `linknet.rs`
+(`RxCfg.pairing`, `SendCfg.pairing`), `lib.rs` (`audio_set_link_input` / `audio_set_link_send` take `pairing` last),
+`audiod/link.js` (token, machine key file, pairing, refusals), `audiod/ether-audiod.js` (plans), `electron/main.js`
+(`link:get` targets, `link:key-line`, `link:mint-key` = the machine's key, `link:set-input` takes `keyLine` /
+`clearKey`), `SourceChannelStrip.tsx` (paste box under the dropdown, ✕), `RemoteLinkSettings.tsx`, the Health row,
+the master section's SEND FEED, `docs/help-remote-link.md`. Dropdown label: **Link (network feed)**.
+
+Tests: `cargo test --release --lib link` 23 passed (new: `the_pairing_binds_a_packet_to_both_machines` — other
+receiver refused, other sender refused, empty/oversized pairing refused); the real-UDP loopback (`--ignored`) with
+the pairing: key accepted, 0 auth failures, 0 lost, tone −21.10 dBFS (sent −21.07); 3 runs — Δ(shown − audio)
+−17.2 ms (**FAILED** the 15 ms bound, on a loaded box: dev app + release build running), then −4.1 and +2.8 ms
+(passed). `node audiod/smoke-link.js` all passed. `npx tsc --noEmit` 0 errors.

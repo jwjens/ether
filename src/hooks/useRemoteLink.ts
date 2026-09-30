@@ -1,8 +1,10 @@
 // src/hooks/useRemoteLink.ts — THE REMOTE LINK, renderer side (docs/remote-link-design-2026-09-28.md).
 //
-// ONE READER, ONE WRITER, like the mic (useMicInputs.ts). The stored Link (which slot takes it, where this station
-// sends, the key's fingerprint — never the key) is read with link:get and written with link:set-input /
-// link:set-send — ENGINE FIRST, stored machine-local only if the engine took it. The live state (both directions,
+// A Link is a FEED over the network into a FADER (its input selector set to Link) — not station to station. The
+// SENDING machine makes the key and shows it as one copyable line; the receiving fader's Link input takes it pasted.
+// ONE READER, ONE WRITER, like the mic (useMicInputs.ts). The stored Link (which fader takes it and whose key it
+// holds, where this station's feed goes, this machine's key fingerprint) is read with link:get and written with
+// link:set-input / link:set-send — ENGINE FIRST, stored machine-local only if the engine took it. The live state (both directions,
 // every counter) is the ENGINE's, read with link:state. One shared poller per station, however many strips and
 // panels show it. The words for each state are HERE, so the strip, Preferences and the Health Monitor say the same.
 import { useCallback, useEffect, useState } from "react";
@@ -10,13 +12,20 @@ import { OPEN_PREFS_KEY } from "./useMicInputs";
 
 export type LinkDefaults = { bitrate: number; bitrateRange: [number, number]; jitterMs: number; jitterRangeMs: [number, number];
                              port: number; frameMs: number; rate: number; transport: string };
-export type LinkInput = { slot: string; jitterMs: number; port: number; autoCut: boolean; autoCutSec: number };
-export type LinkSend = { target: string; host: string; port: number; bitrate: number; fec: boolean; srtFallbackSec: number | null };
-export type LinkStationChoice = { id: number; name: string; uuid: string; hasKeyHere: boolean; keyFingerprint: string; refusal: string | null };
+/** Whose key the fader holds (pasted from the sending computer) — shown as a name and fingerprint, never the key. */
+export type LinkFrom = { machine: string; name: string; keyId: number; fingerprint: string };
+export type LinkInput = { slot: string; jitterMs: number; port: number; autoCut: boolean; autoCutSec: number; from?: LinkFrom | null };
+/** A change to the fader's Link: `keyLine` = a pasted key line, `clearKey` = forget the key (cut that sender off). */
+export type LinkInputEdit = Omit<LinkInput, "from"> & { keyLine?: string; clearKey?: boolean };
+export type LinkSend = { target: string; targetMachine: string; targetMachineName: string; host: string; port: number;
+                         bitrate: number; fec: boolean; srtFallbackSec: number | null };
+/** Where a feed can go: a computer · a station on it (and, on this computer, the fader set to Link). */
+export type LinkTarget = { machine: string; machineName: string; thisComputer: boolean; stationUuid: string; stationName: string;
+                           stationId: number; channel?: string | null; refusal: string | null };
 export type LinkCfg = {
-  ok: boolean; reason?: string; defaults: LinkDefaults; stationUuid: string; machineName: string;
-  input: LinkInput | null; send: LinkSend | null; key: { fingerprint: string; id: number; mintedAt: string | null } | null;
-  stations: LinkStationChoice[]; slots: string[]; autoCutDefault: { autoCut: boolean; autoCutSec: number };
+  ok: boolean; reason?: string; defaults: LinkDefaults; stationUuid: string; machineId: string | null; machineName: string; selfTest: boolean;
+  input: LinkInput | null; inputRefusal: string | null; send: LinkSend | null; key: { fingerprint: string; id: number; mintedAt: string | null } | null;
+  targets: LinkTarget[]; slots: string[]; autoCutDefault: { autoCut: boolean; autoCutSec: number };
   srtFallbackProposedSec: number; daemon: boolean;
 };
 export type LinkRx = {
@@ -91,29 +100,34 @@ export function useRemoteLink(stationId: number | null | undefined) {
   }, [stationId]);
 
   const api = () => (window as any).ether?.audio;
-  /** Patch the Link on a slot / change its buffer, port or auto-cut (null = unpatch). Engine first. */
-  const setInput = useCallback(async (input: LinkInput | null): Promise<{ ok: boolean; reason?: string }> => {
+  /** Patch the Link on a fader / change its buffer, port, auto-cut or pasted key (null = unpatch). Engine first. */
+  const setInput = useCallback(async (input: LinkInputEdit | null): Promise<{ ok: boolean; reason?: string; needsKey?: boolean }> => {
     if (stationId == null) return { ok: false, reason: "no station" };
     const r = await api()?.linkSetInput?.(stationId, input);
     bump(stationId);
     return r || { ok: false, reason: "no answer" };
   }, [stationId]);
-  /** SEND TO (null = stop). Engine first. */
+  /** The feed out (null = stop). Engine first. */
   const setSend = useCallback(async (send: LinkSend | null): Promise<{ ok: boolean; reason?: string }> => {
     if (stationId == null) return { ok: false, reason: "no station" };
     const r = await api()?.linkSetSend?.(stationId, send);
     bump(stationId);
     return r || { ok: false, reason: "no answer" };
   }, [stationId]);
-  /** Make (or replace) this station's link key. Senders using the old key stop being accepted. */
+  /** Replace THIS COMPUTER's link key. Every fader holding the old one stops accepting this computer's feed. */
   const mintKey = useCallback(async (): Promise<{ ok: boolean; reason?: string }> => {
-    if (stationId == null) return { ok: false, reason: "no station" };
-    const r = await api()?.linkMintKey?.(stationId);
-    bump(stationId);
+    const r = await api()?.linkMintKey?.();
+    if (stationId != null) bump(stationId);
+    return r || { ok: false, reason: "no answer" };
+  }, [stationId]);
+  /** This computer's key as the one copyable line (made on first ask). */
+  const keyLine = useCallback(async (): Promise<{ ok: boolean; line?: string; reason?: string }> => {
+    const r = await api()?.linkKeyLine?.();
+    if (stationId != null) bump(stationId);
     return r || { ok: false, reason: "no answer" };
   }, [stationId]);
 
-  return { cfg: snap.cfg, state: snap.state, setInput, setSend, mintKey };
+  return { cfg: snap.cfg, state: snap.state, setInput, setSend, mintKey, keyLine };
 }
 
 /** The Remote Link's door: Preferences → Broadcast → Remote Link. */
@@ -125,9 +139,12 @@ export function openLinkPreferences() {
 type Words = { text: string; tone: "ok" | "warn" | "bad" | "off" };
 const ms = (v: number | null | undefined) => (v == null ? "—" : `${Math.round(v)} ms`);
 
-/** The RECEIVE side in words. `patched` = a Link input is stored for this station on this machine. */
-export function rxWords(rx: LinkRx | null | undefined, patched: boolean): Words {
+/** The RECEIVE side in words. `patched` = a Link input is stored for this station on this machine; `hasKey` = the
+ *  sending computer's key is pasted into it; `refusal` = the pasted key was refused (e.g. this computer's own). */
+export function rxWords(rx: LinkRx | null | undefined, patched: boolean, hasKey = true, refusal?: string | null): Words {
   if (!patched) return { text: "not patched", tone: "off" };
+  if (refusal) return { text: refusal, tone: "bad" };
+  if (!hasKey) return { text: "paste the sending computer's link key", tone: "warn" };
   if (!rx) return { text: "waiting for the engine", tone: "warn" };
   const keyRejected = rx.lastAuthFailureAgoMs != null && rx.lastAuthFailureAgoMs < 10_000;
   switch (rx.state) {
@@ -141,11 +158,11 @@ export function rxWords(rx: LinkRx | null | undefined, patched: boolean): Words 
     default: return { text: rx.state, tone: "warn" };
   }
 }
-/** The SEND side in words. */
+/** The SEND side in words. `targetName` = "<computer> · <station>". */
 export function txWords(tx: LinkTx | null | undefined, sending: boolean, targetName?: string): Words {
   if (!sending) return { text: "off", tone: "off" };
   if (!tx) return { text: "waiting for the engine", tone: "warn" };
-  const to = targetName || "station";
+  const to = targetName || "the other computer";
   switch (tx.state) {
     case "receiving": return { text: `→ ${to} · ${to} receiving · RTT ${ms(tx.rttMs)}`, tone: tx.rxState === "receiving" ? "ok" : "warn" };
     case "sending": return { text: `→ ${to} · no answer yet`, tone: "warn" };
@@ -160,4 +177,11 @@ export function txWords(tx: LinkTx | null | undefined, sending: boolean, targetN
 /** A signal that the channel should read NOT FED: nothing is arriving to play. */
 export function linkNotFed(rx: LinkRx | null | undefined): boolean {
   return !rx || rx.state !== "receiving" || rx.primed === false;
+}
+/** Where this station's feed goes, in words: "<computer> · <station>" — the same on every surface. */
+export function sendTargetName(cfg: LinkCfg | null | undefined): string | undefined {
+  const s = cfg?.send;
+  if (!s) return undefined;
+  const t = cfg?.targets.find(x => x.stationUuid === s.target && x.machine === s.targetMachine) ?? cfg?.targets.find(x => x.stationUuid === s.target);
+  return `${s.targetMachineName || s.targetMachine.slice(0, 8)} · ${t?.stationName ?? "station"}`;
 }

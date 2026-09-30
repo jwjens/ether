@@ -223,59 +223,61 @@ function linkStationByUuid(uuid) {
   try { const r = getDb().prepare("SELECT id, name, uuid FROM stations WHERE lower(uuid)=lower(?) AND deleted_at IS NULL").get(uuid); return r ? { id: r.id, name: r.name, uuid: String(r.uuid).toLowerCase() } : null; }
   catch { return null; }
 }
-function linkDesignatedHere(sid) {
-  try {
-    const me = getDb().prepare("SELECT client_id FROM client_identity LIMIT 1").get();
-    const rec = JSON.parse(linkKv(sid, "designated_generator") || "null");
-    return !!(me && me.client_id && rec && rec.machine_id === me.client_id);
-  } catch { return false; }
+/** THIS machine's id (client_identity, forced to the stable machine-id on every boot by main). */
+function linkThisMachine() {
+  try { const r = getDb().prepare("SELECT client_id FROM client_identity LIMIT 1").get(); return r && r.client_id ? String(r.client_id).toLowerCase() : null; }
+  catch { return null; }
 }
-/** What the engine should run for this station's RECEIVE side: a want-string (to compare) and the call. */
+/** THIS machine's send key — the sending machine makes it (EtherMachine/link-key, beside machine-id). */
+function linkMachineKey() { return LinkCfg.readMachineKey(LinkCfg.machineDir({ userDataDir: _userDataDir() })); }
+/** What the engine should run for this station's RECEIVE side: a want-string (to compare) and the call.
+ *  The fader takes the SENDING machine's key, pasted into its Link input; paired "<this machine>|<sender>". */
 function linkInputPlan(sid, input) {
   const d = linkDefaults();
   const p = input === undefined ? LinkCfg.parseInput(linkKv(sid, LinkCfg.KEY_INPUT), d) : (input ? LinkCfg.parseInput(input, d) : null);
-  const key = LinkCfg.parseKey(linkKv(sid, LinkCfg.KEY_KEY));
   const st = linkStation(sid);
-  const want = p ? `${LinkCfg.serializeInput(p)}|${LinkCfg.keyFingerprint(key)}|${st ? st.uuid : ""}` : "";
-  return { p, key, st, want };
+  const me = linkThisMachine();
+  const refusal = p ? LinkCfg.inputRefusal({ thisMachine: me, from: p.from, selfTest: LinkCfg.selfTestOn() }) : null;
+  const want = p ? `${LinkCfg.serializeInput(p)}|${st ? st.uuid : ""}|${me || ""}|${refusal || ""}` : "";
+  return { p, st, me, refusal, want };
 }
 function linkApplyInput(sid, plan) {
-  const { p, key, st } = plan;
+  const { p, st, me, refusal } = plan;
   const prevSlot = (linkApplied.get(sid) || {}).inputSlot;
-  if (prevSlot && (!p || p.slot !== prevSlot)) { try { A.audioSetLinkInput(sid, prevSlot, "", "", 0, 0); } catch {} }
+  const unpatch = (slot) => { try { A.audioSetLinkInput(sid, slot, "", "", 0, 0, ""); } catch {} };
+  if (prevSlot && (!p || p.slot !== prevSlot || !p.from || refusal)) unpatch(prevSlot);
   if (!p) return { ok: true, slot: null };
   if (typeof A.audioLinkSetPort === "function") A.audioLinkSetPort(p.port);
+  if (refusal) return { ok: false, reason: refusal };
   if (!st || !LinkCfg.isUuid(st.uuid)) return { ok: false, reason: "this station has no UUID yet — sign in so the account can name it" };
-  if (!key) return { ok: false, reason: "this station has no link key — make one in Preferences → Remote Link" };
-  const r = JSON.parse(A.audioSetLinkInput(sid, p.slot, st.uuid, key.key, key.id, p.jitterMs));
+  if (!me) return { ok: false, reason: "this computer has no machine id yet — restart Ether" };
+  // Link picked on the fader, no key pasted yet: stored, NOT in the engine (nothing can be accepted without a key).
+  if (!p.from) return { ok: true, slot: null, needsKey: true };
+  const r = JSON.parse(A.audioSetLinkInput(sid, p.slot, st.uuid, p.from.key, p.from.keyId, p.jitterMs, LinkCfg.pairing(me, p.from.machine)));
   return r && r.ok ? { ok: true, slot: p.slot } : r;
 }
-/** The SEND side: where to, with which key (the TARGET station's — local in this build), and the refusals. */
+/** The SEND side: a feed to the Link fader of station `target` on `targetMachine`, sealed with THIS machine's key. */
 function linkSendPlan(sid, send) {
   const d = linkDefaults();
   const p = send === undefined ? LinkCfg.parseSend(linkKv(sid, LinkCfg.KEY_SEND), d) : (send ? LinkCfg.parseSend(send, d) : null);
   if (!p) return { p: null, want: "" };
   const own = linkStation(sid);
   const tgt = linkStationByUuid(p.target);
-  const key = tgt ? LinkCfg.parseKey(linkKv(tgt.id, LinkCfg.KEY_KEY)) : null;
-  const tgtSend = tgt ? LinkCfg.parseSend(linkKv(tgt.id, LinkCfg.KEY_SEND), d) : null;
-  const refusal = LinkCfg.sendRefusal({
-    ownUuid: own && own.uuid, target: p.target, targetName: tgt ? tgt.name : null,
-    designatedHere: tgt ? linkDesignatedHere(tgt.id) : false,
-    targetSendsToOwn: !!(tgtSend && own && tgtSend.target === own.uuid),
-  });
-  const want = `${LinkCfg.serializeSend(p)}|${LinkCfg.keyFingerprint(key)}|${refusal || ""}`;
-  return { p, tgt, key, refusal, want };
+  const me = linkThisMachine();
+  const key = linkMachineKey();
+  const refusal = LinkCfg.sendRefusal({ thisMachine: me, ownUuid: own && own.uuid, target: p.target, targetMachine: p.targetMachine,
+                                        targetMachineName: p.targetMachineName, selfTest: LinkCfg.selfTestOn() });
+  const want = `${LinkCfg.serializeSend(p)}|${LinkCfg.keyFingerprint(key)}|${key ? key.id : 0}|${me || ""}|${refusal || ""}`;
+  return { p, tgt, key, me, refusal, want };
 }
 function linkApplySend(sid, plan) {
-  const { p, tgt, key, refusal } = plan;
-  if (!p) { JSON.parse(A.audioSetLinkSend(sid, "", "", 0, "", 0, 0, false)); return { ok: true }; }
-  if (refusal) { try { A.audioSetLinkSend(sid, "", "", 0, "", 0, 0, false); } catch {} return { ok: false, reason: refusal }; }
-  if (!key) {
-    try { A.audioSetLinkSend(sid, "", "", 0, "", 0, 0, false); } catch {}
-    return { ok: false, reason: `${tgt ? tgt.name : "that station"} has no link key on this machine. In this build the key is made on the receiving station's machine; carrying it to other machines through the account is the next slice.` };
-  }
-  return JSON.parse(A.audioSetLinkSend(sid, p.target, key.key, key.id, p.host, p.port, p.bitrate, !!p.fec));
+  const { p, key, me, refusal } = plan;
+  const stop = () => { try { A.audioSetLinkSend(sid, "", "", 0, "", 0, 0, false, ""); } catch {} };
+  if (!p) { stop(); return { ok: true }; }
+  if (refusal) { stop(); return { ok: false, reason: refusal }; }
+  if (!me) { stop(); return { ok: false, reason: "this computer has no machine id yet — restart Ether" }; }
+  if (!key) { stop(); return { ok: false, reason: "this computer has no link key yet — make one in Preferences → Broadcast → Remote Link, and paste it into the fader at the other end" }; }
+  return JSON.parse(A.audioSetLinkSend(sid, p.target, key.key, key.id, p.host, p.port, p.bitrate, !!p.fec, LinkCfg.pairing(p.targetMachine, me)));
 }
 /** Every 3 s per station: re-land the stored Link when what is stored (or the key) differs from what was applied. */
 function linkReapply(sid) {
@@ -286,14 +288,14 @@ function linkReapply(sid) {
     if ((a.input === undefined && ip.want) || (a.input !== undefined && a.input !== ip.want)) {
       const r = linkApplyInput(sid, ip);
       a.input = ip.want; a.inputSlot = r && r.ok ? r.slot : null;
-      log(r && r.ok ? `[link s${sid}] input ${ip.p ? `${ip.p.slot} · buffer ${ip.p.jitterMs} ms · UDP ${ip.p.port}` : "unpatched"}`
+      log(r && r.ok ? `[link s${sid}] input ${ip.p ? `${ip.p.slot} · ${ip.p.from ? `key from ${ip.p.from.name}` : "no key pasted yet — not in the engine"} · buffer ${ip.p.jitterMs} ms · UDP ${ip.p.port}` : "unpatched"}`
                     : `[link s${sid}] input refused ✗ ${(r && r.reason) || "no answer from the engine"}`);
     }
     const sp = linkSendPlan(sid);
     if ((a.send === undefined && sp.want) || (a.send !== undefined && a.send !== sp.want)) {
       const r = linkApplySend(sid, sp);
       a.send = sp.want;
-      log(r && r.ok ? `[link s${sid}] send ${sp.p ? `→ ${sp.tgt ? sp.tgt.name : sp.p.target} at ${sp.p.host}:${sp.p.port}` : "off"}`
+      log(r && r.ok ? `[link s${sid}] send ${sp.p ? `feed → ${sp.p.targetMachineName || sp.p.targetMachine} · ${sp.tgt ? sp.tgt.name : sp.p.target} at ${sp.p.host}:${sp.p.port}` : "off"}`
                     : `[link s${sid}] send refused ✗ ${(r && r.reason) || "no answer from the engine"}`);
     }
   } catch (e) { log(`[link s${sid}] apply ✗`, String(e && e.message || e)); }
@@ -508,6 +510,8 @@ const handlers = {
       const plan = linkInputPlan(sid, String(m.input || ""));
       const r = linkApplyInput(sid, plan);
       if (r && r.ok) { const a = linkApplied.get(sid) || {}; a.input = plan.want; a.inputSlot = r.slot; linkApplied.set(sid, a); }
+      // A refused paste unpatched the fader: forget what was applied, so the next pass re-lands what is STORED.
+      else if (plan.refusal) { const a = linkApplied.get(sid) || {}; a.inputSlot = null; a.input = "\u0000"; linkApplied.set(sid, a); }
       return r;
     } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
   },
@@ -522,7 +526,7 @@ const handlers = {
       return r;
     } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
   },
-  // The key changed (minted / rotated) — re-apply on the next pass (both this station's input and any sender here).
+  // This machine's send key changed (made / replaced) — re-apply on the next pass (every sender here re-keys).
   linkKeyChanged:     () => { for (const a of linkApplied.values()) { a.input = "\u0000"; a.send = "\u0000"; } return true; },
   linkState:          (m) => (typeof A.audioLinkState === "function" ? JSON.parse(A.audioLinkState(Number(m.stationId))) : { v: 0, rx: null, tx: null }),
   linkDefaults:       ()  => linkDefaults(),

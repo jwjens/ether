@@ -5578,14 +5578,19 @@ ipcMain.handle("mic:state", async (_, stationId) => {
 });
 
 // ── THE REMOTE LINK (docs/remote-link-design-2026-09-28.md) ────────────────────────────────────────────────────
-//   link:get        → this station's stored Link (receive side, send side), its key's fingerprint (never the key),
-//                     the D5 defaults from the ENGINE, and the account's stations to send to (with the refusals).
-//   link:set-input  → the Link patch on a source channel: delivered to the engine FIRST, stored (set-local) on ok.
-//   link:set-send   → SEND TO: the same order.
-//   link:mint-key   → a new key for this station (OS randomness); the engine re-keys within 3 s.
+// A FEED over the network into a FADER (the channel's input selector set to Link) — not station to station.
+// THE SENDING MACHINE MAKES THE KEY (Jeff's ruling "B", 2026-09-29): Preferences → Broadcast → Remote Link shows it
+// as one copyable line naming this machine; the receiving side pastes it into the fader's Link input.
+//   link:get        → the station's stored Link (fader side + send side), this machine's key fingerprint, the
+//                     D5 defaults from the ENGINE, and where a feed can go (machine · station, from designation).
+//   link:key-line   → this machine's key as the one copyable line (made on first ask).
+//   link:mint-key   → a new key for THIS MACHINE (OS randomness): every fader holding the old one stops accepting.
+//   link:set-input  → the fader's Link (slot, buffer, port, auto-cut, the pasted key line): ENGINE FIRST, stored
+//                     (set-local) on ok.
+//   link:set-send   → the feed out: the same order.
 //   link:state      → the engine's live Link state, both directions (every counter).
-// Everything is machine-local (link_ prefix): what slot takes the Link and where this machine sends are this
-// machine's. The key is local IN THIS BUILD — delivering it through the account is the next slice.
+// Everything is machine-local (link_ prefix; the key in EtherMachine beside machine-id). The one refusal is a feed to
+// THIS SAME machine (a loop); ETHER_LINK_SELF_TEST=1 lifts it for the one-box test.
 const LinkCfg = require(path.join(__dirname, "..", "audiod", "link.js"));
 const _linkNoDaemon = { ok: false, reason: "the Remote Link needs the audio engine service — fully close and reopen Ether" };
 function _linkKv(sid, key) {
@@ -5600,47 +5605,105 @@ async function _linkDefaults() {
   try { if (AUDIO_DAEMON) { const d = await audiodClient.cmd("linkDefaults"); if (d) return d; } } catch {}
   return LinkCfg.FALLBACK_DEFAULTS;
 }
-function _linkDesignatedHere(sid) {
-  try {
-    const me = _machineIdentity();
-    const rec = JSON.parse(_linkKv(sid, "designated_generator") || "null");
-    return !!(me.id && rec && rec.machine_id === me.id);
-  } catch { return false; }
+const _linkMe = () => { const m = _machineIdentity(); return { id: m.id ? String(m.id).toLowerCase() : null, name: m.name || require("os").hostname() }; };
+const _linkMachineKey = () => LinkCfg.readMachineKey(_machineIdDir());
+function _linkMintMachineKey() {
+  const prev = _linkMachineKey();
+  const k = { key: require("crypto").randomBytes(32).toString("hex"), id: prev ? prev.id + 1 : 1, mintedAt: new Date().toISOString() };
+  LinkCfg.writeMachineKey(_machineIdDir(), k);
+  _healthEvent(prev ? "link-key-rotated" : "link-key-made", { keyId: k.id, fingerprint: LinkCfg.keyFingerprint(k) });
+  return k;
+}
+/** Where a feed can go: each station's designated machine (synced — works offline), and, under the self-test
+ *  override only, this computer for every station. The one refusal is computed per row. */
+function _linkTargets(ownSid) {
+  const me = _linkMe();
+  const selfTest = LinkCfg.selfTestOn();
+  const ownUuid = String(_stationUuidById(ownSid) || "").toLowerCase();
+  const d = LinkCfg.FALLBACK_DEFAULTS;
+  const out = [];
+  const seen = new Set();
+  for (const r of getDb().prepare("SELECT id, name, uuid FROM stations WHERE deleted_at IS NULL ORDER BY name").all()) {
+    const uuid = String(r.uuid || "").toLowerCase();
+    if (!LinkCfg.isUuid(uuid)) continue;
+    const machines = [];
+    try { const rec = JSON.parse(_linkKv(r.id, "designated_generator") || "null"); if (rec && rec.machine_id) machines.push({ id: String(rec.machine_id).toLowerCase(), name: rec.machine_name || String(rec.machine_id).slice(0, 8) }); } catch {}
+    if (selfTest && me.id && !machines.some(m => m.id === me.id)) machines.push({ id: me.id, name: me.name });
+    for (const m of machines) {
+      const k = `${m.id}|${uuid}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const here = m.id === me.id;
+      // Which fader takes the feed: known only for this computer (the fader's patch is machine-local).
+      const inp = here ? LinkCfg.parseInput(_linkKv(r.id, LinkCfg.KEY_INPUT), d) : null;
+      out.push({
+        machine: m.id, machineName: m.name, thisComputer: here, stationUuid: uuid, stationName: r.name, stationId: r.id,
+        channel: here ? (inp ? inp.slot : null) : undefined,
+        refusal: LinkCfg.sendRefusal({ thisMachine: me.id, ownUuid, target: uuid, targetMachine: m.id, targetMachineName: m.name, selfTest }),
+      });
+    }
+  }
+  return out;
 }
 ipcMain.handle("link:get", async (_, stationId) => {
   const sid = Number(stationId);
   if (!Number.isFinite(sid)) return { ok: false, reason: "no station" };
   try {
     const d = await _linkDefaults();
-    const ownUuid = String(_stationUuidById(sid) || "").toLowerCase();
-    const key = LinkCfg.parseKey(_linkKv(sid, LinkCfg.KEY_KEY));
-    const send = LinkCfg.parseSend(_linkKv(sid, LinkCfg.KEY_SEND), d);
-    const stations = getDb().prepare("SELECT id, name, uuid FROM stations WHERE deleted_at IS NULL ORDER BY name").all().map(r => {
-      const uuid = String(r.uuid || "").toLowerCase();
-      const tSend = LinkCfg.parseSend(_linkKv(r.id, LinkCfg.KEY_SEND), d);
-      const tKey = LinkCfg.parseKey(_linkKv(r.id, LinkCfg.KEY_KEY));
-      return {
-        id: r.id, name: r.name, uuid, hasKeyHere: !!tKey, keyFingerprint: LinkCfg.keyFingerprint(tKey),
-        refusal: LinkCfg.sendRefusal({ ownUuid, target: uuid, targetName: r.name, designatedHere: _linkDesignatedHere(r.id),
-                                       targetSendsToOwn: !!(tSend && tSend.target === ownUuid) }),
-      };
-    });
+    const me = _linkMe();
+    const key = _linkMachineKey();
+    const input = LinkCfg.parseInput(_linkKv(sid, LinkCfg.KEY_INPUT), d);
+    const inputRefusal = input ? LinkCfg.inputRefusal({ thisMachine: me.id, from: input.from, selfTest: LinkCfg.selfTestOn() }) : null;
     return {
-      ok: true, defaults: d, stationUuid: ownUuid, machineName: require("os").hostname(),
-      input: LinkCfg.parseInput(_linkKv(sid, LinkCfg.KEY_INPUT), d),
-      send, key: key ? { fingerprint: LinkCfg.keyFingerprint(key), id: key.id, mintedAt: key.mintedAt } : null,
-      stations, slots: LinkCfg.LINK_SLOTS, autoCutDefault: LinkCfg.AUTO_CUT_DEFAULT, srtFallbackProposedSec: LinkCfg.SRT_FALLBACK_PROPOSED_SEC,
-      daemon: !!AUDIO_DAEMON,
+      ok: true, defaults: d, stationUuid: String(_stationUuidById(sid) || "").toLowerCase(), machineId: me.id, machineName: me.name,
+      selfTest: LinkCfg.selfTestOn(),
+      // The fader side: the pasted key is shown as who it is from and a fingerprint — never echoed back.
+      input: input ? { ...input, from: input.from ? { machine: input.from.machine, name: input.from.name, keyId: input.from.keyId,
+                                                      fingerprint: LinkCfg.keyFingerprint({ key: input.from.key }) } : null } : null,
+      inputRefusal,
+      send: LinkCfg.parseSend(_linkKv(sid, LinkCfg.KEY_SEND), d),
+      key: key ? { fingerprint: LinkCfg.keyFingerprint(key), id: key.id, mintedAt: key.mintedAt } : null,
+      targets: _linkTargets(sid), slots: LinkCfg.LINK_SLOTS, autoCutDefault: LinkCfg.AUTO_CUT_DEFAULT,
+      srtFallbackProposedSec: LinkCfg.SRT_FALLBACK_PROPOSED_SEC, daemon: !!AUDIO_DAEMON,
     };
   } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
 });
+ipcMain.handle("link:key-line", async () => {
+  try {
+    const me = _linkMe();
+    if (!me.id) return { ok: false, reason: "this computer has no machine id yet — restart Ether" };
+    const k = _linkMachineKey() || _linkMintMachineKey();
+    try { if (AUDIO_DAEMON) await audiodClient.cmd("linkKeyChanged", {}); } catch {}
+    return { ok: true, line: LinkCfg.makeToken({ machine: me.id, name: me.name, key: k }), fingerprint: LinkCfg.keyFingerprint(k), id: k.id };
+  } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+});
+ipcMain.handle("link:mint-key", async () => {
+  try {
+    if (!_linkMe().id) return { ok: false, reason: "this computer has no machine id yet — restart Ether" };
+    const k = _linkMintMachineKey();
+    try { if (AUDIO_DAEMON) await audiodClient.cmd("linkKeyChanged", {}); } catch {}
+    return { ok: true, key: { fingerprint: LinkCfg.keyFingerprint(k), id: k.id, mintedAt: k.mintedAt } };
+  } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+});
+// input: { slot, jitterMs, port, autoCut, autoCutSec, keyLine?: "<pasted line>", clearKey?: true } | null.
+// Without keyLine/clearKey the fader keeps the key it already holds.
 ipcMain.handle("link:set-input", async (_, stationId, input) => {
   const sid = Number(stationId);
   if (!Number.isFinite(sid)) return { ok: false, reason: "no station" };
   if (!AUDIO_DAEMON) return _linkNoDaemon;
   const d = await _linkDefaults();
-  const p = input ? LinkCfg.parseInput(JSON.stringify(input), d) : null;
-  if (input && !p) return { ok: false, reason: `the Link goes on a source channel (${LinkCfg.LINK_SLOTS.join(", ")})` };
+  let p = null;
+  if (input) {
+    const stored = LinkCfg.parseInput(_linkKv(sid, LinkCfg.KEY_INPUT), d);
+    let from = stored ? stored.from : null;
+    if (typeof input.keyLine === "string") {
+      from = LinkCfg.parseToken(input.keyLine);
+      if (!from) return { ok: false, reason: "that is not a link key — copy the whole line from the sending computer (Preferences → Broadcast → Remote Link); it starts with ether-link:1:" };
+    }
+    if (input.clearKey) from = null;
+    p = LinkCfg.parseInput(JSON.stringify({ ...input, from }), d);
+    if (!p) return { ok: false, reason: `the Link goes on a source channel (${LinkCfg.LINK_SLOTS.join(", ")})` };
+  }
   const value = p ? LinkCfg.serializeInput(p) : "";
   let res;
   try { res = await audiodClient.cmd("setLinkInput", { stationId: sid, input: value }); }
@@ -5648,8 +5711,9 @@ ipcMain.handle("link:set-input", async (_, stationId, input) => {
   if (!res || res.ok !== true) return res || { ok: false, reason: "no answer from the engine" };
   try { _linkSetLocal(sid, LinkCfg.KEY_INPUT, value); }
   catch (e) { return { ok: false, reason: `the engine took the Link but it was not saved: ${String(e && e.message || e)}` }; }
-  _healthEvent(p ? "link-patched" : "link-unpatched", { stationId: sid, slot: p ? p.slot : null, jitterMs: p ? p.jitterMs : null, port: p ? p.port : null });
-  return { ok: true, input: p };
+  _healthEvent(p ? "link-patched" : "link-unpatched", { stationId: sid, slot: p ? p.slot : null, jitterMs: p ? p.jitterMs : null, port: p ? p.port : null,
+    from: p && p.from ? p.from.name : null, fromMachine: p && p.from ? p.from.machine : null });
+  return { ok: true, needsKey: !!res.needsKey };
 });
 ipcMain.handle("link:set-send", async (_, stationId, send) => {
   const sid = Number(stationId);
@@ -5657,7 +5721,8 @@ ipcMain.handle("link:set-send", async (_, stationId, send) => {
   if (!AUDIO_DAEMON) return _linkNoDaemon;
   const d = await _linkDefaults();
   const p = send ? LinkCfg.parseSend(JSON.stringify(send), d) : null;
-  if (send && !p) return { ok: false, reason: "pick a station and an address to send to" };
+  if (send && !p) return { ok: false, reason: "pick where the feed goes (computer · station) and the address" };
+  if (p && !_linkMachineKey()) _linkMintMachineKey();   // a sender always has a key to hand out
   const value = p ? LinkCfg.serializeSend(p) : "";
   let res;
   try { res = await audiodClient.cmd("setLinkSend", { stationId: sid, send: value }); }
@@ -5665,20 +5730,9 @@ ipcMain.handle("link:set-send", async (_, stationId, send) => {
   if (!res || res.ok !== true) return res || { ok: false, reason: "no answer from the engine" };
   try { _linkSetLocal(sid, LinkCfg.KEY_SEND, value); }
   catch (e) { return { ok: false, reason: `the engine is sending but the setting was not saved: ${String(e && e.message || e)}` }; }
-  _healthEvent(p ? "link-send-on" : "link-send-off", { stationId: sid, target: p ? p.target : null, host: p ? p.host : null, port: p ? p.port : null });
+  _healthEvent(p ? "link-send-on" : "link-send-off", { stationId: sid, target: p ? p.target : null, targetMachine: p ? p.targetMachineName || p.targetMachine : null,
+    host: p ? p.host : null, port: p ? p.port : null });
   return { ok: true, send: p };
-});
-ipcMain.handle("link:mint-key", async (_, stationId) => {
-  const sid = Number(stationId);
-  if (!Number.isFinite(sid)) return { ok: false, reason: "no station" };
-  try {
-    const prev = LinkCfg.parseKey(_linkKv(sid, LinkCfg.KEY_KEY));
-    const k = { key: require("crypto").randomBytes(32).toString("hex"), id: prev ? prev.id + 1 : 1, mintedAt: new Date().toISOString() };
-    _linkSetLocal(sid, LinkCfg.KEY_KEY, LinkCfg.serializeKey(k));
-    try { if (AUDIO_DAEMON) await audiodClient.cmd("linkKeyChanged", {}); } catch {}
-    _healthEvent(prev ? "link-key-rotated" : "link-key-made", { stationId: sid, keyId: k.id, fingerprint: LinkCfg.keyFingerprint(k) });
-    return { ok: true, key: { fingerprint: LinkCfg.keyFingerprint(k), id: k.id, mintedAt: k.mintedAt } };
-  } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
 });
 ipcMain.handle("link:state", async (_, stationId) => {
   const sid = Number(stationId);

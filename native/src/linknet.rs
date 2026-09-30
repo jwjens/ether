@@ -213,6 +213,8 @@ pub(crate) fn state_json(station_id: u32) -> serde_json::Value {
 #[derive(Clone, Debug)]
 pub(crate) struct SendCfg {
     pub target_uuid: String,
+    /// "<receiving machine id>|<this machine id>" — the key's pairing (link.rs `LinkKey`).
+    pub pairing: String,
     pub key_hex: String,
     pub key_id: u32,
     pub host: String,
@@ -232,7 +234,7 @@ impl Drop for Sender { fn drop(&mut self) { self.stop.store(true, Ordering::Rela
 
 pub(crate) fn start_sender(station_id: u32, cfg: SendCfg, cons: HeapCons<f32>, tsh: Arc<TxShared>) -> Result<Sender, String> {
     let tag = station_tag(&cfg.target_uuid).ok_or_else(|| format!("`{}` is not a station UUID", cfg.target_uuid))?;
-    let key = LinkKey::from_hex(&cfg.key_hex, cfg.key_id).ok_or("the target station's link key is missing or malformed")?;
+    let key = LinkKey::from_hex(&cfg.key_hex, cfg.key_id, &cfg.pairing).ok_or("this computer's link key (or the pairing) is missing or malformed")?;
     let board = tx_board(station_id);
     let stop = Arc::new(AtomicBool::new(false));
     let stop_t = stop.clone();
@@ -475,6 +477,8 @@ pub(crate) struct RxCfg {
     pub key_hex: String,
     pub key_id: u32,
     pub jitter_ms: u32,
+    /// "<this machine id>|<sending machine id>" — the pasted key's pairing (link.rs `LinkKey`).
+    pub pairing: String,
 }
 
 enum RxReg {
@@ -537,7 +541,7 @@ impl LinkInputs {
             *board.lock().unwrap_or_else(|e| e.into_inner()) = RxStatus { slot: slot_name.into(), state: "bad_config".into(), reason: why, ..Default::default() };
         };
         let Some(tag) = station_tag(&cfg.uuid) else { return bad(format!("`{}` is not a station UUID", cfg.uuid)); };
-        let Some(key) = LinkKey::from_hex(&cfg.key_hex, cfg.key_id) else { return bad("this station has no valid link key".into()); };
+        let Some(key) = LinkKey::from_hex(&cfg.key_hex, cfg.key_id, &cfg.pairing) else { return bad("this fader has no valid link key from the sending computer".into()); };
         let jitter_ms = cfg.jitter_ms.clamp(JITTER_RANGE_MS.0, JITTER_RANGE_MS.1);
         if self.slot == Some(idx) {
             // Same slot: a new key or buffer size only — the ring and the slot's feed stay.
@@ -886,15 +890,16 @@ mod tests {
         let port = 39_760u16;
         set_listen_port(port);
         let uuid = "11111111-2222-4333-8444-555555555555";
+        let pairing = "8e8f6181-b68a-433f-a93d-8005787b641b|041ceb96-3d66-4d39-85c0-e2f5aa6e3b1e";
         let key = LinkKey::mint_hex().unwrap();
         // receiver on station 9001, slot S1
         let mut links = LinkInputs::new(9001);
         let mut acts = Vec::new();
-        links.set(7, "S1", Some(RxCfg { uuid: uuid.into(), key_hex: key.clone(), key_id: 1, jitter_ms: 120 }), &mut acts);
+        links.set(7, "S1", Some(RxCfg { uuid: uuid.into(), key_hex: key.clone(), key_id: 1, jitter_ms: 120, pairing: pairing.into() }), &mut acts);
         let mut feed = match acts.pop() { Some(crate::micin::MicAction::Install(_, f)) => f, _ => panic!("no feed installed") };
         // sender on station 9002
         let (mut tap, cons, tsh) = tap();
-        let _sender = start_sender(9002, SendCfg { target_uuid: uuid.into(), key_hex: key, key_id: 1, host: "127.0.0.1".into(),
+        let _sender = start_sender(9002, SendCfg { target_uuid: uuid.into(), pairing: pairing.into(), key_hex: key, key_id: 1, host: "127.0.0.1".into(),
                                                   port, bitrate: DEFAULT_BITRATE, fec: true }, cons, tsh).unwrap();
         // run 6 s at real time in 10 ms buffers: tap in, slot out. A click at 3.000 s (sample-accurate at the tap).
         let block = 441usize;

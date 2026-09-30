@@ -3,7 +3,7 @@
 // Dark steel: #0e0e12 bg, #1e1e28 borders, zero border-radius.
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { openLinkPreferences, txWords, useRemoteLink } from "../hooks/useRemoteLink";
+import { openLinkPreferences, sendTargetName, txWords, useRemoteLink } from "../hooks/useRemoteLink";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { matchesStation } from "../lib/levelsScope";
@@ -234,21 +234,21 @@ function Fader({ label, value, onChange }: { label: string; value: number; onCha
 }
 
 // ── StatusRow ────────────────────────────────────────────────
-/** SEND TO — off, or where this station's programme is going and whether the far end is taking it. */
+/** SEND FEED TO — off, or which computer's fader this station's programme is feeding and whether it is taking it. */
 function SendToButton({ stationId }: { stationId: number | null }) {
   const link = useRemoteLink(stationId);
   const send = link.cfg?.send ?? null;
-  const target = link.cfg?.stations.find(s => s.uuid === send?.target)?.name;
+  const target = sendTargetName(link.cfg);
   const w = txWords(link.state?.tx, !!send, target);
   const tone = { ok: "var(--accent-green)", warn: "var(--accent-amber, #f59e0b)", bad: "var(--accent-red, #ef4444)", off: "var(--text-tertiary)" }[w.tone];
   return (
     <button onClick={openLinkPreferences}
-      title={send ? `Sending this station's programme (before processing) to ${target || "a station"}: ${w.text}. Stop or change it in Preferences → Broadcast → Remote Link.`
-                  : "SEND TO — send this station's programme to another station's Link channel (a remote broadcast). Opens Preferences → Broadcast → Remote Link."}
+      title={send ? `Feeding this station's programme (before processing) to the Link fader on ${target || "another computer"}: ${w.text}. Stop or change it in Preferences → Broadcast → Remote Link.`
+                  : "SEND FEED TO — feed this station's programme over the network into a fader set to Link on another computer (a remote broadcast). Opens Preferences → Broadcast → Remote Link."}
       style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "6px 10px", flexShrink: 0, cursor: "pointer",
                background: send ? "rgb(from var(--accent-green) r g b / 0.08)" : "var(--bg-tertiary)", border: "none",
                borderBottom: "1px solid var(--border-primary)", color: "var(--text-secondary)", textAlign: "left" as const }}>
-      <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" as const }}>Send to</span>
+      <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" as const }}>Send feed</span>
       <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: tone, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
         {send ? `● SENDING ${w.text}` : "off"}
       </span>

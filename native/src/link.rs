@@ -1,7 +1,7 @@
 // link.rs — THE REMOTE LINK, the part with no sockets and no threads (docs/remote-link-design-2026-09-28.md).
 //
 // A remote Ether box sends its programme bus to another station's source channel: Opus, 48 kHz, 20 ms frames,
-// over UDP, every packet sealed with the target station's link key. This file is the sans-IO core — everything
+// over UDP, every packet sealed with the SENDING machine's link key, paired "<receiving machine>|<sending machine>". This file is the sans-IO core — everything
 // that decides what a packet means, so all of it is testable offline with a simulated network:
 //
 //   · the WIRE: a 32-byte cleartext header (it is the AEAD's associated data, so it cannot be altered), then the
@@ -129,16 +129,35 @@ pub(crate) fn station_tag(uuid: &str) -> Option<[u8; 8]> {
     Some(t)
 }
 
-/// A station's link key: 32 bytes, carried as 64 hex characters.
+/// The longest pairing: "<receiving machine id>|<sending machine id>" (two UUIDs: 73 bytes).
+pub(crate) const MAX_PAIR: usize = 96;
+
+/// A link key (32 bytes, carried as 64 hex characters). The SENDING machine makes it; the receiving fader's Link
+/// input holds a copy (pasted), like a codec told which caller to accept. The station UUID stays the routing tag
+/// on the wire. The PAIRING — "<receiving machine id>|<sending machine id>" — is authenticated with every packet
+/// (it follows the header in the associated data, never sent): a packet opens only on the machine it was sealed
+/// for, and only from the machine that fader's key names — even under the same key.
 #[derive(Clone)]
-pub(crate) struct LinkKey { cipher: ChaCha20Poly1305, pub id: u32 }
+pub(crate) struct LinkKey { cipher: ChaCha20Poly1305, pub id: u32, pair: [u8; MAX_PAIR], pair_len: usize }
 impl LinkKey {
-    pub(crate) fn from_hex(hex: &str, id: u32) -> Option<LinkKey> {
+    /// `pairing` = "<receiving machine id>|<sending machine id>", the same string on both ends. Trimmed and
+    /// lower-cased, so a UUID typed in either case pairs. None if the key is not 64 hex, or the pairing is empty/too long.
+    pub(crate) fn from_hex(hex: &str, id: u32, pairing: &str) -> Option<LinkKey> {
         let h = hex.trim();
         if h.len() != 64 { return None; }
         let mut k = [0u8; 32];
         for i in 0..32 { k[i] = u8::from_str_radix(h.get(2 * i..2 * i + 2)?, 16).ok()?; }
-        Some(LinkKey { cipher: ChaCha20Poly1305::new(Key::from_slice(&k)), id })
+        let m = pairing.trim().to_ascii_lowercase();
+        if m.is_empty() || m.len() > MAX_PAIR { return None; }
+        let mut pair = [0u8; MAX_PAIR];
+        pair[..m.len()].copy_from_slice(m.as_bytes());
+        Some(LinkKey { cipher: ChaCha20Poly1305::new(Key::from_slice(&k)), id, pair, pair_len: m.len() })
+    }
+    /// The associated data: the 32-byte header, then the pairing. On the stack — no allocation.
+    fn aad<'a>(&self, header: &[u8], buf: &'a mut [u8; HEADER + MAX_PAIR]) -> &'a [u8] {
+        buf[..HEADER].copy_from_slice(&header[..HEADER]);
+        buf[HEADER..HEADER + self.pair_len].copy_from_slice(&self.pair[..self.pair_len]);
+        &buf[..HEADER + self.pair_len]
     }
     /// A fresh random key, as hex. OS randomness; None only if the OS refuses.
     pub(crate) fn mint_hex() -> Option<String> {
@@ -152,7 +171,9 @@ impl LinkKey {
         if out.len() < n { return None; }
         h.write(&mut out[..HEADER]);
         out[HEADER..HEADER + payload.len()].copy_from_slice(payload);
-        let (aad, rest) = out.split_at_mut(HEADER);
+        let (hdr, rest) = out.split_at_mut(HEADER);
+        let mut ab = [0u8; HEADER + MAX_PAIR];
+        let aad = self.aad(hdr, &mut ab);
         let tag = self.cipher.encrypt_in_place_detached(Nonce::from_slice(&h.nonce()), aad, &mut rest[..payload.len()]).ok()?;
         rest[payload.len()..payload.len() + TAG_LEN].copy_from_slice(&tag);
         Some(n)
@@ -163,7 +184,9 @@ impl LinkKey {
         let h = Header::peek(pkt)?;
         if h.key_id != self.id { return None; }
         let len = pkt.len() - HEADER - TAG_LEN;
-        let (aad, rest) = pkt.split_at_mut(HEADER);
+        let (hdr, rest) = pkt.split_at_mut(HEADER);
+        let mut ab = [0u8; HEADER + MAX_PAIR];
+        let aad = self.aad(hdr, &mut ab);
         let (body, tag) = rest.split_at_mut(len);
         self.cipher.decrypt_in_place_detached(Nonce::from_slice(&h.nonce()), aad, body, Tag::from_slice(tag)).ok()?;
         Some((h, len))
@@ -541,7 +564,8 @@ mod tests {
     use super::*;
 
     const UUID: &str = "8e8f6181-b68a-433f-a93d-8005787b641b";
-    fn key() -> LinkKey { LinkKey::from_hex(&"ab".repeat(32), 7).unwrap() }
+    const MACHINE: &str = "8e8f6181-b68a-433f-a93d-8005787b641b|041ceb96-3d66-4d39-85c0-e2f5aa6e3b1e";
+    fn key() -> LinkKey { LinkKey::from_hex(&"ab".repeat(32), 7, MACHINE).unwrap() }
     fn hdr(kind: Kind, seq: u32) -> Header {
         Header { kind, station: station_tag(UUID).unwrap(), key_id: 7, session: 0x1234_5678_9abc_def0, seq, flags: 0 }
     }
@@ -573,12 +597,31 @@ mod tests {
         println!("[link-wire] {} of {} single-byte tampers refused", refused, n);
         assert_eq!(refused, n);
         // the wrong key, and a truncated packet
-        let other = LinkKey::from_hex(&"cd".repeat(32), 7).unwrap();
+        let other = LinkKey::from_hex(&"cd".repeat(32), 7, MACHINE).unwrap();
         assert!(other.open(&mut buf[..n].to_vec()).is_none());
         assert!(k.open(&mut buf[..n - 1].to_vec()).is_none());
         // a different key id is refused before any decryption
-        let rotated = LinkKey::from_hex(&"ab".repeat(32), 8).unwrap();
+        let rotated = LinkKey::from_hex(&"ab".repeat(32), 8, MACHINE).unwrap();
         assert!(rotated.open(&mut buf[..n].to_vec()).is_none());
+    }
+
+    #[test]
+    fn the_pairing_binds_a_packet_to_both_machines() {
+        // Same key, same header: sealed for receiver A from sender S, it opens on A-from-S (any case/whitespace),
+        // never on another receiver, never as if from another sender.
+        let a = key();
+        let mut buf = [0u8; MAX_PACKET];
+        let n = a.seal(&hdr(Kind::Audio, 1), b"feed", &mut buf).unwrap();
+        let a_upper = LinkKey::from_hex(&"ab".repeat(32), 7, &format!("  {}  ", MACHINE.to_uppercase())).unwrap();
+        assert!(a_upper.open(&mut buf[..n].to_vec()).is_some());
+        let other_rx = LinkKey::from_hex(&"ab".repeat(32), 7, "0f1e2d3c-0000-4000-8000-000000000000|041ceb96-3d66-4d39-85c0-e2f5aa6e3b1e").unwrap();
+        assert!(other_rx.open(&mut buf[..n].to_vec()).is_none(), "sealed for receiver A: must not open on receiver B");
+        let other_tx = LinkKey::from_hex(&"ab".repeat(32), 7, "8e8f6181-b68a-433f-a93d-8005787b641b|0f1e2d3c-0000-4000-8000-000000000000").unwrap();
+        assert!(other_tx.open(&mut buf[..n].to_vec()).is_none(), "the fader's key names sender S: a packet claiming another sender must not open");
+        // No machine id = no key: an unpaired key cannot exist.
+        assert!(LinkKey::from_hex(&"ab".repeat(32), 7, "").is_none());
+        assert!(LinkKey::from_hex(&"ab".repeat(32), 7, "   ").is_none());
+        assert!(LinkKey::from_hex(&"ab".repeat(32), 7, &"x".repeat(MAX_PAIR + 1)).is_none());
     }
 
     #[test]
@@ -612,8 +655,8 @@ mod tests {
         let b = LinkKey::mint_hex().unwrap();
         assert_eq!(a.len(), 64);
         assert_ne!(a, b);
-        assert!(LinkKey::from_hex(&a, 1).is_some());
-        assert!(LinkKey::from_hex("zz", 1).is_none());
+        assert!(LinkKey::from_hex(&a, 1, MACHINE).is_some());
+        assert!(LinkKey::from_hex("zz", 1, MACHINE).is_none());
     }
 
     #[test]

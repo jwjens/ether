@@ -84,13 +84,16 @@ export default function SourceChannelStrip({
   };
 
   // ── THE REMOTE LINK (docs/remote-link-design-2026-09-28.md) ─────────────────────────────────────────────
-  // Picking "Link" patches this slot in the engine (engine first, stored machine-local); leaving it unpatches.
-  // The key, buffer, port and auto-cut live in Preferences → Broadcast → Remote Link; the strip shows the state.
+  // A FEED over the network into this fader, like the input selector on a console channel. Picking "Link" stores the
+  // patch; the SENDING computer's key line is pasted here (beside the dropdown) and only then is it in the engine
+  // (engine first, stored machine-local). ✕ forgets the key — that sender is cut off, this fader alone. Buffer,
+  // port and auto-cut live in Preferences → Broadcast → Remote Link; the strip shows the state.
   const link = useRemoteLink(stationId);
   const isLink = config.kind === "link";
   const linkInput = link.cfg?.input && link.cfg.input.slot === config.slot ? link.cfg.input : null;
   const linkRx = link.state?.rx ?? null;
-  const linkW = rxWords(linkInput ? linkRx : null, !!linkInput);
+  const linkW = rxWords(linkInput ? linkRx : null, !!linkInput, !!linkInput?.from, linkInput ? link.cfg?.inputRefusal : null);
+  const [keyDraft, setKeyDraft] = useState("");
   const linkTo = async (on: boolean) => {
     setPatchErr(null);
     if (!link.cfg) return;
@@ -100,6 +103,14 @@ export default function SourceChannelStrip({
     const r = await link.setInput({ slot: config.slot, jitterMs: cur?.jitterMs ?? d.jitterMs, port: cur?.port ?? d.port,
                                     autoCut: cur?.autoCut ?? link.cfg.autoCutDefault.autoCut, autoCutSec: cur?.autoCutSec ?? link.cfg.autoCutDefault.autoCutSec });
     if (!r.ok) setPatchErr(r.reason || "not applied");
+  };
+  /** The fader's key: a pasted line from the sending computer, or null = forget it (cut that sender off). */
+  const linkKey = async (line: string | null) => {
+    setPatchErr(null);
+    if (!linkInput) return;
+    const { from: _from, ...rest } = linkInput;
+    const r = await link.setInput(line == null ? { ...rest, clearKey: true } : { ...rest, keyLine: line });
+    if (!r.ok) setPatchErr(r.reason || "not applied"); else setKeyDraft("");
   };
   // D4 — AUTO-CUT (off by default, per station, its delay shown in Preferences): lost for autoCutSec → the channel
   // is turned OFF through the ON button's own writer, ONCE per loss, so the remote never returns to air unannounced.
@@ -226,6 +237,27 @@ export default function SourceChannelStrip({
             ● LINK · {linkInput ? linkW.text : "not patched — pick Link again"}
           </button>
         )}
+        {/* THE FADER'S KEY — pasted from the sending computer (its Preferences → Broadcast → Remote Link). */}
+        {isLink && linkInput && (linkInput.from ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 8, color: "var(--text-secondary)" }}
+               title={`This fader takes the feed of ${linkInput.from.name} only (key #${linkInput.from.keyId}, fingerprint ${linkInput.from.fingerprint} — compare it with the sending computer's screen). ✕ forgets the key: that computer is cut off from this fader.`}>
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              ← {linkInput.from.name} · key {linkInput.from.fingerprint}
+            </span>
+            <button onClick={() => linkKey(null)} aria-label={`Forget ${linkInput.from.name}'s key on channel ${letter}`}
+              style={{ width: 14, height: 14, lineHeight: "12px", padding: 0, border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)",
+                       color: "var(--text-tertiary)", fontSize: 9, cursor: "pointer", borderRadius: 2 }}>✕</button>
+          </div>
+        ) : (
+          <input value={keyDraft} placeholder="paste the sender's link key"
+            aria-label={`Link key for channel ${letter}, from the sending computer`}
+            title="On the computer sending the feed: Preferences → Broadcast → Remote Link → Copy link key. Paste the whole line here."
+            onChange={e => setKeyDraft(e.target.value)}
+            onPaste={e => { const t = e.clipboardData.getData("text"); if (t.trim()) { e.preventDefault(); setKeyDraft(t); linkKey(t); } }}
+            onKeyDown={e => { if (e.key === "Enter" && keyDraft.trim()) linkKey(keyDraft); }}
+            style={{ width: "100%", fontSize: 9, padding: "2px 4px", borderRadius: 2, background: "var(--bg-tertiary)", color: "var(--text-primary)",
+                     border: `1px solid ${TONE.warn}`, boxSizing: "border-box" }} />
+        ))}
         {patchErr && <div style={{ fontSize: 8, color: TONE.bad }}>⚠ {patchErr}</div>}
 
         {/* DUCK — the one control §B.6 exposes today. Threshold, attack, hold, release and depth
