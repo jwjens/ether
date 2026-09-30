@@ -221,5 +221,63 @@ Rust stable (targets aarch64 + x86_64), Node 22.23.3 and CMake 4.4.3 in `~/.loca
 `SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk`. `beforePack` overwrites the tracked Windows
 DLL `native/ether-audio.node` (as CI always did) — `git checkout native/ether-audio.node` after a local build.
 
-## Side note (not investigated)
-`ether-startup.log` on this Mac is 2.4 MB — the never-rotating log already on the backlog.
+## 7. Cross-platform filenames, Re-sync, and this Mac's DB
+
+### Fix
+- `storedBasename()` (`electron/audio-library-index.js`, exported): Windows-shaped (drive letter, UNC, any
+  `\`) → `path.win32.basename`, else `path.posix`. It lives in the index module, not a new file: the daemon
+  requires that module, and a new file the Windows stage does not copy is the 4.4.114 failure.
+- Every basename taken from a stored path uses it: `findInIndex` (health classifier, Re-sync, daemon resolver),
+  the materializer's `localTargetFor` (`library-health.js`), the five `file_key`s in `generate-core.js`,
+  `audio-library-migrate.js` `destinationFor`, `audio-library-r2.js` claimed keys, nine sites in `main.js`
+  (resolver log, R2 safe name, `file_key`s, the catalogue upload), and the daemon's resolver log line.
+  Renderer: `App.tsx:3169` and `ImportDialog.tsx:73` split on `/` only → now `\` and `/`.
+  `sync/mutation-writer.js` already split on both inline and is staged with the daemon, so it is unchanged.
+- Test: `electron/stored-basename.test.js` (vitest; CI's test job runs on ubuntu-latest — POSIX, where the bug
+  lives). 19 tests: the splitter, the index lookup, and a real Re-sync (`matchStation` → `applyRelink`) over
+  Windows-path rows in songs, schedule, announcements and library_asset. **With the fix reverted, 7 fail.**
+- Help: `docs/help-resync.md` (there was no help entry for Test sync / Re-sync).
+
+### Gates
+`npx tsc --noEmit` 0 errors · `npx vitest run` 69 files / 627 tests pass · `test:relink` 21/21 ·
+`test:resolver` 15/15 · `test:library-foreign` 28/28 · `test:audio-library` 41/41 · `test:catalogue-r2` PASS ·
+`test:copy-on-import` PASS · `node --check` on every edited main/daemon file.
+`test:audio-library-r2` fails (`uploadLibrary is not a function`) **identically on the committed tree** —
+pre-existing, not in CI, not touched.
+
+### The 92 (now 93) literally-named files — all DELETED as duplicates
+93 by the time of the fix: the installed old-code app wrote more today (07:28, 07:30, 08:25). For each, the
+real name is the `path.win32.basename`. **All 93 had the real file present and byte-identical (SHA-256), so
+all 93 duplicates were deleted; none needed renaming; none differed.** 104 songs and 108 library_asset rows
+pointed at them; the dry run showed all 104 songs inside some station's Re-sync scope before anything moved.
+
+### Re-sync on the installed app's DB (Jeff approved this one write)
+App and daemon closed; DB backed up first (`openair.db`, 748 MB, SHA-256 equal to the live file). Re-sync =
+the app's own `matchStation` → `applyRelink`, every station, with this Mac's catalogue as the folder.
+
+| station | linked | schedule entries NULLed (miss) | assets re-pointed |
+|---|---|---|---|
+| 1 Open Format | 138/138 | 0 | 447 |
+| 2 halloVeen | 291/292 | 1 | 17 |
+| 3 Magical Forest | 156/156 | 0 | 1 |
+| 4 Christmas in Jully | 126/126 | 0 | 1 |
+| 9 Fall VIbes | 0/0 | 0 | 0 |
+
+**OUTSIDE, by the board's own classifier (`classifyAll`): before 576–593 per station → after 48 on every
+station.** (Jeff saw 725 on the old build; the new build's classifier read 576–593 before the write, because
+it already resolves these rows by name.)
+
+- **The 48:** MUSIC rows with Windows paths filed in categories no station's clock plays — "Open Format" (35),
+  "70s" (7), uncategorised (6). Re-sync is station-format-scoped by design, so it does not touch them. They
+  resolve by name here (`elsewhere 48`, `dead` unchanged). Filing them in a clock category and Re-syncing
+  clears them.
+- **3 dead** (unchanged, not a path problem): Mac-path rows whose files never reached this Mac — the Ariana
+  Grande "Hate That I Made You Love Me" live edit (songs 1104 / library_asset 1016, and the halloVeen miss,
+  song 1105) and "GC Sponsorship EnglishVersion 15 Secs Normalized" (spots 7 / library_asset 1015).
+- What the Health Monitor shows on screen: **UNVERIFIED** until the app is opened.
+
+## Side notes (not investigated)
+- `ether-startup.log` on this Mac is 2.4 MB — the never-rotating log already on the backlog.
+- The daemon's resolver requires `../electron/audio-library-index` inside a `try` (`audiod/engine.js:1769`,
+  `:1790`), and `stage-engine.js` stages only `mutation-writer.js` and `synced-tables.js` from `electron/`. On
+  Windows the staged daemon's library resolver may therefore be failing silently. UNVERIFIED.

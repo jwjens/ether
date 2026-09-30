@@ -70,7 +70,7 @@ export default function ImportDialog({ onDone }: Props) {
         // no row and rows ended up pointing at folders other machines cannot open.
         // A refusal is COLLECTED and shown at the end — never a silent skip, and never a row.
         const filePath = await importIntoAudioLibrary(browsedPath);
-        if (!filePath) { refused.push(browsedPath.split(/[\/]/).pop() || browsedPath); continue; }
+        if (!filePath) { refused.push(browsedPath.split(/[\\/]/).pop() || browsedPath); continue; }
 
         // Check if already imported
         const existing = await (query<{ id: number }>("SELECT id FROM songs WHERE file_path = ?", [filePath]).then(r => r[0] ?? null));

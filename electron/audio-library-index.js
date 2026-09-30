@@ -74,6 +74,24 @@ function buildIndex(root, opts = {}) {
 }
 
 /**
+ * The file name of a STORED path, whichever OS wrote it. Every basename taken from a stored path
+ * (file_path / file_key — rows travel between machines) goes through this, never path.basename().
+ *
+ * On macOS/Linux path.basename() does not treat `\` as a separator, so a Windows path arriving on a
+ * Mac comes back WHOLE: `C:\Users\jensj\AppData\Local\Ether\catalogue\ABC.mp3`. That is how 725 rows
+ * read OUTSIDE on Jeff's Mac with the files sitting in the catalogue, and how the materializer wrote
+ * 92 files literally named `C:\Users\…\x.mp3` (docs/mac-install-no-engine-windows-paths-2026-09-30.md).
+ *
+ * Windows-shaped (drive letter, UNC, or any backslash) → path.win32.basename, which splits on both
+ * `\` and `/`. Otherwise path.posix. A POSIX catalogue never legitimately stores a `\` in a path.
+ */
+function storedBasename(p) {
+  const s = String(p == null ? '' : p);
+  if (/^[A-Za-z]:[\\/]/.test(s) || s.startsWith('\\\\') || s.includes('\\')) return path.win32.basename(s);
+  return path.posix.basename(s);
+}
+
+/**
  * Is this stored path's file present in the library under ANY name we would accept?
  * Exact basename first (cheap, unambiguous), then the tolerant key — so the health signal can never
  * call a row unresolvable that Re-sync would happily relink.
@@ -82,7 +100,7 @@ function buildIndex(root, opts = {}) {
  */
 function findInIndex(index, storedPath) {
   if (!index || !storedPath) return null;
-  const name = path.basename(String(storedPath));
+  const name = storedBasename(storedPath);
   const exact = index.byBasename.get(name.toLowerCase());
   if (exact) return exact;
   const k = norm(path.parse(name).name);
@@ -140,4 +158,4 @@ function tableColumns(db, table) {
   return set;
 }
 
-module.exports = { buildIndex, findInIndex, norm, AUDIO, AUDIO_TABLES, AUDIO_TABLE_NAMES, tableColumns };
+module.exports = { buildIndex, findInIndex, storedBasename, norm, AUDIO, AUDIO_TABLES, AUDIO_TABLE_NAMES, tableColumns };

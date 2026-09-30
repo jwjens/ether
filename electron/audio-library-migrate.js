@@ -30,7 +30,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { buildIndex, findInIndex, AUDIO_TABLES, AUDIO_TABLE_NAMES, tableColumns } = require('./audio-library-index');
+const { buildIndex, findInIndex, storedBasename, AUDIO_TABLES, AUDIO_TABLE_NAMES, tableColumns } = require('./audio-library-index');
 
 /** Is this path inside the library root? Case-insensitive: Windows, and the operator typed it. */
 function isInside(root, p) {
@@ -52,7 +52,7 @@ function sizeOf(p) { try { return fs.statSync(p).size; } catch { return -1; } }
  *     already point at the file that is there, and overwriting would silently change what it airs.
  */
 function destinationFor(root, srcPath) {
-  const base = path.basename(String(srcPath));
+  const base = storedBasename(srcPath);
   const direct = path.join(root, base);
   const srcSize = sizeOf(srcPath);
   const dstSize = sizeOf(direct);

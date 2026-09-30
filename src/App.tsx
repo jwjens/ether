@@ -3167,7 +3167,7 @@ export default function App() {
               {panel === "broadcasteditor" && (
                 <BroadcastEditor
                   onBouncePlace={() => setPanel("library")}
-                  onOpenCueEditor={(fp) => { setEditSong({ file_path: fp, title: fp.split(/[\/]/).pop()?.replace(/\.[^.]+$/, "") || "Track" }); setPanel("trackedit"); }}
+                  onOpenCueEditor={(fp) => { setEditSong({ file_path: fp, title: fp.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "") || "Track" }); setPanel("trackedit"); }}
                 />
               )}
               {panel === "logs" && <Logs />}

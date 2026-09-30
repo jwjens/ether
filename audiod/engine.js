@@ -1789,7 +1789,7 @@ class DaemonEngine {
     try {
       const hit = require('../electron/audio-library-index').findInIndex(this._libIndex(), fp);
       if (hit && fs.existsSync(hit) && this._dur(hit) > 0) {
-        this._log(`resolved from audio library: ${path.basename(fp)} -> ${hit}`);
+        this._log(`resolved from audio library: ${require('../electron/audio-library-index').storedBasename(fp)} -> ${hit}`);
         return hit;
       }
     } catch { /* index unavailable — fall through to unresolvable */ }

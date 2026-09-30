@@ -43,7 +43,7 @@ const fs = require('fs');
 const path = require('path');
 
 // One definition of "is this an audio file", shared with the index/health modules.
-const { AUDIO: AUDIO_EXTS } = require('./audio-library-index');
+const { AUDIO: AUDIO_EXTS, storedBasename } = require('./audio-library-index');
 
 const MANIFEST_KEY = '_ether-catalogue-manifest.json';
 const MANIFEST_VERSION = 1;
@@ -173,7 +173,7 @@ function seedManifestFromRows(db, catalogueRoot) {
 
   let seeded = 0;
   for (const r of rows) {
-    const claimed = path.basename(String(r.file_key));
+    const claimed = storedBasename(r.file_key);
     if (!claimed) continue;
     const realName = localByLower.get(claimed.toLowerCase());
     if (!realName) continue;                       // no local copy — let it upload

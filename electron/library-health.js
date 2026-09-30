@@ -19,7 +19,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { buildIndex, findInIndex, AUDIO_TABLES } = require('./audio-library-index');
+const { buildIndex, findInIndex, storedBasename, AUDIO_TABLES } = require('./audio-library-index');
 
 // Module-level bridge: lets code OUTSIDE this factory (the songs delete path) emit a health event
 // without threading the instance through every caller. Wired when the factory is constructed; a no-op
@@ -869,7 +869,7 @@ function createLibraryHealth(opts) {
   function localTargetFor(candidate) {
     const root = (typeof musicDirFn === 'function') ? musicDirFn() : null;
     if (!root) return { ok: false, reason: 'no library root on this machine' };
-    const base = path.basename(String(candidate || '')).trim();
+    const base = storedBasename(candidate || '').trim();
     if (!base || base === '.' || base === path.sep) return { ok: false, reason: 'no filename to materialize' };
     const rootRes   = path.resolve(root);
     const targetRes = path.resolve(rootRes, base);

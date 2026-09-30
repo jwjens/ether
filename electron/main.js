@@ -158,6 +158,8 @@ try {
   console.log("[SENTRY] Not initialized:", e.message);
 }
 const path = require("path");
+// Every basename from a STORED path (rows travel between Windows and Mac) — never path.basename().
+const { storedBasename } = require('./audio-library-index');
 const fs = require("fs");
 const semver = require("semver");
 const { ETHER_BACKEND_URL, canWriteProduction } = require('./lib/etherBackend');
@@ -4389,7 +4391,7 @@ async function resolveLocalAudioPath(filePath) {
     try {
       const hit = require('./audio-library-index').findInIndex(_libIndexCached(), filePath);
       if (hit) {
-        console.log(`[resolveLocalAudioPath] library hit for ${path.basename(filePath)} → ${hit}`);
+        console.log(`[resolveLocalAudioPath] library hit for ${storedBasename(filePath)} → ${hit}`);
         return { ok: true, filePath: hit, resolvedBy: 'audio-library' };
       }
     } catch (e) { console.warn('[resolveLocalAudioPath] library tier failed:', e.message); }
@@ -9269,7 +9271,7 @@ async function fetchR2Track(fileKey) {
     if (!licenseKey) return { ok: false, error: 'No license_key in station_config_kv' };
   }
 
-  const safeName  = path.basename(fileKey).replace(/[^a-zA-Z0-9._-]/g, '_');
+  const safeName  = storedBasename(fileKey).replace(/[^a-zA-Z0-9._-]/g, '_');
   const cachePath = path.join(getMusicDir(), safeName);
 
   // Cache hit path — short-circuit
@@ -9724,7 +9726,7 @@ function _placeJingles(db, stationId, rows) {
       jinRows.push({
         scheduled_at: incoming.scheduled_at, song_id: pick.id,
         title: pick.title, artist: pick.artist_name || '',
-        file_key: pick.file_path ? path.basename(pick.file_path) : '',
+        file_key: pick.file_path ? storedBasename(pick.file_path) : '',
         duration_s: pick.duration_ms ? Math.round(pick.duration_ms / 1000) : 0,
         category_id: null, clock_id: incoming.clock_id ?? null,
         content_class: cls, channel: 'CART',
@@ -10118,7 +10120,7 @@ ipcMain.handle('schedule:editRowFields', (_e, uuid, patch) => {
         `UPDATE generated_schedule SET song_id = ?, title = ?, artist = ?, duration_s = ?, file_key = ?, file_path = NULL,
                 category_id = ?, source = 'operator', pick_reason = NULL, updated_at = ? WHERE uuid = ?`
       ).run(song.id, song.title, song.artist || '', Math.round((song.duration_ms || 0) / 1000),
-            song.file_path ? path.basename(song.file_path) : song.file_key, song.category_id ?? row.category_id, now, uuid);
+            song.file_path ? storedBasename(song.file_path) : song.file_key, song.category_id ?? row.category_id, now, uuid);
       _healthEvent('log-edit', { action: 'swap-song', stationId: row.station_id, at: row.scheduled_at,
         from: row.title, to: song.title, songId: song.id });
       _scheduleChanged(row.station_id, 'swap-song');
@@ -12252,7 +12254,7 @@ ipcMain.handle('library:sync-r2:upload', async (_evt, opts = {}) => {
     const libLower = libDir.toLowerCase();
     function resolveFile(song) {
       if (song.file_path && fs.existsSync(song.file_path)) return song.file_path;     // stored path still valid
-      const base = path.basename(song.file_path || song.file_key || '');
+      const base = storedBasename(song.file_path || song.file_key || '');
       if (!base) return null;
       const inLib = path.join(libDir, base);
       if (fs.existsSync(inLib)) return inLib;                                          // already in the library folder
@@ -12268,10 +12270,10 @@ ipcMain.handle('library:sync-r2:upload', async (_evt, opts = {}) => {
     for (const song of songs) {
       if (_libSyncAbort) break;
       cdone++;
-      const label = path.basename(song.file_path || song.file_key || `song#${song.id}`);
+      const label = storedBasename(song.file_path || song.file_key || `song#${song.id}`);
       const src = resolveFile(song);
       if (!src) { notFound++; if (missing.length < 200) missing.push(label); continue; }
-      const base = path.basename(src);
+      const base = storedBasename(src);
       const dest = path.join(libDir, base);
       try {
         if (path.resolve(src).toLowerCase() !== path.resolve(dest).toLowerCase() && !fs.existsSync(dest)) {
@@ -12314,7 +12316,7 @@ ipcMain.handle('library:sync-r2:upload', async (_evt, opts = {}) => {
 
     async function uploadOne(song) {
       if (_libSyncAbort) return;
-      const fileKey = path.basename(song.file_path);
+      const fileKey = storedBasename(song.file_path);
       const MAX_TRIES = 3;
       let lastErr = null;
       for (let attempt = 1; attempt <= MAX_TRIES; attempt++) {
@@ -12353,7 +12355,7 @@ ipcMain.handle('library:sync-r2:upload', async (_evt, opts = {}) => {
       done++;
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('library:sync-r2:upload:progress', {
-          phase: 'upload', done, total: toUpload.length, errors, current: path.basename(song.file_path),
+          phase: 'upload', done, total: toUpload.length, errors, current: storedBasename(song.file_path),
         });
       }
     }

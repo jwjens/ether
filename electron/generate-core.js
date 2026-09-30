@@ -21,8 +21,9 @@
 "use strict";
 
 // main.js has these at module scope; an extracted module needs its own. They are imports, not moved
-// code — the 496 moved lines below remain byte-identical to the originals.
-const path = require('path');
+// code — the 496 moved lines below remain byte-identical to the originals, except (2026-09-30) the five
+// `file_key` basenames, which now use storedBasename: a stored Windows path on a Mac came back whole.
+const { storedBasename } = require('./audio-library-index');
 
 // ── Spot rotation (clock spot_break slots → spots library) ────────────────────
 // A spot_break clock slot pulls from the spots table: active, inside its date window, and —
@@ -316,7 +317,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
         if (pTitleKey) { usedTitles.add(pTitleKey); titleLastTs.set(pTitleKey, ts); }
         songLastTs.set(picked.id, ts);
         if (picked.artist_id) artistLastTs.set(picked.artist_id, ts);
-        generatedRows.push({ scheduled_at: ts, song_id: picked.id, title: picked.title, artist: picked.artist_name || '', file_key: picked.file_path ? path.basename(picked.file_path) : '', duration_s: durationS, category_id: categoryId, clock_id: show.clock_id });
+        generatedRows.push({ scheduled_at: ts, song_id: picked.id, title: picked.title, artist: picked.artist_name || '', file_key: picked.file_path ? storedBasename(picked.file_path) : '', duration_s: durationS, category_id: categoryId, clock_id: show.clock_id });
       };
       // Place a break's `count` spots back-to-back from its category. Shared rotation/caps via
       // spotLastTs/spotPlaysToday (the run-wide maps) so a spot won't repeat until rotation cycles.
@@ -330,7 +331,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
           spotLastTs.set(sp.id, cur);
           spotPlaysToday.set(dayStr + '|' + sp.id, (spotPlaysToday.get(dayStr + '|' + sp.id) || 0) + 1);
           const durationS = sp.length_sec || 30;
-          generatedRows.push({ scheduled_at: cur, song_id: null, title: sp.title, artist: sp.advertiser || '', file_key: sp.file_path ? path.basename(sp.file_path) : '', file_path: sp.file_path, duration_s: durationS, category_id: null, clock_id: show.clock_id, content_class: 'SPOT' });
+          generatedRows.push({ scheduled_at: cur, song_id: null, title: sp.title, artist: sp.advertiser || '', file_key: sp.file_path ? storedBasename(sp.file_path) : '', file_path: sp.file_path, duration_s: durationS, category_id: null, clock_id: show.clock_id, content_class: 'SPOT' });
           cur += durationS;
         }
         return cur;
@@ -401,7 +402,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
         const pinned = stmtSongById.get(slot.song_id);
         if (pinned && pinned.file_path) {
           const durationS = pinned.duration_ms ? Math.round(pinned.duration_ms / 1000) : slotDurationS;
-          generatedRows.push({ scheduled_at: currentTs, song_id: pinned.id, title: pinned.title, artist: pinned.artist_name || '', file_key: pinned.file_path ? path.basename(pinned.file_path) : '', duration_s: durationS, category_id: slot.category_id, clock_id: show.clock_id });
+          generatedRows.push({ scheduled_at: currentTs, song_id: pinned.id, title: pinned.title, artist: pinned.artist_name || '', file_key: pinned.file_path ? storedBasename(pinned.file_path) : '', duration_s: durationS, category_id: slot.category_id, clock_id: show.clock_id });
           usedSongIds.add(pinned.id);
           if (pinned.artist_id) usedArtistIds.add(pinned.artist_id);
           songLastTs.set(pinned.id, currentTs);
@@ -420,7 +421,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
           spotLastTs.set(sp.id, currentTs);
           spotPlaysToday.set(dayStr + '|' + sp.id, (spotPlaysToday.get(dayStr + '|' + sp.id) || 0) + 1);
           const durationS = sp.length_sec || slotDurationS;
-          generatedRows.push({ scheduled_at: currentTs, song_id: null, title: sp.title, artist: sp.advertiser || '', file_key: sp.file_path ? path.basename(sp.file_path) : '', file_path: sp.file_path, duration_s: durationS, category_id: null, clock_id: show.clock_id, content_class: 'SPOT' });
+          generatedRows.push({ scheduled_at: currentTs, song_id: null, title: sp.title, artist: sp.advertiser || '', file_key: sp.file_path ? storedBasename(sp.file_path) : '', file_path: sp.file_path, duration_s: durationS, category_id: null, clock_id: show.clock_id, content_class: 'SPOT' });
           currentTs += durationS;
           continue;
         }
@@ -484,7 +485,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
         songLastTs.set(picked.id, currentTs);
         if (picked.artist_id) artistLastTs.set(picked.artist_id, currentTs);
         const durationS = picked.duration_ms ? Math.round(picked.duration_ms / 1000) : slotDurationS;
-        generatedRows.push({ scheduled_at: currentTs, song_id: picked.id, title: picked.title, artist: picked.artist_name || '', file_key: picked.file_path ? path.basename(picked.file_path) : '', duration_s: durationS, category_id: slot.category_id, clock_id: show.clock_id, pick_reason: pickReason });
+        generatedRows.push({ scheduled_at: currentTs, song_id: picked.id, title: picked.title, artist: picked.artist_name || '', file_key: picked.file_path ? storedBasename(picked.file_path) : '', duration_s: durationS, category_id: slot.category_id, clock_id: show.clock_id, pick_reason: pickReason });
         currentTs += durationS;
       } else { currentTs += slotDurationS; }
     }
