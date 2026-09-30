@@ -21,7 +21,7 @@
     "verify:migration": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/verify-migration-against-snapshot.js",
     "backfill:assets": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/backfill-library-assets.js",
     "check:audio-isolation": "node scripts/check-no-global-audio-statics.js",
-    "test:rust": "node scripts/cargo-native.js test --release --lib -- --nocapture --test-threads=2 --skip program_processor::bench && node scripts/cargo-native.js test --release --lib program_processor::bench -- --nocapture --test-threads=1 && node scripts/cargo-native.js test --release --doc",
+    "test:rust": "node scripts/cargo-native.js test --release --lib -- --nocapture --test-threads=2 --skip program_processor::bench --skip timing && node scripts/cargo-native.js test --release --lib -- --nocapture --test-threads=1 program_processor::bench timing && node scripts/cargo-native.js test --release --doc",
     "test:rack-eq": "node audiod/smoke-rack-eq.js",
     "test:mic-input": "node audiod/smoke-mic-input.js",
     "test:link": "node audiod/smoke-link.js",
