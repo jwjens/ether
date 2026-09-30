@@ -78,13 +78,25 @@ function checkStaging() {
     : "❌ packaged daemon did not respond — a require/path is wrong in the package (would silently fall back to in-process)"));
 
   const st = checkStaging();
+  // The app modules the daemon requires from ../electron/ — each must be IN the package's app.asar.unpacked, or
+  // stage-engine cannot copy it and the staged daemon's require of it fails (audio-library-index.js, 4.6.52).
+  const stage = require(path.join(__dirname, "stage-engine.js"));
+  const elec = typeof stage.daemonElectronFilesForVerify === "function" ? stage.daemonElectronFilesForVerify(__dirname) : [];
+  const unpackedElectron = path.join(ROOT, MAC ? "Resources" : "resources", "app.asar.unpacked", "electron");
+  const elecMissing = elec.filter(rel => !fs.existsSync(path.join(unpackedElectron, rel)));
+  console.log(`\nstaged app modules (electron/): ${elec.join(", ") || "(none derived)"}`);
+  for (const m of elecMissing) console.log(`   ✗ electron/${m} is required by the daemon but NOT in app.asar.unpacked — add it to asarUnpack`);
+  const elecOk = elec.length > 0 && elecMissing.length === 0;
+  console.log("→ APP MODULES: " + (elecOk
+    ? "✅ every ../electron/ module the daemon requires is in app.asar.unpacked and staged beside it"
+    : "❌ a module the daemon requires would not be staged — its require fails in the staged daemon"));
   console.log(`\nstaging: walked ${st.count || 0} daemon file(s) against ${st.staged || 0} staged file(s)`);
   if (st.missing && st.missing.length) for (const m of st.missing) console.log("   ✗ " + m);
   console.log("→ STAGING: " + (st.ok
     ? "✅ every relative require in the daemon resolves to a file stage-engine copies to %LOCALAPPDATA%\\Ether\\engine"
     : `❌ ${st.why || "a daemon require points at a file that is NOT staged"} — the staged daemon would die on MODULE_NOT_FOUND and every station would fall back to in-process`));
 
-  const pass = ok && st.ok;
+  const pass = ok && st.ok && elecOk;
   console.log(`\n${pass ? "✅ RELEASE GATE PASS" : "❌ RELEASE GATE FAIL"}`);
   setTimeout(() => process.exit(pass ? 0 : 1), 200);
 })();

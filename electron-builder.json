@@ -13,7 +13,8 @@
     "native/**/*.node",
     "electron/sync/mutation-writer.js",
     "electron/sync/synced-tables.js",
-    "electron/audio-library-index.js"
+    "electron/audio-library-index.js",
+    "electron/profile-paths.js"
   ],
   "files": [
     "dist/**/*",

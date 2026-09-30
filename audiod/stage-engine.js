@@ -38,6 +38,21 @@ function daemonFiles(audiodDir) {
     .filter(e => e.isFile() && isDaemonRuntimeFile(e.name))
     .map(e => e.name);
 }
+// The daemon's runtime files also require a few of the app's own modules straight from ../electron/ — the staged
+// daemon runs from the engine dir, so each must be staged beside it or its require fails. 4.6.52 and earlier
+// staged only the two sync files: electron/audio-library-index.js (the library resolver, engine.js _libIndex /
+// _resolveLocal, both inside a try) was never staged, so on Windows a moved song could not be found by name and
+// nothing said so. Derived from the daemon's own `require("../electron/<module>")` calls, never a hand-kept list.
+// The two sync files are required by path.join (audiod/playlog.js), so they are named here.
+const DAEMON_SYNC_FILES = ["sync/mutation-writer.js", "sync/synced-tables.js"];
+function daemonElectronFiles(audiodDir) {
+  const out = new Set(DAEMON_SYNC_FILES);
+  for (const f of daemonFiles(audiodDir)) {
+    let src; try { src = fs.readFileSync(path.join(audiodDir, f), "utf8"); } catch { continue; }
+    for (const m of src.matchAll(/require\(\s*["']\.\.\/electron\/([A-Za-z0-9_./-]+?)(?:\.js)?["']\s*\)/g)) out.add(m[1] + ".js");
+  }
+  return [...out].sort();
+}
 const RUNTIME_DATA = ["icudtl.dat", "v8_context_snapshot.bin", "snapshot_blob.bin"];
 
 function engineBaseDir() {
@@ -96,7 +111,13 @@ function stageEngine({ srcRoot, unpacked, version }) {
     // CODE — must refresh (not locked). Enumerated from the source dir, never from a hand-kept list.
     for (const f of daemonFiles(path.join(unpacked, "audiod"))) cp1(path.join(unpacked, "audiod", f), path.join(dir, "audiod", f));
     cpSoft(path.join(unpacked, "native", "ether-audio.node"), path.join(dir, "native", "ether-audio.node")); // may be loaded/locked
-    for (const f of ["mutation-writer.js", "synced-tables.js"]) cp1(path.join(unpacked, "electron", "sync", f), path.join(dir, "electron", "sync", f));
+    // The app modules the daemon requires. One missing from the package is said and skipped — never a reason to abort
+    // the whole stage (that would leave the daemon on the previous version's code). The release gate
+    // (verify-packaged.js) fails the build if any is missing.
+    for (const rel of daemonElectronFiles(path.join(unpacked, "audiod"))) {
+      try { cp1(path.join(unpacked, "electron", rel), path.join(dir, "electron", rel)); }
+      catch (e) { console.error("[stage-engine] electron/" + rel + " not staged (" + e.code + ") — the daemon's require of it will fail"); }
+    }
     const ffSrc = path.join(unpacked, "node_modules", "ffmpeg-static");        // whole pkg (index.js resolves the binary)
     if (fs.existsSync(ffSrc)) { try { cpDir(ffSrc, path.join(dir, "node_modules", "ffmpeg-static")); } catch { /* locked ffmpeg — reuse */ } }
 
@@ -112,4 +133,4 @@ function stageEngine({ srcRoot, unpacked, version }) {
 // daemonFilesForVerify: the SAME derivation the stage uses, exposed so the release gate
 // (audiod/verify-packaged.js) can assert every daemon require resolves to something that gets staged.
 // Exported deliberately — the gate must check what staging actually does, not a copy of the rule.
-module.exports = { stageEngine, stagedTarget, engineBaseDir, daemonFilesForVerify: daemonFiles };
+module.exports = { stageEngine, stagedTarget, engineBaseDir, daemonFilesForVerify: daemonFiles, daemonElectronFilesForVerify: daemonElectronFiles };
