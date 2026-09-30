@@ -641,7 +641,7 @@ pub struct BusState {
     pub proc_limiter_bypass: bool,
     /// THE LOCAL (studio monitor) branch's processor. Until the split it was the ONLY one, shared by
     /// both branches — so what Jeff heard and what listeners heard were literally the same samples.
-    pub processor:   Arc<Mutex<crate::program_processor::ProgramProcessor>>,
+    pub processor:   Arc<crate::rt::RtMutex<crate::program_processor::ProgramProcessor>>,
 
     // ── THE LOCAL / STREAM SPLIT (2026-09-07) ────────────────────────────────────────────────────
     // A second, fully independent instance for the stream branch: its own ride state, its own limiter
@@ -660,7 +660,7 @@ pub struct BusState {
     pub proc_stream_ride_clamp: f32,
     pub proc_stream_ride_bypass: bool,
     pub proc_stream_limiter_bypass: bool,
-    pub processor_stream: Arc<Mutex<crate::program_processor::ProgramProcessor>>,
+    pub processor_stream: Arc<crate::rt::RtMutex<crate::program_processor::ProgramProcessor>>,
     /// PER-BRANCH METERS. One set of numbers for two processors would be a meter that lies: with the
     /// split on, the two branches ride to different targets and reduce by different amounts at the same
     /// instant. The legacy proc_* fields keep describing the LOCAL branch, and mirror the stream branch
@@ -767,7 +767,7 @@ pub struct BusState {
     /// The AUX feed's own instance of the EXISTING program processor (the loudness ride + -1 dBTP
     /// limiter already in Preferences). Its own, because the processor is stateful and the air and
     /// room chains are already using theirs on different sums this callback.
-    pub processor_aux: Arc<Mutex<crate::program_processor::ProgramProcessor>>,
+    pub processor_aux: Arc<crate::rt::RtMutex<crate::program_processor::ProgramProcessor>>,
     /// The AUX processor's OBSERVED meters — the same four the station's processor reports
     /// (proc_in_lufs / proc_gr_db / proc_ride_gain_db), taken at the same taps on the
     /// same processor type. They exist so the Health Monitor can show deck processing with the same
@@ -782,7 +782,7 @@ pub struct BusState {
     /// control as broken when it was working.
     pub aux_peak: f32,
     pub eq_room:        crate::eq::SharedEq,
-    pub processor_room: Arc<Mutex<crate::program_processor::ProgramProcessor>>,
+    pub processor_room: Arc<crate::rt::RtMutex<crate::program_processor::ProgramProcessor>>,
     /// Processing meters written by mixer_callback (observed), read by GetLevel → the daemon meter event.
     pub proc_in_peak:  f32,
     pub proc_out_peak: f32,
@@ -892,7 +892,7 @@ impl BusState {
             // ceiling. This is the structural half of "bypass must not persist".
             proc_ride_bypass: false,
             proc_limiter_bypass: false,
-            processor:   Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
+            processor:   Arc::new(crate::rt::RtMutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
             // The stream branch starts as an exact copy of the shipped chain — same target, same
             // ceiling, same release, same ride. Nothing about a fresh station is different.
             proc_stream_target_lufs: -14.0,
@@ -902,7 +902,7 @@ impl BusState {
             proc_stream_ride_clamp: 12.0,
             proc_stream_ride_bypass: false,
             proc_stream_limiter_bypass: false,
-            processor_stream: Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
+            processor_stream: Arc::new(crate::rt::RtMutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
             proc_stream_in_lufs: -70.0,
             proc_stream_gr_db: 0.0, proc_stream_ride_gain_db: 0.0,
             proc_stream_in_peak: 0.0, proc_stream_out_peak: 0.0,
@@ -930,13 +930,13 @@ impl BusState {
             link_tap: None,               // not sending (SEND TO off) → the link tap does not exist
             aux_out_frames: Arc::new(AtomicU64::new(0)),
             aux_peak: 0.0,
-            processor_aux: Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
+            processor_aux: Arc::new(crate::rt::RtMutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
             aux_proc_in_lufs: -70.0,
             aux_proc_gr_db: 0.0,
             aux_proc_ride_db: 0.0,
             room_peak: 0.0,
             eq_room:        crate::eq::new_shared_eq(sample_rate as f32),
-            processor_room: Arc::new(Mutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
+            processor_room: Arc::new(crate::rt::RtMutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
             proc_in_peak: 0.0, proc_out_peak: 0.0,
             proc_in_lufs: -70.0, proc_gr_db: 0.0, proc_ride_gain_db: 0.0,
             cmd_cons,
@@ -1201,7 +1201,7 @@ impl BusState {
     }
 }
 
-pub type SharedBusState = Arc<Mutex<BusState>>;
+pub type SharedBusState = Arc<crate::rt::RtMutex<BusState>>;
 
 /// Map a deck letter to its BusState index.
 pub fn deck_index(deck: &str) -> Option<usize> {
@@ -1607,7 +1607,7 @@ mod slice1_regression {
         let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
         let (prod, _cons) = rb.split();
         let eq = crate::eq::new_shared_eq(44100.0);
-        let bus = Arc::new(Mutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
+        let bus = Arc::new(crate::rt::RtMutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
         {
             let mut b = bus.lock().unwrap();
             // ONLY the slots that exist today: A, B, C and CART. No source channels configured —
@@ -1647,7 +1647,7 @@ mod slice1_regression {
         let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
         let (prod, _cons) = rb.split();
         let eq = crate::eq::new_shared_eq(44100.0);
-        let bus = Arc::new(Mutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
+        let bus = Arc::new(crate::rt::RtMutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
         {
             let mut b = bus.lock().unwrap();
             // A/B on the programme, slot 6 as the sweeper, and D as an aux deck so the ROOM chain
@@ -1700,7 +1700,7 @@ mod slice1_regression {
         let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
         let (prod, _cons) = rb.split();
         let eq = crate::eq::new_shared_eq(44100.0);
-        let bus = Arc::new(Mutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
+        let bus = Arc::new(crate::rt::RtMutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
 
         let aux_rb = HeapRb::<f32>::new(AUX_BUS_BUF);
         let (aux_prod, mut aux_cons) = aux_rb.split();
@@ -1807,7 +1807,7 @@ mod rt_command_path {
         }
         assert!(h.cmd_prod.try_push(RtCmd::Params(Box::new(p))).is_ok());
         for i in [0usize, 1, 2, 6] { assert!(h.cmd_prod.try_push(RtCmd::Play { slot: i as u8, reload: None, gen: 0 }).is_ok()); }
-        let bus = Arc::new(Mutex::new(b));
+        let bus = Arc::new(crate::rt::RtMutex::new(b));
         let fin = FinishedFlags::new();
         let playing = Arc::new(AtomicBool::new(true));
         let mut sc = Scratch::new();
@@ -1849,7 +1849,7 @@ mod rt_command_path {
         b.decks[0].source = Some(DeckFeed::prefilled(Dc, 480 * 2 * 3000));
         b.decks[0].active = true;
         b.decks[0].paused = false;
-        let bus = Arc::new(Mutex::new(b));
+        let bus = Arc::new(crate::rt::RtMutex::new(b));
         let mut cmd = h.cmd_prod;
         let mut garbage = h.garbage_cons;
         let stop = Arc::new(AtomicBool::new(false));
@@ -1926,7 +1926,7 @@ mod rt_underrun {
         b.decks[0].active = true;
         b.decks[0].paused = false;
         b.shared.src_gen[0].store(7, Ordering::Release);
-        let bus = Arc::new(Mutex::new(b));
+        let bus = Arc::new(crate::rt::RtMutex::new(b));
         let fin = FinishedFlags::new();
         let playing = Arc::new(AtomicBool::new(true));
         let mut sc = Scratch::new();
@@ -1979,7 +1979,7 @@ mod rt_underrun {
         b.decks[0].source = Some(feed);
         b.decks[0].active = true;
         b.decks[0].paused = false;
-        let bus = Arc::new(Mutex::new(b));
+        let bus = Arc::new(crate::rt::RtMutex::new(b));
         let fin = FinishedFlags::new();
         let playing = Arc::new(AtomicBool::new(true));
         let mut sc = Scratch::new();
@@ -2023,7 +2023,7 @@ mod meter_bus {
         b.decks[7].paused = false;
         b.decks[7].volume = volume;
         b.decks[7].muted = muted;
-        let bus = Arc::new(Mutex::new(b));
+        let bus = Arc::new(crate::rt::RtMutex::new(b));
         let fin = FinishedFlags::new();
         let playing = Arc::new(AtomicBool::new(true));
         let mut sc = Scratch::new();
@@ -2071,7 +2071,7 @@ mod meter_bus {
             b.decks[i].active = true; b.decks[i].paused = false; b.decks[i].volume = 0.5;
         }
         b.proc_local = true; b.proc_stream = true;
-        let bus = Arc::new(Mutex::new(b));
+        let bus = Arc::new(crate::rt::RtMutex::new(b));
         let fin = FinishedFlags::new();
         let playing = Arc::new(AtomicBool::new(true));
         let mut sc = Scratch::new();
@@ -2117,7 +2117,7 @@ mod meter_bus {
             b.decks[i].active = true; b.decks[i].paused = false; b.decks[i].volume = 0.5;
         }
         b.proc_local = true; b.proc_stream = true;
-        let bus = Arc::new(Mutex::new(b));
+        let bus = Arc::new(crate::rt::RtMutex::new(b));
         let fin = FinishedFlags::new();
         let playing = Arc::new(AtomicBool::new(true));
         let mut sc = Scratch::new();
@@ -2180,7 +2180,7 @@ mod meter_bus {
         b.decks[0].source = Some(DeckFeed::prefilled(Burst { n: 0 }, 480 * 2 * 40));
         b.decks[0].active = true;
         b.decks[0].paused = false;
-        let bus = Arc::new(Mutex::new(b));
+        let bus = Arc::new(crate::rt::RtMutex::new(b));
         let fin = FinishedFlags::new();
         let playing = Arc::new(AtomicBool::new(true));
         let mut sc = Scratch::new();
@@ -2224,7 +2224,7 @@ mod duck_regression {
         let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
         let (prod, _cons) = rb.split();
         let eq = crate::eq::new_shared_eq(44100.0);
-        let bus = Arc::new(Mutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
+        let bus = Arc::new(crate::rt::RtMutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
         {
             let mut b = bus.lock().unwrap();
             b.decks[0].source = Some(DeckFeed::prefilled(Tone(music), 480 * 2 * 600));   // Rotation — the music
@@ -2374,7 +2374,7 @@ mod duck_regression {
         let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
         let (prod, _cons) = rb.split();
         let eq = crate::eq::new_shared_eq(44100.0);
-        let bus = Arc::new(Mutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
+        let bus = Arc::new(crate::rt::RtMutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
         {
             let mut b = bus.lock().unwrap();
             for i in [0usize, 6usize] {                  // deck A (Rotation) and CART
@@ -2487,7 +2487,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 handles.shared, aux_frames_ctr_shared.clone(), station_id, station_counters.clone());
     ctl_init.loud = Some(meters_handle.loud.clone());
     let aux_cmd_prod = handles.aux_cmd_prod;
-    let bus_state: SharedBusState = Arc::new(Mutex::new(bus_init));
+    let bus_state: SharedBusState = Arc::new(crate::rt::RtMutex::new(bus_init));
     let bus_cmd = bus_state.clone(); // device-open / device-switch only (no callback running then)
 
     // ── TCP listener (Program Bus) ────────────────────────────────────────────
@@ -4185,7 +4185,7 @@ pub(crate) fn mixer_callback(
     // S1: each branch copies the clean bus into ITS OWN preallocated lane (was: two Vec clones per branch).
     // Returns the meters when the branch processed, None when its lock was missed — in which case the
     // lane holds a copy of the clean bus and is never read, exactly as the old None buffers were never read.
-    let run_branch = |proc: &Arc<Mutex<crate::program_processor::ProgramProcessor>>,
+    let run_branch = |proc: &Arc<crate::rt::RtMutex<crate::program_processor::ProgramProcessor>>,
                       target: f32, ceiling: f32, release: f32, rate: f32, clamp: f32,
                       ride_byp: bool, lim_byp: bool, slots: [crate::rack::Slot<crate::rack::BranchModule>; crate::rack::MASTER_SLOTS],
                       pl: &mut [f32], pr: &mut [f32]|
@@ -4787,7 +4787,7 @@ mod dynamics_through_the_mixer {
             let r = ChannelRack::from_doc_json(j).unwrap();
             cur.ch_rack[7] = ChannelRackParams { rack: r, plan: r.plan(44_100.0), version: 1 };
         }
-        let bus = Arc::new(Mutex::new(b));
+        let bus = Arc::new(crate::rt::RtMutex::new(b));
         let (mut cmd, mut garbage) = (h.cmd_prod, h.garbage_cons);
         let _ = cmd.try_push(RtCmd::Params(Box::new(cur)));
         let (fin, playing) = (FinishedFlags::new(), Arc::new(AtomicBool::new(true)));
@@ -4897,7 +4897,7 @@ mod pfl_over_monitor {
                 {{"freq":100,"gain":0,"width":1}},{{"freq":1000,"gain":{g},"width":1}},{{"freq":3000,"gain":0,"width":1}},{{"freq":8000,"gain":0,"width":1}}]}},"in":true}}]}}}}"#)).unwrap();
             cur.ch_rack[7] = ChannelRackParams { rack: r, plan: r.plan(44_100.0), version: 1 };
         }
-        let bus = Arc::new(Mutex::new(b));
+        let bus = Arc::new(crate::rt::RtMutex::new(b));
         let (mut cmd, mut garbage) = (h.cmd_prod, h.garbage_cons);
         let _ = cmd.try_push(RtCmd::Params(Box::new(cur)));
         let (fin, playing) = (FinishedFlags::new(), Arc::new(AtomicBool::new(true)));
@@ -5029,7 +5029,7 @@ mod mic_through_the_mixer {
                 {{"freq":100,"gain":0,"width":1}},{{"freq":1000,"gain":{g},"width":1}},{{"freq":3000,"gain":0,"width":1}},{{"freq":8000,"gain":0,"width":1}}]}},"in":true}}]}}}}"#)).unwrap();
             cur.ch_rack[7] = ChannelRackParams { rack: r, plan: r.plan(44_100.0), version: 1 };
         }
-        let bus = Arc::new(Mutex::new(b));
+        let bus = Arc::new(crate::rt::RtMutex::new(b));
         let (mut cmd, mut garbage) = (h.cmd_prod, h.garbage_cons);
         let _ = cmd.try_push(RtCmd::Params(Box::new(cur)));
         let (fin, playing) = (FinishedFlags::new(), Arc::new(AtomicBool::new(true)));
@@ -5156,7 +5156,7 @@ mod channel_rack_timing {
         }
         let mut blk: Vec<f32> = Vec::with_capacity(1024);
         let mut cur = b.params();
-        let bus = Arc::new(Mutex::new(b));
+        let bus = Arc::new(crate::rt::RtMutex::new(b));
         let (mut cmd, mut garbage) = (h.cmd_prod, h.garbage_cons);
         let fin = FinishedFlags::new();
         let playing = Arc::new(AtomicBool::new(true));
@@ -5301,7 +5301,7 @@ mod show_through_the_mixer {
         let h = b.handles.take().unwrap();
         let (meters, _loud) = MetersHandle::from_parts(Arc::new(Mutex::new(h.meter_r)), h.shared.clone(), h.loud_cons, h.loud_shared);
         setup(&mut b);
-        Rig { bus: Arc::new(Mutex::new(b)), cmd: h.cmd_prod, garbage: h.garbage_cons, stream_cons, meters,
+        Rig { bus: Arc::new(crate::rt::RtMutex::new(b)), cmd: h.cmd_prod, garbage: h.garbage_cons, stream_cons, meters,
               fin: FinishedFlags::new(), playing: Arc::new(AtomicBool::new(true)), sc: Scratch::new(),
               data: vec![0f32; 960], pop: vec![0f32; 960], stream: Vec::new(), local: Vec::new(), allocs: 0 }
     }
@@ -5546,7 +5546,7 @@ mod eq_stage_timing {
             b.decks[i].active = true; b.decks[i].paused = false; b.decks[i].volume = 0.5;
         }
         if slots.contains(&3) { b.aux_monitor_gain[3] = 1.0; }
-        let bus = Arc::new(Mutex::new(b));
+        let bus = Arc::new(crate::rt::RtMutex::new(b));
         let (fin, playing) = (FinishedFlags::new(), Arc::new(AtomicBool::new(true)));
         let mut sc = Scratch::new();
         let (mut data, mut pop) = (vec![0f32; 960], vec![0f32; PROGRAM_BUS_BUF]);
@@ -5639,7 +5639,7 @@ mod rta_through_the_mixer {
         setup(&mut b, &mut p);
         let mut cmd = h.cmd_prod;
         let _ = cmd.try_push(RtCmd::Params(Box::new(p)));
-        Rig { bus: Arc::new(Mutex::new(b)), cmd, garbage: h.garbage_cons, stream, an, fin: FinishedFlags::new(),
+        Rig { bus: Arc::new(crate::rt::RtMutex::new(b)), cmd, garbage: h.garbage_cons, stream, an, fin: FinishedFlags::new(),
               playing: Arc::new(AtomicBool::new(true)), sc: Scratch::new(), data: vec![0f32; 960], pop: vec![0f32; PROGRAM_BUS_BUF], allocs: 0 }
     }
     impl Rig {
@@ -5912,7 +5912,7 @@ mod rta_screens_fixture {
         p.rta = RtaTarget::Master;
         let mut cmd = h.cmd_prod;
         let _ = cmd.try_push(RtCmd::Params(Box::new(p)));
-        let bus = Arc::new(Mutex::new(b));
+        let bus = Arc::new(crate::rt::RtMutex::new(b));
         let (fin, playing) = (FinishedFlags::new(), Arc::new(AtomicBool::new(true)));
         let mut sc = Scratch::new();
         let (mut data, mut pop) = (vec![0f32; 960], vec![0f32; PROGRAM_BUS_BUF]);
@@ -5951,7 +5951,7 @@ mod rta_screens_fixture {
             p.rta = RtaTarget::Channel(7);
             let mut cmd = h.cmd_prod;
             let _ = cmd.try_push(RtCmd::Params(Box::new(p)));
-            let bus = Arc::new(Mutex::new(b));
+            let bus = Arc::new(crate::rt::RtMutex::new(b));
             let mut garbage = h.garbage_cons;
             let mut sc = Scratch::new();
             for _ in 0..(at_s * 44_100.0 / 480.0) as usize {

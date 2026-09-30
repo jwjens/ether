@@ -5,7 +5,7 @@
 // Shared across the audio engine via Arc<Mutex<EqChain>> so the JS-side
 // slider changes propagate to all active audio sources in real time.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 // Standard 10-band graphic EQ frequency centers (Hz)
 pub const EQ_FREQS: [f32; 10] = [
@@ -167,10 +167,10 @@ impl EqChain {
     }
 }
 
-pub type SharedEq = Arc<Mutex<EqChain>>;
+pub type SharedEq = Arc<crate::rt::RtMutex<EqChain>>;
 
 pub fn new_shared_eq(sample_rate: f32) -> SharedEq {
-    Arc::new(Mutex::new(EqChain::new(sample_rate)))
+    Arc::new(crate::rt::RtMutex::new(EqChain::new(sample_rate)))
 }
 
 // ── Rodio Source adapter ───────────────────────────────────────

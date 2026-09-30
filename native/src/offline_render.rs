@@ -18,7 +18,7 @@
 //
 // This file allocates freely. It is not the real-time path; it only calls it.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use ringbuf::{HeapRb, traits::{Consumer, Producer, Split}};
 use serde::{Deserialize, Serialize};
@@ -202,7 +202,7 @@ pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
     let (prod, mut cons) = rb.split();   // BOTH halves kept — the existing tests drop the consumer
     let eq = crate::eq::new_shared_eq(RATE as f32);
     // stream_connected = true: the callback pushes the stream tap only while a client is attached (:2703).
-    let bus: SharedBusState = Arc::new(Mutex::new(BusState::new(eq, prod, RATE, Arc::new(AtomicBool::new(true)))));
+    let bus: SharedBusState = Arc::new(crate::rt::RtMutex::new(BusState::new(eq, prod, RATE, Arc::new(AtomicBool::new(true)))));
     let mut aux_cons = None;
     // S4 — the decks are fed through the product's own rings (rt.rs). THE SYNCHRONOUS PUMP: before every
     // buffer the harness runs each deck's Feeder::fill inline — the same routine the decode worker thread

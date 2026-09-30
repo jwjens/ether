@@ -542,6 +542,31 @@ pub(crate) mod trap {
     static ALLOC: Trap = Trap;
 }
 
+// ── RtMutex — A MUTEX THE AUDIO CALLBACK MAY try_lock WITHOUT ALLOCATING (2026-09-30) ─────────────────────
+// On macOS, std's Mutex is a pthread mutex that std allocates LAZILY (a OnceBox) on the FIRST lock or
+// try_lock. The first try_lock inside the callback was therefore an allocation on the audio thread — the
+// trap counted 104 across the RT tests on a Mac (ProgramProcessor ×4, EqChain ×2, BusState), all this one
+// mechanism. Windows (SRWLOCK) and Linux (futex) never allocate, which is why it only failed on the Mac.
+// docs/mac-install-no-engine-windows-paths-2026-09-30.md §4.
+//
+// RtMutex::new takes and releases the lock once at construction — off the audio thread — so the OS mutex
+// exists before the callback ever sees it. Moving the value afterwards is fine: std boxes the OS mutex
+// precisely so it can move. It is a TYPE, not a call-site habit: every mutex the callback locks is declared
+// RtMutex, so a construction that skips the prewarm does not compile. Harmless where std never allocates.
+pub struct RtMutex<T>(std::sync::Mutex<T>);
+impl<T> RtMutex<T> {
+    pub fn new(v: T) -> Self {
+        let m = std::sync::Mutex::new(v);
+        drop(m.lock());
+        RtMutex(m)
+    }
+}
+impl<T> std::ops::Deref for RtMutex<T> {
+    type Target = std::sync::Mutex<T>;
+    #[inline]
+    fn deref(&self) -> &std::sync::Mutex<T> { &self.0 }
+}
+
 /// Marks "this thread is inside the audio callback" for the trap, for the lifetime of the value. A no-op
 /// in the shipped release.
 pub(crate) struct RtScope;
