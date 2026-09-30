@@ -94,5 +94,30 @@ Receipts:
 
 ---
 
+## 3. The v4.6.52 arm64 DMG crashes on launch ("Ether quit unexpectedly")
+
+### Cause
+The arm64 DMG is built right: app binary, Electron Framework and engine are all arm64. dyld kills it
+before any Ether code runs.
+
+- Crash report `~/Library/Logs/DiagnosticReports/Ether-2026-09-30-083127.ips`, `termination.namespace: DYLD`,
+  "Library missing": `Library not loaded: @rpath/Electron Framework.framework/Electron Framework … code
+  signature … not valid for use in process: mapping process and mapped file (non-platform) have different
+  Team IDs`.
+- `codesign -dv`: app and Electron Framework both `Signature=adhoc`, `TeamIdentifier=not set`,
+  `flags=0x10002(adhoc,runtime)`. `spctl -a`: rejected.
+- `electron-builder.json` had `mac.hardenedRuntime: true`, and CI has no Apple identity, so electron-builder
+  falls back to ad-hoc signing. Under Hardened Runtime, library validation requires every loaded library to
+  share the app's Team ID. Ad-hoc signatures have none, so the framework is refused.
+- The x64 DMG launched, likely because electron-builder leaves x64 unsigned without an identity, so
+  Hardened Runtime never applied (UNVERIFIED).
+
+### Fix (Jeff's ruling, option a)
+`mac.hardenedRuntime: false` while Mac builds are unsigned. **It returns — `true`, with a Developer ID and
+notarization — when Apple signing exists.** (The note lives here and in the commit: `electron-builder.json`
+cannot carry a comment, `481d689`.)
+
+---
+
 ## Side note (not investigated)
 `ether-startup.log` on this Mac is 2.4 MB — the never-rotating log already on the backlog.

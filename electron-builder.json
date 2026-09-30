@@ -93,7 +93,7 @@
     "category": "public.app-category.music",
     "entitlements": "build-resources/entitlements.mac.plist",
     "entitlementsInherit": "build-resources/entitlements.mac.plist",
-    "hardenedRuntime": true
+    "hardenedRuntime": false
   },
   "linux": {
     "target": [
