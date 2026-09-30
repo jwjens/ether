@@ -322,3 +322,33 @@ receiver refused, other sender refused, empty/oversized pairing refused); the re
 the pairing: key accepted, 0 auth failures, 0 lost, tone −21.10 dBFS (sent −21.07); 3 runs — Δ(shown − audio)
 −17.2 ms (**FAILED** the 15 ms bound, on a loaded box: dev app + release build running), then −4.1 and +2.8 ms
 (passed). `node audiod/smoke-link.js` all passed. `npx tsc --noEmit` 0 errors.
+
+### Self-test on OVEVENTS (design §7 step 2) — 2026-09-30T03:36–03:38Z, dev app at `87f3302`, `ETHER_LINK_SELF_TEST=1`
+
+Driven through the app's own IPC (`window.ether.audio.link*`, the calls Preferences and the strip make) over a
+DevTools port on the dev launch. Magical Forest (s3) → OVEVENTS · halloVeen (s2), fader S5, 127.0.0.1:9760.
+
+| Check | Result (runtime) |
+|---|---|
+| Targets | 7 rows; halloVeen on **ovowforestmusic** (designation) and on **OVEVENTS (this)** (override); only Magical Forest → its own board refused |
+| Copy link key | `ether-link:1:8e8f6181-…:1:<hex>:OVEVENTS`, fingerprint 2B76-918E |
+| Pick Link, no key | `{ok:true, needsKey:true}` — stored, not in the engine |
+| Paste garbage | refused: "that is not a link key — copy the whole line…" |
+| Paste the real line (padded + line break) | taken: fader ← OVEVENTS · 2B76-918E, engine `listening` UDP 9760 |
+| Feed to its own board | refused: "self-test: a station cannot feed its own board — the programme would loop" |
+| Feed Magical Forest → OVEVENTS · halloVeen | 10 s, ~500 frames: **receiving both ends, 0 lost, 0 late, 0 key refused, 0 dropouts**, latency 120–142 ms (net ≈ 28 + buffer ≈ 104–126), RTT 1.4–2.3 ms, 143–156 kb/s |
+| Replace key (fader still holds key #1) | fader refused it: **key refused 229**, state `lost` |
+| Paste the new line | **not recovered within 4 s** — the new sender session was answered BUSY: `[LINK] Station 3 send refused: the link is carrying OVEVENTS`. OPEN — cause UNVERIFIED (see below) |
+| ✕ / Forget key | `{ok:true, needsKey:true}`, fader `off` |
+| Teardown | feed stopped, fader unpatched, nothing stored on s1–s4, s9 |
+
+**Jeff's report during the test, verbatim:** *"its link ovevents and it has a feed but im on ovevents and im not
+playing anything"* — that was this self-test's feed (Magical Forest's idle programme = silence) arriving on his
+halloVeen Link fader. At 03:38:13Z the stored fader moved from **S5 to S1** (`[link s2] input S1 · key from
+OVEVENTS`), which this script did not do — consistent with Link being picked on halloVeen's S1 strip in the UI at
+that moment (the patch follows the pick and keeps the pasted key). UNVERIFIED which.
+
+**OPEN — BUSY after a re-key.** The one-venue rule holds a fader for its sender session until 5 s of silence
+(`linknet.rs` `RELEASE_AFTER`). After Replace key + re-paste, the same machine's new session was refused as a second
+sender. The fader was also re-patched S5 → S1 during this window, so the cause is not isolated. Check: with nobody
+touching the board, feed → Replace key → wait 6 s → paste → does `receiving` return, and does the log say `busy`?
