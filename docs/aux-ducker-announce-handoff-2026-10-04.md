@@ -1,5 +1,49 @@
-# Handoff: aux recovery, ducker, and announcement seconds/repeats (2026-10-04)
+# Handoff: OV fixes, released as 4.6.55 (2026-10-04)
 
+## STATE NOW: 4.6.55 = EVERYTHING from the OV handoff + Jeff's requests. Built, NOT installed, NOT pushed
+**In the release** (branch `fix/aux-monitor-recovery`, local commits):
+- **594a5be, aux and ducker fixes:**
+  - the aux stream reopens on its own
+  - a dead aux is visible (Health RED, NOT FED meters, cart FAULT)
+  - the room leveller holds while ducking
+  - the ducker re-arms on daemon connect
+- **8d64b9b:** the re-captured room golden. Measured: −40.97 dB under the cart, 8.47 dB below pre-fix, 12.00 dB from second 9.
+- **41125ad:** announcement seconds on before-closing lines, and ×1..×10 plays in a row (migration **v62**).
+- **ccb3c94, RC5:** the ON lamp writes ONE deck_configs row; whole-board saves never write channel_on.
+- **bb32265, top-of-hour hard cut REMOVED:**
+  - A/B/C are never stopped and the queue is never cleared at :00.
+  - The new hour JOINS after the crossing song (audiod/hour-join.js). Without that join, the anchored log reader would have
+    stamped the new hour's ID/spots `missed` during the overrun.
+  - Dependencies replaced: loggen.fillFromHour removed, spotProjection's hard-cut ownership removed,
+    showClock's dead renderer cut deleted, autofit/generate comments and UI labels corrected.
+- **75774a5, RC3/RC4 interchangeability:**
+  - S1–S5 get the room/aux path (they were silent in the room).
+  - The jukebox works on D/E/F + S1–S5. Its per-station state had no 3-slot assumption; the native get_state and finished
+    flags were extended to S1–S5.
+  - Every kind is offered on every source fader. Matrix: 8 slots × 7 kinds.
+- **d14fec8:** the board's slot kind reaches the engine on change, at boot and on every daemon connect. Before this,
+  nothing called setSlotKind, so a "Sweeper" fader ran as a Source.
+- **e19831b:** smoke-generate-chunk updated to match Fill Week as built (ff5d11f). It had been failing since 78e1d8a.
+
+**Engine:** rebuilt from d14fec8. sha256 `0ebf6ccbf1855116800ba033b845e0a3bfb8f26427068961cf3d521f3a656bca`.
+NAPI 43/43 bit-exact.
+
+**SCHEMA v62: UPGRADE EVERY STATION MACHINE TOGETHER.** An older peer quarantines everything a v62 machine sends until
+it upgrades. Nothing is lost; it all drains on upgrade.
+
+**Install:** quit Ether from the tray, confirm `ether-engine.exe` has exited, then run the installer.
+
+**Open questions for Jeff (deliberately not changed):**
+- `channel_on` is NOT in the sync registry, although the v58 migration says it is. So a cut never reaches other
+  machines. Registering it would make a cut propagate fleet-wide.
+- The configurator's Apply saves the board twice (App.tsx onApply). This is now harmless; it was left alone because App's
+  board state and Reset Default depend on that path.
+- The ducker boot race (the boot arm may run before the daemon is chosen) is covered by the re-arm on daemon connect.
+- The cause of the 04:00:04Z cut is inferred, not proven: most likely an ON/OFF click in a window holding stale "E off".
+  Check OV's main log for `[show] s2 stores written` at that time.
+
+---
+## History (earlier in the day: the split, now merged back)
 **Nothing committed, built, tagged or installed. No golden re-captured.** The source handoff is
 `P:\ether-aux-sources-handoff-2026-10-04.md`. Full diffs are in `P:\ether-diffs-2026-10-04\`.
 
