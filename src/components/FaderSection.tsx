@@ -80,7 +80,7 @@ export default function FaderSection({
     if (stationId == null) return;
     try { (window as any).ether?.audio?.setPfl?.(stationId, slot, on); } catch { /* engine not up — the lamp stays dark */ }
   };
-  const { configs: deckConfigs, save: saveDeckConfigs } = useDeckConfig();
+  const { configs: deckConfigs, save: saveDeckConfigs, setChannelOn } = useDeckConfig();
 
   // ── SLICE 7 — THE BOARD READS ITS LEVELS AND ITS PENDING STATE BACK FROM THE BLADE ────────────────────────
   // (docs/dsp-show-presets.md). A fader shows the level the engine was last given — by a drag in either window,
@@ -162,8 +162,13 @@ export default function FaderSection({
     const merged = (deckConfigs || []).some(c => c.slot === slot)
       ? (deckConfigs || []).map(c => (c.slot === slot ? next : c))
       : [...(deckConfigs || []), next];
-    try { await saveDeckConfigs(merged); } catch (e) { console.error("[SourceChannel] add failed:", e); }
-  }, [deckConfigs, nextFreeSourceSlot, saveDeckConfigs]);
+    try { await saveDeckConfigs(merged); } catch (e) { console.error("[SourceChannel] add failed:", e); return; }
+    // A channel added with + comes up ON, as it always has. The whole-board save no longer carries channel_on
+    // (RC5), so a slot re-enabled while its row still holds an old cut is opened here — that one row only.
+    if (existing && existing.channelOn === false) {
+      try { await setChannelOn(slot, true); } catch (e) { console.error("[SourceChannel] add: ON save failed:", e); }
+    }
+  }, [deckConfigs, nextFreeSourceSlot, saveDeckConfigs, setChannelOn]);
 
   const onSetSourceKind = useCallback(async (slot: string, kind: SourceKind | "") => {
     const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, kind } : c));
@@ -179,9 +184,10 @@ export default function FaderSection({
 
   const onSetSourceChannelOn = useCallback(async (slot: string, on: boolean) => {
     try { engine.getDeck(slot)?.setMuted(!on); } catch (e) { console.error("[SourceChannel] cut push failed:", e); }
-    const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, channelOn: on } : c));
-    try { await saveDeckConfigs(merged); } catch (e) { console.error("[SourceChannel] cut save failed:", e); }
-  }, [deckConfigs, saveDeckConfigs, engine]);
+    // ONE ROW (RC5). This used to save the WHOLE board from this window's copy, channel_on included, so a cut on D
+    // from a window holding a stale "E off" re-cut E too. Only this channel's channel_on is written now.
+    try { await setChannelOn(slot, on); } catch (e) { console.error("[SourceChannel] cut save failed:", e); }
+  }, [setChannelOn, engine]);
 
   const onRemoveSourceChannel = useCallback(async (slot: string) => {
     const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, enabled: false } : c));

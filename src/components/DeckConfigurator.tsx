@@ -5,6 +5,7 @@ import { checkFilePresence, fileLocationReason, changeFileLocationItem, importIn
 import { useActiveStation } from "../hooks/useActiveStation";
 // The on-screen Console is where an operator looks when something did not go where they expected.
 import { consoleLog } from "./MasterOutput";
+import { writeBoard, writeChannelOn } from "../lib/deckConfigWrites";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -221,35 +222,34 @@ export function useDeckConfig() {
     // Every write is INSPECTED. This used to fire and forget, then update the UI
     // unconditionally — so on a station with no rows the panel showed the new layout
     // while the database received nothing, and the failure was invisible.
-    const results = await Promise.all(next.map(async c => {
-      const res = await (window as any).ether.deckConfigs.updateBySlot(stationId, c.slot, {
-        type: c.type, label: c.label, color: c.color,
-        enabled: c.enabled ? 1 : 0, purpose: c.purpose || "",
-        // v58. `?? true` and not `?? false`: a config object built by older code (or by a caller that
-        // does not care about the lamp) must not cut the channel as a side effect of saving something
-        // else. Absent means "unchanged from open", which is what every board already shows.
-        channel_on: (c.channelOn ?? true) ? 1 : 0,
-        // SLICE 2 — the patch point travels with every save, so a source channel keeps what it is
-        // patched to across a reload. address is written even while unused so Phase 2 needs no
-        // migration.
-        kind: c.kind || "", address: c.address ?? null, duck: c.duck ? 1 : 0,
-      });
-      return { slot: c.slot, res };
-    }));
-    const failed = results.filter(r => r.res && r.res.ok === false);
+    // The row shape lives in src/lib/deckConfigWrites.ts. SLICE 2 — the patch point travels with every
+    // save, so a source channel keeps what it is patched to across a reload. channel_on does NOT travel:
+    // every row is written from the caller's copy of the board, which may be stale (RC5) — use setChannelOn.
+    const failed = await writeBoard((window as any).ether.deckConfigs, stationId, next);
     if (failed.length) {
       const msg = `Could not save ${failed.length} deck slot(s): ` +
-        failed.map(f => `${f.slot} (${f.res.error || "unknown error"})`).join(", ");
+        failed.map(f => `${f.slot} (${f.error})`).join(", ");
       console.error("[DeckConfig]", msg);
       setError(msg);
       throw new Error(msg);       // the caller decides what to show; never a silent success
     }
     setError(null);
-    setConfigs([...next].sort(compareSlots));
+    // channel_on was NOT written (see deckConfigWrites.ts), so the lamp keeps what this hook last read rather
+    // than whatever the caller's copy of the board said.
+    setConfigs(prev => [...next].map(c => {
+      const was = prev.find(p => p.slot === c.slot);
+      return was ? { ...c, channelOn: was.channelOn } : c;
+    }).sort(compareSlots));
+  };
+
+  // THE ON LAMP — one channel's row, channel_on only (RC5). The only renderer writer of channel_on on the board.
+  const setChannelOn = async (slot: string, on: boolean) => {
+    await writeChannelOn((window as any).ether.deckConfigs, stationId, slot, on);
+    setConfigs(prev => prev.map(c => (c.slot === slot ? { ...c, channelOn: on } : c)));
   };
 
   const enabled = useMemo(() => configs.filter(c => c.enabled), [configs]);
-  return { configs, save, enabled };
+  return { configs, save, enabled, setChannelOn };
 }
 
 // ── Deck Configurator Panel ───────────────────────────────────
