@@ -178,7 +178,8 @@ function engineDoc(preset, slots, withMaster) {
     if (c.fader != null) e.fader = c.fader;
     if (c.duck != null && !ROTATION.has(s)) e.duck = c.duck;
     if (c.duckable != null) e.duckable = c.duckable;
-    if (c.roomLevel != null && ["D", "E", "F"].includes(s)) e.room = c.roomLevel;
+    // Every source fader has a room row (D/E/F and S1..S5, 2026-10-04) — the same set the engine's set_room accepts.
+    if (c.roomLevel != null && SOURCE_SLOTS.includes(s)) e.room = c.roomLevel;
     if (c.rack) e.rack = c.rack;
     if (Object.keys(e).length) out.slots[s] = e;
   }

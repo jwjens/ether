@@ -300,11 +300,15 @@ pub struct FinishedFlags {
     pub e: Arc<AtomicBool>,
     pub f: Arc<AtomicBool>,
     pub cart: Arc<AtomicBool>,
+    /// S1..S5 (2026-10-04). The mixer always raised "S1".."S5" (deck_finished_key) and this struct silently dropped
+    /// them, so a jukebox / cart / announcement on S1..S5 could never be seen to end.
+    pub s: [Arc<AtomicBool>; 5],
 }
 
 impl FinishedFlags {
     pub fn new() -> Self {
         FinishedFlags {
+            s: std::array::from_fn(|_| Arc::new(AtomicBool::new(false))),
             a: Arc::new(AtomicBool::new(false)),
             b: Arc::new(AtomicBool::new(false)),
             c: Arc::new(AtomicBool::new(false)),
@@ -323,6 +327,11 @@ impl FinishedFlags {
             "E" => Some(&self.e),
             "F" => Some(&self.f),
             "CART" => Some(&self.cart),
+            "S1" => Some(&self.s[0]),
+            "S2" => Some(&self.s[1]),
+            "S3" => Some(&self.s[2]),
+            "S4" => Some(&self.s[3]),
+            "S5" => Some(&self.s[4]),
             _ => None,
         }
     }
@@ -370,7 +379,7 @@ pub enum AudioCmd {
     /// Audio Processing v1 — per-station program-bus loudness. (process_local, process_stream, target LUFS).
     /// Both bools default OFF; the daemon delivers this like the segue setting (survives respawns).
     SetProcessing { local: bool, stream: bool, target_lufs: f32 },
-    /// AUX MONITOR (2026-08-18): set the ROOM level for one aux deck (D/E/F only). 0.0 = not selected
+    /// AUX MONITOR (2026-08-18): set the ROOM level for one source fader (D/E/F, S1..S5). 0.0 = not selected
     /// by any slot = silent on the local speakers. Never affects air.
     SetAuxMonitor { deck: String, gain: f32 },
     /// DUCKER (slice 3) — arm or disarm one channel's duck. A preference on the channel; whether it
@@ -683,7 +692,8 @@ pub struct BusState {
     // program bus exactly as before, fully EQ'd and processed.
     //
     // Per-slot ROOM level. 0.0 = not selected by any slot = SILENT IN THE ROOM, which is the ruling.
-    // Only indices 3/4/5 are ever non-zero; SetAuxMonitor refuses every other slot.
+    // Every SOURCE fader can be non-zero — D/E/F (3/4/5) and S1..S5 (7..11), 2026-10-04; SetAuxMonitor
+    // (show::set_room) refuses A/B/C and CART, so those indices stay 0.
     pub aux_monitor_gain: [f32; SLOT_COUNT],
     /// PER-SLOT ROOM LEVEL — what the STUDIO hears from this slot, never what airs.
     ///
@@ -2834,11 +2844,10 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             }
                             AudioCmd::SetSlotKind { deck, kind } => {
                                 let Some(idx) = deck_index(&deck) else { continue };
-                                // A/B/C are automation's decks and are never re-kinded: putting a
-                                // rotation deck on another bus is not something an operator can
-                                // ask for by dialling a dropdown.
+                                // A/B/C are automation's decks and are never re-kinded (show::set_slot_kind —
+                                // the one setter the matrix test also drives).
                                 if ctl.params.kind[idx] != SlotKind::Rotation {
-                                    ctl.params.kind[idx] = if kind == "sweeper" { SlotKind::Sweeper } else { SlotKind::Source };
+                                    crate::show::set_slot_kind(&mut ctl.params, idx, &kind);
                                     ctl.params_changed();
                                 }
                             }
@@ -2882,17 +2891,19 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 ctl.params_changed();
                             }
                             AudioCmd::SetAuxMonitor { deck, gain } => {
-                                // AUX DECKS ONLY. A/B/C and CART are board channels and their local
-                                // monitoring is unchanged by this feature; refusing them here means no
-                                // caller can accidentally route a programme deck through the aux path.
+                                // SOURCE FADERS — D/E/F and S1..S5 (2026-10-04; it was D/E/F only, so a
+                                // source on S1..S5 had no way into the room). A/B/C and CART are board
+                                // channels and their local monitoring is unchanged by this feature; the one
+                                // setter (show::set_room) refuses them, so no caller can route a programme
+                                // deck through the aux path.
                                 let Some(idx) = deck_index(&deck) else { continue };
-                                if !(3..=5).contains(&idx) { continue; }
+                                if default_kind_for(idx) != SlotKind::Source { continue; }
                                 crate::show::set_room(&mut ctl.params, idx, gain);
                                 // The SAME row drives both, because it is one control: "how loud
                                 // is this deck in the room". Which buffer it reaches depends on
-                                // the slot's bus — an aux deck through the aux tap, a sweeper
+                                // the slot's bus — a source through the aux tap, a sweeper
                                 // through the room sum — and the operator should not have to know
-                                // which. Rotation decks never get here, so they keep unity.
+                                // which. Rotation decks and CART never get here, so they keep unity.
                                 // (show::set_room — the one setter a Take also uses.)
                                 ctl.params_changed();
                             }
@@ -6169,5 +6180,126 @@ mod rta_screens_fixture {
         std::fs::write(&out, serde_json::to_string_pretty(&j).unwrap()).unwrap();
         println!("[rta-screens] wrote {} (music.wav at {} s, GEQ {:?}; new fed {})", out, at_s, geq, f.fed);
         assert!(f.fed && cf.fed);
+    }
+}
+
+// ── INTERCHANGE (2026-10-04) — every source kind on every source fader ──────────────────────────────────────────
+//
+// Operator requirement, verbatim: "carts announcements jukebox sweepers link they all are just input sources and need
+// to work interchangeably on all faders." The source faders are D/E/F (slots 3/4/5) and S1..S5 (slots 7..11).
+//
+// THE MATRIX: each kind the board offers, dialled onto each source slot through the SAME setters the dispatch thread
+// uses (show::set_slot_kind for SetSlotKind, show::set_room for SetAuxMonitor), then played alone through
+// mixer_callback. Two destinations are read off real buffers:
+//   · PROGRAMME — the stream ring (what airs);
+//   · ROOM      — for a Source-kind slot the AUX TAP (the aux ring, its only way into the room); for a Sweeper-kind
+//                 slot the ROOM CHAIN (the main device output), because a sweeper sums into core with the music and by
+//                 design has no aux tap (SlotKind::Sweeper doc).
+#[cfg(test)]
+mod interchange_matrix {
+    use super::*;
+
+    struct Tone(f32);
+    impl Iterator for Tone {
+        type Item = f32;
+        fn next(&mut self) -> Option<f32> { Some(self.0) }
+    }
+
+    /// The source faders, by engine name and slot index.
+    const SOURCE_SLOTS: [(&str, usize); 8] = [("D", 3), ("E", 4), ("F", 5), ("S1", 7), ("S2", 8), ("S3", 9), ("S4", 10), ("S5", 11)];
+    /// What the board stores for each source kind (src/lib/sourceKinds.ts). "jingle" is the persisted key of the
+    /// Sweeper entry; "sweeper" is the value the engine's SetSlotKind has always named.
+    const KINDS: [&str; 7] = ["cart", "announcement", "jukebox", "link", "mic", "jingle", "sweeper"];
+
+    struct Heard { programme: f32, aux_tap: f32, device: f32, kind: SlotKind }
+
+    fn play_alone(slot: usize, kind: &str) -> Heard {
+        let (prod, mut prog) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
+        let eq = crate::eq::new_shared_eq(44100.0);
+        // stream connected → the programme ring is written, so "what airs" is a buffer we can read.
+        let bus = Arc::new(crate::rt::RtMutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(true)))));
+        let (aux_prod, mut aux) = HeapRb::<f32>::new(AUX_BUS_BUF).split();
+        let k;
+        {
+            let mut b = bus.lock().unwrap();
+            let mut p = b.params();
+            crate::show::set_slot_kind(&mut p, slot, kind);   // == AudioCmd::SetSlotKind
+            crate::show::set_room(&mut p, slot, 1.0);         // == AudioCmd::SetAuxMonitor, the room row at unity
+            b.apply_params(&p);
+            k = b.decks[slot].kind;
+            b.decks[slot].source = Some(DeckFeed::prefilled(Tone(0.25), 480 * 2 * 600));
+            b.decks[slot].active = true; b.decks[slot].paused = false; b.decks[slot].volume = 1.0;
+            b.aux_ring_prod = Some(aux_prod);
+        }
+        let fin = FinishedFlags::new();
+        let playing = Arc::new(AtomicBool::new(true));
+        let mut device = 0.0f32;
+        for _ in 0..20 {
+            let mut data = vec![0f32; 480 * 2];
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut Scratch::new());
+            device = data.iter().fold(device, |m, v| m.max(v.abs()));
+        }
+        let mut programme = 0.0f32;
+        while let Some(v) = prog.try_pop() { programme = programme.max(v.abs()); }
+        let mut aux_tap = 0.0f32;
+        while let Some(v) = aux.try_pop() { aux_tap = aux_tap.max(v.abs()); }
+        Heard { programme, aux_tap, device, kind: k }
+    }
+
+    const HEARD: f32 = 0.1;      // the tone is 0.25 at a unity fader; anything above this is that tone
+    const SILENT: f32 = 1e-6;
+
+    #[test]
+    fn every_source_kind_reaches_programme_and_room_on_every_source_slot() {
+        let mut failures = Vec::new();
+        for kind in KINDS {
+            let sweeper = kind == "sweeper" || kind == "jingle";
+            for (name, slot) in SOURCE_SLOTS {
+                let h = play_alone(slot, kind);
+                let room = if h.kind == SlotKind::Sweeper { h.device } else { h.aux_tap };
+                println!("[matrix] {:<12} on {:<2}  kind={:<8?}  programme={:.3}  aux-tap={:.3}  room-chain(device)={:.3}",
+                         kind, name, h.kind, h.programme, h.aux_tap, h.device);
+                let want = if sweeper { SlotKind::Sweeper } else { SlotKind::Source };
+                if h.kind != want { failures.push(format!("{kind} on {name}: slot kind {:?}, want {:?}", h.kind, want)); }
+                if h.programme < HEARD { failures.push(format!("{kind} on {name}: NOT on the programme ({:.4})", h.programme)); }
+                if room < HEARD { failures.push(format!("{kind} on {name}: NOT in the room ({:.4})", room)); }
+                if sweeper {
+                    // The documented sweeper rule: no aux tap, heard through the room chain on the main device.
+                    if h.aux_tap > SILENT { failures.push(format!("{kind} on {name}: a sweeper reached the aux tap ({:.4})", h.aux_tap)); }
+                } else if h.device > SILENT {
+                    // The documented source rule: excluded from the local room base, heard ONLY via the aux tap.
+                    failures.push(format!("{kind} on {name}: a source leaked into the local room base ({:.4})", h.device));
+                }
+            }
+        }
+        assert!(failures.is_empty(), "interchange matrix failures:\n  {}", failures.join("\n  "));
+    }
+
+    #[test]
+    fn the_room_row_is_accepted_on_every_source_slot_and_refused_on_the_board_channels() {
+        let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
+        let (prod, _c) = rb.split();
+        let b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(false)));
+        let mut p = b.params();
+        for i in 0..SLOT_COUNT { crate::show::set_room(&mut p, i, 0.5); }
+        for (name, slot) in SOURCE_SLOTS {
+            assert_eq!(p.aux_monitor_gain[slot], 0.5, "the room row was refused on source fader {name}");
+        }
+        for (name, slot) in [("A", 0usize), ("B", 1), ("C", 2), ("CART", 6)] {
+            assert_eq!(p.aux_monitor_gain[slot], 0.0, "{name} is a board channel and must not take an aux room row");
+            assert_eq!(p.room_gain[slot], 1.0, "{name}'s room level moved");
+        }
+    }
+
+    #[test]
+    fn a_source_slot_that_runs_out_raises_its_own_finished_flag() {
+        // A jukebox (or a cart, or an announcement) on S1..S5 must be able to say "ended", exactly as on D/E/F —
+        // the jukebox advances on it. Before 2026-10-04 FinishedFlags had no S1..S5 entries, so set("S1") was a no-op.
+        let fin = FinishedFlags::new();
+        for s in ["D", "E", "F", "S1", "S2", "S3", "S4", "S5"] {
+            fin.set(s);
+            assert!(fin.take(s), "{s} finishing was not recorded");
+            assert!(!fin.take(s), "{s}'s flag did not clear on take");
+        }
     }
 }

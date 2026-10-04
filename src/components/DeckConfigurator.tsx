@@ -9,10 +9,16 @@ import { writeBoard, writeChannelOn } from "../lib/deckConfigWrites";
 
 // ── Types ─────────────────────────────────────────────────────
 
+// The source kinds, the source slots and the slot rules live in src/lib/sourceKinds.ts (pure, testable) and are
+// re-exported here so every existing import keeps working.
+export { SOURCE_KINDS, isSweeperKind, sourceKindMeta, SOURCE_SLOTS, JUKEBOX_SLOTS, canHostJukebox, sourceKindOptions } from "../lib/sourceKinds";
+export type { SourceKind, SourceKindMeta, SourceKindOption } from "../lib/sourceKinds";
+import { canHostJukebox, type SourceKind } from "../lib/sourceKinds";
+
 // "jukebox" (2026-08-17) is a SOURCE you patch into a deck, like a mic — the public request jukebox's
-// audio. It is only offerable on slots D/E/F: station automation enumerates ["A","B","C"] and nothing
-// else (audiod/engine.js:521, :604, :648, :905, :1698 …), so a jukebox on D/E/F is a deck rotation
-// structurally cannot touch. Offering it on A/B/C would put the public and the scheduler on the same
+// audio. It is offerable on every source slot (D/E/F, S1..S5 — 2026-10-04): station automation enumerates
+// ["A","B","C"] and nothing else (audiod/engine.js:521, :604, :648, :905, :1698 …), so a jukebox on a source
+// slot is a deck rotation structurally cannot touch. Offering it on A/B/C would put the public and the scheduler on the same
 // deck. docs/jukebox-deck-source-design-2026-08-17.md
 export type DeckType = "music" | "mic" | "guest" | "cart" | "desk" | "video" | "jukebox" | "source";
 
@@ -27,83 +33,10 @@ export type DeckType = "music" | "mic" | "guest" | "cart" | "desk" | "video" | "
 //               does not have. Mic and network are ONE build, and that build is Phase 2.
 // Phase 2 entries are shown DISABLED rather than hidden: a door that says "not yet" beats a door
 // that is not there.
-export type SourceKind = "jukebox" | "announcement" | "jingle" | "cart" | "mic" | "link" | "network";
-
-export interface SourceKindMeta {
-  kind: SourceKind;
-  label: string;
-  /** "file" works today; "stream" needs the Phase 2 capture path. */
-  family: "file" | "stream";
-  /** What the operator is told on the strip — honest about what does and does not play yet. */
-  state: string;
-}
-
-export const SOURCE_KINDS: SourceKindMeta[] = [
-  { kind: "jukebox",      label: "Jukebox",              family: "file",
-    state: "Public request wall — patched and playing" },
-  { kind: "announcement", label: "Announcement",         family: "file",
-    state: "Patched. Announcement playout arrives in a later slice — nothing fires yet." },
-  { kind: "jingle",       label: "Sweeper",              family: "file",
-    // The `kind` VALUE stays "jingle": it is a persisted deck-config key, not a label. Changing a
-    // stored key for cosmetics is how a config silently stops matching, and the daemon's channel
-    // resolver accepts both 'jingle' and 'sweeper' so an existing install needs no re-dial.
-    //
-    // NO LONGER "(hand-fired)". Until 2026-09-03 the automated seam sweeper was hardcoded to the
-    // literal "CART" slot and never read deck_configs, so this entry genuinely could not carry the
-    // log's sweepers — and the state line said so. The fire path now resolves the dialled
-    // channel(s) on every fire, so the qualifier and that sentence would both be false.
-    state: "Sweepers air on this channel — the log's seam sweepers and hand-fired imaging alike." },
-  // CARTS ARE NOT SWEEPERS, and this entry is what finally separates them (Jeff, 2026-09-01).
-  //
-  //   A SWEEPER is programmed to play DURING ROTATION — armed and fired automatically at a song
-  //   seam by the daemon's _jingleTick, bridging the crossfade. It is part of the log.
-  //   A CART is a SOUND-EFFECTS RACK — hand-fired, punch-through, never scheduled, never in
-  //   rotation.
-  //
-  // Both used to drive the one native "CART" channel, so a cart fired while a sweeper was bridging
-  // a seam clobbered it — the daemon _stop()s and _load()s that channel as part of its bridge
-  // lifecycle, and neither side knew about the other. Patching carts onto an ordinary aux deck is
-  // what ends that: the sweeper keeps the overlay bus it is built around, and carts move off it.
-  { kind: "cart",         label: "Cart / SFX rack",      family: "file",
-    state: "Hand-fired sound effects, on this channel instead of the sweeper's overlay bus." },
-  // Mic is an ENGINE input since 2026-09-26 (docs/dsp-mic-in-engine.md): the audio engine captures the device and
-  // the channel goes on air like any other. Only Network below is still gated on a capture path.
-  { kind: "mic",          label: "Mic (device…)",        family: "stream",
-    state: "Live microphone on this channel, on air — pick the input on the strip or in Preferences → Audio." },
-  // THE REMOTE LINK (docs/remote-link-design-2026-09-28.md, ruling D1): Ether-to-Ether, its own patch type. Network below
-  // stays the placeholder for third-party codecs (Zephyr, AoIP), which are a different protocol.
-  { kind: "link",         label: "Link (network feed)",  family: "stream",
-    state: "A feed over the network from another Ether computer, into this fader — paste that computer's link key on the strip; buffer and port in Preferences → Broadcast → Remote Link." },
-  { kind: "network",      label: "Network (IP / Zephyr / AoIP)", family: "stream",
-    state: "Needs the engine capture path — Phase 2." },
-];
-
 // ONE NAME PER FADER. Storage and the Rust engine say "S1".."S5" for the slots added by slice 1 (native/src/audio.rs
 // deck_index, the deck_configs PK (station_id, slot)); an operator never meets that series. The board letter is the
 // fader's only display name, and ONE helper gives it everywhere — src/lib/boardName.ts (useBoardName in a component).
 // The fixed-arithmetic deckLetter that lived here is gone: it could not follow this board's own deck_configs order.
-
-/** Is this channel dialled to sweepers?
- *
- *  Both stored values: 'jingle' is the key the Sweeper entry has always persisted and predates
- *  'sweeper', so an existing install matches with no re-dial and no migration. Renaming a stored key
- *  for cosmetics is how a config silently stops matching.
- *
- *  A sweeper channel is the ONE source kind that joins the programme bus rather than the aux bus —
- *  it sums with the music, is ducked with it, and is heard on the station monitor, exactly as slot 6
- *  always was. Carts are NOT sweepers and never take this path: a cart is a hand-fired rack on an
- *  aux channel. */
-export const isSweeperKind = (k?: string | null) => k === "sweeper" || k === "jingle";
-
-export const sourceKindMeta = (k?: string | null) =>
-  SOURCE_KINDS.find(s => s.kind === k) || null;
-
-/** Slots a SOURCE channel may occupy: the existing aux decks first, then the new engine slots. */
-export const SOURCE_SLOTS = ["D", "E", "F", "S1", "S2", "S3", "S4", "S5"] as const;
-
-/** Slots the jukebox source may be assigned to. Not a preference — see the note above. */
-export const JUKEBOX_SLOTS = ["D", "E", "F"] as const;
-export const canHostJukebox = (slot: string) => (JUKEBOX_SLOTS as readonly string[]).includes(String(slot).toUpperCase());
 
 export interface DeckConfig {
   slot: string;       // "A" | "B" | "C" | "D" | "E" | "F" | "S1".."S5"
@@ -365,7 +298,7 @@ export default function DeckConfigurator({ onClose, onApply }: Props) {
 
                   {/* Type selector */}
                   <div style={{ display: "flex", gap: 4, flex: 1 }}>
-                    {/* Jukebox is offered on D/E/F only — automation owns A/B/C and must never share a
+                    {/* Jukebox is offered on source slots only — automation owns A/B/C and must never share a
                         deck with the public request jukebox. See canHostJukebox and the DeckType note. */}
                     {(Object.keys(TYPE_META) as DeckType[])
                       .filter(type => type !== "jukebox" || canHostJukebox(c.slot))

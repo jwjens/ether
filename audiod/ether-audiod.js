@@ -347,7 +347,7 @@ function modeToggle(stationId, fn) {
   return next;
 }
 
-// ── JUKEBOX DECK SOURCE (D/E/F) ────────────────────────────────────────────────────────────────────
+// ── JUKEBOX DECK SOURCE (every source fader: D/E/F, S1..S5) ────────────────────────────────────────────────────────────────────
 //
 // Design: docs/jukebox-deck-source-design-2026-08-17.md. The jukebox is an EVENT TOOL patched into a
 // deck like a microphone — not playout. It airs through a real Rust deck so the operator mixes it on
@@ -360,9 +360,10 @@ function modeToggle(stationId, fn) {
 // ["A","B","C"] and nothing else (engine.js:521, :604, :648, :905, :1698, …), so it never touches or
 // reads a jukebox deck. That is isolation by construction, not by hiding.
 //
-// Rust already treats D/E/F as first-class: the mixer sums EVERY deck slot with fader, channel cut and
-// trim (`native/src/audio.rs:1151` — `for (i, deck) in bus.decks.iter_mut().enumerate()`), and
-// `audio_get_state` reports deckD/E/F (`native/src/lib.rs:182-210`). So the audio path needs nothing new.
+// Rust treats every source fader as first-class: the mixer sums EVERY deck slot with fader, channel cut and
+// trim (`for (i, deck) in bs.decks.iter_mut().enumerate()` in native/src/audio.rs mixer_callback), and
+// `audio_get_state` reports deckD/E/F and deckS1..S5 (native/src/lib.rs; S1..S5 since 2026-10-04, with their own
+// finished flags — before that a jukebox on S1..S5 could never read its deck or see a track end).
 //
 // STANDALONE FOR ONE STRUCTURAL REASON, not a policy one: `engine.js:396` is
 //   `_deckState(id) { return id === "A" ? this.stateA : id === "B" ? this.stateB : this.stateC; }`
@@ -370,7 +371,13 @@ function modeToggle(stationId, fn) {
 // the engine's deck machinery would silently read and overwrite the mirrored state of deck C — the
 // deck the station may be airing from. The daemon's JS engine models exactly three decks; until that
 // model is widened, a jukebox deck keeps its own state here and emits the same events.
-const JUKEBOX_DECKS = ["D", "E", "F"];
+//
+// THAT STATE HAS NO THREE-DECK SHAPE (audited 2026-10-04, before widening): `jukeboxNow` is a Map keyed by STATION
+// (one jukebox per station, which Jukebox.tsx also assumes — it takes the first patched slot), its value records the
+// deck by name, and every handler addresses the deck by the string it was given. No array of three, no index math,
+// no letter list other than the gate itself. The one D/E/F dependency was OUTSIDE it: jukeboxDeckInfo reads
+// `deck${deck}` from audio_get_state, which never reported S1..S5 — fixed in native/src/lib.rs.
+const { JUKEBOX_DECKS, jukeboxDeck } = require("./jukebox-decks");
 const JUKEBOX_SESSION = require("crypto").randomUUID();
 const _jukeboxPlaylog = (() => { try { return require("./playlog"); } catch { return null; } })();
 /** stationId → { deck, filePath, title, artist, startedAtMs } — what the jukebox last put on air. */
@@ -442,7 +449,7 @@ const handlers = {
   setProcessorParams: (m) => !!A.audioSetProcessorParams(m.stationId, m.branch | 0, m.targetLufs, m.ceilingDbtp, m.releaseMs, m.rideRate, m.rideClamp),
   setProcessorBypass: (m) => !!A.audioSetProcessorBypass(m.stationId, m.branch | 0, !!m.rideBypass, !!m.limiterBypass),
   setDuckParams:      (m) => A.audioSetDuckParams(m.stationId, m.depthDb, m.thresholdDb, m.attackMs, m.holdMs, m.releaseMs),
-  // AUX MONITOR (room) level for one aux deck — D/E/F only, enforced in Rust. 0 = silent locally.
+  // AUX MONITOR (room) level for one source fader — D/E/F and S1..S5; Rust refuses A/B/C and CART. 0 = silent locally.
   setAuxMonitor:      (m) => A.audioSetAuxMonitor(m.stationId, m.deck, m.gain),
   // AUX output device. "" = none = the aux stream closes and the bus is silent. Never falls back.
   setAuxDevice:       (m) => A.audioSetAuxDevice(m.stationId, m.device || ""),
@@ -621,10 +628,10 @@ const handlers = {
   // ── Stage 1: explicit-intent commands (additive; run ALONGSIDE the legacy ones above) ──
   // The renderer does not call these yet (Stage 2 flips it). All id-addressed, idempotent, tolerant
   // — a stale/unknown intent returns false (a quiet no-op), never an error or a corrupting mutation.
-  // ── Jukebox deck source — D/E/F only (see the block above the handler map) ──
+  // ── Jukebox deck source — every source fader (see the block above the handler map) ──
   "jukebox:play": (m) => {
-    const deck = String(m.deck || "").toUpperCase();
-    if (!JUKEBOX_DECKS.includes(deck)) return { ok: false, reason: "deck-not-allowed", allowed: JUKEBOX_DECKS };
+    const deck = jukeboxDeck(m.deck);
+    if (!deck) return { ok: false, reason: "deck-not-allowed", allowed: JUKEBOX_DECKS };
     if (!m.filePath) return { ok: false, reason: "no-file" };
     stations.add(m.stationId);
     let loaded;
@@ -672,8 +679,8 @@ const handlers = {
   },
 
   "jukebox:stop": (m) => {
-    const deck = String(m.deck || "").toUpperCase();
-    if (!JUKEBOX_DECKS.includes(deck)) return { ok: false, reason: "deck-not-allowed" };
+    const deck = jukeboxDeck(m.deck);
+    if (!deck) return { ok: false, reason: "deck-not-allowed" };
     try { A.audioStop(deck, m.stationId); } catch { /* already stopped / never opened */ }
     jukeboxNow.delete(m.stationId);
     broadcast({
@@ -688,8 +695,8 @@ const handlers = {
   /** What the jukebox deck is ACTUALLY doing, straight off the engine — status, volume, is_finished.
    *  The jukebox's routing banner and its on-air blink read this and nothing else. */
   "jukebox:state": (m) => {
-    const deck = String(m.deck || "").toUpperCase();
-    if (!JUKEBOX_DECKS.includes(deck)) return { ok: false, reason: "deck-not-allowed" };
+    const deck = jukeboxDeck(m.deck);
+    if (!deck) return { ok: false, reason: "deck-not-allowed" };
     const info = jukeboxDeckInfo(m.stationId, deck);
     const now = jukeboxNow.get(m.stationId) || null;
     return {

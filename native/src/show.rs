@@ -26,7 +26,7 @@ pub struct ShowSlot {
     pub cut: bool,
     pub duck: Option<bool>,
     pub duckable: Option<bool>,
-    /// The room / aux monitor level (0…4) — D/E/F only, exactly as SetAuxMonitor.
+    /// The room / aux monitor level (0…4) — every source fader (D/E/F, S1..S5), exactly as SetAuxMonitor.
     pub room: Option<f32>,
     pub rack: Option<ChannelRack>,
 }
@@ -142,11 +142,26 @@ impl ShowApply {
 
 // ── The shared setters: the single-control commands and a Take are the same code ─────────────────────────────
 
-/// SetAuxMonitor: the room level of an AUX deck (D/E/F only; every other slot is refused, silently, as always).
+/// SetAuxMonitor: the room level of a SOURCE fader — D/E/F and S1..S5, every slot whose layout kind is
+/// SlotKind::Source (2026-10-04: "they all are just input sources and need to work interchangeably on all faders";
+/// it was D/E/F only, so S1..S5 were silent in the room). A/B/C and CART are board channels and are refused, silently,
+/// as always. Keyed on the slot's LAYOUT kind, not its current kind: a source fader dialled to sweepers keeps its row,
+/// and the row then reaches it through room_gain on the room chain instead of the aux tap.
 pub(crate) fn set_room(p: &mut Params, idx: usize, gain: f32) {
-    if !(3..=5).contains(&idx) { return; }
+    if idx >= SLOT_COUNT || crate::audio::default_kind_for(idx) != SlotKind::Source { return; }
     p.aux_monitor_gain[idx] = gain.clamp(0.0, 4.0);
     if p.kind[idx] != SlotKind::Rotation { p.room_gain[idx] = gain.clamp(0.0, 4.0); }
+}
+
+/// SetSlotKind: WHICH BUS a slot joins. A/B/C are automation's decks and are never re-kinded: putting a rotation
+/// deck on another bus is not something an operator can ask for by dialling a dropdown. The one setter the
+/// dispatch thread and the tests share, so a test that sets a kind sets it exactly as the product does.
+pub(crate) fn set_slot_kind(p: &mut Params, idx: usize, kind: &str) {
+    if idx >= SLOT_COUNT || p.kind[idx] == SlotKind::Rotation { return; }
+    // BOTH sweeper spellings: "jingle" is the value the board's Sweeper entry has always persisted
+    // (src/lib/sourceKinds.ts isSweeperKind), "sweeper" the one this command was written for. Matching only one of them
+    // meant a fader dialled to Sweeper on the board would join the aux bus instead of the programme.
+    p.kind[idx] = if kind == "sweeper" || kind == "jingle" { SlotKind::Sweeper } else { SlotKind::Source };
 }
 
 /// SetChannelRack: the plan is computed here (dispatch thread, f64) and the version moves.

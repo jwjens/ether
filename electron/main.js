@@ -4484,20 +4484,22 @@ ipcMain.handle("audio:load", async (_, deck, filePath, title, artist, gainDb, st
 // the SAME file playback does). Returns { ok, filePath, error } — never throws.
 ipcMain.handle("audio:resolve-local-path", async (_, filePath) => resolveLocalAudioPath(filePath));
 
-// ── Jukebox deck source (D/E/F) ────────────────────────────────────────────────────────────────────
+// ── Jukebox deck source (every source fader: D/E/F, S1..S5) ────────────────────────────────────────────────────────────────────
 //
 // docs/jukebox-deck-source-design-2026-08-17.md. The jukebox is an event tool patched into a deck like
 // a mic: the operator decides with the fader whether it is on air. THE BOARD IS THE TRUTH — nothing
 // here suppresses deck events, metering or logging. The only isolation is that station automation
-// enumerates ["A","B","C"] and never looks at D/E/F.
+// enumerates ["A","B","C"] and never looks at a source fader.
 //
-// Restricted to D/E/F on purpose: offering A/B/C would hand the public a deck rotation also drives,
-// which is two schedulers fighting over one deck.
-const JUKEBOX_DECKS = ["D", "E", "F"];
+// Allowed on every source fader (D/E/F and S1..S5 — "they all are just input sources and need to work
+// interchangeably on all faders", 2026-10-04); refused on A/B/C on purpose: offering those would hand the
+// public a deck rotation also drives, which is two schedulers fighting over one deck. The list is shared
+// with the daemon (audiod/jukebox-decks.js) so the two gates cannot drift.
+const { JUKEBOX_DECKS, jukeboxDeck } = require("../audiod/jukebox-decks");
 
 ipcMain.handle("jukebox:play", async (_evt, req) => {
-  const deck = String(req?.deck || "").toUpperCase();
-  if (!JUKEBOX_DECKS.includes(deck)) return { ok: false, reason: "deck-not-allowed", allowed: JUKEBOX_DECKS };
+  const deck = jukeboxDeck(req?.deck);
+  if (!deck) return { ok: false, reason: "deck-not-allowed", allowed: JUKEBOX_DECKS };
   const stationId = req?.stationId ?? getActiveStationId();
   if (stationId == null) return { ok: false, reason: "no-station" };
   if (!req?.filePath) return { ok: false, reason: "no-file" };
@@ -4539,8 +4541,8 @@ ipcMain.handle("jukebox:play", async (_evt, req) => {
 });
 
 ipcMain.handle("jukebox:stop", async (_evt, req) => {
-  const deck = String(req?.deck || "").toUpperCase();
-  if (!JUKEBOX_DECKS.includes(deck)) return { ok: false, reason: "deck-not-allowed" };
+  const deck = jukeboxDeck(req?.deck);
+  if (!deck) return { ok: false, reason: "deck-not-allowed" };
   const stationId = req?.stationId ?? getActiveStationId();
   if (stationId == null) return { ok: false, reason: "no-station" };
   if (AUDIO_DAEMON) return audiodClient.cmd("jukebox:stop", { stationId, deck });
@@ -4551,8 +4553,8 @@ ipcMain.handle("jukebox:stop", async (_evt, req) => {
 /** What the routed deck is ACTUALLY doing — status, fader level, finished. The jukebox's routing
  *  banner and on-air indicator read this and never infer from intent. */
 ipcMain.handle("jukebox:deck-state", async (_evt, req) => {
-  const deck = String(req?.deck || "").toUpperCase();
-  if (!JUKEBOX_DECKS.includes(deck)) return { ok: false, reason: "deck-not-allowed" };
+  const deck = jukeboxDeck(req?.deck);
+  if (!deck) return { ok: false, reason: "deck-not-allowed" };
   const stationId = req?.stationId ?? getActiveStationId();
   if (stationId == null) return { ok: false, reason: "no-station" };
   if (AUDIO_DAEMON) return audiodClient.cmd("jukebox:state", { stationId, deck });
@@ -4575,8 +4577,10 @@ ipcMain.handle("jukebox:deck-state", async (_evt, req) => {
 ipcMain.handle("audio:play", (_, deck, stationId) => AUDIO_DAEMON ? audiodClient.cmd("play", { deck, stationId }) : audio.audioPlay(deck, stationId));
 ipcMain.handle("audio:pause", (_, deck, stationId) => AUDIO_DAEMON ? audiodClient.cmd("pause", { deck, stationId }) : audio.audioPause(deck, stationId));
 ipcMain.handle("audio:stop", (_, deck, stationId) => AUDIO_DAEMON ? audiodClient.cmd("stop", { deck, stationId }) : audio.audioStop(deck, stationId));
-// AUX MONITOR — the ROOM level for an aux deck (D/E/F). "Slot = room, board = air": this is the ONLY
-// way those decks reach the local speakers, and it never touches the programme bus.
+// AUX MONITOR — the ROOM level for a source fader (D/E/F and S1..S5, every SlotKind::Source slot). "Slot = room,
+// board = air": for a source-kind fader this is the ONLY way it reaches the local speakers (the aux tap), and it never
+// touches the programme bus. A fader dialled to sweepers sums into the programme instead and the same row is its room
+// level on the room chain. A/B/C and CART are refused in Rust.
 // AUX OUTPUT DEVICE — where the aux monitor bus is heard. "" closes it. Deliberately never falls back
 // to a default: aux audio only ever leaves via a device the operator chose.
 ipcMain.handle("audio:set-aux-device", (_, stationId, device) =>

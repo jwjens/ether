@@ -514,6 +514,11 @@ pub fn audio_get_state(station_id: Option<u32>) -> String {
     let fin_e = audio.finished.take("E");
     let fin_f = audio.finished.take("F");
     let fin_cart = audio.finished.take("CART");
+    // S1..S5 (2026-10-04) — the source faders past F. Reported exactly like D/E/F: the jukebox's deck-state and the
+    // renderer's source poll both read `deck${slot}` off this, and before this they found nothing for S1..S5.
+    const S_IDS: [&str; 5] = ["S1", "S2", "S3", "S4", "S5"];
+    let fin_s: [bool; 5] = std::array::from_fn(|k| audio.finished.take(S_IDS[k]));
+    for k in 0..5 { if fin_s[k] { audio.deck_s[k].status = "ended".to_string(); } }
     if fin_a { audio.deck_a.status = "ended".to_string(); }
     if fin_b { audio.deck_b.status = "ended".to_string(); }
     if fin_c { audio.deck_c.status = "ended".to_string(); }
@@ -521,7 +526,7 @@ pub fn audio_get_state(station_id: Option<u32>) -> String {
     if fin_e { audio.deck_e.status = "ended".to_string(); }
     if fin_f { audio.deck_f.status = "ended".to_string(); }
     if fin_cart { audio.deck_cart.status = "ended".to_string(); }
-    serde_json::json!({
+    let mut st = serde_json::json!({
         "deckA": audio.deck_a.info("A", fin_a),
         "deckB": audio.deck_b.info("B", fin_b),
         "deckC": audio.deck_c.info("C", fin_c),
@@ -529,7 +534,11 @@ pub fn audio_get_state(station_id: Option<u32>) -> String {
         "deckE": audio.deck_e.info("E", fin_e),
         "deckF": audio.deck_f.info("F", fin_f),
         "deckCart": audio.deck_cart.info("CART", fin_cart),
-    }).to_string()
+    });
+    for k in 0..5 {
+        st[format!("deck{}", S_IDS[k])] = serde_json::json!(audio.deck_s[k].info(S_IDS[k], fin_s[k]));
+    }
+    st.to_string()
 }
 
 #[napi]
@@ -1136,15 +1145,15 @@ pub fn audio_set_aux_device(station_id: u32, device_name: String) -> bool {
     audio.sender.send(AudioCmd::SetAuxDevice(device_name)).is_ok()
 }
 
-/// AUX MONITOR LEVEL — the ROOM level for one aux deck (D/E/F), 0.0 = silent locally.
+/// AUX MONITOR LEVEL — the ROOM level for one source fader (D/E/F, S1..S5), 0.0 = silent locally.
 ///
-/// "Slot = room, board = air" (Jeff, 2026-08-18). The AUX monitor slots are the ONLY way decks D/E/F
-/// are heard on the local speakers: they are excluded from the room sum entirely and re-enter it only
-/// through this gain, taken PRE-CUT and PRE-FADER so the board's channel switch cannot silence the
-/// room. Air is untouched — those decks stay in the programme bus, fully EQ'd and processed.
+/// "Slot = room, board = air" (Jeff, 2026-08-18). The monitor rows are the ONLY way a source-kind fader
+/// is heard on the local speakers: it is excluded from the room sum entirely and re-enters it only
+/// through this gain on the aux tap, POST-fader and POST-cut (audio.rs mixer_callback). Air is
+/// untouched — those faders stay in the programme bus, fully EQ'd and processed.
 ///
-/// Rejected for any deck that is not D/E/F: A/B/C and CART are board channels and their local
-/// monitoring is unchanged by this feature.
+/// Rejected for any deck that is not a source fader: A/B/C and CART are board channels and their local
+/// monitoring is unchanged by this feature. S1..S5 accepted since 2026-10-04.
 #[napi]
 pub fn audio_set_aux_monitor(station_id: u32, deck: String, gain: f64) -> bool {
     let engine = get_or_create_engine(station_id, None);
@@ -1262,5 +1271,32 @@ mod source_slot_meta {
         assert_eq!(with(9103, |a| a.deck_unknown.volume), 0.1);
         assert!(with(9103, |a| a.deck_s.iter().all(|m| m.file_path.is_empty())), "`s1` must not be taken for S1");
         println!("[src-meta] MIC / s1 / ZZ -> the throwaway record; deck B unchanged");
+    }
+
+    /// INTERCHANGE (2026-10-04): a jukebox — or any source — on S1..S5 must be readable exactly as on D/E/F. The
+    /// jukebox's deck-state (audiod jukeboxDeckInfo, main's jukebox:deck-state) reads `deck${slot}` off this JSON, and
+    /// so does the renderer's source poll; S1..S5 were simply missing, and their end was never recorded.
+    #[test]
+    fn get_state_reports_every_source_slot_and_its_end() {
+        let _rx = engine(9104);
+        for (k, s) in ["S1", "S2", "S3", "S4", "S5"].iter().enumerate() {
+            audio_load((*s).into(), format!("{s}.wav"), format!("Track {s}"), "".into(), None, Some(9104));
+            assert!(audio_play((*s).into(), Some(9104)));
+            let st: serde_json::Value = serde_json::from_str(&audio_get_state(Some(9104))).unwrap();
+            let d = &st[format!("deck{s}")];
+            assert_eq!(d["status"], "playing", "deck{s} missing or wrong in audio_get_state: {st}");
+            assert_eq!(d["title"], format!("Track {s}"));
+            assert_eq!(d["id"], *s);
+            // the mixer raises the slot's own finished flag (deck_finished_key → "S1".."S5") — the state must say so
+            with(9104, |a| a.finished.set(s));
+            let st: serde_json::Value = serde_json::from_str(&audio_get_state(Some(9104))).unwrap();
+            let d = &st[format!("deck{s}")];
+            assert_eq!(d["is_finished"], true, "{s} ended but audio_get_state never said so");
+            assert_eq!(d["status"], "ended");
+            // and D/E/F still report as before
+            assert!(st["deckD"].is_object() && st["deckF"].is_object() && st["deckCart"].is_object());
+            let _ = k;
+        }
+        println!("[src-meta] audio_get_state reports deckS1..S5 and each one's end");
     }
 }

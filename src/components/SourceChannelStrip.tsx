@@ -18,9 +18,8 @@ import { useActiveStation } from "../hooks/useActiveStation";
 import { useMicInputs, useInputDevices, micStateWords, openMicPreferences } from "../hooks/useMicInputs";
 import { useRemoteLink, rxWords, linkNotFed, openLinkPreferences } from "../hooks/useRemoteLink";
 import ConsoleStrip from "./ConsoleStrip";
-import { SOURCE_KINDS, sourceKindMeta, type SourceKind, type DeckConfig } from "./DeckConfigurator";
+import { sourceKindMeta, sourceKindOptions, type SourceKind, type DeckConfig } from "./DeckConfigurator";
 import { useBoardName } from "../hooks/useBoardName";
-import { canHostJukebox } from "./DeckConfigurator";
 
 interface Props {
   config: DeckConfig;
@@ -126,21 +125,9 @@ export default function SourceChannelStrip({
     }
   }, [isLink, linkInput, linkRx, isOn, onSetOn, config.slot]);
 
-  // Jukebox is offerable only where it can actually be routed. Automation enumerates A/B/C and
-  // nothing else, so the jukebox has always been restricted to the aux slots; the new engine slots
-  // (S1..) are not wired to it yet. Offering it where it cannot play would be exactly the decorative
-  // control this strip exists to avoid — so it is disabled with the reason, never silently missing.
-  const options = useMemo(() => SOURCE_KINDS.map(k => {
-    if (k.kind === "jukebox" && !canHostJukebox(config.slot)) {
-      return { ...k, disabled: true, why: `Jukebox routes on D/E/F only — not ${config.slot}` };
-    }
-    // MIC is an ENGINE input since 2026-09-26 (docs/dsp-mic-in-engine.md), the LINK since 2026-09-28. Network stays
-    // disabled — it genuinely has no path yet.
-    if (k.family === "stream" && k.kind !== "mic" && k.kind !== "link") {
-      return { ...k, disabled: true, why: "Phase 2 — needs the engine capture path" };
-    }
-    return { ...k, disabled: false, why: "" };
-  }), [config.slot]);
+  // The SOURCE dropdown's entries — src/lib/sourceKinds.ts, pinned by its test: every source kind is offered on every
+  // source slot (operator requirement, 2026-10-04). Only Network is disabled, with its reason, because it has no path.
+  const options = useMemo(() => sourceKindOptions(config.slot), [config.slot]);
 
   // A patched input names itself on the channel — "Focusrite", not "Mic".
   const label = (isMic && patch) ? patch.device
