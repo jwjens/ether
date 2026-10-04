@@ -72,8 +72,12 @@ check("4 · ctx is built BEFORE any delete (it reads play_log, never generated_s
 
 console.log("\n── 5 · the week is ONE pipeline, not seven blocking calls ──");
 check("5 · a range handler exists", /ipcMain\.handle\('schedule:generateDays'/.test(main));
-check("5 · the Program Log's Fill Day is ONE generateDay call (Fill Week is not built — Jeff's ruling, slice 2a)",
-  (plog.match(/invoke\("schedule:generateDay"/g) || []).length === 1 && !/invoke\("schedule:generateDays"/.test(plog));
+// Slice 2a ruled Fill Week out; ff5d11f (2026-09-23, Jeff's correction) built it — as ONE generateDays invoke for the
+// whole week, never seven generateDay calls (progress + cancel per hour, one shared ctx across day boundaries).
+check("5 · the Program Log's Fill Day is ONE generateDay call",
+  (plog.match(/invoke\("schedule:generateDay"/g) || []).length === 1);
+check("5 · the Program Log's Fill Week is ONE generateDays call for the whole list (ff5d11f), not a day loop",
+  (plog.match(/invoke\("schedule:generateDays"/g) || []).length === 1);
 check("5 · the Program Log never loops generateDay per hour or per day",
   !/for \([^)]*\)[\s\S]{0,600}invoke\("schedule:generateDay"/.test(plog));
 check("5 · the range commits each day atomically as it completes",
