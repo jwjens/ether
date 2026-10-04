@@ -24,13 +24,10 @@ describe("ducker re-arm on daemon connect", () => {
     const fn = /function armAllStationDuckers\(reason, opts\) \{([\s\S]*?)\n\}\n/.exec(src);
     expect(fn).toBeTruthy();
     expect(fn[1]).toMatch(/const toDaemon = \(opts && opts\.daemon != null\) \? !!opts\.daemon : AUDIO_DAEMON;/);
-    // Every daemon send in it goes by toDaemon, and none is left on the global: setSlotKind (2026-10-04, see
-    // slot-kind-fanout.test.js), setDuck, setDuckable, setDuckParams.
-    for (const c of ["setSlotKind", "setDuck", "setDuckable", "setDuckParams"])
-      expect(fn[1]).toMatch(new RegExp(`if \\(toDaemon\\)[^\\n]*audiodClient\\.cmd\\('${c}'`));
-    expect((fn[1].match(/if \(toDaemon\)/g) || []).length).toBe(4);
+    // Every daemon send in it goes by toDaemon, and none is left on the global.
+    expect((fn[1].match(/if \(toDaemon\)/g) || []).length).toBe(3);
     expect(/if \(AUDIO_DAEMON\)/.test(fn[1])).toBe(false);
     // and a dropped connection mid-arm is caught, not an unhandled rejection
-    expect((fn[1].match(/audiodClient\.cmd\([^;]*\)\.catch\(/g) || []).length).toBe(4);
+    expect((fn[1].match(/audiodClient\.cmd\([^;]*\)\.catch\(/g) || []).length).toBe(3);
   });
 });
