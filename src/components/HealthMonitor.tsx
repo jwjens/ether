@@ -1356,8 +1356,8 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
           <HealthPanel id="spot-schedule" title="Spot Schedule — this hour &amp; next">
             <SpotTimeline rows={spotRows} />
             <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: "var(--s-4, 8px)", lineHeight: 1.45 }}>
-              Hollow markers are pending, solid have aired. The top-of-hour anchor is fired by the hard
-              cut — it lands exact by construction, not by scheduling. Hover a marker for its times.
+              Hollow markers are pending, solid have aired. A top-of-hour anchor joins after the song
+              crossing the hour, so it can run late like any other. Hover a marker for its times.
             </div>
           </HealthPanel>
         )}

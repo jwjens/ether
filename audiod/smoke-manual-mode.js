@@ -3,14 +3,14 @@
 //
 // THE CONTRACT (Jeff): MANUAL stops automation DECIDING, never stops the engine RUNNING. Press MANUAL
 // mid-song and the song keeps playing; the jock owns the hour — nothing automated fires, spot anchors
-// and the top-of-hour hard cut included. Press AUTO and the calendar runs from the real-time clock.
+// included (the top-of-hour hard cut no longer exists at all). Press AUTO and the calendar runs from the real-time clock.
 //
 // WHY THIS BENCH EXISTS: on 2026-07-31 a jock on halloVeen pressed play in MANUAL and got dead air with
 // a UI that said "playing", recovering only after four AUTO/MANUAL toggles. stop() was emptying every
 // deck and killing the poll loop.  Cause: docs/manual-mode-dead-air-trace-2026-07-31.md
 //                                Contract: docs/design-manual-mode-contract-2026-07-31.md
 //
-// The failure mode these guard against is automation firing during a live shift — a rotate or a hard cut
+// The failure mode these guard against is automation firing during a live shift — a rotate
 // under a talk break. ONE ASSERTION PER DECIDING PATH: any single leak is a live-air fault.
 "use strict";
 const path = require("path");
@@ -75,10 +75,9 @@ console.log("\n── 3 · MANUAL: every deciding path is silent (one assertion 
   check("3b · _maintain does NOT preload", acted.filter(a => a[0] === "PRELOAD"), []);
   check("3b · _maintain does NOT refill", acted.filter(a => a[0] === "REFILL"), []);
 
-  // the top-of-hour HARD CUT must not fire under a talk break
-  e._lastHourCut = -1;
-  e._checkTopOfHour();
-  check("3c · the top-of-hour hard cut does NOT fire", acted.filter(a => a[0] === "ADVANCE" && /top-of-hour/.test(a[1])), []);
+  // 3c · the top-of-hour hard cut was REMOVED (2026-10-04) — there is no hour-rollover path left to
+  // gate. Pinned in audiod/smoke-hour-rollover.js (AUTO) and audiod/top-of-hour-removed.test.js.
+  check("3c · there is no top-of-hour hard cut to fire", typeof e._checkTopOfHour, "undefined");
 
   // segue overlap (which is how a spot anchor reaches air) must not fire
   e.stateA.positionSec = 198;   // inside the overlap window

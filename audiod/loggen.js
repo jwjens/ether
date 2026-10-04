@@ -16,6 +16,8 @@
 // RULES-OFF actually means off here: with no ACTIVE separation rule, Tier 1 applies no separation
 // (it no longer silently falls back to a hidden 60-min default).
 
+const hourJoin = require("./hour-join");   // the new hour joins after the song crossing :00 (no hard cut)
+
 // ── Separation config — station-scoped, honors rules-off ──
 // rulesOn = an ACTIVE artist-separation rule exists for this station. No active rule → separation OFF.
 function sepConfig(db, stationId) {
@@ -245,26 +247,8 @@ function readGeneratedSchedule(db, count, stationId) {
   return rows.filter(r => r.file_path);
 }
 
-// Top-of-hour: schedule anchored exactly at hourStartTs, no grace (daemon hard cut).
-function fillFromHour(db, stationId, hourStartTs, count = 20) {
-  const fmt = getFormatCategoryIds(db, stationId);
-  const catClause = fmt.length ? `AND (s.id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
-  const params = fmt.length ? [stationId, hourStartTs, ...fmt, count] : [stationId, hourStartTs, count];
-  let rows;
-  try {
-    rows = db.prepare(
-      `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, COALESCE(gs.file_key, s.file_key) AS file_key,
-              COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start, gs.content_class,
-              COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
-       FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
-       WHERE gs.station_id = ? AND gs.scheduled_at >= ? AND gs.deleted_at IS NULL
-         AND (gs.content_class IS NULL OR gs.content_class NOT IN ('JIN','SWP')) ${catClause}
-       ORDER BY gs.scheduled_at LIMIT ?`).all(...params);
-  } catch { return []; }
-  const playable = rows.filter(r => r.file_path);
-  if (playable.length) _schedCursor = playable[playable.length - 1].row_id;
-  return playable.map(r => ({ ...toItem(r), schedId: r.row_id }));   // schedId for the Phase 1 shadow playhead writer
-}
+// (fillFromHour — the top-of-hour hard cut's re-read from the hour boundary — was removed 2026-10-04
+// with the cut. The new hour now joins after the crossing song through selectRowForNow's hour join.)
 
 // ── Log-Reader Flip Phase 3 (§2.7): the TIME-ANCHORED playhead selector ───────────────────────────────
 // Pure, read-only, deterministic (NO LLM). Given the wall clock, return the generated_schedule row that
@@ -289,9 +273,36 @@ function selectRowForNow(db, stationId, nowTs, slackSec = 60) {
     const cols = `gs.id AS row_id, gs.title, gs.scheduled_at, COALESCE(gs.file_path, s.file_path) AS file_path`;
     const fmtP = fmt.length ? fmt : [];
     // Current slot: the latest pending row whose scheduled_at has arrived (within slack).
-    const playRow = db.prepare(
+    let playRow = db.prepare(
       `SELECT ${cols} ${base} AND gs.scheduled_at <= ? ORDER BY gs.scheduled_at DESC, gs.id DESC LIMIT 1`
     ).get(stationId, ...fmtP, nowTs + slackSec);
+    // HOUR JOIN (2026-10-04, top-of-hour hard cut removed): the new hour plays AFTER the song that
+    // crosses :00 — its head is never skipped or stamped `missed` because that song ran over. See
+    // audiod/hour-join.js; a null window leaves the ordinary catch-up below unchanged.
+    if (playRow) {
+      const H = hourJoin.hourStartOf(playRow.scheduled_at);
+      const playing = db.prepare(
+        `SELECT MAX(scheduled_at) AS ts FROM generated_schedule
+          WHERE station_id = ? AND state = 'playing' AND deleted_at IS NULL`).get(stationId);
+      const aired = db.prepare(
+        `SELECT scheduled_at, played_at FROM generated_schedule
+          WHERE station_id = ? AND state IN ('played','playing') AND deleted_at IS NULL
+            AND (content_class IS NULL OR content_class NOT IN ('JIN','SWP'))
+            AND scheduled_at >= ? AND scheduled_at < ?
+          ORDER BY scheduled_at, id LIMIT 1`).get(stationId, H, H + 3600);
+      const win = hourJoin.joinWindow({
+        nowTs, candidateTs: playRow.scheduled_at,
+        playingTs: playing && playing.ts != null ? playing.ts : null,
+        firstAired: aired ? { scheduledAt: aired.scheduled_at, playedAt: aired.played_at } : null,
+      });
+      if (win) {
+        const head = db.prepare(
+          `SELECT ${cols} ${base} AND gs.scheduled_at ${win.fromInclusive ? ">=" : ">"} ? AND gs.scheduled_at <= ?
+             AND gs.scheduled_at < ? ORDER BY gs.scheduled_at, gs.id LIMIT 1`
+        ).get(stationId, ...fmtP, win.fromTs, win.toTs, playRow.scheduled_at);
+        if (head) playRow = head;
+      }
+    }
     if (playRow) {
       // How many pending rows sit BEFORE the current slot (their slots elapsed) — the flip's `missed` set.
       // NOTE this is a BACKLOG count that spans history: Phase 1 only stamped the rows legacy actually
@@ -588,7 +599,7 @@ function fillQueue(db, stationId, count = 12) {
   return { source: clock ? `clock "${clock.showName}"` : "on-format", tier, formatCats, items: songs.map(toItem), starved };
 }
 
-module.exports = { fillQueue, fillQueueEnforced, enforceSeparationOn, sepWindows, fillFromHour, getActiveShowClock, getFormatCategoryIds, getStationCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, readAutoPostForSong, selectRowForNow, readLogAnchored, eligibleForFit,
+module.exports = { fillQueue, fillQueueEnforced, enforceSeparationOn, sepWindows, getActiveShowClock, getFormatCategoryIds, getStationCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, readAutoPostForSong, selectRowForNow, readLogAnchored, eligibleForFit,
   // Internals, exposed for tests only — not part of the daemon's API. The category gate is the kind
   // of rule that is silently deleted by a future refactor unless something asserts it.
   _test: { baseConditions, pickTier } };

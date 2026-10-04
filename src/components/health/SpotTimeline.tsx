@@ -98,7 +98,6 @@ export function SpotTimeline({ rows }: { rows: ProjectedSpot[] }) {
                         `anchor ${fmtClock(s.scheduledAt)}`,
                         played ? `fired ${fmtClock(s.playedAt)}` : `projected ${s.beyondQueue ? "≥ " : ""}${fmtClock(s.projectedAt)}`,
                         `drift ${fmtDrift(s.driftSec)}`,
-                        s.hardCutOwned ? "top-of-hour hard cut" : null,
                       ].filter(Boolean).join(" · ")}
                       style={{
                         position: "absolute", left: `${left}%`, top: 3, bottom: 3, width: 5,

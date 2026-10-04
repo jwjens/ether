@@ -23,25 +23,16 @@ export type ProjectedSpot = SpotRow & {
   /** true when the projection ran off the end of the visible queue: the spot airs at or after
    *  `projectedAt`, we just cannot see far enough to say when. An honest "≥", never a blank. */
   beyondQueue: boolean;
-  /** true when the top-of-hour hard cut owns this anchor (minute 0) — it lands exact by construction */
-  hardCutOwned: boolean;
   /** signed seconds: fired−anchor when played, projected−anchor when pending; null when unknown.
    *  With `beyondQueue` this is a lower bound too (it can only get later, never earlier). */
   driftSec: number | null;
 };
 
-/** Minute-0 anchors belong to `_hardCutTopOfHour`, which re-queues from the hour boundary. They land
- *  exact for that reason, not because the schedule is well-behaved — worth saying so on screen. */
-export function isHardCutOwned(anchorSec: number): boolean {
-  const d = new Date(anchorSec * 1000);
-  return d.getMinutes() === 0 && d.getSeconds() === 0;
-}
-
 /** The nearest-anchor comparison, mirrored from loggen.orderForNearestAnchor. Would the selector promote
  *  a spot anchored at `A` ahead of a music row of `d` seconds, at a seam of `seamTs`? */
 function wouldPromote(seamTs: number, A: number, d: number, nextHourTs: number): boolean {
   if (!(d > 0) || !Number.isFinite(A)) return false;
-  if (A >= nextHourTs) return false;              // §4 — the hard cut owns it
+  if (A >= nextHourTs) return false;              // §4 — the next hour joins after the running song, never promoted
   if ((A - seamTs) > d) return false;             // §1 — out of reach
   const nowDist = Math.abs(seamTs - A);
   const afterDist = Math.abs((seamTs + d) - A);
@@ -105,20 +96,14 @@ export function projectSpots(
 
   const out: ProjectedSpot[] = [];
   for (const s of spots) {
-    const hardCutOwned = isHardCutOwned(s.scheduledAt);
     const played = s.state === "played" || !!s.playedAt;
     if (played) {
-      out.push({ ...s, projectedAt: null, beyondQueue: false, hardCutOwned,
+      out.push({ ...s, projectedAt: null, beyondQueue: false,
         driftSec: s.playedAt ? s.playedAt - s.scheduledAt : null });
       continue;
     }
-    // A top-of-hour anchor is FIRED BY THE HARD CUT, not reached by the queue. Walking the queue to it
-    // gives a meaningless "late" (the cut pre-empts whatever the walk predicted), so project it AT its
-    // anchor — which is what actually happens, and why these land exact.
-    if (hardCutOwned) {
-      out.push({ ...s, projectedAt: s.scheduledAt, beyondQueue: false, hardCutOwned, driftSec: 0 });
-      continue;
-    }
+    // A top-of-hour (minute-0) anchor is walked like any other. There is no hard cut any more
+    // (removed 2026-10-04): the new hour joins after the song crossing :00, so it can genuinely be late.
 
     const exact = placed.get(s.scheduledAt);
     // Unplaced = past the end of the visible queue. Report the queue end as a LOWER BOUND rather than a
@@ -131,7 +116,7 @@ export function projectSpots(
     const driftSec = projectedAt === null ? null
       : (beyondQueue && projectedAt < s.scheduledAt) ? null
       : projectedAt - s.scheduledAt;
-    out.push({ ...s, projectedAt, beyondQueue, hardCutOwned, driftSec });
+    out.push({ ...s, projectedAt, beyondQueue, driftSec });
   }
   return out;
 }

@@ -2342,7 +2342,7 @@ export default function App() {
     engine.continuous = false; setContinuous(false);
     writeAutoAdv(stationId, false);           // stored PREFERENCE only — never a trigger
     // Manual-mode contract: stop DECIDING, not stop the engine. The current song finishes; nothing
-    // advances after it, no spots, no jingles, no top-of-hour.
+    // advances after it, no spots, no jingles.
     if (engine.isDaemonDriven) await (engine as any).stopDaemonAutomation?.();
   };
   // AUTO toggles: pressing it while it reads AUTO STOPS automation, otherwise it ENGAGES. Each branch

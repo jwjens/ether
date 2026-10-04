@@ -95,14 +95,7 @@ console.log("── what the queue-fill may put on a rotation deck (real loggen 
   db.close();
 }
 
-// 3) The hour-fill path takes the same rows and must agree with the query above.
-{
-  const db = makeDb({ withClock: false });
-  const hourStart = Math.floor(Date.now() / 1000);
-  const r = loggen.fillFromHour(db, 1, hourStart, 20) || [];
-  check("fillFromHour with no clock: no sweeper", r.some(x => (x.contentClass || x.content_class) === "SWP"), false);
-  db.close();
-}
+// 3) (removed 2026-10-04) The hour-fill path — loggen.fillFromHour — went with the top-of-hour hard cut.
 
 // 4) THE DRIFT GUARD. The queue-fill and the anchor queries read the same table for the same purpose and
 //    must exclude the same classes. They did not, for months, and nothing caught it.

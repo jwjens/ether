@@ -1,18 +1,14 @@
 // src/audio/showClock.ts
 //
-// Hard top-of-hour show transitions.
+// Read-only show-transition lookup: when does the next show start? (OnShiftScreen's countdown.)
 //
-// At each show's start_hour, executes a hard cut:
-//   1. Stop all decks immediately (even mid-song)
-//   2. Clear the queue — no runover songs
-//   3. Fill from the new show's schedule rules
-//   4. Load and play the first new song automatically
-//   5. Log the transition to play_log
+// There is NO hard cut here. This file used to carry a renderer-side top-of-hour show transition
+// (stop every deck mid-song, clear the queue, refill, play) behind an hourly watcher that nothing
+// had called since playout moved to the daemon. It was removed 2026-10-04 with the daemon's own hard cut
+// (Jeff's ruling): a song that crosses the hour plays to its end and the new hour joins after it.
 
 import { query } from "../db/client";
 import { getActiveStationIdSync } from "../hooks/useActiveStation";
-import { getEngine } from "./engine-registry";
-import { fillQueueFromSchedule, getActiveShowClock, getFormatCategoryIds } from "./loggen";
 
 interface ShowRow {
   id: number;
@@ -62,138 +58,4 @@ export async function getNextTransition(): Promise<NextTransition | null> {
   } catch {
     return null;
   }
-}
-
-// ── Transition execution ──────────────────────────────────────
-
-async function executeTransition(showName: string, newHour: number): Promise<void> {
-  console.log(`[showClock] ⏰ SHOW TRANSITION → "${showName}" at ${newHour}:00`);
-
-  const engine = getEngine(getActiveStationIdSync());
-
-  // 1. Hard-stop all decks — no fades, no grace period
-  engine.getDeck("A")?.stop();
-  engine.getDeck("B")?.stop();
-  engine.getDeck("C")?.stop();
-
-  // Clear the advancing lock so the engine accepts new commands immediately
-  (engine as any).advancing = false;
-  (engine as any).endTriggered.clear();
-
-  // 2. Wipe every queued runover song from the outgoing show
-  engine.clearQueue();
-
-  // Small yield so the stop commands reach the audio backend before we load
-  await new Promise(r => setTimeout(r, 80));
-
-  // 3. Fill from the new hour's schedule rules.
-  //    fillQueueFromSchedule calls new Date().getHours() internally, so it
-  //    already sees the new show's hour at this point.
-  let count = await fillQueueFromSchedule(20);
-
-  // Fallback: if the schedule pickers came up empty, pull rotation-eligible tracks —
-  // but stay ON FORMAT. Restrict to the active clock's music categories (e.g. Daytime →
-  // Drivetime) so seasonal/off-rotation categories like Christmas never leak in. Only if
-  // there's no active clock at all do we widen to "any category used by some clock"
-  // (still keeps un-scheduled songs out), and never the whole library.
-  if (count === 0) {
-    const stationId = getActiveStationIdSync();
-    const hour = new Date().getHours();
-    const clock = await getActiveShowClock(stationId);
-    // On-format universe: active clock's cats, else the cats of clocks that ACTIVE SHOWS
-    // use (never a dormant seasonal clock like "Christmas"). Empty → station isn't using
-    // clocks, so don't restrict by category.
-    const cats = await getFormatCategoryIds(stationId, clock?.clockId);
-    const catClause = cats.length ? `AND s.category_id IN (${cats.map(() => "?").join(",")})` : "";
-    const rows = await query<{ file_path: string; title: string; artist_name: string }>(
-      `SELECT s.file_path, s.title, a.name AS artist_name
-       FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
-       WHERE s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')
-         AND ((s.daypart_mask >> ?) & 1) = 1
-         ${catClause}
-       ORDER BY RANDOM() LIMIT 20`,
-      cats.length ? [hour, ...cats] : [hour]
-    );
-    engine.addToQueue(rows.map(r => ({
-      filePath: r.file_path,
-      title:    r.title,
-      artist:   r.artist_name || "",
-    })));
-    count = rows.length;
-    console.log(`[showClock] fallback filled ${count} on-format track(s)` + (clock ? ` from clock "${clock.showName}" (${cats.length} cats)` : ` (no active clock — in-rotation cats)`));
-  }
-
-  if (count === 0) {
-    console.warn(`[showClock] No songs available for "${showName}" — cannot auto-start`);
-    return;
-  }
-
-  // 4. Load the first song into deck A and start playing immediately.
-  //    preloadDeck handles B and C 800 ms later.
-  const started = await engine.jumpToNextSong();
-  if (!started) {
-    console.warn("[showClock] jumpToNextSong returned false — queue may be empty");
-    return;
-  }
-
-  // 5. Log the transition in the play log so operators can see it
-  try {
-    const stationId = getActiveStationIdSync();
-    await (window as any).ether.playLog.create({
-      station_id: stationId,
-      title:      `[Show Transition: ${showName}]`,
-      artist:     "",
-      deck:       "AUTO",
-      played_at:  Math.floor(Date.now() / 1000),
-      session_id: `show-${newHour}`,
-    });
-  } catch { /* non-critical */ }
-
-  console.log(`[showClock] ✓ "${showName}" is live — ${count} songs queued`);
-}
-
-// ── Clock watcher ─────────────────────────────────────────────
-
-let _lastHour = -1;
-
-/**
- * Start watching for show transitions. Call once when automation starts.
- * Checks every second. When the hour ticks over to a scheduled show's
- * start_hour, executes the hard cut.
- *
- * Returns a cleanup function — call it to stop watching (e.g. when
- * automation is turned off).
- */
-export function watchShowTransitions(
-  onTransition?: (showName: string, hour: number) => void
-): () => void {
-  _lastHour = new Date().getHours();
-
-  const id = setInterval(async () => {
-    const now = new Date();
-    const h   = now.getHours();
-    if (h === _lastHour) return; // same hour — nothing to do
-    _lastHour = h;
-
-    try {
-      const today = String(now.getDay());
-      const stationId = getActiveStationIdSync();
-      const shows = await query<ShowRow>(
-        // deleted_at IS NULL — line 39 in this same file always had it and this one did not, so a
-        // deleted show could still select the clock that governs an hour. That is a scheduling
-        // defect, not a cosmetic one.
-        "SELECT * FROM shows WHERE is_active = 1 AND deleted_at IS NULL AND start_hour = ? AND station_id = ?",
-        [h, stationId]
-      );
-      const show = shows.find(s => s.days.includes(today));
-      if (!show) return; // no show starts at this exact hour
-
-      await executeTransition(show.name, h);
-      onTransition?.(show.name, h);
-    } catch (e) {
-      console.error("[showClock] Transition error:", e);
-    }
-  }, 1000);
-
-  return () => clearInterval(id);
 }

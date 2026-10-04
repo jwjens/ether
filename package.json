@@ -50,6 +50,7 @@
     "test:queue-rows": "node scripts/smoke-sweeper-queue-rows.js",
     "test:stale-rows": "node scripts/smoke-stale-schedule-rows.js",
     "test:calendar-anchor": "node scripts/smoke-calendar-anchor.js",
+    "test:hour-rollover": "cross-env ELECTRON_RUN_AS_NODE=1 electron audiod/smoke-hour-rollover.js",
     "test:jukebox-gate": "node scripts/smoke-jukebox-gate.js",
     "test:spot-retraction": "node scripts/smoke-spot-retraction.js",
     "test:asset-unmirror": "node scripts/smoke-asset-unmirror.js",

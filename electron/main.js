@@ -4628,8 +4628,8 @@ ipcMain.handle("audio:set-duck", (_, stationId, deck, enabled) =>
 // midnight wrap, no grace window, no catch-up, no suppression. Resolution only.
 //
 // This tick governs ANNOUNCEMENTS AND NOTHING ELSE (verified 2026-08-26,
-// docs/scheduler-tick-blast-radius-2026-08-26.md). Spots, clock elements and the top-of-hour hard
-// cut are not on it and never were — they run in the daemon off preload/segue and a 250ms poll.
+// docs/scheduler-tick-blast-radius-2026-08-26.md). Spots and clock elements are not on it and
+// never were (nor was the top-of-hour hard cut, removed 2026-10-04) — they run in the daemon off preload/segue and a 250ms poll.
 const ANNOUNCE_TICK_MS = 250;
 let _announceTimer = null;
 

@@ -159,11 +159,9 @@ class DaemonEngine {
     // so the renderer can report it to the backend. Seeds "off" (automation not engaged on a fresh
     // daemon); the never-false-LIVE bias lives in _computeEngineState.
     this._engineState = "off";
-    this._lastHourCut = new Date().getHours();  // top-of-hour hard cut: hour we last fired for. Seeded to the
-                                         // current hour so a mid-hour daemon start never fires until the next :00.
     // ── JINGLES overlay v1 (daemon = log-reader that orchestrates the CART overlay fire) ──────────────
     // _airGen: on-air generation, bumped every time ANY deck goes live (_fireStart). The Bug-A-immunity
-    // token: an armed jingle captures it; ANY advance/skip/manual/top-of-hour cut goes through _fireStart,
+    // token: an armed jingle captures it; ANY advance/skip/manual load goes through _fireStart,
     // bumps it, and the armed jingle is auto-superseded → cancels silently, re-arms next segue. No naked
     // timers anywhere — arming/firing is driven by poll() and serialized on the _advance chain.
     this._airGen = 0;
@@ -521,7 +519,7 @@ class DaemonEngine {
   // A deck plays at whatever fader the OPERATOR set — automation NEVER moves a deck fader (those are
   // operator controls). Just clear the overlap guard so this deck's next seam can early-start again.
   // liveDeck observer (2026-07-29): also record the deck the engine itself put on air. Every path that
-  // puts a MUSIC deck live funnels through here — handleRotate, load-next, play-now, skip, top-of-hour,
+  // puts a MUSIC deck live funnels through here — handleRotate, load-next, play-now, skip,
   // resume-playout, automationStart — so this one assignment covers all of them with no per-site edits.
   // Bookkeeping only: the audioPlay call is unchanged and nothing reads liveDeck except the observer.
   _play(deck) {
@@ -695,7 +693,6 @@ class DaemonEngine {
                              // seam bridge is never mistaken for a stall).
     this._segueTick(now);    // Routine segue overlap: start the incoming early over the outgoing's tail (no
                              // fades). Reads the jingle state set above so it won't preempt an armed jingle.
-    this._checkTopOfHour();
     this._watchdog();
     this._emitEngineState();
   }
@@ -736,55 +733,13 @@ class DaemonEngine {
     this._log("engine-state → " + next);
   }
 
-  // ── Top-of-hour hard cut ──────────────────────────────────────────────────────────────────────
-  // Radio needs the top of each hour to hit at :00 (legal/station ID, news, the new hour's first
-  // element) — even mid-song. Nothing else here watches the wall clock; rotation only advances at
-  // song-end. So once per hour, when the LOCAL hour rolls over, if the schedule has an element for
-  // the new hour we hard-cut to it. Fail-safe: any miss (no schedule, query error) leaves the current
-  // rotation playing — this never causes dead air. Only runs while automation is engaged.
-  _checkTopOfHour() {
-    if (!this._started) return;
-    const now = new Date();
-    const h = now.getHours();
-    if (h === this._lastHourCut) return;   // same hour — nothing to do
-    this._lastHourCut = h;                  // mark immediately so we fire at most once per boundary
-    const hs = new Date(now.getTime()); hs.setMinutes(0, 0, 0);
-    this._hardCutTopOfHour(h, Math.floor(hs.getTime() / 1000));
-  }
-
-  _hardCutTopOfHour(hour, hourStartTs) {
-    let items;
-    try { items = this._ensureIds(this._playable(loggen.fillFromHour(this.db, this.stationId, hourStartTs, 20))); }
-    catch (e) { this._log("top-of-hour: fill error — " + String(e) + " (rotation continues)"); return; }
-    if (!items.length) { this._log("top-of-hour @" + hour + ":00 — no scheduled element, rotation continues"); return; }
-    this._log("top-of-hour @" + hour + ":00 HARD CUT → " + (items[0].title || "(untitled)") + " (" + items.length + " queued)");
-    this._advance("top-of-hour", async () => {
-      // Hard-stop every deck (no fade) and wipe the outgoing hour's runover + cued state.
-      this._stop("A"); this._stop("B"); this._stop("C");
-      this._setDeck("A", { status: "ended" }); this._setDeck("B", { status: "ended" }); this._setDeck("C", { status: "ended" });
-      this.deckReady.clear(); this.manualCue.clear(); this.endTriggered.clear(); this.segueTriggered.clear();
-      this.clearQueue();
-      this.queue.push(...items);
-      this.emit("queue", { stationId: this.stationId, source: "top-of-hour", items: this.queue });
-      await new Promise(r => setTimeout(r, 80)); // let the stops reach the audio backend before we load
-      // Load + play the new hour's first PLAYABLE element on deck A, skipping any dead files.
-      let loaded = false, guard = 0;
-      while (this.queue.length > 0 && guard++ < 100) {
-        const first = this.dequeue();
-        if (this.loadToDeck("A", first)) { this.deckChainType.A = first.chainType || "segue"; loaded = true; break; }
-        this.emit("error", { stationId: this.stationId, where: "top-of-hour", error: "skipped unplayable: " + (first.filePath || "") });
-        this._noteLoadSkip(first.title, "unplayable at load (top-of-hour)");
-      }
-      if (!loaded) { this._log("top-of-hour: first element unplayable — rotation will self-heal"); return; }
-      this._play("A");
-      this._setDeck("A", { status: "playing", positionSec: 0 });
-      this.endTriggered.delete("A");
-      this._fireStart("A");
-      this._log("top-of-hour: deck A LIVE — " + (this.stateA.title || "(untitled)"));
-      // Preload B/C so the rotation continues normally through the rest of the hour.
-      setTimeout(async () => { await this.preload("B", 0); setTimeout(() => this.preload("C", 1), 400); }, 800);
-    });
-  }
+  // ── No top-of-hour hard cut (removed 2026-10-04, Jeff's ruling) ─────────────────────────────────────
+  // There used to be a once-an-hour cut here that stopped A/B/C mid-song, cleared the queue and
+  // reloaded from the new hour's log. It is gone. A song that crosses :00 plays to its end and the new
+  // hour JOINS after it: on flipped stations loggen.selectRowForNow's hour join (audiod/hour-join.js)
+  // makes the hour's head the next row instead of letting the anchored reader skip past it; on legacy
+  // stations the queue already holds the new hour's rows in log order. Pinned by
+  // audiod/top-of-hour-removed.test.js, audiod/hour-join.test.js and audiod/smoke-hour-rollover.js.
 
   // Stage 3b: stall-recovery watchdog. Runs every poll tick AFTER _maintain. Enforces the invariant
   // "content present + nobody playing ⇒ somebody playing within ~1s" — the backstop that makes a
@@ -1656,7 +1611,7 @@ class DaemonEngine {
     return nowSec + (remaining > 0 ? Math.round(remaining) : 0);
   }
 
-  /** Start of the NEXT top of the hour, epoch seconds — anchors at or beyond it belong to the hard cut. */
+  /** Start of the NEXT top of the hour, epoch seconds — the hour anchor the auto-fitter aims a seam at (no cut fires there). */
   _nextTopOfHourTs() {
     const d = new Date();
     d.setMinutes(0, 0, 0);
@@ -1836,7 +1791,7 @@ class DaemonEngine {
     const st = this._deckState(deckId);
     this._airGen++;   // JINGLES v1: a new deck went live → any jingle armed against the prior on-air
                       // generation is now superseded (see _jingleSuperseded). Bumps for EVERY go-live
-                      // path (rotate / load-next / skip / play-now / top-of-hour / resume).
+                      // path (rotate / load-next / skip / play-now / resume).
     this.emit("playstart", { stationId: this.stationId, deck: deckId, title: st.title, artist: st.artist, filePath: st.filePath });
     // Item 10 Phase 2 Step 4: the daemon owns play logging in daemon-driven mode (the
     // renderer's logPlay is gated off), so Play History survives a UI/app restart. Never
@@ -2211,7 +2166,7 @@ class DaemonEngine {
   // THE ARM WINDOW IS NOT A LEAD-IN CEILING. It gates promotion from SCHEDULED to ARMED, and nothing
   // else — the read-ahead already queries the seam OUTSIDE it, cached per seam, so a wider window costs
   // no extra database work. Its only real cost is exposure: an ARMED sweeper is cancelled by
-  // _jingleSuperseded on a skip, a manual load or a top-of-hour cut, so arming earlier means more
+  // _jingleSuperseded on a skip or a manual load, so arming earlier means more
   // chances to be superseded.
   //
   // It was 30 from 48c7f1a (2026-07-14, JINGLES overlay v1) and never revisited. Nothing in that commit,

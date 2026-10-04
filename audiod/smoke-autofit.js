@@ -86,7 +86,7 @@ console.log("\n── THIN POOL / NO FIT — states it, changes nothing, does no
   check("empty pool → no-fit", fit.mode, "no-fit");
   check("no-fit carries no action", fit.action, null);
   check("no-fit names the gap and the pool size", /overshoot \+93s — no single swap fits \(0 eligible\)/.test(fit.reason), true);
-  check("no-fit line says the hard cut will trim", /hard cut will trim/.test(describeFit(fit, T(20, 0, 0), true)), true);
+  check("no-fit line says the new hour joins after the overrun (no hard cut)", /new hour joins after the overrun/.test(describeFit(fit, T(20, 0, 0), true)), true);
 }
 
 console.log("\n── SINGLE-SWAP ONLY (v1) ──");

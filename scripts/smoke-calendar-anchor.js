@@ -13,7 +13,8 @@
 //      FIXED BY RE-CUEING (_resyncCuedDecks), not by changing what the bound head contains. My first
 //      attempt filtered the bound head down to playing decks and had to be reverted the same night;
 //      see the section below for why that emptied it.
-//   3. (left in place, now redundant) the top-of-hour hard cut re-anchors once an hour.
+//   3. (removed 2026-10-04) the top-of-hour hard cut used to re-anchor once an hour; the new hour now
+//      joins after the crossing song through the anchored reader (audiod/hour-join.js).
 //
 // §2.4a of docs/log-reader-single-source-playout-design-2026-07-20.md has said since 2026-07-20 that
 // "only the currently-playing deck is committed". The code committed every cued deck.
@@ -43,7 +44,7 @@ console.log('\n== AUTO anchors to the calendar ==');
   else fail('the forced refill cannot bypass the throttle — AUTO could anchor up to 2s late');
 
   // Against the WHOLE file, and to the dequeue that FOLLOWS the anchor: `const first = this.dequeue()`
-  // also appears in resume-playout and the top-of-hour cut, so slicing on the function name alone
+  // also appears in resume-playout (and once in the since-removed top-of-hour cut), so slicing on the function name alone
   // picked up an unrelated one and failed a correct ordering.
   const i = src.indexOf('_refillFromLog({ force: true })');
   const j = src.indexOf('const first = this.dequeue();', i);

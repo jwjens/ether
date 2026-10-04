@@ -381,7 +381,8 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
           if (Math.abs(driftSec) > FIT_TOL_S) ctx.breakDrift.push({ hour: h, minute: brk.minute || 0, driftSec, direction: driftSec > 0 ? 'over' : 'under' });
         }
       }
-      // Fill the remainder of the hour with music (last song may overrun :00 and is cut, same as sequential).
+      // Fill the remainder of the hour with music (last song may overrun :00, same as sequential; it plays
+      // out — there is no hard cut since 2026-10-04 — and the next hour joins after it).
       while (currentTs < hourEnd) {
         await _genMaybeYield();              // keep main's message pump alive mid-hour
         const ms = nextMusicSlot(); if (!ms) break;
@@ -394,7 +395,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
 
     for (const slot of slots) {
       await _genMaybeYield();                // keep main's message pump alive mid-hour
-      if (currentTs >= hourEnd) break; // hard top-of-hour: each hour starts fresh, no overflow past :00
+      if (currentTs >= hourEnd) break; // each hour is planned from its own :00 — no slot STARTS past :00 (the last one may run over; on air the next hour joins after it)
       const slotDurationS = (slot.duration_min || 4) * 60;
       // Pinned element: this slot plays ONE specific song/jingle/talk break (set by cart # in the
       // scheduler). Place that exact element regardless of slot_type/category.

@@ -1,7 +1,9 @@
 // ── AUTO-FITTER (§2.7) — deterministic look-ahead, NO LLM ─────────────────────────────────────────────
-// Makes a SEAM land on a hard anchor so the top-of-hour cut has nothing left to chop.
+// Makes a SEAM land on a hard anchor so the hour (or a spot) starts on time.
+// (2026-10-04: the top-of-hour hard cut is gone — a song crossing :00 now plays out and the new hour
+// joins after it, late by the overrun. A fit is what would make it land on time instead.)
 //
-// WHY, measured on 2026-07-30 at the 13:00 hard cut:
+// WHY, measured on 2026-07-30 at the 13:00 hard cut (since removed):
 //   s1 Lovely Day                       13.5s on air when the cut fired
 //   s2 Defying Gravity                  30.2s
 //   s3 Come December                    78.5s
@@ -14,7 +16,7 @@
 // lets it ship OBSERVATION-ONLY: the caller logs the decision and writes nothing.
 //
 // v1 SCOPE (approved 2026-07-30): SINGLE SWAP ONLY. A window no single swap can close is a logged
-// no-fit; the hard cut backstops it. Two-row swaps are deferred to v2, to be decided on observation data
+// no-fit; the new hour joins late after the overrun. Two-row swaps are deferred to v2, to be decided on observation data
 // about how often single-swap falls short.
 //
 // Design of record: docs/design-auto-fitter-2026-07-30.md
@@ -140,7 +142,7 @@ why(fit.action.from, fit.action.to) + `; arrival ${hhmm(fit.action.newArrivalTs)
         `"${fit.action.fill.title || "(untitled)"}" (${Math.round(dur(fit.action.fill))}s); ` +
         `arrival ${hhmm(fit.action.newArrivalTs)} (${secs(fit.action.newGapSec)})`;
     case "no-fit":
-      return `autofit: window ${hhmm(anchorTs)} ${fit.reason}; hard cut will trim`;
+      return `autofit: window ${hhmm(anchorTs)} ${fit.reason}; the new hour joins after the overrun`;
     default:
       return null;   // fitted / out-of-window / no-rows are not worth a line
   }
