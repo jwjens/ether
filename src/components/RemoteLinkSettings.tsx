@@ -14,6 +14,7 @@ import { useActiveStation } from "../hooks/useActiveStation";
 import { useDeckConfig } from "./DeckConfigurator";
 import { useBoardName } from "../hooks/useBoardName";
 import { rxWords, sendTargetName, txWords, useRemoteLink, type LinkInputEdit, type LinkSend } from "../hooks/useRemoteLink";
+import LinkPairPicker from "./LinkPairPicker";
 
 const TONE: Record<string, string> = { ok: "var(--accent-green)", warn: "var(--accent-amber, #f59e0b)", bad: "var(--accent-red, #ef4444)", off: "var(--text-tertiary)" };
 const FIELD: React.CSSProperties = {
@@ -47,7 +48,11 @@ export default function RemoteLinkSettings() {
   const [confirmRotate, setConfirmRotate] = useState(false);
   const [keyLine, setKeyLine] = useState("");         // this computer's line, once asked for
   const [keyMsg, setKeyMsg] = useState("");
-  const [pasteDraft, setPasteDraft] = useState("");
+  // GUEST PAIRING (2026-10-04): the code this computer shows a guest computer — 8 characters, 10 minutes, once.
+  const [guest, setGuest] = useState<{ code: string; expiresAt: string } | null>(null);
+  const [guestMsg, setGuestMsg] = useState("");
+  const [nowMs, setNowMs] = useState(Date.now());
+  useEffect(() => { if (!guest) return; const t = setInterval(() => setNowMs(Date.now()), 1000); return () => clearInterval(t); }, [guest]);
   // SEND FEED TO draft (edited here, applied with Start)
   const [draft, setDraft] = useState<LinkSend | null>(null);
   useEffect(() => {
@@ -70,7 +75,7 @@ export default function RemoteLinkSettings() {
   const applyIn = async (next: LinkInputEdit | null) => {
     setMsgIn("");
     const r = await link.setInput(next);
-    if (!r.ok) setMsgIn(`⚠ Not applied — ${r.reason}`); else setPasteDraft("");
+    if (!r.ok) setMsgIn(`⚠ Not applied — ${r.reason}`);
   };
   const sending = !!cfg.send;
   const wOut = txWords(tx, sending, sendTargetName(cfg));
@@ -100,14 +105,33 @@ export default function RemoteLinkSettings() {
       <div style={{ padding: 10, border: "1px solid var(--border-primary)", background: "var(--bg-secondary)", display: "flex", flexDirection: "column", gap: 8 }}>
         <b style={{ fontSize: 13 }}>This computer's link key — {cfg.machineName}</b>
         <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
-          To feed this computer's programme to another computer, copy this key and paste it into the fader set to <b>Link</b> over there,
-          like telling a codec which caller to accept. That fader then takes this computer's feed and nobody else's.
+          Nothing to copy. On the computer that <b>receives</b> the feed, the fader set to <b>Link</b> lists the computers on your Ether
+          account — pick <b>{cfg.machineName}</b> there. For a computer on <b>another</b> account, show it a pairing code.
         </div>
+        <Row label="Guest computer" hint="For a computer signed in to a different Ether account. The code works once, for 10 minutes.">
+          <button style={{ ...FIELD, cursor: "pointer", fontWeight: 700 }}
+            onClick={async () => { setGuestMsg(""); const r = await link.pairCode(); if (r.ok && r.code && r.expiresAt) setGuest({ code: r.code, expiresAt: r.expiresAt }); else setGuestMsg(`⚠ ${r.reason || "no code"}`); }}>
+            {guest ? "New pairing code" : "Show a pairing code"}
+          </button>
+          {guest && (() => {
+            const left = Math.max(0, Math.round((Date.parse(guest.expiresAt) - nowMs) / 1000));
+            return left > 0 ? (
+              <>
+                <span aria-label="Pairing code" style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 22, fontWeight: 800, letterSpacing: "0.12em" }}>{guest.code}</span>
+                <span style={MONO}>type it on the receiving computer · {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")} left · works once</span>
+              </>
+            ) : <span style={MONO}>that code has expired — make a new one</span>;
+          })()}
+        </Row>
+        {guestMsg && <div style={{ fontSize: 12, color: TONE.bad }}>{guestMsg}</div>}
         <Row label="Key" hint="Compare the fingerprint with the one the receiving fader shows.">
           {cfg.key ? <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 800 }}>{cfg.key.fingerprint}</span>
                    : <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>none yet — made when you copy it</span>}
           {cfg.key && <span style={MONO}>key #{cfg.key.id}{cfg.key.mintedAt ? ` · made ${new Date(cfg.key.mintedAt).toLocaleString()}` : ""}</span>}
-          <button style={{ ...FIELD, cursor: "pointer", fontWeight: 700 }} onClick={copyKey}>Copy link key</button>
+          <details>
+            <summary style={{ fontSize: 11, color: "var(--text-tertiary)", cursor: "pointer" }}>Advanced — copy the key as a line</summary>
+            <button style={{ ...FIELD, cursor: "pointer", marginTop: 4 }} onClick={copyKey}>Copy link key line</button>
+          </details>
           {cfg.key && (confirmRotate ? (
             <>
               <button style={{ ...FIELD, cursor: "pointer", borderColor: TONE.bad, color: TONE.bad }}
@@ -136,16 +160,15 @@ export default function RemoteLinkSettings() {
           {input?.from ? (
             <>
               <b style={{ fontSize: 13 }}>{input.from.name}</b>
-              <span style={MONO}>key {input.from.fingerprint} · #{input.from.keyId}</span>
+              <span style={MONO}>key {input.from.fingerprint} · #{input.from.keyId} · {input.from.via === "account" ? "this account — follows its key" : input.from.via === "code" ? "paired with a code" : "pasted line"}</span>
               <button style={{ ...FIELD, cursor: "pointer", color: TONE.bad }} onClick={() => { const e = inEdit(); if (e) applyIn({ ...e, clearKey: true }); }}>
                 Forget key — cut {input.from.name} off
               </button>
             </>
           ) : input ? (
-            <input value={pasteDraft} placeholder="paste the sending computer's link key (ether-link:1:…)" style={{ ...FIELD, flex: "1 1 320px", borderColor: TONE.warn }}
-              onChange={e => setPasteDraft(e.target.value)}
-              onPaste={e => { const t = e.clipboardData.getData("text"); const ed = inEdit(); if (t.trim() && ed) { e.preventDefault(); setPasteDraft(t); applyIn({ ...ed, keyLine: t }); } }}
-              onKeyDown={e => { const ed = inEdit(); if (e.key === "Enter" && pasteDraft.trim() && ed) applyIn({ ...ed, keyLine: pasteDraft }); }} />
+            <div style={{ flex: "1 1 320px", maxWidth: 520 }}>
+              <LinkPairPicker link={link} edit={inEdit()} label={`channel ${boardName(input.slot)}`} />
+            </div>
           ) : <span style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>— (no fader set to Link)</span>}
         </Row>
         {cfg.inputRefusal && <div style={{ fontSize: 12, color: TONE.bad }}>{cfg.inputRefusal}</div>}

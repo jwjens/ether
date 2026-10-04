@@ -17,6 +17,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { useMicInputs, useInputDevices, micStateWords, openMicPreferences } from "../hooks/useMicInputs";
 import { useRemoteLink, rxWords, linkNotFed, openLinkPreferences } from "../hooks/useRemoteLink";
+import LinkPairPicker from "./LinkPairPicker";
+import { linkNeedsPatch } from "../lib/linkPairing";
 import ConsoleStrip from "./ConsoleStrip";
 import { sourceKindMeta, sourceKindOptions, type SourceKind, type DeckConfig } from "./DeckConfigurator";
 import { useBoardName } from "../hooks/useBoardName";
@@ -92,10 +94,11 @@ export default function SourceChannelStrip({
   const linkInput = link.cfg?.input && link.cfg.input.slot === config.slot ? link.cfg.input : null;
   const linkRx = link.state?.rx ?? null;
   const linkW = rxWords(linkInput ? linkRx : null, !!linkInput, !!linkInput?.from, linkInput ? link.cfg?.inputRefusal : null);
-  const [keyDraft, setKeyDraft] = useState("");
   const linkTo = async (on: boolean) => {
     setPatchErr(null);
-    if (!link.cfg) return;
+    // Never silently: before 2026-10-04 a pick made before the Link settings loaded returned here and left the fader
+    // "set to Link but not patched". The effect below patches as soon as they arrive.
+    if (!link.cfg) { if (on) setPatchErr("the Link settings are still loading — it patches as soon as they arrive"); return; }
     const cur = link.cfg.input;
     if (!on) { if (cur && cur.slot === config.slot) { const r = await link.setInput(null); if (!r.ok) setPatchErr(r.reason || "not applied"); } return; }
     const d = link.cfg.defaults;
@@ -109,8 +112,20 @@ export default function SourceChannelStrip({
     if (!linkInput) return;
     const { from: _from, ...rest } = linkInput;
     const r = await link.setInput(line == null ? { ...rest, clearKey: true } : { ...rest, keyLine: line });
-    if (!r.ok) setPatchErr(r.reason || "not applied"); else setKeyDraft("");
+    if (!r.ok) setPatchErr(r.reason || "not applied");
   };
+  // A FADER WHOSE SOURCE IS LINK IS PATCHED HERE, ALWAYS (2026-10-04) — not only on the dropdown pick. Covers the pick
+  // made before the settings loaded, and a kind that arrived by sync from the other computer (the kind syncs; the
+  // patch is this machine's). Once per fader per mount, so a refusal is shown rather than retried in a loop.
+  const patchTried = useRef<string | null>(null);
+  useEffect(() => {
+    if (linkInput) { patchTried.current = null; return; }
+    if (!linkNeedsPatch({ isLink, cfgLoaded: !!link.cfg, daemon: !!link.cfg?.daemon, slot: config.slot,
+                          inputSlot: link.cfg?.input ? link.cfg.input.slot : null })) return;
+    if (patchTried.current === config.slot) return;
+    patchTried.current = config.slot;
+    linkTo(true);
+  }, [isLink, link.cfg, linkInput, config.slot]);
   // D4 — AUTO-CUT (off by default, per station, its delay shown in Preferences): lost for autoCutSec → the channel
   // is turned OFF through the ON button's own writer, ONCE per loss, so the remote never returns to air unannounced.
   const cutFor = useRef<number | null>(null);
@@ -236,14 +251,10 @@ export default function SourceChannelStrip({
                        color: "var(--text-tertiary)", fontSize: 9, cursor: "pointer", borderRadius: 2 }}>✕</button>
           </div>
         ) : (
-          <input value={keyDraft} placeholder="paste the sender's link key"
-            aria-label={`Link key for channel ${letter}, from the sending computer`}
-            title="On the computer sending the feed: Preferences → Broadcast → Remote Link → Copy link key. Paste the whole line here."
-            onChange={e => setKeyDraft(e.target.value)}
-            onPaste={e => { const t = e.clipboardData.getData("text"); if (t.trim()) { e.preventDefault(); setKeyDraft(t); linkKey(t); } }}
-            onKeyDown={e => { if (e.key === "Enter" && keyDraft.trim()) linkKey(keyDraft); }}
-            style={{ width: "100%", fontSize: 9, padding: "2px 4px", borderRadius: 2, background: "var(--bg-tertiary)", color: "var(--text-primary)",
-                     border: `1px solid ${TONE.warn}`, boxSizing: "border-box" }} />
+          // PAIRING (2026-10-04): pick the sending computer on this account, or type a guest's code. The line paste is
+          // behind "Advanced" inside the picker.
+          <LinkPairPicker link={link} compact label={`channel ${letter}`}
+            edit={(() => { const { from: _f, ...rest } = linkInput; return rest; })()} />
         ))}
         {patchErr && <div style={{ fontSize: 8, color: TONE.bad }}>⚠ {patchErr}</div>}
 

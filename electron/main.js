@@ -5710,7 +5710,7 @@ ipcMain.handle("link:get", async (_, stationId) => {
       ok: true, defaults: d, stationUuid: String(_stationUuidById(sid) || "").toLowerCase(), machineId: me.id, machineName: me.name,
       selfTest: LinkCfg.selfTestOn(),
       // The fader side: the pasted key is shown as who it is from and a fingerprint — never echoed back.
-      input: input ? { ...input, from: input.from ? { machine: input.from.machine, name: input.from.name, keyId: input.from.keyId,
+      input: input ? { ...input, from: input.from ? { machine: input.from.machine, name: input.from.name, keyId: input.from.keyId, via: input.from.via,
                                                       fingerprint: LinkCfg.keyFingerprint({ key: input.from.key }) } : null } : null,
       inputRefusal,
       send: LinkCfg.parseSend(_linkKv(sid, LinkCfg.KEY_SEND), d),
@@ -5730,6 +5730,7 @@ ipcMain.handle("link:key-line", async () => {
     if (!k) {
       k = _linkMintMachineKey();
       try { if (AUDIO_DAEMON) await audiodClient.cmd("linkKeyChanged", {}); } catch {}
+      _linkPublishOwnKey("made");
     }
     return { ok: true, line: LinkCfg.makeToken({ machine: me.id, name: me.name, key: k }), fingerprint: LinkCfg.keyFingerprint(k), id: k.id };
   } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
@@ -5739,13 +5740,15 @@ ipcMain.handle("link:mint-key", async () => {
     if (!_linkMe().id) return { ok: false, reason: "this computer has no machine id yet — restart Ether" };
     const k = _linkMintMachineKey();
     try { if (AUDIO_DAEMON) await audiodClient.cmd("linkKeyChanged", {}); } catch {}
+    _linkPublishOwnKey("replaced");   // same-account receivers pick the new key up within a minute
     return { ok: true, key: { fingerprint: LinkCfg.keyFingerprint(k), id: k.id, mintedAt: k.mintedAt } };
   } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
 });
 // input: { slot, jitterMs, port, autoCut, autoCutSec, keyLine?: "<pasted line>", clearKey?: true } | null.
 // Without keyLine/clearKey the fader keeps the key it already holds.
-ipcMain.handle("link:set-input", async (_, stationId, input) => {
-  const sid = Number(stationId);
+// `fromOverride` (pairing, 2026-10-04): the sender's identity fetched from the account or redeemed from a guest code —
+// it replaces the stored key exactly as a pasted line does. undefined = the IPC path below, unchanged.
+async function _linkSetInputCore(sid, input, fromOverride) {
   if (!Number.isFinite(sid)) return { ok: false, reason: "no station" };
   if (!AUDIO_DAEMON) return _linkNoDaemon;
   const d = await _linkDefaults();
@@ -5757,6 +5760,7 @@ ipcMain.handle("link:set-input", async (_, stationId, input) => {
       from = LinkCfg.parseToken(input.keyLine);
       if (!from) return { ok: false, reason: "that is not a link key — copy the whole line from the sending computer (Preferences → Broadcast → Remote Link); it starts with ether-link:1:" };
     }
+    if (fromOverride !== undefined) from = fromOverride;
     if (input.clearKey) from = null;
     p = LinkCfg.parseInput(JSON.stringify({ ...input, from }), d);
     if (!p) return { ok: false, reason: `the Link goes on a source channel (${LinkCfg.LINK_SLOTS.join(", ")})` };
@@ -5771,7 +5775,82 @@ ipcMain.handle("link:set-input", async (_, stationId, input) => {
   _healthEvent(p ? "link-patched" : "link-unpatched", { stationId: sid, slot: p ? p.slot : null, jitterMs: p ? p.jitterMs : null, port: p ? p.port : null,
     from: p && p.from ? p.from.name : null, fromMachine: p && p.from ? p.from.machine : null });
   return { ok: true, needsKey: !!res.needsKey };
+}
+ipcMain.handle("link:set-input", (_, stationId, input) => _linkSetInputCore(Number(stationId), input));
+
+// ── PAIRING (Jeff's ruling, 2026-10-04): the link key is never copied or typed by hand ──────────────────────────────
+// SAME ACCOUNT (default): this machine publishes its key to the backend; a receiving fader picks one of the account's
+// computers and its key is fetched. GUEST: the sender shows an 8-character code (XXXX-XXXX, 10 min, one use); the
+// receiver types it. The ether-link:1: paste stays as an advanced fallback. Client: electron/link-pairing-client.js.
+const _linkPair = require('./link-pairing-client').createLinkPairingClient({
+  fetch: (...a) => fetch(...a), baseUrl: ETHER_BACKEND_URL, canWrite: () => canWriteProduction(),
+  getJwt: () => { try { return getDb().prepare("SELECT value FROM install_config_kv WHERE key='account_jwt' AND deleted_at IS NULL").get()?.value || null; } catch { return null; } },
 });
+/** Publish this machine's key (made / replaced / at start). Never throws; a failure is logged, the Link still works. */
+async function _linkPublishOwnKey(why) {
+  try {
+    const me = _linkMe(), k = _linkMachineKey();
+    if (!me.id || !k) return;
+    const r = await _linkPair.publishKey({ machineId: me.id, machineName: me.name, key: k });
+    logStartup(`[link] key #${k.id} ${r.ok ? "shared with this account" : "NOT shared: " + r.reason} (${why})`);
+  } catch (e) { logStartup(`[link] key publish threw: ${(e && e.message) || e}`); }
+}
+/** The fader's current settings, without its key — what a pairing keeps while it replaces the key. */
+function _linkStoredEdit(sid, d) {
+  const stored = LinkCfg.parseInput(_linkKv(sid, LinkCfg.KEY_INPUT), d);
+  if (!stored) return null;
+  const { from: _f, ...edit } = stored;
+  return edit;
+}
+async function _linkApplyFrom(sid, from) {
+  const d = await _linkDefaults();
+  const edit = _linkStoredEdit(sid, d);
+  if (!edit) return { ok: false, reason: "set a fader's source to Link first — the key goes on that fader" };
+  const refusal = LinkCfg.inputRefusal({ thisMachine: _linkMe().id, from, selfTest: LinkCfg.selfTestOn() });
+  if (refusal) return { ok: false, reason: refusal };
+  const r = await _linkSetInputCore(sid, edit, from);
+  return r && r.ok ? { ok: true, from: { machine: from.machine, name: from.name, keyId: from.keyId, via: from.via,
+                                         fingerprint: LinkCfg.keyFingerprint({ key: from.key }) } } : r;
+}
+ipcMain.handle("link:account-machines", async () => _linkPair.listMachines({ thisMachine: _linkMe().id }));
+ipcMain.handle("link:pair-machine", async (_, stationId, machineId) => {
+  const r = await _linkPair.fetchKey(String(machineId || ""));
+  if (!r.ok) return r;
+  return _linkApplyFrom(Number(stationId), r.from);
+});
+ipcMain.handle("link:pair-redeem", async (_, stationId, code) => {
+  const r = await _linkPair.redeemCode(code);
+  if (!r.ok) return r;
+  return _linkApplyFrom(Number(stationId), r.from);
+});
+ipcMain.handle("link:pair-code", async () => {
+  try {
+    const me = _linkMe();
+    if (!me.id) return { ok: false, reason: "this computer has no machine id yet — restart Ether" };
+    let k = _linkMachineKey();
+    if (!k) { k = _linkMintMachineKey(); try { if (AUDIO_DAEMON) await audiodClient.cmd("linkKeyChanged", {}); } catch {} _linkPublishOwnKey("made for a code"); }
+    return await _linkPair.createCode({ machineId: me.id, machineName: me.name, key: k });
+  } catch (e) { return { ok: false, reason: String((e && e.message) || e) }; }
+});
+// SAME-ACCOUNT RECEIVERS FOLLOW "REPLACE KEY": once a minute, every fader paired from the account re-fetches its
+// sender's key; a changed key is applied through the same path (engine first). Code and pasted pairings are left as is.
+async function _linkRefetchAccountKeys() {
+  let sids = [];
+  try { sids = getDb().prepare("SELECT station_id FROM station_config_kv WHERE key = ? AND deleted_at IS NULL").all(LinkCfg.KEY_INPUT).map(r => r.station_id); } catch { return; }
+  for (const sid of sids) {
+    try {
+      const stored = LinkCfg.parseInput(_linkKv(sid, LinkCfg.KEY_INPUT));
+      if (!stored || !stored.from || stored.from.via !== "account") continue;
+      const r = await _linkPair.fetchKey(stored.from.machine);
+      if (!r.ok || (r.from.key === stored.from.key && r.from.keyId === stored.from.keyId)) continue;
+      const a = await _linkApplyFrom(sid, r.from);
+      _healthEvent("link-key-refetched", { stationId: sid, from: r.from.name, fromMachine: r.from.machine, keyId: r.from.keyId, ok: !!(a && a.ok) });
+    } catch (e) { logStartup(`[link] re-fetch s${sid}: ${(e && e.message) || e}`); }
+  }
+}
+setTimeout(() => { _linkPublishOwnKey("start"); _linkRefetchAccountKeys(); }, 20000);
+setInterval(() => { _linkRefetchAccountKeys(); }, 60000).unref?.();
+setInterval(() => { _linkPublishOwnKey("hourly"); }, 3600000).unref?.();
 ipcMain.handle("link:set-send", async (_, stationId, send) => {
   const sid = Number(stationId);
   if (!Number.isFinite(sid)) return { ok: false, reason: "no station" };
@@ -5779,7 +5858,7 @@ ipcMain.handle("link:set-send", async (_, stationId, send) => {
   const d = await _linkDefaults();
   const p = send ? LinkCfg.parseSend(JSON.stringify(send), d) : null;
   if (send && !p) return { ok: false, reason: "pick where the feed goes (computer · station) and the address" };
-  if (p && !_linkMachineKey()) _linkMintMachineKey();   // a sender always has a key to hand out
+  if (p && !_linkMachineKey()) { _linkMintMachineKey(); _linkPublishOwnKey("made for sending"); }   // a sender always has a key to hand out
   const value = p ? LinkCfg.serializeSend(p) : "";
   let res;
   try { res = await audiodClient.cmd("setLinkSend", { stationId: sid, send: value }); }

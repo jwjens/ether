@@ -32,6 +32,8 @@ const LINK_KEYS = [KEY_INPUT, KEY_SEND];
 const MACHINE_KEY_FILE = "link-key";
 /** The copyable line: ether-link:1:<machine id>:<key id>:<64 hex>:<machine name, URI-encoded>. */
 const TOKEN_PREFIX = "ether-link:1:";
+/** How a fader's key was paired (link_input.from.via). */
+const PAIR_VIA = ["account", "code", "line"];
 
 /** D5 — used only if the engine is too old to say (audio_link_defaults is the source). */
 const FALLBACK_DEFAULTS = { bitrate: 128000, bitrateRange: [32000, 256000], jitterMs: 120, jitterRangeMs: [20, 1000],
@@ -113,7 +115,10 @@ function parseInput(value, d = FALLBACK_DEFAULTS) {
     if (!v || !LINK_SLOTS.includes(v.slot)) return null;
     const f = v.from;
     const from = f && isMachineId(f.machine) && isKeyHex(f.key)
-      ? { machine: lc(f.machine), name: String(f.name || "").trim() || lc(f.machine).slice(0, 8), keyId: clampInt(f.keyId, 1, 0x7fffffff, 1), key: f.key.toLowerCase() }
+      ? { machine: lc(f.machine), name: String(f.name || "").trim() || lc(f.machine).slice(0, 8), keyId: clampInt(f.keyId, 1, 0x7fffffff, 1), key: f.key.toLowerCase(),
+          // HOW it was paired (2026-10-04): account (re-fetched when the sender replaces its key) · code (a guest's
+          // one-use code) · line (the advanced paste — and every key stored before pairing existed).
+          via: PAIR_VIA.includes(f.via) ? f.via : "line" }
       : null;
     return {
       slot: v.slot,
@@ -127,7 +132,8 @@ function parseInput(value, d = FALLBACK_DEFAULTS) {
 }
 function serializeInput(p) {
   return JSON.stringify({ slot: p.slot, jitterMs: p.jitterMs, port: p.port, autoCut: !!p.autoCut, autoCutSec: p.autoCutSec,
-                          from: p.from ? { machine: p.from.machine, name: p.from.name, keyId: p.from.keyId, key: p.from.key } : null });
+                          from: p.from ? { machine: p.from.machine, name: p.from.name, keyId: p.from.keyId, key: p.from.key,
+                                           via: PAIR_VIA.includes(p.from.via) ? p.from.via : "line" } : null });
 }
 
 /** link_send → normalised, or null (not sending / unreadable). */

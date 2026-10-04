@@ -83,6 +83,11 @@ contextBridge.exposeInMainWorld("ether", {
     linkSetSend: (stationId, send) => ipcRenderer.invoke("link:set-send", stationId, send),
     linkMintKey: () => ipcRenderer.invoke("link:mint-key"),
     linkKeyLine: () => ipcRenderer.invoke("link:key-line"),
+    // PAIRING (2026-10-04): the key is never copied by hand — pick a computer on this account, or a guest's code.
+    linkAccountMachines: () => ipcRenderer.invoke("link:account-machines"),
+    linkPairMachine: (stationId, machineId) => ipcRenderer.invoke("link:pair-machine", stationId, machineId),
+    linkPairCode: () => ipcRenderer.invoke("link:pair-code"),
+    linkPairRedeem: (stationId, code) => ipcRenderer.invoke("link:pair-redeem", stationId, code),
     linkState: (stationId) => ipcRenderer.invoke("link:state", stationId),
     setOutputDevice: (stationId, deviceName) => ipcRenderer.invoke("audio:setOutputDevice", stationId, deviceName),
     setMonitorVolume: (stationId, volume) => ipcRenderer.invoke("audio:setMonitorVolume", stationId, volume),

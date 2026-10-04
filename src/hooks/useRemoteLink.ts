@@ -13,7 +13,8 @@ import { OPEN_PREFS_KEY } from "./useMicInputs";
 export type LinkDefaults = { bitrate: number; bitrateRange: [number, number]; jitterMs: number; jitterRangeMs: [number, number];
                              port: number; frameMs: number; rate: number; transport: string };
 /** Whose key the fader holds (pasted from the sending computer) — shown as a name and fingerprint, never the key. */
-export type LinkFrom = { machine: string; name: string; keyId: number; fingerprint: string };
+/** via (2026-10-04): how it was paired — "account" (followed when the sender replaces its key), "code" (a guest), "line". */
+export type LinkFrom = { machine: string; name: string; keyId: number; fingerprint: string; via?: "account" | "code" | "line" };
 export type LinkInput = { slot: string; jitterMs: number; port: number; autoCut: boolean; autoCutSec: number; from?: LinkFrom | null };
 /** A change to the fader's Link: `keyLine` = a pasted key line, `clearKey` = forget the key (cut that sender off). */
 export type LinkInputEdit = Omit<LinkInput, "from"> & { keyLine?: string; clearKey?: boolean };
@@ -127,7 +128,32 @@ export function useRemoteLink(stationId: number | null | undefined) {
     return r || { ok: false, reason: "no answer" };
   }, [stationId]);
 
-  return { cfg: snap.cfg, state: snap.state, setInput, setSend, mintKey, keyLine };
+  // ── PAIRING (2026-10-04): the key is never copied or typed by hand ──
+  /** This account's other computers, and whether each has shared its key. */
+  const accountMachines = useCallback(async (): Promise<{ ok: boolean; machines?: AccountMachine[]; reason?: string }> =>
+    (await api()?.linkAccountMachines?.()) || { ok: false, reason: "no answer" }, []);
+  /** Same account: put the picked computer's key on this station's Link fader. */
+  const pairMachine = useCallback(async (machineId: string): Promise<PairResult> => {
+    if (stationId == null) return { ok: false, reason: "no station" };
+    const r = await api()?.linkPairMachine?.(stationId, machineId);
+    bump(stationId);
+    return r || { ok: false, reason: "no answer" };
+  }, [stationId]);
+  /** Guest: the 8-character code read off the sending computer's screen. */
+  const pairRedeem = useCallback(async (code: string): Promise<PairResult> => {
+    if (stationId == null) return { ok: false, reason: "no station" };
+    const r = await api()?.linkPairRedeem?.(stationId, code);
+    bump(stationId);
+    return r || { ok: false, reason: "no answer" };
+  }, [stationId]);
+  /** Sender: a code for a guest computer (8 characters, 10 minutes, one use). */
+  const pairCode = useCallback(async (): Promise<{ ok: boolean; code?: string; expiresAt?: string; reason?: string }> => {
+    const r = await api()?.linkPairCode?.();
+    if (stationId != null) bump(stationId);
+    return r || { ok: false, reason: "no answer" };
+  }, [stationId]);
+
+  return { cfg: snap.cfg, state: snap.state, setInput, setSend, mintKey, keyLine, accountMachines, pairMachine, pairRedeem, pairCode };
 }
 
 /** The Remote Link's door: Preferences → Broadcast → Remote Link. */
@@ -135,6 +161,9 @@ export function openLinkPreferences() {
   try { localStorage.setItem(OPEN_KEY, `broadcast:${Date.now()}`); } catch { /* the same-window event still fires */ }
   try { window.dispatchEvent(new CustomEvent("ether:open-preferences", { detail: { category: "broadcast" } })); } catch { /* not in a browser */ }
 }
+
+export type AccountMachine = { machineId: string; name: string; published: boolean; fingerprint: string | null; keyId: number | null; lastSeen: string | null };
+export type PairResult = { ok: boolean; reason?: string; from?: { machine: string; name: string; keyId: number; via: string; fingerprint: string } };
 
 type Words = { text: string; tone: "ok" | "warn" | "bad" | "off" };
 const ms = (v: number | null | undefined) => (v == null ? "—" : `${Math.round(v)} ms`);
@@ -144,7 +173,7 @@ const ms = (v: number | null | undefined) => (v == null ? "—" : `${Math.round(
 export function rxWords(rx: LinkRx | null | undefined, patched: boolean, hasKey = true, refusal?: string | null): Words {
   if (!patched) return { text: "not patched", tone: "off" };
   if (refusal) return { text: refusal, tone: "bad" };
-  if (!hasKey) return { text: "paste the sending computer's link key", tone: "warn" };
+  if (!hasKey) return { text: "pick the sending computer", tone: "warn" };
   if (!rx) return { text: "waiting for the engine", tone: "warn" };
   const keyRejected = rx.lastAuthFailureAgoMs != null && rx.lastAuthFailureAgoMs < 10_000;
   switch (rx.state) {
