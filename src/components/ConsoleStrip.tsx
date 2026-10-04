@@ -11,6 +11,7 @@ import { useAudioEngine } from "../audio/AudioEngineContext";
 import { playClick } from "../lib/uiSound";
 import PeakAvgMeter, { type MeterSource } from "./meter/PeakAvgMeter";
 import { CH_INDEX, useMeterSubscription, latestMeters } from "./meter/meterStore";
+import { auxFaultFor } from "./meter/auxFault";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { useSongMenu } from "../lib/songActions";
 import { openChannelRack, useChannelRackLamps } from "../hooks/useChannelRack";
@@ -101,6 +102,9 @@ export default function ConsoleStrip({
   // PFL OUTPUT DEVICE — when a cue device is chosen but not there, PFL is SILENT (never the speakers); the strip
   // says so while its PFL is on.
   const [cueBad, setCueBad] = useState<string | null>(null);
+  // AUX DOWN (2026-10-04, OV): this slot reaches the room only through the aux output and that output is down.
+  // The meter must not show a normal level for audio nobody can hear — it draws NOT FED, and the fault is named.
+  const [auxBad, setAuxBad] = useState<string | null>(null);
   // SLICE 6 — THE COMPRESSOR LAMP (Jeff's ruling 7): an operator reads the compressor from the board. The engine's
   // comp GR for this channel this window (meters chDyn); lit from 1 dB.
   const [compGr, setCompGr] = useState(0);
@@ -178,6 +182,8 @@ export default function ConsoleStrip({
       const cs = m?.cueState;
       const bad = cs === "not_found" ? "cue device not found — PFL silent" : cs === "failed" ? "cue device failed — PFL silent" : null;
       setCueBad(prev => (prev === bad ? prev : bad));
+      const ab = auxFaultFor(m, slotIndex);
+      setAuxBad(prev => (prev === ab ? prev : ab));
       const gr = m?.chDyn?.[slotIndex]?.[1] ?? 0;
       const q = Math.round(gr * 2) / 2;   // 0.5 dB steps: no re-render per meter window
       setCompGr(prev => (prev === q ? prev : q));
@@ -185,7 +191,7 @@ export default function ConsoleStrip({
     return () => clearInterval(id);
   }, [slotIndex, stationUuid]);
   const pflActive = slotIndex !== undefined ? pflEcho : pflLocal;
-  const meterSource: MeterSource = meterNotFed ? { stationUuid: null, ch: -1 }
+  const meterSource: MeterSource = (meterNotFed || auxBad) ? { stationUuid: null, ch: -1 }
     : deckId
     ? (slotIndex !== undefined ? { stationUuid, ch: slotIndex } : { stationUuid: null, ch: -1 })
     : { external: level };
@@ -420,6 +426,14 @@ export default function ConsoleStrip({
                       background: "color-mix(in srgb, var(--slot-dynamics) 14%, transparent)" }}>
           <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--slot-dynamics)" }} />
           COMP −{compGr.toFixed(1)} dB
+        </div>
+      )}
+
+      {/* The room cannot hear this channel: its aux output is down (native MonOut keeps retrying the same device) */}
+      {auxBad && slotIndex !== undefined && (
+        <div style={{ padding: "4px 8px 0", fontSize: 10, fontWeight: 700, color: "var(--accent-red, #ef4444)", lineHeight: 1.2 }}
+             title="This channel reaches the room only through the aux output, and that device is not open. Ether keeps trying to reopen the SAME device; it never switches to another one. The stream/air feed is unaffected.">
+          ⚠ {auxBad}
         </div>
       )}
 

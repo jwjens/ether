@@ -148,6 +148,11 @@ pub struct DeckTel {
     /// SLICE 1 S6 — buffers in which this deck's ring ran dry before end of file (0 on a healthy disk).
     #[serde(default)]
     pub underruns: u64,
+    /// AUX-ROUTED (2026-10-04): this slot reaches the room ONLY through the aux output (SlotKind::Source).
+    /// While that output is down, its peak is real signal going nowhere audible — the meter and the cart
+    /// confirm read this with getLevels' `aux_open` and must not call it normal.
+    #[serde(default)]
+    pub aux_routed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -2390,6 +2395,43 @@ mod duck_regression {
                 "a Rotation/CART slot triggered the ducker: g={}", duck_gain(&bus));
     }
 
+    /// 1 kHz sine, stereo-interleaved. The ride's meter is K-weighted ebur128, which reads DC as no loudness at
+    /// all — so a test about the RIDE needs a real tone where the ducker tests above can use DC.
+    struct Sine { amp: f32, n: u64 }
+    impl Iterator for Sine {
+        type Item = f32;
+        fn next(&mut self) -> Option<f32> {
+            let i = self.n / 2; self.n += 1;
+            Some((2.0 * std::f32::consts::PI * 1000.0 * (i as f32) / 44_100.0).sin() * self.amp)
+        }
+    }
+
+    /// OV, 2026-10-04: "the music needs to stop turning up loud under the carts". While a cart plays on an aux
+    /// deck the room/PA is fed by the ROOM chain — the ducked music through processor_room. The duck hold was
+    /// only ever applied to the program/stream branches (run_branch), so the room's ride heard a quiet programme
+    /// and pushed it back UP, over seconds, under every cart: the duck undone in the room and nowhere else.
+    #[test]
+    fn the_room_ride_does_not_turn_the_ducked_music_back_up() {
+        let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
+        let (prod, _cons) = rb.split();
+        let eq = crate::eq::new_shared_eq(44100.0);
+        let bus = Arc::new(crate::rt::RtMutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
+        {
+            let mut b = bus.lock().unwrap();
+            b.decks[0].source = Some(DeckFeed::prefilled(Sine { amp: 0.3, n: 0 }, 480 * 2 * 700));   // the music
+            b.decks[0].active = true; b.decks[0].paused = false; b.decks[0].volume = 1.0;
+            b.decks[3].source = Some(DeckFeed::prefilled(Tone(0.5), 480 * 2 * 700));                 // the cart, on D
+            b.decks[3].active = true; b.decks[3].paused = false; b.decks[3].volume = 1.0;
+            b.duck_enabled[3] = true;
+            b.proc_local = true;   // "Process local output" — the room chain runs its processor
+        }
+        run(&bus, 600);            // 6 s of cart over music
+        assert!(duck_gain(&bus) < 0.2, "control: the duck did not engage, g={}", duck_gain(&bus));
+        let ride = bus.lock().unwrap().processor_room.try_lock().map(|p| p.ride_gain_db()).unwrap_or(f32::NAN);
+        assert!(ride.is_finite(), "control: the room processor never ran");
+        assert!(ride < 0.5, "the room ride turned the ducked music back UP by {:.2} dB under the cart", ride);
+    }
+
     #[test]
     fn the_ride_is_frozen_while_ducked() {
         // §B.3a — the ride must not claw the duck back. Feed the processor a QUIET programme, which
@@ -2463,8 +2505,8 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
 
     // ── AUX MONITOR OUTPUT — its own device, its own stream, its own clock ───────────────────────
     // Empty string = no device chosen = no stream = silence. The operator's choice is the only thing
-    // that ever opens this.
-    let aux_req: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    // that ever opens this. Held in the station's aux STATUS so getLevels can say where the aux is going.
+    let aux_req: Arc<Mutex<String>> = aux_status(station_id).req.clone();
 
     let shared_eq = crate::eq::new_shared_eq(44100.0);
     let mut bus_init = BusState::new(shared_eq, ring_prod, 44100, stream_connected.clone());
@@ -2526,7 +2568,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
         std::thread::spawn(move || {
             // Built HERE: a cpal Stream is not Send, so each output's stream lives and dies on this thread.
             let mut outs = [
-                MonOut::new("AUX monitor", "aux", aux_req_t, aux_frames_ctr_shared, None, AuxCmd::Attach, || AuxCmd::Detach),
+                MonOut::new("AUX monitor", "aux", aux_req_t, aux_frames_ctr_shared, Some(aux_status(station_id)), AuxCmd::Attach, || AuxCmd::Detach),
                 MonOut::new("PFL cue", "cue", cue.req.clone(), cue.frames.clone(), Some(cue.clone()), AuxCmd::AttachCue, || AuxCmd::DetachCue),
             ];
             loop {
@@ -2945,6 +2987,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                             frames_played: d.frames_played,
                                             peak: m.peaks[i],
                                             duck: p.duck_enabled[i],
+                                            aux_routed: p.kind[i] == SlotKind::Source,
                                             underruns: ctl.counters.underruns[i].load(Ordering::Relaxed),
                                         });
                                     }
@@ -3334,18 +3377,49 @@ pub(crate) struct CueStatus {
     pub state: std::sync::atomic::AtomicU8,
     pub frames: Arc<AtomicU64>,
     pub rate: std::sync::atomic::AtomicU32,
+    /// Times this output's stream was found dead (cpal error, or no callback for MON_STALL_AFTER) and reopened.
+    pub stalls: AtomicU64,
 }
-static CUE_STATUS: std::sync::OnceLock<Mutex<HashMap<u32, Arc<CueStatus>>>> = std::sync::OnceLock::new();
-pub(crate) fn cue_status(station_id: u32) -> Arc<CueStatus> {
-    let m = CUE_STATUS.get_or_init(|| Mutex::new(HashMap::new()));
+type StatusMap = std::sync::OnceLock<Mutex<HashMap<u32, Arc<CueStatus>>>>;
+static CUE_STATUS: StatusMap = std::sync::OnceLock::new();
+/// The AUX monitor's status, same shape as the cue's (2026-10-04, OV: the aux stream died and nothing could see it).
+/// CUE_SAME_AS_MAIN here means "no aux device chosen" — see aux_state_name.
+static AUX_STATUS: StatusMap = std::sync::OnceLock::new();
+fn status_for(map: &'static StatusMap, station_id: u32) -> Arc<CueStatus> {
+    let m = map.get_or_init(|| Mutex::new(HashMap::new()));
     let mut g = m.lock().unwrap_or_else(|e| e.into_inner());
     g.entry(station_id).or_insert_with(|| Arc::new(CueStatus {
         req: Arc::new(Mutex::new(String::new())), state: std::sync::atomic::AtomicU8::new(CUE_SAME_AS_MAIN),
-        frames: Arc::new(AtomicU64::new(0)), rate: std::sync::atomic::AtomicU32::new(0),
+        frames: Arc::new(AtomicU64::new(0)), rate: std::sync::atomic::AtomicU32::new(0), stalls: AtomicU64::new(0),
     })).clone()
 }
+pub(crate) fn cue_status(station_id: u32) -> Arc<CueStatus> { status_for(&CUE_STATUS, station_id) }
+pub(crate) fn aux_status(station_id: u32) -> Arc<CueStatus> { status_for(&AUX_STATUS, station_id) }
 pub(crate) fn cue_state_name(v: u8) -> &'static str {
     match v { CUE_SAME_AS_MAIN => "same_as_main", CUE_OPENING => "opening", CUE_OPEN => "open", CUE_NOT_FOUND => "not_found", _ => "failed" }
+}
+/// The aux has no "main" to fall back to: no device chosen is simply "none".
+pub(crate) fn aux_state_name(v: u8) -> &'static str {
+    if v == CUE_SAME_AS_MAIN { "none" } else { cue_state_name(v) }
+}
+
+/// A monitor stream (aux / cue) silent this long is dead. Longer than the main output's 1 s: a monitor's
+/// callback is primed by the main mixer, and the main watcher should get first go at a main-side stall.
+pub(crate) const MON_STALL_AFTER: std::time::Duration = std::time::Duration::from_secs(3);
+pub(crate) fn mon_watch(now: std::time::Instant) -> crate::outwatch::StallWatch {
+    crate::outwatch::StallWatch::with(now, MON_STALL_AFTER, crate::outwatch::HEALTHY_AFTER)
+}
+
+#[derive(Debug, PartialEq)]
+pub(crate) enum MonPlan { Keep, Reopen }
+/// What a monitor output should do this tick. `Reopen` = tear down whatever is there and open `want` (or nothing,
+/// if `want` is empty). The `lost` arm is the 2026-10-03 fix: before it, a stream that died on the SAME device was
+/// never reopened — the rule only looked at the name — so the aux stayed silent until the daemon restarted.
+pub(crate) fn mon_plan(want: &str, open_name: &str, stream_open: bool, retry_due: bool, lost: bool) -> MonPlan {
+    if want != open_name { return MonPlan::Reopen; }
+    if stream_open && lost { return MonPlan::Reopen; }
+    if !stream_open && retry_due && !want.is_empty() { return MonPlan::Reopen; }
+    MonPlan::Keep
 }
 
 /// One monitor output on its OWN device — the AUX monitor, or the PFL cue. The device-open path the AUX monitor
@@ -3362,20 +3436,49 @@ struct MonOut {
     open_name: String,
     stream: Option<cpal::Stream>,
     retry_at: Option<std::time::Instant>,
+    /// LIVENESS (2026-10-04, OV): the same watcher the main output uses (outwatch.rs), fed by this output's frame
+    /// counter. A stream that cpal says has lost its device, or whose callback stops, is torn down and the SAME
+    /// device reopened — never another one. Before this, a dead aux stream sat "open" until the daemon restarted.
+    watch: crate::outwatch::StallWatch,
+    dev_err: Arc<Mutex<Option<String>>>,
 }
 impl MonOut {
     fn new(label: &'static str, tag: &'static str, req: Arc<Mutex<String>>, frames: Arc<AtomicU64>, status: Option<Arc<CueStatus>>,
            attach: fn(HeapProd<f32>) -> AuxCmd, detach: fn() -> AuxCmd) -> MonOut {
-        MonOut { label, tag, req, frames, status, attach, detach, open_name: String::new(), stream: None, retry_at: None }
+        MonOut { label, tag, req, frames, status, attach, detach, open_name: String::new(), stream: None, retry_at: None,
+                 watch: mon_watch(std::time::Instant::now()), dev_err: Arc::new(Mutex::new(None)) }
     }
     fn set_state(&self, v: u8) { if let Some(s) = &self.status { s.state.store(v, Ordering::Relaxed); } }
+    fn retry_later(&mut self) {
+        self.watch.open_failed();
+        let wait = std::time::Duration::from_secs(5).max(self.watch.backoff());
+        self.retry_at = Some(std::time::Instant::now() + wait);
+    }
     fn service(&mut self, station_id: u32, send: &mut dyn FnMut(AuxCmd)) {
         use cpal::traits::{DeviceTrait, StreamTrait};
         let want = self.req.lock().map(|r| r.clone()).unwrap_or_default();
+        let now = std::time::Instant::now();
+        // Is the open stream still alive? (Only judged while one is open; observe() is a no-op otherwise.)
+        let lost = if self.stream.is_some() {
+            let err = self.dev_err.try_lock().ok().and_then(|mut g| g.take());
+            match self.watch.observe(now, self.frames.load(Ordering::Relaxed), err) {
+                Some(why) => {
+                    if let Some(s) = &self.status { s.stalls.fetch_add(1, Ordering::Relaxed); }
+                    let what = match why {
+                        crate::outwatch::Stall::NoCallbacks { ms } => format!("no output callback for {} ms", ms),
+                        crate::outwatch::Stall::DeviceError(e) => format!("the device reported an error: {}", e),
+                    };
+                    eprintln!("[RUST] {} Station {} {} output STALL on {:?}: {} — reopening the same device",
+                              crate::outwatch::iso_now(), station_id, self.label, self.open_name, what);
+                    true
+                }
+                None => false,
+            }
+        } else { false };
         // A REQUESTED-BUT-ABSENT device is a normal state, not an error to hammer: the operator may have picked
         // headphones that are currently unplugged. Retry slowly and log once.
-        let retry_due = self.retry_at.map(|t| std::time::Instant::now() >= t).unwrap_or(false);
-        if !(want != self.open_name || (retry_due && !want.is_empty() && self.stream.is_none())) { return; }
+        let retry_due = self.retry_at.map(|t| now >= t).unwrap_or(false);
+        if mon_plan(&want, &self.open_name, self.stream.is_some(), retry_due, lost) == MonPlan::Keep { return; }
         // Tear down first, always: clearing the producer stops the mixer writing before the stream that
         // drains it goes away.
         let changed = want != self.open_name;
@@ -3384,6 +3487,9 @@ impl MonOut {
             eprintln!("[RUST] Station {} {} output closed", station_id, self.label);
         }
         self.stream = None;
+        self.watch.stream_closed();
+        if changed { self.watch.consecutive = 0; }   // the operator chose a device: judge it fresh
+        if let Ok(mut g) = self.dev_err.lock() { *g = None; }
         self.open_name = want.clone();
         self.retry_at = None;
         if self.open_name.is_empty() {
@@ -3395,9 +3501,9 @@ impl MonOut {
         let Some((device, sr, ch)) = open_named_output_device(station_id, &self.open_name) else {
             // NO FALLBACK. A named device that is not present stays unopened and the bus stays silent.
             // Substituting a different output for the operator is the unsafe behaviour this path exists to avoid.
-            if changed { eprintln!("[RUST] Station {} {} device not found: {:?} — staying silent (will retry)", station_id, self.label, self.open_name); }
+            if changed || lost { eprintln!("[RUST] Station {} {} device not found: {:?} — staying silent (will retry)", station_id, self.label, self.open_name); }
             self.set_state(CUE_NOT_FOUND);
-            self.retry_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+            self.retry_later();
             return;
         };
         let rb = HeapRb::<f32>::new(AUX_BUS_BUF);
@@ -3425,7 +3531,13 @@ impl MonOut {
                     let b = cons.try_pop().and_then(|l| cons.try_pop().map(|r| (l, r)));
                     match (a, b) {
                         (Some(x), Some(y)) => { cur = x; nxt = y; primed = true; }
-                        _ => { data.iter_mut().for_each(|x| *x = 0.0); return; }
+                        _ => {
+                            data.iter_mut().for_each(|x| *x = 0.0);
+                            // Counted: the DEVICE took these frames (silence), so the stream is alive. The liveness
+                            // watcher reads this counter, and must not call a waiting-to-prime stream dead.
+                            frames_ctr.fetch_add(frames as u64, Ordering::Relaxed);
+                            return;
+                        }
                     }
                 }
                 // DRIFT CORRECTION, not sample dropping: nudge the resample ratio by at most ±0.3% toward the
@@ -3452,7 +3564,15 @@ impl MonOut {
                 // Proof of flow, not merely of opening.
                 frames_ctr.fetch_add(frames as u64, Ordering::Relaxed);
             },
-            move |err| eprintln!("[cpal {}] {}", tag, err),
+            // cpal's error callback: logged as before, AND handed to service(), which reopens (the 2026-10-03 fix —
+            // this used to be the end of it: "[cpal aux] The requested device is no longer available", then silence).
+            {
+                let err_slot = self.dev_err.clone();
+                move |err| {
+                    eprintln!("[cpal {}] {}", tag, err);
+                    if let Ok(mut g) = err_slot.try_lock() { if g.is_none() { *g = Some(err.to_string()); } }
+                }
+            },
             None,
         );
         match built {
@@ -3461,21 +3581,92 @@ impl MonOut {
                     eprintln!("[RUST] Station {} {} stream.play(): {}", station_id, self.label, e);
                     send((self.detach)());
                     self.set_state(CUE_FAILED);
-                    self.retry_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+                    self.retry_later();
                 } else {
                     eprintln!("[RUST] Station {} {} output opened ({}Hz {}ch)", station_id, self.label, sr, ch);
                     if let Some(s) = &self.status { s.rate.store(sr, Ordering::Relaxed); }
                     self.set_state(CUE_OPEN);
                     self.stream = Some(st);
+                    self.watch.stream_opened(std::time::Instant::now(), self.frames.load(Ordering::Relaxed));
                 }
             }
             Err(e) => {
                 eprintln!("[RUST] Station {} {} build_output_stream: {}", station_id, self.label, e);
                 send((self.detach)());
                 self.set_state(CUE_FAILED);
-                self.retry_at = Some(std::time::Instant::now() + std::time::Duration::from_secs(5));
+                self.retry_later();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod monout_tests {
+    use super::*;
+    use crate::outwatch::Stall;
+    use std::time::{Duration, Instant};
+
+    /// THE OV HICCUP (2026-10-03): the aux device dropped, cpal said so, and the stream stayed in `self.stream`.
+    /// Same name requested, a stream "open" — the old rule saw nothing to do, forever, and re-picking the same
+    /// device changed nothing. A lost stream on the SAME device must be reopened.
+    #[test]
+    fn a_lost_monitor_stream_on_the_same_device_is_reopened() {
+        assert_eq!(mon_plan("Speakers", "Speakers", true, false, true), MonPlan::Reopen);
+    }
+
+    #[test]
+    fn a_healthy_monitor_stream_is_left_alone() {
+        assert_eq!(mon_plan("Speakers", "Speakers", true, false, false), MonPlan::Keep);
+        assert_eq!(mon_plan("", "", false, false, false), MonPlan::Keep, "nothing chosen, nothing open");
+    }
+
+    #[test]
+    fn the_existing_rules_still_hold() {
+        assert_eq!(mon_plan("Phones", "Speakers", true, false, false), MonPlan::Reopen, "operator switched device");
+        assert_eq!(mon_plan("", "Speakers", true, false, false), MonPlan::Reopen, "operator cleared the device");
+        assert_eq!(mon_plan("Speakers", "Speakers", false, true, false), MonPlan::Reopen, "absent device, retry due");
+        assert_eq!(mon_plan("Speakers", "Speakers", false, false, false), MonPlan::Keep, "absent device, retry not due");
+    }
+
+    /// The OV probe's signature: `aux_frames` frozen while the station kept running. The monitor watcher must call
+    /// that a stall — and must not on a stream that is merely quiet (the callback counts frames even unprimed).
+    #[test]
+    fn a_frozen_monitor_frame_counter_is_a_stall_and_a_moving_one_is_not() {
+        let t0 = Instant::now();
+        let mut w = mon_watch(t0);
+        w.stream_opened(t0, 170_964_576);
+        let mut t = t0;
+        let mut frames = 170_964_576u64;
+        for _ in 0..20 {          // 5 s of a healthy stream, 250 ms ticks
+            t += Duration::from_millis(250);
+            frames += 11_025;
+            assert_eq!(w.observe(t, frames, None), None);
+        }
+        let mut got = None;
+        for _ in 0..20 {          // then the counter freezes
+            t += Duration::from_millis(250);
+            if let Some(s) = w.observe(t, frames, None) { got = Some(s); break; }
+        }
+        assert!(matches!(got, Some(Stall::NoCallbacks { .. })), "frozen aux_frames must be judged a stall, got {:?}", got);
+        assert!(t.duration_since(t0) <= Duration::from_secs(5) + MON_STALL_AFTER + Duration::from_millis(250));
+    }
+
+    #[test]
+    fn a_cpal_device_error_on_the_monitor_stream_is_a_stall_at_once() {
+        let t0 = Instant::now();
+        let mut w = mon_watch(t0);
+        w.stream_opened(t0, 0);
+        let s = w.observe(t0 + Duration::from_millis(10), 100, Some("The requested device is no longer available".into()));
+        assert!(matches!(s, Some(Stall::DeviceError(_))));
+    }
+
+    #[test]
+    fn aux_state_names_are_the_aux_words_not_the_cue_words() {
+        assert_eq!(aux_state_name(CUE_SAME_AS_MAIN), "none");
+        assert_eq!(aux_state_name(CUE_OPEN), "open");
+        assert_eq!(aux_state_name(CUE_NOT_FOUND), "not_found");
+        assert_eq!(aux_state_name(CUE_FAILED), "failed");
+        assert_eq!(aux_state_name(CUE_OPENING), "opening");
     }
 }
 
@@ -4337,6 +4528,10 @@ pub(crate) fn mixer_callback(
             // instances (program, aux, room) get the same chain — one station, one sound.
             p.set_params(bus.proc_ceiling_dbtp, bus.proc_release_ms, bus.proc_ride_rate,
                          bus.proc_ride_clamp, bus.proc_ride_bypass, bus.proc_limiter_bypass);
+                // §B.3a, for the ROOM too (2026-10-04, OV: "the music needs to stop turning up loud under the
+                // carts"). This chain only runs while an aux deck is live — i.e. exactly when a cart is ducking
+                // the music — and without the hold its ride pushed the ducked music back up (+9 dB in 6 s).
+                p.set_ride_hold(duck_active);
                 p.process_planar(rl, rr);
                 room_m = Some((p.ride_gain_db(), p.gain_reduction_max_db()));
             } else { RtCounters::bump(&counters.lock_misses, 1); }

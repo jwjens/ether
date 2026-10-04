@@ -960,6 +960,58 @@ mod parity {
     // stay pinned to the commit they came from — and each new render records the commit it was captured at.
     // ETHER_GOLDEN_RECAPTURE=1 re-captures EVERYTHING as a new baseline, archiving the old manifest as
     // manifest-<commit>.json first (Jeff's ruling for slice 1 S7).
+    // ── ROOM DUCK HOLD — music__AUXDUCK_LINKED's ROOM under the cart, measured (2026-10-04) ─────────────────────
+    // A golden must not be re-captured blind. This measures the room level, 1 s windows, wherever the cart (the aux
+    // feed) is audible, for: the GOLDEN on disk (hash-checked against the manifest, so it is the render the manifest
+    // names), a FRESH render of the same scene by this build, and the same scene with the duck OFF. Before a
+    // re-capture the golden is the old render; after, it must equal the fresh one.
+    //   ETHER_ROOM_DUCK_BEFORE=<pre-fix monitor.wav>  also measures that file — the before/after comparison.
+    //   cd native && cargo test --release --lib offline_render::parity::measure_room_duck_hold -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn measure_room_duck_hold() {
+        let id = "music__AUXDUCK_LINKED";
+        let m = manifest().expect("manifest");
+        let g = &m["renders"][id];
+        let gold = read_wav_f32(&goldens_dir().join(format!("{}__monitor.wav", id))).expect("golden monitor wav");
+        assert_eq!(format!("{:016x}", fnv_bits(&gold)), g["monitor"]["hash"].as_str().unwrap_or(""),
+                   "the golden WAV on disk is not the render the manifest names — the measurement would be meaningless");
+        let before = std::env::var("ETHER_ROOM_DUCK_BEFORE").ok().map(|p| read_wav_f32(std::path::Path::new(&p)).expect("ETHER_ROOM_DUCK_BEFORE wav"));
+        let (_, path, cfg) = plan().into_iter().find(|(n, _, _)| n == id).unwrap();
+        let fresh = render_offline(path.to_str().unwrap(), &cfg).unwrap().monitor;
+        // The same scene with the duck OFF — what "not ducked at all" sounds like in this room.
+        let mut undk = cfg.clone(); if let Some(a) = undk.aux.as_mut() { a.duck = false; }
+        let flat = render_offline(path.to_str().unwrap(), &undk).unwrap();
+        let auxs = &flat.aux;   // the cart's own envelope
+        let win = RATE as usize * 2;   // 1 s of interleaved stereo
+        let db = |v: &[f32]| { let ms = v.iter().map(|x| (*x as f64) * (*x as f64)).sum::<f64>() / v.len().max(1) as f64; 10.0 * ms.max(1e-12).log10() };
+        let mut n = gold.len().min(fresh.len()).min(flat.monitor.len()).min(auxs.len());
+        if let Some(b) = &before { n = n.min(b.len()); }
+        let n = n / win;
+        let (mut k, mut sg, mut sf, mut sn, mut sb) = (0usize, 0f64, 0f64, 0f64, 0f64);
+        println!("[room-duck] {} — commit in manifest: {}", id, g["commit"].as_str().unwrap_or("?"));
+        println!("[room-duck] sec | golden | fresh  | no-duck | {}", if before.is_some() { "before | golden-before" } else { "" });
+        for w in 0..n {
+            let r = w * win..(w + 1) * win;
+            if db(&auxs[r.clone()]) < -45.0 { continue; }
+            let (gg, ff, nd) = (db(&gold[r.clone()]), db(&fresh[r.clone()]), db(&flat.monitor[r.clone()]));
+            match &before {
+                Some(b) => { let bb = db(&b[r.clone()]); sb += bb;
+                             println!("[room-duck] {:>3} | {:>6.2} | {:>6.2} | {:>7.2} | {:>6.2} | {:>+7.2} dB", w, gg, ff, nd, bb, gg - bb); }
+                None    => println!("[room-duck] {:>3} | {:>6.2} | {:>6.2} | {:>7.2} |", w, gg, ff, nd),
+            }
+            k += 1; sg += gg; sf += ff; sn += nd;
+        }
+        assert!(k > 0, "no window had the cart audible — the measurement measured nothing");
+        let kf = k as f64;
+        println!("[room-duck] mean over {} cart windows: golden {:.2} dB · fresh {:.2} dB · no-duck {:.2} dB", k, sg / kf, sf / kf, sn / kf);
+        println!("[room-duck] golden vs fresh render: bit-identical = {}", bits_equal(&gold[..n * win], &fresh[..n * win]));
+        if before.is_some() {
+            println!("[room-duck] golden is {:.2} dB below the before-file on average", (sb - sg) / kf);
+            assert!(sg < sb, "the golden is NOT quieter under the cart than the before-file");
+        }
+    }
+
     #[test]
     #[ignore]
     fn capture_goldens() {

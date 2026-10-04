@@ -23,6 +23,7 @@ const MicInput = require(path.join(__dirname, "mic-input.js"));
 const loggen = require("./loggen");
 const autofit = require("./autofit");   // §2.7 auto-fitter — OBSERVATION ONLY this release (writes nothing)
 const playlog = require("./playlog");
+const { classifyCartFlow } = require("./cart-observe");   // 2026-10-04: a cart on a dead aux is a FAULT, not FIRING
 
 // One play-log session id per daemon process (mirrors the renderer's getSessionId()).
 const SESSION = crypto.randomUUID();
@@ -2257,18 +2258,10 @@ class DaemonEngine {
   // showed nothing, and cost hours. Same answer, but it now says which of the two it saw and at what
   // peak. Behaviour is unchanged: `flowing` is the same boolean as before.
   _cartObserve(channels) {
-    const chans = (channels && channels.length) ? channels : ["CART"];
-    const find = (lv, ch) => (lv.decks || []).find(d => d && (d.id === ch || (ch === "CART" && d.id === 6)));
-    try {
-      const lv = JSON.parse(A.audioGetLevels(this.stationId));
-      let peak = 0;
-      for (const ch of chans) { const d = find(lv, ch); if (d && (d.peak || 0) > peak) peak = d.peak || 0; }
-      // level_cart is bus.peaks[6] under a named field, so it speaks only for the fallback slot.
-      if (chans.includes("CART")) { const legacy = lv.cart || lv.level_cart || 0; if (legacy > peak) peak = legacy; }
-      if (peak > 0.0001) return { flowing: true, peak, how: "signal" };
-      const loaded = chans.some(ch => { const d = find(lv, ch); return !!(d && d.source_present && d.active && !d.paused); });
-      return { flowing: loaded, peak, how: loaded ? "loaded-and-active (NOT signal)" : "nothing" };
-    } catch { return { flowing: false, peak: 0, how: "levels-unreadable" }; }
+    // The decision lives in cart-observe.js (pure, tested): signal / loaded-and-active / nothing, and since
+    // 2026-10-04 FAULT when every channel is aux-routed and the aux output is down.
+    try { return classifyCartFlow(JSON.parse(A.audioGetLevels(this.stationId)), channels); }
+    catch { return { flowing: false, peak: 0, how: "levels-unreadable" }; }
   }
   // Unchanged contract for every existing caller.
   _cartFlowing(channels) { return this._cartObserve(channels).flowing; }
@@ -2705,6 +2698,15 @@ class DaemonEngine {
         }
         // firing / bridging
         const obs = this._cartObserve(j.channels);
+        // A cart on a dead aux is a FAULT, said once per fire — never FIRING. flowing is false, so it is not
+        // confirmed, not logged as played, and not bridged: the rotation proceeds as if it had not aired, because
+        // in the room it did not.
+        if (obs.fault) {
+          if (!j.faultAt) {
+            j.faultAt = now; this._emitJingle("FAULT", j);
+            this._log("jingle FAULT on " + (j.channels || ["CART"]).join("+") + " peak=" + obs.peak.toFixed(4) + " — " + obs.how + " - \"" + j.title + "\"");
+          }
+        }
         if (obs.flowing) {
           this._lastPlayingAt = now;                        // watchdog: the bridge is NOT a stall
           if (!j.firingConfirmedAt) {

@@ -586,7 +586,14 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
     };
     // SLICE 1 S6 — the audio callback's health counters. Named key by key, like everything above.
     let rt = levels_arc.lock().map(|l| l.rt.clone()).unwrap_or_default();
+    // AUX OUTPUT STATUS (2026-10-04, OV) — where the aux is going and whether it is actually open. A dead aux stream
+    // used to be invisible: carts metered and reported PLAYING while the room heard nothing.
+    let aux_st = audio::aux_status(station_id.unwrap_or(1));
+    let aux_device = aux_st.req.lock().map(|r| r.clone()).unwrap_or_default();
+    let aux_state = audio::aux_state_name(aux_st.state.load(std::sync::atomic::Ordering::Relaxed));
+    let aux_stalls = aux_st.stalls.load(std::sync::atomic::Ordering::Relaxed);
     serde_json::json!({
+        "aux_device": aux_device, "aux_state": aux_state, "aux_open": aux_state == "open", "aux_stalls": aux_stalls,
         "a": la, "b": lb, "c": lc, "cart": lcart, "master": lmaster, "room": lroom, "aux_frames": auxframes, "aux_peak": auxpeak,
         "aux_proc_in_lufs": auxin, "aux_proc_out_lufs": auxout, "aux_proc_gr_db": auxgr, "aux_proc_ride_db": auxride,
         "frames_total": frames, "active_decks": active, "mon_vol": mon, "decks": decks,
@@ -760,6 +767,13 @@ pub fn audio_get_meters(station_id: u32) -> String {
         "pflDimDb": p.pfl_dim_db,
         // PFL OUTPUT DEVICE — where PFL is going: same_as_main | opening | open | not_found | failed.
         "cueState": audio::cue_state_name(audio::cue_status(station_id).state.load(std::sync::atomic::Ordering::Relaxed)),
+        // AUX OUTPUT (2026-10-04, OV) — the same shape as the cue's, for the same reason. A strip whose slot reaches
+        // the room only through the aux (bit n of auxRouted = slot n is SlotKind::Source) must not show a normal
+        // level while that output is down: "a VU meter that shows level while its output device is dead is itself
+        // a defect." auxState: none | opening | open | not_found | failed.
+        "auxState": audio::aux_state_name(audio::aux_status(station_id).state.load(std::sync::atomic::Ordering::Relaxed)),
+        "auxDevice": audio::aux_status(station_id).req.lock().map(|r| r.clone()).unwrap_or_default(),
+        "auxRouted": p.kind.iter().enumerate().fold(0u32, |m, (i, k)| if *k == audio::SlotKind::Source { m | (1 << i) } else { m }),
         "ld": {
             "local": ld_of(&lf.b[loudness::LOUD_LOCAL]),
             "stream": ld_of(&lf.b[loudness::LOUD_STREAM]),

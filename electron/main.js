@@ -1054,6 +1054,12 @@ if (AUDIO_DAEMON_DESIRED) {
     if (_inProcessFallback && !AUDIO_DAEMON) { _armInProcessHandover(); return; }
     // Phase D: replay BOTH automation AND stream intent so a reload restores playout AND the Icecast stream.
     replayIntents(audiodClient, _automationIntent, _streamIntent, { log: (m) => logStartup(`[AUDIO] ${m}`) });
+    // THE DUCKER (2026-10-04, OV: "it needs to be turned off and turned on again"). A daemon that has just
+    // (re)started holds NO duck flags — every channel off, engine-default depth — while the board still shows
+    // DUCK ON from deck_configs. Nothing re-sent them except the operator's toggle. Re-arm on every connect,
+    // TO THE DAEMON: at boot this handler runs before setupAudioBackend sets AUDIO_DAEMON, so the global
+    // would still say in-process here.
+    armAllStationDuckers("daemon-connect", { daemon: true });
   });
 
   // Safety net for the recurring silent-wedge (cpal output death) — auto-recovers dead air.
@@ -5888,7 +5894,9 @@ ipcMain.handle("audio:setMasterVolume", (_, stationId, volume) => {
 //
 // Called at boot (after the decks are seeded) and again on daemon handover, because a command sent
 // to the in-process engine does not reach a daemon that attaches later.
-function armAllStationDuckers(reason) {
+function armAllStationDuckers(reason, opts) {
+  // opts.daemon forces the daemon route (the connect handler runs before AUDIO_DAEMON is decided).
+  const toDaemon = (opts && opts.daemon != null) ? !!opts.daemon : AUDIO_DAEMON;
   let rows = [];
   try {
     rows = db.prepare(
@@ -5906,7 +5914,7 @@ function armAllStationDuckers(reason) {
     try {
       // TRIGGER side — only a source channel can arm the ducker.
       if (r.type === 'source') {
-        if (AUDIO_DAEMON) { audiodClient.cmd('setDuck', { stationId: r.station_id, deck: r.slot, enabled: !!r.duck }); armed++; }
+        if (toDaemon) { audiodClient.cmd('setDuck', { stationId: r.station_id, deck: r.slot, enabled: !!r.duck }).catch(e => console.error('[duck] setDuck', r.station_id, r.slot, e && e.message)); armed++; }
         else if (audio && typeof audio.audioSetDuck === 'function') {
           if (audio.audioSetDuck(r.station_id, r.slot, !!r.duck)) armed++;
         }
@@ -5914,7 +5922,7 @@ function armAllStationDuckers(reason) {
       // RECEIVER side — every enabled deck says whether it steps back. Pushed for ALL decks, not
       // just sources, and at boot rather than when a panel opens: the same UI-scoped arming trap the
       // trigger flags fell into, which cost a whole diagnosis.
-      if (AUDIO_DAEMON) audiodClient.cmd('setDuckable', { stationId: r.station_id, deck: r.slot, duckable: !!r.duckable });
+      if (toDaemon) audiodClient.cmd('setDuckable', { stationId: r.station_id, deck: r.slot, duckable: !!r.duckable }).catch(e => console.error('[duck] setDuckable', r.station_id, r.slot, e && e.message));
       else if (audio && typeof audio.audioSetDuckable === 'function')
         audio.audioSetDuckable(r.station_id, r.slot, !!r.duckable);
     } catch (e) { console.error('[duck] station', r.station_id, r.slot, e.message); }
@@ -5940,7 +5948,7 @@ function armAllStationDuckers(reason) {
         releaseMs:   num('duck_release_ms', 500),
       };
       try {
-        if (AUDIO_DAEMON) audiodClient.cmd('setDuckParams', { stationId: sid, ...p });
+        if (toDaemon) audiodClient.cmd('setDuckParams', { stationId: sid, ...p }).catch(e => console.error('[duck] params', sid, e && e.message));
         else if (audio && typeof audio.audioSetDuckParams === 'function')
           audio.audioSetDuckParams(sid, p.depthDb, p.thresholdDb, p.attackMs, p.holdMs, p.releaseMs);
       } catch (e) { console.error('[duck] params station', sid, e.message); }

@@ -30,6 +30,11 @@ export interface MeterFrameMsg {
   pflDimDb?: number;
   /** PFL OUTPUT DEVICE — same_as_main | opening | open | not_found | failed. */
   cueState?: string;
+  /** AUX OUTPUT (2026-10-04) — none | opening | open | not_found | failed; the device chosen ("" = none); and bit n
+   *  set = slot n reaches the room only through the aux. Absent from an engine that predates them. See auxFault.ts. */
+  auxState?: string;
+  auxDevice?: string;
+  auxRouted?: number;
 }
 export interface HeldFrame extends MeterFrameMsg { at: number }
 

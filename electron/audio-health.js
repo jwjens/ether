@@ -24,6 +24,7 @@ const PING_LAG_MS        = 500;        // ping RTT > 500ms → YELLOW
 const REFILL0_RECENT_MS  = 8000;       // a "0 playable" refill counts as YELLOW for this long
 const PLAYSKIP_RECENT_MS = 5000;       // a play-skip counts as RED for this long
 const DEGRADED_MS        = 5000;       // frame rate < 90% (but not frozen) sustained this long → YELLOW
+const AUX_GRACE_MS = 5000;             // a chosen aux output not open this long = RED (an automatic reopen takes < 1 s)
 const RANK = { GREY: 0, GREEN: 1, YELLOW: 2, RED: 3 };
 
 function nowMs() { return Date.now(); }
@@ -49,6 +50,7 @@ function createHealthMonitor(opts) {
   const MAX_RECENT = 20;
   let jsonlPath = null;
   try { jsonlPath = path.join(logDir, "health-events.jsonl"); fs.mkdirSync(logDir, { recursive: true }); } catch { jsonlPath = null; }
+  function ledgerEvent(ev) { try { if (jsonlPath) fs.appendFileSync(jsonlPath, JSON.stringify(ev) + "\n"); } catch {} }
   let timer = null;
   let enginePid = null;
   let engineStartedAt = null;
@@ -98,6 +100,29 @@ function createHealthMonitor(opts) {
       if (typeof lv.mon_vol === "number") r.monVol = lv.mon_vol;
       // next-deck-ready: a non-active deck that already has a source loaded = a preloaded standby.
       if (Array.isArray(lv.decks)) r.nextDeckReady = lv.decks.some(d => d && d.source_present && !d.active);
+
+      // ── AUX OUTPUT (2026-10-04, OV) — chosen but not open = the room is not hearing D/E/F ────────────────
+      // On 10/03 the aux stream lost its device and stayed dead for hours with everything here GREEN. Native now
+      // reopens it by itself (MonOut liveness); this is the alarm for when it cannot. A reopen in progress gets
+      // AUX_GRACE_MS before it counts; every reopen, outage and recovery is a ledger line.
+      if (typeof lv.aux_state === "string") {
+        const dev = lv.aux_device || "";
+        if (dev !== "" && lv.aux_state !== "open") {
+          if (!r.auxDownSince) r.auxDownSince = t;
+          if (!r.auxFault && t - r.auxDownSince >= AUX_GRACE_MS) {
+            r.auxFault = { device: dev, state: lv.aux_state, since: iso(r.auxDownSince) };
+            ledgerEvent({ ts: iso(t), type: "aux-down", stationUuid: r.uuid, stationId, stationName: r.name, device: dev, state: lv.aux_state, since: r.auxFault.since });
+          }
+        } else {
+          if (r.auxFault) ledgerEvent({ ts: iso(t), type: "aux-restored", stationUuid: r.uuid, stationId, stationName: r.name, device: r.auxFault.device, downSince: r.auxFault.since });
+          r.auxDownSince = 0; r.auxFault = null;
+        }
+        const stalls = typeof lv.aux_stalls === "number" ? lv.aux_stalls : 0;
+        if (r.auxStalls != null && stalls > r.auxStalls) {
+          ledgerEvent({ ts: iso(t), type: "aux-reopened", stationUuid: r.uuid, stationId, stationName: r.name, device: dev, count: stalls });
+        }
+        r.auxStalls = stalls;
+      }
 
       // ── AUDIO ENGINE (slice 1 S6) — the audio callback's own health counters ─────────────────────
       // Cumulative per station in the engine (they restart at 0 with the engine, which is taken as a new
@@ -256,6 +281,7 @@ function createHealthMonitor(opts) {
     }
     // RED conditions
     if (r._restartFlag && (t - r._restartFlag) < 3000) return { level: "RED", reason: "engine restarted" };
+    if (r.auxFault) return { level: "RED", reason: `aux output down: ${r.auxFault.device} (${r.auxFault.state}) — D/E/F are not reaching the room` };
     if (r.playSkipAt && (t - r.playSkipAt) < PLAYSKIP_RECENT_MS) return { level: "RED", reason: "play-skip event" };
     if (r.refusalAt && (t - r.refusalAt) < PLAYSKIP_RECENT_MS) {
       const lr = r.lastRefusal || {};
@@ -343,6 +369,7 @@ function createHealthMonitor(opts) {
         streaming: r.streaming, drainBps: r.drainBps, enginestate: r.enginestate, levelSince: iso(r.levelSince),
         jingle: r.jingle,   // JINGLES v1: live overlay state (null when idle)
         lastRefusal: r.lastRefusal,   // 2026-09-16: { deck, title, filePath, kind, error, at } or null
+        auxFault: r.auxFault || null, // 2026-10-04: { device, state, since } while a chosen aux output is down
         // Slice 1 S6: the audio callback's counters (null until the engine reports them) and when one last rose.
         rt: r.rt ? { underruns: r.rt.underruns, underrunFrames: r.rt.underrunFrames, overruns: r.rt.overruns,
                      lockMisses: r.rt.lockMisses, eventsDropped: r.rt.eventsDropped, callbacks: r.rt.callbacks } : null,
@@ -365,6 +392,7 @@ function createHealthMonitor(opts) {
   return {
     noteLevels, noteEngineState, noteDeck, noteQueue, notePlaySkip, noteRefusal, notePlayStart, noteStreamStatus, noteEnginePid, noteJingle,
     start, stop, getSnapshot: () => snapshot(), getRecentEvents: (n = MAX_RECENT) => recentEvents.slice(0, n),
+    _evaluateNow: () => tick(),   // tests: one tick on demand
   };
 }
 
