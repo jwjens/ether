@@ -173,7 +173,11 @@ export default function FaderSection({
   const onSetSourceKind = useCallback(async (slot: string, kind: SourceKind | "") => {
     const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, kind } : c));
     try { await saveDeckConfigs(merged); } catch (e) { console.error("[SourceChannel] patch failed:", e); }
-  }, [deckConfigs, saveDeckConfigs]);
+    // The ENGINE routes by kind (a Sweeper sums with — and ducks with — the music; every other source is on the aux
+    // bus). Until 2026-10-04 nothing told it: a fader dialled to Sweeper still ran as a Source. Same shape as DUCK.
+    try { await (window as any).ether?.audio?.setSlotKind?.(stationId, slot, kind); }
+    catch (e) { console.error("[SourceChannel] kind push failed:", e); }
+  }, [deckConfigs, saveDeckConfigs, stationId]);
 
   const onSetSourceDuck = useCallback(async (slot: string, duck: boolean) => {
     const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, duck } : c));

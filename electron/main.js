@@ -5944,7 +5944,7 @@ function armAllStationDuckers(reason, opts) {
   let rows = [];
   try {
     rows = db.prepare(
-      "SELECT station_id, slot, type, COALESCE(duck,0) AS duck, COALESCE(duckable,1) AS duckable " +
+      "SELECT station_id, slot, type, COALESCE(duck,0) AS duck, COALESCE(duckable,1) AS duckable, COALESCE(kind,'') AS kind " +
       "FROM deck_configs WHERE enabled = 1 AND deleted_at IS NULL " +
       "ORDER BY station_id, slot"
     ).all();
@@ -5956,6 +5956,13 @@ function armAllStationDuckers(reason, opts) {
   let armed = 0;
   for (const r of rows) {
     try {
+      // SLOT KIND FIRST (2026-10-04) — the engine routes by it (a Sweeper sums and ducks with the music, never arms
+      // the ducker; every other source is on the aux bus). A (re)started engine holds only the layout defaults, and
+      // until this nothing ever sent the board's kind, so a fader dialled to Sweeper ran as a Source.
+      if (r.type === 'source') {
+        if (toDaemon) audiodClient.cmd('setSlotKind', { stationId: r.station_id, deck: r.slot, kind: r.kind }).catch(e => console.error('[duck] setSlotKind', r.station_id, r.slot, e && e.message));
+        else if (audio && typeof audio.audioSetSlotKind === 'function') audio.audioSetSlotKind(r.station_id, r.slot, String(r.kind));
+      }
       // TRIGGER side — only a source channel can arm the ducker.
       if (r.type === 'source') {
         if (toDaemon) { audiodClient.cmd('setDuck', { stationId: r.station_id, deck: r.slot, enabled: !!r.duck }).catch(e => console.error('[duck] setDuck', r.station_id, r.slot, e && e.message)); armed++; }
