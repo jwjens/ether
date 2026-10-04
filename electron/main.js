@@ -4674,12 +4674,22 @@ function annStmts() {
     "JOIN announcements a ON a.uuid = s.announcement_uuid AND a.deleted_at IS NULL AND a.is_active = 1 " +
     "WHERE s.station_id = ? AND s.deleted_at IS NULL " +
     "AND s.scope = 'date' AND s.date = ? ORDER BY s.sort_order, s.trigger_time";
+  // v62 (2026-10-04) — seconds on before-closing lines and plays-in-a-row. Optional like skipped_at: without
+  // them every line reads as 0 seconds / play once, which is exactly what it did before v62.
+  const V62_COLS = "s.close_offset_sec AS close_offset_sec, s.play_count AS play_count, ";
+  const V62_NONE = "0 AS close_offset_sec, 1 AS play_count, ";
+  let v62 = V62_COLS;
+  try { db.prepare(SCHED_CORE + V62_COLS + SCHED_TAIL); }
+  catch (e) {
+    v62 = V62_NONE;
+    try { logStartup('[announce] announcement_schedule v62 columns missing (migration not applied yet) — lines fire on the minute, once: ' + (e && e.message)); } catch {}
+  }
   try {
-    _annStmts.schedDate = db.prepare(SCHED_CORE + "s.skipped_at AS skipped_at, " + SCHED_TAIL);
+    _annStmts.schedDate = db.prepare(SCHED_CORE + v62 + "s.skipped_at AS skipped_at, " + SCHED_TAIL);
     _annStmts.hasSkipped = true;
   } catch (e) {
     // The column is not there yet. Fire everything anyway; report the degradation ONCE.
-    try { _annStmts.schedDate = db.prepare(SCHED_CORE + "NULL AS skipped_at, " + SCHED_TAIL); }
+    try { _annStmts.schedDate = db.prepare(SCHED_CORE + v62 + "NULL AS skipped_at, " + SCHED_TAIL); }
     catch (e2) { _annStmts.schedDate = null; }
     _annStmts.hasSkipped = false;
     if (_annStmts.schedDate && !_annSkipWarned) {
@@ -4776,10 +4786,8 @@ const hhmmToMinutes = (t) => {
   return h * 60 + mi;
 };
 
-const minutesToHms = (n) => {
-  const w = ((n % 1440) + 1440) % 1440;   // wrap, so 15 minutes after a midnight close is 00:15
-  return String(Math.floor(w / 60)).padStart(2, '0') + ':' + String(w % 60).padStart(2, '0') + ':00';
-};
+// Before-closing time arithmetic (with seconds, v62) and plays-in-a-row timing — pure, so it is tested.
+const _announceTime = require('./announce-time');
 
 // The tick runs every 250ms across every station, so the closing time cannot be read from SQLite per
 // row per tick. Cached with a short TTL, and INVALIDATED BY THE WRITERS — both of them — so an
@@ -4832,9 +4840,8 @@ globalThis.__etherInvalidateClosing = invalidateClosingCache;
  *  note warned about. null is the honest answer, and the panel says the row cannot fire. */
 function dueTimeFor(row, closingHHMM) {
   if (row.trigger_type !== 'close_offset') return hmsNormalize(row.trigger_time);
-  const base = hhmmToMinutes(closingHHMM);
-  if (base == null) return null;
-  return minutesToHms(base + (Number(row.close_offset_min) || 0));
+  // v62: + close_offset_sec, which takes the minutes' sign (electron/announce-time.js).
+  return _announceTime.offsetDueTime(closingHHMM, row.close_offset_min, row.close_offset_sec);
 }
 
 // ── THE SCHEDULE RESOLVER (v48) — one date, one list ─────────────────────────────────────────────
@@ -4933,12 +4940,45 @@ async function announceTick() {
         // things now. Passing the entry uuid here would look up an announcement that does not exist.
         // AWAITED: without this `r` is a Promise, `r.ok` is undefined, and every fire — including a
         // failed one — logged as a success while the failure vanished into an unhandled rejection.
+        _cancelAnnounceRepeats(stationId);   // a new scheduled fire supersedes any repeats still pending
         const r = await fireAnnouncement(stationId, row.announcement_uuid, row.uuid);
         if (!r.ok) logStartup('[announce] scheduled fire FAILED station ' + stationId + ' "' + (row.title || '') + '": ' + r.error);
-        else logStartup('[announce] scheduled fire station ' + stationId + ' "' + (row.title || '') + '" at ' + due + ' (' + row.trigger_type + ')');
+        else {
+          logStartup('[announce] scheduled fire station ' + stationId + ' "' + (row.title || '') + '" at ' + due + ' (' + row.trigger_type + ')');
+          _scheduleAnnounceRepeats(stationId, row);
+        }
       } catch (e) { logStartup('[announce] scheduled fire threw: ' + (e && e.message)); }
     }
   }
+}
+
+// ── PLAYS IN A ROW (v62, 2026-10-04) ─────────────────────────────────────────────────────────────
+// A line with play_count > 1 plays again each time the previous play ENDS (+ a short gap), timed from the
+// file's own length. Unknown length → it plays once, said in the log: a guessed length could start a repeat
+// on top of the play before it. Repeats are per station; a new scheduled fire on that station cancels any
+// still pending, so a ×5 never talks over the next announcement.
+const _announceRepeatTimers = new Map();   // stationId -> [timeouts]
+function _cancelAnnounceRepeats(stationId) {
+  const ts = _announceRepeatTimers.get(stationId);
+  if (ts) { for (const t of ts) clearTimeout(t); _announceRepeatTimers.delete(stationId); }
+}
+function _scheduleAnnounceRepeats(stationId, row) {
+  const count = _announceTime.clampPlayCount(row.play_count);
+  if (count <= 1) return;
+  let filePath = null, durSec = 0;
+  try { filePath = db.prepare('SELECT file_path FROM announcements WHERE uuid = ?').get(row.announcement_uuid)?.file_path || null; } catch {}
+  try { durSec = filePath ? (audio.getFileDuration(filePath) || 0) : 0; } catch { durSec = 0; }
+  const starts = _announceTime.repeatStartsMs(durSec, count);
+  if (!starts.length) {
+    logStartup('[announce] "' + (row.title || '') + '" is set to play ×' + count + ' but its length could not be read — played once');
+    return;
+  }
+  const timers = starts.map((ms, i) => setTimeout(() => {
+    Promise.resolve(fireAnnouncement(stationId, row.announcement_uuid, null)).then(r => {
+      logStartup('[announce] repeat ' + (i + 2) + '/' + count + ' station ' + stationId + ' "' + (row.title || '') + '" ' + (r && r.ok ? 'fired' : 'FAILED: ' + (r && r.error)));
+    }).catch(e => logStartup('[announce] repeat threw: ' + (e && e.message)));
+  }, ms));
+  _announceRepeatTimers.set(stationId, timers);
 }
 
 function startAnnouncementScheduler() {

@@ -102,6 +102,8 @@ const REGISTRY = {
       trigger_type:      'scalar',
       trigger_time:      'scalar',
       close_offset_min:  'scalar',
+      close_offset_sec:  'scalar',   // v62 — seconds on a before-closing line
+      play_count:        'scalar',   // v62 — plays in a row (1 = once)
       sort_order:        'scalar',
       last_played_at:    'scalar',
       created_at:        'scalar',

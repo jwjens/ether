@@ -238,6 +238,10 @@ interface ScheduleEntry {
   trigger_type: "absolute" | "close_offset";
   trigger_time: string | null;
   close_offset_min: number;
+  /** v62. Seconds on a before-closing line; they take the minutes' sign. Absent on a pre-v62 database = 0. */
+  close_offset_sec?: number;
+  /** v62. Plays in a row (1 = once). Absent on a pre-v62 database = 1. */
+  play_count?: number;
   sort_order: number;
   last_played_at: number | null;
   /** v53. Set when an offset row's computed time had already passed — the closing time moved out
@@ -280,7 +284,12 @@ interface Draft {
   trigger_time: string;
   /** Minutes relative to closing when mode is close_offset. NEGATIVE IS BEFORE. Ignored otherwise. */
   offset: number;
+  /** v62. Seconds with the minutes (0-59), taking the minutes' sign. Ignored unless close_offset. */
+  offset_sec: number;
+  /** v62. How many times it plays back to back (1 = once). Any mode. */
+  play_count: number;
 }
+const PLAY_COUNTS = [1, 2, 3, 4, 5, 6, 8, 10];
 let _draftSeq = 0;
 
 function DraftRow({ line, assets, onPatch, onDelete, firesAt }: {
@@ -337,7 +346,7 @@ function DraftRow({ line, assets, onPatch, onDelete, firesAt }: {
           onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
           style={{ ...fld, width: 124, borderColor: draft ? "var(--border-primary)" : "var(--accent-amber)" }} />
       ) : (
-        <div style={{ display: "flex", alignItems: "center", gap: 4, width: 124 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 4, width: 196 }}>
           {/* step={1}, not 5 (2026-09-05). With no `min` set, step={5} made the browser validate
               against multiples of 5 — so a typed -28 was refused by the control itself, not just
               absent from the spinner. Production timing is per-minute; the scheduler already
@@ -349,8 +358,22 @@ function DraftRow({ line, assets, onPatch, onDelete, firesAt }: {
             aria-label="Minutes relative to closing"
             style={{ ...fld, width: 64 }} />
           <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>min</span>
+          {/* v62 (Jeff, 2026-10-04): "all i can choose is minutes". Seconds take the minutes' sign, so
+              -30 min 15 s is 30:15 before close - and with 0 min, -5 s is five seconds before. */}
+          <input type="number" step={1} min={-59} max={59}
+            value={line.offset_sec}
+            onChange={e => onPatch({ offset_sec: Math.max(-59, Math.min(59, parseInt(e.target.value, 10) || 0)) })}
+            aria-label="Seconds relative to closing"
+            style={{ ...fld, width: 52 }} />
+          <span style={{ fontSize: 10, color: "var(--text-tertiary)" }}>sec</span>
         </div>
       )}
+
+      {/* PLAYS IN A ROW (v62). Each repeat starts when the previous one ends. */}
+      <select value={line.play_count} onChange={e => onPatch({ play_count: Number(e.target.value) || 1 })}
+        style={{ ...fld, width: 58 }} aria-label="How many times it plays in a row" title="How many times it plays in a row">
+        {PLAY_COUNTS.map(n => <option key={n} value={n}>×{n}</option>)}
+      </select>
 
       {/* WHAT IT ACTUALLY DOES TONIGHT, on every line regardless of mode — so a mixed list can be
           read straight down as the evening, without working out which rows are relative. */}
@@ -482,6 +505,8 @@ function ScheduleBoard({ stationId, assets, entries, reload, closing }: {
       mode: (e.trigger_type === "close_offset" ? "close_offset" : "absolute") as LineMode,
       trigger_time: e.trigger_time || "",
       offset: e.close_offset_min ?? 0,
+      offset_sec: e.close_offset_sec ?? 0,
+      play_count: e.play_count ?? 1,
     }));
 
   const toggleDate = (d: string) => {
@@ -510,25 +535,29 @@ function ScheduleBoard({ stationId, assets, entries, reload, closing }: {
   // ── RESOLVED TIME: the one function the sort, the previews and the validation all use ──────────
   // Mirrors electron/main.js dueTimeFor, against the DRAFT closing time so typing a new one visibly
   // reorders the list before Apply is pressed.
-  const resolvedMinutes = (l: Draft): number | null => {
+  // In SECONDS since v62 (seconds on before-closing lines), so a :25 line sorts and previews where it fires.
+  const resolvedSeconds = (l: Draft): number | null => {
     if (l.mode === "absolute") {
-      const m = /^(\d{1,2}):(\d{2})/.exec(l.trigger_time || "");
-      return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+      const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(l.trigger_time || "");
+      return m ? Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3] || 0) : null;
     }
     const c = /^(\d{1,2}):(\d{2})/.exec(effectiveClosing || "");
     if (!c) return null;
-    return ((Number(c[1]) * 60 + Number(c[2]) + l.offset) % 1440 + 1440) % 1440;
+    // Seconds take the minutes' sign - the same rule as electron/announce-time.js offsetSeconds.
+    const s = Math.abs(l.offset_sec || 0);
+    const off = l.offset < 0 ? l.offset * 60 - s : l.offset > 0 ? l.offset * 60 + s : (l.offset_sec || 0);
+    return ((Number(c[1]) * 3600 + Number(c[2]) * 60 + off) % 86400 + 86400) % 86400;
   };
-  const fmtMin = (n: number | null): string | null => {
+  const fmtSec = (n: number | null): string | null => {
     if (n == null) return null;
-    const h = Math.floor(n / 60), mi = n % 60;
-    return `${h % 12 === 0 ? 12 : h % 12}:${String(mi).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
+    const h = Math.floor(n / 3600), mi = Math.floor(n % 3600 / 60), sec = n % 60;
+    return `${h % 12 === 0 ? 12 : h % 12}:${String(mi).padStart(2, "0")}${sec ? ":" + String(sec).padStart(2, "0") : ""} ${h >= 12 ? "PM" : "AM"}`;
   };
 
   // A line with no resolvable time sorts LAST rather than being hidden or dropped — it is a real
   // state the operator has to see and fix, not one the list should quietly tidy away.
   const ordered = [...draft].sort((a, b) => {
-    const x = resolvedMinutes(a), y = resolvedMinutes(b);
+    const x = resolvedSeconds(a), y = resolvedSeconds(b);
     if (x == null && y == null) return 0;
     if (x == null) return 1;
     if (y == null) return -1;
@@ -546,7 +575,7 @@ function ScheduleBoard({ stationId, assets, entries, reload, closing }: {
 
   const addLine = () => {
     if (!assets.length) { setErr("There are no announcements yet — upload one below first."); return; }
-    setDraft(d => [...d, { id: ++_draftSeq, announcement_uuid: assets[0].uuid, mode: "absolute", trigger_time: "17:30:00", offset: -30 }]);
+    setDraft(d => [...d, { id: ++_draftSeq, announcement_uuid: assets[0].uuid, mode: "absolute", trigger_time: "17:30:00", offset: -30, offset_sec: 0, play_count: 1 }]);
     setDirty(true); setMsg(null);
   };
   const patchLine  = (id: number, p: Partial<Draft>) => { setDraft(d => d.map(l => l.id === id ? { ...l, ...p } : l)); setDirty(true); setMsg(null); };
@@ -556,7 +585,7 @@ function ScheduleBoard({ stationId, assets, entries, reload, closing }: {
 
   const apply = async () => {
     if (stationId == null || !dates.length) return;
-    const noTime = draft.filter(l => resolvedMinutes(l) == null);
+    const noTime = draft.filter(l => resolvedSeconds(l) == null);
     if (noTime.length) {
       setErr(anyOffset && !effectiveClosing
         ? "Set a closing time — the lines timed from closing have no time without it."
@@ -589,21 +618,32 @@ function ScheduleBoard({ stationId, assets, entries, reload, closing }: {
         // An unchanged line KEEPS its row, and therefore its last_played_at and its 120s guard.
         // Delete-and-recreate would clear the stamp and let a row that already fired tonight fire
         // again. Identity is (announcement, mode, and whichever of time/offset that mode uses).
-        const key = (u: string, m: string, t: string, o: number) => m === "close_offset" ? `${u}|off|${o}` : `${u}|abs|${t}`;
+        // v62: the offset's SECONDS are part of the time, so they are part of the identity. The play count
+        // is NOT - changing x1 to x3 updates the row in place and keeps its fired-tonight stamp.
+        const key = (u: string, m: string, t: string, o: number, os: number) => m === "close_offset" ? `${u}|off|${o}|${os}` : `${u}|abs|${t}`;
         const existing = entries.filter(e => e.date === d);
         const have = new Map(existing.map(e => [
           key(e.announcement_uuid, e.trigger_type === "close_offset" ? "close_offset" : "absolute",
-              e.trigger_time || "", e.close_offset_min ?? 0), e]));
-        const want = new Map(draft.map(l => [key(l.announcement_uuid, l.mode, toHms(l.trigger_time), l.offset), l]));
+              e.trigger_time || "", e.close_offset_min ?? 0, e.close_offset_sec ?? 0), e]));
+        const want = new Map(draft.map(l => [key(l.announcement_uuid, l.mode, toHms(l.trigger_time), l.offset, l.offset_sec || 0), l]));
 
         for (const [k, e] of have) if (!want.has(k)) { await api().deleteEntry(e.uuid, stationId); removed++; }
         for (const [k, l] of want) {
-          if (have.has(k)) { kept++; continue; }
+          const e = have.get(k);
+          if (e) {
+            if ((e.play_count ?? 1) !== (l.play_count || 1)) {
+              const u = await api().updateEntry(e.uuid, { play_count: l.play_count || 1 });
+              if (!u?.ok) throw new Error(u?.error || "could not update an entry");
+            }
+            kept++; continue;
+          }
           const r = await api().createEntry({
             station_id: stationId, announcement_uuid: l.announcement_uuid, scope: "date", date: d,
             trigger_type: l.mode,
             trigger_time: l.mode === "absolute" ? toHms(l.trigger_time) : null,
             close_offset_min: l.mode === "close_offset" ? l.offset : 0,
+            close_offset_sec: l.mode === "close_offset" ? (l.offset_sec || 0) : 0,
+            play_count: l.play_count || 1,
             sort_order: 0,
           });
           if (!r?.ok) throw new Error(r?.error || "could not write an entry");
@@ -687,7 +727,7 @@ function ScheduleBoard({ stationId, assets, entries, reload, closing }: {
             ) : (
               ordered.map(l => (
                 <DraftRow key={l.id} line={l} assets={assets}
-                  firesAt={fmtMin(resolvedMinutes(l))}
+                  firesAt={fmtSec(resolvedSeconds(l))}
                   onPatch={pp => patchLine(l.id, pp)} onDelete={() => removeLine(l.id)} />
               ))
             )}

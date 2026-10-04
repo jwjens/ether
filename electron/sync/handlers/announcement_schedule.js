@@ -66,6 +66,8 @@ function scheduleCreate(db, payload) {
     trigger_type:      payload.trigger_type ?? 'absolute',
     trigger_time:      payload.trigger_time ?? null,
     close_offset_min:  payload.close_offset_min ?? 0,
+    close_offset_sec:  payload.close_offset_sec ?? 0,   // v62
+    play_count:        payload.play_count ?? 1,         // v62
     sort_order:        payload.sort_order ?? 0,
     last_played_at:    payload.last_played_at ?? null,
     created_at:        now,
@@ -80,16 +82,16 @@ function scheduleCreate(db, payload) {
     db.prepare(
       `INSERT INTO ${TABLE}
          (station_id, uuid, announcement_uuid, scope, days, date, trigger_type, trigger_time,
-          close_offset_min, sort_order, last_played_at, created_at, updated_at, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          close_offset_min, close_offset_sec, play_count, sort_order, last_played_at, created_at, updated_at, deleted_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(row.station_id, row.uuid, row.announcement_uuid, row.scope, row.days, row.date,
-          row.trigger_type, row.trigger_time, row.close_offset_min, row.sort_order,
+          row.trigger_type, row.trigger_time, row.close_offset_min, row.close_offset_sec, row.play_count, row.sort_order,
           row.last_played_at, row.created_at, row.updated_at, row.deleted_at);
   });
   return scheduleGet(db, uuid);
 }
 
-const PATCHABLE = ['days', 'date', 'scope', 'trigger_type', 'trigger_time', 'close_offset_min', 'sort_order'];
+const PATCHABLE = ['days', 'date', 'scope', 'trigger_type', 'trigger_time', 'close_offset_min', 'close_offset_sec', 'play_count', 'sort_order'];
 
 function scheduleUpdate(db, uuid, patch) {
   validateScope();
