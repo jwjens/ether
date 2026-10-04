@@ -319,11 +319,11 @@
         "stream_target_lufs": null,
         "target_lufs": -14.0
       },
-      "commit": "7896e9226034177a50bf79a3066c615e537da9a0",
+      "commit": "594a5beb319cabc0d64419c32fd418869fc23acb",
       "frames": 7193280,
       "monitor": {
-        "hash": "9000af2be3647f9c",
-        "lufs_i": -13.917492046040586,
+        "hash": "9e6f1ec22554c0d2",
+        "lufs_i": -13.917492046040085,
         "peak": 0.6280320286750793,
         "tp_dbtp": -3.8558529731390108
       },
