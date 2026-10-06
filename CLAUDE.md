@@ -63,6 +63,13 @@ identity or station identity. Don't conflate "user login / profile select" with
 - Core behavior (shipped v4.3.80): sign out of one account → sign into a different account → see ONLY the second account's stations. Stations are scoped by `owner_license_key`.
 - Multi-tenant (god-mode across all accounts) does NOT live in the desktop app. It is a SEPARATE web console: `platform.ether-technologies.com` (for Jeff / IT / engineering to troubleshoot clients remotely). That's a future build (Track 2) — currently shows no station cards.
 
+## Licensing rulings (Jeff, 2026-10-05) — NON-NEGOTIABLE
+
+- **Lifetime licenses are never modified, migrated, or re-mapped.** No data writes to them, no entitlement mapping, ever.
+- **Licenses created in the platform app stay OUTSIDE the tier system:** no entitlement mapping, no trial, no lapse, no banner. They keep working exactly as today.
+- **The B7 expiry data fix is CANCELLED.** Never "fix" a stale `expires_at` on a license row. The approach is a CODE exemption (lifetime + platform-created licenses ignore `expires_at` in the backend license lookup and entitlement checks) — proposed in `docs/paywall-entitlements-plan.md` → Rulings; not built yet.
+- Full record: `docs/paywall-entitlements-plan.md` → "Rulings (Jeff, 2026-10-05, second set)".
+
 ## Infrastructure
 
 - Backend (`ether-backend`) on Railway. `/account/connect` returns the account's authoritative station list by license key.
