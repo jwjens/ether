@@ -66,7 +66,8 @@ identity or station identity. Don't conflate "user login / profile select" with
 ## Infrastructure
 
 - Backend (`ether-backend`) on Railway. `/account/connect` returns the account's authoritative station list by license key.
-- PWAs on Cloudflare Pages: `listen.ether-technologies.com`, `app.ether-technologies.com`.
+- PWAs on Cloudflare Pages: `listen.ether-technologies.com`, and the remote/dashboard web app at **`app.ether-cast.com`**.
+- **Domain (Jeff, 2026-10-05): `ether-cast.com` is canonical.** The remote/dashboard domain is **`app.ether-cast.com`** (this is also where remote Ether Screens live). The old `*.ether-technologies.com` subdomains 301 to their `ether-cast.com` equivalents. Use `app.ether-cast.com` in new code, docs and help.
 - Stream via Icecast on Lightsail (`stream.ether-technologies.com:8443`), mounts `/ov` `/usph`.
 - Auto-update via electron-updater. NOTE: the audio daemon does NOT reload on auto-update — clients must fully close and reopen the app.
 
@@ -156,7 +157,7 @@ npm run electron:build:win -- --publish never   # electron-builder, LOCAL ONLY (
 Local dir → what it is → deploy target → domain. **Web UIs deploy via `wrangler`; the desktop app releases via GitHub Actions (`.github/workflows/build.yml` publishes installers on push).** Do not confuse these repos — each is a separate tree.
 
 - `C:\openair` → **EtherCast desktop app** — repo `github.com/jwjens/ether`. Releases: GitHub Actions `build.yml` (installers on push).
-- `C:\ether-dashboard` → **web control UI "Ether Control Center"** — repo `jwjens/ether-dashboard` → wrangler Pages project **`ether-dashboard`** → **app.ether-technologies.com**.
+- `C:\ether-dashboard` → **web control UI "Ether Control Center"** — repo `jwjens/ether-dashboard` → wrangler Pages project **`ether-dashboard`** → **app.ether-cast.com** (canonical; the old `app.ether-technologies.com` 301s to it).
 - `C:\ether-cast` → **listener PWA** ("Ethercast"; not a git repo) → wrangler Pages project **`ether-cast`** (deploy: `C:\openair\ec-deploy.sh` = `wrangler pages deploy . --project-name ether-cast`).
 - `C:\ether-listener` → **listen.ether-technologies.com** — repo `jwjens/ether-listener` ("Ether Radio").
 - **Backend:** Railway (`ether-backend-production.up.railway.app`) — **stays, no migration.**
