@@ -164,3 +164,31 @@ describe("powershellInvocation: pwsh when available, else powershell without the
       .toThrow(/HA HELPER SIGNATURE COULD NOT BE CONFIRMED.*module could not be loaded/s);
   });
 });
+
+// ── afterSign runs on EVERY Windows build (WinPackager.signApp returns true without a certificate), so the helper is
+// required to be signed only when the app itself is. The first local unsigned build after 4.6.59 failed here.
+const { afterSignCheck } = require("./engine-pack");
+
+describe("afterSignCheck: the helper must be signed IF THE APP IS", () => {
+  const status = (map) => (file) => {
+    const k = path.basename(file);
+    if (!(k in map)) throw new Error("unexpected read: " + k);
+    if (map[k] instanceof Error) throw map[k];
+    return map[k];
+  };
+  it("signed build (Ether.exe Valid) + helper Valid → checked", () => {
+    expect(afterSignCheck(packedWin(PE), status({ "Ether.exe": "Valid", "ha-setup.exe": "Valid" }))).toBe("checked");
+  });
+  it("signed build + helper NotSigned → throws HA HELPER NOT SIGNED", () => {
+    expect(() => afterSignCheck(packedWin(PE), status({ "Ether.exe": "Valid", "ha-setup.exe": "NotSigned" }))).toThrow(/HA HELPER NOT SIGNED/);
+  });
+  it("unsigned local build (Ether.exe NotSigned) → passes without reading the helper", () => {
+    expect(afterSignCheck(packedWin(PE), status({ "Ether.exe": "NotSigned" }))).toBe("unsigned-build");
+  });
+  it("app signature in any other state (e.g. HashMismatch) → throws", () => {
+    expect(() => afterSignCheck(packedWin(PE), status({ "Ether.exe": "HashMismatch" }))).toThrow(/APP SIGNATURE IS "HashMismatch"/);
+  });
+  it("app signature unreadable → throws (never passes by erroring)", () => {
+    expect(() => afterSignCheck(packedWin(PE), status({ "Ether.exe": new Error("module could not be loaded") }))).toThrow(/APP SIGNATURE COULD NOT BE READ/);
+  });
+});
