@@ -205,6 +205,16 @@ jobs:
           file target/aarch64-apple-darwin/release/libether_audio.dylib target/x86_64-apple-darwin/release/libether_audio.dylib
         shell: bash
 
+      # The HA auto-logon helper ("Keep My Station On Air"). electron-builder.json extraResources copies
+      # native/ha-setup/target/release/ha-setup.exe to resources\ha-setup.exe, but no step ever built it: every Windows
+      # installer through 4.6.57 shipped without it, with only a "file source doesn't exist" WARNING in the log
+      # (docs/ha-setup-installer-check-2026-10-05.md). Built here, before packaging, so the signing pass signs it;
+      # build-resources/engine-pack.js afterPack now fails the build if it is missing.
+      - name: Build HA helper (Windows)
+        if: matrix.platform == 'win'
+        run: cargo build --release --manifest-path native/ha-setup/Cargo.toml
+        shell: pwsh
+
       - name: Copy native addon (Windows)
         if: matrix.platform == 'win'
         run: Copy-Item native/target/release/ether_audio.dll native/ether-audio.node

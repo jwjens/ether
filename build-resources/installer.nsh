@@ -8,9 +8,18 @@
 ; result. The guaranteed teardown is the in-app "Keep My Station On Air → Disable"
 ; button, which always elevates and confirms the result before clearing config.
 
+;
+; ONLY ON A REAL UNINSTALL. An update runs the OLD version's uninstaller with --updated
+; (electron-builder installUtil.nsh), and the template inserts customUnInstall unconditionally
+; (uninstaller.nsh), so without this guard every update of an install that holds ha-setup.exe raised a
+; UAC prompt to DISABLE auto-logon (docs/ha-setup-installer-check-2026-10-05.md). ${isUpdated} is set by
+; that --updated flag; an update now leaves auto-logon exactly as it was.
+
 !macro customUnInstall
-  IfFileExists "$INSTDIR\resources\ha-setup.exe" 0 +2
-    ExecShell "runas" "$INSTDIR\resources\ha-setup.exe" 'disable --result "$TEMP\ether-ha-uninstall.json"' SW_HIDE
+  ${ifNot} ${isUpdated}
+    IfFileExists "$INSTDIR\resources\ha-setup.exe" 0 +2
+      ExecShell "runas" "$INSTDIR\resources\ha-setup.exe" 'disable --result "$TEMP\ether-ha-uninstall.json"' SW_HIDE
+  ${endIf}
 !macroend
 
 ; Force-close a running Ether before installing, so the installer never stalls on

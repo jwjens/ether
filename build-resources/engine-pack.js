@@ -87,4 +87,21 @@ exports.afterPack = async function afterPack(context) {
   const got = kind(packed);
   if (got !== want) throw new Error(`[engine-pack] packaged engine is ${got}, expected ${want} for ${platform} ${arch}: ${packed}`);
   console.log(`  • [engine-pack] packaged engine OK: ${path.relative(context.appOutDir, packed)} (${got})`);
+
+  // WINDOWS: the HA helper must be packaged too. "Keep My Station On Air" launches resources\ha-setup.exe elevated
+  // (electron/main.js haSetupExePath) to write the auto-logon values. Through 4.6.57 CI never built it and
+  // electron-builder only WARNED ("file source doesn't exist") — every published Windows installer shipped without it
+  // and Enable/Disable/Repair could not run (docs/ha-setup-installer-check-2026-10-05.md). Missing → throw; nothing
+  // is signed or published. afterPack runs after extraResources are copied and before signing.
+  if (platform === "win32") {
+    const helper = path.join(resources, "ha-setup.exe");
+    if (!fs.existsSync(helper)) {
+      throw new Error(`[engine-pack] HA HELPER NOT PACKAGED: ${helper}\n` +
+        `  build it first: cargo build --release --manifest-path native/ha-setup/Cargo.toml ` +
+        `(electron-builder.json extraResources copies native/ha-setup/target/release/ha-setup.exe)`);
+    }
+    const hk = kind(helper);
+    if (hk !== "pe") throw new Error(`[engine-pack] packaged HA helper is ${hk}, expected pe: ${helper}`);
+    console.log(`  • [engine-pack] packaged HA helper OK: ${path.relative(context.appOutDir, helper)} (pe)`);
+  }
 };

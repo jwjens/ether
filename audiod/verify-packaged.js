@@ -21,6 +21,10 @@ const PIPE = MAC
   : "\\\\.\\pipe\\ether-audiod-pkgverify-" + process.pid;
 
 for (const p of [EXE, DAEMON]) if (!fs.existsSync(p)) { console.error("missing:", p); process.exit(1); }
+// Windows: the HA auto-logon helper ships beside app.asar — every CI installer through 4.6.57 lacked it
+// (docs/ha-setup-installer-check-2026-10-05.md). The afterPack hook throws first in a real build; this repeats it here.
+const HA_HELPER = path.join(ROOT, "resources", "ha-setup.exe");
+if (!MAC && !fs.existsSync(HA_HELPER)) { console.error("missing:", HA_HELPER, "— build native/ha-setup (cargo build --release)"); process.exit(1); }
 // A private DB path and log: a release gate must never open or append to the installed station's files.
 const GATE_TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ether-pkgverify-"));
 const daemon = cp.spawn(EXE, [DAEMON], { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ETHER_AUDIOD_PIPE: PIPE,
