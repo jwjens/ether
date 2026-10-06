@@ -112,18 +112,51 @@ exports.afterPack = async function afterPack(context) {
 // packaging (build.yml "Sign HA helper"); this fails the build if that did not happen. electron-builder only emits
 // afterSign when it actually signed (platformPackager doSignAfterPack), so local unsigned builds are untouched.
 
-/** Authenticode status of a file via PowerShell: "Valid", "NotSigned", "HashMismatch", … */
-function authenticodeStatus(file) {
-  const cp = require("child_process");
+/**
+ * Which PowerShell to run, and with what environment.
+ *
+ * pwsh (PowerShell 7) when it is installed. Otherwise Windows PowerShell 5.1 — but with PSModulePath REMOVED from the
+ * environment it inherits. 4.6.59's CI failed exactly here: electron-builder runs inside a pwsh step, the child
+ * `powershell` inherited pwsh's PSModulePath, and 5.1 could not load Microsoft.PowerShell.Security, so
+ * Get-AuthenticodeSignature was "found in the module … but the module could not be loaded". Without the inherited
+ * value, 5.1 rebuilds its own default module path. Pure (no I/O) so the choice is unit-tested.
+ */
+function powershellInvocation({ hasPwsh, env }) {
+  if (hasPwsh) return { cmd: "pwsh", env: { ...env } };
+  const clean = { ...env };
+  for (const k of Object.keys(clean)) if (k.toLowerCase() === "psmodulepath") delete clean[k];   // env keys are case-insensitive on Windows
+  return { cmd: "powershell", env: clean };
+}
+
+/** True when `pwsh` runs on this machine. */
+function pwshAvailable() {
+  try {
+    require("child_process").execFileSync("pwsh", ["-NoProfile", "-NonInteractive", "-Command", "$PSVersionTable.PSVersion.Major"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 15000 });
+    return true;
+  } catch { return false; }
+}
+
+/** Authenticode status of a file: "Valid", "NotSigned", "HashMismatch", … Throws if PowerShell can't answer —
+ *  the caller treats that as "not confirmed" and fails the build. */
+function authenticodeStatus(file, { hasPwsh = pwshAvailable(), env = process.env } = {}) {
+  const { cmd, env: childEnv } = powershellInvocation({ hasPwsh, env });
   const ps = `(Get-AuthenticodeSignature -LiteralPath '${String(file).replace(/'/g, "''")}').Status.ToString()`;
-  return cp.execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", ps], { encoding: "utf8" }).trim();
+  return require("child_process")
+    .execFileSync(cmd, ["-NoProfile", "-NonInteractive", "-Command", ps], { encoding: "utf8", env: childEnv })
+    .trim();
 }
 
 /** Throws unless resources\ha-setup.exe exists and its signature status is Valid. `readStatus` is injectable for tests. */
 function checkHelperSignature(resources, readStatus = authenticodeStatus) {
   const helper = path.join(resources, "ha-setup.exe");
   if (!fs.existsSync(helper)) throw new Error(`[engine-pack] HA HELPER NOT PACKAGED: ${helper}`);
-  const status = readStatus(helper);
+  let status;
+  try { status = readStatus(helper); }
+  catch (e) {
+    // Could not read the signature at all → not confirmed → fail (the check must never pass by erroring).
+    throw new Error(`[engine-pack] HA HELPER SIGNATURE COULD NOT BE CONFIRMED: ${helper}\n  ${String(e && e.message || e).split("\n")[0]}`);
+  }
   if (status !== "Valid") {
     throw new Error(`[engine-pack] HA HELPER NOT SIGNED: ${helper} — Authenticode status "${status}", expected "Valid".\n` +
       `  CI signs it before packaging (build.yml "Sign HA helper"); a signed release must never ship it unsigned.`);
@@ -138,3 +171,5 @@ exports.afterSign = async function afterSign(context) {
   console.log(`  • [engine-pack] HA helper signature OK: ${path.relative(context.appOutDir, path.join(resources, "ha-setup.exe"))} (Valid)`);
 };
 exports.checkHelperSignature = checkHelperSignature;
+exports.powershellInvocation = powershellInvocation;
+exports.authenticodeStatus = authenticodeStatus;

@@ -134,3 +134,33 @@ describe("CI signs the helper between building it and packaging, on tag runs onl
     expect(signed.win.azureSignOptions.certificateProfileName).toBe("ethercast-release");
   });
 });
+
+// ── afterSign PowerShell choice (4.6.59's CI failure: child `powershell` inherited pwsh's PSModulePath) ─────────────
+const { powershellInvocation } = require("./engine-pack");
+
+describe("powershellInvocation: pwsh when available, else powershell without the inherited PSModulePath", () => {
+  const env = { PATH: "C:/x", PSModulePath: "C:/Program Files/PowerShell/7/Modules", AZURE_CLIENT_ID: "id" };
+  it("pwsh available → pwsh, environment untouched", () => {
+    const r = powershellInvocation({ hasPwsh: true, env });
+    expect(r.cmd).toBe("pwsh");
+    expect(r.env).toEqual(env);
+    expect(r.env).not.toBe(env);            // a copy, never the caller's object
+  });
+  it("no pwsh → powershell with PSModulePath removed, everything else kept", () => {
+    const r = powershellInvocation({ hasPwsh: false, env });
+    expect(r.cmd).toBe("powershell");
+    expect("PSModulePath" in r.env).toBe(false);
+    expect(r.env.PATH).toBe("C:/x");
+    expect(r.env.AZURE_CLIENT_ID).toBe("id");
+    expect(env.PSModulePath).toBeDefined();  // caller's env not mutated
+  });
+  it("removes PSModulePath whatever its casing (Windows env keys are case-insensitive)", () => {
+    const r = powershellInvocation({ hasPwsh: false, env: { PSMODULEPATH: "a", psmodulepath: "b", Path: "p" } });
+    expect(Object.keys(r.env)).toEqual(["Path"]);
+  });
+  it("a signature that cannot be read is NOT confirmed → the build fails", () => {
+    const resources = path.join(packedWin(PE).appOutDir, "resources");
+    expect(() => checkHelperSignature(resources, () => { throw new Error("Get-AuthenticodeSignature : module could not be loaded"); }))
+      .toThrow(/HA HELPER SIGNATURE COULD NOT BE CONFIRMED.*module could not be loaded/s);
+  });
+});
