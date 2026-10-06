@@ -105,3 +105,36 @@ exports.afterPack = async function afterPack(context) {
     console.log(`  • [engine-pack] packaged HA helper OK: ${path.relative(context.appOutDir, helper)} (pe)`);
   }
 };
+
+// ── afterSign (Windows): the HA helper must carry a VALID Authenticode signature ─────────────────────────────────────
+// electron-builder signs Ether.exe, elevate.exe and signExts matches inside the app — but NOT extraResources, so
+// 4.6.58's resources\ha-setup.exe shipped NotSigned (the one binary Ether launches elevated). CI now signs it before
+// packaging (build.yml "Sign HA helper"); this fails the build if that did not happen. electron-builder only emits
+// afterSign when it actually signed (platformPackager doSignAfterPack), so local unsigned builds are untouched.
+
+/** Authenticode status of a file via PowerShell: "Valid", "NotSigned", "HashMismatch", … */
+function authenticodeStatus(file) {
+  const cp = require("child_process");
+  const ps = `(Get-AuthenticodeSignature -LiteralPath '${String(file).replace(/'/g, "''")}').Status.ToString()`;
+  return cp.execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", ps], { encoding: "utf8" }).trim();
+}
+
+/** Throws unless resources\ha-setup.exe exists and its signature status is Valid. `readStatus` is injectable for tests. */
+function checkHelperSignature(resources, readStatus = authenticodeStatus) {
+  const helper = path.join(resources, "ha-setup.exe");
+  if (!fs.existsSync(helper)) throw new Error(`[engine-pack] HA HELPER NOT PACKAGED: ${helper}`);
+  const status = readStatus(helper);
+  if (status !== "Valid") {
+    throw new Error(`[engine-pack] HA HELPER NOT SIGNED: ${helper} — Authenticode status "${status}", expected "Valid".\n` +
+      `  CI signs it before packaging (build.yml "Sign HA helper"); a signed release must never ship it unsigned.`);
+  }
+  return status;
+}
+
+exports.afterSign = async function afterSign(context) {
+  if (context.electronPlatformName !== "win32") return;
+  const resources = path.join(context.appOutDir, "resources");
+  checkHelperSignature(resources);
+  console.log(`  • [engine-pack] HA helper signature OK: ${path.relative(context.appOutDir, path.join(resources, "ha-setup.exe"))} (Valid)`);
+};
+exports.checkHelperSignature = checkHelperSignature;

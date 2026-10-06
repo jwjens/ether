@@ -48,6 +48,7 @@
   "npmRebuild": false,
   "beforePack": "build-resources/engine-before-pack.js",
   "afterPack": "build-resources/engine-after-pack.js",
+  "afterSign": "build-resources/engine-after-sign.js",
   "win": {
     "target": [
       { "target": "nsis", "arch": ["x64"] }

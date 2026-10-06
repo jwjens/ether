@@ -215,6 +215,30 @@ jobs:
         run: cargo build --release --manifest-path native/ha-setup/Cargo.toml
         shell: pwsh
 
+      # SIGN THE HA HELPER (v* tag pushes only, like the signed package step). electron-builder signs Ether.exe,
+      # elevate.exe and signExts matches inside the app, but NOT extraResources — 4.6.58 shipped resources\ha-setup.exe
+      # NotSigned, the one binary Ether launches elevated. Same Azure Trusted Signing account/profile electron-builder
+      # uses, read from electron-builder.signed.json (one source), same digests/timestamp as its signFile. Verified here,
+      # and again by build-resources/engine-after-sign.js inside the package, which fails the build if it is not Valid.
+      - name: Sign HA helper (Windows, SIGNED — v* tag push only)
+        if: matrix.platform == 'win' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $opts = (Get-Content electron-builder.signed.json -Raw | ConvertFrom-Json).win.azureSignOptions
+          $exe  = (Resolve-Path native/ha-setup/target/release/ha-setup.exe).Path
+          Install-Module -Name TrustedSigning -MinimumVersion 0.5.0 -Force -Repository PSGallery -Scope CurrentUser
+          Invoke-TrustedSigning -Endpoint $opts.endpoint -CodeSigningAccountName $opts.codeSigningAccountName `
+            -CertificateProfileName $opts.certificateProfileName -TimestampRfc3161 'http://timestamp.acs.microsoft.com' `
+            -TimestampDigest 'SHA256' -FileDigest 'SHA256' -Files $exe
+          $sig = Get-AuthenticodeSignature -LiteralPath $exe
+          Write-Host "ha-setup.exe signature: $($sig.Status) — $($sig.SignerCertificate.Subject)"
+          if ($sig.Status -ne 'Valid') { throw "ha-setup.exe signature is $($sig.Status), expected Valid" }
+
       - name: Copy native addon (Windows)
         if: matrix.platform == 'win'
         run: Copy-Item native/target/release/ether_audio.dll native/ether-audio.node
