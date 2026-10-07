@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { bindLocalMedia } from "../audio/localOutput";
 
 interface GuestVideoState {
   id: string;
@@ -223,7 +224,7 @@ function GuestTile({ guest, onMute, onHide }: { guest: GuestVideoState; onMute: 
     >
       {/* Video or placeholder */}
       {hasLiveVideo ? (
-        <video ref={videoRef} autoPlay playsInline muted={guest.muted} style={{ width: "100%", flex: 1, objectFit: "cover", display: "block" }} />
+        <video ref={el => { (videoRef as React.MutableRefObject<HTMLVideoElement | null>).current = el; bindLocalMedia(el); }} autoPlay playsInline muted={guest.muted} style={{ width: "100%", flex: 1, objectFit: "cover", display: "block" }} />
       ) : (
         <div style={{ flex: 1, display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center", gap: 8, padding: 16 }}>
           {isConnecting ? (

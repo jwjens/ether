@@ -12,6 +12,7 @@
 
 import { useEffect, useState } from "react";
 import { useAudioEngine } from "../audio/AudioEngineContext";
+import { localMediaRef } from "../audio/localOutput";
 
 interface Track {
   id: number;
@@ -208,6 +209,7 @@ export default function VoiceTrackInbox({ onClose }: { onClose?: () => void }) {
               {playing === t.id && (
                 // Use file:// URL to load the local audio. Electron renderer can play this.
                 <audio
+                  ref={localMediaRef}
                   src={"file:///" + t.file_path.replace(/\\/g, "/")}
                   controls
                   autoPlay

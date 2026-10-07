@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useMemo } from "react";
 import WaveformEditor from "./WaveformEditor";
 import { extractPeaksRange, spliceOut, sliceRegion, insertAt, makeSilence, applyFadeRegion } from "../audio/wavEdit";
+import { localDestination } from "../audio/localOutput";
 
 // Self-contained clip editor — the full editing toolkit (mark in/out, splice, cut/copy/paste,
 // fade, insert silence, undo/redo, zoom) over an AudioBuffer. Used by PhoneDesk (the call editor)
@@ -54,7 +55,7 @@ export default function TakeEditor({ initialBuffer, onDiscard, sendActions }: {
   const playEdit = () => {
     stopPlayback();
     const ctx = ctxRef.current || new AudioContext(); ctxRef.current = ctx;
-    const src = ctx.createBufferSource(); src.buffer = editBuffer; src.connect(ctx.destination);
+    const src = ctx.createBufferSource(); src.buffer = editBuffer; src.connect(localDestination(ctx));
     const end = editBuffer.duration;
     const from = (editPlayhead >= end - 0.05 || editPlayhead < 0) ? 0 : editPlayhead;
     src.start(0, from); srcRef.current = src; startRef.current = ctx.currentTime - from; setPlaying(true);

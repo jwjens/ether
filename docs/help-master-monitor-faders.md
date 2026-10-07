@@ -61,6 +61,19 @@ How to read the bar, the peak dot and OVER: see **Reading the Meters** (`docs/he
   the output, after everything is mixed together — moving MASTER does not move your channel faders.
 - **Two monitor controls, one room level.** The MONITOR fader in the panel and the one in the pop-out
   Master Output window both set the same room level.
+- **MONITOR controls EVERYTHING you hear locally.** That includes:
+  - the main speakers;
+  - the **AUX monitor output** (where announcements, the jukebox and aux carts play locally — Master Out → AUX
+    monitors);
+  - the **previews Ether plays itself**: ▶ Test on an announcement, editor auditions, PhoneDesk and Show+
+    monitoring, button clicks and voice previews.
+
+  MONITOR all the way down means **silence in the room**, whatever is playing. Your listeners still hear everything
+  at full level.
+- **The one exception: PFL to a headphone/cue device.** If you sent PFL to its own cue device, it keeps playing
+  there with MONITOR down, so you can cue with the room silent.
+- **If anything ever makes sound with MONITOR at zero,** the Health Monitor shows a red **Monitor bypass error**
+  with the level. That is a fault to report, never normal.
 
 ## If something looks wrong
 

@@ -28,6 +28,7 @@ import TakeEditor from "./TakeEditor";
 const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 import { DeckId } from "../audio/engine-rodio";
 import { useAudioEngine } from "../audio/AudioEngineContext";
+import { localDestination } from "../audio/localOutput";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -500,7 +501,7 @@ export default function PhoneDesk({ onClose }: Props) {
       monitorStreamRef.current = stream;
       const ctx = new AudioContext();
       monitorCtxRef.current = ctx;
-      ctx.createMediaStreamSource(stream).connect(ctx.destination);
+      ctx.createMediaStreamSource(stream).connect(localDestination(ctx));
       setMonitoring(true);
     } catch (e) { console.error("[PhoneDesk] monitor failed:", e); alert("Couldn't start monitor: " + String(e)); }
   };
@@ -628,7 +629,7 @@ export default function PhoneDesk({ onClose }: Props) {
       };
 
       source.connect(proc);
-      proc.connect(ctx.destination); // must connect to dest for onaudioprocess to fire (Chrome quirk)
+      proc.connect(localDestination(ctx)); // must connect to dest for onaudioprocess to fire (Chrome quirk)
 
       pcmBufferRef.current  = [];
       totalSamplesRef.current = 0;
@@ -703,7 +704,7 @@ export default function PhoneDesk({ onClose }: Props) {
 
     const src = ctx.createBufferSource();
     src.buffer = buf;
-    src.connect(ctx.destination);
+    src.connect(localDestination(ctx));
 
     const start  = Math.max(cueInRef.current, fromSec ?? cueInRef.current);
     const end    = cueOutRef.current;

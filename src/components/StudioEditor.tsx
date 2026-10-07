@@ -16,6 +16,7 @@
 //   • Export the finished mix as a WAV file
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { localDestination } from "../audio/localOutput";
 const convertFileSrc = (p: string) => `file:///${p.replace(/\\/g, "/")}`;
 const save = (opts?: any) => (window as any).ether.dialog.saveFile(opts);
 const writeFile = (p: string, data: any) => (window as any).ether.fs.writeFile(p, data);
@@ -288,7 +289,7 @@ export default function StudioEditor({ deckAPath, deckATitle, deckBPath, deckBTi
 
       const gainNode = ctx.createGain();
       gainNode.gain.value = dbToLinear(t.gainDb);
-      gainNode.connect(ctx.destination);
+      gainNode.connect(localDestination(ctx));
 
       const source = ctx.createBufferSource();
       source.buffer = t.buffer;
@@ -479,7 +480,7 @@ export default function StudioEditor({ deckAPath, deckATitle, deckBPath, deckBTi
         gain.gain.setValueAtTime(0, startSec);
         gain.gain.linearRampToValueAtTime(dbToLinear(t.gainDb), startSec + 0.05);
 
-        gain.connect(ctx.destination);
+        gain.connect(localDestination(ctx));
         const src = ctx.createBufferSource();
         src.buffer = t.buffer;
         src.connect(gain);

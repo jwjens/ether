@@ -145,6 +145,10 @@ jobs:
       - name: Station audio-isolation guard (DESIGN-TRUTH §2, mandatory)
         run: node scripts/check-no-global-audio-statics.js
 
+      # MONITOR is the local master: nothing a window plays may reach a speaker without it (docs/monitor-bypass-diagnosis.md).
+      - name: Local playback guard (MONITOR gain, mandatory)
+        run: node scripts/test-local-playback-guard.js
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 

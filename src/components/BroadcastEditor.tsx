@@ -47,6 +47,7 @@ const openDialog = (opts?: any) => opts?.directory ? (window as any).ether.dialo
 const save = (opts?: any) => (window as any).ether.dialog.saveFile(opts);
 const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 import TrackEditor from "./TrackEditor";
+import { localDestination } from "../audio/localOutput";
 
 // Open Cue Editor as a free-floating native OS window
 
@@ -851,7 +852,7 @@ export default function BroadcastEditor({
         } else {
           gain.connect(pan); lastNode = pan;
         }
-        pan.connect(ctx.destination);
+        pan.connect(localDestination(ctx));
 
         const src = ctx.createBufferSource();
         src.buffer = track.buffer;
@@ -1067,7 +1068,7 @@ export default function BroadcastEditor({
         } else {
           gain.connect(pan);
         }
-        pan.connect(ctx.destination);
+        pan.connect(localDestination(ctx));
 
         clips.filter(c => c.trackId === track.id).forEach(clip => {
           const src = ctx.createBufferSource();
@@ -1149,7 +1150,7 @@ export default function BroadcastEditor({
           high.type = "highshelf"; high.frequency.value = 8000; high.gain.value = track.eqHighDb;
           gain.connect(low); low.connect(mid); mid.connect(high); high.connect(pan);
         } else { gain.connect(pan); }
-        pan.connect(offCtx.destination);
+        pan.connect(localDestination(offCtx));
         clips.filter(c => c.trackId === track.id).forEach(clip => {
           const src = offCtx.createBufferSource();
           src.buffer = track.buffer!;
@@ -1244,7 +1245,7 @@ export default function BroadcastEditor({
           high.type = "highshelf"; high.frequency.value = 8000; high.gain.value = track.eqHighDb;
           gain.connect(low); low.connect(mid); mid.connect(high); high.connect(pan);
         } else { gain.connect(pan); }
-        pan.connect(ctx.destination);
+        pan.connect(localDestination(ctx));
         clips.filter(c => c.trackId === track.id).forEach(clip => {
           const src = ctx.createBufferSource();
           src.buffer = track.buffer!;
@@ -1296,7 +1297,7 @@ export default function BroadcastEditor({
       gain.gain.value = dbToLinear(track.gainDb);
       const pan = ctx.createStereoPanner();
       pan.pan.value = track.pan;
-      gain.connect(pan); pan.connect(ctx.destination);
+      gain.connect(pan); pan.connect(localDestination(ctx));
 
       const src = ctx.createBufferSource();
       src.buffer = track.buffer;
@@ -1346,7 +1347,7 @@ export default function BroadcastEditor({
       gain.gain.value = dbToLinear(track.gainDb);
       const pan = ctx.createStereoPanner();
       pan.pan.value = track.pan;
-      gain.connect(pan); pan.connect(ctx.destination);
+      gain.connect(pan); pan.connect(localDestination(ctx));
 
       const src = ctx.createBufferSource();
       src.buffer = track.buffer;

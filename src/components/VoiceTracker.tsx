@@ -7,6 +7,7 @@ import { useAudioEngine } from "../audio/AudioEngineContext";
 import WaveformEditor from "./WaveformEditor";
 import { decodeBlobToBuffer, extractPeaks, extractPeaksRange, encodeWav, wavToDataUrl, spliceOut, sliceRegion, insertAt, makeSilence, applyFadeRegion } from "../audio/wavEdit";
 import { vuSmooth, vuPeak } from "../lib/vuMeter";
+import { localDestination, localAudio } from "../audio/localOutput";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -658,7 +659,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
     if (!editBuffer) return;
     stopEditPlayback();
     const ctx = editCtxRef.current || new AudioContext(); editCtxRef.current = ctx;
-    const src = ctx.createBufferSource(); src.buffer = editBuffer; src.connect(ctx.destination);
+    const src = ctx.createBufferSource(); src.buffer = editBuffer; src.connect(localDestination(ctx));
     const end = editBuffer.duration;
     const from = (editPlayhead >= end - 0.05 || editPlayhead < 0) ? 0 : editPlayhead;
     src.start(0, from);
@@ -791,7 +792,7 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
   const playTrack = (track: VoiceTrack) => {
     if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
     if (playingId === track.id) { setPlayingId(null); return; }
-    const audio = new Audio(track.file_path); audioRef.current = audio;
+    const audio = localAudio(track.file_path); audioRef.current = audio;
     setPlayingId(track.id);
     audio.ontimeupdate = () => setPlayProgress(p => ({ ...p, [track.id]: audio.currentTime / (audio.duration || 1) }));
     audio.onended = () => { setPlayingId(null); setPlayProgress(p => ({ ...p, [track.id]: 0 })); };

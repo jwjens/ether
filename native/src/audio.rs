@@ -167,6 +167,12 @@ pub struct AudioLevels {
     /// signal, which is exactly why this exists.
     #[serde(default)]
     pub level_room: f32,
+    /// THE LOCAL OUTPUT STAGE — post-MONITOR peak of what left for local devices (main + AUX). See BusState.
+    #[serde(default)]
+    pub local_out_peak: f32,
+    /// The master MONITOR level the local output was scaled by (Params.master_monitor_vol).
+    #[serde(default)]
+    pub master_monitor: f32,
     /// Frames the AUX output device callback has written. Monotonic; a rising value is the only
     /// honest evidence that the aux bus is reaching a device.
     #[serde(default)]
@@ -753,6 +759,9 @@ pub struct BusState {
     /// silent in the room, or in the room and off air. Built in with the feature rather than bolted
     /// on, and it is what makes "no slot selected = silence in the room" observable instead of a claim.
     pub room_peak: f32,
+    /// THE LOCAL OUTPUT STAGE (2026-10-07) — post-MONITOR peak of everything written to local devices in the LATEST
+    /// buffer (main device + AUX ring), exact (no release). With MONITOR at 0 this must read 0; the bypass sense watches it.
+    pub local_out_peak: f32,
     /// The room chain's OWN EQ + processor state.
     ///
     /// Why a second instance rather than re-running `eq`/`processor`: the room feed is a DIFFERENT sum
@@ -769,8 +778,10 @@ pub struct BusState {
     /// device the operator picked; `None` = no device = the mixer writes nothing and the aux bus is
     /// silent. This is the single gate that makes "no device chosen = silence" true in the audio path
     /// rather than in a comment.
-    pub aux_ring_prod:  Option<HeapProd<f32>>,
+    pub aux_ring_prod:  Option<crate::localout::LocalRing>,   // LOCAL device feed: written only post-MONITOR (localout.rs)
     /// PFL cue output ring — Some only while the chosen cue device is OPEN (installed by the monitor-output thread).
+    /// THE ONE APPROVED EXCEPTION to "every local output passes the MONITOR gain" (Jeff, 2026-10-07): PFL routed to a
+    /// dedicated cue device. Deliberately a raw producer, not a LocalRing.
     pub cue_ring_prod: Option<HeapProd<f32>>,
     /// REMOTE LINK — the SEND tap (linknet.rs). Some only while this station is sending to another station
     /// (SEND TO); None = no link = the callback does nothing for it (docs/remote-link-design-2026-09-28.md).
@@ -950,6 +961,7 @@ impl BusState {
             aux_proc_gr_db: 0.0,
             aux_proc_ride_db: 0.0,
             room_peak: 0.0,
+            local_out_peak: 0.0,
             eq_room:        crate::eq::new_shared_eq(sample_rate as f32),
             processor_room: Arc::new(crate::rt::RtMutex::new(crate::program_processor::ProgramProcessor::new(sample_rate as f32, -14.0))),
             proc_in_peak: 0.0, proc_out_peak: 0.0,
@@ -1174,8 +1186,8 @@ impl BusState {
         if n > 0 { self.shared.applied_seq.fetch_add(n, Ordering::Release); }
         while let Some(a) = self.aux_cmd_cons.try_pop() {
             match a {
-                AuxCmd::Attach(p) => { if let Some(o) = self.aux_ring_prod.replace(p) { self.discard(Garbage::AuxProd(o)); } }
-                AuxCmd::Detach    => { if let Some(o) = self.aux_ring_prod.take()     { self.discard(Garbage::AuxProd(o)); } }
+                AuxCmd::Attach(p) => { if let Some(o) = self.aux_ring_prod.replace(crate::localout::LocalRing::new(p)) { self.discard(Garbage::AuxProd(o.into_inner())); } }
+                AuxCmd::Detach    => { if let Some(o) = self.aux_ring_prod.take()     { self.discard(Garbage::AuxProd(o.into_inner())); } }
                 AuxCmd::AttachCue(p) => { if let Some(o) = self.cue_ring_prod.replace(p) { self.discard(Garbage::AuxProd(o)); } }
                 AuxCmd::DetachCue    => { if let Some(o) = self.cue_ring_prod.take()     { self.discard(Garbage::AuxProd(o)); } }
             }
@@ -1190,6 +1202,7 @@ impl BusState {
             master_peak: self.master_peak,
             room_peak: self.room_peak,
             aux_peak: self.aux_peak,
+            local_out_peak: self.local_out_peak,
             frames_consumed: self.frames_consumed,
             duck_gain: self.duck_gain,
             aux_proc_in_lufs: self.aux_proc_in_lufs,
@@ -1732,7 +1745,7 @@ mod slice1_regression {
             b.decks[3].volume = 0.9;
             b.aux_monitor_gain[3] = 1.0;      // slot D selected into the room at unity
             b.proc_local = true;              // the toggle that gates the aux processor
-            b.aux_ring_prod = Some(aux_prod);
+            b.aux_ring_prod = Some(crate::localout::LocalRing::new(aux_prod));
         }
         let fin = FinishedFlags::new();
         let playing = Arc::new(AtomicBool::new(true));
@@ -1760,6 +1773,125 @@ mod slice1_regression {
         println!("[aux] monitor-path checksum = {:#018x}", sum);
         assert_eq!(sum, GOLDEN_AUX_SINGLE_PASS,
             "the aux monitor path changed — if the ride/limiter is running more than once over aux_l/aux_r, that is the 2026-08-22 distortion");
+    }
+
+    // ── THE LOCAL OUTPUT STAGE (2026-10-07, docs/monitor-bypass-diagnosis.md) ────────────────────────────────────────
+    //
+    // Jeff's rule: MONITOR is the local master. Every sound that reaches a LOCAL device passes the MONITOR gain; the
+    // ONE exception is PFL to a dedicated cue device. The bug: with MONITOR all the way down a scheduled announcement
+    // (a Source channel, which reaches the room only through the AUX ring) still played out of the monitors.
+    //
+    // This drives every channel KIND through the real callback — Rotation (A), Sweeper (slot 6), Source (D, and the
+    // new channel 7; a mic or Link feed on a slot takes that slot's kind) — and captures EVERY local output: the main
+    // device buffer, the AUX ring, the PFL cue ring. Then:
+    //   • MONITOR (master) = 0 → every local output is EXACTLY silent; the strip level at 0 does the same;
+    //   • the AIR STREAM is bit-identical between MONITOR 1 and MONITOR 0 — the monitor never touches air;
+    //   • at MONITOR 1 the path under test is actually producing sound (so a silent result can't be a dead test);
+    //   • the AUX feed scales with MONITOR exactly (0.5 → half, bit-for-bit);
+    //   • the exception: PFL to a dedicated cue device still sounds at MONITOR 0.
+    struct LocalRun { device: Vec<f32>, aux: Vec<f32>, stream: Vec<f32>, cue: Vec<f32> }
+
+    fn run_local(slot: usize, strip: f32, master: f32, pfl_to_cue_device: bool) -> LocalRun {
+        let (prod, mut cons) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
+        let eq = crate::eq::new_shared_eq(44100.0);
+        // stream_connected = true, so the stream ring is pushed (the air tap this test compares).
+        let bus = Arc::new(crate::rt::RtMutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(true)))));
+        let (aux_prod, mut aux_cons) = HeapRb::<f32>::new(AUX_BUS_BUF).split();
+        let (cue_prod, mut cue_cons) = HeapRb::<f32>::new(AUX_BUS_BUF * 16).split();
+        {
+            let mut b = bus.lock().unwrap();
+            // A rotation deck always runs, so the room has programme in it whatever kind is under test.
+            for i in [0usize, slot] {
+                b.decks[i].source = Some(DeckFeed::prefilled(Det(100 + i as u64), 480 * 2 * 600));
+                b.decks[i].active = true;
+                b.decks[i].paused = false;
+                b.decks[i].volume = 0.8;
+            }
+            b.aux_monitor_gain[slot] = 1.0;   // the slot's room row up (only a Source slot reads it)
+            b.aux_ring_prod = Some(crate::localout::LocalRing::new(aux_prod));
+            b.monitor_vol = strip;
+            b.master_monitor_vol = master;
+            if pfl_to_cue_device {
+                b.pfl[slot] = true;
+                b.pfl_to_device = true;
+                b.cue_ring_prod = Some(cue_prod);
+            }
+        }
+        let fin = FinishedFlags::new();
+        let playing = Arc::new(AtomicBool::new(true));
+        let mut r = LocalRun { device: Vec::new(), aux: Vec::new(), stream: Vec::new(), cue: Vec::new() };
+        let mut sc = Scratch::new();
+        for _ in 0..40 {
+            let mut data = vec![0f32; 480 * 2];
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+            r.device.extend_from_slice(&data);
+            while let Some(v) = cons.try_pop() { r.stream.push(v); }
+            while let Some(v) = aux_cons.try_pop() { r.aux.push(v); }
+            while let Some(v) = cue_cons.try_pop() { r.cue.push(v); }
+        }
+        r
+    }
+
+    fn silent(v: &[f32]) -> bool { v.iter().all(|&x| x == 0.0) }
+    fn peak(v: &[f32]) -> f32 { v.iter().fold(0.0f32, |m, &x| m.max(x.abs())) }
+
+    #[test]
+    fn local_output_obeys_monitor() {
+        // (slot, name) — every kind of channel the board has.
+        let cases = [(0usize, "Rotation A"), (6, "Sweeper (slot 6)"), (3, "Source D (announcement / jukebox / aux cart)"), (7, "Source channel 7")];
+        for (slot, name) in cases {
+            let up   = run_local(slot, 1.0, 1.0, false);
+            let down = run_local(slot, 1.0, 0.0, false);
+            let strip_down = run_local(slot, 0.0, 1.0, false);
+            let half = run_local(slot, 1.0, 0.5, false);
+
+            // The test is live: at MONITOR 1 the local outputs carry sound, and the stream carries air.
+            assert!(peak(&up.stream) > 0.01, "{name}: no air in the stream — the test is not exercising the mix");
+            assert!(peak(&up.device) > 0.01, "{name}: the main device is silent at MONITOR 1 — the test is not live");
+            if default_kind_for(slot) == SlotKind::Source {
+                assert!(peak(&up.aux) > 0.01, "{name}: the AUX ring is silent at MONITOR 1 — the Source path is not exercised");
+            }
+
+            // MONITOR 0 → EVERY local output exactly silent. The AUX case is the 2026-10-07 bug.
+            assert!(silent(&down.device), "{name}: the MAIN device made sound with MONITOR at 0");
+            assert!(silent(&down.aux), "{name}: the AUX device made sound with MONITOR at 0 — the monitor bypass");
+            assert!(silent(&strip_down.device) && silent(&strip_down.aux), "{name}: a local output made sound with the station strip at 0");
+
+            // AIR UNCHANGED: the stream is bit-identical whatever the monitor does.
+            assert_eq!(checksum(&up.stream), checksum(&down.stream), "{name}: MONITOR changed the AIR stream");
+            assert_eq!(checksum(&up.stream), checksum(&strip_down.stream), "{name}: the strip level changed the AIR stream");
+            assert_eq!(up.stream.len(), down.stream.len(), "{name}: stream length differs");
+
+            // The AUX feed is scaled by MONITOR exactly (× 0.5 is exact in IEEE-754).
+            assert_eq!(up.aux.len(), half.aux.len(), "{name}: aux length differs");
+            for (a, h) in up.aux.iter().zip(half.aux.iter()) {
+                assert_eq!((a * 0.5).to_bits(), h.to_bits(), "{name}: AUX is not scaled by MONITOR exactly");
+            }
+            println!("[local-out] {name}: device pk {:.3} → {:.3}, aux pk {:.3} → {:.3} at MONITOR 1 → 0; stream {:#018x} unchanged",
+                     peak(&up.device), peak(&down.device), peak(&up.aux), peak(&down.aux), checksum(&up.stream));
+        }
+    }
+
+    #[test]
+    fn pfl_to_a_dedicated_cue_device_is_the_one_exception() {
+        // Jeff, 2026-10-07: "Only exception: PFL to a dedicated cue device." With MONITOR at 0 the cue device still
+        // carries the PFL'd channel; every other local output is silent; air is unchanged.
+        for slot in [0usize, 3] {
+            let on  = run_local(slot, 1.0, 1.0, true);
+            let off = run_local(slot, 1.0, 0.0, true);
+            assert!(peak(&off.cue) > 0.01, "slot {slot}: PFL to the cue device went silent with MONITOR at 0 — the exception was lost");
+            assert!(silent(&off.device) && silent(&off.aux), "slot {slot}: a non-cue local output made sound with MONITOR at 0");
+            assert_eq!(checksum(&on.stream), checksum(&off.stream), "slot {slot}: PFL/MONITOR changed the AIR stream");
+        }
+    }
+
+    #[test]
+    fn monitor_gain_is_built_only_from_the_bus() {
+        // The type rule, exercised: the gain the devices get is exactly strip × master, in that order.
+        let (prod, _c) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(false)));
+        b.monitor_vol = 0.6; b.master_monitor_vol = 0.25;
+        assert_eq!(crate::localout::MonitorGain::of(&b).get().to_bits(), (0.6f32 * 0.25f32).to_bits());
     }
 
     /// MEASURED 2026-08-22 on real audio, both sides.
@@ -2927,6 +3059,8 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                     lvl.level_cart   = m.peaks[6];
                                     lvl.level_master = m.master_peak;
                                     lvl.level_room   = m.room_peak;
+                                    lvl.local_out_peak = m.local_out_peak;
+                                    lvl.master_monitor = p.master_monitor_vol;
                                     lvl.aux_frames   = ctl.aux_frames.load(Ordering::Relaxed);
                                     lvl.aux_peak     = m.aux_peak;
                                     lvl.aux_proc_in_lufs  = m.aux_proc_in_lufs;
@@ -4662,25 +4796,20 @@ pub(crate) fn mixer_callback(
     // Past AUX_RING_HIGH we drop a frame rather than let the ring creep toward full — a monitor that
     // is seconds behind is useless, and a dropped frame on a monitor feed is a tick, not a fault.
     // try_push is used throughout: the audio thread must never block on a full ring.
+    //
+    // THE LOCAL OUTPUT STAGE (2026-10-07, Jeff's ruling): the AUX device is a LOCAL output, so it is fed POST-MONITOR —
+    // the same strip × master gain the main device gets. Before this the ring was written raw and MONITOR never reached
+    // it: with MONITOR all the way down, a scheduled announcement (a Source channel) still played out of the monitors.
+    // `LocalRing::push` is the ONLY way to write this ring, and it applies the gain (localout.rs).
+    //
+    // NO CLAMP HERE. Peak control on this bus belongs to the program processor above — the same -1 dBTP limiter the
+    // rest of the product uses. NO mid-buffer break: rate correction happens on the CONSUMER side (a sub-audible
+    // resample nudge); the producer hands over every sample it made.
+    let local_gain = crate::localout::MonitorGain::of(&*bus);
+    let mut local_pk = 0.0f32;
     {
-        if let Some(ref mut prod) = bus.aux_ring_prod {
-            for f in 0..prog_frames {
-                // NO CLAMP HERE. Peak control on this bus belongs to the program processor above —
-                // the same -1 dBTP limiter the rest of the product uses. An earlier revision clamped
-                // instead, which is a hard clipper: it produced the very distortion it was meant to
-                // prevent on loud material, and did nothing for the quiet dialogue that is the reason
-                // this bus is processed at all. One system, one place that controls peaks.
-                let l = aux_l[f];
-                let r = aux_r[f];
-                // NO mid-buffer break. This used to `break` out of the loop once the ring reached its
-                // high-water mark, which threw away the REST of the buffer — a hard discontinuity in
-                // the waveform every time it fired, i.e. a click, repeating for as long as the two
-                // device clocks disagreed. That is the crackle. Rate correction now happens on the
-                // CONSUMER side (a sub-audible resample nudge), where it belongs; the producer's only
-                // job is to hand over every sample it made.
-                let _ = prod.try_push(l);
-                let _ = prod.try_push(r);
-            }
+        if let Some(ref mut ring) = bus.aux_ring_prod {
+            local_pk = ring.push(aux_l, aux_r, local_gain);
         }
     }
 
@@ -4722,39 +4851,15 @@ pub(crate) fn mixer_callback(
         let rp = dl.iter().chain(dr.iter()).map(|&s| s.abs()).fold(0.0f32, f32::max);
         bus.room_peak = rp.max(bus.room_peak * VU_RELEASE);
     }
-    // Room level = this station's strip level x the ONE master monitor level. Both local-only: the
-    // stream push above already happened, so neither can change what airs.
-    let mvol = bus.monitor_vol * bus.master_monitor_vol;
-    if device_sr == PROGRAM_RATE || prog_frames <= 1 {
-        for f in 0..device_frames {
-            if ch == 2 {
-                data[f * 2]     = dl[f] * mvol;
-                data[f * 2 + 1] = dr[f] * mvol;
-            } else {
-                data[f] = (dl[f] + dr[f]) * 0.5 * mvol;
-            }
-        }
-    } else {
-        // Linear interpolation: map device_frames output positions into prog_frames input
-        let scale = (prog_frames - 1) as f64 / (device_frames - 1).max(1) as f64;
-        for f in 0..device_frames {
-            let t    = f as f64 * scale;
-            let idx  = t as usize;
-            let frac = (t - idx as f64) as f32;
-            let l0 = dl[idx];
-            let l1 = dl.get(idx + 1).copied().unwrap_or(l0);
-            let r0 = dr[idx];
-            let r1 = dr.get(idx + 1).copied().unwrap_or(r0);
-            let l = l0 + (l1 - l0) * frac;
-            let r = r0 + (r1 - r0) * frac;
-            if ch == 2 {
-                data[f * 2]     = l * mvol;
-                data[f * 2 + 1] = r * mvol;
-            } else {
-                data[f] = (l + r) * 0.5 * mvol;
-            }
-        }
-    }
+    // Room level = this station's strip level x the ONE master monitor level — the SAME MonitorGain the AUX ring got
+    // above. Both local-only: the stream push above already happened, so neither can change what airs. The device
+    // buffer is written ONLY by localout::write_device, which takes the gain (same arithmetic as before).
+    let resample = !(device_sr == PROGRAM_RATE || prog_frames <= 1);
+    let dev_pk = crate::localout::write_device(data, ch as usize, dl, dr, prog_frames, device_frames, resample, local_gain);
+    let lp = local_pk.max(dev_pk);
+    // NO release ballistics: this is the bypass SENSE, not a VU. It must describe THIS buffer exactly, so the buffer
+    // in which MONITOR reaches 0 reads 0 — a decaying peak would raise a false alarm the moment the fader is pulled.
+    bus.local_out_peak = lp;
 
     playing.store(any_playing, Ordering::Relaxed);   // S2 — was a try_lock on a Mutex<bool>
     // S3 — this buffer's meters and telemetry, for GetLevel (lock-free triple buffer).
@@ -6229,7 +6334,7 @@ mod interchange_matrix {
             k = b.decks[slot].kind;
             b.decks[slot].source = Some(DeckFeed::prefilled(Tone(0.25), 480 * 2 * 600));
             b.decks[slot].active = true; b.decks[slot].paused = false; b.decks[slot].volume = 1.0;
-            b.aux_ring_prod = Some(aux_prod);
+            b.aux_ring_prod = Some(crate::localout::LocalRing::new(aux_prod));
         }
         let fin = FinishedFlags::new();
         let playing = Arc::new(AtomicBool::new(true));

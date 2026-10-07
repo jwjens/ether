@@ -7,6 +7,7 @@
 //                       used as a panel (panel === "captions").
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { localDestination } from "../audio/localOutput";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -58,7 +59,7 @@ async function startLoopbackTap(deviceId: string | undefined, onChunk: (data: Fl
   };
 
   source.connect(proc);
-  proc.connect(ctx.destination);   // must be connected to run in Chrome/Electron
+  proc.connect(localDestination(ctx));   // must be connected to run in Chrome/Electron
 
   return () => {
     proc.disconnect();

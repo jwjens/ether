@@ -92,6 +92,10 @@ pub struct RenderCfg {
     /// does) and capture what it carries into Render::link. Never serialized.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub link_tap: bool,
+    /// THE LOCAL OUTPUT STAGE — bus.master_monitor_vol (the MONITOR fader). None = 1.0, which keeps every golden's
+    /// monitor tap bit-identical (x·1.0 == x). Never serialized when absent, so no manifest changes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub master_monitor_vol: Option<f32>,
 }
 
 /// The aux deck of a render: its file, whether its duck is armed, and its monitor-slot level (which, as
@@ -113,7 +117,7 @@ impl Default for RenderCfg {
             stream_ride_rate: None, stream_ride_clamp: None,
             master_vol: 1.0, gain_db: 0.0, eq_bands: None,
             block_frames: None, device_rate: None, monitor_vol: None, aux: None, via_rack: false,
-            ch_racks_out: false, ch_rack_a: None, link_tap: false,
+            ch_racks_out: false, ch_rack_a: None, link_tap: false, master_monitor_vol: None,
         }
     }
 }
@@ -156,7 +160,7 @@ fn configure(bus: &mut BusState, cfg: &RenderCfg) {
     // Condition 3: the room gains are unity so the device buffer IS dl/dr. These are BusState::new's
     // own defaults; set explicitly so the invariant is visible here and cannot drift silently.
     bus.monitor_vol = cfg.monitor_vol.unwrap_or(1.0).clamp(0.0, 4.0);   // SetMonitorVolume clamp
-    bus.master_monitor_vol = 1.0;
+    bus.master_monitor_vol = cfg.master_monitor_vol.unwrap_or(1.0).clamp(0.0, 1.0);   // SetMasterMonitorVolume clamp
     // Master GEQ, as SetEq applies it (audio.rs:2084-2096): both the air EQ and the room EQ.
     if let Some(ref bands) = cfg.eq_bands {
         if let Ok(mut eq) = bus.eq.lock() { eq.set_bands(bands); }
@@ -242,7 +246,7 @@ pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
             b.aux_monitor_gain[3] = ax.aux_gain.clamp(0.0, 4.0);
             b.room_gain[3] = ax.aux_gain.clamp(0.0, 4.0);
             let (ap, ac) = HeapRb::<f32>::new(AUX_BUS_BUF).split();
-            b.aux_ring_prod = Some(ap);
+            b.aux_ring_prod = Some(crate::localout::LocalRing::new(ap));
             aux_cons = Some(ac);
         }
     }

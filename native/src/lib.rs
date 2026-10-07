@@ -22,6 +22,7 @@ mod linknet;             // The Remote Link's sockets and threads (sender, liste
 pub mod rack;            // Slice 4 — the rack model; pub so the type-rule doctests (compile_fail) can see it
 mod rt;                  // Slice 1 S3 — lock-free channels between the audio callback and everything else
 mod loudness;           // Slice 3 — BS.1770 loudness per branch, on a meter thread — docs/dsp-loudness-meter.md
+mod localout;            // THE LOCAL OUTPUT STAGE — every local device is fed post-MONITOR (docs/monitor-bypass-diagnosis.md)
 mod offline_render;      // DSP parity harness — docs/dsp-parity-harness.md (diagnostic; never on the audio path)
 
 use napi_derive::napi;
@@ -595,6 +596,10 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
     };
     // SLICE 1 S6 — the audio callback's health counters. Named key by key, like everything above.
     let rt = levels_arc.lock().map(|l| l.rt.clone()).unwrap_or_default();
+    // THE LOCAL OUTPUT STAGE (2026-10-07) — what actually left the engine for local devices (main + AUX), AFTER the
+    // MONITOR gain, and the master MONITOR level it was scaled by. The daemon/main raise a red health event if the
+    // first is above silence while the second is 0 — a monitor bypass made visible, not reported.
+    let (lout_peak, master_mon) = levels_arc.lock().map(|l| (l.local_out_peak, l.master_monitor)).unwrap_or((0.0, 1.0));
     // AUX OUTPUT STATUS (2026-10-04, OV) — where the aux is going and whether it is actually open. A dead aux stream
     // used to be invisible: carts metered and reported PLAYING while the room heard nothing.
     let aux_st = audio::aux_status(station_id.unwrap_or(1));
@@ -606,6 +611,7 @@ pub fn audio_get_levels(station_id: Option<u32>) -> String {
         "a": la, "b": lb, "c": lc, "cart": lcart, "master": lmaster, "room": lroom, "aux_frames": auxframes, "aux_peak": auxpeak,
         "aux_proc_in_lufs": auxin, "aux_proc_out_lufs": auxout, "aux_proc_gr_db": auxgr, "aux_proc_ride_db": auxride,
         "frames_total": frames, "active_decks": active, "mon_vol": mon, "decks": decks,
+        "local_out_peak": lout_peak, "master_monitor": master_mon,
         "proc_local": p_local, "proc_stream": p_stream, "proc_target_lufs": p_target,
         "proc_in_lufs": p_in_lufs, "proc_out_lufs": p_out_lufs, "proc_gr_db": p_gr,
         "proc_in_peak": p_in_peak, "proc_out_peak": p_out_peak, "proc_ride_gain_db": p_ride,

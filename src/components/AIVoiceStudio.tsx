@@ -16,6 +16,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { getActiveStationIdSync } from "../hooks/useActiveStation";
+import { localMediaRef } from "../audio/localOutput";
 
 type SegmentStatus = "pending" | "generating" | "ready" | "played" | "error" | "archived";
 
@@ -290,7 +291,7 @@ function ComposeTab({ templates, onGenerated }: { templates: Template[]; onGener
           {status && <span style={{ fontSize: 12, color: status.startsWith("✓") ? "#22c55e" : status.startsWith("✗") ? "#ef4444" : "var(--text-tertiary)" }}>{status}</span>}
         </div>
 
-        {previewAudio && <audio src={previewAudio} controls autoPlay style={{ width: "100%", marginTop: 4 }} />}
+        {previewAudio && <audio ref={localMediaRef} src={previewAudio} controls autoPlay style={{ width: "100%", marginTop: 4 }} />}
       </div>
     </div>
   );
@@ -392,7 +393,7 @@ function LibraryTab({ segments, loading, playing, setPlaying, onRefresh }:
                 </div>
               </div>
               {playing === s.id && s.file_path && (
-                <audio src={"file:///" + s.file_path.replace(/\\/g, "/")} controls autoPlay
+                <audio ref={localMediaRef} src={"file:///" + s.file_path.replace(/\\/g, "/")} controls autoPlay
                   style={{ width: "100%", marginTop: 8 }}
                   onError={() => alert("Playback failed — file may be missing")} />
               )}

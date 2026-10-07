@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 const readFile = (p: string) => (window as any).ether.fs.readFile(p);
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { localDestination } from "../audio/localOutput";
 
 interface Props {
   songId: number;
@@ -222,7 +223,7 @@ export default function CueEditor({ songId, filePath, onSaved }: Props) {
     if (!actx || !buf) return;
     const src = actx.createBufferSource();
     src.buffer = buf;
-    src.connect(actx.destination);
+    src.connect(localDestination(actx));
     src.start(0, ms / 1000);
     srcRef.current = src;
     startTimeRef.current = actx.currentTime;

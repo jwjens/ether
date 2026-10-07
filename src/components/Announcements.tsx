@@ -7,6 +7,7 @@ import { useFileMenu } from "../lib/fileLocation";
 const readFile = (p: string) => (window as any).ether.fs.readFile(p);
 import { getEngine } from "../audio/engine-registry";
 import { diffSchedule } from "../lib/scheduleDiff";
+import { localAudio } from "../audio/localOutput";
 
 interface Announcement {
   id: number;
@@ -919,7 +920,7 @@ export default function Announcements() {
       const bytes = await readFile(ann.file_path);
       const blob = new Blob([bytes], { type: "audio/mpeg" });
       const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
+      const audio = localAudio(url);
       audio.onended = () => URL.revokeObjectURL(url);
       audio.play();
     } catch (e) { alert("Could not play: " + e); }

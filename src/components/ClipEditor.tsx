@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { query as dbQuery } from "../db/client";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { localMediaRef } from "../audio/localOutput";
 
 const BG0  = "#0d0d0f";
 const BG1  = "#111114";
@@ -526,6 +527,7 @@ export default function ClipEditor() {
                 width: recW >= recH ? "100%" : "auto",
               }}>
                 <video
+                  ref={localMediaRef}
                   src={clipUrl ?? undefined}
                   controls
                   style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", background: "#000" }}

@@ -1,3 +1,4 @@
+import { localDestination } from "../audio/localOutput";
 // Tiny synthesized UI "click" for tactile button feedback. Lazily creates one shared
 // WebAudio context and plays a short low tick on the renderer's default output — it's
 // a local UI sound only, never routed to the broadcast/Icecast path (that's the Rust
@@ -19,7 +20,7 @@ export function playClick(volume = 0.05): void {
     gain.gain.setValueAtTime(volume, t);
     gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
     osc.connect(gain);
-    gain.connect(_ctx.destination);
+    gain.connect(localDestination(_ctx));
     osc.start(t);
     osc.stop(t + 0.06);
   } catch { /* audio unavailable — silent */ }

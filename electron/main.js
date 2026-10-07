@@ -852,6 +852,7 @@ if (AUDIO_DAEMON_DESIRED) {
         // Forward the whole frame with the station UUID (not the per-machine integer id).
         const lv = scopeLevelsFrame(m, _stationUuidById);
         sendToAllWindows("audio:levels", lv);
+        _noteLocalOutput(m.stationId, m);
         // Per-station audio-liveness signal (DESIGN-TRUTH §2): real output keeps THIS station's clock
         // fresh; a wedged station (deck claims playing, output silent) stops updating its own clock
         // because its cpal callback stopped firing → its levels freeze at ~0 while siblings stay fresh.
@@ -3619,6 +3620,7 @@ app.whenReady().then(() => {
         try { if (_health) _health.noteLevels(sid, raw); } catch {}   // v4.4.50: feed the health monitor in in-process mode too (same addon → same frames_total/decks telemetry)
         const levels = scopeLevelsFrame({ ...raw, stationId: sid }, _stationUuidById);
         sendToAllWindows("audio:levels", levels);
+        _noteLocalOutput(sid, raw);
         // SLICE 2 — the meter bus in the in-process fallback: same frame, same 33 ms, subscribed stations.
         if (typeof audio.audioGetMeters === "function") {
           const now = Date.now();
@@ -6083,7 +6085,36 @@ function armAllStationDuckers(reason, opts) {
   }
   return { ok: true, armed };
 }
+// ── THE LOCAL OUTPUT STAGE, renderer half (2026-10-07, docs/monitor-bypass-diagnosis.md) ─────────────────────────
+// MONITOR is the local master: every sound that reaches a local device obeys it. The engine applies it to the main
+// device and the AUX ring (native/src/localout.rs). Sound a WINDOW makes (auditions, previews, UI clicks, PhoneDesk /
+// Show+ monitors) goes through src/audio/localOutput.ts, which scales by this level. Main remembers the last value the
+// MONITOR fader set and tells every window; a window opened later asks for it. Clamped exactly as the engine clamps.
+let _localMonitorLevel = 1.0;
+ipcMain.handle("local:monitor-level", () => _localMonitorLevel);
+
+// MONITOR BYPASS SENSE — red in the Health Monitor. Every levels frame carries what actually left the engine for local
+// devices AFTER the MONITOR gain (local_out_peak, exact per buffer) and the master MONITOR level it was scaled by
+// (master_monitor). With MONITOR at 0 the first must be 0 by construction (native/src/localout.rs); anything above
+// silence means a path bypasses the monitor — the 2026-10-07 bug, now observed instead of reported. Once a minute per
+// station at most. ('…-error' → red in healthUtils.eventLevel.) The PFL cue device is the approved exception and is
+// not part of local_out_peak.
+const _bypassSeenAt = new Map();
+function _noteLocalOutput(stationId, f) {
+  try {
+    if (!require('./local-output-sense').isMonitorBypass(f)) return;
+    const pk = Number(f.local_out_peak);
+    const now = Date.now();
+    if (now - (_bypassSeenAt.get(stationId) || 0) < 60000) return;
+    _bypassSeenAt.set(stationId, now);
+    const msg = 'Sound reached a local output with MONITOR at 0 (peak ' + pk.toFixed(3) + ') — a path is bypassing the monitor';
+    console.error('[monitor] station ' + stationId + ': ' + msg);
+    _healthEvent('monitor-bypass-error', { stationId, peak: Math.round(pk * 1000) / 1000, message: msg });
+  } catch { /* a sense must never break the levels relay */ }
+}
 ipcMain.handle("audio:setMasterMonitorVolume", (_, volume) => {
+  { const v = Number(volume); _localMonitorLevel = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : _localMonitorLevel; }
+  try { sendToAllWindows("local:monitor-level", _localMonitorLevel); } catch {}
   let ids = [];
   try { ids = db.prepare("SELECT id FROM stations WHERE deleted_at IS NULL").all().map(r => r.id); }
   catch (e) { console.error("[audio:setMasterMonitorVolume] station list:", e.message); }

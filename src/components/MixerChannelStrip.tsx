@@ -1,6 +1,7 @@
 import React from "react";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import VUMeter from "./VUMeter";
+import { localDestination } from "../audio/localOutput";
 
 export interface MixerChannelStripProps {
   label: string;
@@ -54,7 +55,7 @@ export default function MixerChannelStrip({
       analyser.fftSize = 256;
       src.connect(gainNode);
       gainNode.connect(analyser);
-      analyser.connect(ctx.destination);
+      analyser.connect(localDestination(ctx));
       gainNodeRef.current = gainNode;
       const data = new Uint8Array(analyser.frequencyBinCount);
       const tick = () => {

@@ -1,3 +1,4 @@
+import { localDestination } from "./localOutput";
 // regionAudition — the ONE shared region-audition mechanic, worn by BOTH imaging surfaces: the Reel
 // Splitter push-up and the StudioPro DAW chop-and-send (per CLAUDE.md: "one region engine, two surfaces,
 // never a copy"). Plays a [start,end) window of a decoded buffer through a throwaway BufferSource on a
@@ -14,7 +15,7 @@ export function auditionRegion(
 ): AudioBufferSourceNode {
   const src = ctx.createBufferSource();
   src.buffer = buffer;
-  src.connect(ctx.destination);
+  src.connect(localDestination(ctx));
   if (onEnded) src.onended = onEnded;
   src.start(0, Math.max(0, startSec), Math.max(0.02, endSec - startSec));
   return src;

@@ -6,6 +6,7 @@ const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any)
 const toFileUrl = (p: string) => p.startsWith("http") || p.startsWith("blob:") ? p : `file:///${p.replace(/\\/g, "/")}`;
 import WaveformGL from "./WaveformGL";
 import { importIntoAudioLibrary } from "../lib/fileLocation";
+import { localDestination } from "../audio/localOutput";
 
 interface Song {
   id: number;
@@ -584,7 +585,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
     sourceRef.current?.stop();
     const src = ctx.createBufferSource();
     src.buffer = buf;
-    src.connect(ctx.destination);
+    src.connect(localDestination(ctx));
     const offset = fromSec !== undefined ? fromSec : (cueInRef.current || 0);
     src.start(0, offset);
     src.onended = () => setPlaying(false);

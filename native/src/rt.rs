@@ -378,6 +378,8 @@ pub(crate) struct MeterFrame {
     pub master_peak: f32,
     pub room_peak: f32,
     pub aux_peak: f32,
+    /// THE LOCAL OUTPUT STAGE — post-MONITOR peak of everything written to local devices (main + AUX ring).
+    pub local_out_peak: f32,
     pub frames_consumed: u64,
     pub duck_gain: f32,
     // No *_out_lufs here: slice 3 deleted the estimate; OUT is measured by loudness.rs and joined in GetLevel.

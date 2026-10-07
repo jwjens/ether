@@ -15,6 +15,7 @@ import { useCaptions, CaptionsOverlay } from "./Captions";
 import StreamStatusPill from "./StreamStatusPill";
 import { QRCodeSVG } from "qrcode.react";
 import { ETHER_BACKEND_URL } from "../lib/etherBackend";
+import { bindLocalMedia, localAudio } from "../audio/localOutput";
 
 const invoke = (cmd: string, args?: any): Promise<any> =>
   (window as any).ether.invoke(cmd, args);
@@ -955,7 +956,7 @@ function HostCamera({
           <button onClick={() => start(resolution)} style={{ ...btn(), color: "#fff", background: "#3b82f6", border: "none" }}>Retry</button>
         </div>
       ) : (
-        <video ref={videoRef} autoPlay playsInline style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        <video ref={el => { (videoRef as React.MutableRefObject<HTMLVideoElement | null>).current = el; bindLocalMedia(el); }} autoPlay playsInline style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
       )}
 
       {actualRes && showFrameOverlays && (
@@ -1134,7 +1135,7 @@ function GuestTile({ guest, onMute, onRemove }: { guest: GuestPeer; onMute: () =
   return (
     <div style={{ position: "relative", background: BG0, border: `1px solid ${BOR}`, flexShrink: 0, height: 130 }}>
       {guest.stream ? (
-        <video ref={vidRef} autoPlay playsInline style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        <video ref={el => { (vidRef as React.MutableRefObject<HTMLVideoElement | null>).current = el; bindLocalMedia(el); }} autoPlay playsInline style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
       ) : (
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div style={{ width: 40, height: 40, borderRadius: "50%", background: BG3, display: "flex", alignItems: "center", justifyContent: "center", color: TXT2, fontSize: 16, fontWeight: 700 }}>
@@ -1931,7 +1932,7 @@ function AudioPanel({
   const monitorAudioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
-    const el = new Audio();
+    const el = localAudio();
     el.autoplay = true;
     monitorAudioRef.current = el;
     return () => { el.pause(); el.srcObject = null; monitorAudioRef.current = null; };
@@ -1961,7 +1962,7 @@ function AudioPanel({
   }, [micVolume]);
 
   useEffect(() => {
-    if (monitorAudioRef.current) monitorAudioRef.current.volume = monitorVolume / 100;
+    if (monitorAudioRef.current) bindLocalMedia(monitorAudioRef.current, monitorVolume / 100);
   }, [monitorVolume]);
 
   // Rebuild audio graph whenever hostStream changes (new mic device → HostCamera restarts → new stream)
@@ -1994,7 +1995,7 @@ function AudioPanel({
     if (!el) return;
     if (selfMonitor && monitorDestRef.current) {
       el.srcObject = monitorDestRef.current.stream;
-      el.volume = monitorVolume / 100;
+      bindLocalMedia(el, monitorVolume / 100);
       if (outputDeviceId && typeof (el as any).setSinkId === "function") {
         (el as any).setSinkId(outputDeviceId).catch(() => {});
       }
@@ -2249,7 +2250,7 @@ function EmbeddedStudio({
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
                 {guests.filter(g => g.status === "accepted").map(g => (
                   <div key={g.id} style={{ background: BG0, border: `1px solid ${BOR}`, padding: 6 }}>
-                    {g.stream ? <video ref={el => { if (el && el.srcObject !== g.stream) { el.srcObject = g.stream; el.play().catch(() => {}); } }} autoPlay playsInline style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", display: "block", background: "#0a0a10" }} /> : <div style={{ width: "100%", aspectRatio: "4/3", background: "#0a0a10", display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ fontSize: 12, color: "#22c55e" }}>● Connected</span></div>}
+                    {g.stream ? <video ref={el => { bindLocalMedia(el); if (el && el.srcObject !== g.stream) { el.srcObject = g.stream; el.play().catch(() => {}); } }} autoPlay playsInline style={{ width: "100%", aspectRatio: "4/3", objectFit: "cover", display: "block", background: "#0a0a10" }} /> : <div style={{ width: "100%", aspectRatio: "4/3", background: "#0a0a10", display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ fontSize: 12, color: "#22c55e" }}>● Connected</span></div>}
                     <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
                       <span style={{ flex: 1, fontSize: 12, color: TXT2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>{g.name}</span>
                       <button onClick={() => toggleMute(g.id)} style={{ padding: "1px 5px", fontSize: 11, background: "none", border: `1px solid ${BOR}`, color: g.muted ? AMB : TXT2, cursor: "pointer" }}>{g.muted ? "Unmute" : "Mute"}</button>
@@ -2368,7 +2369,7 @@ function GuestGridTile({ guest, onScene, onToggleScene, onMute, onRemove, output
           <video ref={vidRef} autoPlay playsInline muted
             style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
         ) : null}
-        <audio ref={audioRef} autoPlay playsInline style={{ display: "none" }} />
+        <audio ref={el => { (audioRef as React.MutableRefObject<HTMLAudioElement | null>).current = el; bindLocalMedia(el); }} autoPlay playsInline style={{ display: "none" }} />
         {!guest.stream && (
           <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <div style={{ width: 32, height: 32, borderRadius: "50%", background: BG3, display: "flex", alignItems: "center", justifyContent: "center", color: TXT2, fontSize: 14, fontWeight: 700 }}>

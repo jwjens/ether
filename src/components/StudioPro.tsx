@@ -44,6 +44,7 @@ import VoiceTracker from "./VoiceTracker";
 import StudioSendBar from "./StudioSendBar";
 import { execute, query } from "../db/client";
 import { useUser } from "../UserContext";
+import { localDestination } from "../audio/localOutput";
 
 // ── File-URL shim ────────────────────────────────────────────────
 
@@ -1826,7 +1827,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     g.gain.setValueAtTime(0.0001, time);
     g.gain.exponentialRampToValueAtTime(accent ? 0.45 : 0.28, time + 0.001);
     g.gain.exponentialRampToValueAtTime(0.0001, time + 0.05);
-    osc.connect(g).connect((ctx as AudioContext).destination);
+    osc.connect(g).connect(localDestination(ctx as AudioContext));
     osc.start(time);
     osc.stop(time + 0.06);
   };
@@ -1902,7 +1903,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       masterAnalyser = (ctx as AudioContext).createAnalyser();
       masterAnalyser.fftSize = 2048;
       masterTail.connect(masterAnalyser);
-      masterAnalyser.connect((ctx as AudioContext).destination);
+      masterAnalyser.connect(localDestination(ctx as AudioContext));
 
       // L/R split for correlation + goniometer
       const splitter = (ctx as AudioContext).createChannelSplitter(2);
@@ -1925,7 +1926,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       masterTail.connect(hp).connect(shelf).connect(kAn);
       masterKWeightedAnalyser = kAn;
     } else {
-      masterTail.connect((ctx as AudioContext).destination);
+      masterTail.connect(localDestination(ctx as AudioContext));
     }
 
     const effSolo = stateRef.current.tracks.some(t => t.solo);
@@ -2500,7 +2501,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         if (!src) continue;
         const srcCtx = new OfflineAudioContext(1, Math.ceil(totalSec * sr), sr);
         const g = srcCtx.createGain(); g.gain.value = 1;
-        g.connect(srcCtx.destination);
+        g.connect(localDestination(srcCtx));
         src.regions.forEach(r => {
           if (!r.buffer) return;
           const node = srcCtx.createBufferSource(); node.buffer = r.buffer;
@@ -2556,7 +2557,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       lim.attack.value = 0.003; lim.release.value = 0.25; lim.knee.value = 0;
       masterTail.connect(lim); masterTail = lim;
     }
-    masterTail.connect(offline.destination);
+    masterTail.connect(localDestination(offline));
 
     // Per-track AudioParam map for offline automation scheduling
     const offlineParams = new Map<string, TrackAudioParams>();
@@ -2774,12 +2775,12 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
         comp.connect(mkup);
         chainTail = mkup;
       }
-      chainTail.connect(offline.destination);
+      chainTail.connect(localDestination(offline));
       // Reverb in parallel
       if (t.reverb.on && t.reverb.wet > 0) {
         const wet = offline.createGain(); wet.gain.value = clamp(t.reverb.wet, 0, 1);
         const conv = offline.createConvolver(); conv.buffer = makeReverbIR(offline, t.reverb.type, t.reverb.size);
-        chainTail.connect(wet).connect(conv).connect(offline.destination);
+        chainTail.connect(wet).connect(conv).connect(localDestination(offline));
       }
 
       t.regions.forEach(r => {
@@ -2984,7 +2985,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     liveTracks.forEach(t => {
       const trackGain = offline.createGain();
       trackGain.gain.value = dbToLinear(t.gainDb);
-      trackGain.connect(offline.destination);
+      trackGain.connect(localDestination(offline));
       t.regions.forEach(r => {
         if (!r.buffer) return;
         const src = offline.createBufferSource(); src.buffer = r.buffer;
@@ -3372,7 +3373,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
     liveTracks.forEach(t => {
       const trackGain = offline.createGain();
       trackGain.gain.value = dbToLinear(t.gainDb);
-      trackGain.connect(offline.destination);
+      trackGain.connect(localDestination(offline));
       t.regions.forEach(r => {
         if (!r.buffer) return;
         const src = offline.createBufferSource(); src.buffer = r.buffer;

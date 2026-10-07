@@ -10,6 +10,7 @@
 
 import { useEffect, useState } from "react";
 import { getActiveStationIdSync } from "../hooks/useActiveStation";
+import { speakLocal, localMediaRef } from "../audio/localOutput";
 
 type Provider = "elevenlabs" | "openai" | "browser";
 
@@ -139,7 +140,7 @@ export default function AIVoiceSettings() {
         const u = new SpeechSynthesisUtterance(text);
         const v = window.speechSynthesis.getVoices().find(v => v.voiceURI === config.voiceId);
         if (v) u.voice = v;
-        window.speechSynthesis.speak(u);
+        speakLocal(u);
         setTestStatus("✓ Playing via Web Speech");
         setTimeout(() => setTestStatus(""), 3500);
         return;
@@ -266,7 +267,7 @@ export default function AIVoiceSettings() {
       </div>
 
       {testAudio && (
-        <audio src={testAudio} controls autoPlay style={{ width: "100%" }} />
+        <audio ref={localMediaRef} src={testAudio} controls autoPlay style={{ width: "100%" }} />
       )}
     </div>
   );
