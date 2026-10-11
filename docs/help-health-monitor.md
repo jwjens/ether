@@ -95,6 +95,28 @@ When any of them goes up, the line turns **amber for a minute** and shows the ti
 written to the health ledger (**Live events**) with how many and for which station. The totals stay
 on the card after that, in grey. Hover the line for the full detail (callbacks run, silent frames).
 
+### "Daemon engine mismatch error" — the engine playing is not the one installed
+
+EtherCast's audio engine keeps running while you update, so music isn't cut. After an update, the engine
+that is playing can be **older than the one you just installed**. Two builds can carry the same version
+number, so EtherCast compares the engine files themselves.
+
+When they differ, a **red** row appears in **Live events**: *Daemon engine mismatch error — The running
+audio engine is not the installed one: engine 0ebf6ccbf185 ≠ installed 9f7d7079f4e7*. Expand it for the
+full fingerprints. Until it clears, the fixes in the new install are **not** in what you hear.
+
+What to do:
+
+1. **Nothing, if you can wait.** EtherCast replaces the engine by itself the next time **no station is
+   playing**. It never restarts the engine while a station is on air.
+2. **To do it now:** stop automation on every station, or fully quit EtherCast (**Quit Ether** from the
+   tray icon or the app menu, or Ctrl+Q; closing the window is not enough) and open it again.
+3. When the new engine is running, a green **Daemon engine match** row appears with the installed
+   engine's fingerprint.
+
+If the red row comes back after a full quit and reopen, tell support and include the time. The startup
+log will have a `[stage-engine]` line naming the file that could not be replaced.
+
 ## The bottom half — the detail
 
 - **Audio Processing** — the loudness chain. IN and OUT loudness lead as figures, then meters for the

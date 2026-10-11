@@ -569,6 +569,43 @@ async function checkStaleDaemon() {
 // Late-joining windows (popouts, a reopened main window) ask rather than wait for the next check —
 // otherwise the banner would be missing exactly where a mismatch is hardest to spot.
 try { ipcMain.handle("daemon:version-state", () => _daemonVersionState); } catch {}
+// ── Daemon ENGINE match — by content, not version (2026-10-10, docs/monitor-failed-test-diagnosis-2026-10-10.md) ──
+// The version check above compares release labels. On OVEVENTS the install and the running daemon both said 4.6.59
+// while the daemon ran the PRE-FIX ether-audio.node, so MONITOR "did nothing" and nothing said why. Here the daemon
+// reports the sha256 of the engine it LOADED (`engine` command) and main compares it with the installed one.
+//   · mismatch / unknown → RED in the Health Monitor (daemon-engine-mismatch-error, both hashes named), a startup-log
+//     line, and the reload is ARMED — which fires only when no on-air engine is live (fireDaemonReload /
+//     anyOnAirEngineLive): never mid-broadcast. The respawn re-stages by content, so it loads the installed engine.
+//   · back to a match → one green daemon-engine-match event, so the timeline shows when it was resolved.
+// Transition-only events; the startup-log line is written on every connect as the receipt.
+const { decideDaemonEngine } = require("./daemon-engine");
+let _daemonEngineStale = null;
+// The running engine a reload was already armed for. If the respawned daemon reports the SAME stale engine, the
+// replacement did not take (stage-engine could not replace an in-use file — it says so in the startup log): stay red,
+// do not re-arm, so an idle station is never put through a reload loop.
+let _engineReloadArmedFor = null;
+async function checkDaemonEngine() {
+  let eng, err;
+  try { eng = await audiodClient.cmd("engine", {}); } catch (e) { err = e; }
+  const verdict = decideDaemonEngine({ daemon: eng, installed: audiodClient.installedEngineFingerprint(), error: err });
+  if (!verdict) return;
+  const d = verdict.daemon, i = verdict.installed;
+  logStartup(`[AUDIO] engine-check: running native ${d.native || "unknown"} code ${d.code || "unknown"} | installed native ${i.native || "unknown"} code ${i.code || "unknown"} → ${verdict.stale ? "MISMATCH (" + verdict.reason + ") — reload armed, fires only when no station is live" : "match"}`);
+  if (verdict.stale) {
+    if (_daemonEngineStale !== true) {
+      _healthEvent("daemon-engine-mismatch-error", { reason: verdict.reason, parts: verdict.parts,
+        runningEngine: d.native, installedEngine: i.native, runningCode: d.code, installedCode: i.code, message: verdict.message });
+    }
+    const key = (d.native || "unknown") + "/" + (d.code || "unknown");
+    if (_engineReloadArmedFor === key) logStartup("[AUDIO] engine-check: the respawned engine is still the old one — NOT re-arming; see [stage-engine] lines above");
+    else { _engineReloadArmedFor = key; armDaemonReload(); }
+  } else if (_daemonEngineStale === true) {
+    _healthEvent("daemon-engine-match", { runningEngine: d.native, installedEngine: i.native,
+      message: `The running audio engine is now the installed one (${String(i.native || "").slice(0, 12)})` });
+  }
+  _daemonEngineStale = verdict.stale;
+}
+
 
 // Audio-liveness watchdog (Item 10 follow-up — the recurring SILENT-WEDGE recovery). Distinct from
 // the daemon's own stall watchdog (which only catches "no deck playing"): here the daemon's logic
@@ -1049,6 +1086,7 @@ if (AUDIO_DAEMON_DESIRED) {
     // A fresh connection supersedes any pending reload (this connect may BE the reloaded daemon).
     disarmDaemonReload();
     checkStaleDaemon();
+    checkDaemonEngine();
     _seedAutomationIntentFromDisk();   // ensure the persisted on-air set is loaded before we replay intents (boot + respawn)
     // v4.4.50: if we FELL BACK to in-process at boot and the daemon has now attached, do NOT drive the
     // daemon here (that would double up with the live in-process audio). Arm a song-boundary handover.

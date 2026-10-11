@@ -118,7 +118,7 @@ function spawnDaemon() {
     let exe = process.execPath, script = DAEMON_SCRIPT, tag = "in-dir engine";
     // Packaged only: stage a renamed, update-proof engine. Dev runs the in-dir repo source (above)
     // so daemon edits actually take effect and no stale packaged binary is reused.
-    const staged = dev ? null : stageEngine({ srcRoot: SRC_ROOT, unpacked: UNPACKED_ROOT, version: appVersion() });
+    const staged = dev ? null : stageEngine({ srcRoot: SRC_ROOT, unpacked: UNPACKED_ROOT, version: appVersion(), log: (m) => _log(m) });
     if (staged) { exe = staged.exe; script = staged.script; tag = "staged engine (update-proof)"; }
     // Durable daemon log: the daemon is detached/stdio:"ignore" so its console is otherwise lost.
     // We know app userData here (the ELECTRON_RUN_AS_NODE daemon doesn't), so pass the path in.
@@ -275,6 +275,15 @@ function cmd(name, args = {}) {
   });
 }
 
+// What the INSTALL's engine is, by content (audiod/engine-fingerprint.js) — compared by main with what the running
+// daemon reports it loaded (`engine` command). Cached: the install does not change under a running app.
+let _installedFp = null;
+function installedEngineFingerprint() {
+  if (_installedFp) return _installedFp;
+  try { _installedFp = require("../audiod/engine-fingerprint").engineFingerprint(UNPACKED_ROOT); } catch { _installedFp = { native: null, code: null }; }
+  return _installedFp;
+}
+
 function isConnected() { return connected; }
 function getDaemonLogPath() { return daemonLogPath; }
 function stop() { stopped = true; if (reconnectTimer) clearTimeout(reconnectTimer); try { if (sock) sock.end(); } catch {} }
@@ -287,4 +296,4 @@ function reloadDaemon() {
   try { if (connected && sock) sock.write(JSON.stringify({ cmd: "shutdown" }) + "\n"); } catch {}
 }
 
-module.exports = { isEnabled, ensure, cmd, setEventHandler, setConnectedHandler, setLog, isConnected, getDaemonLogPath, stop, reloadDaemon };
+module.exports = { installedEngineFingerprint, isEnabled, ensure, cmd, setEventHandler, setConnectedHandler, setLog, isConnected, getDaemonLogPath, stop, reloadDaemon };

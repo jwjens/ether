@@ -32,6 +32,8 @@ const daemon = cp.spawn(EXE, [DAEMON], { env: { ...process.env, ELECTRON_RUN_AS_
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 function ping() { return new Promise((res) => { const s = net.connect(PIPE); let done = false; const fin = (v) => { if (done) return; done = true; try { s.destroy(); } catch {} res(v); }; s.once("connect", () => { s.write(JSON.stringify({ id: 1, cmd: "ping" }) + "\n"); }); s.on("data", (d) => { fin(d.toString().includes("pong")); }); s.once("error", () => fin(false)); setTimeout(() => fin(false), 1200); }); }
 
+function ask(cmd) { return new Promise((res) => { const s = net.connect(PIPE); let buf = "", done = false; const fin = (v) => { if (done) return; done = true; try { s.destroy(); } catch {} res(v); }; s.once("connect", () => { s.write(JSON.stringify({ id: 7, cmd }) + "\n"); }); s.on("data", (d) => { buf += d.toString(); const nl = buf.indexOf("\n"); if (nl < 0) return; try { const m = JSON.parse(buf.slice(0, nl)); fin(m && m.ok ? m.result : null); } catch { fin(null); } }); s.once("error", () => fin(null)); setTimeout(() => fin(null), 3000); }); }
+
 // ── STAGING CHECK (added 2026-07-30) ──────────────────────────────────────────────────────────────
 // The ping above proves the PACKAGE is right. It is not enough, and 4.4.114 proved it: the package was
 // perfect and this script passed, but the daemon does not run from the package — stage-engine.js copies
@@ -70,6 +72,9 @@ function checkStaging() {
 (async () => {
   let ok = false;
   for (let i = 0; i < 25 && !ok; i++) { ok = await ping(); if (!ok) await sleep(300); }
+  // ENGINE IDENTITY (2026-10-10): the packaged daemon must report, by sha256, the engine it loaded — and it must be the
+  // packaged one. That report is what main compares with the install to raise daemon-engine-mismatch-error.
+  const eng = ok ? await ask("engine") : null;
   try { daemon.kill(); } catch {}
   console.log("packaged daemon spawned under: " + path.basename(EXE));
   console.log("packaged daemon answered ping: " + ok);
@@ -100,7 +105,15 @@ function checkStaging() {
     ? "✅ every relative require in the daemon resolves to a file stage-engine copies to %LOCALAPPDATA%\\Ether\\engine"
     : `❌ ${st.why || "a daemon require points at a file that is NOT staged"} — the staged daemon would die on MODULE_NOT_FOUND and every station would fall back to in-process`));
 
-  const pass = ok && st.ok && elecOk;
+  const pkgFp = require(path.join(__dirname, "engine-fingerprint.js")).engineFingerprint(path.join(ROOT, MAC ? "Resources" : "resources", "app.asar.unpacked"));
+  const engOk = !!(eng && pkgFp.native && eng.native === pkgFp.native && pkgFp.code && eng.code === pkgFp.code);
+  console.log(`\nengine identity: daemon reports native ${eng && eng.native || "(none)"} code ${eng && eng.code || "(none)"}`);
+  console.log(`                 package holds  native ${pkgFp.native || "(none)"} code ${pkgFp.code || "(none)"}`);
+  console.log("→ ENGINE IDENTITY: " + (engOk
+    ? "✅ the packaged daemon reports the packaged engine by sha256 (what the Health Monitor engine-match check reads)"
+    : "❌ the packaged daemon did not report the packaged engine — the engine-match check would be blind or wrong"));
+
+  const pass = ok && st.ok && elecOk && engOk;
   console.log(`\n${pass ? "✅ RELEASE GATE PASS" : "❌ RELEASE GATE FAIL"}`);
   setTimeout(() => process.exit(pass ? 0 : 1), 200);
 })();

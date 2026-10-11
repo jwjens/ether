@@ -138,6 +138,12 @@ setInterval(() => {
 // (electron/main.js setupAudioBackend → in-process engine) can be verified deterministically.
 if (process.env.ETHER_AUDIOD_DIE === "1") { console.error("[audiod] ETHER_AUDIOD_DIE — exiting to simulate an unstartable daemon"); process.exit(1); }
 const A = require(path.join(__dirname, "..", "native", "ether-audio.node"));
+// WHAT THIS PROCESS LOADED, by content (2026-10-10, docs/monitor-failed-test-diagnosis-2026-10-10.md): the sha256 of the
+// ether-audio.node required just above and of the daemon code beside this file. Taken once, now, from the files this
+// process started from — so a later re-stage (which renames an in-use file aside) cannot make it claim the new engine.
+// main compares it with the install and reports a mismatch red in the Health Monitor. Never fatal.
+let ENGINE_FP = { native: null, code: null };
+try { ENGINE_FP = require("./engine-fingerprint").engineFingerprint(path.join(__dirname, "..")); } catch { /* reported as unknown */ }
 const { DaemonEngine } = require("./engine");
 const { StreamSupervisor } = require("./stream");
 // v4.4.51: approximate the daemon process start (for the Health Monitor's uptime/restart, reported in
@@ -582,11 +588,14 @@ const handlers = {
     // three code paths each resolved "the daemon log" on their own). null when the log module is absent.
     let logPath = null;
     try { logPath = _dlog && _dlog.logPath ? (_dlog.logPath() || null) : null; } catch { logPath = null; }
-    return { ok: true, pid: process.pid, startedAt: DAEMON_STARTED_AT, ownerPid, supervisorPid, spawnedFor: SPAWNED_FOR, version: process.env.ETHER_DAEMON_VERSION || "0", logPath };
+    return { ok: true, pid: process.pid, startedAt: DAEMON_STARTED_AT, ownerPid, supervisorPid, spawnedFor: SPAWNED_FOR, version: process.env.ETHER_DAEMON_VERSION || "0", logPath, engine: ENGINE_FP };
   },
   // The app version this daemon was spawned with (passed via env). Lets the app detect a stale
   // daemon left running across an update and reload it (the dead-air-on-update gotcha).
   version:            ()  => process.env.ETHER_DAEMON_VERSION || "0",
+  // The engine this process loaded (sha256 of ether-audio.node + of the daemon code). A version string names a release,
+  // not a build — two different builds both said "4.6.59" (2026-10-10). main compares this with the install.
+  engine:             ()  => ({ native: ENGINE_FP.native, code: ENGINE_FP.code, root: path.join(__dirname, "..") }),
   // Graceful remote stop (the HA watchdog sends this on a clean user-quit, so the daemon
   // doesn't outlive the station; an update/relaunch leaves the daemon running instead).
   shutdown:           ()  => { setTimeout(shutdown, 50); return "bye"; },
