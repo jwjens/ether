@@ -132,15 +132,10 @@ export default function FaderSection({
   // ON with the engine never told, and a cart re-dialled onto it played into a slot whose cut had
   // never been asserted. Because what is asserted is now the STORED value, two windows assert the
   // same thing. The jukebox is excluded — its cut is persisted separately and defaults OFF.
-  useEffect(() => {
-    if (!deckConfigs || !deckConfigs.length) return;
-    for (const c of deckConfigs) {
-      if (c.type !== "source" || !c.enabled) continue;
-      if (c.kind === "jukebox") continue;
-      const on = srcChannelOn[c.slot] ?? true;
-      try { engine.getDeck(c.slot)?.setMuted(!on); } catch { /* engine not up yet */ }
-    }
-  }, [deckConfigs, srcChannelOn, engine]);
+  // (2026-10-11) That downward assert is now the ENGINE's job: it restores every channel's stored cut itself at its own
+  // start and on every connect (audiod/board-state.js, from deck_configs.channel_on — the same value the lamp reads).
+  // The window sent it once per mount and dropped a failure, which on an in-process fallback start reached the wrong
+  // engine. The lamp still reads the row; the ON button still sends the change.
 
   // ── THE SIX SOURCE-CHANNEL WRITERS ──────────────────────────────────────────────────────────
   // Each had exactly one consumer — this section — so they live with it. Every one that touches

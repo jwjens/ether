@@ -79,15 +79,14 @@ export default function AuxMonitorSlots() {
   const [info, setInfo] = useState<Record<string, any>>({});
   const uuidRef = useRef(stationUuid);
   uuidRef.current = stationUuid;
-  const levelsRef = useRef(levels);
-  levelsRef.current = levels;
-  const appliedRef = useRef<Set<string>>(new Set());   // decks whose gain we have asserted this mount
 
   /** The ROOM level for one aux deck. 0 = silent on the local speakers. Never air. */
   const applyGain = useCallback(async (deck: string, gain: number) => {
     if (stationId == null) return;
-    try { await (window as any).ether.audio.setAuxMonitor(stationId, deck, gain); }
-    catch { /* engine not up yet — the level is persisted and asserted on the next mount */ }
+    // A CHANGE only. Never swallowed: main queues a send the engine could not take and applies it on connect
+    // (electron/board-sync.js); a failure that still reaches here is said.
+    try { const r = await (window as any).ether.audio.setAuxMonitor(stationId, deck, gain); if (r === false) console.warn(`[aux-monitor] ${deck} room level ${gain} not taken by the engine yet — queued by main`); }
+    catch (e) { console.warn(`[aux-monitor] ${deck} room level ${gain} not sent:`, e); }
   }, [stationId]);
 
   // ── WHICH DECKS. Derived live from deck_configs: every enabled deck that is not a main fader.
@@ -168,7 +167,7 @@ export default function AuxMonitorSlots() {
 
         const dev = String(rows.find((x: any) => x.key === DEV_KEY)?.value ?? "");
         setDevice(dev);
-        try { await (window as any).ether.audio.setAuxDevice(stationId, dev); } catch { /* engine not up */ }
+        // No push here: the saved device is the engine's from its start (audiod/board-state.js). The panel only READS it.
         try {
           const list = await (window as any).ether.audio.listOutputDevices();
           if (!stop && Array.isArray(list)) setDevices(list);
@@ -178,20 +177,10 @@ export default function AuxMonitorSlots() {
     return () => { stop = true; };
   }, [stationId, showTick]);
 
-  // ASSERT DOWNWARD, per deck, once each. The engine boots with every aux gain at 0, so the panel
-  // states the operator's saved position rather than assuming the engine already has it. A deck with
-  // no saved level is asserted at 0 — silence is never something an upgrade decides for you; the
-  // row's slider is right there.
-  useEffect(() => {
-    if (stationId == null) return;
-    for (const d of auxDecks) {
-      if (appliedRef.current.has(d.slot)) continue;
-      appliedRef.current.add(d.slot);
-      void applyGain(d.slot, levelsRef.current[d.slot] ?? 0);
-    }
-  }, [auxDecks, stationId, applyGain]);
-  // A station switch re-asserts everything.
-  useEffect(() => { appliedRef.current = new Set(); }, [stationId]);
+  // NO ASSERT ON MOUNT (2026-10-11, docs/board-state-on-connect-diagnosis-2026-10-11.md). This panel used to send every
+  // saved row once per mount and drop a failure; when the app started on its in-process fallback those sends never
+  // reached the daemon, and every Source fader was silent in the room. The engine now restores the saved rows itself
+  // (audiod/board-state.js), and this panel sends CHANGES only.
 
   const chooseDevice = useCallback((dev: string) => {
     setDevice(dev);

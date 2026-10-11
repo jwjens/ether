@@ -274,21 +274,15 @@ class ShowBlade {
   boot() {
     if (this.booted) return;
     this.booted = true;
+    // THE FADER RESTORE IS RETIRED HERE (Jeff, 2026-10-11). It ran only from the daemon's `init` command, which nothing
+    // sends, so saved fader levels were never restored. The saved board — faders included — is now restored by the one
+    // applier (audiod/board-state.js) at engine start and on every connect. The blade still MIRRORS the levels it sees
+    // (noteVolume/noteMaster) so its own state and board_levels stay true.
     let lv = null;
     try { lv = JSON.parse(this.readKv("board_levels") || "null"); } catch { lv = null; }
     if (lv && typeof lv === "object") {
-      const slots = {};
-      for (const s of SLOTS) { const v = num(lv[s]); if (v != null && v >= 0 && v <= 4) slots[s] = { fader: v }; }
-      const mv = num(lv.master);
-      const doc = { slots, ...(mv != null && mv >= 0 && mv <= 1 ? { master: { fader: mv } } : {}) };
-      if (Object.keys(slots).length || doc.master) {
-        const r = this._apply(doc);
-        if (r.ok) {
-          for (const s of Object.keys(slots)) this.levels[s] = slots[s].fader;
-          if (doc.master) this.levels.master = doc.master.fader;
-          this.log(`[show s${this.stationId}] faders restored (${Object.keys(slots).length} + ${doc.master ? "master" : "no master"})`);
-        } else this.log(`[show s${this.stationId}] faders NOT restored ✗ ${r.reason}`);
-      }
+      for (const s of SLOTS) { const v = num(lv[s]); if (v != null && v >= 0 && v <= 4) this.levels[s] = v; }
+      const mv = num(lv.master); if (mv != null && mv >= 0 && mv <= 1) this.levels.master = mv;
     }
     try { this.current = this.readKv("show_current") || null; } catch { this.current = null; }
     let pend = null;

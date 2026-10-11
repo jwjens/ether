@@ -29,8 +29,9 @@ export default function StationMonitorMixer() {
     try { return JSON.parse(localStorage.getItem("ether_monitor_open") || "{}"); } catch { return {}; }
   });
 
-  // Load stations + each station's saved monitor level / output device, and APPLY them on launch
-  // (so the operator's mix is restored, not reset to unity every start).
+  // Load stations + each station's saved monitor level / output device, for DISPLAY. Not re-sent (2026-10-11): the
+  // engine restores both itself at its own start (audiod/board-state.js) — this used to push them once per mount and
+  // drop a failure, and the device push reopened every station's output on every mount.
   useEffect(() => {
     (async () => {
       const ether = (window as any).ether;
@@ -45,8 +46,6 @@ export default function StationMonitorMixer() {
           const od = rows.find(r => r.key === "audio_output_device")?.value;
           v[s.id] = mv != null && mv !== "" ? Math.max(0, Math.min(1, parseFloat(mv))) : 1;
           d[s.id] = od ?? "";
-          try { await ether.audio.setMonitorVolume(s.id, v[s.id]); } catch {}
-          if (od) { try { await ether.audio.setOutputDevice(s.id, od); } catch {} }
         }));
         setVol(v); setDev(d);
         const devs = await ether.audio.listOutputDevices();

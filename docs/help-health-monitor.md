@@ -95,6 +95,25 @@ When any of them goes up, the line turns **amber for a minute** and shows the ti
 written to the health ledger (**Live events**) with how many and for which station. The totals stay
 on the card after that, in grey. Hover the line for the full detail (callbacks run, silent frames).
 
+### "Board state mismatch error" — the engine is not running the board you saved
+
+Every time Ether connects to its audio engine (when Ether opens, and after any restart of the engine), it puts your
+saved board back and then **checks** it: every channel fader, ON/OFF, AUX monitor row, MONITOR and MASTER. If
+anything the engine is running differs from what you saved, a **red** row appears in **Live events**, naming each
+setting by the fader's name on your board, with its saved and live values. For example: *G AUX monitor row: saved
+0.74, live 0* means channel G should be heard in the room at 0.74 and the engine has it silent.
+
+What to do:
+
+1. Move the named control a little and back. That sends it again.
+2. If the row comes back after Ether reopens, tell support and include the time.
+
+A green **Board state match** row appears when a later check finds everything as you saved it.
+
+*A Sweeper channel listed as "channel type" (saved "jingle → sweeper", live "source"):* the engine is playing that channel
+as a Source fader rather than a Sweeper. This is known, and the change needs an operator decision because it affects
+how the channel ducks the music. It is listed so it is never hidden.
+
 ### "Daemon engine mismatch error" — the engine playing is not the one installed
 
 EtherCast's audio engine keeps running while you update, so music isn't cut. After an update, the engine

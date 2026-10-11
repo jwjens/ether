@@ -459,6 +459,13 @@ const handlers = {
   setAuxMonitor:      (m) => A.audioSetAuxMonitor(m.stationId, m.deck, m.gain),
   // AUX output device. "" = none = the aux stream closes and the bus is silent. Never falls back.
   setAuxDevice:       (m) => A.audioSetAuxDevice(m.stationId, m.device || ""),
+  // THE BOARD AS THE ENGINE HOLDS IT (native/src/board.rs): every operator-set value as the dispatch thread holds it
+  // (`control`) and as the audio callback last mixed with it (`applied`), plus the devices. A read; changes nothing.
+  // Re-apply the saved board (one station, or every station when stationId is absent). main sends this on every connect.
+  applySavedBoard:    (m) => (m.stationId != null ? applyBoardFor(m.stationId, m.reason || "app") : applyBoardAll(m.reason || "app")),
+  getBoardState:      (m) => (typeof A.audioGetBoardState === "function"
+                                ? JSON.parse(A.audioGetBoardState(Number(m.stationId)))
+                                : { ok: false, reason: "this audio engine predates board-state reads — fully close and reopen Ether" }),
   setEq:              (m) => A.audioSetEq(m.stationId, JSON.stringify(m.bands || [])),
   // SLICE 4 — the whole master rack for one station. The engine parses and validates it and answers
   // { ok, reason } — a refused rack is reported, never silently dropped.
@@ -742,6 +749,33 @@ const handlers = {
 
 function send(sock, obj) { try { sock.write(JSON.stringify(obj) + "\n"); } catch { /* client gone */ } }
 
+// Every board setter the engine receives, logged with what the engine answered (audiod/board-log.js). Never fatal.
+const noteBoard = (() => { try { return require("./board-log").makeBoardLog(log); } catch (e) { log("board log unavailable:", e && e.message); return () => {}; } })();
+
+// THE SAVED BOARD (audiod/board-state.js; docs/board-state-on-connect-diagnosis-2026-10-11.md). Jeff: "a fader is never
+// asleep." This daemon restores every station's saved board itself — at start (whether or not the app is open), the
+// first time a station it has not seen is addressed, and whenever main asks (every connect, so changes made while the
+// app ran on its in-process fallback reach this engine too). The windows no longer have to.
+const BoardState = (() => { try { return require("./board-state"); } catch (e) { log("board state unavailable:", e && e.message); return null; } })();
+const boardApplied = new Set();   // stations whose saved board this process has applied
+function applyBoardFor(stationId, why) {
+  const sid = Number(stationId);
+  if (!BoardState || !Number.isFinite(sid)) return { ok: false, stationId: sid, reason: "board state unavailable" };
+  let db;
+  try { db = getDb(); } catch (e) { log(`[board s${sid}] saved board NOT applied (${why}) ✗ ${e && e.message}`); return { ok: false, stationId: sid, reason: String(e && e.message || e) }; }
+  const r = BoardState.applySavedBoardState(db, A, sid);
+  boardApplied.add(sid);
+  log(`[board s${sid}] saved board applied (${why}): ${r.sent.length} setting(s)` +
+      (r.failed.length ? ` — NOT applied ✗ ${r.failed.map(f => `${f.setting}: ${f.reason}`).join("; ")}` : ""));
+  return { ok: r.failed.length === 0, stationId: sid, sent: r.sent, failed: r.failed };
+}
+function applyBoardAll(why) {
+  if (!BoardState) return [];
+  let ids = [];
+  try { ids = BoardState.listStations(getDb()); } catch (e) { log(`[board] stations not listed (${why}) ✗ ${e && e.message}`); return []; }
+  return ids.map(sid => applyBoardFor(sid, why));
+}
+
 // Commands worth a log line on receipt — the lifecycle/automation surface (NOT the high-rate
 // pollers like getState/getLevels/getQueue, which would drown the log). automationStart/Stop
 // receipts are the anchor for verifying the auto-resume fix (Commit 2).
@@ -753,8 +787,16 @@ function handleLine(sock, line) {
   const fn = handlers[msg.cmd];
   if (!fn) { send(sock, { id: msg.id, ok: false, error: "unknown cmd: " + msg.cmd }); return; }
   if (LOGGED_CMDS.has(msg.cmd)) log("cmd " + msg.cmd + " station=" + (msg.stationId ?? "-"));
+  // A profile switch changes the database: every station's board is re-read on its next use.
+  if (msg.cmd === "releaseDb") boardApplied.clear();
+  // A station this process has not restored yet (created after start, or after a profile switch): its saved board
+  // first, then the command — so the command lands on the board the operator saved, never on boot defaults.
+  else if (msg.stationId != null && msg.cmd !== "applySavedBoard" && msg.cmd !== "getBoardState" && !boardApplied.has(Number(msg.stationId))) {
+    try { applyBoardFor(msg.stationId, "first use"); } catch (e) { log(`[board s${msg.stationId}] first-use apply ✗ ${e && e.message}`); }
+  }
   try {
     const r = fn(msg);
+    try { noteBoard(msg, r); } catch { /* the log must never break a command */ }
     // Some handlers (automationStart/fill) return promises — resolve before replying.
     if (r && typeof r.then === "function") r.then(v => send(sock, { id: msg.id, ok: true, result: v })).catch(e => send(sock, { id: msg.id, ok: false, error: String(e && e.message || e) }));
     else send(sock, { id: msg.id, ok: true, result: r });
@@ -900,7 +942,13 @@ const server = net.createServer((sock) => {
   sock.on("error", () => { clients.delete(sock); });
 });
 
-function startListen() { server.listen(PIPE, () => log("listening on " + PIPE + " (node " + process.version + ")")); }
+function startListen() {
+  server.listen(PIPE, () => {
+    log("listening on " + PIPE + " (node " + process.version + ")");
+    // Every station's saved board, now — with or without the app (a watchdog restart has no window to send it).
+    setImmediate(() => { try { applyBoardAll("engine start"); } catch (e) { log("[board] start-up apply ✗ " + (e && e.message)); } });
+  });
+}
 
 server.on("error", (e) => {
   if (e.code === "EADDRINUSE") {

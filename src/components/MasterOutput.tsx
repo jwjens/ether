@@ -628,7 +628,7 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
   useEffect(() => { if (show.levels.master != null) setMasterVol(show.levels.master); }, [show.levels.master]);
 
   useEffect(() => {
-    try { localStorage.setItem('ether_monitor_vol', String(monitorVol)); } catch {}
+    // (no longer saved here — the database holds it, machine-local; see applyMonitor)
   }, [monitorVol]);
 
   // ── MONITOR = the ONE master room level ───────────────────────────────────────────────────────
@@ -642,17 +642,29 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
   // docs/master-monitor-faders-dead-2026-08-06.md §7
   const applyMonitor = useCallback((v: number) => {
     setMonitorVol(v);
-    try { (window as any).ether?.audio?.setMasterMonitorVolume?.(v); } catch { /* engine absent */ }
+    // A CHANGE. main sends it to every station's engine (queued if the engine cannot take it yet) and SAVES it,
+    // machine-local, so the engine restores it at its own start (audiod/board-state.js). Never swallowed.
+    Promise.resolve((window as any).ether?.audio?.setMasterMonitorVolume?.(v))
+      .catch((e: any) => console.warn("[monitor] MONITOR level not sent:", e));
   }, []);
 
-  // Re-apply the remembered room level once audio is up, so it survives a restart. Global, so it does
-  // not depend on which station is active and cannot disturb anyone's strip.
-  const monitorPrimed = useRef(false);
+  // THE SAVED LEVEL, READ — not re-sent (2026-10-11). This used to re-apply the window's localStorage value once per
+  // mount and drop a failure; the engine restores the saved level itself now. The fader only shows it. A level that
+  // was only ever in localStorage (before this build) is moved into the database ONCE, through the normal send.
+  const monitorLoaded = useRef(false);
   useEffect(() => {
-    if (!isReady || monitorPrimed.current) return;
-    monitorPrimed.current = true;
-    if (monitorVol !== 1) applyMonitor(monitorVol);
-  }, [isReady, monitorVol, applyMonitor]);
+    if (monitorLoaded.current) return;
+    monitorLoaded.current = true;
+    (async () => {
+      try {
+        const saved = await (window as any).ether?.invoke?.("local:monitor-saved");
+        if (typeof saved === "number" && Number.isFinite(saved)) { setMonitorVol(saved); return; }
+        let legacy: number | null = null;
+        try { const raw = localStorage.getItem("ether_monitor_vol"); legacy = raw == null ? null : parseFloat(raw); } catch { legacy = null; }
+        if (legacy != null && Number.isFinite(legacy)) applyMonitor(Math.max(0, Math.min(1, legacy)));
+      } catch (e) { console.warn("[monitor] saved MONITOR level not read:", e); }
+    })();
+  }, [applyMonitor]);
   useEffect(() => {
     try { localStorage.setItem("ether_station_info_collapsed", stationInfoOpen ? "0" : "1"); } catch {}
   }, [stationInfoOpen]);

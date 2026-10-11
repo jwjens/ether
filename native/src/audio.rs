@@ -446,6 +446,8 @@ pub enum AudioCmd {
     /// Choose the output device for the AUX monitor bus. Empty string = none = the aux stream is
     /// closed and the bus is silent.
     SetAuxDevice(String),
+    /// THE BOARD AS THE ENGINE HOLDS IT (board.rs): replies with { control, applied, devices } as JSON.
+    GetBoard(std::sync::mpsc::SyncSender<String>),
 }
 
 pub struct AudioState {
@@ -1039,7 +1041,7 @@ impl BusState {
 
     /// Adopt a parameter block (callback, top of buffer). Plain field copies; the GEQ is re-tuned only when
     /// its bands actually changed, on BOTH instances, as SetEq always did.
-    fn apply_params(&mut self, p: &Params) {
+    pub(crate) fn apply_params(&mut self, p: &Params) {
         for i in 0..SLOT_COUNT {
             self.decks[i].volume = p.volume[i];
             self.decks[i].muted = p.muted[i];
@@ -1466,6 +1468,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             // Superseded no-device path (see start_station_mixer's header): it owns no
                             // aux stream, so there is nothing here to open or close.
                             AudioCmd::SetAuxDevice(_) => {}
+                            AudioCmd::GetBoard(tx) => { let _ = tx.try_send(r#"{"ok":false,"reason":"no mixer on this path"}"#.to_string()); }
                         }
                     }
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -1883,6 +1886,64 @@ mod slice1_regression {
             assert!(silent(&off.device) && silent(&off.aux), "slot {slot}: a non-cue local output made sound with MONITOR at 0");
             assert_eq!(checksum(&on.stream), checksum(&off.stream), "slot {slot}: PFL/MONITOR changed the AIR stream");
         }
+    }
+
+    /// THE BOARD IS NEVER ASLEEP (2026-10-11, docs/board-state-on-connect-diagnosis-2026-10-11.md). After a fresh start
+    /// every Source fader was silent in the room — on air, ducking the music, meters moving — until a fader was touched.
+    /// A fresh engine is that state; the saved board then arrives LATE, as ONE parameter block through the product's own
+    /// command queue (what audiod/board-state.js sends), and nothing is touched after it. The Source fader must then be
+    /// heard on all three: air (stream), the main device, and the AUX room path.
+    #[test]
+    fn a_late_saved_board_brings_a_source_fader_to_air_stream_and_room_with_no_touch() {
+        let (prod, mut cons) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)));
+        let mut h = b.handles.take().unwrap();
+        let (aux_prod, mut aux_cons) = HeapRb::<f32>::new(AUX_BUS_BUF).split();
+        const S1: usize = 7;
+        assert_eq!(default_kind_for(S1), SlotKind::Source);
+        for i in [0usize, S1] {
+            b.decks[i].source = Some(DeckFeed::prefilled(Det(500 + i as u64), 480 * 2 * 600));
+            b.decks[i].active = true;
+            b.decks[i].paused = false;
+        }
+        b.aux_ring_prod = Some(crate::localout::LocalRing::new(aux_prod));
+        // The saved board, as the applier builds it: S1's room row, its fader, the station strip and the master MONITOR.
+        let mut saved = b.params();
+        crate::show::set_room(&mut saved, S1, 0.74);
+        saved.volume[S1] = 0.9;
+        saved.monitor_vol = 0.73;
+        saved.master_monitor_vol = 0.4641;
+        let bus = Arc::new(crate::rt::RtMutex::new(b));
+        let fin = FinishedFlags::new();
+        let playing = Arc::new(AtomicBool::new(true));
+        let mut sc = Scratch::new();
+        let mut run = |n: usize, aux: &mut Vec<f32>, dev: &mut Vec<f32>, stream: &mut Vec<f32>| {
+            for _ in 0..n {
+                let mut data = vec![0f32; 480 * 2];
+                mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+                dev.extend_from_slice(&data);
+                while let Some(v) = aux_cons.try_pop() { aux.push(v); }
+                while let Some(v) = cons.try_pop() { stream.push(v); }
+            }
+        };
+        // 1 · FRESH ENGINE, nothing restored: S1 is on air, and silent in the room (the 2026-10-11 report).
+        let (mut aux0, mut dev0, mut st0) = (Vec::new(), Vec::new(), Vec::new());
+        run(20, &mut aux0, &mut dev0, &mut st0);
+        assert!(peak(&st0) > 0.01, "the stream is not live — the test is not exercising the mix");
+        assert!(silent(&aux0), "a fresh engine's Source fader reached the room with no AUX row — the test premise changed");
+        // 2 · THE LATE CONNECT: the saved board arrives as one block through the queue. No fader is touched after it.
+        assert!(h.cmd_prod.try_push(RtCmd::Params(Box::new(saved))).is_ok());
+        let (mut aux1, mut dev1, mut st1) = (Vec::new(), Vec::new(), Vec::new());
+        run(20, &mut aux1, &mut dev1, &mut st1);
+        assert!(peak(&st1) > 0.01, "S1 is not on air after the saved board arrived");
+        assert!(peak(&dev1) > 0.001, "the main device is silent after the saved board arrived");
+        assert!(peak(&aux1) > 0.001, "S1 is still silent in the room after its saved AUX row arrived — the board is asleep");
+        // The room row is post-fader and post-MONITOR: S1 × 0.9 × 0.74 × (0.73 × 0.4641), against S1 × 0.9 on air.
+        let applied = bus.lock().unwrap().params();
+        assert!((applied.aux_monitor_gain[S1] - 0.74).abs() < 1e-6 && (applied.master_monitor_vol - 0.4641).abs() < 1e-6,
+                "the callback is not running the saved block");
+        println!("[late-board] before: aux pk {:.4}; after: stream pk {:.4}, device pk {:.4}, aux pk {:.4} — no touch",
+                 peak(&aux0), peak(&st1), peak(&dev1), peak(&aux1));
     }
 
     #[test]
@@ -3038,6 +3099,21 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 // which. Rotation decks and CART never get here, so they keep unity.
                                 // (show::set_room — the one setter a Take also uses.)
                                 ctl.params_changed();
+                            }
+                            AudioCmd::GetBoard(tx) => {
+                                // The control copy is authoritative; `applied` is what the callback's latest meter frame
+                                // says it mixed with. Devices: what this station was told to open.
+                                let applied = ctl.meter.lock().ok().map(|mut r| crate::board::params_json(&r.read().params));
+                                let aux = aux_req.lock().map(|r| r.clone()).unwrap_or_default();
+                                let cue = cue_status(station_id).req.lock().map(|r| r.clone()).unwrap_or_default();
+                                let j = serde_json::json!({
+                                    "ok": true,
+                                    "station_id": station_id,
+                                    "control": crate::board::params_json(&ctl.params),
+                                    "applied": applied,
+                                    "devices": { "output": current_device.clone(), "aux": aux, "cue": cue },
+                                });
+                                let _ = tx.try_send(j.to_string());
                             }
                             AudioCmd::GetLevel => {
                                 // REAL levels — the callback's latest published frame (S3: a lock-free

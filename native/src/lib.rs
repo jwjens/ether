@@ -22,6 +22,7 @@ mod linknet;             // The Remote Link's sockets and threads (sender, liste
 pub mod rack;            // Slice 4 — the rack model; pub so the type-rule doctests (compile_fail) can see it
 mod rt;                  // Slice 1 S3 — lock-free channels between the audio callback and everything else
 mod loudness;           // Slice 3 — BS.1770 loudness per branch, on a meter thread — docs/dsp-loudness-meter.md
+mod board;               // The board as the engine holds it — audio_get_board_state (docs/board-state-on-connect-diagnosis-2026-10-11.md)
 mod localout;            // THE LOCAL OUTPUT STAGE — every local device is fed post-MONITOR (docs/monitor-bypass-diagnosis.md)
 mod offline_render;      // DSP parity harness — docs/dsp-parity-harness.md (diagnostic; never on the audio path)
 
@@ -1160,6 +1161,23 @@ pub fn audio_set_aux_device(station_id: u32, device_name: String) -> bool {
 ///
 /// Rejected for any deck that is not a source fader: A/B/C and CART are board channels and their local
 /// monitoring is unchanged by this feature. S1..S5 accepted since 2026-10-04.
+/// THE BOARD AS THE ENGINE HOLDS IT (native/src/board.rs): every operator-set value twice, the dispatch thread's
+/// authoritative copy (`control`) and the block the audio callback last mixed with (`applied`), plus the devices the
+/// station was told to open. {"ok":false,"reason":…} when the station's engine does not answer within a second.
+#[napi]
+pub fn audio_get_board_state(station_id: u32) -> String {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<String>(1);
+    {
+        let engine = get_or_create_engine(station_id, None);
+        let Ok(audio) = engine.lock() else { return serde_json::json!({ "ok": false, "reason": "engine busy" }).to_string() };
+        if audio.sender.send(AudioCmd::GetBoard(tx)).is_err() {
+            return serde_json::json!({ "ok": false, "reason": "the station's engine is not running" }).to_string();
+        }
+    }
+    rx.recv_timeout(std::time::Duration::from_millis(1000))
+        .unwrap_or_else(|_| serde_json::json!({ "ok": false, "reason": "the station's engine did not answer within 1 s" }).to_string())
+}
+
 #[napi]
 pub fn audio_set_aux_monitor(station_id: u32, deck: String, gain: f64) -> bool {
     let engine = get_or_create_engine(station_id, None);

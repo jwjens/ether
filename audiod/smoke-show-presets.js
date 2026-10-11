@@ -98,14 +98,14 @@ console.log("\nSLICE 7 — the blade: live = ON, pending until OFF, one engine c
   const kv = { show_pending: JSON.stringify(doc), show_current: "Morning", board_levels: JSON.stringify({ A: 0.7, D: 0.4, S1: 0.3, master: 0.9 }) };
   const r2 = rig({ kv, playing: [] });                   // fresh daemon: nothing playing; S1 boots OPEN (ON)
   r2.blade.boot();
-  check(r2.calls.length === 2, `boot = the faders restore + the pending that is no longer live (got ${r2.calls.length} calls)`);
-  const restore = r2.calls[0] || { slots: {} };
-  check(restore.slots.A.fader === 0.7 && restore.slots.S1.fader === 0.3 && restore.master.fader === 0.9 && Object.values(restore.slots).every(s => Object.keys(s).join() === "fader"), "board_levels restored as faders only (ruling 2)");
-  check(r2.calls[1] && Object.keys(r2.calls[1].slots).join() === "A", "A (not playing after the restart) takes its pending at boot");
+  // 2026-10-11: boot no longer restores the faders (audiod/board-state.js does, at engine start); it only re-arms.
+  check(r2.calls.length === 1, `boot = only the pending that is no longer live — no fader restore (got ${r2.calls.length} calls)`);
+  check(r2.blade.state().levels.S1 === 0.3 && r2.blade.state().levels.master === 0.9, "the blade still mirrors the saved levels (S1 still waiting keeps its saved 0.3)");
+  check(r2.calls[0] && Object.keys(r2.calls[0].slots).join() === "A", "A (not playing after the restart) takes its pending at boot");
   const st = r2.blade.state();
   check(st.current === "Morning" && st.pending.length === 1 && st.pending[0].slot === "S1", "S1 (ON after the restart) is still waiting, and says for which show");
   r2.blade.boot();
-  check(r2.calls.length === 2, "boot runs once per engine");
+  check(r2.calls.length === 1, "boot runs once per engine");
 }
 
 // 5 · A preset never touches a machine-local key.

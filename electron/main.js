@@ -415,6 +415,80 @@ try {
 // desired. When desired, re-broadcast the daemon's events to windows (levels → the renderer's
 // VU feed; deck/queue/playstart → the renderer proxy; stream → the on-air status).
 const audiodClient = require("./audio-daemon-client");
+// ── THE BOARD IS NEVER ASLEEP (2026-10-11, docs/board-state-on-connect-diagnosis-2026-10-11.md) ─────────────────────
+// Jeff: "Whatever the board shows must be live in the engine from the moment Ether opens, with no touch required."
+// BoardState = the ONE applier (audiod/board-state.js) — the daemon runs it at its own start and on every connect; main
+// runs it against the in-process engine when it falls back. BoardSync = main's half: board setters routed through
+// _boardSend (a failed or fallback-time send is queued for the daemon and logged, never swallowed), and the connect pass
+// (apply, flush, read back, compare → board-state-mismatch-error).
+const BoardState = require("../audiod/board-state");
+const BoardSync = require("./board-sync");
+const _boardQueue = BoardSync.createBoardQueue({ log: (m) => { try { logStartup(m); } catch {} } });
+function _boardSend(cmd, args, inProcess) {
+  return BoardSync.boardSend({ cmd, args, daemonActive: AUDIO_DAEMON, daemonWanted: AUDIO_DAEMON_DESIRED,
+    toDaemon: (c, a) => audiodClient.cmd(c, a), inProcess, queue: _boardQueue });
+}
+// The database as main's normal start-up opened it — never opened early from here (getDb() would self-open it ahead of
+// the migrations). null until then.
+function _boardDb() { try { return db && db.open ? db : null; } catch { return null; } }
+const _waitBoardDb = async (ms = 30000) => { const t0 = Date.now(); while (!_boardDb() && Date.now() - t0 < ms) await new Promise(r => setTimeout(r, 250)); return _boardDb(); };
+function _stationIds() {
+  const d = _boardDb(); if (!d) return [];
+  try { return BoardState.listStations(d); } catch { return []; }
+}
+// The master MONITOR the windows show and scale by (local:monitor-level) starts from the SAVED level, not unity.
+function _loadSavedMasterMonitor() {
+  try {
+    for (const sid of _stationIds()) {
+      const s = BoardState.readSavedBoard(_boardDb(), sid);
+      if (s.masterMonitorVol !== undefined) { _localMonitorLevel = s.masterMonitorVol; sendToAllWindows("local:monitor-level", _localMonitorLevel); return; }
+    }
+  } catch (e) { logStartup(`[board] saved master MONITOR not read: ${e && e.message}`); }
+}
+// THE CONNECT PASS — serialised, so a connect and a handover a moment apart run one after the other.
+const _boardMismatched = new Set();   // stations whose last read-back differed (a later match says so, once)
+let _boardSyncChain = Promise.resolve();
+function _syncBoard(why) {
+  _boardSyncChain = _boardSyncChain.then(async () => {
+    if (!(await _waitBoardDb())) { logStartup(`[board] connect pass skipped (${why}) — the database did not open within 30 s`); return; }
+    _loadSavedMasterMonitor();
+    await BoardSync.syncBoardOnConnect({
+      cmd: (c, a) => audiodClient.cmd(c, a),
+      queue: _boardQueue,
+      stations: _stationIds,
+      readSaved: (sid) => BoardState.readSavedBoard(_boardDb(), sid),
+      compare: BoardState.compareBoard,
+      settle: (ms) => new Promise(r => setTimeout(r, ms)),
+      log: (m) => logStartup(`${m} (${why})`),
+      onMismatch: (sid, diffs) => {
+        _boardMismatched.add(sid);
+        const shown = diffs.slice(0, 8).map(d => `${d.label || d.setting}: saved ${JSON.stringify(d.saved)}, live ${JSON.stringify(d.live)}`).join("; ");
+        _healthEvent("board-state-mismatch-error", { stationId: sid, mismatches: diffs, reason: why,
+          message: `The engine is not running the board you saved — ${shown}${diffs.length > 8 ? ` (+${diffs.length - 8} more)` : ""}` });
+      },
+      onMatch: (sid) => {
+        if (!_boardMismatched.delete(sid)) return;
+        _healthEvent("board-state-match", { stationId: sid, reason: why, message: "The engine is running the board you saved" });
+      },
+    });
+  }).catch(e => logStartup(`[board] connect pass ✗ ${e && e.message || e} (${why})`));
+  return _boardSyncChain;
+}
+// IN-PROCESS FALLBACK: the same applier against the in-process engine (main owns it then). The database may not be open
+// yet when the fallback is decided, so it waits for it — briefly, and says so if it gives up.
+async function _applyBoardInProcess(why) {
+  await new Promise(r => setTimeout(r, 0));   // never synchronously inside module start-up
+  const db0 = await _waitBoardDb();
+  if (!db0) { logStartup(`[board] saved board NOT applied to the in-process engine (${why}) — the database did not open within 30 s`); return; }
+  for (const sid of _stationIds()) {
+    try {
+      const r = BoardState.applySavedBoardState(db0, audio, sid);
+      logStartup(`[board s${sid}] saved board applied to the in-process engine (${why}): ${r.sent.length} setting(s)` +
+        (r.failed.length ? ` — NOT applied ✗ ${r.failed.map(f => `${f.setting}: ${f.reason}`).join("; ")}` : ""));
+    } catch (e) { logStartup(`[board s${sid}] in-process apply ✗ ${e && e.message}`); }
+  }
+  _loadSavedMasterMonitor();
+}
 const _daemonStreamStates = new Map();   // stationId → last stream state, for stream:status:global
 const _daemonEngineState = new Map();    // stationId → last daemon enginestate (live|stalled|off); corroborates the silent-wedge watchdog in the reload-reason log
 // Auto-resume (Item 10): per-station automation intent. Set when the app issues automationStart,
@@ -1062,6 +1136,9 @@ if (AUDIO_DAEMON_DESIRED) {
       // The duck flags were pushed to the IN-PROCESS engine at boot; the daemon that just attached
       // has never heard them. Re-arm against the engine that now owns the audio.
       try { armAllStationDuckers("daemon-handover"); } catch (e) { logStartup("[duck] re-arm: " + (e && e.message)); }
+      // THE BOARD (2026-10-11): everything the windows set while the in-process engine played is in the queue; the
+      // handover used to carry only the duck flags, and the daemon ran on its boot defaults (every AUX row 0).
+      _syncBoard("handover");
       logStartup("[AUDIO] HANDOVER complete — playout on daemon (AUDIO_DAEMON=true)");
     } catch (e) { logStartup("[AUDIO] handover error: " + (e && e.message)); }
   }
@@ -1090,7 +1167,9 @@ if (AUDIO_DAEMON_DESIRED) {
     _seedAutomationIntentFromDisk();   // ensure the persisted on-air set is loaded before we replay intents (boot + respawn)
     // v4.4.50: if we FELL BACK to in-process at boot and the daemon has now attached, do NOT drive the
     // daemon here (that would double up with the live in-process audio). Arm a song-boundary handover.
-    if (_inProcessFallback && !AUDIO_DAEMON) { _armInProcessHandover(); return; }
+    // On the fallback the daemon is not playing yet, but it gets the saved board now (and the queue again at handover),
+    // so whatever it plays first it plays on the operator's board.
+    if (_inProcessFallback && !AUDIO_DAEMON) { _syncBoard("daemon attached during fallback"); _armInProcessHandover(); return; }
     // Phase D: replay BOTH automation AND stream intent so a reload restores playout AND the Icecast stream.
     replayIntents(audiodClient, _automationIntent, _streamIntent, { log: (m) => logStartup(`[AUDIO] ${m}`) });
     // THE DUCKER (2026-10-04, OV: "it needs to be turned off and turned on again"). A daemon that has just
@@ -1099,6 +1178,7 @@ if (AUDIO_DAEMON_DESIRED) {
     // TO THE DAEMON: at boot this handler runs before setupAudioBackend sets AUDIO_DAEMON, so the global
     // would still say in-process here.
     armAllStationDuckers("daemon-connect", { daemon: true });
+    _syncBoard("daemon connect");
   });
 
   // Safety net for the recurring silent-wedge (cpal output death) — auto-recovers dead air.
@@ -1137,10 +1217,12 @@ async function setupAudioBackend() {
         // daemon is picked up and setConnectedHandler arms the song-boundary handover. The old terminal
         // audiodClient.stop() is what stranded the app in-process for the whole session (docs/inprocess-*).
         try { audio.initAudioEngine(); } catch (e) { console.error("[AUDIO] in-process init failed:", e.message); logStartup("[AUDIO] in-process init failed: " + e.message); }
+        _applyBoardInProcess("in-process fallback");
       }
     } else {
       try { audio.initAudioEngine(); console.log("[AUDIO] in-process engine (daemon not enabled)"); }
       catch (e) { console.error("[AUDIO] init failed:", e.message); }
+      _applyBoardInProcess("in-process engine");
     }
   } finally { _resolveBackend(); }
 }
@@ -4624,17 +4706,14 @@ ipcMain.handle("audio:stop", (_, deck, stationId) => AUDIO_DAEMON ? audiodClient
 // AUX OUTPUT DEVICE — where the aux monitor bus is heard. "" closes it. Deliberately never falls back
 // to a default: aux audio only ever leaves via a device the operator chose.
 ipcMain.handle("audio:set-aux-device", (_, stationId, device) =>
-  AUDIO_DAEMON ? audiodClient.cmd("setAuxDevice", { stationId, device })
-               : audio.audioSetAuxDevice(stationId, device || ""));
+  _boardSend("setAuxDevice", { stationId, device }, () => audio.audioSetAuxDevice(stationId, device || "")));
 // DUCKER (slice 3) — arm/disarm one channel's duck. Routed like setMuted for the same reason: the
 // daemon owns the audio whenever AUDIO_DAEMON is on (the default on Windows), so an in-process-only
 // path would be a silent no-op on most installs.
 ipcMain.handle("audio:set-slot-kind", (_, stationId, deck, kind) =>
-  AUDIO_DAEMON ? audiodClient.cmd("setSlotKind", { stationId, deck, kind })
-               : audio.audioSetSlotKind(stationId, deck, String(kind || "")));
+  _boardSend("setSlotKind", { stationId, deck, kind }, () => audio.audioSetSlotKind(stationId, deck, String(kind || ""))));
 ipcMain.handle("audio:set-duck", (_, stationId, deck, enabled) =>
-  AUDIO_DAEMON ? audiodClient.cmd("setDuck", { stationId, deck, enabled })
-               : audio.audioSetDuck(stationId, deck, !!enabled));
+  _boardSend("setDuck", { stationId, deck, enabled }, () => audio.audioSetDuck(stationId, deck, !!enabled)));
 // ── THE ANNOUNCEMENT SCHEDULER (slice 5, 2026-08-25) ──────────────────────────────────────────
 //
 // docs/aux-channel-ducker-announcements-design-2026-08-21.md §C.2.
@@ -5194,14 +5273,12 @@ ipcMain.handle('announcements:can-fire', (_, stationId) => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 ipcMain.handle("audio:set-duckable", (_, stationId, deck, duckable) =>
-  AUDIO_DAEMON ? audiodClient.cmd("setDuckable", { stationId, deck, duckable })
-               : (audio && typeof audio.audioSetDuckable === "function"
-                    ? audio.audioSetDuckable(stationId, deck, !!duckable) : false));
+  _boardSend("setDuckable", { stationId, deck, duckable }, () => (audio && typeof audio.audioSetDuckable === "function"
+    ? audio.audioSetDuckable(stationId, deck, !!duckable) : false)));
 ipcMain.handle("audio:set-duck-params", (_, stationId, p) =>
-  AUDIO_DAEMON
-    ? audiodClient.cmd("setDuckParams", { stationId, depthDb: p.depthDb, thresholdDb: p.thresholdDb, attackMs: p.attackMs, holdMs: p.holdMs, releaseMs: p.releaseMs })
-    : (audio && typeof audio.audioSetDuckParams === "function"
-         ? audio.audioSetDuckParams(stationId, p.depthDb, p.thresholdDb, p.attackMs, p.holdMs, p.releaseMs) : false));
+  _boardSend("setDuckParams", { stationId, depthDb: p.depthDb, thresholdDb: p.thresholdDb, attackMs: p.attackMs, holdMs: p.holdMs, releaseMs: p.releaseMs },
+    () => (audio && typeof audio.audioSetDuckParams === "function"
+      ? audio.audioSetDuckParams(stationId, p.depthDb, p.thresholdDb, p.attackMs, p.holdMs, p.releaseMs) : false)));
 // The program processor's operator parameters. Routed exactly like set-duck-params so it reaches
 // whichever engine owns the audio. The two bypasses ride this call and are never stored anywhere.
 // TWO engine commands, because the numbers and the bypass are two different lifetimes: the numbers are
@@ -5244,12 +5321,13 @@ ipcMain.handle("audio:set-processor-bypass", async (_, stationId, p = {}) => {
   } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
 });
 ipcMain.handle("audio:set-aux-monitor", (_, stationId, deck, gain) =>
-  AUDIO_DAEMON ? audiodClient.cmd("setAuxMonitor", { stationId, deck, gain })
-               : audio.audioSetAuxMonitor(stationId, deck, gain));
-ipcMain.handle("audio:setVolume", (_, deck, volume, stationId) => AUDIO_DAEMON ? audiodClient.cmd("setVolume", { deck, volume, stationId }) : audio.audioSetVolume(deck, volume, stationId));
+  _boardSend("setAuxMonitor", { stationId, deck, gain }, () => audio.audioSetAuxMonitor(stationId, deck, gain)));
+ipcMain.handle("audio:setVolume", (_, deck, volume, stationId) =>
+  _boardSend("setVolume", { deck, volume, stationId }, () => audio.audioSetVolume(deck, volume, stationId)));
 // Console channel cut (CART/jingle channel today). Routed exactly like setVolume so it reaches whichever
 // engine actually owns the audio — the daemon when AUDIO_DAEMON is on, the in-process addon otherwise.
-ipcMain.handle("audio:setMuted", (_, deck, muted, stationId) => AUDIO_DAEMON ? audiodClient.cmd("setMuted", { deck, muted, stationId }) : audio.audioSetMuted(deck, muted, stationId));
+ipcMain.handle("audio:setMuted", (_, deck, muted, stationId) =>
+  _boardSend("setMuted", { deck, muted, stationId }, () => audio.audioSetMuted(deck, muted, stationId)));
 ipcMain.handle("audio:getState", (_, stationId) => AUDIO_DAEMON ? audiodClient.cmd("getState", { stationId }) : JSON.parse(audio.audioGetState(stationId)));
 // SLICE 2 — a renderer names the stations it draws meters for (renew every ≤ 5 s or it lapses).
 // ── SLICE 4 — THE MASTER RACK (docs/dsp-rack-framework.md) ────────────────────────────────────────────────
@@ -5955,13 +6033,9 @@ ipcMain.handle("audio:listOutputDevices", async () => {
     return JSON.parse(audio.audioListOutputDevices());
   } catch { return []; }
 });
-ipcMain.handle("audio:setOutputDevice", (_, stationId, deviceName) => {
-  if (AUDIO_DAEMON) return audiodClient.cmd("setOutputDevice", { stationId, device: deviceName });
-  try {
-    if (typeof audio.audioSetOutputDevice !== "function") return false;
-    return audio.audioSetOutputDevice(stationId, deviceName);
-  } catch { return false; }
-});
+ipcMain.handle("audio:setOutputDevice", (_, stationId, deviceName) =>
+  _boardSend("setOutputDevice", { stationId, device: deviceName },
+    () => (typeof audio.audioSetOutputDevice === "function" ? audio.audioSetOutputDevice(stationId, deviceName) : false)));
 
 // Per-station LOCAL monitor (speaker) gain — never touches the Icecast broadcast. Lets the
 // operator blend/mute what they HEAR across stations while every station keeps airing.
@@ -5974,7 +6048,11 @@ ipcMain.handle("audio:set-pfl", async (_, stationId, slot, on) => {
   try {
     if (AUDIO_DAEMON) return await audiodClient.cmd("setPfl", { stationId: sid, slot: String(slot), on: !!on });
     return typeof audio.audioSetPfl === "function" ? audio.audioSetPfl(sid, String(slot), !!on) : false;
-  } catch { return false; }
+  } catch (e) {
+    // PFL is momentary — never queued (a PFL replayed later would switch on by itself) — but never silent either.
+    logStartup(`[board] PFL ${slot} ${on ? "on" : "off"} s${sid} NOT delivered ✗ ${e && e.message || e}`);
+    return false;
+  }
 });
 // The station's PFL dim (dB, −60…0): applied to the engine now; the daemon re-applies the stored value
 // (station_config_kv `pfl_dim_db`, written by Preferences) to every fresh engine.
@@ -5983,10 +6061,8 @@ ipcMain.handle("audio:set-pfl-dim", async (_, stationId, dimDb) => {
   if (!Number.isFinite(sid)) return false;
   const v = Math.max(-60, Math.min(0, Number(dimDb)));
   if (!Number.isFinite(v)) return false;
-  try {
-    if (AUDIO_DAEMON) return await audiodClient.cmd("setPflDim", { stationId: sid, dimDb: v });
-    return typeof audio.audioSetPflDim === "function" ? audio.audioSetPflDim(sid, v) : false;
-  } catch { return false; }
+  return _boardSend("setPflDim", { stationId: sid, dimDb: v },
+    () => (typeof audio.audioSetPflDim === "function" ? audio.audioSetPflDim(sid, v) : false));
 });
 // PFL OUTPUT DEVICE (docs/dsp-pfl-2026-09-26.md) — the cue device on THIS machine ("" = same as the main output).
 // Engine first; stored machine-local (pfl_cue_device, set-local) only if the engine took it.
@@ -5995,10 +6071,8 @@ ipcMain.handle("audio:set-cue-device", async (_, stationId, device) => {
   if (!Number.isFinite(sid)) return { ok: false, reason: "no station" };
   const name = String(device || "");
   let ok = false;
-  try {
-    if (AUDIO_DAEMON) ok = await audiodClient.cmd("setCueDevice", { stationId: sid, device: name });
-    else ok = typeof audio.audioSetCueDevice === "function" ? audio.audioSetCueDevice(sid, name) : false;
-  } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+  ok = await _boardSend("setCueDevice", { stationId: sid, device: name },
+    () => (typeof audio.audioSetCueDevice === "function" ? audio.audioSetCueDevice(sid, name) : false));
   if (!ok) return { ok: false, reason: "the audio engine did not take it — fully close and reopen Ether if it just updated" };
   try {
     const { stationConfigKvSetLocal } = require("./sync/handlers/station_config_kv");
@@ -6015,22 +6089,16 @@ ipcMain.handle("audio:cue-state", async (_, stationId) => {
   } catch { return { device: "", state: "same_as_main" }; }
 });
 ipcMain.handle("audio:setMonitorVolume", (_, stationId, volume) => {
-  if (AUDIO_DAEMON) return audiodClient.cmd("setMonitorVolume", { stationId, volume });
-  try {
-    if (typeof audio.audioSetMonitorVolume !== "function") return false;
-    return audio.audioSetMonitorVolume(stationId, volume);
-  } catch { return false; }
+  return _boardSend("setMonitorVolume", { stationId, volume },
+    () => (typeof audio.audioSetMonitorVolume === "function" ? audio.audioSetMonitorVolume(stationId, volume) : false));
 });
 
 // MASTER OUT — the broadcast gain for a station. Rides the program bus pre-meter in Rust, so it
 // changes what listeners hear and the master VU follows. Mirrors setMonitorVolume's plumbing exactly.
 // docs/master-monitor-faders-dead-2026-08-06.md
 ipcMain.handle("audio:setMasterVolume", (_, stationId, volume) => {
-  if (AUDIO_DAEMON) return audiodClient.cmd("setMasterVolume", { stationId, volume });
-  try {
-    if (typeof audio.audioSetMasterVolume !== "function") return false;
-    return audio.audioSetMasterVolume(stationId, volume);
-  } catch (e) { console.error("[audio:setMasterVolume]", e.message); return false; }
+  return _boardSend("setMasterVolume", { stationId, volume },
+    () => (typeof audio.audioSetMasterVolume === "function" ? audio.audioSetMasterVolume(stationId, volume) : false));
 });
 
 // MASTER MONITOR — the operator's ONE room level.
@@ -6130,6 +6198,14 @@ function armAllStationDuckers(reason, opts) {
 // MONITOR fader set and tells every window; a window opened later asks for it. Clamped exactly as the engine clamps.
 let _localMonitorLevel = 1.0;
 ipcMain.handle("local:monitor-level", () => _localMonitorLevel);
+// The SAVED master MONITOR (machine-local kv), or null when none has ever been saved — the fader reads it on mount.
+ipcMain.handle("local:monitor-saved", () => {
+  const d = _boardDb(); if (!d) return null;
+  for (const sid of _stationIds()) {
+    try { const s = BoardState.readSavedBoard(d, sid); if (s.masterMonitorVol !== undefined) return s.masterMonitorVol; } catch {}
+  }
+  return null;
+});
 
 // MONITOR BYPASS SENSE — red in the Health Monitor. Every levels frame carries what actually left the engine for local
 // devices AFTER the MONITOR gain (local_out_peak, exact per buffer) and the master MONITOR level it was scaled by
@@ -6150,7 +6226,7 @@ function _noteLocalOutput(stationId, f) {
     _healthEvent('monitor-bypass-error', { stationId, peak: Math.round(pk * 1000) / 1000, message: msg });
   } catch { /* a sense must never break the levels relay */ }
 }
-ipcMain.handle("audio:setMasterMonitorVolume", (_, volume) => {
+ipcMain.handle("audio:setMasterMonitorVolume", async (_, volume) => {
   { const v = Number(volume); _localMonitorLevel = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : _localMonitorLevel; }
   try { sendToAllWindows("local:monitor-level", _localMonitorLevel); } catch {}
   let ids = [];
@@ -6158,12 +6234,13 @@ ipcMain.handle("audio:setMasterMonitorVolume", (_, volume) => {
   catch (e) { console.error("[audio:setMasterMonitorVolume] station list:", e.message); }
   let applied = 0;
   for (const stationId of ids) {
-    try {
-      if (AUDIO_DAEMON) { audiodClient.cmd("setMasterMonitorVolume", { stationId, volume }); applied++; }
-      else if (typeof audio.audioSetMasterMonitorVolume === "function") {
-        if (audio.audioSetMasterMonitorVolume(stationId, volume)) applied++;
-      }
-    } catch (e) { console.error("[audio:setMasterMonitorVolume] station", stationId, e.message); }
+    const r = await _boardSend("setMasterMonitorVolume", { stationId, volume },
+      () => (typeof audio.audioSetMasterMonitorVolume === "function" ? audio.audioSetMasterMonitorVolume(stationId, volume) : false));
+    if (r !== false) applied++;
+    // SAVED, machine-local (2026-10-11): MONITOR used to live only in a window's localStorage, so nothing outside the
+    // window could restore it. The applier reads it from here at every engine start and connect.
+    try { require("./sync/handlers/station_config_kv").stationConfigKvSetLocal(getDb(), stationId, BoardState.MASTER_MONITOR_KEY, String(_localMonitorLevel)); }
+    catch (e) { logStartup(`[board] master MONITOR not saved for s${stationId}: ${e && e.message}`); }
   }
   return { ok: applied > 0, stations: applied };
 });
