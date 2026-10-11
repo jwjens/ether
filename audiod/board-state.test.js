@@ -125,7 +125,7 @@ describe("compareBoard", () => {
     const d = B.compareBoard(B.readSavedBoard(db, 2), live());
     expect(d).toContainEqual(expect.objectContaining({ setting: "S1.aux", saved: 0.74, live: 0, where: "control", label: "G AUX monitor row" }));
   });
-  it("is silent when the engine holds the saved board (bar the slot-kind ruling)", () => {
+  it("is silent when the engine holds the saved board", () => {
     const saved = B.readSavedBoard(db, 2);
     const ok = live(b => { for (const p of [b.control, b.applied]) {
       for (const [s, e] of Object.entries(saved.slots)) {
@@ -133,13 +133,14 @@ describe("compareBoard", () => {
         if (e.volume !== undefined) l.volume = e.volume; if (e.muted !== undefined) l.muted = e.muted;
         if (e.duck !== undefined) l.duck = e.duck; if (e.duckable !== undefined) l.duckable = e.duckable;
         if (e.aux !== undefined) l.aux_monitor_gain = e.aux;
-        if (e.kind !== undefined) l.kind = e.kind === "jingle" || e.kind === "sweeper" ? "sweeper" : "source";
       } } });
     expect(B.compareBoard(saved, ok)).toEqual([]);
   });
-  it("reports a Sweeper-kind channel the engine runs as Source (never sent — pending Jeff's ruling)", () => {
-    const d = B.compareBoard(B.readSavedBoard(db, 2), live());
-    expect(d.some(x => x.setting === "E.kind" && x.live === "source")).toBe(true);
+  it("never reads, sends or flags a fader TYPE (Jeff: faders are generic shells)", () => {
+    const saved = B.readSavedBoard(db, 2);
+    expect(Object.values(saved.slots).some(e => "kind" in e)).toBe(false);
+    const d = B.compareBoard(saved, live());
+    expect(d.some(x => /kind/.test(x.setting))).toBe(false);
   });
   it("names faders as the board does — never an engine slot id", () => {
     expect(B.boardNames(["A", "B", "C", "D", "E", "F", "S1", "S2", "S3"]).S1).toBe("G");

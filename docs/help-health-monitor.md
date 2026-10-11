@@ -110,10 +110,6 @@ What to do:
 
 A green **Board state match** row appears when a later check finds everything as you saved it.
 
-*A Sweeper channel listed as "channel type" (saved "jingle → sweeper", live "source"):* the engine is playing that channel
-as a Source fader rather than a Sweeper. This is known, and the change needs an operator decision because it affects
-how the channel ducks the music. It is listed so it is never hidden.
-
 ### "Daemon engine mismatch error" — the engine playing is not the one installed
 
 EtherCast's audio engine keeps running while you update, so music isn't cut. After an update, the engine

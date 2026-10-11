@@ -93,7 +93,6 @@ function readSavedBoard(db, sid) {
       if (c.kind === "jukebox") e.muted = kv("jukebox_channel_on") !== "1";
       else if (c.channel_on !== null && c.channel_on !== undefined) e.muted = !(Number(c.channel_on) === 1 || c.channel_on === true);
       e.duck = !!Number(c.duck || 0);
-      e.kind = String(c.kind || "");
     }
     e.duckable = c.duckable === null || c.duckable === undefined ? true : !!Number(c.duckable);
     if (SOURCE_SLOTS.includes(s)) e.aux = room[s] ?? 0;   // an unsaved row is 0 — the engine's own default, and what the panel shows
@@ -125,8 +124,8 @@ function readSavedBoard(db, sid) {
  *   setVolume(slot, v) setMuted(slot, m) setDuck(slot, on) setDuckable(slot, on) setAuxMonitor(slot, g)
  *   setMonitorVolume(v) setMasterVolume(v) setMasterMonitorVolume(v) setDuckParams(p) setAuxDevice(name)
  *   setCueDevice(name) setPflDim(db)
- * Slot KIND is deliberately not sent: no shipped path has ever sent it, so applying it would move faders onto another
- * bus on air (a Sweeper stops triggering the duck). It is reported by compareBoard instead, pending Jeff's ruling.
+ * No fader TYPE is read, sent or compared (Jeff, 2026-10-11: "faders are generic shells … a stored type on a fader is
+ * wrong"). deck_configs.kind is read only to find the jukebox's own cut — it is the source input selected on the fader.
  * Returns { sent, failed: [{ setting, reason }] } — never throws, never swallows: every failure is in the result.
  */
 function applyBoard(saved, sink) {
@@ -160,15 +159,13 @@ function applyBoard(saved, sink) {
 }
 
 const close = (a, b) => Math.abs(Number(a) - Number(b)) <= 1e-3;
-// The engine's bus for a saved kind (native show::set_slot_kind).
-const busOf = (kind) => (kind === "sweeper" || kind === "jingle" ? "sweeper" : "source");
 
 /**
  * Saved vs the engine's live values (`getBoardState` → control and applied). Every difference, named:
  *   [{ setting: "S1.aux", saved: 0.74, live: 0, where: "control" | "applied" }]
  * `applied` absent (no meter frame yet) compares the control copy only.
  */
-const WHAT = { volume: "fader", muted: "ON/OFF", duck: "duck", duckable: "ducks under others", aux: "AUX monitor row", kind: "channel type" };
+const WHAT = { volume: "fader", muted: "ON/OFF", duck: "duck", duckable: "ducks under others", aux: "AUX monitor row" };
 const GLOBAL = { monitorVol: "station MONITOR strip", masterVol: "MASTER", masterMonitorVol: "MONITOR", auxDevice: "AUX output device", cueDevice: "PFL output device", board: "the board" };
 /** What an operator calls a setting: the fader's board name and the control — never an engine slot id. */
 function labelOf(setting, names) {
@@ -194,7 +191,6 @@ function compareBoardRaw(saved, live) {
       if (e.duck !== undefined && !!e.duck !== !!l.duck) out.push({ setting: `${s}.duck`, saved: e.duck, live: l.duck, where });
       if (e.duckable !== undefined && !!e.duckable !== !!l.duckable) out.push({ setting: `${s}.duckable`, saved: e.duckable, live: l.duckable, where });
       if (e.aux !== undefined && !close(e.aux, l.aux_monitor_gain)) out.push({ setting: `${s}.aux`, saved: e.aux, live: l.aux_monitor_gain, where });
-      if (e.kind !== undefined && SOURCE_SLOTS.includes(s) && busOf(e.kind) !== l.kind) out.push({ setting: `${s}.kind`, saved: `${e.kind || "(none)"} → ${busOf(e.kind)}`, live: l.kind, where });
     }
     if (saved.monitorVol !== undefined && !close(saved.monitorVol, p.monitor_vol)) out.push({ setting: "monitorVol", saved: saved.monitorVol, live: p.monitor_vol, where });
     if (saved.masterVol !== undefined && !close(saved.masterVol, p.master_vol)) out.push({ setting: "masterVol", saved: saved.masterVol, live: p.master_vol, where });
