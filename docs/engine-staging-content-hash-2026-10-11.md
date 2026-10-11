@@ -38,8 +38,12 @@ no version bump, not pushed.
 | Mutation check | old version-keyed fast path put back → **9 of 10** stage-engine tests fail; restored |
 | Real Windows lock test | a running `ether-engine.exe` is renamed aside, keeps running, and the new one is staged: PASS |
 | `test:local-playback`, leak-guard, audio-statics | PASS |
-| Rust suite (`-j 2`, `--test-threads=1`) | **INCOMPLETE**: killed by Claude Code for low system memory after 79 tests ok, 0 failed. Native code is unchanged in this change |
-| Installer build | **NOT PRODUCED**: vite built OK; electron-builder killed for low memory mid-packaging. `dist-electron\win-unpacked` is TORN, do not use |
+| Rust suite, alone (`-j 1`, `--test-threads=1`, run module by module after Ether was quit) | pass 1 **148 passed, 0 failed, 4 ignored**; pass 2 (bench + timing) **11 passed**; doc tests **2 passed**. 163/163 lib tests accounted for |
+| Installer | `dist-electron\Ether Setup 4.6.59.exe`, 215,922,478 B, built 2026-10-11 12:11 PDT from `692dffc`, sha256 `7fcc8fa798af0bdb5706e14143c183e0741293c04ce68d8ecbe295493cbac048` |
+| Packaged release gate (`verify-packaged.js`) | **PASS**: packaging, app modules, staging, ENGINE IDENTITY (the daemon reports native `9f7d7079…`, code `c4939e93…` = the package) |
+
+Commits: `b52ca9e` (staging by content), `692dffc` (engine-check + gate + help). The first build/Rust attempt
+(2026-10-10) was killed for low memory and is superseded by the above.
 
 Ether (PID 33072) and the daemon (PID 12696) on OVEVENTS kept running throughout.
 
