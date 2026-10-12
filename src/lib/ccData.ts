@@ -14,11 +14,11 @@ export async function pushCcData(
   stationUuid: string | null | undefined,
   table: string,
   rows: unknown[],
-): Promise<void> {
-  if (!licenseKey || !stationUuid) return;
+): Promise<boolean> {
+  if (!licenseKey || !stationUuid) return false;
   // THE CHOKE POINT. Every mirror write — categories, library, ops, health frames — comes through
   // here, so one check covers them all and a new caller inherits it without having to remember.
-  if (blockedByDevGuard(`${table} sync`)) return;
+  if (blockedByDevGuard(`${table} sync`)) return false;
   try {
     const res = await fetch(`${ETHER_BACKEND_URL}/api/account/data/sync`, {
       method: "POST",
@@ -26,7 +26,18 @@ export async function pushCcData(
       body: JSON.stringify({ station_uuid: stationUuid, table, rows }),
     });
     console.log(`[CCPUSH] ${table} sync → HTTP ${res.status}`);
-  } catch (e) { console.log(`[CCPUSH] ${table} sync error:`, (e as any)?.message ?? e); }
+    return res.ok;
+  } catch (e) { console.log(`[CCPUSH] ${table} sync error:`, (e as any)?.message ?? e); return false; }
+}
+
+/** A heavy SELECT, off the main process (main.js db:query-offmain → the library-health worker's read-only connection).
+ *  Falls back to the ordinary query if that path is unavailable. */
+async function queryOffMain<T = any>(sql: string, params: unknown[]): Promise<T[]> {
+  try {
+    const r = await (window as any).ether?.invoke?.("db:query-offmain", sql, params);
+    if (r && r.ok && Array.isArray(r.rows)) return r.rows as T[];
+  } catch { /* fall through */ }
+  return query<T>(sql, params as any[]);
 }
 
 // ── FLEET HEALTH FRAMES (web Health Monitor) ──────────────────────────────────────────────────────
@@ -380,9 +391,26 @@ export async function pushLibrary(
   stationId: number,
 ): Promise<void> {
   if (!licenseKey || !stationUuid) return;
+  // ONLY WHEN IT CHANGED (2026-10-12, docs/health-monitor-jump-and-freeze-2026-10-12.md). This ran the full-library join
+  // and serialised the whole library every 60 s whether or not anything had moved — about 5,600 rows at OV, through the
+  // main process. A cheap token (row counts + newest edit of the five tables the snapshot reads) decides; the full push
+  // still goes at least every 10 minutes, so a mirror that lost it is refilled.
+  let token = "";
+  try {
+    const t = await query<{ t: string }>(
+      `SELECT (SELECT COUNT(*) || ':' || IFNULL(MAX(updated_at), '') FROM songs) || '|' ||
+              (SELECT COUNT(*) || ':' || IFNULL(MAX(updated_at), '') FROM station_programming WHERE station_id = ?) || '|' ||
+              (SELECT COUNT(*) || ':' || IFNULL(MAX(updated_at), '') FROM categories) || '|' ||
+              (SELECT COUNT(*) || ':' || IFNULL(MAX(updated_at), '') FROM artists) || '|' ||
+              (SELECT COUNT(*) || ':' || IFNULL(MAX(updated_at), '') FROM albums) AS t`, [stationId]);
+    token = String(t[0]?.t ?? "");
+  } catch { token = ""; }
+  const key = `${licenseKey}|${stationUuid}`;
+  const last = _libraryPushed.get(key);
+  if (token && last && last.token === token && Date.now() - last.at < 10 * 60_000) return;
   let rows: any[];
   try {
-    rows = await query(
+    rows = await queryOffMain(
       `SELECT
          s.uuid          AS uuid,
          s.id            AS song_id,
@@ -417,8 +445,9 @@ export async function pushLibrary(
   // station_programming row (song_id + station_id) when editing treatment.
   for (const r of rows) r.station_id = stationId;
   console.log(`[CCPUSH] library: ${rows.length} songs for station ${stationId}`);
-  await pushCcData(licenseKey, stationUuid, "library", rows);
+  if (await pushCcData(licenseKey, stationUuid, "library", rows)) _libraryPushed.set(key, { token, at: Date.now() });
 }
+const _libraryPushed = new Map<string, { token: string; at: number }>();
 
 // ── THE PLAY-HISTORY PUSH SENSE ──────────────────────────────────────────────────────────────────
 //

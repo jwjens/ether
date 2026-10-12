@@ -17,6 +17,7 @@ import AuxMonitorSlots from "./AuxMonitorSlots";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useShowState } from "../hooks/useShowState";
 import { monitorLevel, onMonitorLevel } from "../audio/localOutput";
+import { useStickyScroll } from "../lib/stickyScroll";
 
 // ── Constants ────────────────────────────────────────────────
 // Fallback values only — resolved via CSS custom properties at runtime
@@ -288,13 +289,14 @@ interface ConsoleLine {
 let _lineId = 0;
 
 // ── LiveConsole ──────────────────────────────────────────────
-function LiveConsole({ masterLevel }: { masterLevel: number }) {
+export function LiveConsole({ masterLevel }: { masterLevel: number }) {
   const [lines, setLines]   = useState<ConsoleLine[]>([]);
   const [filter, setFilter] = useState<"all" | "error" | "rotation" | "audio">("all");
   const [engineOk, setEngineOk] = useState(true);
-  const bottomRef   = useRef<HTMLDivElement>(null);
-  const scrollRef   = useRef<HTMLDivElement>(null);
-  const userScrolled = useRef(false);
+  const lastLineId = lines.length ? lines[lines.length - 1].id : 0;
+  // FEEDS NEVER MOVE THE SCREEN (Jeff, 2026-10-12): follows new lines in its OWN box only while you are at its bottom;
+  // scrolled up, it stays put and counts what arrived (src/lib/stickyScroll.ts).
+  const feed = useStickyScroll(lastLineId);
   const lastLevelLog = useRef(0);
   const masterRef    = useRef(masterLevel);
   const silenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -341,18 +343,9 @@ function LiveConsole({ masterLevel }: { masterLevel: number }) {
     return () => {};
   }, [masterLevel]);
 
-  // ── Auto-scroll to bottom (unless user scrolled up) ──────────
-  useEffect(() => {
-    if (userScrolled.current) return;
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [lines]);
-
-  const handleScroll = () => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 20;
-    userScrolled.current = !atBottom;
-  };
+  // (2026-10-12) The auto-scroll that lived here called bottomRef.scrollIntoView() on every line. scrollIntoView scrolls
+  // EVERY scrollable ancestor, so each new line dragged the whole Master Out column down and the MASTER/MONITOR faders
+  // off the screen ("the Health Monitor jumps to the bottom of the screen, so Jeff can't use the faders").
 
   // ── Filtered lines ────────────────────────────────────────────
   const visible = filter === "all" ? lines
@@ -379,7 +372,7 @@ function LiveConsole({ masterLevel }: { masterLevel: number }) {
         <div style={{ width: 5, height: 5, borderRadius: "50%", background: engineOk ? "var(--status-live)" : "var(--status-error)", flexShrink: 0, animation: engineOk ? "none" : "con-blink 1s step-start infinite" }} />
         <span style={{ fontSize: 11, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5, flex: 1 }}>Console</span>
         <button
-          onClick={() => { setLines([]); userScrolled.current = false; }}
+          onClick={() => { setLines([]); feed.jump(); }}
           style={{ fontSize: 11, color: "var(--text-tertiary)", background: "none", border: "none", cursor: "pointer", padding: 0 }}
           title="Clear console"
         >CLR</button>
@@ -402,8 +395,8 @@ function LiveConsole({ masterLevel }: { masterLevel: number }) {
 
       {/* Scrolling terminal */}
       <div
-        ref={scrollRef}
-        onScroll={handleScroll}
+        ref={feed.ref}
+        onScroll={feed.onScroll}
         style={{
           flex: 1, overflowY: "auto", background: "var(--bg-primary)",
           padding: "4px 0",
@@ -428,8 +421,14 @@ function LiveConsole({ masterLevel }: { masterLevel: number }) {
             <span style={{ color: TYPE_COLOR[line.type], overflow: "hidden", textOverflow: "ellipsis" }}>{line.msg}</span>
           </div>
         ))}
-        <div ref={bottomRef} />
       </div>
+      {feed.unseen > 0 && (
+        <button onClick={feed.jump} title="Show the newest events (the view stayed where you were reading)"
+          style={{ flexShrink: 0, fontSize: 11, padding: "2px 8px", background: "var(--bg-tertiary, rgba(255,255,255,0.08))",
+                   border: "none", borderTop: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}>
+          {feed.unseen} new event{feed.unseen === 1 ? "" : "s"} ↓
+        </button>
+      )}
 
       <style>{`
         @keyframes con-blink {

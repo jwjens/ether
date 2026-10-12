@@ -80,6 +80,9 @@ const LEVEL_COLOR: Record<Level, string> = {
 export function LiveActivityTerminal() {
   const [lines, setLines] = useState<ActivityLine[]>([]);
   const [paused, setPaused] = useState(false);
+  // Rows that arrived while the view was scroll-locked (2026-10-12: a feed never moves the operator's reading position;
+  // it says what arrived instead).
+  const [unseen, setUnseen] = useState(0);
   const [station, setStation] = useState<number | "all">("all");
   const [showRoutine, setShowRoutine] = useState(false);   // default: decisions + warnings only
   const [warnOnly, setWarnOnly] = useState(false);
@@ -126,6 +129,7 @@ export function LiveActivityTerminal() {
         if (r.reset) setLines(prev => [...prev, parseActivityLine("— log rotated —")]);
         if (r.lines?.length) {
           const parsed = r.lines.map(parseActivityLine);
+          if (pausedRef.current) setUnseen(n => n + parsed.length);
           setLines(prev => {
             const next = prev.concat(parsed);
             return next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next;
@@ -166,6 +170,7 @@ export function LiveActivityTerminal() {
 
   const jumpToLive = () => {
     setPaused(false);
+    setUnseen(0);
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   };
@@ -193,7 +198,7 @@ export function LiveActivityTerminal() {
               animation: paused ? "none" : "nominal-pulse 2.4s ease-in-out infinite",
             }} />
             <button onClick={paused ? jumpToLive : () => setPaused(true)} style={btn(paused)}>
-              {paused ? "Resume" : "Pause"}
+              {paused ? (unseen > 0 ? `Resume · ${unseen} new` : "Resume") : "Pause"}
             </button>
           </div>
         </div>

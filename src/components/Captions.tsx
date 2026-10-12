@@ -8,6 +8,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { localDestination } from "../audio/localOutput";
+import { scrollOwnToBottom } from "../lib/stickyScroll";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -260,7 +261,7 @@ export function CaptionsLogPanel({ lines, enabled, status, toggle }: LogProps) {
   const [autoScroll, setAutoScroll] = useState(true);
 
   useEffect(() => {
-    if (autoScroll) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (autoScroll) scrollOwnToBottom(bottomRef.current);   // its own box only (2026-10-12)
   }, [lines, autoScroll]);
 
   const exportTxt = () => {
@@ -398,7 +399,7 @@ export function CaptionsLogPanel({ lines, enabled, status, toggle }: LogProps) {
       {/* Auto-scroll nudge */}
       {!autoScroll && lines.length > 0 && (
         <button
-          onClick={() => { setAutoScroll(true); bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }}
+          onClick={() => { setAutoScroll(true); scrollOwnToBottom(bottomRef.current); }}
           style={{ margin: "8px auto 0", display: "block", padding: "6px 16px", fontSize: 12, fontWeight: 700, background: "var(--accent-blue)", color: "#fff", border: "none", borderRadius: 0, cursor: "pointer" }}
         >
           ↓ Jump to latest

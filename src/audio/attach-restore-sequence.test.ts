@@ -150,10 +150,12 @@ describe("2026-10-12 sequence: the engine restores, then the window attaches", (
     }
     const raised: any[] = [];
     const watch = createBoardWatch({
-      stations: () => sids, readSaved: (sid: number) => B.readSavedBoard(db, sid), readLive: async (sid: number) => engines[sid].live(),
+      readSaved: (sid: number) => B.readSavedBoard(db, sid), readLive: async (sid: number) => engines[sid].live(),
       compare: B.compareBoard, onMismatch: (sid: number, d: any[]) => raised.push({ sid, d }), confirmMs: 50,
     });
-    await watch.tick(); await new Promise(r => setTimeout(r, 80)); await watch.tick();
+    stops.push(() => watch.stop());
+    for (const sid of sids) watch.touched(sid);
+    await new Promise(r => setTimeout(r, 600));
     expect(raised).toEqual([]);
   }, 20000);
 
@@ -163,13 +165,14 @@ describe("2026-10-12 sequence: the engine restores, then the window attaches", (
     B.applyBoard(B.readSavedBoard(db, SID), eng.sink);
     const raised: any[] = [];
     const watch = createBoardWatch({
-      stations: () => [SID], readSaved: (sid: number) => B.readSavedBoard(db, sid), readLive: async () => eng.live(),
+      readSaved: (sid: number) => B.readSavedBoard(db, sid), readLive: async () => eng.live(),
       compare: B.compareBoard, onMismatch: (sid: number, d: any[]) => raised.push({ sid, d, at: Date.now() }),
     });
-    watch.start(); stops.push(() => watch.stop());
+    stops.push(() => watch.stop());
     await watch.check(SID);
     const t0 = Date.now();
-    eng.sink.setMonitorVolume(0);                 // what the window did at 20:26:06.334Z
+    eng.sink.setMonitorVolume(0);                 // what the window did at 20:26:06.334Z …
+    watch.touched(SID);                           // … through main's _boardSend, which tells the watch
     await waitFor(() => raised.length > 0, 2000);
     expect(raised[0].at - t0).toBeLessThanOrEqual(1000);
     expect(raised[0].d.find((d: any) => d.setting === "monitorVol")).toMatchObject({ saved: 0.68, live: 0, label: "station MONITOR strip" });

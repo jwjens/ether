@@ -334,4 +334,11 @@ function groupTopGain(db, sid, group) {
   return dbGain(v == null ? FADER_TOP_DEFAULTS[group] : Math.max(0, Math.min(10, v)));
 }
 
-module.exports = { CART_ON_KEY, FADER_TOP_KEYS, FADER_TOP_DEFAULTS, groupTopGain, routingMigration, FADER_LOCAL_KEY, FADER_ROUTING_FLAG, SMOOTHING_KEY, LOUDNESS_TARGET_KEY, MAX_GAIN, boardNames, labelOf, SLOTS, SOURCE_SLOTS, MASTER_MONITOR_KEY, DUCK_KEYS, readSavedBoard, applyBoard, compareBoard, listStations, addonSink, applySavedBoardState, parseRoomLevels };
+/** Every station_config_kv key readSavedBoard reads — a write to any other key cannot change the saved board. */
+const BOARD_KV_KEYS = new Set(["board_levels", "aux_monitor_levels", "aux_monitor_slots", FADER_LOCAL_KEY, FADER_ROUTING_FLAG,
+  "monitor_volume", MASTER_MONITOR_KEY, SMOOTHING_KEY, LOUDNESS_TARGET_KEY, "aux_monitor_device", "pfl_cue_device", "pfl_dim_db",
+  "audio_output_device", "jukebox_channel_on", CART_ON_KEY, ...Object.values(FADER_TOP_KEYS), ...Object.values(DUCK_KEYS).map(([k]) => k)]);
+/** null/undefined = unknown key (a write by uuid): treat as a board key. */
+function isBoardKey(key) { return key == null || BOARD_KV_KEYS.has(String(key)); }
+
+module.exports = { isBoardKey, BOARD_KV_KEYS, CART_ON_KEY, FADER_TOP_KEYS, FADER_TOP_DEFAULTS, groupTopGain, routingMigration, FADER_LOCAL_KEY, FADER_ROUTING_FLAG, SMOOTHING_KEY, LOUDNESS_TARGET_KEY, MAX_GAIN, boardNames, labelOf, SLOTS, SOURCE_SLOTS, MASTER_MONITOR_KEY, DUCK_KEYS, readSavedBoard, applyBoard, compareBoard, listStations, addonSink, applySavedBoardState, parseRoomLevels };

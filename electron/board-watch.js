@@ -1,64 +1,82 @@
 // electron/board-watch.js — THE BOARD IS WATCHED, NOT JUST CHECKED AT CONNECT (Jeff, 2026-10-12).
 //
-// docs/station-monitor-zeroed-at-attach-2026-10-12.md. Jeff: "Make it continuous: compare saved vs live engine values on
-// every change the engine reports (and a periodic check), and raise the red board-state-mismatch-error within a second
-// of any divergence, naming the setting."
+// docs/station-monitor-zeroed-at-attach-2026-10-12.md (why), docs/health-monitor-jump-and-freeze-2026-10-12.md (how).
+// Jeff: "compare saved vs live engine values on every change the engine reports … raise the red
+// board-state-mismatch-error within a second of any divergence, naming the setting" — and then: "the mismatch check must
+// be event-driven and cheap, with no polling DB reads."
 //
-// The connect pass (electron/board-sync.js) compares once per connect; a write that lands after it (2026-10-12: the
-// window zeroed halloVeen's station MONITOR half a second after the engine restored it) was only seen by the NEXT pass.
-// This watches every station all the time:
-//   · poke(sid)  — a change went to or came from the engine (every board setter main routes, the blade's level and Take
-//                  events): that station is compared now.
-//   · the beat   — every station is compared every `periodMs`, so a change nobody announced is still seen.
-// A difference must SURVIVE `confirmMs` before it is an error: an operator's change reaches the engine a moment before it
-// is saved (the strip sends, then saves), and that moment is not a fault. Worst case from divergence to the red event:
-// periodMs + confirmMs (500 + 300 ms by default).
-//
-// Saved = the database, overlaid with what main is about to save (`overlay` — board_levels is written at most once a
-// second, so a fader drag is "saved" the moment main holds it). One red event per distinct set of differences; a later
-// match says so once (board-state-match). An engine that cannot answer is not a mismatch (the connect pass owns that).
+// EVENT-DRIVEN. Nothing here runs on a timer of its own. A station is compared only when something changed it:
+//   · touched(sid)      — a board change went to or came from its engine (main's _boardSend, the blade's level events,
+//                         a Take). Trailing debounce `quietMs` (a drag is one check, after it settles), but never later
+//                         than `maxWaitMs` after the first change, so a long drag is still checked about once a second.
+//   · savedChanged(sid) — a write to the saved board (electron/board-write-events.js). Drops that station's cached copy,
+//                         then compares it.
+// THE SAVED BOARD IS CACHED. It is read from the database only after a write said it changed (or on first use) — never
+// polled. The live board is one async engine read (getBoardState over the daemon pipe; nothing blocks main).
+// A DIFFERENCE MUST HOLD STILL. It is an error only when the SAME settings show the SAME live and saved values on two reads
+// `confirmMs` apart. A fader being dragged (values moving, the callback's applied copy a buffer behind) is never an error;
+// when it stops, the saved board has caught up and the check matches. Worst case from a lasting divergence to the red
+// event: quietMs + confirmMs (+ one engine read) — under a second.
 "use strict";
 
-function createBoardWatch({ stations, readSaved, readLive, compare, overlay, onMismatch, onMatch, log,
-  periodMs = 500, confirmMs = 300, now = () => Date.now(), setTimer = setTimeout, clearTimer = clearTimeout, setBeat = setInterval, clearBeat = clearInterval }) {
+function createBoardWatch({ readSaved, readLive, compare, overlay, onMismatch, onMatch, log,
+  quietMs = 200, maxWaitMs = 600, confirmMs = 300, now = () => Date.now(), setTimer = setTimeout, clearTimer = clearTimeout }) {
   const say = (m) => { try { if (log) log(m); } catch {} };
-  const st = new Map();          // sid → { since, raised, busy, again, timer }
-  let beat = null, paused = 0;
-  // raised: undefined = never compared (the first match is reported too, so a mismatch raised elsewhere — the connect
-  // pass — is cleared by the watch), null = matching, a string = the differences already reported.
-  const of = (sid) => { let s = st.get(sid); if (!s) { s = { since: null, raised: undefined, busy: false, again: false, timer: null }; st.set(sid, s); } return s; };
+  const st = new Map();
+  const saved = new Map();       // sid → the saved board (cached)
+  let paused = 0;
+  let reads = { saved: 0, live: 0, checks: 0 };
+  const of = (sid) => {
+    let s = st.get(sid);
+    if (!s) { s = { first: 0, timer: null, busy: false, again: false, pending: null, raised: undefined }; st.set(sid, s); }
+    return s;
+  };
   const sigOf = (diffs) => [...new Set(diffs.map(d => d.setting))].sort().join(",");
+  const round = (v) => (typeof v === "number" ? Math.round(v * 1e4) / 1e4 : v);
+  const exactOf = (diffs) => JSON.stringify(diffs.map(d => [d.setting, d.where, round(d.saved), round(d.live)]).sort());
+
+  function savedFor(sid) {
+    if (!saved.has(sid)) { reads.saved++; saved.set(sid, readSaved(sid)); }
+    return saved.get(sid);
+  }
+
+  function schedule(sid, delay) {
+    const s = of(sid);
+    if (s.timer) clearTimer(s.timer);
+    s.timer = setTimer(() => { s.timer = null; s.first = 0; void check(sid); }, Math.max(0, delay));
+  }
 
   async function check(sid) {
     const s = of(sid);
     if (paused) return;
     if (s.busy) { s.again = true; return; }
-    s.busy = true;
+    s.busy = true; reads.checks++;
     try {
       let live;
+      reads.live++;
       try { live = await readLive(sid); } catch (e) { live = { ok: false, reason: String(e && e.message || e) }; }
       if (!live || !live.ok || paused) return;        // no answer is not a mismatch; the connect pass reports it
-      let saved;
-      try { saved = readSaved(sid); } catch (e) { say(`[board-watch] s${sid} saved board unreadable ✗ ${e && e.message || e}`); return; }
-      if (overlay) { try { saved = overlay(sid, saved) || saved; } catch { /* the database copy stands */ } }
-      const diffs = compare(saved, live);
+      let sv;
+      try { sv = savedFor(sid); } catch (e) { say(`[board-watch] s${sid} saved board unreadable ✗ ${e && e.message || e}`); return; }
+      if (overlay) { try { sv = overlay(sid, sv) || sv; } catch { /* the cached copy stands */ } }
+      const diffs = compare(sv, live);
       if (!diffs.length) {
-        s.since = null;
-        if (s.timer) { clearTimer(s.timer); s.timer = null; }
-        if (s.raised !== null) { s.raised = null; try { if (onMatch) onMatch(sid); } catch {} }
+        s.pending = null;
+        if (s.raised !== null) { s.raised = null; try { if (onMatch) onMatch(sid); } catch {} }   // main says it once
         return;
       }
-      const t = now();
-      if (s.since === null) s.since = t;
-      if (t - s.since < confirmMs) {
-        // Seen once. Look again when it has had confirmMs to settle.
-        if (!s.timer) s.timer = setTimer(() => { s.timer = null; void check(sid); }, confirmMs - (t - s.since));
+      const exact = exactOf(diffs), t = now();
+      if (!s.pending || s.pending.exact !== exact) {
+        // New, or still moving: look again once it has had confirmMs to hold still.
+        s.pending = { exact, since: t };
+        schedule(sid, confirmMs);
         return;
       }
+      if (t - s.pending.since < confirmMs) { schedule(sid, confirmMs - (t - s.pending.since)); return; }
       const sig = sigOf(diffs);
       if (sig === s.raised) return;                   // already said, unchanged
       s.raised = sig;
-      say(`[board-watch] s${sid} LIVE ≠ SAVED for ${t - s.since} ms: ${diffs.map(d => `${d.setting} saved ${JSON.stringify(d.saved)} live ${JSON.stringify(d.live)} (${d.where})`).join("; ")}`);
+      say(`[board-watch] s${sid} LIVE ≠ SAVED, unchanged for ${t - s.pending.since} ms: ${diffs.map(d => `${d.setting} saved ${JSON.stringify(d.saved)} live ${JSON.stringify(d.live)} (${d.where})`).join("; ")}`);
       try { onMismatch(sid, diffs); } catch {}
     } finally {
       s.busy = false;
@@ -66,23 +84,32 @@ function createBoardWatch({ stations, readSaved, readLive, compare, overlay, onM
     }
   }
 
-  async function tick() {
-    let ids = [];
-    try { ids = stations() || []; } catch { ids = []; }
-    for (const sid of ids) await check(sid);
+  /** A board change went to / came from this station's engine. Trailing debounce, bounded by maxWaitMs. */
+  function touched(sid) {
+    const n = Number(sid); if (!Number.isFinite(n) || paused) return;
+    const s = of(n), t = now();
+    if (!s.first) s.first = t;
+    schedule(n, Math.min(quietMs, maxWaitMs - (t - s.first)));
   }
 
   return {
-    /** A change went to / came from this station's engine: compare it now. */
-    poke(sid) { const n = Number(sid); if (Number.isFinite(n)) void check(n); },
-    check, tick,
-    start() { if (!beat) beat = setBeat(() => { void tick(); }, periodMs); return this; },
-    stop() { if (beat) { clearBeat(beat); beat = null; } for (const s of st.values()) if (s.timer) { clearTimer(s.timer); s.timer = null; } },
-    /** While the connect pass re-applies the saved board, the board is between states: say nothing about it. Nested. */
-    pause() { paused++; for (const s of st.values()) { s.since = null; if (s.timer) { clearTimer(s.timer); s.timer = null; } } },
+    touched,
+    /** Back-compatible name for touched(). */
+    poke: touched,
+    /** The saved board changed (a write said so). null = any station. Drops the cached copy, then compares. */
+    savedChanged(sid, stationIds) {
+      if (sid == null) { saved.clear(); for (const id of (stationIds ? stationIds() : [...st.keys()])) touched(id); return; }
+      const n = Number(sid); saved.delete(n); touched(n);
+    },
+    check,
+    /** While the connect pass re-applies the board, the board is between states: say nothing about it. Nested. */
+    pause() { paused++; for (const s of st.values()) { s.pending = null; s.first = 0; if (s.timer) { clearTimer(s.timer); s.timer = null; } } },
     resume() { paused = Math.max(0, paused - 1); },
-    /** The last raised difference per station (tests, and the Health Monitor's "still mismatched"). */
+    stop() { for (const s of st.values()) if (s.timer) { clearTimer(s.timer); s.timer = null; } },
+    /** The last raised difference per station. */
     raised(sid) { const s = st.get(Number(sid)); return s && s.raised ? s.raised : null; },
+    /** What it has cost: database reads (saved boards), engine reads, comparisons. */
+    stats() { return { ...reads, cachedStations: saved.size }; },
   };
 }
 

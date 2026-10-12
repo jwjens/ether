@@ -45,19 +45,23 @@ import { useActiveStation } from "../hooks/useActiveStation";
 
 function StandaloneUpNext() {
   const [queueLen, setQueueLen] = useState(0);
-  const [rev, setRev] = useState(0);   // bump to force UpNext re-fetch
 
+  // NO REMOUNT (2026-10-12, docs/ui-freeze-diagnosis.md §1). This was <UpNext key={rev}>, bumped on every queue:sync —
+  // which arrived on every deck event — so the whole panel was torn down and rebuilt about once a second, re-running its
+  // six main-process loads each time. UpNext follows the queue itself (its engine mirror and ether:queue-changed); the
+  // length is all this wrapper passes. queue:sync now carries { len, items } and is sent only when the queue changed.
   useEffect(() => {
     const ether = (window as any).ether;
     if (!ether?.on) return;
-    const h = ether.on("queue:sync", (len: number) => {
-      setQueueLen(len);
-      setRev(r => r + 1);
+    const h = ether.on("queue:sync", (d: any) => {
+      const n = typeof d === "number" ? d : Number(d?.len);
+      if (Number.isFinite(n)) setQueueLen(n);
+      try { window.dispatchEvent(new CustomEvent("ether:queue-changed")); } catch { /* no window */ }
     });
     return () => ether.off("queue:sync", h);
   }, []);
 
-  return <UpNext key={rev} queueLen={queueLen} onQueueChange={() => setRev(r => r + 1)} />;
+  return <UpNext queueLen={queueLen} onQueueChange={() => { try { window.dispatchEvent(new CustomEvent("ether:queue-changed")); } catch {} }} />;
 }
 
 // ── Router ───────────────────────────────────────────────────

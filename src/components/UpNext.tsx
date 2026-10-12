@@ -215,14 +215,17 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
   const [lintMap, setLintMap] = useState<Record<number, number>>({});
 
   useEffect(() => {
-    setQueue(engine.getQueue());
-    const interval = setInterval(() => {
-      setQueue(engine.getQueue());
-    }, 1000);
+    // Only a CHANGED queue re-renders the list (2026-10-12): getQueue() is a new array every call, so the 1 s poll used to
+    // re-render the whole list every second with nothing new in it.
+    const sig = (q: any[]) => q.map((it: any) => `${it?.qid ?? ""}:${it?.filePath ?? ""}:${it?.title ?? ""}:${it?.contentClass ?? ""}`).join("|");
+    let last = "";
+    const pull = () => { const q = engine.getQueue(); const s = sig(q); if (s !== last) { last = s; setQueue(q); } };
+    pull();
+    const interval = setInterval(pull, 1000);
     // Stage 2a: re-render promptly when the daemon's queue changes (engine-rodio re-emits
     // `ether:queue-changed` on every daemon queue event) — not just on the 1s poll. This is what
     // makes intent-driven edits feel instant now that we no longer push the mirror synchronously.
-    const onChanged = () => setQueue(engine.getQueue());
+    const onChanged = pull;
     window.addEventListener("ether:queue-changed", onChanged);
     return () => { clearInterval(interval); window.removeEventListener("ether:queue-changed", onChanged); };
   }, [engine, queueLen]);

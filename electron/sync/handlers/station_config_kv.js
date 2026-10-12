@@ -410,6 +410,20 @@ function installStationConfigKv(ipcMain, db) {
   console.log('[station_config_kv] handlers installed');
 }
 
+// EVERY WRITE SAYS SO (2026-10-12, electron/board-write-events.js): the board watch keeps the saved board in memory and
+// re-reads it only when one of these writers ran — never on a timer. Re-bound here so the IPC handlers above (which call
+// these names at run time) announce too.
+{
+  const BW = require('../../board-write-events');
+  const T = 'station_config_kv';
+  stationConfigKvSetLocal    = BW.wrap(T, stationConfigKvSetLocal,    (_db, stationId, key) => ({ stationId, key }));
+  stationConfigKvUpsertByKey = BW.wrap(T, stationConfigKvUpsertByKey, (_db, stationId, key) => ({ stationId, key }));
+  stationConfigKvRemoveByKey = BW.wrap(T, stationConfigKvRemoveByKey, (_db, stationId, key) => ({ stationId, key }));
+  stationConfigKvCreate      = BW.wrap(T, stationConfigKvCreate,      (_db, p) => ({ stationId: p && p.station_id, key: p && p.key }));
+  stationConfigKvUpdate      = BW.wrap(T, stationConfigKvUpdate,      () => ({ stationId: null, key: null }));
+  stationConfigKvDelete      = BW.wrap(T, stationConfigKvDelete,      (_db, _uuid, stationId) => ({ stationId: stationId ?? null, key: null }));
+}
+
 module.exports = {
   installStationConfigKv,
   validateScope,

@@ -34,6 +34,7 @@ import { queryScoped } from "./db/stationScoped";
 import { useActiveStation, getActiveStationIdSync } from "./hooks/useActiveStation";
 import { useStreaming } from "./hooks/useStreaming";
 import { DeckState, rotLog } from "./audio/engine-rodio";
+import { useDecks, useDeckSelect, selectOnAir, sameOnAir } from "./audio/deckStore";
 import { fillQueueFromSchedule, refillFromSchedule, resetScheduleCursor, getFormatCategoryIds, getActiveShowClock } from "./audio/loggen";
 import { readID3 } from "./audio/id3";
 import { autoCueSong } from "./audio/songAnalysis";
@@ -604,6 +605,7 @@ export default function App() {
   // still reference the module-level singleton and are migrated in Commit 6.
   // Do not remove the module-level `engine` import until Commit 6 clears them.
   const engine = getEngine(stationId);
+  const onAir = useDeckSelect(engine, selectOnAir, sameOnAir);
   const viewport = useViewport();
   const [bottomMenuOpen, setBottomMenuOpen] = useState(false);
   const [irisOpen, setIrisOpen] = useState(false);   // Iris chat panel — toggled by the bottom-bar IRIS button (2026-07-22)
@@ -694,14 +696,15 @@ export default function App() {
   const durQueried = useRef(new Set<string>());
   const deckConfigsRef   = useRef<DeckConfig[]>([]);
   const prevQueueLen = useRef(-1); // track queue length changes for console logging
+  const lastQueueSig = useRef<string | null>(null);   // the queue last broadcast to the pop-outs (sent only on change)
   // Slice 2: source-machine attribution + last error. This machine's id (= client_identity.client_id),
   // and per-station stream live/last-error from the existing stream:status events (keyed by stationId).
   const machineIdRef = useRef<string | null>(null);
   const streamStatusRef = useRef<Map<number, { live: boolean; lastError: string | null; lastErrorAt: number | null }>>(new Map());
   const [restoreInfo, setRestoreInfo] = useState<{ title: string | null; position: number; queueLen: number; savedAt: number } | null>(null);
-  const [deckA, setDeckA] = useState<DeckState | null>(null);
-  const [deckB, setDeckB] = useState<DeckState | null>(null);
-  const [deckC, setDeckC] = useState<DeckState | null>(null);
+  // DECK STATE IS NOT APP STATE (2026-10-12, src/audio/deckStore.ts). App used to hold deckA/B/C and replace them on every
+  // deck event — the position ticks, ≥ 1/s — so the whole app re-rendered every second (docs/ui-freeze-diagnosis.md §2A).
+  // App now reads only what it shows (which deck is on air, its title); the board reads the decks itself.
   // JINGLES overlay v1: live overlay state for the ACTIVE station, from the daemon (observed, not claimed).
   // { deck: the deck whose seam the jingle bridges, state: 'SCHEDULED'|'ARMED'|'FIRING', title }. null when idle.
   const [jingleOverlay, setJingleOverlay] = useState<{ deck: string | null; state: string; title: string | null; contentClass: string | null; jinDurSec: number | null } | null>(null);
@@ -1966,6 +1969,9 @@ export default function App() {
     return () => { alive = false; };
   }, [stationId]);
 
+  // The handler calls the CURRENT toggleAuto through a ref (declared below). It used to re-subscribe on every deck event
+  // ([deckA, deckB]), which is the only reason its closure was fresh; with the decks out of App it must not go stale.
+  const toggleAutoRef = useRef<() => unknown>(() => {});
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || (e.target as HTMLElement).isContentEditable) return;
@@ -1991,14 +1997,14 @@ export default function App() {
         case "KeyL": setPanel("library"); break;
         case "KeyS": setPanel("clocks"); break;
         case "KeyG": setPanel("logs"); break;
-        case "KeyA": e.preventDefault(); toggleAuto(); break;
+        case "KeyA": e.preventDefault(); void toggleAutoRef.current(); break;
         case "Slash": if (e.shiftKey) { e.preventDefault(); setShowShortcuts(s => !s); } break;
         case "Escape": setShowShortcuts(false); setDrawerOpen(false); break;
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [deckA, deckB]);
+  }, []);
 
   // When the schedule is (re)generated, resync the live up-next queue to the new plan from now —
   // only while AUTO is driving playback (don't disturb a manually-built queue).
@@ -2037,16 +2043,10 @@ export default function App() {
     // crash-only auto-resume, and re-running it per station switch could re-trigger
     // auto-start on the station being switched to.
     engine.init();
-    setDeckA(engine.getDeck("A")?.getState?.() ?? null);
-    setDeckB(engine.getDeck("B")?.getState?.() ?? null);
-    setDeckC(engine.getDeck("C")?.getState?.() ?? null);
     setQueueLen(engine.getQueue().length);
-    const unsub = engine.on((id, st) => {
-      if (id === "A") setDeckA({...st});
-      else if (id === "B") setDeckB({...st});
-      else if (id === "C") setDeckC({...st});
-      setQueueLen(engine.getQueue().length);
-    });
+    // Only the queue LENGTH here (an unchanged number does not re-render). The deck states are read by the components that
+    // show them (src/audio/deckStore.ts), so a position tick no longer re-renders the whole app.
+    const unsub = engine.on(() => { setQueueLen(engine.getQueue().length); });
     // Exactly ONE live engine: when the active station changes, the engine we are leaving
     // releases its 250 ms poll and its daemon listeners. Without this, every station
     // visited left a timer running for the session — and in the in-process fallback two
@@ -2167,10 +2167,18 @@ export default function App() {
       // their local engine instances can mirror it. Pop-outs are separate
       // BrowserWindows with their own JS context, so they have empty engine
       // singletons until we explicitly sync.
-      (window as any).ether?.emit("ether:broadcast", {
-        channel: "queue:sync",
-        data: { len: newQLen, items: engine.getQueue() },
-      });
+      // ONLY WHEN THE QUEUE CHANGED (2026-10-12, docs/ui-freeze-diagnosis.md §2B). This ran on every deck event — the
+      // position ticks, ≥ 1/s — cloning the whole queue through main into every window, and the Up Next pop-out remounted
+      // on each one. A position tick does not change the queue.
+      const q = engine.getQueue();
+      const qSig = q.map((it: any) => it?.qid ?? it?.filePath ?? it?.title ?? "").join("|");
+      if (qSig !== lastQueueSig.current) {
+        lastQueueSig.current = qSig;
+        (window as any).ether?.emit("ether:broadcast", {
+          channel: "queue:sync",
+          data: { len: newQLen, items: q },
+        });
+      }
 
       // Fire tour events
       if (id === "A" && st.filePath) window.dispatchEvent(new Event("ether:tour-deck-loaded"));
@@ -2348,6 +2356,7 @@ export default function App() {
   // AUTO toggles: pressing it while it reads AUTO STOPS automation, otherwise it ENGAGES. Each branch
   // then sends an ABSOLUTE command (never `!label` arithmetic passed down to the daemon).
   const toggleAuto = async () => { if (autoAdv === true) await stopAutomation(); else await runEngage(); };
+  toggleAutoRef.current = toggleAuto;
   const runEngage = async () => {
     autoCmdRef.current = { value: true, until: Date.now() + 4000 };    // hold AUTO until confirmed
     const n = true;
@@ -2498,26 +2507,26 @@ export default function App() {
   // else — no reload, no navigation, session untouched.
   const resetLayout = () => { canvasEngine.resetLayout(); };
 
-  const nowPlayingDeck = [deckA, deckB, deckC].find(d => d?.status === "playing");
-  // Clock accent follows the on-air deck's color (A red / B blue / C green), teal when idle.
+  // Clock accent follows the on-air deck's color (A red / B blue / C green), teal when idle. From the on-air SELECTION —
+  // changes on a track change, never on a position tick.
   const nowPlayingDeckColor =
-    deckA?.status === "playing" ? "var(--deck-a)" :
-    deckB?.status === "playing" ? "var(--deck-b)" :
-    deckC?.status === "playing" ? "var(--deck-c)" :
+    onAir.id === "A" ? "var(--deck-a)" :
+    onAir.id === "B" ? "var(--deck-b)" :
+    onAir.id === "C" ? "var(--deck-c)" :
     "var(--accent-cyan)";
-  const nowPlayingTitle = nowPlayingDeck?.title || "";
-  const nowPlayingStr = nowPlayingDeck
-    ? `${nowPlayingDeck.title}${nowPlayingDeck.artist ? ` by ${nowPlayingDeck.artist}` : ""}`
+  const nowPlayingTitle = onAir.id ? onAir.title : "";
+  const nowPlayingStr = onAir.id
+    ? `${onAir.title}${onAir.artist ? ` by ${onAir.artist}` : ""}`
     : "";
-  const anyDeckPlaying = [deckA, deckB, deckC].some(d => d?.status === "playing");
+  const anyDeckPlaying = onAir.id != null;
 
   // Broadcast the engine's ACTUAL playing track so views (e.g. the Calendar day view) can
   // highlight what's really on air. scheduledAt is the exact generated_schedule row identity
   // (single source) — the calendar matches on it, no text/clock guessing.
   useEffect(() => {
-    const scheduledAt = nowPlayingDeck ? (engine as any).getDeckSched?.(nowPlayingDeck.id) : undefined;
-    window.dispatchEvent(new CustomEvent("ether:now-playing", { detail: { title: nowPlayingDeck?.title || "", artist: nowPlayingDeck?.artist || "", scheduledAt } }));
-  }, [nowPlayingDeck?.title, nowPlayingDeck?.artist, nowPlayingDeck?.id]);
+    const scheduledAt = onAir.id ? (engine as any).getDeckSched?.(onAir.id) : undefined;
+    window.dispatchEvent(new CustomEvent("ether:now-playing", { detail: { title: onAir.id ? onAir.title : "", artist: onAir.id ? onAir.artist : "", scheduledAt } }));
+  }, [onAir.title, onAir.artist, onAir.id]);
 
   const handleStationSwitch = async (id: number, name: string): Promise<boolean> => {
     const r = await (window as any).ether.stations.switch(id);
@@ -2659,7 +2668,7 @@ export default function App() {
         filePath:    payload.filePath || null,
       }).catch(() => {});
     }
-  }, [deckA?.status === "playing" ? deckA?.title : null, deckB?.status === "playing" ? deckB?.title : null, deckC?.status === "playing" ? deckC?.title : null, stationName, stationUuid]);
+  }, [onAir.titles[0], onAir.titles[1], onAir.titles[2], stationName, stationUuid]);
 
   // Tell the engine which music decks are enabled, so auto-advance only
   // rotates through them. If a deck the user disabled is currently playing
@@ -2779,7 +2788,7 @@ export default function App() {
         <div style={{ display: "flex", alignSelf: "stretch", flexShrink: 1, minWidth: 0, zIndex: 1 }}>
           {viewport.searchW > 0 ? (
             <div style={{ width: "100%", maxWidth: viewport.searchW, minWidth: 0, position: "relative" as const, display: "flex", flexDirection: "column" as const, transition: "max-width 0.18s ease" }}>
-              <JockStrip deckA={deckA} deckB={deckB} dropDown externalSearch={globalSearch} onSearchChange={setGlobalSearch} />
+              <JockStripLive dropDown externalSearch={globalSearch} onSearchChange={setGlobalSearch} />
             </div>
           ) : (
             <button
@@ -3123,14 +3132,12 @@ export default function App() {
           {panel === "live" && (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, position: "relative" as const }}>
               {useCanvas ? (
-                <WidgetCanvas
+                <WidgetCanvasLive
                   canvasEngine={canvasEngine}
-                  deckStates={{ A: deckA, B: deckB, C: deckC }}
                   audioEngine={engine}
                 />
               ) : (
                 <LivePanel
-                  deckA={deckA} deckB={deckB} deckC={deckC}
                   jingleOverlay={jingleOverlay}
                   onCloseDock={() => setProgPanel(null)}
                   onOpenImaging={() => { setProgPanel(null); setPanel("imaging"); }}
@@ -3539,7 +3546,7 @@ export default function App() {
           onClose={() => setShowProducerDesk(false)}
           episodeTitle={nowPlayingTitle || undefined}
           nowPlaying={nowPlayingStr || undefined}
-          nowPlayingTrack={nowPlayingDeck ? { title: nowPlayingDeck.title || "", artist: nowPlayingDeck.artist || "" } : null}
+          nowPlayingTrack={onAir.id ? { title: onAir.title, artist: onAir.artist } : null}
         />
       )}
       {showDeckConfig && (
@@ -3910,8 +3917,18 @@ function PlaylistPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, onOpenCarts, libraryDock, jingleOverlay, onCloseDock, onOpenImaging }: {
-  deckA: DeckState | null; deckB: DeckState | null; deckC: DeckState | null;
+// The two surfaces in App that show deck positions read the deck store themselves (src/audio/deckStore.ts), so a position
+// tick re-renders them and nothing else.
+function JockStripLive(props: Omit<React.ComponentProps<typeof JockStrip>, "deckA" | "deckB">) {
+  const d = useDecks(useAudioEngine());
+  return <JockStrip deckA={d.A} deckB={d.B} {...props} />;
+}
+function WidgetCanvasLive(props: Omit<React.ComponentProps<typeof WidgetCanvas>, "deckStates">) {
+  const d = useDecks(props.audioEngine as any);
+  return <WidgetCanvas {...props} deckStates={{ A: d.A, B: d.B, C: d.C }} />;
+}
+
+function LivePanel({ autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, onOpenCarts, libraryDock, jingleOverlay, onCloseDock, onOpenImaging }: {
   autoAdv: boolean | null; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
   queueLen: number; showCarts: boolean; toggleCarts: () => void;
@@ -3935,6 +3952,8 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
   onOpenImaging: () => void;
 }) {
   const engine = useAudioEngine();
+  // The board shows the countdowns, so it reads the full deck states (src/audio/deckStore.ts) — App no longer passes them.
+  const { A: deckA, B: deckB, C: deckC } = useDecks(engine);
   const { stationId: lpStationId, stationUuid: lpStationUuid } = useActiveStation();   // for the JINGLES push-up (imaging home)
   const vp = visiblePanels || { queue: true, deckA: true, deckB: true, deckC: true, mic: true };
   const lpViewport = useViewport();

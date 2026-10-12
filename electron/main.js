@@ -104,6 +104,12 @@ try { require("dotenv").config(); } catch (e) { /* dotenv optional in packaged b
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = "true";
 
 const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage, safeStorage, powerMonitor } = require("electron");
+// RESPONSIVENESS SENSE (2026-10-12, electron/perf-sense.js) — installed before any handler registers, so every ipcMain
+// handler's synchronous part is timed and a main stall can name what held it. Numbers on /health (`perf`).
+const PerfSense = require("./perf-sense").createPerfSense({
+  ledger: (kind, data) => { try { _healthEvent(kind, { ...data, message: `Main was blocked ${data.lagMs} ms — ${(data.heldBy || []).join("; ")}` }); } catch {} },
+});
+PerfSense.instrumentIpc(ipcMain);
 
 // ── RESTORE GATE ────────────────────────────────────────────────────────────────────────────────
 // A database cannot be replaced while anything still holds it open. The app is the main offender: the
@@ -494,13 +500,14 @@ function _clearBoardMismatch(sid, why) {
   if (!_boardMismatched.delete(sid)) return;
   _healthEvent("board-state-match", { stationId: sid, reason: why, message: "The engine is running the board you saved" });
 }
-// THE CONTINUOUS WATCH (Jeff, 2026-10-12; electron/board-watch.js): every change main routes or the engine reports is
-// compared, and every station every 500 ms; a difference that survives 300 ms is the red event, naming the setting.
-// Daemon only, like the connect pass: the in-process fallback has no blade to save fader levels, so its board is not
-// "saved" until the daemon takes over. Saved = the database plus the board_levels main is about to write.
+// THE CONTINUOUS WATCH (Jeff, 2026-10-12; electron/board-watch.js). EVENT-DRIVEN: a station is compared after every change
+// main routes or the engine reports, and after every write to its saved board — never on a timer, and the saved board is
+// read from the database only after a write said it changed (no polling DB reads). A difference that holds still for
+// 300 ms is the red event, naming the setting; a drag in progress never is. Daemon only, like the connect pass: the
+// in-process fallback has no blade to save fader levels, so its board is not "saved" until the daemon takes over.
+// Saved = the cached database copy plus the board_levels main is about to write.
 const _boardLevelsPending = new Map();   // sid → the blade's levels not yet written to board_levels
 const _boardWatch = BoardWatch.createBoardWatch({
-  stations: _stationIds,
   readSaved: (sid) => { const d = _boardDb(); if (!d) throw new Error("database not open"); return BoardState.readSavedBoard(d, sid); },
   readLive: async (sid) => (AUDIO_DAEMON ? audiodClient.cmd("getBoardState", { stationId: sid }) : { ok: false, reason: "in-process" }),
   compare: BoardState.compareBoard,
@@ -509,8 +516,16 @@ const _boardWatch = BoardWatch.createBoardWatch({
   onMatch: (sid) => _clearBoardMismatch(sid, "watch"),
   log: (m) => logStartup(m),
 });
+// The saved board changed: every writer of station_config_kv / deck_configs announces itself (electron/board-write-events.js).
+// A kv key the board does not read is ignored. master_monitor_volume is ONE level for the machine (any station's row can
+// be the one read), so it refreshes every station.
+require("./board-write-events").on(({ table, stationId, key }) => {
+  if (table === "station_config_kv" && !BoardState.isBoardKey(key)) return;
+  if (key === BoardState.MASTER_MONITOR_KEY) { _boardWatch.savedChanged(null, _stationIds); return; }
+  _boardWatch.savedChanged(stationId == null ? null : Number(stationId), _stationIds);
+});
 // THE CONNECT PASS — serialised, so a connect and a handover a moment apart run one after the other. The watch holds its
-// tongue while the saved board is being re-applied, and starts its beat after the first pass.
+// tongue while the saved board is being re-applied, then compares every station once.
 let _boardSyncChain = Promise.resolve();
 function _syncBoard(why) {
   _boardSyncChain = _boardSyncChain.then(async () => {
@@ -529,7 +544,7 @@ function _syncBoard(why) {
         onMismatch: (sid, diffs) => _raiseBoardMismatch(sid, diffs, why),
         onMatch: (sid) => _clearBoardMismatch(sid, why),
       });
-    } finally { _boardWatch.resume(); _boardWatch.start(); }
+    } finally { _boardWatch.resume(); _boardWatch.savedChanged(null, _stationIds); }
   }).catch(e => logStartup(`[board] connect pass ✗ ${e && e.message || e} (${why})`));
   return _boardSyncChain;
 }
@@ -1000,7 +1015,11 @@ if (AUDIO_DAEMON_DESIRED) {
   // Declared in the enclosing scope so the daemon event handler (below) can feed noteSkip (Slice B).
   let _libHealth = null;
   try {
-    _libHealth = require("./library-health").createLibraryHealth({
+    // OFF THE MAIN PROCESS (2026-10-12, docs/health-monitor-jump-and-freeze-2026-10-12.md). The sweep measured 4.0–9.2 s
+    // per run, every 2 min, synchronously on main — the "Not Responding" freeze. It now runs in its own thread
+    // (electron/library-health-worker.js) with its own read-only connection; this is the same options block, kept as the
+    // in-main fallback should the worker fail to start (then it says so, loudly, and behaves exactly as before).
+    const _lhOpts = {
       getDb: () => db,
       backendUrl: ETHER_BACKEND_URL,
       licenseKeyFn: () => { try { return accountLicenseKey(); } catch { return null; } },
@@ -1015,11 +1034,32 @@ if (AUDIO_DAEMON_DESIRED) {
       // The health ledger is ACCOUNT state (it records this account's library), so it lives in the
       // profile alongside the database it describes — not in machine-level Roaming.
       userDataDir: P.profileDir(P.activeKey()),
+    };
+    // main keeps an instance for the module-level noteEvent bridge (cheap ledger appends) — it never sweeps.
+    require("./library-health").createLibraryHealth(_lhOpts);
+    _libHealth = require("./library-health-host").createLibraryHealthHost({
+      dbPathFn: () => getDbPath(),
+      ctxFn: () => ({
+        musicDir: (() => { try { return getMusicDir(); } catch { return null; } })(),
+        restoreInFlight: (() => { try { return catalogueRestoreInFlight(); } catch { return false; } })(),
+        licenseKey: (() => { try { return accountLicenseKey(); } catch { return null; } })(),
+      }),
+      userDataDir: _lhOpts.userDataDir,
+      backendUrl: ETHER_BACKEND_URL,
+      broadcast: sendToAllWindows,
+      log: (m) => logStartup(m),
+      healthEvent: (kind, data) => { try { _healthEvent(kind, data); } catch {} },
+      inMainFallback: () => require("./library-health").createLibraryHealth(_lhOpts),
     });
     _libHealth.start();
     ipcMain.handle("library-health:get", () => { try { return _libHealth.snapshot(); } catch { return null; } });
-    ipcMain.handle("library-health:eligibility", (_e, stationId) => { try { return _libHealth.eligibilityRows(stationId); } catch { return []; } });
-    ipcMain.handle("library-health:queue-lint", (_e, stationId) => { try { return _libHealth.lintRows(stationId); } catch { return []; } });
+    ipcMain.handle("library-health:eligibility", async (_e, stationId) => { try { return await _libHealth.eligibilityRows(stationId); } catch { return []; } });
+    ipcMain.handle("library-health:queue-lint", async (_e, stationId) => { try { return await _libHealth.lintRows(stationId); } catch { return []; } });
+    // A heavy SELECT, off the main process (2026-10-12): the library mirror's full-library join ran here every 60 s.
+    // { ok, rows } or { ok:false } — the caller falls back to db:query, so an unavailable worker costs nothing but the stall.
+    ipcMain.handle("db:query-offmain", async (_e, sql, params) => {
+      try { return { ok: true, rows: await _libHealth.query(sql, params) }; } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+    });
     // ── PHASE C — the advisor, on demand (2026-08-10) ───────────────────────────────────────────
     // SAME goalCheck the Station Health sense uses — one implementation, two cadences. The snapshot
     // above is recomputed on a 120s tick and polled at 30s, which is right for a background sense and
@@ -1028,8 +1068,8 @@ if (AUDIO_DAEMON_DESIRED) {
     // would quietly disagree about the same clock.
     // Called on mount and after committed mutations only — never per keystroke.
     // docs/schedule-manager-design-2026-08-10.md §3.3
-    ipcMain.handle("library-health:goals", (_e, stationId) => {
-      try { return _libHealth.goalCheck(db, stationId || getActiveStationId()); } catch { return null; }
+    ipcMain.handle("library-health:goals", async (_e, stationId) => {
+      try { return await _libHealth.goalCheck(db, stationId || getActiveStationId()); } catch { return null; }
     });
   } catch (e) { console.error("[library-health] init failed:", e && e.message); }
 
@@ -3569,6 +3609,10 @@ app.whenReady().then(() => {
         // is how one machine's user directory used to land in the other's rows. A getter, not a
         // string: changing the library folder takes effect on the next apply, not the next restart.
         localAudioDir: () => getMusicDir(),
+        // An inbound pull that touched the saved board refreshes the board watch's copy (event-driven, no polling).
+        onProgress: (ev) => {
+          try { const bt = (ev && ev.byTable) || {}; if (bt.station_config_kv || bt.deck_configs) _boardWatch.savedChanged(null, _stationIds); } catch {}
+        },
       });
       if (uuidIdentity) console.log('[SYNC] UUID-identity scoping ENABLED (station programming syncs by station UUID)');
       // Do NOT start sync here. Sync must never run off a license_key that's merely sitting in the
@@ -4139,6 +4183,7 @@ let _mainLoopLagMs = 0, _mainLoopLagPeakMs = 0, _mainLoopLagPeakAt = 0;
     _expected = nowT + PERIOD;
     _mainLoopLagMs = lag;
     if (lag >= _mainLoopLagPeakMs || (nowT - _mainLoopLagPeakAt) > 60000) { _mainLoopLagPeakMs = lag; _mainLoopLagPeakAt = nowT; }
+    try { PerfSense.noteLag(lag); } catch {}
   }, PERIOD);
   if (_t.unref) _t.unref();
 }
@@ -4176,8 +4221,11 @@ function buildHealthSnapshot() {
     memRssMb,
     eventLoopLagMs: _mainLoopLagMs,          // (2026-07-22) current main event-loop lag
     eventLoopLagPeakMs: _mainLoopLagPeakMs,  // worst in the last ~60s
+    // (2026-10-12) what held main (handlers ≥ 50 ms) and every window's long tasks + input timing, last 60 s.
+    perf: (() => { try { return PerfSense.snapshot(); } catch { return null; } })(),
   };
 }
+ipcMain.handle("perf:report", (e, p) => { try { PerfSense.report(e.sender.id, p); } catch {} return true; });
 
 ipcMain.handle("ha:status", () => {
   const plat = loadHaPlatform();
@@ -7546,9 +7594,20 @@ function attachPopoutDebugBridge(win, panel) {
   });
 }
 
+// POP-OUTS STAY ALIVE (2026-10-12, docs/ui-freeze-diagnosis.md §1 #4). Every open used to build a new BrowserWindow that
+// booted the whole 3.3 MB renderer, and every close destroyed it, so the next open paid it all again — the "first click
+// freezes". Now closing a pop-out HIDES it, and opening it again shows the same, already-running window. A real quit
+// (app.isQuitting) closes everything. Found by panel, not by title: the page sets its own document.title, so a title
+// lookup missed a live window.
+// CLOSED FOR REAL, as before: anything that holds a device or acts while open — the Show+ DAW (its own close guard), Show+
+// and the camera (capture devices), the phone desk (calls), voice tracking and the mic (inputs), and the jukebox (it picks
+// the next song while it is open; closing it must still stop that).
+const _popoutWins = new Map();   // panel → BrowserWindow
+const POPOUT_DESTROY_ON_CLOSE = new Set(["studiopro", "videostudio", "camera", "phone", "voicetrack", "mic", "jukebox"]);
 function openPopoutWindow(panel) {
   const tag = `popout:${panel}`;
-  const existing = BrowserWindow.getAllWindows().find(w => w.getTitle() === tag);
+  const known = _popoutWins.get(panel);
+  const existing = (known && !known.isDestroyed()) ? known : BrowserWindow.getAllWindows().find(w => w.getTitle() === tag);
   if (existing) { existing.show(); existing.focus(); return existing; }
 
   const { screen } = require("electron");
@@ -7606,10 +7665,21 @@ function openPopoutWindow(panel) {
     },
   });
 
-  // Remember size + position (Windows fires these once at the end of a drag/resize).
-  const persist = () => { try { savePopoutBounds(panel, win.getBounds()); } catch { /* ignore */ } };
+  // Remember size + position (Windows fires these once at the end of a drag/resize). Written 500 ms after the last one,
+  // off the moment of the drag (it was a synchronous read + write of the bounds file on every event).
+  let _persistT = null;
+  const persist = () => { clearTimeout(_persistT); _persistT = setTimeout(() => { try { if (!win.isDestroyed()) savePopoutBounds(panel, win.getBounds()); } catch { /* ignore */ } }, 500); };
   win.on("moved", persist);
   win.on("resized", persist);
+  _popoutWins.set(panel, win);
+  win.on("closed", () => { if (_popoutWins.get(panel) === win) _popoutWins.delete(panel); });
+  if (!POPOUT_DESTROY_ON_CLOSE.has(panel)) {
+    win.on("close", (e) => {
+      if (app.isQuitting) return;            // a real quit closes it
+      e.preventDefault();
+      try { win.hide(); } catch { /* already going */ }
+    });
+  }
 
   // Close-guard: the Show+ DAW holds an un-persisted editing session — warn before discarding
   // uncommitted regions. Guards Alt+F4 / OS close, not just the shell X. The renderer reports
@@ -8524,10 +8594,16 @@ ipcMain.handle("weather:getLasVegas", async () => {
 let irisConnected = false;
 let irisLastSeen  = 0;
 
+// Meter-rate channels are not sent to a HIDDEN pop-out (2026-10-12): pop-outs now stay alive when closed, and a hidden
+// window has no meter to draw. Everything else (state, queue, show, health) still reaches it, so it is current the moment
+// it is shown; the meters resume on the next frame.
+const _METER_RATE = new Set(["audio:levels", "audio:meters", "audio:proc-meters", "audio:rta"]);
 function sendToAllWindows(channel, payload) {
+  const meterRate = _METER_RATE.has(channel);
   BrowserWindow.getAllWindows().forEach(w => {
     try {
       if (!w.isDestroyed() && w.webContents && !w.webContents.isDestroyed()) {
+        if (meterRate && w !== mainWindow && !w.isVisible()) return;
         w.webContents.send(channel, payload);
       }
     } catch (e) {

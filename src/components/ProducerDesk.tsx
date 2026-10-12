@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { queryScoped } from "../db/stationScoped";
 import { CART_SLOT_COUNT } from "./DeckConfigurator";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { scrollOwnToBottom } from "../lib/stickyScroll";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -1229,7 +1230,7 @@ export function InlineProducerDesk({ episodeTitle, nowPlaying }: { episodeTitle?
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (chatEndRef.current) chatEndRef.current.scrollIntoView({ behavior: "smooth" });
+    scrollOwnToBottom(chatEndRef.current);   // its own box only — never the board around it (2026-10-12)
   }, [chatMessages, chatLoading]);
 
   useEffect(() => {

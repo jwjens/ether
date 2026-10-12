@@ -61,6 +61,8 @@
     "test:local-playback": "node scripts/test-local-playback-guard.js",
     "test:board-restore": "node scripts/smoke-board-restore.js",
     "test:attach-restore": "node scripts/smoke-attach-after-restore.js --control",
+    "test:feed-no-jump": "electron scripts/smoke-feed-no-jump.js --control 193aae1",
+    "test:lh-worker": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-library-health-worker.js",
     "test:iris-phrases": "node scripts/test-iris-transport-phrases.js",
     "test:library-foreign": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-library-health-foreign.js",
     "test:relink": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-relink-no-mutation.js",

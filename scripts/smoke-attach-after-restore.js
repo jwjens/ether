@@ -132,12 +132,14 @@ async function run(tag, engineFile) {
       ok(r.diffs[sid].length === 0, `fixed s${sid}: live = saved after the attach — no fader needs a nudge${r.diffs[sid].length ? ` (${r.diffs[sid].map(d => d.setting).join(",")})` : ""}`);
     }
   }
+  // The control is the last commit BEFORE the fix (ad3f958), unless another revision is named after --control.
+  const CONTROL_REV = (process.argv[process.argv.indexOf("--control") + 1] || "").match(/^[0-9a-f]{6,40}$/) ? process.argv[process.argv.indexOf("--control") + 1] : "ad3f958";
   if (process.argv.includes("--control")) {
     const headSrc = path.join(TMP, "engine-rodio.head.ts"), headBoot = path.join(TMP, "boot-seq.ts");
-    fs.writeFileSync(headSrc, cp.execSync("git show HEAD:src/audio/engine-rodio.ts", { cwd: ROOT, maxBuffer: 1 << 26 }));
+    fs.writeFileSync(headSrc, cp.execSync(`git show ${CONTROL_REV}:src/audio/engine-rodio.ts`, { cwd: ROOT, maxBuffer: 1 << 26 }));
     fs.copyFileSync(path.join(ROOT, "src", "audio", "boot-seq.ts"), headBoot);
     const old = bundle(headSrc, path.join(TMP, "engine-head.js"));
-    const c = await run("control-HEAD", old);
+    const c = await run(`control-${CONTROL_REV}`, old);
     if (c) {
       ok(c.writes.some(w => /^setMonitorVolume\[2,0\]/.test(w)), `CONTROL (pre-fix engine): the window zeroed halloVeen's station MONITOR on attach — ${c.writes.filter(w => /setMonitorVolume/.test(w)).join(", ")}`);
       ok(c.diffs[2].some(d => d.setting === "monitorVol" && d.live === 0), `CONTROL: live ≠ saved afterwards — ${c.diffs[2].map(d => `${d.label}: saved ${d.saved}, live ${d.live} (${d.where})`).join("; ")}`);

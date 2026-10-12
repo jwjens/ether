@@ -16,6 +16,9 @@ import PopoutRenderer from "./components/PopoutRenderer";
 import { AudioEngineProvider } from "./audio/AudioEngineContext";
 import "./index.css";
 import { runMigrations } from "./db/client";
+import { startPerfSense } from "./lib/perfSense";
+// Responsiveness sense (2026-10-12, electron/perf-sense.js): this window's long tasks and input timing, on /health.
+try { startPerfSense((window.location.hash || "#main").slice(1) || "main"); } catch { /* never block boot */ }
 
 // ── Root error boundary — catches crashes before EtherErrorBoundary mounts ──
 class RootBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {

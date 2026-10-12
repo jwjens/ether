@@ -285,6 +285,17 @@ function installDeckConfigs(ipcMain, db) {
   console.log('[deck_configs] handlers installed');
 }
 
+// EVERY WRITE SAYS SO (2026-10-12, electron/board-write-events.js) — see station_config_kv.js.
+{
+  const BW = require('../../board-write-events');
+  const T = 'deck_configs';
+  deckConfigsCreate      = BW.wrap(T, deckConfigsCreate,      (_db, p) => ({ stationId: p && p.station_id }));
+  deckConfigsUpdate      = BW.wrap(T, deckConfigsUpdate,      () => ({ stationId: null }));
+  deckConfigsUpdateBySlot = BW.wrap(T, deckConfigsUpdateBySlot, (_db, stationId) => ({ stationId }));
+  deckConfigsDelete      = BW.wrap(T, deckConfigsDelete,      (_db, _uuid, stationId) => ({ stationId: stationId ?? null }));
+  deckConfigsClearAll    = BW.wrap(T, deckConfigsClearAll,    (_db, stationId) => ({ stationId }));
+}
+
 module.exports = {
   installDeckConfigs,
   validateScope,
