@@ -197,3 +197,46 @@ The `24d656e7` installer is kept as `Ether Setup 4.6.59 - board-watch 24d656e7 2
    - per window: `longTaskPeakMs`, `inputsOverOneFrame`, `inputResponsePeakMs` and `firstInput`.
 
 **Temporary tooling:** none left running. The 10-minute `/health` sampler (2026-10-12 21:52–22:02 UTC) ended by itself. `measure-responsiveness.js` runs only when started, and stops after the given minutes.
+
+
+## 5 · Result on OVEVENTS (Jeff installed the fix build; MEASURE-BEFORE skipped by Jeff)
+
+Confirmed installed:
+- `app.asar` sha256 `217118cf2622b591e8428278847669c21d14b05d60fe59cb229d586759a3dc34` = the `6b1fcb43` installer's (from `0acf1f8`);
+- engine `7598aef6`.
+
+`scripts/measure-responsiveness.js`, 5 minutes each, starting 1 minute after launch. Jeff ruled that the `24d656e7` main-process numbers are the "before".
+
+| | Before (`24d656e7`) | After (`0acf1f8`) |
+|---|---|---|
+| Main `eventLoopLagPeakMs` | **14,799 ms** | **788 ms** |
+| Reads that saw a stall ≥ 1 s | 1 | **0** |
+| Reads that saw a stall ≥ 250 ms | 6 | 9 |
+| `/health` unanswered / worst answer | 2 / 1,307 ms | **0 / 577 ms** |
+| Library sweep | on main, 4.0–9.2 s per run | in the worker, 3.7–5.7 s per run; main not blocked by it |
+| Renderer (main window), last 60 s | not measurable (no sense) | long tasks 5, worst 259 ms |
+| Input: delay before handler, worst | — | **18 ms** (about one frame) |
+| Input → next paint, worst | — | 288 ms; 27 of 42 inputs over one frame |
+| First input of the session | — | keydown, delay 18 ms, 40 ms to paint |
+
+**Met:** no "Not Responding". After startup no stall reached 1 s, and the multi-second stalls every 2 minutes are gone.
+
+**Not met: "no input delay over one frame".** The handler starts within a frame (worst 18 ms), but painting the result took up to 288 ms, and 27 of 42 inputs exceeded a frame. The renderer still has long tasks (worst 259 ms).
+
+**What still holds main** (ledger `main-stall`, after startup, all 0.3–0.8 s):
+- `health:frames` 1,381 ms: the fleet health frame builder, a synchronous IPC handler.
+- `video:list-encoders` 1,777 ms, once, soon after launch: the Show+ encoder probe, synchronous.
+- Ten more stalls of 315–788 ms named "no IPC handler — a timer or an event held main", roughly every 30 s (23:22:07, 23:22:39, 23:23:11, 23:23:33, 23:24:05 …). That points to a main-process interval of about 30 s (UNVERIFIED which one; candidates are the 30 s library sync, `runLibrarySync`, `main.js:3266`, and the sync pull). The sense does not yet time timers. The next step is to give it timer attribution, then fix what it names.
+
+**Separate finding: the first launch after an install takes 15–16 s before any window appears.** Boot trace (`%TEMP%\ether-diag.txt`): `POINT-3 lock acquired` → `POINT-4 app.whenReady` on every post-install launch:
+
+| Launch | Time to `whenReady` |
+|---|---|
+| 2026-10-11 19:28 | 16.2 s |
+| 2026-10-11 20:21 | 16.7 s |
+| 2026-10-12 20:25 | 16.1 s |
+| 2026-10-12 21:43 | 15.4 s |
+| 2026-10-12 23:18 | 15.1 s |
+| A plain relaunch, 22:40 | **0.8 s** |
+
+It is the same on the old and new builds: synchronous work at `main.js` module load before the app is ready, after an update. Not caused by this change, and not the click freeze. Its cause is not yet identified.
