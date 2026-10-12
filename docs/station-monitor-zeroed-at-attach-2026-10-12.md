@@ -136,3 +136,38 @@ Line numbers are at the pre-fix commit (`ad3f958`). Every one is removed or conv
 - **CART ON/OFF** now travels with the station (synced, like the jukebox cut) instead of living in one window's browser storage.
 - **A machine updating from a build older than 2026-10-11, with MONITOR only in browser storage,** comes up with the room silent and MONITOR reading OFF until it is raised. It used to send the browser value, which the pop-out could have overwritten with its 0.8 placeholder. This follows the "silent until known" ruling. **OV is such a machine** if it updates straight from an older build.
 - **The old browser mic pick** is handed over once per channel letter. If two stations both had an unpatched mic on the same letter, only the first station seen gets it; the other says "no input — Preferences → Audio".
+
+## 5 · Build (2026-10-12 14:17, local, unsigned release held, no version bump)
+
+- Installer: `C:\openair\dist-electron\Ether Setup 4.6.59.exe`, built from `90a6a47`, 215,960,939 bytes.
+- **sha256 `24d656e72e794d2a7f19ad9d8de3f89694adcbc3792c33fd8cf0144c6173da40`**.
+- Check it in PowerShell: `(Get-FileHash "C:\openair\dist-electron\Ether Setup 4.6.59.exe").Hash -eq "24D656E72E794D2A7F19AD9D8DE3F89694ADCBC3792C33FD8CF0144C6173DA40"`
+- The previous installer (`aad22f7d…`) is kept as `Ether Setup 4.6.59 - limiter aad22f7d 2026-10-12 1213 - SUPERSEDED.exe`.
+- **Engine `7598aef6be66488d5120688d8a4f67bbdb582965a87999227908a4925225658c`**: unchanged, no Rust source changed. Daemon code hash `48276f72…`.
+- `audiod/verify-packaged.js`: RELEASE GATE PASS. The packaged daemon reports the same native and code hashes as the package.
+
+**Gates:**
+- `tsc --noEmit`: 0 errors.
+- vitest: 864/864 (98 files).
+- Leak guard OK (baseline holds); isolation guard OK; local-playback guard PASS; window-station PASS.
+- Show presets 52/52; meter contract 30/30; board-restore 39/39.
+- **attach-after-restore 15/15**, including the pre-fix control.
+
+**Rust suite, single-threaded:**
+- Pass 1: 149 passed, 5 failed, 4 ignored. The 5 are the same known golden and AUX-checksum reds, caused by the approved −22 duck and the limiter. Goldens are still on hold.
+- Pass 2 (bench/timing): 12/12.
+- Doc tests: 2/2.
+- Ether was open during this run.
+
+## 6 · Test steps (Jeff)
+
+1. Fully quit Ether (tray → Quit). Install, then open it.
+2. **Don't touch anything.** halloVeen plays in the room at its strip's level, with the master MONITOR up. No nudge needed.
+3. Check the logs:
+   - `rotation.log` has **no** "monitor asserted to 0.00 at attach".
+   - `ether-audiod.log` has **no** `setMonitorVolume=0` after "saved board applied".
+4. Health Monitor → Live events: no red **Board state mismatch error**.
+5. Live check of the watch (optional): drag the halloVeen station MONITOR strip. **No** red event appears, because your move is saved.
+6. Preferences → segue overlap still shows each station's own value (5 s on Open Format, Magical Forest and Christmas in Jully; 3 s on halloVeen).
+7. Open the pop-out Master Output. Its MONITOR fader shows the same level as the main panel and follows it when you move either one.
+8. The CART/jingles channel: on the first launch the window hands over its old ON/OFF once. The startup log says "CART ON/OFF moved from the window into the station's saved board". After that the engine restores it by itself.
