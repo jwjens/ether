@@ -463,13 +463,16 @@ function _stationIds() {
   const d = _boardDb(); if (!d) return [];
   try { return BoardState.listStations(d); } catch { return []; }
 }
-// The master MONITOR the windows show and scale by (local:monitor-level) starts from the SAVED level, not unity.
+// The master MONITOR the windows show and scale by (local:monitor-level): the SAVED level, or 0 (silent) when none has
+// ever been saved — never a placeholder.
 function _loadSavedMasterMonitor() {
   try {
-    for (const sid of _stationIds()) {
-      const s = BoardState.readSavedBoard(_boardDb(), sid);
-      if (s.masterMonitorVol !== undefined) { _localMonitorLevel = s.masterMonitorVol; sendToAllWindows("local:monitor-level", _localMonitorLevel); return; }
-    }
+    const sids = _stationIds();
+    if (!sids.length) return;
+    const s = BoardState.readSavedBoard(_boardDb(), sids[0]);
+    _localMonitorLevel = s.masterMonitorVol;
+    if (!s.masterMonitorKnown) logStartup("[board] master MONITOR has never been saved on this machine — the local output stays silent until it is set");
+    sendToAllWindows("local:monitor-level", _localMonitorLevel);
   } catch (e) { logStartup(`[board] saved master MONITOR not read: ${e && e.message}`); }
 }
 // THE CONNECT PASS — serialised, so a connect and a handover a moment apart run one after the other.
@@ -1689,7 +1692,7 @@ function initDb() {
   // Every station's ducker, from its own row, whether or not its board is ever opened.
   // FADERS ARE GENERIC (Jeff, 2026-10-11): once per station, write today's EFFECTIVE routing into each fader's own three
   // settings (audiod/board-state.js routingMigration), so from now on every fader is read the same way and nothing moves.
-  bootStep("Fader routing…", () => { try { _migrateFaderRouting(); } catch (e) { logStartup("[board] routing migration ✗ " + (e && e.message)); } });
+  bootStep("Fader routing…", () => { try { _migrateFaderRouting(); } catch (e) { logStartup("[board] routing migration ✗ " + (e && e.message)); } try { _loadSavedMasterMonitor(); } catch {} });
   bootStep("Arming duckers…", () => { try { armAllStationDuckers("boot"); } catch (e) { console.warn("[duck]", e.message); } });
   // Scheduled announcements fire whether or not any window is open.
   bootStep("Starting announcement scheduler…", () => { try { startAnnouncementScheduler(); } catch (e) { console.warn("[announce]", e.message); } });
@@ -5381,10 +5384,21 @@ ipcMain.handle("audio:set-processor-bypass", async (_, stationId, p = {}) => {
     return { ok: !!audio.audioSetProcessorBypass(sid, branch, !!p.rideBypass, !!p.limiterBypass) };
   } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
 });
-ipcMain.handle("audio:set-aux-monitor", (_, stationId, deck, gain) =>
-  _boardSend("setAuxMonitor", { stationId, deck, gain }, () => audio.audioSetAuxMonitor(stationId, deck, gain)));
-ipcMain.handle("audio:setVolume", (_, deck, volume, stationId) =>
-  _boardSend("setVolume", { deck, volume, stationId }, () => audio.audioSetVolume(deck, volume, stationId)));
+ipcMain.handle("audio:set-aux-monitor", (_, stationId, deck, gain) => {
+  const g = _capToTop(stationId, "aux", gain);
+  return _boardSend("setAuxMonitor", { stationId, deck, gain: g }, () => audio.audioSetAuxMonitor(stationId, deck, g));
+});
+// A level is never sent above its fader group's top (a visible setting; audiod/board-state.js FADER_TOP_KEYS).
+function _capToTop(stationId, group, v) {
+  const n = Number(v); if (!Number.isFinite(n)) return v;
+  const d = _boardDb(); const sid = Number(stationId);
+  if (!d || !Number.isFinite(sid)) return Math.max(0, Math.min(BoardState.MAX_GAIN, n));
+  return Math.max(0, Math.min(BoardState.groupTopGain(d, sid, group), n));
+}
+ipcMain.handle("audio:setVolume", (_, deck, volume, stationId) => {
+  const v = _capToTop(stationId ?? getActiveStationId(), "channel", volume);
+  return _boardSend("setVolume", { deck, volume: v, stationId }, () => audio.audioSetVolume(deck, v, stationId));
+});
 // Console channel cut (CART/jingle channel today). Routed exactly like setVolume so it reaches whichever
 // engine actually owns the audio — the daemon when AUDIO_DAEMON is on, the in-process addon otherwise.
 ipcMain.handle("audio:setMuted", (_, deck, muted, stationId) =>
@@ -6150,16 +6164,18 @@ ipcMain.handle("audio:cue-state", async (_, stationId) => {
   } catch { return { device: "", state: "same_as_main" }; }
 });
 ipcMain.handle("audio:setMonitorVolume", (_, stationId, volume) => {
-  return _boardSend("setMonitorVolume", { stationId, volume },
-    () => (typeof audio.audioSetMonitorVolume === "function" ? audio.audioSetMonitorVolume(stationId, volume) : false));
+  const vv = _capToTop(stationId, "monitor", volume);
+  return _boardSend("setMonitorVolume", { stationId, volume: vv },
+    () => (typeof audio.audioSetMonitorVolume === "function" ? audio.audioSetMonitorVolume(stationId, vv) : false));
 });
 
 // MASTER OUT — the broadcast gain for a station. Rides the program bus pre-meter in Rust, so it
 // changes what listeners hear and the master VU follows. Mirrors setMonitorVolume's plumbing exactly.
 // docs/master-monitor-faders-dead-2026-08-06.md
 ipcMain.handle("audio:setMasterVolume", (_, stationId, volume) => {
-  return _boardSend("setMasterVolume", { stationId, volume },
-    () => (typeof audio.audioSetMasterVolume === "function" ? audio.audioSetMasterVolume(stationId, volume) : false));
+  const vv = _capToTop(stationId, "master", volume);
+  return _boardSend("setMasterVolume", { stationId, volume: vv },
+    () => (typeof audio.audioSetMasterVolume === "function" ? audio.audioSetMasterVolume(stationId, vv) : false));
 });
 
 // MASTER MONITOR — the operator's ONE room level.
@@ -6237,11 +6253,12 @@ function armAllStationDuckers(reason, opts) {
       try { kv = readKv.all(sid); } catch { continue; }
       const num = (k, d) => { const v = kv.find(x => x.key === k)?.value; const n = v == null ? NaN : Number(v); return Number.isFinite(n) ? n : d; };
       const p = {
-        depthDb:     num('duck_depth_db', -22),
-        thresholdDb: num('duck_threshold_db', -45),
-        attackMs:    num('duck_attack_ms', 30),
-        holdMs:      num('duck_hold_ms', 700),
-        releaseMs:   num('duck_release_ms', 500),
+        // ONE set of ducker defaults (audiod/board-state.js DUCK_KEYS) — the engine, the applier and this fan-out agree.
+        depthDb:     num(BoardState.DUCK_KEYS.depthDb[0], BoardState.DUCK_KEYS.depthDb[1]),
+        thresholdDb: num(BoardState.DUCK_KEYS.thresholdDb[0], BoardState.DUCK_KEYS.thresholdDb[1]),
+        attackMs:    num(BoardState.DUCK_KEYS.attackMs[0], BoardState.DUCK_KEYS.attackMs[1]),
+        holdMs:      num(BoardState.DUCK_KEYS.holdMs[0], BoardState.DUCK_KEYS.holdMs[1]),
+        releaseMs:   num(BoardState.DUCK_KEYS.releaseMs[0], BoardState.DUCK_KEYS.releaseMs[1]),
       };
       try {
         if (toDaemon) audiodClient.cmd('setDuckParams', { stationId: sid, ...p }).catch(e => console.error('[duck] params', sid, e && e.message));
@@ -6261,7 +6278,9 @@ function armAllStationDuckers(reason, opts) {
 // device and the AUX ring (native/src/localout.rs). Sound a WINDOW makes (auditions, previews, UI clicks, PhoneDesk /
 // Show+ monitors) goes through src/audio/localOutput.ts, which scales by this level. Main remembers the last value the
 // MONITOR fader set and tells every window; a window opened later asks for it. Clamped exactly as the engine clamps.
-let _localMonitorLevel = 1.0;
+// SILENT UNTIL KNOWN (Jeff, 2026-10-11): the windows' local playback starts at 0 and takes the SAVED master MONITOR the
+// moment it is read (_loadSavedMasterMonitor) — never a placeholder level.
+let _localMonitorLevel = 0;
 ipcMain.handle("local:monitor-level", () => _localMonitorLevel);
 // ── FADER ROUTING + SOUND SETTINGS (2026-10-11) — every number visible, every fader the same ────────────────────────
 // board:routing → { slot: { local: "aux"|"main", duck, duckable } } as the ONE applier reads it (what the engine runs).
@@ -6299,17 +6318,20 @@ ipcMain.handle("board:set-routing", async (_, stationId, slot, patch = {}) => {
 // board:sound-settings → the station's loudness target and fader smoothing, as the engine uses them.
 ipcMain.handle("board:sound-settings", (_, stationId) => {
   const d = _boardDb(); const sid = Number(stationId); if (!d || !Number.isFinite(sid)) return null;
-  try { const s = BoardState.readSavedBoard(d, sid); return { loudnessTargetLufs: s.loudnessTargetLufs, smoothingMs: s.smoothingMs }; } catch { return null; }
+  try { const s = BoardState.readSavedBoard(d, sid); return { loudnessTargetLufs: s.loudnessTargetLufs, smoothingMs: s.smoothingMs, faderTopDb: s.faderTopDb }; } catch { return null; }
 });
 ipcMain.handle("board:set-sound-setting", async (_, stationId, key, value) => {
   const d = _boardDb(); const sid = Number(stationId); const n = Number(value);
   if (!d || !Number.isFinite(sid) || !Number.isFinite(n)) return { ok: false, reason: "no station or not a number" };
-  const KEYS = { loudnessTargetLufs: [BoardState.LOUDNESS_TARGET_KEY, -40, -5], smoothingMs: [BoardState.SMOOTHING_KEY, 0, 500] };
+  const KEYS = { loudnessTargetLufs: [BoardState.LOUDNESS_TARGET_KEY, -40, -5], smoothingMs: [BoardState.SMOOTHING_KEY, 0, 500],
+    channelTopDb: [BoardState.FADER_TOP_KEYS.channel, 0, 10], auxTopDb: [BoardState.FADER_TOP_KEYS.aux, 0, 10],
+    masterTopDb: [BoardState.FADER_TOP_KEYS.master, 0, 10], monitorTopDb: [BoardState.FADER_TOP_KEYS.monitor, 0, 10] };
   const k = KEYS[key]; if (!k) return { ok: false, reason: "unknown setting" };
   const v = Math.max(k[1], Math.min(k[2], n));
   try { require("./sync/handlers/station_config_kv").stationConfigKvUpsertByKey(d, sid, k[0], String(v)); }
   catch (e) { return { ok: false, reason: `not saved: ${e && e.message}` }; }
   if (key === "smoothingMs") await _boardSend("setFaderSmoothing", { stationId: sid, ms: v }, () => (typeof audio.audioSetFaderSmoothing === "function" ? audio.audioSetFaderSmoothing(sid, v) : false));
+  try { sendToAllWindows("board:sound-settings-changed", { stationUuid: _stationUuidById(sid) }); } catch {}
   return { ok: true, value: v };
 });
 ipcMain.handle("board:loudness-status", async () => {
@@ -6318,10 +6340,8 @@ ipcMain.handle("board:loudness-status", async () => {
 // The SAVED master MONITOR (machine-local kv), or null when none has ever been saved — the fader reads it on mount.
 ipcMain.handle("local:monitor-saved", () => {
   const d = _boardDb(); if (!d) return null;
-  for (const sid of _stationIds()) {
-    try { const s = BoardState.readSavedBoard(d, sid); if (s.masterMonitorVol !== undefined) return s.masterMonitorVol; } catch {}
-  }
-  return null;
+  const sids = _stationIds(); if (!sids.length) return null;
+  try { const s = BoardState.readSavedBoard(d, sids[0]); return s.masterMonitorKnown ? s.masterMonitorVol : null; } catch { return null; }
 });
 
 // MONITOR BYPASS SENSE — red in the Health Monitor. Every levels frame carries what actually left the engine for local
@@ -6344,7 +6364,7 @@ function _noteLocalOutput(stationId, f) {
   } catch { /* a sense must never break the levels relay */ }
 }
 ipcMain.handle("audio:setMasterMonitorVolume", async (_, volume) => {
-  { const v = Number(volume); _localMonitorLevel = Number.isFinite(v) ? Math.max(0, Math.min(BoardState.MAX_GAIN, v)) : _localMonitorLevel; }
+  { const sids0 = _stationIds(); const v = Number(_capToTop(sids0.length ? sids0[0] : null, "monitor", volume)); _localMonitorLevel = Number.isFinite(v) ? Math.max(0, v) : _localMonitorLevel; volume = _localMonitorLevel; }
   try { sendToAllWindows("local:monitor-level", _localMonitorLevel); } catch {}
   let ids = [];
   try { ids = db.prepare("SELECT id FROM stations WHERE deleted_at IS NULL").all().map(r => r.id); }
@@ -11979,7 +11999,7 @@ ipcMain.handle('stream:go-live', async (_, args = {}) => {
       const server = station.icecast_server_url?.trim() || '44.244.52.207';
       const pw     = station.icecast_password?.trim()   || 'hackme';
       const mount  = station.icecast_mount?.trim()      || '/live';
-      const bitrate = station.icecast_bitrate || 128;
+      const bitrate = require("./stream-args").icecastBitrateOf(station);
       const streamArgs = { stationId, config: { server, password: pw, mount, bitrate, sampleRate: 44100, icecastPort: 8000 } };
       try { await audiodClient.cmd('startStream', streamArgs); }
       catch (e) { return { ok: false, error: 'daemon startStream failed: ' + e.message }; }
@@ -12008,14 +12028,10 @@ ipcMain.handle('stream:go-live', async (_, args = {}) => {
     // Default 44100 is safe; the engine always resamples to match before writing.
     const sampleRate = 44100;
 
-    _spawnStream(stationId, [
-      '-f', 'f32le', '-ar', String(sampleRate), '-ac', '2',
-      '-i', `tcp://127.0.0.1:${port}`,
-      '-c:a', 'libmp3lame', '-b:a', '128k',
-      '-f', 'mp3',
-      '-content_type', 'audio/mpeg',
-      state.url,
-    ], `programbus:${port}→${mount}`);
+    // The station's bitrate on this path too (electron/stream-args.js) — it was hard-coded 128k here.
+    const SA = require("./stream-args");
+    _spawnStream(stationId, SA.programBusEncoderArgs({ port, sampleRate, bitrateKbps: SA.icecastBitrateOf(station), url: state.url }),
+      `programbus:${port}→${mount}`);
 
     console.log(`[stream/${stationId}] ffmpeg started (programbus:${port}) → ${state.url}`);
 

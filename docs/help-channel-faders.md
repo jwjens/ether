@@ -37,7 +37,9 @@ too (see **Show Presets**). Specifically:
 ### The fader scale (the same on every fader)
 
 Every fader in Ether — the channel faders, MASTER, MONITOR, each station's MONITOR strip and every AUX row — uses
-**one console scale**, marked in dB on the fader:
+**one console curve**, marked in dB on the fader. Channel faders and AUX rows reach **+10 dB** at the top; **MASTER
+and MONITOR reach 0 dB** at the top, on the same curve shifted down 10 dB. The top of each group is a setting:
+**Preferences → Loudness & fader smoothing → Fader maximum**. The channel-fader scale:
 
 | Fader position | Level |
 |---|---|

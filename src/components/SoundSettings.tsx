@@ -13,8 +13,9 @@ import { useActiveStation } from "../hooks/useActiveStation";
 export default function SoundSettings() {
   const { stationId } = useActiveStation();
   const ether = (window as any).ether;
-  const [cur, setCur] = useState<{ loudnessTargetLufs: number; smoothingMs: number } | null>(null);
-  const [draft, setDraft] = useState<{ loudnessTargetLufs: string; smoothingMs: string }>({ loudnessTargetLufs: "", smoothingMs: "" });
+  type Tops = { channel: number; aux: number; master: number; monitor: number };
+  const [cur, setCur] = useState<{ loudnessTargetLufs: number; smoothingMs: number; faderTopDb?: Tops } | null>(null);
+  const [draft, setDraft] = useState<Record<string, string>>({ loudnessTargetLufs: "", smoothingMs: "", channelTopDb: "", auxTopDb: "", masterTopDb: "", monitorTopDb: "" });
   const [msg, setMsg] = useState<string | null>(null);
   const [status, setStatus] = useState<{ cached: number; queued: number; measured: number; failed: number } | null>(null);
 
@@ -22,7 +23,12 @@ export default function SoundSettings() {
     if (stationId == null) return;
     try {
       const s = await ether?.invoke?.("board:sound-settings", stationId);
-      if (s) { setCur(s); setDraft({ loudnessTargetLufs: String(s.loudnessTargetLufs), smoothingMs: String(s.smoothingMs) }); }
+      if (s) {
+        setCur(s);
+        const t = s.faderTopDb || {};
+        setDraft({ loudnessTargetLufs: String(s.loudnessTargetLufs), smoothingMs: String(s.smoothingMs),
+                   channelTopDb: String(t.channel ?? ""), auxTopDb: String(t.aux ?? ""), masterTopDb: String(t.master ?? ""), monitorTopDb: String(t.monitor ?? "") });
+      }
     } catch (e) { setMsg(`Not read: ${String(e)}`); }
   }, [stationId, ether]);
   useEffect(() => { void load(); }, [load]);
@@ -33,14 +39,16 @@ export default function SoundSettings() {
     return () => { alive = false; clearInterval(t); };
   }, [ether]);
 
-  const save = async (key: "loudnessTargetLufs" | "smoothingMs") => {
+  const save = async (key: string) => {
     if (stationId == null) return;
     const v = Number(draft[key]);
     if (!Number.isFinite(v)) { setMsg("Enter a number."); return; }
     try {
       const r = await ether?.invoke?.("board:set-sound-setting", stationId, key, v);
       if (!r || r.ok !== true) { setMsg(`Not saved: ${(r && r.reason) || "no answer"}`); return; }
-      setMsg(key === "loudnessTargetLufs" ? `Loudness target is now ${r.value} LUFS — applies to every file from its next load.` : `Fader smoothing is now ${r.value} ms.`);
+      setMsg(key === "loudnessTargetLufs" ? `Loudness target is now ${r.value} LUFS — applies to every file from its next load.`
+           : key === "smoothingMs" ? `Fader smoothing is now ${r.value} ms.`
+           : `That fader group now tops out at ${r.value > 0 ? "+" : ""}${r.value} dB — the faders redraw on the same curve; no level moves.`);
       void load();
     } catch (e) { setMsg(`Not saved: ${String(e)}`); }
   };
@@ -72,6 +80,20 @@ export default function SoundSettings() {
       <div style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>
         How long every level move takes — channel faders, MASTER, MONITOR and the AUX rows — so a move never clicks or zips.
         0 = an instant step. Range 0…500.
+      </div>
+      <div style={{ fontSize: 13, fontWeight: 700, margin: "14px 0 4px" }}>Fader maximum (top of travel)</div>
+      {([["channelTopDb", "channel", "Channel faders"], ["auxTopDb", "aux", "AUX rows"], ["masterTopDb", "master", "MASTER"], ["monitorTopDb", "monitor", "MONITOR (and each station's MONITOR strip)"]] as const).map(([key, g, name]) => (
+        <div key={key} style={row}>
+          <span style={{ width: 170, fontSize: 13 }}>{name}</span>
+          <input style={inp} value={draft[key]} onChange={e => setDraft(d => ({ ...d, [key]: e.target.value }))} />
+          <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>dB</span>
+          <button style={btn} onClick={() => void save(key)}>Save</button>
+          <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>now: {cur?.faderTopDb ? `${cur.faderTopDb[g] > 0 ? "+" : ""}${cur.faderTopDb[g]} dB` : "—"}</span>
+        </div>
+      ))}
+      <div style={{ fontSize: 11.5, color: "var(--text-tertiary)" }}>
+        Every fader uses the same curve; this sets the level at the very top of each group's travel (0 to +10 dB).
+        Lowering it never changes a level that is already set below it.
       </div>
       {msg && <div style={{ fontSize: 12, marginTop: 8, color: "var(--accent-cyan)" }}>{msg}</div>}
     </div>

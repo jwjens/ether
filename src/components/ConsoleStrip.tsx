@@ -6,7 +6,8 @@
 // VU meter: full height, right side, same color coding as before.
 
 import FaderRouting from "./FaderRouting";
-import { posToGain, gainToPos, formatDb, FADER_MARKS } from "../lib/faderLaw";
+import { posToGain, gainToPos, formatDb, faderMarks } from "../lib/faderLaw";
+import { useFaderTop } from "../lib/useFaderTop";
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { useMidiState } from "./MidiEngine";
 import { useAudioEngine } from "../audio/AudioEngineContext";
@@ -210,7 +211,9 @@ export default function ConsoleStrip({
   // Top offset of the knob cap — dB-linear taper so scale marks are evenly spaced.
   // 0 dB → knobY=0 (top); −60 dB → knobY=faderH−KNOB_H (bottom).
   const effVol = dragVol ?? volume; // pointer-driven while dragging, real volume otherwise
-  const knobY = (1 - gainToPos(effVol)) * (faderH - KNOB_H);
+  // The channel group's top (Preferences → Loudness & fader smoothing): the one curve, slid to it.
+  const chTop = useFaderTop("channel");
+  const knobY = (1 - gainToPos(effVol, chTop)) * (faderH - KNOB_H);
 
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -223,7 +226,7 @@ export default function ConsoleStrip({
       // The knob's centre travels between KNOB_H/2 from the top and from the bottom of the track.
       const travel = Math.max(1, rect.height - KNOB_H);
       const ratio = Math.max(0, Math.min(1, (clientY - rect.top - KNOB_H / 2) / travel));
-      return posToGain(1 - ratio);
+      return posToGain(1 - ratio, chTop);
     };
     const onMove = (ev: PointerEvent) => {
       const rect = track.getBoundingClientRect();
@@ -362,7 +365,7 @@ export default function ConsoleStrip({
           }} />
 
           {/* THE dB SCALE — the one console law's marks (src/lib/faderLaw.ts), unity highlighted. */}
-          {FADER_MARKS.map(m => (
+          {faderMarks(chTop).map(m => (
             <div key={m.label} style={{ position: "absolute", left: 0, right: 0, top: KNOB_H / 2 + (1 - m.pos) * (faderH - KNOB_H),
                                         height: 0, pointerEvents: "none", zIndex: 1 }}>
               <div style={{ position: "absolute", left: 2, width: m.unity ? 12 : 7, top: 0, borderTop: `1px solid ${m.unity ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.22)"}` }} />

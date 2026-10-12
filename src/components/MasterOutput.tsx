@@ -2,7 +2,8 @@
 // Fixed right column in the deck area. Always visible.
 // Dark steel: #0e0e12 bg, #1e1e28 borders, zero border-radius.
 
-import { posToGain, gainToPos, formatDb, FADER_MARKS } from "../lib/faderLaw";
+import { posToGain, gainToPos, formatDb, faderMarks } from "../lib/faderLaw";
+import { useFaderTop } from "../lib/useFaderTop";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { openLinkPreferences, sendTargetName, txWords, useRemoteLink } from "../hooks/useRemoteLink";
 import { queryScoped } from "../db/stationScoped";
@@ -153,8 +154,10 @@ function LimiterGR() {
 // STREAM / MONITOR post-fader, plus the Wild Meter. docs/dsp-meter-bus.md §3.
 
 // ── Fader ────────────────────────────────────────────────────
-function Fader({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+function Fader({ label, value, onChange, group }: { label: string; value: number; onChange: (v: number) => void; group: "master" | "monitor" }) {
   const trackRef = useRef<HTMLDivElement>(null);
+  // This group's top (MASTER and MONITOR: 0 dB unless set otherwise in Preferences) — the one curve, slid to it.
+  const top = useFaderTop(group);
   const [dragging, setDragging] = useState(false);
 
   const updateFromClientX = useCallback((clientX: number) => {
@@ -162,8 +165,8 @@ function Fader({ label, value, onChange }: { label: string; value: number; onCha
     if (!track) return;
     const rect = track.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    onChange(posToGain(ratio));   // THE ONE CONSOLE LAW (src/lib/faderLaw.ts): travel → gain
-  }, [onChange]);
+    onChange(posToGain(ratio, top));   // THE ONE CONSOLE LAW (src/lib/faderLaw.ts): travel → gain, at this group's top
+  }, [onChange, top]);
 
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -211,12 +214,12 @@ function Fader({ label, value, onChange }: { label: string; value: number; onCha
           position: "absolute", left: 0, top: "50%",
           transform: "translateY(-50%)",
           height: 3,
-          width: `${gainToPos(value) * 100}%`,
+          width: `${gainToPos(value, top) * 100}%`,
           background: "var(--accent-teal)",
           pointerEvents: "none",
         }} />
         {/* THE dB SCALE — the one console law's marks, unity highlighted */}
-        {FADER_MARKS.map(m => (
+        {faderMarks(top).map(m => (
           <div key={m.label} style={{ position: "absolute", left: `${m.pos * 100}%`, top: m.unity ? -2 : 1, bottom: m.unity ? -2 : 1,
                                       borderLeft: `1px solid ${m.unity ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.22)"}`, pointerEvents: "none" }}
                title={`${m.label} dB`} />
@@ -224,7 +227,7 @@ function Fader({ label, value, onChange }: { label: string; value: number; onCha
         {/* Thumb — 12×12 */}
         <div style={{
           position: "absolute",
-          left: `${gainToPos(value) * 100}%`,
+          left: `${gainToPos(value, top) * 100}%`,
           top: "50%",
           transform: "translate(-50%, -50%)",
           width: 12, height: 12,
@@ -475,9 +478,8 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
   const { stationId, stationUuid, isReady } = useActiveStation();
   const [masterLevel, setMasterLevel] = useState(0);
   const [masterVol,  setMasterVol]  = useState(1.0);
-  const [monitorVol, setMonitorVol] = useState(() => {
-    try { return parseFloat(localStorage.getItem('ether_monitor_vol') ?? '0.8'); } catch { return 0.8; }
-  });
+  // What the room is at: unknown (0, silent) until the saved level is read below — never a placeholder (2026-10-11).
+  const [monitorVol, setMonitorVol] = useState(0);
   const [stationInfoOpen, setStationInfoOpen] = useState<boolean>(() => {
     try { return localStorage.getItem("ether_station_info_collapsed") !== "1"; } catch { return true; }
   });
@@ -669,6 +671,7 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
         let legacy: number | null = null;
         try { const raw = localStorage.getItem("ether_monitor_vol"); legacy = raw == null ? null : parseFloat(raw); } catch { legacy = null; }
         if (legacy != null && Number.isFinite(legacy)) applyMonitor(Math.max(0, Math.min(1, legacy)));
+        else setMonitorVol(0);   // never saved anywhere: the room stays silent and the fader says OFF until it is set
       } catch (e) { console.warn("[monitor] saved MONITOR level not read:", e); }
     })();
   }, [applyMonitor]);
@@ -826,8 +829,8 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
       </div>
 
       {/* Faders */}
-      <Fader label="Master" value={masterVol} onChange={applyMaster} />
-      <Fader label="Monitor" value={monitorVol} onChange={applyMonitor} />
+      <Fader label="Master" group="master" value={masterVol} onChange={applyMaster} />
+      <Fader label="Monitor" group="monitor" value={monitorVol} onChange={applyMonitor} />
 
       {/* Limiter */}
       <div style={{ padding: "6px 14px", borderBottom: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>

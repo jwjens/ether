@@ -42,7 +42,8 @@
 // so a deck cannot be sent to a different device than the station's own. The room is one room, and
 // the single OUTPUT selector at the top is the whole aux path's device.
 
-import { posToGain, gainToPos, formatDb, FADER_MARKS } from "../lib/faderLaw";
+import { posToGain, gainToPos, formatDb, faderMarks } from "../lib/faderLaw";
+import { useFaderTop } from "../lib/useFaderTop";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { matchesStation } from "../lib/levelsScope";
@@ -71,6 +72,7 @@ const selectStyle: React.CSSProperties = {
 };
 
 export default function AuxMonitorSlots() {
+  const auxTop = useFaderTop("aux");   // the AUX-row group's top (Preferences)
   const { stationId, stationUuid } = useActiveStation();
   const [auxDecks, setAuxDecks] = useState<AuxDeck[]>([]);
   const [levels, setLevels] = useState<Record<string, number>>({});
@@ -345,12 +347,12 @@ export default function AuxMonitorSlots() {
                   <span style={{ fontSize: 9, color: "#8868D8", letterSpacing: "0.08em", width: 52, fontWeight: 700 }}>MONITOR</span>
                   {/* THE ONE CONSOLE LAW (src/lib/faderLaw.ts): the slider is TRAVEL, the stored row is GAIN */}
                   <input
-                    type="range" min={0} max={1} step={0.001} list="ether-fader-law"
-                    value={gainToPos(lvl)}
-                    onChange={e => setLevel(d.slot, posToGain(parseFloat(e.target.value)))}
+                    type="range" min={0} max={1} step={0.001} list="ether-fader-law-aux"
+                    value={gainToPos(lvl, auxTop)}
+                    onChange={e => setLevel(d.slot, posToGain(parseFloat(e.target.value), auxTop))}
                     style={{ flex: 1, accentColor: "#8868D8" }}
                   />
-                  <datalist id="ether-fader-law">{FADER_MARKS.map(m => <option key={m.label} value={m.pos} label={m.label} />)}</datalist>
+                  <datalist id="ether-fader-law-aux">{faderMarks(auxTop).map(m => <option key={m.label} value={m.pos} label={m.label} />)}</datalist>
                   <span style={{ fontSize: 10, color: "var(--text-tertiary)", width: 54, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
                     {formatDb(lvl)}
                   </span>

@@ -19,7 +19,9 @@ import { MAX_GAIN } from "../lib/faderLaw";
 
 type Listener = (level: number) => void;
 
-let level = 1;
+// SILENT UNTIL KNOWN (Jeff, 2026-10-11): a window plays nothing locally until main has told it the saved MONITOR level —
+// never a placeholder. main answers the moment the saved level is read (electron/main.js "local:monitor-level").
+let level = 0;
 const listeners = new Set<Listener>();
 let wired = false;
 

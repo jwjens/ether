@@ -1,4 +1,5 @@
-import { posToGain, gainToPos, formatDb, FADER_MARKS } from "../lib/faderLaw";
+import { posToGain, gainToPos, formatDb, faderMarks } from "../lib/faderLaw";
+import { useFaderTop } from "../lib/useFaderTop";
 import { getEngine } from "../audio/engine-registry";
 // src/components/StationMonitorMixer.tsx
 // Per-station LOCAL monitor mixer. Each station is a collapsible strip with its own monitor
@@ -22,6 +23,7 @@ const selectStyle: React.CSSProperties = {
 
 export default function StationMonitorMixer() {
   const { dests } = useStreamStatus();
+  const monTop = useFaderTop("monitor");   // the MONITOR group's top (Preferences)
   const [stations, setStations] = useState<Station[]>([]);
   const [devices,  setDevices]  = useState<string[]>([]);
   const [vol, setVol] = useState<Record<number, number>>({});
@@ -137,12 +139,12 @@ export default function StationMonitorMixer() {
                   <span style={{ fontSize: 10, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase", width: 52, flexShrink: 0 }}>Monitor</span>
                   {/* THE ONE CONSOLE LAW (src/lib/faderLaw.ts): the slider is TRAVEL, the stored level is GAIN */}
                   <input
-                    type="range" min={0} max={1} step={0.001} value={gainToPos(v)} list="ether-fader-law"
-                    onChange={e => setMonitor(s.id, posToGain(parseFloat(e.target.value)))}
+                    type="range" min={0} max={1} step={0.001} value={gainToPos(v, monTop)} list="ether-fader-law-monitor"
+                    onChange={e => setMonitor(s.id, posToGain(parseFloat(e.target.value), monTop))}
                     style={{ flex: 1, accentColor: "var(--accent-teal)", cursor: "pointer" }}
                     title="Local speaker level for this station — does NOT affect its broadcast"
                   />
-                  <datalist id="ether-fader-law">{FADER_MARKS.map(m => <option key={m.label} value={m.pos} label={m.label} />)}</datalist>
+                  <datalist id="ether-fader-law-monitor">{faderMarks(monTop).map(m => <option key={m.label} value={m.pos} label={m.label} />)}</datalist>
                   <span style={{ fontSize: 10, color: "var(--text-tertiary)", width: 54, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{formatDb(v)}</span>
                 </div>
                 {/* Output device */}

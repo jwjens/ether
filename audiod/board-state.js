@@ -30,8 +30,14 @@ const FADER_LOCAL_KEY = "fader_local";
 const FADER_ROUTING_FLAG = "fader_routing_v1";
 const SMOOTHING_KEY = "fader_smoothing_ms";
 const LOUDNESS_TARGET_KEY = "loudness_target_lufs";
-// The most any fader, MASTER, MONITOR or row can be set to: +10 dB (Jeff's console law, top of travel).
+// The most any fader, MASTER, MONITOR or row can be set to: +10 dB (the engine's own ceiling).
 const MAX_GAIN = Math.pow(10, 10 / 20);
+// EACH FADER GROUP'S TOP is a visible setting (Jeff, 2026-10-11): "MASTER and MONITOR top out at unity … Channel faders
+// and AUX rows keep +10 dB at the top. The maximum for each fader group is a visible setting, not hard-coded."
+// dB, 0…+10. A level is never restored or sent above its group's top (src/lib/faderLaw.ts draws the same curve to it).
+const FADER_TOP_KEYS = { channel: "fader_top_db_channel", aux: "fader_top_db_aux", master: "fader_top_db_master", monitor: "fader_top_db_monitor" };
+const FADER_TOP_DEFAULTS = { channel: 10, aux: 10, master: 0, monitor: 0 };
+const dbGain = (db) => Math.pow(10, db / 20);
 
 // ONE NAME PER FADER (Jeff, 2026-09-26; src/lib/boardName.ts — the same rule, ported): engine slot ids S1–S5 are never
 // shown to an operator. The board's rows in its own order (every row, enabled or not), completed with every engine
@@ -134,8 +140,24 @@ function readSavedBoard(db, sid) {
   const mv = levels && typeof levels === "object" ? num(levels.master) : null;
   if (mv != null && mv >= 0 && mv <= MAX_GAIN + 1e-6) out.masterVol = mv;
   const mon = num(kv("monitor_volume")); if (mon != null) out.monitorVol = clampGain(mon);
-  const mm = num(kv(MASTER_MONITOR_KEY)); if (mm != null) out.masterMonitorVol = clampGain(mm);
+  // MASTER MONITOR is ONE level for every station on this machine: this station's saved value, else any station's.
+  // NOT KNOWN = SILENT (Jeff, 2026-10-11): "the local output stays silent until the saved master MONITOR level is known,
+  // then applies it. Never play the room at 0 dB as a placeholder." Air is unaffected (MONITOR never touches air).
+  let mm = num(kv(MASTER_MONITOR_KEY));
+  if (mm == null) {
+    try { const r = db.prepare("SELECT value FROM station_config_kv WHERE key = ? AND deleted_at IS NULL AND value IS NOT NULL AND value != '' LIMIT 1").get(MASTER_MONITOR_KEY); mm = r ? num(r.value) : null; } catch { mm = null; }
+  }
+  out.masterMonitorKnown = mm != null;
+  out.masterMonitorVol = mm != null ? clampGain(mm) : 0;
   const sm = num(kv(SMOOTHING_KEY)); out.smoothingMs = sm == null ? 20 : Math.max(0, Math.min(500, sm));
+  // The fader groups' tops, and every restored level held at or below its group's top.
+  out.faderTopDb = {};
+  for (const [g, key] of Object.entries(FADER_TOP_KEYS)) { const v = num(kv(key)); out.faderTopDb[g] = v == null ? FADER_TOP_DEFAULTS[g] : Math.max(0, Math.min(10, v)); }
+  const cap = (v, g) => (v === undefined ? v : Math.min(v, dbGain(out.faderTopDb[g])));
+  for (const e of Object.values(out.slots)) { e.volume = cap(e.volume, "channel"); e.aux = cap(e.aux, "aux"); if (e.volume === undefined) delete e.volume; if (e.aux === undefined) delete e.aux; }
+  if (out.masterVol !== undefined) out.masterVol = cap(out.masterVol, "master");
+  if (out.monitorVol !== undefined) out.monitorVol = cap(out.monitorVol, "monitor");
+  out.masterMonitorVol = cap(out.masterMonitorVol, "monitor");
   const lt = num(kv(LOUDNESS_TARGET_KEY)); out.loudnessTargetLufs = lt == null ? -16 : lt;
   const duck = {};
   for (const [k, [key, def]] of Object.entries(DUCK_KEYS)) { const n = num(kv(key)); duck[k] = n == null ? def : n; }
@@ -163,6 +185,8 @@ function applyBoard(saved, sink) {
     try { const r = fn(); if (r === false) failed.push({ setting, reason: "the engine refused it" }); else sent.push(setting); }
     catch (e) { failed.push({ setting, reason: String(e && e.message || e) }); }
   };
+  // FIRST: the room's level — silent when it is not known — before anything that could make a sound locally.
+  if (saved.masterMonitorVol !== undefined) call("masterMonitorVol", sink.setMasterMonitorVolume && (() => sink.setMasterMonitorVolume(saved.masterMonitorVol)));
   for (const [s, e] of Object.entries(saved.slots || {})) {
     if (e.volume !== undefined) call(`${s}.volume`, sink.setVolume && (() => sink.setVolume(s, e.volume)));
     if (e.muted !== undefined) call(`${s}.muted`, sink.setMuted && (() => sink.setMuted(s, e.muted)));
@@ -173,7 +197,6 @@ function applyBoard(saved, sink) {
   }
   if (saved.monitorVol !== undefined) call("monitorVol", sink.setMonitorVolume && (() => sink.setMonitorVolume(saved.monitorVol)));
   if (saved.masterVol !== undefined) call("masterVol", sink.setMasterVolume && (() => sink.setMasterVolume(saved.masterVol)));
-  if (saved.masterMonitorVol !== undefined) call("masterMonitorVol", sink.setMasterMonitorVolume && (() => sink.setMasterMonitorVolume(saved.masterMonitorVol)));
   if (saved.duckParams) call("duckParams", sink.setDuckParams && (() => sink.setDuckParams(saved.duckParams)));
   if (saved.auxDevice !== undefined) call("auxDevice", sink.setAuxDevice && (() => sink.setAuxDevice(saved.auxDevice)));
   if (saved.cueDevice !== undefined) call("cueDevice", sink.setCueDevice && (() => sink.setCueDevice(saved.cueDevice)));
@@ -297,4 +320,12 @@ function routingMigration(db, sid) {
   return writes;
 }
 
-module.exports = { routingMigration, FADER_LOCAL_KEY, FADER_ROUTING_FLAG, SMOOTHING_KEY, LOUDNESS_TARGET_KEY, MAX_GAIN, boardNames, labelOf, SLOTS, SOURCE_SLOTS, MASTER_MONITOR_KEY, DUCK_KEYS, readSavedBoard, applyBoard, compareBoard, listStations, addonSink, applySavedBoardState, parseRoomLevels };
+/** The gain cap of one fader group for a station (main clamps every live setter with it). */
+function groupTopGain(db, sid, group) {
+  const key = FADER_TOP_KEYS[group]; if (!key) return MAX_GAIN;
+  let v = null;
+  try { const r = db.prepare("SELECT value FROM station_config_kv WHERE station_id = ? AND key = ? AND deleted_at IS NULL").get(sid, key); v = r ? num(r.value) : null; } catch { v = null; }
+  return dbGain(v == null ? FADER_TOP_DEFAULTS[group] : Math.max(0, Math.min(10, v)));
+}
+
+module.exports = { FADER_TOP_KEYS, FADER_TOP_DEFAULTS, groupTopGain, routingMigration, FADER_LOCAL_KEY, FADER_ROUTING_FLAG, SMOOTHING_KEY, LOUDNESS_TARGET_KEY, MAX_GAIN, boardNames, labelOf, SLOTS, SOURCE_SLOTS, MASTER_MONITOR_KEY, DUCK_KEYS, readSavedBoard, applyBoard, compareBoard, listStations, addonSink, applySavedBoardState, parseRoomLevels };

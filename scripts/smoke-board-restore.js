@@ -96,6 +96,17 @@ async function check(tag) {
   ok(await waitUp(), "restart: the daemon is up again (still no app)");
   await check("restart");
   try { d.kill(); } catch {}
+  // SILENT UNTIL KNOWN (Jeff, 2026-10-11): no master MONITOR saved anywhere → the engine holds the local output at 0.
+  await sleep(1500);
+  { const db = new DatabaseSync(DB); db.exec("DELETE FROM station_config_kv WHERE key = 'master_monitor_volume'"); db.close(); }
+  d = start("nomonitor");
+  ok(await waitUp(), "no saved MONITOR: the daemon is up");
+  let b = null;
+  for (let i = 0; i < 40; i++) { b = await ask("getBoardState", { stationId: SID }); if (b && b.ok && b.applied) break; await sleep(250); }
+  ok(!!(b && b.ok && b.control.master_monitor_vol === 0 && b.applied && b.applied.master_monitor_vol === 0),
+     `no saved MONITOR: the room is SILENT (control ${b && b.control && b.control.master_monitor_vol}, applied ${b && b.applied && b.applied.master_monitor_vol}) — never a placeholder`);
+  ok(!!(b && b.control && Math.abs(b.control.slots.S1.aux_monitor_gain - 0.74) < 1e-3), "no saved MONITOR: everything else is still restored");
+  try { d.kill(); } catch {}
   console.log(`\n${fail ? "FAILED" : "ALL PASS"}  (${pass} passed, ${fail} failed)`);
   setTimeout(() => process.exit(fail ? 1 : 0), 300);
 })();

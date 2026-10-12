@@ -153,6 +153,46 @@ describe("routing: faders are generic, and the update moves nothing", () => {
   });
 });
 
+describe("master MONITOR: silent until known (Jeff, 2026-10-11)", () => {
+  it("unknown anywhere → 0 (silent), sent FIRST, before any other setting", () => {
+    db.prepare("DELETE FROM station_config_kv WHERE key = 'master_monitor_volume'").run();
+    const saved = B.readSavedBoard(db, 2);
+    expect(saved.masterMonitorKnown).toBe(false);
+    expect(saved.masterMonitorVol).toBe(0);
+    const { calls, sink } = recorder();
+    B.applyBoard(saved, sink);
+    expect(calls[0]).toEqual(["setMasterMonitorVolume", 0]);
+  });
+  it("known on another station → that level (MONITOR is one level for the machine)", () => {
+    db.prepare("DELETE FROM station_config_kv WHERE key = 'master_monitor_volume'").run();
+    db.prepare("INSERT INTO station_config_kv VALUES (7, 'master_monitor_volume', '0.4641', NULL)").run();
+    const saved = B.readSavedBoard(db, 2);
+    expect(saved.masterMonitorKnown).toBe(true);
+    expect(saved.masterMonitorVol).toBeCloseTo(0.4641, 9);
+  });
+  it("known on this station → applied first", () => {
+    const { calls, sink } = recorder();
+    B.applyBoard(B.readSavedBoard(db, 2), sink);
+    expect(calls[0]).toEqual(["setMasterMonitorVolume", 0.4641]);
+  });
+});
+
+describe("fader group tops (Jeff, 2026-10-11)", () => {
+  it("defaults: channel +10, AUX rows +10, MASTER 0, MONITOR 0", () => {
+    expect(B.readSavedBoard(db, 2).faderTopDb).toEqual({ channel: 10, aux: 10, master: 0, monitor: 0 });
+  });
+  it("a restored level is held at its group's top — and never raised", () => {
+    db.prepare("UPDATE station_config_kv SET value = ? WHERE station_id = 2 AND key = 'board_levels'").run(JSON.stringify({ E: 2.0, master: 1.0 }));
+    db.prepare("INSERT INTO station_config_kv VALUES (2, 'fader_top_db_channel', '3', NULL)").run();
+    const s = B.readSavedBoard(db, 2);
+    expect(s.slots.E.volume).toBeCloseTo(Math.pow(10, 3 / 20), 9);   // 2.0 (+6 dB) held at the +3 dB top
+    expect(s.masterVol).toBeCloseTo(1, 12);                          // MASTER 0 dB at a 0 dB top: unchanged
+    expect(s.slots.D.aux).toBeCloseTo(0.82, 9);                      // under its top: untouched
+    expect(B.groupTopGain(db, 2, "channel")).toBeCloseTo(Math.pow(10, 3 / 20), 9);
+    expect(B.groupTopGain(db, 2, "master")).toBeCloseTo(1, 12);
+  });
+});
+
 describe("compareBoard", () => {
   const live = (mut) => {
     const slot = { volume: 1, muted: false, kind: "source", duck: true, duckable: true, aux_monitor_gain: 0, room_gain: 1, pfl: false };

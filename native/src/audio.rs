@@ -962,7 +962,7 @@ impl BusState {
             // sits fine at -12, but a CONTINUOUS source needs the programme much further down or the
             // two clash. A starting point, not a rebuild — every value here is tunable at runtime
             // from that station's Preferences (SetDuckParams).
-            duck_depth_db: -28.0,
+            duck_depth_db: -22.0,   // = the configured default everywhere (audiod/board-state.js DUCK_KEYS, the Ducker panel); was a separate −28
             duck_attack_ms: 30.0,
             duck_hold_ms: 700.0,
             duck_release_ms: 500.0,

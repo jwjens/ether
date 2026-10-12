@@ -1,7 +1,7 @@
 // THE ONE CONSOLE FADER LAW (src/lib/faderLaw.ts; Jeff, 2026-10-11). Pinned: the law's points, the round trip, and
 // that no saved level changes its gain when the law changes (stores hold GAIN; only where a fader is drawn moves).
 import { describe, it, expect } from "vitest";
-import { posToDb, posToGain, dbToPos, gainToPos, formatDb, FADER_LAW, UNITY_POS, MAX_GAIN } from "./faderLaw";
+import { posToDb, posToGain, dbToPos, gainToPos, formatDb, FADER_LAW, UNITY_POS, MAX_GAIN, faderMarks, unityPos, topGain, DEFAULT_TOP_DB } from "./faderLaw";
 
 const dbOf = (g: number) => 20 * Math.log10(g);
 
@@ -50,6 +50,29 @@ describe("the console fader law", () => {
     expect(gainToPos(0.15270909928001813) * 100).toBeCloseTo(40.52, 2);  // E −16.3 dB → 40.5%
     expect(gainToPos(1) * 100).toBeCloseTo(75, 9);                       // 0 dB → 75%
     expect(gainToPos(0.4641) * 100).toBeCloseTo(58.3, 1);                // MONITOR −6.7 dB → 58.3%
+  });
+
+  it("MASTER and MONITOR top out at unity: the same curve, slid so 0 dB is the top (Jeff, 2026-10-11)", () => {
+    expect(DEFAULT_TOP_DB).toEqual({ channel: 10, aux: 10, master: 0, monitor: 0 });
+    expect(posToDb(1, 0)).toBeCloseTo(0, 12);       // top = unity
+    expect(posToDb(0.75, 0)).toBeCloseTo(-10, 12);  // the same curve, 10 dB lower
+    expect(posToDb(0.5, 0)).toBeCloseTo(-20, 12);
+    expect(posToGain(0, 0)).toBe(0);                // off at the bottom
+    expect(topGain(0)).toBeCloseTo(1, 12);
+    expect(unityPos(0)).toBeCloseTo(1, 12);
+    expect(faderMarks(0)[0]).toEqual({ label: "0", pos: 1, unity: true });
+    // a top off the 10 dB grid still marks unity where it falls
+    expect(faderMarks(6).some(m => m.unity && Math.abs(posToDb(m.pos, 6)) < 1e-9)).toBe(true);
+    // round trip at any top
+    for (const top of [0, 3, 6, 10]) for (let i = 1; i <= 200; i++) { const p = i / 200; expect(gainToPos(posToGain(p, top), top)).toBeCloseTo(p, 9); }
+  });
+
+  it("MIGRATION with group tops: every saved station-2 level keeps its gain; only where it is drawn moves", () => {
+    const monitorGroup: Record<string, number> = { "master MONITOR": 0.4641, "station 2 MONITOR strip": 0.73 };
+    for (const g of Object.values(monitorGroup)) expect(20 * Math.log10(posToGain(gainToPos(g, 0), 0))).toBeCloseTo(20 * Math.log10(g), 9);
+    expect(gainToPos(0.4641, 0) * 100).toBeCloseTo(83.3, 1);   // −6.7 dB on a 0 dB-top fader
+    expect(gainToPos(0.73, 0) * 100).toBeCloseTo(93.2, 1);     // −2.7 dB
+    expect(gainToPos(1, 0)).toBeCloseTo(1, 12);                // a MASTER at 0 dB sits at the top
   });
 
   it("reads like a console scale", () => {
