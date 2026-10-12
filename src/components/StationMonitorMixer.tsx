@@ -1,3 +1,4 @@
+import { posToGain, gainToPos, formatDb, FADER_MARKS } from "../lib/faderLaw";
 import { getEngine } from "../audio/engine-registry";
 // src/components/StationMonitorMixer.tsx
 // Per-station LOCAL monitor mixer. Each station is a collapsible strip with its own monitor
@@ -134,12 +135,15 @@ export default function StationMonitorMixer() {
                 {/* Monitor fader (local speakers only) */}
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ fontSize: 10, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase", width: 52, flexShrink: 0 }}>Monitor</span>
+                  {/* THE ONE CONSOLE LAW (src/lib/faderLaw.ts): the slider is TRAVEL, the stored level is GAIN */}
                   <input
-                    type="range" min={0} max={1} step={0.01} value={v}
-                    onChange={e => setMonitor(s.id, parseFloat(e.target.value))}
+                    type="range" min={0} max={1} step={0.001} value={gainToPos(v)} list="ether-fader-law"
+                    onChange={e => setMonitor(s.id, posToGain(parseFloat(e.target.value)))}
                     style={{ flex: 1, accentColor: "var(--accent-teal)", cursor: "pointer" }}
                     title="Local speaker level for this station — does NOT affect its broadcast"
                   />
+                  <datalist id="ether-fader-law">{FADER_MARKS.map(m => <option key={m.label} value={m.pos} label={m.label} />)}</datalist>
+                  <span style={{ fontSize: 10, color: "var(--text-tertiary)", width: 54, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{formatDb(v)}</span>
                 </div>
                 {/* Output device */}
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

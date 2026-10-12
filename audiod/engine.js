@@ -513,7 +513,12 @@ class DaemonEngine {
   }
 
   // ── addon wrappers (synchronous) ──
-  _load(deck, fp, title, artist, gainDb) { return A.audioLoad(deck, fp, title || "", artist || "", gainDb ?? 0, this.stationId); }
+  // EVERY load goes through the daemon's one normalizer (audiod/loudness.js via DaemonEngine.loadHook): gain = the station's
+  // target − the file's measured loudness. A per-item gain passed here is ignored (Jeff, 2026-10-11: no per-item trims).
+  _load(deck, fp, title, artist, _gainDbIgnored) {
+    if (typeof DaemonEngine.loadHook === "function") return DaemonEngine.loadHook(deck, fp, title, artist, this.stationId);
+    return A.audioLoad(deck, fp, title || "", artist || "", 0, this.stationId);
+  }
   // Pure + testable: which deck ids are rotation decks. CART is the jingle overlay, not a rotation deck.
   _isRotationDeck(deck) { return deck === "A" || deck === "B" || deck === "C"; }
   // A deck plays at whatever fader the OPERATOR set — automation NEVER moves a deck fader (those are

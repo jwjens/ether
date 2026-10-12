@@ -1,3 +1,4 @@
+import { posToGain, UNITY_POS } from "../lib/faderLaw";
 import React from "react";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import VUMeter from "./VUMeter";
@@ -27,7 +28,7 @@ export default function MixerChannelStrip({
   const [peakHold, setPeakHold] = React.useState(0);
   const [peakHoldR, setPeakHoldR] = React.useState(0);
   const [muted, setMuted] = React.useState(false);
-  const [fader, setFader] = React.useState(100);
+  const [fader, setFader] = React.useState(Math.round(UNITY_POS * 100));   // THE ONE CONSOLE LAW: start at unity (0 dB), not at +10
   const animRef = React.useRef<number>(0);
   const micAnimRef = React.useRef<number>(0);
   const streamRef = React.useRef<MediaStream | null>(null);
@@ -50,7 +51,7 @@ export default function MixerChannelStrip({
       const ctx = new AudioContext();
       const src = ctx.createMediaStreamSource(stream);
       const gainNode = ctx.createGain();
-      gainNode.gain.value = fader / 100;
+      gainNode.gain.value = posToGain(fader / 100);
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       src.connect(gainNode);
@@ -90,7 +91,7 @@ export default function MixerChannelStrip({
       // (docs/master-monitor-faders-dead-2026-08-06.md). Scaling here as well would apply master
       // TWICE — once on this channel and again at the bus.
       if (gainNodeRef.current) {
-        gainNodeRef.current.gain.value = fader / 100;
+        gainNodeRef.current.gain.value = posToGain(fader / 100);
       }
     };
     update();
@@ -236,9 +237,9 @@ export default function MixerChannelStrip({
               setFader(v);
               // Channel fader sends its OWN level. Master is applied once, at the program bus.
               if (isMic) {
-                if (gainNodeRef.current) gainNodeRef.current.gain.value = v / 100;
+                if (gainNodeRef.current) gainNodeRef.current.gain.value = posToGain(v / 100);
               } else if (deckSlot) {
-                engine.getDeck(deckSlot)?.setVolume(v / 100);
+                engine.getDeck(deckSlot)?.setVolume(posToGain(v / 100));
               }
             }}
             style={{ width: '100%', accentColor: color, cursor: 'pointer', height: 10 }}
@@ -361,9 +362,9 @@ export default function MixerChannelStrip({
           setFader(v);
           // Channel fader sends its OWN level. Master is applied once, at the program bus.
           if (isMic) {
-            if (gainNodeRef.current) gainNodeRef.current.gain.value = v / 100;
+            if (gainNodeRef.current) gainNodeRef.current.gain.value = posToGain(v / 100);
           } else if (deckSlot) {
-            engine.getDeck(deckSlot)?.setVolume(v / 100);
+            engine.getDeck(deckSlot)?.setVolume(posToGain(v / 100));
           }
         }}
         style={{ width: "100%", accentColor: color, cursor: "pointer", height: 3, display: "block" }}

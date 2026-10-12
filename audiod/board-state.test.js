@@ -34,7 +34,7 @@ const recorder = (over = {}) => {
   const calls = [];
   const rec = (name) => (...a) => { calls.push([name, ...a]); return true; };
   const sink = Object.fromEntries(["setVolume", "setMuted", "setDuck", "setDuckable", "setAuxMonitor", "setMonitorVolume", "setMasterVolume",
-    "setMasterMonitorVolume", "setDuckParams", "setAuxDevice", "setCueDevice", "setPflDim", "setOutputDevice"].map(n => [n, rec(n)]));
+    "setMasterMonitorVolume", "setDuckParams", "setAuxDevice", "setCueDevice", "setPflDim", "setOutputDevice", "setLocalOutput", "setFaderSmoothing"].map(n => [n, rec(n)]));
   return { calls, sink: { ...sink, getOutputDevice: () => null, ...over } };
 };
 
@@ -113,6 +113,46 @@ describe("applyBoard", () => {
   });
 });
 
+describe("routing: faders are generic, and the update moves nothing", () => {
+  const routingOf = (d) => Object.fromEntries(Object.entries(B.readSavedBoard(d, 2).slots).map(([s, e]) => [s, [e.local, e.duck, e.duckable]]));
+  it("before migration every fader reads as the engine has always run it", () => {
+    const r = routingOf(db);
+    expect(r.A).toEqual(["main", false, true]);   // a music fader: main output, never ducks, ducked
+    expect(r.D).toEqual(["aux", true, false]);    // a source fader: AUX, ducks per its toggle, never ducked
+    expect(r.F).toEqual(["aux", false, false]);
+  });
+  it("the migration writes exactly that into each fader's own settings — and reads back identically", () => {
+    const before = routingOf(db);
+    const writes = B.routingMigration(db, 2);
+    // source rows stored duckable=1 that never acted → 0; nothing else needed
+    expect(writes.filter(w => w.table === "deck_configs").map(w => [w.slot, w.patch])).toEqual(
+      [["D", { duckable: 0 }], ["E", { duckable: 0 }], ["F", { duckable: 0 }], ["S1", { duckable: 0 }], ["S2", { duckable: 0 }], ["S3", { duckable: 0 }]]);   // S2 disabled — migrated too, so re-enabling it moves nothing
+    for (const w of writes) {
+      if (w.table === "deck_configs") for (const [k, v] of Object.entries(w.patch)) db.prepare(`UPDATE deck_configs SET ${k} = ? WHERE station_id = 2 AND slot = ?`).run(v, w.slot);
+      else db.prepare("INSERT INTO station_config_kv VALUES (2, ?, ?, NULL)").run(w.key, w.value);
+    }
+    expect(routingOf(db)).toEqual(before);        // NOTHING moves at the update
+    expect(B.routingMigration(db, 2)).toEqual([]); // once
+  });
+  it("after migration a fader's settings are its own — a music fader can be put on AUX and made to duck", () => {
+    for (const w of B.routingMigration(db, 2)) {
+      if (w.table === "deck_configs") for (const [k, v] of Object.entries(w.patch)) db.prepare(`UPDATE deck_configs SET ${k} = ? WHERE station_id = 2 AND slot = ?`).run(v, w.slot);
+      else db.prepare("INSERT INTO station_config_kv VALUES (2, ?, ?, NULL)").run(w.key, w.value);
+    }
+    db.prepare("UPDATE station_config_kv SET value = ? WHERE station_id = 2 AND key = 'fader_local'").run(JSON.stringify({ A: "aux" }));
+    db.prepare("UPDATE deck_configs SET duck = 1 WHERE station_id = 2 AND slot = 'A'").run();
+    expect(routingOf(db).A).toEqual(["aux", true, true]);
+  });
+  it("sends local output and smoothing for every fader", () => {
+    const { calls, sink } = recorder();
+    B.applyBoard(B.readSavedBoard(db, 2), sink);
+    expect(calls).toContainEqual(["setLocalOutput", "A", false]);
+    expect(calls).toContainEqual(["setLocalOutput", "D", true]);
+    expect(calls).toContainEqual(["setFaderSmoothing", 20]);
+    expect(B.readSavedBoard(db, 2).loudnessTargetLufs).toBe(-16);
+  });
+});
+
 describe("compareBoard", () => {
   const live = (mut) => {
     const slot = { volume: 1, muted: false, kind: "source", duck: true, duckable: true, aux_monitor_gain: 0, room_gain: 1, pfl: false };
@@ -123,7 +163,7 @@ describe("compareBoard", () => {
   };
   it("names the 2026-10-11 failure: S1's room row saved 0.74, live 0", () => {
     const d = B.compareBoard(B.readSavedBoard(db, 2), live());
-    expect(d).toContainEqual(expect.objectContaining({ setting: "S1.aux", saved: 0.74, live: 0, where: "control", label: "G AUX monitor row" }));
+    expect(d).toContainEqual(expect.objectContaining({ setting: "S1.aux", saved: 0.74, live: 0, where: "control", label: "G local row" }));
   });
   it("is silent when the engine holds the saved board", () => {
     const saved = B.readSavedBoard(db, 2);

@@ -423,6 +423,33 @@ const audiodClient = require("./audio-daemon-client");
 // (apply, flush, read back, compare → board-state-mismatch-error).
 const BoardState = require("../audiod/board-state");
 const BoardSync = require("./board-sync");
+// ONE LOUDNESS NORMALIZATION (audiod/loudness.js): main's in-process loads use the same rule and the same measurement
+// cache the daemon fills (gain = the station's target − the file's measured loudness; any per-item gain is ignored).
+let _mainLoud = null;
+const _loudSaid = new Map();   // "state|file" → last time a loudness event was raised for it
+function _getMainLoud() {
+  if (_mainLoud) return _mainLoud;
+  try {
+    let ff = null;
+    try { ff = require("ffmpeg-static"); if (ff && ff.includes("app.asar") && !ff.includes("app.asar.unpacked")) ff = ff.replace("app.asar", "app.asar.unpacked"); } catch { ff = null; }
+    const dbp = process.env.ETHER_DB_PATH; if (!dbp) return null;
+    _mainLoud = require("../audiod/loudness").createLoudness({ cachePath: path.join(path.dirname(dbp), "loudness-cache.json"), ffmpegPath: ff, log: (m) => logStartup(m) });
+  } catch (e) { logStartup(`[loudness] unavailable in main: ${e && e.message}`); _mainLoud = null; }
+  return _mainLoud;
+}
+function _loadNormalizedInProcess(deck, fp, title, artist, stationId) {
+  let gainDb = 0;
+  try {
+    const L = _getMainLoud(); const d = _boardDb();
+    if (L && fp && !/^[a-z]+:\/\//i.test(fp)) {
+      const target = d ? BoardState.readSavedBoard(d, Number(stationId)).loudnessTargetLufs : -16;
+      const g = L.gainFor(fp, target);
+      gainDb = g.gainDb;
+      if (!g.measured) { L.enqueue(fp); logStartup(`[loudness s${stationId}] ${deck} "${title || path.basename(fp)}" NOT yet measured — plays at 0 dB trim (queued)`); }
+    }
+  } catch (e) { logStartup(`[loudness] in-process gain ✗ ${e && e.message}`); }
+  return audio.audioLoad(deck, fp, title || "", artist || "", gainDb, stationId);
+}
 const _boardQueue = BoardSync.createBoardQueue({ log: (m) => { try { logStartup(m); } catch {} } });
 function _boardSend(cmd, args, inProcess) {
   return BoardSync.boardSend({ cmd, args, daemonActive: AUDIO_DAEMON, daemonWanted: AUDIO_DAEMON_DESIRED,
@@ -473,6 +500,25 @@ function _syncBoard(why) {
     });
   }).catch(e => logStartup(`[board] connect pass ✗ ${e && e.message || e} (${why})`));
   return _boardSyncChain;
+}
+// THE ONE-TIME ROUTING MIGRATION — through the app's own sync-aware writers (deck_configs, station_config_kv).
+function _migrateFaderRouting() {
+  const d = _boardDb(); if (!d) return;
+  const { deckConfigsUpdateBySlot } = require("./sync/handlers/deck_configs");
+  const { stationConfigKvUpsertByKey } = require("./sync/handlers/station_config_kv");
+  for (const sid of _stationIds()) {
+    const writes = BoardState.routingMigration(d, sid);
+    if (!writes.length) continue;
+    let n = 0;
+    for (const w of writes) {
+      try {
+        if (w.table === "deck_configs") deckConfigsUpdateBySlot(d, sid, w.slot, w.patch);
+        else stationConfigKvUpsertByKey(d, sid, w.key, w.value);
+        n++;
+      } catch (e) { logStartup(`[board s${sid}] routing migration write ✗ ${JSON.stringify(w)}: ${e && e.message}`); }
+    }
+    logStartup(`[board s${sid}] fader routing migrated to today's behaviour (${n}/${writes.length} writes): ${writes.filter(w => w.table === "deck_configs").map(w => `${w.slot} ${JSON.stringify(w.patch)}`).join(", ") || "no channel changes"}`);
+  }
 }
 // IN-PROCESS FALLBACK: the same applier against the in-process engine (main owns it then). The database may not be open
 // yet when the fallback is decided, so it waits for it — briefly, and says so if it gives up.
@@ -995,6 +1041,18 @@ if (AUDIO_DAEMON_DESIRED) {
         _showOnState(m);        // SLICE 7 — the blade's show state (UUID-scoped) + show_pending
       } else if (m.event === "showapplied") {
         _showOnApplied(m);      // SLICE 7 — write the stores for exactly what the blade applied
+      } else if (m.event === "loudness") {
+        // ONE NORMALIZATION (audiod/loudness.js): a file aired before it was measured (0 dB trim), or one whose
+        // measured loudness needed more trim than the engine's range. Said once per file per hour, never per load.
+        const key = `${m.state}|${m.file}`, now = Date.now();
+        if (now - (_loudSaid.get(key) || 0) > 3600000) {
+          _loudSaid.set(key, now);
+          const name = require("path").basename(String(m.file || ""));
+          if (m.state === "unmeasured") _healthEvent("loudness-unmeasured-skipped", { stationUuid: m.stationUuid, deck: m.deck, file: m.file,
+            message: `"${name}" aired before its loudness was measured — played without normalization (now queued for measuring)` });
+          else if (m.state === "clamped") _healthEvent("loudness-gain-limited-skipped", { stationUuid: m.stationUuid, deck: m.deck, file: m.file, lufs: m.lufs,
+            message: `"${name}" measures ${m.lufs} LUFS and needed ${Number(m.wantDb).toFixed(1)} dB; the engine's trim range held it at ${m.gainDb} dB` });
+        }
       } else if (m.event === "boardlevels") {
         _showOnLevels(m);       // SLICE 7 — board_levels, at most once a second
       } else if (m.event === "deck") {
@@ -1629,6 +1687,9 @@ function initDb() {
   bootStep("Preparing artwork cache…", () => initArtworkCache());
   bootStep("Preparing decks…", () => seedDeckConfigs());
   // Every station's ducker, from its own row, whether or not its board is ever opened.
+  // FADERS ARE GENERIC (Jeff, 2026-10-11): once per station, write today's EFFECTIVE routing into each fader's own three
+  // settings (audiod/board-state.js routingMigration), so from now on every fader is read the same way and nothing moves.
+  bootStep("Fader routing…", () => { try { _migrateFaderRouting(); } catch (e) { logStartup("[board] routing migration ✗ " + (e && e.message)); } });
   bootStep("Arming duckers…", () => { try { armAllStationDuckers("boot"); } catch (e) { console.warn("[duck]", e.message); } });
   // Scheduled announcements fire whether or not any window is open.
   bootStep("Starting announcement scheduler…", () => { try { startAnnouncementScheduler(); } catch (e) { console.warn("[announce]", e.message); } });
@@ -4595,7 +4656,7 @@ ipcMain.handle("audio:load", async (_, deck, filePath, title, artist, gainDb, st
   // needs main's DB + R2 — stays here; only the final load is forwarded.
   const doLoad = (fp) => AUDIO_DAEMON
     ? audiodClient.cmd("load", { deck, filePath: fp, title, artist, gainDb: gainDb ?? 0, stationId })
-    : audio.audioLoad(deck, fp, title, artist, gainDb ?? 0, stationId);
+    : _loadNormalizedInProcess(deck, fp, title, artist, stationId);
   // Resolve exactly as before (local-first → file_key → R2). On any failure, soft-fall to the
   // original filePath so the Rust worker reports the error exactly as pre-refactor (no regression).
   const resolved = await resolveLocalAudioPath(filePath);
@@ -4642,7 +4703,7 @@ ipcMain.handle("jukebox:play", async (_evt, req) => {
 
   // In-process fallback (no daemon): same two addon calls, and the same honest play_log row.
   try {
-    const loaded = audio.audioLoad(deck, fp, req.title || "", req.artist || "", req.gainDb ?? 0, stationId);
+    const loaded = _loadNormalizedInProcess(deck, fp, req.title, req.artist, stationId);
     if (loaded === false) return { ok: false, reason: "load-failed" };
     const played = audio.audioPlay(deck, stationId);
     if (played === false) return { ok: false, reason: "play-failed" };
@@ -5206,7 +5267,7 @@ async function fireAnnouncement(stationId, uuid, entryUuid) {
         const played = await audiodClient.cmd('play', { deck: ch, stationId });
         if (played === false) { failures.push(ch + ': play refused (nothing loaded)'); continue; }
       } else {
-        const loaded = audio.audioLoad(ch, row.file_path, row.title || 'Announcement', '', 0, stationId);
+        const loaded = _loadNormalizedInProcess(ch, row.file_path, row.title || 'Announcement', '', stationId);
         if (loaded === false) { failures.push(ch + ': load refused'); continue; }
         const played = audio.audioPlay(ch, stationId);
         if (played === false) { failures.push(ch + ': play refused (nothing loaded)'); continue; }
@@ -6141,22 +6202,26 @@ function armAllStationDuckers(reason, opts) {
     return { ok: false, armed: 0 };
   }
   let armed = 0;
-  for (const r of rows) {
-    try {
-      // TRIGGER side — only a source channel can arm the ducker.
-      if (r.type === 'source') {
-        if (toDaemon) { audiodClient.cmd('setDuck', { stationId: r.station_id, deck: r.slot, enabled: !!r.duck }).catch(e => console.error('[duck] setDuck', r.station_id, r.slot, e && e.message)); armed++; }
-        else if (audio && typeof audio.audioSetDuck === 'function') {
-          if (audio.audioSetDuck(r.station_id, r.slot, !!r.duck)) armed++;
+  // FADERS ARE GENERIC (2026-10-11): each fader's own three routing settings, read by the ONE applier's rule
+  // (audiod/board-state.js readSavedBoard — today's effective behaviour until the station's routing is migrated, the
+  // fader's stored values after). Never the raw columns: a source row's stored "duckable" never acted, and sending it
+  // raw to the generic mixer would start ducking that fader on air.
+  const sidsAll = [...new Set(rows.map(r => r.station_id))];
+  for (const sid of sidsAll) {
+    let saved;
+    try { saved = BoardState.readSavedBoard(db, sid); } catch (e) { console.error('[duck] station', sid, e.message); continue; }
+    for (const [slot, e] of Object.entries(saved.slots || {})) {
+      try {
+        const sends = [['setDuck', { stationId: sid, deck: slot, enabled: !!e.duck }, () => audio.audioSetDuck(sid, slot, !!e.duck)],
+                       ['setDuckable', { stationId: sid, deck: slot, duckable: !!e.duckable }, () => audio.audioSetDuckable(sid, slot, !!e.duckable)],
+                       ['setLocalOutput', { stationId: sid, deck: slot, aux: e.local === 'aux' }, () => (typeof audio.audioSetLocalOutput === 'function' ? audio.audioSetLocalOutput(sid, slot, e.local === 'aux') : false)]];
+        for (const [c, a, inProc] of sends) {
+          if (toDaemon) audiodClient.cmd(c, a).catch(err => logStartup(`[duck] ${c} s${sid} ${slot} NOT delivered ✗ ${err && err.message}`));
+          else { try { inProc(); } catch (err) { logStartup(`[duck] ${c} s${sid} ${slot} ✗ ${err && err.message}`); } }
         }
-      }
-      // RECEIVER side — every enabled deck says whether it steps back. Pushed for ALL decks, not
-      // just sources, and at boot rather than when a panel opens: the same UI-scoped arming trap the
-      // trigger flags fell into, which cost a whole diagnosis.
-      if (toDaemon) audiodClient.cmd('setDuckable', { stationId: r.station_id, deck: r.slot, duckable: !!r.duckable }).catch(e => console.error('[duck] setDuckable', r.station_id, r.slot, e && e.message));
-      else if (audio && typeof audio.audioSetDuckable === 'function')
-        audio.audioSetDuckable(r.station_id, r.slot, !!r.duckable);
-    } catch (e) { console.error('[duck] station', r.station_id, r.slot, e.message); }
+        armed++;
+      } catch (err) { console.error('[duck] station', sid, slot, err.message); }
+    }
   }
   // TUNING, per station, from that station's own Preferences (station_config_kv). Without this a
   // station's dialled depth/hold only reached the engine if someone opened its Preferences — the
@@ -6198,6 +6263,58 @@ function armAllStationDuckers(reason, opts) {
 // MONITOR fader set and tells every window; a window opened later asks for it. Clamped exactly as the engine clamps.
 let _localMonitorLevel = 1.0;
 ipcMain.handle("local:monitor-level", () => _localMonitorLevel);
+// ── FADER ROUTING + SOUND SETTINGS (2026-10-11) — every number visible, every fader the same ────────────────────────
+// board:routing → { slot: { local: "aux"|"main", duck, duckable } } as the ONE applier reads it (what the engine runs).
+ipcMain.handle("board:routing", (_, stationId) => {
+  const d = _boardDb(); const sid = Number(stationId); if (!d || !Number.isFinite(sid)) return {};
+  try {
+    const s = BoardState.readSavedBoard(d, sid);
+    return Object.fromEntries(Object.entries(s.slots).map(([k, e]) => [k, { local: e.local, duck: !!e.duck, duckable: !!e.duckable }]));
+  } catch { return {}; }
+});
+// board:set-routing — one fader's local output / ducks music / ducked by others: SAVED, then sent (queued if it can't be).
+ipcMain.handle("board:set-routing", async (_, stationId, slot, patch = {}) => {
+  const d = _boardDb(); const sid = Number(stationId); const s = String(slot || "");
+  if (!d || !Number.isFinite(sid) || !BoardState.SLOTS.includes(s)) return { ok: false, reason: "no station or fader" };
+  try {
+    if (patch.duck !== undefined || patch.duckable !== undefined) {
+      const p = {};
+      if (patch.duck !== undefined) p.duck = patch.duck ? 1 : 0;
+      if (patch.duckable !== undefined) p.duckable = patch.duckable ? 1 : 0;
+      require("./sync/handlers/deck_configs").deckConfigsUpdateBySlot(d, sid, s, p);
+    }
+    if (patch.local !== undefined) {
+      const r = d.prepare("SELECT value FROM station_config_kv WHERE station_id = ? AND key = ? AND deleted_at IS NULL").get(sid, BoardState.FADER_LOCAL_KEY);
+      let m = {}; try { m = JSON.parse((r && r.value) || "{}") || {}; } catch { m = {}; }
+      m[s] = patch.local === "aux" ? "aux" : "main";
+      require("./sync/handlers/station_config_kv").stationConfigKvUpsertByKey(d, sid, BoardState.FADER_LOCAL_KEY, JSON.stringify(m));
+    }
+  } catch (e) { return { ok: false, reason: `not saved: ${e && e.message}` }; }
+  if (patch.duck !== undefined) await _boardSend("setDuck", { stationId: sid, deck: s, enabled: !!patch.duck }, () => audio.audioSetDuck(sid, s, !!patch.duck));
+  if (patch.duckable !== undefined) await _boardSend("setDuckable", { stationId: sid, deck: s, duckable: !!patch.duckable }, () => audio.audioSetDuckable(sid, s, !!patch.duckable));
+  if (patch.local !== undefined) await _boardSend("setLocalOutput", { stationId: sid, deck: s, aux: patch.local === "aux" }, () => (typeof audio.audioSetLocalOutput === "function" ? audio.audioSetLocalOutput(sid, s, patch.local === "aux") : false));
+  try { sendToAllWindows("board:routing-changed", { stationUuid: _stationUuidById(sid) }); } catch {}
+  return { ok: true };
+});
+// board:sound-settings → the station's loudness target and fader smoothing, as the engine uses them.
+ipcMain.handle("board:sound-settings", (_, stationId) => {
+  const d = _boardDb(); const sid = Number(stationId); if (!d || !Number.isFinite(sid)) return null;
+  try { const s = BoardState.readSavedBoard(d, sid); return { loudnessTargetLufs: s.loudnessTargetLufs, smoothingMs: s.smoothingMs }; } catch { return null; }
+});
+ipcMain.handle("board:set-sound-setting", async (_, stationId, key, value) => {
+  const d = _boardDb(); const sid = Number(stationId); const n = Number(value);
+  if (!d || !Number.isFinite(sid) || !Number.isFinite(n)) return { ok: false, reason: "no station or not a number" };
+  const KEYS = { loudnessTargetLufs: [BoardState.LOUDNESS_TARGET_KEY, -40, -5], smoothingMs: [BoardState.SMOOTHING_KEY, 0, 500] };
+  const k = KEYS[key]; if (!k) return { ok: false, reason: "unknown setting" };
+  const v = Math.max(k[1], Math.min(k[2], n));
+  try { require("./sync/handlers/station_config_kv").stationConfigKvUpsertByKey(d, sid, k[0], String(v)); }
+  catch (e) { return { ok: false, reason: `not saved: ${e && e.message}` }; }
+  if (key === "smoothingMs") await _boardSend("setFaderSmoothing", { stationId: sid, ms: v }, () => (typeof audio.audioSetFaderSmoothing === "function" ? audio.audioSetFaderSmoothing(sid, v) : false));
+  return { ok: true, value: v };
+});
+ipcMain.handle("board:loudness-status", async () => {
+  try { return AUDIO_DAEMON ? await audiodClient.cmd("loudnessStatus", {}) : (_mainLoud ? _mainLoud.status() : null); } catch { return null; }
+});
 // The SAVED master MONITOR (machine-local kv), or null when none has ever been saved — the fader reads it on mount.
 ipcMain.handle("local:monitor-saved", () => {
   const d = _boardDb(); if (!d) return null;
@@ -6227,7 +6344,7 @@ function _noteLocalOutput(stationId, f) {
   } catch { /* a sense must never break the levels relay */ }
 }
 ipcMain.handle("audio:setMasterMonitorVolume", async (_, volume) => {
-  { const v = Number(volume); _localMonitorLevel = Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : _localMonitorLevel; }
+  { const v = Number(volume); _localMonitorLevel = Number.isFinite(v) ? Math.max(0, Math.min(BoardState.MAX_GAIN, v)) : _localMonitorLevel; }
   try { sendToAllWindows("local:monitor-level", _localMonitorLevel); } catch {}
   let ids = [];
   try { ids = db.prepare("SELECT id FROM stations WHERE deleted_at IS NULL").all().map(r => r.id); }
@@ -9445,6 +9562,11 @@ ipcMain.handle('audio-library:import', (_e, srcPath) => {
     const r = _audioMigrate.importIntoLibrary(getMusicDir(), srcPath);
     if (!r.ok) console.warn(`[audio-library] import REFUSED (${r.code}): ${srcPath} — ${r.error}`);
     else if (r.action === 'copied') console.log(`[audio-library] imported -> ${r.path}`);
+    // LOUDNESS, measured ON IMPORT (2026-10-11) — in the background, at low priority; never blocks the import or air.
+    if (r.ok && r.path) {
+      if (AUDIO_DAEMON) audiodClient.cmd('loudnessMeasure', { filePath: r.path }).catch(e => logStartup(`[loudness] measure-on-import not queued ✗ ${e && e.message}`));
+      else { const L = _getMainLoud(); if (L) L.enqueue(r.path); }
+    }
     return r;
   } catch (e) { return { ok: false, code: 'exception', error: e.message }; }
 });

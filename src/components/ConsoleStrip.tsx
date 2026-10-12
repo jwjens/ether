@@ -5,6 +5,8 @@
 // 0 dB has a wider tick + a bright notch on the rail surface for tactile reference.
 // VU meter: full height, right side, same color coding as before.
 
+import FaderRouting from "./FaderRouting";
+import { posToGain, gainToPos, formatDb, FADER_MARKS } from "../lib/faderLaw";
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { useMidiState } from "./MidiEngine";
 import { useAudioEngine } from "../audio/AudioEngineContext";
@@ -56,18 +58,9 @@ interface Props {
 const KNOB_H = 80;  // height of the cap
 const KNOB_W = 46;  // width of the cap
 
-// Fader uses a dB-linear taper: position maps linearly to dB (0 dB at top, −60 dB at bottom).
-// This matches real broadcast console scaling and keeps scale labels evenly distributed.
-const DB_FLOOR = 60; // fader bottom = −60 dB; below this snaps volume to 0
-
-const DB_MARKS: { label: string; db: number; isUnity?: boolean }[] = [
-  { label: "0",   db: 0,         isUnity: true },
-  { label: "−10", db: -10 },
-  { label: "−20", db: -20 },
-  { label: "−40", db: -40 },
-  { label: "−60", db: -60 },
-  { label: "∞",   db: -Infinity },
-];
+// THE ONE CONSOLE FADER LAW (src/lib/faderLaw.ts; Jeff, 2026-10-11): +10 dB at the top, unity at ~75%, −10 at
+// half, off at the bottom — the same law, marks and readout on every fader in Ether. The level stored and sent is
+// GAIN; the law only decides where the knob is drawn for it.
 
 export default function ConsoleStrip({
   label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId, hideLabel, sourceChannel = false, role = "third", jingle = null, jingleClass = null, pendingShow = null, onTakeNow,
@@ -217,8 +210,7 @@ export default function ConsoleStrip({
   // Top offset of the knob cap — dB-linear taper so scale marks are evenly spaced.
   // 0 dB → knobY=0 (top); −60 dB → knobY=faderH−KNOB_H (bottom).
   const effVol = dragVol ?? volume; // pointer-driven while dragging, real volume otherwise
-  const volDb = effVol > 0.001 ? 20 * Math.log10(effVol) : -DB_FLOOR;
-  const knobY = (Math.max(-DB_FLOOR, Math.min(0, volDb)) / -DB_FLOOR) * (faderH - KNOB_H);
+  const knobY = (1 - gainToPos(effVol)) * (faderH - KNOB_H);
 
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -228,10 +220,10 @@ export default function ConsoleStrip({
     const el = e.currentTarget;
     el.setPointerCapture(e.pointerId);
     const posToVol = (clientY: number, rect: DOMRect) => {
-      const ratio = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
-      if (ratio >= 0.999) return 0;
-      const db = -ratio * DB_FLOOR;
-      return Math.pow(10, db / 20);
+      // The knob's centre travels between KNOB_H/2 from the top and from the bottom of the track.
+      const travel = Math.max(1, rect.height - KNOB_H);
+      const ratio = Math.max(0, Math.min(1, (clientY - rect.top - KNOB_H / 2) / travel));
+      return posToGain(1 - ratio);
     };
     const onMove = (ev: PointerEvent) => {
       const rect = track.getBoundingClientRect();
@@ -369,7 +361,15 @@ export default function ConsoleStrip({
             transition: dragging ? "none" : "height 0.08s ease-out",
           }} />
 
-          {/* dB scale removed — clean rail, no per-tick labels (the meter reads the level) */}
+          {/* THE dB SCALE — the one console law's marks (src/lib/faderLaw.ts), unity highlighted. */}
+          {FADER_MARKS.map(m => (
+            <div key={m.label} style={{ position: "absolute", left: 0, right: 0, top: KNOB_H / 2 + (1 - m.pos) * (faderH - KNOB_H),
+                                        height: 0, pointerEvents: "none", zIndex: 1 }}>
+              <div style={{ position: "absolute", left: 2, width: m.unity ? 12 : 7, top: 0, borderTop: `1px solid ${m.unity ? "rgba(255,255,255,0.55)" : "rgba(255,255,255,0.22)"}` }} />
+              <span style={{ position: "absolute", left: 2, top: 1, fontSize: 8, lineHeight: 1, fontFamily: "'DM Mono', monospace",
+                             color: m.unity ? "rgba(255,255,255,0.8)" : "rgba(255,255,255,0.4)" }}>{m.label}</span>
+            </div>
+          ))}
 
           {/* ── Fader knob cap — flat handle (motorized-board friendly) ── */}
           <div style={{
@@ -387,8 +387,9 @@ export default function ConsoleStrip({
             boxShadow: dragging ? `0 0 0 3px ${color}40` : "none",
             display: "flex", alignItems: "center", justifyContent: "center",
           }}>
-            {/* Center grip line */}
-            <div style={{ width: KNOB_W - 18, height: 2, background: "rgba(0,0,0,0.28)", borderRadius: 1 }} />
+            {/* Center grip line, and the level this fader is at — read from the same law */}
+            <div style={{ position: "absolute", width: KNOB_W - 18, height: 2, background: "rgba(0,0,0,0.28)", borderRadius: 1 }} />
+            <span style={{ position: "relative", top: 12, fontSize: 9, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "rgba(0,0,0,0.6)" }}>{formatDb(effVol)}</span>
           </div>
 
         </div>{/* end fader column */}
@@ -399,6 +400,9 @@ export default function ConsoleStrip({
         </div>
 
       </div>{/* end main area */}
+
+      {/* ── THE THREE ROUTING SETTINGS — on every engine fader (Jeff, 2026-10-11: faders are generic shells) ── */}
+      {deckId && <FaderRouting stationId={stationId ?? null} stationUuid={stationUuid ?? null} slot={String(deckId)} label={label} />}
 
       {/* ── EQ — the door to this fader's channel rack (Slice 5) ── */}
       {rackSlot && (

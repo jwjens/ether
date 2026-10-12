@@ -42,6 +42,7 @@
 // so a deck cannot be sent to a different device than the station's own. The room is one room, and
 // the single OUTPUT selector at the top is the whole aux path's device.
 
+import { posToGain, gainToPos, formatDb, FADER_MARKS } from "../lib/faderLaw";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { matchesStation } from "../lib/levelsScope";
@@ -99,13 +100,17 @@ export default function AuxMonitorSlots() {
       try {
         const r: any = await (window as any).ether.deckConfigs.list(stationId);
         const rows: any[] = (r && r.rows) || [];
+        // FADERS ARE GENERIC (2026-10-11): a fader has a row here when ITS local output is AUX — not by its letter.
+        let routing: Record<string, { local?: string }> = {};
+        try { routing = (await (window as any).ether?.invoke?.("board:routing", stationId)) || {}; } catch { routing = {}; }
+        const onAux = (slot: string) => routing[slot] ? routing[slot].local === "aux" : !MAIN_DECKS.includes(slot);
         // ONE NAME PER FADER — each row is named by its board letter, from this board's own order (src/lib/boardName.ts).
         const order = [...rows].filter(c => c && c.slot).sort(compareSlots).map(c => String(c.slot));
         const next: AuxDeck[] = rows
           // EVERY AUX DECK GETS A ROW. One row per deck, whatever is dialled into it — including
           // nothing. A row that disappears when a source is selected is not "treated the same"; it
           // is the panel changing shape under the operator (Jeff, 2026-09-03).
-          .filter(c => c && c.slot && c.enabled !== 0 && c.enabled !== false && !MAIN_DECKS.includes(String(c.slot)))
+          .filter(c => c && c.slot && c.enabled !== 0 && c.enabled !== false && onAux(String(c.slot)))
           .map(c => {
             const slot = String(c.slot);
             // The name the operator gave it wins; otherwise what is patched in; otherwise the type.
@@ -338,14 +343,16 @@ export default function AuxMonitorSlots() {
                 {/* Line 3 — MONITOR level: the ROOM, not air. */}
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
                   <span style={{ fontSize: 9, color: "#8868D8", letterSpacing: "0.08em", width: 52, fontWeight: 700 }}>MONITOR</span>
+                  {/* THE ONE CONSOLE LAW (src/lib/faderLaw.ts): the slider is TRAVEL, the stored row is GAIN */}
                   <input
-                    type="range" min={0} max={1} step={0.01}
-                    value={lvl}
-                    onChange={e => setLevel(d.slot, parseFloat(e.target.value))}
+                    type="range" min={0} max={1} step={0.001} list="ether-fader-law"
+                    value={gainToPos(lvl)}
+                    onChange={e => setLevel(d.slot, posToGain(parseFloat(e.target.value)))}
                     style={{ flex: 1, accentColor: "#8868D8" }}
                   />
-                  <span style={{ fontSize: 10, color: "var(--text-tertiary)", width: 26, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                    {Math.round(lvl * 100)}
+                  <datalist id="ether-fader-law">{FADER_MARKS.map(m => <option key={m.label} value={m.pos} label={m.label} />)}</datalist>
+                  <span style={{ fontSize: 10, color: "var(--text-tertiary)", width: 54, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                    {formatDb(lvl)}
                   </span>
                 </div>
               </div>

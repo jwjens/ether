@@ -34,11 +34,43 @@ too (see **Show Presets**). Specifically:
 - **A restart does not move it.** Ether remembers every fader (and the master) for the station and puts them
   back when it starts.
 
+### The fader scale (the same on every fader)
+
+Every fader in Ether — the channel faders, MASTER, MONITOR, each station's MONITOR strip and every AUX row — uses
+**one console scale**, marked in dB on the fader:
+
+| Fader position | Level |
+|---|---|
+| top | **+10 dB** |
+| about three-quarters | **0 dB** (unity — the brighter mark) |
+| halfway | −10 dB |
+| about a third | −20 dB |
+| a quarter | −30 dB |
+| 15% | −40 dB |
+| 5% | −60 dB |
+| bottom | off |
+
+The whole travel is usable: halfway is −10 dB, not silence. The level you are at is shown on the fader cap.
+**A fader set before this version keeps exactly the level it had** — only where the knob is drawn moved.
+
 ### Every level change is smooth
 
-When a level changes — your drag, a show you TAKE, TAKE NOW, or the levels coming back at start — the engine
-glides it over **20 milliseconds** instead of jumping. A jump in level makes a click on air; the glide doesn't,
-and it is too short to hear as a fade. A level that isn't changing is untouched.
+When a level changes — your drag, MONITOR, an AUX row, a show you TAKE, TAKE NOW, or the levels coming back at
+start — the engine glides it instead of jumping, so nothing clicks or "zips". How long the glide takes is a setting:
+**Preferences → Loudness & fader smoothing → Fader smoothing** (20 ms unless you change it; 0 = an instant step).
+A level that isn't changing is untouched.
+
+### Every fader is the same: MAIN/AUX, DUCKS, DUCKED
+
+No fader has a fixed job. Whatever you select on a fader, three buttons under it say how it behaves:
+
+- **MAIN / AUX** — where you hear it **in the room**: the main speakers, or the AUX output (through its row in
+  Master Out → AUX monitors). It never changes what goes **on air** — every fader is always on air.
+- **DUCKS** — lit: while this fader plays, it pulls the music down (the ducker).
+- **DUCKED** — lit: this fader is pulled down when another fader ducks the music.
+
+After this update every fader is set exactly as it already behaved, so nothing sounds different until you change a
+button. The Ducker section in Preferences shows the same DUCKED setting for every fader.
 
 ### PENDING on a channel
 
@@ -51,10 +83,12 @@ See **Show Presets** (`docs/help-show-presets.md`).
 
 ### What about tracks that are too loud or too quiet?
 
-Each track can carry its **own loudness trim**, worked out from the file itself. That trim is applied
-**before** your fader, so it evens out the material *underneath* your hand — quiet songs come up, hot songs
-come down, and your fader still means what you set it to mean. The trim belongs to the track; the fader
-belongs to you.
+**Every file on any fader plays at the same loudness** — songs, sweepers, carts, announcements, the jukebox. Ether
+measures each file once (in the background, after import) and plays it at the **Loudness target** in
+**Preferences → Loudness & fader smoothing** (−16 LUFS unless you change it). That evens out the material
+*underneath* your hand, so a fader at 0 dB means the same loudness whatever is on it. A file played before it was
+measured plays as it is and is listed in the Health Monitor. See **Loudness normalization**
+(`docs/help-loudness-normalization.md`).
 
 ## Cutting a channel (ON / OFF)
 

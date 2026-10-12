@@ -22,18 +22,27 @@
 
 use ringbuf::{HeapProd, traits::Producer};
 
-/// A gain that IS the MONITOR stage: this station's strip level × the ONE master MONITOR level.
+/// A gain that IS the MONITOR stage: this station's strip level × the ONE master MONITOR level — and, while either was
+/// just moved, the smoothing ramp toward it (2026-10-11: a MONITOR move never zips; the ramp time is the operator's
+/// `fader_smoothing_ms`). At rest it is the plain product, so a static MONITOR is bit-identical to before.
 #[derive(Clone, Copy, Debug)]
-pub struct MonitorGain(f32);
+pub struct MonitorGain { level: f32, ramp: Option<crate::ramp::LevelRamp> }
 
 impl MonitorGain {
     /// The only constructor: read from the station's bus — its strip level × the master MONITOR level, multiplied in
     /// the same order the device stage always used (`monitor_vol * master_monitor_vol`), so the main output is
     /// bit-identical to before. Taking the bus (not two floats) means no caller can hand a device a gain it invented.
     #[inline]
-    pub fn of(bus: &crate::audio::BusState) -> MonitorGain { MonitorGain(bus.monitor_vol * bus.master_monitor_vol) }
+    pub fn of(bus: &crate::audio::BusState) -> MonitorGain {
+        MonitorGain { level: bus.monitor_vol * bus.master_monitor_vol,
+                      ramp: if bus.monitor_ramp.ramping() { Some(bus.monitor_ramp) } else { None } }
+    }
+    /// The level the stage rests on.
     #[inline]
-    pub fn get(self) -> f32 { self.0 }
+    pub fn get(self) -> f32 { self.level }
+    /// The gain at programme frame `f` of this buffer.
+    #[inline]
+    fn at(&self, f: usize) -> f32 { match self.ramp { Some(r) => r.at(f), None => self.level } }
 }
 
 /// The producer end of a ring that feeds a LOCAL output device (the AUX monitor). The only way to write to it is
@@ -47,13 +56,25 @@ impl LocalRing {
     /// peak of what was pushed, for the bypass sense.
     #[inline]
     pub fn push(&mut self, l: &[f32], r: &[f32], g: MonitorGain) -> f32 {
-        let gv = g.0;
         let mut pk = 0.0f32;
-        for f in 0..l.len().min(r.len()) {
-            let (a, b) = (l[f] * gv, r[f] * gv);
-            let _ = self.prod.try_push(a);
-            let _ = self.prod.try_push(b);
-            pk = pk.max(a.abs()).max(b.abs());
+        let n = l.len().min(r.len());
+        if g.ramp.is_none() {
+            // AT REST (almost always): the exact loop and arithmetic from before the MONITOR ramp — no per-sample branch.
+            let gv = g.level;
+            for f in 0..n {
+                let (a, b) = (l[f] * gv, r[f] * gv);
+                let _ = self.prod.try_push(a);
+                let _ = self.prod.try_push(b);
+                pk = pk.max(a.abs()).max(b.abs());
+            }
+        } else {
+            for f in 0..n {
+                let gv = g.at(f);
+                let (a, b) = (l[f] * gv, r[f] * gv);
+                let _ = self.prod.try_push(a);
+                let _ = self.prod.try_push(b);
+                pk = pk.max(a.abs()).max(b.abs());
+            }
         }
         pk
     }
@@ -67,10 +88,12 @@ impl LocalRing {
 #[inline]
 pub fn write_device(data: &mut [f32], ch: usize, dl: &[f32], dr: &[f32], prog_frames: usize, device_frames: usize,
                     resample: bool, g: MonitorGain) -> f32 {
-    let mvol = g.0;
     let mut pk = 0.0f32;
+    let ramping = g.ramp.is_some();
+    let rest = g.level;
     if !resample {
         for f in 0..device_frames {
+            let mvol = if ramping { g.at(f) } else { rest };
             if ch == 2 {
                 let (a, b) = (dl[f] * mvol, dr[f] * mvol);
                 data[f * 2] = a; data[f * 2 + 1] = b;
@@ -94,6 +117,7 @@ pub fn write_device(data: &mut [f32], ch: usize, dl: &[f32], dr: &[f32], prog_fr
             let r1 = dr.get(idx + 1).copied().unwrap_or(r0);
             let l = l0 + (l1 - l0) * frac;
             let r = r0 + (r1 - r0) * frac;
+            let mvol = if ramping { g.at(idx) } else { rest };
             if ch == 2 {
                 let (a, b) = (l * mvol, r * mvol);
                 data[f * 2] = a; data[f * 2 + 1] = b;

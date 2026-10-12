@@ -1,3 +1,4 @@
+import { MAX_GAIN } from "../lib/faderLaw";
 // src/audio/localOutput.ts — THE LOCAL OUTPUT STAGE, renderer half (2026-10-07, docs/monitor-bypass-diagnosis.md).
 //
 // Jeff's rule: the MONITOR fader is the local master output. Every sound that reaches a local output device passes
@@ -27,7 +28,7 @@ function ether(): any { return (window as any).ether; }
 function setLevel(v: unknown) {
   const n = Number(v);
   if (!Number.isFinite(n)) return;
-  level = Math.max(0, Math.min(1, n));
+  level = Math.max(0, Math.min(MAX_GAIN, n));   // MONITOR reaches +10 dB (the console law, src/lib/faderLaw.ts)
   listeners.forEach(l => { try { l(level); } catch { /* one bad listener never stops the others */ } });
 }
 
@@ -72,10 +73,11 @@ export function bindLocalMedia(el: HTMLMediaElement | null, base = 1): void {
   if (!el) return;
   const b = Math.max(0, Math.min(1, Number.isFinite(base) ? base : 1));
   const prev = bound.get(el);
-  if (prev) { prev.base = b; el.volume = b * monitorLevel(); return; }
+  // An <audio>/<video> element cannot go above 1.0 (the browser throws): above unity it plays at full scale.
+  if (prev) { prev.base = b; el.volume = Math.min(1, b * monitorLevel()); return; }
   const entry = { base: b, off: () => {} };
-  el.volume = b * monitorLevel();
-  entry.off = onMonitorLevel(v => { el.volume = entry.base * v; });
+  el.volume = Math.min(1, b * monitorLevel());
+  entry.off = onMonitorLevel(v => { el.volume = Math.min(1, entry.base * v); });
   bound.set(el, entry);
   el.addEventListener("emptied", () => { /* element reused: keep binding */ });
 }

@@ -39,6 +39,13 @@ pub(crate) struct Params {
     pub duck_duckable: [bool; SLOT_COUNT],
     pub aux_monitor_gain: [f32; SLOT_COUNT],
     pub room_gain: [f32; SLOT_COUNT],
+    /// FADERS ARE GENERIC (Jeff, 2026-10-11): where each fader is heard LOCALLY — false = the station's main output
+    /// (the room sum), true = the AUX output (through its AUX row). An operator setting per fader, never derived from a
+    /// fader's position or type. Boot default = today's layout (D–F, S1–S5 on AUX), so nothing moves until it is set.
+    pub local_aux: [bool; SLOT_COUNT],
+    /// The smoothing every level change rides (faders, MASTER, MONITOR, AUX/room rows), in programme frames. An operator
+    /// setting (`fader_smoothing_ms`); boot default = the 20 ms the engine always used (ramp::LEVEL_RAMP_FRAMES).
+    pub ramp_frames: u32,
     pub monitor_vol: f32,
     pub master_vol: f32,
     pub master_monitor_vol: f32,

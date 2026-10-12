@@ -406,9 +406,7 @@ pub fn audio_set_mic_input(station_id: u32, slot: String, device: String, channe
     let Some(idx) = audio::deck_index(&slot) else {
         return serde_json::json!({ "ok": false, "reason": format!("`{}` is not a fader", slot) }).to_string();
     };
-    if audio::default_kind_for(idx) != audio::SlotKind::Source {
-        return serde_json::json!({ "ok": false, "reason": format!("{} is a rotation/sweeper channel — a mic goes on a source channel (D–F, S1–S5)", slot) }).to_string();
-    }
+    // (2026-10-11) No refusal by fader position: faders are generic shells (Jeff) — any fader can take a mic.
     if !device.is_empty() && channel == 0 {
         return serde_json::json!({ "ok": false, "reason": "input channels are numbered from 1" }).to_string();
     }
@@ -436,9 +434,7 @@ pub fn audio_set_link_input(station_id: u32, slot: String, station_uuid: String,
     let Some(idx) = audio::deck_index(&slot) else {
         return serde_json::json!({ "ok": false, "reason": format!("`{}` is not a fader", slot) }).to_string();
     };
-    if audio::default_kind_for(idx) != audio::SlotKind::Source {
-        return serde_json::json!({ "ok": false, "reason": format!("{} is a rotation/sweeper channel — the Link goes on a source channel (D–F, S1–S5)", slot) }).to_string();
-    }
+    // (2026-10-11) No refusal by fader position: faders are generic shells (Jeff) — any fader can take the Link.
     let cfg = if station_uuid.is_empty() { None } else {
         if link::station_tag(&station_uuid).is_none() {
             return serde_json::json!({ "ok": false, "reason": format!("`{}` is not a station UUID", station_uuid) }).to_string();
@@ -1176,6 +1172,24 @@ pub fn audio_get_board_state(station_id: u32) -> String {
     }
     rx.recv_timeout(std::time::Duration::from_millis(1000))
         .unwrap_or_else(|_| serde_json::json!({ "ok": false, "reason": "the station's engine did not answer within 1 s" }).to_string())
+}
+
+/// FADERS ARE GENERIC (Jeff, 2026-10-11): where this fader is heard LOCALLY — `aux` true = the AUX output (through its
+/// AUX row), false = the station's main output. An operator setting per fader (`fader_routing`, audiod/board-state.js).
+#[napi]
+pub fn audio_set_local_output(station_id: u32, deck: String, aux: bool) -> bool {
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetLocalOutput { deck, aux }).is_ok()
+}
+
+/// The smoothing every level change rides (faders, MASTER, MONITOR, AUX/room rows), in milliseconds — the operator's
+/// `fader_smoothing_ms`. 0 = a hard step. Clamped 0…500 ms.
+#[napi]
+pub fn audio_set_fader_smoothing(station_id: u32, ms: f64) -> bool {
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetFaderSmoothing(ms.clamp(0.0, 500.0) as f32)).is_ok()
 }
 
 #[napi]

@@ -148,9 +148,11 @@ impl ShowApply {
 /// as always. Keyed on the slot's LAYOUT kind, not its current kind: a source fader dialled to sweepers keeps its row,
 /// and the row then reaches it through room_gain on the room chain instead of the aux tap.
 pub(crate) fn set_room(p: &mut Params, idx: usize, gain: f32) {
-    if idx >= SLOT_COUNT || crate::audio::default_kind_for(idx) != SlotKind::Source { return; }
+    // (2026-10-11) Any fader, no refusal by position or type (Jeff: faders are generic). The ONE row is the fader's
+    // local level: it reaches the AUX output or the main output by that fader's local-output setting (Params.local_aux).
+    if idx >= SLOT_COUNT { return; }
     p.aux_monitor_gain[idx] = gain.clamp(0.0, 4.0);
-    if p.kind[idx] != SlotKind::Rotation { p.room_gain[idx] = gain.clamp(0.0, 4.0); }
+    p.room_gain[idx] = gain.clamp(0.0, 4.0);
 }
 
 /// SetSlotKind: WHICH BUS a slot joins. A/B/C are automation's decks and are never re-kinded: putting a rotation
@@ -192,7 +194,10 @@ pub(crate) fn set_duck_params(p: &mut Params, d: DuckParams) {
 }
 
 /// SetMasterVolume: 0…1 (master is an attenuator on air).
-pub(crate) fn set_master_fader(p: &mut Params, v: f32) { p.master_vol = v.clamp(0.0, 1.0); }
+/// SetMasterVolume: 0…+10 dB (3.1623) — the console fader law's top (Jeff, 2026-10-11: one law for every fader, MASTER
+/// included). Above unity the programme can exceed full scale ahead of the stream limiter; with processing off the clean
+/// tap clamps it at ±1. The saved level is never raised by this — only the operator's hand can take MASTER above unity.
+pub(crate) fn set_master_fader(p: &mut Params, v: f32) { p.master_vol = v.clamp(0.0, 3.1623); }
 
 /// SetMonitorVolume: the station's monitor level, 0…4 — the room only, never air.
 pub(crate) fn set_monitor(p: &mut Params, v: f32) { p.monitor_vol = v.clamp(0.0, 4.0); }

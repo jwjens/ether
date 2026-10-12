@@ -22,6 +22,16 @@ const SOURCE_SLOTS = ["D", "E", "F", "S1", "S2", "S3", "S4", "S5"];
 // The ducker's saved parameters and the defaults main has always used for them (main.js armAllStationDuckers).
 const DUCK_KEYS = { depthDb: ["duck_depth_db", -22], thresholdDb: ["duck_threshold_db", -45], attackMs: ["duck_attack_ms", 30], holdMs: ["duck_hold_ms", 700], releaseMs: ["duck_release_ms", 500] };
 const MASTER_MONITOR_KEY = "master_monitor_volume";   // machine-local (LOCAL_ONLY_KEYS); moved out of localStorage
+// FADERS ARE GENERIC (Jeff, 2026-10-11). Each fader's three routing settings: where it is heard locally (`fader_local`,
+// { slot: "aux" | "main" }), whether it ducks the music (deck_configs.duck) and whether the music ducks it
+// (deck_configs.duckable). FADER_ROUTING_FLAG marks a station whose stored values have been migrated to today's
+// EFFECTIVE behaviour; until then they are read the way the engine has always applied them, so nothing moves on air.
+const FADER_LOCAL_KEY = "fader_local";
+const FADER_ROUTING_FLAG = "fader_routing_v1";
+const SMOOTHING_KEY = "fader_smoothing_ms";
+const LOUDNESS_TARGET_KEY = "loudness_target_lufs";
+// The most any fader, MASTER, MONITOR or row can be set to: +10 dB (Jeff's console law, top of travel).
+const MAX_GAIN = Math.pow(10, 10 / 20);
 
 // ONE NAME PER FADER (Jeff, 2026-09-26; src/lib/boardName.ts — the same rule, ported): engine slot ids S1–S5 are never
 // shown to an operator. The board's rows in its own order (every row, enabled or not), completed with every engine
@@ -42,7 +52,7 @@ function boardNames(order) {
 }
 
 const num = (v) => { const n = Number(v); return v === null || v === undefined || v === "" || !Number.isFinite(n) ? null : n; };
-const clamp01 = (v) => Math.max(0, Math.min(1, v));
+const clampGain = (v) => Math.max(0, Math.min(MAX_GAIN, v));
 
 function kvReader(db, sid) {
   let rows = [];
@@ -57,11 +67,11 @@ function parseRoomLevels(rawLvl, rawSlots) {
   let parsed = null;
   try { parsed = rawLvl ? JSON.parse(rawLvl) : null; } catch { parsed = null; }
   if (parsed && !Array.isArray(parsed) && typeof parsed === "object") {
-    for (const [k, v] of Object.entries(parsed)) { const n = num(v); if (n != null && SOURCE_SLOTS.includes(k)) out[k] = clamp01(n); }
+    for (const [k, v] of Object.entries(parsed)) { const n = num(v); if (n != null && SLOTS.includes(k)) out[k] = clampGain(n); }
   } else if (Array.isArray(parsed)) {
     let oldSlots = [];
     try { oldSlots = rawSlots ? (JSON.parse(rawSlots) || []) : []; } catch { oldSlots = []; }
-    oldSlots.forEach((deck, i) => { if (deck && SOURCE_SLOTS.includes(deck)) { const n = num(parsed[i]); out[deck] = n == null ? 0.8 : clamp01(n); } });
+    oldSlots.forEach((deck, i) => { if (deck && SLOTS.includes(deck)) { const n = num(parsed[i]); out[deck] = n == null ? 0.8 : clampGain(n); } });
   }
   return out;
 }
@@ -81,21 +91,37 @@ function readSavedBoard(db, sid) {
   let levels = null;
   try { levels = JSON.parse(kv("board_levels") || "null"); } catch { levels = null; }
   const room = parseRoomLevels(kv("aux_monitor_levels"), kv("aux_monitor_slots"));
+  let local = {};
+  try { local = JSON.parse(kv(FADER_LOCAL_KEY) || "{}") || {}; } catch { local = {}; }
+  const migrated = kv(FADER_ROUTING_FLAG) === "1";
   const slots = {};
   for (const c of configs) {
     const s = String(c.slot || "");
     if (!SLOTS.includes(s) || c.enabled === 0 || c.enabled === false) continue;
     const e = {};
     const lv = levels && typeof levels === "object" ? num(levels[s]) : null;
-    if (lv != null && lv >= 0 && lv <= 4) e.volume = lv;
+    if (lv != null && lv >= 0 && lv <= MAX_GAIN + 1e-6) e.volume = lv;
     if (c.type === "source") {
       // The cut: the board's ON lamp reads channel_on (v58); the jukebox keeps its own (default OFF).
       if (c.kind === "jukebox") e.muted = kv("jukebox_channel_on") !== "1";
       else if (c.channel_on !== null && c.channel_on !== undefined) e.muted = !(Number(c.channel_on) === 1 || c.channel_on === true);
-      e.duck = !!Number(c.duck || 0);
     }
-    e.duckable = c.duckable === null || c.duckable === undefined ? true : !!Number(c.duckable);
-    if (SOURCE_SLOTS.includes(s)) e.aux = room[s] ?? 0;   // an unsaved row is 0 — the engine's own default, and what the panel shows
+    // THE THREE ROUTING SETTINGS. Once migrated: each fader's own stored values, read the same way for every fader.
+    // Before: exactly what the engine has always done (a source-channel row ducks per its toggle, is never ducked and
+    // is heard on AUX; any other row never ducks, is ducked per its toggle and is heard on the main output).
+    const storedDuck = !!Number(c.duck || 0);
+    const storedDucked = c.duckable === null || c.duckable === undefined ? true : !!Number(c.duckable);
+    const wasSource = c.type === "source";
+    if (migrated) {
+      e.duck = storedDuck; e.duckable = storedDucked;
+      e.local = local[s] === "aux" ? "aux" : local[s] === "main" ? "main" : (wasSource ? "aux" : "main");
+    } else {
+      e.duck = wasSource ? storedDuck : false;
+      e.duckable = wasSource ? false : storedDucked;
+      e.local = wasSource ? "aux" : "main";
+    }
+    if (room[s] !== undefined) e.aux = room[s];
+    else if (e.local === "aux") e.aux = 0;   // an unsaved AUX row is 0 — the engine's own default, and what the panel shows
     slots[s] = e;
   }
   let order = [];
@@ -106,9 +132,11 @@ function readSavedBoard(db, sid) {
   } catch { order = []; }
   const out = { stationId: sid, slots, names: boardNames(order) };
   const mv = levels && typeof levels === "object" ? num(levels.master) : null;
-  if (mv != null && mv >= 0 && mv <= 1) out.masterVol = mv;
-  const mon = num(kv("monitor_volume")); if (mon != null) out.monitorVol = clamp01(mon);
-  const mm = num(kv(MASTER_MONITOR_KEY)); if (mm != null) out.masterMonitorVol = clamp01(mm);
+  if (mv != null && mv >= 0 && mv <= MAX_GAIN + 1e-6) out.masterVol = mv;
+  const mon = num(kv("monitor_volume")); if (mon != null) out.monitorVol = clampGain(mon);
+  const mm = num(kv(MASTER_MONITOR_KEY)); if (mm != null) out.masterMonitorVol = clampGain(mm);
+  const sm = num(kv(SMOOTHING_KEY)); out.smoothingMs = sm == null ? 20 : Math.max(0, Math.min(500, sm));
+  const lt = num(kv(LOUDNESS_TARGET_KEY)); out.loudnessTargetLufs = lt == null ? -16 : lt;
   const duck = {};
   for (const [k, [key, def]] of Object.entries(DUCK_KEYS)) { const n = num(kv(key)); duck[k] = n == null ? def : n; }
   out.duckParams = duck;
@@ -140,6 +168,7 @@ function applyBoard(saved, sink) {
     if (e.muted !== undefined) call(`${s}.muted`, sink.setMuted && (() => sink.setMuted(s, e.muted)));
     if (e.duck !== undefined) call(`${s}.duck`, sink.setDuck && (() => sink.setDuck(s, e.duck)));
     if (e.duckable !== undefined) call(`${s}.duckable`, sink.setDuckable && (() => sink.setDuckable(s, e.duckable)));
+    if (e.local !== undefined) call(`${s}.local`, sink.setLocalOutput && (() => sink.setLocalOutput(s, e.local === "aux")));
     if (e.aux !== undefined) call(`${s}.aux`, sink.setAuxMonitor && (() => sink.setAuxMonitor(s, e.aux)));
   }
   if (saved.monitorVol !== undefined) call("monitorVol", sink.setMonitorVolume && (() => sink.setMonitorVolume(saved.monitorVol)));
@@ -149,6 +178,7 @@ function applyBoard(saved, sink) {
   if (saved.auxDevice !== undefined) call("auxDevice", sink.setAuxDevice && (() => sink.setAuxDevice(saved.auxDevice)));
   if (saved.cueDevice !== undefined) call("cueDevice", sink.setCueDevice && (() => sink.setCueDevice(saved.cueDevice)));
   if (saved.pflDimDb !== undefined) call("pflDimDb", sink.setPflDim && (() => sink.setPflDim(saved.pflDimDb)));
+  if (saved.smoothingMs !== undefined) call("smoothingMs", sink.setFaderSmoothing && (() => sink.setFaderSmoothing(saved.smoothingMs)));
   // The OUTPUT device only when the engine is not already on it: a switch reopens the stream, and a reopen while a
   // station airs is a gap on air. "Already on it" is the engine's own report, never assumed.
   if (saved.outputDevice) {
@@ -165,7 +195,7 @@ const close = (a, b) => Math.abs(Number(a) - Number(b)) <= 1e-3;
  *   [{ setting: "S1.aux", saved: 0.74, live: 0, where: "control" | "applied" }]
  * `applied` absent (no meter frame yet) compares the control copy only.
  */
-const WHAT = { volume: "fader", muted: "ON/OFF", duck: "duck", duckable: "ducks under others", aux: "AUX monitor row" };
+const WHAT = { volume: "fader", muted: "ON/OFF", duck: "ducks music", duckable: "ducked by others", aux: "local row", local: "local output" };
 const GLOBAL = { monitorVol: "station MONITOR strip", masterVol: "MASTER", masterMonitorVol: "MONITOR", auxDevice: "AUX output device", cueDevice: "PFL output device", board: "the board" };
 /** What an operator calls a setting: the fader's board name and the control — never an engine slot id. */
 function labelOf(setting, names) {
@@ -191,6 +221,7 @@ function compareBoardRaw(saved, live) {
       if (e.duck !== undefined && !!e.duck !== !!l.duck) out.push({ setting: `${s}.duck`, saved: e.duck, live: l.duck, where });
       if (e.duckable !== undefined && !!e.duckable !== !!l.duckable) out.push({ setting: `${s}.duckable`, saved: e.duckable, live: l.duckable, where });
       if (e.aux !== undefined && !close(e.aux, l.aux_monitor_gain)) out.push({ setting: `${s}.aux`, saved: e.aux, live: l.aux_monitor_gain, where });
+      if (e.local !== undefined && l.local !== undefined && e.local !== l.local) out.push({ setting: `${s}.local`, saved: e.local, live: l.local, where });
     }
     if (saved.monitorVol !== undefined && !close(saved.monitorVol, p.monitor_vol)) out.push({ setting: "monitorVol", saved: saved.monitorVol, live: p.monitor_vol, where });
     if (saved.masterVol !== undefined && !close(saved.masterVol, p.master_vol)) out.push({ setting: "masterVol", saved: saved.masterVol, live: p.master_vol, where });
@@ -224,6 +255,8 @@ function addonSink(A, sid) {
     setCueDevice: has("audioSetCueDevice") ? (d) => A.audioSetCueDevice(sid, d || "") : undefined,
     setPflDim: has("audioSetPflDim") ? (db) => A.audioSetPflDim(sid, db) : undefined,
     setOutputDevice: has("audioSetOutputDevice") ? (d) => A.audioSetOutputDevice(sid, d) : undefined,
+    setLocalOutput: has("audioSetLocalOutput") ? (s, aux) => A.audioSetLocalOutput(sid, s, !!aux) : undefined,
+    setFaderSmoothing: has("audioSetFaderSmoothing") ? (ms) => A.audioSetFaderSmoothing(sid, ms) : undefined,
     getOutputDevice: has("audioGetBoardState") ? () => { const b = JSON.parse(A.audioGetBoardState(sid)); return b && b.ok && b.devices ? (b.devices.output ?? null) : undefined; } : undefined,
   };
 }
@@ -235,4 +268,33 @@ function applySavedBoardState(db, A, sid) {
   return { stationId: sid, saved, ...report };
 }
 
-module.exports = { boardNames, labelOf, SLOTS, SOURCE_SLOTS, MASTER_MONITOR_KEY, DUCK_KEYS, readSavedBoard, applyBoard, compareBoard, listStations, addonSink, applySavedBoardState, parseRoomLevels };
+/**
+ * THE ONE-TIME ROUTING MIGRATION (Jeff, 2026-10-11: "Migration writes in today's behaviour so nothing changes on air or
+ * in the room at update"). Returns the writes that make a station's stored routing say exactly what the engine already
+ * does — after them, every fader's three settings are read the same way. Nothing for an already-migrated station.
+ *   [{ table: "deck_configs", slot, patch }, { table: "kv", key, value }]
+ */
+function routingMigration(db, sid) {
+  const kv = kvReader(db, sid);
+  if (kv(FADER_ROUTING_FLAG) === "1") return [];
+  let rows = [];
+  try { rows = db.prepare("SELECT slot, type, duck, duckable FROM deck_configs WHERE station_id = ? AND deleted_at IS NULL").all(sid); } catch { rows = []; }
+  const writes = [], local = {};
+  for (const r of rows) {
+    const s = String(r.slot || ""); if (!SLOTS.includes(s)) continue;
+    const wasSource = r.type === "source";
+    local[s] = wasSource ? "aux" : "main";
+    const storedDucked = r.duckable === null || r.duckable === undefined ? true : !!Number(r.duckable);
+    const duck = wasSource ? !!Number(r.duck || 0) : false;
+    const ducked = wasSource ? false : storedDucked;
+    const patch = {};
+    if (!!Number(r.duck || 0) !== duck) patch.duck = duck ? 1 : 0;
+    if (storedDucked !== ducked) patch.duckable = ducked ? 1 : 0;
+    if (Object.keys(patch).length) writes.push({ table: "deck_configs", slot: s, patch });
+  }
+  writes.push({ table: "kv", key: FADER_LOCAL_KEY, value: JSON.stringify(local) });
+  writes.push({ table: "kv", key: FADER_ROUTING_FLAG, value: "1" });
+  return writes;
+}
+
+module.exports = { routingMigration, FADER_LOCAL_KEY, FADER_ROUTING_FLAG, SMOOTHING_KEY, LOUDNESS_TARGET_KEY, MAX_GAIN, boardNames, labelOf, SLOTS, SOURCE_SLOTS, MASTER_MONITOR_KEY, DUCK_KEYS, readSavedBoard, applyBoard, compareBoard, listStations, addonSink, applySavedBoardState, parseRoomLevels };

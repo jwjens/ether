@@ -25,9 +25,11 @@ describe("ducker re-arm on daemon connect", () => {
     expect(fn).toBeTruthy();
     expect(fn[1]).toMatch(/const toDaemon = \(opts && opts\.daemon != null\) \? !!opts\.daemon : AUDIO_DAEMON;/);
     // Every daemon send in it goes by toDaemon, and none is left on the global.
-    expect((fn[1].match(/if \(toDaemon\)/g) || []).length).toBe(3);
+    // 2026-10-11: the per-fader sends (duck, ducked-by-others, local output) go through ONE loop — one toDaemon branch —
+    // plus the duck-parameter fan-out: 2 branches, every send still routed by toDaemon.
+    expect((fn[1].match(/if \(toDaemon\)/g) || []).length).toBe(2);
     expect(/if \(AUDIO_DAEMON\)/.test(fn[1])).toBe(false);
     // and a dropped connection mid-arm is caught, not an unhandled rejection
-    expect((fn[1].match(/audiodClient\.cmd\([^;]*\)\.catch\(/g) || []).length).toBe(3);
+    expect((fn[1].match(/audiodClient\.cmd\([^;]*\)\.catch\(/g) || []).length).toBe(2);
   });
 });

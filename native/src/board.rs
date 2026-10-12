@@ -7,14 +7,10 @@
 //   · control — the dispatch thread's authoritative Params (what the last command set);
 //   · applied — the Params block the audio CALLBACK published with its latest meter frame (what the mix ran on).
 // They differ only while a block is in flight. A lasting difference is a delivery fault, and naming it is the point.
-use crate::audio::{SlotKind, SLOT_COUNT};
+use crate::audio::SLOT_COUNT;
 use crate::rt::Params;
 
 pub(crate) const SLOT_NAMES: [&str; SLOT_COUNT] = ["A", "B", "C", "D", "E", "F", "CART", "S1", "S2", "S3", "S4", "S5"];
-
-fn kind_name(k: SlotKind) -> &'static str {
-    match k { SlotKind::Rotation => "rotation", SlotKind::Sweeper => "sweeper", SlotKind::Source => "source" }
-}
 
 /// Every operator-set value in a Params block, keyed by fader name. Racks are summarised (their own kv reconcilers own
 /// them); the levels, switches, rows and duck settings are exact.
@@ -24,7 +20,7 @@ pub(crate) fn params_json(p: &Params) -> serde_json::Value {
         slots.insert(SLOT_NAMES[i].to_string(), serde_json::json!({
             "volume": p.volume[i],
             "muted": p.muted[i],
-            "kind": kind_name(p.kind[i]),
+            "local": if p.local_aux[i] { "aux" } else { "main" },
             "duck": p.duck_enabled[i],
             "duckable": p.duck_duckable[i],
             "aux_monitor_gain": p.aux_monitor_gain[i],
@@ -45,6 +41,7 @@ pub(crate) fn params_json(p: &Params) -> serde_json::Value {
         },
         "pfl_dim_db": p.pfl_dim_db,
         "pfl_to_device": p.pfl_to_device,
+        "fader_smoothing_ms": p.ramp_frames as f64 * 1000.0 / crate::audio::PROGRAM_RATE as f64,
     })
 }
 
@@ -65,7 +62,8 @@ mod tests {
         assert_eq!(j["slots"].as_object().unwrap().len(), SLOT_COUNT);
         assert!((j["slots"]["S1"]["aux_monitor_gain"].as_f64().unwrap() - 0.74).abs() < 1e-6);
         assert!((j["slots"]["E"]["volume"].as_f64().unwrap() - 0.15).abs() < 1e-6);
-        assert_eq!(j["slots"]["A"]["kind"], "rotation");
-        assert_eq!(j["slots"]["S1"]["kind"], "source");
+        assert_eq!(j["slots"]["A"]["local"], "main");     // today's layout until the operator sets it
+        assert_eq!(j["slots"]["S1"]["local"], "aux");
+        assert!((j["fader_smoothing_ms"].as_f64().unwrap() - 20.0).abs() < 0.1);
     }
 }

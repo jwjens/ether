@@ -48,6 +48,17 @@ impl LevelRamp {
         }
     }
 
+    /// The operator's smoothing time changed (fader_smoothing_ms). A ramp in progress finishes at the new length.
+    #[inline]
+    pub fn set_len(&mut self, len: u32) {
+        if self.pos < self.len { self.pos = ((self.pos as u64 * len as u64) / self.len.max(1) as u64) as u32; }
+        self.len = len;
+    }
+
+    /// The level this ramp rests on (its target).
+    #[inline]
+    pub fn target(&self) -> f32 { self.to }
+
     #[inline]
     pub fn snap(&mut self, target: f32) {
         self.from = target;

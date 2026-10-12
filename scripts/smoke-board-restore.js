@@ -73,9 +73,14 @@ async function check(tag) {
        `${tag} ${where}: every Source fader's AUX row is the saved one (S1 ${s.S1.aux_monitor_gain.toFixed(3)}, E ${s.E.aux_monitor_gain.toFixed(3)}, D ${s.D.aux_monitor_gain.toFixed(3)})`);
     ok(Math.abs(s.E.volume - 0.15) < 1e-3 && Math.abs(s.A.volume - 0.9) < 1e-3, `${tag} ${where}: saved fader levels (E ${s.E.volume.toFixed(3)}, A ${s.A.volume.toFixed(3)})`);
     ok(s.F.muted === true && s.S1.muted === false, `${tag} ${where}: saved channel cuts (F off, S1 on)`);
+    ok(s.D.local === "aux" && s.S1.local === "aux" && s.A.local === "main", `${tag} ${where}: each fader's local output restored (A main, D aux, S1 aux)`);
+    ok(s.D.duck === true && s.D.duckable === false && s.A.duck === false && s.A.duckable === true, `${tag} ${where}: ducks / ducked restored as today (D ducks, not ducked; A ducked, does not duck)`);
+    ok(Math.abs((p.fader_smoothing_ms ?? -1) - 20) < 0.1, `${tag} ${where}: fader smoothing ${p.fader_smoothing_ms} ms`);
     ok(Math.abs(p.monitor_vol - 0.73) < 1e-3 && Math.abs(p.master_monitor_vol - 0.4641) < 1e-3 && Math.abs(p.master_vol - 0.95) < 1e-3,
        `${tag} ${where}: MONITOR ${p.monitor_vol.toFixed(3)} × master ${p.master_monitor_vol.toFixed(4)}, master fader ${p.master_vol.toFixed(3)}`);
   }
+  const ls = await ask("loudnessStatus");
+  ok(!!(ls && typeof ls.cached === "number"), `${tag}: the loudness measurer answers (${JSON.stringify(ls)})`);
   const log = fs.readFileSync(path.join(TMP, `audiod-${tag.split(" ")[0]}.log`), "utf8");
   ok(/\[board s2\] saved board applied \(engine start\)/.test(log), `${tag}: the daemon logged its own start-up restore`);
 }

@@ -11,14 +11,14 @@
 const BOARD_CMDS = new Set([
   "setVolume", "setMuted", "setAuxMonitor", "setDuck", "setDuckable", "setDuckParams", "setSlotKind",
   "setMonitorVolume", "setMasterVolume", "setMasterMonitorVolume", "setAuxDevice", "setCueDevice", "setOutputDevice",
-  "setPfl", "setPflDim",
+  "setPfl", "setPflDim", "setLocalOutput", "setFaderSmoothing",
 ]);
 
 /** The value a setter carries, as one short string. */
 function valueOf(m) {
   if (!m || typeof m !== "object") return "";
-  for (const k of ["volume", "gain", "kind", "device", "dimDb"]) if (m[k] !== undefined) return JSON.stringify(m[k]);
-  for (const k of ["muted", "enabled", "duckable", "on"]) if (m[k] !== undefined) return String(!!m[k]);
+  for (const k of ["volume", "gain", "kind", "device", "dimDb", "ms"]) if (m[k] !== undefined) return JSON.stringify(m[k]);
+  for (const k of ["muted", "enabled", "duckable", "on", "aux"]) if (m[k] !== undefined) return String(!!m[k]);
   if (m.depthDb !== undefined) return `depth ${m.depthDb} thr ${m.thresholdDb} att ${m.attackMs} hold ${m.holdMs} rel ${m.releaseMs}`;
   return "";
 }

@@ -2,6 +2,7 @@
 // Fixed right column in the deck area. Always visible.
 // Dark steel: #0e0e12 bg, #1e1e28 borders, zero border-radius.
 
+import { posToGain, gainToPos, formatDb, FADER_MARKS } from "../lib/faderLaw";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { openLinkPreferences, sendTargetName, txWords, useRemoteLink } from "../hooks/useRemoteLink";
 import { queryScoped } from "../db/stationScoped";
@@ -161,7 +162,7 @@ function Fader({ label, value, onChange }: { label: string; value: number; onCha
     if (!track) return;
     const rect = track.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    onChange(ratio);
+    onChange(posToGain(ratio));   // THE ONE CONSOLE LAW (src/lib/faderLaw.ts): travel → gain
   }, [onChange]);
 
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -184,7 +185,7 @@ function Fader({ label, value, onChange }: { label: string; value: number; onCha
     <div style={{ padding: "7px 14px", borderBottom: "1px solid var(--border-primary)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
         <span style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase" as const }}>{label}</span>
-        <span style={{ fontSize: 13, fontFamily: "'DM Mono', monospace", color: "var(--accent-teal)" }}>{Math.round(value * 100)}</span>
+        <span style={{ fontSize: 13, fontFamily: "'DM Mono', monospace", color: "var(--accent-teal)" }}>{formatDb(value)}</span>
       </div>
 
       <div
@@ -210,14 +211,20 @@ function Fader({ label, value, onChange }: { label: string; value: number; onCha
           position: "absolute", left: 0, top: "50%",
           transform: "translateY(-50%)",
           height: 3,
-          width: `${value * 100}%`,
+          width: `${gainToPos(value) * 100}%`,
           background: "var(--accent-teal)",
           pointerEvents: "none",
         }} />
+        {/* THE dB SCALE — the one console law's marks, unity highlighted */}
+        {FADER_MARKS.map(m => (
+          <div key={m.label} style={{ position: "absolute", left: `${m.pos * 100}%`, top: m.unity ? -2 : 1, bottom: m.unity ? -2 : 1,
+                                      borderLeft: `1px solid ${m.unity ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.22)"}`, pointerEvents: "none" }}
+               title={`${m.label} dB`} />
+        ))}
         {/* Thumb — 12×12 */}
         <div style={{
           position: "absolute",
-          left: `${value * 100}%`,
+          left: `${gainToPos(value) * 100}%`,
           top: "50%",
           transform: "translate(-50%, -50%)",
           width: 12, height: 12,

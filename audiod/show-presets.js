@@ -409,6 +409,14 @@ class ShowBlade {
   /** The persisted pending set (show_pending, machine-local) — values included, so a restart re-arms without the preset. */
   pendingDoc() { return { v: 1, slots: Object.fromEntries(Object.entries(this.pending).map(([s, p]) => [s, { show: p.show, values: p.values }])) }; }
   _changed() { this.emit("showstate", { stationId: this.stationId, ...this.state(), pendingDoc: this.pendingDoc() }); this._levelsChanged(); }
+  /** ONE SOURCE OF TRUTH (Jeff, 2026-10-11): the faders show what the ENGINE is applying. After the engine restores the
+   *  saved board (audiod/board-state.js) its own values are mirrored here and announced, so every fader is drawn at the
+   *  level the engine is running, never at a default. `levels` = { A: 0.9, …, master: 1 } read back from the engine. */
+  mirrorEngine(levels) {
+    if (!levels || typeof levels !== "object") return;
+    for (const [k, v] of Object.entries(levels)) { const n = num(v); if (n != null && (SLOTS.includes(k) || k === "master")) this.levels[k] = n; }
+    this._levelsChanged();
+  }
   _levelsChanged() { this.emit("boardlevels", { stationId: this.stationId, levels: { ...this.levels } }); }
 }
 

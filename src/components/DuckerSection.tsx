@@ -96,12 +96,12 @@ export default function DuckerSection() {
   const toggleDuckable = async (slot: string, next: boolean) => {
     setDecks(ds => ds.map(d => (d.slot === slot ? { ...d, duckable: next } : d)));
     if (stationId == null) return;
-    // Store on the deck's own row, and tell the engine now — the row survives a restart, the push
-    // makes it true immediately. Both, every time.
-    try { await (window as any).ether.deckConfigs.updateBySlot(stationId, slot, { duckable: next ? 1 : 0 }); }
-    catch (e) { console.error("[Ducker] duckable save failed:", e); }
-    try { await (window as any).ether?.audio?.setDuckable?.(stationId, slot, next); }
-    catch (e) { console.error("[Ducker] duckable push failed:", e); }
+    // ONE path for every fader (2026-10-11, faders are generic): main saves the fader's "ducked by others" and sends it
+    // (queued if the engine cannot take it yet) — the same setting the strip's DUCKED button shows.
+    try {
+      const r = await (window as any).ether?.invoke?.("board:set-routing", stationId, slot, { duckable: next });
+      if (!r || r.ok !== true) console.error("[Ducker] ducked-by-others not saved:", r && r.reason);
+    } catch (e) { console.error("[Ducker] ducked-by-others not sent:", e); }
   };
 
   // Load this station's stored values. Absent keys fall back to the engine's own defaults, so a
@@ -213,26 +213,20 @@ export default function DuckerSection() {
         )}
 
         {decks.map(d => {
-          const isSource = d.type === "source";
+          // FADERS ARE GENERIC (Jeff, 2026-10-11): every fader shows and sets its own "ducked by others" — no fader is
+          // excluded by what kind of channel it is.
           return (
             <label
               key={d.slot}
-              title={isSource ? "A source channel is the trigger — it is never ducked" : undefined}
-              style={{
-                display: "flex", alignItems: "center", gap: 8, padding: "3px 0",
-                cursor: isSource ? "not-allowed" : "pointer", opacity: isSource ? 0.45 : 1,
-              }}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0", cursor: "pointer" }}
             >
               <input
                 type="checkbox"
-                checked={isSource ? false : d.duckable}
-                disabled={isSource}
+                checked={d.duckable}
                 onChange={e => toggleDuckable(d.slot, e.target.checked)}
               />
               <span style={{ fontSize: 12, color: "var(--text-primary)", minWidth: 34 }}>{d.slot}</span>
-              <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>
-                {d.label}{isSource ? " — source (trigger)" : ""}
-              </span>
+              <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{d.label}</span>
             </label>
           );
         })}

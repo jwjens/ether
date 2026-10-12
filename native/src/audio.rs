@@ -448,6 +448,10 @@ pub enum AudioCmd {
     SetAuxDevice(String),
     /// THE BOARD AS THE ENGINE HOLDS IT (board.rs): replies with { control, applied, devices } as JSON.
     GetBoard(std::sync::mpsc::SyncSender<String>),
+    /// FADERS ARE GENERIC: this fader is heard locally on the AUX output (true) or the main output (false).
+    SetLocalOutput { deck: String, aux: bool },
+    /// The smoothing every level change rides, milliseconds (fader_smoothing_ms).
+    SetFaderSmoothing(f32),
 }
 
 pub struct AudioState {
@@ -854,6 +858,14 @@ pub struct BusState {
     /// while the channel sounds (ramp.rs). At rest they equal the adopted level and the arithmetic is today's.
     pub(crate) vol_ramp: [crate::ramp::LevelRamp; SLOT_COUNT],
     pub(crate) master_ramp: crate::ramp::LevelRamp,
+    /// FADERS ARE GENERIC (2026-10-11) — per fader: heard locally on the AUX output (true) or the main output (false).
+    pub local_aux: [bool; SLOT_COUNT],
+    /// Every level ramp's length, programme frames (the operator's `fader_smoothing_ms`).
+    pub ramp_frames: u32,
+    /// The MONITOR stage's ramp (strip × master MONITOR), so a MONITOR move never zips (2026-10-11).
+    pub(crate) monitor_ramp: crate::ramp::LevelRamp,
+    /// Each fader's LOCAL row ramp (its AUX row on AUX, its room row on main), same reason.
+    pub(crate) row_ramp: [crate::ramp::LevelRamp; SLOT_COUNT],
     /// SLICE 8 — the RTA target this state is running (from Params) and the callback end of its rings (rta.rs).
     pub(crate) rta_target: crate::rta::RtaTarget,
     pub(crate) rta: crate::rta::RtaTaps,
@@ -938,7 +950,13 @@ impl BusState {
             room_gain: [1.0; SLOT_COUNT],          // unity until an operator says otherwise — never silent by default
             // Ducker: OFF everywhere until asked for. Defaults are §B.6's.
             duck_enabled: [false; SLOT_COUNT],
-            duck_duckable: [true; SLOT_COUNT],   // every deck ducks until an operator says otherwise
+            // Today's layout, reproduced exactly until the operator's settings arrive (Jeff, 2026-10-11: migration writes
+            // in today's behaviour): the D–F / S1–S5 faders were never ducked, every other fader was.
+            duck_duckable: std::array::from_fn(|i| default_kind_for(i) != SlotKind::Source),
+            local_aux: std::array::from_fn(|i| default_kind_for(i) == SlotKind::Source),
+            ramp_frames: crate::ramp::LEVEL_RAMP_FRAMES,
+            monitor_ramp: crate::ramp::LevelRamp::default(),
+            row_ramp: [crate::ramp::LevelRamp::default(); SLOT_COUNT],
             duck_threshold: 0.0056,   // ~-45 dBFS
             // -22 dB, not -12: Jeff's ears on a live jukebox-over-music test. A short announcement
             // sits fine at -12, but a CONTINUOUS source needs the programme much further down or the
@@ -1005,6 +1023,8 @@ impl BusState {
             duck_duckable: self.duck_duckable,
             aux_monitor_gain: self.aux_monitor_gain,
             room_gain: self.room_gain,
+            local_aux: self.local_aux,
+            ramp_frames: self.ramp_frames,
             monitor_vol: self.monitor_vol,
             master_vol: self.master_vol,
             master_monitor_vol: self.master_monitor_vol,
@@ -1051,6 +1071,13 @@ impl BusState {
         self.duck_duckable = p.duck_duckable;
         self.aux_monitor_gain = p.aux_monitor_gain;
         self.room_gain = p.room_gain;
+        self.local_aux = p.local_aux;
+        if p.ramp_frames != self.ramp_frames {
+            self.ramp_frames = p.ramp_frames;
+            for r in self.vol_ramp.iter_mut().chain(self.row_ramp.iter_mut()) { r.set_len(p.ramp_frames); }
+            self.master_ramp.set_len(p.ramp_frames);
+            self.monitor_ramp.set_len(p.ramp_frames);
+        }
         self.monitor_vol = p.monitor_vol;
         self.master_vol = p.master_vol;
         self.master_monitor_vol = p.master_monitor_vol;
@@ -1468,6 +1495,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             // Superseded no-device path (see start_station_mixer's header): it owns no
                             // aux stream, so there is nothing here to open or close.
                             AudioCmd::SetAuxDevice(_) => {}
+                            AudioCmd::SetLocalOutput { .. } | AudioCmd::SetFaderSmoothing(_) => {}
                             AudioCmd::GetBoard(tx) => { let _ = tx.try_send(r#"{"ok":false,"reason":"no mixer on this path"}"#.to_string()); }
                         }
                     }
@@ -1944,6 +1972,114 @@ mod slice1_regression {
                 "the callback is not running the saved block");
         println!("[late-board] before: aux pk {:.4}; after: stream pk {:.4}, device pk {:.4}, aux pk {:.4} — no touch",
                  peak(&aux0), peak(&st1), peak(&dev1), peak(&aux1));
+    }
+
+    // ── FADERS ARE GENERIC + ONE NORMALIZATION (Jeff, 2026-10-11) ─────────────────────────────────────────────────────
+    // docs/fader-kind-loudness-taper-2026-10-11.md. A fader's local output and ducking are ITS settings, not its position;
+    // and every source on any fader goes through the same chain and lands on the same loudness.
+
+    /// A deterministic source at a chosen level: the module's PRNG, scaled.
+    struct Scaled(Det, f32);
+    impl Iterator for Scaled { type Item = f32; fn next(&mut self) -> Option<f32> { self.0.next().map(|v| v * self.1) } }
+
+    fn integrated_lufs(stereo: &[f32]) -> f64 {
+        let mut m = ebur128::EbuR128::new(2, 44100, ebur128::Mode::I).unwrap();
+        m.add_frames_f32(stereo).unwrap();
+        m.loudness_global().unwrap()
+    }
+
+    /// One fader playing `amp`-scaled noise with `gain_db` trim, rendered through the real callback. Returns (stream, device, aux).
+    fn render_one(slot: usize, amp: f32, gain_db: f32, seed: u64, setup: impl Fn(&mut BusState), buffers: usize) -> (Vec<f32>, Vec<f32>, Vec<f32>) {
+        let (prod, mut cons) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
+        let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)));
+        let (aux_prod, mut aux_cons) = HeapRb::<f32>::new(AUX_BUS_BUF).split();
+        b.decks[slot].source = Some(DeckFeed::prefilled(Scaled(Det(seed), amp), 480 * 2 * (buffers + 10)));
+        b.decks[slot].active = true; b.decks[slot].paused = false; b.decks[slot].volume = 1.0;
+        b.decks[slot].gain_db = gain_db;
+        b.aux_ring_prod = Some(crate::localout::LocalRing::new(aux_prod));
+        setup(&mut b);
+        let bus = Arc::new(crate::rt::RtMutex::new(b));
+        let fin = FinishedFlags::new();
+        let playing = Arc::new(AtomicBool::new(true));
+        let mut sc = Scratch::new();
+        let (mut st, mut dev, mut aux) = (Vec::new(), Vec::new(), Vec::new());
+        for _ in 0..buffers {
+            let mut data = vec![0f32; 480 * 2];
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+            dev.extend_from_slice(&data);
+            while let Some(v) = cons.try_pop() { st.push(v); }
+            while let Some(v) = aux_cons.try_pop() { aux.push(v); }
+        }
+        (st, dev, aux)
+    }
+
+    #[test]
+    fn local_output_follows_the_faders_setting_not_its_position() {
+        // A — a "music" position — set to AUX: heard on the AUX output, not the main speakers; still on air.
+        let (st, dev, aux) = render_one(0, 0.3, 0.0, 901, |b| { b.local_aux[0] = true; b.aux_monitor_gain[0] = 1.0; }, 30);
+        assert!(peak(&st) > 0.01, "A on AUX left air");
+        assert!(peak(&aux) > 0.01, "A set to AUX is not on the AUX output");
+        assert!(silent(&dev), "A set to AUX still reached the main speakers");
+        // S1 — a "source" position — set to MAIN: heard on the main speakers, not the AUX output.
+        let (st, dev, aux) = render_one(7, 0.3, 0.0, 902, |b| { b.local_aux[7] = false; b.room_gain[7] = 1.0; }, 30);
+        assert!(peak(&st) > 0.01, "S1 on main left air");
+        assert!(peak(&dev) > 0.01, "S1 set to MAIN is not on the main speakers");
+        assert!(silent(&aux), "S1 set to MAIN still reached the AUX output");
+    }
+
+    #[test]
+    fn ducking_follows_the_faders_settings_on_every_fader() {
+        // D (an AUX fader) plays; S1 (on MAIN) ducks the music. With D "ducked by others" ON its AUX feed and its air
+        // drop under S1; with it OFF (today's source behaviour) they do not. Same everything else.
+        let run = |d_ducked: bool| render_one(3, 0.3, 0.0, 903, move |b| {
+            b.local_aux[3] = true; b.aux_monitor_gain[3] = 1.0; b.duck_duckable[3] = d_ducked;
+            b.decks[7].source = Some(DeckFeed::prefilled(Scaled(Det(904), 0.3), 480 * 2 * 80));
+            b.decks[7].active = true; b.decks[7].paused = false; b.decks[7].volume = 1.0;
+            b.local_aux[7] = false; b.duck_enabled[7] = true; b.duck_duckable[7] = false;
+        }, 60);
+        let (_, _, aux_on) = run(true);
+        let (_, _, aux_off) = run(false);
+        let tail = |v: &[f32]| peak(&v[v.len() / 2..]);   // after the duck's attack has settled
+        assert!(tail(&aux_on) < tail(&aux_off) * 0.5, "a ducked AUX fader was not ducked (on {:.4} vs off {:.4})", tail(&aux_on), tail(&aux_off));
+        // And a fader on a "music" position can BE the trigger: A ducks, D (ducked) drops.
+        let (_, _, aux_a) = render_one(3, 0.3, 0.0, 903, |b| {
+            b.local_aux[3] = true; b.aux_monitor_gain[3] = 1.0; b.duck_duckable[3] = true;
+            b.decks[0].source = Some(DeckFeed::prefilled(Scaled(Det(905), 0.3), 480 * 2 * 80));
+            b.decks[0].active = true; b.decks[0].paused = false; b.decks[0].volume = 1.0;
+            b.duck_enabled[0] = true; b.duck_duckable[0] = false;
+        }, 60);
+        assert!(tail(&aux_a) < tail(&aux_off) * 0.5, "fader A with \"ducks music\" on did not duck");
+    }
+
+    #[test]
+    fn every_source_on_any_fader_passes_the_same_chain_and_lands_within_1_lu_of_target() {
+        // Jeff, 2026-10-11: "every source … same normalization, same EQ, same processing chain … a render test proving
+        // every source passes the same processing and lands within 1 LU of target." The engine's half of
+        // audiod/loudness.js: each source is MEASURED (here exactly as the measurer does, BS.1770 integrated), loaded
+        // with gain = target − measured, and rendered alone at fader unity through the real callback on a different
+        // fader position each — a music fader (A), the sweeper fader (CART), a source fader (D) and S1.
+        const TARGET: f64 = -16.0;
+        const BUFS: usize = 500;   // 5 s
+        // Very different levels (about −6 to −26 LUFS), all inside the engine's trim range (−20…+12 dB); a source outside it is
+        // held at the range edge and REPORTED by the normalizer (audiod/loudness.js "clamped"), which loudness.test.js pins.
+        let sources = [(0usize, 0.9f32, 11u64), (6, 0.08, 12), (3, 0.5, 13), (7, 0.15, 14)];
+        for &(slot, amp, seed) in &sources {
+            // "the file", measured as the measurer measures it
+            let file: Vec<f32> = Scaled(Det(seed), amp).take(480 * 2 * BUFS).collect();
+            let measured = integrated_lufs(&file);
+            let gain_db = (TARGET - measured) as f32;
+            let (st, _, _) = render_one(slot, amp, gain_db, seed, |b| { for i in 0..SLOT_COUNT { b.aux_monitor_gain[i] = 1.0; } }, BUFS);
+            let on_air = integrated_lufs(&st);
+            println!("[loudness] fader {slot}: file {measured:.1} LUFS, gain {gain_db:+.1} dB → air {on_air:.2} LUFS (target {TARGET})");
+            assert!((on_air - TARGET).abs() <= 1.0, "fader {slot}: air {on_air:.2} LUFS is not within 1 LU of {TARGET} (file {measured:.1})");
+        }
+        // SAME CHAIN, bit for bit: the identical input on four different faders airs identical samples (processing on).
+        let air = |slot: usize| render_one(slot, 0.3, -3.0, 77, |b| {
+            b.proc_stream = true; b.proc_local = true;
+            for i in 0..SLOT_COUNT { b.duck_duckable[i] = true; }   // no fader is treated differently by position
+        }, 60).0;
+        let a = air(0);
+        for slot in [6usize, 3, 7] { assert_eq!(checksum(&a), checksum(&air(slot)), "fader {slot} airs through a different chain than fader A"); }
     }
 
     #[test]
@@ -2576,26 +2712,27 @@ mod duck_regression {
     }
 
     #[test]
-    fn rotation_and_cart_can_never_duck() {
-        // The rule is structural: the detector reads the slot's KIND, so arming a Rotation deck or
-        // CART does nothing. A sweeper must never duck the song it is sweeping into.
-        let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
-        let (prod, _cons) = rb.split();
-        let eq = crate::eq::new_shared_eq(44100.0);
-        let bus = Arc::new(crate::rt::RtMutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
-        {
-            let mut b = bus.lock().unwrap();
-            for i in [0usize, 6usize] {                  // deck A (Rotation) and CART
-                b.decks[i].source = Some(DeckFeed::prefilled(Tone(0.7), 480 * 2 * 600));
-                b.decks[i].active = true; b.decks[i].paused = false; b.decks[i].volume = 1.0;
-                b.duck_enabled[i] = true;                // armed, and still must not duck
+    fn a_fader_ducks_the_music_only_when_its_own_ducks_music_setting_is_on() {
+        // Jeff, 2026-10-11: faders are generic. "Ducks music" is the fader's own setting, on ANY fader. This replaced the
+        // structural rule that a Rotation deck or CART could never duck; the update migrates them with it OFF, so
+        // nothing ducks that did not duck before.
+        for armed in [false, true] {
+            let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
+            let (prod, _cons) = rb.split();
+            let eq = crate::eq::new_shared_eq(44100.0);
+            let bus = Arc::new(crate::rt::RtMutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
+            {
+                let mut b = bus.lock().unwrap();
+                for i in [0usize, 6usize] {                  // deck A and CART
+                    b.decks[i].source = Some(DeckFeed::prefilled(Tone(0.7), 480 * 2 * 600));
+                    b.decks[i].active = true; b.decks[i].paused = false; b.decks[i].volume = 1.0;
+                    b.duck_enabled[i] = armed;
+                }
             }
-            assert_eq!(b.decks[0].kind, SlotKind::Rotation);
-            assert_eq!(b.decks[6].kind, SlotKind::Sweeper);
+            run(&bus, 40);
+            if armed { assert!(duck_gain(&bus) < 0.999, "A/CART with ducks-music ON did not duck: g={}", duck_gain(&bus)); }
+            else { assert!(duck_gain(&bus) > 0.999, "A/CART with ducks-music OFF ducked: g={}", duck_gain(&bus)); }
         }
-        run(&bus, 40);
-        assert!(duck_gain(&bus) > 0.999,
-                "a Rotation/CART slot triggered the ducker: g={}", duck_gain(&bus));
     }
 
     /// 1 kHz sine, stereo-interleaved. The ride's meter is K-weighted ebur128, which reads DC as no loudness at
@@ -2668,7 +2805,7 @@ mod duck_regression {
     }
 }
 
-const PROGRAM_RATE:   u32       = 44100;
+pub(crate) const PROGRAM_RATE:   u32       = 44100;
 pub(crate) const PROGRAM_BUS_BUF: usize    = PROGRAM_RATE as usize * 2 * 4; // 4 s at 44100 Hz stereo
 /// AUX monitor ring — ~0.5 s of 44100 Hz stereo. Deliberately SHORT: this is a monitor feed and
 /// latency matters more than resilience. The writer bounds it further (see AUX_RING_HIGH).
@@ -3089,8 +3226,10 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 // channels and their local monitoring is unchanged by this feature; the one
                                 // setter (show::set_room) refuses them, so no caller can route a programme
                                 // deck through the aux path.
+                                // (2026-10-11) No refusal by fader position: any fader has a local row (Jeff: faders
+                                // are generic). It reaches the AUX output or the main output by that fader's own
+                                // local-output setting.
                                 let Some(idx) = deck_index(&deck) else { continue };
-                                if default_kind_for(idx) != SlotKind::Source { continue; }
                                 crate::show::set_room(&mut ctl.params, idx, gain);
                                 // The SAME row drives both, because it is one control: "how loud
                                 // is this deck in the room". Which buffer it reaches depends on
@@ -3098,6 +3237,15 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 // through the room sum — and the operator should not have to know
                                 // which. Rotation decks and CART never get here, so they keep unity.
                                 // (show::set_room — the one setter a Take also uses.)
+                                ctl.params_changed();
+                            }
+                            AudioCmd::SetLocalOutput { deck, aux } => {
+                                let Some(idx) = deck_index(&deck) else { continue };
+                                ctl.params.local_aux[idx] = aux;
+                                ctl.params_changed();
+                            }
+                            AudioCmd::SetFaderSmoothing(ms) => {
+                                ctl.params.ramp_frames = (ms.max(0.0) * PROGRAM_RATE as f32 / 1000.0).round() as u32;
                                 ctl.params_changed();
                             }
                             AudioCmd::GetBoard(tx) => {
@@ -3260,13 +3408,12 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 ctl.params_changed();
                             }
                             AudioCmd::SetMasterVolume(v) => {
-                                // Clamped 0..=1: master is an attenuator on air. >1 would let the operator
-                                // push the program bus into clipping ahead of the limiter.
+                                // 0…+10 dB, the console fader law (show::set_master_fader).
                                 crate::show::set_master_fader(&mut ctl.params, v);
                                 ctl.params_changed();
                             }
                             AudioCmd::SetMasterMonitorVolume(v) => {
-                                ctl.params.master_monitor_vol = v.clamp(0.0, 1.0);
+                                ctl.params.master_monitor_vol = v.clamp(0.0, 3.1623);   // +10 dB: the top of the console fader law (2026-10-11)
                                 ctl.params_changed();
                             }
                             AudioCmd::SetProcessorBypass { branch, ride_bypass, limiter_bypass } => {
@@ -3993,6 +4140,7 @@ pub(crate) struct Scratch {
     src_l: Box<[f32]>, src_r: Box<[f32]>,
     imm_l: Box<[f32]>, imm_r: Box<[f32]>,
     det_l: Box<[f32]>, det_r: Box<[f32]>,
+    auxd_l: Box<[f32]>, auxd_r: Box<[f32]>,          // the AUX feed of faders the duck may pull down (2026-10-11)
     out_l: Box<[f32]>, out_r: Box<[f32]>,            // post-EQ, post-master (the clean bus)
     loc_l: Box<[f32]>, loc_r: Box<[f32]>,            // LOCAL-branch processed
     str_l: Box<[f32]>, str_r: Box<[f32]>,            // STREAM-branch processed
@@ -4018,6 +4166,7 @@ impl Scratch {
             imm_room_l: lane(), imm_room_r: lane(), core_l: lane(), core_r: lane(),
             aux_l: lane(), aux_r: lane(), src_l: lane(), src_r: lane(),
             imm_l: lane(), imm_r: lane(), det_l: lane(), det_r: lane(),
+            auxd_l: lane(), auxd_r: lane(),
             out_l: lane(), out_r: lane(), loc_l: lane(), loc_r: lane(),
             str_l: lane(), str_r: lane(), room_out_l: lane(), room_out_r: lane(),
             dev_l: lane(), dev_r: lane(), rack_l: lane(), rack_r: lane(),
@@ -4085,6 +4234,7 @@ pub(crate) fn mixer_callback(
         mix_l, mix_r, room_l, room_r, imm_room_l, imm_room_r, core_l, core_r, aux_l, aux_r,
         src_l, src_r, imm_l, imm_r, det_l, det_r, out_l, out_r, loc_l, loc_r, str_l, str_r,
         room_out_l, room_out_r, dev_l, dev_r, rack_l, rack_r, cue_l, cue_r, pfl_l, pfl_r, feed, counters, events,
+        auxd_l, auxd_r,
     } = sc;
     let counters: &RtCounters = counters;
     // PFL — is any channel's PFL on this buffer? (the block adopted at the top of the buffer). The cue lanes are
@@ -4131,6 +4281,11 @@ pub(crate) fn mixer_callback(
     let imm_r = &mut imm_r[..prog_frames]; imm_r.fill(0.0);
     let det_l = &mut det_l[..prog_frames]; det_l.fill(0.0);
     let det_r = &mut det_r[..prog_frames]; det_r.fill(0.0);
+    // The AUX feed of faders the duck may pull down — zeroed only when such a fader exists (today's layout has none).
+    let auxd_l = &mut auxd_l[..prog_frames];
+    let auxd_r = &mut auxd_r[..prog_frames];
+    let mut auxd_any = false;
+    if bus.local_aux.iter().zip(bus.duck_duckable.iter()).any(|(&a, &d)| a && d) { auxd_l.fill(0.0); auxd_r.fill(0.0); }
     let mut duck_armed = false;    // at least one duck-enabled Source slot is actually producing
     let mut aux_present = false;   // an aux deck is producing audio → the room must use core_*
     let mut any_playing = false;
@@ -4182,7 +4337,12 @@ pub(crate) fn mixer_callback(
         // SLICE 1 — the rule now reads what the slot IS. Behaviour is unchanged for the shipped
         // layout (3/4/5 are Source, 0/1/2 Rotation, 6 Cart); the new 7.. channels are Source too,
         // and being inactive they reach this line only once something loads them.
-        let is_aux = deck.kind == SlotKind::Source;
+        // FADERS ARE GENERIC (Jeff, 2026-10-11). Where this fader is heard locally, whether it ducks the music and whether
+        // the music ducks it are the OPERATOR'S three settings for this fader — never its position or a stored type.
+        // Their boot defaults are today's layout (D–F / S1–S5: AUX, not ducked), so nothing moves until they are set.
+        let is_aux = bs.local_aux[i];
+        let ducks = duck_enabled[i];
+        let ducked = duck_duckable[i];
         // AUX MONITOR TAP — POST-FADER, POST-CUT (Jeff's ruling, 2026-08-18).
         //
         // `mon` is the SLOT level applied on top of `vol`, and `vol` is already 0 when the channel is
@@ -4198,8 +4358,16 @@ pub(crate) fn mixer_callback(
         // This slot's ROOM level. Rotation decks are pinned at unity by construction (nothing ever
         // writes room_gain for them), so A/B/C are bit-identical to before the split.
         let rg = room_gain[i];
+        // The LOCAL row this fader is heard through rides the same smoothing as the fader (no zipper on a row move).
+        bs.row_ramp[i].follow(if is_aux { mon } else { rg }, true);
+        // Hoisted out of the sample loop: at rest (almost always) the row is a constant, exactly as before the ramp.
+        let row_snapshot = bs.row_ramp[i];
+        let row_moving = row_snapshot.ramping();
+        let row_at = |f: usize| row_snapshot.at(f);
+        let aux_heard = is_aux && (mon != 0.0 || row_moving);
+        if aux_heard && ducked { auxd_any = true; }
         if is_aux { aux_present = true; }
-        if is_aux && duck_enabled[i] { duck_armed = true; }
+        if ducks { duck_armed = true; }
         let mut pk = 0.0f32;
         let mut pulled = 0u64;   // frames actually taken from THIS deck's source this buffer
         // S4 — pull this buffer's frames from the deck's RING (never the decoder). Interleaved stereo, always
@@ -4296,32 +4464,33 @@ pub(crate) fn mixer_callback(
                                    }
                                    else if rack_on { (rack_l[f] * fader, rack_r[f] * fader) }
                                    else { (feed[2 * f] * vol, feed[2 * f + 1] * vol) };
-                    mix_l[f] += lv;                       // AIR — every slot, unchanged
+                    mix_l[f] += lv;                       // AIR — every fader, unchanged
                     mix_r[f] += rv;
-                    if !is_aux {                          // programme base — aux decks excluded entirely
-                        core_l[f] += lv;                  // AIR: never scaled by a monitor
-                        core_r[f] += rv;
-                        // ROOM: the same slot at its own room level. Unity for rotation decks, the
-                        // operator's monitor row for a sweeper channel.
-                        room_l[f] += lv * rg;
-                        room_r[f] += rv * rg;
-                        // ...and, of each, the part the duck may NOT touch.
-                        if !duck_duckable[i] {
-                            imm_l[f] += lv; imm_r[f] += rv;
-                            imm_room_l[f] += lv * rg; imm_room_r[f] += rv * rg;
-                        }
-                    }
-                    if is_aux {
-                        // AIR-level source sum for the ducker (distinct from the room's aux_*).
+                    // THE DUCK'S EAR: every fader whose "ducks music" is on.
+                    if ducks { det_l[f] += lv; det_r[f] += rv; }
+                    // AIR, by "ducked by others": an AUX fader that is not ducked joins after the duck (src_*), exactly
+                    // as today's Source faders; every other fader is the programme base the duck pulls down (core_*),
+                    // with its un-duckable part kept aside (imm_*), exactly as today's music and sweeper faders.
+                    if is_aux && !ducked {
                         src_l[f] += lv;
                         src_r[f] += rv;
-                        if duck_enabled[i] { det_l[f] += lv; det_r[f] += rv; }
+                    } else {
+                        core_l[f] += lv;                  // AIR: never scaled by a monitor
+                        core_r[f] += rv;
+                        if !ducked { imm_l[f] += lv; imm_r[f] += rv; }
                     }
-                    if is_aux && mon != 0.0 {             // AUX monitor — POST-fader, POST-cut
-                        // lv/rv, NOT l/r: these are the samples after the channel cut and the fader,
-                        // so a cut or a closed fader yields zero here as well as on air.
-                        aux_l[f] += lv * mon;
-                        aux_r[f] += rv * mon;
+                    if !is_aux {
+                        // LOCAL — MAIN OUTPUT: the fader at its own room level (unity unless the operator set one).
+                        let g = if row_moving { row_at(f) } else { rg };
+                        room_l[f] += lv * g;
+                        room_r[f] += rv * g;
+                        if !ducked { imm_room_l[f] += lv * g; imm_room_r[f] += rv * g; }
+                    } else if aux_heard {
+                        // LOCAL — AUX OUTPUT, POST-fader, POST-cut: lv/rv are after the channel cut and the fader, so a
+                        // cut or a closed fader is silent here as well as on air. A ducked AUX fader rides the duck.
+                        let g = if row_moving { row_at(f) } else { mon };
+                        if ducked { auxd_l[f] += lv * g; auxd_r[f] += rv * g; }
+                        else { aux_l[f] += lv * g; aux_r[f] += rv * g; }
                     }
                     pulled += 1;
                     let a = lv.abs().max(rv.abs());
@@ -4352,6 +4521,7 @@ pub(crate) fn mixer_callback(
         deck.frames_played = deck.frames_played.wrapping_add(pulled);
         frame_peaks[i] = pk;
         bs.vol_ramp[i].advance(prog_frames);
+        bs.row_ramp[i].advance(prog_frames);
     }
     // SLICE 2 — fold this buffer's channel taps into the window.
     bus.meters_acc.frames += prog_frames as u64;
@@ -4476,6 +4646,7 @@ pub(crate) fn mixer_callback(
             room_r[f] = room_r[f] * gc + imm_room_r[f] * (1.0 - gc);
             mix_l[f] = core_l[f] + src_l[f];
             mix_r[f] = core_r[f] + src_r[f];
+            if auxd_any { aux_l[f] += auxd_l[f] * gc; aux_r[f] += auxd_r[f] * gc; }
         }
 
         bus.duck_gain = g;
@@ -4490,6 +4661,7 @@ pub(crate) fn mixer_callback(
         // there is no path that jumps the programme back to full level.
         bus.duck_gain = 1.0;
         bus.duck_hold_left_ms = 0.0;
+        if auxd_any { for f in 0..prog_frames { aux_l[f] += auxd_l[f]; aux_r[f] += auxd_r[f]; } }
         false
     };
 
@@ -4881,6 +5053,8 @@ pub(crate) fn mixer_callback(
     // NO CLAMP HERE. Peak control on this bus belongs to the program processor above — the same -1 dBTP limiter the
     // rest of the product uses. NO mid-buffer break: rate correction happens on the CONSUMER side (a sub-audible
     // resample nudge); the producer hands over every sample it made.
+    // The MONITOR stage rides the operator's smoothing like every other level (2026-10-11).
+    { let target = bus.monitor_vol * bus.master_monitor_vol; bus.monitor_ramp.follow(target, any_playing); }
     let local_gain = crate::localout::MonitorGain::of(&*bus);
     let mut local_pk = 0.0f32;
     {
@@ -4936,6 +5110,7 @@ pub(crate) fn mixer_callback(
     // NO release ballistics: this is the bypass SENSE, not a VU. It must describe THIS buffer exactly, so the buffer
     // in which MONITOR reaches 0 reads 0 — a decaying peak would raise a false alarm the moment the fader is pulled.
     bus.local_out_peak = lp;
+    bus.monitor_ramp.advance(prog_frames);
 
     playing.store(any_playing, Ordering::Relaxed);   // S2 — was a try_lock on a Mutex<bool>
     // S3 — this buffer's meters and telemetry, for GetLevel (lock-free triple buffer).
@@ -6392,22 +6567,22 @@ mod interchange_matrix {
     /// Sweeper entry; "sweeper" is the value the engine's SetSlotKind has always named.
     const KINDS: [&str; 7] = ["cart", "announcement", "jukebox", "link", "mic", "jingle", "sweeper"];
 
-    struct Heard { programme: f32, aux_tap: f32, device: f32, kind: SlotKind }
+    struct Heard { programme: f32, aux_tap: f32, device: f32 }
 
-    fn play_alone(slot: usize, kind: &str) -> Heard {
+    /// One fader playing alone, its LOCAL OUTPUT set to AUX or MAIN (Jeff, 2026-10-11: the fader's own setting, never
+    /// its position or type), its local row at unity. What is on the fader is irrelevant to the engine: a tone.
+    fn play_alone(slot: usize, aux: bool) -> Heard {
         let (prod, mut prog) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
         let eq = crate::eq::new_shared_eq(44100.0);
-        // stream connected → the programme ring is written, so "what airs" is a buffer we can read.
+        // stream connected: the programme ring is written, so "what airs" is a buffer we can read.
         let bus = Arc::new(crate::rt::RtMutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(true)))));
-        let (aux_prod, mut aux) = HeapRb::<f32>::new(AUX_BUS_BUF).split();
-        let k;
+        let (aux_prod, mut aux_c) = HeapRb::<f32>::new(AUX_BUS_BUF).split();
         {
             let mut b = bus.lock().unwrap();
             let mut p = b.params();
-            crate::show::set_slot_kind(&mut p, slot, kind);   // == AudioCmd::SetSlotKind
-            crate::show::set_room(&mut p, slot, 1.0);         // == AudioCmd::SetAuxMonitor, the room row at unity
+            p.local_aux[slot] = aux;                           // == AudioCmd::SetLocalOutput
+            crate::show::set_room(&mut p, slot, 1.0);          // == AudioCmd::SetAuxMonitor, the local row at unity
             b.apply_params(&p);
-            k = b.decks[slot].kind;
             b.decks[slot].source = Some(DeckFeed::prefilled(Tone(0.25), 480 * 2 * 600));
             b.decks[slot].active = true; b.decks[slot].paused = false; b.decks[slot].volume = 1.0;
             b.aux_ring_prod = Some(crate::localout::LocalRing::new(aux_prod));
@@ -6423,53 +6598,57 @@ mod interchange_matrix {
         let mut programme = 0.0f32;
         while let Some(v) = prog.try_pop() { programme = programme.max(v.abs()); }
         let mut aux_tap = 0.0f32;
-        while let Some(v) = aux.try_pop() { aux_tap = aux_tap.max(v.abs()); }
-        Heard { programme, aux_tap, device, kind: k }
+        while let Some(v) = aux_c.try_pop() { aux_tap = aux_tap.max(v.abs()); }
+        Heard { programme, aux_tap, device }
     }
 
     const HEARD: f32 = 0.1;      // the tone is 0.25 at a unity fader; anything above this is that tone
     const SILENT: f32 = 1e-6;
 
+    /// Every fader, whatever is on it, is ON AIR; and it is heard in the room on exactly the output its own setting
+    /// names (AUX through its row, MAIN through the room chain), never both.
     #[test]
-    fn every_source_kind_reaches_programme_and_room_on_every_source_slot() {
+    fn every_fader_reaches_air_and_the_room_output_its_setting_names() {
         let mut failures = Vec::new();
-        for kind in KINDS {
-            let sweeper = kind == "sweeper" || kind == "jingle";
-            for (name, slot) in SOURCE_SLOTS {
-                let h = play_alone(slot, kind);
-                let room = if h.kind == SlotKind::Sweeper { h.device } else { h.aux_tap };
-                println!("[matrix] {:<12} on {:<2}  kind={:<8?}  programme={:.3}  aux-tap={:.3}  room-chain(device)={:.3}",
-                         kind, name, h.kind, h.programme, h.aux_tap, h.device);
-                let want = if sweeper { SlotKind::Sweeper } else { SlotKind::Source };
-                if h.kind != want { failures.push(format!("{kind} on {name}: slot kind {:?}, want {:?}", h.kind, want)); }
-                if h.programme < HEARD { failures.push(format!("{kind} on {name}: NOT on the programme ({:.4})", h.programme)); }
-                if room < HEARD { failures.push(format!("{kind} on {name}: NOT in the room ({:.4})", room)); }
-                if sweeper {
-                    // The documented sweeper rule: no aux tap, heard through the room chain on the main device.
-                    if h.aux_tap > SILENT { failures.push(format!("{kind} on {name}: a sweeper reached the aux tap ({:.4})", h.aux_tap)); }
-                } else if h.device > SILENT {
-                    // The documented source rule: excluded from the local room base, heard ONLY via the aux tap.
-                    failures.push(format!("{kind} on {name}: a source leaked into the local room base ({:.4})", h.device));
+        const ALL: [(&str, usize); 12] = [("A", 0), ("B", 1), ("C", 2), ("D", 3), ("E", 4), ("F", 5), ("CART", 6), ("S1", 7), ("S2", 8), ("S3", 9), ("S4", 10), ("S5", 11)];
+        for (name, slot) in ALL {
+            for aux in [true, false] {
+                let h = play_alone(slot, aux);
+                println!("[matrix] {:<4} local={:<4} programme={:.3}  aux-tap={:.3}  main-device={:.3}", name, if aux { "AUX" } else { "MAIN" }, h.programme, h.aux_tap, h.device);
+                if h.programme < HEARD { failures.push(format!("{name}: NOT on air ({:.4})", h.programme)); }
+                if aux {
+                    if h.aux_tap < HEARD { failures.push(format!("{name} set to AUX: not on the AUX output ({:.4})", h.aux_tap)); }
+                    if h.device > SILENT { failures.push(format!("{name} set to AUX: leaked into the main speakers ({:.4})", h.device)); }
+                } else {
+                    if h.device < HEARD { failures.push(format!("{name} set to MAIN: not on the main speakers ({:.4})", h.device)); }
+                    if h.aux_tap > SILENT { failures.push(format!("{name} set to MAIN: leaked into the AUX output ({:.4})", h.aux_tap)); }
                 }
             }
         }
-        assert!(failures.is_empty(), "interchange matrix failures:\n  {}", failures.join("\n  "));
+        assert!(failures.is_empty(), "routing matrix failures: {}", failures.join(" | "));
     }
 
     #[test]
-    fn the_room_row_is_accepted_on_every_source_slot_and_refused_on_the_board_channels() {
+    fn the_local_row_is_accepted_on_every_fader() {
+        // Jeff, 2026-10-11: no fader refuses an AUX/local row by its position.
         let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
         let (prod, _c) = rb.split();
         let b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(false)));
         let mut p = b.params();
         for i in 0..SLOT_COUNT { crate::show::set_room(&mut p, i, 0.5); }
-        for (name, slot) in SOURCE_SLOTS {
-            assert_eq!(p.aux_monitor_gain[slot], 0.5, "the room row was refused on source fader {name}");
-        }
-        for (name, slot) in [("A", 0usize), ("B", 1), ("C", 2), ("CART", 6)] {
-            assert_eq!(p.aux_monitor_gain[slot], 0.0, "{name} is a board channel and must not take an aux room row");
-            assert_eq!(p.room_gain[slot], 1.0, "{name}'s room level moved");
-        }
+        for i in 0..SLOT_COUNT { assert_eq!(p.aux_monitor_gain[i], 0.5, "fader {i} refused its local row"); assert_eq!(p.room_gain[i], 0.5); }
+    }
+
+    #[test]
+    fn the_update_moves_nothing_the_boot_defaults_are_todays_layout() {
+        // Until the operator's settings arrive, a fresh engine routes exactly as before the ruling: D-F and S1-S5 on AUX
+        // and never ducked; A/B/C/CART on the main output and ducked; nothing ducks.
+        let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
+        let (prod, _c) = rb.split();
+        let b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(false)));
+        for (name, slot) in SOURCE_SLOTS { assert!(b.local_aux[slot] && !b.duck_duckable[slot], "{name} default moved"); }
+        for (name, slot) in [("A", 0usize), ("B", 1), ("C", 2), ("CART", 6)] { assert!(!b.local_aux[slot] && b.duck_duckable[slot], "{name} default moved"); }
+        for i in 0..SLOT_COUNT { assert!(!b.duck_enabled[i], "fader {i} ducks by default"); }
     }
 
     #[test]

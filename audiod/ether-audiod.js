@@ -420,7 +420,7 @@ const handlers = {
   // the pop-out windows fired carts into station 1 for as long as they did, unnoticed. One line per
   // load (a few per hour per station, in a 5 MB rotating file) makes "which station did this reach"
   // readable instead of inferred.
-  load:               (m) => { stations.add(m.stationId); log(`[engine s${m.stationId}] load ${m.deck} <- "${m.title || "(untitled)"}"`); const r = A.audioLoad(m.deck, m.filePath, m.title || "", m.artist || "", m.gainDb ?? 0, m.stationId); const e = engines.get(m.stationId); if (e) e.noteManualCue(m.deck, { title: m.title, artist: m.artist, filePath: m.filePath, durationMs: m.durationMs, contentClass: m.contentClass ?? null }); return r; },
+  load:               (m) => { stations.add(m.stationId); log(`[engine s${m.stationId}] load ${m.deck} <- "${m.title || "(untitled)"}"`); const r = loadNormalized(m.deck, m.filePath, m.title, m.artist, m.stationId); const e = engines.get(m.stationId); if (e) e.noteManualCue(m.deck, { title: m.title, artist: m.artist, filePath: m.filePath, durationMs: m.durationMs, contentClass: m.contentClass ?? null }); return r; },
   // A refused play is a DECISION the operator must see, not a silent no-op (2026-07-31). audioPlay
   // returns false when the deck has no content; say so, name the deck, and tell them what to do.
   play:               (m) => {
@@ -461,6 +461,14 @@ const handlers = {
   setAuxDevice:       (m) => A.audioSetAuxDevice(m.stationId, m.device || ""),
   // THE BOARD AS THE ENGINE HOLDS IT (native/src/board.rs): every operator-set value as the dispatch thread holds it
   // (`control`) and as the audio callback last mixed with it (`applied`), plus the devices. A read; changes nothing.
+  // FADERS ARE GENERIC — where this fader is heard locally (aux true = AUX output, false = main output).
+  setLocalOutput:     (m) => (typeof A.audioSetLocalOutput === "function" ? A.audioSetLocalOutput(Number(m.stationId), String(m.deck), !!m.aux) : false),
+  // The smoothing every level change rides, ms (fader_smoothing_ms).
+  setFaderSmoothing:  (m) => (typeof A.audioSetFaderSmoothing === "function" ? A.audioSetFaderSmoothing(Number(m.stationId), Number(m.ms)) : false),
+  // LOUDNESS — measure one file now (on import; background, low priority), and the measurer's state.
+  loudnessMeasure:    (m) => { if (Loud && m.filePath) { Loud.enqueue(String(m.filePath)); return true; } return false; },
+  loudnessStatus:     ()  => (Loud ? Loud.status() : { unavailable: true }),
+  loudnessOf:         (m) => (Loud ? { lufs: Loud.lookup(String(m.filePath || "")) } : { lufs: null }),
   // Re-apply the saved board (one station, or every station when stationId is absent). main sends this on every connect.
   applySavedBoard:    (m) => (m.stationId != null ? applyBoardFor(m.stationId, m.reason || "app") : applyBoardAll(m.reason || "app")),
   getBoardState:      (m) => (typeof A.audioGetBoardState === "function"
@@ -651,7 +659,7 @@ const handlers = {
     if (!m.filePath) return { ok: false, reason: "no-file" };
     stations.add(m.stationId);
     let loaded;
-    try { loaded = A.audioLoad(deck, m.filePath, m.title || "", m.artist || "", m.gainDb ?? 0, m.stationId); }
+    try { loaded = loadNormalized(deck, m.filePath, m.title, m.artist, m.stationId); }
     catch (e) { return { ok: false, reason: "load-threw", error: String(e && e.message || e) }; }
     if (loaded === false) return { ok: false, reason: "load-failed" };
     let played;
@@ -765,10 +773,86 @@ function applyBoardFor(stationId, why) {
   try { db = getDb(); } catch (e) { log(`[board s${sid}] saved board NOT applied (${why}) ✗ ${e && e.message}`); return { ok: false, stationId: sid, reason: String(e && e.message || e) }; }
   const r = BoardState.applySavedBoardState(db, A, sid);
   boardApplied.add(sid);
+  // The faders show what the ENGINE now applies — read back from the engine itself, not from the saved values.
+  try {
+    const b = JSON.parse(A.audioGetBoardState(sid));
+    if (b && b.ok && b.control) {
+      const lv = { master: b.control.master_vol };
+      for (const [s, e] of Object.entries(b.control.slots || {})) lv[s] = e.volume;
+      bladeDo(sid, x => x.mirrorEngine(lv));
+    }
+  } catch (e) { log(`[board s${sid}] fader read-back for the board ✗ ${e && e.message}`); }
   log(`[board s${sid}] saved board applied (${why}): ${r.sent.length} setting(s)` +
       (r.failed.length ? ` — NOT applied ✗ ${r.failed.map(f => `${f.setting}: ${f.reason}`).join("; ")}` : ""));
   return { ok: r.failed.length === 0, stationId: sid, sent: r.sent, failed: r.failed };
 }
+// ── ONE LOUDNESS NORMALIZATION FOR EVERY SOURCE (audiod/loudness.js; Jeff, 2026-10-11) ───────────────────────────────
+// Every file loaded onto any fader — music, sweepers, carts, announcements, the jukebox — gets gain = the station's
+// target − the file's measured loudness, and nothing else. Measured once per file content, in the background.
+const Loud = (() => {
+  try {
+    let ff = null;
+    try { ff = require("ffmpeg-static"); if (ff && ff.includes("app.asar") && !ff.includes("app.asar.unpacked")) ff = ff.replace("app.asar", "app.asar.unpacked"); } catch { ff = null; }
+    const dbDir = process.env.ETHER_DB_PATH ? path.dirname(process.env.ETHER_DB_PATH) : require("os").tmpdir();
+    return require("./loudness").createLoudness({ cachePath: path.join(dbDir, "loudness-cache.json"), ffmpegPath: ff, log });
+  } catch (e) { log("loudness normalization unavailable:", e && e.message); return null; }
+})();
+const _targetCache = new Map();   // stationId → { v, at }
+// A station frame that crosses a boundary carries its UUID, never this machine's integer id (station-identity leak guard).
+const _uuidCache = new Map();
+function stationUuidOf(sid) {
+  if (_uuidCache.has(sid)) return _uuidCache.get(sid);
+  let u = null;
+  try { const r = getDb().prepare("SELECT uuid FROM stations WHERE id = ?").get(sid); u = (r && r.uuid) || null; } catch { u = null; }
+  if (u) _uuidCache.set(sid, u);
+  return u;
+}
+function loudnessTargetFor(sid) {
+  const c = _targetCache.get(sid);
+  if (c && Date.now() - c.at < 5000) return c.v;
+  let v = -16;
+  try {
+    const r = getDb().prepare("SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'loudness_target_lufs' AND deleted_at IS NULL").get(sid);
+    const n = r ? Number(r.value) : NaN; if (Number.isFinite(n)) v = n;
+  } catch { /* no DB yet → the default the Settings field shows */ }
+  _targetCache.set(sid, { v, at: Date.now() });
+  return v;
+}
+/** THE load every daemon path uses. Any gain a caller passes is IGNORED — there are no per-item trims. */
+function loadNormalized(deck, fp, title, artist, stationId) {
+  const sid = Number(stationId);
+  let g = { gainDb: 0, measured: false, clamped: false, lufs: null };
+  if (Loud && fp && !/^[a-z]+:\/\//i.test(fp)) {
+    const target = loudnessTargetFor(sid);
+    g = Loud.gainFor(fp, target);
+    if (!g.measured) {
+      Loud.enqueue(fp);
+      log(`[loudness s${sid}] ${deck} "${title || path.basename(fp)}" NOT yet measured — plays at 0 dB trim (queued for measuring)`);
+      broadcast({ event: "loudness", stationUuid: stationUuidOf(sid), deck, file: fp, state: "unmeasured" });
+    } else if (g.clamped) {
+      log(`[loudness s${sid}] ${deck} "${title || path.basename(fp)}" ${g.lufs} LUFS needs ${g.wantDb.toFixed(1)} dB for ${target} — the engine's trim range holds it at ${g.gainDb} dB`);
+      broadcast({ event: "loudness", stationUuid: stationUuidOf(sid), deck, file: fp, state: "clamped", lufs: g.lufs, wantDb: g.wantDb, gainDb: g.gainDb });
+    }
+  }
+  return A.audioLoad(deck, fp, title || "", artist || "", g.gainDb, sid);
+}
+/** Every audio file the station could air, from the library's own audio tables — for the background measurer. */
+function loudnessBackfill() {
+  if (!Loud) return 0;
+  let db; try { db = getDb(); } catch { return 0; }
+  const paths = new Set();
+  let tables = [];
+  try { tables = require("../electron/audio-library-index").AUDIO_TABLE_NAMES || []; } catch { tables = ["songs", "announcements", "cart_slots", "library_asset"]; }
+  for (const t of tables) {
+    try { for (const r of db.prepare(`SELECT file_path FROM ${t} WHERE file_path IS NOT NULL AND file_path != ''`).all()) paths.add(String(r.file_path)); }
+    catch { /* a table without file_path, or absent on this profile */ }
+  }
+  return Loud.backfill([...paths].filter(p => { try { return require("fs").existsSync(p); } catch { return false; } }));
+}
+
+// The engine's own loads (rotation, sweepers, voice tracks) ride the same normalizer.
+DaemonEngine.loadHook = loadNormalized;
+
 function applyBoardAll(why) {
   if (!BoardState) return [];
   let ids = [];
@@ -947,6 +1031,9 @@ function startListen() {
     log("listening on " + PIPE + " (node " + process.version + ")");
     // Every station's saved board, now — with or without the app (a watchdog restart has no window to send it).
     setImmediate(() => { try { applyBoardAll("engine start"); } catch (e) { log("[board] start-up apply ✗ " + (e && e.message)); } });
+    // Loudness: measure every airable file not yet measured — in the background, after start-up settles.
+    const bf = setTimeout(() => { try { loudnessBackfill(); } catch (e) { log("[loudness] backfill ✗ " + (e && e.message)); } }, 30000);
+    if (bf.unref) bf.unref();
   });
 }
 
