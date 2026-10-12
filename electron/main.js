@@ -423,6 +423,7 @@ const audiodClient = require("./audio-daemon-client");
 // (apply, flush, read back, compare → board-state-mismatch-error).
 const BoardState = require("../audiod/board-state");
 const BoardSync = require("./board-sync");
+const BoardWatch = require("./board-watch");
 // ONE LOUDNESS NORMALIZATION (audiod/loudness.js): main's in-process loads use the same rule and the same measurement
 // cache the daemon fills (gain = the station's target − the file's measured loudness; any per-item gain is ignored).
 let _mainLoud = null;
@@ -452,8 +453,11 @@ function _loadNormalizedInProcess(deck, fp, title, artist, stationId) {
 }
 const _boardQueue = BoardSync.createBoardQueue({ log: (m) => { try { logStartup(m); } catch {} } });
 function _boardSend(cmd, args, inProcess) {
-  return BoardSync.boardSend({ cmd, args, daemonActive: AUDIO_DAEMON, daemonWanted: AUDIO_DAEMON_DESIRED,
+  const p = BoardSync.boardSend({ cmd, args, daemonActive: AUDIO_DAEMON, daemonWanted: AUDIO_DAEMON_DESIRED,
     toDaemon: (c, a) => audiodClient.cmd(c, a), inProcess, queue: _boardQueue });
+  // Every board change main routes is compared right after it lands (electron/board-watch.js).
+  Promise.resolve(p).finally(() => { try { _boardWatch.poke(args && args.stationId); } catch {} });
+  return p;
 }
 // The database as main's normal start-up opened it — never opened early from here (getDb() would self-open it ahead of
 // the migrations). null until then.
@@ -475,32 +479,57 @@ function _loadSavedMasterMonitor() {
     sendToAllWindows("local:monitor-level", _localMonitorLevel);
   } catch (e) { logStartup(`[board] saved master MONITOR not read: ${e && e.message}`); }
 }
-// THE CONNECT PASS — serialised, so a connect and a handover a moment apart run one after the other.
-const _boardMismatched = new Set();   // stations whose last read-back differed (a later match says so, once)
+// THE RED EVENT — one writer for the connect pass and the continuous watch. Said once per distinct set of differences;
+// a later match says so once.
+const _boardMismatched = new Map();   // sid → the settings last reported as differing
+function _raiseBoardMismatch(sid, diffs, why) {
+  const sig = [...new Set(diffs.map(d => d.setting))].sort().join(",");
+  if (_boardMismatched.get(sid) === sig) return;
+  _boardMismatched.set(sid, sig);
+  const shown = diffs.slice(0, 8).map(d => `${d.label || d.setting}: saved ${JSON.stringify(d.saved)}, live ${JSON.stringify(d.live)}`).join("; ");
+  _healthEvent("board-state-mismatch-error", { stationId: sid, mismatches: diffs, reason: why,
+    message: `The engine is not running the board you saved — ${shown}${diffs.length > 8 ? ` (+${diffs.length - 8} more)` : ""}` });
+}
+function _clearBoardMismatch(sid, why) {
+  if (!_boardMismatched.delete(sid)) return;
+  _healthEvent("board-state-match", { stationId: sid, reason: why, message: "The engine is running the board you saved" });
+}
+// THE CONTINUOUS WATCH (Jeff, 2026-10-12; electron/board-watch.js): every change main routes or the engine reports is
+// compared, and every station every 500 ms; a difference that survives 300 ms is the red event, naming the setting.
+// Daemon only, like the connect pass: the in-process fallback has no blade to save fader levels, so its board is not
+// "saved" until the daemon takes over. Saved = the database plus the board_levels main is about to write.
+const _boardLevelsPending = new Map();   // sid → the blade's levels not yet written to board_levels
+const _boardWatch = BoardWatch.createBoardWatch({
+  stations: _stationIds,
+  readSaved: (sid) => { const d = _boardDb(); if (!d) throw new Error("database not open"); return BoardState.readSavedBoard(d, sid); },
+  readLive: async (sid) => (AUDIO_DAEMON ? audiodClient.cmd("getBoardState", { stationId: sid }) : { ok: false, reason: "in-process" }),
+  compare: BoardState.compareBoard,
+  overlay: (sid, saved) => BoardWatch.overlayLevels(saved, _boardLevelsPending.get(sid)),
+  onMismatch: (sid, diffs) => _raiseBoardMismatch(sid, diffs, "watch"),
+  onMatch: (sid) => _clearBoardMismatch(sid, "watch"),
+  log: (m) => logStartup(m),
+});
+// THE CONNECT PASS — serialised, so a connect and a handover a moment apart run one after the other. The watch holds its
+// tongue while the saved board is being re-applied, and starts its beat after the first pass.
 let _boardSyncChain = Promise.resolve();
 function _syncBoard(why) {
   _boardSyncChain = _boardSyncChain.then(async () => {
     if (!(await _waitBoardDb())) { logStartup(`[board] connect pass skipped (${why}) — the database did not open within 30 s`); return; }
     _loadSavedMasterMonitor();
-    await BoardSync.syncBoardOnConnect({
-      cmd: (c, a) => audiodClient.cmd(c, a),
-      queue: _boardQueue,
-      stations: _stationIds,
-      readSaved: (sid) => BoardState.readSavedBoard(_boardDb(), sid),
-      compare: BoardState.compareBoard,
-      settle: (ms) => new Promise(r => setTimeout(r, ms)),
-      log: (m) => logStartup(`${m} (${why})`),
-      onMismatch: (sid, diffs) => {
-        _boardMismatched.add(sid);
-        const shown = diffs.slice(0, 8).map(d => `${d.label || d.setting}: saved ${JSON.stringify(d.saved)}, live ${JSON.stringify(d.live)}`).join("; ");
-        _healthEvent("board-state-mismatch-error", { stationId: sid, mismatches: diffs, reason: why,
-          message: `The engine is not running the board you saved — ${shown}${diffs.length > 8 ? ` (+${diffs.length - 8} more)` : ""}` });
-      },
-      onMatch: (sid) => {
-        if (!_boardMismatched.delete(sid)) return;
-        _healthEvent("board-state-match", { stationId: sid, reason: why, message: "The engine is running the board you saved" });
-      },
-    });
+    _boardWatch.pause();
+    try {
+      await BoardSync.syncBoardOnConnect({
+        cmd: (c, a) => audiodClient.cmd(c, a),
+        queue: _boardQueue,
+        stations: _stationIds,
+        readSaved: (sid) => BoardState.readSavedBoard(_boardDb(), sid),
+        compare: BoardState.compareBoard,
+        settle: (ms) => new Promise(r => setTimeout(r, ms)),
+        log: (m) => logStartup(`${m} (${why})`),
+        onMismatch: (sid, diffs) => _raiseBoardMismatch(sid, diffs, why),
+        onMatch: (sid) => _clearBoardMismatch(sid, why),
+      });
+    } finally { _boardWatch.resume(); _boardWatch.start(); }
   }).catch(e => logStartup(`[board] connect pass ✗ ${e && e.message || e} (${why})`));
   return _boardSyncChain;
 }
@@ -5605,11 +5634,14 @@ function _showOnLevels(m) {
   // Every window's board reads the levels back from here (a fader released after a drag stays where the engine is).
   sendToAllWindows("show:levels", { stationUuid: _stationUuidById(sid), levels });
   clearTimeout(_showLevelTimers.get(sid));
+  _boardLevelsPending.set(sid, levels);   // "saved" for the board watch from this moment
   _showLevelTimers.set(sid, setTimeout(() => {
     _showLevelTimers.delete(sid);
     try { require("./sync/handlers/station_config_kv").stationConfigKvUpsertByKey(getDb(), sid, "board_levels", JSON.stringify(levels)); }
     catch (e) { console.warn("[show] board_levels not saved:", e.message); }
+    _boardLevelsPending.delete(sid);
   }, 1000));
+  try { _boardWatch.poke(sid); } catch {}
 }
 function _showOnApplied(m) {
   const sid = Number(m.stationId);
@@ -5628,6 +5660,7 @@ function _showOnApplied(m) {
   // scoped query per board, and never a stale one.
   if (plan.deck.length) sendToAllWindows("deck_configs:changed", { stationUuid: _stationUuidById(sid) });
   sendToAllWindows("show:applied", { stationUuid: _stationUuidById(sid), reason: m.reason, show: m.show || null, shows: m.shows || null, failed });
+  try { _boardWatch.poke(sid); } catch {}   // a Take changed the engine and the stores: compare them now
 }
 
 // SLICE 3 — the loudness panel's Reset: integrated loudness, LRA and TP max for a branch start again.
@@ -6313,6 +6346,27 @@ ipcMain.handle("board:set-routing", async (_, stationId, slot, patch = {}) => {
   if (patch.duckable !== undefined) await _boardSend("setDuckable", { stationId: sid, deck: s, duckable: !!patch.duckable }, () => audio.audioSetDuckable(sid, s, !!patch.duckable));
   if (patch.local !== undefined) await _boardSend("setLocalOutput", { stationId: sid, deck: s, aux: patch.local === "aux" }, () => (typeof audio.audioSetLocalOutput === "function" ? audio.audioSetLocalOutput(sid, s, patch.local === "aux") : false));
   try { sendToAllWindows("board:routing-changed", { stationUuid: _stationUuidById(sid) }); } catch {}
+  return { ok: true };
+});
+// board:migrate-cart-cut — ONE TIME (2026-10-12). The CART channel's ON/OFF lived only in a window's localStorage, and the
+// window re-sent it to the engine on every mount. It is now saved with the station (cart_channel_on) and restored by the
+// engine itself (audiod/board-state.js). The window hands its old value over once; a value already saved wins. When
+// the saved cut is OFF, the engine re-applies the station's SAVED board (its own restore path) — the window sends nothing.
+ipcMain.handle("board:migrate-cart-cut", async (_, stationId, on) => {
+  const d = _boardDb(); const sid = Number(stationId);
+  if (!d || !Number.isFinite(sid)) return { ok: false, reason: "no station" };
+  try {
+    const r = d.prepare("SELECT value FROM station_config_kv WHERE station_id = ? AND key = ? AND deleted_at IS NULL").get(sid, BoardState.CART_ON_KEY);
+    if (r && (r.value === "0" || r.value === "1")) return { ok: true, kept: r.value };
+    require("./sync/handlers/station_config_kv").stationConfigKvUpsertByKey(d, sid, BoardState.CART_ON_KEY, on ? "1" : "0");
+  } catch (e) { return { ok: false, reason: `not saved: ${e && e.message}` }; }
+  logStartup(`[board s${sid}] CART ON/OFF moved from the window into the station's saved board: ${on ? "ON" : "OFF"}`);
+  if (!on) {
+    try {
+      if (AUDIO_DAEMON) await audiodClient.cmd("applySavedBoard", { stationId: sid, reason: "CART cut saved" });
+      else BoardState.applySavedBoardState(d, audio, sid);
+    } catch (e) { logStartup(`[board s${sid}] saved board not re-applied after the CART move ✗ ${e && e.message}`); }
+  }
   return { ok: true };
 });
 // board:sound-settings → the station's loudness target and fader smoothing, as the engine uses them.

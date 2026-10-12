@@ -1960,11 +1960,11 @@ export default function App() {
         }
       } catch { /* fall through with the default; the daemon reads the KV itself */ }
       if (!alive) return;
+      // DISPLAY ONLY (2026-10-12): the daemon reads segue_overlap_sec itself; the window never re-sends a stored value.
       setSegueOverlapState(v);
-      (engine as any).setSegueOverlap?.(v);
     })();
     return () => { alive = false; };
-  }, [stationId, engine]);
+  }, [stationId]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -4018,31 +4018,25 @@ function LivePanel({ deckA, deckB, deckC, autoAdv, shuffle, toggleAuto, toggleSh
     return () => clearInterval(t);
   }, [engine]);
 
-  // ── JINGLES CHANNEL ON/OFF — a console channel cut, per station ────────────────────────────────────
-  // This is the aux-fader OFF on a Wheatstone: while OFF the CART channel contributes nothing to the
-  // program bus, so a jingle or cart that fires still never reaches air. Enforced in the mixer
-  // (audio.rs — `let vol = if deck.muted { 0.0 } else { deck.volume }`), NOT by fader position: `Load`
-  // rewrites slot volume on every cart fire, so a mute expressed as volume 0 would be wiped by the next
-  // jingle and the channel would silently re-open.
-  //
-  // Persisted per station, and pushed DOWN to the engine on mount and on every station switch — the
-  // engine boots un-muted, so the UI must assert the operator's saved setting rather than assume it.
-  const cartOnKey = `ether:cartChannelOn:${lpStationId ?? "none"}`;
-  const [cartOn, setCartOn] = useState(true);
+  // ── JINGLES (CART) CHANNEL ON/OFF — a console channel cut, per station ───────────────────────────────
+  // While OFF the CART channel contributes nothing to the program bus (audio.rs — the mixer's `deck.muted`), so a jingle
+  // that fires never reaches air. It lived only in this window's localStorage and was pushed to the engine on every
+  // mount and station switch. NO WRITES ON MOUNT (Jeff, 2026-10-12): the cut is now saved with the station
+  // (cart_channel_on) and restored by the engine itself (audiod/board-state.js). The old local value is handed to main
+  // ONCE — a value already saved wins — and then forgotten.
   useEffect(() => {
-    let saved = true;
-    try { saved = localStorage.getItem(cartOnKey) !== "off"; } catch { /* private mode — default ON */ }
-    setCartOn(saved);
-    try { (engine.getDeck("CART" as any) as any)?.setMuted?.(!saved); } catch { /* engine not ready */ }
-  }, [engine, cartOnKey]);
-  const toggleCartChannel = () => {
-    setCartOn(prev => {
-      const next = !prev;
-      try { localStorage.setItem(cartOnKey, next ? "on" : "off"); } catch { /* non-fatal */ }
-      try { (engine.getDeck("CART" as any) as any)?.setMuted?.(!next); } catch { /* engine not ready */ }
-      return next;
-    });
-  };
+    if (lpStationId == null) return;
+    const key = `ether:cartChannelOn:${lpStationId}`;
+    let raw: string | null = null;
+    try { raw = localStorage.getItem(key); } catch { raw = null; }
+    if (raw !== "on" && raw !== "off") return;
+    Promise.resolve((window as any).ether?.invoke?.("board:migrate-cart-cut", lpStationId, raw === "on"))
+      .then((r: any) => {
+        if (r && r.ok) { try { localStorage.removeItem(key); } catch { /* tried again next launch */ } }
+        else console.warn("[cart] CART ON/OFF not moved into the saved board:", r && r.reason);
+      })
+      .catch((e: any) => console.warn("[cart] CART ON/OFF not moved into the saved board:", e));
+  }, [lpStationId]);
 
   // ── THE BOARD'S STATE MOVED TO FaderSection.tsx ──────────────────────────────────────────────
   //

@@ -156,7 +156,6 @@ export class AudioEngine {
   // It is a HARDCODED NUMBER ON THE FALLBACK PATH and nothing can set it — filed in backlog.md. The name
   // is wrong now too: it times a stop and a preload, not a crossfade.
   crossfadeDuration = 3;
-  segueOverlap = 3;                      // routine auto segue OVERLAP (seconds the next song starts early, 0 = off) — daemon-side, no fades
   // advancePromise serializes advance operations. Any handler chains onto this promise
   // so that concurrent same-tick callers await the in-flight advance rather than
   // spawning a second one.
@@ -282,7 +281,10 @@ export class AudioEngine {
       // pushed on CHANGE — so it needs a daemon-side `deck:snapshot` re-emit command. Until that
       // exists, adopt restores the QUEUE only and the decks fill on the next daemon deck event.
       // deck:snapshot (2026-08-03) is that command — requested above, applied by onDeck.
-      await this.assertMonitorSilence();   // D2: silence from the moment the engine exists
+      // NO WRITES ON ATTACH (Jeff, 2026-10-12, docs/station-monitor-zeroed-at-attach-2026-10-12.md): "the window never
+      // writes a board value it didn't get from the operator; the engine's restored state is the truth." This used to
+      // zero the station MONITOR here (D2) half a second after the engine restored it — the fader showed the saved
+      // level and the station was silent until it was nudged.
       rotLog(`[ROT] ADOPT (${reason}): queue=${this.queue.length} — populated on attach, not on next change`);
       try { window.dispatchEvent(new CustomEvent("ether:queue-changed")); } catch {}
       try { window.dispatchEvent(new CustomEvent("ether:daemon-adopted", { detail: { stationId: this.stationId, reason } })); } catch {}
@@ -379,9 +381,9 @@ export class AudioEngine {
     const a = (window as any).ether?.audio;
     if (!a) return;
     bootSeq(`attachDaemonEvents station=${this.stationId}`);
-    // Re-push the routine segue overlap — the daemon resets to its default on respawn, so a
-    // (re)connect (incl. the update/crash respawn) must restore the operator's setting.
-    this.pushSegueOverlap();
+    // The segue overlap is NOT pushed here (2026-10-12): this window's copy was a hard-coded 3 until Preferences loaded,
+    // and it overwrote the station's own value on every attach. The daemon reads the station's segue_overlap_sec itself
+    // (audiod/engine.js _applySegueOverlapFromKv); the window sends only the operator's change.
     // Mirror the daemon's queue so getQueue() (the Up Next UI) stays current. Stage 0: carry the
     // daemon's per-entry qid so the mirror can address an exact entry (Stage 2 intent commands).
     if (a.onQueue) {
@@ -541,7 +543,6 @@ export class AudioEngine {
       return false;
     }
     rotLog(`[ROT] automationStart station=${this.stationId} origin=${reason}`);
-    this.pushSegueOverlap();   // ensure the daemon has the operator's segue setting before it airs
     try { const r = await (window as any).ether?.audio?.daemon?.("automationStart", { stationId: this.stationId }); return !!(r && r.ok); }
     catch { return false; }
   }
@@ -564,61 +565,15 @@ export class AudioEngine {
   }
   private _daemonStarted: boolean | null = null;
 
-  /** D2 — SILENCE IS ASSERTED AT ATTACH, not at dashboard render. The Rust bus default is
-   *  monitor_vol: 1.0 (audio.rs:368) — full local speakers — so an engine that exists is audible unless
-   *  something says otherwise, and until now the only thing that said otherwise was the board painting.
-   *  That left every station monitoring at unity from daemon start until the dashboard rendered
-   *  (2026-08-03: four stations over each other at the on-shift screen, silent the instant the board
-   *  opened). Raising a monitor is an operator act; once raised, the operator's level is re-applied on
-   *  reattach instead of being re-muted, because a daemon respawn resets the bus to 1.0.
-   *  NEVER touches the program bus — monitor_vol applies to the device branch only (audio.rs:1157),
-   *  so this cannot affect what goes to air. */
-  private monitorRaisedByOperator = false;
-  private operatorMonitorLevel = 0;
-  private monitorAssertedOnce = false;
-  async assertMonitorSilence(): Promise<void> {
-    // FIRST ATTACH: silence is asserted, because the Rust bus default is monitor_vol 1.0 — an engine
-    // that exists is audible unless something says otherwise.
-    // RE-ATTACH (a station switch tears the engine down, so switching back lands here again): NEVER
-    // re-impose silence on a station the operator was already listening to. Re-apply their level if
-    // they raised one; otherwise leave the bus alone — it is already silent from the first assert, and
-    // re-zeroing it is what dropped the monitor for a couple of seconds on every switch.
-    if (this.monitorAssertedOnce && !this.monitorRaisedByOperator) {
-      rotLog(`[ROT] monitor re-attach (station ${this.stationId}) — already silent, leaving it alone`);
-      return;
-    }
-    const level = this.monitorRaisedByOperator ? this.operatorMonitorLevel : 0;
-    this.monitorAssertedOnce = true;
-    try {
-      await (window as any).ether?.audio?.setMonitorVolume?.(this.stationId, level);
-      rotLog(`[ROT] monitor asserted to ${level.toFixed(2)} at attach (station ${this.stationId})${this.monitorRaisedByOperator ? " — operator level restored" : " — SILENT by default"}`);
-    } catch { /* monitor assert is best-effort; never block attach on it */ }
-    // Master rides air, so a respawn that dropped it back to unity would put the station BACK UP to
-    // full level mid-show without anyone touching the fader. Re-assert the operator's level here.
-    try { await this.reassertMaster(); } catch { /* best-effort */ }
-  }
-  /** Called by the operator's monitor control so the level survives a daemon respawn. */
-  noteOperatorMonitor(level: number) {
-    this.operatorMonitorLevel = level;
-    this.monitorRaisedByOperator = level > 0;
-  }
-
   /**
-   * MASTER OUT — the broadcast gain. Sends it to the engine and remembers it, so a daemon respawn
-   * re-asserts the operator's level instead of silently reverting to unity mid-show.
+   * MASTER OUT — the broadcast gain. A CHANGE from the operator's fader, sent to the engine. Nothing is cached here and
+   * nothing is re-sent on attach: the engine restores MASTER itself at its start and on every connect
+   * (audiod/board-state.js), and that restored value is the truth (Jeff, 2026-10-12).
    * docs/master-monitor-faders-dead-2026-08-06.md
    */
-  private operatorMasterLevel = 1;
   async setMasterVolume(level: number): Promise<void> {
-    this.operatorMasterLevel = level;
     try { await (window as any).ether?.audio?.setMasterVolume?.(this.stationId, level); }
     catch { /* best-effort; never throw into a fader drag */ }
-  }
-  /** Re-assert the operator's master level (called on attach, alongside the monitor assert). */
-  async reassertMaster(): Promise<void> {
-    if (this.operatorMasterLevel === 1) return;   // unity → nothing to restore
-    try { await (window as any).ether?.audio?.setMasterVolume?.(this.stationId, this.operatorMasterLevel); }
-    catch { /* best-effort */ }
   }
 
   /** Stop the daemon's unattended playout (AUTO off, daemon-driven). */
@@ -685,14 +640,11 @@ export class AudioEngine {
   deckCrossfade(from?: DeckId, to?: DeckId): Promise<any> { return this.daemonCmd("deck:crossfade", { from, to }); }
   /** Board-style channel OFF — audio off now (not a pause). */
   deckOff(deck: DeckId): Promise<any> { return this.daemonCmd("deck:off", { deck }); }
-  // Routine segue overlap (auto). Stored locally + pushed to the daemon (the daemon resets to its
-  // default on respawn, so this is re-pushed on every daemon (re)connect + automation start).
+  // Routine segue overlap (auto) — the operator's CHANGE, sent to the daemon. The daemon reads the station's stored
+  // value itself on start and every 3 s (audiod/engine.js _applySegueOverlapFromKv); nothing is re-pushed from here.
   setSegueOverlap(seconds: number): Promise<any> | void {
-    this.segueOverlap = Math.max(0, Math.min(10, seconds || 0));
-    if (this.daemonDriven) return this.daemonCmd("setSegueOverlap", { seconds: this.segueOverlap });
-  }
-  private pushSegueOverlap(): void {
-    if (this.daemonDriven) { try { this.daemonCmd("setSegueOverlap", { seconds: this.segueOverlap }); } catch {} }
+    const v = Math.max(0, Math.min(10, seconds || 0));
+    if (this.daemonDriven) return this.daemonCmd("setSegueOverlap", { seconds: v });
   }
 
   private async poll() {

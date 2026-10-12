@@ -128,9 +128,8 @@ export default function DuckerSection() {
         };
         setP(next);
         setLoaded(true);
-        // Assert downward on open: the engine boots at ITS defaults, and the board states the
-        // operator's settings rather than assuming them — the same rule the jukebox cut follows.
-        push(next);
+        // READ ONLY (Jeff, 2026-10-12): the engine restores the saved ducker itself (audiod/board-state.js DUCK_KEYS,
+        // the same defaults as above). This used to re-send it every time the panel opened.
       } catch { if (!stop) setLoaded(true); }
     })();
     return () => { stop = true; };

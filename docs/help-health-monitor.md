@@ -98,10 +98,14 @@ on the card after that, in grey. Hover the line for the full detail (callbacks r
 ### "Board state mismatch error" — the engine is not running the board you saved
 
 Every time Ether connects to its audio engine (when Ether opens, and after any restart of the engine), it puts your
-saved board back and then **checks** it: every channel fader, ON/OFF, AUX monitor row, MONITOR and MASTER. If
-anything the engine is running differs from what you saved, a **red** row appears in **Live events**, naming each
-setting by the fader's name on your board, with its saved and live values. For example: *G AUX monitor row: saved
-0.74, live 0* means channel G should be heard in the room at 0.74 and the engine has it silent.
+saved board back. From then on it **keeps checking** it, all the time: every channel fader, ON/OFF (the jingles/CART
+channel included), AUX monitor row, each station's MONITOR strip, MONITOR and MASTER. Ether compares again right after
+every change, and every half second anyway. If anything the engine is running differs from what you saved, a **red**
+row appears in **Live events** within a second, naming each setting by the fader's name on your board, with its
+saved and live values. For example: *G AUX monitor row: saved 0.74, live 0* means channel G should be heard in the
+room at 0.74 and the engine has it silent.
+
+Moving a fader yourself never raises it: your move is saved as you make it.
 
 What to do:
 

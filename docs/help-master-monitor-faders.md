@@ -77,9 +77,10 @@ How to read the bar, the peak dot and OVER: see **Reading the Meters** (`docs/he
   there with MONITOR down, so you can cue with the room silent.
 - **If anything ever makes sound with MONITOR at zero,** the Health Monitor shows a red **Monitor bypass error**
   with the level. That is a fault to report, never normal.
-- **Your board comes back exactly as you left it.** MONITOR, MASTER, every channel fader, every channel's ON/OFF
-  and every AUX monitor row are saved. The audio engine puts them back itself when Ether opens, and after any restart
-  of the audio engine, even with the window closed. You never have to touch a fader to wake it up.
+- **Your board comes back exactly as you left it.** MONITOR, MASTER, each station's MONITOR strip, every channel
+  fader, every channel's ON/OFF (the jingles/CART channel included) and every AUX monitor row are saved. The audio
+  engine puts them back itself when Ether opens, and after any restart of the audio engine, even with the window
+  closed. Opening a window never changes them. You never have to touch a fader to wake it up.
 - **MONITOR belongs to this computer.** It is the level of the speakers in this room, so it is saved on this machine
   and doesn't travel to your other computers.
 - **Until MONITOR is known, the room is silent.** When Ether starts it plays nothing in the room until it has read your

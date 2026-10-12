@@ -42,7 +42,7 @@
 // so a deck cannot be sent to a different device than the station's own. The room is one room, and
 // the single OUTPUT selector at the top is the whole aux path's device.
 
-import { posToGain, gainToPos, formatDb, faderMarks } from "../lib/faderLaw";
+import { posToGain, gainToPos, formatDb, faderMarks, MAX_GAIN } from "../lib/faderLaw";
 import { useFaderTop } from "../lib/useFaderTop";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -154,7 +154,7 @@ export default function AuxMonitorSlots() {
             // Current format — a map keyed by deck slot id.
             for (const [k, v] of Object.entries(parsed)) {
               const n = parseFloat(String(v));
-              if (Number.isFinite(n)) map[k] = Math.max(0, Math.min(1, n));
+              if (Number.isFinite(n)) map[k] = Math.max(0, Math.min(MAX_GAIN, n));
             }
           } else if (Array.isArray(parsed)) {
             // LEGACY positional array. The old slots array says which deck held each position, so the
@@ -165,7 +165,7 @@ export default function AuxMonitorSlots() {
             oldSlots.forEach((deck: string, i: number) => {
               if (!deck) return;
               const n = parseFloat(String(parsed[i]));
-              map[deck] = Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : DEFAULT_LEVEL;
+              map[deck] = Number.isFinite(n) ? Math.max(0, Math.min(MAX_GAIN, n)) : DEFAULT_LEVEL;
             });
           }
         } catch { map = {}; }

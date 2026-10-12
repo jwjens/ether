@@ -61,9 +61,12 @@ export function useMicMigration(stationId: number | null | undefined, ready: boo
       let labels: MediaDeviceInfo[] = [];
       try { labels = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "audioinput"); } catch { /* no labels → nothing to match */ }
       for (const { slot, from } of micSlots) {
-        if (patched[slot]) continue;
+        // ONE TIME (2026-10-12: the window never writes a board value it didn't get from the operator). The old browser
+        // pick is read once and forgotten, whatever the outcome — otherwise a mic the operator later UNPATCHED was
+        // re-patched from this stale value on the next launch.
         let id = "";
-        try { id = localStorage.getItem(`ether_mic_device_${from}`) || ""; } catch { /* none */ }
+        try { id = localStorage.getItem(`ether_mic_device_${from}`) || ""; localStorage.removeItem(`ether_mic_device_${from}`); } catch { /* none */ }
+        if (patched[slot] || !id) continue;
         const label = labels.find(d => d.deviceId === id)?.label || "";
         const device = id ? matchDeviceLabel(label, names) : null;
         if (!device) {

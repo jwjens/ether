@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { query } from "../db/client";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useShowState } from "../hooks/useShowState";
+import { monitorLevel, onMonitorLevel } from "../audio/localOutput";
 
 const TEAL = "#00c8a8";
 const AMB  = "#c07820";
@@ -381,9 +382,10 @@ function NextUpList({ items }: { items: { title: string; artist: string }[] }) {
 export default function BroadcastMonitor() {
   const [masterLevel, setMasterLevel] = useState(0);
   const [masterVol,   setMasterVol]   = useState(1.0);
-  const [monitorVol,  setMonitorVol]  = useState(() => {
-    try { return parseFloat(localStorage.getItem('ether_monitor_vol') ?? '0.8'); } catch { return 0.8; }
-  });
+  // MONITOR shows the level main reports (the saved one, then every change) — never a placeholder (2026-10-12; this read
+  // a localStorage 0.8 and wrote it back on mount).
+  const [monitorVol,  setMonitorVol]  = useState(() => monitorLevel());
+  useEffect(() => onMonitorLevel(v => setMonitorVol(v)), []);
   const [onAir,       setOnAir]       = useState(false);
 
   const [title,       setTitle]       = useState("");
@@ -413,10 +415,6 @@ export default function BroadcastMonitor() {
     });
     return () => ether.audio.offLevels(h);
   }, []);
-
-  useEffect(() => {
-    try { localStorage.setItem('ether_monitor_vol', String(monitorVol)); } catch {}
-  }, [monitorVol]);
 
   // ── MONITOR = the ONE master room level (same control as the inline panel) ────────────────────
   // Global by design — no station id. 4.4.154 wrote a per-station strip level here, which meant this

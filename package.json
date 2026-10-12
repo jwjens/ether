@@ -60,6 +60,7 @@
     "test:announce": "node scripts/smoke-announce-coexist.js",
     "test:local-playback": "node scripts/test-local-playback-guard.js",
     "test:board-restore": "node scripts/smoke-board-restore.js",
+    "test:attach-restore": "node scripts/smoke-attach-after-restore.js --control",
     "test:iris-phrases": "node scripts/test-iris-transport-phrases.js",
     "test:library-foreign": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-library-health-foreign.js",
     "test:relink": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-relink-no-mutation.js",

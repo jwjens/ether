@@ -16,6 +16,7 @@ import MasterMeters from "./meter/MasterMeters";
 import AuxMonitorSlots from "./AuxMonitorSlots";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useShowState } from "../hooks/useShowState";
+import { monitorLevel, onMonitorLevel } from "../audio/localOutput";
 
 // ── Constants ────────────────────────────────────────────────
 // Fallback values only — resolved via CSS custom properties at runtime
@@ -657,24 +658,15 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
       .catch((e: any) => console.warn("[monitor] MONITOR level not sent:", e));
   }, []);
 
-  // THE SAVED LEVEL, READ — not re-sent (2026-10-11). This used to re-apply the window's localStorage value once per
-  // mount and drop a failure; the engine restores the saved level itself now. The fader only shows it. A level that
-  // was only ever in localStorage (before this build) is moved into the database ONCE, through the normal send.
-  const monitorLoaded = useRef(false);
+  // THE SAVED LEVEL, READ — never sent (2026-10-11/12). The engine restores the saved level itself; the fader shows the
+  // level main reports (the saved one at start, then every change from either window). Never saved anywhere = 0: the
+  // room stays silent and the fader says OFF until it is set. The old localStorage hand-over is GONE (2026-10-12): the
+  // pop-out wrote its own 0.8 placeholder into that key, so on a machine with no saved MONITOR this window could
+  // have sent a placeholder to the room.
   useEffect(() => {
-    if (monitorLoaded.current) return;
-    monitorLoaded.current = true;
-    (async () => {
-      try {
-        const saved = await (window as any).ether?.invoke?.("local:monitor-saved");
-        if (typeof saved === "number" && Number.isFinite(saved)) { setMonitorVol(saved); return; }
-        let legacy: number | null = null;
-        try { const raw = localStorage.getItem("ether_monitor_vol"); legacy = raw == null ? null : parseFloat(raw); } catch { legacy = null; }
-        if (legacy != null && Number.isFinite(legacy)) applyMonitor(Math.max(0, Math.min(1, legacy)));
-        else setMonitorVol(0);   // never saved anywhere: the room stays silent and the fader says OFF until it is set
-      } catch (e) { console.warn("[monitor] saved MONITOR level not read:", e); }
-    })();
-  }, [applyMonitor]);
+    setMonitorVol(monitorLevel());
+    return onMonitorLevel(v => setMonitorVol(v));
+  }, []);
   useEffect(() => {
     try { localStorage.setItem("ether_station_info_collapsed", stationInfoOpen ? "0" : "1"); } catch {}
   }, [stationInfoOpen]);

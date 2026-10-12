@@ -210,16 +210,13 @@ export default function FaderSection({
         on = ((r && r.rows) || []).find((x: any) => x.key === "jukebox_channel_on")?.value === "1";
       } catch { /* no config yet — stays OFF, the safe direction */ }
       if (stop) return;
+      // READ ONLY (Jeff, 2026-10-12: the window never writes a board value it didn't get from the operator). The engine
+      // restores the jukebox cut itself from jukebox_channel_on (audiod/board-state.js); this used to re-send it on
+      // every mount. The level was already the engine's (slice 7).
       setJukeboxOn(on);
-      // Assert the cut downward: the engine boots un-muted. The LEVEL is not asserted any more (slice 7): the engine
-      // restores the saved faders at start (board_levels), and pushing this window's unity here undid that on every
-      // launch. The fader reads the level back from the blade.
-      try {
-        (engine.getDeck(jukeboxSlot as any) as any)?.setMuted?.(!on);
-      } catch { /* engine not ready */ }
     })();
     return () => { stop = true; };
-  }, [engine, jukeboxSlot, stationId]);
+  }, [jukeboxSlot, stationId]);
 
   const toggleJukeboxChannel = () => {
     if (!jukeboxSlot) return;

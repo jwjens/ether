@@ -30,6 +30,9 @@ const FADER_LOCAL_KEY = "fader_local";
 const FADER_ROUTING_FLAG = "fader_routing_v1";
 const SMOOTHING_KEY = "fader_smoothing_ms";
 const LOUDNESS_TARGET_KEY = "loudness_target_lufs";
+// The CART channel's ON/OFF ("1"/"0"). It lived only in a window's localStorage and was re-sent on every mount
+// (2026-10-12: the window never writes a board value); it is saved with the station and restored here.
+const CART_ON_KEY = "cart_channel_on";
 // The most any fader, MASTER, MONITOR or row can be set to: +10 dB (the engine's own ceiling).
 const MAX_GAIN = Math.pow(10, 10 / 20);
 // EACH FADER GROUP'S TOP is a visible setting (Jeff, 2026-10-11): "MASTER and MONITOR top out at unity … Channel faders
@@ -130,6 +133,9 @@ function readSavedBoard(db, sid) {
     else if (e.local === "aux") e.aux = 0;   // an unsaved AUX row is 0 — the engine's own default, and what the panel shows
     slots[s] = e;
   }
+  // CART's cut, when saved and not already given by a board row of its own (a CART row's ON lamp is the newer truth).
+  const cartOn = kv(CART_ON_KEY);
+  if ((cartOn === "0" || cartOn === "1") && !(slots.CART && slots.CART.muted !== undefined)) slots.CART = { ...(slots.CART || {}), muted: cartOn !== "1" };
   let order = [];
   try {
     order = db.prepare("SELECT slot FROM deck_configs WHERE station_id = ? AND deleted_at IS NULL").all(sid)
@@ -328,4 +334,4 @@ function groupTopGain(db, sid, group) {
   return dbGain(v == null ? FADER_TOP_DEFAULTS[group] : Math.max(0, Math.min(10, v)));
 }
 
-module.exports = { FADER_TOP_KEYS, FADER_TOP_DEFAULTS, groupTopGain, routingMigration, FADER_LOCAL_KEY, FADER_ROUTING_FLAG, SMOOTHING_KEY, LOUDNESS_TARGET_KEY, MAX_GAIN, boardNames, labelOf, SLOTS, SOURCE_SLOTS, MASTER_MONITOR_KEY, DUCK_KEYS, readSavedBoard, applyBoard, compareBoard, listStations, addonSink, applySavedBoardState, parseRoomLevels };
+module.exports = { CART_ON_KEY, FADER_TOP_KEYS, FADER_TOP_DEFAULTS, groupTopGain, routingMigration, FADER_LOCAL_KEY, FADER_ROUTING_FLAG, SMOOTHING_KEY, LOUDNESS_TARGET_KEY, MAX_GAIN, boardNames, labelOf, SLOTS, SOURCE_SLOTS, MASTER_MONITOR_KEY, DUCK_KEYS, readSavedBoard, applyBoard, compareBoard, listStations, addonSink, applySavedBoardState, parseRoomLevels };

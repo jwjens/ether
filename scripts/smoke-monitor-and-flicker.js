@@ -9,21 +9,18 @@ let pass = 0, fail = 0;
 const check = (n, c) => { console.log(`${c ? "PASS" : "FAIL"}  ${n}`); c ? pass++ : fail++; };
 const NL = String.fromCharCode(10);
 
-console.log("── 1 · MONITOR: the fader tells the engine the operator owns the level ──");
-check("1 · setMonitor calls noteOperatorMonitor", mix.includes("getEngine(sid).noteOperatorMonitor(value)"));
-check("1 · …before pushing the gain (so a re-attach can restore it)",
-  mix.indexOf("noteOperatorMonitor") < mix.indexOf("setMonitorVolume?.(sid, value)"));
-check("1 · noteOperatorMonitor now HAS a caller (it had zero)",
-  (mix + app).includes("noteOperatorMonitor"));
+// 2026-10-12 (docs/station-monitor-zeroed-at-attach-2026-10-12.md): the D2 attach-time assert is GONE. It zeroed the station
+// MONITOR half a second after the engine restored it (Jeff: "the halloween fader was up i had to nudge it for audio to
+// play"). The engine's restored board is the truth; the window sends the operator's change and nothing else.
+console.log("── 1 · MONITOR: the window never writes the station MONITOR on attach ──");
+check("1 · no attach-time monitor assert", !eng.includes("assertMonitorSilence") && !eng.includes("monitor asserted to"));
+check("1 · no attach-time MASTER re-assert", !eng.includes("reassertMaster") && !eng.includes("operatorMasterLevel"));
+check("1 · no cached operator monitor level", !(eng + mix).includes("noteOperatorMonitor"));
+check("1 · the strip still sends the operator's change, then saves it",
+  mix.indexOf("setMonitorVolume?.(sid, value)") > 0 && mix.indexOf("setMonitorVolume?.(sid, value)") < mix.indexOf('"monitor_volume", String(value)'));
 
-console.log(NL + "── 2 · MONITOR: re-attach restores, never re-mutes ──");
-check("2 · a first-attach flag exists", eng.includes("private monitorAssertedOnce = false;"));
-check("2 · re-attach with no operator level leaves the bus alone",
-  eng.includes("if (this.monitorAssertedOnce && !this.monitorRaisedByOperator) {"));
-check("2 · …and says so in the log rather than silently returning",
-  eng.includes("already silent, leaving it alone"));
-check("2 · a RAISED monitor still re-applies on re-attach (daemon respawn resets the bus to 1.0)",
-  eng.includes("const level = this.monitorRaisedByOperator ? this.operatorMonitorLevel : 0;"));
+console.log(NL + "── 2 · the segue overlap is not re-pushed on attach ──");
+check("2 · no pushSegueOverlap", !eng.includes("pushSegueOverlap"));
 
 console.log(NL + "── 3 · AUTO FLICKER: a press is held until the daemon confirms ──");
 check("3 · an in-flight command ref exists", app.includes("const autoCmdRef = useRef<{ value: boolean; until: number } | null>(null);"));

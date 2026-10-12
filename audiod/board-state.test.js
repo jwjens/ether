@@ -231,3 +231,31 @@ describe("compareBoard", () => {
     expect(B.compareBoard(B.readSavedBoard(db, 2), { ok: false, reason: "no answer" })[0].setting).toBe("board");
   });
 });
+
+describe("the CART cut is part of the saved board (2026-10-12)", () => {
+  beforeEach(seed);
+  it("absent → not restored (the engine's own default stands)", () => {
+    expect(B.readSavedBoard(db, 2).slots.CART).toBeUndefined();
+  });
+  it("cart_channel_on 0 → CART restored OFF; 1 → ON; applied through the engine's setter", () => {
+    db.prepare("INSERT INTO station_config_kv VALUES (2, 'cart_channel_on', '0', NULL)").run();
+    const s = B.readSavedBoard(db, 2);
+    expect(s.slots.CART).toEqual({ muted: true });
+    const calls = [];
+    B.applyBoard(s, { setMuted: (slot, m) => { calls.push([slot, m]); return true; } });
+    expect(calls).toContainEqual(["CART", true]);
+    db.prepare("UPDATE station_config_kv SET value = '1' WHERE key = 'cart_channel_on'").run();
+    expect(B.readSavedBoard(db, 2).slots.CART).toEqual({ muted: false });
+  });
+  it("a CART row of its own on the board wins (its ON lamp is the newer truth)", () => {
+    db.prepare("INSERT INTO station_config_kv VALUES (2, 'cart_channel_on', '0', NULL)").run();
+    db.prepare("INSERT INTO deck_configs VALUES (2, 'CART', 'source', '', 1, 1, 0, 1, NULL)").run();
+    expect(B.readSavedBoard(db, 2).slots.CART.muted).toBe(false);
+  });
+  it("compared like any other cut", () => {
+    db.prepare("INSERT INTO station_config_kv VALUES (2, 'cart_channel_on', '0', NULL)").run();
+    const saved = B.readSavedBoard(db, 2);
+    const d = B.compareBoard(saved, { ok: true, control: { slots: { CART: { muted: false } } } });
+    expect(d.filter(x => x.setting.startsWith("CART")).map(x => [x.setting, x.label])).toEqual([["CART.muted", "CART ON/OFF"]]);
+  });
+});

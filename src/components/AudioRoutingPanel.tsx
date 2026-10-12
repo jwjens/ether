@@ -89,17 +89,9 @@ export function AudioRoutingPicker({ onApplied }: { onApplied: () => void }) {
         const stns: Station[] = await ether.stations.list();
         setStations(stns);
 
-        // Startup: apply saved device for every station
-        await Promise.all(stns.map(async (s: Station) => {
-          try {
-            const rows = await query<{ value: string }>(
-              "SELECT value FROM station_config_kv WHERE station_id=? AND key='audio_output_device'",
-              [s.id]
-            );
-            const dev = rows[0]?.value;
-            if (dev) await ether.audio.setOutputDevice(s.id, dev);
-          } catch {}
-        }));
+        // No device is sent on open (Jeff, 2026-10-12: the window never writes a board value it didn't get from the
+        // operator). The engine opens each station's saved output itself (audiod/board-state.js), and only when it is
+        // not already on it — a re-send from here reopened every station's output each time this panel mounted.
 
         // Open on the station you're currently viewing (so the picker doubles as a
         // "which station am I monitoring" switch), falling back to the first station.

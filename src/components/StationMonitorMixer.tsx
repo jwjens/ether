@@ -1,6 +1,5 @@
-import { posToGain, gainToPos, formatDb, faderMarks } from "../lib/faderLaw";
+import { posToGain, gainToPos, formatDb, faderMarks, MAX_GAIN } from "../lib/faderLaw";
 import { useFaderTop } from "../lib/useFaderTop";
-import { getEngine } from "../audio/engine-registry";
 // src/components/StationMonitorMixer.tsx
 // Per-station LOCAL monitor mixer. Each station is a collapsible strip with its own monitor
 // fader (what you HEAR on the local speakers) + output device. The monitor fader drives the
@@ -47,7 +46,7 @@ export default function StationMonitorMixer() {
             "SELECT key, value FROM station_config_kv WHERE station_id=? AND key IN ('monitor_volume','audio_output_device')", [s.id]);
           const mv = rows.find(r => r.key === "monitor_volume")?.value;
           const od = rows.find(r => r.key === "audio_output_device")?.value;
-          v[s.id] = mv != null && mv !== "" ? Math.max(0, Math.min(1, parseFloat(mv))) : 1;
+          v[s.id] = mv != null && mv !== "" ? Math.max(0, Math.min(MAX_GAIN, parseFloat(mv))) : 1;
           d[s.id] = od ?? "";
         }));
         setVol(v); setDev(d);
@@ -70,7 +69,7 @@ export default function StationMonitorMixer() {
           "SELECT station_id, value FROM station_config_kv WHERE key='monitor_volume' AND deleted_at IS NULL", []);
         setVol(prev => {
           const next = { ...prev };
-          for (const r of rows) { const n = parseFloat(r.value); if (Number.isFinite(n)) next[r.station_id] = Math.max(0, Math.min(1, n)); }
+          for (const r of rows) { const n = parseFloat(r.value); if (Number.isFinite(n)) next[r.station_id] = Math.max(0, Math.min(MAX_GAIN, n)); }
           return next;
         });
       } catch { /* keep what is shown */ }
@@ -80,12 +79,8 @@ export default function StationMonitorMixer() {
 
   const setMonitor = useCallback((sid: number, value: number) => {
     setVol(prev => ({ ...prev, [sid]: value }));
-    // Tell the ENGINE the operator owns this level (2026-08-03). Without this,
-    // assertMonitorSilence() re-mutes to 0 on EVERY daemon attach — and a station switch tears the
-    // engine down, so switching back is a fresh attach. Receipt: "monitor asserted to 0.00 at attach
-    // (station 2)" three times across two switches. noteOperatorMonitor() was written for exactly this
-    // in the D2 slice and never wired to anything, so monitorRaisedByOperator was permanently false.
-    try { getEngine(sid).noteOperatorMonitor(value); } catch { /* engine not up yet — level still persists below */ }
+    // The operator's change: to the engine, then saved. Nothing re-sends it on attach any more (2026-10-12) — the engine
+    // restores monitor_volume itself (audiod/board-state.js).
     (window as any).ether?.audio?.setMonitorVolume?.(sid, value);
     (window as any).ether?.stationConfigKv?.upsertByKey?.(sid, "monitor_volume", String(value));
   }, []);
