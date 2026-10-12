@@ -175,3 +175,46 @@ change is held to)." If Jeff says so, the procedure is:
 
 Engine `native/ether-audio.node` rebuilt from 7e218ca: sha256 **7598aef6be66488d5120688d8a4f67bbdb582965a87999227908a4925225658c**
 (6,146,048 bytes).
+
+**Installer:** `C:\openair\dist-electron\Ether Setup 4.6.59.exe`, built 2026-10-12 12:13 from **77c5e85**,
+215,958,583 bytes, sha256 **aad22f7d141256ba2dab45c2b50a4a3a65e4cad87f907f27b8861ca1be727df6**. Unsigned local build,
+version unchanged (4.6.59), not published, release held. The previous local 4.6.59 is kept as
+`Ether Setup 4.6.59 - faders-loudness 2026-10-11 1446 - SUPERSEDED.exe`.
+
+Gates on this tree:
+- `verify-packaged`: **RELEASE GATE PASS**; the packaged daemon reports native 7598aef6…, code 1e45eff8….
+- tsc: 0 errors. vitest: 843/843.
+- leak guard: baseline holds. station-isolation guard: pass. local-playback guard: pass. window-station: pass.
+- show-presets 52/52. meter-contract 30/30. board-restore (real daemon) 39/39.
+
+PowerShell check before installing:
+`(Get-FileHash "C:\openair\dist-electron\Ether Setup 4.6.59.exe").Hash -eq "AAD22F7D141256BA2DAB45C2B50A4A3A65E4CAD87F907F27B8861CA1BE727DF6"`
+
+## 8 · Test steps (Jeff)
+
+Fully quit Ether (tray → Quit) before installing, then reopen. Help → About should read 4.6.59. The Health Monitor must
+show **no red "daemon engine mismatch"**: the engine is 7598aef6.
+
+1. **MONITOR silent until known.** On a machine with a saved MONITOR, the room comes up at the saved level (no blast at
+   0 dB, no silence). Optional, on a test machine only: delete `master_monitor_volume` with Ether closed. The MONITOR
+   fader should read **off** and the room stay silent while the stream keeps playing; raise MONITOR and the room
+   follows.
+2. **MASTER and MONITOR top at 0 dB.**
+   - MASTER at 0 dB sits at the top of its travel; MONITOR −6.7 dB draws at about 83%.
+   - Preferences → Loudness & fader smoothing → Fader maximum shows channel +10, AUX rows +10, MASTER 0, MONITOR 0, each
+     with a "now:" value.
+   - Set MONITOR to +6 and save: the fader redraws and the room level does not jump. Set it back to 0.
+3. **Duck depth.** With the Ducker panel at its defaults (−22 dB), a cart over music ducks the music by the same amount
+   as before you touched anything. There should be no deeper −28 first duck after an engine restart.
+4. **Stream bitrate.** If your station's Icecast bitrate is not 128, the fallback stream path now uses it (Icecast
+   admin → mount → bitrate).
+5. **Exact-ceiling limiter** (Process stream ON; Master Out → Processor → OPEN):
+   - The ceiling label reads "−1.0 dBTP set · limits at −1.0 dBTP" (was −2.2).
+   - Play hot material: **True peak max** on the loudness panel should settle at −1.0, not about −1.35.
+   - Programme under the ceiling is unchanged; limited material is up to ~0.3 dB louder.
+   - Latency through the processor is 1.73 ms (was 1.50).
+6. Carts and faders as in the part-1 steps (`docs/faders-loudness-build-2026-10-11.md`): every fader plays without a
+   touch, and the AUX and MAIN routing holds.
+
+**Open for Jeff:** say-so to re-capture the parity goldens and the AUX checksum (§6). Until then the Rust suite reports
+those 5 known reds.
