@@ -175,4 +175,25 @@ See §4. The new build carries the senses above, so after install the same `/hea
 
 ## 4 · Builds and measurement
 
-Filled in below with the installer hashes and the after-numbers.
+Both builds are local and unsigned, version 4.6.59. No bump, nothing pushed. Engine `7598aef6be66488d5120688d8a4f67bbdb582965a87999227908a4925225658c` (unchanged); `verify-packaged` RELEASE GATE PASS on both.
+
+| Build | From | sha256 | Bytes |
+|---|---|---|---|
+| **The fix**: `C:\openair\dist-electron\Ether Setup 4.6.59.exe` | `0acf1f8` | `6b1fcb432d023979337a754daabff803bc304a4f9508f6498135985af6560ad5` | 215,971,843 |
+| **Measurement "before"**: `…\Ether Setup 4.6.59 - MEASURE-BEFORE a27d3d8 - NOT FOR RELEASE.exe` | `a27d3d8` = `193aae1` (the build Jeff runs) **+ the responsiveness sense only** (local branch `measure/before-senses`) | `e406bfa6960c7d420fdde40efd5dc276bd2e6eb3140874fd01a5724c71c968d9` | 215,957,281 |
+
+The `24d656e7` installer is kept as `Ether Setup 4.6.59 - board-watch 24d656e7 2026-10-12 1417 - SUPERSEDED.exe`.
+
+**Packaged worker check.** The packaged `Ether.exe` (`ELECTRON_RUN_AS_NODE`) started the library-health worker from **inside `app.asar`** with the packaged `better-sqlite3`. It swept all 5 stations of the snapshot (`inWorker=true`) and answered the off-main query.
+
+**Why two builds.** Main-process lag "before" is measured above from the live app. Renderer long tasks and first-click timing can only be read by a build that carries the sense, so the "before" build is the code Jeff runs now plus the sense and nothing else.
+
+**The measurement** (needs Jeff: only he installs):
+1. Install the MEASURE-BEFORE build. Use Ether normally for ~5 minutes with music playing, and open/close pop-outs (Up Next, Carts, Health Monitor, Library) with first clicks. Meanwhile: `node scripts/measure-responsiveness.js 5 before before.json` (read-only, ends by itself).
+2. Install the fix build and do the same, with `… 5 after after.json`.
+3. Compare:
+   - `main.eventLoopLagPeakMs` and the stalls;
+   - `slowestHandlers`;
+   - per window: `longTaskPeakMs`, `inputsOverOneFrame`, `inputResponsePeakMs` and `firstInput`.
+
+**Temporary tooling:** none left running. The 10-minute `/health` sampler (2026-10-12 21:52–22:02 UTC) ended by itself. `measure-responsiveness.js` runs only when started, and stops after the given minutes.
