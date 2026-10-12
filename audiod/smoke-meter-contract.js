@@ -287,9 +287,11 @@ console.log("\nRULE 9 - no OUT loudness estimate anywhere in the engine");
 console.log("\nRULE 10 - the limiter's detection margin lives in one place and the wire derives from it");
 {
   const pp = read("native/src/program_processor.rs");
-  const lits = pp.split("\n").filter(l => !/^\s*\/\//.test(l) && !/^\s*\/\/\//.test(l) && /\b1\.15\b/.test(l.replace(/\/\/.*$/, "")));
-  if (lits.length === 1 && /const DETECT_MARGIN: f32 = 1\.15/.test(lits[0])) ok("1.15 appears once in code: the DETECT_MARGIN constant");
-  else bad(`expected exactly the DETECT_MARGIN constant to hold 1.15, found ${lits.length} code line(s): ${lits.map(l => l.trim()).join(" | ")}`);
+  // EXACT CEILING (Jeff, 2026-10-11): the margin is 1.0 — peaks land on the set ceiling (program_processor.rs test
+  // peaks_land_on_the_set_ceiling_within_0_1_db). The old 1.15 must not survive anywhere in code.
+  const lits = pp.split("\n").filter(l => !/^\s*\/\//.test(l) && /\b1\.15\b/.test(l.replace(/\/\/.*$/, "")));
+  if (/const DETECT_MARGIN: f32 = 1\.0;/.test(pp) && lits.length === 0) ok("DETECT_MARGIN is 1.0 (no margin) and 1.15 is gone from code");
+  else bad(`expected DETECT_MARGIN = 1.0 and no 1.15 in code; found ${lits.length} line(s) with 1.15: ${lits.map(l => l.trim()).join(" | ")}`);
   if (/tp\s*=\s*self\.os\.push_peak\(l, r\)\s*\*\s*DETECT_MARGIN/.test(pp)) ok("the limiter detects with DETECT_MARGIN");
   else bad("the limiter no longer detects with DETECT_MARGIN");
   if (/detect_margin_db\(\)/.test(libRs) && /"eff":\s*\(\(set as f64 - margin\)/.test(libRs)) ok("ceil.*.eff = set − detect_margin_db()");

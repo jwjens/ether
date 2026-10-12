@@ -33,7 +33,7 @@ export function makeRack(o: { target?: number; ceiling?: number; bands?: number[
 /** THE BUILT-IN PRESETS. Only the target and the ceiling come from each standard; rate, clamp and release are
  *  the shipped values (none invented). "Ether v1 (shipped)" is the default — and it IS the −14 LUFS
  *  streaming target, so there is no separate "Stream −14" (Jeff's slice 4 ruling 4). The ceilings are the
- *  SETTING: with the limiter's detection margin each limits ~1.2 dB lower (the ceiling label says where). */
+ *  SETTING, and the limiter holds true peaks exactly on it (2026-10-11; the ceiling label says where). */
 export const BUILT_IN_PRESETS: RackPreset[] = [
   { name: "Ether v1 (shipped)", doc: makeRack(), builtIn: true },
   { name: "Broadcast −24 (ATSC A/85)", doc: makeRack({ target: -24, ceiling: -2.0 }), builtIn: true },

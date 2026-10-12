@@ -5695,9 +5695,11 @@ mod channel_rack_timing {
 
     /// `n_active` faders playing, racks IN on all of them if `racks`; the first `n_fading` get a new rack version
     /// EVERY buffer (so each fade is followed at once by the held one — crossfading continuously).
-    fn measure(n_active: usize, racks: bool, n_fading: usize, mics: usize, mpc: f64) -> Row { measure_x(n_active, racks, n_fading, mics, false, mpc) }
+    fn measure(n_active: usize, racks: bool, n_fading: usize, mics: usize, mpc: f64) -> Row { measure_x(n_active, racks, n_fading, mics, false, false, mpc) }
     /// `full`: every rack is the whole Filters → Gate → PEQ → Comp chain (SLICE 6).
-    fn measure_x(n_active: usize, racks: bool, n_fading: usize, mics: usize, full: bool, mpc: f64) -> Row {
+    /// `proc`: "Process local output" AND "Process stream" ON — the loudness ride and the true-peak limiter run on
+    /// both branches every buffer (the exact-ceiling limiter, 2026-10-11, is in the gate's p99 through these rows).
+    fn measure_x(n_active: usize, racks: bool, n_fading: usize, mics: usize, full: bool, proc: bool, mpc: f64) -> Row {
         let rb = HeapRb::<f32>::new(PROGRAM_BUS_BUF);
         let (prod, mut stream_cons) = rb.split();
         let mut b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)));
@@ -5717,6 +5719,7 @@ mod channel_rack_timing {
             mic_in.push((p, sh, crate::micin::tests::Gen { rate: 48_000.0, freq: 300.0 + 100.0 * m as f64, amp: 0.2, n: 0 }, 0.0));
         }
         let mut blk: Vec<f32> = Vec::with_capacity(1024);
+        b.proc_local = proc; b.proc_stream = proc;
         let mut cur = b.params();
         let bus = Arc::new(crate::rt::RtMutex::new(b));
         let (mut cmd, mut garbage) = (h.cmd_prod, h.garbage_cons);
@@ -5792,13 +5795,15 @@ mod channel_rack_timing {
             (" 4 faders + 1 MIC (48 k), racks IN", 4, true, 0, 1, true),
             (" 4 faders + 5 MICS (48 k), racks IN", 4, true, 0, 5, true),
             (" 4 faders + 1 MIC, FULL rack IN (flt+gate+peq+comp)", 4, true, 0, 1, true),
+            (" 4 faders + 5 MICS, racks IN, PROCESSING ON (both)", 4, true, 0, 5, true),
+            (" 4 faders, racks IN, 1 crossfading, PROCESSING ON", 4, true, 1, 0, true),
             ("12 faders, FULL rack IN, ALL CROSSFADING (extreme)", 12, true, 12, 0, false),
             ("12 faders, racks IN, steady", 12, true, 0, 0, false),
             ("12 faders, racks IN, ALL CROSSFADING (extreme)", 12, true, 12, 0, false),
         ];
         let mut fails = Vec::new();
         for (name, n, racks, fading, mics, gated) in rows {
-            let r = measure_x(n, racks, fading, mics, name.contains("FULL"), mpc);
+            let r = measure_x(n, racks, fading, mics, name.contains("FULL"), name.contains("PROCESSING ON"), mpc);
             let rk = if racks {
                 let c = &r.worst_calls;
                 let (mx, sum) = (c.iter().cloned().fold(0.0, f64::max), c.iter().sum::<f64>());

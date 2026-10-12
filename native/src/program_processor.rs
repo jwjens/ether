@@ -18,73 +18,77 @@
 use ebur128::{EbuR128, Mode};
 
 const CEILING_DBTP: f32 = -1.0; // true-peak ceiling
-/// DETECTION MARGIN: the limiter holds `ceiling` against `true_peak × DETECT_MARGIN`, i.e. it limits
-/// 20·log10(1.15) = 1.214 dB BELOW the ceiling the operator sets (−1.0 set → acts at −2.21 dBTP). The one
-/// place this number lives: the limiter uses it and the meter bus reports the effective ceiling from it
-/// (docs/dsp-loudness-meter.md §3.3). Whether the margin stays is Jeff's call once the slice 3 true-peak
-/// meter shows where the output really lands — the label says what it does until then.
-pub(crate) const DETECT_MARGIN: f32 = 1.15;
+/// DETECTION MARGIN — NONE (Jeff, 2026-10-11: "peaks land on the set ceiling"). It was ×1.15 (1.214 dB): the old
+/// detector (8 taps per phase, per-phase normalised, no phase on the real samples) under-read true peak, so the
+/// limiter acted 1.2 dB early and the stream peaked ~0.33 dB under the setting (measured,
+/// docs/faders-loudness-build-2026-10-11-part2.md §5). The detector is now the BS.1770-4 Annex 2 interpolator
+/// itself and the gain path is exact (see TruePeakLimiter), so the margin is 1.0. Kept as the one named place the
+/// meter bus derives the effective ceiling from (docs/dsp-loudness-meter.md §3.3): eff = set − 0 dB.
+pub(crate) const DETECT_MARGIN: f32 = 1.0;
 /// The margin in dB (≈ 1.214).
 pub(crate) fn detect_margin_db() -> f32 { 20.0 * DETECT_MARGIN.log10() }
 fn db_to_lin(db: f32) -> f32 { 10.0_f32.powf(db / 20.0) }
 fn lin_to_db(x: f32) -> f32 { if x <= 1e-9 { -120.0 } else { 20.0 * x.log10() } }
 
-// ── 4× oversampler for true-peak detection (windowed-sinc polyphase FIR, computed once) ────────────────
-// Detects inter-sample peaks the 1× sample stream hides. 4 phases × TAPS_PER_PHASE taps per channel.
+// ── 4× oversampler for true-peak detection — THE BS.1770-4 ANNEX 2 INTERPOLATOR ─────────────────────────────────
+// 48 taps, 4 phases × 12, Hann-windowed sinc — coefficient for coefficient the interpolator of the reference true-peak
+// meter (the ebur128 crate's Mode::TRUE_PEAK, libebur128's design), so the limiter measures exactly what a BS.1770
+// meter will read on its output. Phase 0 is the real sample itself (every other phase-0 tap sits on a sinc zero), and
+// the four phases of push j sit at sample times j−6, j−5.75, j−5.5, j−5.25: the detector looks DETECT_BACK samples back.
 const PHASES: usize = 4;
-const TAPS_PER_PHASE: usize = 8;
+const TAPS_PER_PHASE: usize = 12;
+/// How far behind the newest input the detected positions are: phase p of push j is at time j − DETECT_BACK + p/4.
+const DETECT_BACK: usize = TAPS_PER_PHASE / 2;
 
 struct Oversampler4x {
-    // phase[p][t] — polyphase coefficients; history ring per channel.
-    coeffs: [[f32; TAPS_PER_PHASE]; PHASES],
+    // coeffs[t][p] — tap t of phase p (the meter's own layout); history ring per channel, newest at `pos`.
+    coeffs: [[f32; PHASES]; TAPS_PER_PHASE],
     hist_l: [f32; TAPS_PER_PHASE],
     hist_r: [f32; TAPS_PER_PHASE],
     pos: usize,
 }
 impl Oversampler4x {
     fn new() -> Self {
-        // Windowed-sinc lowpass at fs/2 (of the 1× rate), designed across PHASES*TAPS_PER_PHASE taps,
-        // decomposed into PHASES polyphase branches. Hann window. Normalized per phase to unity DC.
-        let n = PHASES * TAPS_PER_PHASE;
-        let mut proto = vec![0.0f32; n];
-        let fc = 0.5 / PHASES as f32; // normalized cutoff for the up-sampled rate
-        for i in 0..n {
-            let m = i as f32 - (n as f32 - 1.0) / 2.0;
-            let sinc = if m.abs() < 1e-6 { 2.0 * fc } else { (2.0 * std::f32::consts::PI * fc * m).sin() / (std::f32::consts::PI * m) };
-            let w = 0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / (n as f32 - 1.0)).cos();
-            proto[i] = sinc * w;
-        }
-        let mut coeffs = [[0.0f32; TAPS_PER_PHASE]; PHASES];
-        for p in 0..PHASES {
-            let mut sum = 0.0f32;
-            for t in 0..TAPS_PER_PHASE { let c = proto[t * PHASES + p] * PHASES as f32; coeffs[p][t] = c; sum += c; }
-            // Unity-DC normalize each phase so the oversampled envelope is not biased.
-            if sum.abs() > 1e-6 { for t in 0..TAPS_PER_PHASE { coeffs[p][t] /= sum; } }
+        let taps = PHASES * TAPS_PER_PHASE;          // 48
+        let window = taps as f64;
+        let mut coeffs = [[0.0f32; PHASES]; TAPS_PER_PHASE];
+        for t in 0..TAPS_PER_PHASE {
+            for p in 0..PHASES {
+                let j = (t * PHASES + p) as f64;
+                let w = 0.5 * (1.0 - (2.0 * std::f64::consts::PI * j / window).cos());
+                let m = j - window / 2.0;
+                let x = m * std::f64::consts::PI / PHASES as f64;
+                coeffs[t][p] = (if m.abs() > 1e-6 { w * x.sin() / x } else { w }) as f32;
+            }
         }
         Oversampler4x { coeffs, hist_l: [0.0; TAPS_PER_PHASE], hist_r: [0.0; TAPS_PER_PHASE], pos: 0 }
     }
     // Push one stereo sample; return the max |true-peak| across its 4 sub-sample positions (both channels).
     #[inline]
     fn push_peak(&mut self, l: f32, r: f32) -> f32 {
+        self.pos = if self.pos == 0 { TAPS_PER_PHASE - 1 } else { self.pos - 1 };
         self.hist_l[self.pos] = l;
         self.hist_r[self.pos] = r;
-        let mut peak = 0.0f32;
-        for p in 0..PHASES {
-            let (mut al, mut ar) = (0.0f32, 0.0f32);
-            for t in 0..TAPS_PER_PHASE {
-                let idx = (self.pos + TAPS_PER_PHASE - t) % TAPS_PER_PHASE;
-                let c = self.coeffs[p][t];
-                al += c * self.hist_l[idx];
-                ar += c * self.hist_r[idx];
-            }
-            peak = peak.max(al.abs()).max(ar.abs());
+        let (mut al, mut ar) = ([0.0f32; PHASES], [0.0f32; PHASES]);
+        for t in 0..TAPS_PER_PHASE {
+            let idx = self.pos + t;
+            let idx = if idx >= TAPS_PER_PHASE { idx - TAPS_PER_PHASE } else { idx };
+            let (xl, xr) = (self.hist_l[idx], self.hist_r[idx]);
+            let c = &self.coeffs[t];
+            for p in 0..PHASES { al[p] += c[p] * xl; ar[p] += c[p] * xr; }
         }
-        self.pos = (self.pos + 1) % TAPS_PER_PHASE;
+        let mut peak = 0.0f32;
+        for p in 0..PHASES { peak = peak.max(al[p].abs()).max(ar[p].abs()); }
         peak
     }
 }
 
 // ── True-peak look-ahead limiter (-1 dBTP) ─────────────────────────────────────────────────────────────
+/// Samples either side of a detected peak that are held at its gain: half the interpolator's support, so the output
+/// interpolated around the peak is built only from samples carrying exactly that gain.
+const NEIGH: usize = TAPS_PER_PHASE / 2;
+/// Re-sum the attack box exactly this often (samples), so its running f64 sum can never drift.
+const BOX_RESUM: u64 = 1 << 20;
 struct TruePeakLimiter {
     ceiling: f32,          // linear — SETTABLE (operator's dBTP ceiling)
     fs: f32,               // sample rate, kept so release_ms can be recomputed without realloc
@@ -94,12 +98,29 @@ struct TruePeakLimiter {
     // the point of use, the processed one is not), which is distortion the operator cannot hear locally
     // but a listener's decoder will. Jeff's ruling, 2026-09-07.
     bypass: bool,
-    la: usize,             // look-ahead in samples
-    delay_l: Vec<f32>, delay_r: Vec<f32>, // audio delay line (aligns gain to the peak)
-    req_ring: Vec<f32>,    // required-gain over the look-ahead window (min = target)
+    // EXACT CEILING (Jeff, 2026-10-11). The gain path, per input sample j:
+    //   req[j]  = ceiling / detected true peak (1 when under) — the gain that puts THIS peak exactly on the ceiling;
+    //   hold[j] = min(req) over the last `win` samples (sliding minimum);
+    //   box[j]  = mean(hold) over the last `la` samples (the attack: a straight-line ramp, no overshoot);
+    //   gain    = box when it falls, released toward it (rel) when it rises — so gain ≤ box always.
+    // The audio is delayed `la` (box) + DETECT_BACK (the detector's own lag) + NEIGH − 1 samples, and the hold spans
+    // la + 2·NEIGH + 1, so every sample within ±NEIGH of a detected peak — the whole support of the interpolator that
+    // measures the output — leaves with a gain no higher than that peak's req, and an isolated peak with EXACTLY it.
+    // The output then reads, on the same BS.1770 interpolator, at the ceiling. (The old path smoothed toward the
+    // window minimum with a one-pole attack that had covered only ~86% of the way when the peak left the delay —
+    // part of why it needed the ×1.15 margin.)
+    la: usize,             // box (attack) length in samples, ~1.5 ms
+    win: usize,            // hold window = la + 2·NEIGH + 1
+    delay: usize,          // audio delay = la + DETECT_BACK + NEIGH − 1 (the fixed on-path latency)
+    delay_l: Vec<f32>, delay_r: Vec<f32>, // audio delay line, `delay` long
+    req_ring: Vec<f32>,    // required gain over the hold window
+    box_ring: Vec<f32>,    // the last `la` hold values (the box average's window)
+    box_sum: f64,          // their sum (f64; re-summed exactly every BOX_RESUM samples so it can never drift)
+    bpos: usize,
+    hpos: usize,           // req_ring slot of the newest sample
     dpos: usize,
-    gain: f32,             // current smoothed gain (linear)
-    atk: f32, rel: f32,    // per-sample smoothing coeffs (attack completes within `la`)
+    gain: f32,             // current gain (linear)
+    rel: f32,              // per-sample release coefficient
     os: Oversampler4x,
     gr_db: f32,            // metering: current gain reduction (dB, >= 0)
     gr_buf_max: f32,       // SLICE 3 — the largest gr_db since the buffer began (process_planar/process_block reset it)
@@ -115,22 +136,26 @@ struct TruePeakLimiter {
     //
     // Preallocated to `la` and never resized: the hot-path rule in this file's header (no allocation
     // in process()) applies to this exactly as it does to the delay lines.
-    dq_idx: Vec<usize>,    // ring of sample indices, monotonically increasing in req value
+    dq_idx: Vec<usize>,    // ring (`win` long) of sample indices, monotonically increasing in req value
     dq_head: usize,        // front slot (the window minimum)
     dq_len: usize,         // occupied slots
     n: u64,                // absolute sample counter, for window expiry
 }
 impl TruePeakLimiter {
     fn new(sample_rate: f32) -> Self {
-        let la = ((sample_rate * 0.0015).round() as usize).max(8); // ~1.5 ms look-ahead
-        // Attack reaches target within the look-ahead window; release ~120 ms.
-        let atk = (-1.0 / (la as f32 * 0.5)).exp();
-        let rel = (-1.0 / (sample_rate * 0.120)).exp();
+        let la = ((sample_rate * 0.0015).round() as usize).max(8); // ~1.5 ms attack ramp
+        let win = la + 2 * NEIGH + 1;
+        // Sample s near a peak detected at push j (positions j−DETECT_BACK … +1) leaves at step s + delay; its box window
+        // [s+delay−la+1, s+delay] must sit inside that peak's hold span [j, j+win−1] for s ∈ [c−NEIGH, c+1+NEIGH]:
+        // delay = la + DETECT_BACK + NEIGH − 1 meets both ends exactly.
+        let delay = la + DETECT_BACK + NEIGH - 1;
+        let rel = (-1.0 / (sample_rate * 0.120)).exp();             // release ~120 ms (settable)
         TruePeakLimiter {
-            ceiling: db_to_lin(CEILING_DBTP), fs: sample_rate, bypass: false, la,
-            delay_l: vec![0.0; la], delay_r: vec![0.0; la], req_ring: vec![1.0; la],
-            dpos: 0, gain: 1.0, atk, rel, os: Oversampler4x::new(), gr_db: 0.0, gr_buf_max: 0.0,
-            dq_idx: vec![0; la], dq_head: 0, dq_len: 0, n: 0,
+            ceiling: db_to_lin(CEILING_DBTP), fs: sample_rate, bypass: false, la, win, delay,
+            delay_l: vec![0.0; delay], delay_r: vec![0.0; delay], req_ring: vec![1.0; win],
+            box_ring: vec![1.0; la], box_sum: la as f64, bpos: 0, hpos: 0,
+            dpos: 0, gain: 1.0, rel, os: Oversampler4x::new(), gr_db: 0.0, gr_buf_max: 0.0,
+            dq_idx: vec![0; win], dq_head: 0, dq_len: 0, n: 0,
         }
     }
     /// Runtime parameter changes. Both are plain scalar writes — nothing here resizes a buffer, which
@@ -147,40 +172,47 @@ impl TruePeakLimiter {
         // advanced, so the on-path latency changes when bypass is toggled — acceptable for a test tool,
         // and the reason this must never be a persisted setting.
         if self.bypass { self.gr_db = 0.0; return (l, r); }
-        // 1) True-peak of the incoming sample; required instantaneous gain to hold the ceiling.
-        let tp = self.os.push_peak(l, r) * DETECT_MARGIN; // detection headroom: hold the ceiling vs a full BS.1770 true-peak measurement
+        // 1) True peak around sample j − DETECT_BACK (the BS.1770 interpolator); the gain that puts it on the ceiling.
+        let tp = self.os.push_peak(l, r) * DETECT_MARGIN;
         let req = if tp > self.ceiling { self.ceiling / tp } else { 1.0 };
-        // 2) Look-ahead target = min required-gain across the window (duck BEFORE the peak arrives).
-        //    Sliding-window minimum via the monotonic deque — same answer as the old full scan of
-        //    req_ring, in O(1) amortised instead of O(la). See the struct note.
-        self.req_ring[self.dpos] = req;
-        let cap = self.la;
-        // Drop the front once it has fallen out of the look-ahead window.
-        if self.dq_len > 0 {
-            let oldest = self.n.wrapping_sub(cap as u64);
-            if (self.dq_idx[self.dq_head] as u64) <= oldest && self.n >= cap as u64 {
+        // 2) HOLD: the minimum required gain over the last `win` samples — monotonic-deque sliding minimum, O(1)
+        //    amortised (same structure as before, over the hold window).
+        let cap = self.win;
+        self.hpos = (self.n % cap as u64) as usize;
+        self.req_ring[self.hpos] = req;
+        if self.dq_len > 0 && self.n >= cap as u64 {
+            let oldest = self.n - cap as u64;
+            if (self.dq_idx[self.dq_head] as u64) <= oldest {
                 self.dq_head = (self.dq_head + 1) % cap;
                 self.dq_len -= 1;
             }
         }
-        // Pop every tail entry this sample undercuts — they can never be the minimum again.
         while self.dq_len > 0 {
             let tail = (self.dq_head + self.dq_len - 1) % cap;
             if self.req_ring[self.dq_idx[tail] % cap] >= req { self.dq_len -= 1; } else { break; }
         }
         let tail_slot = (self.dq_head + self.dq_len) % cap;
-        self.dq_idx[tail_slot] = self.n as usize;   // absolute index; req_ring slot is idx % cap == dpos
+        self.dq_idx[tail_slot] = self.n as usize;
         self.dq_len += 1;
-        let target = self.req_ring[self.dq_idx[self.dq_head] % cap];
-        // 3) Smooth: fast attack (down) within look-ahead, slow release (up).
-        if target < self.gain { self.gain = self.atk * self.gain + (1.0 - self.atk) * target; }
-        else { self.gain = self.rel * self.gain + (1.0 - self.rel) * target; }
-        // 4) Output the DELAYED sample scaled by the anticipatory gain.
+        let hold = self.req_ring[self.dq_idx[self.dq_head] % cap];
+        // 3) ATTACK: the box average of the held minimum — a straight ramp down over `la` that arrives at the held
+        //    value exactly when the peak's neighbourhood leaves the delay.
+        self.box_sum += hold as f64 - self.box_ring[self.bpos] as f64;
+        self.box_ring[self.bpos] = hold;
+        self.bpos += 1;
+        if self.bpos == self.la { self.bpos = 0; }
+        if self.n % BOX_RESUM == 0 { self.box_sum = self.box_ring.iter().map(|&v| v as f64).sum(); }
+        let target = ((self.box_sum / self.la as f64) as f32).min(1.0);
+        // 4) RELEASE: falling follows the box at once; rising eases back at `rel` — never above the box.
+        if target <= self.gain { self.gain = target; }
+        else { self.gain = (self.rel * self.gain + (1.0 - self.rel) * target).min(target); }
+        // 5) Output the DELAYED sample scaled by the gain.
         let ol = self.delay_l[self.dpos] * self.gain;
         let or = self.delay_r[self.dpos] * self.gain;
         self.delay_l[self.dpos] = l;
         self.delay_r[self.dpos] = r;
-        self.dpos = (self.dpos + 1) % self.la;
+        self.dpos += 1;
+        if self.dpos == self.delay { self.dpos = 0; }
         self.n = self.n.wrapping_add(1);
         self.gr_db = -lin_to_db(self.gain); // >= 0
         if self.gr_db > self.gr_buf_max { self.gr_buf_max = self.gr_db; }
@@ -312,9 +344,8 @@ impl ProgramProcessor {
     /// THE OPERATOR'S PARAMETERS, applied from the settings snapshot the callback already holds.
     ///
     /// Every one of these is a plain scalar write. NOTHING here resizes a buffer — that is the hot-path
-    /// rule this file opens with, and it is why look-ahead, attack, the ×1.15 detection headroom and the
-    /// oversampling factor are absent: the first three would change the delay-line size or let peaks past
-    /// the ceiling, and the last is a CPU/quality tradeoff, not a sound anyone chooses.
+    /// rule this file opens with, and it is why look-ahead, attack and the oversampling factor are absent: the
+    /// first two would change the delay-line size, and the last is the BS.1770 interpolator itself, not a choice.
     ///
     /// The two bypasses are deliberately in this call and NOT in any stored settings key: they reach the
     /// engine live and die with the process.
@@ -409,7 +440,7 @@ impl ProgramProcessor {
     /// released inside the buffer; the meter bus reports this one.
     pub fn gain_reduction_max_db(&self) -> f32 { self.limiter.gr_buf_max }
     /// The fixed processing latency (limiter look-ahead), in samples. Zero when a branch is bypassed.
-    pub fn latency_samples(&self) -> usize { self.limiter.la }
+    pub fn latency_samples(&self) -> usize { self.limiter.delay }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -469,6 +500,48 @@ mod bench {
             i = end;
         }
         (sig, worst_ns)
+    }
+
+    /// EXACT CEILING (Jeff, 2026-10-11): "Add a test proving peaks land on the set ceiling within 0.1 dB." Every
+    /// worst case, at every ceiling, measured on the OUTPUT by the reference BS.1770 true-peak meter: the loudest peak
+    /// lands in [ceiling − 0.1, ceiling] dBTP (+0.01 for f32 rounding). Ride bypassed so the limiter alone is judged.
+    #[test]
+    fn peaks_land_on_the_set_ceiling_within_0_1_db() {
+        let secs = 4.0f32;
+        let n = (FS * secs) as usize;
+        let sine = |f: f32, ph: f32, amp: f32| -> Vec<f32> {
+            let mut v = Vec::with_capacity(n * 2);
+            for i in 0..n { let x = amp * (2.0 * std::f32::consts::PI * f * i as f32 / FS + ph).sin(); v.push(x); v.push(x); }
+            v
+        };
+        let mut cases: Vec<(String, Vec<f32>)> = Vec::new();
+        // Inter-sample worst cases: near fs/4, phases that put the crest BETWEEN samples (sample peak ~3 dB under TP).
+        for &ph in &[0.0f32, 0.25, 0.5, 0.785] { cases.push((format!("12 kHz sine, phase {ph}, +6 dBTP"), sine(12_000.0, ph, 2.0))); }
+        cases.push(("11.9 kHz sine (beating crest), +3 dBTP".into(), sine(11_900.0, 0.3, 1.41)));
+        cases.push(("997 Hz sine, +6 dBTP".into(), sine(997.0, 0.0, 2.0)));
+        cases.push(("19 kHz sine, +2 dBTP".into(), sine(19_000.0, 0.1, 1.26)));
+        // Clipped (square-ish) noise at +6 dB — flat tops, dense peaks.
+        { let mut r = Rng(7); let mut v = Vec::with_capacity(n * 2);
+          for _ in 0..n { let x = (r.next() * 4.0).clamp(-2.0, 2.0); v.push(x); v.push(-x * 0.9); } cases.push(("clipped noise +6 dB".into(), v)); }
+        // Programme-like: bursty noise, hot.
+        cases.push(("bursty programme, hot".into(), gen(secs, 1.6, true, 11)));
+        // Isolated transients: single-sample clicks every 0.25 s on a quiet bed.
+        { let mut v = gen(secs, 0.05, false, 3); for k in 0..(n / 12_000) { let i = k * 12_000 + 500; v[2 * i] = 1.8; v[2 * i + 1] = -1.5; } cases.push(("isolated clicks +5 dB".into(), v)); }
+
+        let mut fails = Vec::new();
+        for &ceil in &[-0.1f32, -1.0, -3.0, -6.0] {
+            for (name, sig) in &cases {
+                let mut p = ProgramProcessor::new(FS, -14.0);
+                p.set_params(ceil, 120.0, 1.5, 12.0, true, false);
+                let mut out = sig.clone();
+                for chunk in out.chunks_mut(480 * 2) { p.process_block(chunk); }
+                let tin = max_true_peak_dbtp(sig);
+                let tp = max_true_peak_dbtp(&out);
+                println!("[ceiling] set {:>5.1}  {:<36} in {:>6.2} → out {:>7.3} dBTP  ({:+.3} dB)", ceil, name, tin, tp, tp - ceil);
+                if !(tp <= ceil + 0.01 && tp >= ceil - 0.1) { fails.push(format!("{name} @ {ceil}: {tp:.3} dBTP")); }
+            }
+        }
+        assert!(fails.is_empty(), "peaks did not land on the ceiling within 0.1 dB: {fails:?}");
     }
 
     #[test]

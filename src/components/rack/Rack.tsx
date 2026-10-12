@@ -267,7 +267,7 @@ function MasterRack({ stationId, stationUuid }: Props) {
         <Knob label="Ceiling" value={l.ceiling} unit=" dBTP" min={-3} max={-0.1} step={0.1} onChange={v => edit({ ceiling: Math.round(v * 10) / 10 } as any)}
               hint="Never reaches 0. Above about −0.3 dBTP the stream's encoder makes inter-sample overs that clip on the listener's decoder." />
         <div style={{ fontSize: 12, color: "var(--text-secondary)", marginLeft: 88 }}
-             title="The limiter detects true peaks with a 1.15× margin, so it holds the output that much below the ceiling you set.">
+             title="Where the engine says the limiter holds true peaks: on the ceiling you set (BS.1770 true peak).">
           {typeof margin === "number" ? ceilingLabel(l.ceiling, l.ceiling - margin) : `${l.ceiling.toFixed(1)} dBTP set · the engine has not reported where it limits`}
         </div>
         <Knob label="Release" value={l.release} unit=" ms" min={30} max={500} step={10} onChange={v => edit({ release: v } as any)}

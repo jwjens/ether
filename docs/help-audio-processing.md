@@ -86,9 +86,9 @@ they say "waiting for audio…", nothing is playing yet.
 
 The **Ceiling** is adjustable in the master rack (Master Out → Processor → OPEN) (−3 to −0.1 dBTP; −1.0 unless you change it). The label
 under it says what the limiter **does**, not only what it is set to — for example
-**"−1.0 dBTP set · limits at −2.2 dBTP"**. The limiter detects peaks with a safety margin (×1.15, about
-1.2 dB), so it holds the output that much below the setting. The **True peak max** reading on the loudness
-panel shows where your output really lands.
+**"−1.0 dBTP set · limits at −1.0 dBTP"**. The limiter measures peaks the way a broadcast true-peak meter
+does (ITU-R BS.1770), so the loudest peaks land **on** the ceiling you set — not below it, and never above it.
+The **True peak max** reading on the loudness panel shows where your output really lands.
 
 ## Related
 

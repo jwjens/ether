@@ -70,9 +70,9 @@ start of a show you want to measure on its own. The line beside it shows **"sinc
 
 ## The ceiling
 
-The limiter's **Ceiling** label says what it does, for example **"−1.0 dBTP set · limits at −2.2 dBTP"**. The
-limiter holds peaks about 1.2 dB below the setting (a safety margin). **True peak max** shows where your
-output actually lands.
+The limiter's **Ceiling** label says what it does, for example **"−1.0 dBTP set · limits at −1.0 dBTP"**. The
+limiter holds the loudest peaks exactly on the setting, measured the way a broadcast true-peak meter measures
+them. **True peak max** shows where your output actually lands.
 
 ## If something looks wrong
 
