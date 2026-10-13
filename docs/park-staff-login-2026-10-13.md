@@ -79,3 +79,14 @@ Jeff: "why did you make that!!!! specific instructions were user pin created in 
 - Jeff's rule now: log in with the username + PIN made in **Ether → Preferences → Users & Security**. **Admins can use every station's Park page.** Per-station access, lockout settings and an activity log go in Ether's Users & Security, only after a screenshot and his approval.
 - **Ryan today (read-only check):** account user on lic 24, role admin, has a PIN, not locked. The server still requires a Park-access row, and there are none, so **Ryan is refused right now** ("Ryan isn't allowed on this station's Park page"). Fix = a server change (admins pass on every station of their account), which needs Jeff's GO to deploy.
 - No login safety values were ever saved, so both logins still use 5 wrong PINs → 15 minutes, as before tonight.
+
+## Admins only, no extra layer (Jeff: "you pulled them so obviously they are there you made an unnecessary layer"; "then thats the one he has access to its not hard")
+
+- `ether-backend` `8cd59cc` (local, **not deployed**: the push was blocked pending Jeff's GO):
+  - Park login = a user from **Ether → Preferences → Users & Security** (already on the server) with role **admin**, on any station of their own account.
+  - The `park_access` layer is gone; non-admins get "Only admins can use the Park page."
+  - A logged-in device is logged out if the user is removed, their PIN changes, or they stop being an admin.
+  - Removed the four Remote-page routes behind the deleted Users-tab screens (Park access, login safety, Park activity).
+  - Lockout stays at 5 / 15.
+- Tests 119/119.
+- Ryan: admin on lic 24, whose station is the Halloween his login works on.
