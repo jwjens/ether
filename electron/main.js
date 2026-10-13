@@ -553,7 +553,8 @@ const _boardWatch = BoardWatch.createBoardWatch({
 // be the one read), so it refreshes every station.
 // PARK OPS (2026-10-13): the hosted Park page must show the real state when something changes elsewhere (Preferences,
 // the desktop strip, a Take). A write to anything it shows is announced; the window re-pushes that station's mirror now.
-const _PARK_KEYS = new Set(["closing_time", "monitor_volume", "fader_top_db_monitor", "monitor_muted", "park_sound_last", "park_control"]);
+const _PARK_KEYS = new Set(["closing_time", "monitor_volume", "fader_top_db_monitor", "monitor_muted", "park_sound_last", "park_control",
+  "fader_law", "fader_fine_factor", "fader_wheel_step_db", "fader_arrow_step_db", "fader_arrow_fine_step_db"]);
 require("./board-write-events").on(({ table, stationId, key }) => {
   if (table === "station_config_kv" && stationId != null && _PARK_KEYS.has(String(key))) {
     // Named by station UUID (the station-identity rule; scripts/test-station-identity-leak.js), never the local integer.
@@ -584,11 +585,24 @@ function _seedDuckPreferences(why) {
   } catch (e) { logStartup(`[duck] could not write the ducker's starting values into Preferences (${why}): ${e && e.message}`); }
 }
 ipcMain.handle("board:duck-start", () => ({ ...BoardState.DUCK_START }));
+// THE FADER LAW AND FEEL GO INTO PREFERENCES, ONCE PER STATION (Jeff, 2026-10-13, option A): the same pattern as the
+// ducker — a key the operator set is never touched; from then on Preferences → Faders shows them and every fader uses them.
+function _seedFaderPreferences(why) {
+  try {
+    const { stationConfigKvUpsertByKey } = require("./sync/handlers/station_config_kv");
+    for (const sid of BoardState.listStations(db)) {
+      const wrote = BoardState.seedFaderPreferences(db, sid, (s, key, value) => stationConfigKvUpsertByKey(db, s, key, value));
+      if (wrote.length) logStartup(`[faders] s${sid}: Preferences had no fader law/feel — wrote the starting values (${wrote.join(", ")}) (${why})`);
+    }
+  } catch (e) { logStartup(`[faders] could not write the fader law/feel's starting values into Preferences (${why}): ${e && e.message}`); }
+}
+ipcMain.handle("board:fader-start", () => JSON.parse(JSON.stringify(BoardState.FADER_START)));
 
 function _syncBoard(why) {
   _boardSyncChain = _boardSyncChain.then(async () => {
     if (!(await _waitBoardDb())) { logStartup(`[board] connect pass skipped (${why}) — the database did not open within 30 s`); return; }
     _seedDuckPreferences(why);
+    _seedFaderPreferences(why);
     _loadSavedMasterMonitor();
     _boardWatch.pause();
     try {
@@ -6620,14 +6634,26 @@ ipcMain.handle("board:migrate-cart-cut", async (_, stationId, on) => {
 // board:sound-settings → the station's loudness target and fader smoothing, as the engine uses them.
 ipcMain.handle("board:sound-settings", (_, stationId) => {
   const d = _boardDb(); const sid = Number(stationId); if (!d || !Number.isFinite(sid)) return null;
-  try { const s = BoardState.readSavedBoard(d, sid); return { loudnessTargetLufs: s.loudnessTargetLufs, smoothingMs: s.smoothingMs, faderTopDb: s.faderTopDb }; } catch { return null; }
+  try { const s = BoardState.readSavedBoard(d, sid); return { loudnessTargetLufs: s.loudnessTargetLufs, smoothingMs: s.smoothingMs, faderTopDb: s.faderTopDb, faderLaw: s.faderLaw, faderFeel: s.faderFeel }; } catch { return null; }
 });
 ipcMain.handle("board:set-sound-setting", async (_, stationId, key, value) => {
-  const d = _boardDb(); const sid = Number(stationId); const n = Number(value);
+  const d = _boardDb(); const sid = Number(stationId);
+  // The fader law: a list of { pos, db } points (Preferences → Faders). Drawing only; the engine never sees it.
+  if (key === "faderLaw") {
+    if (!d || !Number.isFinite(sid)) return { ok: false, reason: "no station" };
+    const bad = BoardState.faderLawProblem(value);
+    if (bad) return { ok: false, reason: bad };
+    try { require("./sync/handlers/station_config_kv").stationConfigKvUpsertByKey(d, sid, BoardState.FADER_LAW_KEY, JSON.stringify(value.map(p => ({ pos: Number(p.pos), db: Number(p.db) })))); }
+    catch (e) { return { ok: false, reason: `not saved: ${e && e.message}` }; }
+    try { sendToAllWindows("board:sound-settings-changed", { stationUuid: _stationUuidById(sid) }); } catch {}
+    return { ok: true, value };
+  }
+  const n = Number(value);
   if (!d || !Number.isFinite(sid) || !Number.isFinite(n)) return { ok: false, reason: "no station or not a number" };
   const KEYS = { loudnessTargetLufs: [BoardState.LOUDNESS_TARGET_KEY, -40, -5], smoothingMs: [BoardState.SMOOTHING_KEY, 0, 500],
     channelTopDb: [BoardState.FADER_TOP_KEYS.channel, 0, 10], auxTopDb: [BoardState.FADER_TOP_KEYS.aux, 0, 10],
-    masterTopDb: [BoardState.FADER_TOP_KEYS.master, 0, 10], monitorTopDb: [BoardState.FADER_TOP_KEYS.monitor, 0, 10] };
+    masterTopDb: [BoardState.FADER_TOP_KEYS.master, 0, 10], monitorTopDb: [BoardState.FADER_TOP_KEYS.monitor, 0, 10],
+    ...Object.fromEntries(Object.entries(BoardState.FADER_FEEL_KEYS).map(([k, kvKey]) => [`feel.${k}`, [kvKey, ...BoardState.FADER_FEEL_RANGE[k]]])) };
   const k = KEYS[key]; if (!k) return { ok: false, reason: "unknown setting" };
   const v = Math.max(k[1], Math.min(k[2], n));
   try { require("./sync/handlers/station_config_kv").stationConfigKvUpsertByKey(d, sid, k[0], String(v)); }

@@ -1,13 +1,14 @@
 // THE ONE CONSOLE FADER LAW (src/lib/faderLaw.ts; Jeff, 2026-10-11). Pinned: the law's points, the round trip, and
 // that no saved level changes its gain when the law changes (stores hold GAIN; only where a fader is drawn moves).
 import { describe, it, expect } from "vitest";
-import { posToDb, posToGain, dbToPos, gainToPos, formatDb, FADER_LAW, UNITY_POS, MAX_GAIN, faderMarks, unityPos, topGain, DEFAULT_TOP_DB } from "./faderLaw";
+import { posToDb, posToGain, dbToPos, gainToPos, formatDb, FADER_LAW, UNITY_POS, MAX_GAIN, faderMarks, unityPos, topGain, DEFAULT_TOP_DB,
+  stepGain, parseDbInput, lawProblem, setFaderLaw, faderLaw, FADER_LAW_START, setFaderFeel, faderFeel, FADER_FEEL_START } from "./faderLaw";
 
 const dbOf = (g: number) => 20 * Math.log10(g);
 
 describe("the console fader law", () => {
-  it("hits Jeff's points exactly", () => {
-    const want: [number, number][] = [[1, 10], [0.75, 0], [0.5, -10], [0.35, -20], [0.25, -30], [0.15, -40], [0.05, -60]];
+  it("hits Jeff's points exactly (option A, 2026-10-13)", () => {
+    const want: [number, number][] = [[1, 10], [0.75, 0], [0.5, -10], [0.25, -20], [0.175, -30], [0.10, -40], [0.03, -60]];
     for (const [pos, db] of want) expect(posToDb(pos)).toBeCloseTo(db, 9);
     expect(posToGain(0)).toBe(0);                      // 0% = off
     expect(posToGain(UNITY_POS)).toBeCloseTo(1, 12);   // unity is marked at 75%
@@ -19,9 +20,11 @@ describe("the console fader law", () => {
     for (let i = 1; i <= 1000; i++) { const d = posToDb(i / 1000); expect(d).toBeGreaterThan(prev); prev = d; }
   });
 
-  it("the bottom half is usable: halfway is −10 dB (the old channel law put −30 dB there)", () => {
+  it("−20…+10 is 75 % of the travel, every dB 2.5 % wide (option A: Jeff could not set −5 dB)", () => {
     expect(posToDb(0.5)).toBe(-10);
-    expect(posToDb(0.25)).toBe(-30);
+    expect(posToDb(0.25)).toBe(-20);
+    for (let d = -20; d <= 9; d += 0.5) expect(dbToPos(d + 1) - dbToPos(d)).toBeCloseTo(0.025, 12);
+    expect(dbToPos(-5)).toBeCloseTo(0.625, 12);
   });
 
   it("round-trips position ↔ dB ↔ gain", () => {
@@ -47,7 +50,7 @@ describe("the console fader law", () => {
       else expect(dbOf(back)).toBeCloseTo(dbOf(g), 9);   // the same level, to a billionth of a dB
     }
     // A few, as the table in the report shows them.
-    expect(gainToPos(0.15270909928001813) * 100).toBeCloseTo(40.52, 2);  // E −16.3 dB → 40.5%
+    expect(gainToPos(0.15270909928001813) * 100).toBeCloseTo(34.19, 2);  // E −16.3 dB → 34.2% (option A; 40.5% before)
     expect(gainToPos(1) * 100).toBeCloseTo(75, 9);                       // 0 dB → 75%
     expect(gainToPos(0.4641) * 100).toBeCloseTo(58.3, 1);                // MONITOR −6.7 dB → 58.3%
   });
@@ -80,5 +83,44 @@ describe("the console fader law", () => {
     expect(formatDb(MAX_GAIN)).toBe("+10.0 dB");
     expect(formatDb(0.15270909928001813)).toBe("−16.3 dB");
     expect(formatDb(0)).toBe("off");
+  });
+});
+
+describe("fader handling (Jeff, 2026-10-13)", () => {
+  const db = (g: number) => 20 * Math.log10(g);
+  it("steps land on the step grid, stop at the group's top, go off below the travel and come back from off", () => {
+    expect(db(stepGain(Math.pow(10, -5.3 / 20), -1, 0.5))).toBeCloseTo(-5.5, 9);
+    expect(db(stepGain(Math.pow(10, -5.3 / 20), 1, 0.5))).toBeCloseTo(-5.0, 9);
+    expect(db(stepGain(Math.pow(10, -5 / 20), 1, 0.5))).toBeCloseTo(-4.5, 9);
+    expect(db(stepGain(Math.pow(10, -5 / 20), -1, 0.1))).toBeCloseTo(-5.1, 9);
+    expect(db(stepGain(Math.pow(10, -0.2 / 20), 1, 0.5, 0))).toBeCloseTo(0, 9);      // MASTER/MONITOR top
+    expect(db(stepGain(1, 1, 0.5, 0))).toBeCloseTo(0, 9);
+    expect(stepGain(Math.pow(10, -89.8 / 20), -1, 0.5)).toBe(0);                    // below the travel → off
+    expect(stepGain(0, -1, 0.5)).toBe(0);
+    expect(stepGain(0, 1, 0.5)).toBeGreaterThan(0);                                  // off → the lowest step
+  });
+  it("reads a typed level", () => {
+    expect(parseDbInput("-5")).toBe(-5);
+    expect(parseDbInput("\u22125")).toBe(-5);
+    expect(parseDbInput(" -5 dB ")).toBe(-5);
+    expect(parseDbInput("+3.5")).toBe(3.5);
+    expect(parseDbInput("off")).toBe(-Infinity);
+    expect(parseDbInput("loud")).toBeNull();
+  });
+  it("a law must rise and end at 100 % = +10 dB; the saved law is what every fader draws with", () => {
+    expect(lawProblem(FADER_LAW_START)).toBeNull();
+    expect(lawProblem([{ pos: 0.5, db: 0 }, { pos: 0.4, db: 5 }, { pos: 1, db: 10 }])).not.toBeNull();
+    expect(lawProblem([{ pos: 0.5, db: 0 }, { pos: 1, db: 6 }])).not.toBeNull();
+    expect(setFaderLaw([{ pos: 0.5, db: 0 }, { pos: 1, db: 10 }])).toBe(true);
+    expect(posToDb(0.75)).toBeCloseTo(5, 9);
+    expect(setFaderLaw([{ pos: 0.5, db: 0 }])).toBe(false);                         // refused: the saved law stays
+    expect(faderLaw()).toHaveLength(2);
+    setFaderLaw(FADER_LAW_START);
+    expect(posToDb(0.75)).toBeCloseTo(0, 9);
+  });
+  it("the feel takes only sane values", () => {
+    setFaderFeel({ fine: 4, wheelDb: null, arrowDb: 99 });
+    expect(faderFeel()).toEqual({ ...FADER_FEEL_START, fine: 4 });
+    setFaderFeel(FADER_FEEL_START);
   });
 });

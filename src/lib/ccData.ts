@@ -360,6 +360,9 @@ export async function pushOpsData(
       muted: kvStr("monitor_muted") === "1",
       locked: kvStr("park_control") === "off",
       last: parseParkSoundLast(kvStr("park_sound_last")),
+      // The board's fader law and feel (Preferences → Faders), so the Park page fader moves exactly like Ether's.
+      law: (() => { try { const l = JSON.parse(kvStr("fader_law") || "null"); return Array.isArray(l) ? l : null; } catch { return null; } })(),
+      feel: { fine: kvNum("fader_fine_factor"), wheelDb: kvNum("fader_wheel_step_db"), arrowDb: kvNum("fader_arrow_step_db"), arrowFineDb: kvNum("fader_arrow_fine_step_db") },
     };
     // PARK LISTEN (2026-10-13): available only once every Listen setting is set (Preferences → Park page — Listen); the
     // listener buffer is the phone's, so it travels to the page. Nothing here is a default.

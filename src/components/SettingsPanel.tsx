@@ -3359,7 +3359,7 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
 
       {/* ── Loudness ── */}
       {/* ONE NORMALIZATION + FADER SMOOTHING (2026-10-11) — every number that shapes every source, visible and settable. */}
-      <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12h3l3-8 4 16 3-8h3"/></svg>} title="Loudness & fader smoothing" description="One loudness for every source on air, and how smoothly every fader moves">
+      <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12h3l3-8 4 16 3-8h3"/></svg>} title="Loudness & faders" description="One loudness for every source on air; every fader's maximum, law (where each level sits), smoothing, and how it moves (fine, wheel, arrow steps)">
         <SoundSettings />
       </Section>
 

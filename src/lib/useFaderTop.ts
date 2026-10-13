@@ -3,7 +3,7 @@
 // refreshed when any window changes it (board:sound-settings-changed). Until the saved values are read the defaults
 // stand: channel +10, AUX rows +10, MASTER 0, MONITOR 0 (src/lib/faderLaw.ts DEFAULT_TOP_DB).
 import { useEffect, useState } from "react";
-import { DEFAULT_TOP_DB, type FaderGroup } from "./faderLaw";
+import { DEFAULT_TOP_DB, setFaderLaw, setFaderFeel, type FaderGroup } from "./faderLaw";
 import { useActiveStation } from "../hooks/useActiveStation";
 
 type Tops = Record<FaderGroup, number>;
@@ -16,7 +16,13 @@ function ether(): any { return (window as any).ether; }
 async function load(stationId: number) {
   try {
     const s = await ether()?.invoke?.("board:sound-settings", stationId);
-    if (s && s.faderTopDb) { tops = { ...DEFAULT_TOP_DB, ...s.faderTopDb }; loadedFor = stationId; listeners.forEach(l => l(tops)); }
+    if (s && s.faderTopDb) {
+      // The fader law and how a fader feels (Preferences → Faders, 2026-10-13) arrive with the tops; a fresh tops object
+      // re-renders every fader so each redraws on the saved law.
+      setFaderLaw(s.faderLaw);
+      setFaderFeel(s.faderFeel);
+      tops = { ...DEFAULT_TOP_DB, ...s.faderTopDb }; loadedFor = stationId; listeners.forEach(l => l(tops));
+    }
   } catch { /* main not ready — the defaults stand until it is */ }
 }
 function wire() {

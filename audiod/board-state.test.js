@@ -43,6 +43,17 @@ const recorder = (over = {}) => {
 };
 
 describe("readSavedBoard", () => {
+  it("the fader law and feel: written into Preferences once, a set value never touched, read back as saved (2026-10-13)", () => {
+    expect(B.readSavedBoard(db, 2).faderLaw).toBeNull();
+    db.prepare("INSERT INTO station_config_kv VALUES (2, 'fader_wheel_step_db', '1', NULL)").run();
+    const wrote = B.seedFaderPreferences(db, 2, (sid, key, value) => db.prepare("INSERT INTO station_config_kv VALUES (?, ?, ?, NULL)").run(sid, key, value));
+    expect(wrote).toEqual(["fader_law", "fader_fine_factor", "fader_arrow_step_db", "fader_arrow_fine_step_db"]);
+    const s = B.readSavedBoard(db, 2);
+    expect(s.faderLaw).toEqual(B.FADER_START.law);
+    expect(s.faderFeel).toEqual({ fine: 10, wheelDb: 1, arrowDb: 0.5, arrowFineDb: 0.1 });
+    expect(B.seedFaderPreferences(db, 2, () => { throw new Error("must not write"); })).toEqual([]);
+    expect(B.faderLawProblem([{ pos: 0.5, db: 0 }, { pos: 1, db: 9 }])).not.toBeNull();
+  });
   it("the station strip's real MUTE holds through an engine restart, and the level is kept for unmute (2026-10-13)", () => {
     db.prepare("INSERT INTO station_config_kv VALUES (2, 'monitor_muted', '1', NULL)").run();
     expect(B.readSavedBoard(db, 2).monitorVol).toBe(0);

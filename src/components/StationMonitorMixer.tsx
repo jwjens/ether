@@ -18,6 +18,7 @@ import { useFaderTop } from "../lib/useFaderTop";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { query } from "../db/client";
 import { useStreamStatus } from "../contexts/StreamStatusContext";
+import HFader from "./HFader";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { parseParkSoundLast, parkSoundLine, recordParkSound, type ParkSoundLast } from "../lib/parkSound";
 
@@ -194,19 +195,11 @@ export default function StationMonitorMixer() {
 
             {isOpen && (
               <div style={{ padding: "0 12px 9px", display: "flex", flexDirection: "column", gap: 7 }}>
-                {/* Monitor fader (local speakers only) */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 10, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase", width: 52, flexShrink: 0 }}>Monitor</span>
-                  {/* THE ONE CONSOLE LAW (src/lib/faderLaw.ts): the slider is TRAVEL, the stored level is GAIN */}
-                  <input
-                    type="range" min={0} max={1} step={0.001} value={gainToPos(v, monTop)} list="ether-fader-law-monitor"
-                    onChange={e => setMonitor(s.id, posToGain(parseFloat(e.target.value), monTop))}
-                    style={{ flex: 1, accentColor: "var(--accent-teal)", cursor: "pointer", opacity: muted ? 0.45 : 1 }}
-                    title="Local speaker level for this station — does NOT affect its broadcast"
-                  />
-                  <datalist id="ether-fader-law-monitor">{faderMarks(monTop).map(m => <option key={m.label} value={m.pos} label={m.label} />)}</datalist>
-                  <span style={{ fontSize: 10, color: "var(--text-tertiary)", width: 54, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{formatDb(v)}</span>
-                </div>
+                {/* Monitor fader (local speakers only) — handled like every fader (useFaderControl): no jump, Shift fine,
+                    wheel, arrows, double-click the value to type one. */}
+                <HFader label="Monitor" gain={v} topDb={monTop} onChange={g => setMonitor(s.id, g)} dim={muted}
+                  title="Local speaker level for this station — does NOT affect its broadcast"
+                  valueStyle={{ fontSize: 10, color: "var(--text-tertiary)", fontVariantNumeric: "tabular-nums" }} />
                 {/* Who changed the sound last, and when — the same line the Park page shows. */}
                 {line && (
                   <div style={{ fontSize: 10.5, color: "var(--text-primary)", background: "var(--bg-tertiary)", borderLeft: "2px solid #8868D8", padding: "3px 7px" }}>{line}</div>

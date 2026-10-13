@@ -6,7 +6,9 @@
 // VU meter: full height, right side, same color coding as before.
 
 import FaderRouting from "./FaderRouting";
-import { posToGain, gainToPos, formatDb, faderMarks } from "../lib/faderLaw";
+import { gainToPos, faderMarks } from "../lib/faderLaw";
+import { useFaderControl } from "../lib/useFaderControl";
+import FaderValue from "./FaderValue";
 import { useFaderTop } from "../lib/useFaderTop";
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { useMidiState } from "./MidiEngine";
@@ -83,7 +85,6 @@ export default function ConsoleStrip({
   // Ask the engine for this station's meter windows while an engine-metered strip is on screen (the daemon
   // only emits meters for subscribed stations; every strip renewing is cheap and needs no parent wiring).
   useMeterSubscription([deckId && isReady ? stationId : null]);
-  const [dragging, setDragging] = useState(false);
   // Local drag value: the knob follows the pointer instantly off this, instead of waiting
   // for the audio-engine state to round-trip back into `volume` (which ticks, so the knob
   // would skip between positions). Null when not dragging → fall back to the real volume.
@@ -215,38 +216,18 @@ export default function ConsoleStrip({
   const chTop = useFaderTop("channel");
   const knobY = (1 - gainToPos(effVol, chTop)) * (faderH - KNOB_H);
 
-  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setDragging(true);
-    const track = trackRef.current;
-    if (!track) return;
-    const el = e.currentTarget;
-    el.setPointerCapture(e.pointerId);
-    const posToVol = (clientY: number, rect: DOMRect) => {
-      // The knob's centre travels between KNOB_H/2 from the top and from the bottom of the track.
-      const travel = Math.max(1, rect.height - KNOB_H);
-      const ratio = Math.max(0, Math.min(1, (clientY - rect.top - KNOB_H / 2) / travel));
-      return posToGain(1 - ratio, chTop);
-    };
-    const onMove = (ev: PointerEvent) => {
-      const rect = track.getBoundingClientRect();
-      const v = posToVol(ev.clientY, rect);
-      setDragVol(v);          // knob follows the pointer instantly
-      onVolumeChange(v);      // engine gets the value too
-    };
-    const onUp = () => {
-      setDragging(false);
-      setDragVol(null);       // hand the knob back to the real volume
-      el.removeEventListener("pointermove", onMove);
-      el.removeEventListener("pointerup", onUp);
-    };
-    el.addEventListener("pointermove", onMove);
-    el.addEventListener("pointerup", onUp);
-    const rect = track.getBoundingClientRect();
-    const v0 = posToVol(e.clientY, rect);
-    setDragVol(v0);
-    onVolumeChange(v0);
-  }, [onVolumeChange]);
+  // HANDLING (Jeff, 2026-10-13; src/lib/useFaderControl.ts): pressing never moves the fader; it moves by the distance
+  // dragged (Shift = fine); wheel and arrow keys step; double-click the fader to type a level. The knob follows the
+  // drag instantly (dragVol) and hands back to the real volume when the drag ends.
+  const draggingRef = useRef(false);
+  const fc = useFaderControl({
+    gain: effVol, topDb: chTop, axis: "y", trackRef, insetPx: KNOB_H,
+    onChange: (v: number) => { if (draggingRef.current) setDragVol(v); onVolumeChange(v); },
+  });
+  draggingRef.current = fc.dragging;
+  const dragging = fc.dragging;
+  useEffect(() => { if (!fc.dragging) setDragVol(null); }, [fc.dragging]);
+  const [typeReq, setTypeReq] = useState(0);
 
   const db = effVol > 0.001 ? (20 * Math.log10(effVol)).toFixed(0) : "−∞";
 
@@ -335,11 +316,15 @@ export default function ConsoleStrip({
           {/* Mouse / touch capture — covers full column, sits above all visuals */}
           <div
             ref={trackRef}
-            onPointerDown={handlePointerDown}
+            onPointerDown={fc.onPointerDown}
+            onKeyDown={fc.onKeyDown}
+            tabIndex={fc.tabIndex}
+            onDoubleClick={() => setTypeReq(n => n + 1)}
+            title="Drag to move (Shift = fine) · wheel or arrow keys step · double-click to type a level"
             style={{
               position: "absolute", inset: 0,
               cursor: dragging ? "grabbing" : "ns-resize",
-              zIndex: 10,
+              zIndex: 10, outline: "none", touchAction: "none",
             }}
           />
 
@@ -392,7 +377,8 @@ export default function ConsoleStrip({
           }}>
             {/* Center grip line, and the level this fader is at — read from the same law */}
             <div style={{ position: "absolute", width: KNOB_W - 18, height: 2, background: "rgba(0,0,0,0.28)", borderRadius: 1 }} />
-            <span style={{ position: "relative", top: 12, fontSize: 9, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "rgba(0,0,0,0.6)" }}>{formatDb(effVol)}</span>
+            <FaderValue gain={effVol} topDb={chTop} onChange={onVolumeChange} active={fc.active} typeRequest={typeReq}
+              style={{ position: "relative", top: 12, fontSize: 9, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "rgba(0,0,0,0.6)" }} />
           </div>
 
         </div>{/* end fader column */}

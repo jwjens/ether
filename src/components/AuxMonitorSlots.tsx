@@ -42,6 +42,7 @@
 // so a deck cannot be sent to a different device than the station's own. The room is one room, and
 // the single OUTPUT selector at the top is the whole aux path's device.
 
+import HFader from "./HFader";
 import { posToGain, gainToPos, formatDb, faderMarks, MAX_GAIN } from "../lib/faderLaw";
 import { useFaderTop } from "../lib/useFaderTop";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
@@ -345,17 +346,11 @@ export default function AuxMonitorSlots() {
                 {/* Line 3 — MONITOR level: the ROOM, not air. */}
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
                   <span style={{ fontSize: 9, color: "#8868D8", letterSpacing: "0.08em", width: 52, fontWeight: 700 }}>MONITOR</span>
-                  {/* THE ONE CONSOLE LAW (src/lib/faderLaw.ts): the slider is TRAVEL, the stored row is GAIN */}
-                  <input
-                    type="range" min={0} max={1} step={0.001} list="ether-fader-law-aux"
-                    value={gainToPos(lvl, auxTop)}
-                    onChange={e => setLevel(d.slot, posToGain(parseFloat(e.target.value), auxTop))}
-                    style={{ flex: 1, accentColor: "#8868D8" }}
-                  />
-                  <datalist id="ether-fader-law-aux">{faderMarks(auxTop).map(m => <option key={m.label} value={m.pos} label={m.label} />)}</datalist>
-                  <span style={{ fontSize: 10, color: "var(--text-tertiary)", width: 54, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                    {formatDb(lvl)}
-                  </span>
+                  {/* THE ONE CONSOLE LAW (src/lib/faderLaw.ts), handled like every fader (useFaderControl, 2026-10-13). */}
+                  <div style={{ flex: 1 }}>
+                    <HFader gain={lvl} topDb={auxTop} onChange={g => setLevel(d.slot, g)} color="#8868D8"
+                      valueStyle={{ fontSize: 10, color: "var(--text-tertiary)", fontVariantNumeric: "tabular-nums" }} />
+                  </div>
                 </div>
               </div>
             );

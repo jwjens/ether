@@ -26,6 +26,31 @@ const SOURCE_SLOTS = ["D", "E", "F", "S1", "S2", "S3", "S4", "S5"];
 // then the engine is sent nothing and does not duck. docs/duck-from-preferences-2026-10-13.md.
 const DUCK_KEYS = { depthDb: "duck_depth_db", thresholdDb: "duck_threshold_db", attackMs: "duck_attack_ms", holdMs: "duck_hold_ms", releaseMs: "duck_release_ms" };
 const DUCK_START = require("./duck-defaults");
+// THE FADER LAW AND HOW A FADER FEELS (Jeff, 2026-10-13, option A; docs/fader-handling-plan-2026-10-13.md): visible
+// settings, written into Preferences once with these starting values (seedFaderPreferences, the ducker's pattern) and
+// read from there by every window (board:sound-settings). Drawing only — stores hold gain, the engine never sees these.
+// src/lib/faderLaw.ts FADER_LAW_START / FADER_FEEL_START carry the same values.
+const FADER_LAW_KEY = "fader_law";
+const FADER_FEEL_KEYS = { fine: "fader_fine_factor", wheelDb: "fader_wheel_step_db", arrowDb: "fader_arrow_step_db", arrowFineDb: "fader_arrow_fine_step_db" };
+const FADER_FEEL_RANGE = { fine: [1, 100], wheelDb: [0.01, 10], arrowDb: [0.01, 10], arrowFineDb: [0.01, 10] };
+const FADER_START = {
+  law: [{ pos: 0.03, db: -60 }, { pos: 0.10, db: -40 }, { pos: 0.175, db: -30 }, { pos: 0.25, db: -20 }, { pos: 0.50, db: -10 }, { pos: 0.75, db: 0 }, { pos: 1, db: 10 }],
+  feel: { fine: 10, wheelDb: 0.5, arrowDb: 0.5, arrowFineDb: 0.1 },
+};
+/** The reason a law cannot be used, or null (the same rule as faderLaw.ts lawProblem). */
+function faderLawProblem(pts) {
+  if (!Array.isArray(pts) || pts.length < 2 || pts.length > 16) return "The law needs 2 to 16 points.";
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    if (!p || !Number.isFinite(p.pos) || !Number.isFinite(p.db)) return `Point ${i + 1} is not a position and a dB.`;
+    if (!(p.pos > 0 && p.pos <= 1)) return `Point ${i + 1}: the position must be above 0 % and at most 100 %.`;
+    if (p.db < -120 || p.db > 10) return `Point ${i + 1}: the dB must be between −120 and +10.`;
+    if (i > 0 && !(p.pos > pts[i - 1].pos && p.db > pts[i - 1].db)) return `Point ${i + 1} must be above point ${i} in both position and dB.`;
+  }
+  const last = pts[pts.length - 1];
+  if (last.pos !== 1 || last.db !== 10) return "The last point must be 100 % = +10 dB (each group's maximum slides the curve).";
+  return null;
+}
 const MASTER_MONITOR_KEY = "master_monitor_volume";   // machine-local (LOCAL_ONLY_KEYS); moved out of localStorage
 // FADERS ARE GENERIC (Jeff, 2026-10-11). Each fader's three routing settings: where it is heard locally (`fader_local`,
 // { slot: "aux" | "main" }), whether it ducks the music (deck_configs.duck) and whether the music ducks it
@@ -172,6 +197,13 @@ function readSavedBoard(db, sid) {
   if (out.monitorVol !== undefined) out.monitorVol = cap(out.monitorVol, "monitor");
   out.masterMonitorVol = cap(out.masterMonitorVol, "monitor");
   const lt = num(kv(LOUDNESS_TARGET_KEY)); out.loudnessTargetLufs = lt == null ? -16 : lt;
+  // The fader law and feel as Preferences holds them; null / missing = not written yet (the windows keep the starting law).
+  try { const law = JSON.parse(kv(FADER_LAW_KEY) || "null"); out.faderLaw = faderLawProblem(law) ? null : law; } catch { out.faderLaw = null; }
+  out.faderFeel = {};
+  for (const [k, key] of Object.entries(FADER_FEEL_KEYS)) {
+    const n = num(kv(key)); const [lo, hi] = FADER_FEEL_RANGE[k];
+    if (n != null && n >= lo && n <= hi) out.faderFeel[k] = n;
+  }
   // The ducker: exactly what Preferences holds, all five values, or nothing (never a number from here).
   const duck = {}, duckMissing = [];
   for (const [k, key] of Object.entries(DUCK_KEYS)) { const n = num(kv(key)); if (n == null) duckMissing.push(key); else duck[k] = n; }
@@ -382,4 +414,17 @@ function seedDuckPreferences(db, sid, upsert) {
   return wrote;
 }
 
-module.exports = { DUCK_START, seedDuckPreferences, isBoardKey, BOARD_KV_KEYS, CART_ON_KEY, FADER_TOP_KEYS, FADER_TOP_DEFAULTS, groupTopGain, routingMigration, FADER_LOCAL_KEY, FADER_ROUTING_FLAG, SMOOTHING_KEY, LOUDNESS_TARGET_KEY, MAX_GAIN, boardNames, labelOf, SLOTS, SOURCE_SLOTS, MASTER_MONITOR_KEY, DUCK_KEYS, readSavedBoard, applyBoard, compareBoard, listStations, addonSink, applySavedBoardState, parseRoomLevels };
+/**
+ * Write the STARTING fader law and feel into a station's Preferences — only the keys it does not have yet (one-time per
+ * station; a value the operator set is never touched). Returns the keys written.
+ */
+function seedFaderPreferences(db, sid, upsert) {
+  const have = new Set();
+  try { for (const r of db.prepare("SELECT key FROM station_config_kv WHERE station_id = ? AND deleted_at IS NULL").all(sid)) have.add(r.key); } catch { return []; }
+  const wrote = [];
+  if (!have.has(FADER_LAW_KEY)) { upsert(sid, FADER_LAW_KEY, JSON.stringify(FADER_START.law)); wrote.push(FADER_LAW_KEY); }
+  for (const [k, key] of Object.entries(FADER_FEEL_KEYS)) if (!have.has(key)) { upsert(sid, key, String(FADER_START.feel[k])); wrote.push(key); }
+  return wrote;
+}
+
+module.exports = { FADER_START, FADER_LAW_KEY, FADER_FEEL_KEYS, FADER_FEEL_RANGE, faderLawProblem, seedFaderPreferences, DUCK_START, seedDuckPreferences, isBoardKey, BOARD_KV_KEYS, CART_ON_KEY, FADER_TOP_KEYS, FADER_TOP_DEFAULTS, groupTopGain, routingMigration, FADER_LOCAL_KEY, FADER_ROUTING_FLAG, SMOOTHING_KEY, LOUDNESS_TARGET_KEY, MAX_GAIN, boardNames, labelOf, SLOTS, SOURCE_SLOTS, MASTER_MONITOR_KEY, DUCK_KEYS, readSavedBoard, applyBoard, compareBoard, listStations, addonSink, applySavedBoardState, parseRoomLevels };

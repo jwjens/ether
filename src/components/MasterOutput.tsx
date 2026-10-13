@@ -14,6 +14,7 @@ import { useAudioHealth, HealthDot, HealthStyles, HealthModeBanner, rateLabel, p
 import StationMonitorMixer from "./StationMonitorMixer";
 import MasterMeters from "./meter/MasterMeters";
 import AuxMonitorSlots from "./AuxMonitorSlots";
+import HFader from "./HFader";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useShowState } from "../hooks/useShowState";
 import { monitorLevel, onMonitorLevel } from "../audio/localOutput";
@@ -157,90 +158,15 @@ function LimiterGR() {
 
 // ── Fader ────────────────────────────────────────────────────
 function Fader({ label, value, onChange, group }: { label: string; value: number; onChange: (v: number) => void; group: "master" | "monitor" }) {
-  const trackRef = useRef<HTMLDivElement>(null);
   // This group's top (MASTER and MONITOR: 0 dB unless set otherwise in Preferences) — the one curve, slid to it.
+  // Handled like every fader (src/lib/useFaderControl.ts, 2026-10-13): no jump on grab, Shift fine, wheel, arrows,
+  // double-click the value to type one.
   const top = useFaderTop(group);
-  const [dragging, setDragging] = useState(false);
-
-  const updateFromClientX = useCallback((clientX: number) => {
-    const track = trackRef.current;
-    if (!track) return;
-    const rect = track.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    onChange(posToGain(ratio, top));   // THE ONE CONSOLE LAW (src/lib/faderLaw.ts): travel → gain, at this group's top
-  }, [onChange, top]);
-
-  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setDragging(true);
-    const el = e.currentTarget;
-    el.setPointerCapture(e.pointerId);
-    updateFromClientX(e.clientX);
-    const onMove = (ev: PointerEvent) => updateFromClientX(ev.clientX);
-    const onUp = () => {
-      setDragging(false);
-      el.removeEventListener("pointermove", onMove);
-      el.removeEventListener("pointerup", onUp);
-    };
-    el.addEventListener("pointermove", onMove);
-    el.addEventListener("pointerup", onUp);
-  }, [updateFromClientX]);
-
   return (
     <div style={{ padding: "7px 14px", borderBottom: "1px solid var(--border-primary)" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-        <span style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase" as const }}>{label}</span>
-        <span style={{ fontSize: 13, fontFamily: "'DM Mono', monospace", color: "var(--accent-teal)" }}>{formatDb(value)}</span>
-      </div>
-
-      <div
-        ref={trackRef}
-        onPointerDown={handlePointerDown}
-        style={{
-          position: "relative",
-          width: "100%", height: 12,
-          cursor: dragging ? "grabbing" : "pointer",
-          display: "flex", alignItems: "center",
-          userSelect: "none",
-        }}
-      >
-        {/* Track — 3px tall horizontal bar */}
-        <div style={{
-          position: "absolute", left: 0, right: 0, top: "50%",
-          transform: "translateY(-50%)",
-          height: 3,
-          background: "var(--fader-track-bg, rgba(255,255,255,0.08))",
-        }} />
-        {/* Fill — teal from 0 to thumb */}
-        <div style={{
-          position: "absolute", left: 0, top: "50%",
-          transform: "translateY(-50%)",
-          height: 3,
-          width: `${gainToPos(value, top) * 100}%`,
-          background: "var(--accent-teal)",
-          pointerEvents: "none",
-        }} />
-        {/* THE dB SCALE — the one console law's marks, unity highlighted */}
-        {faderMarks(top).map(m => (
-          <div key={m.label} style={{ position: "absolute", left: `${m.pos * 100}%`, top: m.unity ? -2 : 1, bottom: m.unity ? -2 : 1,
-                                      borderLeft: `1px solid ${m.unity ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.22)"}`, pointerEvents: "none" }}
-               title={`${m.label} dB`} />
-        ))}
-        {/* Thumb — 12×12 */}
-        <div style={{
-          position: "absolute",
-          left: `${gainToPos(value, top) * 100}%`,
-          top: "50%",
-          transform: "translate(-50%, -50%)",
-          width: 12, height: 12,
-          borderRadius: "var(--fader-thumb-radius, 50%)",
-          background: "var(--accent-teal)",
-          backgroundImage: "var(--fader-thumb-gradient, none)",
-          border: "var(--fader-thumb-border, 1px solid var(--strip-thumb-border))",
-          boxShadow: "var(--fader-thumb-shadow, none)",
-          pointerEvents: "none",
-        }} />
-      </div>
+      <HFader layout="stacked" gain={value} topDb={top} onChange={onChange}
+        label={<span style={{ fontSize: 12.5, fontWeight: 700, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase" as const }}>{label}</span>}
+        valueStyle={{ fontSize: 13, fontFamily: "'DM Mono', monospace", color: "var(--accent-teal)" }} />
     </div>
   );
 }
