@@ -1126,4 +1126,14 @@ const REGISTRY = {
 
 };
 
-module.exports = { SYNCED_TABLES, REGISTRY };
+/**
+ * Is this table kept OUT of sync? One rule, read by the writer (never queue it) and the push (never send it):
+ * `syncExcluded: true` (generated_schedule — ruling A; install_secrets_kv — [Q-13]) or `scope: 'local-only'`
+ * (monitor_routing — AD-10). docs/sync-queue-excluded-leak-2026-10-12.md.
+ */
+function isSyncExcluded(tableName) {
+  const e = REGISTRY[tableName];
+  return !!e && (e.syncExcluded === true || e.scope === 'local-only');
+}
+
+module.exports = { SYNCED_TABLES, REGISTRY, isSyncExcluded };

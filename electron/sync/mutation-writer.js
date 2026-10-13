@@ -31,7 +31,7 @@
 
 const crypto    = require('crypto');
 const path      = require('path');
-const { REGISTRY } = require('./synced-tables');
+const { REGISTRY, isSyncExcluded } = require('./synced-tables');
 
 // ── Module-scoped cache ────────────────────────────────────────
 // client_id is stable for the DB lifetime per [N-79].
@@ -238,6 +238,13 @@ function logMutation(db, opts) {
     );
   }
 
+  // ── EXCLUDED TABLES NEVER ENTER THE QUEUE (2026-10-12, docs/sync-queue-excluded-leak-2026-10-12.md) ──
+  // The push has always refused to SEND an excluded table, but this writer still QUEUED it: every Generate
+  // journalled its generated_schedule rows as 'pending', where they stayed forever — 217,002 on OVEVENTS, ~123 MB,
+  // walked by every 10 s push tick. An excluded table is not shared state, so there is nothing to journal: the row
+  // write itself is unchanged, only the queue entry is not made. Same rule as the push (synced-tables isSyncExcluded).
+  if (table_name !== '__checkpoint__' && isSyncExcluded(table_name)) return null;
+
   if (!VALID_OPS.has(op)) {
     throw new Error(
       '[mutation-writer] invalid op: "' + op + '" — must be insert|update|delete|checkpoint [N-10]'
@@ -415,6 +422,17 @@ function _unmirrorOnDelete(db, opts) {
 }
 
 function withMutation(db, opts, fn) {
+  // An excluded table is written without a queue entry (see logMutation) and without becoming the causal parent of
+  // nested writes: a parent id that is never written would leave a synced child waiting on a mutation that does not
+  // exist. Nested writes keep whatever parent was already on the stack.
+  if (opts && isSyncExcluded(opts.table_name)) {
+    return db.transaction(() => {
+      const result = fn();
+      _unmirrorOnDelete(db, opts);
+      return result;
+    })();
+  }
+
   // Library-borrowed read-only guard: reject LOCAL writes to the install-scoped catalog while
   // this install is borrowing a library via a grant. The KV lookup runs ONLY for catalog-table
   // writes (rare), so all other synced writes are unaffected. (Remote/pulled rows apply via the

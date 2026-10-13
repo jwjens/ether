@@ -156,3 +156,21 @@ Done last, as asked. What the senses and the code show:
 ## 14 · Build (round 2, fixes)
 
 From `fc89cc5`, no version bump: `C:\openair\dist-electron\Ether Setup 4.6.59.exe` — 216,025,982 bytes, sha256 `020771f1520deb8c1df22fcba8a6260038043386334c32495f42f01ad64c0375`; `app.asar` `577806e8ae0541c734f4f6dfc702eb2b25bd9a2756574de61088902a320c5aab`; engine `7598aef6` unchanged; verify-packaged RELEASE GATE PASS. Previous (senses) installer renamed `… perf-senses 0b1ef492 721cd86 - SUPERSEDED.exe`. Gates: tsc 0; vitest 878/878; test:sync 49/49; schema/ipc/preload/undefined-calls/window-station/local-playback/closing PASS; board-restore 39/39; attach-restore 15/15; leak-guard at baseline; stall-sense 9/9, react-sense 5/5, encoder-probe 4/4, feed-long 10/10, push-index 5/5, lh-worker 10/10. The after-measurement follows Jeff's install.
+
+## 15 · After (OVEVENTS, build `020771f1`, `app.asar` `577806e8…` confirmed; 5 min from 80 s uptime, same script)
+
+| | Before (`6b1fcb43`, round-1 fix build) | After (`020771f1`) |
+|---|---|---|
+| Main stalls ≥ 100 ms (stall sense) | ~every 10 s, 300–1,224 ms (ledger) | **0 in 5 min** |
+| Main `eventLoopLagPeakMs` | 1,026 ms | **16 ms** |
+| `/health` worst answer / unanswered | 942 ms / 0 | **42 ms / 0** |
+| Slowest IPC handler | `health:frames` 1,100 ms | `audio:embeddedArt` 67 ms |
+| Renderer: commits over one frame | 115 in 5 min (senses build), worst 205 ms | **4**, worst **46 ms** |
+| Input delay before the handler, worst | 18 ms | **13 ms** (under a frame) |
+| Input → next paint, worst | 288 ms (round 1) / 440 ms (senses build) | 456 ms; 44 inputs over a frame in the busiest 60 s |
+| Long tasks (busiest 60 s), worst | 5, 259 ms | 7, **420 ms** (one frame: 421 ms, 371 ms blocking) |
+
+- **Main: target met.** No main-process stall ≥ 100 ms after startup.
+- **Input delay: met** (≤ 13 ms). **Input → paint: not met.** The slow ones are not React: every commit was ≤ 46 ms, so the blocking work (one 371 ms task) is non-React script. Chromium withholds its script attribution for `file://` (§3), so the sense cannot name it yet. Naming it needs script attribution that works on `file://` (e.g. loading the renderer from a privileged custom scheme, or a JS self-profiler) — a proposal, not built.
+- **Item 5:** over this session too, only the 4 launch-time window calls; no unprompted scroll.
+- **Item 4 cross-check:** on this launch the engine exe was unchanged, so staging took 1.1 s and CreateProcess 0.15 s (vs 4.3 s + 8.4 s when the install changed it). New, UNVERIFIED: `initDb` took 13.8 s with 13.5 s CPU on this first launch — consistent with building the new indexes once on the live database; the next relaunch's boot trace settles it.

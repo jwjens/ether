@@ -10,7 +10,7 @@
 //   syncCycle()   — push then pull, retry causal queue, check staleness
 //   compact()     — 90-day retention via compactMutations() [§22]
 
-const { REGISTRY }                               = require('./synced-tables');
+const { REGISTRY, isSyncExcluded }               = require('./synced-tables');
 const { toWireFormat, compactMutations }          = require('./mutation-writer');
 const { MergeEngine, compareHLC }                = require('./merge-engine');
 const { CausalOrderQueue }                       = require('./causal-order');
@@ -37,9 +37,7 @@ function isPermanentRejection(reason) {
 }
 
 const EXCLUDED_TABLES = new Set(
-  Object.entries(REGISTRY)
-    .filter(([, e]) => e.syncExcluded === true || e.scope === 'local-only')
-    .map(([wireName]) => wireName)
+  Object.keys(REGISTRY).filter(isSyncExcluded)   // the same rule the writer uses (synced-tables isSyncExcluded)
 );
 
 // ── THE PUSH READS ONLY WHAT IT CAN SEND (2026-10-12, docs/perf-pass-round2-2026-10-12.md §1) ──────────────────────
