@@ -132,3 +132,24 @@ From `6233ccc`; no version bump, tag or CI.
 - Engine `7598aef6`, unchanged. verify-packaged: RELEASE GATE PASS.
 - The previous installer was renamed `… perf-fixes 020771f1 fc89cc5 - SUPERSEDED.exe`.
 - Gates: tsc 0; vitest 878/878; test:sync 52/52; verify:schema, undefined-calls, ipc-contract, preload-bridge PASS; purge-onair 10/10; push-index 5/5.
+
+## Result on OVEVENTS (Jeff installed `1780db16`; `app.asar` `7044e521…` confirmed; 2026-10-13 06:12 UTC)
+
+From the startup log, as it happened:
+```
+06:14:17 [sync-queue] before: generated_schedule 217002, install_secrets_kv 0, monitor_routing 0; allPending 217002; allRows 358445
+06:14:20 [sync-queue] backup: 217002 row(s) copied to …\profiles\ETH-STN-BAA8-E056-6FC8\backups\sync-queue-purge-20261013-061404.db
+06:19:50 [sync-queue] after: excluded 0; allPending 0; allRows 141444 — removed 217002
+```
+Nothing was playing, so there were no on-air pauses. Total 5 min 46 s.
+
+Checked independently (read-only, `scratchpad verify-purge.js`, against the live database and the backup file):
+- **Backup:** 209 MB file, **217,002 rows, 217,002 distinct ids**, every one `generated_schedule` / `pending` (2026-08-22 → 2026-10-11). All 18 columns of `mutations`, payloads present. Its `purge_report` holds the before-counts.
+- **Gone from the queue:** of the 217,002 backed-up ids, **0** are still in the live `mutations` table. Live now: 141,444 rows, **0 pending**, 0 rows of any excluded table.
+- **Nothing else touched:** before the cleanup, every pending row (217,002 of 217,002) was the leaked table, so there were no real pending changes to disturb. The other 141,443 rows (synced / conflicted history) are all still there: 141,443 + 1 = 141,444. The +1 is a `station_config_kv` change written during the cleanup and pushed (synced) normally while it ran.
+- **Run-once mark:** `system_state.sync_excluded_queue_purged_v1` written at 06:19:50 with the report.
+- **No stalls during the cleanup:** the stall sense recorded 6 main stalls ≥ 100 ms since launch, all in the first 61 s (launch work, before the cleanup began at ~76 s), and **none from 76 s to the end of the run (~420 s)**.
+
+**Startup:** `initDb` took **0.16 s** this launch (was 13.8 s the launch before), so the 13.8 s was the one-time index build. The rest of this first-after-install launch was the known engine staging again: the install changed 3 engine files, 3.9 s copying + 8.1 s waiting on CreateProcess. That is §12 of `docs/perf-pass-round2-2026-10-12.md`, proposed fix not built. A plain restart will not have it.
+
+**Seen in passing (one line, not investigated):** launch-time stalls at 17 s, `getOutputDevice audiod/board-state.js:289 ← applyBoard ← applySavedBoardState` ~0.9 s; at 60–61 s, 191 ms (unattributed) and 128 ms (`scopeLevelsFrame`).
