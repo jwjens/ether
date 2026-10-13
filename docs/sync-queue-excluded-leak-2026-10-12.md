@@ -92,3 +92,34 @@ Ruling A (2026-06) stopped the push from sending the table. It did not stop the 
 - `scripts/smoke-generated_schedule-handlers.js` is an old generated scaffold, not in any gate, and it opens the live database. It still expects one queued mutation per `generated_schedule` write. Those checks are now wrong by design; it should be regenerated or retired.
 - The cleanup runs only on an install that runs this build. Other machines (OV) get it with the next build they install.
 - No version bump, tag or CI. The installer is not rebuilt for this yet.
+
+## Never while on air (Jeff, verbatim, 2026-10-12)
+
+> One change before you build: the one-time cleanup must not run while anything is playing on air. Have it wait until no deck is playing and pause if playback starts, then resume. Machines that update during a show must never see a slowdown from it. Test that.
+
+**What counts as on air** (`electron/main.js` `anyDeckPlaying`):
+- ANY deck playing on ANY station, from the daemon's `deck` events: music decks, carts, a jock playing by hand. A deck reported playing counts for 5 s after its last report; playing decks report continuously.
+- Any station whose engine reports `live` (a deck playing, or a jingle audibly bridging a seam).
+- In the in-process fallback, the active station's decks.
+
+This is broader than `anyOnAirEngineLive`, which counts only stations under automation. A lost event can hold the cleanup back briefly; it can never let it run during a show.
+
+**How the cleanup obeys it:**
+- Main keeps a shared flag (1 = something playing). It updates the flag the moment a `deck` or `enginestate` event arrives, plus a 500 ms poll as backstop.
+- The worker checks the flag before **every** step: the counts, each backup chunk (5,000 rows; the backup is chunked now so it can pause too), and each delete batch.
+- While the flag is up, it does nothing. It resumes only after **15 s of continuous silence**, so a gap between two songs or two carts never lets a batch in.
+- A batch that a show interrupted skips its checkpoint (that is disk work too).
+- Every pause and resume goes to the startup log. The final report carries the total time spent waiting and the number of pauses.
+- If a machine plays around the clock, the cleanup simply waits until it doesn't.
+
+**Test** (`npm run test:purge-onair <database copy>`, the real worker on a copy of the live data; 2 s quiet spell instead of 15 s to keep it short):
+1. On air when the cleanup is due: for 5 s it does not touch the database (no counts, no backup file, nothing removed).
+2. A 1 s gap between songs (shorter than the quiet spell): it does not start.
+3. Off air: it starts after the quiet spell (2.2 s).
+4. A deck starts while it is deleting:
+   - nothing more is removed while it plays (8 s, count unchanged);
+   - every write by main after that instant runs at normal speed: **worst 1–2 ms** over ~136 writes, in three runs;
+   - the single write that coincided with the step already running at that instant took 78–143 ms, once. The flag is read between steps, so one step at most (a ~30 ms batch) finishes after the deck starts.
+5. Off air again: it resumes and finishes: 217,002 removed, backup 217,002, 0 left.
+
+Before the checkpoint skip and the event-driven flag, that same single write took 79–182 ms; every later write was already normal.
