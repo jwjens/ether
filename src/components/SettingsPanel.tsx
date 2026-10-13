@@ -9,6 +9,7 @@ import MicInputsSettings from "./MicInputsSettings";
 import RemoteLinkSettings from "./RemoteLinkSettings";
 import PflSettings from "./PflSettings";
 import SoundSettings from "./SoundSettings";
+import ParkListenSettings from "./ParkListenSettings";
 import { usePlan } from "../hooks/usePlan";
 import { useStreaming } from "../hooks/useStreaming";
 import { getStationTimezone, setStationTimezone, COMMON_TIMEZONES } from "../utils/timezone";
@@ -3360,6 +3361,11 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
       {/* ONE NORMALIZATION + FADER SMOOTHING (2026-10-11) — every number that shapes every source, visible and settable. */}
       <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12h3l3-8 4 16 3-8h3"/></svg>} title="Loudness & fader smoothing" description="One loudness for every source on air, and how smoothly every fader moves">
         <SoundSettings />
+      </Section>
+
+      {/* PARK PAGE — LISTEN (2026-10-13, docs/park-listen-plan-2026-10-13.md): every number that shapes the staff feed. */}
+      <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1v-6h3z"/><path d="M3 19a2 2 0 0 0 2 2h1v-6H3z"/></svg>} title="Park page — Listen" description="Logged-in park staff hear what the park speakers get, on their own phone">
+        <ParkListenSettings />
       </Section>
 
       {/* PFL (docs/help-channel-faders.md) — the programme dip in the local output while a PFL is on. */}

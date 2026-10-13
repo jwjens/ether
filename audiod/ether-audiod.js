@@ -146,6 +146,7 @@ let ENGINE_FP = { native: null, code: null };
 try { ENGINE_FP = require("./engine-fingerprint").engineFingerprint(path.join(__dirname, "..")); } catch { /* reported as unknown */ }
 const { DaemonEngine } = require("./engine");
 const { StreamSupervisor } = require("./stream");
+const { ListenSender } = require("./listen");     // Park page Listen (2026-10-13) — its own ffmpeg, its own port
 // v4.4.51: approximate the daemon process start (for the Health Monitor's uptime/restart, reported in
 // the ping reply so main doesn't have to scrape the rotating log for the pid).
 const DAEMON_STARTED_AT = Date.now() - Math.round((process.uptime && process.uptime() || 0) * 1000);
@@ -338,6 +339,15 @@ const streams = new Map(); // stationId → StreamSupervisor
 function getStream(stationId) {
   let s = streams.get(stationId);
   if (!s) { s = new StreamSupervisor(stationId, () => { try { return A.audioGetProgramBusPort(stationId); } catch { return 0; } }, (st) => broadcast({ event: "stream", ...st })); streams.set(stationId, s); }
+  return s;
+}
+
+// PARK LISTEN (2026-10-13) — per station, its own ffmpeg reading the engine's listen port (audiod/listen.js).
+// Status events broadcast as { event: "listen", ... } → main.
+const listens = new Map(); // stationId → ListenSender
+function getListen(stationId) {
+  let s = listens.get(stationId);
+  if (!s) { s = new ListenSender(stationId, A, (st) => broadcast({ event: "listen", ...st })); listens.set(stationId, s); }
   return s;
 }
 
@@ -631,6 +641,10 @@ const handlers = {
   startStream:        (m) => getStream(m.stationId).start(m.config || {}),
   stopStream:         (m) => { const s = streams.get(m.stationId); return s ? s.stop() : { ok: true }; },
   streamStatus:       (m) => { const s = streams.get(m.stationId); return s ? s.status() : { stationId: m.stationId, state: "idle" }; },
+  // Park page Listen — start / renew (a lease), stop, status. Never touches the stream or playout.
+  listenStart:        (m) => getListen(m.stationId).start(m.config || {}),
+  listenStop:         (m) => { const s = listens.get(m.stationId); return s ? s.stop() : { ok: true }; },
+  listenStatus:       (m) => { const s = listens.get(m.stationId); return s ? s.status() : { stationId: m.stationId, state: "idle" }; },
   // Real cpal output-callback stamp (epoch ms of the last device callback, ANY station). The
   // authoritative "is the output device alive" signal — independent of the VU levels pipeline. The
   // app's silent-wedge watchdog uses this to tell a real output death (callback stopped) from a
@@ -863,7 +877,7 @@ function applyBoardAll(why) {
 // Commands worth a log line on receipt — the lifecycle/automation surface (NOT the high-rate
 // pollers like getState/getLevels/getQueue, which would drown the log). automationStart/Stop
 // receipts are the anchor for verifying the auto-resume fix (Commit 2).
-const LOGGED_CMDS = new Set(["releaseDb", "automationStart", "automationStop", "skip", "fill", "init", "shutdown", "startStream", "stopStream"]);
+const LOGGED_CMDS = new Set(["releaseDb", "automationStart", "automationStop", "skip", "fill", "init", "shutdown", "startStream", "stopStream", "listenStop"]);
 
 function handleLine(sock, line) {
   let msg;
@@ -1058,6 +1072,7 @@ function shutdown() {
   log("shutting down — stopping streams + engines + decks + closing pipe");
   clearInterval(eventTimer);
   for (const s of streams.values()) { try { s.stop(); } catch {} }
+  for (const s of listens.values()) { try { s.stop(); } catch {} }
   // dispose(), not stop(): stop() no longer tears down timers (MANUAL keeps the poll alive), so the
   // shutdown path must clear them explicitly or every station leaks a 250ms interval on exit.
   for (const e of engines.values()) { try { e.dispose(); } catch {} }

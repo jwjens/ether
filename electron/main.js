@@ -1289,6 +1289,10 @@ if (AUDIO_DAEMON_DESIRED) {
         // Song boundary: the cleanest moment to swap out a stale-but-healthy daemon (current song
         // just ended). The no-audio timer covers wedged/idle daemons that never reach here.
         if (_daemonReloadArmed) fireDaemonReload("song boundary");
+      } else if (m.event === "listen") {
+        // Park page Listen sender (audiod/listen.js): every state change in the startup log — observed, never claimed.
+        logStartup(`[park-listen] station ${m.stationId}: ${m.state}${m.errorMsg ? " — " + m.errorMsg : ""} (tap ${m.tapConnected ? "reading" : "idle"}, restarts ${m.restarts})`);
+        sendToAllWindows("park:listen-status", m);
       } else if (m.event === "stream") {
         // Step 5: daemon Icecast status → the renderer's existing stream channels. The on-air
         // badge reads global.anyLive, which ONLY updates from stream:status:global — so the
@@ -5249,6 +5253,30 @@ function dueTimeFor(row, closingHHMM) {
 /** PARK OPS (2026-10-13): each of a date's announcements with the clock time it will fire at — computed by the SAME
  *  functions the announcement tick fires from (closingCfgFor → resolveClosingCfg → dueTimeFor), so the Park page shows
  *  exactly what will play, not a second calculation of it. A closing-time change moves these the moment it is written. */
+// ── PARK PAGE LISTEN (2026-10-13, docs/park-listen-plan-2026-10-13.md) ───────────────────────────────────────────────
+// The server says someone on the Park page is listening (on:true — sent again as a renewal while they are) or that
+// nobody is (on:false). The SOUND settings are the station's own, from Preferences → Park page → Listen; none is chosen
+// here. Runs in the audio daemon (its own ffmpeg); without the daemon there is no Listen, and it says so.
+const PARK_LISTEN_OUTPUT = { monitor: 1, aux: 2, both: 3 };
+ipcMain.handle("park:listen", async (_e, args = {}) => {
+  try {
+    const stationId = Number(args.stationId);
+    if (!Number.isFinite(stationId)) return { ok: false, error: "no station" };
+    if (!AUDIO_DAEMON) return { ok: false, error: "Listen needs the audio engine (daemon) — it is not running on this machine." };
+    if (!args.on) return await audiodClient.cmd("listenStop", { stationId });
+    const kv = {};
+    for (const r of db.prepare(`SELECT key, value FROM station_config_kv WHERE station_id = ? AND key IN ('park_listen_output','park_listen_bitrate_kbps','park_listen_frame_ms') AND deleted_at IS NULL`).all(stationId)) kv[r.key] = r.value;
+    const config = {
+      url: String(args.url || ""),
+      which: PARK_LISTEN_OUTPUT[String(kv.park_listen_output || "")] || 0,
+      bitrateKbps: Number(kv.park_listen_bitrate_kbps),
+      frameMs: Number(kv.park_listen_frame_ms),
+      leaseSec: Number(args.leaseSec),
+    };
+    return await audiodClient.cmd("listenStart", { stationId, config });
+  } catch (e) { return { ok: false, error: "park listen failed: " + (e && e.message || e) }; }
+});
+
 ipcMain.handle("announce:due-times", (_e, stationId, dateStr) => {
   try {
     const sid = Number(stationId);

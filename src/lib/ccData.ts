@@ -353,8 +353,15 @@ export async function pushOpsData(
     // MONITOR), and MUTE — read from the real level, never a stored flag.
     const level = kvNum("monitor_volume");
     const park = { level, top_db: kvNum("fader_top_db_monitor") ?? 0, muted: level === 0 };
+    // PARK LISTEN (2026-10-13): available only once every Listen setting is set (Preferences → Park page — Listen); the
+    // listener buffer is the phone's, so it travels to the page. Nothing here is a default.
+    const kvStr = (k: string) => String(kvRows.find(r => r?.key === k && !r?.deleted_at)?.value ?? "");
+    const listen = {
+      ready: ["park_listen_output", "park_listen_bitrate_kbps", "park_listen_frame_ms", "park_listen_buffer_ms"].every(k => kvStr(k) !== ""),
+      buffer_ms: kvNum("park_listen_buffer_ms"),
+    };
     await pushCcData(licenseKey, stationUuid, "ops_config", [
-      { uuid: "ops", closing, closing_today: closingToday, local_date: localDate, park, cart_playing: await cartPlaying(stationId), pushed_at: new Date().toISOString() },
+      { uuid: "ops", closing, closing_today: closingToday, local_date: localDate, park, listen, cart_playing: await cartPlaying(stationId), pushed_at: new Date().toISOString() },
     ]);
   } catch (e) { console.log("[OPSPUSH] ops_config failed:", (e as any)?.message ?? e); }
 

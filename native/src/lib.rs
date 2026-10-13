@@ -1134,6 +1134,27 @@ pub fn audio_get_program_bus_port(station_id: u32) -> u32 {
     audio.program_bus_port as u32
 }
 
+/// PARK LISTEN (2026-10-13): the 127.0.0.1 port the listen sender reads — a copy of what the park speakers get
+/// (localout.rs ListenRing). 0 = the station's mixer is not running. Never starts a mixer: Listen hears a station
+/// that is already playing, it never opens an output device.
+#[napi]
+pub fn audio_get_listen_port(station_id: u32) -> u32 {
+    audio::listen_ctl(station_id).port.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// PARK LISTEN: which local feeds the park speakers are on — the station's setting. 1 = MONITOR (main output),
+/// 2 = AUX, 3 = both, 0 = nothing.
+#[napi]
+pub fn audio_set_listen_source(station_id: u32, which: u32) {
+    audio::listen_ctl(station_id).which.store((which & 3) as u8, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// PARK LISTEN: is a sender reading the listen port right now (observed by the drain thread, never claimed)?
+#[napi]
+pub fn audio_get_listen_connected(station_id: u32) -> bool {
+    audio::listen_ctl(station_id).connected.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// AUX MONITOR OUTPUT DEVICE — where the aux bus is heard. Empty string = NONE = the aux stream is
 /// closed and the bus is silent.
 ///

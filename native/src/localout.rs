@@ -131,3 +131,42 @@ pub fn write_device(data: &mut [f32], ch: usize, dl: &[f32], dr: &[f32], prog_fr
     }
     pk
 }
+
+// ── PARK LISTEN (2026-10-13, docs/park-listen-plan-2026-10-13.md) ────────────────────────────────────────────────────
+// Jeff: "The feed is exactly what goes to the park speakers: the station's MONITOR output, after the park fader and
+// MUTE. Staff must hear their fader moves, mute and carts."
+//
+// A COPY for logged-in staff on the Park page. It is fed from the SAME post-MONITOR point as the two local devices —
+// the main device feed (`dl`/`dr`, after PFL-over-monitor) and the AUX sum — times the SAME `MonitorGain`, so a fader
+// move, MUTE or a cart is in it exactly as the speakers get it. Which of the two (or both) feed the park speakers is
+// the station's setting (`which`: LISTEN_MAIN | LISTEN_AUX); 0 = nothing.
+//
+// Air and the speakers are untouched by construction: this runs after the device buffer is written, reads only, and
+// writes only its own ring — try_push, whole stereo frames, a full ring drops (a listener that is behind loses a
+// frame; nothing waits). It runs only while a sender is connected to the listen port.
+pub const LISTEN_MAIN: u8 = 1;
+pub const LISTEN_AUX:  u8 = 2;
+
+pub struct ListenRing { prod: HeapProd<f32> }
+
+impl ListenRing {
+    pub fn new(prod: HeapProd<f32>) -> ListenRing { ListenRing { prod } }
+    /// Push one buffer: the selected local feeds, summed, × MONITOR, clamped to full scale (two speaker feeds summed
+    /// in the air can exceed it; the encoder cannot). Interleaved stereo at programme rate.
+    #[inline]
+    pub fn push(&mut self, main: (&[f32], &[f32]), aux: (&[f32], &[f32]), which: u8, g: MonitorGain) {
+        use ringbuf::traits::Observer;
+        let (m, a) = (which & LISTEN_MAIN != 0, which & LISTEN_AUX != 0);
+        if !m && !a { return; }
+        let n = main.0.len().min(main.1.len()).min(aux.0.len()).min(aux.1.len());
+        for f in 0..n {
+            if self.prod.vacant_len() < 2 { return; }   // whole frames only: L/R never slip
+            let (mut l, mut r) = (0.0f32, 0.0f32);
+            if m { l += main.0[f]; r += main.1[f]; }
+            if a { l += aux.0[f];  r += aux.1[f]; }
+            let gv = g.at(f);
+            let _ = self.prod.try_push((l * gv).clamp(-1.0, 1.0));
+            let _ = self.prod.try_push((r * gv).clamp(-1.0, 1.0));
+        }
+    }
+}

@@ -1624,6 +1624,14 @@ export default function App() {
             }
             break;
           }
+          // ── PARK OPS: Listen (2026-10-13) — someone on the Park page is listening (on, renewed while they are), or not.
+          // The sender runs in the audio daemon (audiod/listen.js); its sound settings are this station's Preferences.
+          case "park:listen": {
+            if (targetId == null) { refuse("park:listen — no target station"); break; }
+            const r: any = await (window as any).ether?.invoke?.("park:listen", { stationId: targetId, on: !!data.on, url: data.url, leaseSec: data.lease_sec });
+            if (!r?.ok) outcome = { ok: false, error: r?.error || "park:listen failed" };
+            break;
+          }
           // ── PARK OPS: fire a cart from the phone ──────────────────────────────────────────────
           // The remote twin of clicking a tile on the desktop cart wall (DeckConfigurator.tsx
           // BoutiqueCartWall.fireCart). Same two moves, same channel, so a cart fired from the park
@@ -1662,6 +1670,15 @@ export default function App() {
                              || dcs.find(c => c.enabled === 1 && c.type === "cart");
                 if (patched) cartCh = patched.slot;
               } catch { /* unreadable config → the legacy bus, never a silent no-fire */ }
+              // SECOND PRESS STOPS (Jeff, 2026-10-13: "a second press on the carts needs to stop the cart not restart it").
+              // Pressed while THIS cart is playing on the cart channel → stop it. Judged here, from the engine's own
+              // state, so a phone that is a second behind can never restart a cart it meant to stop.
+              const now: any = activeEngine.getDeck(cartCh)?.getState?.();
+              if (now && now.status === "playing" && now.filePath === row.file_path) {
+                activeEngine.getDeck(cartCh)?.stop();
+                console.log(`[RemoteCmd] cart:fire slot ${slot} → second press: stopped ${row.title || "(untitled)"} on ${cartCh}`);
+                break;
+              }
               await activeEngine.loadToDeck(cartCh, row.file_path, row.title || `Cart ${slot}`, "");
               activeEngine.getDeck(cartCh)?.play();
               console.log(`[RemoteCmd] cart:fire slot ${slot} → ${row.title || "(untitled)"} on ${cartCh}`);

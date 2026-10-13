@@ -787,6 +787,9 @@ pub struct BusState {
     /// silent. This is the single gate that makes "no device chosen = silence" true in the audio path
     /// rather than in a comment.
     pub aux_ring_prod:  Option<crate::localout::LocalRing>,   // LOCAL device feed: written only post-MONITOR (localout.rs)
+    /// PARK LISTEN (2026-10-13): the copy of what the park speakers get, for the Park page's Listen button. `Some` once
+    /// the station's mixer is started (start_station_mixer); written only while a sender is connected (`ListenCtl`).
+    pub listen: Option<(crate::localout::ListenRing, Arc<ListenCtl>)>,
     /// PFL cue output ring — Some only while the chosen cue device is OPEN (installed by the monitor-output thread).
     /// THE ONE APPROVED EXCEPTION to "every local output passes the MONITOR gain" (Jeff, 2026-10-07): PFL routed to a
     /// dedicated cue device. Deliberately a raw producer, not a LocalRing.
@@ -975,6 +978,7 @@ impl BusState {
             duck_gain: 1.0,
             duck_hold_left_ms: 0.0,
             aux_ring_prod: None,          // no aux device open → nowhere to send, by construction
+            listen: None,                 // installed by start_station_mixer; render tests run without it
             cue_ring_prod: None,          // no cue device open → the cue goes nowhere (or to the main output — see pfl_to_device)
             link_tap: None,               // not sending (SEND TO off) → the link tap does not exist
             aux_out_frames: Arc::new(AtomicU64::new(0)),
@@ -1914,6 +1918,70 @@ mod slice1_regression {
             println!("[local-out] {name}: device pk {:.3} → {:.3}, aux pk {:.3} → {:.3} at MONITOR 1 → 0; stream {:#018x} unchanged",
                      peak(&up.device), peak(&down.device), peak(&up.aux), peak(&down.aux), checksum(&up.stream));
         }
+    }
+
+    /// PARK LISTEN (2026-10-13) — one run with the listen tap installed. `which` = the station's setting; `listening` =
+    /// a sender is connected. Returns (device, aux, stream, listen).
+    fn run_listen(slot: usize, master: f32, which: u8, listening: bool) -> (Vec<f32>, Vec<f32>, Vec<f32>, Vec<f32>) {
+        let (prod, mut cons) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
+        let bus = Arc::new(crate::rt::RtMutex::new(BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)))));
+        let (aux_prod, mut aux_cons) = HeapRb::<f32>::new(AUX_BUS_BUF).split();
+        let (lprod, mut lcons) = HeapRb::<f32>::new(LISTEN_BUF * 8).split();
+        let ctl = Arc::new(ListenCtl { port: std::sync::atomic::AtomicU32::new(0), connected: AtomicBool::new(listening),
+                                       which: std::sync::atomic::AtomicU8::new(which) });
+        {
+            let mut b = bus.lock().unwrap();
+            for i in [0usize, slot] {
+                b.decks[i].source = Some(DeckFeed::prefilled(Det(100 + i as u64), 480 * 2 * 600));
+                b.decks[i].active = true; b.decks[i].paused = false; b.decks[i].volume = 0.8;
+            }
+            b.aux_monitor_gain[slot] = 1.0;
+            b.aux_ring_prod = Some(crate::localout::LocalRing::new(aux_prod));
+            b.monitor_vol = 1.0;
+            b.master_monitor_vol = master;
+            b.listen = Some((crate::localout::ListenRing::new(lprod), ctl));
+        }
+        let (fin, playing, mut sc) = (FinishedFlags::new(), Arc::new(AtomicBool::new(true)), Scratch::new());
+        let (mut dev, mut aux, mut st, mut li) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for _ in 0..40 {
+            let mut data = vec![0f32; 480 * 2];
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+            dev.extend_from_slice(&data);
+            while let Some(v) = cons.try_pop() { st.push(v); }
+            while let Some(v) = aux_cons.try_pop() { aux.push(v); }
+            while let Some(v) = lcons.try_pop() { li.push(v); }
+        }
+        (dev, aux, st, li)
+    }
+
+    #[test]
+    fn park_listen_is_exactly_what_the_speakers_get_and_never_touches_air() {
+        // Jeff, 2026-10-13: "exactly what goes to the park speakers: the station's MONITOR output, after the park fader
+        // and MUTE … if the feed fails, playout and the stream are untouched."
+        let src = 3usize;   // a Source channel (carts / announcements reach the room through AUX)
+        assert_eq!(default_kind_for(src), SlotKind::Source);
+        let (dev, aux, st_on, main) = run_listen(src, 1.0, crate::localout::LISTEN_MAIN, true);
+        let (_, _, _, auxl)         = run_listen(src, 1.0, crate::localout::LISTEN_AUX, true);
+        let (_, _, _, both)         = run_listen(src, 1.0, crate::localout::LISTEN_MAIN | crate::localout::LISTEN_AUX, true);
+        let (_, _, st_off, none)    = run_listen(src, 1.0, crate::localout::LISTEN_MAIN, false);
+        let (_, _, _, muted)        = run_listen(src, 0.0, crate::localout::LISTEN_MAIN | crate::localout::LISTEN_AUX, true);
+        let (_, _, _, nothing)      = run_listen(src, 1.0, 0, true);
+        assert!(peak(&dev) > 0.01 && peak(&aux) > 0.01, "the test is not live");
+        // MONITOR setting → the copy IS the main device feed, sample for sample.
+        assert_eq!(main.len(), dev.len());
+        for (a, b) in main.iter().zip(dev.iter()) { assert_eq!(a.to_bits(), b.to_bits(), "Listen (MONITOR) differs from the speakers"); }
+        // AUX setting → the copy IS the AUX device feed.
+        assert_eq!(auxl.len(), aux.len());
+        for (a, b) in auxl.iter().zip(aux.iter()) { assert_eq!(a.to_bits(), b.to_bits(), "Listen (AUX) differs from the AUX output"); }
+        // Both → the two summed (clamped to full scale).
+        for i in 0..both.len() { assert_eq!(both[i].to_bits(), (dev[i] + aux[i]).clamp(-1.0, 1.0).to_bits(), "Listen (both) is not the sum"); }
+        // MUTE (MONITOR 0) → silence; nobody listening or no setting → nothing written at all.
+        assert!(silent(&muted), "Listen made sound with the park sound at 0");
+        assert!(none.is_empty(), "the tap wrote with no sender connected");
+        assert!(nothing.is_empty(), "the tap wrote with no output chosen");
+        // AIR: the stream is bit-identical whether anyone listens or not.
+        assert_eq!(checksum(&st_on), checksum(&st_off), "listening changed the AIR stream");
+        println!("[listen] main pk {:.3}, aux pk {:.3}, both pk {:.3}; stream {:#018x} unchanged", peak(&main), peak(&auxl), peak(&both), checksum(&st_on));
     }
 
     #[test]
@@ -2900,6 +2968,24 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
         drain_program_bus(station_id, listener, ring_cons, delay_drain, stream_connected);
     });
 
+    // ── PARK LISTEN tap (2026-10-13) — its own ring, its own 127.0.0.1 port, its own thread ─────────────────────────
+    // Installed here, while no callback runs. A bind failure leaves the station without Listen; nothing else changes.
+    {
+        let ctl = listen_ctl(station_id);
+        let (lprod, lcons) = HeapRb::<f32>::new(LISTEN_BUF).split();
+        match TcpListener::bind("127.0.0.1:0") {
+            Ok(l) => {
+                let lport = l.local_addr().map(|a| a.port()).unwrap_or(0);
+                ctl.port.store(lport as u32, Ordering::Relaxed);
+                eprintln!("[RUST] Station {} Park listen on TCP port {}", station_id, lport);
+                if let Ok(mut b) = bus_cmd.lock() { b.listen = Some((crate::localout::ListenRing::new(lprod), ctl.clone())); }
+                let c2 = ctl.clone();
+                std::thread::spawn(move || drain_listen(station_id, l, lcons, c2));
+            }
+            Err(e) => eprintln!("[RUST] Station {} Park listen bind failed: {} — Listen unavailable", station_id, e),
+        }
+    }
+
     // ── MONITOR OUTPUT THREAD — the AUX monitor AND the PFL cue output ─────────────────────────────────────
     // Each owns its own cpal stream on a device the OPERATOR chose: opened when picked, closed when cleared,
     // reopened when switched, retried slowly while absent — never a fallback to another device. It is the ONLY
@@ -3781,6 +3867,27 @@ fn status_for(map: &'static StatusMap, station_id: u32) -> Arc<CueStatus> {
 }
 pub(crate) fn cue_status(station_id: u32) -> Arc<CueStatus> { status_for(&CUE_STATUS, station_id) }
 pub(crate) fn aux_status(station_id: u32) -> Arc<CueStatus> { status_for(&AUX_STATUS, station_id) }
+
+/// PARK LISTEN control, per station (2026-10-13). `port`: the 127.0.0.1 TCP port the listen sender reads (0 = mixer not
+/// started). `connected`: a sender is reading — the only time the mixer writes the listen ring. `which`: the local
+/// feeds the park speakers are on (localout::LISTEN_MAIN | LISTEN_AUX), the station's setting; 0 = nothing.
+pub(crate) struct ListenCtl {
+    pub port: std::sync::atomic::AtomicU32,
+    pub connected: AtomicBool,
+    pub which: std::sync::atomic::AtomicU8,
+}
+static LISTEN_CTL: std::sync::OnceLock<Mutex<HashMap<u32, Arc<ListenCtl>>>> = std::sync::OnceLock::new();
+pub(crate) fn listen_ctl(station_id: u32) -> Arc<ListenCtl> {
+    let m = LISTEN_CTL.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut g = m.lock().unwrap_or_else(|e| e.into_inner());
+    g.entry(station_id).or_insert_with(|| Arc::new(ListenCtl {
+        port: std::sync::atomic::AtomicU32::new(0), connected: AtomicBool::new(false),
+        which: std::sync::atomic::AtomicU8::new(0),
+    })).clone()
+}
+/// One second of programme-rate stereo: enough to ride out the sender's scheduling; small enough that a listener is
+/// never far behind (the ring only fills if the sender stalls, and then it drops, never waits).
+const LISTEN_BUF: usize = PROGRAM_RATE as usize * 2;
 pub(crate) fn cue_state_name(v: u8) -> &'static str {
     match v { CUE_SAME_AS_MAIN => "same_as_main", CUE_OPENING => "opening", CUE_OPEN => "open", CUE_NOT_FOUND => "not_found", _ => "failed" }
 }
@@ -5125,6 +5232,13 @@ pub(crate) fn mixer_callback(
     // buffer is written ONLY by localout::write_device, which takes the gain (same arithmetic as before).
     let resample = !(device_sr == PROGRAM_RATE || prog_frames <= 1);
     let dev_pk = crate::localout::write_device(data, ch as usize, dl, dr, prog_frames, device_frames, resample, local_gain);
+    // PARK LISTEN — the copy for the Park page, from the SAME post-MONITOR feeds the speakers just got (localout.rs).
+    if let Some((ref mut ring, ref ctl)) = bus.listen {
+        if ctl.connected.load(Ordering::Relaxed) {
+            let w = ctl.which.load(Ordering::Relaxed);
+            if w != 0 { ring.push((dl, dr), (&*aux_l, &*aux_r), w, local_gain); }
+        }
+    }
     let lp = local_pk.max(dev_pk);
     // NO release ballistics: this is the bypass SENSE, not a VU. It must describe THIS buffer exactly, so the buffer
     // in which MONITOR reaches 0 reads 0 — a decaying peak would raise a false alarm the moment the fader is pulled.
@@ -5135,6 +5249,32 @@ pub(crate) fn mixer_callback(
     // S3 — this buffer's meters and telemetry, for GetLevel (lock-free triple buffer).
     bus.publish_meters();
 
+}
+
+/// PARK LISTEN sender feed: one client at a time (the daemon's listen sender). Producer-paced like the stream's
+/// delay-off path — it writes what the mixer made, so there is no second clock. A stale ring is emptied on connect so
+/// a new listener starts at "now".
+fn drain_listen(station_id: u32, listener: std::net::TcpListener, mut cons: ringbuf::HeapCons<f32>, ctl: Arc<ListenCtl>) {
+    use std::io::Write;
+    use ringbuf::traits::Consumer;
+    let mut buf = vec![0.0f32; 8820];
+    let mut bytes: Vec<u8> = Vec::with_capacity(8820 * 4);
+    loop {
+        let Ok((mut stream, addr)) = listener.accept() else { std::thread::sleep(std::time::Duration::from_millis(200)); continue; };
+        eprintln!("[RUST] Station {} Park listen sender connected: {}", station_id, addr);
+        let _ = stream.set_nodelay(true);
+        while cons.pop_slice(&mut buf) > 0 {}
+        ctl.connected.store(true, Ordering::Relaxed);
+        loop {
+            let n = cons.pop_slice(&mut buf);
+            if n == 0 { std::thread::sleep(std::time::Duration::from_millis(5)); continue; }
+            bytes.clear();
+            for &x in &buf[..n] { bytes.extend_from_slice(&x.to_le_bytes()); }
+            if stream.write_all(&bytes).is_err() { break; }
+        }
+        ctl.connected.store(false, Ordering::Relaxed);
+        eprintln!("[RUST] Station {} Park listen sender gone", station_id);
+    }
 }
 
 fn drain_program_bus(
