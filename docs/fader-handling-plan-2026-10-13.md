@@ -106,3 +106,31 @@ in the working range (2.5 %) and gives less to the bottom; the LXE spreads more 
 For Jeff: (A) the proposal as is, or (B) the LXE law (its points as the default rows of the law setting). B's top is
 +12 dB; Ether's engine ceiling for any fader is +10 dB (src/lib/faderLaw.ts MAX_GAIN_DB), so B either stops at +10
 (top 4 % of travel unused) or the ceiling is raised to +12 — Jeff's call.
+
+## Jeff: "use A" — BUILT (2026-10-13), LOCAL
+
+Commits: Ether `70e4108`, server `eb61418` (passes the law/feel to the Park page), Park page `68b7fa3`.
+
+- `src/lib/faderLaw.ts`: the law is read from Preferences (`fader_law`); option A is only the starting value written
+  once (`audiod/board-state.js` FADER_START, seeded on the engine connect like the ducker). Feel: `fader_fine_factor`
+  10, `fader_wheel_step_db` 0.5 (Jeff's number), `fader_arrow_step_db` 0.5, `fader_arrow_fine_step_db` 0.1 — the mock's
+  values, written once, editable.
+- `src/lib/useFaderControl.ts` (+ `FaderValue.tsx`, `HFader.tsx`): every fader — channel/source (`ConsoleStrip`),
+  MASTER/MONITOR (`MasterOutput`), Station Monitors (`StationMonitorMixer`), AUX rows (`AuxMonitorSlots`) — and the Park
+  page fader: press = no change; relative drag; Shift = ÷ fine; wheel/arrow steps on the step grid; double-click the
+  level (channel faders: the fader) to type. The browser sliders (`<input type=range>`) on the strips and AUX rows are
+  gone — they jumped on click. `MixerChannelStrip.tsx` is not rendered anywhere; untouched.
+- Readout: every fader already showed its exact dB (0.1); it now lights while moving. Differs from the mock: no extra
+  bubble beside the cap — the existing readout is the one lit.
+- Preferences → Audio → **Loudness & faders** (renamed from "Loudness & fader smoothing"): "How a fader moves" (4
+  steps) and "Fader law" (editable points, add/remove, Save law). Help: `docs/help-faders.md`.
+- Tests: faderLaw 12/12 (3 updated to option A — E −16.3 dB now draws at 34.2 % instead of 40.5 %; its gain is
+  unchanged), board-state 27/27 (seeding), vitest 893/893, tsc 0, leak guard 13, server 130/130.
+- Runtime receipt (the real HFader in a local test page in Chrome, 300 px, top 0 dB, torn down after): clicking the
+  track and the thumb sent nothing; 30 px drag = exactly 4.0 dB either way, from any grab point; Shift 30 px = 0.4 dB;
+  wheel −2.3 → −2.0 → −1.5 and the page did not scroll; arrow −0.5, Shift+arrow +0.1; typed −5 → −5.0 dB; typed +6 on a
+  0 dB-top fader → stopped at 0.0 dB with "Stopped at the maximum". The vertical channel fader uses the same control
+  (axis y); it and the Park page fader are UNVERIFIED on screen until the installed build / deployed page.
+
+Installer: `C:\openair\dist-electronther Setup 4.6.59 parkcontrol+logo+faders 16e13166 70e4108.exe`
+sha256 `16e131665510b5649c254aa2610b0094481f5425216af054ef108f6e785833fd` — RELEASE GATE PASS. Carries the park control fix and the taskbar-logo fix too (replaces 2766c514).
