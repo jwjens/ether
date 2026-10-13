@@ -70,3 +70,12 @@ Jeff: staff log in with the SAME username + PIN system Ether already has. Reuse 
   - Park access is kept by username, so it comes back with the user, but they'd have to log in again.
   - Fix proposed separately, not built.
 - **HalloVeen's MONITOR level is 0** (set 08:32 UTC, before tonight's install; no Park command sent it). The Park page shows MUTED / off because that is the real level. Not changed.
+
+## Removed from the Remote page (Jeff, 2026-10-13, later the same night)
+
+Jeff: "why did you make that!!!! specific instructions were user pin created in ether in preferences" and "you were not given permission to assume and do what you want". The Users-tab additions were never asked for.
+
+- `ether-dashboard` `14318b4` reverted (`651becf`), deployed. Live check: the Users tab again only lists the users (name, @username, Admin/User, "locked"), with no Park boxes, Login safety or activity. Same as before tonight.
+- Jeff's rule now: log in with the username + PIN made in **Ether → Preferences → Users & Security**. **Admins can use every station's Park page.** Per-station access, lockout settings and an activity log go in Ether's Users & Security, only after a screenshot and his approval.
+- **Ryan today (read-only check):** account user on lic 24, role admin, has a PIN, not locked. The server still requires a Park-access row, and there are none, so **Ryan is refused right now** ("Ryan isn't allowed on this station's Park page"). Fix = a server change (admins pass on every station of their account), which needs Jeff's GO to deploy.
+- No login safety values were ever saved, so both logins still use 5 wrong PINs → 15 minutes, as before tonight.
