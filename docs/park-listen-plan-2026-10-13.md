@@ -99,3 +99,115 @@ Rust mixer ──try_push──► MONITOR tap ──► ffmpeg (own process, Op
 
 - Which output(s) on OVEVENTS feed the park speakers (main MONITOR device, AUX device, or both)?
 - Approval of this plan, of installing MediaMTX on the Lightsail stream server, and of a new OVEVENTS build.
+
+---
+
+## Built (2026-10-13, after Jeff's approval)
+
+Jeff: "Listen plan approved: install MediaMTX on the stream server and build Listen + 'second press stops the cart' into one OVEVENTS installer. No deploy of the Listen server side until the installer is ready and I've installed it. Measure the real delay after."
+
+Jeff's form came through as "Park speakers on OVEVENTS are fed from: ___". The blank is not filled. It's a setting in Ether (Preferences → Audio → Park page — Listen → "Park speakers are fed from"), unset until Jeff chooses.
+
+### Transport: RTSPS in, WebRTC out
+
+- Ether's bundled ffmpeg is **6.1.1**. It has Opus but **not** the WHIP muxer, which arrived later ([Phoronix](https://www.phoronix.com/news/FFmpeg-Lands-WHIP-Muxer)).
+- So the station sends Opus over **RTSPS** (TLS) to MediaMTX, which takes RTSP from ffmpeg ([MediaMTX: FFmpeg](https://mediamtx.org/docs/publish/ffmpeg)). Phones play it as WebRTC (WHEP).
+- No second ffmpeg is added to the air machine.
+
+### Station (OVEVENTS installer)
+
+**Engine** (`native/src/localout.rs` ListenRing, `audio.rs`):
+- A copy of what the park speakers get, taken after the device buffer is written: the same post-MONITOR feeds × the same MonitorGain.
+- Sources: MONITOR, AUX, or both (summed, clamped).
+- `try_push`, whole frames only, written only while a sender is connected.
+- Its own 1 s ring, its own 127.0.0.1 port and thread.
+- Engine functions: `audioGetListenPort` (never starts a mixer), `audioSetListenSource`, `audioGetListenConnected`.
+
+**Daemon** (`audiod/listen.js`):
+- Its own ffmpeg, Opus, settings from Preferences.
+- A lease: it stops by itself 60 s after the last renewal.
+- Retries after 3 s if it falls over; never a tight loop.
+- Stops on daemon shutdown.
+
+**Main** `park:listen`:
+- Reads the four settings; refuses honestly without the daemon.
+- Every sender state goes to the startup log as `[park-listen]` and to Preferences.
+
+**Renderer:**
+- `park:listen` command (station-scoped, aimed at the owner).
+- The Park mirror reports `listen.ready` and `buffer_ms`.
+
+**Preferences → Audio → Park page — Listen:**
+- Four settings, none prefilled; Listen is off until all four are set.
+- Shows the sender's live state.
+
+**Second press stops the cart:** `cart:fire` while that cart is playing on the cart channel stops it. The station's engine state decides.
+
+**Help:** `docs/help-park-listen.md`.
+
+### Server
+
+**`ether-backend` `f7d720e`** — committed, **NOT deployed** (waits for Jeff's install):
+- `lib/park-listen.js`, 6 tests.
+- `POST /public/ops/:slug/listen | /renew | /stop`: logged-in sessions only; the long key is refused.
+- `POST /internal/mediamtx/auth`.
+- `listen` in `GET /public/ops`; `park:listen` station-scoped.
+- All 130 server tests pass.
+- Relay addresses and the secret are env settings: `PARK_LISTEN_RTSP_BASE`, `PARK_LISTEN_WHEP_BASE`, `MEDIAMTX_AUTH_SECRET`.
+
+**`ether-park` `1303a47`** — committed, **NOT deployed**:
+- LISTEN under MUTE, logged-in only, never auto-starts, renews every 15 s.
+- `jitterBufferTarget` = the station's buffer setting.
+- Cart tile: "Playing · 0:42 left · tap to stop".
+
+**MediaMTX v1.21.2 on the stream server** — INSTALLED (approved):
+- Checksum verified, `121be6e0…`.
+- systemd `mediamtx.service` (own user, MemoryMax 256M, CPUQuota 50%, Nice 10), using 11 MB.
+- Only RTSPS on :8322 (publish) and WebRTC (WHEP via nginx 443 → 127.0.0.1:8889; media UDP+TCP 8189). Every other protocol is off.
+- Every publish and read is checked by `ether-backend`. Until that's deployed, everything is refused: a live WHEP POST through nginx returned 401.
+- New nginx site `stream-listen` (stream.ether-technologies.com:443, `/park/` only).
+- Certbot deploy hook `mediamtx.sh`.
+- Icecast untouched: still active, HalloVeen mount up.
+
+### Tests
+
+- Rust: `park_listen_is_exactly_what_the_speakers_get_and_never_touches_air`:
+  - MONITOR copy = the speaker feed bit-for-bit; AUX copy = the AUX feed; both = the sum;
+  - MONITOR 0 → silent; no sender or no setting → nothing written;
+  - the stream checksum is identical listening or not.
+- Full Rust suite: 150 pass; 5 fail, and the **same 5 fail without this change** (stale goldens: `null_vs_golden`, `rack_path…`, `channel_racks…`, `link_tap…`, `aux_monitor_single_pass_regression`). Not re-captured: goldens only on Jeff's say-so.
+- `the_callback_never_allocates` passes with the tap in.
+- Sender: 6 tests. Typecheck: 0 errors. Leak guard: 13 (baseline holds).
+- Packaged gate: `✅ RELEASE GATE PASS`. The packaged engine exports the three Listen functions; the packaged daemon contains `listen.js`.
+
+### Local delay measurement (this machine, no internet in the path)
+
+Rig: a 1 kHz beep every 2 s in the engine's exact format (f32le 44.1 kHz stereo) → the **real** sender command line (bundled ffmpeg 6.1.1, Opus 64 kbps, 20 ms) → local MediaMTX → Chrome WebRTC → analyser onset. Times were measured against the same clock.
+
+| Listener buffer | Settled delay | Notes |
+|---|---|---|
+| 0 ms (browser decides) | **152–157 ms** | starts ~490 ms, catches up in ~8 s; 0 packets lost |
+| 500 ms | **572–583 ms** | the setting works as intended |
+
+The browser reported a further **40 ms** of audio output latency.
+
+**This is not the park delay.** The real number needs the internet path (OVEVENTS → Lightsail → a phone). It is measured after the install, as Jeff asked. The test was torn down (MediaMTX, rig, ports); HalloVeen's live stream encoder was left running.
+
+## Installer
+
+`C:\openair\dist-electron\Ether Setup 4.6.59 listen+cartstop 17c3aac7 ee2d98b.exe`
+- sha256 `17c3aac756d34855aa075d9737e09fcf88ebe4d90c453694193715ba371ac8f8`.
+- Engine `91b9f495…` (commit `6d7c7de`).
+- No version bump, tag or CI.
+
+## Still needed from Jeff
+
+1. **Lightsail firewall** (Lightsail console → stream server → Networking → IPv4 firewall → Add rule):
+   - **TCP 8322**: the station sends;
+   - **TCP 8189** and **UDP 8189**: phones play.
+   - Today all three are closed (checked from OVEVENTS).
+2. **Which output feeds the park speakers** (MONITOR / AUX / both), set in Preferences after the install, along with the other three Listen settings.
+3. **Install** the build on OVEVENTS. Then GO to deploy:
+   - `ether-backend` `f7d720e` + 3 Railway env vars;
+   - `ether-park` `1303a47`.
+4. Then: the real delay measurement.
