@@ -89,3 +89,24 @@ Also verified in dev: unmute returns to 0.0 dB, and dragging the fader set −12
 1. Deploy the backend (`C:\ether-backend`, Railway).
 2. Deploy the page: `cd C:\ether-park && npm run deploy` (wrangler, project `ether-park`). An older station keeps working with the new page: missing fields show as "not reported yet".
 3. Install the station build with these changes.
+
+## Deployed (Jeff's GO, 2026-10-13 ~08:20 UTC)
+
+- **Safety check first.** The server change touches only the Park page's read (`GET /public/ops/:slug`) and adds two park-only routes (`…/level`, `…/mute`). Nothing the station calls changed. The air machine's current build (OVEVENTS, HalloVeen) already handles the page's closing-time Save the same way (it writes tonight's date entry; announcements resolve at fire time). The page only sends level/MUTE once a station reports its sound, which the current build doesn't, so those can't reach it.
+- **Server:** `a6d6493` fast-forwarded onto `ether-backend` main (live was `21156d3`; this commit was the only difference). Railway deploy SUCCESS at 08:20:54Z; `/health` ok.
+- **Still on air:** HalloVeen's own play log on OVEVENTS shows "We Don't Talk About Bruno" at 08:20:37Z, then "Dark Horse" at 08:24:09Z, back to back across the deploy. The station kept reporting to the server every few seconds throughout.
+- **Page:** `wrangler pages deploy` (project `ether-park`, branch main), deployment `51c61ad1`; live at `park.ether-cast.com/halloween`. Screenshots 7 and 8.
+
+### What works now, with OVEVENTS on its current build
+- Clock; tonight's closing time (9:00 PM); the four announcements with real times (8:29, 8:45, 8:57, 8:59 PM, worked out by the server from the closing time); carts 1–8 with the four HalloVeen carts and four empty; view-only lock.
+- Closing-time Save: the current build applies it. The announcements move with it.
+- Firing a cart: the current build plays it. The tile does **not** light up or count down (that needs the new build).
+
+### What needs the new station build on OVEVENTS
+- The fader and MUTE. They show "The station hasn't reported its sound level yet" and stay locked.
+- The cart that's playing, with time left.
+- Announcement times taken from the station's own scheduler (today they're the server's arithmetic, which gives the same times).
+- Instant updates after a change made elsewhere. The current build updates the page only for the station on screen, and only every 60 s.
+
+### Found while checking (not caused by this deploy, not changed)
+- **"Now playing" shows "Nothing playing" while HalloVeen is on air.** The station's own now-playing report says all three decks are idle, even as its play log shows songs airing. The deploy didn't touch that report, and the page shows exactly what the station sends. Not investigated further. Runtime check to settle it: is HalloVeen the station on screen on OVEVENTS right now?
