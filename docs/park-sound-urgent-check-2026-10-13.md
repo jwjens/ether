@@ -57,3 +57,32 @@ of sight in Master Out. Proposed:
 - C: every Park page while OFF: "Controls locked by the studio", fader/MUTE/carts/closing time greyed, Listen works.
   The server refuses those writes too, and Ether refuses them itself.
 - D: mono needs one new Listen setting, "Channels" (Mono/Stereo, no default) — the sender is always stereo today.
+
+## Jeff (verbatim), after the mock
+
+> Staff run the park from the Park page; only Jeff uses Ether. Any logged-in staff member on any Park page can adjust and undo any other staff member's fader or mute, and sees the who/when line on the Park page. Only the lock switch is Ether-only.
+
+## Built (2026-10-13) — LOCAL, nothing pushed or deployed
+
+Installer: `C:\openair\dist-electron\Ether Setup 4.6.59 parkcontrol+logo 2766c514 ce58ead.exe`
+sha256 `2766c5142aaa8a2016f22e0bdcc2c46261deb764f8343b0c15e106ad751ff35d` — RELEASE GATE PASS (engine unchanged, 91b9f495).
+Also carries the taskbar-logo fix (docs/ether-logo-everywhere-2026-10-13.md).
+
+- Ether `5e633d7`: real MUTE (`monitor_muted`; main's `audio:setMonitorMute`; every path to the strip — Park page,
+  Ether strip, Show Take, engine restore — holds it), who/when (`park_sound_last`, src/lib/parkSound.ts), the lock
+  (`park_control` = off; Ether refuses `from_park` level/mute/closing/cart commands too), the station on screen first
+  and always open, live updates (main's `ops:changed`), Listen Channels (Mono/Stereo, `park_listen_channels`).
+  Built on the mock, plus: the strip keeps its level number next to MUTE (it was there before); the switch and
+  who/when line are on every station's strip (each station can have a Park page).
+- Server `db7cda1`: 423 "Controls locked by the studio" on level/mute/closing/fire; commands carry `from_park` and the
+  staff name; GET shows `park.locked` and `park.last`, the name only to logged-in staff (read-only check, no writes on
+  the 4 s refresh). Sits on `f7d720e` (Listen, inert until its Railway variables are set).
+- Park page `115e274`: lock note + fader/MUTE/carts/closing greyed (Listen stays), who/when line under MUTE, refresh
+  identifies the staff member. Sits on `1303a47` (Listen button).
+- Tests: tsc 0 errors; leak guard 13; vitest 888/888 (new: MUTE holds through a restart); server 130/130.
+- HalloVeen before install (read-only snapshot 10:0x): strip 0.82, not muted — nothing to carry over.
+
+## Not yet done
+
+- Test 4 (mute from Park page A, log A out, unmute from Ether and separately from Park page B) needs this build
+  installed on OVEVENTS and the server + Park page deployed. Not run.
