@@ -94,3 +94,11 @@ Recorded verbatim above. Not investigated yet — after the performance work, as
 1. Jeff installs this build (the boot trace of that launch is §4's receipt).
 2. 5-minute measurement with the same script (now also reading the stall sense and the React breakdown) while Jeff works normally — clicks included.
 3. The sense names the ~11 s main stall and the components behind the slow clicks → fix them (off main / stop the re-render) → after-measurement → installer.
+
+## 9 · Build (round 2, senses + main-process fixes)
+
+From `721cd86` (`npm run build` + `npm run electron:build:win -- --publish never`, no version bump):
+- `C:\openair\dist-electron\Ether Setup 4.6.59.exe` — 216,040,164 bytes, sha256 `0b1ef492e5f1147102c69f97869d4973ca8689f4e21648eae6514746cd27c143`
+- `app.asar` sha256 `ce021cb747e47b5ce7b7c4dc6a544cbc724166665c9a64230214b204df36feb1`; engine `7598aef6` (unchanged); `audiod/verify-packaged.js` RELEASE GATE PASS.
+- The installed round-1 fix build was renamed `Ether Setup 4.6.59 - perf-fix 6b1fcb43 0acf1f8 - SUPERSEDED.exe` (sha256 checked before the rename).
+- Rust suite not re-run: no Rust change since `90a6a47` (149 pass / 5 known goldens / 4 ignored). Goldens on hold.
