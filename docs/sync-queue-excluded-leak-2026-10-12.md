@@ -123,3 +123,12 @@ This is broader than `anyOnAirEngineLive`, which counts only stations under auto
 5. Off air again: it resumes and finishes: 217,002 removed, backup 217,002, 0 left.
 
 Before the checkpoint skip and the event-driven flag, that same single write took 79–182 ms; every later write was already normal.
+
+## Build
+
+From `6233ccc`; no version bump, tag or CI.
+- `C:\openair\dist-electron\Ether Setup 4.6.59.exe`: 216,047,591 bytes, sha256 `1780db161d47d1ac5785d74bfd5552ac7677a6b3b61edbc1306d565620acd7f4`.
+- `app.asar`: `7044e521b76e72e0788f59dd7012aa4932f043ad79667e97acac8533c1aac5c8`.
+- Engine `7598aef6`, unchanged. verify-packaged: RELEASE GATE PASS.
+- The previous installer was renamed `… perf-fixes 020771f1 fc89cc5 - SUPERSEDED.exe`.
+- Gates: tsc 0; vitest 878/878; test:sync 52/52; verify:schema, undefined-calls, ipc-contract, preload-bridge PASS; purge-onair 10/10; push-index 5/5.
