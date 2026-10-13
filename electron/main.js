@@ -319,7 +319,11 @@ function logStartup(msg) {
 }
 
 // ── App identity ──────────────────────────────────────────────
-app.setAppUserModelId("ether");
+// MUST equal electron-builder's appId (electron-builder.json "com.ether.radio"): the installer stamps that id on Ether's
+// Start-menu and desktop shortcuts, and Windows draws the taskbar button with the icon of the shortcut carrying the
+// running app's id. It was "ether" — the id of an old dev "Electron.lnk" (target node_modules\electron\dist\electron.exe)
+// on OVEVENTS, so the taskbar showed Electron's logo (Jeff, 2026-10-13; docs/ether-logo-everywhere-2026-10-13.md).
+app.setAppUserModelId("com.ether.radio");
 
 // ── Fix DPI scaling on Windows ────────────────────────────────
 if (process.platform === "win32") {
