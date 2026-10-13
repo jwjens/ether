@@ -3,6 +3,7 @@ import { useAudioEngine } from "../audio/AudioEngineContext";
 import { queryScoped } from "../db/stationScoped";
 import { checkFilePresence, fileLocationReason, changeFileLocationItem, importIntoAudioLibrary, type FilePresence } from "../lib/fileLocation";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { matchesStation } from "../lib/levelsScope";
 // The on-screen Console is where an operator looks when something did not go where they expected.
 import { consoleLog } from "./MasterOutput";
 import { writeBoard, writeChannelOn } from "../lib/deckConfigWrites";
@@ -683,7 +684,9 @@ interface CartProps {
 
 export function BoutiqueCartWall({ compact, variant }: CartProps) {
   const engine = useAudioEngine();
-  const { stationId } = useActiveStation();
+  const { stationId, stationUuid } = useActiveStation();
+  const cartUuidRef = useRef(stationUuid);
+  cartUuidRef.current = stationUuid;
   const { configs: deckCfgs } = useDeckConfig();
 
   // ── WHERE A CART ACTUALLY SOUNDS ───────────────────────────────────────────────────────────────
@@ -817,8 +820,14 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
   // length, shows time remaining, and you can see audio moving.
   useEffect(() => {
     const ether = (window as any).ether;
-    const lv = ether?.audio?.onLevels?.((l: { a?: number; b?: number; c?: number; cart?: number }) => {
-      setVu(l.cart ?? 0);
+    // THIS STATION'S cart level only, and a render only when the drawn bar changes (2026-10-12, docs/perf-pass-round2-2026-10-12.md
+    // §7). Every station's levels frames reach every window, interleaved; this took them all, so the VU jumped between
+    // stations' cart levels (a sweeper on another station's CART bus moved this wall's meter) and the whole wall
+    // re-rendered at the meter rate of every station.
+    const lv = ether?.audio?.onLevels?.((l: { a?: number; b?: number; c?: number; cart?: number; stationUuid?: string }) => {
+      if (!matchesStation(l, cartUuidRef.current)) return;
+      const v = Math.round((l.cart ?? 0) * 100) / 100;        // the bar is drawn in whole percent
+      setVu(prev => (prev === v ? prev : v));
     });
     const id = setInterval(() => {
       if (!playingKeyRef.current) return;

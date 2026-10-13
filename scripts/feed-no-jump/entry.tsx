@@ -9,7 +9,8 @@ function Board() {
     <div id="column" style={{ height: 600, minHeight: 0, overflowY: "auto", overflowX: "hidden", display: "flex", flexDirection: "column" }}>
       <div id="faders" style={{ height: 640, flexShrink: 0, background: "#222", color: "#fff" }}>MASTER / MONITOR faders — Master Out is taller than the screen, so its column scrolls</div>
       <div style={{ flexShrink: 0, height: 60 }}>Health Monitor (mini)</div>
-      <LiveConsole masterLevel={0.5} />
+      {/* masterLevel for the pre-fix control's console, levelRef for the current one */}
+      <LiveConsole {...({ masterLevel: 0.5, levelRef: { current: 0.5 } } as any)} />
     </div>
   );
 }

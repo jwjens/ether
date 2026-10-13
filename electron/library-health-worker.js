@@ -44,6 +44,8 @@ const CALLS = {
   goalCheck: (sid) => lh.goalCheck(getDb(), sid),
   // The health frame's database part (health:frames, every 60 s / 5 s while the web monitor watches): each station's
   // runway and its 7-day trend. Was synchronous on main: 0.46–1.4 s per call on OVEVENTS (docs/perf-pass-round2-2026-10-12.md).
+  // schedule:playhead-view (UpNext's 30 s shadow-compare) — 186–207 ms of main per call on OVEVENTS.
+  playheadView: (sid, n) => require("./runway").playheadView(getDb(), sid, n),
   runwayFrames: (sids) => {
     const R = require("./runway"), d = getDb(), out = {};
     for (const sid of Array.isArray(sids) ? sids : []) out[sid] = { runway: R.computeRunway(d, sid) || null, series: R.runwaySeries(d, sid) };

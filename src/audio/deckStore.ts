@@ -83,3 +83,13 @@ export function selectOnAir(s: DeckSnap): OnAir {
 export const sameOnAir = (a: OnAir, b: OnAir) =>
   a.id === b.id && a.title === b.title && a.artist === b.artist && a.queueLen === b.queueLen &&
   a.titles[0] === b.titles[0] && a.titles[1] === b.titles[1] && a.titles[2] === b.titles[2];
+
+/** What the BOARD shows about the decks (FaderSection reads only status and volume): no positions, so a position tick
+ *  never re-renders the faders. docs/perf-pass-round2-2026-10-12.md §3 — the board re-rendered on every deck event
+ *  in the dashboard (LivePanel → all faders) and 4×/s in the Decks pop-out (a 250 ms poll). */
+export type BoardDeck = Pick<DeckState, "status" | "volume"> | null;
+export type BoardDecks = { A: BoardDeck; B: BoardDeck; C: BoardDeck };
+const boardDeck = (d: DeckState | null): BoardDeck => (d ? { status: d.status, volume: d.volume } : null);
+export function selectBoard(s: DeckSnap): BoardDecks { return { A: boardDeck(s.A), B: boardDeck(s.B), C: boardDeck(s.C) }; }
+const sameDeck = (a: BoardDeck, b: BoardDeck) => a === b || (!!a && !!b && a.status === b.status && a.volume === b.volume);
+export const sameBoard = (a: BoardDecks, b: BoardDecks) => sameDeck(a.A, b.A) && sameDeck(a.B, b.B) && sameDeck(a.C, b.C);

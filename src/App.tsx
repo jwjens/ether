@@ -43,7 +43,7 @@ import ClipEditor from "./components/ClipEditor";
 import { useCaptions, CaptionsOverlay, CaptionsLogPanel } from "./components/Captions";
 import DeckConfigurator, { useDeckConfig, PlaylistPlayer, BoutiqueCartWall, type DeckConfig } from "./components/DeckConfigurator";
 import ProducerDesk, { InlineProducerDesk } from "./components/ProducerDesk";
-import FaderSection from "./components/FaderSection";
+import { FaderSectionLive } from "./components/FaderSection";
 import MasterOutput, { consoleLog } from "./components/MasterOutput";
 import SmartScheduler from "./components/SmartScheduler";
 import ImportDialog from "./components/ImportDialog";
@@ -3953,7 +3953,8 @@ function LivePanel({ autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, show
 }) {
   const engine = useAudioEngine();
   // The board shows the countdowns, so it reads the full deck states (src/audio/deckStore.ts) — App no longer passes them.
-  const { A: deckA, B: deckB, C: deckC } = useDecks(engine);
+  // (2026-10-12) No deck subscription here: LivePanel used the decks only to hand them to the board, so every deck event
+  // re-rendered the whole panel (70.8 ms of LivePanel's own time in one commit on OVEVENTS). The board reads them itself.
   const { stationId: lpStationId, stationUuid: lpStationUuid } = useActiveStation();   // for the JINGLES push-up (imaging home)
   const vp = visiblePanels || { queue: true, deckA: true, deckB: true, deckC: true, mic: true };
   const lpViewport = useViewport();
@@ -4396,8 +4397,7 @@ function LivePanel({ autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, show
           it. It owns its own board state — deck_configs, the ON lamp, the six source-channel writers,
           the jukebox cut — which is exactly what lets it render in two windows without them
           disagreeing. LivePanel keeps only the view flags it actually owns. */}
-      <FaderSection
-        deckA={deckA} deckB={deckB} deckC={deckC}
+      <FaderSectionLive
         showCarts={showCarts}
         masterCollapsed={masterCollapsed}
         onToggleMasterCollapsed={toggleMasterCollapsed}

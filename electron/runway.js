@@ -136,4 +136,25 @@ function runwaySeries(db, stationId, nowMs) {
   } catch { return null; }
 }
 
-module.exports = { computeRunway, runwaySec, runwaySeries, showCoversHour, SCAN_DAYS };
+/**
+ * schedule:playhead-view's read — "what's playing + what's next" from generated_schedule (Log-Reader Flip Phase 2). Moved
+ * here verbatim from main.js (2026-10-12) so the library-health worker runs it off the main process. Music rows only
+ * (JIN/SWP are seam overlays); the cross-station foreign-category guard as schedule:get. READ-ONLY.
+ */
+function playheadView(db, sid, n) {
+  const foreign = `AND NOT EXISTS (SELECT 1 FROM songs s JOIN categories c ON c.id=s.category_id
+     WHERE s.id=g.song_id AND c.station_id IS NOT NULL AND c.station_id <> g.station_id)`;
+  const cols = `g.id, g.scheduled_at, g.title, g.artist, g.duration_s, g.state, g.played_at, g.seq, g.content_class`;
+  const playing = db.prepare(
+    `SELECT ${cols} FROM generated_schedule g
+      WHERE g.station_id=? AND g.state='playing' AND g.deleted_at IS NULL ${foreign}
+      ORDER BY g.scheduled_at LIMIT 1`).get(sid) || null;
+  const upNext = db.prepare(
+    `SELECT ${cols} FROM generated_schedule g
+      WHERE g.station_id=? AND g.state='pending' AND g.deleted_at IS NULL
+        AND (g.content_class IS NULL OR g.content_class NOT IN ('JIN','SWP')) ${foreign}
+      ORDER BY g.scheduled_at LIMIT ?`).all(sid, n);
+  return { playing, upNext };
+}
+
+module.exports = { computeRunway, runwaySec, runwaySeries, playheadView, showCoversHour, SCAN_DAYS };

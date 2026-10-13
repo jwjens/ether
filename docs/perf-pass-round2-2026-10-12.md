@@ -102,3 +102,53 @@ From `721cd86` (`npm run build` + `npm run electron:build:win -- --publish never
 - `app.asar` sha256 `ce021cb747e47b5ce7b7c4dc6a544cbc724166665c9a64230214b204df36feb1`; engine `7598aef6` (unchanged); `audiod/verify-packaged.js` RELEASE GATE PASS.
 - The installed round-1 fix build was renamed `Ether Setup 4.6.59 - perf-fix 6b1fcb43 0acf1f8 - SUPERSEDED.exe` (sha256 checked before the rename).
 - Rust suite not re-run: no Rust change since `90a6a47` (149 pass / 5 known goldens / 4 ignored). Goldens on hold.
+
+## 10 · What the senses named on OVEVENTS (build `0b1ef492`, installed; `app.asar` `ce021cb7…` confirmed)
+
+5-minute measurement from ~12 min uptime (`scripts/measure-responsiveness.js`, same method):
+- **Main:** 36 stalls ≥ 100 ms in 5 min, worst 620 ms (the 1 s meter's peak 569 ms); 0 unanswered, worst answer 542 ms.
+  - **20 × ~300–620 ms, every ~10.4 s — the SYNC PUSH.** The profiler showed no Ether frame (the sense's "Ether code" pattern did not cover `electron/sync/` — fixed) and a native leaf; the 10.4 s period matched the sync scheduler's push tick (10 s + work). Re-timed on the read-only snapshot, the push's pending load exactly as the engine builds it: **290 ms (node:sqlite) / 519–579 ms (better-sqlite3), 0 rows**. `mutations` holds **217,002 'pending' rows, every one `generated_schedule`** — syncExcluded since ruling A (`synced-tables.js:455`), so never sent, never retired, and still being journalled (5,136 since Oct 10). Each tick walked all of them through `idx_mutations_sync_status`, filtered them out by `table_name`, and sorted.
+  - **5 × up to 186–207 ms — `schedule:playhead-view`**, UpNext's 30 s shadow-compare: a station's pending rows sorted by time, on main.
+- **Renderer (main window):** 115 commits over one frame in 5 min, worst 205 ms. By component (self time in slow commits): `LiveConsole` 187 ms in ONE commit, `MasterOutput` 90 ms, `LivePanel` 71 ms; over the run `motion.div` 308, `ConsoleStrip` 218, `UpNext` 132, `PeakAvgMeter` 89 ms. A later 60 s window (nobody clicking) added `VideoEngineProvider` 152 + `VideoEnginePanel` 100 ms.
+- **Item 5 receipt so far:** 27 min into the session, `selfWindowActions` = only the 4 startup calls (main window centred and shown, faded in, focused at launch — `main.js` 2820/2821/3813/3827, before any operator input exists); `unpromptedScrolls` = **none**.
+
+## 11 · Fixes from what was named
+
+**Main**
+- **The push reads only what it can send.** A PARTIAL index `idx_mutations_push_pending_<hash>` on `mutations(hlc)` holding only pending rows of sendable tables; the push names it (`INDEXED BY`) with the excluded tables as literals in both index and query (SQLite uses a partial index only when the WHERE matches; the name carries a hash of the list, so a changed list makes a new index and the stale one is dropped at open). `electron/sync/sync-engine.js ensurePushPendingIndex` (initDb; made on first use if the table did not exist yet). On a copy of the live data: **431.5 ms → 0.57 ms**, the same 300 rows in the same order, no excluded table or station ever returned (`npm run test:push-index <db copy>`). Built once: 0.65–1.1 s. NOT changed (one line for Jeff, not this task): the 217k never-sendable rows stay in the table, the Sync panel's pending count includes them, and the writer still journals `generated_schedule`.
+- **`schedule:playhead-view` off main:** the same read on the library-health worker's read-only connection (`electron/runway.js playheadView`); main only resolves the station. Worker smoke D: main's worst lag 9 ms, answers identical.
+- The stall sense counts any `electron/…` / `audiod/…` subfolder as Ether code.
+
+**Renderer**
+- **Master Out:** the master level was React state set on every `audio:levels` event (~30/s), so all of Master Out (mixer, faders, the 100-row console) re-rendered ~30×/s. Now a ref; `onAir` renders only when it flips; the Limiter line is its own small component that renders only when its text changes; the console reads the level from the ref and checks silence every 500 ms (same rule: > 0.03 is sound, 5 s without it is silence).
+- **The board:** `LivePanel` subscribed to every deck event only to hand the decks to `FaderSection`; the Decks pop-out polled every 250 ms. Both now render `FaderSectionLive`, which selects **status + volume only** (`deckStore.ts selectBoard`) — a position tick no longer re-renders the board.
+- **Up Next:** the countdowns (deck event + 1 s tick) lived in Up Next's own state, so every tick re-rendered the whole animated list (each row a framer-motion `layout` element that measures the DOM). The deck rows are now their own component (`DeckRows`) with their own clock; the list renders when the queue, its lint, its sweepers or its art change.
+- **Show+:** the 500 ms video-status poll set a new object every time; now only a changed status re-renders.
+- Guards: `src/lib/renderBudget.test.ts` (7).
+
+## 12 · Item 4 — the receipt (the install of `0b1ef492`, pid 40428, `%TEMP%\ether-diag.txt`)
+
+```
+POINT-3 lock acquired                                    t+1.5 s
+BOOT setupAudioBackend() starts                          t+2049 ms  cpu 874 ms
+BOOT main.js module load finished                        t+2693 ms  cpu 1202 ms
+BOOT daemon spawn: engine stage starts                   t+3159 ms  cpu 1452 ms
+  [stage-engine] staged engine updated from the install: ether-engine.exe
+BOOT daemon spawn: engine stage done (replaced 1)        t+7420 ms  cpu 3624 ms   <- 4.3 s, 2.2 s CPU: hashing + copying
+BOOT daemon spawn: process started (CreateProcess)       t+15797 ms cpu 3780 ms   <- 8.4 s, 0.16 s CPU: WAITING
+BOOT app ready (whenReady callback starts)               t+16099 ms
+BOOT createSplash() done                                 t+16237 ms
+BOOT initDb() done                                       t+16680 ms
+POINT-4                                                  t+16722 ms
+```
+- **13 s of the 16.7 s is the audio engine's staging and start, synchronous on main, before the app can be ready:** 4.3 s hashing/copying the 238 MB `ether-engine.exe` (changed by the install), then **8.4 s inside CreateProcess with almost no CPU** — main waiting while Windows starts a freshly written 238 MB executable (an on-access scan of a new binary is the consistent explanation; the trace proves the wait, not the scanner). A relaunch hits the stage cache and starts a known exe: 0.8 s.
+- What Ether does after ready (splash, initDb, migrations) is 0.6 s.
+- **Proposal (not built):** stage and spawn the engine from a worker thread, not on main and not at module load. The window and splash come up at once (~3 s); the daemon arrives when Windows lets it start, and the existing late-attach/handover path already plays on the in-process engine until then (the 23:18 log shows that path working). Widen the cold-stage connect window with it (memory: cold-stage daemon race).
+
+## 13 · The carts window flicker (Jeff, verbatim: "the carts window is flickering now")
+
+Done last, as asked. What the senses and the code show:
+- No carts **pop-out** was open when read (the only window reporting was the main window), so the surface is most likely the CARTS dock or a cart deck inside the main window.
+- The cart wall's VU took **every station's** `audio:levels` frames, interleaved, unscoped — its meter jumped between stations' CART levels (a sweeper on another station's CART bus moved this wall's meter), and the whole wall re-rendered at every station's meter rate. Fixed: this station's frames only (`matchesStation`), and a render only when the drawn bar changes.
+- The round-1 build made the board re-render on every deck tick (LivePanel subscribed to the decks), and a cart deck lives inside the board. Fixed above (the board reads status + volume only).
+- **Not confirmed as THE flicker** — neither change is proven to be what Jeff saw. Needs Jeff's eyes on the next build: which carts surface, and what flickers (the meter, the tiles, the whole panel).

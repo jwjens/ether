@@ -47,6 +47,7 @@ import { BoutiqueCartWall } from "./DeckConfigurator";
 import { computeDeckRole } from "../lib/deckRole";
 import { boardSlots } from "../lib/boardSlots";
 import { dispatchCrossWindow } from "../lib/crossWindowEvent";
+import { useDeckSelect, selectBoard, sameBoard } from "../audio/deckStore";
 
 export interface FaderSectionProps {
   deckA: DeckState | null;
@@ -62,6 +63,14 @@ export interface FaderSectionProps {
   nowPlaying?: any;
   /** Below this width the mic strip drops out to give the music decks room, unless a guest is up. */
   narrow?: boolean;
+}
+
+/** The board, reading its decks itself — status and volume only (src/audio/deckStore.ts selectBoard), so it re-renders
+ *  when a deck starts/stops or its fader moves, never on a position tick. Both surfaces (the dashboard's LivePanel and
+ *  the Decks pop-out) render this. docs/perf-pass-round2-2026-10-12.md §3. */
+export function FaderSectionLive(props: Omit<React.ComponentProps<typeof FaderSection>, "deckA" | "deckB" | "deckC">) {
+  const d = useDeckSelect(useAudioEngine(), selectBoard, sameBoard);
+  return <FaderSection {...props} deckA={d.A as DeckState | null} deckB={d.B as DeckState | null} deckC={d.C as DeckState | null} />;
 }
 
 export default function FaderSection({

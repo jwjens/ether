@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, Fragment } from "react";
+import { useState, useEffect, useRef, useCallback, Fragment } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSongMenu } from "../lib/songActions";
 import { useAudioEngine } from "../audio/AudioEngineContext";
@@ -334,54 +334,11 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
     return engine.on(update);
   }, [engine]);
 
-  // Live A/B/C deck snapshots for the stacked deck rows. engine.on fires on every state
-  // change; the 1s tick keeps the playing deck's countdown + progress fresh between events.
-  const [deckStates, setDeckStates] = useState<Record<"A" | "B" | "C", DeckRowState>>({
-    A: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "", contentClass: null, scheduledAt: null },
-    B: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "", contentClass: null, scheduledAt: null },
-    C: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "", contentClass: null, scheduledAt: null },
-  });
-  useEffect(() => {
-    const pull = () => setDeckStates(prev => {
-      const next = { ...prev };
-      (["A", "B", "C"] as const).forEach(id => {
-        const s = engine.getDeck(id)?.getState?.();
-        next[id] = {
-          title: s?.title ?? "", artist: s?.artist ?? "", status: s?.status ?? "idle",
-          positionSec: s?.positionSec ?? 0, durationSec: s?.durationSec ?? 0,
-          filePath: (s as any)?.filePath ?? "",
-          contentClass: (s as any)?.contentClass ?? null,
-          // NOT on the state object, and that was the bug. The daemon emits scheduledAt on every deck
-          // event, but engine-rodio.ts:417 stores it in its OWN map (this.deckSched) and exposes it
-          // only through the getDeckSched accessor — getState() has never carried it. Reading
-          // (s as any).scheduledAt gave undefined on every deck, so sweeperMap[undefined] never
-          // matched and no deck row could render a sweeper, while the queue rows worked because
-          // queue ITEMS genuinely carry the field.
-          scheduledAt: (engine as any)?.getDeckSched?.(id) ?? null,
-        };
-      });
-      return next;
-    });
-    pull();
-    const unsub = engine.on(pull);
-    const tick = setInterval(pull, 1000);
-    return () => { unsub(); clearInterval(tick); };
-  }, [engine]);
 
-  // Artwork for whatever is on the decks. resolveArtwork routes by content class: a spot takes the
-  // spot chain (override → embedded → nothing) which contains no music-store lookup at all.
-  useEffect(() => {
-    (["A", "B", "C"] as const).forEach(id => {
-      const s = deckStates[id];
-      if (!s.title) return;
-      const key = `${s.title}::${s.artist}`;
-      if (artUrls[key] !== undefined) return;
-      (async () => {
-        const url = await resolveArtwork(s.filePath, s.contentClass, s.title, s.artist, stationId);
-        if (url) setArtUrls(prev => ({ ...prev, [key]: url }));
-      })();
-    });
-  }, [deckStates.A.title, deckStates.B.title, deckStates.C.title, stationId]);
+  // Artwork for the deck rows is resolved by DeckRows itself and handed back here (noteArt), so both surfaces share one
+  // cache. The queue's own artwork stays below.
+  const noteArt = useCallback((key: string, url: string) => setArtUrls(prev => (prev[key] === url ? prev : { ...prev, [key]: url })), []);
+
 
   useEffect(() => {
     queue.forEach(item => {
@@ -566,99 +523,7 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
 
       {/* ── Stacked A / B / C deck rows — color-coded, animated, flash in last 10s ── */}
       <div style={{ flexShrink: 0, borderBottom: "2px solid rgba(255,255,255,0.07)" }}>
-        {(() => {
-        // Role of each deck for the color-coding: playing → duration progress (below);
-        // next → pulse; third → solid. "next" = the cued deck after the playing one (cyclic A→B→C).
-        const _order = ["A", "B", "C"] as const;
-        const _playingId = _order.find(d => deckStates[d].status === "playing") || null;
-        let _nextId: "A" | "B" | "C" | null = null;
-        if (_playingId) {
-          const _si = _order.indexOf(_playingId);
-          for (let _i = 1; _i <= 2; _i++) { const _c = _order[(_si + _i) % 3]; if (deckStates[_c].title) { _nextId = _c; break; } }
-        }
-        return _order.map(id => {
-          const s = deckStates[id];
-          const color = DECK_COLORS[id];
-          const isPlaying = s.status === "playing";
-          const role: "playing" | "next" | "third" = isPlaying ? "playing" : id === _nextId ? "next" : "third";
-          const dur = s.durationSec || 0;
-          const pos = s.positionSec || 0;
-          const remaining = Math.max(0, dur - pos);
-          const isEndingSoon = isPlaying && dur > 0 && remaining <= 10;
-          const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
-          const hasTrack = !!s.title;
-          // SPOT-deck flash: a deck holding a SPOT (commercial/promo) gets an amber pulsing frame from load
-          // until it finishes airing — exclusive to spots (songs never flash), distinct from the jingle
-          // third-row indicator. Dies when the spot ends (status 'ended') and music takes over.
-          const isSpotDeck = s.contentClass === "SPOT" && hasTrack && s.status !== "ended";
-          const timeStr = isPlaying ? `-${fmtSec(remaining)}` : (dur > 0 ? fmtSec(dur) : "");
-          const artKey = `${s.title}::${s.artist}`;
-          // The placement is keyed on the scheduled_at of the song it introduces — this deck's row.
-          const swp = s.scheduledAt != null ? sweeperMap[s.scheduledAt] : undefined;
-          return (
-            <Fragment key={id}>
-            {swp && <SweeperRow p={swp} color={color} state={sweeperState(swp)} />}
-            <div style={{
-              position: "relative", overflow: "hidden", display: "flex", alignItems: "stretch",
-              height: 94, flexShrink: 0,
-              borderBottom: "1px solid rgba(255,255,255,0.05)",
-              background: "transparent",
-            }}>
-              {/* full-row color wash — playing = dim base (progress fills it), next = pulsing, third = solid */}
-              {hasTrack && (
-                <div
-                  className={role === "next" ? "deck-bar-pulse" : ""}
-                  style={{
-                    position: "absolute", inset: 0, background: color, zIndex: 0, pointerEvents: "none",
-                    opacity: role === "playing" ? 0.3 : role === "next" ? undefined : 0.9,
-                  }}
-                />
-              )}
-              {/* progress fill (playing deck) — duration-synced animation over the dim base */}
-              {isPlaying && (
-                <div style={{ position: "absolute", top: 0, left: 0, bottom: 0, width: `${pct}%`, background: color, opacity: 0.92, zIndex: 0, pointerEvents: "none", transition: "width 1s linear" }} />
-              )}
-              {/* last-10s flash overlay */}
-              {isEndingSoon && (
-                <div style={{ position: "absolute", inset: 0, background: color, zIndex: 0, pointerEvents: "none", animation: "deck-row-flash 0.85s ease-in-out infinite" }} />
-              )}
-              {/* SPOT deck flash — amber pulsing frame + faint wash, SPOT-exclusive (songs never flash) */}
-              {isSpotDeck && (
-                <div className="spot-deck-flash" style={{ position: "absolute", inset: 0, zIndex: 4, pointerEvents: "none", boxShadow: "inset 0 0 0 3px #fbbf24", background: "rgba(251,191,36,0.12)" }} />
-              )}
-              {/* (deck color strip removed) */}
-              {/* content */}
-              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 13, padding: "0 14px", minWidth: 0, zIndex: 1 }}>
-                <div style={{ width: 74, height: 74, flexShrink: 0, background: "var(--bg-tertiary)", border: `1px solid ${color}55`, overflow: "hidden" }}>
-                  {artUrls[artKey] && <img src={artUrls[artKey]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
-                    <span style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.01em", color: hasTrack ? "var(--text-primary)" : "var(--text-tertiary)", fontStyle: hasTrack ? "normal" : "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {s.title || "—"}
-                    </span>
-                  </div>
-                  {s.artist && (
-                    <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 3 }}>{s.artist}</div>
-                  )}
-                </div>
-                {hasTrack && (
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0, fontFamily: "'DM Mono', monospace", letterSpacing: "-0.02em" }}>
-                    <span style={{ fontSize: 13, fontWeight: 800, color: isEndingSoon ? "#fbbf24" : (isPlaying ? "#fff" : "var(--text-tertiary)") }}>{fmtSec(pos)}</span>
-                    <span style={{ fontSize: 15, fontWeight: 800, color: isPlaying ? "#fff" : "var(--text-secondary)" }}>{dur > 0 ? fmtSec(dur) : "--:--"}</span>
-                  </div>
-                )}
-              </div>
-              {/* The third-line SWP badge that used to live here is GONE — replaced by SweeperRow,
-                  rendered ABOVE this deck row. It keyed on jingleOverlay.deck, which is the OUTGOING
-                  deck, so it sat on the song the sweeper plays over rather than the one it introduces;
-                  and being inside the row it read as "plays with this song". Keeping both would be two
-                  indicators for one element, which is how the confusion started. */}
-            </div>
-            </Fragment>
-          );
-        });
-        })()}
+        <DeckRows engine={engine} stationId={stationId} sweeperMap={sweeperMap} sweeperState={sweeperState} artUrls={artUrls} onArt={noteArt} />
       </div>
 
       {/* Queue list */}
@@ -811,5 +676,165 @@ export default function UpNext({ queueLen, onQueueChange, jingleOverlay = null }
       {/* Context menu */}
       {songMenu.node}
     </div>
+  );
+}
+
+// ── THE DECK ROWS, ON THEIR OWN CLOCK (2026-10-12, docs/perf-pass-round2-2026-10-12.md §3) ─────────────────────────────
+// The countdowns need a re-render every second and on every deck event. They used to live in UpNext's own state, so each
+// tick re-rendered the WHOLE list too — every queued row a framer-motion `layout` element that measures the DOM on each
+// render (the React sense on OVEVENTS: motion.div 308 ms + UpNext 132 ms of slow-commit time in 5 minutes). Now the
+// tick re-renders these three rows only; the queue list renders when the queue, its lint, its sweepers or its art change.
+function DeckRows({ engine, stationId, sweeperMap, sweeperState, artUrls, onArt }: {
+  engine: any; stationId: any;
+  sweeperMap: Record<number, SweeperPlacement>;
+  sweeperState: (p: SweeperPlacement | undefined) => string | null;
+  artUrls: Record<string, string>;
+  onArt: (key: string, url: string) => void;
+}) {
+  // Live A/B/C deck snapshots for the stacked deck rows. engine.on fires on every state
+  // change; the 1s tick keeps the playing deck's countdown + progress fresh between events.
+  const [deckStates, setDeckStates] = useState<Record<"A" | "B" | "C", DeckRowState>>({
+    A: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "", contentClass: null, scheduledAt: null },
+    B: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "", contentClass: null, scheduledAt: null },
+    C: { title: "", artist: "", status: "idle", positionSec: 0, durationSec: 0, filePath: "", contentClass: null, scheduledAt: null },
+  });
+  useEffect(() => {
+    const pull = () => setDeckStates(prev => {
+      const next = { ...prev };
+      (["A", "B", "C"] as const).forEach(id => {
+        const s = engine.getDeck(id)?.getState?.();
+        next[id] = {
+          title: s?.title ?? "", artist: s?.artist ?? "", status: s?.status ?? "idle",
+          positionSec: s?.positionSec ?? 0, durationSec: s?.durationSec ?? 0,
+          filePath: (s as any)?.filePath ?? "",
+          contentClass: (s as any)?.contentClass ?? null,
+          // NOT on the state object, and that was the bug. The daemon emits scheduledAt on every deck
+          // event, but engine-rodio.ts:417 stores it in its OWN map (this.deckSched) and exposes it
+          // only through the getDeckSched accessor — getState() has never carried it. Reading
+          // (s as any).scheduledAt gave undefined on every deck, so sweeperMap[undefined] never
+          // matched and no deck row could render a sweeper, while the queue rows worked because
+          // queue ITEMS genuinely carry the field.
+          scheduledAt: (engine as any)?.getDeckSched?.(id) ?? null,
+        };
+      });
+      return next;
+    });
+    pull();
+    const unsub = engine.on(pull);
+    const tick = setInterval(pull, 1000);
+    return () => { unsub(); clearInterval(tick); };
+  }, [engine]);
+
+  // Artwork for whatever is on the decks. resolveArtwork routes by content class: a spot takes the
+  // spot chain (override → embedded → nothing) which contains no music-store lookup at all.
+  useEffect(() => {
+    (["A", "B", "C"] as const).forEach(id => {
+      const s = deckStates[id];
+      if (!s.title) return;
+      const key = `${s.title}::${s.artist}`;
+      if (artUrls[key] !== undefined) return;
+      (async () => {
+        const url = await resolveArtwork(s.filePath, s.contentClass, s.title, s.artist, stationId);
+        if (url) onArt(key, url);
+      })();
+    });
+  }, [deckStates.A.title, deckStates.B.title, deckStates.C.title, stationId]);
+
+  return (
+    <>
+        {(() => {
+        // Role of each deck for the color-coding: playing → duration progress (below);
+        // next → pulse; third → solid. "next" = the cued deck after the playing one (cyclic A→B→C).
+        const _order = ["A", "B", "C"] as const;
+        const _playingId = _order.find(d => deckStates[d].status === "playing") || null;
+        let _nextId: "A" | "B" | "C" | null = null;
+        if (_playingId) {
+          const _si = _order.indexOf(_playingId);
+          for (let _i = 1; _i <= 2; _i++) { const _c = _order[(_si + _i) % 3]; if (deckStates[_c].title) { _nextId = _c; break; } }
+        }
+        return _order.map(id => {
+          const s = deckStates[id];
+          const color = DECK_COLORS[id];
+          const isPlaying = s.status === "playing";
+          const role: "playing" | "next" | "third" = isPlaying ? "playing" : id === _nextId ? "next" : "third";
+          const dur = s.durationSec || 0;
+          const pos = s.positionSec || 0;
+          const remaining = Math.max(0, dur - pos);
+          const isEndingSoon = isPlaying && dur > 0 && remaining <= 10;
+          const pct = dur > 0 ? Math.min(100, (pos / dur) * 100) : 0;
+          const hasTrack = !!s.title;
+          // SPOT-deck flash: a deck holding a SPOT (commercial/promo) gets an amber pulsing frame from load
+          // until it finishes airing — exclusive to spots (songs never flash), distinct from the jingle
+          // third-row indicator. Dies when the spot ends (status 'ended') and music takes over.
+          const isSpotDeck = s.contentClass === "SPOT" && hasTrack && s.status !== "ended";
+          const timeStr = isPlaying ? `-${fmtSec(remaining)}` : (dur > 0 ? fmtSec(dur) : "");
+          const artKey = `${s.title}::${s.artist}`;
+          // The placement is keyed on the scheduled_at of the song it introduces — this deck's row.
+          const swp = s.scheduledAt != null ? sweeperMap[s.scheduledAt] : undefined;
+          return (
+            <Fragment key={id}>
+            {swp && <SweeperRow p={swp} color={color} state={sweeperState(swp)} />}
+            <div style={{
+              position: "relative", overflow: "hidden", display: "flex", alignItems: "stretch",
+              height: 94, flexShrink: 0,
+              borderBottom: "1px solid rgba(255,255,255,0.05)",
+              background: "transparent",
+            }}>
+              {/* full-row color wash — playing = dim base (progress fills it), next = pulsing, third = solid */}
+              {hasTrack && (
+                <div
+                  className={role === "next" ? "deck-bar-pulse" : ""}
+                  style={{
+                    position: "absolute", inset: 0, background: color, zIndex: 0, pointerEvents: "none",
+                    opacity: role === "playing" ? 0.3 : role === "next" ? undefined : 0.9,
+                  }}
+                />
+              )}
+              {/* progress fill (playing deck) — duration-synced animation over the dim base */}
+              {isPlaying && (
+                <div style={{ position: "absolute", top: 0, left: 0, bottom: 0, width: `${pct}%`, background: color, opacity: 0.92, zIndex: 0, pointerEvents: "none", transition: "width 1s linear" }} />
+              )}
+              {/* last-10s flash overlay */}
+              {isEndingSoon && (
+                <div style={{ position: "absolute", inset: 0, background: color, zIndex: 0, pointerEvents: "none", animation: "deck-row-flash 0.85s ease-in-out infinite" }} />
+              )}
+              {/* SPOT deck flash — amber pulsing frame + faint wash, SPOT-exclusive (songs never flash) */}
+              {isSpotDeck && (
+                <div className="spot-deck-flash" style={{ position: "absolute", inset: 0, zIndex: 4, pointerEvents: "none", boxShadow: "inset 0 0 0 3px #fbbf24", background: "rgba(251,191,36,0.12)" }} />
+              )}
+              {/* (deck color strip removed) */}
+              {/* content */}
+              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 13, padding: "0 14px", minWidth: 0, zIndex: 1 }}>
+                <div style={{ width: 74, height: 74, flexShrink: 0, background: "var(--bg-tertiary)", border: `1px solid ${color}55`, overflow: "hidden" }}>
+                  {artUrls[artKey] && <img src={artUrls[artKey]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+                    <span style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.01em", color: hasTrack ? "var(--text-primary)" : "var(--text-tertiary)", fontStyle: hasTrack ? "normal" : "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {s.title || "—"}
+                    </span>
+                  </div>
+                  {s.artist && (
+                    <div style={{ fontSize: 14, fontWeight: 800, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 3 }}>{s.artist}</div>
+                  )}
+                </div>
+                {hasTrack && (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0, fontFamily: "'DM Mono', monospace", letterSpacing: "-0.02em" }}>
+                    <span style={{ fontSize: 13, fontWeight: 800, color: isEndingSoon ? "#fbbf24" : (isPlaying ? "#fff" : "var(--text-tertiary)") }}>{fmtSec(pos)}</span>
+                    <span style={{ fontSize: 15, fontWeight: 800, color: isPlaying ? "#fff" : "var(--text-secondary)" }}>{dur > 0 ? fmtSec(dur) : "--:--"}</span>
+                  </div>
+                )}
+              </div>
+              {/* The third-line SWP badge that used to live here is GONE — replaced by SweeperRow,
+                  rendered ABOVE this deck row. It keyed on jingleOverlay.deck, which is the OUTGOING
+                  deck, so it sat on the song the sweeper plays over rather than the one it introduces;
+                  and being inside the row it read as "plays with this song". Keeping both would be two
+                  indicators for one element, which is how the confusion started. */}
+            </div>
+            </Fragment>
+          );
+        });
+        })()}
+    </>
   );
 }

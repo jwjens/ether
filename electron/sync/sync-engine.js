@@ -42,6 +42,31 @@ const EXCLUDED_TABLES = new Set(
     .map(([wireName]) => wireName)
 );
 
+// ── THE PUSH READS ONLY WHAT IT CAN SEND (2026-10-12, docs/perf-pass-round2-2026-10-12.md §1) ──────────────────────
+// RECEIPT (OVEVENTS, named by the stall sense, re-timed on a read-only snapshot): the push tick held main ~300 ms every
+// 10 s. `mutations` held 217,002 'pending' rows, ALL of them generated_schedule — a syncExcluded table (ruling A in
+// synced-tables.js), so never sent and never retired. Every push walked all 217k through idx_mutations_sync_status to
+// filter them out by table_name, then sorted: 290 ms for 0 rows.
+// A PARTIAL index holds only the pending rows a push can send (excluded tables left out), ordered by hlc; the push
+// names it, so its cost is the rows it actually sends (0.03 ms for 0 rows on the same data). The excluded list is
+// written as literals in BOTH the index and the query — SQLite uses a partial index only when the query's WHERE
+// matches it — and the index name carries a hash of that list, so a change to the list makes a new index (the old one
+// is dropped at open) rather than an index and a query that disagree. Without the index, the old query runs unchanged.
+const _EXCLUDED_SORTED = [...EXCLUDED_TABLES].filter(t => /^[a-z0-9_]+$/.test(t)).sort();
+const PUSH_PENDING_WHERE = _EXCLUDED_SORTED.length
+  ? `sync_status = 'pending' AND table_name NOT IN (${_EXCLUDED_SORTED.map(t => `'${t}'`).join(', ')})`
+  : `sync_status = 'pending'`;
+const PUSH_PENDING_INDEX = 'idx_mutations_push_pending_' +
+  require('crypto').createHash('sha256').update(PUSH_PENDING_WHERE).digest('hex').slice(0, 8);
+
+/** Create the push index for the current exclusion list, and drop one made for an older list. Idempotent; called at
+ *  database open (electron/main.js initDb). Built once: ~0.7–1.0 s on 357k mutations. */
+function ensurePushPendingIndex(db) {
+  const stale = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_mutations_push_pending_%' AND name <> ?").all(PUSH_PENDING_INDEX);
+  for (const { name } of stale) db.exec(`DROP INDEX IF EXISTS "${name}"`);
+  db.exec(`CREATE INDEX IF NOT EXISTS ${PUSH_PENDING_INDEX} ON mutations(hlc) WHERE ${PUSH_PENDING_WHERE}`);
+}
+
 class SyncEngine {
   /**
    * @param {import('better-sqlite3').Database} db
@@ -521,8 +546,22 @@ class SyncEngine {
     return this._uuidStmts[table];
   }
 
+  _hasPushIndex() {
+    if (this._pushIndexOk) return true;
+    try { this._pushIndexOk = !!this._db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?").get(PUSH_PENDING_INDEX); }
+    catch { this._pushIndexOk = false; }
+    // Not made at open (a fresh install's mutations table is created later, by migration): make it now, once — the
+    // table is small then. Failing that, the old query runs.
+    if (!this._pushIndexOk && !this._pushIndexTried) {
+      this._pushIndexTried = true;
+      try { ensurePushPendingIndex(this._db); this._pushIndexOk = true; } catch { this._pushIndexOk = false; }
+    }
+    return this._pushIndexOk;
+  }
+
   _loadPendingMutations() {
-    const clauses = ["sync_status = 'pending'"];
+    const indexed = this._hasPushIndex();
+    const clauses = [indexed ? PUSH_PENDING_WHERE : "sync_status = 'pending'"];
     const params  = [];
 
     // Per-context push isolation. station_id is stamped on every mutation row by the writer
@@ -541,14 +580,14 @@ class SyncEngine {
       }
     }
 
-    if (EXCLUDED_TABLES.size > 0) {
+    if (!indexed && EXCLUDED_TABLES.size > 0) {
       const ph = Array.from(EXCLUDED_TABLES).map(() => '?').join(', ');
       clauses.push(`table_name NOT IN (${ph})`);
       params.push(...EXCLUDED_TABLES);
     }
 
     return this._db.prepare(
-      `SELECT * FROM mutations WHERE ${clauses.join(' AND ')} ORDER BY hlc ASC`
+      `SELECT * FROM mutations${indexed ? ` INDEXED BY ${PUSH_PENDING_INDEX}` : ''} WHERE ${clauses.join(' AND ')} ORDER BY hlc ASC`
     ).all(...params);
   }
 
@@ -589,4 +628,4 @@ class SyncEngine {
   }
 }
 
-module.exports = { SyncEngine };
+module.exports = { SyncEngine, ensurePushPendingIndex, PUSH_PENDING_INDEX, PUSH_PENDING_WHERE };

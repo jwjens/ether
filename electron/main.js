@@ -114,6 +114,7 @@ process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = "true";
 const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Tray, nativeImage, safeStorage, powerMonitor } = require("electron");
 // RESPONSIVENESS SENSE (2026-10-12, electron/perf-sense.js) — installed before any handler registers, so every ipcMain
 // handler's synchronous part is timed and a main stall can name what held it. Numbers on /health (`perf`).
+let _libHealthForIpc = null;   // the library-health worker host, once started (see _libHealth)
 const PerfSense = require("./perf-sense").createPerfSense({
   ledger: (kind, data) => { try { _healthEvent(kind, { ...data, message: `Main was blocked ${data.lagMs} ms — ${(data.heldBy || []).join("; ")}` }); } catch {} },
 });
@@ -1060,6 +1061,7 @@ if (AUDIO_DAEMON_DESIRED) {
       inMainFallback: () => require("./library-health").createLibraryHealth(_lhOpts),
     });
     _libHealth.start();
+    _libHealthForIpc = _libHealth;   // top-level IPC handlers (schedule:playhead-view) reach the worker through this
     ipcMain.handle("library-health:get", () => { try { return _libHealth.snapshot(); } catch { return null; } });
     ipcMain.handle("library-health:eligibility", async (_e, stationId) => { try { return await _libHealth.eligibilityRows(stationId); } catch { return []; } });
     ipcMain.handle("library-health:queue-lint", async (_e, stationId) => { try { return await _libHealth.lintRows(stationId); } catch { return []; } });
@@ -2245,6 +2247,11 @@ function runMigrations() {
   // rows; with it 0.1–8.7 ms. Built once (557 ms on that database), idempotent.
   // docs/perf-pass-round2-2026-10-12.md §2.
   try { db.exec("CREATE INDEX IF NOT EXISTS idx_gensched_station_at ON generated_schedule(station_id, scheduled_at)"); } catch {}
+
+  // The sync push's partial index — only the pending mutations a push can send (electron/sync/sync-engine.js
+  // ensurePushPendingIndex). Without it every 10 s push tick walked 217,002 never-sendable generated_schedule rows on
+  // OVEVENTS: ~300 ms of main per tick for 0 rows. docs/perf-pass-round2-2026-10-12.md §1.
+  try { require("./sync/sync-engine").ensurePushPendingIndex(db); } catch (e) { console.error("[sync] push index:", e.message); }
 
   // Add any missing columns via ALTER TABLE (safe to re-run)
   // NOTE: these target `songs`, which is and stays a real TABLE. It was briefly a view (4.4.151-156)
@@ -11879,23 +11886,17 @@ ipcMain.handle('schedule:get', (_, fromTs, toTs, stationId) => {
 // so UpNext + the ▶ marker can render from the log instead of the in-memory queue. Music rows only
 // (JIN/SWP are seam overlays, never deck tracks); same cross-station foreign-category guard as
 // schedule:get. Ordered by scheduled_at (the calendar's order). READ-ONLY — changes no playout.
-ipcMain.handle('schedule:playhead-view', (_e, stationId, limit) => {
+// OFF MAIN (2026-10-12, docs/perf-pass-round2-2026-10-12.md §1): UpNext polls this every 30 s (its shadow-compare). The
+// stall sense named it on OVEVENTS — 186–207 ms of main per call (the pending rows of a station sorted by scheduled_at).
+// The same two read-only queries now run on the library-health worker's read-only connection (electron/runway.js
+// playheadView); main only resolves the station. In-main is the fallback when the worker is not running.
+ipcMain.handle('schedule:playhead-view', async (_e, stationId, limit) => {
   try {
     const sid = stationId ?? getActiveStationId();
     const n = Math.max(1, Math.min(200, limit ?? 12));
-    const foreign = `AND NOT EXISTS (SELECT 1 FROM songs s JOIN categories c ON c.id=s.category_id
-       WHERE s.id=g.song_id AND c.station_id IS NOT NULL AND c.station_id <> g.station_id)`;
-    const cols = `g.id, g.scheduled_at, g.title, g.artist, g.duration_s, g.state, g.played_at, g.seq, g.content_class`;
-    const playing = db.prepare(
-      `SELECT ${cols} FROM generated_schedule g
-        WHERE g.station_id=? AND g.state='playing' AND g.deleted_at IS NULL ${foreign}
-        ORDER BY g.scheduled_at LIMIT 1`).get(sid) || null;
-    const upNext = db.prepare(
-      `SELECT ${cols} FROM generated_schedule g
-        WHERE g.station_id=? AND g.state='pending' AND g.deleted_at IS NULL
-          AND (g.content_class IS NULL OR g.content_class NOT IN ('JIN','SWP')) ${foreign}
-        ORDER BY g.scheduled_at LIMIT ?`).all(sid, n);
-    return { ok: true, playing, upNext };
+    const R = require("./runway");
+    const r = _libHealthForIpc ? await _libHealthForIpc.playheadView(sid, n, () => R.playheadView(db, sid, n)) : R.playheadView(db, sid, n);
+    return { ok: true, playing: r.playing, upNext: r.upNext };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 

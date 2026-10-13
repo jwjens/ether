@@ -67,6 +67,7 @@
     "test:react-sense": "electron scripts/smoke-react-sense.js",
     "test:encoder-probe": "electron scripts/smoke-encoder-probe.js",
     "test:feed-long": "electron scripts/smoke-feed-no-jump.js --control 193aae1 --long",
+    "test:push-index": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-push-pending-index.js",
     "test:iris-phrases": "node scripts/test-iris-transport-phrases.js",
     "test:library-foreign": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-library-health-foreign.js",
     "test:relink": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-relink-no-mutation.js",

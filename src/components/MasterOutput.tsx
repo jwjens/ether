@@ -245,6 +245,28 @@ function Fader({ label, value, onChange, group }: { label: string; value: number
   );
 }
 
+// ── LimiterReadout ───────────────────────────────────────────
+// The Limiter line, on its own subscription (it was computed in MasterOutput's render from a 30 Hz state). Same rule:
+// 0 to -6 dB above 85%. setText with an unchanged string does not re-render, so below 85% it never renders at all.
+function LimiterReadout({ stationUuid }: { stationUuid: string | null | undefined }) {
+  const [text, setText] = useState("0.0");
+  const uuidRef = useRef(stationUuid);
+  uuidRef.current = stationUuid;
+  useEffect(() => {
+    const ether = (window as any).ether;
+    if (!ether?.audio?.onLevels) return;
+    const h = ether.audio.onLevels((lvl: { master?: number; a?: number; b?: number; c?: number; stationUuid?: string }) => {
+      if (!matchesStation(lvl, uuidRef.current)) return;
+      const v = lvl.master ?? Math.max(lvl.a || 0, lvl.b || 0, lvl.c || 0);
+      setText(v > 0.85 ? String(-((v - 0.85) / 0.15 * 6).toFixed(1)) : "0.0");
+    });
+    return () => ether.audio.offLevels(h);
+  }, []);
+  return (
+    <span style={{ fontSize: 13, fontFamily: "'DM Mono', monospace", color: text !== "0.0" ? "var(--accent-amber)" : "var(--accent-teal)" }}>{text} dB</span>
+  );
+}
+
 // ── StatusRow ────────────────────────────────────────────────
 /** SEND FEED TO — off, or which computer's fader this station's programme is feeding and whether it is taking it. */
 function SendToButton({ stationId }: { stationId: number | null }) {
@@ -289,7 +311,11 @@ interface ConsoleLine {
 let _lineId = 0;
 
 // ── LiveConsole ──────────────────────────────────────────────
-export function LiveConsole({ masterLevel }: { masterLevel: number }) {
+// THE LEVEL IS A REF, NOT A PROP (2026-10-12, docs/perf-pass-round2-2026-10-12.md §3). It used to be `masterLevel`, a prop
+// that changed on every audio:levels event (~30/s), so the whole console — 100 rows — re-rendered 30 times a second;
+// the React sense measured a 187 ms LiveConsole commit on OVEVENTS. The silence watchdog and the 30 s level line read
+// the ref; the console re-renders only when a line arrives, a filter changes, or the engine dot changes.
+export function LiveConsole({ levelRef }: { levelRef: { current: number } }) {
   const [lines, setLines]   = useState<ConsoleLine[]>([]);
   const [filter, setFilter] = useState<"all" | "error" | "rotation" | "audio">("all");
   const [engineOk, setEngineOk] = useState(true);
@@ -298,10 +324,7 @@ export function LiveConsole({ masterLevel }: { masterLevel: number }) {
   // scrolled up, it stays put and counts what arrived (src/lib/stickyScroll.ts).
   const feed = useStickyScroll(lastLineId);
   const lastLevelLog = useRef(0);
-  const masterRef    = useRef(masterLevel);
-  const silenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => { masterRef.current = masterLevel; }, [masterLevel]);
+  const masterRef    = levelRef;
 
   // ── Subscribe to console events ──────────────────────────────
   useEffect(() => {
@@ -328,20 +351,16 @@ export function LiveConsole({ masterLevel }: { masterLevel: number }) {
   }, []);
 
   // ── Silence watchdog — flag engine after 5s silence ──────────
+  // Sampled every 500 ms from the ref (same rule: above 0.03 is sound; 5 s without it is silence). setEngineOk with an
+  // unchanged value does not re-render.
   useEffect(() => {
-    if (masterLevel > 0.03) {
-      setEngineOk(true);
-      if (silenceTimer.current) { clearTimeout(silenceTimer.current); silenceTimer.current = null; }
-    } else {
-      if (!silenceTimer.current) {
-        silenceTimer.current = setTimeout(() => {
-          setEngineOk(false);
-          silenceTimer.current = null;
-        }, 5000);
-      }
-    }
-    return () => {};
-  }, [masterLevel]);
+    let lastSound = Date.now();
+    const id = setInterval(() => {
+      if (masterRef.current > 0.03) { lastSound = Date.now(); setEngineOk(true); }
+      else if (Date.now() - lastSound >= 5000) setEngineOk(false);
+    }, 500);
+    return () => clearInterval(id);
+  }, [masterRef]);
 
   // (2026-10-12) The auto-scroll that lived here called bottomRef.scrollIntoView() on every line. scrollIntoView scrolls
   // EVERY scrollable ancestor, so each new line dragged the whole Master Out column down and the MASTER/MONITOR faders
@@ -476,7 +495,8 @@ function ArcProgress({ pct, size = 52, stroke = 3, color = TEAL, label }: {
 export default function MasterOutput({ expanded, collapsed = false, onToggleCollapsed }: { expanded?: boolean; collapsed?: boolean; onToggleCollapsed?: () => void }) {
   const engine = useAudioEngine();
   const { stationId, stationUuid, isReady } = useActiveStation();
-  const [masterLevel, setMasterLevel] = useState(0);
+  // The master level lives in a REF (see LiveConsole): as state it re-rendered all of Master Out ~30 times a second.
+  const masterLevelRef = useRef(0);
   const [masterVol,  setMasterVol]  = useState(1.0);
   // What the room is at: unknown (0, silent) until the saved level is read below — never a placeholder (2026-10-11).
   const [monitorVol, setMonitorVol] = useState(0);
@@ -511,7 +531,9 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
     if (!ether?.audio?.onLevels) return;
     const h = ether.audio.onLevels((lvl: { master?: number; a?: number; b?: number; c?: number; stationUuid?: string }) => {
       if (!matchesStation(lvl, masterUuidRef.current)) return; // station scope
-      setMasterLevel(lvl.master ?? Math.max(lvl.a || 0, lvl.b || 0, lvl.c || 0));
+      const v = lvl.master ?? Math.max(lvl.a || 0, lvl.b || 0, lvl.c || 0);
+      masterLevelRef.current = v;
+      setOnAir(v > 0.03);          // on-air detection from master level — renders only when it flips
     });
     return () => ether.audio.offLevels(h);
   }, []);
@@ -618,10 +640,6 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
     return () => clearInterval(id);
   }, []);
 
-  // On-air detection from master level
-  useEffect(() => {
-    setOnAir(masterLevel > 0.03);
-  }, [masterLevel]);
 
   // MASTER OUT = the broadcast. Rides the program bus in Rust, pre-meter, so listeners hear it and the
   // master VU shows what went out. __etherMasterVol is GONE: it was a workaround for the missing gain
@@ -706,10 +724,6 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
     return () => clearInterval(id);
   }, []);
 
-  // Limiter simulation: 0 to -6dB reduction above 85%
-  const limitDb = masterLevel > 0.85
-    ? -((masterLevel - 0.85) / 0.15 * 6).toFixed(1)
-    : "0.0";
 
   // Expanded-mode computed values
   const playPct = activeDeck && activeDeck.durationSec > 0
@@ -826,10 +840,7 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
       {/* Limiter */}
       <div style={{ padding: "6px 14px", borderBottom: "1px solid var(--border-primary)", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
         <span style={{ fontSize: 11, fontWeight: 400, letterSpacing: "0.02em", color: "var(--text-secondary)", opacity: 0.5 }}>Limiter</span>
-        <span style={{
-          fontSize: 13, fontFamily: "'DM Mono', monospace",
-          color: masterLevel > 0.85 ? "var(--accent-amber)" : "var(--accent-teal)",
-        }}>{limitDb} dB</span>
+        <LimiterReadout stationUuid={stationUuid} />
       </div>
 
       {/* Master EQ toggle */}
@@ -1055,7 +1066,7 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
       )}
 
       {/* Live console — fills all remaining space */}
-      <LiveConsole masterLevel={masterLevel} />
+      <LiveConsole levelRef={masterLevelRef} />
       </div>{/* /scrollable body */}
     </div>
   );

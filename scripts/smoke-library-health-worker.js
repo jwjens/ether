@@ -67,6 +67,14 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   console.log(`  ..   C (health-frame runway): on this thread ${cMainMs} ms for ${sids.length} station(s); via the worker ${cWorkerMs} ms with main's worst lag ${cLag} ms`);
   ok(cLag < 17, `C: computing the runway for the health frame never blocks main (worst ${cLag} ms < 16.7 ms)`);
   ok(JSON.stringify(viaWorker) === JSON.stringify(cInMain), "C: the worker's runway + 7-day trend equal the in-main computation");
+  // D · schedule:playhead-view (UpNext's 30 s shadow-compare) in the worker: same answer as in main, main not held.
+  m = lagMeter(); await sleep(20);
+  const dViaWorker = []; for (const id of sids) dViaWorker.push(await host.playheadView(id, 12, () => { throw new Error("fallback must not be needed"); }));
+  await sleep(20); const dLag = m.stop();
+  const dInMain = sids.map(id => R.playheadView(db, id, 12));
+  console.log(`  ..   D (playhead-view): main's worst lag ${dLag} ms while the worker read ${sids.length} station(s)`);
+  ok(dLag < 17, `D: the playhead view never blocks main (worst ${dLag} ms)`);
+  ok(JSON.stringify(dViaWorker) === JSON.stringify(dInMain), `D: the worker's playhead view equals the in-main read (${dInMain.map(x => x.upNext.length).join("/")} upcoming rows)`);
   console.log(`\n${fail ? "FAILED" : "ALL PASS"}  (${pass} passed, ${fail} failed)`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

@@ -428,11 +428,17 @@ export function VideoEngineProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     if (!ether?.video?.getStatus) return;
     let alive = true;
+    // Only a CHANGED status re-renders (2026-10-12, docs/perf-pass-round2-2026-10-12.md §3): a new object every 500 ms
+    // re-rendered the whole Show+ tree twice a second with nothing new in it (the React sense on OVEVENTS:
+    // VideoEngineProvider + VideoEnginePanel ~250 ms of slow-commit time a minute, idle).
+    let lastSig = "";
     const tick = async () => {
       try {
         const s = await ether.video.getStatus();
         if (alive) {
-          setStatus({ ...s, fpsActual: s.fpsActual ?? 0 });
+          const next = { ...s, fpsActual: s.fpsActual ?? 0 };
+          const sig = JSON.stringify(next);
+          if (sig !== lastSig) { lastSig = sig; setStatus(next); }
           // Broadcast to App.tsx so the header indicator dot can show/hide
           // without lifting VideoEngineProvider out of the Studio tree.
           window.dispatchEvent(new CustomEvent("ether:video-status", {

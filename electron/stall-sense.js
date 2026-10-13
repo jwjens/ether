@@ -24,7 +24,8 @@ function frameLabel(cf) {
   const file = String(cf.url).replace(/^file:\/+/, "").split(/[\\/]/).slice(-2).join("/");
   return `${fn} ${file}:${(cf.lineNumber | 0) + 1}`;
 }
-const OURS = /[\\/](electron|audiod)[\\/][^\\/]+\.js$/;
+// Subfolders too (electron/sync/…): without them the sync push's 300 ms stall read "no Ether frame on the stack".
+const OURS = /[\\/](electron|audiod)[\\/](.+[\\/])?[^\\/]+\.js$/;
 const isOurs = (cf) => !!cf.url && OURS.test(String(cf.url)) && !/node_modules/.test(String(cf.url));
 
 /** Count what ran inside [fromPerf, toPerf] in a V8 CPU profile whose startTime maps to `startPerf`. Pure (tested). */

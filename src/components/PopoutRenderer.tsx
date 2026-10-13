@@ -5,7 +5,7 @@ import React, { useState, useEffect } from "react";
 import PopoutShell from "./PopoutShell";
 import Rack from "./rack/Rack";
 import ImagingPanel from "./ImagingPanel";
-import FaderSection from "./FaderSection";
+import { FaderSectionLive } from "./FaderSection";
 import MasterOutput from "./MasterOutput";
 import MicStatusPanel from "./MicStatusPanel";
 import PhoneDesk from "./PhoneDesk";
@@ -142,31 +142,15 @@ function ProcessorPopout() {
 // six source-channel writers, the jukebox cut — so all this has to supply is the live A/B/C deck
 // state, which comes off the engine the same way the dashboard's does.
 function PopoutFaders() {
-  const eng = useAudioEngine();
-  const [decks, setDecks] = React.useState<{ A: any; B: any; C: any }>({ A: null, B: null, C: null });
-  React.useEffect(() => {
-    const sync = () => setDecks({
-      A: eng.getDeck("A")?.getState() ?? null,
-      B: eng.getDeck("B")?.getState() ?? null,
-      C: eng.getDeck("C")?.getState() ?? null,
-    });
-    sync();
-    // The engine's own listener, not a poll: the dashboard reads the same stream, so the two windows
-    // show the same decks on the same tick rather than drifting by up to a poll interval.
-    const off = eng.on(sync);            // engine-rodio.ts:962 — returns its own unsubscribe
-    // The engine only emits on CHANGE, and position advances without one, so the countdown and the
-    // progress bar need a tick of their own. 250ms matches the engine's own poll.
-    const id = setInterval(sync, 250);
-    return () => { try { off(); } catch {} clearInterval(id); };
-  }, [eng]);
+  // The board reads its decks itself (FaderSectionLive: status + volume only). This used to poll the engine every 250 ms
+  // and re-render the whole board each time, for a countdown the board does not show (docs/perf-pass-round2-2026-10-12.md §3).
   // masterCollapsed is a per-window VIEW preference and is deliberately not shared: this window is
   // usually narrower than the dashboard, and forcing them to agree would collapse the master meter
   // on a screen that has room for it.
   const [masterCollapsed, setMasterCollapsed] = React.useState(false);
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
-      <FaderSection
-        deckA={decks.A} deckB={decks.B} deckC={decks.C}
+      <FaderSectionLive
         masterCollapsed={masterCollapsed}
         onToggleMasterCollapsed={() => setMasterCollapsed(v => !v)}
       />
