@@ -43,6 +43,14 @@ const recorder = (over = {}) => {
 };
 
 describe("readSavedBoard", () => {
+  it("the station strip's real MUTE holds through an engine restart, and the level is kept for unmute (2026-10-13)", () => {
+    db.prepare("INSERT INTO station_config_kv VALUES (2, 'monitor_muted', '1', NULL)").run();
+    expect(B.readSavedBoard(db, 2).monitorVol).toBe(0);
+    expect(db.prepare("SELECT value FROM station_config_kv WHERE station_id = 2 AND key = 'monitor_volume'").get().value).toBe("0.73");
+    db.prepare("UPDATE station_config_kv SET value = '0' WHERE key = 'monitor_muted'").run();
+    expect(B.readSavedBoard(db, 2).monitorVol).toBeCloseTo(0.73);
+    expect(B.isBoardKey("monitor_muted")).toBe(true);
+  });
   it("reads every saved value for the station, inventing nothing", () => {
     const s = B.readSavedBoard(db, 2);
     expect(s.slots.S1.aux).toBeCloseTo(0.74);

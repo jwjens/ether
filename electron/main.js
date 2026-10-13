@@ -549,7 +549,7 @@ const _boardWatch = BoardWatch.createBoardWatch({
 // be the one read), so it refreshes every station.
 // PARK OPS (2026-10-13): the hosted Park page must show the real state when something changes elsewhere (Preferences,
 // the desktop strip, a Take). A write to anything it shows is announced; the window re-pushes that station's mirror now.
-const _PARK_KEYS = new Set(["closing_time", "monitor_volume", "fader_top_db_monitor", "park_unmute_level"]);
+const _PARK_KEYS = new Set(["closing_time", "monitor_volume", "fader_top_db_monitor", "monitor_muted", "park_sound_last", "park_control"]);
 require("./board-write-events").on(({ table, stationId, key }) => {
   if (table === "station_config_kv" && stationId != null && _PARK_KEYS.has(String(key))) {
     // Named by station UUID (the station-identity rule; scripts/test-station-identity-leak.js), never the local integer.
@@ -5265,11 +5265,12 @@ ipcMain.handle("park:listen", async (_e, args = {}) => {
     if (!AUDIO_DAEMON) return { ok: false, error: "Listen needs the audio engine (daemon) — it is not running on this machine." };
     if (!args.on) return await audiodClient.cmd("listenStop", { stationId });
     const kv = {};
-    for (const r of db.prepare(`SELECT key, value FROM station_config_kv WHERE station_id = ? AND key IN ('park_listen_output','park_listen_bitrate_kbps','park_listen_frame_ms') AND deleted_at IS NULL`).all(stationId)) kv[r.key] = r.value;
+    for (const r of db.prepare(`SELECT key, value FROM station_config_kv WHERE station_id = ? AND key IN ('park_listen_output','park_listen_bitrate_kbps','park_listen_channels','park_listen_frame_ms') AND deleted_at IS NULL`).all(stationId)) kv[r.key] = r.value;
     const config = {
       url: String(args.url || ""),
       which: PARK_LISTEN_OUTPUT[String(kv.park_listen_output || "")] || 0,
       bitrateKbps: Number(kv.park_listen_bitrate_kbps),
+      channels: ({ mono: 1, stereo: 2 })[String(kv.park_listen_channels || "")] || 0,
       frameMs: Number(kv.park_listen_frame_ms),
       leaseSec: Number(args.leaseSec),
     };
@@ -6427,10 +6428,32 @@ ipcMain.handle("audio:cue-state", async (_, stationId) => {
     return typeof audio.audioCueState === "function" ? JSON.parse(audio.audioCueState(sid)) : { device: "", state: "same_as_main" };
   } catch { return { device: "", state: "same_as_main" }; }
 });
-ipcMain.handle("audio:setMonitorVolume", (_, stationId, volume) => {
-  const vv = _capToTop(stationId, "monitor", volume);
+// THE STATION STRIP'S MUTE (Jeff, 2026-10-13: "MUTE is a real mute that remembers the level (not 'fader to 0')"). The
+// level stays in monitor_volume; monitor_muted = "1" holds the engine's strip at 0 until unmuted, whoever moves the fader
+// meanwhile. Every path to the engine's strip level reads it: this setter, a Show Take (audiod/show-presets.js) and the
+// engine's own restore (audiod/board-state.js readSavedBoard).
+function _monitorMuted(sid) {
+  const d = _boardDb(); if (!d) return false;
+  try { const r = d.prepare("SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'monitor_muted' AND deleted_at IS NULL").get(Number(sid)); return !!r && r.value === "1"; } catch { return false; }
+}
+function _sendMonitorLevel(stationId, level) {
+  const vv = _monitorMuted(stationId) ? 0 : _capToTop(stationId, "monitor", level);
   return _boardSend("setMonitorVolume", { stationId, volume: vv },
     () => (typeof audio.audioSetMonitorVolume === "function" ? audio.audioSetMonitorVolume(stationId, vv) : false));
+}
+ipcMain.handle("audio:setMonitorVolume", (_, stationId, volume) => _sendMonitorLevel(stationId, volume));
+ipcMain.handle("audio:setMonitorMute", async (_, stationId, muted) => {
+  const sid = Number(stationId);
+  const d = _boardDb();
+  if (!d || !Number.isFinite(sid)) return { ok: false, reason: "database not open" };
+  try {
+    const { stationConfigKvUpsertByKey } = require("./sync/handlers/station_config_kv");
+    stationConfigKvUpsertByKey(d, sid, "monitor_muted", muted ? "1" : "0");
+    const r = d.prepare("SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'monitor_volume' AND deleted_at IS NULL").get(sid);
+    const level = r ? Number(r.value) : NaN;
+    const ok = await _sendMonitorLevel(sid, Number.isFinite(level) ? level : 0);
+    return ok === false ? { ok: false, reason: "the audio engine did not take it" } : { ok: true };
+  } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
 });
 
 // MASTER OUT — the broadcast gain for a station. Rides the program bus pre-meter in Rust, so it

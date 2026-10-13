@@ -9,6 +9,7 @@ import { startLicenseGuard } from "./lib/licenseGuard";
 import CloudInstallPrompt from "./components/CloudInstallPrompt";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import { pushInstallUsers } from "./lib/syncUsers";
+import { recordParkSound } from "./lib/parkSound";
 import { setClosingForDates } from "./lib/closingTime";
 import { startParkMirror } from "./lib/parkMirror";
 import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong, pushPlayHistory, notePlayHistoryState, reconcileAccountStations, importStagedProgramming, pushHealthFrames, pushJukeboxPool, pushOpsData, fetchOpsLink } from "./lib/ccData";
@@ -1376,6 +1377,17 @@ export default function App() {
           accepted = true;
         }
         const isActive = targetId === activeId;
+        // THE STUDIO'S LOCK (Jeff, 2026-10-13): "Park page control: OFF" on the station strip refuses the Park page's
+        // fader, MUTE, carts and closing time here too, not only on the server (a page or server a moment behind still
+        // cannot change anything). Listen is not locked. Only Ether turns it back on.
+        if (data?.from_park === true && targetId != null && ["ops:set-level", "ops:set-mute", "ops:set-closing", "cart:fire"].includes(cmd)) {
+          let locked = false;
+          try {
+            const r = await query<{ value: string }>("SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'park_control' AND deleted_at IS NULL", [targetId]);
+            locked = r[0]?.value === "off";
+          } catch { /* unreadable → not locked; the server holds the same lock */ }
+          if (locked) { refuse("Controls locked by the studio"); return; }   // acked in the finally below
+        }
         const activeEngine = getEngine(activeId);             // fresh active engine (replaces the stale closure `engine`)
         const useDaemon = activeEngine.isDaemonDriven;         // install-level mode — all stations share it
         // Daemon-direct: act on the TARGET station by id, independent of which station is the active
@@ -1587,36 +1599,35 @@ export default function App() {
           }
           // ── PARK OPS: the park's sound level and MUTE (2026-10-13) ────────────────────────────
           // The park hears this station through this computer's speaker output, so the Park page's fader is THIS
-          // STATION's MONITOR strip — the same level the desktop's station MONITOR strip moves (StationMonitorMixer),
-          // through the same two calls: the engine, then Preferences (monitor_volume). Not the stream, not another
-          // station, not the machine-wide MONITOR. MUTE is that level at 0, with the level before it kept in
-          // park_unmute_level so unmuting puts it back; "muted" on the page is read from the real level, never a flag.
+          // STATION's strip under Station Monitors (StationMonitorMixer) — not the stream, not another station, not the
+          // machine-wide MONITOR. MUTE is the strip's REAL mute (Jeff, 2026-10-13): monitor_muted holds the strip silent
+          // and the level stays where it was, so unmuting from Ether or any Park page brings that level back. Any
+          // logged-in staff member can change or undo anyone's change; who and when is recorded (park_sound_last).
           case "ops:set-level":
           case "ops:set-mute": {
             if (targetId == null) { refuse(`${cmd} — no target station`); break; }
             try {
               const ether = (window as any).ether;
-              const res: any = await ether?.stationConfigKv?.list?.(targetId);
-              const kvRows: any[] = Array.isArray(res) ? res : (res?.rows ?? []);
-              const kvNum = (k: string) => { const v = Number(kvRows.find(r => r?.key === k && !r?.deleted_at)?.value); return Number.isFinite(v) ? v : null; };
-              const topDb = kvNum("fader_top_db_monitor") ?? 0;
-              const top = Math.pow(10, topDb / 20);
-              const cur = kvNum("monitor_volume");
-              let level: number;
+              const by = typeof data.by === "string" && data.by.trim() ? data.by.trim().slice(0, 60) : null;
               if (cmd === "ops:set-level") {
-                level = Number(data.level);
+                const res: any = await ether?.stationConfigKv?.list?.(targetId);
+                const kvRows: any[] = Array.isArray(res) ? res : (res?.rows ?? []);
+                const v = Number(kvRows.find(r => r?.key === "fader_top_db_monitor" && !r?.deleted_at)?.value);
+                const top = Math.pow(10, (Number.isFinite(v) ? v : 0) / 20);
+                let level = Number(data.level);
                 if (!Number.isFinite(level) || level < 0) { refuse("ops:set-level — not a level"); break; }
                 level = Math.min(level, top);
-              } else if (data.muted) {
-                if (cur != null && cur > 0) await ether.stationConfigKv.upsertByKey(targetId, "park_unmute_level", String(cur));
-                level = 0;
+                await ether?.audio?.setMonitorVolume?.(targetId, level);   // held silent while muted (main)
+                await ether.stationConfigKv.upsertByKey(targetId, "monitor_volume", String(level));
+                await recordParkSound(targetId, { what: "level", level, by, via: "park" });
+                console.log(`[RemoteCmd] ${cmd} station ${targetId} → strip ${level.toFixed(3)} (by ${by || "?"})`);
               } else {
-                const back = kvNum("park_unmute_level");
-                level = Math.min(back != null && back > 0 ? back : 1, top);
+                const muted = !!data.muted;
+                const r: any = await ether?.audio?.setMonitorMute?.(targetId, muted);
+                if (!r?.ok) { refuse(`ops:set-mute — ${r?.reason || "not applied"}`); break; }
+                await recordParkSound(targetId, { what: muted ? "muted" : "unmuted", by, via: "park" });
+                console.log(`[RemoteCmd] ${cmd} station ${targetId} → ${muted ? "MUTED" : "unmuted"} (by ${by || "?"})`);
               }
-              await ether?.audio?.setMonitorVolume?.(targetId, level);
-              await ether.stationConfigKv.upsertByKey(targetId, "monitor_volume", String(level));
-              console.log(`[RemoteCmd] ${cmd} station ${targetId} → MONITOR ${level.toFixed(3)}`);
               window.dispatchEvent(new CustomEvent("ether:ops-push", { detail: { stationId: targetId } }));
             } catch (e) {
               console.error(`[RemoteCmd] ${cmd} failed:`, e);

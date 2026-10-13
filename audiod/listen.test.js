@@ -5,11 +5,11 @@ import { createRequire } from "node:module";
 const require_ = createRequire(import.meta.url);
 const { ListenSender, checkConfig, ffmpegArgs } = require_("./listen.js");
 
-const good = { url: "rtsps://station:t@stream.example:8322/park/abc", which: 3, bitrateKbps: 64, frameMs: 20, leaseSec: 60 };
+const good = { url: "rtsps://station:t@stream.example:8322/park/abc", which: 3, bitrateKbps: 24, channels: 1, frameMs: 20, leaseSec: 60 };
 
 describe("listen config", () => {
   it("accepts the station's settings as given", () => {
-    expect(checkConfig(good)).toEqual({ ok: true, cfg: { url: good.url, which: 3, bitrate: 64, frameMs: 20, leaseSec: 60 } });
+    expect(checkConfig(good)).toEqual({ ok: true, cfg: { url: good.url, which: 3, bitrate: 24, channels: 1, frameMs: 20, leaseSec: 60 } });
   });
   it("refuses a missing choice of speaker output — never guesses one", () => {
     expect(checkConfig({ ...good, which: 0 }).ok).toBe(false);
@@ -18,12 +18,16 @@ describe("listen config", () => {
   it("refuses an Opus frame length Opus does not have, and a silly bitrate", () => {
     expect(checkConfig({ ...good, frameMs: 15 }).ok).toBe(false);
     expect(checkConfig({ ...good, bitrateKbps: 0 }).ok).toBe(false);
+    expect(checkConfig({ ...good, channels: 0 }).ok).toBe(false);
+    expect(checkConfig({ ...good, channels: undefined }).ok).toBe(false);
     expect(checkConfig({ ...good, url: "http://x" }).ok).toBe(false);
   });
   it("the ffmpeg line reads the listen port and uses exactly the settings", () => {
     const a = ffmpegArgs(5555, checkConfig(good).cfg).join(" ");
     expect(a).toContain("-i tcp://127.0.0.1:5555");
-    expect(a).toContain("-c:a libopus -b:a 64k -frame_duration 20");
+    expect(a).toContain("-af aresample=48000 -ac 1");
+    expect(a).toContain("-c:a libopus -b:a 24k -frame_duration 20");
+    expect(ffmpegArgs(5555, checkConfig({ ...good, channels: 2 }).cfg).join(" ")).toContain("-ac 2 -c:a");
     expect(a).toContain("-f rtsp -rtsp_transport tcp " + good.url);
   });
 });

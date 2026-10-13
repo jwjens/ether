@@ -3,6 +3,7 @@ import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { selectAttachedStationsToMaterialize, chooseActiveStation } from "./provisioning";
 import { hasEngine, getEngine } from "../audio/engine-registry";
+import { parseParkSoundLast } from "./parkSound";
 
 // Control Center data mirror (Phase 2). Pushes install-owned table rows up so the
 // dashboard can view them, and applies remote dashboard edits back through the local
@@ -349,15 +350,21 @@ export async function pushOpsData(
     // TONIGHT'S closing time as the announcement scheduler resolves it (electron/main.js announce:due-times).
     let closingToday: string | null = null;
     try { const dt = await ether.invoke("announce:due-times", stationId, localDate); if (dt?.ok) closingToday = dt.closing ?? null; } catch { /* older main */ }
-    // THE PARK'S SOUND (2026-10-13): this station's MONITOR level, its fader maximum (Preferences → Fader maximum →
-    // MONITOR), and MUTE — read from the real level, never a stored flag.
+    const kvStr = (k: string) => String(kvRows.find(r => r?.key === k && !r?.deleted_at)?.value ?? "");
+    // THE PARK'S SOUND (2026-10-13): this station's strip level, its fader maximum (Preferences → Fader maximum →
+    // MONITOR), the strip's real MUTE (monitor_muted — the level is kept), the studio's lock ("Park page control: OFF"
+    // on the strip, park_control = "off") and who changed the sound last (park_sound_last).
     const level = kvNum("monitor_volume");
-    const park = { level, top_db: kvNum("fader_top_db_monitor") ?? 0, muted: level === 0 };
+    const park = {
+      level, top_db: kvNum("fader_top_db_monitor") ?? 0,
+      muted: kvStr("monitor_muted") === "1",
+      locked: kvStr("park_control") === "off",
+      last: parseParkSoundLast(kvStr("park_sound_last")),
+    };
     // PARK LISTEN (2026-10-13): available only once every Listen setting is set (Preferences → Park page — Listen); the
     // listener buffer is the phone's, so it travels to the page. Nothing here is a default.
-    const kvStr = (k: string) => String(kvRows.find(r => r?.key === k && !r?.deleted_at)?.value ?? "");
     const listen = {
-      ready: ["park_listen_output", "park_listen_bitrate_kbps", "park_listen_frame_ms", "park_listen_buffer_ms"].every(k => kvStr(k) !== ""),
+      ready: ["park_listen_output", "park_listen_bitrate_kbps", "park_listen_channels", "park_listen_frame_ms", "park_listen_buffer_ms"].every(k => kvStr(k) !== ""),
       buffer_ms: kvNum("park_listen_buffer_ms"),
     };
     await pushCcData(licenseKey, stationUuid, "ops_config", [

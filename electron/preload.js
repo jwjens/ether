@@ -91,6 +91,8 @@ contextBridge.exposeInMainWorld("ether", {
     linkState: (stationId) => ipcRenderer.invoke("link:state", stationId),
     setOutputDevice: (stationId, deviceName) => ipcRenderer.invoke("audio:setOutputDevice", stationId, deviceName),
     setMonitorVolume: (stationId, volume) => ipcRenderer.invoke("audio:setMonitorVolume", stationId, volume),
+    // The station strip's real MUTE: the level is kept, the strip is held silent until unmuted.
+    setMonitorMute: (stationId, muted) => ipcRenderer.invoke("audio:setMonitorMute", stationId, muted),
     // PFL — one channel on/off (the lamp follows the engine's echo on the meters frame), and the station's dim.
     setPfl: (stationId, slot, on) => ipcRenderer.invoke("audio:set-pfl", stationId, slot, on),
     setPflDim: (stationId, dimDb) => ipcRenderer.invoke("audio:set-pfl-dim", stationId, dimDb),

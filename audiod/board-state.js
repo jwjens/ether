@@ -151,6 +151,8 @@ function readSavedBoard(db, sid) {
   const mv = levels && typeof levels === "object" ? num(levels.master) : null;
   if (mv != null && mv >= 0 && mv <= MAX_GAIN + 1e-6) out.masterVol = mv;
   const mon = num(kv("monitor_volume")); if (mon != null) out.monitorVol = clampGain(mon);
+  // The strip's real MUTE (monitor_muted = "1"): the engine's strip is held at 0; the level stays saved for unmute.
+  if (kv("monitor_muted") === "1") out.monitorVol = 0;
   // MASTER MONITOR is ONE level for every station on this machine: this station's saved value, else any station's.
   // NOT KNOWN = SILENT (Jeff, 2026-10-11): "the local output stays silent until the saved master MONITOR level is known,
   // then applies it. Never play the room at 0 dB as a placeholder." Air is unaffected (MONITOR never touches air).
@@ -362,7 +364,7 @@ function groupTopGain(db, sid, group) {
 
 /** Every station_config_kv key readSavedBoard reads — a write to any other key cannot change the saved board. */
 const BOARD_KV_KEYS = new Set(["board_levels", "aux_monitor_levels", "aux_monitor_slots", FADER_LOCAL_KEY, FADER_ROUTING_FLAG,
-  "monitor_volume", MASTER_MONITOR_KEY, SMOOTHING_KEY, LOUDNESS_TARGET_KEY, "aux_monitor_device", "pfl_cue_device", "pfl_dim_db",
+  "monitor_volume", "monitor_muted", MASTER_MONITOR_KEY, SMOOTHING_KEY, LOUDNESS_TARGET_KEY, "aux_monitor_device", "pfl_cue_device", "pfl_dim_db",
   "audio_output_device", "jukebox_channel_on", CART_ON_KEY, ...Object.values(FADER_TOP_KEYS), ...Object.values(DUCK_KEYS)]);
 /** null/undefined = unknown key (a write by uuid): treat as a board key. */
 function isBoardKey(key) { return key == null || BOARD_KV_KEYS.has(String(key)); }

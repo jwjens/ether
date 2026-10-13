@@ -353,6 +353,8 @@ class ShowBlade {
 
   _apply(doc) {
     if (typeof this.A.audioApplyShow !== "function") return { ok: false, reason: "this engine has no show apply (an older build)" };
+    // The station strip's real MUTE holds: a Take may move the saved level, never unmute the strip.
+    if (doc && doc.master && doc.master.monitor != null && this.readKv("monitor_muted") === "1") doc = { ...doc, master: { ...doc.master, monitor: 0 } };
     try { const r = JSON.parse(this.A.audioApplyShow(this.stationId, JSON.stringify(doc))); return r && r.ok ? r : { ok: false, reason: (r && r.reason) || "no answer from the engine" }; }
     catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
   }

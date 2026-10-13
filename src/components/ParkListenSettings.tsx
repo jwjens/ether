@@ -1,9 +1,10 @@
 // ParkListenSettings — Preferences → "Park page — Listen" (2026-10-13, docs/park-listen-plan-2026-10-13.md).
 //
 // Jeff: "Every number involved (buffer, quality) is a visible setting, nothing in code." So nothing here has a value
-// until the operator sets it, and Listen stays off for this station until all four are set:
+// until the operator sets it, and Listen stays off for this station until all five are set:
 //   · park_listen_output       which local output feeds the park speakers: MONITOR (main), AUX, or both
 //   · park_listen_bitrate_kbps Opus quality the station sends (6–510 kbps)
+//   · park_listen_channels     mono or stereo (Jeff, 2026-10-13: mono — "only for quick observing")
 //   · park_listen_frame_ms     Opus frame length (2.5 / 5 / 10 / 20 / 40 / 60 ms) — shorter = less delay, more overhead
 //   · park_listen_buffer_ms    how much the listener's phone holds before playing (0–4000 ms; the browser's
 //                              jitterBufferTarget) — more = fewer dropouts on a weak connection, more delay
@@ -11,14 +12,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
 
-const KEYS = ["park_listen_output", "park_listen_bitrate_kbps", "park_listen_frame_ms", "park_listen_buffer_ms"] as const;
+const KEYS = ["park_listen_output", "park_listen_bitrate_kbps", "park_listen_channels", "park_listen_frame_ms", "park_listen_buffer_ms"] as const;
 type Key = typeof KEYS[number];
 const FRAMES = ["2.5", "5", "10", "20", "40", "60"];
 
 export default function ParkListenSettings() {
   const { stationId } = useActiveStation();
   const ether = (window as any).ether;
-  const [cur, setCur] = useState<Record<Key, string>>({ park_listen_output: "", park_listen_bitrate_kbps: "", park_listen_frame_ms: "", park_listen_buffer_ms: "" });
+  const [cur, setCur] = useState<Record<Key, string>>({ park_listen_output: "", park_listen_bitrate_kbps: "", park_listen_channels: "", park_listen_frame_ms: "", park_listen_buffer_ms: "" });
   const [draft, setDraft] = useState<Record<Key, string>>(cur);
   const [msg, setMsg] = useState<string | null>(null);
   const [live, setLive] = useState<any>(null);
@@ -29,7 +30,7 @@ export default function ParkListenSettings() {
       const res: any = await ether?.stationConfigKv?.list?.(stationId);
       const rows: any[] = Array.isArray(res) ? res : (res?.rows ?? []);
       const v = (k: Key) => String(rows.find(r => r?.key === k && !r?.deleted_at)?.value ?? "");
-      const next = { park_listen_output: v("park_listen_output"), park_listen_bitrate_kbps: v("park_listen_bitrate_kbps"),
+      const next = { park_listen_output: v("park_listen_output"), park_listen_bitrate_kbps: v("park_listen_bitrate_kbps"), park_listen_channels: v("park_listen_channels"),
                      park_listen_frame_ms: v("park_listen_frame_ms"), park_listen_buffer_ms: v("park_listen_buffer_ms") };
       setCur(next); setDraft(next);
     } catch (e) { setMsg(`Not read: ${String(e)}`); }
@@ -42,6 +43,7 @@ export default function ParkListenSettings() {
 
   const valid = (k: Key, v: string): string | null => {
     if (k === "park_listen_output") return ["monitor", "aux", "both"].includes(v) ? null : "Choose MONITOR, AUX or both.";
+    if (k === "park_listen_channels") return ["mono", "stereo"].includes(v) ? null : "Choose Mono or Stereo.";
     const n = Number(v);
     if (v.trim() === "" || !Number.isFinite(n)) return "Enter a number.";
     if (k === "park_listen_bitrate_kbps" && !(n >= 6 && n <= 510)) return "Quality must be 6–510 kbps.";
@@ -88,6 +90,16 @@ export default function ParkListenSettings() {
         {now("park_listen_bitrate_kbps", " kbps")}
       </div>
       <div style={row}>
+        <span style={{ width: 210, fontSize: 13 }}>Channels</span>
+        <select style={{ ...inp, width: 100 }} value={draft.park_listen_channels} onChange={e => setDraft(d => ({ ...d, park_listen_channels: e.target.value }))}>
+          <option value="">— choose —</option>
+          <option value="mono">Mono</option>
+          <option value="stereo">Stereo</option>
+        </select>
+        <button style={btn} onClick={() => void save("park_listen_channels")}>Save</button>
+        {now("park_listen_channels", "")}
+      </div>
+      <div style={row}>
         <span style={{ width: 210, fontSize: 13 }}>Frame length</span>
         <select style={{ ...inp, width: 100 }} value={draft.park_listen_frame_ms} onChange={e => setDraft(d => ({ ...d, park_listen_frame_ms: e.target.value }))}>
           <option value="">— choose —</option>
@@ -106,12 +118,12 @@ export default function ParkListenSettings() {
       <div style={{ fontSize: 11.5, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
         Logged-in staff can press <strong>Listen</strong> on the Park page to hear exactly what the park speakers get — after
         the park fader and MUTE, with the carts. It plays only on their own phone; their phone volume never changes the
-        park. Quality: higher = better sound, more data. Frame length: shorter = less delay. Listener buffer: more = fewer
+        park. Quality: higher = better sound, more data. Mono sounds clearer than stereo at a low quality setting. Frame length: shorter = less delay. Listener buffer: more = fewer
         dropouts on a weak connection, but more delay. Nothing is sent unless someone is listening, and it never touches
         the on-air stream or playout.
       </div>
       <div style={{ fontSize: 12, marginTop: 8, color: ready ? "var(--text-secondary)" : "var(--accent-orange, #f59e0b)" }}>
-        {ready ? "Listen is available on this station's Park page." : "Listen is off for this station until all four are set."}
+        {ready ? "Listen is available on this station's Park page." : "Listen is off for this station until all five are set."}
         {live && <> Sender: <strong>{live.state}</strong>{live.errorMsg ? ` — ${live.errorMsg}` : ""}.</>}
       </div>
       {msg && <div style={{ fontSize: 12, marginTop: 8, color: "var(--accent-cyan)" }}>{msg}</div>}

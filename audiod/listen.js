@@ -41,11 +41,13 @@ function checkConfig(c) {
   if (![1, 2, 3].includes(which)) return { ok: false, error: "Choose which output feeds the park speakers (Preferences → Park page → Listen)." };
   const bitrate = Number(x.bitrateKbps);
   if (!(bitrate >= 6 && bitrate <= 510)) return { ok: false, error: "Listen quality (kbps) must be 6–510." };
+  const channels = Number(x.channels);
+  if (![1, 2].includes(channels)) return { ok: false, error: "Choose Mono or Stereo for Listen (Preferences → Park page → Listen)." };
   const frameMs = Number(x.frameMs);
   if (!OPUS_FRAMES.includes(frameMs)) return { ok: false, error: `Listen frame length must be one of ${OPUS_FRAMES.join(", ")} ms.` };
   const leaseSec = Number(x.leaseSec);
   if (!(leaseSec >= 10 && leaseSec <= 600)) return { ok: false, error: "Bad lease." };
-  return { ok: true, cfg: { url, which, bitrate, frameMs, leaseSec } };
+  return { ok: true, cfg: { url, which, bitrate, channels, frameMs, leaseSec } };
 }
 
 /** The ffmpeg command line. Pure — pinned by listen.test.js. */
@@ -55,7 +57,8 @@ function ffmpegArgs(port, cfg) {
     // Raw programme-rate PCM from the engine; no probing, no input buffering.
     "-fflags", "nobuffer", "-flags", "low_delay", "-probesize", "32", "-analyzeduration", "0",
     "-f", "f32le", "-ar", "44100", "-ac", "2", "-i", `tcp://127.0.0.1:${port}`,
-    "-af", "aresample=48000",
+    // Mono (Jeff, 2026-10-13: "only for quick observing, so efficiency and least delay over quality") folds L+R down.
+    "-af", "aresample=48000", "-ac", String(cfg.channels),
     "-c:a", "libopus", "-b:a", `${cfg.bitrate}k`, "-frame_duration", String(cfg.frameMs), "-application", "lowdelay",
     "-f", "rtsp", "-rtsp_transport", "tcp", cfg.url,
   ];
@@ -83,7 +86,7 @@ class ListenSender {
     let port = 0; try { port = this.A.audioGetListenPort(this.stationId); } catch {}
     if (!port) { this.state = "error"; this.errorMsg = "Audio engine not ready — no listen port."; this._emit(); return { ok: false, error: this.errorMsg }; }
     try { this.A.audioSetListenSource(this.stationId, v.cfg.which); } catch {}
-    const changed = !this.cfg || ["url", "which", "bitrate", "frameMs"].some(k => this.cfg[k] !== v.cfg[k]);
+    const changed = !this.cfg || ["url", "which", "bitrate", "channels", "frameMs"].some(k => this.cfg[k] !== v.cfg[k]);
     this.cfg = v.cfg; this.armed = true;
     this._renewLease();
     if (!this.proc || changed) this._spawn(port);
