@@ -90,3 +90,13 @@ Jeff: "why did you make that!!!! specific instructions were user pin created in 
   - Lockout stays at 5 / 15.
 - Tests 119/119.
 - Ryan: admin on lic 24, whose station is the Halloween his login works on.
+
+## Correction: any role (Jeff: "any user I created in Ether (any role) can log in to their own account's Park page with their name and PIN. No admin-only rule.")
+
+- `ether-backend` `f4a301e` deployed (Railway SUCCESS): any user of the station's account, any role, logs in with their Ether username + PIN. No admin check anywhere. Tests 119/119.
+- Live checks:
+  - park.ether-cast.com/halloween = station 43889edc… on lic 24.
+  - Ryan is a user of lic 24, with 0 wrong tries and not locked.
+  - A made-up username gets "Wrong username or PIN."
+  - The removed Remote-page route `/api/account/park` returns 404.
+- Not done: a real login with Ryan's PIN (only Ryan/Jeff can type it).
