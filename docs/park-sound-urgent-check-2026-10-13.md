@@ -33,3 +33,27 @@ of it was built. What the code in the installer actually does (source read; runt
   Ether's MUTE goes.
 - Item 2: what "the board" means here and where the who/when shows.
 - Item 3: what OFF locks (fader + MUTE only, or carts, closing time and Listen too) and where the switch sits.
+
+## Jeff's decisions (verbatim)
+
+> 1. The Park page fader and MUTE control HalloVeen's station fader (under Station Monitors), not the big MONITOR. That station fader must be clearly visible on the board, update live when the Park page changes it, and get its own real MUTE button. MUTE is a real mute that remembers the level (not "fader to 0"); unmuting from Ether or any Park page restores it. The big MONITOR stays the machine master.
+> 2. Who and when ("Muted from Park page by Ryan, 8:42 PM") shows next to that station fader in Ether AND on the Park page.
+> 3. "Park page control: ON/OFF" switch on HalloVeen's station fader strip in Ether. OFF locks fader, MUTE, carts and closing time on every Park page instantly ("Controls locked by the studio"). Listen stays allowed. Only Ether turns it back on. Show me a screenshot of its spot before building.
+> 4. Run the test: mute from Park page A, log A out, unmute from Ether and separately from Park page B.
+> Build all of this into the installer before Listen goes live, then give me the new path and sha256. Listen settings: I'll use 64 kbps, 20 ms, buffer 0.
+
+Then: "Listen settings: 24 kbps mono, 20 ms frames, buffer 0. It's only for quick observing, so efficiency and least delay over quality."
+
+## Mock for approval (nothing built yet)
+
+![Park control mock](park-control-mock-2026-10-13.png)
+
+Today (screenshot of this machine, 09:54): Station Monitors lists Open Format first; HalloVeen's strip is below it, out
+of sight in Master Out. Proposed:
+- A: the station on screen goes to the top of Station Monitors, always open. MUTE/MUTED button in the strip header; the
+  fader keeps its position (greyed) while muted. Who/when line under the fader. "Park page control ON/OFF" under that.
+- The who/when line shows the LAST change from anywhere, so an Ether change replaces "Muted from Park page by Ryan"
+  with e.g. "Unmuted in Ether, 8:45 PM" (otherwise the line would describe a state that is no longer true).
+- C: every Park page while OFF: "Controls locked by the studio", fader/MUTE/carts/closing time greyed, Listen works.
+  The server refuses those writes too, and Ether refuses them itself.
+- D: mono needs one new Listen setting, "Channels" (Mono/Stereo, no default) — the sender is always stereo today.
