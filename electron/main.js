@@ -547,6 +547,15 @@ const _boardWatch = BoardWatch.createBoardWatch({
 // The saved board changed: every writer of station_config_kv / deck_configs announces itself (electron/board-write-events.js).
 // A kv key the board does not read is ignored. master_monitor_volume is ONE level for the machine (any station's row can
 // be the one read), so it refreshes every station.
+// PARK OPS (2026-10-13): the hosted Park page must show the real state when something changes elsewhere (Preferences,
+// the desktop strip, a Take). A write to anything it shows is announced; the window re-pushes that station's mirror now.
+const _PARK_KEYS = new Set(["closing_time", "monitor_volume", "fader_top_db_monitor", "park_unmute_level"]);
+require("./board-write-events").on(({ table, stationId, key }) => {
+  if (table === "station_config_kv" && stationId != null && _PARK_KEYS.has(String(key))) {
+    // Named by station UUID (the station-identity rule; scripts/test-station-identity-leak.js), never the local integer.
+    try { const stationUuid = _stationUuidById(Number(stationId)); if (stationUuid) sendToAllWindows("ops:changed", { stationUuid }); } catch {}
+  }
+});
 require("./board-write-events").on(({ table, stationId, key }) => {
   if (table === "station_config_kv" && !BoardState.isBoardKey(key)) return;
   if (table === "station_config_kv" && /^duck_/.test(String(key || "")) && stationId != null) _duckPending.delete(Number(stationId));
@@ -5236,6 +5245,21 @@ function dueTimeFor(row, closingHHMM) {
   // v62: + close_offset_sec, which takes the minutes' sign (electron/announce-time.js).
   return _announceTime.offsetDueTime(closingHHMM, row.close_offset_min, row.close_offset_sec);
 }
+
+/** PARK OPS (2026-10-13): each of a date's announcements with the clock time it will fire at — computed by the SAME
+ *  functions the announcement tick fires from (closingCfgFor → resolveClosingCfg → dueTimeFor), so the Park page shows
+ *  exactly what will play, not a second calculation of it. A closing-time change moves these the moment it is written. */
+ipcMain.handle("announce:due-times", (_e, stationId, dateStr) => {
+  try {
+    const sid = Number(stationId);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || ""))) return { ok: false, error: "bad date" };
+    const dow = new Date(`${dateStr}T12:00:00`).getDay();
+    const closing = resolveClosingCfg(closingCfgFor(sid), dateStr, dow);
+    const due = {};
+    for (const r of (scheduleForDate(sid, dateStr) || [])) due[r.uuid] = dueTimeFor(r, closing);
+    return { ok: true, closing, due };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 
 // ── THE SCHEDULE RESOLVER (v48) — one date, one list ─────────────────────────────────────────────
 //

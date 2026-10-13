@@ -9,6 +9,8 @@ import { startLicenseGuard } from "./lib/licenseGuard";
 import CloudInstallPrompt from "./components/CloudInstallPrompt";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import { pushInstallUsers } from "./lib/syncUsers";
+import { setClosingForDates } from "./lib/closingTime";
+import { startParkMirror } from "./lib/parkMirror";
 import { pushCcTable, pushLibrary, applyDbMutation, addLibrarySong, pushPlayHistory, notePlayHistoryState, reconcileAccountStations, importStagedProgramming, pushHealthFrames, pushJukeboxPool, pushOpsData, fetchOpsLink } from "./lib/ccData";
 import etherMarkSvg from "./assets/ether-logo.svg";
 import VideoStudio from "./components/ShowPlus";
@@ -1067,13 +1069,10 @@ export default function App() {
       // timer — the closing time and today's announcements change at operator pace, and 60s is well
       // inside "before the operator reloads their phone". The hosted page is reachable whether or
       // not this push ever lands; without it the page simply shows its dark state.
-      pushOpsData(apiKeyRef.current, stationUuid, stationId);
+      // PARK OPS: pushed for EVERY station by src/lib/parkMirror.ts (60 s, and at once on any change) — not only the
+      // station on screen, which left a park whose station was not active showing stale times.
     };
-    // A closing time set in the studio must reach the operator's phone NOW, not on the next 60s
-    // tick. Park Ops reads the mirrored copy, and the two surfaces disagreeing about closing time
-    // is the one thing this feature cannot afford. Announcements.tsx fires this on save.
-    const onOpsPush = () => { pushOpsData(apiKeyRef.current, stationUuid, stationId); };
-    window.addEventListener("ether:ops-push", onOpsPush);
+    const stopParkMirror = startParkMirror({ licenseKey: () => apiKeyRef.current });
 
     // The address, once, so it exists somewhere an operator can be given it. This is NOT a door —
     // a link that lives only in a log is not discoverable, and Park Ops still owes a real affordance
@@ -1086,7 +1085,7 @@ export default function App() {
     // without the deprecated staged pipeline / sync_enabled push. Edits also push immediately on
     // db:apply (see execCmd); this catches desktop-local edits between command-bus applies.
     const id = setInterval(push, 60_000);
-    return () => { clearInterval(id); window.removeEventListener("ether:ops-push", onOpsPush); };
+    return () => { clearInterval(id); stopParkMirror(); };
   }, [stationId, stationUuid, firstRunChecked, currentUser]);
 
   // ── FLEET HEALTH FRAMES — the web Health Monitor's feed ──────────────────────────────────────────
@@ -1576,21 +1575,52 @@ export default function App() {
             }
             if (targetId == null) { refuse("ops:set-closing — no target station"); break; }
             try {
-              const ether = (window as any).ether;
-              const res: any = await ether?.stationConfigKv?.list?.(targetId);
-              const kvRows: any[] = Array.isArray(res) ? res : (res?.rows ?? []);
-              const raw = kvRows.find(r => r?.key === "closing_time" && !r?.deleted_at)?.value ?? null;
-              let cfg: any = { default: null, byWeekday: {}, byDate: {} };
-              try { if (raw) cfg = { default: null, byWeekday: {}, byDate: {}, ...JSON.parse(raw) }; }
-              catch { /* corrupt value — replaced, never inherited half-parsed */ }
-              cfg.byDate = { ...(cfg.byDate || {}), [date]: time };
-              await ether.stationConfigKv.upsertByKey(targetId, "closing_time", JSON.stringify(cfg));
+              // THE SAME WRITER Preferences → Announcements uses (src/lib/closingTime.ts) — not a copy of it. It also
+              // re-pushes the Park mirror, so the phone's announcement times move as soon as this lands.
+              await setClosingForDates(targetId, [date], time);
               console.log(`[RemoteCmd] ops:set-closing ${date} → ${time} (station ${targetId})`);
-              // Reconcile up so the phone's optimistic copy is replaced by this install's truth.
-              window.dispatchEvent(new CustomEvent("ether:ops-push"));
             } catch (e) {
               console.error("[RemoteCmd] ops:set-closing failed:", e);
               outcome = { ok: false, error: `ops:set-closing failed: ${(e as any)?.message || e}` };
+            }
+            break;
+          }
+          // ── PARK OPS: the park's sound level and MUTE (2026-10-13) ────────────────────────────
+          // The park hears this station through this computer's speaker output, so the Park page's fader is THIS
+          // STATION's MONITOR strip — the same level the desktop's station MONITOR strip moves (StationMonitorMixer),
+          // through the same two calls: the engine, then Preferences (monitor_volume). Not the stream, not another
+          // station, not the machine-wide MONITOR. MUTE is that level at 0, with the level before it kept in
+          // park_unmute_level so unmuting puts it back; "muted" on the page is read from the real level, never a flag.
+          case "ops:set-level":
+          case "ops:set-mute": {
+            if (targetId == null) { refuse(`${cmd} — no target station`); break; }
+            try {
+              const ether = (window as any).ether;
+              const res: any = await ether?.stationConfigKv?.list?.(targetId);
+              const kvRows: any[] = Array.isArray(res) ? res : (res?.rows ?? []);
+              const kvNum = (k: string) => { const v = Number(kvRows.find(r => r?.key === k && !r?.deleted_at)?.value); return Number.isFinite(v) ? v : null; };
+              const topDb = kvNum("fader_top_db_monitor") ?? 0;
+              const top = Math.pow(10, topDb / 20);
+              const cur = kvNum("monitor_volume");
+              let level: number;
+              if (cmd === "ops:set-level") {
+                level = Number(data.level);
+                if (!Number.isFinite(level) || level < 0) { refuse("ops:set-level — not a level"); break; }
+                level = Math.min(level, top);
+              } else if (data.muted) {
+                if (cur != null && cur > 0) await ether.stationConfigKv.upsertByKey(targetId, "park_unmute_level", String(cur));
+                level = 0;
+              } else {
+                const back = kvNum("park_unmute_level");
+                level = Math.min(back != null && back > 0 ? back : 1, top);
+              }
+              await ether?.audio?.setMonitorVolume?.(targetId, level);
+              await ether.stationConfigKv.upsertByKey(targetId, "monitor_volume", String(level));
+              console.log(`[RemoteCmd] ${cmd} station ${targetId} → MONITOR ${level.toFixed(3)}`);
+              window.dispatchEvent(new CustomEvent("ether:ops-push", { detail: { stationId: targetId } }));
+            } catch (e) {
+              console.error(`[RemoteCmd] ${cmd} failed:`, e);
+              outcome = { ok: false, error: `${cmd} failed: ${(e as any)?.message || e}` };
             }
             break;
           }

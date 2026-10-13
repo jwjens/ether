@@ -2,6 +2,7 @@ import { ETHER_BACKEND_URL, blockedByDevGuard } from "./etherBackend";
 import { query } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { selectAttachedStationsToMaterialize, chooseActiveStation } from "./provisioning";
+import { hasEngine, getEngine } from "../audio/engine-registry";
 
 // Control Center data mirror (Phase 2). Pushes install-owned table rows up so the
 // dashboard can view them, and applies remote dashboard edits back through the local
@@ -287,6 +288,36 @@ export async function fetchOpsLink(
   }
 }
 
+// ── PARK OPS: which cart is playing, and how long it has left (2026-10-13) ───────────────────────
+// Read off the station's REAL cart channel — the deck a cart fires on (an enabled SOURCE channel of kind "cart", else a
+// deck typed "cart", else the CART bus: the same resolution as the wall and the phone's cart:fire). The file on it is
+// matched to the cart wall's slot, so a cart fired from the studio and one fired from the park both show. Never
+// constructs an engine; a station with none is simply not playing a cart.
+export async function cartPlaying(stationId: number): Promise<{ slot: number; title: string; position_sec: number; duration_sec: number; at: string } | null> {
+  if (!hasEngine(stationId)) return null;
+  try {
+    const eng = getEngine(stationId);
+    let chans = ["CART"];
+    try {
+      const dcs = await query<{ slot: string; type: string; kind: string | null; enabled: number }>(
+        "SELECT slot, type, COALESCE(kind,'') AS kind, enabled FROM deck_configs WHERE station_id = ? AND deleted_at IS NULL ORDER BY slot", [stationId]);
+      const patched = dcs.filter(c => c.enabled === 1 && ((c.type === "source" && c.kind === "cart") || c.type === "cart")).map(c => c.slot);
+      if (patched.length) chans = patched;
+    } catch { /* unreadable config → the CART bus */ }
+    const res: any = await (window as any).ether?.cartSlots?.list?.(stationId);
+    const rows: any[] = Array.isArray(res) ? res : (res?.rows ?? []);
+    for (const ch of chans) {
+      const st: any = eng.getDeck(ch)?.getState?.();
+      if (!st || st.status !== "playing" || !st.filePath) continue;
+      const row = rows.find(r => r && !r.deleted_at && r.file_path === st.filePath && Number(r.slot_number) <= 7);
+      if (!row) continue;
+      return { slot: Number(row.slot_number), title: row.title || st.title || `Cart ${Number(row.slot_number) + 1}`,
+               position_sec: Number(st.positionSec) || 0, duration_sec: Number(st.durationSec) || 0, at: new Date().toISOString() };
+    }
+  } catch { /* the mirror is best-effort */ }
+  return null;
+}
+
 // ── PARK OPS mirror ───────────────────────────────────────────────────────────────────────────
 // Feeds park.ether-cast.com/<station-slug>. Pushed as two tables on the existing pushCcData rail:
 //
@@ -314,8 +345,16 @@ export async function pushOpsData(
     const kvRes = await ether.stationConfigKv.list(stationId);
     const kvRows: any[] = Array.isArray(kvRes) ? kvRes : ((kvRes && kvRes.rows) || []);
     const closing = kvRows.find(r => r?.key === "closing_time")?.value ?? null;
+    const kvNum = (k: string) => { const v = Number(kvRows.find(r => r?.key === k && !r?.deleted_at)?.value); return Number.isFinite(v) ? v : null; };
+    // TONIGHT'S closing time as the announcement scheduler resolves it (electron/main.js announce:due-times).
+    let closingToday: string | null = null;
+    try { const dt = await ether.invoke("announce:due-times", stationId, localDate); if (dt?.ok) closingToday = dt.closing ?? null; } catch { /* older main */ }
+    // THE PARK'S SOUND (2026-10-13): this station's MONITOR level, its fader maximum (Preferences → Fader maximum →
+    // MONITOR), and MUTE — read from the real level, never a stored flag.
+    const level = kvNum("monitor_volume");
+    const park = { level, top_db: kvNum("fader_top_db_monitor") ?? 0, muted: level === 0 };
     await pushCcData(licenseKey, stationUuid, "ops_config", [
-      { uuid: "ops", closing, local_date: localDate },
+      { uuid: "ops", closing, closing_today: closingToday, local_date: localDate, park, cart_playing: await cartPlaying(stationId), pushed_at: new Date().toISOString() },
     ]);
   } catch (e) { console.log("[OPSPUSH] ops_config failed:", (e as any)?.message ?? e); }
 
@@ -325,6 +364,9 @@ export async function pushOpsData(
     const annRes = await ether.announcements.list(stationId);
     const anns: any[] = Array.isArray(annRes) ? annRes : ((annRes && annRes.rows) || []);
     const byUuid = new Map(anns.map(a => [a.uuid, a]));
+    // The time each row WILL fire at today, from the scheduler's own functions — never re-derived elsewhere.
+    let due: Record<string, string | null> = {};
+    try { const dt = await ether.invoke("announce:due-times", stationId, localDate); if (dt?.ok) due = dt.due || {}; } catch { /* older main */ }
 
     // Today only, and only date-scoped entries — the same filter the page applies. An inactive or
     // deleted announcement drops out here rather than rendering as "(untitled)" on the operator's
@@ -341,6 +383,8 @@ export async function pushOpsData(
           trigger_time: r.trigger_time,
           trigger_type: r.trigger_type,
           close_offset_min: r.close_offset_min,
+          close_offset_sec: r.close_offset_sec ?? 0,
+          due_time: due[r.uuid] ?? null,
           sort_order: r.sort_order ?? 0,
           last_played_at: r.last_played_at ?? null,
           duck_music: a.duck_music,

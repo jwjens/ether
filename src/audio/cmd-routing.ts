@@ -36,6 +36,8 @@ const STATION_SCOPED: ReadonlySet<string> = new Set([
   // Park Ops setting ONE station's closing time for one date. Station-scoped for the obvious reason:
   // closing_time is per station, and a park's closing time is not the Christmas station's.
   "ops:set-closing",
+  // Park Ops: the park's sound — this station's MONITOR level, and MUTE (2026-10-13).
+  "ops:set-level", "ops:set-mute",
 ]);
 
 /** True if `cmd` acts on a single station (→ route by station_uuid). False for license-scoped commands

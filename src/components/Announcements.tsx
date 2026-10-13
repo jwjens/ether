@@ -1,3 +1,4 @@
+import { setClosingForDates } from "../lib/closingTime";
 import { useState, useEffect } from "react";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStation";
@@ -600,16 +601,8 @@ function ScheduleBoard({ stationId, assets, entries, reload, closing }: {
       // THE CLOSING TIME, per selected date. byDate[d] and nothing else — the hard rule, pinned by
       // scripts/smoke-closing-isolation.js. One read-modify-write for the batch: per date in a loop
       // would re-read a value the same loop had just written.
-      if (effectiveClosing && anyOffset) {
-        const kvRes = await (window as any).ether.stationConfigKv.list(stationId);
-        const kvRows: any[] = Array.isArray(kvRes) ? kvRes : (kvRes?.rows ?? []);
-        const raw = kvRows.find(x => x?.key === "closing_time" && !x?.deleted_at)?.value ?? null;
-        const cfg = parseClosingCfg(raw);
-        const bd = { ...cfg.byDate };
-        for (const d of dates) bd[d] = effectiveClosing;
-        await (window as any).ether.stationConfigKv.upsertByKey(stationId, "closing_time", JSON.stringify({ ...cfg, byDate: bd }));
-        window.dispatchEvent(new CustomEvent("ether:ops-push"));
-      }
+      // The ONE writer (src/lib/closingTime.ts) — the Park page's Save runs the same function.
+      if (effectiveClosing && anyOffset) await setClosingForDates(stationId, dates, effectiveClosing);
 
       let created = 0, removed = 0, kept = 0;
       for (const d of dates) {
