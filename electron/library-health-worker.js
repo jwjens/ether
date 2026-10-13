@@ -42,6 +42,13 @@ const CALLS = {
   eligibilityRows: (sid) => lh.eligibilityRows(sid),
   lintRows: (sid) => lh.lintRows(sid),
   goalCheck: (sid) => lh.goalCheck(getDb(), sid),
+  // The health frame's database part (health:frames, every 60 s / 5 s while the web monitor watches): each station's
+  // runway and its 7-day trend. Was synchronous on main: 0.46–1.4 s per call on OVEVENTS (docs/perf-pass-round2-2026-10-12.md).
+  runwayFrames: (sids) => {
+    const R = require("./runway"), d = getDb(), out = {};
+    for (const sid of Array.isArray(sids) ? sids : []) out[sid] = { runway: R.computeRunway(d, sid) || null, series: R.runwaySeries(d, sid) };
+    return out;
+  },
   // A heavy READ for main's callers (db:query-offmain) — the 60 s library mirror's full-library join. Read-only connection,
   // and SELECT only, so it can never write.
   query: (sql, params) => {

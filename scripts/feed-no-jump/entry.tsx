@@ -13,5 +13,10 @@ function Board() {
     </div>
   );
 }
+// The window's own sense, as every Ether window runs it (src/lib/perfSense.ts) — its reports are kept for the long run.
+import { startPerfSense } from "../../src/lib/perfSense";
+(window as any).__reports = [];
+(window as any).ether = { invoke: (ch: string, p: any) => { if (ch === "perf:report") (window as any).__reports.push(p); return Promise.resolve(true); } };
+startPerfSense("feed-smoke");
 (window as any).__log = (n: number, msg = "deck") => { for (let i = 0; i < n; i++) consoleLog("audio", `[DECK A] ${msg} ${i}`); };
 ReactDOM.createRoot(document.getElementById("root")!).render(<Board />);

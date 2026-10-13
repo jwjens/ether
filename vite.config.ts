@@ -4,8 +4,16 @@
 import { defineConfig, configDefaults } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [react()],
+  // THE RENDERER'S SENSE NEEDS NAMES AND TIMINGS (2026-10-12, docs/perf-pass-round2-2026-10-12.md §3).
+  //   · react-dom → react-dom/profiling in the BUILD: production React otherwise never calls <Profiler onRender>, so a
+  //     slow click could not be broken down by component (src/lib/perfSense.ts reactCommit). Same API, a few % cost.
+  //   · keepNames: minification renamed every function, so a long frame's scripts and a slow commit's components would
+  //     be reported as "Xe" and "qt". Names are kept; the bundle grows slightly.
+  // Dev (`serve`) and vitest are untouched.
+  resolve: command === "build" ? { alias: [{ find: /^react-dom$/, replacement: "react-dom/profiling" }] } : undefined,
+  esbuild: command === "build" ? { keepNames: true } : undefined,
   base: "./",
   server: {
     port: 1420, host: "127.0.0.1",
@@ -49,4 +57,4 @@ export default defineConfig({
       "electron/sync/tests/**",
     ],
   },
-});
+}));

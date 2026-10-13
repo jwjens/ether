@@ -77,6 +77,8 @@ function createLibraryHealthHost({ dbPathFn, ctxFn, userDataDir, backendUrl, bro
     eligibilityRows: (sid) => call("eligibilityRows", [sid], () => fallback.eligibilityRows(sid)),
     lintRows: (sid) => call("lintRows", [sid], () => fallback.lintRows(sid)),
     goalCheck: (_db, sid) => call("goalCheck", [sid], () => fallback.goalCheck(_db, sid)),
+    /** Each station's runway + 7-day trend for the health frame, computed in the worker. `inMain(sids)` is the fallback. */
+    runwayFrames: (sids, inMain) => call("runwayFrames", [sids], () => inMain(sids)),
     /** A heavy SELECT on the worker's read-only connection (main is never blocked by it). */
     query: (sql, params) => call("query", [sql, params], () => { throw new Error("the worker is not running — use db:query"); }),
     noteSkip: (...a) => note("noteSkip", a),

@@ -1,10 +1,16 @@
 // scripts/measure-responsiveness.js — read Ether's own responsiveness senses for N minutes and summarise (2026-10-12).
 //
-// docs/health-monitor-jump-and-freeze-2026-10-12.md §4. READ-ONLY: polls http://127.0.0.1:3400/health every 2 s (the
-// endpoint the HA watchdog already polls), and ENDS BY ITSELF after the given minutes. Nothing is left running.
+// docs/health-monitor-jump-and-freeze-2026-10-12.md §4, docs/perf-pass-round2-2026-10-12.md. READ-ONLY: polls
+// http://127.0.0.1:3400/health every 2 s (the endpoint the HA watchdog already polls), and ENDS BY ITSELF after the
+// given minutes. Nothing is left running.
 //   node scripts/measure-responsiveness.js <minutes> <label> [out.json]
-// Reports: main event-loop lag (peak, stalls ≥ 250 ms / ≥ 1 s, unanswered polls), the slowest main handlers seen, and per
-// window: long tasks, the worst long task, inputs over one frame, the worst input delay/response, and the first input.
+// Reports (the round-1 columns are kept, so a before and an after are read the same way):
+//   main — event-loop lag peak, polls that saw a stall ≥ 250 ms / ≥ 1 s, unanswered polls, the slowest IPC handlers;
+//          round 2 (a build with electron/stall-sense.js): EVERY stall ≥ 100 ms in the run, counted after the first
+//          minute of uptime, and the code that held main for each (summed by cause).
+//   each window — long tasks, the worst one, inputs over one frame, the worst input delay/response, the first input;
+//          round 2: long animation frames, slow React commits, and component self time (summed over 60 s windows that
+//          do not overlap, so nothing is counted twice).
 "use strict";
 const http = require("http"), fs = require("fs");
 const MIN = Number(process.argv[2] || 5), LABEL = process.argv[3] || "run", OUT = process.argv[4] || null;
@@ -14,36 +20,73 @@ const get = () => new Promise((res) => {
   rq.on("timeout", () => { rq.destroy(); res({ ok: false, timeout: true }); }); rq.on("error", () => res({ ok: false }));
 });
 (async () => {
-  const end = Date.now() + MIN * 60_000;
+  const start = Date.now(), end = start + MIN * 60_000;
   let polls = 0, answered = 0, worstLag = 0, stalls250 = 0, stalls1s = 0, worstAnswerMs = 0;
   const handlers = new Map(), wins = new Map();
+  const stalls = new Map();          // at → stall (round-2 sense), deduplicated across polls
+  let uptimeAtStart = null, stallsTotalFirst = null, stallsTotalLast = null, nextWindowAt = start + 60_000;
+  const add = (m, k, v) => m.set(k, (m.get(k) || 0) + v);
   while (Date.now() < end) {
     polls++;
     const r = await get();
     if (r.ok) {
       answered++; worstAnswerMs = Math.max(worstAnswerMs, r.ms);
+      if (uptimeAtStart == null) uptimeAtStart = r.h.uptimeSec;
       const lag = Number(r.h.eventLoopLagMs) || 0;
       worstLag = Math.max(worstLag, Number(r.h.eventLoopLagPeakMs) || 0, lag);
       if (lag >= 250) stalls250++; if (lag >= 1000) stalls1s++;
       const p = r.h.perf || {};
       for (const x of p.mainSlowHandlers || []) handlers.set(x.channel, Math.max(handlers.get(x.channel) || 0, x.ms));
+      const ms = p.mainStalls;
+      if (ms) {
+        if (stallsTotalFirst == null) stallsTotalFirst = ms.stallsTotal;
+        stallsTotalLast = ms.stallsTotal;
+        for (const s of ms.stalls || []) if (s.at >= start - 2000) stalls.set(s.at, s);
+      }
+      const windowDue = Date.now() >= nextWindowAt;
       for (const w of p.renderers || []) {
-        const c = wins.get(w.window) || { longTasksSeen: 0, longTaskPeakMs: 0, inputsOverOneFrame: 0, inputDelayPeakMs: 0, inputResponsePeakMs: 0, firstInput: null };
+        const c = wins.get(w.window) || { longTasksSeen: 0, longTaskPeakMs: 0, inputsOverOneFrame: 0, inputDelayPeakMs: 0, inputResponsePeakMs: 0, firstInput: null,
+                                          inputsTotal: 0, inputsOverOneFrameTotal: 0, longFramesTotal: 0, longFrameWorst: [], slowCommitsTotal: 0, slowCommitPeakMs: 0, slowCommitWorst: [], components: new Map() };
         c.longTaskPeakMs = Math.max(c.longTaskPeakMs, w.longTaskPeakMs || 0);
         c.longTasksSeen = Math.max(c.longTasksSeen, w.longTasks || 0);           // per 60 s window, the busiest one seen
         c.inputsOverOneFrame = Math.max(c.inputsOverOneFrame, w.inputsOverOneFrame || 0);
         c.inputDelayPeakMs = Math.max(c.inputDelayPeakMs, w.inputDelayPeakMs || 0);
         c.inputResponsePeakMs = Math.max(c.inputResponsePeakMs, w.inputResponsePeakMs || 0);
         if (w.firstInput && !c.firstInput) c.firstInput = w.firstInput;
+        c.slowCommitPeakMs = Math.max(c.slowCommitPeakMs, w.slowCommitPeakMs || 0);
+        for (const f of w.longFrameWorst || []) if (!c.longFrameWorst.some(g => g.at === f.at)) c.longFrameWorst.push(f);
+        c.longFrameWorst = c.longFrameWorst.sort((a, b) => b.ms - a.ms).slice(0, 5);
+        for (const f of w.slowCommitWorst || []) if (!c.slowCommitWorst.some(g => g.at === f.at)) c.slowCommitWorst.push(f);
+        c.slowCommitWorst = c.slowCommitWorst.sort((a, b) => b.ms - a.ms).slice(0, 5);
+        if (windowDue) {      // one non-overlapping 60 s window
+          c.inputsTotal += w.inputs || 0; c.inputsOverOneFrameTotal += w.inputsOverOneFrame || 0;
+          c.longFramesTotal += w.longFrames || 0; c.slowCommitsTotal += w.slowCommits || 0;
+          for (const x of w.componentSelfMs || []) add(c.components, x.name, x.ms);
+        }
         wins.set(w.window, c);
       }
+      if (windowDue) nextWindowAt += 60_000;
     }
     await new Promise(r => setTimeout(r, 2000));
   }
+  // Round-2 stalls: after the first minute of uptime ("after startup"), by cause.
+  const after = [...stalls.values()].filter(s => (s.sinceLaunchSec || 0) >= 60).sort((a, b) => a.at - b.at);
+  const causes = new Map();
+  for (const s of after) { const k = String((s.heldBy || [])[0] || "?").replace(/ ~\d+ ms$/, ""); const c = causes.get(k) || { n: 0, worstMs: 0, totalMs: 0 }; c.n++; c.worstMs = Math.max(c.worstMs, s.lagMs); c.totalMs += s.lagMs; causes.set(k, c); }
   const out = {
-    label: LABEL, minutes: MIN, polls, answered, unanswered: polls - answered, worstAnswerMs,
-    main: { eventLoopLagPeakMs: worstLag, pollsSeeingLag250: stalls250, pollsSeeingLag1s: stalls1s, slowestHandlers: [...handlers].sort((a, b) => b[1] - a[1]).slice(0, 8) },
-    windows: Object.fromEntries(wins),
+    label: LABEL, minutes: MIN, uptimeAtStartSec: uptimeAtStart, polls, answered, unanswered: polls - answered, worstAnswerMs,
+    main: {
+      eventLoopLagPeakMs: worstLag, pollsSeeingLag250: stalls250, pollsSeeingLag1s: stalls1s,
+      slowestHandlers: [...handlers].sort((a, b) => b[1] - a[1]).slice(0, 8),
+      stallSense: stallsTotalFirst == null ? "not in this build" : {
+        stallsOver100msInRun: stallsTotalLast - stallsTotalFirst,
+        attributedAfterStartup: after.length,
+        worstMs: after.reduce((m, s) => Math.max(m, s.lagMs), 0),
+        byCause: [...causes].sort((a, b) => b[1].totalMs - a[1].totalMs).map(([cause, c]) => ({ cause, ...c })),
+        list: after.map(s => ({ at: new Date(s.at).toISOString(), lagMs: s.lagMs, heldBy: s.heldBy, leaf: s.leaf })),
+      },
+    },
+    windows: Object.fromEntries([...wins].map(([k, c]) => [k, { ...c, components: [...c.components].sort((a, b) => b[1] - a[1]).slice(0, 12) }])),
   };
   console.log(JSON.stringify(out, null, 2));
   if (OUT) fs.writeFileSync(OUT, JSON.stringify(out, null, 2));

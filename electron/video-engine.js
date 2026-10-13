@@ -34,31 +34,67 @@ let cachedEncoders = null;
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
+const ENCODER_CANDIDATES = [
+  "libx264", "libx265",
+  "h264_nvenc", "hevc_nvenc",
+  "h264_qsv",   "hevc_qsv",
+  "h264_amf",   "hevc_amf",
+  "h264_videotoolbox", "hevc_videotoolbox",
+];
+function parseEncoders(stdout) {
+  const found = [];
+  for (const line of String(stdout || "").split("\n")) {
+    const t = line.trim();
+    if (!t.startsWith("V")) continue;
+    const parts = t.split(/\s+/);
+    if (parts.length < 2) continue;
+    if (ENCODER_CANDIDATES.includes(parts[1])) found.push(parts[1]);
+  }
+  return found;
+}
+
+// The probe on THIS thread — only the fallback now (see encoders()).
 function probeEncoders() {
   return new Promise((resolve) => {
     if (!ffmpegBin) return resolve([]);
     execFile(ffmpegBin, ["-hide_banner", "-encoders"], { maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
       if (err) return resolve([]);
-      const candidates = [
-        "libx264", "libx265",
-        "h264_nvenc", "hevc_nvenc",
-        "h264_qsv",   "hevc_qsv",
-        "h264_amf",   "hevc_amf",
-        "h264_videotoolbox", "hevc_videotoolbox",
-      ];
-      const found = [];
-      for (const line of String(stdout).split("\n")) {
-        const t = line.trim();
-        if (!t.startsWith("V")) continue;
-        const parts = t.split(/\s+/);
-        if (parts.length < 2) continue;
-        const name = parts[1];
-        if (candidates.includes(name)) found.push(name);
-      }
+      const found = parseEncoders(stdout);
       console.log("[video] ffmpeg encoders detected:", found);
       resolve(found);
     });
   });
+}
+
+// ── THE ENCODER PROBE RUNS ONCE, IN THE BACKGROUND, OFF MAIN (2026-10-12, docs/perf-pass-round2-2026-10-12.md §2) ──
+// Measured on OVEVENTS: video:list-encoders held the main process 1,777 ms. The handler was async, but starting a
+// process is not: on Windows CreateProcess runs on the calling thread, and an on-access scan of ffmpeg.exe makes it
+// slow. So the probe now starts ffmpeg from a worker thread (only that thread waits), once, shortly after launch,
+// and every caller shares the one answer. If a worker cannot start, the old probe runs as before.
+let encodersPromise = null;
+function probeEncodersOffMain() {
+  return new Promise((resolve) => {
+    if (!ffmpegBin) return resolve([]);
+    let W;
+    try { W = require("worker_threads").Worker; } catch { return resolve(probeEncoders()); }
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+    try {
+      const w = new W(`
+        const { parentPort, workerData } = require("worker_threads");
+        let out = "";
+        try { out = require("child_process").execFileSync(workerData.bin, ["-hide_banner", "-encoders"], { maxBuffer: 8 * 1024 * 1024, windowsHide: true, timeout: 30000 }).toString(); } catch { out = ""; }
+        parentPort.postMessage(out);
+      `, { eval: true, workerData: { bin: ffmpegBin } });
+      w.once("message", (out) => { const found = parseEncoders(out); console.log("[video] ffmpeg encoders detected (probed off main):", found); done(found); });
+      w.once("error", () => done(probeEncoders()));
+      w.once("exit", () => done([]));
+    } catch { done(probeEncoders()); }
+  });
+}
+function encoders() {
+  if (!encodersPromise) encodersPromise = probeEncodersOffMain().then((list) => { cachedEncoders = list; return list; });
+  return encodersPromise;
 }
 
 // Pick the right ffmpeg `-c:v` based on user preference + availability.
@@ -299,11 +335,9 @@ function installVideoEngine(ipcMain, opts = {}) {
   if (opts.ffmpegBin) setFfmpegBin(opts.ffmpegBin);
   console.log("[video] installVideoEngine", { ffmpegBin });
 
-  ipcMain.handle("video:list-encoders", async () => {
-    if (cachedEncoders) return cachedEncoders;
-    cachedEncoders = await probeEncoders();
-    return cachedEncoders;
-  });
+  ipcMain.handle("video:list-encoders", () => encoders());
+  // Once, in the background, after launch has settled — never on demand from a click.
+  { const t = setTimeout(() => { encoders(); }, Number(opts.probeDelayMs) >= 0 ? Number(opts.probeDelayMs) : 20000); if (t.unref) t.unref(); }
 
   // Multi-destination RTMP: each call gets a unique sinkId ("stream:0", "stream:1", …).
   // pushChunk() already broadcasts to ALL open sinks, so a single MediaRecorder feeds
@@ -311,7 +345,7 @@ function installVideoEngine(ipcMain, opts = {}) {
   ipcMain.handle("video:start-stream", async (_evt, dest) => {
     // dest = { url, key, backupUrl?, backupKey?, label, fps, bitrate_kbps, keyframe_interval, codec, sinkId? }
     if (!ffmpegBin) throw new Error("ffmpeg-static not available");
-    if (cachedEncoders === null) cachedEncoders = await probeEncoders();
+    if (cachedEncoders === null) await encoders();
     const sinkId = dest.sinkId || "stream";
     const { encoder, redactedUrl } = rtmpArgs(dest, cachedEncoders);
     spawnRtmpSink(sinkId, dest, cachedEncoders, 0);
@@ -335,7 +369,7 @@ function installVideoEngine(ipcMain, opts = {}) {
   ipcMain.handle("video:start-recording", async (_evt, opts) => {
     // opts = { filePath, fps, bitrate_kbps, keyframe_interval, codec }
     if (!ffmpegBin) throw new Error("ffmpeg-static not available");
-    if (cachedEncoders === null) cachedEncoders = await probeEncoders();
+    if (cachedEncoders === null) await encoders();
     const { args, encoder } = mp4Args(opts, cachedEncoders);
     spawnSink("record", `MP4 → ${opts.filePath}`, args);
     return { encoder, filePath: opts.filePath };
@@ -359,4 +393,4 @@ function installVideoEngine(ipcMain, opts = {}) {
   });
 }
 
-module.exports = { installVideoEngine, setFfmpegBin };
+module.exports = { installVideoEngine, setFfmpegBin, parseEncoders, _encoders: () => encoders() };

@@ -93,6 +93,14 @@ const _haDisableHaFlag = process.argv.includes('--disable-ha');
     process.on('uncaughtException', (e) => _log('UNCAUGHT: ' + e.message + '\n' + (e.stack||'')));
     process.on('unhandledRejection', (r) => _log('UNHANDLED_REJECTION: ' + r));
     global.__etherDiag = _log;
+    // BOOT RECEIPTS (2026-10-12, docs/perf-pass-round2-2026-10-12.md §4). The first launch after every install spends
+    // 15–16 s between POINT-3 and POINT-4 (a plain relaunch: 0.8 s). Each mark gives the time since POINT-1 and the
+    // process CPU time, so the trace itself says WHICH step took the time and whether main was computing (CPU rises
+    // with the clock) or waiting on the disk / an on-access scan (the clock runs, CPU does not).
+    const _t0 = Date.now();
+    global.__bootMark = (name) => {
+      try { const cu = process.cpuUsage(); _log(`BOOT ${name}  t+${Date.now() - _t0} ms  cpu ${Math.round((cu.user + cu.system) / 1000)} ms`); } catch {}
+    };
   } catch(e) { /* silently skip if fs not available */ }
 })();
 
@@ -110,6 +118,13 @@ const PerfSense = require("./perf-sense").createPerfSense({
   ledger: (kind, data) => { try { _healthEvent(kind, { ...data, message: `Main was blocked ${data.lagMs} ms — ${(data.heldBy || []).join("; ")}` }); } catch {} },
 });
 PerfSense.instrumentIpc(ipcMain);
+// Round 2 (docs/perf-pass-round2-2026-10-12.md): every main stall ≥ 100 ms, named by the code that held it — timers and
+// await continuations included (electron/stall-sense.js). On /health as perf.mainStalls.
+PerfSense.startStallSense();
+// Round 2 §5: any Ether window moved / resized / raised / focused by Ether's own code with no operator input just before
+// it is recorded with its caller (electron/self-action-sense.js). On /health as perf.selfActions.
+const SelfActions = require("./self-action-sense").createSelfActionSense();
+try { SelfActions.install(require("electron")); } catch (e) { console.error("[self-action-sense]", e && e.message); }
 
 // ── RESTORE GATE ────────────────────────────────────────────────────────────────────────────────
 // A database cannot be replaced while anything still holds it open. The app is the main offender: the
@@ -331,6 +346,7 @@ if (SMOKE_ISOLATED) {
   }
   if (global.__etherDiag) global.__etherDiag('POINT-3: lock acquired OK');
   app.on('second-instance', () => {
+    try { SelfActions.operatorAct(); } catch {}   // the operator launched Ether again
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();
@@ -932,13 +948,38 @@ if (AUDIO_DAEMON_DESIRED) {
   // machine id. The renderer's only job is to push the result up the existing CC channel, so the frame
   // has ONE builder and cannot drift between callers.
   // Returns [{ stationUuid, row }] — see electron/health-frame.js and the design doc §2.
+  //
+  // OFF MAIN (2026-10-12, docs/perf-pass-round2-2026-10-12.md §2). The frame's database part — each station's runway and
+  // its 7-day trend — was computed synchronously in this handler: 0.46–1.4 s of main per call on OVEVENTS (the runway
+  // walked every generated_schedule row; see idx_gensched_station_at). It is now computed by the library-health worker
+  // and CACHED here for 60 s: a runway moves over hours, and the 5 s watch cadence must not recompute it. The in-memory
+  // parts (health snapshot, designations, machine id, processing sample) are read fresh on every call. Never blocks main.
+  const _runwayCache = { at: 0, bySid: {}, inflight: null };
+  const _runwayInMain = (sids) => {     // the fallback when the worker is not running — the old behaviour, same results
+    const R = require("./runway"), out = {};
+    for (const sid of sids) out[sid] = { runway: db ? (R.computeRunway(db, sid) || null) : null, series: db ? R.runwaySeries(db, sid) : null };
+    return out;
+  };
+  const _refreshRunways = (sids) => {
+    if (_runwayCache.inflight) return _runwayCache.inflight;
+    _runwayCache.inflight = Promise.resolve()
+      .then(() => (_libHealth ? _libHealth.runwayFrames(sids, _runwayInMain) : _runwayInMain(sids)))
+      .then((bySid) => { _runwayCache.bySid = bySid || {}; _runwayCache.at = Date.now(); })
+      .catch((e) => { console.error("[health:frames] runway:", e && e.message); })
+      .finally(() => { _runwayCache.inflight = null; });
+    return _runwayCache.inflight;
+  };
   try {
-    ipcMain.handle("health:frames", (_evt, cadenceSec) => {
+    ipcMain.handle("health:frames", async (_evt, cadenceSec) => {
       try {
         const { buildHealthFrames } = require("./health-frame");
         let snapshot = null;
         try { snapshot = _health.getSnapshot(); } catch {}
         if (!snapshot) return [];
+        const sids = (snapshot.stations || []).map(st => st && st.stationId).filter(sid => sid != null);
+        const missing = sids.some(sid => !(sid in _runwayCache.bySid));
+        if (missing || !_runwayCache.at) await _refreshRunways(sids);                 // first call: wait for it, once
+        else if (Date.now() - _runwayCache.at > 60_000) _refreshRunways(sids);        // stale: refresh in the background
         let designations = [];
         try { designations = [..._desigStatus.values()]; } catch {}
         return buildHealthFrames({
@@ -946,42 +987,9 @@ if (AUDIO_DAEMON_DESIRED) {
           designations,
           machineId: getStableMachineId(),
           cadenceSec: Number(cadenceSec) > 0 ? Number(cadenceSec) : 60,
-          runwayFor: (sid) => {
-            if (!db || sid == null) return null;
-            try { return require("./runway").computeRunway(db, sid) || null; } catch { return null; }
-          },
-          // The 7-day trend, SUMMARISED to 6-hour buckets (28 points) holding each bucket's LOW-WATER
-          // mark. Read-only from runway_history; nothing is synced and nothing is written — the series
-          // rides inside a frame keyed station:machine, so two machines' observations never merge
-          // (the ruling of 2026-08-19; see electron/health-frame.js and design §2.1).
-          //
-          // The low-water mark, not an average: for a runway the DIP is the fact that matters, and an
-          // average would smooth away the exact hour the log nearly ran out.
-          // days: null is preserved — "no active show" is not zero days.
-          runwaySeriesFor: (sid) => {
-            if (!db || sid == null) return null;
-            try {
-              const BUCKET = 6 * 3600;
-              const nowHour = Math.floor(Date.now() / 3600_000) * 3600;
-              const since = nowHour - (7 * 24 - 1) * 3600;
-              const rows = db.prepare(
-                "SELECT at, days FROM runway_history WHERE station_id = ? AND at >= ? ORDER BY at"
-              ).all(sid, since);
-              if (!rows.length) return null;
-              const buckets = new Map();
-              for (const r of rows) {
-                const slot = Math.floor(r.at / BUCKET) * BUCKET;
-                const prev = buckets.get(slot);
-                // A bucket with ANY measured value reports the lowest of them. A bucket that only ever
-                // saw nulls stays null rather than becoming 0.
-                if (prev === undefined) buckets.set(slot, r.days == null ? null : Number(r.days));
-                else if (r.days != null) buckets.set(slot, prev == null ? Number(r.days) : Math.min(prev, Number(r.days)));
-              }
-              return [...buckets.entries()]
-                .sort((a, b) => a[0] - b[0])
-                .map(([at, days]) => ({ at, days: days == null ? null : Math.round(days * 100) / 100 }));
-            } catch { return null; }
-          },
+          runwayFor: (sid) => (_runwayCache.bySid[sid] || {}).runway || null,
+          // The 7-day low-water trend (electron/runway.js runwaySeries — the rules are documented there).
+          runwaySeriesFor: (sid) => (_runwayCache.bySid[sid] || {}).series || null,
           procFor: (sid) => _procLast.get(sid) || null,
         });
       } catch (e) { console.error("[health:frames]", e.message); return []; }
@@ -1363,7 +1371,9 @@ async function setupAudioBackend() {
 // Now also what keeps the daemon on the ACTIVE PROFILE's database across an account switch.
 try { process.env.ETHER_DB_PATH = getDbPath(); }
 catch (e) { console.error("[DB] early path resolve failed (initDb will surface it):", e.message); }
+if (global.__bootMark) global.__bootMark("setupAudioBackend() — daemon ensure (engine stage + spawn) starts");
 setupAudioBackend();
+if (global.__bootMark) global.__bootMark("setupAudioBackend() returned");
 
 // ── Database ──────────────────────────────────────────────────
 let db;
@@ -2229,6 +2239,13 @@ function runMigrations() {
   // daemon's loggen LRP ordering and buildRestMaps. Cheap to build (~80ms), idempotent.
   try { db.exec("CREATE INDEX IF NOT EXISTS idx_play_log_file_station ON play_log(file_path, station_id, played_at)"); } catch {}
 
+  // generated_schedule(station_id, scheduled_at) — the index the runway needs (electron/runway.js: hours filled in the
+  // next 30 days, and the last scheduled time). Without it each call walked every one of a station's rows through
+  // idx_gensched_playhead: 42–437 ms per station, ~0.8 s per health frame and per runway sample on OVEVENTS' 266,845
+  // rows; with it 0.1–8.7 ms. Built once (557 ms on that database), idempotent.
+  // docs/perf-pass-round2-2026-10-12.md §2.
+  try { db.exec("CREATE INDEX IF NOT EXISTS idx_gensched_station_at ON generated_schedule(station_id, scheduled_at)"); } catch {}
+
   // Add any missing columns via ALTER TABLE (safe to re-run)
   // NOTE: these target `songs`, which is and stays a real TABLE. It was briefly a view (4.4.151-156)
   // and that is exactly what stranded a customer — an older build's migration chain ran ALTER against
@@ -3003,7 +3020,7 @@ function createTray() {
   const icon = nativeImage.createFromPath(TRAY_PNG).resize({ width: 32, height: 32 });
   tray = new Tray(icon);
   const menu = Menu.buildFromTemplate([
-    { label: "Show Ether", click: () => { mainWindow.show(); mainWindow.focus(); } },
+    { label: "Show Ether", click: () => { SelfActions.operatorAct(); mainWindow.show(); mainWindow.focus(); } },
     { type: "separator" },
     { label: "Stop Keeping On Air…", click: () => {
         const c = dialog.showMessageBoxSync({
@@ -3020,7 +3037,7 @@ function createTray() {
   tray.setToolTip("Ether — On Air");
   tray.on("click", () => {
     if (mainWindow.isVisible()) { mainWindow.hide(); }
-    else { mainWindow.show(); mainWindow.focus(); }
+    else { SelfActions.operatorAct(); mainWindow.show(); mainWindow.focus(); }
   });
 }
 
@@ -3043,6 +3060,7 @@ function buildMenu() {
   // below — F12 inside a pop-out must open THAT pop-out's DevTools, not the dashboard's).
   const send = (cmd) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
+    SelfActions.operatorAct();   // a menu command is the operator's act
     try { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); }
     catch { /* window is mid-teardown; the message below is still worth attempting */ }
     sendToMainWindow("menu-action", cmd);
@@ -3279,6 +3297,7 @@ function processInviteFile() {
 let levelPushId = null;
 
 app.whenReady().then(() => {
+  if (global.__bootMark) global.__bootMark("app ready — the whenReady callback starts");
   // initDb() opens SQLite (better-sqlite3, synchronous) + runs migrations. On a managed/OV profile
   // with redirected (network/SMB) AppData this can THROW — WAL's shared-memory (-shm mmap) is
   // unsupported on SMB, and open/mkdir can be denied. An uncaught throw here aborts this ENTIRE
@@ -3289,6 +3308,7 @@ app.whenReady().then(() => {
   // happening while it happens. It costs nothing and it is the difference between "working" and "hung".
   createSplash();
   logStartup('createSplash() done — startup work is now visible');
+  if (global.__bootMark) global.__bootMark("createSplash() done");
 
   // ── OPEN THE STATION, DO NOT INTERVIEW THE OPERATOR ─────────────────────────────────────────────
   // The operator is a DJ. They double-click Ether and their station comes up. They do not close
@@ -3360,6 +3380,7 @@ app.whenReady().then(() => {
     app.quit();
     return;
   }
+  if (global.__bootMark) global.__bootMark("initDb() done (open + repair + migrations)");
   try { _backfillAccountMarker(); } catch {}
   // ONE-TIME DB JOBS — here, after initDb(), because `db` does not exist at module load. Both of these
   // were called from startAutoExtend() at module scope and silently did nothing (see the note there).
@@ -3889,13 +3910,15 @@ app.whenReady().then(() => {
       } catch {}
     }, 33);
     // Write session header to rotation.log so every capture is clearly delimited
+    // The commit is asked of git only in dev, and asynchronously: execSync started a shell + git ON MAIN at every launch
+    // (up to its 2 s timeout), and a packaged install has no repo to ask (docs/perf-pass-round2-2026-10-12.md §2).
     try {
-      const { execSync } = require("child_process");
-      let commit = "unknown";
-      try { commit = execSync("git rev-parse --short HEAD", { cwd: path.join(__dirname, ".."), timeout: 2000 }).toString().trim(); } catch {}
       const ts = new Date().toISOString();
       const sep = "========================================";
-      fs.appendFileSync(_rotationLogPath, `\n${sep}\nSESSION START ${ts}\ncommit: ${commit}\n${sep}\n`);
+      const write = (commit) => { try { fs.appendFileSync(_rotationLogPath, `\n${sep}\nSESSION START ${ts}\ncommit: ${commit}\n${sep}\n`); } catch {} };
+      if (app.isPackaged) write(`packaged ${app.getVersion()}`);
+      else require("child_process").execFile("git", ["rev-parse", "--short", "HEAD"], { cwd: path.join(__dirname, ".."), timeout: 2000, windowsHide: true },
+        (err, out) => write(err ? "unknown" : String(out).trim()));
     } catch {}
   });
 });
@@ -4222,7 +4245,7 @@ function buildHealthSnapshot() {
     eventLoopLagMs: _mainLoopLagMs,          // (2026-07-22) current main event-loop lag
     eventLoopLagPeakMs: _mainLoopLagPeakMs,  // worst in the last ~60s
     // (2026-10-12) what held main (handlers ≥ 50 ms) and every window's long tasks + input timing, last 60 s.
-    perf: (() => { try { return PerfSense.snapshot(); } catch { return null; } })(),
+    perf: (() => { try { return { ...PerfSense.snapshot(), selfActions: SelfActions.snapshot(PerfSense.rendererScrolls()) }; } catch { return null; } })(),
   };
 }
 ipcMain.handle("perf:report", (e, p) => { try { PerfSense.report(e.sender.id, p); } catch {} return true; });
@@ -13472,3 +13495,6 @@ ipcMain.handle('songs:set-local-file-path', (_, intId, filePath) => {
     return { ok: false, error: e.message };
   }
 });
+
+// The last line of main.js: everything above ran at module load, before the app could be ready.
+if (global.__bootMark) global.__bootMark("main.js module load finished");

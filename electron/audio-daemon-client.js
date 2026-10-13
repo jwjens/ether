@@ -118,7 +118,10 @@ function spawnDaemon() {
     let exe = process.execPath, script = DAEMON_SCRIPT, tag = "in-dir engine";
     // Packaged only: stage a renamed, update-proof engine. Dev runs the in-dir repo source (above)
     // so daemon edits actually take effect and no stale packaged binary is reused.
-    const staged = dev ? null : stageEngine({ srcRoot: SRC_ROOT, unpacked: UNPACKED_ROOT, version: appVersion(), log: (m) => _log(m) });
+    const _mark = (m) => { try { if (global.__bootMark) global.__bootMark(m); } catch {} };
+    _mark("daemon spawn: engine stage starts (hash + copy, synchronous)");
+    const staged = dev ? null : stageEngine({ srcRoot: SRC_ROOT, unpacked: UNPACKED_ROOT, version: appVersion(), log: (m) => { _log(m); try { if (global.__etherDiag) global.__etherDiag("  " + m); } catch {} } });
+    _mark(`daemon spawn: engine stage done (${staged ? `replaced ${(staged.replaced || []).length}, swapped ${(staged.swapped || []).length}` : "not staged"})`);
     if (staged) { exe = staged.exe; script = staged.script; tag = "staged engine (update-proof)"; }
     // Durable daemon log: the daemon is detached/stdio:"ignore" so its console is otherwise lost.
     // We know app userData here (the ELECTRON_RUN_AS_NODE daemon doesn't), so pass the path in.
@@ -157,6 +160,7 @@ function spawnDaemon() {
       detached: !dev, stdio: ["ignore", "ignore", errStdio],
     });
     if (errFd != null) { try { fs.closeSync(errFd); } catch {} }  // child owns its inherited handle now
+    _mark(`daemon spawn: process started (CreateProcess returned, pid ${child.pid})`);
     child.unref();
     const sm = `[audiod-client] spawned daemon (${dev ? "dev, dies-with-app" : "detached"}) pid ${child.pid} — ${tag}${errFd != null ? " (+native stderr→log)" : ""} [attempt ${spawnAttempts}/${MAX_SPAWN_ATTEMPTS}]`;
     console.log(sm); try { _log(sm); } catch {}

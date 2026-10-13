@@ -12,7 +12,7 @@
 //            it stays where the operator is reading and shows "N new events".
 //   CONTROL: the same page built from the pre-fix MasterOutput.tsx (git HEAD~… — the commit before this fix) moves the
 //            column, i.e. reproduces Jeff's report.
-//   npx electron scripts/smoke-feed-no-jump.js [--control <git-rev>]
+//   npx electron scripts/smoke-feed-no-jump.js [--control <git-rev>] [--long]
 "use strict";
 const { app, BrowserWindow } = require("electron");
 const path = require("path"), fs = require("fs"), os = require("os"), cp = require("child_process");
@@ -60,6 +60,40 @@ async function run(tag, html) {
   return { a, b };
 }
 
+// THE LONG SESSION (round 2 §5, docs/perf-pass-round2-2026-10-12.md): 1,200 events over 30 s, the operator wheel-scrolls
+// the column part-way through (a real OS input event), events keep coming. Read the column, the console and the
+// window's own UNPROMPTED-SCROLL sense (src/lib/perfSense.ts): the fixed console must leave the column at 0 the whole
+// way and the sense must report nothing; the pre-fix console must be caught by the same sense.
+async function runLong(tag, html) {
+  const w = new BrowserWindow({ width: 420, height: 700, x: -4000, y: 0, show: false, focusable: false, skipTaskbar: true,
+    webPreferences: { contextIsolation: false, backgroundThrottling: false } });
+  w.showInactive();
+  try { await w.loadFile(html); } catch { await new Promise(r => setTimeout(r, 800)); }
+  const js = (code) => w.webContents.executeJavaScript(code);
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  await sleep(300);
+  // Before the operator touches anything the column must sit at 0; after the operator wheel-scrolls it, it must stay
+  // exactly where the operator left it while events keep arriving.
+  let columnMax = 0, operatorAt = null, movedAfterOperator = 0, focused = false;
+  w.on("focus", () => { focused = true; });
+  for (let i = 0; i < 60; i++) {
+    await js(`__log(20, "tick${i}")`);
+    if (i === 25) {
+      for (let k = 0; k < 3; k++) { w.webContents.sendInputEvent({ type: "mouseWheel", x: 200, y: 300, deltaX: 0, deltaY: -120, canScroll: true }); await sleep(80); }
+      await sleep(400);
+      operatorAt = await js(`document.getElementById("column").scrollTop`);
+    }
+    await sleep(500);
+    const top = await js(`document.getElementById("column").scrollTop`);
+    if (operatorAt == null) columnMax = Math.max(columnMax, top);
+    else if (top !== operatorAt) movedAfterOperator++;
+  }
+  await sleep(5600);                     // the sense reports every 5 s
+  const scrolls = (await js(`window.__reports`)).flatMap(r => r.scrolls || []);
+  w.destroy();
+  return { columnMax, operatorAt, movedAfterOperator, focused, scrolls };
+}
+
 app.on("window-all-closed", () => { /* stay up between the two pages; app.exit() ends the run */ });
 app.whenReady().then(async () => {
   try {
@@ -69,6 +103,14 @@ app.whenReady().then(async () => {
     ok(cur.a.feed != null && cur.a.feedMax != null && Math.abs(cur.a.feed - cur.a.feedMax) <= 2, `at its bottom, the console follows new lines in its OWN box (${cur.a.feed}/${cur.a.feedMax})`);
     ok(cur.b.feed === 40 && cur.b.column === 0, `scrolled up, the console stays where the operator is reading (feed ${cur.b.feed}, column ${cur.b.column})`);
     ok(/^5 new events/.test(cur.b.badge || ""), `…and says what arrived: "${cur.b.badge}"`);
+    if (process.argv.includes("--long")) {
+      const L = await runLong("long", build("long", path.join(ROOT, "src", "components", "MasterOutput.tsx")));
+      console.log("  ..   long:", JSON.stringify({ ...L, scrolls: L.scrolls.slice(0, 5) }));
+      ok(L.columnMax === 0, `LONG · 1,200 events over 30 s: the Master Out column never moved (worst scrollTop ${L.columnMax})`);
+      ok(L.scrolls.length === 0, `LONG · the window's own sense saw no unprompted scroll (${L.scrolls.length})`);
+      ok(!L.focused, "LONG · the window never took focus");
+      ok(L.operatorAt > 0 && L.movedAfterOperator === 0, `LONG · the operator scrolled the column to ${L.operatorAt}; it stayed there for the rest of the run (moved ${L.movedAfterOperator} time(s))`);
+    }
     const ri = process.argv.indexOf("--control");
     if (ri > 0) {
       const rev = process.argv[ri + 1] || "HEAD";
@@ -82,6 +124,10 @@ app.whenReady().then(async () => {
       const ctl = await run("control", build("control", mo));
       console.log("  ..   control:", JSON.stringify(ctl));
       ok(ctl.a.column > 0, `CONTROL (${rev}): the pre-fix console drags the whole column down (column scrollTop ${ctl.a.column}) — Jeff's report reproduced`);
+      if (process.argv.includes("--long")) {
+        const LC = await runLong("long-control", build("long-control", mo));
+        ok(LC.columnMax > 0 && LC.scrolls.some(x => /#column/.test(x.el)), `CONTROL LONG: the sense catches the pre-fix column moving by itself (${LC.scrolls.filter(x => /#column/.test(x.el)).map(x => `${x.el} ${x.from}→${x.to}`).join("; ")}; ${LC.scrolls.length} row(s) in all)`);
+      }
     }
   } catch (e) { console.error(e); fail++; }
   console.log(`\n${fail ? "FAILED" : "ALL PASS"}  (${pass} passed, ${fail} failed)`);

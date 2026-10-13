@@ -56,6 +56,17 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
   ok(JSON.stringify(bLint) === JSON.stringify(aLint), `B: queue-lint answers the same as before (${(bLint || []).length} rows)`);
   const strip = (s) => JSON.stringify(s.stations.map(x => ({ ...x, sweepMs: 0 })));
   ok(snap.stations.map(x => x.stationId).join() === a.stations.map(x => x.stationId).join(), "B: the same stations in the same order as the in-main sweep");
+  // C · ROUND 2 (docs/perf-pass-round2-2026-10-12.md §2): the health frame's runway part, in the worker. Main's lag while
+  // the worker computes it, and the answer equal to the in-main computation it replaced.
+  const R = require("../electron/runway");
+  const sids = a.stations.map(x => x.stationId);
+  const tc = Date.now(); const cInMain = {}; for (const id of sids) cInMain[id] = { runway: R.computeRunway(db, id) || null, series: R.runwaySeries(db, id) }; const cMainMs = Date.now() - tc;
+  m = lagMeter(); await sleep(20);
+  const t1 = Date.now(); const viaWorker = await host.runwayFrames(sids, () => { throw new Error("fallback must not be needed"); }); const cWorkerMs = Date.now() - t1;
+  await sleep(20); const cLag = m.stop();
+  console.log(`  ..   C (health-frame runway): on this thread ${cMainMs} ms for ${sids.length} station(s); via the worker ${cWorkerMs} ms with main's worst lag ${cLag} ms`);
+  ok(cLag < 17, `C: computing the runway for the health frame never blocks main (worst ${cLag} ms < 16.7 ms)`);
+  ok(JSON.stringify(viaWorker) === JSON.stringify(cInMain), "C: the worker's runway + 7-day trend equal the in-main computation");
   console.log(`\n${fail ? "FAILED" : "ALL PASS"}  (${pass} passed, ${fail} failed)`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

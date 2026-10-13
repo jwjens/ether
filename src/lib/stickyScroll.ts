@@ -9,6 +9,11 @@
 // screen. A feed may only ever scroll ITS OWN box, and only when the operator is already at its bottom.
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 
+/** Feeds following their OWN box (the allowed programmatic scroll). The scroll sense (src/lib/perfSense.ts) skips
+ *  these, so anything else that scrolls with no operator input is reported as unprompted (round 2 §5). */
+export const ownFeedScrolls = new WeakMap<Element, number>();
+function followOwn(el: HTMLElement) { ownFeedScrolls.set(el, performance.now()); el.scrollTop = el.scrollHeight; }
+
 /** The nearest ancestor (or the element itself) that actually scrolls vertically. */
 export function ownScroller(el: Element | null): HTMLElement | null {
   let n: HTMLElement | null = el as HTMLElement | null;
@@ -23,7 +28,7 @@ export function ownScroller(el: Element | null): HTMLElement | null {
 /** Bring a feed's end into view by scrolling ONLY the feed's own scroller — never the page or the panels around it. */
 export function scrollOwnToBottom(endMarker: Element | null) {
   const s = ownScroller(endMarker);
-  if (s) s.scrollTop = s.scrollHeight;
+  if (s) followOwn(s);
 }
 
 const AT_BOTTOM_PX = 24;
@@ -54,7 +59,7 @@ export function useStickyScroll(rowCount: number) {
     lastCount.current = rowCount;
     if (added <= 0) return;
     const el = ref.current; if (!el) return;
-    if (atBottom.current) el.scrollTop = el.scrollHeight;   // its own box only
+    if (atBottom.current) followOwn(el);   // its own box only
     else setUnseen(n => n + added);
   }, [rowCount]);
 

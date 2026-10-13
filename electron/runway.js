@@ -107,4 +107,33 @@ function runwaySec(db, stationId, nowSec) {
   return Math.round(r.days * 86400);
 }
 
-module.exports = { computeRunway, runwaySec, showCoversHour, SCAN_DAYS };
+/**
+ * The 7-day runway trend, SUMMARISED to 6-hour buckets (28 points) holding each bucket's LOW-WATER mark. Read-only from
+ * runway_history. Moved here from main.js's health:frames handler (2026-10-12) so the library-health worker computes it
+ * off the main process; the rules are unchanged:
+ *   · the low-water mark, not an average — for a runway the DIP is the fact that matters;
+ *   · days: null is preserved — "no active show" is not zero days; a bucket that only ever saw nulls stays null.
+ */
+function runwaySeries(db, stationId, nowMs) {
+  try {
+    const BUCKET = 6 * 3600;
+    const nowHour = Math.floor((nowMs != null ? nowMs : Date.now()) / 3600_000) * 3600;
+    const since = nowHour - (7 * 24 - 1) * 3600;
+    const rows = db.prepare(
+      "SELECT at, days FROM runway_history WHERE station_id = ? AND at >= ? ORDER BY at"
+    ).all(stationId, since);
+    if (!rows.length) return null;
+    const buckets = new Map();
+    for (const r of rows) {
+      const slot = Math.floor(r.at / BUCKET) * BUCKET;
+      const prev = buckets.get(slot);
+      if (prev === undefined) buckets.set(slot, r.days == null ? null : Number(r.days));
+      else if (r.days != null) buckets.set(slot, prev == null ? Number(r.days) : Math.min(prev, Number(r.days)));
+    }
+    return [...buckets.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([at, days]) => ({ at, days: days == null ? null : Math.round(days * 100) / 100 }));
+  } catch { return null; }
+}
+
+module.exports = { computeRunway, runwaySec, runwaySeries, showCoversHour, SCAN_DAYS };

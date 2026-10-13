@@ -1,4 +1,4 @@
-import React, { Component, ReactNode } from "react";
+import React, { Component, Profiler, ReactNode } from "react";
 import * as Sentry from "@sentry/electron/renderer";
 
 Sentry.init({
@@ -16,7 +16,7 @@ import PopoutRenderer from "./components/PopoutRenderer";
 import { AudioEngineProvider } from "./audio/AudioEngineContext";
 import "./index.css";
 import { runMigrations } from "./db/client";
-import { startPerfSense } from "./lib/perfSense";
+import { startPerfSense, reactCommit } from "./lib/perfSense";
 // Responsiveness sense (2026-10-12, electron/perf-sense.js): this window's long tasks and input timing, on /health.
 try { startPerfSense((window.location.hash || "#main").slice(1) || "main"); } catch { /* never block boot */ }
 
@@ -116,12 +116,16 @@ async function boot() {
     ? <AudioEngineProvider gate>{secondary}</AudioEngineProvider>
     : <App />;
 
+  // <Profiler>: every commit over one frame is broken down by component on /health (src/lib/perfSense.ts reactCommit;
+  // the build uses React's profiling renderer — vite.config.ts). docs/perf-pass-round2-2026-10-12.md §3.
   ReactDOM.createRoot(document.getElementById("root")!).render(
-    <RootBoundary>
-      {DevTierBanner && <DevTierBanner />}
-      {mainContent}
-      {DebugMount && <DebugMount />}
-    </RootBoundary>
+    <Profiler id="root" onRender={reactCommit}>
+      <RootBoundary>
+        {DevTierBanner && <DevTierBanner />}
+        {mainContent}
+        {DebugMount && <DebugMount />}
+      </RootBoundary>
+    </Profiler>
   );
 }
 
