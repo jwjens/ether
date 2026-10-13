@@ -62,6 +62,9 @@ pub(crate) struct Params {
     /// biquads it runs — coefficients computed on the dispatch thread, f64) and a version the callback adopts
     /// on change. Default: empty — nothing runs, today's exact arithmetic.
     pub ch_rack: [crate::rack::ChannelRackParams; SLOT_COUNT],
+    /// THE DUCK HAS NO AMOUNT OF ITS OWN (Jeff, 2026-10-13): false until the station's Preferences send it
+    /// (SetDuckParams / a show's duck). While false the ducker does nothing and the board snapshot says so.
+    pub duck_set: bool,
     pub duck_threshold: f32,
     pub duck_depth_db: f32,
     pub duck_attack_ms: f32,

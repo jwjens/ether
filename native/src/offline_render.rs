@@ -106,6 +106,11 @@ pub struct AuxCfg {
     pub path: String,
     pub duck: bool,
     pub aux_gain: f32,
+    /// The ducker's values for this render — the render STATES them (Jeff, 2026-10-13: "the test renders must set their
+    /// duck amount explicitly in the test itself"). The engine has no duck amount of its own, so a render with `duck`
+    /// armed and no values here does not duck at all.
+    #[serde(default)]
+    pub duck_params: Option<crate::show::DuckParams>,
 }
 
 impl Default for RenderCfg {
@@ -243,6 +248,11 @@ pub fn render_offline(path: &str, cfg: &RenderCfg) -> Result<Render, String> {
             d.volume = 1.0;
             d.muted  = false;
             b.duck_enabled[3] = ax.duck;
+            if let Some(d) = ax.duck_params.clone() {
+                let mut p = b.params();
+                crate::show::set_duck_params(&mut p, d);
+                b.apply_params(&p);
+            }
             b.aux_monitor_gain[3] = ax.aux_gain.clamp(0.0, 4.0);
             b.room_gain[3] = ax.aux_gain.clamp(0.0, 4.0);
             let (ap, ac) = HeapRb::<f32>::new(AUX_BUS_BUF).split();
@@ -611,7 +621,12 @@ mod parity {
         }
         let linked = RenderCfg { proc_local: true, proc_stream: true, ..RenderCfg::default() };
         let eq = configs().into_iter().find(|(n, _)| *n == "EQ").unwrap().1;
-        let aux = |duck: bool| Some(AuxCfg { path: path_of("speech").to_string_lossy().into_owned(), duck, aux_gain: 1.0 });
+        // THE DUCK RENDERS STATE THEIR OWN DUCK VALUES (Jeff, 2026-10-13): the engine has no duck amount of its own, so
+        // these goldens test the ducker WORKING at a value written here — not whatever number a default happened to be.
+        const TEST_DUCK: crate::show::DuckParams = crate::show::DuckParams {
+            depth_db: -20.0, threshold_db: -45.0, attack_ms: 30.0, hold_ms: 700.0, release_ms: 500.0 };
+        let aux = |duck: bool| Some(AuxCfg { path: path_of("speech").to_string_lossy().into_owned(), duck, aux_gain: 1.0,
+                                             duck_params: if duck { Some(TEST_DUCK) } else { None } });
         out.push(("music__LINKED_B1024".into(), path_of("music"), RenderCfg { block_frames: Some(1024), ..linked.clone() }));
         out.push(("music__LINKED_B441".into(),  path_of("music"), RenderCfg { block_frames: Some(441), ..linked.clone() }));
         out.push(("music__LINKED_DEV48K_MON07".into(), path_of("music"),
@@ -1197,7 +1212,7 @@ mod loudness_path {
     fn aux_out_is_measured_on_the_aux_feed() {
         let (p, _) = ref_m23();
         let speech = inputs_dir().join("speech.wav");
-        let cfg = RenderCfg { aux: Some(AuxCfg { path: speech.to_string_lossy().into_owned(), duck: false, aux_gain: 1.0 }), ..RenderCfg::default() };
+        let cfg = RenderCfg { aux: Some(AuxCfg { path: speech.to_string_lossy().into_owned(), duck: false, aux_gain: 1.0, duck_params: None }), ..RenderCfg::default() };
         let r = render(&p, &cfg);
         let (_, ind_tp) = loudness(&r.aux);
         let a = &r.loud.b[LOUD_AUX];

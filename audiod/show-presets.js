@@ -33,8 +33,6 @@ const isMachineLocalKey = (k) => MACHINE_LOCAL_KEYS.includes(k) || MACHINE_LOCAL
 
 /** The store keys a preset is read from and written to (all synced, station-scoped). */
 const DUCK_KEYS = { depthDb: "duck_depth_db", thresholdDb: "duck_threshold_db", attackMs: "duck_attack_ms", holdMs: "duck_hold_ms", releaseMs: "duck_release_ms" };
-/** main's own defaults for an absent key (electron/main.js armAllStationDuckers) — "the ducker at its defaults". */
-const DUCK_DEFAULTS = { depthDb: -22, thresholdDb: -45, attackMs: 30, holdMs: 700, releaseMs: 500 };
 const FLAT = "Flat";
 
 const num = (v) => { const n = typeof v === "number" ? v : parseFloat(v); return Number.isFinite(n) ? n : null; };
@@ -124,13 +122,15 @@ function snapshotBoard({ name, stationUuid, deckConfigs, get, levels }) {
     if (room[slot] != null) c.roomLevel = room[slot];
     channels[slot] = c;
   }
+  // The ducker as Preferences holds it — all five values, or none (Jeff's ruling, 2026-10-13: never a number from code).
   const duck = {};
-  for (const [f, key] of Object.entries(DUCK_KEYS)) duck[f] = num(get(key)) ?? DUCK_DEFAULTS[f];
+  for (const [f, key] of Object.entries(DUCK_KEYS)) { const n = num(get(key)); if (n != null) duck[f] = n; }
+  const duckComplete = Object.keys(DUCK_KEYS).every(f => duck[f] != null);
   const mon = num(get("monitor_volume"));
   const master = {
     rack: RackSeed.seedMasterRack(get).doc,
     fader: num(levels && levels.master) ?? 1,
-    duck,
+    ...(duckComplete ? { duck } : {}),
     ...(mon != null ? { monitorLevel: clamp(mon, 0, 4) } : {}),
   };
   return sanitizePreset({ v: 1, name, stationUuid, savedAt: new Date().toISOString(), board: { channels, master } }).preset;
@@ -144,16 +144,17 @@ function parseRoomLevels(s) {
 }
 
 /**
- * "Flat" (ruling 7): every channel rack empty, every fader at unity, the ducker at its defaults, and the master at
- * the shipped chain (flat GEQ, the shipped ride and limiter — NOT an empty master, which would drop the limiter
- * whenever processing is on). It names no channel layout, no duck toggles and no levels it cannot know.
+ * "Flat" (ruling 7): every channel rack empty, every fader at unity, and the master at the shipped chain (flat GEQ,
+ * the shipped ride and limiter — NOT an empty master, which would drop the limiter whenever processing is on). It names
+ * no channel layout, no duck toggles and no levels it cannot know — and NO DUCKER VALUES: the ducker is the station's
+ * Preferences (Jeff's ruling, 2026-10-13), so taking Flat leaves it exactly as set there.
  */
 function flatPreset(stationUuid) {
   const channels = {};
   for (const s of SLOTS) channels[s] = { fader: 1, rack: RackSeed.emptyChannelRack() };
   const shipped = RackSeed.seedMasterRack(() => undefined).doc;
   return { v: 1, name: FLAT, stationUuid, savedAt: null, builtIn: true,
-           board: { channels, master: { rack: shipped, fader: 1, duck: { ...DUCK_DEFAULTS } } } };
+           board: { channels, master: { rack: shipped, fader: 1 } } };
 }
 
 // ── The live rule and what goes to the engine ────────────────────────────────────────────────────────────
@@ -420,5 +421,5 @@ class ShowBlade {
   _levelsChanged() { this.emit("boardlevels", { stationId: this.stationId, levels: { ...this.levels } }); }
 }
 
-module.exports = { SLOTS, SOURCE_SLOTS, ROTATION, MACHINE_LOCAL_KEYS, MACHINE_LOCAL_PREFIXES, isMachineLocalKey, DUCK_KEYS, DUCK_DEFAULTS, FLAT,
+module.exports = { SLOTS, SOURCE_SLOTS, ROTATION, MACHINE_LOCAL_KEYS, MACHINE_LOCAL_PREFIXES, isMachineLocalKey, DUCK_KEYS, FLAT,
   sanitizePreset, snapshotBoard, parseRoomLevels, flatPreset, isLive, engineDoc, storeWrites, planStoreWrites, ShowBlade };

@@ -44,6 +44,7 @@ function savedHalloveen() {
     kv.run(sid, "jukebox_channel_on", sid === 2 ? "1" : "0");
     kv.run(sid, "cart_channel_on", "0");
     kv.run(sid, "segue_overlap_sec", "3");
+    for (const [k, v] of [["duck_depth_db", "-22"], ["duck_threshold_db", "-45"], ["duck_attack_ms", "30"], ["duck_hold_ms", "700"], ["duck_release_ms", "500"]]) kv.run(sid, k, v);
   }
   return db;
 }
@@ -51,7 +52,7 @@ function savedHalloveen() {
 /** An engine: the board values it is running, set only through its setters, read back in getBoardState's shape. */
 function engineModel() {
   const slots: Record<string, any> = {};
-  const p: any = { monitor_vol: 1, master_vol: 1, master_monitor_vol: 0, slots };   // the Rust bus defaults
+  const p: any = { monitor_vol: 1, master_vol: 1, master_monitor_vol: 0, slots, duck_params: null };   // the Rust bus defaults (no ducker values)
   const slot = (s: string) => (slots[s] ||= { volume: 1, muted: false, duck: false, duckable: true, aux_monitor_gain: 0, local: "main" });
   const devices: any = { aux: "", cue: "", output: null };
   const sink = {
@@ -64,7 +65,9 @@ function engineModel() {
     setMonitorVolume: (v: number) => { p.monitor_vol = v; return true; },
     setMasterVolume: (v: number) => { p.master_vol = v; return true; },
     setMasterMonitorVolume: (v: number) => { p.master_monitor_vol = v; return true; },
-    setDuckParams: () => true, setPflDim: () => true, setFaderSmoothing: () => true,
+    // The engine's copy of the ducker, as board.rs reports it (null until sent — it has no values of its own).
+    setDuckParams: (d: any) => { p.duck_params = { depth_db: d.depthDb, threshold: 10 ** (d.thresholdDb / 20), attack_ms: d.attackMs, hold_ms: d.holdMs, release_ms: d.releaseMs }; return true; },
+    setPflDim: () => true, setFaderSmoothing: () => true,
     setAuxDevice: (d: string) => { devices.aux = d; return true; },
     setCueDevice: (d: string) => { devices.cue = d; return true; },
     setOutputDevice: (d: string) => { devices.output = d; return true; },

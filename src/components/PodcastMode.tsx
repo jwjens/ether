@@ -5,84 +5,8 @@ import { execute } from "../db/client";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 
-// ═══════════════════════════════════════════════════════════════
-// 1. AUTO-DUCK
-// When mic goes live → duck all decks to 20%.
-// When mic cuts → smoothly restore to 100%.
-// ═══════════════════════════════════════════════════════════════
-
-const DUCK_LEVEL = 0.18;
-const DUCK_RAMP_MS = 400;
-const RESTORE_RAMP_MS = 800;
-
-function rampVolume(engine: AudioEngine, deckId: string, from: number, to: number, ms: number) {
-  const steps = 20;
-  const interval = ms / steps;
-  const delta = (to - from) / steps;
-  let step = 0;
-  const id = setInterval(() => {
-    step++;
-    const v = Math.max(0, Math.min(1, from + delta * step));
-    engine.getDeck(deckId)?.setVolume(v);
-    if (step >= steps) clearInterval(id);
-  }, interval);
-}
-
-export function useAutoDuck() {
-  const engine = useAudioEngine();
-  const [enabled, setEnabled] = useState(true);
-  const [ducked, setDucked] = useState(false);
-  const prevVolumes = useRef<Record<string, number>>({ A: 1, B: 1, C: 1 });
-
-  const duck = useCallback(() => {
-    if (!enabled || ducked) return;
-    setDucked(true);
-    ["A", "B", "C"].forEach(id => {
-      const deck = engine.getDeck(id);
-      if (deck) {
-        prevVolumes.current[id] = deck.getState().volume ?? 1;
-        rampVolume(engine, id, prevVolumes.current[id], DUCK_LEVEL, DUCK_RAMP_MS);
-      }
-    });
-  }, [engine, enabled, ducked]);
-
-  const unduck = useCallback(() => {
-    if (!ducked) return;
-    setDucked(false);
-    ["A", "B", "C"].forEach(id => {
-      const deck = engine.getDeck(id);
-      if (deck) rampVolume(engine, id, DUCK_LEVEL, prevVolumes.current[id] ?? 1, RESTORE_RAMP_MS);
-    });
-  }, [engine, ducked]);
-
-  return { enabled, setEnabled, ducked, duck, unduck };
-}
-
-// Auto-duck toggle button — drop into MicDeck or toolbar
-export function AutoDuckToggle({ hook }: { hook: ReturnType<typeof useAutoDuck> }) {
-  return (
-    <button
-      onClick={() => hook.setEnabled(e => !e)}
-      style={{
-        padding: "4px 10px", borderRadius: 0, fontSize: 9, fontWeight: 700,
-        letterSpacing: "0.08em", textTransform: "uppercase" as const,
-        background: hook.enabled ? "rgba(239,68,68,0.15)" : "var(--bg-tertiary)",
-        border: `1px solid ${hook.enabled ? "rgba(239,68,68,0.4)" : "var(--border-primary)"}`,
-        color: hook.enabled ? "#ef4444" : "var(--text-tertiary)",
-        cursor: "pointer", transition: "all 0.15s",
-        display: "flex", alignItems: "center", gap: 5,
-      }}
-      title="Auto-Duck: music drops when mic goes live"
-    >
-      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-        <path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
-        <path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/>
-        <line x1="12" y1="17" x2="12" y2="21"/>
-      </svg>
-      {hook.enabled ? "Duck ON" : "Duck OFF"}
-    </button>
-  );
-}
+// (2026-10-13) The AUTO-DUCK that stood here — decks A/B/C ramped to 0.18 in 400 ms when a mic went live — is GONE:
+// nothing called it, and the duck amount is the station's Preferences only (Jeff's ruling; docs/duck-from-preferences-2026-10-13.md).
 
 // ═══════════════════════════════════════════════════════════════
 // 2. EPISODE MODE

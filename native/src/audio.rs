@@ -742,6 +742,8 @@ pub struct BusState {
     /// kind. You do not duck the thing doing the ducking.
     pub duck_duckable: [bool; SLOT_COUNT],
     /// Source-sum peak above which the duck engages (linear). ~-45 dBFS.
+    /// False until the station's Preferences send the ducker its values (see rt.rs Params::duck_set).
+    pub duck_set: bool,
     pub duck_threshold: f32,
     /// How far the music drops, in dB (negative). -12 dB default.
     pub duck_depth_db: f32,
@@ -957,15 +959,16 @@ impl BusState {
             ramp_frames: crate::ramp::LEVEL_RAMP_FRAMES,
             monitor_ramp: crate::ramp::LevelRamp::default(),
             row_ramp: [crate::ramp::LevelRamp::default(); SLOT_COUNT],
-            duck_threshold: 0.0056,   // ~-45 dBFS
-            // -22 dB, not -12: Jeff's ears on a live jukebox-over-music test. A short announcement
-            // sits fine at -12, but a CONTINUOUS source needs the programme much further down or the
-            // two clash. A starting point, not a rebuild — every value here is tunable at runtime
-            // from that station's Preferences (SetDuckParams).
-            duck_depth_db: -22.0,   // = the configured default everywhere (audiod/board-state.js DUCK_KEYS, the Ducker panel); was a separate −28
-            duck_attack_ms: 30.0,
-            duck_hold_ms: 700.0,
-            duck_release_ms: 500.0,
+            // THE ENGINE HAS NO DUCK AMOUNT OF ITS OWN (Jeff's ruling, 2026-10-13): depth, threshold, attack, hold and
+            // release come ONLY from the station's Preferences (SetDuckParams, applied by the board applier at start). Until
+            // they arrive the ducker does nothing (duck_set = false) and the board snapshot reports "not set" — it never
+            // ducks by a number nobody chose. (It booted at -28 dB here, then -22; docs/duck-from-preferences-2026-10-13.md.)
+            duck_set: false,
+            duck_threshold: 0.0,
+            duck_depth_db: 0.0,
+            duck_attack_ms: 0.0,
+            duck_hold_ms: 0.0,
+            duck_release_ms: 0.0,
             pfl: [false; SLOT_COUNT],
             pfl_dim_db: PFL_DIM_DB_DEFAULT,
             pfl_to_device: false,
@@ -1032,6 +1035,7 @@ impl BusState {
             proc_stream: self.proc_stream,
             rack: self.rack_from_fields(),
             ch_rack: self.ch_rack,
+            duck_set: self.duck_set,
             duck_threshold: self.duck_threshold,
             duck_depth_db: self.duck_depth_db,
             duck_attack_ms: self.duck_attack_ms,
@@ -1061,6 +1065,14 @@ impl BusState {
 
     /// Adopt a parameter block (callback, top of buffer). Plain field copies; the GEQ is re-tuned only when
     /// its bands actually changed, on BOTH instances, as SetEq always did.
+    /// TESTS ONLY: the ducker's values a test states for itself (the engine has none of its own — BusState::new).
+    #[cfg(test)]
+    pub(crate) fn set_test_duck(&mut self) {
+        let mut p = self.params();
+        crate::show::set_duck_params(&mut p, crate::show::DuckParams { depth_db: -20.0, threshold_db: -45.0, attack_ms: 30.0, hold_ms: 700.0, release_ms: 500.0 });
+        self.apply_params(&p);
+    }
+
     pub(crate) fn apply_params(&mut self, p: &Params) {
         for i in 0..SLOT_COUNT {
             self.decks[i].volume = p.volume[i];
@@ -1105,6 +1117,7 @@ impl BusState {
             self.proc_stream_ride_bypass = !ris;
             self.proc_stream_limiter_bypass = !lis;
         }
+        self.duck_set = p.duck_set;
         self.duck_threshold = p.duck_threshold;
         self.duck_depth_db = p.duck_depth_db;
         self.duck_attack_ms = p.duck_attack_ms;
@@ -2036,6 +2049,7 @@ mod slice1_regression {
             b.decks[7].source = Some(DeckFeed::prefilled(Scaled(Det(904), 0.3), 480 * 2 * 80));
             b.decks[7].active = true; b.decks[7].paused = false; b.decks[7].volume = 1.0;
             b.local_aux[7] = false; b.duck_enabled[7] = true; b.duck_duckable[7] = false;
+            b.set_test_duck();
         }, 60);
         let (_, _, aux_on) = run(true);
         let (_, _, aux_off) = run(false);
@@ -2047,6 +2061,7 @@ mod slice1_regression {
             b.decks[0].source = Some(DeckFeed::prefilled(Scaled(Det(905), 0.3), 480 * 2 * 80));
             b.decks[0].active = true; b.decks[0].paused = false; b.decks[0].volume = 1.0;
             b.duck_enabled[0] = true; b.duck_duckable[0] = false;
+            b.set_test_duck();
         }, 60);
         assert!(tail(&aux_a) < tail(&aux_off) * 0.5, "fader A with \"ducks music\" on did not duck");
     }
@@ -2576,6 +2591,7 @@ mod duck_regression {
             b.decks[3].source = Some(DeckFeed::prefilled(Tone(source), 480 * 2 * 600));  // Source (D) — the announcement
             b.decks[3].active = true; b.decks[3].paused = false; b.decks[3].volume = 1.0;
             b.duck_enabled[3] = duck_on;
+            b.set_test_duck();   // this test's own duck values — the engine has none of its own
         }
         bus
     }
@@ -2727,6 +2743,7 @@ mod duck_regression {
                     b.decks[i].source = Some(DeckFeed::prefilled(Tone(0.7), 480 * 2 * 600));
                     b.decks[i].active = true; b.decks[i].paused = false; b.decks[i].volume = 1.0;
                     b.duck_enabled[i] = armed;
+                    b.set_test_duck();
                 }
             }
             run(&bus, 40);
@@ -2763,6 +2780,7 @@ mod duck_regression {
             b.decks[3].source = Some(DeckFeed::prefilled(Tone(0.5), 480 * 2 * 700));                 // the cart, on D
             b.decks[3].active = true; b.decks[3].paused = false; b.decks[3].volume = 1.0;
             b.duck_enabled[3] = true;
+            b.set_test_duck();
             b.proc_local = true;   // "Process local output" — the room chain runs its processor
         }
         run(&bus, 600);            // 6 s of cart over music
@@ -4592,7 +4610,8 @@ pub(crate) fn mixer_callback(
     // nothing is armed, so the detector simply reads silence and the normal hold-then-release path
     // takes it home at the operator's release time. Once it is fully back, and only then, the block
     // is skipped again and the mix is bit-identical.
-    let duck_running = duck_armed || bus.duck_gain < 0.999;
+    // No values from Preferences yet → no duck (the engine has no amount of its own; see BusState::new).
+    let duck_running = bus.duck_set && (duck_armed || bus.duck_gain < 0.999);
     let duck_active = if duck_running {
         let fs_ms = PROGRAM_RATE as f32 / 1000.0;          // frames per millisecond
         let depth = 10f32.powf(bus.duck_depth_db / 20.0);  // linear floor
@@ -5343,6 +5362,7 @@ mod dynamics_through_the_mixer {
         }
         b.decks[7].source = Some(DeckFeed::prefilled(src, cap));
         b.decks[7].active = true; b.decks[7].paused = false; b.decks[7].volume = 1.0;
+        b.set_test_duck();   // this test's own duck values — the engine has none of its own
         let mut cur = b.params();
         cur.duck_enabled[7] = duck;
         if let Some(j) = rack_json {

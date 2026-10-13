@@ -524,11 +524,22 @@ function _clearBoardMismatch(sid, why) {
 // in-process fallback has no blade to save fader levels, so its board is not "saved" until the daemon takes over.
 // Saved = the cached database copy plus the board_levels main is about to write.
 const _boardLevelsPending = new Map();   // sid → the blade's levels not yet written to board_levels
+// The Ducker panel sends the engine its values LIVE while a slider moves and writes Preferences on release. Until that
+// write lands, the values sent are the board watch's "saved" — so a drag is never reported as a disagreement. Cleared by
+// the Preferences write (board-write-events, a duck_* key) or after 10 s without a move: a value the engine got that
+// Preferences never kept is then shown as the disagreement it is. docs/duck-from-preferences-2026-10-13.md.
+const _duckPending = new Map();          // sid → { p, at }
+function _overlayDuck(sid, saved) {
+  const d = _duckPending.get(sid);
+  if (!d || !saved) return saved;
+  if (Date.now() - d.at > 10_000) { _duckPending.delete(sid); return saved; }
+  return { ...saved, duckParams: { ...d.p }, duckMissing: undefined };
+}
 const _boardWatch = BoardWatch.createBoardWatch({
   readSaved: (sid) => { const d = _boardDb(); if (!d) throw new Error("database not open"); return BoardState.readSavedBoard(d, sid); },
   readLive: async (sid) => (AUDIO_DAEMON ? audiodClient.cmd("getBoardState", { stationId: sid }) : { ok: false, reason: "in-process" }),
   compare: BoardState.compareBoard,
-  overlay: (sid, saved) => BoardWatch.overlayLevels(saved, _boardLevelsPending.get(sid)),
+  overlay: (sid, saved) => _overlayDuck(sid, BoardWatch.overlayLevels(saved, _boardLevelsPending.get(sid))),
   onMismatch: (sid, diffs) => _raiseBoardMismatch(sid, diffs, "watch"),
   onMatch: (sid) => _clearBoardMismatch(sid, "watch"),
   log: (m) => logStartup(m),
@@ -538,15 +549,33 @@ const _boardWatch = BoardWatch.createBoardWatch({
 // be the one read), so it refreshes every station.
 require("./board-write-events").on(({ table, stationId, key }) => {
   if (table === "station_config_kv" && !BoardState.isBoardKey(key)) return;
+  if (table === "station_config_kv" && /^duck_/.test(String(key || "")) && stationId != null) _duckPending.delete(Number(stationId));
   if (key === BoardState.MASTER_MONITOR_KEY) { _boardWatch.savedChanged(null, _stationIds); return; }
   _boardWatch.savedChanged(stationId == null ? null : Number(stationId), _stationIds);
 });
 // THE CONNECT PASS — serialised, so a connect and a handover a moment apart run one after the other. The watch holds its
 // tongue while the saved board is being re-applied, then compares every station once.
 let _boardSyncChain = Promise.resolve();
+// THE DUCKER'S STARTING VALUES GO INTO PREFERENCES, ONCE PER STATION (Jeff's ruling, 2026-10-13). A station whose
+// Preferences have no ducker values yet (a new install, a new station, an install from before this) gets the starting
+// values from audiod/duck-defaults.js — the one place they live — written through the same Preferences writer the Ducker
+// panel saves with (journalled, synced, announced to the board watch). A key the operator set is never touched. From then
+// on Preferences → Ducker shows them and the engine is sent only them.
+function _seedDuckPreferences(why) {
+  try {
+    const { stationConfigKvUpsertByKey } = require("./sync/handlers/station_config_kv");
+    for (const sid of BoardState.listStations(db)) {
+      const wrote = BoardState.seedDuckPreferences(db, sid, (s, key, value) => stationConfigKvUpsertByKey(db, s, key, value));
+      if (wrote.length) logStartup(`[duck] s${sid}: Preferences had no ducker values — wrote the starting values (${wrote.join(", ")}) (${why})`);
+    }
+  } catch (e) { logStartup(`[duck] could not write the ducker's starting values into Preferences (${why}): ${e && e.message}`); }
+}
+ipcMain.handle("board:duck-start", () => ({ ...BoardState.DUCK_START }));
+
 function _syncBoard(why) {
   _boardSyncChain = _boardSyncChain.then(async () => {
     if (!(await _waitBoardDb())) { logStartup(`[board] connect pass skipped (${why}) — the database did not open within 30 s`); return; }
+    _seedDuckPreferences(why);
     _loadSavedMasterMonitor();
     _boardWatch.pause();
     try {
@@ -3421,6 +3450,7 @@ app.whenReady().then(() => {
     return;
   }
   if (global.__bootMark) global.__bootMark("initDb() done (open + repair + migrations)");
+  try { _seedDuckPreferences("startup"); } catch {}
   try { _backfillAccountMarker(); } catch {}
   // ONE-TIME DB JOBS — here, after initDb(), because `db` does not exist at module load. Both of these
   // were called from startAutoExtend() at module scope and silently did nothing (see the note there).
@@ -5516,6 +5546,8 @@ ipcMain.handle("audio:set-duckable", (_, stationId, deck, duckable) =>
   _boardSend("setDuckable", { stationId, deck, duckable }, () => (audio && typeof audio.audioSetDuckable === "function"
     ? audio.audioSetDuckable(stationId, deck, !!duckable) : false)));
 ipcMain.handle("audio:set-duck-params", (_, stationId, p) =>
+  (_duckPending.set(Number(stationId), { p: { depthDb: p.depthDb, thresholdDb: p.thresholdDb, attackMs: p.attackMs, holdMs: p.holdMs, releaseMs: p.releaseMs }, at: Date.now() }),
+   _boardWatch.touched(Number(stationId)), 0) ||
   _boardSend("setDuckParams", { stationId, depthDb: p.depthDb, thresholdDb: p.thresholdDb, attackMs: p.attackMs, holdMs: p.holdMs, releaseMs: p.releaseMs },
     () => (audio && typeof audio.audioSetDuckParams === "function"
       ? audio.audioSetDuckParams(stationId, p.depthDb, p.thresholdDb, p.attackMs, p.holdMs, p.releaseMs) : false)));
@@ -6419,27 +6451,17 @@ function armAllStationDuckers(reason, opts) {
       } catch (err) { console.error('[duck] station', sid, slot, err.message); }
     }
   }
-  // TUNING, per station, from that station's own Preferences (station_config_kv). Without this a
-  // station's dialled depth/hold only reached the engine if someone opened its Preferences — the
-  // same UI-scoped arming bug the per-channel flags had. Absent keys leave the engine on its own
-  // defaults, which are the same numbers the panel shows.
+  // THE DUCKER'S VALUES, per station, EXACTLY as that station's Preferences hold them (Jeff's ruling, 2026-10-13) — every
+  // station, not only those with a source channel (a fader of any kind can duck: faders are generic). No default here:
+  // a station whose Preferences have no ducker values is sent nothing and does not duck (the engine has no amount of its
+  // own); main writes the starting values into Preferences first (_seedDuckPreferences), so this is the missing case only
+  // if that write failed — and the board check then shows it on the Health page.
   try {
-    const sids = db.prepare(
-      "SELECT DISTINCT station_id AS sid FROM deck_configs WHERE type = 'source' AND deleted_at IS NULL"
-    ).all().map(r => r.sid);
-    const readKv = db.prepare("SELECT key, value FROM station_config_kv WHERE station_id = ?");
-    for (const sid of sids) {
-      let kv = [];
-      try { kv = readKv.all(sid); } catch { continue; }
-      const num = (k, d) => { const v = kv.find(x => x.key === k)?.value; const n = v == null ? NaN : Number(v); return Number.isFinite(n) ? n : d; };
-      const p = {
-        // ONE set of ducker defaults (audiod/board-state.js DUCK_KEYS) — the engine, the applier and this fan-out agree.
-        depthDb:     num(BoardState.DUCK_KEYS.depthDb[0], BoardState.DUCK_KEYS.depthDb[1]),
-        thresholdDb: num(BoardState.DUCK_KEYS.thresholdDb[0], BoardState.DUCK_KEYS.thresholdDb[1]),
-        attackMs:    num(BoardState.DUCK_KEYS.attackMs[0], BoardState.DUCK_KEYS.attackMs[1]),
-        holdMs:      num(BoardState.DUCK_KEYS.holdMs[0], BoardState.DUCK_KEYS.holdMs[1]),
-        releaseMs:   num(BoardState.DUCK_KEYS.releaseMs[0], BoardState.DUCK_KEYS.releaseMs[1]),
-      };
+    for (const sid of BoardState.listStations(db)) {
+      let saved;
+      try { saved = BoardState.readSavedBoard(db, sid); } catch { continue; }
+      const p = saved && saved.duckParams;
+      if (!p) { logStartup(`[duck] s${sid}: Preferences have no ducker values (${(saved && saved.duckMissing || []).join(", ")}) — the engine is sent nothing`); continue; }
       try {
         if (toDaemon) audiodClient.cmd('setDuckParams', { stationId: sid, ...p }).catch(e => console.error('[duck] params', sid, e && e.message));
         else if (audio && typeof audio.audioSetDuckParams === 'function')

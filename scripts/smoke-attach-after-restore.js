@@ -45,6 +45,8 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
     kv.run(sid, "jukebox_channel_on", "1");
     kv.run(sid, "cart_channel_on", "0");
     kv.run(sid, "segue_overlap_sec", "5");
+    // The ducker as Preferences hold it (the engine has none of its own — 2026-10-13).
+    for (const [k, v] of [["duck_depth_db", "-22"], ["duck_threshold_db", "-45"], ["duck_attack_ms", "30"], ["duck_hold_ms", "700"], ["duck_release_ms", "500"]]) kv.run(sid, k, v);
   }
   db.close();
 }

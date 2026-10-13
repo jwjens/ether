@@ -25,7 +25,11 @@ function seed() {
   kv.run("master_monitor_volume", "0.4641");
   kv.run("aux_monitor_device", "Speakers (2- Realtek(R) Audio)");
   kv.run("audio_output_device", "Speakers (2- Realtek(R) Audio)");
-  kv.run("duck_depth_db", "-18");
+  kv.run("duck_depth_db", "-18");                   // the ducker, all five values in Preferences (the only source, 2026-10-13)
+  kv.run("duck_threshold_db", "-40");
+  kv.run("duck_attack_ms", "12");
+  kv.run("duck_hold_ms", "900");
+  kv.run("duck_release_ms", "650");
   kv.run("jukebox_channel_on", "0");
 }
 beforeEach(seed);
@@ -52,8 +56,7 @@ describe("readSavedBoard", () => {
     expect(s.monitorVol).toBeCloseTo(0.73);
     expect(s.masterMonitorVol).toBeCloseTo(0.4641);
     expect(s.masterVol).toBeCloseTo(0.9);
-    expect(s.duckParams.depthDb).toBe(-18);
-    expect(s.duckParams.releaseMs).toBe(500);          // unsaved → main's long-standing default
+    expect(s.duckParams).toEqual({ depthDb: -18, thresholdDb: -40, attackMs: 12, holdMs: 900, releaseMs: 650 });   // exactly Preferences
   });
 
   it("migrates the legacy positional room-level array exactly", () => {
@@ -213,7 +216,10 @@ describe("compareBoard", () => {
         if (e.volume !== undefined) l.volume = e.volume; if (e.muted !== undefined) l.muted = e.muted;
         if (e.duck !== undefined) l.duck = e.duck; if (e.duckable !== undefined) l.duckable = e.duckable;
         if (e.aux !== undefined) l.aux_monitor_gain = e.aux;
-      } } });
+      }
+      const d = saved.duckParams;
+      b.control.duck_params = { depth_db: d.depthDb, threshold: 10 ** (d.thresholdDb / 20), attack_ms: d.attackMs, hold_ms: d.holdMs, release_ms: d.releaseMs };
+    } });
     expect(B.compareBoard(saved, ok)).toEqual([]);
   });
   it("never reads, sends or flags a fader TYPE (Jeff: faders are generic shells)", () => {

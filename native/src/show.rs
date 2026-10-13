@@ -31,7 +31,7 @@ pub struct ShowSlot {
     pub rack: Option<ChannelRack>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DuckParams { pub depth_db: f32, pub threshold_db: f32, pub attack_ms: f32, pub hold_ms: f32, pub release_ms: f32 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -186,6 +186,7 @@ pub(crate) fn set_master_rack(p: &mut Params, new_rack: MasterRack) {
 
 /// SetDuckParams: clamped at the edges only.
 pub(crate) fn set_duck_params(p: &mut Params, d: DuckParams) {
+    p.duck_set        = true;   // the values came from Preferences (or a show built from them)
     p.duck_depth_db   = d.depth_db.clamp(-60.0, 0.0);
     p.duck_threshold  = 10f32.powf(d.threshold_db.clamp(-90.0, 0.0) / 20.0);
     p.duck_attack_ms  = d.attack_ms.clamp(1.0, 1000.0);

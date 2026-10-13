@@ -7,9 +7,11 @@ const require_ = createRequire(import.meta.url);
 const { createBoardWatch, overlayLevels } = require_("./board-watch.js");
 const B = require_("../audiod/board-state.js");
 
-const SAVED = { stationId: 2, names: { D: "D", C: "C" }, slots: { D: { volume: 0.5, muted: false }, C: { volume: 1.0654451173610493 } }, monitorVol: 0.68, masterVol: 0.9, masterMonitorVol: 0.31 };
+const DUCK = { depthDb: -22, thresholdDb: -45, attackMs: 30, holdMs: 700, releaseMs: 500 };   // this test's ducker values (Preferences)
+const SAVED = { stationId: 2, names: { D: "D", C: "C" }, slots: { D: { volume: 0.5, muted: false }, C: { volume: 1.0654451173610493 } }, monitorVol: 0.68, masterVol: 0.9, masterMonitorVol: 0.31, duckParams: DUCK };
 function engine() {
-  const p = { slots: { D: { volume: 0.5, muted: false }, C: { volume: 1.0654451173610493 } }, monitor_vol: 0.68, master_vol: 0.9, master_monitor_vol: 0.31 };
+  const p = { slots: { D: { volume: 0.5, muted: false }, C: { volume: 1.0654451173610493 } }, monitor_vol: 0.68, master_vol: 0.9, master_monitor_vol: 0.31,
+              duck_params: { depth_db: DUCK.depthDb, threshold: 10 ** (DUCK.thresholdDb / 20), attack_ms: DUCK.attackMs, hold_ms: DUCK.holdMs, release_ms: DUCK.releaseMs } };
   const a = JSON.parse(JSON.stringify(p));
   return { p, a, live: () => ({ ok: true, control: JSON.parse(JSON.stringify(p)), applied: JSON.parse(JSON.stringify(a)) }),
            set(fn) { fn(p); fn(a); } };

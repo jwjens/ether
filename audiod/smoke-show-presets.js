@@ -113,7 +113,9 @@ console.log("\nSLICE 7 — the blade: live = ON, pending until OFF, one engine c
   const kv = {
     audio_output_device: "Speakers (Realtek)", aux_monitor_device: "USB DAC", pfl_cue_device: "Headphones",
     mic_input_S1: JSON.stringify({ device: "Shure MV7", channel: 1, gainDb: 12 }),
-    monitor_volume: "0.6", duck_depth_db: "-18", aux_monitor_levels: JSON.stringify({ D: 0.4 }),
+    monitor_volume: "0.6", aux_monitor_levels: JSON.stringify({ D: 0.4 }),
+    // The ducker, all five values (a show captures the ducker only as Preferences holds it, whole — 2026-10-13).
+    duck_depth_db: "-18", duck_threshold_db: "-40", duck_attack_ms: "12", duck_hold_ms: "900", duck_release_ms: "650",
     rack_ch_S1: JSON.stringify(rack(5)),
   };
   const deckConfigs = [
@@ -166,7 +168,7 @@ console.log("\nSLICE 7 — the blade: live = ON, pending until OFF, one engine c
   const secs = f.board.master.rack.sections;
   check(secs.local.some(s => s.module.type === "ride") && secs.local.some(s => s.module.type === "limiter") && secs.pgm[0].module.bands.every(b => b === 0),
         "Flat's master is the shipped chain (flat GEQ, ride + limiter kept — never a master without its limiter)");
-  check(JSON.stringify(f.board.master.duck) === JSON.stringify(S.DUCK_DEFAULTS), "Flat's ducker is at main's defaults (-22 / -45 / 30 / 700 / 500)");
+  check(f.board.master.duck === undefined, "Flat names no ducker values — taking it leaves the ducker as Preferences has it (Jeff's ruling, 2026-10-13)");
 }
 
 // 8 · The wiring.

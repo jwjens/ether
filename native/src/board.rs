@@ -28,6 +28,10 @@ pub(crate) fn params_json(p: &Params) -> serde_json::Value {
             "pfl": p.pfl[i],
         }));
     }
+    let duck_params = if p.duck_set {
+        serde_json::json!({ "threshold": p.duck_threshold, "depth_db": p.duck_depth_db,
+                            "attack_ms": p.duck_attack_ms, "hold_ms": p.duck_hold_ms, "release_ms": p.duck_release_ms })
+    } else { serde_json::Value::Null };
     serde_json::json!({
         "slots": slots,
         "monitor_vol": p.monitor_vol,
@@ -35,10 +39,8 @@ pub(crate) fn params_json(p: &Params) -> serde_json::Value {
         "master_monitor_vol": p.master_monitor_vol,
         "proc_local": p.proc_local,
         "proc_stream": p.proc_stream,
-        "duck_params": {
-            "threshold": p.duck_threshold, "depth_db": p.duck_depth_db,
-            "attack_ms": p.duck_attack_ms, "hold_ms": p.duck_hold_ms, "release_ms": p.duck_release_ms,
-        },
+        // null until the station's Preferences have sent the ducker its values — never a number nobody chose.
+        "duck_params": duck_params,
         "pfl_dim_db": p.pfl_dim_db,
         "pfl_to_device": p.pfl_to_device,
         "fader_smoothing_ms": p.ramp_frames as f64 * 1000.0 / crate::audio::PROGRAM_RATE as f64,

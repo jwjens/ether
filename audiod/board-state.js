@@ -20,7 +20,12 @@
 const SLOTS = ["A", "B", "C", "D", "E", "F", "CART", "S1", "S2", "S3", "S4", "S5"];
 const SOURCE_SLOTS = ["D", "E", "F", "S1", "S2", "S3", "S4", "S5"];
 // The ducker's saved parameters and the defaults main has always used for them (main.js armAllStationDuckers).
-const DUCK_KEYS = { depthDb: ["duck_depth_db", -22], thresholdDb: ["duck_threshold_db", -45], attackMs: ["duck_attack_ms", 30], holdMs: ["duck_hold_ms", 700], releaseMs: ["duck_release_ms", 500] };
+// THE DUCKER'S VALUES COME ONLY FROM PREFERENCES (Jeff's ruling, 2026-10-13). These are the keys, nothing else: there is
+// no default here. A station whose Preferences have no ducker values yet gets the starting values written INTO its
+// Preferences once by main (seedDuckPreferences, from audiod/duck-defaults.js — the one place they live), and until
+// then the engine is sent nothing and does not duck. docs/duck-from-preferences-2026-10-13.md.
+const DUCK_KEYS = { depthDb: "duck_depth_db", thresholdDb: "duck_threshold_db", attackMs: "duck_attack_ms", holdMs: "duck_hold_ms", releaseMs: "duck_release_ms" };
+const DUCK_START = require("./duck-defaults");
 const MASTER_MONITOR_KEY = "master_monitor_volume";   // machine-local (LOCAL_ONLY_KEYS); moved out of localStorage
 // FADERS ARE GENERIC (Jeff, 2026-10-11). Each fader's three routing settings: where it is heard locally (`fader_local`,
 // { slot: "aux" | "main" }), whether it ducks the music (deck_configs.duck) and whether the music ducks it
@@ -165,9 +170,11 @@ function readSavedBoard(db, sid) {
   if (out.monitorVol !== undefined) out.monitorVol = cap(out.monitorVol, "monitor");
   out.masterMonitorVol = cap(out.masterMonitorVol, "monitor");
   const lt = num(kv(LOUDNESS_TARGET_KEY)); out.loudnessTargetLufs = lt == null ? -16 : lt;
-  const duck = {};
-  for (const [k, [key, def]] of Object.entries(DUCK_KEYS)) { const n = num(kv(key)); duck[k] = n == null ? def : n; }
-  out.duckParams = duck;
+  // The ducker: exactly what Preferences holds, all five values, or nothing (never a number from here).
+  const duck = {}, duckMissing = [];
+  for (const [k, key] of Object.entries(DUCK_KEYS)) { const n = num(kv(key)); if (n == null) duckMissing.push(key); else duck[k] = n; }
+  out.duckParams = duckMissing.length ? null : duck;
+  if (duckMissing.length) out.duckMissing = duckMissing;
   const auxDev = kv("aux_monitor_device"); if (auxDev !== undefined) out.auxDevice = String(auxDev || "");
   const cueDev = kv("pfl_cue_device"); if (cueDev !== undefined) out.cueDevice = String(cueDev || "");
   const dim = num(kv("pfl_dim_db")); if (dim != null) out.pflDimDb = dim;
@@ -225,7 +232,9 @@ const close = (a, b) => Math.abs(Number(a) - Number(b)) <= 1e-3;
  * `applied` absent (no meter frame yet) compares the control copy only.
  */
 const WHAT = { volume: "fader", muted: "ON/OFF", duck: "ducks music", duckable: "ducked by others", aux: "local row", local: "local output" };
-const GLOBAL = { monitorVol: "station MONITOR strip", masterVol: "MASTER", masterMonitorVol: "MONITOR", auxDevice: "AUX output device", cueDevice: "PFL output device", board: "the board" };
+const GLOBAL = { monitorVol: "station MONITOR strip", masterVol: "MASTER", masterMonitorVol: "MONITOR", auxDevice: "AUX output device", cueDevice: "PFL output device", board: "the board",
+  duckDepth: "Ducker depth", duckThreshold: "Ducker threshold", duckAttack: "Ducker attack", duckHold: "Ducker hold", duckRelease: "Ducker release",
+  duckPrefs: "Ducker settings in Preferences", duckEngine: "Ducker settings in the engine" };
 /** What an operator calls a setting: the fader's board name and the control — never an engine slot id. */
 function labelOf(setting, names) {
   const [slot, what] = String(setting).split(".");
@@ -255,6 +264,23 @@ function compareBoardRaw(saved, live) {
     if (saved.monitorVol !== undefined && !close(saved.monitorVol, p.monitor_vol)) out.push({ setting: "monitorVol", saved: saved.monitorVol, live: p.monitor_vol, where });
     if (saved.masterVol !== undefined && !close(saved.masterVol, p.master_vol)) out.push({ setting: "masterVol", saved: saved.masterVol, live: p.master_vol, where });
     if (saved.masterMonitorVol !== undefined && !close(saved.masterMonitorVol, p.master_monitor_vol)) out.push({ setting: "masterMonitorVol", saved: saved.masterMonitorVol, live: p.master_monitor_vol, where });
+  }
+  // THE DUCKER (Jeff, 2026-10-13: "If Preferences and the engine ever disagree, it shows on the Health page as an
+  // error"): Preferences' five values against the engine's own copy (board.rs duck_params — null until it was sent
+  // values). The engine clamps at its edges (show.rs set_duck_params), so a Preferences value outside them shows here too.
+  const cd = live.control;
+  if (cd) {
+    const ld = cd.duck_params;
+    if (!saved.duckParams) out.push({ setting: "duckPrefs", saved: `missing ${(saved.duckMissing || []).join(", ")}`, live: ld ? "set" : "not set", where: "control" });
+    else if (!ld) out.push({ setting: "duckEngine", saved: "set", live: "not set — the engine was never sent the ducker's values", where: "control" });
+    else {
+      const thrDb = ld.threshold > 0 ? 20 * Math.log10(ld.threshold) : -Infinity;
+      for (const [setting, sv, lv, tol] of [["duckDepth", saved.duckParams.depthDb, ld.depth_db, 0.05], ["duckThreshold", saved.duckParams.thresholdDb, thrDb, 0.05],
+                                            ["duckAttack", saved.duckParams.attackMs, ld.attack_ms, 0.5], ["duckHold", saved.duckParams.holdMs, ld.hold_ms, 0.5],
+                                            ["duckRelease", saved.duckParams.releaseMs, ld.release_ms, 0.5]]) {
+        if (!(Math.abs(Number(sv) - Number(lv)) <= tol)) out.push({ setting, saved: sv, live: Number.isFinite(lv) ? Math.round(lv * 100) / 100 : lv, where: "control" });
+      }
+    }
   }
   if (live.devices && saved.auxDevice !== undefined && String(live.devices.aux || "") !== saved.auxDevice) out.push({ setting: "auxDevice", saved: saved.auxDevice, live: live.devices.aux, where: "control" });
   if (live.devices && saved.cueDevice !== undefined && String(live.devices.cue || "") !== saved.cueDevice) out.push({ setting: "cueDevice", saved: saved.cueDevice, live: live.devices.cue, where: "control" });
@@ -337,8 +363,21 @@ function groupTopGain(db, sid, group) {
 /** Every station_config_kv key readSavedBoard reads — a write to any other key cannot change the saved board. */
 const BOARD_KV_KEYS = new Set(["board_levels", "aux_monitor_levels", "aux_monitor_slots", FADER_LOCAL_KEY, FADER_ROUTING_FLAG,
   "monitor_volume", MASTER_MONITOR_KEY, SMOOTHING_KEY, LOUDNESS_TARGET_KEY, "aux_monitor_device", "pfl_cue_device", "pfl_dim_db",
-  "audio_output_device", "jukebox_channel_on", CART_ON_KEY, ...Object.values(FADER_TOP_KEYS), ...Object.values(DUCK_KEYS).map(([k]) => k)]);
+  "audio_output_device", "jukebox_channel_on", CART_ON_KEY, ...Object.values(FADER_TOP_KEYS), ...Object.values(DUCK_KEYS)]);
 /** null/undefined = unknown key (a write by uuid): treat as a board key. */
 function isBoardKey(key) { return key == null || BOARD_KV_KEYS.has(String(key)); }
 
-module.exports = { isBoardKey, BOARD_KV_KEYS, CART_ON_KEY, FADER_TOP_KEYS, FADER_TOP_DEFAULTS, groupTopGain, routingMigration, FADER_LOCAL_KEY, FADER_ROUTING_FLAG, SMOOTHING_KEY, LOUDNESS_TARGET_KEY, MAX_GAIN, boardNames, labelOf, SLOTS, SOURCE_SLOTS, MASTER_MONITOR_KEY, DUCK_KEYS, readSavedBoard, applyBoard, compareBoard, listStations, addonSink, applySavedBoardState, parseRoomLevels };
+/**
+ * Write the STARTING ducker values into a station's Preferences — only the keys it does not have yet (one-time per
+ * station; a value the operator set is never touched). `upsert(sid, key, value)` is main's Preferences writer (the same
+ * path the Ducker panel saves through). Returns the keys written.
+ */
+function seedDuckPreferences(db, sid, upsert) {
+  const have = new Set();
+  try { for (const r of db.prepare("SELECT key FROM station_config_kv WHERE station_id = ? AND deleted_at IS NULL").all(sid)) have.add(r.key); } catch { return []; }
+  const wrote = [];
+  for (const [k, key] of Object.entries(DUCK_KEYS)) if (!have.has(key)) { upsert(sid, key, String(DUCK_START[k])); wrote.push(key); }
+  return wrote;
+}
+
+module.exports = { DUCK_START, seedDuckPreferences, isBoardKey, BOARD_KV_KEYS, CART_ON_KEY, FADER_TOP_KEYS, FADER_TOP_DEFAULTS, groupTopGain, routingMigration, FADER_LOCAL_KEY, FADER_ROUTING_FLAG, SMOOTHING_KEY, LOUDNESS_TARGET_KEY, MAX_GAIN, boardNames, labelOf, SLOTS, SOURCE_SLOTS, MASTER_MONITOR_KEY, DUCK_KEYS, readSavedBoard, applyBoard, compareBoard, listStations, addonSink, applySavedBoardState, parseRoomLevels };

@@ -22,16 +22,11 @@ import { queryScoped } from "../db/stationScoped";
 /** One deck's line in the receiver-side list. */
 type DeckRow = { slot: string; label: string; type: string; duckable: boolean };
 
-/** The engine's own defaults (native/src/audio.rs BusState::new) — kept in step deliberately. */
-export const DUCK_DEFAULTS = {
-  depthDb: -22,        // how far the programme drops
-  thresholdDb: -45,    // source level that engages it
-  attackMs: 30,        // duck fast; a late duck is heard as a stumble
-  holdMs: 700,         // stay down between words
-  releaseMs: 500,      // come back like a house system returning
-};
-
-type Params = typeof DUCK_DEFAULTS;
+// THE DUCKER'S VALUES ARE THIS STATION'S PREFERENCES — NOTHING ELSE (Jeff's ruling, 2026-10-13). This panel holds no
+// numbers of its own. It shows what Preferences holds; a station that has none yet is given the starting values by main
+// (written INTO Preferences once — audiod/duck-defaults.js is the one place they live), and "Reset" writes those same
+// starting values, which main hands this panel (board:duck-start). docs/duck-from-preferences-2026-10-13.md.
+type Params = { depthDb: number; thresholdDb: number; attackMs: number; holdMs: number; releaseMs: number };
 
 const KV = {
   depthDb: "duck_depth_db",
@@ -68,11 +63,17 @@ function Row({ label, hint, value, min, max, step, unit, onChange, onCommit }: {
 
 export default function DuckerSection() {
   const { stationId, stationName } = useActiveStation();
-  const [p, setP] = useState<Params>(DUCK_DEFAULTS);
+  const [p, setP] = useState<Params | null>(null);          // null until Preferences are read — never a placeholder
+  const [start, setStart] = useState<Params | null>(null);  // the starting values (from main; one place)
+  const [missing, setMissing] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [decks, setDecks] = useState<DeckRow[]>([]);
   const pRef = useRef(p);
   pRef.current = p;
+
+  useEffect(() => {
+    (async () => { try { const s = await (window as any).ether?.invoke?.("board:duck-start"); if (s && typeof s === "object") setStart(s as Params); } catch { /* shown as "—" */ } })();
+  }, []);
 
   // ── THE RECEIVER SIDE ────────────────────────────────────────────────────────────────────────
   // A ducker is a sidechain: a TRIGGER and a SET OF CHANNELS it acts on. This list is that set.
@@ -113,20 +114,16 @@ export default function DuckerSection() {
       try {
         const r: any = await (window as any).ether.stationConfigKv.list(stationId);
         const rows: { key: string; value: string }[] = r?.ok ? r.rows : [];
-        const get = (k: string, d: number) => {
+        const get = (k: string) => {
           const v = rows.find(x => x.key === k)?.value;
           const n = v == null ? NaN : Number(v);
-          return Number.isFinite(n) ? n : d;
+          return Number.isFinite(n) ? n : null;
         };
         if (stop) return;
-        const next: Params = {
-          depthDb:     get(KV.depthDb,     DUCK_DEFAULTS.depthDb),
-          thresholdDb: get(KV.thresholdDb, DUCK_DEFAULTS.thresholdDb),
-          attackMs:    get(KV.attackMs,    DUCK_DEFAULTS.attackMs),
-          holdMs:      get(KV.holdMs,      DUCK_DEFAULTS.holdMs),
-          releaseMs:   get(KV.releaseMs,   DUCK_DEFAULTS.releaseMs),
-        };
-        setP(next);
+        const vals = Object.fromEntries((Object.keys(KV) as (keyof Params)[]).map(k => [k, get(KV[k])])) as Record<keyof Params, number | null>;
+        const miss = (Object.keys(KV) as (keyof Params)[]).filter(k => vals[k] == null).map(k => KV[k]);
+        setMissing(miss);
+        setP(miss.length ? null : (vals as Params));
         setLoaded(true);
         // READ ONLY (Jeff, 2026-10-12): the engine restores the saved ducker itself (audiod/board-state.js DUCK_KEYS,
         // the same defaults as above). This used to re-send it every time the panel opened.
@@ -135,13 +132,15 @@ export default function DuckerSection() {
     return () => { stop = true; };
   }, [stationId]);
 
-  const push = (v: Params) => {
+  const push = (v: Params | null) => {
+    if (!v) return;
     if (stationId == null) return;
     try { (window as any).ether?.audio?.setDuckParams?.(stationId, v); } catch { /* engine not up */ }
   };
 
   /** Live to the engine while dragging — this is a by-ear control. */
   const change = (k: keyof Params) => (n: number) => {
+    if (!pRef.current) return;
     const next = { ...pRef.current, [k]: n };
     setP(next);
     push(next);
@@ -151,6 +150,7 @@ export default function DuckerSection() {
   const commit = () => {
     if (stationId == null) return;
     const v = pRef.current;
+    if (!v) return;
     const kv = (window as any).ether?.stationConfigKv;
     if (!kv?.upsertByKey) return;
     (Object.keys(KV) as (keyof Params)[]).forEach(k => {
@@ -158,7 +158,8 @@ export default function DuckerSection() {
     });
   };
 
-  const reset = () => { setP(DUCK_DEFAULTS); push(DUCK_DEFAULTS); setTimeout(commit, 0); };
+  // Writes the STARTING values into this station's Preferences (they come from main; this panel has no copy).
+  const reset = () => { if (!start) return; setP(start); pRef.current = start; push(start); setMissing([]); setTimeout(commit, 0); };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -169,6 +170,13 @@ export default function DuckerSection() {
         {" "}These settings are for <strong>{stationName || "this station"}</strong> only.
       </p>
 
+      {p == null && loaded && (
+        <div style={{ padding: "8px 10px", margin: "4px 0", border: "1px solid var(--accent-amber, #f59e0b)", color: "var(--text-primary)", fontSize: 12, lineHeight: 1.4 }}>
+          This station's Preferences have no ducker settings yet ({missing.join(", ")}), so the music is not ducked.
+          {" "}<button onClick={reset} disabled={!start} style={{ marginLeft: 6, padding: "2px 8px", fontSize: 11, cursor: "pointer" }}>Use the starting values</button>
+        </div>
+      )}
+      {p != null && (<>
       {/* DEPTH READS AS AN AMOUNT OF DUCKING, NOT A NEGATIVE GAIN.
           It was min=-40 max=0, so dragging to "max" gave 0 dB — NO ducking. Jeff maxed it, landed on
           -2 dB, and reported the duck had got weaker; the engine was obeying perfectly. A control
@@ -196,6 +204,7 @@ export default function DuckerSection() {
            hint="The source level that engages the duck. It is read post-fader and post-cut, so a closed fader or a cut channel can never duck — the board stays the gate."
            onChange={change("thresholdDb")} onCommit={commit} />
 
+      </>)}
       {/* ── Which decks step back ──────────────────────────────────────────────────────────── */}
       <div style={{ marginTop: 14, borderTop: "1px solid var(--border-primary)", paddingTop: 10 }}>
         <div style={{ fontSize: 12, color: "var(--text-primary)", fontWeight: 600, marginBottom: 2 }}>
@@ -238,7 +247,12 @@ export default function DuckerSection() {
           background: "var(--bg-tertiary)", color: "var(--text-secondary)",
           border: "1px solid var(--border-primary)", borderRadius: 3, cursor: "pointer",
         }}
-      >Reset to defaults</button>
+      >Reset to the starting values</button>
+      <span style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 4, lineHeight: 1.4 }}>
+        Starting values (what a new station gets, written into its Preferences once):{" "}
+        {start ? `${-start.depthDb} dB down · hold ${start.holdMs} ms · release ${start.releaseMs} ms · attack ${start.attackMs} ms · threshold ${start.thresholdDb} dBFS` : "—"}.
+        {" "}The engine uses only the values above — it has none of its own.
+      </span>
 
       {!loaded && (
         <span style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 4 }}>
