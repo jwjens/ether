@@ -9,6 +9,12 @@
 // none is (main.js anyDeckPlaying). Before every chunk of work: wait while it is 1, and once it drops, wait for QUIET_MS of
 // continuous 0 — so a gap between two songs, or a jock between two carts, never lets a batch in. Each pause and resume
 // is reported.
+//
+// RUN NOW (Jeff, 2026-10-13, option B — Preferences → Multi-Machine Sync → "Run sync cleanup now"): workerData.mode
+//   "auto"  (default) — the above: once, gated on silence.
+//   "count" — only the counts (no backup, no delete), for the row's "N entries this machine will never send".
+//   "now"   — the same cleanup immediately, NOT waiting for silence (an air machine never goes quiet). Its batches are the
+//             same small, time-sized ones, so the app and the audio engine never wait long behind it.
 "use strict";
 const { parentPort, workerData } = require("worker_threads");
 const MARK = "sync_excluded_queue_purged_v1";
@@ -37,14 +43,21 @@ const MARK = "sync_excluded_queue_purged_v1";
         return Date.now() - t0;
       }
     };
-    // Nothing touches the database before the first quiet spell either — not even the counts.
-    if (Atomics.load(flag, 0) === 1) waitOffAir();
+    const mode = workerData.mode || "auto";
+    // Nothing touches the database before the first quiet spell either — not even the counts (automatic run only).
+    if (mode === "auto" && Atomics.load(flag, 0) === 1) waitOffAir();
     db = new Database(workerData.dbPath, { fileMustExist: true });
     db.pragma("busy_timeout = 15000");
-    const done = db.prepare("SELECT value FROM system_state WHERE key = ?").get(MARK);
-    if (done) { parentPort.postMessage({ type: "done", already: true, report: JSON.parse(done.value || "{}") }); return; }
-    const { purgeExcludedQueue } = require("./purge-excluded-queue");
-    const report = purgeExcludedQueue(db, { backupPath: workerData.backupPath, waitOffAir, onAirNow: () => Atomics.load(flag, 0) === 1, log: say });
+    const { purgeExcludedQueue, counts, excludedTables } = require("./purge-excluded-queue");
+    if (mode === "count") { parentPort.postMessage({ type: "counts", counts: counts(db, excludedTables()) }); return; }
+    if (mode === "auto") {
+      const done = db.prepare("SELECT value FROM system_state WHERE key = ?").get(MARK);
+      if (done) { parentPort.postMessage({ type: "done", already: true, report: JSON.parse(done.value || "{}") }); return; }
+    }
+    const report = mode === "now"
+      ? purgeExcludedQueue(db, { backupPath: workerData.backupPath, log: say, onProgress: (p) => parentPort.postMessage({ type: "progress", ...p }) })
+      : purgeExcludedQueue(db, { backupPath: workerData.backupPath, waitOffAir, onAirNow: () => Atomics.load(flag, 0) === 1, log: say });
+    report.mode = mode;
     db.prepare(`INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, ?)
                 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
       .run(MARK, JSON.stringify(report), new Date().toISOString());

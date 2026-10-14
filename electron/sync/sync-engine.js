@@ -59,6 +59,13 @@ const PUSH_PENDING_INDEX = 'idx_mutations_push_pending_' +
 
 /** Create the push index for the current exclusion list, and drop one made for an older list. Idempotent; called at
  *  database open (electron/main.js initDb). Built once: ~0.7–1.0 s on 357k mutations. */
+// BUILT IN THE BACKGROUND, IN SILENCE (2026-10-13, electron/startup-heavy.js). Building it holds SQLite's write lock for
+// the whole build (11.7 s on a 241,064-entry copy with playout writes going on, and those writes FAILED after their 5 s
+// wait), so it is never built on main and never while anything plays. Until it exists the push uses the plain query —
+// 0.5 ms once the stuck entries are gone, 741 ms while they are there — so a 1 ms probe decides: a queue holding more
+// than PUSH_WAIT_OVER pending entries makes the push WAIT (send nothing, say why) instead of walking them on main.
+const PUSH_WAIT_OVER = 20000;
+
 function ensurePushPendingIndex(db) {
   const stale = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_mutations_push_pending_%' AND name <> ?").all(PUSH_PENDING_INDEX);
   for (const { name } of stale) db.exec(`DROP INDEX IF EXISTS "${name}"`);
@@ -544,21 +551,38 @@ class SyncEngine {
     return this._uuidStmts[table];
   }
 
+  /** true = the index is there; false = it is not (the plain query runs if the queue is small; see PUSH_WAIT_OVER). */
   _hasPushIndex() {
     if (this._pushIndexOk) return true;
     try { this._pushIndexOk = !!this._db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?").get(PUSH_PENDING_INDEX); }
     catch { this._pushIndexOk = false; }
-    // Not made at open (a fresh install's mutations table is created later, by migration): make it now, once — the
-    // table is small then. Failing that, the old query runs.
-    if (!this._pushIndexOk && !this._pushIndexTried) {
-      this._pushIndexTried = true;
-      try { ensurePushPendingIndex(this._db); this._pushIndexOk = true; } catch { this._pushIndexOk = false; }
-    }
     return this._pushIndexOk;
+  }
+
+  /** How many mutations the push can send — through the partial index (0.1 ms on a 241,064-row queue; COUNT(*) of every
+   *  pending row on main was 8–17 ms on this machine's disk and the source of the tick's stalls on a slow one). null when
+   *  the index is not there. */
+  pendingPushableCount() {
+    if (this._hasPushIndex() !== true) return null;
+    try { return this._db.prepare(`SELECT COUNT(*) n FROM mutations INDEXED BY ${PUSH_PENDING_INDEX} WHERE ${PUSH_PENDING_WHERE}`).get().n; }
+    catch { return null; }
   }
 
   _loadPendingMutations() {
     const indexed = this._hasPushIndex();
+    if (!indexed) {
+      let big = false;
+      try { big = !!this._db.prepare(`SELECT rowid FROM mutations WHERE sync_status = 'pending' LIMIT 1 OFFSET ${PUSH_WAIT_OVER}`).get(); } catch { big = false; }
+      if (big) {
+        if (!this._pushWaitSaid) {
+          this._pushWaitSaid = true;
+          console.warn(`[SYNC] push WAITING — over ${PUSH_WAIT_OVER} entries are queued and the push index is not built yet; walking them would stall the app. Run Preferences → Multi-Machine Sync → Run sync cleanup now.`);
+        }
+        this.pushWaiting = true;
+        return [];
+      }
+      this.pushWaiting = false; this._pushWaitSaid = false;
+    }
     const clauses = [indexed ? PUSH_PENDING_WHERE : "sync_status = 'pending'"];
     const params  = [];
 
@@ -626,4 +650,4 @@ class SyncEngine {
   }
 }
 
-module.exports = { SyncEngine, ensurePushPendingIndex, PUSH_PENDING_INDEX, PUSH_PENDING_WHERE };
+module.exports = { SyncEngine, ensurePushPendingIndex, PUSH_PENDING_INDEX, PUSH_PENDING_WHERE, PUSH_WAIT_OVER };

@@ -35,7 +35,7 @@ function createLibraryHealth(opts) {
   // `blob-ref` and may hold another machine's absolute path. See prefetchTick below.
   // restoreInFlightFn: () => true while a restore is pulling rows or files. Optional — absent means
   // false, so every existing caller keeps its current behaviour.
-  const { getDb, backendUrl, licenseKeyFn, broadcast, userDataDir, musicDirFn, restoreInFlightFn } = opts;
+  const { getDb, backendUrl, licenseKeyFn, broadcast, userDataDir, musicDirFn, restoreInFlightFn, appendEvent } = opts;
   const jsonlPath = path.join(userDataDir, 'health-events.jsonl');
   const inFlight = new Set();          // file_key currently downloading (dedup)
   const skipCounts = new Map();        // stationId -> { hour: <epoch hour>, n }
@@ -44,7 +44,13 @@ function createLibraryHealth(opts) {
 
   const nowSec = () => Math.floor(Date.now() / 1000);
   const exists = (fp) => { try { return !!fp && fs.existsSync(fp); } catch { return false; } };
-  const appendJsonl = (rec) => { try { fs.appendFileSync(jsonlPath, JSON.stringify({ t: new Date().toISOString(), ...rec }) + '\n'); } catch { /* best-effort */ } };
+  // On main the app hands in the ONE background health-log writer (electron/health-ledger.js); in the library-health
+  // worker thread (no appendEvent) the line is written from that thread, which is off main.
+  const appendJsonl = (rec) => {
+    const row = { t: new Date().toISOString(), ...rec };
+    if (appendEvent) { try { appendEvent(row); } catch { /* best-effort */ } return; }
+    try { fs.appendFileSync(jsonlPath, JSON.stringify(row) + '\n'); } catch { /* best-effort */ }
+  };
   _appendEvent = appendJsonl;          // wire the module-level bridge (see noteEvent above)
 
   // ═══════════════════════════════════════════════════════════════════════════════════════════

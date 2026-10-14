@@ -37,12 +37,25 @@ function parseLine(line) {
   };
 }
 
+// THE SAVED PASSWORD ON EVERY (RE)CONNECT (Jeff, 2026-10-13, C; docs/air-machine-stalls-plan-2026-10-13.md §6). A running
+// encoder used to keep the password it started with, so after the server's password changed the next automatic
+// reconnect used the OLD one and the station dropped. Every spawn now re-reads the station's saved password: change it in
+// Station settings first (the running stream is untouched), then on the server — the next reconnect uses the new one.
+// A missing/empty saved password keeps the one the stream started with (never a guessed value).
+function withPassword(url, pw) {
+  const p = pw == null ? "" : String(pw).trim();
+  if (!p) return url;
+  return String(url).replace(/^(icecast:\/\/source:)[^@]*(@)/, (_m, a, b) => a + p + b);
+}
+
 class StreamSupervisor {
   // getPort: () => program-bus TCP port for this station.  emit: (statusObj) => broadcast.
-  constructor(stationId, getPort, emit) {
+  // readPassword: () => the station's saved password now (or null) — re-read on every spawn.
+  constructor(stationId, getPort, emit, readPassword = () => null) {
     this.stationId = stationId;
     this.getPort = getPort;
     this.emit = emit;
+    this.readPassword = readPassword;
     this.armed = false; this.proc = null;
     this.failureCount = 0; this.firstFailureTime = 0;
     this.statusState = "idle"; this.speed = null; this.bitrate = null; this.startTime = null; this.errorMsg = null; this.url = "";
@@ -75,6 +88,10 @@ class StreamSupervisor {
 
   _spawn(port) {
     this._kill();
+    let saved = null;
+    try { saved = this.readPassword(); } catch { saved = null; }
+    const next = withPassword(this.url, saved);
+    if (next !== this.url) { this.url = next; try { console.log(`[stream/${this.stationId}] using the station's saved password (changed since the last connect)`); } catch {} }
     const args = [
       "-f", "f32le", "-ar", String(this._sampleRate), "-ac", "2",
       "-i", `tcp://127.0.0.1:${port}`,
@@ -129,4 +146,4 @@ class StreamSupervisor {
   stop() { this.armed = false; this.failureCount = 0; this._kill(); this.statusState = "idle"; this.speed = null; this.bitrate = null; this._emit(); return { ok: true }; }
 }
 
-module.exports = { StreamSupervisor };
+module.exports = { StreamSupervisor, withPassword };

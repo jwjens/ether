@@ -39,7 +39,7 @@ function counts(db, EX) {
  * @param onAirNow    true the moment a deck is playing (no wait) — to skip the checkpoint after a batch a show interrupted.
  * @returns report { before, after, removed, backupPath, backupRows, batches, batchMsPeak, ckptMsPeak, pausedMs, pauses, ms, skipped? }
  */
-function purgeExcludedQueue(db, { backupPath, batch = 50, targetMs = 30, pauseMs = 100, backupChunk = 5000, waitOffAir = () => 0, onAirNow = () => false, log = () => {} } = {}) {
+function purgeExcludedQueue(db, { backupPath, batch = 50, targetMs = 30, pauseMs = 100, backupChunk = 5000, waitOffAir = () => 0, onAirNow = () => false, log = () => {}, onProgress = () => {} } = {}) {
   const t0 = Date.now();
   let pausedMs = 0, pauses = 0;
   const gate = () => { const w = waitOffAir() || 0; if (w > 0) { pausedMs += w; pauses++; } };
@@ -69,8 +69,9 @@ function purgeExcludedQueue(db, { backupPath, batch = 50, targetMs = 30, pauseMs
       if (!e || !e.n) break;
       copy.run(...EX, lastRowid, e.m);
       lastRowid = e.m;
+      try { onProgress({ phase: "backup", done: (backupRows += e.n), of: before.excludedPendingTotal }); } catch { /* progress only */ }
     }
-    backupRows = db.prepare("SELECT COUNT(*) n FROM qbk.mutations_removed").get().n;
+    backupRows = db.prepare("SELECT COUNT(*) n FROM qbk.mutations_removed").get().n;   // the COUNT is the check, not the running total
     db.exec("CREATE TABLE qbk.purge_report (key TEXT PRIMARY KEY, value TEXT)");
     db.prepare("INSERT INTO qbk.purge_report VALUES ('before', ?), ('at', ?), ('max_rowid', ?)").run(JSON.stringify(before), new Date().toISOString(), String(lastRowid));
   } finally { db.exec("DETACH DATABASE qbk"); }
@@ -107,6 +108,7 @@ function purgeExcludedQueue(db, { backupPath, batch = 50, targetMs = 30, pauseMs
       else if (took < targetMs / 2) batch = Math.min(2000, batch * 1.25);
       removed += n; batches++;
       if (n === 0) break;
+      if (batches % 20 === 0) { try { onProgress({ phase: "delete", done: removed, of: backupRows }); } catch { /* progress only */ } }
       // A deck that started during this batch: no checkpoint now (it is disk work too) — the next gate waits, and the
       // first batch after the quiet spell is followed by one as usual.
       if (!onAirNow()) { const tc = Date.now(); try { db.pragma("wal_checkpoint(PASSIVE)"); } catch {} ckptMsPeak = Math.max(ckptMsPeak, Date.now() - tc); }
@@ -124,4 +126,17 @@ function purgeExcludedQueue(db, { backupPath, batch = 50, targetMs = 30, pauseMs
   return { before, after, removed, backupPath, backupRows, batches, batchMsPeak, ckptMsPeak, pausedMs, pauses, ms: Date.now() - t0 };
 }
 
-module.exports = { purgeExcludedQueue, excludedTables, counts };
+/** The result in plain words (Jeff, 2026-10-13: "plain-words result"). */
+function plainResult(r) {
+  if (!r) return "No result.";
+  const b = r.before || {}, a = r.after || {};
+  const fmt = (n) => (n == null ? "?" : Number(n).toLocaleString("en-US"));
+  if (r.skipped) return `Nothing to clean: no stuck sync entries on this machine (${fmt(b.allPending)} waiting to send, ${fmt(b.allRows)} in total).`;
+  const tables = Object.entries(b.excludedPending || {}).filter(([, n]) => n > 0).map(([t, n]) => `${fmt(n)} for ${t === "generated_schedule" ? "the generated log" : t}`).join(", ");
+  const secs = Math.round((r.ms || 0) / 1000);
+  return `Removed ${fmt(r.removed)} stuck sync entries (${tables || "none"} — tables that are never sent). ` +
+    `Before: ${fmt(b.allPending)} waiting / ${fmt(b.allRows)} total. After: ${fmt(a.allPending)} waiting / ${fmt(a.allRows)} total. ` +
+    `Backup: ${r.backupPath} (${fmt(r.backupRows)} rows). Took ${secs >= 60 ? `${Math.floor(secs / 60)} min ${secs % 60} s` : `${secs} s`}.`;
+}
+
+module.exports = { purgeExcludedQueue, excludedTables, counts, plainResult };

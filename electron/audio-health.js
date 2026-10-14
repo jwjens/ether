@@ -32,7 +32,8 @@ function iso(ms) { return new Date(ms).toISOString(); }
 
 function createHealthMonitor(opts) {
   const {
-    logDir,                              // dir for health-events.jsonl
+    logDir,                              // dir for health-events.jsonl (tests only; the app passes appendEvent)
+    appendEvent = null,                  // (obj) => void — THE one background health-log writer (electron/health-ledger.js)
     broadcast = () => {},                // (channel, payload) — sendToAllWindows
     ping = async () => null,             // async () => round-trip ms (or null on failure)
     drainRate = () => null,              // (stationId) => latest drain B/s (or null); read-only
@@ -49,8 +50,13 @@ function createHealthMonitor(opts) {
   const recentEvents = [];               // last N YELLOW/RED transitions (newest first)
   const MAX_RECENT = 20;
   let jsonlPath = null;
-  try { jsonlPath = path.join(logDir, "health-events.jsonl"); fs.mkdirSync(logDir, { recursive: true }); } catch { jsonlPath = null; }
-  function ledgerEvent(ev) { try { if (jsonlPath) fs.appendFileSync(jsonlPath, JSON.stringify(ev) + "\n"); } catch {} }
+  // ONE FILE, WRITTEN IN THE BACKGROUND (2026-10-13): the app hands in the shared ledger writer, so this module no longer
+  // keeps its own logs\health-events.jsonl (the second, unrotated copy) nor blocks main with appendFileSync.
+  if (!appendEvent) { try { jsonlPath = path.join(logDir, "health-events.jsonl"); fs.mkdirSync(logDir, { recursive: true }); } catch { jsonlPath = null; } }
+  function ledgerEvent(ev) {
+    if (appendEvent) { try { appendEvent(ev); } catch {} return; }
+    try { if (jsonlPath) fs.appendFileSync(jsonlPath, JSON.stringify(ev) + "\n"); } catch {}
+  }
   let timer = null;
   let enginePid = null;
   let engineStartedAt = null;
@@ -152,7 +158,7 @@ function createHealthMonitor(opts) {
         if (r._rtAcc && t - r._rtAcc.since >= 10000) {
           const ev = { ts: iso(t), type: "audio-rt", stationUuid: r.uuid, stationName: r.name,
                        windowSec: Math.round((t - r._rtAcc.since) / 1000), ...r._rtAcc.d, totals: cur };
-          try { if (jsonlPath) fs.appendFileSync(jsonlPath, JSON.stringify(ev) + "\n"); } catch {}
+          ledgerEvent(ev);
           r._rtAcc = null;
         }
       }
@@ -199,7 +205,7 @@ function createHealthMonitor(opts) {
               paths: [lv.proc_local ? "local" : null, lv.proc_stream ? "stream" : null].filter(Boolean).join("+"),
               aux: a.auxN > 0 ? { outLufs: d1(a.auxOutSum / a.auxN), rideMaxDb: d1(a.auxMaxRide), limiterMaxGrDb: d1(a.auxMaxGr), samples: a.auxN } : null,
             };
-            try { if (jsonlPath) fs.appendFileSync(jsonlPath, JSON.stringify(ev) + "\n"); } catch {}
+            ledgerEvent(ev);
           }
           r._procAcc = null;
         }
@@ -235,7 +241,7 @@ function createHealthMonitor(opts) {
       r.lastRefusal = { deck: (m && m.deck) || null, title: (m && m.title) || "", filePath: (m && m.filePath) || "",
                         kind: (m && m.kind) || "refused", error: (m && m.error) || "", at: iso(t) };
       const ev = { ts: iso(t), type: "play-refused", stationUuid: r.uuid, stationName: r.name, stationId, ...r.lastRefusal };
-      try { if (jsonlPath) fs.appendFileSync(jsonlPath, JSON.stringify(ev) + "\n"); } catch {}
+      ledgerEvent(ev);
     } catch {}
   }
   function notePlayStart(stationId, title, artist, durationMs) {
@@ -256,7 +262,7 @@ function createHealthMonitor(opts) {
       const ev = { ts: iso(t), type: "jingle", stationUuid: r.uuid, stationName: r.name, state,
         deck: (m.deck || null), title: (m.title || null), categoryId: (m.categoryId ?? null), contentClass: (m.contentClass || "JIN"),
         leadInSec: (m.leadInSec ?? null) };
-      try { if (jsonlPath) fs.appendFileSync(jsonlPath, JSON.stringify(ev) + "\n"); } catch {}
+      ledgerEvent(ev);
     } catch {}
   }
   function noteEnginePid(pid) {
@@ -344,7 +350,7 @@ function createHealthMonitor(opts) {
   // JSONL (Iris feed) — RAW transition, full fidelity.
   function logJsonl(r, prevLevel, t) {
     const ev = { ts: iso(t), stationUuid: r.uuid, stationName: r.name, level: r.level, prevLevel, reason: r.reason, metrics: _metrics(r) };
-    try { if (jsonlPath) fs.appendFileSync(jsonlPath, JSON.stringify(ev) + "\n"); } catch {}
+    ledgerEvent(ev);
   }
   // UI event ring — DEBOUNCED (display) transition, so the on-screen feed doesn't flap on sub-5s blips.
   function pushRecent(r, prevLevel, t) {

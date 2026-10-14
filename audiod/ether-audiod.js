@@ -338,7 +338,9 @@ const bladeDo = (stationId, fn) => { try { const b = getBlade(stationId); if (b)
 const streams = new Map(); // stationId → StreamSupervisor
 function getStream(stationId) {
   let s = streams.get(stationId);
-  if (!s) { s = new StreamSupervisor(stationId, () => { try { return A.audioGetProgramBusPort(stationId); } catch { return 0; } }, (st) => broadcast({ event: "stream", ...st })); streams.set(stationId, s); }
+  // The 4th argument re-reads the station's saved Icecast password on every (re)connect (audiod/stream.js withPassword).
+  const readPassword = () => { try { const r = getDb().prepare("SELECT icecast_password AS pw FROM stations WHERE id = ?").get(stationId); return r && r.pw ? String(r.pw) : null; } catch { return null; } };
+  if (!s) { s = new StreamSupervisor(stationId, () => { try { return A.audioGetProgramBusPort(stationId); } catch { return 0; } }, (st) => broadcast({ event: "stream", ...st }), readPassword); streams.set(stationId, s); }
   return s;
 }
 
@@ -650,6 +652,10 @@ const handlers = {
   // app's silent-wedge watchdog uses this to tell a real output death (callback stopped) from a
   // levels false-positive (callback still firing) before reloading the whole daemon.
   lastCallbackMs:     (m) => A.audioLastCallbackMs(m.stationId),
+  // THE AGE MEASURED HERE, ON THE ENGINE'S OWN CLOCK (2026-10-13; docs/air-machine-stalls-plan-2026-10-13.md §5). main
+  // used to subtract the stamp from ITS clock after the answer arrived, so a main process stuck 3 s made a healthy output
+  // look 3 s stale and reopened it on air. stampMs lets main ask twice and see the callback move.
+  callbackAge:        (m) => { const stampMs = Number(A.audioLastCallbackMs(m.stationId)) || 0; return { stampMs, ageMs: stampMs > 0 ? Math.max(0, Date.now() - stampMs) : null }; },
   // Per-station output recovery (DESIGN-TRUTH §2): reopen ONLY this station's cpal stream.
   reopenOutput:       (m) => A.audioReopenOutput(m.stationId),
 

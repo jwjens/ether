@@ -306,7 +306,9 @@ class SyncScheduler {
       // the one the engine just acted on, not one a second reader fetched separately.
       try {
         let pending = null;
-        try { pending = this._db.prepare("SELECT COUNT(*) n FROM mutations WHERE sync_status = 'pending'").get()?.n ?? null; } catch (_) {}
+        // What the push CAN send (the partial index — cheap), not every pending row (a full walk of the queue on main
+        // every tick: the ovowforestmusic stalls, 2026-10-13).
+        try { pending = this._engine && typeof this._engine.pendingPushableCount === 'function' ? this._engine.pendingPushableCount() : null; } catch (_) {}
         this._broadcast('sync:status', {
           pending,
           lastSyncAt: this._stats.lastSyncAt,

@@ -209,6 +209,20 @@ function _profileData(...segments) {
   return full;
 }
 
+// THE ONE HEALTH LOG WRITER (2026-10-13, docs/air-machine-stalls-plan-2026-10-13.md §3): every health-events.jsonl line
+// from main goes through here — queued and written in the background, rotated by size (install_config_kv
+// health_log_max_mb / health_log_keep), old archives deleted after health_log_archive_days. Never appendFileSync on main.
+const HealthLedger = require("./health-ledger");
+let _healthLogSettings = { maxMb: null, keep: null, archiveDays: null };
+function _refreshHealthLogSettings() { try { if (db && db.open) _healthLogSettings = HealthLedger.readSettings(db); } catch {} return _healthLogSettings; }
+const _ledger = HealthLedger.createLedger({
+  dir: () => P.profileDir(P.activeKey()),
+  settings: () => _healthLogSettings,
+  onError: (e) => { try { console.error("[health-log]", e && e.message); } catch {} },
+});
+function _ledgerAppend(obj) { _ledger.append(obj); }
+app.on("will-quit", () => { try { _ledger.drainSync(); } catch {} });
+
 // Stop leaving a Roaming\openair folder behind: store this app's userData under an "Ether" folder
 // instead of the legacy "openair" app-name default. We redirect the userData PATH only (not the
 // Electron app name) so the updater, single-instance lock, and watchdog identity are untouched.
@@ -815,8 +829,7 @@ function _publishDaemonVersion(next) {
   try { sendToAllWindows("audio:daemon-version", next); } catch {}
   if (!changed) return;                       // transition only — never a repeating event
   try {
-    require("fs").appendFileSync(_profileData("health-events.jsonl"),
-      JSON.stringify({ t: new Date().toISOString(), kind: "daemon-version", ...next }) + "\n");
+    _ledgerAppend({ t: new Date().toISOString(), kind: "daemon-version", ...next });
   } catch {}
 }
 async function checkStaleDaemon() {
@@ -900,17 +913,39 @@ const WedgeJudge = require("./wedge-judge");
 function startAudioLivenessWatchdog() {
   if (_audioWatchdogTimer) return;
   const REOPEN_COOLDOWN_MS = 30000;   // per-station: don't re-reopen a still-recovering card in a tight loop
+  const WATCHDOG_MS = 2000;
+  let prevTickAt = 0, busy = false;
   _audioWatchdogTimer = setInterval(async () => {
+    if (busy) { prevTickAt = Date.now(); return; }   // a round still re-checking is not overlapped (and is not "late")
+    busy = true;
     try {
       if (!audiodClient.isConnected()) return;
+      // A LATE ROUND IS NOT EVIDENCE (2026-10-13): if this tick itself arrived > 2 s late, main was stuck — every age it
+      // would compute is inflated by that. Skip the round, say so, and start fresh next tick.
+      const tickAt = Date.now();
+      const late = WedgeJudge.tickWasLate(prevTickAt, tickAt, WATCHDOG_MS);
+      const lateMs = prevTickAt ? tickAt - prevTickAt - WATCHDOG_MS : 0;
+      prevTickAt = tickAt;
+      if (late) {
+        _wedgeAt.clear();
+        logStartup(`[AUDIO] watchdog round skipped — main was ${lateMs} ms late (a late main is never a reason to reopen)`);
+        _healthEvent("watchdog-late", { lateMs, message: `The output watchdog ran ${(lateMs / 1000).toFixed(1)} s late; that round was skipped (no reopen).` });
+        return;
+      }
       const sids = _automationIntent.size > 0 ? [..._automationIntent.keys()] : [1];
       for (const sid of sids) {
         // THE CALLBACK STAMP FIRST (electron/wedge-judge.js). OV 4.6.51: the output callback stopped, the engine kept
         // re-publishing the last meter frame, levels looked fresh, and the old first line here — "levels fresh →
         // skip" — suppressed a 19.5-minute dead air before the stamp was ever read. Levels are now consulted only
         // when the engine cannot report a stamp.
-        let cbStaleMs = null;
-        try { const cb = Number(await audiodClient.cmd("lastCallbackMs", { stationId: sid })); if (cb > 0) cbStaleMs = Date.now() - cb; } catch {}
+        // The age is measured by the ENGINE on its own clock (callbackAge). An engine without that command: the old way.
+        let cbStaleMs = null, stamp1 = 0;
+        try {
+          const a = await audiodClient.cmd("callbackAge", { stationId: sid });
+          if (a && a.stampMs > 0) { stamp1 = a.stampMs; cbStaleMs = a.ageMs; }
+        } catch {
+          try { const cb = Number(await audiodClient.cmd("lastCallbackMs", { stationId: sid })); if (cb > 0) { stamp1 = cb; cbStaleMs = Date.now() - cb; } } catch {}
+        }
         const levelsAgeMs = _stationAudioAgeMs(sid);
         let playing = false;
         if (cbStaleMs == null) {
@@ -932,6 +967,25 @@ function startAudioLivenessWatchdog() {
 
         // Escalate: recover THIS station only (reopen its own cpal stream). Never touches siblings.
         if (Date.now() - (_lastReopenAt.get(sid) || 0) < REOPEN_COOLDOWN_MS) continue;
+        // SECOND LOOK FIRST (2026-10-13): ask the engine again in 1 s. If its callback stamp moved, the card is producing
+        // audio — no reopen, and the ledger says why. Only a stamp that did not move (the callback really stopped) reopens.
+        if (stamp1 > 0) {
+          await new Promise((r) => setTimeout(r, WedgeJudge.RECHECK_MS));
+          let stamp2 = 0;
+          try { const a2 = await audiodClient.cmd("callbackAge", { stationId: sid }); stamp2 = (a2 && a2.stampMs) || 0; }
+          catch { try { stamp2 = Number(await audiodClient.cmd("lastCallbackMs", { stationId: sid })) || 0; } catch {} }
+          const second = WedgeJudge.recheck(stamp1, stamp2);
+          if (second !== "dead") {
+            _wedgeAt.delete(sid);
+            const why = second === "alive"
+              ? `output alive (callback moved ${stamp2 - stamp1} ms in ${WedgeJudge.RECHECK_MS} ms)`
+              : "engine did not answer the second look";
+            logStartup(`[AUDIO] station ${sid} NOT reopened — first look said ${v.reason}; ${why}`);
+            _healthEvent("reopen-avoided", { stationUuid: _stationUuidById(sid), firstLook: v.reason, secondLook: second,
+              message: `Station output not reopened: ${why}.` });
+            continue;
+          }
+        }
         _lastReopenAt.set(sid, Date.now());
         _wedgeAt.delete(sid);
         logStartup(`[AUDIO] REOPEN station ${sid} output — WEDGE: ${v.reason} (held ${wedgeMs}ms, cpal-stale ${cbStaleMs == null ? "unknown" : cbStaleMs + "ms"}, levels ${silentMs === Infinity ? "never" : silentMs + "ms"}, enginestate=${engineLive ? "live(lying)" : (_daemonEngineState.get(sid) || "?")}; on-air=[${[...sids].join(",")}])`);
@@ -939,8 +993,8 @@ function startAudioLivenessWatchdog() {
         catch (e) { logStartup(`[AUDIO] reopenOutput station ${sid} failed: ${e && e.message}`); }
         // no break: each station is judged and recovered independently
       }
-    } catch {}
-  }, 2000);
+    } catch {} finally { busy = false; }
+  }, WATCHDOG_MS);
 }
 
 // VU levels station-scoping (v4.5 levels-slice; docs/vu-meter-crosstalk-2026-07-08.md). Resolve the
@@ -1015,6 +1069,7 @@ if (AUDIO_DAEMON_DESIRED) {
   };
   _health = createHealthMonitor({
     logDir: _healthLogDir,
+    appendEvent: _ledgerAppend,
     broadcast: sendToAllWindows,
     ping: _healthPing,
     drainRate: (id) => { const d = _healthReadTail().drain[String(id)]; return typeof d === "number" ? d : null; },
@@ -1098,7 +1153,7 @@ if (AUDIO_DAEMON_DESIRED) {
       try {
         if (typeof kind !== "string" || !kind) return false;
         const row = { t: new Date().toISOString(), kind, ...(data && typeof data === "object" ? data : {}) };
-        require("fs").appendFileSync(_profileData("health-events.jsonl"), JSON.stringify(row) + "\n");
+        _ledgerAppend(row);
         return true;
       } catch { return false; }   // the ledger must never be able to break its caller
     });
@@ -1130,6 +1185,7 @@ if (AUDIO_DAEMON_DESIRED) {
       // The health ledger is ACCOUNT state (it records this account's library), so it lives in the
       // profile alongside the database it describes — not in machine-level Roaming.
       userDataDir: P.profileDir(P.activeKey()),
+      appendEvent: _ledgerAppend,
     };
     // main keeps an instance for the module-level noteEvent bridge (cheap ledger appends) — it never sweeps.
     require("./library-health").createLibraryHealth(_lhOpts);
@@ -1244,8 +1300,7 @@ if (AUDIO_DAEMON_DESIRED) {
         // OWN categories (2026-07-26) — surfaced loudly here instead of silently borrowing another
         // station's songs. Appended to the honest health ledger so the law-bending is visible, never silent.
         try {
-          require('fs').appendFileSync(_profileData('health-events.jsonl'),
-            JSON.stringify({ t: new Date().toISOString(), kind: m.event, ...m }) + "\n");
+          _ledgerAppend({ t: new Date().toISOString(), kind: m.event, ...m });
         } catch { /* a lost ledger line is cosmetic */ }
       } else if (m.event === "logreader-shadow") {
         // Log-Reader Flip Phase 3 (§2.7): a go-live boundary — the daemon reports what the time-anchored
@@ -1826,6 +1881,8 @@ function bootStep(label, fn) {
     const ms = Date.now() - t0;
     bootReport.push({ label, ms, ok: true });
     if (ms > 150) console.log(`[BOOT] ${label} — ${ms}ms`);
+    // A startup step that holds main over 1 s is named in the health log (2026-10-13, the ovowforestmusic 68 s freeze).
+    if (ms > 1000) { try { _healthEvent("startup-slow-step", { label, ms, message: `Startup step "${label}" took ${(ms / 1000).toFixed(1)} s on the main thread` }); } catch {} }
     return out;
   } catch (e) {
     bootReport.push({ label, ms: Date.now() - t0, ok: false, error: String((e && e.message) || e) });
@@ -1870,6 +1927,13 @@ function initDb() {
   bootStep("Arming duckers…", () => { try { armAllStationDuckers("boot"); } catch (e) { console.warn("[duck]", e.message); } });
   // Scheduled announcements fire whether or not any window is open.
   bootStep("Starting announcement scheduler…", () => { try { startAnnouncementScheduler(); } catch (e) { console.warn("[announce]", e.message); } });
+  // The heavy startup work (indexes, the songs fix-up) — on its own thread, once the window is on screen.
+  _scheduleHeavyWork();
+  // The health log's size settings (this machine's, install_config_kv): the starting values written once, then read.
+  bootStep("Health log settings…", () => {
+    try { const w = HealthLedger.seedSettings(db); if (w.length) logStartup(`[health-log] wrote the starting settings (${w.join(", ")})`); } catch (e) { logStartup("[health-log] settings not written: " + (e && e.message)); }
+    _refreshHealthLogSettings();
+  });
   setTimeout(() => { try { console.log("[DB] Song count:", db.prepare("SELECT COUNT(*) as c FROM songs").get()); } catch(e) { console.log("[DB] Song count error:", e.message); } }, 500);
 }
 
@@ -2270,7 +2334,155 @@ function runMigrationChain(db) {
   }
 }
 
+// ── "RUN SYNC CLEANUP NOW" (Jeff, 2026-10-13, option B; docs/air-machine-stalls-plan-2026-10-13.md §1) ──────────────
+// The automatic cleanup waits for 15 s of silence, which an air machine never has (ovowforestmusic: 241,064 stuck
+// entries). The button runs the SAME cleanup now, on its own thread and connection: backup first (counted; a short copy
+// deletes nothing), small time-sized batches, counts before and after, a plain-words result on the row and in the health
+// log. One cleanup at a time: the automatic one only gives way while it is still waiting for silence (it has touched
+// nothing then).
+let _syncCleanup = { running: false, kind: null, worker: null, waitingForSilence: false, startedAt: null, progress: null, last: null };
+function _syncCleanupView() {
+  const c = _syncCleanup;
+  return { running: c.running, kind: c.kind, waitingForSilence: c.waitingForSilence, startedAt: c.startedAt, progress: c.progress, last: c.last,
+           canRunNow: !c.running || (c.kind === "auto" && c.waitingForSilence) };
+}
+function _syncCleanupBroadcast() { try { sendToAllWindows("sync-cleanup:status", _syncCleanupView()); } catch {} }
+function _syncCleanupWorker(workerData) {
+  const { Worker } = require("worker_threads");
+  return new Worker(path.join(__dirname, "sync", "purge-excluded-queue-worker.js"), { workerData: { dbPath: getDbPath(), ...workerData } });
+}
+async function _syncCleanupRunNow() {
+  const c = _syncCleanup;
+  if (c.running && !(c.kind === "auto" && c.waitingForSilence)) return { ok: false, reason: "A sync cleanup is already running." };
+  if (c.running && c.kind === "auto" && c.worker) {
+    logStartup("[sync-queue] the automatic cleanup was waiting for silence — stopped; running now (button)");
+    const old = c.worker;
+    _syncCleanup = { ..._syncCleanup, worker: null };
+    try { await old.terminate(); } catch {}
+  }
+  const dir = _profileData("backups");
+  fs.mkdirSync(dir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..*$/, "").replace("T", "-");
+  const backupPath = path.join(dir, `sync-queue-removed-${stamp}.db`);
+  const w = _syncCleanupWorker({ mode: "now", backupPath });
+  _syncCleanup = { ..._syncCleanup, running: true, kind: "now", worker: w, waitingForSilence: false, startedAt: Date.now(), progress: null };
+  logStartup(`[sync-queue] RUN NOW (button) — backup to ${backupPath}`);
+  _syncCleanupBroadcast();
+  let ended = false;
+  const end = (last) => {
+    if (ended) return; ended = true;
+    _syncCleanup = { ..._syncCleanup, running: false, kind: null, worker: null, progress: null, last };
+    logStartup(`[sync-queue] ${last.message}`);
+    _healthEvent(last.ok ? "sync-queue-cleanup-now" : "sync-queue-cleanup-now-error", { ...(last.report || {}), error: last.error || null, message: last.message });
+    _syncCleanupBroadcast();
+  };
+  w.on("message", (m) => {
+    if (!m) return;
+    if (m.type === "log") logStartup(m.msg);
+    else if (m.type === "progress") { _syncCleanup.progress = { phase: m.phase, done: m.done, of: m.of }; _syncCleanupBroadcast(); }
+    else if (m.type === "done") end({ at: Date.now(), ok: true, report: m.report, message: require("./sync/purge-excluded-queue").plainResult(m.report) });
+    else if (m.type === "error") end({ at: Date.now(), ok: false, error: m.error, message: `Sync cleanup stopped: ${m.error}. Nothing was removed past the last finished batch; the backup keeps what was copied. Run it again to finish.` });
+  });
+  w.on("error", (e) => end({ at: Date.now(), ok: false, error: e && e.message, message: `Sync cleanup stopped: ${e && e.message}.` }));
+  w.on("exit", (code) => end({ at: Date.now(), ok: false, error: `exit ${code}`, message: `Sync cleanup stopped before it finished (exit ${code}). Run it again to finish.` }));
+  return { ok: true, started: true, backupPath };
+}
+try {
+  ipcMain.handle("sync-cleanup:status", () => _syncCleanupView());
+  ipcMain.handle("sync-cleanup:run-now", () => _syncCleanupRunNow().catch((e) => ({ ok: false, reason: e && e.message })));
+  // The row's count, read on the worker's own connection — never a COUNT of the whole queue on main.
+  ipcMain.handle("sync-cleanup:count", () => new Promise((resolve) => {
+    let w;
+    try { w = _syncCleanupWorker({ mode: "count" }); } catch (e) { resolve({ ok: false, reason: e && e.message }); return; }
+    const t = setTimeout(() => { try { w.terminate(); } catch {} resolve({ ok: false, reason: "counting took over 60 s" }); }, 60000);
+    w.on("message", (m) => { if (m && m.type === "counts") { clearTimeout(t); resolve({ ok: true, counts: m.counts }); } else if (m && m.type === "error") { clearTimeout(t); resolve({ ok: false, reason: m.error }); } });
+    w.on("error", (e) => { clearTimeout(t); resolve({ ok: false, reason: e && e.message }); });
+  }));
+} catch (e) { console.error("[sync-queue] cleanup ipc registration failed:", e.message); }
+
+// ── THE HEAVY STARTUP WORK, AFTER THE WINDOW (Jeff, 2026-10-13; electron/startup-heavy.js) ──────────────────────────
+// Waits for the main window to be visible (at most 60 s), then runs the steps on a worker thread with its own connection.
+// A MISSING index is built only after 15 s of silence (never on air); until then the push uses the plain query, or waits
+// if the queue is huge (sync-engine PUSH_WAIT_OVER). Every step's time goes to the
+// startup log, the boot report and the health log; the Health Monitor can read the last run (startup:heavy-status).
+let _heavyStatus = { state: "not started", steps: [], startedAt: null, doneAt: null, error: null };
+let _heavyRunning = false;
+function _scheduleHeavyWork() {
+  if (_heavyRunning) return;
+  _heavyRunning = true;
+  const t0 = Date.now();
+  const tryStart = () => {
+    const shown = (() => { try { return mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible(); } catch { return false; } })();
+    if (!shown && Date.now() - t0 < 60000) { setTimeout(tryStart, 500); return; }
+    _heavyStatus = { state: "running", steps: [], startedAt: Date.now(), doneAt: null, error: null, waitedForWindowMs: Date.now() - t0 };
+    logStartup(`[startup] heavy work starting in the background (${shown ? "window on screen" : "no window after 60 s"}; waited ${Date.now() - t0} ms)`);
+    const finish = (error) => {
+      _heavyRunning = false;
+      _heavyStatus = { ..._heavyStatus, state: error ? "failed" : "done", doneAt: Date.now(), error: error || null };
+      const totalMs = _heavyStatus.doneAt - _heavyStatus.startedAt;
+      const msg = error ? `Startup background work failed: ${error}` : `Startup background work done in ${(totalMs / 1000).toFixed(1)} s`;
+      logStartup(`[startup] ${msg}`);
+      _healthEvent("startup-heavy", { totalMs, steps: _heavyStatus.steps, error: error || null, message: msg });
+      try { sendToAllWindows("startup:heavy-status", _heavyStatus); } catch {}
+    };
+    try {
+      const { Worker } = require("worker_threads");
+      // The worker builds a MISSING index only after 15 s with nothing on air (the same gate as the automatic sync
+      // cleanup): a build holds SQLite's write lock throughout, and the engine's writes would fail behind it.
+      const onAirFlag = new SharedArrayBuffer(4), flag = new Int32Array(onAirFlag);
+      const setFlag = () => { const v = anyDeckPlaying() ? 1 : 0; if (Atomics.load(flag, 0) !== v) { Atomics.store(flag, 0, v); Atomics.notify(flag, 0); } };
+      setFlag();
+      const flagTimer = setInterval(setFlag, 500);
+      const w = new Worker(path.join(__dirname, "startup-heavy-worker.js"), { workerData: { dbPath: getDbPath(), onAirFlag } });
+      w.on("exit", () => clearInterval(flagTimer));
+      let ended = false;
+      w.on("message", (m) => {
+        if (!m) return;
+        if (m.type === "log") logStartup(m.msg);
+        else if (m.type === "step") {
+          _heavyStatus.steps.push({ name: m.name, ms: m.ms, waitedMs: m.waitedMs || 0, skipped: m.skipped || null, error: m.error });
+          try { bootReport.push({ label: `Background: ${m.name}`, ms: m.ms, ok: !m.error, error: m.error || undefined }); } catch {}
+          logStartup(`[startup] background ${m.name}: ${m.skipped ? m.skipped : `${m.ms} ms`}${m.waitedMs ? ` (waited ${Math.round(m.waitedMs / 1000)} s for silence)` : ""}${m.error ? ` ✗ ${m.error}` : ""}`);
+        } else if (m.type === "done") { ended = true; finish(null); }
+        else if (m.type === "error") { ended = true; finish(m.error); }
+      });
+      w.on("error", (e) => { if (!ended) { ended = true; finish(e && e.message); } });
+      w.on("exit", (code) => { if (!ended) { ended = true; finish(`worker exited (${code})`); } });
+    } catch (e) { finish(e && e.message); }
+  };
+  setTimeout(tryStart, 0);
+}
+try { ipcMain.handle("startup:heavy-status", () => _heavyStatus); } catch {}
+
+// THE SENSE ON MIGRATIONS (2026-10-13): ovowforestmusic spent ~12 s in runMigrations and nothing said where. Every SQL
+// statement the migrations run (exec, and run/get/all of a prepared one) that takes over 200 ms is named — in the startup
+// log and the health log — so the first launch of a build tells which step is slow on that machine's data.
 function runMigrations() {
+  const slow = [];
+  const t0 = Date.now();
+  const origExec = db.exec, origPrepare = db.prepare;
+  const timed = (sql, fn) => { const t = Date.now(); try { return fn(); } finally { const ms = Date.now() - t; if (ms > 200) slow.push({ ms, sql: String(sql).replace(/\s+/g, " ").trim().slice(0, 160) }); } };
+  try {
+    db.exec = function (sql) { return timed(sql, () => origExec.call(this, sql)); };
+    db.prepare = function (sql) {
+      const st = origPrepare.call(this, sql);
+      for (const m of ["run", "get", "all"]) { const f = st[m]; try { st[m] = function (...a) { return timed(sql, () => f.apply(st, a)); }; } catch { /* leave it untimed */ } }
+      return st;
+    };
+  } catch { /* untimed */ }
+  try { return _runMigrationsInner(); }
+  finally {
+    try { db.exec = origExec; db.prepare = origPrepare; delete db.exec; delete db.prepare; } catch {}
+    const totalMs = Date.now() - t0;
+    if (slow.length || totalMs > 1000) {
+      slow.sort((a, b) => b.ms - a.ms);
+      logStartup(`[startup] migrations took ${totalMs} ms; slow statements: ${slow.length ? slow.map(x => `${x.ms} ms ${x.sql}`).join(" | ") : "none over 200 ms"}`);
+      _healthEvent("startup-migrations", { totalMs, slow: slow.slice(0, 10), message: `Database update at startup took ${(totalMs / 1000).toFixed(1)} s` });
+    }
+  }
+}
+
+function _runMigrationsInner() {
   const schemaVersionExists = db.prepare(
     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
   ).get();
@@ -2332,19 +2544,20 @@ function runMigrations() {
   // 52-candidate jingle pool on a 36,900-row play_log, which is what froze Generate for minutes
   // (docs/generate-freeze-and-calendar-history-2026-08-06.md §8). With it: 0.16ms. Also serves the
   // daemon's loggen LRP ordering and buildRestMaps. Cheap to build (~80ms), idempotent.
-  try { db.exec("CREATE INDEX IF NOT EXISTS idx_play_log_file_station ON play_log(file_path, station_id, played_at)"); } catch {}
+  // → BUILT IN THE BACKGROUND after the window is up (electron/startup-heavy.js, 2026-10-13).
 
   // generated_schedule(station_id, scheduled_at) — the index the runway needs (electron/runway.js: hours filled in the
   // next 30 days, and the last scheduled time). Without it each call walked every one of a station's rows through
   // idx_gensched_playhead: 42–437 ms per station, ~0.8 s per health frame and per runway sample on OVEVENTS' 266,845
   // rows; with it 0.1–8.7 ms. Built once (557 ms on that database), idempotent.
   // docs/perf-pass-round2-2026-10-12.md §2.
-  try { db.exec("CREATE INDEX IF NOT EXISTS idx_gensched_station_at ON generated_schedule(station_id, scheduled_at)"); } catch {}
+  // → BUILT IN THE BACKGROUND after the window is up (electron/startup-heavy.js, 2026-10-13).
 
   // The sync push's partial index — only the pending mutations a push can send (electron/sync/sync-engine.js
   // ensurePushPendingIndex). Without it every 10 s push tick walked 217,002 never-sendable generated_schedule rows on
   // OVEVENTS: ~300 ms of main per tick for 0 rows. docs/perf-pass-round2-2026-10-12.md §1.
-  try { require("./sync/sync-engine").ensurePushPendingIndex(db); } catch (e) { console.error("[sync] push index:", e.message); }
+  // → BUILT IN THE BACKGROUND after the window is up (electron/startup-heavy.js, 2026-10-13); the push waits for it.
+  //   ovowforestmusic: this line alone held main ~18 s at startup while the window waited.
 
   // Add any missing columns via ALTER TABLE (safe to re-run)
   // NOTE: these target `songs`, which is and stays a real TABLE. It was briefly a view (4.4.151-156)
@@ -2357,7 +2570,7 @@ function runMigrations() {
   // default (only hours 0-6), and NULL (e.g. from a cloud-restored/synced library) means eligible
   // for NO hours at all — both make the scheduler generate nothing during the day. Normalize both
   // to 16777215 (all 24 hours) so Generate always has candidates. See _generateDayRows.
-  db.exec("UPDATE songs SET daypart_mask = 16777215 WHERE daypart_mask = 127 OR daypart_mask IS NULL");
+  // (The daypart_mask 127/NULL → all-hours fix-up runs in the background after the window: electron/startup-heavy.js.)
   alterSafe("ALTER TABLE songs ADD COLUMN daypart_mask INTEGER DEFAULT 127");
   alterSafe("ALTER TABLE songs ADD COLUMN no_repeat_hours INTEGER DEFAULT 2");
   alterSafe("ALTER TABLE songs ADD COLUMN rotation_status TEXT DEFAULT 'active'");
@@ -3505,11 +3718,19 @@ app.whenReady().then(() => {
       setFlag();
       _onAirFlagHook = setFlag;
       const flagTimer = setInterval(setFlag, 500);
+      if (_syncCleanup.running) { logStartup("[sync-queue] automatic cleanup not started — a cleanup is already running"); clearInterval(flagTimer); _onAirFlagHook = null; return; }
       const w = new Worker(path.join(__dirname, "sync", "purge-excluded-queue-worker.js"), { workerData: { dbPath: getDbPath(), backupPath, onAirFlag } });
-      w.on("exit", () => { clearInterval(flagTimer); _onAirFlagHook = null; });
+      // The shared lock: the button and this run never overlap. While this one is only WAITING FOR SILENCE (it has not
+      // touched the database), the button may stop it and run now (_syncCleanupRunNow).
+      _syncCleanup = { ..._syncCleanup, running: true, kind: "auto", worker: w, waitingForSilence: anyDeckPlaying(), startedAt: Date.now(), progress: null };
+      w.on("exit", () => { clearInterval(flagTimer); _onAirFlagHook = null; if (_syncCleanup.worker === w) _syncCleanup = { ..._syncCleanup, running: false, kind: null, worker: null, waitingForSilence: false }; _syncCleanupBroadcast(); });
       w.on("message", (m) => {
         if (!m) return;
-        if (m.type === "log") logStartup(m.msg);
+        if (m.type === "log") {
+          logStartup(m.msg);
+          if (/paused — something is playing/.test(m.msg)) _syncCleanup.waitingForSilence = true;
+          else if (/resumed — nothing on air|\[sync-queue\] before:/.test(m.msg)) _syncCleanup.waitingForSilence = false;
+        }
         else if (m.type === "error") { logStartup(`[sync-queue] one-time cleanup FAILED: ${m.error} — nothing removed past the last finished batch; retries next launch`); _healthEvent("sync-queue-purge-error", { error: m.error, message: `The one-time sync-queue cleanup failed: ${m.error}` }); }
         else if (m.type === "done" && !m.already) {
           const r = m.report || {};
@@ -3518,6 +3739,7 @@ app.whenReady().then(() => {
             : `Sync queue cleaned: ${r.removed} queued row(s) of tables that never sync removed (backup: ${r.backupPath}, ${r.backupRows} rows). Pending ${b.allPending} → ${a.allPending}; all rows ${b.allRows} → ${a.allRows}; ${r.ms} ms.`;
           logStartup(`[sync-queue] ${msg}`);
           _healthEvent("sync-queue-excluded-purged", { ...r, message: msg });
+          _syncCleanup.last = { at: Date.now(), ok: true, report: r, message: require("./sync/purge-excluded-queue").plainResult(r) };
         }
       });
       w.on("error", (e) => logStartup(`[sync-queue] cleanup worker error: ${e && e.message}`));
@@ -5326,13 +5548,48 @@ function scheduleForDate(stationId, dateStr) {
   catch { return null; }
 }
 
+// TODAY'S LIST, KEPT IN MEMORY (2026-10-13; docs/air-machine-stalls-plan-2026-10-13.md §4). The tick runs 4× a second and
+// read every station's schedule from the database each time — ~240 reads a minute on the process that carries the board
+// (ovowforestmusic: 100–380 ms main stalls traced to it). Now each station's list for a date is read once and re-read only
+// when the DATABASE CHANGED (a write on this connection — any IPC handler, a sync pull, a fire's stamp — moves
+// total_changes(); a write by another connection — the engine, a worker — moves PRAGMA data_version; neither reads a
+// table), when the date changes, or after 60 s as a safety net. Every writer is covered without naming them, so an edit
+// can never be missed by the to-the-second match. A read over 50 ms goes to the health log.
+const _annDayCache = new Map();   // stationId -> { date, rows, sig, at }
+let _annStations = null;          // { ids, sig, at }
+let _annSigStmts = null;
+function _annDbSignature() {
+  try {
+    if (!_annSigStmts) _annSigStmts = { tc: db.prepare("SELECT total_changes() AS n"), dv: db.prepare("PRAGMA data_version") };
+    return `${_annSigStmts.tc.get().n}:${_annSigStmts.dv.pluck().get()}`;
+  } catch { _annSigStmts = null; return null; }
+}
+function scheduleForDateCached(stationId, dateStr, sig) {
+  const c = _annDayCache.get(stationId);
+  if (c && c.date === dateStr && sig != null && c.sig === sig && Date.now() - c.at < 60000) return c.rows;
+  const t0 = Date.now();
+  const rows = scheduleForDate(stationId, dateStr);
+  const ms = Date.now() - t0;
+  if (ms > 50) { try { _healthEvent("slow-main-read", { what: "announcement schedule", stationUuid: _stationUuidById(stationId), ms, message: `Reading today's announcements took ${ms} ms on the main thread` }); } catch {} }
+  if (rows === null) { _annDayCache.delete(stationId); return null; }
+  _annDayCache.set(stationId, { date: dateStr, rows, sig, at: Date.now() });
+  return rows;
+}
+
 async function announceTick() {
   let stations = [];
   // A cached statement must never become a PERMANENT failure. If the handle it was compiled against
   // ever goes away, drop the cache so the next tick re-prepares — the scheduler heals itself instead
   // of going quiet for the rest of the session. Same swallow-and-carry-on as before otherwise.
-  try { stations = annStmts().stations.all().map(r => r.id); }
-  catch { _annStmts = null; return; }
+  // The station list is kept too (re-read every 60 s, or when a write moved the signature) — the same rule as the lists.
+  try {
+    const sig0 = _annDbSignature();
+    if (!_annStations || _annStations.sig !== sig0 || sig0 == null || Date.now() - _annStations.at > 60000) {
+      _annStations = { ids: annStmts().stations.all().map(r => r.id), sig: sig0, at: Date.now() };
+    }
+    stations = _annStations.ids;
+  }
+  catch { _annStmts = null; _annStations = null; return; }
   const now = new Date();
   const hhmmss = String(now.getHours()).padStart(2, '0') + ':' +
                  String(now.getMinutes()).padStart(2, '0') + ':' +
@@ -5348,6 +5605,7 @@ async function announceTick() {
   // against. Local, like dateStr above: a weekday is a property of the calendar date, not of UTC.
   const nowDow = now.getDay();
 
+  const sig = _annDbSignature();   // once per tick: has anything been written since the lists were read?
   for (const stationId of stations) {
     // v47 — the tick iterates SCHEDULE ENTRIES, not announcements. What changed is WHAT IS WALKED;
     // the match, the guard and the fire path below are the same code they were before.
@@ -5356,7 +5614,7 @@ async function announceTick() {
     // is worse than not firing. A missing table means the v47 migration has not applied; the chain
     // retries it on every launch, so the recovery is a relaunch and it is automatic. The absence is
     // logged loudly (annStmts) and the panel says so rather than looking empty-but-fine.
-    const rows = scheduleForDate(stationId, dateStr);
+    const rows = scheduleForDateCached(stationId, dateStr, sig);
     if (rows === null) continue;
 
     // TODAY'S closing time for THIS station, resolved byDate -> byWeekday -> default. Read once per
@@ -10623,8 +10881,7 @@ function _genEmit(payload) {
 // the thing being observed.
 function _healthEvent(kind, data) {
   try {
-    require('fs').appendFileSync(_profileData('health-events.jsonl'),
-      JSON.stringify({ t: new Date().toISOString(), kind, ...(data && typeof data === 'object' ? data : {}) }) + "\n");
+    _ledgerAppend({ t: new Date().toISOString(), kind, ...(data && typeof data === 'object' ? data : {}) });
   } catch {}
 }
 function _noteGenerateTiming(stationId, ctx, days) {
@@ -10633,10 +10890,9 @@ function _noteGenerateTiming(stationId, ctx, days) {
     if (!ms.length) return;
     const s = [...ms].sort((a, b) => a - b);
     const at = (p) => s[Math.min(s.length - 1, Math.floor(s.length * p))];
-    require('fs').appendFileSync(_profileData('health-events.jsonl'),
-      JSON.stringify({ t: new Date().toISOString(), kind: 'generate-timing', stationId, days,
-                       hours: s.length, p50: at(0.50), p95: at(0.95), max: s[s.length - 1],
-                       totalMs: s.reduce((a, b) => a + b, 0) }) + "\n");
+    _ledgerAppend({ t: new Date().toISOString(), kind: 'generate-timing', stationId, days,
+                    hours: s.length, p50: at(0.50), p95: at(0.95), max: s[s.length - 1],
+                    totalMs: s.reduce((a, b) => a + b, 0) });
   } catch { /* observation must never break Generate */ }
 }
 // Drive ONE day an hour at a time, yielding to the event loop between hours. The yield is the whole
@@ -11342,6 +11598,19 @@ try {
     }
   });
 } catch (e) { console.error('[runway-history] registration failed:', e.message); }
+
+// health-log:get / health-log:set — Preferences → Multi-Machine Sync → "Health log": the file's size now, and the three
+// settings (rotate at MB, keep N files, delete archives after N days). This machine's values (install_config_kv).
+try {
+  ipcMain.handle("health-log:get", () => {
+    try { return { ok: true, settings: _refreshHealthLogSettings(), start: HealthLedger.SETTINGS_START, range: HealthLedger.RANGE, status: _ledger.status() }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle("health-log:set", (_e, k, value) => {
+    try { const r = HealthLedger.writeSetting(db, String(k), value); _refreshHealthLogSettings(); return r; }
+    catch (e) { return { ok: false, reason: e.message }; }
+  });
+} catch (e) { console.error('[health-log] ipc registration failed:', e.message); }
 
 // health:recent-events — READ BACK the honest ledger.
 //
@@ -12234,6 +12503,14 @@ function _streamKillCurrent(stationId) {
 function _spawnStream(stationId, args, label) {
   _streamKillCurrent(stationId);
   const state = _getStreamState(stationId);
+  // The in-process fallback re-reads the saved password on every (re)connect too (audiod/stream.js withPassword).
+  try {
+    const pw = db.prepare("SELECT icecast_password AS pw FROM stations WHERE id = ?").get(stationId)?.pw;
+    const { withPassword } = require("../audiod/stream");
+    args = args.map((a) => (/^icecast:\/\//.test(String(a)) ? withPassword(a, pw) : a));
+    const u = args.find((a) => /^icecast:\/\//.test(String(a)));
+    if (u) state.url = u;
+  } catch { /* keep the args it was given */ }
   const { spawn } = require('child_process');
   const bin = ffmpegBin || 'ffmpeg';
   console.log(`[stream/${stationId}] spawning ffmpeg: ${bin}`);

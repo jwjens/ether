@@ -41,4 +41,22 @@ function judge({ cbStaleMs, levelsAgeMs, playing, engineLive, wedgeMs }) {
 }
 const fmt = (ms) => (ms === Infinity || ms == null ? "never" : `${Math.round(ms)}ms`);
 
-module.exports = { judge, CB_STALE_MS, LEVELS_STALE_MS, ENGINE_LIVE_CEILING_MS };
+// ── NEVER REOPEN BECAUSE MAIN IS LATE (Jeff, 2026-10-13: "Never reopen an on-air output because the main process is late.
+// Check that the engine is still producing audio first.") ──────────────────────────────────────────────────────────────
+/** The watchdog's own tick arrived this much later than its interval → that round is not evidence; skip it. */
+const TICK_LATE_MS = 2000;
+/** Before any reopen the engine is asked again after this long; a callback stamp that moved = the card is alive. */
+const RECHECK_MS = 1000;
+/** true when the watchdog round itself ran late (main was stuck): skip judging this round. */
+function tickWasLate(prevTickAt, now, intervalMs) {
+  return prevTickAt > 0 && now - prevTickAt - intervalMs > TICK_LATE_MS;
+}
+/** The second look before a reopen. first/second are the engine's own stamps (epoch ms of the last callback).
+ *  "alive" when the stamp moved between the two asks (callbacks are running), "dead" when it did not, "unknown" when the
+ *  engine could not answer (then the reopen is NOT done this round — the next round asks again). */
+function recheck(firstStampMs, secondStampMs) {
+  if (!(firstStampMs > 0) || !(secondStampMs > 0)) return "unknown";
+  return secondStampMs > firstStampMs ? "alive" : "dead";
+}
+
+module.exports = { judge, CB_STALE_MS, LEVELS_STALE_MS, ENGINE_LIVE_CEILING_MS, TICK_LATE_MS, RECHECK_MS, tickWasLate, recheck };

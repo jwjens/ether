@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
+import { SyncCleanupRow, HealthLogRow } from "./SyncCleanupRows";
 import { getJukeboxPayouts, connectJukeboxPayouts, refreshJukeboxPayouts, setJukeboxDonationSettings, type JukeboxPayouts } from "../lib/ccData";
 const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 import { query, execute } from "../db/client";
@@ -1337,6 +1338,10 @@ function MultiMachineSyncSection() {
           )}
         </div>
       </div>
+
+      {/* Stuck sync entries + the health log (Jeff, 2026-10-13; docs/help-sync-cleanup.md). */}
+      <SyncCleanupRow />
+      <HealthLogRow />
 
       {/* Kept as EMERGENCY OVERRIDES, not the normal path — the loop is. They earn their place: if
           the timer is wedged or an operator needs a transfer to land before walking away from the
