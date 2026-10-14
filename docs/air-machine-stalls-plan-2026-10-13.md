@@ -185,3 +185,138 @@ Items 1–5 go into one installer after you approve this plan. The Rust engine i
 - The sync-cleanup and wedge-judge unit tests.
 - A startup timing receipt from this machine.
 - The full gate: `tsc` zero errors, leak-guard 13, `verify-packaged`.
+
+---
+
+## Jeff's GO (verbatim, 2026-10-13)
+
+> GO: build items 1–5 into one installer.
+> A: delete the archived health logs after 30 days (setting).
+> B: rotate at 50 MB, keep 5.
+> C: yes, include the re-read-password-on-reconnect change in this installer. No password change itself until I approve.
+> For item 1: test the on-air cleanup on a copy of ovowforestmusic-size data while simulating playout, and report the worst app write wait during it.
+> Also: 16e13166 is installed on ovowforestmusic (not yet on OVEVENTS). GO to deploy the server and Park page parts (lock, who/when, Park fader); Listen stays off. Then run test 4 against ovowforestmusic, since HalloVeen is on air from there.
+
+## Built (commit b343fe0)
+
+### Deployed (Jeff's GO)
+- **Backend:** `git push origin HEAD:refs/heads/main` from C:\ether-backend.
+  - 58e5c0d..eb61418 (f7d720e, db7cda1, eb61418). 130/130 tests passed before the push.
+  - The Listen env vars are unset, so `listenRelayConfigured()` is false and Listen stays off.
+- **Park page:** `npm run deploy` (C:\ether-park) → Pages deployment 7768525d.
+- **Receipt:** `GET /public/ops/halloween` now carries these fields, reported by ovowforestmusic:
+  - `locked: false`
+  - `last`: via park, 00:19:18Z
+  - `law`: option A
+  - `feel`: fine 10, wheel 0.5, arrow 0.5, fine arrow 0.1
+
+### Test data
+- **A copy of this machine's live database** (read-only online backup → scratchpad). 383,998 sync queue rows after adding
+  **241,064 pending generated_schedule entries** made from real generated_schedule rows (ovowforestmusic's count).
+- **Simulated playout:** two separate processes, like the engine and the app:
+  - "engine": a play_log insert every 250 ms.
+  - "app": a station_config_kv upsert every 100 ms.
+  - Each write is timed from start to commit, with busy_timeout 5 s (the app's and the engine's own).
+
+### Item 1 — on-air cleanup test (the real worker, mode "now", no silence gate)
+
+| | writes | p50 | p99 | **worst** | errors |
+|---|---|---|---|---|---|
+| app, during cleanup | 3,267 | 0.48 ms | 30.6 ms | **60 ms** | 0 |
+| engine, during cleanup | 1,370 | 1.17 ms | 32.6 ms | **55.5 ms** | 0 |
+| app, without cleanup | 181 | 0.30 ms | 7.4 ms | 16.2 ms | 0 |
+| engine, without cleanup | 76 | 0.96 ms | 16.7 ms | 16.7 ms | 0 |
+
+- **Removed** 241,064, backup 241,064 rows (verified count), 2,279 batches.
+- **Slowest:** batch 57 ms; checkpoint 161 ms (PASSIVE, which does not block writers).
+- **Took** 5 min 56 s on this machine's disk.
+- **Before:** 241,064 waiting / 383,998 total. **After:** 0 waiting / 142,934 total.
+- **Worst app write wait during the cleanup: 60 ms.**
+- ovowforestmusic's disk is slower. The batches are sized by time (a 30 ms target), so they shrink there, and the run
+  takes longer.
+
+### Measured on the same copy (main-thread costs)
+| What | Time |
+|---|---|
+| COUNT(*) of every pending row (the sync status line, every 10 s) | 8–17 ms here |
+| Pushable count through the push index (replacement) | 0.1 ms |
+| Push query without the push index, 241,064 stuck | 407–741 ms |
+| Push query without the push index, after cleanup | 0.5 ms |
+| Today's announcements read (×200, worst) | 0.33 ms here |
+| Build push index, idle | 0.8 s |
+| Build push index **with the two writers running** | **11.7 s, and each writer FAILED twice (5 s busy timeout)** |
+| Build push index after cleanup, with writers | 1.7–4.2 s; one write waited 4.2 s |
+
+**Change from the plan, because of that measurement:** a background thread does not make an index build safe. The build
+holds SQLite's write lock for its whole length, so on air the engine's play-log writes would fail behind it. So:
+- A step whose index already exists does nothing. That is the normal case: ovowforestmusic built all three on 16e13166.
+- A missing index is built only after 15 s with nothing on air, the same gate as the automatic cleanup.
+- Until it exists, the push uses the plain query when the queue is small. Over 20,000 pending, it **waits** and says so
+  (`sync-engine.js PUSH_WAIT_OVER`).
+- Item 4 (sync tick): the two stall sources measured were the status COUNT and the unindexed push. Both are removed
+  (above), so the sync engine stays on main. Moving it to a thread would have meant untangling about 15 closures it
+  shares with main (sign-in, member sync, push-now, re-baseline), for no measured gain.
+
+### What changed, by item
+1. **Run sync cleanup now:** Preferences → Multi-Machine Sync → "Stuck sync entries".
+   - Shows the count, read on a worker. **RUN SYNC CLEANUP NOW** and COUNT AGAIN.
+   - Live progress ("Backing up N of M…", "Removing…").
+   - A plain-words result on the row and in the health log (`sync-queue-cleanup-now`).
+   - Shares one lock with the automatic run. While the automatic run is still waiting for silence, the button replaces it.
+   - Files: `electron/main.js` (`_syncCleanupRunNow`, `sync-cleanup:*`), `electron/sync/purge-excluded-queue{,-worker}.js`
+     (modes count/now, progress, `plainResult`), `src/components/SyncCleanupRows.tsx`.
+2. **Startup:**
+   - The push index, the generated-log index, the play-log index and the songs eligible-hours fix-up moved out of
+     `runMigrations` into `electron/startup-heavy{,-worker}.js`. They start once the window is visible.
+   - Every migration statement over 200 ms is named in the startup log and the health log (`startup-migrations`).
+   - A boot step over 1 s is named too (`startup-slow-step`).
+   - The background steps are in the boot report, the startup log, and the health log (`startup-heavy`).
+3. **Health log:** `electron/health-ledger.js`.
+   - One file, `<profile>\health-events.jsonl`. The audio-health and library-health writers on main use it.
+   - Lines are queued and written with async appendFile. The queue is capped at 5,000 lines, and an overflow is reported
+     in one line.
+   - Rotates at `health_log_max_mb` (50) and keeps `health_log_keep` (5).
+   - The old `logs\` copy and any over-size file are renamed to `health-events.archive-<date>.jsonl`, and deleted after
+     `health_log_archive_days` (30). These are this machine's settings (install_config_kv), written once and shown on
+     Preferences → Multi-Machine Sync → "Health log".
+4. **Sync tick:** the status count goes through the push index, and the push waits on a huge queue. Today's announcements
+   are read once per database change: total_changes() for this connection, PRAGMA data_version for other connections.
+   Neither reads a table, and any writer anywhere is caught. There is a 60 s safety re-read, and a read over 50 ms goes to
+   the health log (`slow-main-read`).
+5. **Output reopen:**
+   - The engine measures the callback age on its own clock (`callbackAge`).
+   - A watchdog round that ran over 2 s late is skipped and logged (`watchdog-late`).
+   - Before any reopen there is a second look after 1 s. If the callback moved, there is no reopen, logged as
+     `reopen-avoided`.
+   - Tests: `npm run test:wedge`, 15/15.
+- **C. Password re-read:** every encoder (re)connect re-reads `stations.icecast_password`. Daemon:
+  `audiod/stream.js withPassword` with `ether-audiod.js readPassword`. In-process fallback: `main.js _spawnStream`.
+  An empty saved password keeps the one the stream started with. **The password itself was not changed.**
+
+### Tests
+- `vitest` 105 files / 900 tests, including the new `health-ledger.test.js` (5) and `stream-password.test.js` (2).
+- `npm run test:sync`: 13 files / 55 tests (new T-53..55, push wait).
+- `npm run test:wedge`: all passed.
+- `tsc --noEmit`: 0 errors.
+- leak-guard: 13 (baseline 13).
+- Schema chain v0–v62 clean (pre-commit).
+
+### UNVERIFIED (needs the running app)
+- **The Preferences rows on screen.** The check: Preferences → Multi-Machine Sync shows "Stuck sync entries" and
+  "Health log".
+- **The startup log on the first launch.** It should say `[startup] background … already there` and name any slow
+  migration statement.
+- **On ovowforestmusic:** the count, the button's progress and result, and the two old health logs renamed to archives.
+
+### Installer
+- **Path:** `C:\openair\dist-electron\Ether Setup 4.6.59 airstalls+cleanup ecf38bbf b343fe0.exe`
+- **sha256:** `ecf38bbfdf7898c925d22bf6d06d1130a3be57709f90182b6a1a25aa78340770`
+- **Size:** 216,080,309 bytes.
+- **Version:** unchanged, 4.6.59. The engine is unchanged (native 91b9f495).
+- **`verify-packaged`:**
+  - **First run, straight after packaging: RELEASE GATE FAIL.** The daemon answered but reported engine identity
+    "(none)". Every other check had passed.
+  - **Re-run on the same artifact: RELEASE GATE PASS.** The engine identity matched by sha256.
+  - Recorded as seen. The first run's cause is not known.
+- **Contents:** 16e13166 (park control, logo, faders) plus items 1–5 and C.
+
