@@ -57,3 +57,49 @@ Built-in sense: every fire, failure and skip is already in the play log or the s
   title while it plays ("HALLOVEEN 30 MIN"), or stay on the song?
 - **B.** Royalty CSV (BMI/ASCAP): announcements are in it today. Leave them out?
 - **C.** Order: the server "played" fix first (small, after 9:30 tonight), then the app pieces in the next installer?
+
+## Jeff's answers (verbatim, 2026-10-13, after 9:30 PM)
+
+> 2. Announcements plan, corrected: announcements NEVER show on the public listener page. They're venue operations, for staff and management only. Show them in:
+> - Ether's Announcements panel: the announcement that's airing pulses, with its seconds countdown; each of today's lines shows played/failed/skipped and the time.
+> - The Park page: the announcement that's airing shows with a pulse and its seconds countdown, then "Played 8:29 PM".
+> - Ether's strip, Program Log, Up Next and Live Activity, as planned, for management.
+> Leave announcements out of the BMI/ASCAP export. Server "played" fix tonight; app pieces in the next installer. Mock of the Announcements panel and Park page first.
+
+## Plan as corrected
+
+- **A — never on the public listener page.** The listener now-playing (`listen.*`, the app's listener payload) stays on the
+  song while an announcement airs. Announcements are venue operations: staff and management only.
+- **Item 4 changes accordingly:** "Now playing" for an announcement is in Ether (management) and on the Park page (staff),
+  never in the listener payload.
+- **Announcements panel:** the airing line pulses with its seconds countdown; every line of today shows
+  Played / Failed / Skipped with the time.
+- **Park page:** the airing announcement shows with a pulse and its seconds countdown, then "Played 8:29 PM".
+- **Strip, Program Log, Up Next, Live Activity:** as planned (items 1, 2, 3, 6).
+- **B — left out of the BMI/ASCAP export.**
+- **C — server "played" fix tonight; app pieces in the next installer.**
+- **Mocks of the Announcements panel and the Park page come first**, before any app or page code.
+
+## Server "played" fix (tonight)
+
+- `ether-backend` commit **83df5dd** (local): `src/ops-core.js` reads `last_played_at` as unix seconds (a string keeps the
+  old date-prefix reading). Each schedule row is one date's line (`scope = 'date'`), so a play within that date in any
+  zone (UTC-14 to UTC+12 around it) counts as that date's play. Adds `playedAt` (ISO) to each queue line for the page's
+  "Played 8:29 PM".
+- `scripts/smoke-ops-core.js`: 6 new checks (8:29 PM PDT = 03:29 UTC next day reads as played; playedAt; seconds as a
+  string; two days earlier/later do not; not played gives null). **45 / 45 PASS.**
+- **Not deployed:** the `git push origin main` that deploys Railway was refused by this session's permission check.
+  Jeff deploys it, or allows the push.
+- Runtime UNVERIFIED until deployed: `GET /public/ops/halloween` shows `alreadyPlayed: true` and a `playedAt` on a line
+  that played.
+
+## Mocks (for Jeff's review; nothing built)
+
+Canvas: https://claude.ai/artifact/JNXifpqkTjHwVrtKhT29b5 (private to Jeff).
+- **Ether, Announcements panel:** a new TONIGHT list above the existing library table. The airing line pulses with
+  ON AIR and its seconds countdown; other lines show Played 8:29 PM (green), Skipped (amber), Failed: reason (red),
+  or Up next / Waiting.
+- **Park page (phone):** an ON AIR NOW card with a pulse, the title and the seconds left, above the list. Each line shows
+  Played 8:29 PM / Skipped / Did not play.
+- The "example" tweak switches tonight's real lines to a version with a skip and a failure. The failed and skipped
+  lines, and the 38-second length, are illustrations, not tonight's data.
