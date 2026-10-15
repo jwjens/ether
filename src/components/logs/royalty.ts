@@ -6,10 +6,15 @@
 
 export interface RoyaltyRow { played_at: number; title: string; artist: string | null; duration_ms: number | null }
 
-/** The whole period, oldest-first order kept as the screen's (newest first). No LIMIT. */
+/** The whole period, oldest-first order kept as the screen's (newest first). No LIMIT.
+ *  ANNOUNCEMENTS ARE LEFT OUT (Jeff, 2026-10-13: "Leave announcements out of the BMI/ASCAP export"). A park's
+ *  announcement is venue operations, not a performance of a musical work; it is in play_log (content_class 'ANN',
+ *  electron/main.js fireAnnouncement) for the as-run log and the printable log, which keep it. COALESCE keeps every row
+ *  with no class (songs logged before v29, carts, jingles) exactly as before. */
 export const ROYALTY_SQL =
   `SELECT played_at, title, artist, duration_ms FROM play_log
     WHERE station_id = ? AND played_at >= ? AND played_at <= ?
+      AND COALESCE(content_class, '') <> 'ANN'
     ORDER BY played_at DESC`;
 
 /** Every play in the period, all columns — the printable (PDF) log. No LIMIT (audit 7: it printed the 200 on screen). */

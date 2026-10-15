@@ -9,6 +9,7 @@ const readFile = (p: string) => (window as any).ether.fs.readFile(p);
 import { getEngine } from "../audio/engine-registry";
 import { diffSchedule } from "../lib/scheduleDiff";
 import { localAudio } from "../audio/localOutput";
+import { announcementStatus, type AnnouncementStatus } from "../lib/ccData";
 
 interface Announcement {
   id: number;
@@ -767,6 +768,101 @@ function ScheduleBoard({ stationId, assets, entries, reload, closing }: {
 }
 
 
+// ── TONIGHT: what is airing, and how each of today's lines went (Jeff, 2026-10-13 / 2026-10-15) ────────────────────
+// "Ether's Announcements panel: the airing announcement pulses with its seconds countdown. Each of today's lines shows
+// played/failed/skipped with the time."
+// Every value is the station's own record: the airing announcement and today's failures from main
+// (announcementStatus — the same reading the Park page gets), Played / Skipped from the entry's own stamps, and the
+// time each line fires from the scheduler's own due times (announce:due-times). Nothing is re-derived here.
+function fmtStamp(sec: number | null | undefined): string {
+  if (!sec) return "";
+  return new Date(sec * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+function Tonight({ stationId, entries, assets, reload }: { stationId: number | null; entries: ScheduleEntry[]; assets: Announcement[]; reload: () => void }) {
+  const [st, setSt] = useState<AnnouncementStatus>({ airing: null, failed: {} });
+  const [due, setDue] = useState<Record<string, string | null>>({});
+  const [now, setNow] = useState(() => Date.now());
+  const today = ymd(new Date(now));
+  useEffect(() => {
+    if (stationId == null) return;
+    let alive = true;
+    const tick = async () => {
+      const s = await announcementStatus(stationId);
+      if (alive) { setSt(s); setNow(Date.now()); }
+    };
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => { alive = false; window.clearInterval(id); };
+  }, [stationId]);
+  // The fire times, re-read when the list or the day changes, or when something airs/ends (the closing time may have
+  // moved; the Played stamps arrive with the entries reload the parent does on ops-push).
+  useEffect(() => {
+    if (stationId == null) return;
+    (window as any).ether.invoke("announce:due-times", stationId, today)
+      .then((r: any) => { if (r?.ok) setDue(r.due || {}); }).catch(() => {});
+  }, [stationId, today, entries, st.airing?.started_at]);
+  // A fire stamps its line (Played) in the database: re-read the list when something starts or stops airing, or fails.
+  const sig = `${st.airing?.started_at ?? ""}|${Object.keys(st.failed).sort().join(",")}`;
+  useEffect(() => { if (sig !== "|") reload(); }, [sig]);
+  useEffect(() => { if (!st.airing) reload(); }, [!!st.airing]);
+
+  const titleOf = new Map(assets.map(a => [a.uuid, a.title]));
+  const rows = entries
+    .filter(e => e.scope === "date" && e.date === today)
+    .map(e => ({ e, at: due[e.uuid] ?? null }))
+    .sort((a, b) => (a.at ?? "99").localeCompare(b.at ?? "99"));
+  const a = st.airing;
+  const left = a && a.duration_sec > 0 ? Math.max(0, Math.ceil(a.duration_sec - (a.position_sec + (now - Date.parse(a.at)) / 1000))) : null;
+  const nowHms = new Date(now).toTimeString().slice(0, 8);
+  const hmsSec = (t: string) => { const [h, m, x] = t.split(":").map(Number); return (h || 0) * 3600 + (m || 0) * 60 + (x || 0); };
+  // "Did not play" only once the line is two minutes past its time — the fire's own guard window — so a line is never
+  // called missed while its fire is still landing.
+  const nextUuid = rows.find(r => r.at && r.at > nowHms && !r.e.last_played_at && !r.e.skipped_at)?.e.uuid ?? null;
+  const airingHere = (uuid: string) => !!a && a.entry_uuid === uuid;
+
+  return (
+    <div style={{ marginTop: 14, border: "1px solid var(--border-primary)", background: "var(--bg-secondary)", maxWidth: 680 }}>
+      <div style={{ padding: "8px 12px", fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", borderBottom: "1px solid var(--border-primary)" }}>
+        TONIGHT · {new Date(now).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}
+      </div>
+      {a && !rows.some(r => airingHere(r.e.uuid)) && (
+        // Airing but not one of today's lines (fired by hand, or from another day's list): still shown, plainly.
+        <div className="on-air-active" style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", background: "rgba(239,68,68,0.12)", borderBottom: "1px solid var(--border-primary)" }}>
+          <span style={{ fontSize: 11, fontWeight: 800, color: "#ef4444", letterSpacing: "0.08em" }}>ON AIR</span>
+          <span style={{ flex: 1, fontSize: 14, fontWeight: 700, color: "var(--text-primary)" }}>{a.title}</span>
+          <span style={{ fontSize: 22, fontWeight: 800, color: "#ef4444", fontVariantNumeric: "tabular-nums" }}>{left != null ? `${left}s` : "playing"}</span>
+        </div>
+      )}
+      {rows.length === 0 ? (
+        <div style={{ padding: "10px 12px", fontSize: 12, color: "var(--text-tertiary)" }}>Nothing is scheduled today.</div>
+      ) : rows.map(({ e, at }) => {
+        const onAir = airingHere(e.uuid);
+        const f = st.failed[e.uuid];
+        const playedToday = !!e.last_played_at && ymd(new Date(e.last_played_at * 1000)) === today;
+        const skippedToday = !!e.skipped_at && ymd(new Date(e.skipped_at * 1000)) === today;
+        let status: { text: string; color: string };
+        if (onAir) status = { text: left != null ? `ON AIR · ${left}s` : "ON AIR", color: "#ef4444" };
+        else if (f) status = { text: `Failed ${fmtStamp(f.at)}: ${f.reason}`, color: "var(--accent-red, #ef4444)" };
+        else if (playedToday) status = { text: `Played ${fmtStamp(e.last_played_at)}`, color: "var(--accent-green, #22c55e)" };
+        else if (skippedToday) status = { text: `Skipped ${fmtStamp(e.skipped_at)} — its time passed when the closing time moved`, color: "var(--accent-amber, #fbbf24)" };
+        else if (!at) status = { text: "No time — no closing time set, so it will not play", color: "var(--accent-amber, #fbbf24)" };
+        else if (hmsSec(nowHms) - hmsSec(at) > 120) status = { text: "Did not play", color: "var(--accent-red, #ef4444)" };
+        else if (hmsSec(nowHms) >= hmsSec(at)) status = { text: "Due now", color: "var(--text-secondary)" };
+        else status = { text: e.uuid === nextUuid ? "Up next" : "Waiting", color: "var(--text-tertiary)" };
+        return (
+          <div key={e.uuid} className={onAir ? "on-air-active" : undefined}
+               style={{ display: "flex", alignItems: "center", gap: 12, padding: onAir ? "10px 12px" : "6px 12px",
+                        borderBottom: "1px solid var(--border-primary)", background: onAir ? "rgba(239,68,68,0.12)" : undefined }}>
+            <span style={{ width: 84, fontSize: 12, fontVariantNumeric: "tabular-nums", color: "var(--text-secondary)" }}>{at ? fmtTime(at) : "—"}</span>
+            <span style={{ flex: 1, fontSize: onAir ? 14 : 12, fontWeight: onAir ? 800 : 600, color: "var(--text-primary)" }}>{titleOf.get(e.announcement_uuid) || "(announcement removed)"}</span>
+            <span style={{ fontSize: onAir ? 18 : 11, fontWeight: 700, color: status.color, fontVariantNumeric: "tabular-nums", textAlign: "right" }}>{status.text}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -937,6 +1033,8 @@ export default function Announcements() {
           {fireMsg && (
             <p style={{ fontSize: 11, color: "var(--text-secondary)", margin: "6px 0 0" }}>{fireMsg}</p>
           )}
+
+          {!schedErr && <Tonight stationId={stationId} entries={entries} assets={list} reload={loadEntries} />}
 
           {/* ── THE SCHEDULE (v47) ─────────────────────────────────────────────────────────────
               Pick the days (or a date) on the left; build that selection's list of announcements and

@@ -5642,6 +5642,7 @@ async function announceTick() {
             // recorded, which is the cosmetic half of this feature, not the firing half.
             annStmts().markSkipped?.run(nowEpoch, row.uuid);
             row.skipped_at = nowEpoch;
+            _healthEvent('announcement-skipped', { stationId, entry: row.uuid, title: row.title || '', due });
             logStartup('[announce] SKIPPED station ' + stationId + ' "' + (row.title || '') + '" — its time (' + due + ') passed when the closing time moved');
           } catch (e) { logStartup('[announce] could not record a skip: ' + (e && e.message)); }
         }
@@ -5664,12 +5665,17 @@ async function announceTick() {
         // failed one — logged as a success while the failure vanished into an unhandled rejection.
         _cancelAnnounceRepeats(stationId);   // a new scheduled fire supersedes any repeats still pending
         const r = await fireAnnouncement(stationId, row.announcement_uuid, row.uuid);
-        if (!r.ok) logStartup('[announce] scheduled fire FAILED station ' + stationId + ' "' + (row.title || '') + '": ' + r.error);
-        else {
+        if (!r.ok) {
+          logStartup('[announce] scheduled fire FAILED station ' + stationId + ' "' + (row.title || '') + '": ' + r.error);
+          _noteAnnounceFailed(stationId, row, dateStr, r.error);
+        } else {
           logStartup('[announce] scheduled fire station ' + stationId + ' "' + (row.title || '') + '" at ' + due + ' (' + row.trigger_type + ')');
           _scheduleAnnounceRepeats(stationId, row);
         }
-      } catch (e) { logStartup('[announce] scheduled fire threw: ' + (e && e.message)); }
+      } catch (e) {
+        logStartup('[announce] scheduled fire threw: ' + (e && e.message));
+        _noteAnnounceFailed(stationId, row, dateStr, String(e && e.message || e));
+      }
     }
   }
 }
@@ -5696,7 +5702,7 @@ function _scheduleAnnounceRepeats(stationId, row) {
     return;
   }
   const timers = starts.map((ms, i) => setTimeout(() => {
-    Promise.resolve(fireAnnouncement(stationId, row.announcement_uuid, null)).then(r => {
+    Promise.resolve(fireAnnouncement(stationId, row.announcement_uuid, null, { airingEntry: row.uuid })).then(r => {
       logStartup('[announce] repeat ' + (i + 2) + '/' + count + ' station ' + stationId + ' "' + (row.title || '') + '" ' + (r && r.ok ? 'fired' : 'FAILED: ' + (r && r.error)));
     }).catch(e => logStartup('[announce] repeat threw: ' + (e && e.message)));
   }, ms));
@@ -5746,7 +5752,56 @@ function startAnnouncementScheduler() {
 // it and guards on it; a hand-fire from the panel has no entry and passes nothing. Both stamps are
 // written: the asset stamp stays because "when did this audio last play" is a real thing the list
 // shows and the hand-fire path has nothing else to record.
-async function fireAnnouncement(stationId, uuid, entryUuid) {
+// ── WHAT IS AIRING, AND WHAT FAILED (2026-10-15) ────────────────────────────────────────────────
+// Jeff: "Priority now: seeing the announcement that's playing." Ether's Announcements panel and the Park page show the
+// airing announcement (name, pulse, seconds left), then each of today's lines as Played / Failed / Skipped with the
+// time. Played and Skipped are already stamped on the entry (last_played_at, skipped_at). What was missing:
+//   · AIRING — set here only once the engine accepted the play: title, the channel, the file's length and the moment
+//     the engine took it. The renderer ends it early if the engine then reports the channel is no longer playing
+//     (src/lib/ccData.ts announcementStatus), so a stopped announcement does not keep counting down.
+//   · FAILED — a scheduled fire the engine refused (or that threw) left a startup-log line and nothing on the entry.
+//     Kept in memory for today, with the reason. NOT a schema change: after a relaunch a failed line reads as not
+//     played (the page says "Did not play"), never as played.
+// Every fire, failure and skip also goes to the health ledger (announcement-fired / -failed / -skipped).
+const _announceAiring = new Map();   // stationId -> { entry_uuid, announcement_uuid, title, slot, slots, duration_sec, started_at, started_ms }
+const _announceFailed = new Map();   // stationId -> Map(entryUuid -> { at, reason, date })
+function _noteAnnounceFailed(stationId, row, dateStr, reason) {
+  try {
+    let m = _announceFailed.get(stationId);
+    if (!m) { m = new Map(); _announceFailed.set(stationId, m); }
+    m.set(row.uuid, { at: Math.floor(Date.now() / 1000), reason: String(reason || 'unknown'), date: dateStr });
+    _healthEvent('announcement-failed', { stationId, entry: row.uuid, title: row.title || '', reason: String(reason || '') });
+  } catch {}
+}
+// The unknown-length cap: an announcement whose length could not be read is shown as airing (no countdown) until
+// the engine reports the channel stopped, or for at most this long.
+const ANNOUNCE_AIRING_UNKNOWN_LEN_MS = 10 * 60 * 1000;
+function _announceAiringNow(stationId) {
+  const a = _announceAiring.get(stationId);
+  if (!a) return null;
+  const endMs = a.duration_sec > 0 ? a.started_ms + a.duration_sec * 1000 : a.started_ms + ANNOUNCE_AIRING_UNKNOWN_LEN_MS;
+  if (Date.now() >= endMs) { _announceAiring.delete(stationId); return null; }
+  return a;
+}
+ipcMain.handle('announce:airing', (_e, stationId) => {
+  try {
+    const sid = Number(stationId);
+    const a = _announceAiringNow(sid);
+    const d = new Date();
+    const today = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    const failed = {};
+    for (const [entry, f] of (_announceFailed.get(sid) || new Map())) if (f.date === today) failed[entry] = { at: f.at, reason: f.reason };
+    return {
+      ok: true,
+      airing: a ? { entry_uuid: a.entry_uuid, announcement_uuid: a.announcement_uuid, title: a.title, slot: a.slot, slots: a.slots,
+                    duration_sec: a.duration_sec, started_at: a.started_at,
+                    position_sec: Math.max(0, (Date.now() - a.started_ms) / 1000) } : null,
+      failed,
+    };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+async function fireAnnouncement(stationId, uuid, entryUuid, opts = {}) {
   // 1. WHERE does it play? EVERY source channel dialled to Announcement on THIS station — read
   //    fresh on every fire, so moving the selector takes effect on the very next announcement with
   //    no restart. `LIMIT 1` used to cap this at the lowest-lettered channel: dial two and only one
@@ -5819,6 +5874,17 @@ async function fireAnnouncement(stationId, uuid, entryUuid) {
   // 5. Stamp it ONLY once the engine has been told — an announcement that never played must not
   //    look like it did.
   const _stampAt = Math.floor(Date.now() / 1000);
+  // The file's length, read once: the airing countdown and the as-run log both use it. 0 = could not be read.
+  let _durMs = 0;
+  try { _durMs = Math.round((audio.getFileDuration(row.file_path) || 0) * 1000); } catch { _durMs = 0; }
+  const _airEntry = entryUuid || (opts && opts.airingEntry) || null;
+  const _airMs = Date.now();
+  _announceAiring.set(stationId, {
+    entry_uuid: _airEntry, announcement_uuid: uuid, title: row.title || 'Announcement', slot: firedOn[0], slots: firedOn,
+    duration_sec: _durMs / 1000, started_at: new Date(_airMs).toISOString(), started_ms: _airMs,
+  });
+  if (_airEntry) { try { _announceFailed.get(stationId)?.delete(_airEntry); } catch {} }
+  _healthEvent('announcement-fired', { stationId, entry: _airEntry, title: row.title || '', slots: firedOn, duration_sec: _durMs / 1000 });
   try { db.prepare('UPDATE announcements SET last_played_at = ? WHERE uuid = ?').run(_stampAt, uuid); } catch {}
   // THE ENTRY STAMP IS THE ONE THE TICK GUARDS ON. Without it the 250ms tick would re-fire this
   // entry ~4 times inside the matched second, because its guard reads the entry, not the asset.
@@ -5842,8 +5908,6 @@ async function fireAnnouncement(stationId, uuid, entryUuid) {
   //    AFTER the engine call succeeded, like the stamps: an announcement that never played must not
   //    appear in the as-run log. Wrapped, because a logging fault must never reach playout.
   try {
-    let _durMs = 0;
-    try { _durMs = Math.round((audio.getFileDuration(row.file_path) || 0) * 1000); } catch { _durMs = 0; }
     require('../audiod/playlog').logPlay(db, {
       stationId, title: row.title || 'Announcement', artist: '', deck: firedOn[0],
       durationMs: _durMs, sessionId: null, filePath: row.file_path,

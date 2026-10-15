@@ -57,6 +57,9 @@ most recent).
 **BMI and ASCAP lengths** come from the play log. A play whose length was never recorded has an **empty**
 duration rather than a guessed one — check those rows before you file.
 
+**Announcements are not in BMI or ASCAP.** A park announcement isn't music, so those two exports leave it
+out. It still shows in the play log on screen and in the printable log.
+
 ## Related
 
 **Traffic** — scheduled spots and whether they aired (`docs/help-traffic.md`).

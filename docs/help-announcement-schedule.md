@@ -69,6 +69,28 @@ aired today.
   plays. **not scheduled** in amber means it will never fire — the first thing to check if something
   didn't go to air.
 
+## Did it play? — TONIGHT
+
+At the top of the Announcements page, **TONIGHT** lists today's announcements in the order they play.
+
+1. While an announcement is on air, its line **pulses red** with **ON AIR** and the **seconds left**.
+2. When it ends, the line says **Played 8:29 PM** in green.
+3. Other things a line can say:
+   - **Failed 8:29 PM: reason** (red): Ether tried to play it and couldn't. The reason says why.
+     A common one is that no channel is patched to Announcement.
+   - **Skipped 8:29 PM** (amber): the closing time moved, so its time had already passed.
+   - **Did not play** (red): its time is more than two minutes past and nothing says it played. This
+     also shows if Ether was restarted after a failure.
+   - **Up next** / **Waiting** / **Due now**: it hasn't played yet.
+
+**On the Park page:** the airing announcement shows at the top in a big red pulsing box with its name
+and the seconds left. Each line under **Announcements today** shows Played / Failed / Skipped with the
+time.
+
+**In the web app (app.ether-cast.com):** open the station. Under the decks, **Announcements · tonight**
+shows the same list as Ether, watch-only. The airing line pulses red with the seconds left, then reads
+Played with the time. Announcements are for staff and management only. They never show on the public listener page.
+
 ## Worth knowing
 
 - **Each date owns its own list.** Applying to five dates gives each of them the same five lines;

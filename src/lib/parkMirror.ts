@@ -7,9 +7,11 @@
 //   · a station AT ONCE when something it shows is written anywhere — closing time, its MONITOR level, its fader
 //     maximum (main's "ops:changed", from the Preferences writers) — or when a Park command lands ("ether:ops-push");
 //   · a station AT ONCE when its cart channel starts or stops playing a cart (checked every second, from the engine's
-//     state — no database work).
+//     state — no database work);
+//   · a station AT ONCE when an announcement starts or stops airing, or a scheduled one fails (2026-10-15; main's
+//     in-memory record, no database work).
 import { query } from "../db/client";
-import { pushOpsData, cartPlaying } from "./ccData";
+import { pushOpsData, cartPlaying, announcementStatus } from "./ccData";
 
 type Ctx = { licenseKey: () => string | null | undefined };
 let started = false;
@@ -52,13 +54,16 @@ export function startParkMirror(ctx: Ctx): () => void {
     if (sid != null) pushOne(sid);
   });
 
-  // Cart starts and stops, from the engine (once a second; a signature compare, no database read unless it changed).
+  // Cart and announcement starts and stops, and announcement failures (once a second; a signature compare, no database
+  // read unless it changed).
   const cartSig = new Map<number, string>();
   const cartTimer = window.setInterval(async () => {
     for (const sid of uuidOf.keys()) {
       const c = await cartPlaying(sid);
-      const sig = c ? `${c.slot}:${c.title}` : "";
-      if ((cartSig.get(sid) ?? "") !== sig) { cartSig.set(sid, sig); pushOne(sid); }
+      const an = await announcementStatus(sid);
+      const sig = (c ? `${c.slot}:${c.title}` : "") + "|" + (an.airing ? `${an.airing.started_at}:${an.airing.title}` : "")
+                + "|" + Object.keys(an.failed).sort().join(",");
+      if ((cartSig.get(sid) ?? "||") !== sig) { cartSig.set(sid, sig); pushOne(sid); }
     }
   }, 1000);
 

@@ -38,6 +38,10 @@ describe("royalty exports — real durations, every play (audit 6, 7)", () => {
     expect(fmtMinutes(210000)).toBe("3.50");
   });
 
+  it("announcements are left out of BMI / ASCAP (Jeff, 2026-10-13); the printable log keeps them", () => {
+    expect(ROYALTY_SQL).toContain("AND COALESCE(content_class, '') <> 'ANN'");
+  });
+
   it("the export query covers the whole period: no row cap", () => {
     expect(ROYALTY_SQL).not.toMatch(/LIMIT/i);
     expect(ROYALTY_SQL).toMatch(/duration_ms/);
@@ -55,6 +59,7 @@ describe("the PDF log covers the whole period (audit 7)", () => {
   it("exportPDF reads the whole-period query (no LIMIT), not the 200-row screen list", async () => {
     const { PERIOD_PLAYS_SQL } = await import("./royalty");
     expect(PERIOD_PLAYS_SQL).not.toMatch(/LIMIT/i);
+    expect(PERIOD_PLAYS_SQL).not.toMatch(/ANN/);   // the as-run printable log keeps announcements
     const src = fs.readFileSync(path.join(__dirname, "..", "Logs.tsx"), "utf8");
     const pdf = src.slice(src.indexOf("const exportPDF"), src.indexOf("const visible"));
     expect(pdf).toMatch(/PERIOD_PLAYS_SQL/);

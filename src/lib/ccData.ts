@@ -319,6 +319,40 @@ export async function cartPlaying(stationId: number): Promise<{ slot: number; ti
   return null;
 }
 
+// ── THE ANNOUNCEMENT ON AIR, AND TODAY'S FAILURES (2026-10-15) ─────────────────────────────────
+// One reading, used by BOTH Ether's Announcements panel and the Park page push, so the two can never disagree.
+// main (electron/main.js announce:airing) knows what it told the engine to play: the title, the channel, the file's
+// length and when the engine took it. This adds what the ENGINE then reports: once the channel has been seen playing
+// this announcement and later reports anything else (stopped on the board, ended early), it is no longer airing. A
+// channel the engine never reports on keeps main's length-based countdown — nothing here is guessed.
+export type AnnouncementAiring = {
+  entry_uuid: string | null; announcement_uuid: string; title: string; slot: string;
+  duration_sec: number; started_at: string; position_sec: number; at: string;
+};
+export type AnnouncementStatus = { airing: AnnouncementAiring | null; failed: Record<string, { at: number; reason: string }> };
+const _annSeenPlaying = new Map<number, string>();   // stationId -> started_at of the airing the engine has shown playing
+export async function announcementStatus(stationId: number): Promise<AnnouncementStatus> {
+  let r: any = null;
+  try { r = await (window as any).ether?.invoke?.("announce:airing", stationId); } catch { /* older main */ }
+  if (!r?.ok) return { airing: null, failed: {} };
+  const failed = (r.failed && typeof r.failed === "object") ? r.failed : {};
+  const a = r.airing;
+  if (!a) { _annSeenPlaying.delete(stationId); return { airing: null, failed }; }
+  if (hasEngine(stationId)) {
+    try {
+      const st: any = getEngine(stationId).getDeck(a.slot)?.getState?.();
+      if (st?.status === "playing") _annSeenPlaying.set(stationId, a.started_at);
+      else if (st?.status && _annSeenPlaying.get(stationId) === a.started_at) return { airing: null, failed };
+    } catch { /* the engine reading is a refinement, never required */ }
+  }
+  return {
+    airing: { entry_uuid: a.entry_uuid ?? null, announcement_uuid: a.announcement_uuid, title: a.title, slot: a.slot,
+              duration_sec: Number(a.duration_sec) || 0, started_at: a.started_at, position_sec: Number(a.position_sec) || 0,
+              at: new Date().toISOString() },
+    failed,
+  };
+}
+
 // ── PARK OPS mirror ───────────────────────────────────────────────────────────────────────────
 // Feeds park.ether-cast.com/<station-slug>. Pushed as two tables on the existing pushCcData rail:
 //
@@ -370,8 +404,13 @@ export async function pushOpsData(
       ready: ["park_listen_output", "park_listen_bitrate_kbps", "park_listen_channels", "park_listen_frame_ms", "park_listen_buffer_ms"].every(k => kvStr(k) !== ""),
       buffer_ms: kvNum("park_listen_buffer_ms"),
     };
+    // THE ANNOUNCEMENT ON AIR (2026-10-15): name, length, when it started and where it is now — for the Park page's
+    // ON AIR card. Staff/management only: this rides ops_config, never the listener now-playing payload.
+    const annNow = (await announcementStatus(stationId)).airing;
+    const announcement_playing = annNow ? { title: annNow.title, duration_sec: annNow.duration_sec, started_at: annNow.started_at,
+                                            position_sec: annNow.position_sec, at: annNow.at, entry_uuid: annNow.entry_uuid } : null;
     await pushCcData(licenseKey, stationUuid, "ops_config", [
-      { uuid: "ops", closing, closing_today: closingToday, local_date: localDate, park, listen, cart_playing: await cartPlaying(stationId), pushed_at: new Date().toISOString() },
+      { uuid: "ops", closing, closing_today: closingToday, local_date: localDate, park, listen, cart_playing: await cartPlaying(stationId), announcement_playing, pushed_at: new Date().toISOString() },
     ]);
   } catch (e) { console.log("[OPSPUSH] ops_config failed:", (e as any)?.message ?? e); }
 
@@ -384,6 +423,8 @@ export async function pushOpsData(
     // The time each row WILL fire at today, from the scheduler's own functions — never re-derived elsewhere.
     let due: Record<string, string | null> = {};
     try { const dt = await ether.invoke("announce:due-times", stationId, localDate); if (dt?.ok) due = dt.due || {}; } catch { /* older main */ }
+    // Today's failed fires, with the reason (main keeps them for today; see announcementStatus).
+    const failed = (await announcementStatus(stationId)).failed;
 
     // Today only, and only date-scoped entries — the same filter the page applies. An inactive or
     // deleted announcement drops out here rather than rendering as "(untitled)" on the operator's
@@ -404,6 +445,10 @@ export async function pushOpsData(
           due_time: due[r.uuid] ?? null,
           sort_order: r.sort_order ?? 0,
           last_played_at: r.last_played_at ?? null,
+          // Played / Skipped / Failed, each with its time, for the Park page's line (unix seconds, like last_played_at).
+          skipped_at: r.skipped_at ?? null,
+          failed_at: failed[r.uuid]?.at ?? null,
+          fail_reason: failed[r.uuid]?.reason ?? null,
           duck_music: a.duck_music,
         };
       })
