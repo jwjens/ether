@@ -100,3 +100,22 @@ webrtcAdditionalHosts: [44.244.52.207]
 
 **Listen stays off.** The park machine needs the new build and its Listen settings (`listen.ready`). Not touched.
 UDP 8189 is still UNVERIFIED until the first real session.
+
+## Why LISTEN is greyed (2026-10-16, 10:59 AM PDT)
+
+Jeff: "76f29be1 is installed on ovowforestmusic and its Listen settings are filled in (MONITOR, 24 kbps, Mono, 20 ms,
+buffer 0)."
+
+- **No Park page deploy is needed.** LISTEN (commit `1303a47`) is already on the live page. It went out with yesterday's
+  announcements deploy (`ab9f1b6` is built on it). It shows only to logged-in staff (`ether-park src/App.tsx:484`) and is
+  greyed with "Listen isn't set up on this station" until the station reports `listen.ready`.
+- **The server needs nothing more.** The three Railway values are set (above).
+- **The air machine reports Listen not ready.** Its ops_config push at 17:59:08Z reads `listen: {"ready":false,"buffer_ms":null}`.
+  - `ready` is true only when all five settings are saved (`src/lib/ccData.ts:404`).
+  - `buffer_ms: null` means the station has **no saved Listener buffer**. `kvNum` gives null only for a missing row; a
+    saved `0` would read 0.
+  - Each Listen setting has its own **Save** button (`src/components/ParkListenSettings.tsx:115`), so a typed 0 that wasn't
+    saved stays unsaved. Whether the other four are saved can't be seen from here.
+- Fader, MUTE, carts and closing time at 17:58Z (`/public/ops/halloween`): station online, unmuted, closing 21:30, 4 carts,
+  writes without login 403. The page code is unchanged since the 10:00 AM browser check.
+- For the session watch, the relay log (`journalctl -u mediamtx`) is readable read-only.
