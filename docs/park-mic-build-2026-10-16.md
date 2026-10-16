@@ -315,3 +315,23 @@ still work."
 - **The station was offline** before the deploy: last report 2:39:44 PM (Jeff: "becasue we are offline"). So the fader
   and MUTE (greyed "Station offline"), LISTEN and HOLD TO TALK could not be checked working. They need the station back
   online and a staff login.
+
+## First real talk, the delay, and cutting it (2026-10-16, 3:07 PM)
+
+- **Relay log, 3:07:22 PM:** the phone published Park Mic 1 over WebRTC (`remote candidate: prflx/udp/…`, so UDP
+  8189), and the station read it 0.2 s later over RTSPS/TCP 8322. The talk lasted 3 s. Listen sessions also connected
+  over UDP 8189.
+- **Delay, by ear (Jeff):** "i said delay check and my voice came through the speaker right as i finished saying check"
+  → about 0.7 s, mouth to park speaker. An estimate, not a measurement.
+- **Earlier the same afternoon:** "the hold to talk button flickers it does not work … nothing changes" (iPhone Chrome).
+  No talk reached the server or the relay. A few minutes later, without any change deployed: "for some reason its
+  working now". A sturdier page is written but not deployed: the microphone is turned on by a tap first, a hold is
+  tracked page-wide, and every early end says why.
+- **Measured here:** the receiver's ffmpeg writing to a local port held up to **256 ms** and sent it in one lump without
+  `-flush_packets 1`; with it, the largest lump was 85 ms (scratchpad `ffmpeg-chunk-test.js`).
+- **Done (`talk.js`):** `-flush_packets 1`, `-max_delay 0`, `-reorder_queue_size 0`; the bundled ffmpeg accepts them.
+- **Proposed, waiting for Jeff's OK (an engine change, Park mic code only):**
+  - read the port in 10 ms pieces, so a lump can't raise the input target (`in_block_max` only ever grows);
+  - drop backlog above about 30 ms at once (today up to 100 ms lingers and drains at ±0.3 %).
+  - Risk: low. The mixing and the other inputs are not touched.
+  - Cost: on a bad connection the voice skips a fragment instead of falling behind. Jeff: "we wont use weak phones".
