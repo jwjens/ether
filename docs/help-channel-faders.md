@@ -62,14 +62,18 @@ start — the engine glides it instead of jumping, so nothing clicks or "zips". 
 **Preferences → Loudness & fader smoothing → Fader smoothing** (20 ms unless you change it; 0 = an instant step).
 A level that isn't changing is untouched.
 
-### Every fader is the same: MAIN/AUX, DUCKS, DUCKED
+### Every fader is the same: MAIN/AUX, DUCKS, DUCKED, TO STREAM
 
-No fader has a fixed job. Whatever you select on a fader, three buttons under it say how it behaves:
+No fader has a fixed job. Whatever you select on a fader, four buttons under it say how it behaves:
 
 - **MAIN / AUX** — where you hear it **in the room**: the main speakers, or the AUX output (through its row in
-  Master Out → AUX monitors). It never changes what goes **on air** — every fader is always on air.
+  Master Out → AUX monitors). It never changes what goes **on air**.
 - **DUCKS** — lit: while this fader plays, it pulls the music down (the ducker).
 - **DUCKED** — lit: this fader is pulled down when another fader ducks the music.
+- **TO STREAM** — lit (the start, on every fader): this fader goes to the stream as well as the room. Not lit: it is
+  heard **only in the room** (the park), through its MAIN or AUX output and MONITOR, and **never on the stream**. It
+  still ducks the music if DUCKS is lit. Use it, for example, for a Park mic that should talk to the park but not go
+  out on the radio. Saved with the station.
 
 After this update every fader is set exactly as it already behaved, so nothing sounds different until you change a
 button. The Ducker section in Preferences shows the same DUCKED setting for every fader.

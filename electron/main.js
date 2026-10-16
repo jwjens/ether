@@ -1366,6 +1366,9 @@ if (AUDIO_DAEMON_DESIRED) {
         // Park page Listen sender (audiod/listen.js): every state change in the startup log — observed, never claimed.
         logStartup(`[park-listen] station ${m.stationId}: ${m.state}${m.errorMsg ? " — " + m.errorMsg : ""} (tap ${m.tapConnected ? "reading" : "idle"}, restarts ${m.restarts})`);
         sendToAllWindows("park:listen-status", m);
+      } else if (m.event === "talk") {
+        // Park mic receiver (audiod/talk.js): who/when, the health ledger, every window.
+        try { _onTalkEvent(m); } catch (e) { logStartup(`[park-talk] event ✗ ${e && e.message}`); }
       } else if (m.event === "stream") {
         // Step 5: daemon Icecast status → the renderer's existing stream channels. The on-air
         // badge reads global.anyLive, which ONLY updates from stream:status:global — so the
@@ -5518,6 +5521,112 @@ ipcMain.handle("park:listen", async (_e, args = {}) => {
   } catch (e) { return { ok: false, error: "park listen failed: " + (e && e.message || e) }; }
 });
 
+// ── PARK MIC / HOLD TO TALK (2026-10-16, docs/park-mic-build-2026-10-16.md) ─────────────────────────────────────────
+// The server says a logged-in staff member is holding HOLD TO TALK on one Park mic (on:true — again as a renewal while
+// they hold it) or let go (on:false). The station decides too: the studio lock refuses it here (and cuts a talk within a
+// second when it turns on), the longest talk is THIS station's setting, and the Park mic must be on a fader. The voice is
+// received by the audio daemon (audiod/talk.js) into the engine's Park mic port; the fader's own settings decide where
+// it is heard. Who and when: live in memory while it happens, then park_talk_last_<mic> (synced, shown by the strip).
+const ParkTalk = require("./park-talk");
+const _talkNow = new Map();   // `${stationId}:${mic}` → { by, since, talkId, receiving }
+let _talkLockTimer = null;
+function _talkKv(sid) {
+  const rows = getDb().prepare(`SELECT key, value FROM station_config_kv WHERE station_id = ? AND deleted_at IS NULL AND (key IN (${ParkTalk.ALL_KEYS.map(() => "?").join(",")}) OR key = 'park_control')`).all(sid, ...ParkTalk.ALL_KEYS);
+  return (k) => { const r = rows.find(x => x.key === k); return r ? r.value : undefined; };
+}
+function _talkPatches(sid) {
+  const rows = getDb().prepare(`SELECT key, value FROM station_config_kv WHERE station_id = ? AND key IN (${MicInput.MIC_KEYS.map(() => "?").join(",")}) AND deleted_at IS NULL`).all(sid, ...MicInput.MIC_KEYS);
+  const patches = {};
+  for (const slot of MicInput.MIC_SLOTS) { const r = rows.find(x => x.key === MicInput.micKey(slot)); const p = MicInput.parseMicInput(r && r.value); if (p) patches[slot] = p; }
+  return patches;
+}
+function _talkLockWatch() {
+  if (_talkNow.size === 0) { if (_talkLockTimer) { clearInterval(_talkLockTimer); _talkLockTimer = null; } return; }
+  if (_talkLockTimer) return;
+  _talkLockTimer = setInterval(() => {
+    if (_talkNow.size === 0) { clearInterval(_talkLockTimer); _talkLockTimer = null; return; }
+    for (const k of [..._talkNow.keys()]) {
+      const [sid, mic] = k.split(":").map(Number);
+      let locked = false; try { locked = _talkKv(sid)("park_control") === "off"; } catch { /* unreadable → the server holds the same lock */ }
+      if (locked) audiodClient.cmd("talkStop", { stationId: sid, mic, how: "locked" }).catch(() => {});
+    }
+  }, 1000);
+}
+/** Everything the Park page and the strip show about this station's Park mics. */
+function parkTalkState(sid) {
+  const get = _talkKv(sid);
+  const settings = ParkTalk.readSettings(get);
+  const { faders, conflicts } = ParkTalk.micFaders(_talkPatches(sid));
+  let slots = {}; try { slots = BoardState.readSavedBoard(getDb(), sid).slots || {}; } catch { slots = {}; }
+  const mics = ParkTalk.PARK_MICS.map(n => {
+    const fader = faders[n], e = fader ? slots[fader] : null, now = _talkNow.get(`${sid}:${n}`) || null;
+    return { mic: n, name: settings.names[n], fader, conflict: conflicts[n] || null,
+             local: e ? e.local : null, stream: e ? e.stream !== false : null, on: e ? !e.muted : null,
+             talking: now ? { by: now.by, since: new Date(now.since).toISOString(), receiving: !!now.receiving } : null,
+             last: ParkTalk.parseLast(get(ParkTalk.lastKey(n))) };
+  });
+  const lim = {}; for (const [k, key] of Object.entries(ParkTalk.LIMIT_KEYS)) { const n = Number(get(key)); lim[k] = get(key) != null && String(get(key)).trim() !== "" && Number.isFinite(n) ? n : null; }
+  return { ready: settings.ready, missing: settings.missing, maxSec: settings.maxSec, echo: settings.echo, noise: settings.noise, agc: settings.agc,
+           limit: lim, locked: get("park_control") === "off", mics };
+}
+ipcMain.handle("park:talk-state", (_e, stationId) => {
+  const sid = Number(stationId);
+  try { return Number.isFinite(sid) ? { ok: true, ...parkTalkState(sid) } : { ok: false, error: "no station" }; }
+  catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+ipcMain.handle("park:talk", async (_e, args = {}) => {
+  try {
+    const sid = Number(args.stationId), mic = Number(args.mic);
+    if (!Number.isFinite(sid) || !ParkTalk.PARK_MICS.includes(mic)) return { ok: false, error: "no station or Park mic" };
+    if (!args.on) {
+      if (!AUDIO_DAEMON) return { ok: true };
+      return await audiodClient.cmd("talkStop", { stationId: sid, mic, how: String(args.how || "released") });
+    }
+    const get = _talkKv(sid);
+    const settings = ParkTalk.readSettings(get);
+    const fader = ParkTalk.micFaders(_talkPatches(sid)).faders[mic];
+    const why = ParkTalk.refusal({ locked: get("park_control") === "off", settings, fader, daemon: !!AUDIO_DAEMON });
+    if (why) { _healthEvent("park-talk-refused", { stationId: sid, mic, by: args.by || null, reason: why }); return { ok: false, error: why }; }
+    const config = { mic, url: String(args.url || ""), limitSec: settings.maxSec, leaseSec: Number(args.leaseSec), talkId: String(args.talkId || ""), by: String(args.by || "") };
+    return await audiodClient.cmd("talkStart", { stationId: sid, config });
+  } catch (e) { return { ok: false, error: "park talk failed: " + (e && e.message || e) }; }
+});
+// STOP in Ether, by the Park mic's strip: ends the talk at once (the receiver stops; the page sees it on its next read).
+ipcMain.handle("park:talk-stop", async (_e, stationId, mic) => {
+  const sid = Number(stationId), n = Number(mic);
+  if (!Number.isFinite(sid) || !ParkTalk.PARK_MICS.includes(n)) return { ok: false, error: "no station or Park mic" };
+  if (!AUDIO_DAEMON) return { ok: false, error: "the audio engine is not running" };
+  try { return await audiodClient.cmd("talkStop", { stationId: sid, mic: n, how: "ether" }); }
+  catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+});
+/** A daemon talk event: who/when, the health ledger, and every window (the strip, the Park page push). */
+function _onTalkEvent(m) {
+  const sid = Number(m.stationId), n = Number(m.mic), k = `${sid}:${n}`;
+  const cur = _talkNow.get(k);
+  logStartup(`[park-talk] station ${sid} Park Mic ${n}: ${m.state}${m.by ? " (" + m.by + ")" : ""}${m.errorMsg ? " — " + m.errorMsg : ""}${m.endedHow ? " · ended: " + m.endedHow : ""}`);
+  if (m.state === "connecting" && (!cur || cur.talkId !== m.talkId)) {
+    _talkNow.set(k, { by: m.by || null, since: Number(m.since) || Date.now(), talkId: m.talkId, receiving: false });
+    _healthEvent("park-talk-start", { stationId: sid, mic: n, by: m.by || null });
+  } else if (m.state === "receiving" && cur) {
+    cur.receiving = true;
+  } else if (m.state === "idle" && cur) {
+    _talkNow.delete(k);
+    const sec = Math.max(0, (Date.now() - cur.since) / 1000);
+    const how = m.endedHow || "released";
+    _healthEvent("park-talk-stop", { stationId: sid, mic: n, by: cur.by, sec: Math.round(sec * 10) / 10, how });
+    if (how === "limit" || how === "locked") _healthEvent("park-talk-cut", { stationId: sid, mic: n, by: cur.by, how });
+    if (!cur.receiving) _healthEvent("park-talk-no-audio", { stationId: sid, mic: n, by: cur.by, how, message: "a talk started but no voice arrived" });
+    try {
+      require("./sync/handlers/station_config_kv").stationConfigKvUpsertByKey(getDb(), sid, ParkTalk.lastKey(n),
+        JSON.stringify({ by: cur.by, at: new Date(cur.since).toISOString(), sec: Math.round(sec * 10) / 10, how }));
+    } catch (e) { logStartup(`[park-talk] last talk not saved ✗ ${e && e.message}`); }
+  } else if (m.state === "error") {
+    _healthEvent("park-talk-refused", { stationId: sid, mic: n, reason: m.errorMsg || "error" });
+  }
+  _talkLockWatch();
+  sendToAllWindows("park:talk-status", { ...m, stationUuid: _stationUuidById(sid) });
+}
+
 ipcMain.handle("announce:due-times", (_e, stationId, dateStr) => {
   try {
     const sid = Number(stationId);
@@ -6375,11 +6484,18 @@ ipcMain.handle("audio:setEq", (_, deck, bands, stationId) => {
 //   mic:state        → the engine's live state per patched mic: running / not_found / lost / digital_silence…,
 //                      the ring fill, the drift, and every counter.
 const MicInput = require(path.join(__dirname, "..", "audiod", "mic-input.js"));
+// PARK MIC (2026-10-16): the two Park mics are listed with the other inputs ("listed under Mic with the other inputs").
+// Their device is "park:<n>"; `label` is what the list shows. They exist on every machine (the engine has them), but
+// only receive a voice through the audio daemon.
+const _parkMicDevices = () => ParkTalk.PARK_MICS.map(n => ({ name: ParkTalk.parkDevice(n), label: `${ParkTalk.DEFAULT_NAME(n)} (Park page)`,
+  channels: 1, rate: 48000, format: "network", isDefault: false, park: n }));
 ipcMain.handle("mic:list-devices", async () => {
+  let hw = [];
   try {
-    if (AUDIO_DAEMON) return await audiodClient.cmd("listInputDevices");
-    return typeof audio.audioListInputDevices === "function" ? JSON.parse(audio.audioListInputDevices()) : [];
-  } catch { return []; }
+    if (AUDIO_DAEMON) hw = await audiodClient.cmd("listInputDevices");
+    else hw = typeof audio.audioListInputDevices === "function" ? JSON.parse(audio.audioListInputDevices()) : [];
+  } catch { hw = []; }
+  return [...(Array.isArray(hw) ? hw : []), ..._parkMicDevices()];
 });
 ipcMain.handle("mic:get", (_, stationId) => {
   const sid = Number(stationId);
@@ -6415,6 +6531,13 @@ ipcMain.handle("mic:set", async (_, { stationId, slot, device, channel, gainDb }
     stationConfigKvSetLocal(getDb(), sid, MicInput.micKey(slot), p ? MicInput.serializeMicInput(p) : "");
   } catch (e) {
     return { ok: false, reason: `the engine took the patch but it was not saved: ${String(e && e.message || e)}` };
+  }
+  // A Park mic put on a fader: Hold to talk's starting values (Jeff's) go into Preferences once — never over a set value.
+  if (p && ParkTalk.parkMicOf(p.device)) {
+    try {
+      const { stationConfigKvUpsertByKey } = require("./sync/handlers/station_config_kv");
+      for (const [k, v] of ParkTalk.seedWrites(_talkKv(sid))) stationConfigKvUpsertByKey(getDb(), sid, k, v);
+    } catch (e) { logStartup(`[park-talk] starting values not written ✗ ${e && e.message}`); }
   }
   return { ok: true };
 });
@@ -6857,7 +6980,8 @@ function armAllStationDuckers(reason, opts) {
       try {
         const sends = [['setDuck', { stationId: sid, deck: slot, enabled: !!e.duck }, () => audio.audioSetDuck(sid, slot, !!e.duck)],
                        ['setDuckable', { stationId: sid, deck: slot, duckable: !!e.duckable }, () => audio.audioSetDuckable(sid, slot, !!e.duckable)],
-                       ['setLocalOutput', { stationId: sid, deck: slot, aux: e.local === 'aux' }, () => (typeof audio.audioSetLocalOutput === 'function' ? audio.audioSetLocalOutput(sid, slot, e.local === 'aux') : false)]];
+                       ['setLocalOutput', { stationId: sid, deck: slot, aux: e.local === 'aux' }, () => (typeof audio.audioSetLocalOutput === 'function' ? audio.audioSetLocalOutput(sid, slot, e.local === 'aux') : false)],
+                       ['setToStream', { stationId: sid, deck: slot, on: e.stream !== false }, () => (typeof audio.audioSetToStream === 'function' ? audio.audioSetToStream(sid, slot, e.stream !== false) : false)]];
         for (const [c, a, inProc] of sends) {
           if (toDaemon) audiodClient.cmd(c, a).catch(err => logStartup(`[duck] ${c} s${sid} ${slot} NOT delivered ✗ ${err && err.message}`));
           else { try { inProc(); } catch (err) { logStartup(`[duck] ${c} s${sid} ${slot} ✗ ${err && err.message}`); } }
@@ -6905,7 +7029,7 @@ ipcMain.handle("board:routing", (_, stationId) => {
   const d = _boardDb(); const sid = Number(stationId); if (!d || !Number.isFinite(sid)) return {};
   try {
     const s = BoardState.readSavedBoard(d, sid);
-    return Object.fromEntries(Object.entries(s.slots).map(([k, e]) => [k, { local: e.local, duck: !!e.duck, duckable: !!e.duckable }]));
+    return Object.fromEntries(Object.entries(s.slots).map(([k, e]) => [k, { local: e.local, duck: !!e.duck, duckable: !!e.duckable, stream: e.stream !== false }]));
   } catch { return {}; }
 });
 // board:set-routing — one fader's local output / ducks music / ducked by others: SAVED, then sent (queued if it can't be).
@@ -6925,10 +7049,18 @@ ipcMain.handle("board:set-routing", async (_, stationId, slot, patch = {}) => {
       m[s] = patch.local === "aux" ? "aux" : "main";
       require("./sync/handlers/station_config_kv").stationConfigKvUpsertByKey(d, sid, BoardState.FADER_LOCAL_KEY, JSON.stringify(m));
     }
+    if (patch.stream !== undefined) {
+      // TO STREAM (2026-10-16): only OFF is stored; ON removes the fader from the map (missing = ON = today).
+      const r = d.prepare("SELECT value FROM station_config_kv WHERE station_id = ? AND key = ? AND deleted_at IS NULL").get(sid, BoardState.FADER_STREAM_KEY);
+      let m = {}; try { m = JSON.parse((r && r.value) || "{}") || {}; } catch { m = {}; }
+      if (patch.stream) delete m[s]; else m[s] = false;
+      require("./sync/handlers/station_config_kv").stationConfigKvUpsertByKey(d, sid, BoardState.FADER_STREAM_KEY, JSON.stringify(m));
+    }
   } catch (e) { return { ok: false, reason: `not saved: ${e && e.message}` }; }
   if (patch.duck !== undefined) await _boardSend("setDuck", { stationId: sid, deck: s, enabled: !!patch.duck }, () => audio.audioSetDuck(sid, s, !!patch.duck));
   if (patch.duckable !== undefined) await _boardSend("setDuckable", { stationId: sid, deck: s, duckable: !!patch.duckable }, () => audio.audioSetDuckable(sid, s, !!patch.duckable));
   if (patch.local !== undefined) await _boardSend("setLocalOutput", { stationId: sid, deck: s, aux: patch.local === "aux" }, () => (typeof audio.audioSetLocalOutput === "function" ? audio.audioSetLocalOutput(sid, s, patch.local === "aux") : false));
+  if (patch.stream !== undefined) await _boardSend("setToStream", { stationId: sid, deck: s, on: !!patch.stream }, () => (typeof audio.audioSetToStream === "function" ? audio.audioSetToStream(sid, s, !!patch.stream) : false));
   try { sendToAllWindows("board:routing-changed", { stationUuid: _stationUuidById(sid) }); } catch {}
   return { ok: true };
 });

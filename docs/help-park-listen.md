@@ -13,9 +13,10 @@ tour: true
 ## What it is
 
 **Listen** lets park staff who are logged in to the Park page hear the park speakers on their own phone. They hear
-exactly what the speakers get:
+exactly what the speakers get: everything the park hears, on the main output and on AUX (music, announcements,
+commercials, sound effects, carts):
 - after the park sound fader and MUTE;
-- with the carts and the announcements.
+- with the carts and the announcements, whichever output they play on.
 
 When someone moves the fader, presses MUTE or plays a cart, they hear it.
 
@@ -31,22 +32,22 @@ changes the park's sound; only the Park page fader and MUTE do.
 ## Set it up (once per station, in Ether)
 
 Open **Preferences → Audio → Park page — Listen** for the station. Nothing has a value until you set it. Listen
-stays off for the station until all five are set:
+stays off for the station until all four are set. (What Listen sends isn't a setting: it is always everything the park
+hears, MAIN and AUX together, after MONITOR and MUTE.)
 
-1. **Park speakers are fed from:** which output of this computer the park speakers are plugged into.
-   - **MONITOR** (the main output), **AUX output**, or **Both**.
-   - Carts and announcements on Source channels reach the room through AUX, so if the park hears carts from the AUX
-     output, choose AUX or Both.
-2. **Listen quality (kbps):** how much sound detail is sent.
+1. **Listen quality (kbps):** how much sound detail is sent.
    - Higher sounds better and uses more data on the staff phone.
-3. **Channels:** Mono or Stereo.
+2. **Channels:** Mono or Stereo.
    - Mono puts all of the quality setting into one channel, so a low kbps still sounds clear. It is plenty for
      checking what the park hears.
-4. **Frame length (ms):** how the sound is cut into packets.
+3. **Frame length (ms):** how the sound is cut into packets.
    - Shorter means less delay and a little more data.
-5. **Listener buffer (ms):** how much the staff phone holds before playing.
+4. **Listener buffer (ms):** how much the staff phone holds before playing.
    - More means fewer dropouts on weak phone signal, but more delay.
-   - 0 lets the phone decide.
+   - 0 lets the phone decide. 0 is a setting like any other.
+
+Each setting has its own **Save** button. After you press it, the line under the settings says what was saved and for
+which station (for example "Saved for halloVeen: Listener buffer 0 ms"), or why it wasn't.
 
 The line under the settings says whether Listen is available. While someone is listening, it also shows the sender's
 state (for example **live**).
@@ -68,7 +69,8 @@ pick it back up.
 
 ## If it doesn't work
 
-- **"Listen isn't set up on this station":** set all five settings above in Ether.
+- **"Listen isn't set up on this station":** set all four settings above in Ether, pressing **Save** by each.
 - **"Station offline":** the computer that plays the park isn't connected. Listen can't start until it is.
-- **No sound but LISTENING is lit:** check the phone's volume and silent switch, then the **Park speakers are fed
-  from** setting.
+- **No sound but LISTENING is lit:** check the phone's volume and silent switch, then the park sound fader and MUTE.
+- **Hold to talk pauses Listen on the same phone** while you talk (so the phone doesn't hear itself); it comes back when
+  you let go.

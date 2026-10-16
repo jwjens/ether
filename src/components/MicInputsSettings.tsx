@@ -79,7 +79,7 @@ export default function MicInputsSettings() {
                 title="The input device on THIS computer (never synced to another install)">
                 <option value="">— no input —</option>
                 {p?.device && !devices?.some(d => d.name === p.device) && <option value={p.device}>{p.device} (not connected)</option>}
-                {(devices || []).map(d => <option key={d.name} value={d.name}>{d.name}{d.isDefault ? " (Windows default)" : ""}</option>)}
+                {(devices || []).map(d => <option key={d.name} value={d.name}>{d.label || d.name}{d.isDefault ? " (Windows default)" : ""}</option>)}
               </select>
               <select value={p?.channel || 1} disabled={!p} style={{ ...FIELD, width: 110 }}
                 onChange={e => p && apply(slot, { ...p, channel: Number(e.target.value) })} title="Which input on the device (an interface's input 1, 2 …)">

@@ -411,8 +411,13 @@ export async function pushOpsData(
     const annNow = (await announcementStatus(stationId)).airing;
     const announcement_playing = annNow ? { title: annNow.title, duration_sec: annNow.duration_sec, started_at: annNow.started_at,
                                             position_sec: annNow.position_sec, at: annNow.at, entry_uuid: annNow.entry_uuid } : null;
+    // PARK MIC / HOLD TO TALK (2026-10-16): the station's settings (the phone's mic processing and the longest talk), each
+    // Park mic's name (the user's), its fader and where that fader is heard (MAIN/AUX, To stream, ON), who is talking now
+    // and the last talk. Main reads it (park:talk-state); staff/management only, like everything in ops_config.
+    let talk: any = null;
+    try { const t = await ether.invoke("park:talk-state", stationId); if (t?.ok) { const { ok: _ok, ...rest } = t; talk = rest; } } catch { /* older main */ }
     await pushCcData(licenseKey, stationUuid, "ops_config", [
-      { uuid: "ops", closing, closing_today: closingToday, local_date: localDate, park, listen, cart_playing: await cartPlaying(stationId), announcement_playing, pushed_at: new Date().toISOString() },
+      { uuid: "ops", closing, closing_today: closingToday, local_date: localDate, park, listen, talk, cart_playing: await cartPlaying(stationId), announcement_playing, pushed_at: new Date().toISOString() },
     ]);
   } catch (e) { console.log("[OPSPUSH] ops_config failed:", (e as any)?.message ?? e); }
 

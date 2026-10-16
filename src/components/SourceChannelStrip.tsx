@@ -22,6 +22,7 @@ import { linkNeedsPatch } from "../lib/linkPairing";
 import ConsoleStrip from "./ConsoleStrip";
 import { sourceKindMeta, sourceKindOptions, type SourceKind, type DeckConfig } from "./DeckConfigurator";
 import { useBoardName } from "../hooks/useBoardName";
+import ParkTalkLine from "./ParkTalkLine";
 
 interface Props {
   config: DeckConfig;
@@ -77,6 +78,8 @@ export default function SourceChannelStrip({
   const micState = mic.states[config.slot];
   const isMic = config.kind === "mic";
   const words = micStateWords(micState, !!patch);
+  // PARK MIC (2026-10-16): a mic whose input is "park:<n>" — the Park page's Hold to talk, not a sound card.
+  const parkMic = (() => { const m = /^park:(\d+)$/.exec(patch?.device || ""); return m ? Number(m[1]) : null; })();
   const [patchErr, setPatchErr] = useState<string | null>(null);
   const patchTo = async (device: string | null) => {
     setPatchErr(null);
@@ -211,7 +214,7 @@ export default function SourceChannelStrip({
           {(devices || []).length > 0 && (
             <optgroup label="INPUT DEVICES (this computer)">
               {(devices || []).map(d => (
-                <option key={d.name} value={MIC_PREFIX + d.name}>{d.name}</option>
+                <option key={d.name} value={MIC_PREFIX + d.name}>{d.label || d.name}</option>
               ))}
             </optgroup>
           )}
@@ -225,9 +228,11 @@ export default function SourceChannelStrip({
                      letterSpacing: "0.04em", textAlign: "left", background: "var(--bg-tertiary)",
                      border: `1px solid ${words.tone === "bad" ? TONE.bad : "var(--border-primary)"}`, color: TONE[words.tone],
                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            ● {patch ? `IN ${patch.channel} · ${patch.gainDb >= 0 ? "+" : ""}${patch.gainDb} dB · ${words.text}` : "no input — Preferences → Audio"}
+            ● {patch ? `${parkMic ? `PARK MIC ${parkMic}` : `IN ${patch.channel}`} · ${patch.gainDb >= 0 ? "+" : ""}${patch.gainDb} dB · ${words.text}` : "no input — Preferences → Audio"}
           </button>
         )}
+        {/* PARK MIC (2026-10-16): who is talking now (and STOP), or the last talk. */}
+        {isMic && parkMic != null && <ParkTalkLine stationId={stationId} mic={parkMic} />}
         {/* THE LINK'S STATE — the engine's, in words; the key, buffer, port and auto-cut live in Preferences. */}
         {isLink && (
           <button onClick={openLinkPreferences}

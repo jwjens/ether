@@ -11,7 +11,7 @@
 const BOARD_CMDS = new Set([
   "setVolume", "setMuted", "setAuxMonitor", "setDuck", "setDuckable", "setDuckParams", "setSlotKind",
   "setMonitorVolume", "setMasterVolume", "setMasterMonitorVolume", "setAuxDevice", "setCueDevice", "setOutputDevice",
-  "setPfl", "setPflDim", "setLocalOutput", "setFaderSmoothing",
+  "setPfl", "setPflDim", "setLocalOutput", "setToStream", "setFaderSmoothing",
 ]);
 
 /** The value a setter carries, as one short string. */

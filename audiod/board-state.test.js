@@ -284,3 +284,28 @@ describe("the CART cut is part of the saved board (2026-10-12)", () => {
     expect(d.filter(x => x.setting.startsWith("CART")).map(x => [x.setting, x.label])).toEqual([["CART.muted", "CART ON/OFF"]]);
   });
 });
+
+describe("To stream (Jeff, 2026-10-16)", () => {
+  it("every fader starts ON (today's sound); a saved OFF is read, sent and compared", () => {
+    const s0 = B.readSavedBoard(db, 2);
+    for (const e of Object.values(s0.slots)) expect(e.stream).toBe(true);
+    db.prepare("INSERT INTO station_config_kv VALUES (2, 'fader_stream', ?, NULL)").run(JSON.stringify({ D: false }));
+    const s = B.readSavedBoard(db, 2);
+    expect(s.slots.D.stream).toBe(false);
+    expect(s.slots.A.stream).toBe(true);
+    const { calls, sink } = recorder({ setToStream: (...a) => { calls.push(["setToStream", ...a]); return true; } });
+    B.applyBoard(s, sink);
+    expect(calls).toContainEqual(["setToStream", "D", false]);
+    expect(calls).toContainEqual(["setToStream", "A", true]);
+    // the engine running it ON while it is saved OFF is a named difference
+    const live = { ok: true, control: { slots: { D: { stream: true } } } };
+    expect(B.compareBoard(s, live).map(d => d.setting)).toContain("D.stream");
+    expect(B.isBoardKey("fader_stream")).toBe(true);
+  });
+  it("an engine without the switch: ON is not a failure; a saved OFF is reported as not applied", () => {
+    const { sink } = recorder();
+    expect(B.applyBoard(B.readSavedBoard(db, 2), sink).failed.map(f => f.setting).filter(x => x.endsWith(".stream"))).toEqual([]);
+    db.prepare("INSERT INTO station_config_kv VALUES (2, 'fader_stream', ?, NULL)").run(JSON.stringify({ D: false }));
+    expect(B.applyBoard(B.readSavedBoard(db, 2), sink).failed.map(f => f.setting)).toContain("D.stream");
+  });
+});

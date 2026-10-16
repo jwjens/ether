@@ -53,6 +53,14 @@ export function startParkMirror(ctx: Ctx): () => void {
     if (sid == null) { await loadStations(); sid = [...uuidOf].find(([, u]) => u === uuid)?.[0]; }
     if (sid != null) pushOne(sid);
   });
+  // PARK MIC (2026-10-16): a talk starting, its voice arriving, and its end reach the Park page at once (who is talking,
+  // "busy" for the other phones, and a Stop in Ether).
+  const ht = ether?.on?.("park:talk-status", async (p: any) => {
+    const uuid = String(p?.stationUuid || "");
+    let sid = [...uuidOf].find(([, u]) => u === uuid)?.[0];
+    if (sid == null && uuid) { await loadStations(); sid = [...uuidOf].find(([, u]) => u === uuid)?.[0]; }
+    if (sid != null) pushOne(sid);
+  });
 
   // Cart and announcement starts and stops, and announcement failures (once a second; a signature compare, no database
   // read unless it changed).
@@ -72,6 +80,7 @@ export function startParkMirror(ctx: Ctx): () => void {
   return () => {
     window.removeEventListener("ether:ops-push", onLocal);
     try { if (h) ether?.off?.("ops:changed", h); } catch {}
+    try { if (ht) ether?.off?.("park:talk-status", ht); } catch {}
     window.clearInterval(cartTimer); window.clearInterval(every);
     started = false;
   };

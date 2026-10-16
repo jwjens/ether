@@ -14,7 +14,8 @@ export type MicState = {
   fillMs: number; targetMs: number; driftPpm: number; primed: boolean;
   underruns: number; starvedMs: number; overruns: number; staleFlushes: number; deviceErrors: number; zeroSec: number;
 };
-export type InputDevice = { name: string; channels: number; rate: number; format: string; isDefault: boolean };
+/** `label` / `park`: the two Park mics (Hold to talk, 2026-10-16) — device "park:<n>", listed with the sound cards. */
+export type InputDevice = { name: string; channels: number; rate: number; format: string; isDefault: boolean; label?: string; park?: number };
 
 const REV_KEY = "ether.mic.rev";
 export const MIC_SLOTS = ["D", "E", "F", "S1", "S2", "S3", "S4", "S5"] as const;
@@ -114,6 +115,8 @@ export function micStateWords(s: MicState | undefined, patched: boolean): { text
   if (!s) return { text: "waiting for the engine", tone: "warn" };
   switch (s.state) {
     case "running": return s.primed ? { text: "live", tone: "ok" } : { text: "starting", tone: "warn" };
+    // PARK MIC: patched and ready, nobody holding HOLD TO TALK.
+    case "idle": return { text: "ready — nobody talking", tone: "ok" };
     case "opening": return { text: "opening", tone: "warn" };
     case "not_found": return { text: "device not connected", tone: "bad" };
     case "lost": return { text: "device lost — retrying", tone: "bad" };

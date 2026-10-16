@@ -147,6 +147,7 @@ try { ENGINE_FP = require("./engine-fingerprint").engineFingerprint(path.join(__
 const { DaemonEngine } = require("./engine");
 const { StreamSupervisor } = require("./stream");
 const { ListenSender } = require("./listen");     // Park page Listen (2026-10-13) — its own ffmpeg, its own port
+const { TalkReceiver, PARK_MICS } = require("./talk");   // Park mic / Hold to talk (2026-10-16) — its own ffmpeg per mic
 // v4.4.51: approximate the daemon process start (for the Health Monitor's uptime/restart, reported in
 // the ping reply so main doesn't have to scrape the rotating log for the pid).
 const DAEMON_STARTED_AT = Date.now() - Math.round((process.uptime && process.uptime() || 0) * 1000);
@@ -353,6 +354,16 @@ function getListen(stationId) {
   return s;
 }
 
+// PARK MIC (2026-10-16) — per station and Park mic, its own ffmpeg writing the engine's Park mic port (audiod/talk.js).
+// Status events broadcast as { event: "talk", ... } → main.
+const talks = new Map(); // `${stationId}:${mic}` → TalkReceiver
+function getTalk(stationId, mic) {
+  const k = `${stationId}:${mic}`;
+  let t = talks.get(k);
+  if (!t) { t = new TalkReceiver(stationId, mic, A, (st) => broadcast({ event: "talk", ...st })); talks.set(k, t); }
+  return t;
+}
+
 // ── Command surface (addon-backed) ────────────────────────────────────────────
 // Each returns a JSON-serializable result (or throws → { ok:false, error }).
 // Per-station promise chain for the MANUAL/AUTO toggle. Per station, so a jock toggling one station
@@ -475,6 +486,7 @@ const handlers = {
   // (`control`) and as the audio callback last mixed with it (`applied`), plus the devices. A read; changes nothing.
   // FADERS ARE GENERIC — where this fader is heard locally (aux true = AUX output, false = main output).
   setLocalOutput:     (m) => (typeof A.audioSetLocalOutput === "function" ? A.audioSetLocalOutput(Number(m.stationId), String(m.deck), !!m.aux) : false),
+  setToStream:        (m) => (typeof A.audioSetToStream === "function" ? A.audioSetToStream(Number(m.stationId), String(m.deck), !!m.on) : false),
   // The smoothing every level change rides, ms (fader_smoothing_ms).
   setFaderSmoothing:  (m) => (typeof A.audioSetFaderSmoothing === "function" ? A.audioSetFaderSmoothing(Number(m.stationId), Number(m.ms)) : false),
   // LOUDNESS — measure one file now (on import; background, low priority), and the measurer's state.
@@ -647,6 +659,11 @@ const handlers = {
   listenStart:        (m) => getListen(m.stationId).start(m.config || {}),
   listenStop:         (m) => { const s = listens.get(m.stationId); return s ? s.stop() : { ok: true }; },
   listenStatus:       (m) => { const s = listens.get(m.stationId); return s ? s.status() : { stationId: m.stationId, state: "idle" }; },
+  // Park mic / Hold to talk — start (or renew) a talk on one Park mic, stop it, status. Never touches playout.
+  talkStart:          (m) => { const mic = Number(m.config && m.config.mic); if (!PARK_MICS.includes(mic)) return { ok: false, error: "No such Park mic." }; return getTalk(m.stationId, mic).start(m.config || {}); },
+  talkStop:           (m) => { const t = talks.get(`${m.stationId}:${Number(m.mic)}`); return t ? t.stop(String(m.how || "released")) : { ok: true, was: false }; },
+  talkStatus:         (m) => PARK_MICS.map(n => { const t = talks.get(`${m.stationId}:${n}`); return t ? t.status() : { stationId: m.stationId, mic: n, state: "idle" }; }),
+  parkMicState:       (m) => { try { return typeof A.audioParkMicState === "function" ? JSON.parse(A.audioParkMicState(Number(m.stationId))) : { v: 0, parkMics: [] }; } catch (e) { return { v: 0, parkMics: [], error: String(e && e.message || e) }; } },
   // Real cpal output-callback stamp (epoch ms of the last device callback, ANY station). The
   // authoritative "is the output device alive" signal — independent of the VU levels pipeline. The
   // app's silent-wedge watchdog uses this to tell a real output death (callback stopped) from a
@@ -883,7 +900,7 @@ function applyBoardAll(why) {
 // Commands worth a log line on receipt — the lifecycle/automation surface (NOT the high-rate
 // pollers like getState/getLevels/getQueue, which would drown the log). automationStart/Stop
 // receipts are the anchor for verifying the auto-resume fix (Commit 2).
-const LOGGED_CMDS = new Set(["releaseDb", "automationStart", "automationStop", "skip", "fill", "init", "shutdown", "startStream", "stopStream", "listenStop"]);
+const LOGGED_CMDS = new Set(["releaseDb", "automationStart", "automationStop", "skip", "fill", "init", "shutdown", "startStream", "stopStream", "listenStop", "talkStart", "talkStop"]);
 
 function handleLine(sock, line) {
   let msg;
@@ -1079,6 +1096,7 @@ function shutdown() {
   clearInterval(eventTimer);
   for (const s of streams.values()) { try { s.stop(); } catch {} }
   for (const s of listens.values()) { try { s.stop(); } catch {} }
+  for (const t of talks.values()) { try { t.stop("shutdown"); } catch {} }
   // dispose(), not stop(): stop() no longer tears down timers (MANUAL keeps the poll alive), so the
   // shutdown path must clear them explicitly or every station leaks a 250ms interval on exit.
   for (const e of engines.values()) { try { e.dispose(); } catch {} }

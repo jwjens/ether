@@ -1380,7 +1380,7 @@ export default function App() {
         // THE STUDIO'S LOCK (Jeff, 2026-10-13): "Park page control: OFF" on the station strip refuses the Park page's
         // fader, MUTE, carts and closing time here too, not only on the server (a page or server a moment behind still
         // cannot change anything). Listen is not locked. Only Ether turns it back on.
-        if (data?.from_park === true && targetId != null && ["ops:set-level", "ops:set-mute", "ops:set-closing", "cart:fire"].includes(cmd)) {
+        if (data?.from_park === true && targetId != null && (["ops:set-level", "ops:set-mute", "ops:set-closing", "cart:fire"].includes(cmd) || (cmd === "park:talk" && data?.on))) {
           let locked = false;
           try {
             const r = await query<{ value: string }>("SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'park_control' AND deleted_at IS NULL", [targetId]);
@@ -1641,6 +1641,15 @@ export default function App() {
             if (targetId == null) { refuse("park:listen — no target station"); break; }
             const r: any = await (window as any).ether?.invoke?.("park:listen", { stationId: targetId, on: !!data.on, url: data.url, leaseSec: data.lease_sec });
             if (!r?.ok) outcome = { ok: false, error: r?.error || "park:listen failed" };
+            break;
+          }
+          // ── PARK OPS: Hold to talk (2026-10-16) — a logged-in staff member holds HOLD TO TALK on one Park mic (on, renewed
+          // while held) or lets go. Main checks the lock, the setup and the fader again, and runs the daemon's receiver.
+          case "park:talk": {
+            if (targetId == null) { refuse("park:talk — no target station"); break; }
+            const r: any = await (window as any).ether?.invoke?.("park:talk", { stationId: targetId, on: !!data.on, mic: data.mic, url: data.url,
+              leaseSec: data.lease_sec, talkId: data.talk_id, by: data.by, how: data.how });
+            if (!r?.ok) outcome = { ok: false, error: r?.error || "park:talk failed" };
             break;
           }
           // ── PARK OPS: fire a cart from the phone ──────────────────────────────────────────────

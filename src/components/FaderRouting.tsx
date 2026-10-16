@@ -1,13 +1,14 @@
 // FaderRouting — every fader's three routing settings, on the strip (Jeff, 2026-10-11: "faders are generic shells …
 // three explicit per-fader settings (local output: main speakers or AUX; ducks music; ducked by others), on every
-// fader, visible on the strip").
+// fader, visible on the strip"). TO STREAM (2026-10-16): a fourth — on the stream (ON, every fader's default) or heard
+// only locally (OFF: the park through MAIN/AUX and MONITOR, never the stream).
 //
 // What it shows is what the engine is running: main reads it with the ONE applier's rule (board:routing →
 // audiod/board-state.js readSavedBoard). A press SAVES the setting and sends it (board:set-routing); a send the engine
 // cannot take yet is queued by main, never dropped. Every window refreshes on board:routing-changed.
 import { useCallback, useEffect, useState } from "react";
 
-type Routing = { local: "aux" | "main"; duck: boolean; duckable: boolean };
+type Routing = { local: "aux" | "main"; duck: boolean; duckable: boolean; stream?: boolean };
 const ENGINE_SLOTS = ["A", "B", "C", "D", "E", "F", "CART", "S1", "S2", "S3", "S4", "S5"];
 
 export default function FaderRouting({ stationId, stationUuid, slot, label }: { stationId: number | null; stationUuid?: string | null; slot: string; label: string }) {
@@ -50,6 +51,10 @@ export default function FaderRouting({ stationId, stationUuid, slot, label }: { 
         title={`${label} ${r.duck ? "DUCKS the music while it plays" : "does not duck the music"}. Click to change.`}>DUCKS</button>
       <button onClick={() => void set({ duckable: !r.duckable })} style={btn(r.duckable, "#38bdf8")}
         title={`${label} ${r.duckable ? "is DUCKED when another fader ducks the music" : "is never ducked"}. Click to change.`}>DUCKED</button>
+      <button onClick={() => void set({ stream: !(r.stream !== false) })} style={btn(r.stream !== false, "#f87171")} aria-pressed={r.stream !== false}
+        title={`${label} ${r.stream !== false ? "goes to the STREAM (and the park)" : "is heard only locally — in the park through its MAIN/AUX output and MONITOR, never on the stream"}. Click to change.`}>
+        TO STREAM
+      </button>
     </div>
   );
 }

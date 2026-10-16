@@ -11,6 +11,7 @@ import RemoteLinkSettings from "./RemoteLinkSettings";
 import PflSettings from "./PflSettings";
 import SoundSettings from "./SoundSettings";
 import ParkListenSettings from "./ParkListenSettings";
+import ParkTalkSettings from "./ParkTalkSettings";
 import { usePlan } from "../hooks/usePlan";
 import { useStreaming } from "../hooks/useStreaming";
 import { getStationTimezone, setStationTimezone, COMMON_TIMEZONES } from "../utils/timezone";
@@ -3371,6 +3372,12 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
       {/* PARK PAGE — LISTEN (2026-10-13, docs/park-listen-plan-2026-10-13.md): every number that shapes the staff feed. */}
       <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1v-6h3z"/><path d="M3 19a2 2 0 0 0 2 2h1v-6H3z"/></svg>} title="Park page — Listen" description="Logged-in park staff hear what the park speakers get, on their own phone">
         <ParkListenSettings />
+      </Section>
+
+      {/* PARK PAGE — HOLD TO TALK (2026-10-16, docs/park-mic-build-2026-10-16.md): the Park mics' names, the longest talk, the
+          phone's mic processing and the voice limiter. */}
+      <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg>} title="Park page — Hold to talk" description="Logged-in park staff talk over the park speakers (and the stream, per the fader) from their phone">
+        <ParkTalkSettings />
       </Section>
 
       {/* PFL (docs/help-channel-faders.md) — the programme dip in the local output while a PFL is on. */}
