@@ -252,13 +252,18 @@ Second message, a few minutes later:
 
 ### Plan as answered
 
-1. **The stream: OPEN.** The two messages conflict. The first says both the park and the stream, with a "To stream" switch
+1. **The stream: DECIDED (Jeff, final):**
+
+   > Stream answer, final: the PARK TALK fader gets a visible "To stream: ON/OFF" switch, saved like other fader settings, starting ON. ON = park speakers + internet stream; OFF = park only. Ignore "park only, never on the stream".
+
+   (The earlier conflict is kept below as history.) The two messages conflicted. The first says both the park and the stream, with a "To stream" switch
    that starts ON. The second says "park only, never on the stream". Waiting for Jeff to say which stands.
    - Announcement audio stays on the stream as now in either case. Only announcement TITLES stay off the public listener
      page and its queue (already so).
 2. **Its own duck settings:** depth, threshold, attack, hold and release for talk, set once from the station ducker's
    current numbers when Hold to talk is first saved, then edited only here. The read-only ducker copy above is replaced
    by these five settings.
+   - **Jeff: "if it needs an engine change, tell me what it involves and the risk before building. Don't change the engine without my OK."**
    - **UNVERIFIED, engine question:** the ducker today is one per station, on the programme bus
      (`aux…design` B.3). A second set for talk means the engine must run two duck sources with their own numbers. To be
      designed at build time, inside that design.
