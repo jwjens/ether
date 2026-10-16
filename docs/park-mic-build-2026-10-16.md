@@ -335,3 +335,52 @@ still work."
   - drop backlog above about 30 ms at once (today up to 100 ms lingers and drains at ±0.3 %).
   - Risk: low. The mixing and the other inputs are not touched.
   - Cost: on a bad connection the voice skips a fragment instead of falling behind. Jeff: "we wont use weak phones".
+
+## Tap to talk, no time limit, least delay, spectrum fix: installer 62a389ec + Park page (2026-10-16, 3:30 PM)
+
+Jeff (verbatim, in order):
+- "make it press onece to turn on and press again to turn off holding it is inconsistent"
+- "Tap on / tap off is right. Remove the 20-second limit completely: no automatic stop and no 'longest talk' setting.
+  Turning the mic off is the user's job. Ether's STOP button and the studio lock already cover a forgotten mic. Don't add
+  anything else. Finish item 2 and the installer."
+- "Fader G (Park Mic 1) spectrum shows every band pinned full at the same level all the time, even with nobody talking,
+  and the scale on the right reads 114–174. … Find out whether the Park mic input is actually sending something while
+  idle … or the analyzer is drawing silence/no-data as full. Fix whichever it is."
+
+**Installer:** `C:\openair\dist-electron\Ether Setup 4.6.59 park-mic-tap-lowdelay 62a389ec d9fcba6.exe`
+- sha256 `62a389ec3eafbf02bba6a5ff093bfe0c0722de34ed91a45e28128ba4e8ce8c55`, 216,087,563 bytes.
+- Engine native `40c7c9c3…` / code `d7fbd30a…` (rebuilt: the Park mic delay change).
+- Release gate PASS (`gate-logs/2026-10-16T22-33-37-697Z PASS.log`).
+
+**What changed:**
+- **No time limit anywhere** (station `d9fcba6`, server `84a4a6b`, page `1690b7d`):
+  - no longest-talk setting, receiver limit, server end time, page countdown or background stop;
+  - a talk ends when tapped off, by Ether's STOP TALK, by the studio lock, or when the phone stops renewing (lease).
+- **Least delay:**
+  - receiver `-flush_packets 1 -max_delay 0 -reorder_queue_size 0` (`4c33ad6`);
+  - engine, Park mic only: the port is fed in 10 ms pieces, and backlog over 30 ms is dropped at once (`LiveIn::new_park`;
+    a mic and the Link keep 100 ms);
+  - page: mic `latency: 0` hint.
+  - The delay was not re-measured after these changes; by ear it was about 0.7 s before.
+- **Spectrum (root cause found and fixed):**
+  - Runtime check on the real engine: an idle Park mic fader feeds EXACT silence (all 241 points at −120 dB, `fed=true`).
+    Talking gives a normal spectrum (max −13 dB for a −12 dB tone).
+  - The view's auto-range followed the −120 floor down to a top of −114, so silence drew 6 dB under the top: every band
+    "full", on a −114…−174 scale.
+  - Now the top never goes below −60 dB (`AUTO_TOP_MIN_DB`), and a live but silent channel says "silence on this
+    channel" (`isSilent`). rta tests 11/11.
+- **Park page `1690b7d` deployed `6a1920f0`, 3:30:35–3:30:56 PM**, the old files kept (rollback copy
+  `park-live-before-sturdy`):
+  - TAP TO TALK: the first tap turns the mic on (`latency: 0`) and starts; the mic stays open, paused; tap again to
+    stop; every end says why.
+  - **Switchover:** at 3:30:56 PM the new script answered as HTML on the plain address (the Cloudflare switch). By 3:31:06
+    it was correct; the edge revalidated it at 3:31:45.
+  - A phone that loaded the page in that ~10 s window may hold the wrong file for up to 4 h (`max-age=14400`). Fix: clear
+    site data or a private tab.
+  - Live check 3:32 PM: new script, station online, fader, MUTE, carts, closing time and announcements shown.
+  - TAP TO TALK and LISTEN need a staff login; not checked by Claude.
+- **Server `84a4a6b` (no time limit): NOT deployed, waiting for Jeff's GO.**
+  - Until then the live server still ends a talk at the station's longest talk + 2 s. The station on ovowforestmusic still
+    runs an older build that ends it at 20 s too, until 62a389ec is installed.
+- Also found: Park Mic 1 is patched on two faders on ovowforestmusic (G and H; `conflict: ["S1","S2"]`). Only the last
+  one patched gets the voice.
