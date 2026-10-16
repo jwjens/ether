@@ -38,3 +38,27 @@ WHEP body: `{"status":"error","error":"path 'park/probe' is not configured"}` (M
     so it would need a host firewall too.
 - **UDP 8189: can't be confirmed from outside yet.** MediaMTX only answers on it during a real WebRTC session, and a real
   session needs the Railway values (auth), which wait for Jeff's GO. **UNVERIFIED** until the first Listen session plays.
+
+## Re-probe of TCP 8189 (2026-10-15, 6:45 PM PDT)
+
+Jeff added the Lightsail rule: Custom · TCP · 8189 · Any IPv4 address, on ether-playout. Probe only, as before; Railway values
+and Listen were not touched.
+
+**Result: answered, 3 of 3.**
+
+```
+TCP 8189 try 1: 000 Recv failure: Connection was reset
+TCP 8189 try 2: 000 Recv failure: Connection was reset
+TCP 8189 try 3: 000 Recv failure: Connection was reset
+```
+(curl: the connection opened, then MediaMTX closed it on the HTTP request, which isn't WebRTC.) Then a plain TCP connect
+(scratchpad `tcp8189.js`, sends nothing):
+```
+try 1: ANSWERED (TCP connected in 75 ms)
+try 2: ANSWERED (TCP connected in 37 ms)
+try 3: ANSWERED (TCP connected in 43 ms)
+```
+
+- The cause of the earlier timeouts was the missing Lightsail rule. Nothing on the server was dropping it, and MediaMTX is
+  listening on TCP 8189.
+- **UDP 8189 is still UNVERIFIED** until the first real Listen session (after Jeff's GO on the Railway values).
