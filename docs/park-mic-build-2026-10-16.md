@@ -218,3 +218,33 @@ talk paths. Rollback = restore the backup. Change nothing else on that server."
   - **UNVERIFIED** with a real phone: Claude has no staff login. Check: tap LISTEN on the Park page.
 - **Rollback:** `sudo cp -p /etc/mediamtx/mediamtx.yml.bak-20261016-park-talk /etc/mediamtx/mediamtx.yml` (it reloads by
   itself).
+
+## "Put the limiter on fader S1 does nothing" (2026-10-16, fixed for the next installer)
+
+Jeff (verbatim): "On ovowforestmusic (fe8ce09c), Preferences → Park page — Hold to talk: clicking 'Put the limiter on
+fader S1' does nothing. No change, no message. Find why and fix it for the next installer. The button must either apply
+the limiter and show 'Limiter on fader S1: −6 dB, 20:1', or say why it can't."
+
+**What the code in fe8ce09c did (read, plus one engine check):**
+- **The answer went to the foot of the panel.** The button's result, success or refusal, was written to the panel's one
+  message line, under the help text at the bottom of the section, out of sight of the button.
+- **An open rack window never re-reads.** `useChannelRack` reads a fader's rack once when the view opens. A rack written
+  from elsewhere doesn't appear there, and that window's next edit re-sends the old rack and overwrites the limiter.
+  The EQ lamp re-reads; the rack view didn't.
+- **The engine accepts the button's exact rack.** Checked here: `audioSetChannelRack(…, "S1", <empty rack + comp -6 dB
+  20:1 1 ms 100 ms knee 0>)` → `{"ok":true}`.
+- **UNVERIFIED** which of the two Jeff met on ovowforestmusic: the button may have saved the limiter while the S1 rack
+  window kept showing the old rack, or it was refused and said so out of sight. Both are fixed.
+
+**Fix (`316e975`, in the next installer):**
+- The answer appears **right under that Park mic**, with the button disabled while it works:
+  - success: "Limiter on fader S1: −6 dB, 20:1 (attack 1 ms, release 100 ms). It is the COMP in fader S1's rack.";
+  - otherwise: "Not put on: <why>" (no station, not on a fader, numbers not set, rack unreadable, the engine's reason, or
+    what the rack reads back instead).
+- After the write it **reads the rack back** and checks the compressor is there, IN, with those numbers
+  (`src/lib/parkLimiter.ts`, tested).
+- Open rack windows and the EQ lamp re-read a rack written elsewhere. A view in the middle of its own edit keeps its edit.
+- vitest 924/924, tsc 0.
+
+**By hand meanwhile** (fader S1's rack → COMP): Threshold −6 dB, Ratio 20 (20:1), Attack 1 ms, Release 100 ms, Knee 0 dB,
+Makeup 0 dB, module IN. Knee and Makeup are the two that could be left wrong: a new COMP starts at Knee 6 dB.
