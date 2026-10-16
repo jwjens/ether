@@ -17,7 +17,7 @@ import { useBoardName } from "../hooks/useBoardName";
 import { saveRefusal } from "../lib/parkListenSettings";
 
 type Mic = { mic: number; name: string; fader: string | null; conflict: string[] | null; stream: boolean | null; on: boolean | null };
-type State = { ready: boolean; missing: string[]; echo: boolean | null; noise: boolean | null; agc: boolean | null;
+type State = { ready: boolean; missing: string[]; echo: boolean | null; noise: boolean | null; agc: boolean | null; bufferMs: number | null;
                locked: boolean; mics: Mic[] };
 
 // No longest talk (Jeff, 2026-10-16): a talk runs until it is tapped off, Ether's STOP, or the studio lock.
@@ -40,7 +40,7 @@ export default function ParkTalkSettings() {
       const r = await ether?.invoke?.("park:talk-state", stationId);
       if (!r?.ok) { setMsg(`Not read: ${r?.error || "no answer"}`); return; }
       setS(r);
-      const d: Record<string, string> = {};
+      const d: Record<string, string> = { park_mic_buffer_ms: r.bufferMs != null ? String(r.bufferMs) : "" };
       for (const m of r.mics as Mic[]) d[nameKey(m.mic)] = m.name;
       setDraft(d);
     } catch (e) { setMsg(`Not read: ${String(e)}`); }
@@ -102,6 +102,15 @@ export default function ParkTalkSettings() {
           </div>
         </div>
       ))}
+      <div style={row}>
+        <span style={lab}>Park mic buffer</span>
+        <input style={inp} value={draft.park_mic_buffer_ms ?? ""} onChange={e => setDraft(d => ({ ...d, park_mic_buffer_ms: e.target.value }))} />
+        <span style={small}>ms</span>
+        <button style={btn} onClick={() => { const v = (draft.park_mic_buffer_ms || "").trim(); const n = Number(v);
+          if (v === "" || !Number.isFinite(n) || n < 20 || n > 1000) { setMsg("Park mic buffer must be 20 to 1000 ms."); return; }
+          void save("park_mic_buffer_ms", String(Math.round(n)), `Park mic buffer ${Math.round(n)} ms`); }}>Save</button>
+        <span style={small}>now: {s.bufferMs != null ? `${s.bufferMs} ms` : "not set"} · more = steadier voice on weak signal, a little more delay</span>
+      </div>
       {toggle(K.echo, "Phone echo cancellation", s.echo)}
       {toggle(K.noise, "Phone noise suppression", s.noise)}
       {toggle(K.agc, "Phone automatic gain", s.agc)}

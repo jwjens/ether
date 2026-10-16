@@ -25,9 +25,17 @@ const KEYS = {
 const nameKey = (n) => `park_mic_${n}_name`;
 const lastKey = (n) => `park_talk_last_${n}`;
 /** Jeff's numbers (2026-10-15/16), written once — when a Park mic is first put on a fader — never over a set value. */
-const START = { echo: "1", noise: "1", agc: "0" };
+// Auto gain ON (Jeff, 2026-10-16: "Turn phone auto gain ON for the Park mic, so talking close doesn't clip and staff
+// don't need an exact distance").
+const START = { echo: "1", noise: "1", agc: "1" };
+/** PARK MIC BUFFER (Jeff, 2026-10-16: a visible setting "starting at 120 ms"): how much voice the engine holds before
+ *  playing, to ride out phone internet. Applied by the daemon (audiod/engine.js); not needed for "ready" (the engine
+ *  starts at the same 120). */
+const BUFFER_KEY = "park_mic_buffer_ms";
+const BUFFER_START = "120";
+const BUFFER_RANGE = [20, 1000];
 const DEFAULT_NAME = (n) => `Park Mic ${n}`;
-const ALL_KEYS = [...Object.values(KEYS), ...PARK_MICS.map(nameKey), ...PARK_MICS.map(lastKey)];
+const ALL_KEYS = [...Object.values(KEYS), BUFFER_KEY, ...PARK_MICS.map(nameKey), ...PARK_MICS.map(lastKey)];
 
 /** @param get (key) => stored value | undefined */
 function readSettings(get) {
@@ -37,13 +45,16 @@ function readSettings(get) {
   const echo = flag(KEYS.echo), noise = flag(KEYS.noise), agc = flag(KEYS.agc);
   const names = {};
   for (const n of PARK_MICS) names[n] = (val(nameKey(n)) || DEFAULT_NAME(n)).slice(0, 40);
-  return { ready: missing.length === 0, missing, echo, noise, agc, names };
+  const b = Number(val(BUFFER_KEY));
+  const bufferMs = Number.isFinite(b) && b >= BUFFER_RANGE[0] && b <= BUFFER_RANGE[1] ? b : null;
+  return { ready: missing.length === 0, missing, echo, noise, agc, bufferMs, names };
 }
 
 /** The writes that put Jeff's starting values in, for keys not set yet. [[key, value]] */
 function seedWrites(get) {
   const out = [];
   for (const [k, key] of Object.entries(KEYS)) { const v = get(key); if (v == null || String(v).trim() === "") out.push([key, START[k]]); }
+  { const v = get(BUFFER_KEY); if (v == null || String(v).trim() === "") out.push([BUFFER_KEY, BUFFER_START]); }
   return out;
 }
 
@@ -86,5 +97,5 @@ function refusal({ locked, settings, fader, daemon }) {
   return null;
 }
 
-module.exports = { PARK_MICS, parkDevice, parkMicOf, KEYS, nameKey, lastKey, START, ALL_KEYS, DEFAULT_NAME,
+module.exports = { PARK_MICS, parkDevice, parkMicOf, KEYS, BUFFER_KEY, BUFFER_START, BUFFER_RANGE, nameKey, lastKey, START, ALL_KEYS, DEFAULT_NAME,
   readSettings, seedWrites, micFaders, parseLast, lastLine, refusal, HOW };

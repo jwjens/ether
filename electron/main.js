@@ -5560,7 +5560,7 @@ function _talkLockWatch() {
     for (const k of [..._talkNow.keys()]) {
       const [sid, mic] = k.split(":").map(Number);
       let locked = false; try { locked = _talkKv(sid)("park_control") === "off"; } catch { /* unreadable → the server holds the same lock */ }
-      if (locked) audiodClient.cmd("talkStop", { stationId: sid, mic, how: "locked" }).catch(() => {});
+      if (locked) audiodClient.cmd("talkOff", { stationId: sid, mic, how: "locked" }).catch(() => {});
     }
   }, 1000);
 }
@@ -5577,7 +5577,7 @@ function parkTalkState(sid) {
              talking: now ? { by: now.by, since: new Date(now.since).toISOString(), receiving: !!now.receiving } : null,
              last: ParkTalk.parseLast(get(ParkTalk.lastKey(n))) };
   });
-  return { ready: settings.ready, missing: settings.missing, echo: settings.echo, noise: settings.noise, agc: settings.agc,
+  return { ready: settings.ready, missing: settings.missing, echo: settings.echo, noise: settings.noise, agc: settings.agc, bufferMs: settings.bufferMs,
            locked: get("park_control") === "off", mics };
 }
 ipcMain.handle("park:talk-state", (_e, stationId) => {
@@ -5585,21 +5585,34 @@ ipcMain.handle("park:talk-state", (_e, stationId) => {
   try { return Number.isFinite(sid) ? { ok: true, ...parkTalkState(sid) } : { ok: false, error: "no station" }; }
   catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 });
+// A PHONE'S WARM LINE (Jeff, 2026-10-16: "the phone keeps a warm connection to the relay, muted, and the station keeps
+// listening for it"): on (renewed while the phone is there) / off (its mic turned off, the page closed).
+ipcMain.handle("park:warm", async (_e, args = {}) => {
+  try {
+    const sid = Number(args.stationId);
+    if (!Number.isFinite(sid)) return { ok: false, error: "no station" };
+    if (!AUDIO_DAEMON) return { ok: false, error: "Talk needs the audio engine — it is not running on this computer." };
+    if (!args.on) return await audiodClient.cmd("warmStop", { stationId: sid, warmId: String(args.warmId || "") });
+    return await audiodClient.cmd("warmStart", { stationId: sid, config: { warmId: String(args.warmId || ""), url: String(args.url || ""), leaseSec: Number(args.leaseSec) } });
+  } catch (e) { return { ok: false, error: "park warm failed: " + (e && e.message || e) }; }
+});
+// THE TALK SWITCH — the user's tap ON / OFF (THE STANDING RULE, Jeff 2026-10-16: the user is in charge of on and off;
+// only a tap, Ether's STOP or the studio lock ends a talk).
 ipcMain.handle("park:talk", async (_e, args = {}) => {
   try {
     const sid = Number(args.stationId), mic = Number(args.mic);
     if (!Number.isFinite(sid) || !ParkTalk.PARK_MICS.includes(mic)) return { ok: false, error: "no station or Park mic" };
     if (!args.on) {
       if (!AUDIO_DAEMON) return { ok: true };
-      return await audiodClient.cmd("talkStop", { stationId: sid, mic, how: String(args.how || "released") });
+      return await audiodClient.cmd("talkOff", { stationId: sid, mic, how: String(args.how || "released") });
     }
     const get = _talkKv(sid);
     const settings = ParkTalk.readSettings(get);
     const fader = ParkTalk.micFaders(_talkPatches(sid)).faders[mic];
     const why = ParkTalk.refusal({ locked: get("park_control") === "off", settings, fader, daemon: !!AUDIO_DAEMON });
     if (why) { _healthEvent("park-talk-refused", { stationId: sid, mic, by: args.by || null, reason: why }); return { ok: false, error: why }; }
-    const config = { mic, url: String(args.url || ""), leaseSec: Number(args.leaseSec), talkId: String(args.talkId || ""), by: String(args.by || "") };
-    return await audiodClient.cmd("talkStart", { stationId: sid, config });
+    const config = { mic, warmId: String(args.warmId || ""), talkId: String(args.talkId || ""), by: String(args.by || "") };
+    return await audiodClient.cmd("talkOn", { stationId: sid, config });
   } catch (e) { return { ok: false, error: "park talk failed: " + (e && e.message || e) }; }
 });
 // STOP in Ether, by the Park mic's strip: ends the talk at once (the receiver stops; the page sees it on its next read).
@@ -5607,7 +5620,7 @@ ipcMain.handle("park:talk-stop", async (_e, stationId, mic) => {
   const sid = Number(stationId), n = Number(mic);
   if (!Number.isFinite(sid) || !ParkTalk.PARK_MICS.includes(n)) return { ok: false, error: "no station or Park mic" };
   if (!AUDIO_DAEMON) return { ok: false, error: "the audio engine is not running" };
-  try { return await audiodClient.cmd("talkStop", { stationId: sid, mic: n, how: "ether" }); }
+  try { return await audiodClient.cmd("talkOff", { stationId: sid, mic: n, how: "ether" }); }
   catch (e) { return { ok: false, error: String(e && e.message || e) }; }
 });
 /** A daemon talk event: who/when, the health ledger, and every window (the strip, the Park page push). */
@@ -5615,18 +5628,20 @@ function _onTalkEvent(m) {
   const sid = Number(m.stationId), n = Number(m.mic), k = `${sid}:${n}`;
   const cur = _talkNow.get(k);
   logStartup(`[park-talk] station ${sid} Park Mic ${n}: ${m.state}${m.by ? " (" + m.by + ")" : ""}${m.errorMsg ? " — " + m.errorMsg : ""}${m.endedHow ? " · ended: " + m.endedHow : ""}`);
-  if (m.state === "connecting" && (!cur || cur.talkId !== m.talkId)) {
-    _talkNow.set(k, { by: m.by || null, since: Number(m.since) || Date.now(), talkId: m.talkId, receiving: false });
-    _healthEvent("park-talk-start", { stationId: sid, mic: n, by: m.by || null });
-  } else if (m.state === "receiving" && cur) {
-    cur.receiving = true;
+  if (m.state === "on" && (!cur || cur.talkId !== m.talkId)) {
+    _talkNow.set(k, { by: m.by || null, since: Number(m.since) || Date.now(), talkId: m.talkId, receiving: !!m.receiving, everOpen: !!m.receiving });
+    _healthEvent("park-talk-start", { stationId: sid, mic: n, by: m.by || null, lineOpen: !!m.receiving });
+  } else if (m.state === "on" && cur) {
+    // The line opened or dropped during a talk — a fact about the connection; the talk stays on (the standing rule).
+    if (cur.receiving && !m.receiving) _healthEvent("park-talk-line-dropped", { stationId: sid, mic: n, by: cur.by, message: "the phone's line dropped during a talk; the talk stays on and the line is being retried" });
+    cur.receiving = !!m.receiving; if (m.receiving) cur.everOpen = true;
   } else if (m.state === "idle" && cur) {
     _talkNow.delete(k);
     const sec = Math.max(0, (Date.now() - cur.since) / 1000);
     const how = m.endedHow || "released";
     _healthEvent("park-talk-stop", { stationId: sid, mic: n, by: cur.by, sec: Math.round(sec * 10) / 10, how });
-    if (how === "limit" || how === "locked") _healthEvent("park-talk-cut", { stationId: sid, mic: n, by: cur.by, how });
-    if (!cur.receiving) _healthEvent("park-talk-no-audio", { stationId: sid, mic: n, by: cur.by, how, message: "a talk started but no voice arrived" });
+    if (how === "locked" || how === "ether") _healthEvent("park-talk-cut", { stationId: sid, mic: n, by: cur.by, how });
+    if (!cur.everOpen) _healthEvent("park-talk-line-never-opened", { stationId: sid, mic: n, by: cur.by, how, message: "the phone's line never opened during this talk" });
     try {
       require("./sync/handlers/station_config_kv").stationConfigKvUpsertByKey(getDb(), sid, ParkTalk.lastKey(n),
         JSON.stringify({ by: cur.by, at: new Date(cur.since).toISOString(), sec: Math.round(sec * 10) / 10, how }));

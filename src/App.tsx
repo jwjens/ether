@@ -1647,9 +1647,16 @@ export default function App() {
           // while held) or lets go. Main checks the lock, the setup and the fader again, and runs the daemon's receiver.
           case "park:talk": {
             if (targetId == null) { refuse("park:talk — no target station"); break; }
-            const r: any = await (window as any).ether?.invoke?.("park:talk", { stationId: targetId, on: !!data.on, mic: data.mic, url: data.url,
-              leaseSec: data.lease_sec, talkId: data.talk_id, by: data.by, how: data.how });
+            const r: any = await (window as any).ether?.invoke?.("park:talk", { stationId: targetId, on: !!data.on, mic: data.mic,
+              warmId: data.warm_id, talkId: data.talk_id, by: data.by, how: data.how });
             if (!r?.ok) outcome = { ok: false, error: r?.error || "park:talk failed" };
+            break;
+          }
+          // ── PARK OPS: a phone's warm line (2026-10-16) — kept open while that phone's mic is on, so a tap is instant.
+          case "park:warm": {
+            if (targetId == null) { refuse("park:warm — no target station"); break; }
+            const r: any = await (window as any).ether?.invoke?.("park:warm", { stationId: targetId, on: !!data.on, warmId: data.warm_id, url: data.url, leaseSec: data.lease_sec });
+            if (!r?.ok) outcome = { ok: false, error: r?.error || "park:warm failed" };
             break;
           }
           // ── PARK OPS: fire a cart from the phone ──────────────────────────────────────────────

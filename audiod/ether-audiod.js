@@ -147,7 +147,7 @@ try { ENGINE_FP = require("./engine-fingerprint").engineFingerprint(path.join(__
 const { DaemonEngine } = require("./engine");
 const { StreamSupervisor } = require("./stream");
 const { ListenSender } = require("./listen");     // Park page Listen (2026-10-13) — its own ffmpeg, its own port
-const { TalkReceiver, PARK_MICS } = require("./talk");   // Park mic / Hold to talk (2026-10-16) — its own ffmpeg per mic
+const { ParkTalk, PARK_MICS } = require("./talk");   // Park mic (2026-10-16) — warm phone lines + the talk switch
 // v4.4.51: approximate the daemon process start (for the Health Monitor's uptime/restart, reported in
 // the ping reply so main doesn't have to scrape the rotating log for the pid).
 const DAEMON_STARTED_AT = Date.now() - Math.round((process.uptime && process.uptime() || 0) * 1000);
@@ -354,13 +354,12 @@ function getListen(stationId) {
   return s;
 }
 
-// PARK MIC (2026-10-16) — per station and Park mic, its own ffmpeg writing the engine's Park mic port (audiod/talk.js).
-// Status events broadcast as { event: "talk", ... } → main.
-const talks = new Map(); // `${stationId}:${mic}` → TalkReceiver
-function getTalk(stationId, mic) {
-  const k = `${stationId}:${mic}`;
-  let t = talks.get(k);
-  if (!t) { t = new TalkReceiver(stationId, mic, A, (st) => broadcast({ event: "talk", ...st })); talks.set(k, t); }
+// PARK MIC (2026-10-16) — per station: the phones' warm lines and the talk switch into the engine's Park mic ports
+// (audiod/talk.js). Status events broadcast as { event: "talk", ... } → main.
+const talks = new Map(); // stationId → ParkTalk
+function getTalk(stationId) {
+  let t = talks.get(stationId);
+  if (!t) { t = new ParkTalk(stationId, A, (st) => broadcast({ event: "talk", ...st })); talks.set(stationId, t); }
   return t;
 }
 
@@ -660,9 +659,13 @@ const handlers = {
   listenStop:         (m) => { const s = listens.get(m.stationId); return s ? s.stop() : { ok: true }; },
   listenStatus:       (m) => { const s = listens.get(m.stationId); return s ? s.status() : { stationId: m.stationId, state: "idle" }; },
   // Park mic / Hold to talk — start (or renew) a talk on one Park mic, stop it, status. Never touches playout.
-  talkStart:          (m) => { const mic = Number(m.config && m.config.mic); if (!PARK_MICS.includes(mic)) return { ok: false, error: "No such Park mic." }; return getTalk(m.stationId, mic).start(m.config || {}); },
-  talkStop:           (m) => { const t = talks.get(`${m.stationId}:${Number(m.mic)}`); return t ? t.stop(String(m.how || "released")) : { ok: true, was: false }; },
-  talkStatus:         (m) => PARK_MICS.map(n => { const t = talks.get(`${m.stationId}:${n}`); return t ? t.status() : { stationId: m.stationId, mic: n, state: "idle" }; }),
+  // Park mic — a phone's warm line (kept open while its mic is on), and the talk switch (on until a person ends it).
+  warmStart:          (m) => getTalk(m.stationId).warm(m.config || {}),
+  warmStop:           (m) => { const t = talks.get(m.stationId); return t ? t.unwarm(String(m.warmId || "")) : { ok: true, was: false }; },
+  talkOn:             (m) => getTalk(m.stationId).on(m.config || {}),
+  talkOff:            (m) => { const t = talks.get(m.stationId); return t ? t.off(Number(m.mic), String(m.how || "released")) : { ok: true, was: false }; },
+  talkStatus:         (m) => { const t = talks.get(m.stationId); return t ? t.status() : PARK_MICS.map(n => ({ stationId: m.stationId, mic: n, state: "idle" })); },
+  setParkMicBuffer:   (m) => (typeof A.audioSetParkMicBuffer === "function" ? { ok: true, ms: A.audioSetParkMicBuffer(Number(m.stationId), Number(m.ms)) } : { ok: false, error: "this audio engine predates the Park mic buffer" }),
   parkMicState:       (m) => { try { return typeof A.audioParkMicState === "function" ? JSON.parse(A.audioParkMicState(Number(m.stationId))) : { v: 0, parkMics: [] }; } catch (e) { return { v: 0, parkMics: [], error: String(e && e.message || e) }; } },
   // Real cpal output-callback stamp (epoch ms of the last device callback, ANY station). The
   // authoritative "is the output device alive" signal — independent of the VU levels pipeline. The
@@ -900,7 +903,7 @@ function applyBoardAll(why) {
 // Commands worth a log line on receipt — the lifecycle/automation surface (NOT the high-rate
 // pollers like getState/getLevels/getQueue, which would drown the log). automationStart/Stop
 // receipts are the anchor for verifying the auto-resume fix (Commit 2).
-const LOGGED_CMDS = new Set(["releaseDb", "automationStart", "automationStop", "skip", "fill", "init", "shutdown", "startStream", "stopStream", "listenStop", "talkStart", "talkStop"]);
+const LOGGED_CMDS = new Set(["releaseDb", "automationStart", "automationStop", "skip", "fill", "init", "shutdown", "startStream", "stopStream", "listenStop", "warmStart", "warmStop", "talkOn", "talkOff", "setParkMicBuffer"]);
 
 function handleLine(sock, line) {
   let msg;
@@ -1096,7 +1099,7 @@ function shutdown() {
   clearInterval(eventTimer);
   for (const s of streams.values()) { try { s.stop(); } catch {} }
   for (const s of listens.values()) { try { s.stop(); } catch {} }
-  for (const t of talks.values()) { try { t.stop("shutdown"); } catch {} }
+  for (const t of talks.values()) { try { t.shutdown(); } catch {} }
   // dispose(), not stop(): stop() no longer tears down timers (MANUAL keeps the poll alive), so the
   // shutdown path must clear them explicitly or every station leaks a 250ms interval on exit.
   for (const e of engines.values()) { try { e.dispose(); } catch {} }

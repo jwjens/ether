@@ -53,9 +53,26 @@ const FILL_TAU_S: f64 = 4.0;
 /// Fill beyond the target by more than this is STALE (the output stopped while the input kept writing):
 /// discarded down to the target before playing. A mic never comes back late.
 const STALE_MS: f64 = 100.0;
-/** PARK MIC (2026-10-16, Jeff: "cut everything we can to shorten delay"): its backlog bound. A lump from the network or
- *  the receiver above this is dropped at once instead of lingering (a mic keeps STALE_MS). */
-pub(crate) const PARK_STALE_MS: f64 = 30.0;
+/** PARK MIC BUFFER (Jeff, 2026-10-16: "make that buffer a visible setting and start it where the voice stays solid, even
+ *  if the delay goes up a little"). The station's setting `park_mic_buffer_ms` (Preferences → Park page — Talk), sent by
+ *  the daemon; this is only the value the engine holds until the setting arrives, and the range it accepts.
+ *  The Park mic's queue holds this much voice before playing, rides out internet timing with it, and drops only backlog
+ *  more than this much above it. (The 30 ms bound of earlier today was too small for phone internet: cut-outs.) */
+pub(crate) const PARK_BUFFER_START_MS: u32 = 120;
+pub(crate) const PARK_BUFFER_RANGE_MS: (u32, u32) = (20, 1000);
+static PARK_BUFFERS: OnceLock<Mutex<HashMap<u32, Arc<AtomicU32>>>> = OnceLock::new();
+/** The station's Park mic buffer, ms (shared by its Park mic queues; read by the mixer callback, atomically). */
+pub(crate) fn park_buffer(station_id: u32) -> Arc<AtomicU32> {
+    let m = PARK_BUFFERS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut g = m.lock().unwrap_or_else(|e| e.into_inner());
+    g.entry(station_id).or_insert_with(|| Arc::new(AtomicU32::new(PARK_BUFFER_START_MS))).clone()
+}
+/** Set it (clamped to PARK_BUFFER_RANGE_MS). Returns the value now in force. */
+pub(crate) fn set_park_buffer(station_id: u32, ms: u32) -> u32 {
+    let v = ms.clamp(PARK_BUFFER_RANGE_MS.0, PARK_BUFFER_RANGE_MS.1);
+    park_buffer(station_id).store(v, Ordering::Relaxed);
+    v
+}
 /** PARK MIC: the port is fed to the fader in pieces of at most this many samples (10 ms at 48 kHz), so a lump can never
  *  raise the ring's target (in_block_max only ever grows). */
 const PARK_PIECE: usize = 480;
@@ -185,8 +202,10 @@ pub(crate) struct LiveIn {
     gain: f32,
     last: f32,
     shared: Arc<MicShared>,
-    /** Backlog above the target that is dropped at once, ms (STALE_MS for a mic; PARK_STALE_MS for a Park mic). */
+    /** Backlog above the target that is dropped at once, ms (STALE_MS for a mic). */
     stale_ms: f64,
+    /** PARK MIC: the station's Park mic buffer (ms) — added to the target and used as the backlog bound. None = a mic. */
+    park_buffer: Option<Arc<AtomicU32>>,
     /// REMOTE LINK — a STEREO live feed (interleaved L/R in the ring) whose drift controller steers on the
     /// link's total buffer (MicShared::extra_*). False for every mic: `pull` is the mic path, untouched.
     link: bool,
@@ -201,12 +220,13 @@ impl LiveIn {
             cons, table: SincTable::new(in_rate, PROGRAM_RATE), hist: [0.0; 2 * TAPS], hpos: 0, phase: 0.0,
             base_step: in_rate as f64 / PROGRAM_RATE as f64, in_rate: in_rate as f64, fill_avg: 0.0,
             primed: false, gain: g, last: 0.0, shared, link: false, hist_r: [0.0; 2 * TAPS], last_r: 0.0, stale_ms: STALE_MS,
+            park_buffer: None,
         }
     }
-    /** PARK MIC — the same consumer with the Park mic's tighter backlog bound. */
-    pub(crate) fn new_park(cons: HeapCons<f32>, in_rate: u32, shared: Arc<MicShared>) -> LiveIn {
+    /** PARK MIC — the same consumer, holding the station's Park mic buffer (read every pull, so a change applies at once). */
+    pub(crate) fn new_park(cons: HeapCons<f32>, in_rate: u32, shared: Arc<MicShared>, buffer: Arc<AtomicU32>) -> LiveIn {
         let mut li = LiveIn::new(cons, in_rate, shared);
-        li.stale_ms = PARK_STALE_MS;
+        li.park_buffer = Some(buffer);
         li
     }
     /// REMOTE LINK — the same consumer over a STEREO ring (linknet.rs decodes the link into it).
@@ -235,7 +255,13 @@ impl LiveIn {
     }
     /// The ring's target fill for a pull of `frames`: one pull + the largest input block seen + a margin.
     fn target(&self, frames: usize) -> f64 {
-        frames as f64 * self.base_step + self.shared.in_block_max.load(Ordering::Relaxed) as f64 + MARGIN_MS * self.in_rate / 1000.0
+        let park = self.park_buffer.as_ref().map_or(0.0, |b| b.load(Ordering::Relaxed) as f64 * self.in_rate / 1000.0);
+        frames as f64 * self.base_step + self.shared.in_block_max.load(Ordering::Relaxed) as f64 + MARGIN_MS * self.in_rate / 1000.0 + park
+    }
+    /** Backlog above the target dropped at once, in input samples: STALE_MS for a mic; the Park mic buffer for a Park mic. */
+    fn stale_frames(&self) -> f64 {
+        let ms = self.park_buffer.as_ref().map_or(self.stale_ms, |b| b.load(Ordering::Relaxed) as f64);
+        ms * self.in_rate / 1000.0
     }
     /// Fill `feed` (interleaved stereo, `frames` frames at PROGRAM_RATE). Always writes every frame: what the
     /// input could not supply is silence (a decay from the last sample, never a step), counted, never an end.
@@ -244,7 +270,7 @@ impl LiveIn {
         let target = self.target(frames);
         let mut fill = self.cons.occupied_len() as f64;
         // STALE: the output stopped while the input kept writing — throw away down to the target.
-        if fill > target + self.stale_ms * self.in_rate / 1000.0 {
+        if fill > target + self.stale_frames() {
             let n = (fill - target) as usize;
             self.cons.skip(n);
             fill -= n as f64;
@@ -745,7 +771,7 @@ impl MicInputs {
             if other != idx { eprintln!("[PARKMIC] Station {} Park Mic {} moved from {} to {}", self.station_id, n, SLOT_NAMES[other], SLOT_NAMES[idx]); }
         }
         if let Some(s) = self.slots[idx].as_mut() { s.was_open = true; s.last_seq = sh.in_seq.load(Ordering::Relaxed); s.last_seq_at = Instant::now(); }
-        out.push(MicAction::Install(idx, crate::rt::DeckFeed::live(Box::new(LiveIn::new_park(cons, PARK_MIC_RATE, sh)))));
+        out.push(MicAction::Install(idx, crate::rt::DeckFeed::live(Box::new(LiveIn::new_park(cons, PARK_MIC_RATE, sh, park_buffer(self.station_id))))));
         let port = pm.port.load(Ordering::Relaxed);
         eprintln!("[PARKMIC] Station {} {}: Park Mic {} patched (port {})", self.station_id, SLOT_NAMES[idx], n, port);
         self.set_status(idx, |st| {
@@ -848,6 +874,38 @@ impl MicInputs {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// PARK MIC BUFFER (2026-10-16, Jeff: "cuts in and out often … make that buffer a visible setting and start it where the
+    /// voice stays solid"). Phone internet delivers voice unevenly: here 60 ms of it every 60 ms in one burst (three 20 ms
+    /// packets at once). The mixer pulls 10 ms at a time. With a 20 ms buffer the queue runs dry again and again (the
+    /// cut-outs); at the 120 ms start value it never does, and nothing is thrown away.
+    #[test]
+    fn the_park_mic_buffer_rides_out_bursty_phone_internet() {
+        let run = |buffer_ms: u32| {
+            let sh = Arc::new(MicShared::default());
+            let buf = Arc::new(AtomicU32::new(buffer_ms));
+            let (mut prod, cons) = mic_ring(PARK_MIC_RATE);
+            let mut li = LiveIn::new_park(cons, PARK_MIC_RATE, sh.clone(), buf);
+            let mut feed = vec![0f32; 441 * 2];
+            let mut g = Gen { rate: 48_000.0, freq: 440.0, amp: 0.25, n: 0 };
+            let mut blk = Vec::new();
+            for t in 0..600 {                                  // 6 s of 10 ms pulls
+                if t % 6 == 0 {                                // every 60 ms: three 20 ms packets arrive together
+                    for _ in 0..6 { g.block(&mut blk, 480); input_block(&blk, 1, 0, &mut prod, &sh, |x| x); }
+                }
+                li.pull(&mut feed, 441);
+            }
+            (sh.underruns.load(Ordering::Relaxed), sh.stale_flushes.load(Ordering::Relaxed))
+        };
+        let (u20, _) = run(20);
+        let (u120, s120) = run(PARK_BUFFER_START_MS);
+        println!("[parkbuffer] bursts of 60 ms: buffer 20 ms → {u20} dropouts; buffer {PARK_BUFFER_START_MS} ms → {u120} dropouts, {s120} backlog drops");
+        assert!(u20 > 10, "the small buffer should starve under bursts ({u20})");
+        assert_eq!(u120, 0, "the Park mic still cut out at {PARK_BUFFER_START_MS} ms");
+        assert_eq!(s120, 0, "voice was thrown away at {PARK_BUFFER_START_MS} ms");
+        assert_eq!(set_park_buffer(990_002, 5), PARK_BUFFER_RANGE_MS.0);
+        assert_eq!(set_park_buffer(990_002, 5000), PARK_BUFFER_RANGE_MS.1);
+    }
 
     /// PARK MIC (2026-10-16): what the daemon's receiver writes into Park Mic 1's port reaches the fader it is patched on
     /// (as that fader's mic input), and stops reaching it once it is unpatched. `park:1` is a mic like any other.

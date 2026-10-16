@@ -42,6 +42,8 @@ const STATION_SCOPED: ReadonlySet<string> = new Set([
   "park:listen",
   // Park Ops: Hold to talk — a logged-in staff member's voice onto one of this station's Park mics (2026-10-16).
   "park:talk",
+  // Park Ops: a phone's warm line to this station's Park mics, kept open while that phone's mic is on (2026-10-16).
+  "park:warm",
 ]);
 
 /** True if `cmd` acts on a single station (→ route by station_uuid). False for license-scoped commands

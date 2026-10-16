@@ -1,22 +1,27 @@
-// audiod/talk.js — PARK MIC receiver (Hold to talk, 2026-10-16; docs/park-mic-build-2026-10-16.md).
+// audiod/talk.js — PARK MIC: warm phone lines and the talk switch (2026-10-16; docs/park-mic-build-2026-10-16.md).
 //
-// Jeff: "2 Park mic input sources (Park Mic 1, Park Mic 2), listed under Mic with the other inputs. The user puts each on
-// any fader; that fader's existing settings (MAIN/AUX, ON, stream) decide where it's heard."
+// THE STANDING RULE (Jeff, 2026-10-16): "the user is in charge of on and off. The system never assumes, never listens for
+// talking, never ends a talk because of silence, and never auto-stops. Once green, it stays open until the user taps
+// off, or a person presses STOP / the studio lock in Ether. Show green only when the line is truly open end to end, so
+// the first word is always heard. If the connection drops, say so plainly … don't silently end it."
 //
-// What it does: while a logged-in staff member holds HOLD TO TALK on the Park page, ONE ffmpeg reads that Park mic's
-// voice off the relay (MediaMTX on the stream server — the phone publishes it there over WebRTC) over RTSPS, decodes
-// it to mono f32le at 48 kHz and writes it into the engine's Park mic port (native/src/micin.rs park_mic_port). From
-// there the voice is the fader's mic input, like any other: fader, ON, MAIN/AUX, To stream, DUCKS, the rack's limiter.
+// WARM LINES: for every phone with its microphone on, the server sends `park:warm` (renewed while the phone is there)
+// with that phone's own relay address. This daemon keeps ONE ffmpeg reading it (mono f32le 48 kHz on a pipe). A read
+// that fails — the phone not there yet, or a drop — is tried again every RETRY_MS, quietly, for as long as the line is
+// wanted. A muted phone sends only silence frames (tiny data). A line is OPEN when its audio is arriving — any audio,
+// silence included: nothing here ever judges whether someone is talking.
 //
-// Why it cannot touch air when it fails: it is its own process writing its own port. The engine reads that port on its
-// own thread into the fader's ring; the mixer only ever try-pops the ring. If this ffmpeg dies, hangs or loses the
-// internet, the fader goes silent and the programme carries on.
+// THE SWITCH: `park:talk on` names a Park mic and a warm line. From then on that line's samples go into the engine's port
+// for that Park mic (native/src/micin.rs park_mic_port) — no new connection, so the first word goes straight through.
+// It stays on until `off`: the user's tap, Ether's STOP, or the studio lock. NOTHING ELSE ENDS A TALK — no timer, no
+// lease, no silence. A line that drops during a talk keeps the talk on; it is reported (`lineOpen: false`) so the phone
+// can say "Disconnected — tap to reconnect", and it is retried.
 //
-// NO TIME LIMIT (Jeff, 2026-10-16): a talk runs until the staff member taps again, Ether's STOP, or the studio lock.
-// Only a LEASE remains: no renewal within `leaseSec` (the phone or the page is gone) and it stops by itself.
-// Every number comes from the station's settings or the server's command — none is chosen here.
-
+// A warm line that is NOT in a talk lapses when its phone stops renewing (the page closed) — only cleanup of something
+// that was never turned on for talking.
+"use strict";
 const cp = require("child_process");
+const net = require("net");
 
 let ffmpegBin = null;
 try {
@@ -30,101 +35,169 @@ try {
 const PARK_MICS = [1, 2];
 /** The engine's Park mic rate (micin.rs PARK_MIC_RATE): mono f32le. */
 const PARK_MIC_RATE = 48000;
+/** A line's read that fails is tried again this often while the line is wanted. */
+const RETRY_MS = 300;
+/** A line is OPEN while audio (silence frames included) arrived within this long — a fact about the line, not a
+ *  judgement about talking. A muted phone sends silence frames every 20 ms. */
+const OPEN_WITHIN_MS = 600;
 
-/**
- * Validate a start request. Pure — pinned by talk.test.js.
- * @returns {{ok:true, cfg:object}|{ok:false, error:string}}
- */
-function checkTalk(c) {
+/** Validate a warm line. Pure — pinned by talk.test.js. */
+function checkWarm(c) {
   const x = c || {};
-  const mic = Number(x.mic);
-  if (!PARK_MICS.includes(mic)) return { ok: false, error: "No such Park mic." };
+  const warmId = String(x.warmId || "");
+  if (!/^[0-9a-f]{8,64}$/.test(warmId)) return { ok: false, error: "Bad line id." };
   const url = String(x.url || "");
   if (!/^rtsps?:\/\/[^\s]+$/.test(url)) return { ok: false, error: "No relay address." };
   const leaseSec = Number(x.leaseSec);
   if (!(leaseSec >= 5 && leaseSec <= 600)) return { ok: false, error: "Bad lease." };
-  return { ok: true, cfg: { mic, url, leaseSec, talkId: String(x.talkId || ""), by: String(x.by || "").slice(0, 60) } };
+  return { ok: true, cfg: { warmId, url, leaseSec } };
+}
+/** Validate a talk switch. Pure. */
+function checkTalk(c) {
+  const x = c || {};
+  const mic = Number(x.mic);
+  if (!PARK_MICS.includes(mic)) return { ok: false, error: "No such Park mic." };
+  const warmId = String(x.warmId || "");
+  if (!/^[0-9a-f]{8,64}$/.test(warmId)) return { ok: false, error: "No phone line for this talk." };
+  return { ok: true, cfg: { mic, warmId, talkId: String(x.talkId || ""), by: String(x.by || "").slice(0, 60) } };
 }
 
-/** The ffmpeg command line. Pure — pinned by talk.test.js. */
-function ffmpegArgs(port, cfg) {
+/** The ffmpeg command line for a warm line: the phone's voice off the relay, onto stdout. Pure. */
+function ffmpegArgs(url) {
   return [
-    "-hide_banner", "-loglevel", "warning", "-stats",
-    // The voice off the relay: no probing, no input buffering (least delay, as Listen).
-    // LEAST DELAY (Jeff, 2026-10-16: "cut everything we can to shorten delay"): no reorder wait, no demuxer delay.
+    "-hide_banner", "-loglevel", "warning",
+    // Least delay: no probing, no input buffering, no reorder wait.
     "-fflags", "nobuffer", "-flags", "low_delay", "-probesize", "32", "-analyzeduration", "0",
     "-max_delay", "0", "-reorder_queue_size", "0",
-    "-rtsp_transport", "tcp", "-i", cfg.url,
-    // Exactly the engine's Park mic format: mono, 48 kHz, f32le, into its port — each packet sent the moment it is
-    // decoded (-flush_packets 1). Without it ffmpeg held up to 256 ms and sent it in one lump (measured 2026-10-16).
-    "-vn", "-af", `aresample=${PARK_MIC_RATE}`, "-ac", "1", "-flush_packets", "1", "-f", "f32le", `tcp://127.0.0.1:${port}`,
+    "-rtsp_transport", "tcp", "-i", url,
+    // Exactly the engine's Park mic format, each packet the moment it is decoded.
+    "-vn", "-af", `aresample=${PARK_MIC_RATE}`, "-ac", "1", "-flush_packets", "1", "-f", "f32le", "pipe:1",
   ];
 }
 
-class TalkReceiver {
-  // A: the native addon (audioGetParkMicPort). emit: status → broadcast. One receiver per (station, Park mic).
-  constructor(stationId, mic, A, emit, timers = { setTimeout, clearTimeout, now: Date.now }) {
-    this.stationId = stationId; this.mic = mic; this.A = A; this.emit = emit; this.t = timers;
-    this.proc = null; this.cfg = null; this.lease = null;
-    this.state = "idle"; this.errorMsg = null; this.since = null; this.receiving = false; this.endedHow = null;
+class ParkTalk {
+  // A: the native addon (audioGetParkMicPort). emit: per-mic status → broadcast. spawn/connect injectable for tests.
+  constructor(stationId, A, emit, deps = {}) {
+    this.stationId = stationId; this.A = A; this.emit = emit;
+    this.t = deps.timers || { setTimeout, clearTimeout, now: Date.now };
+    this.spawn = deps.spawn || ((args) => cp.spawn(ffmpegBin || "ffmpeg", args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true }));
+    this.connect = deps.connect || ((port) => { const s = net.connect({ host: "127.0.0.1", port }); s.setNoDelay(true); return s; });
+    this.lines = new Map();     // warmId → { cfg, proc, lease, retry, lastData }
+    this.active = {};           // mic → { warmId, talkId, by, since, open }
+    this.sockets = {};          // mic → engine port socket
+    this.endedHow = {};
+  }
+  _inTalk(warmId) { return PARK_MICS.some(m => this.active[m] && this.active[m].warmId === warmId); }
+  _open(warmId) { const l = this.lines.get(warmId); return !!(l && l.lastData && this.t.now() - l.lastData <= OPEN_WITHIN_MS); }
+
+  // ── warm lines ──
+  warm(config) {
+    const v = checkWarm(config);
+    if (!v.ok) return { ok: false, error: v.error };
+    let l = this.lines.get(v.cfg.warmId);
+    if (!l) { l = { cfg: v.cfg, proc: null, lease: null, retry: null, lastData: 0 }; this.lines.set(v.cfg.warmId, l); this._read(v.cfg.warmId); }
+    else if (l.cfg.url !== v.cfg.url) { l.cfg = v.cfg; this._kill(l); this._read(v.cfg.warmId); }
+    else l.cfg = v.cfg;
+    this._lease(v.cfg.warmId);
+    return { ok: true, lines: this.lines.size };
+  }
+  _lease(warmId) {
+    const l = this.lines.get(warmId); if (!l) return;
+    if (l.lease) this.t.clearTimeout(l.lease);
+    // Cleanup of a line nobody is talking on. A line in a talk is never dropped by a timer (the standing rule).
+    l.lease = this.t.setTimeout(() => { l.lease = null; if (this._inTalk(warmId)) this._lease(warmId); else this.unwarm(warmId); }, l.cfg.leaseSec * 1000);
+  }
+  /** The phone turned its microphone off (or the page closed). Never ends a talk: a person ends a talk. */
+  unwarm(warmId) {
+    const l = this.lines.get(warmId); if (!l) return { ok: true, was: false };
+    if (this._inTalk(warmId)) return { ok: true, was: false, kept: "in a talk" };
+    this.lines.delete(warmId);
+    if (l.lease) this.t.clearTimeout(l.lease);
+    if (l.retry) this.t.clearTimeout(l.retry);
+    this._kill(l);
+    return { ok: true, was: true };
+  }
+  _read(warmId) {
+    const l = this.lines.get(warmId); if (!l) return;
+    const p = this.spawn(ffmpegArgs(l.cfg.url));
+    l.proc = p;
+    p.stdout && p.stdout.on("data", (d) => this._data(warmId, d));
+    p.stderr && p.stderr.on("data", () => {});
+    const again = () => {
+      if (l.proc !== p) return;
+      l.proc = null; l.lastData = 0;
+      for (const m of PARK_MICS) if (this.active[m] && this.active[m].warmId === warmId && this.active[m].open) { this.active[m].open = false; this._emit(m, "on"); }
+      // KEEP TRYING (Jeff: "receiver keeps retrying instead of giving up"), quietly, while the line is wanted.
+      if (this.lines.get(warmId) === l) l.retry = this.t.setTimeout(() => { l.retry = null; if (this.lines.get(warmId) === l) this._read(warmId); }, RETRY_MS);
+    };
+    p.on("close", again);
+    p.on("error", again);
+  }
+  _data(warmId, chunk) {
+    const l = this.lines.get(warmId); if (l) l.lastData = this.t.now();
+    for (const m of PARK_MICS) {
+      const a = this.active[m];
+      if (!a || a.warmId !== warmId) continue;
+      const s = this._socket(m);
+      if (s) { try { s.write(chunk); } catch { /* reconnects on its own */ } }
+      if (!a.open) { a.open = true; this._emit(m, "on"); }
+    }
+  }
+  _socket(m) {
+    const cur = this.sockets[m];
+    if (cur && !cur.destroyed) return cur;
+    let port = 0; try { port = this.A.audioGetParkMicPort(this.stationId, m); } catch {}
+    if (!port) return null;
+    const s = this.connect(port);
+    s.on("error", () => {}); s.on("close", () => { if (this.sockets[m] === s) delete this.sockets[m]; });
+    this.sockets[m] = s;
+    return s;
+  }
+  _kill(l) { if (l.proc) { const p = l.proc; l.proc = null; try { p.kill("SIGTERM"); } catch {} } }
+
+  // ── the switch ──
+  /** Turn a talk ON: this line's audio into Park mic `mic`. Stays on until off(). Repeating it changes nothing. */
+  on(config) {
+    const v = checkTalk(config);
+    if (!v.ok) return { ok: false, error: v.error };
+    const m = v.cfg.mic, cur = this.active[m];
+    if (cur && cur.talkId === v.cfg.talkId && cur.warmId === v.cfg.warmId) return { ok: true, open: cur.open };
+    if (cur) this.off(m, "replaced");
+    this.active[m] = { warmId: v.cfg.warmId, talkId: v.cfg.talkId, by: v.cfg.by, since: this.t.now(), open: this._open(v.cfg.warmId) };
+    this._socket(m);
+    this._emit(m, "on");
+    return { ok: true, open: this.active[m].open };
+  }
+  /** Turn a talk OFF. `how`: "released" (the user tapped off) | "ether" (STOP in Ether) | "locked" | "replaced" | "shutdown". */
+  off(mic, how = "released") {
+    const a = this.active[mic]; if (!a) return { ok: true, was: false };
+    delete this.active[mic];
+    this.endedHow[mic] = how;
+    this._emit(mic, "idle", a);
+    return { ok: true, was: true };
   }
   status() {
-    return { stationId: this.stationId, mic: this.mic, state: this.state, errorMsg: this.errorMsg, since: this.since,
-             receiving: this.receiving, by: this.cfg ? this.cfg.by : null, talkId: this.cfg ? this.cfg.talkId : null,
-             endedHow: this.endedHow };
-  }
-  _emit() { try { this.emit(this.status()); } catch {} }
-
-  /** Start a talk, or renew the one running (same talkId). A new talkId replaces the running talk. */
-  start(config) {
-    const v = checkTalk(config);
-    if (!v.ok) { this.state = "error"; this.errorMsg = v.error; this._emit(); return { ok: false, error: v.error }; }
-    if (v.cfg.mic !== this.mic) return { ok: false, error: "wrong Park mic" };
-    let port = 0; try { port = this.A.audioGetParkMicPort(this.stationId, this.mic); } catch {}
-    if (!port) { this.state = "error"; this.errorMsg = "Audio engine not ready — no Park mic port."; this._emit(); return { ok: false, error: this.errorMsg }; }
-    const renewal = this.proc && this.cfg && this.cfg.talkId === v.cfg.talkId && this.cfg.url === v.cfg.url;
-    if (!renewal) {
-      this._kill();
-      this.cfg = v.cfg; this.since = this.t.now(); this.endedHow = null; this.receiving = false;
-      this._spawn(port);
-    }
-    this._renewLease();
-    return { ok: true };
-  }
-  /** End the talk. `how`: "released" (tapped off) | "lease" | "locked" | "ether" (Stop in Ether) | … */
-  stop(how = "released") {
-    const was = this.state !== "idle";
-    if (this.lease) { this.t.clearTimeout(this.lease); this.lease = null; }
-    this._kill();
-    this.receiving = false;
-    if (was) { this.endedHow = how; this.state = "idle"; this.errorMsg = null; this._emit(); }
-    return { ok: true, was };
-  }
-  _renewLease() {
-    if (this.lease) this.t.clearTimeout(this.lease);
-    this.lease = this.t.setTimeout(() => { this.lease = null; this.stop("lease"); }, this.cfg.leaseSec * 1000);
-  }
-  _spawn(port) {
-    this.state = "connecting"; this.errorMsg = null; this._emit();
-    const p = cp.spawn(ffmpegBin || "ffmpeg", ffmpegArgs(port, this.cfg), { stdio: ["ignore", "ignore", "pipe"], windowsHide: true });
-    this.proc = p;
-    p.stderr.on("data", (d) => {
-      for (const raw of d.toString().split(/[\r\n]+/)) {
-        const line = raw.trim(); if (!line) continue;
-        if (/size=\s*\d+\s*[kK]i?B/.test(line) && !this.receiving) { this.receiving = true; this.state = "receiving"; this._emit(); }
-        else if (/error|failed|refused|unauthorized|denied|timed out|not found/i.test(line)) { this.errorMsg = line.slice(0, 200); }
-      }
-    });
-    p.on("error", (e) => { if (this.proc === p) this.proc = null; this.state = "error"; this.errorMsg = e.message; this._emit(); });
-    p.on("close", () => {
-      if (this.proc !== p) return;
-      this.proc = null;
-      // The phone stopped publishing (released) or the relay dropped it. A talk is short: no retry loop — the page
-      // presses again. Say how it ended.
-      if (this.state !== "idle") this.stop(this.errorMsg && !this.receiving ? "no-audio" : "released");
+    return PARK_MICS.map(m => {
+      const a = this.active[m];
+      return { stationId: this.stationId, mic: m, state: a ? "on" : "idle", lineOpen: !!(a && a.open), by: a ? a.by : null,
+               talkId: a ? a.talkId : null, since: a ? a.since : null, lines: this.lines.size };
     });
   }
-  _kill() { if (this.proc) { const p = this.proc; this.proc = null; try { p.kill("SIGTERM"); } catch {} } }
+  _emit(m, state, was = null) {
+    const a = this.active[m] || was;
+    try {
+      // `receiving` = the line is OPEN end to end (audio arriving from the phone into this Park mic) — what the phone
+      // shows green on. Never a judgement about talking.
+      this.emit({ stationId: this.stationId, mic: m, state, by: a ? a.by : null, talkId: a ? a.talkId : null, since: a ? a.since : null,
+                  receiving: state === "on" && !!(a && a.open), lineOpen: state === "on" && !!(a && a.open),
+                  endedHow: state === "idle" ? (this.endedHow[m] || "released") : null, lines: this.lines.size });
+    } catch {}
+  }
+  shutdown() {
+    for (const m of PARK_MICS) this.off(m, "shutdown");
+    for (const id of [...this.lines.keys()]) this.unwarm(id);
+    for (const s of Object.values(this.sockets)) { try { s.destroy(); } catch {} }
+  }
 }
 
-module.exports = { TalkReceiver, checkTalk, ffmpegArgs, PARK_MICS, PARK_MIC_RATE };
+module.exports = { ParkTalk, checkWarm, checkTalk, ffmpegArgs, PARK_MICS, PARK_MIC_RATE, RETRY_MS, OPEN_WITHIN_MS };

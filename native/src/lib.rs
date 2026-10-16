@@ -1152,6 +1152,11 @@ pub fn audio_get_park_mic_port(station_id: u32, mic: u32) -> u32 {
     micin::park_mic_port(station_id, n).port.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// PARK MIC BUFFER (2026-10-16): how much voice this station's Park mics hold before playing, ms (the station's setting
+/// park_mic_buffer_ms; clamped 20–1000). Applies at once. Returns the value now in force.
+#[napi]
+pub fn audio_set_park_mic_buffer(station_id: u32, ms: u32) -> u32 { micin::set_park_buffer(station_id, ms) }
+
 /// PARK MIC: each Park mic's port, whether a receiver is attached, and the fader it is on (JSON).
 #[napi]
 pub fn audio_park_mic_state(station_id: u32) -> String { micin::park_mic_state_json(station_id).to_string() }

@@ -380,6 +380,24 @@ class DaemonEngine {
   // re-lands on every fresh engine (a new engine object starts with nothing applied), and an unpatch (the row
   // removed or emptied) unpatches. The ENGINE opens, watches and re-opens the device; this only says what is
   // patched where. A slot never patched is never sent anything.
+  // PARK MIC BUFFER (Jeff, 2026-10-16: "visible 'Park mic buffer' setting starting at 120 ms") — the station's own setting,
+  // read on the same 3 s cadence and sent when it changes (and to every fresh engine). Not set → the engine keeps the value
+  // it starts with (native/src/micin.rs PARK_BUFFER_START_MS = 120, the same number Preferences writes in).
+  _applyParkMicBufferFromKv(now) {
+    if (now - (this._pmbCheckedAt || 0) < 3000) return;
+    this._pmbCheckedAt = now;
+    if (typeof A.audioSetParkMicBuffer !== "function") return;
+    let ms = null;
+    try {
+      const r = this.db.prepare("SELECT value FROM station_config_kv WHERE station_id=? AND key='park_mic_buffer_ms' AND deleted_at IS NULL").get(this.stationId);
+      const n = r ? Number(r.value) : NaN;
+      if (r && String(r.value).trim() !== "" && Number.isFinite(n)) ms = Math.round(n);
+    } catch { return; }
+    if (ms == null || ms === this._pmbApplied) return;
+    try { const v = A.audioSetParkMicBuffer(this.stationId, ms); this._pmbApplied = ms; this._log("park mic buffer", `${v} ms`); }
+    catch (e) { this._log("park mic buffer ✗", String(e && e.message || e)); }
+  }
+
   _applyMicInputsFromKv(now) {
     if (now - (this._micCheckedAt || 0) < 3000) return;
     this._micCheckedAt = now;
@@ -639,6 +657,7 @@ class DaemonEngine {
     this._applyProcessingFromKv(now);   // Audio Processing v1: deliver proc_local/proc_stream/target from KV (segue pattern)
     this._applyChannelRacksFromKv(now); // SLICE 5: each fader's channel rack (rack_ch_<slot>)
     this._applyMicInputsFromKv(now);    // THE MIC: each source channel's input patch (mic_input_<slot>, machine-local)
+    this._applyParkMicBufferFromKv(now); // PARK MIC: the station's Park mic buffer (park_mic_buffer_ms)
     this._applySegueOverlapFromKv(now); // the operator's segue overlap, stored with the station
     this._applyPflDimFromKv(now);       // PFL: the programme dim in the local output while a PFL is on
     this._applyCueDeviceFromKv(now);    // PFL: the cue output device on this machine (machine-local)
