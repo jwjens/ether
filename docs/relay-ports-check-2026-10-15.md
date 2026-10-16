@@ -119,3 +119,29 @@ buffer 0)."
 - Fader, MUTE, carts and closing time at 17:58Z (`/public/ops/halloween`): station online, unmuted, closing 21:30, 4 carts,
   writes without login 403. The page code is unchanged since the 10:00 AM browser check.
 - For the session watch, the relay log (`journalctl -u mediamtx`) is readable read-only.
+
+## "Buffer 0 reads as not set": checked (2026-10-16, 11:02 AM PDT)
+
+Jeff (verbatim): "I saved all five Listen settings again on ovowforestmusic, Listener buffer = 0, and it still reports blank /
+not ready. Likely 0 is being treated as 'not set' somewhere (station save, the report, or the server check)."
+
+What the station actually sent, read from the cloud (read-only):
+
+| Air machine push (UTC) | listen |
+|---|---|
+| 17:59:08 | `{"ready":false,"buffer_ms":null}` |
+| 18:02:08 | `{"ready":true,"buffer_ms":0}` |
+
+The server's `/public/ops/halloween` at 18:02:35Z returned `listen: {"ready":true,"buffer_ms":0}`.
+
+- **0 is accepted all the way through.** The station saves it (`ParkListenSettings.tsx:51` allows 0–4000; `"0"` is not
+  empty), the report counts it (`ccData.ts:404` checks `!== ""`, `kvNum("0")` = 0), and the server and page keep it
+  (`Number.isFinite`).
+- The 17:59 push had no saved buffer. The 18:02 push, after the re-save, had 0 and ready. So what Jeff saw as "still blank"
+  was most likely read before the 18:02 push. **UNVERIFIED** which screen showed it: the Park page button, or the
+  "now:" line in Preferences.
+- **A different defect found (not fixed, not deployed):** the server turns a *missing* buffer into 0.
+  - `ether-backend src/index.js:5624` and `:6058` use `Number(x)`, and `Number(null)` is 0. That is why the server showed
+    `buffer_ms: 0` at 17:58 while the station sent null.
+  - It's harmless today, because LISTEN stays greyed while `ready` is false.
+  - The fix would check for null first.
