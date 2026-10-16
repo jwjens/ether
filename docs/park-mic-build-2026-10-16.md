@@ -384,3 +384,13 @@ Jeff (verbatim, in order):
     runs an older build that ends it at 20 s too, until 62a389ec is installed.
 - Also found: Park Mic 1 is patched on two faders on ovowforestmusic (G and H; `conflict: ["S1","S2"]`). Only the last
   one patched gets the voice.
+
+## Server 84a4a6b (no time limit) deployed (2026-10-16, 3:48 PM, Jeff GO)
+
+- Rollback branch `rollback/server-talk-nolimit` = `f33c4f2`. Pushed `f33c4f2..84a4a6b`; Railway `cbba149c` SUCCESS
+  3:48:46 PM.
+- **After:**
+  - `/health` 200; station online by 3:49:08 PM.
+  - The talk block has no `maxSec`: ready, echo ON, noise ON, auto gain OFF, Park Mic 1 on a fader, not busy.
+  - Level, MUTE, closing 21:30, 4 carts and Listen ready all the same as before; writes without a login 403.
+- The station on ovowforestmusic still ends a talk at 20 s until 62a389ec is installed.
