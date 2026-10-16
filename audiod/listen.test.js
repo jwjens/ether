@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { createRequire } from "node:module";
 const require_ = createRequire(import.meta.url);
-const { ListenSender, checkConfig, ffmpegArgs } = require_("./listen.js");
+const { ListenSender, checkConfig, ffmpegArgs, LISTEN_ALL } = require_("./listen.js");
 
 const good = { url: "rtsps://station:t@stream.example:8322/park/abc", which: 3, bitrateKbps: 24, channels: 1, frameMs: 20, leaseSec: 60 };
 
@@ -11,9 +11,18 @@ describe("listen config", () => {
   it("accepts the station's settings as given", () => {
     expect(checkConfig(good)).toEqual({ ok: true, cfg: { url: good.url, which: 3, bitrate: 24, channels: 1, frameMs: 20, leaseSec: 60 } });
   });
-  it("refuses a missing choice of speaker output — never guesses one", () => {
-    expect(checkConfig({ ...good, which: 0 }).ok).toBe(false);
-    expect(checkConfig({ ...good, which: undefined }).ok).toBe(false);
+  it("always sends the complete local mix, MAIN + AUX (Jeff, 2026-10-16) — whatever an older main asks for", () => {
+    // "announcements on the AUX fader don't reach Listen": a station set to MONITOR (1) sent MAIN only.
+    for (const which of [undefined, 0, 1, 2, 3]) expect(checkConfig({ ...good, which }).cfg.which).toBe(LISTEN_ALL);
+    expect(LISTEN_ALL).toBe(3);   // native/src/localout.rs LISTEN_MAIN | LISTEN_AUX
+  });
+  it("tells the engine MAIN + AUX on every start", () => {
+    const set = [];
+    const A = { audioGetListenPort: () => 5555, audioSetListenSource: (_s, w) => set.push(w), audioGetListenConnected: () => false };
+    const s = new ListenSender(1, A, () => {}, { setTimeout: () => 0, clearTimeout: () => {} });
+    s._spawn = () => {};
+    expect(s.start({ ...good, which: 1 }).ok).toBe(true);
+    expect(set).toEqual([3]);
   });
   it("refuses an Opus frame length Opus does not have, and a silly bitrate", () => {
     expect(checkConfig({ ...good, frameMs: 15 }).ok).toBe(false);

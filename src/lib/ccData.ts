@@ -4,6 +4,7 @@ import { queryScoped } from "../db/stationScoped";
 import { selectAttachedStationsToMaterialize, chooseActiveStation } from "./provisioning";
 import { hasEngine, getEngine } from "../audio/engine-registry";
 import { parseParkSoundLast } from "./parkSound";
+import { listenReady, storedNumber } from "./parkListenSettings";
 
 // Control Center data mirror (Phase 2). Pushes install-owned table rows up so the
 // dashboard can view them, and applies remote dashboard edits back through the local
@@ -400,9 +401,10 @@ export async function pushOpsData(
     };
     // PARK LISTEN (2026-10-13): available only once every Listen setting is set (Preferences → Park page — Listen); the
     // listener buffer is the phone's, so it travels to the page. Nothing here is a default.
+    // 2026-10-16: four settings (what is sent is no longer one — it is always the complete local mix); 0 is a value.
     const listen = {
-      ready: ["park_listen_output", "park_listen_bitrate_kbps", "park_listen_channels", "park_listen_frame_ms", "park_listen_buffer_ms"].every(k => kvStr(k) !== ""),
-      buffer_ms: kvNum("park_listen_buffer_ms"),
+      ready: listenReady(kvRows),
+      buffer_ms: storedNumber(kvRows, "park_listen_buffer_ms"),
     };
     // THE ANNOUNCEMENT ON AIR (2026-10-15): name, length, when it started and where it is now — for the Park page's
     // ON AIR card. Staff/management only: this rides ops_config, never the listener now-playing payload.

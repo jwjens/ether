@@ -5497,7 +5497,8 @@ function dueTimeFor(row, closingHHMM) {
 // The server says someone on the Park page is listening (on:true — sent again as a renewal while they are) or that
 // nobody is (on:false). The SOUND settings are the station's own, from Preferences → Park page → Listen; none is chosen
 // here. Runs in the audio daemon (its own ffmpeg); without the daemon there is no Listen, and it says so.
-const PARK_LISTEN_OUTPUT = { monitor: 1, aux: 2, both: 3 };
+// WHAT IS SENT is not a setting: the complete local mix the park hears, MAIN + AUX after MONITOR and MUTE
+// (audiod/listen.js LISTEN_ALL; Jeff, 2026-10-16). The old park_listen_output key is no longer read.
 ipcMain.handle("park:listen", async (_e, args = {}) => {
   try {
     const stationId = Number(args.stationId);
@@ -5505,10 +5506,9 @@ ipcMain.handle("park:listen", async (_e, args = {}) => {
     if (!AUDIO_DAEMON) return { ok: false, error: "Listen needs the audio engine (daemon) — it is not running on this machine." };
     if (!args.on) return await audiodClient.cmd("listenStop", { stationId });
     const kv = {};
-    for (const r of db.prepare(`SELECT key, value FROM station_config_kv WHERE station_id = ? AND key IN ('park_listen_output','park_listen_bitrate_kbps','park_listen_channels','park_listen_frame_ms') AND deleted_at IS NULL`).all(stationId)) kv[r.key] = r.value;
+    for (const r of db.prepare(`SELECT key, value FROM station_config_kv WHERE station_id = ? AND key IN ('park_listen_bitrate_kbps','park_listen_channels','park_listen_frame_ms') AND deleted_at IS NULL`).all(stationId)) kv[r.key] = r.value;
     const config = {
       url: String(args.url || ""),
-      which: PARK_LISTEN_OUTPUT[String(kv.park_listen_output || "")] || 0,
       bitrateKbps: Number(kv.park_listen_bitrate_kbps),
       channels: ({ mono: 1, stereo: 2 })[String(kv.park_listen_channels || "")] || 0,
       frameMs: Number(kv.park_listen_frame_ms),

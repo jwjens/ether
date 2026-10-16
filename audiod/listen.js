@@ -26,6 +26,12 @@ try {
   }
 } catch { /* falls back to PATH 'ffmpeg' */ }
 
+/** WHAT LISTEN SENDS: the complete local mix the park hears — every MAIN and AUX source (music, announcements,
+ *  commercials, sound effects, carts), after MONITOR and MUTE (Jeff, 2026-10-16: "announcements on the AUX fader don't
+ *  reach Listen … Remove the MONITOR/AUX choice from the Listen settings"). Not a setting: the engine's MAIN | AUX
+ *  (native/src/localout.rs LISTEN_MAIN | LISTEN_AUX). */
+const LISTEN_ALL = 3;
+
 /** Opus accepts these frame lengths (ms). */
 const OPUS_FRAMES = [2.5, 5, 10, 20, 40, 60];
 
@@ -37,8 +43,7 @@ function checkConfig(c) {
   const x = c || {};
   const url = String(x.url || "");
   if (!/^rtsps?:\/\/[^\s]+$/.test(url)) return { ok: false, error: "No relay address." };
-  const which = Number(x.which);
-  if (![1, 2, 3].includes(which)) return { ok: false, error: "Choose which output feeds the park speakers (Preferences → Park page → Listen)." };
+  const which = LISTEN_ALL;   // never the caller's choice — an older main's 'which' is ignored
   const bitrate = Number(x.bitrateKbps);
   if (!(bitrate >= 6 && bitrate <= 510)) return { ok: false, error: "Listen quality (kbps) must be 6–510." };
   const channels = Number(x.channels);
@@ -128,4 +133,4 @@ class ListenSender {
   _kill() { if (this.proc) { const p = this.proc; this.proc = null; try { p.kill("SIGTERM"); } catch {} } }
 }
 
-module.exports = { ListenSender, checkConfig, ffmpegArgs, OPUS_FRAMES };
+module.exports = { ListenSender, checkConfig, ffmpegArgs, OPUS_FRAMES, LISTEN_ALL };
