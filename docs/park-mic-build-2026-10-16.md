@@ -394,3 +394,46 @@ Jeff (verbatim, in order):
   - The talk block has no `maxSec`: ready, echo ON, noise ON, auto gain OFF, Park Mic 1 on a fader, not busy.
   - Level, MUTE, closing 21:30, 4 carts and Listen ready all the same as before; writes without a login 403.
 - The station on ovowforestmusic still ends a talk at 20 s until 62a389ec is installed.
+
+## "Sensitive to distance, clips, cuts in and out": what the logs show (2026-10-16, 4:05 PM; nothing changed yet)
+
+Jeff (verbatim): "Park mic test: the voice is very sensitive to distance from the mouth, clips easily, and cuts in and
+out often. Staff should be able to hold the phone like a walkie-talkie, a few inches from the mouth, and get a clean,
+steady voice without clipping. 1. Turn phone auto gain ON … 2. Find out what's causing the cut-outs: the phone's noise
+suppression, the new 30 ms backlog drop, network loss, or a gate on fader G's rack. Read the relay and station logs from
+my last test and tell me which in plain words. 3. If it's the backlog drop, make that buffer a visible setting and start
+it where the voice stays solid, even if the delay goes up a little. … Tell me what you found before rebuilding." Then:
+"its on source D".
+
+**The station** (its cloud report, read-only): the new build is installed (engine up since 3:53 PM; no 20 s cut). Park
+Mic 1 is on fader D only. The last talk was by Admin at 4:00:39 PM, 30.9 s, ended by a tap. Phone settings: echo ON,
+noise ON, auto gain OFF.
+
+**The relay log, 3:58–4:01 PM** (read-only):
+- **Network loss is small.**
+  - The 30.9 s talk (4:00:39–4:01:09) lost 2 RTP packets of about 1,500 (≈0.1 %).
+  - An earlier long session (until 3:59:20) lost 1–2 packets every few seconds.
+  - A lost 20 ms packet is a tiny tick, not the steady cutting in and out Jeff describes.
+- **Four talks in a row failed to start** (4:00:17, 4:00:23, 4:00:27, 4:00:31):
+  - each time, the station's receiver asked the relay for the voice a moment BEFORE the phone's voice arrived, got "no
+    stream is available", and stopped. It never tried again;
+  - the phone then gave up 1.5–2 s later. The fifth try (4:00:39) worked because the order happened to come out right.
+  - This is a start-up race in the receiver (`audiod/talk.js`: no retry), a real bug.
+- **During the working talk the relay saw nothing wrong.** So the cut-outs inside a talk come from the station side:
+  - **The engine's Park mic buffer is now too small for the internet's timing (the 30 ms change).**
+    - With the 10 ms pieces, the engine waits for only about 20–25 ms of voice before playing.
+    - Phone audio arrives with 20–60 ms of jitter, so the buffer often runs dry: a short silence, then it starts
+      again. Or a lump arrives and anything over 30 ms is thrown away.
+    - Before that change, a larger read size happened to give it about 45 ms more cushion.
+    - **UNVERIFIED on ovowforestmusic:** its Mic inputs panel (Preferences → Audio → Mic Inputs, fader D) shows the
+      engine's dropout count. A count that climbs during a talk confirms it.
+  - **Phone noise suppression** can also chop a voice held at a varying distance. It's a possible contributor, not
+    seen in any log.
+  - **A gate on fader D's rack:** unknown from here. Check: fader D's rack (EQ button) for a GATE that is IN.
+- **Clipping and distance:** phone auto gain is OFF, so the level follows the distance exactly and a close voice runs hot.
+
+**Proposed, nothing built:**
+1. Auto gain ON: the Preferences switch on ovowforestmusic, now; and the starting value ON in the next build.
+2. Receiver: keep trying to read the voice for a few seconds when it isn't there yet (fixes the failed starts).
+3. Engine, Park mic only: a visible "Park mic buffer (ms)" setting. The engine holds that much voice before playing,
+   and only drops backlog well above it. Start at 120 ms (solid on phone internet; adds about 0.1 s).
