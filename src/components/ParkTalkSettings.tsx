@@ -13,6 +13,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { saveRefusal } from "../lib/parkListenSettings";
+import { rackWritten } from "../hooks/useChannelRack";
+import { limiterRack, limiterCheck } from "../lib/parkLimiter";
 
 type Mic = { mic: number; name: string; fader: string | null; conflict: string[] | null; local: string | null; stream: boolean | null; on: boolean | null };
 type State = { ready: boolean; missing: string[]; maxSec: number | null; echo: boolean | null; noise: boolean | null; agc: boolean | null;
@@ -30,6 +32,9 @@ export default function ParkTalkSettings() {
   const [s, setS] = useState<State | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [msg, setMsg] = useState<string | null>(null);
+  // THE LIMITER BUTTON'S OWN ANSWER, right under that Park mic (Jeff, 2026-10-16: "clicking … does nothing. No change, no
+  // message" — the answer used to land at the foot of the panel, out of sight). Per mic; "busy" while it works.
+  const [lim, setLim] = useState<Record<number, { text: string; bad: boolean; busy?: boolean }>>({});
 
   const load = useCallback(async () => {
     if (stationId == null) return;
@@ -70,21 +75,27 @@ export default function ParkTalkSettings() {
     void save(key, String(n), `${label} ${n} ${unit}`);
   };
   const putLimiter = async (m: Mic) => {
-    if (stationId == null || !m.fader || !s) return;
+    const say = (text: string, bad: boolean, busy = false) => setLim(x => ({ ...x, [m.mic]: { text, bad, busy } }));
+    // Every way out says something (never a silent return).
+    if (stationId == null) { say("Not put on: no station is active.", true); return; }
+    if (!m.fader) { say(`Not put on: Park Mic ${m.mic} isn't on a fader.`, true); return; }
+    if (!s) { say("Not put on: the settings haven't been read yet.", true); return; }
     const L = s.limit;
-    if (L.ceilingDb == null || L.attackMs == null || L.releaseMs == null) { setMsg("Set the limiter's three numbers first."); return; }
+    if (L.ceilingDb == null || L.attackMs == null || L.releaseMs == null) { say("Not put on: set the limiter's ceiling, attack and release below first.", true); return; }
+    const rack = `ch:${m.fader}`;
+    say(`Putting the limiter on fader ${m.fader}…`, false, true);
     try {
-      const rack = `ch:${m.fader}`;
       const cur = await ether.audio.getRack(stationId, rack);
-      const doc = cur?.ok && cur.doc ? JSON.parse(JSON.stringify(cur.doc)) : { v: 1, sections: { ch: [] } };
-      const comp = { type: "comp", threshold: L.ceilingDb, ratio: 20, attack: L.attackMs, release: L.releaseMs, makeup: 0, knee: 0 };
-      const i = doc.sections.ch.findIndex((x: any) => x?.module?.type === "comp");
-      if (i >= 0) doc.sections.ch[i] = { ...doc.sections.ch[i], in: true, module: comp };
-      else doc.sections.ch.push({ id: "park-limiter", in: true, module: comp });
-      const r = await ether.audio.setRack(stationId, doc, rack);
-      if (!r?.ok) { setMsg(`Limiter not put on${where}: ${r?.reason || r?.error || "refused"}`); return; }
-      setMsg(`Limiter on fader ${m.fader}${where}: ceiling ${L.ceilingDb} dB, 20:1, attack ${L.attackMs} ms, release ${L.releaseMs} ms — shown in that fader's rack (COMP).`);
-    } catch (e) { setMsg(`Limiter not put on: ${String(e)}`); }
+      if (!cur?.ok) { say(`Not put on: fader ${m.fader}'s rack could not be read (${cur?.reason || "no answer"}).`, true); return; }
+      const r = await ether.audio.setRack(stationId, limiterRack(cur.doc, L), rack);
+      if (!r?.ok) { say(`Not put on: ${r?.reason || r?.error || "the engine refused it"}.`, true); return; }
+      // Read it back: the line says what the fader's rack HOLDS now, not what was sent.
+      const back = await ether.audio.getRack(stationId, rack);
+      const why = limiterCheck(back?.ok ? back.doc : null, L);
+      if (why) { say(`Not put on: fader ${m.fader}'s rack reads back ${why}.`, true); return; }
+      rackWritten(stationId);   // the fader's EQ lamp and any open rack window re-read it
+      say(`Limiter on fader ${m.fader}: ${L.ceilingDb} dB, 20:1 (attack ${L.attackMs} ms, release ${L.releaseMs} ms). It is the COMP in fader ${m.fader}'s rack.`, false);
+    } catch (e) { say(`Not put on: ${String((e as Error)?.message || e)}`, true); }
   };
 
   const row = { display: "flex", alignItems: "center", gap: 10, padding: "6px 0", flexWrap: "wrap" } as const;
@@ -120,9 +131,10 @@ export default function ParkTalkSettings() {
             {m.fader
               ? <>On fader <b>{m.fader}</b> · heard on {m.local === "aux" ? "AUX" : "MAIN"} · {m.stream === false ? "park only (To stream OFF)" : "park + stream (To stream ON)"}{m.on === false ? " · the fader is OFF" : ""}
                   {m.conflict && <span style={{ color: "#f59e0b" }}> · also on {m.conflict.filter(x => x !== m.fader).join(", ")} — keep it on one fader</span>}
-                  {" "}<button style={{ ...btn, padding: "2px 8px", fontSize: 11, marginLeft: 6 }} onClick={() => void putLimiter(m)}>Put the limiter on fader {m.fader}</button></>
+                  {" "}<button style={{ ...btn, padding: "2px 8px", fontSize: 11, marginLeft: 6 }} disabled={!!lim[m.mic]?.busy} onClick={() => void putLimiter(m)}>Put the limiter on fader {m.fader}</button></>
               : <span style={{ color: "#f59e0b" }}>Not on a fader — on the board, set a fader's source to Mic and pick “Park Mic {m.mic} (Park page)”.</span>}
           </div>
+          {lim[m.mic] && <div role="status" style={{ fontSize: 12, marginTop: 6, fontWeight: 600, color: lim[m.mic].bad ? "var(--accent-orange, #f59e0b)" : "var(--accent-cyan)" }}>{lim[m.mic].text}</div>}
         </div>
       ))}
       <div style={row}>
