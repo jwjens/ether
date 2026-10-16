@@ -287,3 +287,31 @@ no routing change: decks A, B, C show no buttons; other faders show only DUCK; a
   not touched.
 - A TO STREAM set OFF on a non-Park-mic fader under fe8ce09c would now be hidden (it can't be seen to turn it back on).
   UNVERIFIED whether any was set; check on ovowforestmusic: each fader's settings are in its saved `fader_stream` row.
+
+## Installer 0cd997f4 (To stream reset) + Park page wording deployed (2026-10-16, 2:42–2:44 PM)
+
+Jeff (verbatim): "1. On update, set TO STREAM back to ON for every fader that isn't a Park mic, so nothing hidden can keep
+a fader off the program. Log any fader it changes. Put it in this installer (rebuild, new path and sha256). 2. Park page
+wording: replace 'park + stream' / 'only the stream hears you' with 'Park + on air (MAIN)' / 'Park only'. GO to deploy that
+page change now, keeping the old files in place like last time, and confirm fader, MUTE, carts, LISTEN and HOLD TO TALK
+still work."
+
+**Installer:** `C:\openair\dist-electron\Ether Setup 4.6.59 park-mic-buttons-stream-reset 0cd997f4 21c7a76.exe`
+- sha256 `0cd997f4c3caaf3b7ba4c938d88c1a7ca84e80ad24a7d424858c91c34b81cc43`, 216,088,053 bytes.
+- Engine unchanged. Release gate PASS (`gate-logs/2026-10-16T21-44-31-766Z PASS.log`).
+- **`21c7a76`:** only a Park mic fader can be off the program.
+  - `readSavedBoard` reads a saved OFF as ON on any fader that isn't a Park mic (this machine's `mic_input_<slot>` =
+    `park:<n>`). That holds at the update and later too, e.g. when a Park mic is unpatched.
+  - The startup step "Fader routing" (`streamReset`) removes those saved OFFs and logs each fader by its board name:
+    startup log "[board sN] To stream was OFF on fader(s) … set back ON", and the health event `fader-to-stream-reset`.
+  - Tests: board-state 30/30 (non-Park OFF reads ON; a sound-card mic isn't a Park mic; a Park mic keeps OFF; the
+    cleanup runs once). vitest 922/922, tsc 0, sync 55, wedge pass.
+
+**Park page `3f9e9a8`, deployed `6ad10646` at 2:41:56 PM:**
+- Wording: "· Park + on air (MAIN)", "· Park only". When muted with MAIN lit: "· Park is muted — on air only (MAIN)".
+  The literal "Park only" there would have said the opposite of what happens.
+- Rollback copy: scratchpad `park-live-before-wording`. The old files stayed in the upload; all three serve 200.
+- Live at 2:42:13 PM on `a2/index-D52LCHZL.js`: closing 9:30 PM, announcements, carts 1–4, fader −10.0 dB shown.
+- **The station was offline** before the deploy: last report 2:39:44 PM (Jeff: "becasue we are offline"). So the fader
+  and MUTE (greyed "Station offline"), LISTEN and HOLD TO TALK could not be checked working. They need the station back
+  online and a staff login.
