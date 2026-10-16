@@ -450,6 +450,9 @@ pub enum AudioCmd {
     GetBoard(std::sync::mpsc::SyncSender<String>),
     /// FADERS ARE GENERIC: this fader is heard locally on the AUX output (true) or the main output (false).
     SetLocalOutput { deck: String, aux: bool },
+    /// TO STREAM (Jeff, 2026-10-16): this fader goes to the stream (true, the default) or is heard only locally
+    /// (false) — in the park through its MAIN/AUX output and MONITOR, never on the stream.
+    SetToStream { deck: String, on: bool },
     /// The smoothing every level change rides, milliseconds (fader_smoothing_ms).
     SetFaderSmoothing(f32),
 }
@@ -865,6 +868,8 @@ pub struct BusState {
     pub(crate) master_ramp: crate::ramp::LevelRamp,
     /// FADERS ARE GENERIC (2026-10-11) — per fader: heard locally on the AUX output (true) or the main output (false).
     pub local_aux: [bool; SLOT_COUNT],
+    /// TO STREAM (2026-10-16) — per fader: on the stream (true, every fader's default = today) or local only (false).
+    pub air_on: [bool; SLOT_COUNT],
     /// Every level ramp's length, programme frames (the operator's `fader_smoothing_ms`).
     pub ramp_frames: u32,
     /// The MONITOR stage's ramp (strip × master MONITOR), so a MONITOR move never zips (2026-10-11).
@@ -959,6 +964,7 @@ impl BusState {
             // in today's behaviour): the D–F / S1–S5 faders were never ducked, every other fader was.
             duck_duckable: std::array::from_fn(|i| default_kind_for(i) != SlotKind::Source),
             local_aux: std::array::from_fn(|i| default_kind_for(i) == SlotKind::Source),
+            air_on: [true; SLOT_COUNT],           // every fader on the stream, exactly as before the switch existed
             ramp_frames: crate::ramp::LEVEL_RAMP_FRAMES,
             monitor_ramp: crate::ramp::LevelRamp::default(),
             row_ramp: [crate::ramp::LevelRamp::default(); SLOT_COUNT],
@@ -1031,6 +1037,7 @@ impl BusState {
             aux_monitor_gain: self.aux_monitor_gain,
             room_gain: self.room_gain,
             local_aux: self.local_aux,
+            air_on: self.air_on,
             ramp_frames: self.ramp_frames,
             monitor_vol: self.monitor_vol,
             master_vol: self.master_vol,
@@ -1088,6 +1095,7 @@ impl BusState {
         self.aux_monitor_gain = p.aux_monitor_gain;
         self.room_gain = p.room_gain;
         self.local_aux = p.local_aux;
+        self.air_on = p.air_on;
         if p.ramp_frames != self.ramp_frames {
             self.ramp_frames = p.ramp_frames;
             for r in self.vol_ramp.iter_mut().chain(self.row_ramp.iter_mut()) { r.set_len(p.ramp_frames); }
@@ -1512,7 +1520,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                             // Superseded no-device path (see start_station_mixer's header): it owns no
                             // aux stream, so there is nothing here to open or close.
                             AudioCmd::SetAuxDevice(_) => {}
-                            AudioCmd::SetLocalOutput { .. } | AudioCmd::SetFaderSmoothing(_) => {}
+                            AudioCmd::SetLocalOutput { .. } | AudioCmd::SetToStream { .. } | AudioCmd::SetFaderSmoothing(_) => {}
                             AudioCmd::GetBoard(tx) => { let _ = tx.try_send(r#"{"ok":false,"reason":"no mixer on this path"}"#.to_string()); }
                         }
                     }
@@ -3348,6 +3356,11 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                                 ctl.params.local_aux[idx] = aux;
                                 ctl.params_changed();
                             }
+                            AudioCmd::SetToStream { deck, on } => {
+                                let Some(idx) = deck_index(&deck) else { continue };
+                                ctl.params.air_on[idx] = on;
+                                ctl.params_changed();
+                            }
                             AudioCmd::SetFaderSmoothing(ms) => {
                                 ctl.params.ramp_frames = (ms.max(0.0) * PROGRAM_RATE as f32 / 1000.0).round() as u32;
                                 ctl.params_changed();
@@ -4396,6 +4409,8 @@ pub(crate) fn mixer_callback(
     // construction, which is what makes the duck-off path provably bit-identical below.
     let duck_enabled = bus.duck_enabled;
     let duck_duckable = bus.duck_duckable;
+    // TO STREAM (2026-10-16): per fader. All true (the default) = every branch below runs exactly as before the switch.
+    let air_on = bus.air_on;
     let src_l = &mut src_l[..prog_frames]; src_l.fill(0.0);
     let src_r = &mut src_r[..prog_frames]; src_r.fill(0.0);
     // RECEIVER SIDE: the non-source music splits in two. `duckable` is what the duck multiplies;
@@ -4413,6 +4428,10 @@ pub(crate) fn mixer_callback(
     if bus.local_aux.iter().zip(bus.duck_duckable.iter()).any(|(&a, &d)| a && d) { auxd_l.fill(0.0); auxd_r.fill(0.0); }
     let mut duck_armed = false;    // at least one duck-enabled Source slot is actually producing
     let mut aux_present = false;   // an aux deck is producing audio → the room must use core_*
+    // A MAIN fader that is OFF the stream is producing audio → the park cannot be fed from the air mix (it isn't in it),
+    // so the room chain builds the park from room_* — the same path an AUX deck already forces. False whenever every
+    // fader is on the stream, so nothing changes for a station that never touches the switch.
+    let mut room_split = false;
     let mut any_playing = false;
     let mut exhausted   = [false; SLOT_COUNT];
     let mut frame_peaks = [0.0f32; SLOT_COUNT]; // this-buffer post-fader peak per deck
@@ -4492,6 +4511,8 @@ pub(crate) fn mixer_callback(
         let aux_heard = is_aux && (mon != 0.0 || row_moving);
         if aux_heard && ducked { auxd_any = true; }
         if is_aux { aux_present = true; }
+        let on_air = air_on[i];
+        if !on_air && !is_aux { room_split = true; }
         if ducks { duck_armed = true; }
         let mut pk = 0.0f32;
         let mut pulled = 0u64;   // frames actually taken from THIS deck's source this buffer
@@ -4589,20 +4610,27 @@ pub(crate) fn mixer_callback(
                                    }
                                    else if rack_on { (rack_l[f] * fader, rack_r[f] * fader) }
                                    else { (feed[2 * f] * vol, feed[2 * f + 1] * vol) };
-                    mix_l[f] += lv;                       // AIR — every fader, unchanged
-                    mix_r[f] += rv;
+                    // TO STREAM OFF (2026-10-16): the fader skips every AIR sum — mix (the stream), core/src/imm (what
+                    // the duck rebuilds the stream from) — and keeps its ear (it still ducks the music) and its local
+                    // feed below. ON (the default) runs these lines exactly as they always ran.
+                    if on_air {
+                        mix_l[f] += lv;                   // AIR — every fader whose To stream is on
+                        mix_r[f] += rv;
+                    }
                     // THE DUCK'S EAR: every fader whose "ducks music" is on.
                     if ducks { det_l[f] += lv; det_r[f] += rv; }
                     // AIR, by "ducked by others": an AUX fader that is not ducked joins after the duck (src_*), exactly
                     // as today's Source faders; every other fader is the programme base the duck pulls down (core_*),
                     // with its un-duckable part kept aside (imm_*), exactly as today's music and sweeper faders.
-                    if is_aux && !ducked {
-                        src_l[f] += lv;
-                        src_r[f] += rv;
-                    } else {
-                        core_l[f] += lv;                  // AIR: never scaled by a monitor
-                        core_r[f] += rv;
-                        if !ducked { imm_l[f] += lv; imm_r[f] += rv; }
+                    if on_air {
+                        if is_aux && !ducked {
+                            src_l[f] += lv;
+                            src_r[f] += rv;
+                        } else {
+                            core_l[f] += lv;              // AIR: never scaled by a monitor
+                            core_r[f] += rv;
+                            if !ducked { imm_l[f] += lv; imm_r[f] += rv; }
+                        }
                     }
                     if !is_aux {
                         // LOCAL — MAIN OUTPUT: the fader at its own room level (unity unless the operator set one).
@@ -5018,7 +5046,9 @@ pub(crate) fn mixer_callback(
     // SLICE 3 — the room processor's dynamics, when it ran: while an aux deck is live the device plays the
     // ROOM chain, so LOCAL's ride/limiter meter must describe this instance, not the LOCAL one.
     let mut room_m: Option<(f32, f32)> = None;   // (ride dB, GR buffer max)
-    let room_owned: bool = if aux_present {
+    // room_split: a MAIN fader is off the stream, so the air mix no longer holds everything the park hears (see the deck
+    // loop) — the park is built from room_* here, exactly as when an aux deck is up.
+    let room_owned: bool = if aux_present || room_split {
         // The room's programme base is core_* (aux decks excluded), run through the room's OWN EQ and
         // master gain so A/B/C local monitoring is unchanged. Separate instances because both stages
         // are stateful and the air chain has already used its own on a different sum this callback.
@@ -6736,7 +6766,10 @@ mod interchange_matrix {
 
     /// One fader playing alone, its LOCAL OUTPUT set to AUX or MAIN (Jeff, 2026-10-11: the fader's own setting, never
     /// its position or type), its local row at unity. What is on the fader is irrelevant to the engine: a tone.
-    fn play_alone(slot: usize, aux: bool) -> Heard {
+    fn play_alone(slot: usize, aux: bool) -> Heard { play_alone_air(slot, aux, true) }
+
+    /// The same, with the fader's TO STREAM setting (2026-10-16).
+    fn play_alone_air(slot: usize, aux: bool, air: bool) -> Heard {
         let (prod, mut prog) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
         let eq = crate::eq::new_shared_eq(44100.0);
         // stream connected: the programme ring is written, so "what airs" is a buffer we can read.
@@ -6746,6 +6779,7 @@ mod interchange_matrix {
             let mut b = bus.lock().unwrap();
             let mut p = b.params();
             p.local_aux[slot] = aux;                           // == AudioCmd::SetLocalOutput
+            p.air_on[slot] = air;                              // == AudioCmd::SetToStream
             crate::show::set_room(&mut p, slot, 1.0);          // == AudioCmd::SetAuxMonitor, the local row at unity
             b.apply_params(&p);
             b.decks[slot].source = Some(DeckFeed::prefilled(Tone(0.25), 480 * 2 * 600));
@@ -6793,6 +6827,72 @@ mod interchange_matrix {
         assert!(failures.is_empty(), "routing matrix failures: {}", failures.join(" | "));
     }
 
+    /// TO STREAM OFF (Jeff, 2026-10-16): "test that a fader with To stream OFF is heard in the park but not on the stream."
+    /// Every fader, on MAIN and on AUX: OFF = heard on the output its setting names, nothing on the stream; ON = today.
+    #[test]
+    fn a_fader_with_to_stream_off_is_heard_in_the_park_but_not_on_the_stream() {
+        let mut failures = Vec::new();
+        const ALL: [(&str, usize); 12] = [("A", 0), ("B", 1), ("C", 2), ("D", 3), ("E", 4), ("F", 5), ("CART", 6), ("S1", 7), ("S2", 8), ("S3", 9), ("S4", 10), ("S5", 11)];
+        for (name, slot) in ALL {
+            for aux in [true, false] {
+                let h = play_alone_air(slot, aux, false);
+                println!("[to-stream off] {:<4} local={:<4} programme={:.6}  aux-tap={:.3}  main-device={:.3}", name, if aux { "AUX" } else { "MAIN" }, h.programme, h.aux_tap, h.device);
+                if h.programme > SILENT { failures.push(format!("{name} To stream OFF: still on the stream ({:.6})", h.programme)); }
+                if aux {
+                    if h.aux_tap < HEARD { failures.push(format!("{name} AUX, To stream OFF: not heard on the AUX output ({:.4})", h.aux_tap)); }
+                    if h.device > SILENT { failures.push(format!("{name} AUX, To stream OFF: leaked into the main speakers ({:.4})", h.device)); }
+                } else {
+                    if h.device < HEARD { failures.push(format!("{name} MAIN, To stream OFF: not heard on the main speakers ({:.4})", h.device)); }
+                    if h.aux_tap > SILENT { failures.push(format!("{name} MAIN, To stream OFF: leaked into the AUX output ({:.4})", h.aux_tap)); }
+                }
+                // and back ON is exactly today
+                let on = play_alone_air(slot, aux, true);
+                if on.programme < HEARD { failures.push(format!("{name} To stream ON: not on the stream ({:.4})", on.programme)); }
+            }
+        }
+        assert!(failures.is_empty(), "To stream failures: {}", failures.join(" | "));
+    }
+
+    /// TO STREAM OFF keeps the fader's DUCKS: a local-only Park mic still pulls the music down (park and stream alike —
+    /// the ducker is the programme's), while its own voice stays off the stream.
+    #[test]
+    fn a_to_stream_off_fader_still_ducks_the_music() {
+        let (prod, mut prog) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
+        let bus = Arc::new(crate::rt::RtMutex::new(BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(true)))));
+        let talk = 3usize;
+        {
+            let mut b = bus.lock().unwrap();
+            b.set_test_duck();
+            let mut p = b.params();
+            p.duck_enabled[talk] = true;     // DUCKS on the talk fader
+            p.air_on[talk] = false;          // To stream OFF
+            p.local_aux[talk] = false;       // heard on MAIN
+            b.apply_params(&p);
+            b.decks[0].source = Some(DeckFeed::prefilled(Tone(0.25), 480 * 2 * 600));       // music on A
+            b.decks[0].active = true; b.decks[0].paused = false; b.decks[0].volume = 1.0;
+            b.decks[talk].source = Some(DeckFeed::prefilled(Tone(0.25), 480 * 2 * 600));    // the voice
+            b.decks[talk].active = true; b.decks[talk].paused = false; b.decks[talk].volume = 1.0;
+        }
+        let (fin, playing) = (FinishedFlags::new(), Arc::new(AtomicBool::new(true)));
+        let mut dev = 0.0f32;
+        for i in 0..60 {
+            let mut data = vec![0f32; 480 * 2];
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut Scratch::new());
+            if i >= 50 { dev = data.iter().fold(dev, |m, v| m.max(v.abs())); }
+        }
+        let g = bus.lock().unwrap().duck_gain;
+        let mut st = Vec::new();
+        while let Some(v) = prog.try_pop() { st.push(v); }
+        let tail = &st[st.len() - 480 * 2 * 10..];
+        let air_pk = tail.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        println!("[to-stream duck] duck_gain {:.3}, stream peak {:.4} (music alone, ducked), main device peak {:.4}", g, air_pk, dev);
+        assert!(g < 0.2, "the To-stream-OFF fader did not duck the music (gain {g})");
+        // the stream carries only the ducked music (0.25 x 0.1 = -20 dB), never the voice at 0.25
+        assert!(air_pk < 0.05, "the voice reached the stream ({air_pk})");
+        // the park hears the voice at full level
+        assert!(dev > 0.2, "the voice is not heard in the park ({dev})");
+    }
+
     #[test]
     fn the_local_row_is_accepted_on_every_fader() {
         // Jeff, 2026-10-11: no fader refuses an AUX/local row by its position.
@@ -6812,6 +6912,7 @@ mod interchange_matrix {
         let (prod, _c) = rb.split();
         let b = BusState::new(crate::eq::new_shared_eq(44100.0), prod, 44100, Arc::new(AtomicBool::new(false)));
         for (name, slot) in SOURCE_SLOTS { assert!(b.local_aux[slot] && !b.duck_duckable[slot], "{name} default moved"); }
+        assert!(b.air_on.iter().all(|&a| a), "To stream must start ON on every fader (today's sound)");
         for (name, slot) in [("A", 0usize), ("B", 1), ("C", 2), ("CART", 6)] { assert!(!b.local_aux[slot] && b.duck_duckable[slot], "{name} default moved"); }
         for i in 0..SLOT_COUNT { assert!(!b.duck_enabled[i], "fader {i} ducks by default"); }
     }

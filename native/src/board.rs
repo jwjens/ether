@@ -21,6 +21,7 @@ pub(crate) fn params_json(p: &Params) -> serde_json::Value {
             "volume": p.volume[i],
             "muted": p.muted[i],
             "local": if p.local_aux[i] { "aux" } else { "main" },
+            "stream": p.air_on[i],
             "duck": p.duck_enabled[i],
             "duckable": p.duck_duckable[i],
             "aux_monitor_gain": p.aux_monitor_gain[i],

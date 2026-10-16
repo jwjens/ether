@@ -43,6 +43,9 @@ pub(crate) struct Params {
     /// (the room sum), true = the AUX output (through its AUX row). An operator setting per fader, never derived from a
     /// fader's position or type. Boot default = today's layout (D–F, S1–S5 on AUX), so nothing moves until it is set.
     pub local_aux: [bool; SLOT_COUNT],
+    /// TO STREAM (Jeff, 2026-10-16): each fader goes to the stream (true — every fader's default, today's behaviour) or
+    /// is heard only locally (false): in the park through its MAIN/AUX output and MONITOR, never on the stream.
+    pub air_on: [bool; SLOT_COUNT],
     /// The smoothing every level change rides (faders, MASTER, MONITOR, AUX/room rows), in programme frames. An operator
     /// setting (`fader_smoothing_ms`); boot default = the 20 ms the engine always used (ramp::LEVEL_RAMP_FRAMES).
     pub ramp_frames: u32,

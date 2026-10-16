@@ -1142,6 +1142,20 @@ pub fn audio_get_listen_port(station_id: u32) -> u32 {
     audio::listen_ctl(station_id).port.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// PARK MIC (2026-10-16): the 127.0.0.1 port the daemon's talk receiver writes Park Mic `mic` (1 or 2) into — mono
+/// f32le at 48 kHz (micin.rs). Bound on first ask; 0 = it could not be bound, or `mic` is not 1..2. Patching the mic
+/// onto a fader is the ordinary mic patch with device "park:<mic>" (audio_set_mic_input).
+#[napi]
+pub fn audio_get_park_mic_port(station_id: u32, mic: u32) -> u32 {
+    let n = mic as usize;
+    if !(1..=micin::PARK_MIC_COUNT).contains(&n) { return 0; }
+    micin::park_mic_port(station_id, n).port.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// PARK MIC: each Park mic's port, whether a receiver is attached, and the fader it is on (JSON).
+#[napi]
+pub fn audio_park_mic_state(station_id: u32) -> String { micin::park_mic_state_json(station_id).to_string() }
+
 /// PARK LISTEN: which local feeds the park speakers are on — the station's setting. 1 = MONITOR (main output),
 /// 2 = AUX, 3 = both, 0 = nothing.
 #[napi]
@@ -1202,6 +1216,16 @@ pub fn audio_set_local_output(station_id: u32, deck: String, aux: bool) -> bool 
     let engine = get_or_create_engine(station_id, None);
     let Ok(audio) = engine.lock() else { return false };
     audio.sender.send(AudioCmd::SetLocalOutput { deck, aux }).is_ok()
+}
+
+/// TO STREAM (Jeff, 2026-10-16): whether this fader goes to the stream (`on` true — every fader's default) or is heard
+/// only locally (false): in the park through its MAIN/AUX output and MONITOR, never on the stream. An operator setting per
+/// fader (`fader_routing` → stream, audiod/board-state.js).
+#[napi]
+pub fn audio_set_to_stream(station_id: u32, deck: String, on: bool) -> bool {
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetToStream { deck, on }).is_ok()
 }
 
 /// The smoothing every level change rides (faders, MASTER, MONITOR, AUX/room rows), in milliseconds — the operator's

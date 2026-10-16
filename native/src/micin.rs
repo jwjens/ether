@@ -480,6 +480,97 @@ pub(crate) fn list_input_devices() -> serde_json::Value {
     serde_json::Value::Array(out)
 }
 
+// ── PARK MIC (2026-10-16, docs/park-mic-build-2026-10-16.md) ───────────────────────────────────────────
+// Jeff: "2 Park mic input sources (Park Mic 1, Park Mic 2), listed under Mic with the other inputs. The user puts each
+// on any fader; that fader's existing settings … decide where it's heard."
+//
+// A Park mic is a MIC whose "device" is `park:1` / `park:2`: the same patch command, the same live feed, the same
+// LiveIn consumer in the mixer callback — the fader cannot tell it from a sound-card mic. What differs is only where the
+// samples come from: instead of a cpal input stream, a 127.0.0.1 TCP port that the audio daemon's talk receiver (an
+// ffmpeg reading the phone's voice off the relay) writes into, as mono f32le at PARK_MIC_RATE.
+//
+// THREADS: one accept/read thread per (station, mic), started the first time its port is asked for and living with the
+// process (like the Listen port). It converts bytes to samples and pushes them into whichever fader's ring is patched to
+// that mic right now (under a Mutex — this thread is not the audio thread). Nothing patched = the samples are read and
+// dropped. One sender at a time; a new connection replaces the old one.
+//
+// SENSES: the patched fader's MicShared counters (in_frames, starvation, overruns) as for any mic, plus `connected`
+// (a receiver is attached) and the slot's state: "idle" (patched, no voice arriving) or "running" (voice arriving).
+pub(crate) const PARK_MIC_COUNT: usize = 2;
+/// The rate the daemon's receiver writes (Opus decodes at 48 kHz; LiveIn resamples to the programme rate).
+pub(crate) const PARK_MIC_RATE: u32 = 48_000;
+/// No samples for this long while patched = idle (nobody talking).
+const PARK_IDLE: Duration = Duration::from_millis(500);
+
+/// `park:1` → Some(1). Anything else (a sound-card name) → None.
+pub(crate) fn park_mic_index(device: &str) -> Option<usize> {
+    device.strip_prefix("park:").and_then(|n| n.parse::<usize>().ok()).filter(|n| (1..=PARK_MIC_COUNT).contains(n))
+}
+
+pub(crate) struct ParkMicPort {
+    pub port: AtomicU32,
+    pub connected: AtomicBool,
+    /// The patched fader's ring + its counters, with the fader index that owns it; None = not on any fader.
+    sink: Mutex<Option<(usize, HeapProd<f32>, Arc<MicShared>)>>,
+}
+static PARK_PORTS: OnceLock<Mutex<HashMap<(u32, usize), Arc<ParkMicPort>>>> = OnceLock::new();
+
+/// The (station, mic) port, bound on first use. port 0 = it could not be bound (said so in the log).
+pub(crate) fn park_mic_port(station_id: u32, n: usize) -> Arc<ParkMicPort> {
+    let m = PARK_PORTS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut g = m.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(p) = g.get(&(station_id, n)) { return p.clone(); }
+    let pm = Arc::new(ParkMicPort { port: AtomicU32::new(0), connected: AtomicBool::new(false), sink: Mutex::new(None) });
+    match std::net::TcpListener::bind("127.0.0.1:0") {
+        Ok(l) => {
+            let port = l.local_addr().map(|a| a.port()).unwrap_or(0);
+            pm.port.store(port as u32, Ordering::Relaxed);
+            eprintln!("[PARKMIC] Station {} Park Mic {} on TCP port {}", station_id, n, port);
+            let t = pm.clone();
+            std::thread::spawn(move || park_mic_read(station_id, n, l, t));
+        }
+        Err(e) => eprintln!("[PARKMIC] Station {} Park Mic {} bind failed: {} — this Park mic is unavailable", station_id, n, e),
+    }
+    g.insert((station_id, n), pm.clone());
+    pm
+}
+
+fn park_mic_read(station_id: u32, n: usize, listener: std::net::TcpListener, pm: Arc<ParkMicPort>) {
+    use std::io::Read;
+    let mut bytes = vec![0u8; 8192];
+    let mut samples: Vec<f32> = Vec::with_capacity(2048);
+    loop {
+        let Ok((mut stream, addr)) = listener.accept() else { std::thread::sleep(Duration::from_millis(200)); continue; };
+        let _ = stream.set_nodelay(true);
+        pm.connected.store(true, Ordering::Relaxed);
+        eprintln!("[PARKMIC] Station {} Park Mic {} receiver connected: {}", station_id, n, addr);
+        let mut carry: Vec<u8> = Vec::with_capacity(4);
+        loop {
+            let got = match stream.read(&mut bytes) { Ok(0) | Err(_) => break, Ok(k) => k };
+            carry.extend_from_slice(&bytes[..got]);
+            let whole = carry.len() - carry.len() % 4;
+            samples.clear();
+            samples.extend(carry[..whole].chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])));
+            carry.drain(..whole);
+            if samples.is_empty() { continue; }
+            let mut sink = pm.sink.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((_, prod, sh)) = sink.as_mut() { input_block(&samples, 1, 0, prod, sh, |x| x); }
+        }
+        pm.connected.store(false, Ordering::Relaxed);
+        eprintln!("[PARKMIC] Station {} Park Mic {} receiver gone", station_id, n);
+    }
+}
+
+/// Park mic state for audio_park_mic_state: each mic's port, whether a receiver is attached, and the fader it is on.
+pub(crate) fn park_mic_state_json(station_id: u32) -> serde_json::Value {
+    let rows: Vec<serde_json::Value> = (1..=PARK_MIC_COUNT).map(|n| {
+        let pm = park_mic_port(station_id, n);
+        let on = pm.sink.lock().map(|s| s.as_ref().map(|(i, _, _)| SLOT_NAMES[*i].to_string())).unwrap_or(None);
+        serde_json::json!({ "mic": n, "port": pm.port.load(Ordering::Relaxed), "connected": pm.connected.load(Ordering::Relaxed), "fader": on })
+    }).collect();
+    serde_json::json!({ "v": 1, "parkMics": rows })
+}
+
 // ── the manager (dispatch thread) ──────────────────────────────────────────────────────────────────────
 struct MicSlot {
     device: String,
@@ -492,6 +583,8 @@ struct MicSlot {
     last_seq_at: Instant,
     zero_reported: bool,
     refusals_logged: bool,
+    /// PARK MIC: Some(n) when this slot carries Park Mic n (no cpal stream; fed by the mic's port).
+    park: Option<usize>,
 }
 
 /// What the manager asks the dispatch loop to do to a deck slot.
@@ -533,6 +626,10 @@ impl MicInputs {
         if idx >= SLOT_COUNT { return; }
         let gain_db = gain_db.clamp(GAIN_DB_RANGE.0, GAIN_DB_RANGE.1);
         self.board.shared[idx].gain_bits.store(db_to_lin(gain_db).to_bits(), Ordering::Relaxed);
+        // A Park mic leaving this slot (unpatched, or re-patched to something else) stops feeding it.
+        if let Some(Some(old)) = self.slots.get(idx) {
+            if let Some(n) = old.park { if old.device != device { self.release_park(idx, n); } }
+        }
         if device.is_empty() {
             if self.slots[idx].take().is_some() {
                 eprintln!("[MIC] Station {} {}: unpatched", self.station_id, SLOT_NAMES[idx]);
@@ -550,6 +647,7 @@ impl MicInputs {
         self.slots[idx] = Some(MicSlot {
             device: device.clone(), channel, gain_db, stream: None, was_open: false, next_try: now,
             last_seq: 0, last_seq_at: now, zero_reported: false, refusals_logged: false,
+            park: park_mic_index(&device),
         });
         self.set_status(idx, |s| {
             let (losses, reopens) = (s.losses, s.reopens);
@@ -563,6 +661,18 @@ impl MicInputs {
         for idx in 0..SLOT_COUNT {
             let Some(s) = self.slots[idx].as_mut() else { continue };
             let sh = self.board.shared[idx].clone();
+            if s.park.is_some() {
+                // A Park mic has no device to lose and no reopen: it is idle until a talk arrives. State only.
+                let seq = sh.in_seq.load(Ordering::Relaxed);
+                if seq != s.last_seq { s.last_seq = seq; s.last_seq_at = now; }
+                let talking = s.last_seq != 0 && now.duration_since(s.last_seq_at) <= PARK_IDLE;
+                let want = if talking { "running" } else { "idle" };
+                self.set_status(idx, |st| if st.state != want {
+                    st.state = want.into();
+                    st.reason = if talking { String::new() } else { "nobody is talking".into() };
+                });
+                continue;
+            }
             if s.stream.is_some() {
                 let mut lost: Option<String> = None;
                 if sh.err_flag.swap(false, Ordering::Relaxed) { lost = Some("the device reported an error".into()); }
@@ -597,9 +707,41 @@ impl MicInputs {
             }
         }
     }
+    /// PARK MIC n stops feeding slot `idx` (only if that slot is the one it feeds).
+    fn release_park(&mut self, idx: usize, n: usize) {
+        let pm = park_mic_port(self.station_id, n);
+        let mut sink = pm.sink.lock().unwrap_or_else(|e| e.into_inner());
+        if matches!(sink.as_ref(), Some((owner, _, _)) if *owner == idx) {
+            *sink = None;
+            eprintln!("[PARKMIC] Station {} Park Mic {} off {}", self.station_id, n, SLOT_NAMES[idx]);
+        }
+    }
+    /// PARK MIC n onto slot `idx`: a fresh ring for this fader, handed to the mic's port, and the same live feed a
+    /// sound-card mic installs. A second fader patched to the same Park mic takes it over (one mic, one fader).
+    fn open_park(&mut self, idx: usize, n: usize, out: &mut Vec<MicAction>) {
+        let sh = self.board.shared[idx].clone();
+        let pm = park_mic_port(self.station_id, n);
+        sh.zero_run.store(0, Ordering::Relaxed);
+        sh.in_block_max.store(0, Ordering::Relaxed);
+        let (prod, cons) = mic_ring(PARK_MIC_RATE);
+        let prev = pm.sink.lock().unwrap_or_else(|e| e.into_inner()).replace((idx, prod, sh.clone()));
+        if let Some((other, _, _)) = prev {
+            if other != idx { eprintln!("[PARKMIC] Station {} Park Mic {} moved from {} to {}", self.station_id, n, SLOT_NAMES[other], SLOT_NAMES[idx]); }
+        }
+        if let Some(s) = self.slots[idx].as_mut() { s.was_open = true; s.last_seq = sh.in_seq.load(Ordering::Relaxed); s.last_seq_at = Instant::now(); }
+        out.push(MicAction::Install(idx, crate::rt::DeckFeed::live(Box::new(LiveIn::new(cons, PARK_MIC_RATE, sh)))));
+        let port = pm.port.load(Ordering::Relaxed);
+        eprintln!("[PARKMIC] Station {} {}: Park Mic {} patched (port {})", self.station_id, SLOT_NAMES[idx], n, port);
+        self.set_status(idx, |st| {
+            st.state = if port == 0 { "open_failed".into() } else { "idle".into() };
+            st.reason = if port == 0 { "the Park mic's local port could not be opened".into() } else { "nobody is talking".into() };
+            st.rate = PARK_MIC_RATE; st.channels = 1;
+        });
+    }
     fn open(&mut self, idx: usize, now: Instant, out: &mut Vec<MicAction>) {
         use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
         use cpal::Sample;
+        if let Some(n) = self.slots[idx].as_ref().and_then(|s| s.park) { return self.open_park(idx, n, out); }
         let station_id = self.station_id;
         let sh = self.board.shared[idx].clone();
         let Some(s) = self.slots[idx].as_mut() else { return };
@@ -690,6 +832,43 @@ impl MicInputs {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// PARK MIC (2026-10-16): what the daemon's receiver writes into Park Mic 1's port reaches the fader it is patched on
+    /// (as that fader's mic input), and stops reaching it once it is unpatched. `park:1` is a mic like any other.
+    #[test]
+    fn a_park_mic_port_feeds_the_fader_it_is_patched_on() {
+        use std::io::Write;
+        let station = 990_001u32;
+        assert_eq!(park_mic_index("park:1"), Some(1));
+        assert_eq!(park_mic_index("park:2"), Some(2));
+        assert_eq!(park_mic_index("park:3"), None);
+        assert_eq!(park_mic_index("Microphone (USB)"), None);
+        let mut mics = MicInputs::new(station);
+        let mut out = Vec::new();
+        mics.set(3, "park:1".into(), 0, 0.0, Instant::now(), &mut out);
+        assert!(matches!(out.as_slice(), [MicAction::Install(3, _)]), "patching park:1 did not install a live feed on D");
+        let port = park_mic_port(station, 1).port.load(Ordering::Relaxed);
+        assert!(port != 0, "Park Mic 1 has no port");
+        let sh = board(station).shared[3].clone();
+        let mut tx = std::net::TcpStream::connect(("127.0.0.1", port as u16)).expect("connect to Park Mic 1");
+        let one_block: Vec<u8> = (0..4800).flat_map(|i| ((i as f32 * 0.01).sin() * 0.5).to_le_bytes()).collect();
+        tx.write_all(&one_block).unwrap();
+        let t0 = Instant::now();
+        while sh.in_frames.load(Ordering::Relaxed) < 4800 && t0.elapsed() < Duration::from_secs(3) { std::thread::sleep(Duration::from_millis(10)); }
+        let got = sh.in_frames.load(Ordering::Relaxed);
+        println!("[parkmic] port {port}: {got} samples reached fader D");
+        assert_eq!(got, 4800, "the voice did not reach the fader");
+        assert!(park_mic_port(station, 1).connected.load(Ordering::Relaxed), "the receiver is not shown as connected");
+        // unpatch → the port keeps reading but nothing reaches D any more
+        out.clear();
+        mics.set(3, String::new(), 0, 0.0, Instant::now(), &mut out);
+        assert!(matches!(out.as_slice(), [MicAction::Release(3)]));
+        tx.write_all(&one_block).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        assert_eq!(sh.in_frames.load(Ordering::Relaxed), 4800, "an unpatched Park mic still fed the fader");
+        // Park Mic 2 is a separate port
+        assert_ne!(park_mic_port(station, 2).port.load(Ordering::Relaxed), port);
+    }
 
     /// A test producer: a sine at `rate × (1 + ppm·1e-6)` samples per REAL second, pushed in blocks of `block`.
     pub(crate) struct Gen { pub(crate) rate: f64, pub(crate) freq: f64, pub(crate) amp: f64, pub(crate) n: u64 }
