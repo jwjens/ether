@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 const require_ = createRequire(import.meta.url);
 const { TalkReceiver, checkTalk, ffmpegArgs } = require_("./talk.js");
 
-const good = { mic: 1, url: "rtsps://station:t@stream.example:8322/park/abc/talk1", limitSec: 20, leaseSec: 30, talkId: "t1", by: "Ryan" };
+const good = { mic: 1, url: "rtsps://station:t@stream.example:8322/park/abc/talk1", leaseSec: 30, talkId: "t1", by: "Ryan" };
 
 function fakeTimers() {
   let now = 1000, seq = 0; const due = new Map();
@@ -25,12 +25,10 @@ function receiver(timers) {
 
 describe("talk config", () => {
   it("accepts the station's settings as given", () => {
-    expect(checkTalk(good)).toEqual({ ok: true, cfg: { mic: 1, url: good.url, limitSec: 20, leaseSec: 30, talkId: "t1", by: "Ryan" } });
+    expect(checkTalk(good)).toEqual({ ok: true, cfg: { mic: 1, url: good.url, leaseSec: 30, talkId: "t1", by: "Ryan" } });
   });
   it("refuses a Park mic that does not exist, a missing longest talk, a missing relay", () => {
     expect(checkTalk({ ...good, mic: 3 }).ok).toBe(false);
-    expect(checkTalk({ ...good, limitSec: undefined }).ok).toBe(false);
-    expect(checkTalk({ ...good, limitSec: 0 }).ok).toBe(false);
     expect(checkTalk({ ...good, url: "http://x" }).ok).toBe(false);
   });
   it("the ffmpeg line reads the relay and writes mono 48 kHz f32le into the Park mic's port", () => {
@@ -42,18 +40,16 @@ describe("talk config", () => {
 });
 
 describe("the receiver", () => {
-  it("stops by itself at the longest talk, whatever the server does", () => {
-    const ft = fakeTimers(); const { r, events } = receiver(ft);
+  it("has no time limit: renewed, it keeps going (Jeff, 2026-10-16 — the user taps it off)", () => {
+    const ft = fakeTimers(); const { r } = receiver(ft);
     expect(r.start(good).ok).toBe(true);
-    ft.advance(15000); r.start(good);              // a renewal at 15 s
-    ft.advance(5000);                               // 20 s
-    expect(r.state).toBe("idle");
-    expect(events.at(-1).endedHow).toBe("limit");
-    expect(r.spawned).toBe(1);                      // the renewal did not restart it
+    for (let i = 0; i < 30; i++) { ft.advance(10000); r.start(good); }   // five minutes of renewals
+    expect(r.state).not.toBe("idle");
+    expect(r.spawned).toBe(1);                      // renewals never restart it
   });
   it("stops when the lease is not renewed (a phone that vanished)", () => {
     const ft = fakeTimers(); const { r, events } = receiver(ft);
-    r.start({ ...good, limitSec: 120, leaseSec: 10 });
+    r.start({ ...good, leaseSec: 10 });
     ft.advance(10000);
     expect(r.state).toBe("idle");
     expect(events.at(-1).endedHow).toBe("lease");

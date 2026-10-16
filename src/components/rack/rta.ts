@@ -80,7 +80,18 @@ export const BARS_RANGE_DB = 60;
  */
 export function autoTop(prevRef: number | null, loudest: number, dtS: number, releaseDbS = 2, headDb = 6): { ref: number; topDb: number } {
   const ref = prevRef == null || loudest > prevRef ? loudest : Math.max(loudest, prevRef - releaseDbS * Math.max(0, dtS));
-  return { ref, topDb: Math.min(0, Math.ceil((ref + headDb) / 3) * 3) };
+  // NEVER BELOW AUTO_TOP_MIN_DB (2026-10-16): with nothing but silence on a live channel (an idle Park mic) the top used to
+  // follow the −120 dB floor down to −114, so silence was drawn 6 dB under the top — every band "full" — on a −114…−174
+  // scale. Silence now sits at the bottom of a −60…−120 view, empty.
+  return { ref, topDb: Math.max(AUTO_TOP_MIN_DB, Math.min(0, Math.ceil((ref + headDb) / 3) * 3)) };
+}
+/** The lowest the view's top goes (dBFS): silence (the engine's −120 floor) is always the bottom, drawn empty. */
+export const AUTO_TOP_MIN_DB = -60;
+/** A live channel with nothing but silence on it (every point at the floor). */
+export function isSilent(frame: Pick<RtaFrame, "fed" | "finePre" | "finePost"> | null | undefined): boolean {
+  if (!frame || !frame.fed) return false;
+  const all = [...(frame.finePost || []), ...(frame.finePre || [])];
+  return all.length > 0 && all.every(v => !(v > RTA_FLOOR_DB + 0.5));
 }
 /** A level → a y, for a view whose top is `topDb` and whose range is BARS_RANGE_DB. */
 export const barY = (db: number, topDb: number, top: number, bottom: number) =>

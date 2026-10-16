@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bandEdges, dbfsY, holdStep, coarseSpan, geqX, fineFreq, fineEdges, autoTop, barY, groupBars, LEVEL_STOPS, FINE_N } from "./rta";
+import { bandEdges, dbfsY, holdStep, coarseSpan, geqX, fineFreq, fineEdges, autoTop, barY, groupBars, LEVEL_STOPS, FINE_N, isSilent } from "./rta";
 import { geqResponseDb, x as axisX, FREQ_GRID, DB_GRID } from "./scopeAxis";
 
 describe("the RTA drawing (slice 8)", () => {
@@ -69,6 +69,12 @@ describe("the RTA drawing (slice 8)", () => {
     t = autoTop(t.ref, -40, 1);
     expect(t.ref).toBe(-22);                            // released 2 dB in 1 s, not below the loudest
     expect(autoTop(null, 3, 0).topDb).toBe(0);          // never above 0 dBFS
+    // silence on a live channel (an idle Park mic, 2026-10-16): the top stays at −60, so the −120 floor draws empty
+    expect(autoTop(null, -120, 0).topDb).toBe(-60);
+    expect(barY(-120, autoTop(null, -120, 0).topDb, 0, 100)).toBe(100);
+    expect(isSilent({ fed: true, finePre: Array(241).fill(-120), finePost: Array(241).fill(-120) })).toBe(true);
+    expect(isSilent({ fed: true, finePre: [-120, -60], finePost: [-120, -120] })).toBe(false);
+    expect(isSilent({ fed: false, finePre: [], finePost: [] })).toBe(false);
     expect(barY(-24, -24, 0, 100)).toBe(0);
     expect(barY(-84, -24, 0, 100)).toBe(100);
   });

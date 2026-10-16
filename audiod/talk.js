@@ -12,9 +12,8 @@
 // own thread into the fader's ring; the mixer only ever try-pops the ring. If this ffmpeg dies, hangs or loses the
 // internet, the fader goes silent and the programme carries on.
 //
-// LIMITS, enforced HERE as well as on the server (a stuck button or a dropped phone cannot hold the park open):
-//   · the longest talk (the station's setting, seconds) — the receiver stops at it, whatever the server says;
-//   · a lease — no renewal within `leaseSec` and it stops by itself.
+// NO TIME LIMIT (Jeff, 2026-10-16): a talk runs until the staff member taps again, Ether's STOP, or the studio lock.
+// Only a LEASE remains: no renewal within `leaseSec` (the phone or the page is gone) and it stops by itself.
 // Every number comes from the station's settings or the server's command — none is chosen here.
 
 const cp = require("child_process");
@@ -42,11 +41,9 @@ function checkTalk(c) {
   if (!PARK_MICS.includes(mic)) return { ok: false, error: "No such Park mic." };
   const url = String(x.url || "");
   if (!/^rtsps?:\/\/[^\s]+$/.test(url)) return { ok: false, error: "No relay address." };
-  const limitSec = Number(x.limitSec);
-  if (!(limitSec >= 1 && limitSec <= 600)) return { ok: false, error: "Set the longest talk (Ether → Preferences → Park page — Hold to talk)." };
   const leaseSec = Number(x.leaseSec);
   if (!(leaseSec >= 5 && leaseSec <= 600)) return { ok: false, error: "Bad lease." };
-  return { ok: true, cfg: { mic, url, limitSec, leaseSec, talkId: String(x.talkId || ""), by: String(x.by || "").slice(0, 60) } };
+  return { ok: true, cfg: { mic, url, leaseSec, talkId: String(x.talkId || ""), by: String(x.by || "").slice(0, 60) } };
 }
 
 /** The ffmpeg command line. Pure — pinned by talk.test.js. */
@@ -68,13 +65,13 @@ class TalkReceiver {
   // A: the native addon (audioGetParkMicPort). emit: status → broadcast. One receiver per (station, Park mic).
   constructor(stationId, mic, A, emit, timers = { setTimeout, clearTimeout, now: Date.now }) {
     this.stationId = stationId; this.mic = mic; this.A = A; this.emit = emit; this.t = timers;
-    this.proc = null; this.cfg = null; this.lease = null; this.limit = null;
+    this.proc = null; this.cfg = null; this.lease = null;
     this.state = "idle"; this.errorMsg = null; this.since = null; this.receiving = false; this.endedHow = null;
   }
   status() {
     return { stationId: this.stationId, mic: this.mic, state: this.state, errorMsg: this.errorMsg, since: this.since,
              receiving: this.receiving, by: this.cfg ? this.cfg.by : null, talkId: this.cfg ? this.cfg.talkId : null,
-             limitSec: this.cfg ? this.cfg.limitSec : null, endedHow: this.endedHow };
+             endedHow: this.endedHow };
   }
   _emit() { try { this.emit(this.status()); } catch {} }
 
@@ -89,19 +86,15 @@ class TalkReceiver {
     if (!renewal) {
       this._kill();
       this.cfg = v.cfg; this.since = this.t.now(); this.endedHow = null; this.receiving = false;
-      if (this.limit) this.t.clearTimeout(this.limit);
-      // THE LONGEST TALK, enforced by the station itself.
-      this.limit = this.t.setTimeout(() => { this.limit = null; this.stop("limit"); }, this.cfg.limitSec * 1000);
       this._spawn(port);
     }
     this._renewLease();
     return { ok: true };
   }
-  /** End the talk. `how`: "released" (the page let go) | "limit" | "lease" | "locked" | "ether" (Stop in Ether) | … */
+  /** End the talk. `how`: "released" (tapped off) | "lease" | "locked" | "ether" (Stop in Ether) | … */
   stop(how = "released") {
     const was = this.state !== "idle";
     if (this.lease) { this.t.clearTimeout(this.lease); this.lease = null; }
-    if (this.limit) { this.t.clearTimeout(this.limit); this.limit = null; }
     this._kill();
     this.receiving = false;
     if (was) { this.endedHow = how; this.state = "idle"; this.errorMsg = null; this._emit(); }

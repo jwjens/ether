@@ -17,10 +17,11 @@ import { useBoardName } from "../hooks/useBoardName";
 import { saveRefusal } from "../lib/parkListenSettings";
 
 type Mic = { mic: number; name: string; fader: string | null; conflict: string[] | null; stream: boolean | null; on: boolean | null };
-type State = { ready: boolean; missing: string[]; maxSec: number | null; echo: boolean | null; noise: boolean | null; agc: boolean | null;
+type State = { ready: boolean; missing: string[]; echo: boolean | null; noise: boolean | null; agc: boolean | null;
                locked: boolean; mics: Mic[] };
 
-const K = { maxSec: "park_talk_max_sec", echo: "park_talk_echo_cancel", noise: "park_talk_noise_suppress", agc: "park_talk_auto_gain" };
+// No longest talk (Jeff, 2026-10-16): a talk runs until it is tapped off, Ether's STOP, or the studio lock.
+const K = { echo: "park_talk_echo_cancel", noise: "park_talk_noise_suppress", agc: "park_talk_auto_gain" };
 const nameKey = (n: number) => `park_mic_${n}_name`;
 
 export default function ParkTalkSettings() {
@@ -39,7 +40,7 @@ export default function ParkTalkSettings() {
       const r = await ether?.invoke?.("park:talk-state", stationId);
       if (!r?.ok) { setMsg(`Not read: ${r?.error || "no answer"}`); return; }
       setS(r);
-      const d: Record<string, string> = { [K.maxSec]: r.maxSec != null ? String(r.maxSec) : "" };
+      const d: Record<string, string> = {};
       for (const m of r.mics as Mic[]) d[nameKey(m.mic)] = m.name;
       setDraft(d);
     } catch (e) { setMsg(`Not read: ${String(e)}`); }
@@ -78,7 +79,8 @@ export default function ParkTalkSettings() {
   return (
     <div>
       <div style={{ fontSize: 12.5, color: "var(--text-secondary)", padding: "2px 0 8px", lineHeight: 1.5 }}>
-        Logged-in staff hold <strong>HOLD TO TALK</strong> on the Park page and talk on one of these Park mics. Each Park mic
+        Logged-in staff tap <strong>TAP TO TALK</strong> on the Park page to talk on one of these Park mics, and tap again
+        to stop (there is no time limit; Ether's STOP TALK by the fader and the studio lock end a forgotten one). Each Park mic
         is an input like a sound-card mic: on the board, set a fader's source to <strong>Mic</strong> and pick the Park mic.
         It plays in the park like every fader. Its <strong>MAIN</strong> button on the board puts the voice on air as well
         (lit) or keeps it in the park only (not lit); <strong>DUCK</strong> dips the music while someone talks. Park MUTE
@@ -100,15 +102,6 @@ export default function ParkTalkSettings() {
           </div>
         </div>
       ))}
-      <div style={row}>
-        <span style={lab}>Longest talk</span>
-        <input style={inp} value={draft[K.maxSec] ?? ""} onChange={e => setDraft(d => ({ ...d, [K.maxSec]: e.target.value }))} />
-        <span style={small}>seconds</span>
-        <button style={btn} onClick={() => { const v = (draft[K.maxSec] || "").trim(); const n = Number(v);
-          if (v === "" || !Number.isFinite(n) || n < 1 || n > 600) { setMsg("Longest talk must be 1 to 600 s."); return; }
-          void save(K.maxSec, String(n), `Longest talk ${n} s`); }}>Save</button>
-        <span style={small}>now: {s.maxSec != null ? `${s.maxSec} s` : "not set"}</span>
-      </div>
       {toggle(K.echo, "Phone echo cancellation", s.echo)}
       {toggle(K.noise, "Phone noise suppression", s.noise)}
       {toggle(K.agc, "Phone automatic gain", s.agc)}
@@ -119,7 +112,7 @@ export default function ParkTalkSettings() {
       </div>
       <div style={{ fontSize: 12, marginTop: 8, color: s.ready ? "var(--text-secondary)" : "var(--accent-orange, #f59e0b)" }}>
         {s.locked ? "Park page control is OFF on this station: Hold to talk is locked. " : ""}
-        {s.ready ? "Hold to talk is available on this station's Park page for every Park mic that is on a fader." : "Hold to talk is off for this station until the longest talk and the three phone settings are set."}
+        {s.ready ? "Hold to talk is available on this station's Park page for every Park mic that is on a fader." : "Hold to talk is off for this station until the three phone settings are set."}
       </div>
       {msg && <div role="status" style={{ fontSize: 12, marginTop: 8, color: msg.startsWith("Not") || msg.includes("must") ? "var(--accent-orange, #f59e0b)" : "var(--accent-cyan)" }}>{msg}</div>}
     </div>

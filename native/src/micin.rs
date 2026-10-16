@@ -53,6 +53,12 @@ const FILL_TAU_S: f64 = 4.0;
 /// Fill beyond the target by more than this is STALE (the output stopped while the input kept writing):
 /// discarded down to the target before playing. A mic never comes back late.
 const STALE_MS: f64 = 100.0;
+/** PARK MIC (2026-10-16, Jeff: "cut everything we can to shorten delay"): its backlog bound. A lump from the network or
+ *  the receiver above this is dropped at once instead of lingering (a mic keeps STALE_MS). */
+pub(crate) const PARK_STALE_MS: f64 = 30.0;
+/** PARK MIC: the port is fed to the fader in pieces of at most this many samples (10 ms at 48 kHz), so a lump can never
+ *  raise the ring's target (in_block_max only ever grows). */
+const PARK_PIECE: usize = 480;
 /// Exact digital zero for this long on an open input is its own state.
 pub(crate) const ZERO_SECONDS: f64 = 5.0;
 /// No input callback for this long on an open stream = the device is gone.
@@ -179,6 +185,8 @@ pub(crate) struct LiveIn {
     gain: f32,
     last: f32,
     shared: Arc<MicShared>,
+    /** Backlog above the target that is dropped at once, ms (STALE_MS for a mic; PARK_STALE_MS for a Park mic). */
+    stale_ms: f64,
     /// REMOTE LINK — a STEREO live feed (interleaved L/R in the ring) whose drift controller steers on the
     /// link's total buffer (MicShared::extra_*). False for every mic: `pull` is the mic path, untouched.
     link: bool,
@@ -192,8 +200,14 @@ impl LiveIn {
         LiveIn {
             cons, table: SincTable::new(in_rate, PROGRAM_RATE), hist: [0.0; 2 * TAPS], hpos: 0, phase: 0.0,
             base_step: in_rate as f64 / PROGRAM_RATE as f64, in_rate: in_rate as f64, fill_avg: 0.0,
-            primed: false, gain: g, last: 0.0, shared, link: false, hist_r: [0.0; 2 * TAPS], last_r: 0.0,
+            primed: false, gain: g, last: 0.0, shared, link: false, hist_r: [0.0; 2 * TAPS], last_r: 0.0, stale_ms: STALE_MS,
         }
+    }
+    /** PARK MIC — the same consumer with the Park mic's tighter backlog bound. */
+    pub(crate) fn new_park(cons: HeapCons<f32>, in_rate: u32, shared: Arc<MicShared>) -> LiveIn {
+        let mut li = LiveIn::new(cons, in_rate, shared);
+        li.stale_ms = PARK_STALE_MS;
+        li
     }
     /// REMOTE LINK — the same consumer over a STEREO ring (linknet.rs decodes the link into it).
     pub(crate) fn new_link(cons: HeapCons<f32>, in_rate: u32, shared: Arc<MicShared>) -> LiveIn {
@@ -230,7 +244,7 @@ impl LiveIn {
         let target = self.target(frames);
         let mut fill = self.cons.occupied_len() as f64;
         // STALE: the output stopped while the input kept writing — throw away down to the target.
-        if fill > target + STALE_MS * self.in_rate / 1000.0 {
+        if fill > target + self.stale_ms * self.in_rate / 1000.0 {
             let n = (fill - target) as usize;
             self.cons.skip(n);
             fill -= n as f64;
@@ -554,7 +568,9 @@ fn park_mic_read(station_id: u32, n: usize, listener: std::net::TcpListener, pm:
             carry.drain(..whole);
             if samples.is_empty() { continue; }
             let mut sink = pm.sink.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some((_, prod, sh)) = sink.as_mut() { input_block(&samples, 1, 0, prod, sh, |x| x); }
+            if let Some((_, prod, sh)) = sink.as_mut() {
+                for piece in samples.chunks(PARK_PIECE) { input_block(piece, 1, 0, prod, sh, |x| x); }
+            }
         }
         pm.connected.store(false, Ordering::Relaxed);
         eprintln!("[PARKMIC] Station {} Park Mic {} receiver gone", station_id, n);
@@ -729,7 +745,7 @@ impl MicInputs {
             if other != idx { eprintln!("[PARKMIC] Station {} Park Mic {} moved from {} to {}", self.station_id, n, SLOT_NAMES[other], SLOT_NAMES[idx]); }
         }
         if let Some(s) = self.slots[idx].as_mut() { s.was_open = true; s.last_seq = sh.in_seq.load(Ordering::Relaxed); s.last_seq_at = Instant::now(); }
-        out.push(MicAction::Install(idx, crate::rt::DeckFeed::live(Box::new(LiveIn::new(cons, PARK_MIC_RATE, sh)))));
+        out.push(MicAction::Install(idx, crate::rt::DeckFeed::live(Box::new(LiveIn::new_park(cons, PARK_MIC_RATE, sh)))));
         let port = pm.port.load(Ordering::Relaxed);
         eprintln!("[PARKMIC] Station {} {}: Park Mic {} patched (port {})", self.station_id, SLOT_NAMES[idx], n, port);
         self.set_status(idx, |st| {
@@ -858,6 +874,8 @@ pub(crate) mod tests {
         let got = sh.in_frames.load(Ordering::Relaxed);
         println!("[parkmic] port {port}: {got} samples reached fader D");
         assert_eq!(got, 4800, "the voice did not reach the fader");
+        // LEAST DELAY: a 100 ms lump arrives in 10 ms pieces, so it cannot raise the ring's target.
+        assert!(sh.in_block_max.load(Ordering::Relaxed) <= PARK_PIECE as u64, "a lump raised the target: {}", sh.in_block_max.load(Ordering::Relaxed));
         assert!(park_mic_port(station, 1).connected.load(Ordering::Relaxed), "the receiver is not shown as connected");
         // unpatch → the port keeps reading but nothing reaches D any more
         out.clear();

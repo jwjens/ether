@@ -23,6 +23,7 @@ import { SLOT_COLOR } from "./rackModel";
 import { HPF_HZ, LPF_HZ, PEQ_HZ, PEQ_GAIN_DB, PEQ_WIDTH_OCT } from "./eqMath";
 import EqCurve from "./EqCurve";
 import { useRta } from "../../hooks/useRta";
+import { isSilent } from "./rta";
 import { LABEL, MONO, TOUCH, BTN } from "./rackUi";
 import { useChannelRack } from "../../hooks/useChannelRack";
 import PeakAvgMeter from "../meter/PeakAvgMeter";
@@ -115,7 +116,7 @@ export function RtaBar({ rta }: { rta: ReturnType<typeof useRta> }) {
       <span><span style={{ display: "inline-block", width: 12, height: 8, background: "linear-gradient(0deg, #1d4ed8, #22c55e, #facc15, #ef4444)", opacity: 0.32, marginRight: 4 }} />before the rack (dimmed)</span>
       <span><span style={{ display: "inline-block", width: 12, height: 8, background: "linear-gradient(0deg, #1d4ed8, #22c55e, #facc15, #ef4444)", marginRight: 4 }} />after it</span>
       <span><span style={{ display: "inline-block", width: 12, height: 2, background: "var(--eq-curve)", marginRight: 4, verticalAlign: "middle" }} />the EQ</span>
-      <span>{rta.unavailable ? `— ${rta.unavailable}` : !f ? "— waiting for the engine" : !f.fed ? "— nothing playing on this channel" : ""}</span>
+      <span>{rta.unavailable ? `— ${rta.unavailable}` : !f ? "— waiting for the engine" : !f.fed ? "— nothing playing on this channel" : isSilent(f) ? "— silence on this channel" : ""}</span>
       <div style={{ flex: 1 }} />
       <button onClick={() => rta.setPeakHold(!rta.peakHold)} style={{ ...BTN(rta.peakHold), minHeight: 30, padding: "0 10px", fontSize: 11 }}
               title="PEAK HOLD — the white markers: each point's highest level, held 2 s">PEAK HOLD {rta.peakHold ? "ON" : "OFF"}</button>

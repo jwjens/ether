@@ -5577,7 +5577,7 @@ function parkTalkState(sid) {
              talking: now ? { by: now.by, since: new Date(now.since).toISOString(), receiving: !!now.receiving } : null,
              last: ParkTalk.parseLast(get(ParkTalk.lastKey(n))) };
   });
-  return { ready: settings.ready, missing: settings.missing, maxSec: settings.maxSec, echo: settings.echo, noise: settings.noise, agc: settings.agc,
+  return { ready: settings.ready, missing: settings.missing, echo: settings.echo, noise: settings.noise, agc: settings.agc,
            locked: get("park_control") === "off", mics };
 }
 ipcMain.handle("park:talk-state", (_e, stationId) => {
@@ -5598,7 +5598,7 @@ ipcMain.handle("park:talk", async (_e, args = {}) => {
     const fader = ParkTalk.micFaders(_talkPatches(sid)).faders[mic];
     const why = ParkTalk.refusal({ locked: get("park_control") === "off", settings, fader, daemon: !!AUDIO_DAEMON });
     if (why) { _healthEvent("park-talk-refused", { stationId: sid, mic, by: args.by || null, reason: why }); return { ok: false, error: why }; }
-    const config = { mic, url: String(args.url || ""), limitSec: settings.maxSec, leaseSec: Number(args.leaseSec), talkId: String(args.talkId || ""), by: String(args.by || "") };
+    const config = { mic, url: String(args.url || ""), leaseSec: Number(args.leaseSec), talkId: String(args.talkId || ""), by: String(args.by || "") };
     return await audiodClient.cmd("talkStart", { stationId: sid, config });
   } catch (e) { return { ok: false, error: "park talk failed: " + (e && e.message || e) }; }
 });

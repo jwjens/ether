@@ -10,16 +10,18 @@ describe("settings", () => {
   it("off until every number is set; Jeff's starting values make it ready", () => {
     const empty = T.readSettings(kv({}));
     expect(empty.ready).toBe(false);
-    expect(empty.missing).toEqual(["park_talk_max_sec", "park_talk_echo_cancel", "park_talk_noise_suppress", "park_talk_auto_gain"]);
+    expect(empty.missing).toEqual(["park_talk_echo_cancel", "park_talk_noise_suppress", "park_talk_auto_gain"]);   // no longest talk
     const store = {};
     for (const [k, v] of T.seedWrites(kv(store))) store[k] = v;
     const s = T.readSettings(kv(store));
-    expect(s).toMatchObject({ ready: true, maxSec: 20, echo: true, noise: true, agc: false });
+    expect(s).toMatchObject({ ready: true, echo: true, noise: true, agc: false });
+    expect("maxSec" in s).toBe(false);
+    expect(store.park_talk_max_sec).toBeUndefined();   // no time limit is written (Jeff, 2026-10-16)
     expect(s.names).toEqual({ 1: "Park Mic 1", 2: "Park Mic 2" });
     expect(Object.keys(store).some(k => /limit/.test(k))).toBe(false);   // no limiter is written (Jeff, 2026-10-16)
   });
   it("a set value is never overwritten by the starting values", () => {
-    expect(T.seedWrites(kv({ park_talk_max_sec: "15", park_talk_echo_cancel: "0", park_talk_noise_suppress: "1", park_talk_auto_gain: "1" }))).toEqual([]);
+    expect(T.seedWrites(kv({ park_talk_echo_cancel: "0", park_talk_noise_suppress: "1", park_talk_auto_gain: "1" }))).toEqual([]);
   });
   it("the user's names are what the phone shows", () => {
     expect(T.readSettings(kv({ park_mic_1_name: "Front gate", park_mic_2_name: " Staff " })).names).toEqual({ 1: "Front gate", 2: "Staff" });
@@ -37,7 +39,7 @@ describe("which fader", () => {
 });
 
 describe("refusals and who/when", () => {
-  const ready = T.readSettings(kv({ park_talk_max_sec: "20", park_talk_echo_cancel: "1", park_talk_noise_suppress: "1", park_talk_auto_gain: "0" }));
+  const ready = T.readSettings(kv({ park_talk_echo_cancel: "1", park_talk_noise_suppress: "1", park_talk_auto_gain: "0" }));
   it("lock, setup, fader and engine are each named", () => {
     expect(T.refusal({ locked: true, settings: ready, fader: "D", daemon: true })).toBe("Controls locked by the studio");
     expect(T.refusal({ locked: false, settings: T.readSettings(kv({})), fader: "D", daemon: true })).toMatch(/isn't set up/);

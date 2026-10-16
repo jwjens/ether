@@ -13,8 +13,9 @@ const parkDevice = (n) => `park:${n}`;
 const parkMicOf = (device) => { const m = /^park:(\d+)$/.exec(String(device || "")); const n = m ? Number(m[1]) : NaN; return PARK_MICS.includes(n) ? n : null; };
 
 /** The station's Hold-to-talk settings (station_config_kv, synced with the station). */
+// NO TIME LIMIT (Jeff, 2026-10-16): "no automatic stop and no 'longest talk' setting. Turning the mic off is the user's
+// job. Ether's STOP button and the studio lock already cover a forgotten mic."
 const KEYS = {
-  maxSec: "park_talk_max_sec",            // the longest talk, seconds
   echo: "park_talk_echo_cancel",          // "1" / "0" — the phone's echo cancellation
   noise: "park_talk_noise_suppress",      // "1" / "0" — the phone's noise suppression
   agc: "park_talk_auto_gain",             // "1" / "0" — the phone's automatic gain
@@ -24,7 +25,7 @@ const KEYS = {
 const nameKey = (n) => `park_mic_${n}_name`;
 const lastKey = (n) => `park_talk_last_${n}`;
 /** Jeff's numbers (2026-10-15/16), written once — when a Park mic is first put on a fader — never over a set value. */
-const START = { maxSec: "20", echo: "1", noise: "1", agc: "0" };
+const START = { echo: "1", noise: "1", agc: "0" };
 const DEFAULT_NAME = (n) => `Park Mic ${n}`;
 const ALL_KEYS = [...Object.values(KEYS), ...PARK_MICS.map(nameKey), ...PARK_MICS.map(lastKey)];
 
@@ -32,13 +33,11 @@ const ALL_KEYS = [...Object.values(KEYS), ...PARK_MICS.map(nameKey), ...PARK_MIC
 function readSettings(get) {
   const missing = [];
   const val = (k) => { const v = get(k); return v == null || String(v).trim() === "" ? null : String(v).trim(); };
-  const maxSec = Number(val(KEYS.maxSec));
-  if (!(maxSec >= 1 && maxSec <= 600)) missing.push(KEYS.maxSec);
   const flag = (k) => { const v = val(k); if (v !== "1" && v !== "0") { missing.push(k); return null; } return v === "1"; };
   const echo = flag(KEYS.echo), noise = flag(KEYS.noise), agc = flag(KEYS.agc);
   const names = {};
   for (const n of PARK_MICS) names[n] = (val(nameKey(n)) || DEFAULT_NAME(n)).slice(0, 40);
-  return { ready: missing.length === 0, missing, maxSec: missing.includes(KEYS.maxSec) ? null : maxSec, echo, noise, agc, names };
+  return { ready: missing.length === 0, missing, echo, noise, agc, names };
 }
 
 /** The writes that put Jeff's starting values in, for keys not set yet. [[key, value]] */
