@@ -130,3 +130,27 @@ Jeff (verbatim):
 - No dedicated "Park talk" row in the Health Monitor. The health events go to the ledger, and the Park mic's state shows
   in the existing Mic inputs health.
 - The delay, mouth to park speaker, is not measured yet. Measure at the first real talk.
+
+## Relay path rule: checked read-only (2026-10-16, 1:30 PM PDT)
+
+Read from `/etc/mediamtx/mediamtx.yml` on the stream server (Jeff OK, read-only, nothing changed):
+```
+paths:
+  "~^park/[0-9a-f-]{36}$":
+```
+plus `rtspTransports: [tcp]`, `rtspsAddress: :8322`, `webrtcAddress: 127.0.0.1:8889`,
+`webrtcAllowOrigins: ['https://park.ether-cast.com']`, `webrtcAdditionalHosts: [44.244.52.207]`.
+
+- **The talk paths are NOT covered.** The only rule is `park/<36-char station id>` with nothing after it: Listen's path.
+  `park/<station>/talk1` and `talk2` don't match, so the relay would answer "path is not configured" to the phone and
+  to the station.
+- **The fix (needs Jeff's OK; a change on the stream server):** one more rule under `paths:`, empty like the Listen one,
+  so any publisher/reader that the auth check allows may use it:
+  ```
+    "~^park/[0-9a-f-]{36}/talk[12]$":
+  ```
+  MediaMTX reloads its config file by itself when it changes.
+  - **UNVERIFIED:** that hot reload leaves Listen sessions in progress alone. Do it while nobody is listening.
+- Everything else Hold to talk needs is already there: WebRTC through nginx `/park/…` (the WHIP address is
+  `/park/<station>/talk<n>/whip`), RTSPS 8322 for the station, the Park page origin allowed, the public address
+  advertised.
