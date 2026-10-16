@@ -186,3 +186,35 @@ plus `rtspTransports: [tcp]`, `rtspsAddress: :8322`, `webrtcAddress: 127.0.0.1:8
   - It didn't matter this time, because the old files stayed in the upload.
 
 **Relay: not changed.** The talk paths are not covered (above); the one-line rule waits for Jeff's OK.
+
+## Relay talk-path rule added (2026-10-16, 1:41 PM PDT, Jeff GO)
+
+Jeff (verbatim): "GO: add the talk-path line to /etc/mediamtx/mediamtx.yml. Back up the file first. Do it now; if anyone
+is on Listen they may need to press Listen again. After the reload, confirm Listen still works and the relay accepts the
+talk paths. Rollback = restore the backup. Change nothing else on that server."
+
+- **Backup:** `/etc/mediamtx/mediamtx.yml.bak-20261016-park-talk` (`cp -p`, identical sha256 `d2eb3894a2f111d9…`).
+- **The change:** one line appended after the Listen rule. `diff backup new`:
+  ```
+  38a39
+  >   "~^park/[0-9a-f-]{36}/talk[12]$":
+  ```
+  Owner and mode unchanged (`-rw-r----- root mediamtx`).
+- **Reload:** `INF reloading configuration (file changed)` at 20:41:32 UTC. Same process (started 2026-10-13 12:11:36
+  UTC, not restarted), service active, no ERR/WAR lines.
+- **Probe without credentials, before → after** (scratchpad `relay-paths-probe.js`):
+
+  | Path | Before | After |
+  |---|---|---|
+  | `park/<halloVeen>` (Listen) | WHEP 401 "authentication error" · RTSPS 401 | the same |
+  | `park/<halloVeen>/talk1` | WHIP 400 "not configured" · RTSPS 400 | WHIP 401 "authentication error" · RTSPS 401 |
+  | `park/<halloVeen>/talk2` | the same 400s | the same 401s as talk1 |
+  | `park/<halloVeen>/talk3` | 400 | still 400 (only talk1/talk2 allowed) |
+
+  401 = the path is accepted and the relay asked the server's auth check, which refused (no ticket). The relay log shows
+  "failed to authenticate: server replied with code 401", so the relay → server auth link works, with the secret.
+- **Listen:** its path answers exactly as before the change.
+  - No real Listen session was running at the reload (the relay log has none since 19:00 UTC).
+  - **UNVERIFIED** with a real phone: Claude has no staff login. Check: tap LISTEN on the Park page.
+- **Rollback:** `sudo cp -p /etc/mediamtx/mediamtx.yml.bak-20261016-park-talk /etc/mediamtx/mediamtx.yml` (it reloads by
+  itself).
