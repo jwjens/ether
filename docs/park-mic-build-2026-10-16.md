@@ -248,3 +248,42 @@ the limiter and show 'Limiter on fader S1: −6 dB, 20:1', or say why it can't."
 
 **By hand meanwhile** (fader S1's rack → COMP): Threshold −6 dB, Ratio 20 (20:1), Attack 1 ms, Release 100 ms, Knee 0 dB,
 Makeup 0 dB, module IN. Knee and Makeup are the two that could be left wrong: a new COMP starts at Knee 6 dB.
+
+## Installer ac24be72: buttons cleaned up, limiter removed, board letters (2026-10-16, 2:34 PM)
+
+Jeff (verbatim): "Stop the output merge plan. Don't change any routing or outputs. … Keep only: 1. The Park mic source on
+faders (already built). 2. The fader-name fix (board letters only, everywhere). 3. Remove the special Park mic limiter:
+no limiter settings and no 'Put the limiter on' button in the Park mic preferences. The Park mic fader uses its own
+processor like every other fader, and nothing is applied automatically or baked in. 4. The button cleanup, display only,
+no routing change: decks A, B, C show no buttons; other faders show only DUCK; a Park mic fader shows DUCK and MAIN (lit
+= also on air). Remove TO STREAM and MAIN/AUX from view. Build that into one installer. Path and sha256."
+
+(The output-merge plan, `fader-buttons-simplify-plan-2026-10-16.md`, is stopped by Jeff. Nothing of it was built.)
+
+**Installer:** `C:\openair\dist-electron\Ether Setup 4.6.59 park-mic-buttons ac24be72 139544c.exe`
+- sha256 `ac24be7225a089eb04537dddac3116cebaff2e4bc2e69d3555ed7b841fd1bbcf`, 216,087,410 bytes, version 4.6.59.
+- Engine unchanged from fe8ce09c (native `c2372b8a…` / code `5dfdeeba…`).
+- Release gate PASS (log `gate-logs/2026-10-16T21-34-58-930Z PASS.log`).
+
+**What changed since fe8ce09c (commit `139544c`, plus `6f8ad1b` for the names):**
+- **Strip buttons, display only** (`FaderRouting.tsx`):
+  - A/B/C show no buttons; every other fader shows DUCK; a fader whose input is a Park mic also shows MAIN (its on-air
+    setting).
+  - MAIN/AUX, DUCKED and TO STREAM are hidden. Their saved settings are untouched and still applied as before.
+- **No Park mic limiter:**
+  - the limiter settings, their starting values (no longer written when a Park mic is first patched), the button and its
+    rack writer (`src/lib/parkLimiter.ts`) are removed;
+  - the rack-window change made for that button (`useChannelRack.ts`) is reverted to its earlier state.
+- **Board letters:** the Park mic Preferences card says "On fader G · park and on air (MAIN lit)". No engine slot name
+  appears in any screen this work touched; the Mic inputs list already used board letters.
+- **Help updated:** `help-channel-faders.md` (the buttons), `help-park-hold-to-talk.md` (MAIN/DUCK, no limiter).
+- tsc 0, vitest 921/921, sync 55, wedge pass.
+
+**Left as it was (noted):**
+- Limiter values written by fe8ce09c into ovowforestmusic's Preferences (`park_talk_limit_*`) stay in its database but
+  are no longer read or shown.
+- A compressor set by hand on fader G stays in G's rack.
+- The Park page still says "park + stream" / "only the stream hears you". Its wording would change with a page deploy;
+  not touched.
+- A TO STREAM set OFF on a non-Park-mic fader under fe8ce09c would now be hidden (it can't be seen to turn it back on).
+  UNVERIFIED whether any was set; check on ovowforestmusic: each fader's settings are in its saved `fader_stream` row.
