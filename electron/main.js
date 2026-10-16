@@ -653,6 +653,18 @@ function _migrateFaderRouting() {
     }
     logStartup(`[board s${sid}] fader routing migrated to today's behaviour (${n}/${writes.length} writes): ${writes.filter(w => w.table === "deck_configs").map(w => `${w.slot} ${JSON.stringify(w.patch)}`).join(", ") || "no channel changes"}`);
   }
+  // TO STREAM back ON for every fader that isn't a Park mic (Jeff, 2026-10-16) — logged per fader by its board name.
+  for (const sid of _stationIds()) {
+    let r; try { r = BoardState.streamReset(d, sid); } catch (e) { logStartup(`[board s${sid}] To stream cleanup ✗ ${e && e.message}`); continue; }
+    if (!r.changed.length) continue;
+    let names = {}; try { names = BoardState.readSavedBoard(d, sid).names || {}; } catch { names = {}; }
+    const faders = r.changed.map(s => names[s] || s);
+    try {
+      for (const w of r.writes) stationConfigKvUpsertByKey(d, sid, w.key, w.value);
+      logStartup(`[board s${sid}] To stream was OFF on fader(s) ${faders.join(", ")} (not a Park mic) — set back ON: on the program again`);
+      _healthEvent("fader-to-stream-reset", { stationId: sid, faders, message: `To stream set back ON for ${faders.join(", ")} (not a Park mic)` });
+    } catch (e) { logStartup(`[board s${sid}] To stream cleanup write ✗ ${e && e.message}`); }
+  }
 }
 // IN-PROCESS FALLBACK: the same applier against the in-process engine (main owns it then). The database may not be open
 // yet when the fallback is decided, so it waits for it — briefly, and says so if it gives up.

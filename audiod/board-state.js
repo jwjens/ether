@@ -60,6 +60,11 @@ const FADER_LOCAL_KEY = "fader_local";
 // TO STREAM (Jeff, 2026-10-16): { slot: false } for a fader that is heard only locally; a fader not listed is ON (the
 // default — every fader on the stream, exactly as before the switch).
 const FADER_STREAM_KEY = "fader_stream";
+// ONLY A PARK MIC CAN BE OFF THE PROGRAM (Jeff, 2026-10-16: "set TO STREAM back to ON for every fader that isn't a Park
+// mic, so nothing hidden can keep a fader off the program"). The board shows the switch (MAIN) only on a Park mic fader,
+// so a saved OFF anywhere else would be a hidden setting: it reads as ON, and the startup cleanup (streamReset) removes it.
+// A fader is a Park mic when this machine's mic patch for it (mic_input_<slot>, audiod/mic-input.js) is "park:<n>".
+const isParkMicPatch = (raw) => { try { const v = JSON.parse(raw || "null"); return !!(v && /^park:\d+$/.test(String(v.device || ""))); } catch { return false; } };
 const FADER_ROUTING_FLAG = "fader_routing_v1";
 const SMOOTHING_KEY = "fader_smoothing_ms";
 const LOUDNESS_TARGET_KEY = "loudness_target_lufs";
@@ -164,7 +169,7 @@ function readSavedBoard(db, sid) {
       e.duckable = wasSource ? false : storedDucked;
       e.local = wasSource ? "aux" : "main";
     }
-    e.stream = stream[s] !== false;   // ON unless saved OFF
+    e.stream = !(stream[s] === false && isParkMicPatch(kv(`mic_input_${s}`)));   // OFF only on a Park mic fader
     if (room[s] !== undefined) e.aux = room[s];
     else if (e.local === "aux") e.aux = 0;   // an unsaved AUX row is 0 — the engine's own default, and what the panel shows
     slots[s] = e;
@@ -406,6 +411,20 @@ function groupTopGain(db, sid, group) {
 }
 
 /** Every station_config_kv key readSavedBoard reads — a write to any other key cannot change the saved board. */
+/**
+ * The startup cleanup for To stream: every saved OFF on a fader that is NOT a Park mic is removed (that fader goes back on
+ * the program). Pure over the database. → { writes: [{ key, value }], changed: [slot] } — nothing when nothing to do.
+ */
+function streamReset(db, sid) {
+  const kv = kvReader(db, sid);
+  let m = {};
+  try { m = JSON.parse(kv(FADER_STREAM_KEY) || "{}") || {}; } catch { m = {}; }
+  const changed = Object.keys(m).filter(s => m[s] === false && !isParkMicPatch(kv(`mic_input_${s}`)));
+  if (!changed.length) return { writes: [], changed: [] };
+  for (const s of changed) delete m[s];
+  return { writes: [{ key: FADER_STREAM_KEY, value: JSON.stringify(m) }], changed };
+}
+
 const BOARD_KV_KEYS = new Set(["board_levels", "aux_monitor_levels", "aux_monitor_slots", FADER_LOCAL_KEY, FADER_STREAM_KEY, FADER_ROUTING_FLAG,
   "monitor_volume", "monitor_muted", MASTER_MONITOR_KEY, SMOOTHING_KEY, LOUDNESS_TARGET_KEY, "aux_monitor_device", "pfl_cue_device", "pfl_dim_db",
   "audio_output_device", "jukebox_channel_on", CART_ON_KEY, ...Object.values(FADER_TOP_KEYS), ...Object.values(DUCK_KEYS)]);
@@ -438,4 +457,4 @@ function seedFaderPreferences(db, sid, upsert) {
   return wrote;
 }
 
-module.exports = { FADER_START, FADER_LAW_KEY, FADER_FEEL_KEYS, FADER_FEEL_RANGE, faderLawProblem, seedFaderPreferences, DUCK_START, seedDuckPreferences, isBoardKey, BOARD_KV_KEYS, CART_ON_KEY, FADER_TOP_KEYS, FADER_TOP_DEFAULTS, groupTopGain, routingMigration, FADER_LOCAL_KEY, FADER_STREAM_KEY, FADER_ROUTING_FLAG, SMOOTHING_KEY, LOUDNESS_TARGET_KEY, MAX_GAIN, boardNames, labelOf, SLOTS, SOURCE_SLOTS, MASTER_MONITOR_KEY, DUCK_KEYS, readSavedBoard, applyBoard, compareBoard, listStations, addonSink, applySavedBoardState, parseRoomLevels };
+module.exports = { FADER_START, FADER_LAW_KEY, FADER_FEEL_KEYS, FADER_FEEL_RANGE, faderLawProblem, seedFaderPreferences, DUCK_START, seedDuckPreferences, isBoardKey, BOARD_KV_KEYS, CART_ON_KEY, FADER_TOP_KEYS, FADER_TOP_DEFAULTS, groupTopGain, routingMigration, streamReset, FADER_LOCAL_KEY, FADER_STREAM_KEY, FADER_ROUTING_FLAG, SMOOTHING_KEY, LOUDNESS_TARGET_KEY, MAX_GAIN, boardNames, labelOf, SLOTS, SOURCE_SLOTS, MASTER_MONITOR_KEY, DUCK_KEYS, readSavedBoard, applyBoard, compareBoard, listStations, addonSink, applySavedBoardState, parseRoomLevels };

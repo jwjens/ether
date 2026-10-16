@@ -286,9 +286,10 @@ describe("the CART cut is part of the saved board (2026-10-12)", () => {
 });
 
 describe("To stream (Jeff, 2026-10-16)", () => {
-  it("every fader starts ON (today's sound); a saved OFF is read, sent and compared", () => {
+  it("every fader starts ON (today's sound); a saved OFF on a Park mic fader is read, sent and compared", () => {
     const s0 = B.readSavedBoard(db, 2);
     for (const e of Object.values(s0.slots)) expect(e.stream).toBe(true);
+    db.prepare("INSERT INTO station_config_kv VALUES (2, 'mic_input_D', ?, NULL)").run(JSON.stringify({ device: "park:1", channel: 1, gainDb: 0 }));
     db.prepare("INSERT INTO station_config_kv VALUES (2, 'fader_stream', ?, NULL)").run(JSON.stringify({ D: false }));
     const s = B.readSavedBoard(db, 2);
     expect(s.slots.D.stream).toBe(false);
@@ -302,9 +303,23 @@ describe("To stream (Jeff, 2026-10-16)", () => {
     expect(B.compareBoard(s, live).map(d => d.setting)).toContain("D.stream");
     expect(B.isBoardKey("fader_stream")).toBe(true);
   });
+  it("only a Park mic can be off the program: a saved OFF elsewhere reads ON and the startup cleanup removes it (2026-10-16)", () => {
+    db.prepare("INSERT INTO station_config_kv VALUES (2, 'mic_input_S2', ?, NULL)").run(JSON.stringify({ device: "Microphone (USB)", channel: 1, gainDb: 0 }));
+    db.prepare("INSERT INTO station_config_kv VALUES (2, 'mic_input_S1', ?, NULL)").run(JSON.stringify({ device: "park:1", channel: 1, gainDb: 0 }));
+    db.prepare("INSERT INTO station_config_kv VALUES (2, 'fader_stream', ?, NULL)").run(JSON.stringify({ D: false, S2: false, S1: false }));
+    const s = B.readSavedBoard(db, 2);
+    expect(s.slots.D.stream).toBe(true);        // announcements: not a Park mic → on the program
+    expect(s.slots.S1.stream).toBe(false);      // the Park mic fader keeps its OFF (park only)
+    const r = B.streamReset(db, 2);
+    expect(r.changed.sort()).toEqual(["D", "S2"]);   // a sound-card mic is not a Park mic either
+    expect(JSON.parse(r.writes[0].value)).toEqual({ S1: false });   // the Park mic keeps its OFF
+    db.prepare("UPDATE station_config_kv SET value = ? WHERE station_id = 2 AND key = 'fader_stream'").run(r.writes[0].value);
+    expect(B.streamReset(db, 2)).toEqual({ writes: [], changed: [] });   // once
+  });
   it("an engine without the switch: ON is not a failure; a saved OFF is reported as not applied", () => {
     const { sink } = recorder();
     expect(B.applyBoard(B.readSavedBoard(db, 2), sink).failed.map(f => f.setting).filter(x => x.endsWith(".stream"))).toEqual([]);
+    db.prepare("INSERT INTO station_config_kv VALUES (2, 'mic_input_D', ?, NULL)").run(JSON.stringify({ device: "park:2", channel: 1, gainDb: 0 }));
     db.prepare("INSERT INTO station_config_kv VALUES (2, 'fader_stream', ?, NULL)").run(JSON.stringify({ D: false }));
     expect(B.applyBoard(B.readSavedBoard(db, 2), sink).failed.map(f => f.setting)).toContain("D.stream");
   });
