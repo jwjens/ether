@@ -54,10 +54,13 @@ function ffmpegArgs(port, cfg) {
   return [
     "-hide_banner", "-loglevel", "warning", "-stats",
     // The voice off the relay: no probing, no input buffering (least delay, as Listen).
+    // LEAST DELAY (Jeff, 2026-10-16: "cut everything we can to shorten delay"): no reorder wait, no demuxer delay.
     "-fflags", "nobuffer", "-flags", "low_delay", "-probesize", "32", "-analyzeduration", "0",
+    "-max_delay", "0", "-reorder_queue_size", "0",
     "-rtsp_transport", "tcp", "-i", cfg.url,
-    // Exactly the engine's Park mic format: mono, 48 kHz, f32le, into its port.
-    "-vn", "-af", `aresample=${PARK_MIC_RATE}`, "-ac", "1", "-f", "f32le", `tcp://127.0.0.1:${port}`,
+    // Exactly the engine's Park mic format: mono, 48 kHz, f32le, into its port — each packet sent the moment it is
+    // decoded (-flush_packets 1). Without it ffmpeg held up to 256 ms and sent it in one lump (measured 2026-10-16).
+    "-vn", "-af", `aresample=${PARK_MIC_RATE}`, "-ac", "1", "-flush_packets", "1", "-f", "f32le", `tcp://127.0.0.1:${port}`,
   ];
 }
 

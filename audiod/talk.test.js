@@ -36,7 +36,8 @@ describe("talk config", () => {
   it("the ffmpeg line reads the relay and writes mono 48 kHz f32le into the Park mic's port", () => {
     const a = ffmpegArgs(5555, checkTalk(good).cfg).join(" ");
     expect(a).toContain(`-rtsp_transport tcp -i ${good.url}`);
-    expect(a).toContain("-af aresample=48000 -ac 1 -f f32le tcp://127.0.0.1:5555");
+    expect(a).toContain("-af aresample=48000 -ac 1 -flush_packets 1 -f f32le tcp://127.0.0.1:5555");
+    expect(a).toContain("-max_delay 0 -reorder_queue_size 0");
   });
 });
 
