@@ -32,7 +32,42 @@ const daemon = cp.spawn(EXE, [DAEMON], { env: { ...process.env, ELECTRON_RUN_AS_
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 function ping() { return new Promise((res) => { const s = net.connect(PIPE); let done = false; const fin = (v) => { if (done) return; done = true; try { s.destroy(); } catch {} res(v); }; s.once("connect", () => { s.write(JSON.stringify({ id: 1, cmd: "ping" }) + "\n"); }); s.on("data", (d) => { fin(d.toString().includes("pong")); }); s.once("error", () => fin(false)); setTimeout(() => fin(false), 1200); }); }
 
-function ask(cmd) { return new Promise((res) => { const s = net.connect(PIPE); let buf = "", done = false; const fin = (v) => { if (done) return; done = true; try { s.destroy(); } catch {} res(v); }; s.once("connect", () => { s.write(JSON.stringify({ id: 7, cmd }) + "\n"); }); s.on("data", (d) => { buf += d.toString(); const nl = buf.indexOf("\n"); if (nl < 0) return; try { const m = JSON.parse(buf.slice(0, nl)); fin(m && m.ok ? m.result : null); } catch { fin(null); } }); s.once("error", () => fin(null)); setTimeout(() => fin(null), 3000); }); }
+// A GATE FAILURE NAMES ITSELF (Jeff, 2026-10-15). ecf38bbf's gate failed once with engine identity "(none)" and could
+// not say why: a timeout, a socket error, a refusal and an unreadable line all came back as the same null. Now the answer
+// is the line carrying OUR id (an event broadcast to every client is skipped, never mistaken for it), and a miss says
+// which of the four it was. docs/announcement-airing-visible-2026-10-15.md §Release gate.
+const ASK_TIMEOUT_MS = 3000;
+function ask(cmd) {
+  return new Promise((res) => {
+    const s = net.connect(PIPE); let buf = "", done = false, skipped = 0;
+    const fin = (result, why) => { if (done) return; done = true; try { s.destroy(); } catch {} res({ result, why }); };
+    s.once("connect", () => { s.write(JSON.stringify({ id: 7, cmd }) + "\n"); });
+    s.on("data", (d) => {
+      buf += d.toString(); let nl;
+      while ((nl = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
+        let m; try { m = JSON.parse(line); } catch { return fin(null, `an unreadable line came back: ${line.slice(0, 120)}`); }
+        if (!m || m.id !== 7) { skipped++; continue; }   // an event, not our answer
+        return m.ok ? fin(m.result, null) : fin(null, `the daemon refused "${cmd}": ${m.error || "no reason given"}`);
+      }
+    });
+    s.once("error", (e) => fin(null, `socket error: ${e && e.message || e}`));
+    setTimeout(() => fin(null, `no answer within ${ASK_TIMEOUT_MS / 1000} s${skipped ? ` (${skipped} event line(s) arrived instead)` : ""}`), ASK_TIMEOUT_MS);
+  });
+}
+// Up to 3 tries, 1 s apart. A retry can only cover a slow moment: the identity must still match the package by sha256.
+const ENGINE_ASK_TRIES = 3;
+async function askEngine() {
+  const tries = [];
+  for (let i = 1; i <= ENGINE_ASK_TRIES; i++) {
+    const t0 = Date.now();
+    const r = await ask("engine");
+    tries.push(r.why ? `try ${i}: FAILED after ${Date.now() - t0} ms: ${r.why}` : `try ${i}: answered in ${Date.now() - t0} ms`);
+    if (!r.why) return { eng: r.result, tries };
+    if (i < ENGINE_ASK_TRIES) await sleep(1000);
+  }
+  return { eng: null, tries };
+}
 
 // ── STAGING CHECK (added 2026-07-30) ──────────────────────────────────────────────────────────────
 // The ping above proves the PACKAGE is right. It is not enough, and 4.4.114 proved it: the package was
@@ -74,7 +109,8 @@ function checkStaging() {
   for (let i = 0; i < 25 && !ok; i++) { ok = await ping(); if (!ok) await sleep(300); }
   // ENGINE IDENTITY (2026-10-10): the packaged daemon must report, by sha256, the engine it loaded — and it must be the
   // packaged one. That report is what main compares with the install to raise daemon-engine-mismatch-error.
-  const eng = ok ? await ask("engine") : null;
+  const asked = ok ? await askEngine() : { eng: null, tries: ["not asked: the daemon never answered ping"] };
+  const eng = asked.eng;
   try { daemon.kill(); } catch {}
   console.log("packaged daemon spawned under: " + path.basename(EXE));
   console.log("packaged daemon answered ping: " + ok);
@@ -109,11 +145,25 @@ function checkStaging() {
   const engOk = !!(eng && pkgFp.native && eng.native === pkgFp.native && pkgFp.code && eng.code === pkgFp.code);
   console.log(`\nengine identity: daemon reports native ${eng && eng.native || "(none)"} code ${eng && eng.code || "(none)"}`);
   console.log(`                 package holds  native ${pkgFp.native || "(none)"} code ${pkgFp.code || "(none)"}`);
+  for (const t of asked.tries) console.log("                 " + t);
   console.log("→ ENGINE IDENTITY: " + (engOk
     ? "✅ the packaged daemon reports the packaged engine by sha256 (what the Health Monitor engine-match check reads)"
-    : "❌ the packaged daemon did not report the packaged engine — the engine-match check would be blind or wrong"));
+    : (eng ? "❌ the packaged daemon reports a DIFFERENT engine than the package holds"
+           : "❌ the packaged daemon did not report its engine (see the tries above) — the engine-match check would be blind")));
 
   const pass = ok && st.ok && elecOk && engOk;
+  // THE DAEMON'S LOG IS KEPT beside the build, every run, so a failure can be read afterwards (the gate's temp folder
+  // is otherwise lost). dist-electron/gate-logs/<time> <PASS|FAIL>.log, plus this run's tries.
+  try {
+    const dir = path.join(__dirname, "..", "dist-electron", "gate-logs");
+    fs.mkdirSync(dir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const out = path.join(dir, `${stamp} ${pass ? "PASS" : "FAIL"}.log`);
+    let dlog = ""; try { dlog = fs.readFileSync(path.join(GATE_TMP, "ether-audiod.log"), "utf8"); } catch { dlog = "(the daemon wrote no log)\n"; }
+    fs.writeFileSync(out, `release gate ${pass ? "PASS" : "FAIL"} ${new Date().toISOString()}\nping: ${ok}\n${asked.tries.join("\n")}\n` +
+      `daemon reports native ${eng && eng.native || "(none)"} code ${eng && eng.code || "(none)"}\npackage holds  native ${pkgFp.native || "(none)"} code ${pkgFp.code || "(none)"}\n\n--- daemon log ---\n${dlog}`);
+    console.log("\ndaemon log saved: " + out);
+  } catch (e) { console.log("\ndaemon log NOT saved: " + (e && e.message)); }
   console.log(`\n${pass ? "✅ RELEASE GATE PASS" : "❌ RELEASE GATE FAIL"}`);
   setTimeout(() => process.exit(pass ? 0 : 1), 200);
 })();
