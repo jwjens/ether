@@ -62,3 +62,41 @@ try 3: ANSWERED (TCP connected in 43 ms)
 - The cause of the earlier timeouts was the missing Lightsail rule. Nothing on the server was dropping it, and MediaMTX is
   listening on TCP 8189.
 - **UDP 8189 is still UNVERIFIED** until the first real Listen session (after Jeff's GO on the Railway values).
+
+## Relay secret read + Railway values set (2026-10-16, 9:57 AM PDT, Jeff GO)
+
+**Read on the stream server (read-only, Jeff OK; nothing changed there).** `mediamtx` service active, config
+`/etc/mediamtx/mediamtx.yml`:
+```
+authMethod: http
+authHTTPAddress: https://ether-backend-production.up.railway.app/internal/mediamtx/auth?s=<hidden>
+rtspsAddress: :8322
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+webrtcAdditionalHosts: [44.244.52.207]
+```
+- The server's own public IP (`checkip.amazonaws.com`, asked from the server) is `44.244.52.207`, so the relay tells phones
+  the right address. This settles the open `webrtcAdditionalHosts` question in the Hold-to-talk plan.
+- From OVEVENTS, DNS answers `6.6.1.33` for the stream name, even through 1.1.1.1 and 8.8.8.8, yet connects to the same
+  server with a valid cert. Looks local to this machine's network; noted only, not looked into.
+
+**Set on Railway (service ether-backend), one save:**
+- `PARK_LISTEN_RTSP_BASE = rtsps://stream.ether-technologies.com:8322`
+- `PARK_LISTEN_WHEP_BASE = https://stream.ether-technologies.com`. Nothing after it, because the server adds
+  `park/<station>` itself (`ether-backend/src/lib/park-listen.js:24`). The plan's earlier `.../park` value was wrong.
+- `MEDIAMTX_AUTH_SECRET`: set, length 48, sha256 prefix `3ccb5cf8`, the same as the relay's `?s=` value. Neither the
+  secret nor the hash input was printed. Local copy deleted.
+
+**Restart:** deployment `7dbe73fc` SUCCESS 9:58 AM (old `15cf29b5` removed).
+
+**After the restart:**
+- `/health` → 200.
+- `GET /public/ops/halloween` → 200: station online, mirrored, level 0.42 MUTED, closing 21:30, 4 carts (30 MIN, 15 MIN,
+  FULL CLOSING OUTRO, CLOSED), now playing "Zombie", 4 announcements queued for tonight, `listenReady: false`.
+- Without login, writes are refused: mute / level / fire / closing-time → 403, and Listen → 403 "Log in to make changes."
+- The relay auth endpoint with a wrong secret → 401.
+- Live page `park.ether-cast.com/halloween` in a browser at 10:00 AM: clock, Now Playing, closes 9:30 PM,
+  4 announcements, fader -7.5 dB MUTED ("Muted from Park page, 8:59 PM"), carts 1-4, Log in.
+
+**Listen stays off.** The park machine needs the new build and its Listen settings (`listen.ready`). Not touched.
+UDP 8189 is still UNVERIFIED until the first real session.
