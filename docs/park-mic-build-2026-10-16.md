@@ -437,3 +437,51 @@ noise ON, auto gain OFF.
 2. Receiver: keep trying to read the voice for a few seconds when it isn't there yet (fixes the failed starts).
 3. Engine, Park mic only: a visible "Park mic buffer (ms)" setting. The engine holds that much voice before playing,
    and only drops backlog well above it. Start at 120 ms (solid on phone internet; adds about 0.1 s).
+
+## The user is in charge of on and off: warm lines, installer 1278bdeb (2026-10-16, 4:28 PM)
+
+Jeff (verbatim):
+- "'On should mean on.' No CONNECTING step. … the phone keeps a warm connection to the relay, muted, and the station
+  keeps listening for it. A tap just unmutes … If the warm connection drops, it reconnects quietly in the background
+  before the next tap. … Build with the three fixes: receiver keeps retrying instead of giving up; auto gain starts ON;
+  visible 'Park mic buffer' setting starting at 120 ms."
+- STANDING RULE: "the user is in charge of on and off. The system never assumes, never listens for talking, never ends a
+  talk because of silence, and never auto-stops. Once green, it stays open until the user taps off, or a person presses
+  STOP / the studio lock in Ether. Show green only when the line is truly open end to end … If the connection drops, say
+  so plainly on the phone ('Disconnected — tap to reconnect'); don't silently end it." (Saved to memory.)
+
+**Installer:** `C:\openair\dist-electron\Ether Setup 4.6.59 park-mic-warm 1278bdeb 6558e57.exe`
+- sha256 `1278bdeb91f9747da7e21d192ceea1d099519446a6f0bce456d6155657ffc931`, 216,092,536 bytes.
+- Engine `73436d14…`. Release gate PASS (`gate-logs/2026-10-16T23-29-03-334Z PASS.log`).
+
+**What is built (local commits: openair `6558e57`, ether-backend `61852fc`, ether-park `008a5fa`):**
+- **Station (`audiod/talk.js`):**
+  - one warm line per phone (ffmpeg reading that phone's relay path, retried every 300 ms, never given up while wanted);
+  - the switch puts the talker's line into the Park mic port at once. ON stays on until `off` (tap, STOP, lock);
+  - no timer, lease or silence rule ends a talk; a line in a talk is never cleaned up;
+  - a dropped line during a talk stays on (`lineOpen: false`).
+  - Tests 8/8, including "an hour of silence and no renewals, still on".
+- **Engine:** the Park mic buffer `park_mic_buffer_ms` (starts 120, 20–1000) is added to the queue target and is the
+  backlog bound. Bursty phone internet (60 ms bursts): 20 ms gives 100 dropouts in 6 s; 120 ms gives 0.
+- **Settings:** auto gain starts ON; the Park mic buffer is in Preferences → Park page — Hold to talk.
+  - ovowforestmusic already has auto gain saved OFF; starting values never overwrite a saved value. Turn it ON there in
+    Preferences.
+- **Server:**
+  - `/talk/warm` (+ renew, stop) gives each phone its own relay path `park/<station>/w/<id>`; `/talk`, `/talk/stop`;
+  - floors are never swept; the status comes back on the line's renewal (fast while waiting for green).
+  - Tests 128/128, smoke PASS.
+- **Park page:**
+  - TAP TO TALK → amber CONNECTING… until the station reports the line open → green TALK NOW → tap to stop;
+  - DISCONNECTED (red), "tap to reconnect" during a talk; quiet reconnect between talks.
+  - The mic is muted between talks (silence frames: a trickle of data). DTX is not used: it is the codec's own silence
+    detection, and the rule forbids listening for talking.
+- **Removed:** the old receiver that gave up and reported the talk ended; the page's background stop; any limit.
+
+**Before it works (the order matters; each needs Jeff's GO/OK):**
+1. **Relay rule (OK needed):** add `"~^park/[0-9a-f-]{36}/w/[0-9a-f]{16}$":` under `paths:` (backup first), as the
+   talk-path rule was added.
+2. **Install 1278bdeb on ovowforestmusic.**
+3. **Server `61852fc`** and **Park page `008a5fa`**, right after the install.
+   - The new station no longer understands the old talk command, and the old server/page don't know warm lines, so Talk
+     doesn't work between the install and these two deploys.
+   - Listen, the fader, MUTE, carts and closing time are not affected.
