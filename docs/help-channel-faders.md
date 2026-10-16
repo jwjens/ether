@@ -62,21 +62,17 @@ start — the engine glides it instead of jumping, so nothing clicks or "zips". 
 **Preferences → Loudness & fader smoothing → Fader smoothing** (20 ms unless you change it; 0 = an instant step).
 A level that isn't changing is untouched.
 
-### Every fader is the same: MAIN/AUX, DUCKS, DUCKED, TO STREAM
+### The buttons under a fader: DUCK (and MAIN on a Park mic)
 
-No fader has a fixed job. Whatever you select on a fader, four buttons under it say how it behaves:
+Every fader plays in the park. The buttons under it:
 
-- **MAIN / AUX** — where you hear it **in the room**: the main speakers, or the AUX output (through its row in
-  Master Out → AUX monitors). It never changes what goes **on air**.
-- **DUCKS** — lit: while this fader plays, it pulls the music down (the ducker).
-- **DUCKED** — lit: this fader is pulled down when another fader ducks the music.
-- **TO STREAM** — lit (the start, on every fader): this fader goes to the stream as well as the room. Not lit: it is
-  heard **only in the room** (the park), through its MAIN or AUX output and MONITOR, and **never on the stream**. It
-  still ducks the music if DUCKS is lit. Use it, for example, for a Park mic that should talk to the park but not go
-  out on the radio. Saved with the station.
+- **Decks A, B and C:** no buttons. The music dips by itself while any fader with **DUCK** lit is playing.
+- **Every other fader** (announcements, carts, sweepers, jukebox, mics…): one button, **DUCK**. Lit = while this fader
+  plays, the music dips. How far and how fast is set in **Preferences → Ducker**.
+- **A fader whose source is a Park mic** also has **MAIN**. Lit = the voice also goes on air. Not lit = the voice
+  plays in the park only.
 
-After this update every fader is set exactly as it already behaved, so nothing sounds different until you change a
-button. The Ducker section in Preferences shows the same DUCKED setting for every fader.
+This update changes only which buttons the strip shows. Every fader keeps playing exactly as it did.
 
 ### PENDING on a channel
 

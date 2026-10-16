@@ -18,16 +18,6 @@ const REV_KEY = "ether.rack.rev";
 function bumpRev(stationId: number) {
   try { localStorage.setItem(REV_KEY, `${stationId}:${Date.now()}`); } catch { /* not essential */ }
   lampListeners.forEach(fn => fn());   // same window (a storage event only reaches OTHER windows)
-  docListeners.forEach(fn => fn());
-}
-/** A rack was written from outside the rack window (Preferences → Park page — Hold to talk's limiter button): the lamps
- *  and every open rack view re-read it. */
-export function rackWritten(stationId: number) { bumpRev(stationId); }
-/** Open rack views: re-read their rack when one is written elsewhere (2026-10-16 — an open view used to keep showing,
- *  and on its next edit re-send, the rack it read when it opened). */
-const docListeners = new Set<() => void>();
-if (typeof window !== "undefined") {
-  window.addEventListener("storage", (e: StorageEvent) => { if (e.key === REV_KEY) docListeners.forEach(fn => fn()); });
 }
 
 /** Open the rack window at a fader's channel rack (or re-select it if the window is already open). */
@@ -44,17 +34,10 @@ export function useChannelRack(stationId: number | null, slot: ChannelSlot) {
   const pending = useRef<ChannelRackDoc | null>(null);
   const timer = useRef<any>(null);
 
-  const [rev, setRev] = useState(0);
-  useEffect(() => {
-    // Written elsewhere → read again, unless an edit of this view is still on its way (the view's own write wins).
-    const fn = () => { if (!pending.current && !timer.current) setRev(n => n + 1); };
-    docListeners.add(fn);
-    return () => { docListeners.delete(fn); };
-  }, []);
   useEffect(() => {
     if (stationId == null) return;            // never load against a guessed station
     let alive = true;
-    if (rev === 0) { setDoc(null); setError(null); }
+    setDoc(null); setError(null);
     (async () => {
       try {
         const r = await (window as any).ether?.audio?.getRack?.(stationId, rackName(slot));
@@ -64,7 +47,7 @@ export function useChannelRack(stationId: number | null, slot: ChannelSlot) {
       } catch (e: any) { if (alive) setError(String(e?.message || e)); }
     })();
     return () => { alive = false; };
-  }, [stationId, slot, rev]);
+  }, [stationId, slot]);
 
   const flush = useCallback(async () => {
     timer.current = null;

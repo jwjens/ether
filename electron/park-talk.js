@@ -19,16 +19,14 @@ const KEYS = {
   noise: "park_talk_noise_suppress",      // "1" / "0" — the phone's noise suppression
   agc: "park_talk_auto_gain",             // "1" / "0" — the phone's automatic gain
 };
-/** The voice limiter (Jeff: "Limiter via the fader's compressor is fine"): the numbers Preferences puts into the Park
- *  mic fader's channel compressor — threshold = the ceiling, the compressor's maximum ratio (20:1), no knee, no makeup. */
-const LIMIT_KEYS = { ceilingDb: "park_talk_limit_ceiling_db", attackMs: "park_talk_limit_attack_ms", releaseMs: "park_talk_limit_release_ms" };
-const LIMIT_START = { ceilingDb: "-6", attackMs: "1", releaseMs: "100" };
+// NO PARK MIC LIMITER (Jeff, 2026-10-16): "The Park mic fader uses its own processor like every other fader, and nothing
+// is applied automatically or baked in." No limiter settings, nothing written into a fader's rack.
 const nameKey = (n) => `park_mic_${n}_name`;
 const lastKey = (n) => `park_talk_last_${n}`;
 /** Jeff's numbers (2026-10-15/16), written once — when a Park mic is first put on a fader — never over a set value. */
 const START = { maxSec: "20", echo: "1", noise: "1", agc: "0" };
 const DEFAULT_NAME = (n) => `Park Mic ${n}`;
-const ALL_KEYS = [...Object.values(KEYS), ...Object.values(LIMIT_KEYS), ...PARK_MICS.map(nameKey), ...PARK_MICS.map(lastKey)];
+const ALL_KEYS = [...Object.values(KEYS), ...PARK_MICS.map(nameKey), ...PARK_MICS.map(lastKey)];
 
 /** @param get (key) => stored value | undefined */
 function readSettings(get) {
@@ -47,7 +45,6 @@ function readSettings(get) {
 function seedWrites(get) {
   const out = [];
   for (const [k, key] of Object.entries(KEYS)) { const v = get(key); if (v == null || String(v).trim() === "") out.push([key, START[k]]); }
-  for (const [k, key] of Object.entries(LIMIT_KEYS)) { const v = get(key); if (v == null || String(v).trim() === "") out.push([key, LIMIT_START[k]]); }
   return out;
 }
 
@@ -90,5 +87,5 @@ function refusal({ locked, settings, fader, daemon }) {
   return null;
 }
 
-module.exports = { PARK_MICS, parkDevice, parkMicOf, KEYS, LIMIT_KEYS, LIMIT_START, nameKey, lastKey, START, ALL_KEYS, DEFAULT_NAME,
+module.exports = { PARK_MICS, parkDevice, parkMicOf, KEYS, nameKey, lastKey, START, ALL_KEYS, DEFAULT_NAME,
   readSettings, seedWrites, micFaders, parseLast, lastLine, refusal, HOW };

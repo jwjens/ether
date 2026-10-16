@@ -1,7 +1,7 @@
 ---
 feature: park-hold-to-talk
 title: Park page — Hold to talk (Park mics)
-summary: Logged-in park staff press and hold a button on the Park page and talk from their phone over the park speakers (and the stream, if that fader goes to the stream).
+summary: Logged-in park staff press and hold a button on the Park page and talk from their phone over the park speakers (and on air too, if that fader's MAIN is lit).
 where: Park page (park.ether-cast.com/<your-station>) → HOLD TO TALK, under LISTEN. In Ether: a fader's source → Mic → Park Mic 1 / Park Mic 2. Settings: Preferences → Audio → Park page — Hold to talk
 since: Ether build 2026-10-16
 audience: operator
@@ -16,33 +16,30 @@ tour: true
 the Park page, talk, and let go.
 
 The voice arrives in Ether on a **Park mic**. There are two, **Park Mic 1** and **Park Mic 2**. They are inputs like a
-sound-card mic: you put each on a fader, and **that fader's own buttons decide where the voice is heard**:
-- **MAIN / AUX:** which output of this computer plays it in the park;
-- **ON:** the fader's channel switch;
-- **TO STREAM:** lit = the park and the stream; not lit = the park only, never the stream;
-- **DUCKS:** lit = the music dips under the voice.
+sound-card mic: you put each on a fader. It plays in the park like every fader, and **that fader's buttons decide the
+rest**:
+- **MAIN:** lit = the voice also goes on air; not lit = the park only;
+- **DUCK:** lit = the music dips under the voice;
+- the fader's level and its channel **ON** switch, as on every fader.
 
-So one Park mic can go on air (park and stream) while the other stays in the park only.
+So one Park mic can go on air while the other stays in the park only. Any processing of the voice (EQ, compressor)
+goes in that fader's own rack, like every other fader; nothing is added for you.
 
 ## When to use it
 
 - Talking to visitors over the park speakers from anywhere in the park.
-- A Park mic with **TO STREAM** lit when what is said is part of the show; not lit for park-only messages.
+- A Park mic with **MAIN** lit when what is said is part of the show; not lit for park-only messages.
 
 ## Set it up (once per station, in Ether)
 
 1. **Put a Park mic on a fader.** On the board, set a fader's source to **Mic** and pick **Park Mic 1 (Park page)**
    (or **Park Mic 2**). They are listed with this computer's other inputs.
    - The first time you do this, Hold to talk's starting values go into Preferences: longest talk **20 s**, phone echo
-     cancellation **ON**, noise suppression **ON**, automatic gain **OFF**, and a voice limiter of **−6 dB, 1 ms,
-     100 ms**. You can change every one.
-2. **Set the fader's buttons:** MAIN or AUX, ON, **TO STREAM**, **DUCKS** (see What it is).
+     cancellation **ON**, noise suppression **ON**, automatic gain **OFF**. You can change every one.
+2. **Set the fader's buttons:** **MAIN** (on air too, or park only) and **DUCK**; bring the fader up and turn it ON.
 3. **Name the Park mics** in **Preferences → Audio → Park page — Hold to talk**, for example "Front gate". The phone
    shows these names.
-4. **Put the limiter on.** In the same place, press **Put the limiter on fader …** next to each Park mic. It writes
-   the limiter numbers into that fader's compressor (20:1). You can see and change it in the fader's rack. It catches a
-   shout or a bumped phone before the speakers.
-5. Check the line at the bottom: **"Hold to talk is available on this station's Park page…"**.
+4. Check the line at the bottom: **"Hold to talk is available on this station's Park page…"**.
 
 ## Use it (Park page)
 
@@ -76,7 +73,7 @@ phone itself plays, not the park speakers. If you are listening on the same phon
 - **The studio lock.** When the station strip's **Park page control** is OFF, Hold to talk is locked too ("Controls
   locked by the studio"). Turning the lock on while someone talks cuts them off within a second or two.
 - **MUTE.** Park MUTE silences the voice in the park, like everything else there. When the park is muted and the Park
-  mic goes to the park only, the button says **"Park is muted. Unmute to be heard."** When it also goes to the stream,
+  mic goes to the park only (MAIN not lit), the button says **"Park is muted. Unmute to be heard."** When MAIN is lit,
   the button says only the stream will hear you.
 - **Longest talk.** The phone, the server and the station each stop at the longest talk, so a stuck button or a
   dropped phone can't hold the park open.

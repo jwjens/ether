@@ -16,11 +16,10 @@ describe("settings", () => {
     const s = T.readSettings(kv(store));
     expect(s).toMatchObject({ ready: true, maxSec: 20, echo: true, noise: true, agc: false });
     expect(s.names).toEqual({ 1: "Park Mic 1", 2: "Park Mic 2" });
-    expect(store).toMatchObject({ park_talk_limit_ceiling_db: "-6", park_talk_limit_attack_ms: "1", park_talk_limit_release_ms: "100" });
+    expect(Object.keys(store).some(k => /limit/.test(k))).toBe(false);   // no limiter is written (Jeff, 2026-10-16)
   });
   it("a set value is never overwritten by the starting values", () => {
-    expect(T.seedWrites(kv({ park_talk_max_sec: "15", park_talk_echo_cancel: "0", park_talk_noise_suppress: "1", park_talk_auto_gain: "1",
-      park_talk_limit_ceiling_db: "-3", park_talk_limit_attack_ms: "2", park_talk_limit_release_ms: "80" }))).toEqual([]);
+    expect(T.seedWrites(kv({ park_talk_max_sec: "15", park_talk_echo_cancel: "0", park_talk_noise_suppress: "1", park_talk_auto_gain: "1" }))).toEqual([]);
   });
   it("the user's names are what the phone shows", () => {
     expect(T.readSettings(kv({ park_mic_1_name: "Front gate", park_mic_2_name: " Staff " })).names).toEqual({ 1: "Front gate", 2: "Staff" });

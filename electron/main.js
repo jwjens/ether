@@ -5565,9 +5565,8 @@ function parkTalkState(sid) {
              talking: now ? { by: now.by, since: new Date(now.since).toISOString(), receiving: !!now.receiving } : null,
              last: ParkTalk.parseLast(get(ParkTalk.lastKey(n))) };
   });
-  const lim = {}; for (const [k, key] of Object.entries(ParkTalk.LIMIT_KEYS)) { const n = Number(get(key)); lim[k] = get(key) != null && String(get(key)).trim() !== "" && Number.isFinite(n) ? n : null; }
   return { ready: settings.ready, missing: settings.missing, maxSec: settings.maxSec, echo: settings.echo, noise: settings.noise, agc: settings.agc,
-           limit: lim, locked: get("park_control") === "off", mics };
+           locked: get("park_control") === "off", mics };
 }
 ipcMain.handle("park:talk-state", (_e, stationId) => {
   const sid = Number(stationId);
