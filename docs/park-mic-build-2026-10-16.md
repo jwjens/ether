@@ -154,3 +154,35 @@ plus `rtspTransports: [tcp]`, `rtspsAddress: :8322`, `webrtcAddress: 127.0.0.1:8
 - Everything else Hold to talk needs is already there: WebRTC through nginx `/park/…` (the WHIP address is
   `/park/<station>/talk<n>/whip`), RTSPS 8322 for the station, the Park page origin allowed, the public address
   advertised.
+
+## Deployed now, park open (Jeff: "Do it now, don't wait for close") (2026-10-16)
+
+**Server `f33c4f2`:**
+- Rollback branch `rollback/server-park-talk` = `2e5840b` (`git push origin rollback/server-park-talk:main`).
+- Pushed `2e5840b..f33c4f2`; Railway `433ca48b` SUCCESS 1:31 PM.
+- **Before (1:30 PM):** level 0.316, not muted, closing 21:30, 4 carts, Listen ready, writes without a login 403.
+- **After (1:32 PM):** `/health` 200, station back online. Same level, MUTE, closing time, carts and Listen ready; writes
+  without a login 403. New `/talk` refuses without a login (403 "Log in to make changes.").
+- Live page in a browser at 1:32 PM: fader −10.0 dB, MUTE, carts 1–4, closes 9:30 PM, 4 announcements.
+- A server restart drops Listen tickets held in memory: a phone listening at 1:31 PM would have seen "Listening
+  stopped. Press Listen again."
+
+**Park page `2d7a204` (with the headers fix):**
+- Rollback copy (the live page as it was: index + `a2/index-CmN86cCJ.js`, `a2/index-AjIQ3lZA.css`, `_redirects`):
+  scratchpad `park-live-before-talk` (`npx wrangler pages deploy <that folder> --project-name ether-park --branch main`).
+- Built with `--assetsDir a2`; the live files were added to the upload, so a phone holding the old page never fetches a
+  missing file. Deployed `e53eb3af` 1:33:42–1:33:52 PM; live index switched by 1:33:58 PM.
+- All three files serve 200 with the right types.
+- **After (1:34 PM):** the live page runs `a2/index-p6DRQqZG.js`: fader −10.0 dB, MUTE, carts 1–4, closes 9:30 PM, 4
+  announcements; the ops data is the same.
+- **LISTEN and HOLD TO TALK show only to logged-in staff; not checked by Claude** (no staff login).
+  - The server says Listen is ready.
+  - Until ovowforestmusic runs the new build, HOLD TO TALK shows greyed "Hold to talk isn't set up on this station"
+    (the station doesn't report Park mics yet).
+- **Found: the headers fix doesn't fully take.**
+  - The files come back `cache-control: public, max-age=14400, must-revalidate`. The `must-revalidate` from `_headers`
+    is there, but `max-age` is still 4 hours.
+  - Most likely Cloudflare's zone "Browser Cache TTL" setting overrides it (UNVERIFIED, a Cloudflare dashboard setting).
+  - It didn't matter this time, because the old files stayed in the upload.
+
+**Relay: not changed.** The talk paths are not covered (above); the one-line rule waits for Jeff's OK.
