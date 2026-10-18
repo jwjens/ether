@@ -14,7 +14,7 @@ import UpNext from "./UpNext";
 import { HealthMonitor } from "./HealthMonitor";
 import { BoutiqueCartWall } from "./DeckConfigurator";
 import Scheduler from "./Scheduler";
-import { LibraryPanel } from "../App";
+import LibraryWindow from "./LibraryWindow";
 import StudioPro from "./StudioPro";
 import VideoStudio from "./ShowPlus";
 import Jukebox from "./Jukebox";
@@ -38,7 +38,6 @@ import LibraryImport from "./LibraryImport";
 import { PlanGate } from "../hooks/usePlan";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useActiveStation } from "../hooks/useActiveStation";
-import { useLibraryWindowActions } from "../lib/libraryWindowActions";
 
 // ── StandaloneUpNext — wraps UpNext; syncs queue via broadcast relay ──
 // The main window emits "ether:broadcast" { channel: "queue:sync", data: queueLen }
@@ -159,19 +158,6 @@ function PopoutFaders() {
   );
 }
 
-function PopoutLibrary() {
-  // The deck / queue / studio actions live in useLibraryWindowActions (moved there unchanged) so the
-  // Library module on a built surface calls the same ones. onEdit stays off — see that file.
-  const actions = useLibraryWindowActions();
-  // PopoutShell's content area is overflow:hidden; LibraryPanel is a plain flex-column with no
-  // internal scroll (in the main app the surrounding page scrolls). Give the pop-out its own
-  // vertical scroll so a library taller than the window is reachable.
-  return (
-    <div style={{ height: "100%", overflowY: "auto", overflowX: "hidden", padding: 16 }}>
-      <LibraryPanel {...actions} />
-    </div>
-  );
-}
 
 export default function PopoutRenderer({ panel }: { panel: string }) {
   const title = TITLES[panel] ?? panel;
@@ -230,7 +216,7 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
       content = <Scheduler defaultTab="categories" embedded />;
       break;
     case "library":
-      content = <PopoutLibrary />;
+      content = <LibraryWindow />;   // the Library window: src/components/LibraryWindow.tsx
       break;
     case "studiopro":
       content = <StudioProPopout />;

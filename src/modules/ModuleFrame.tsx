@@ -41,17 +41,13 @@ export function ModuleFrame({ type, instanceId, options }: ModuleFrameProps) {
   const entry = moduleEntry(type);
   return (
     <ModuleInstanceContext.Provider value={instanceId}>
-      {/* keyed by type: a pane whose type changes remounts, so useBoundProps' hook order never changes */}
+      {/* keyed by type: a pane whose type changes remounts rather than reusing another module's state */}
       <ModuleBody key={type} entry={entry} options={options} />
     </ModuleInstanceContext.Provider>
   );
 }
 
 function ModuleBody({ entry, options }: { entry: ModuleEntry; options?: Record<string, unknown> }) {
-  const bound = entry.useBoundProps ? entry.useBoundProps() : {};
   const Component = entry.component;
-  const body = <Component {...bound} {...options} />;
-  // Same wrapper the Library pop-out uses (PopoutRenderer PopoutLibrary): the panel relies on its parent to scroll.
-  if (entry.scroll) return <div style={{ height: "100%", overflowY: "auto", overflowX: "hidden", padding: 16 }}>{body}</div>;
-  return <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column" }}>{body}</div>;
+  return <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column" }}><Component {...options} /></div>;
 }

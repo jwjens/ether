@@ -19,7 +19,8 @@ The **Song Library** is everything your station can play: music, spots, sweepers
 searchable list.
 
 As a **screen module**, it is exactly the **Library** window — the same list and the same buttons, doing the same
-thing. Loading a song onto a deck from a screen you build is the same action as from the Library window.
+thing. The main screen's Library, the Library window and the module all load and queue the **same way**, by the
+same rules.
 
 ## When to use it
 
@@ -32,11 +33,17 @@ the Screen Builder (the next step); this page will say how when it arrives.
 
 1. **Find a song.** Type in the search box, or pick a category.
 2. **Load it.** Press **A**, **B** or **C** on its row to cue it on that deck.
-3. **Add music.** With an empty library, press **Import Music**.
+3. **Queue it.** Press **Q** to add it to the bottom of Up Next.
+4. **Add music.** With an empty library, press **Import Music**.
 
 ## How it behaves on air
 
-- **A / B / C** cue the song on that deck.
+- **A / B / C** cue the song on that deck. If the song's audio is only in the cloud, Ether fetches it first and says
+  **Loading "…" onto A…** while it does.
+- **A deck that is on air is never replaced.** If the deck is **playing or paused**, nothing is loaded and Ether says:
+  **Deck A is on air — "…" was not loaded. Stop deck A first.** The same words on the main screen, in the Library
+  window and in the module.
+- **Q** adds the song to the bottom of Up Next.
 - The station is the screen's station. A Library module loads onto that station's decks only.
 - Column choices and widths are remembered on this computer (widths per station), so two Library modules share
   them.
@@ -45,11 +52,10 @@ the Screen Builder (the next step); this page will say how when it arrives.
 
 - **"No items yet — Import audio to add items to the library."** The library is empty: press **Import Music**.
 - **"No … match that search"** — clear the search or the category filter.
+- **"Deck … is on air"** — that deck is playing or paused. Stop it on the board (or pick another deck), then load.
 
 ## Not in this version (by design)
 
-- **Q (add to queue)** from the Library window — see the Phase 1 build report: in the code, it reaches nothing.
-  Use the Library on the main screen to queue, until it is fixed.
 - **Edit cue points** is not offered here; open the cue editor from the main screen.
 
 ## Related

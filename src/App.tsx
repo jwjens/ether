@@ -124,6 +124,7 @@ import { EtherErrorBoundary, SessionRestoreToast, HealthMonitor, HealthStatusDot
 import { importIntoAudioLibrary, fileLocationItem, changeFileLocationItem, checkFilePresence, type FilePresence } from "./lib/fileLocation";
 import { openLinkPreferences } from "./hooks/useRemoteLink";
 import { appShortcut } from "./lib/appShortcuts";
+import { libraryDeckActions, DeckLoadNoticeBar } from "./lib/libraryDeckActions";
 import { useMicMigration } from "./hooks/useMicMigration";
 import { OPEN_PREFS_KEY } from "./hooks/useMicInputs";
 import TrackEditor from "./components/TrackEditor";
@@ -2496,56 +2497,19 @@ export default function App() {
 
   const toggleShuffle = () => { const n = !shuffle; setShuffle(n); engine.shuffle = n; };
 
-  // A/B/C = load the song onto that exact deck. If the deck is on air, leave it alone — never
-  // override the playing song. (Q below appends to the bottom of the queue.)
-  const loadDeck = useCallback(async (deckId: "A" | "B" | "C", s: SongRow) => {
-    const fail = (text: string) => { setDeckLoadMsg({ text, err: true }); setTimeout(() => setDeckLoadMsg(m => (m && m.text === text ? null : m)), 6000); };
-    if (!s.file_path) { fail(`Can't load "${s.title}" — no file on record`); return; }
-    // Command-path station scoping: resolve the ACTIVE station's engine fresh at call time (getEngine
-    // froze to station 1 under a useCallback that closed over render-0 engine — see VU cross-talk).
-    const engine = getEngine(stationId);
-    if (engine.getDeck(deckId).getState().status === "playing") return; // don't kill what's on air
-    // Slice B — loud refusal: resolve the SAME way the cue editor does (local-first → R2-by-file_key),
-    // so an R2-only library song loads onto the deck instead of dying silently; on failure, SAY WHY.
-    // The resolve is off the deck-load hot path (it's a manual button), so it may fetch from the cloud.
-    let filePath = s.file_path;
-    setDeckLoadMsg({ text: `Loading "${s.title}" onto ${deckId}…`, err: false });
-    try {
-      const r = await (window as any).ether.invoke("audio:resolve-local-path", s.file_path);
-      if (!r?.ok || !r.filePath) {
-        fail(`Can't load "${s.title}" — ${r?.error === 'no local file, no file_key' ? 'unavailable, needs re-import' : (r?.error || 'file not on this machine')}`);
-        return;
-      }
-      filePath = r.filePath;
-    } catch { /* resolver unreachable — proceed with the raw path; the engine surfaces its own error */ }
-    if (engine.isDaemonDriven) {
-      engine.deckCue(deckId, { filePath, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 });
-    } else {
-      engine.loadToDeck(deckId, filePath, s.title, s.artist_name || "", 0, s.duration_ms ?? 0);
-    }
-    setDeckLoadMsg(null);   // success — clear the Loading… note
-    window.dispatchEvent(new CustomEvent('ether:queue-changed'));
-    if (s.id && !s.intro_end) autoCueSong(s.id, s.file_path).catch(() => {});
-  }, [stationId]);
-  const loadA = useCallback((s: SongRow) => loadDeck("A", s), [loadDeck]);
-  const loadB = useCallback((s: SongRow) => loadDeck("B", s), [loadDeck]);
-  const loadC = useCallback((s: SongRow) => loadDeck("C", s), [loadDeck]);
   const [autoSilenceTrim, setAutoSilenceTrim] = useState(() => {
     try { return localStorage.getItem("ether_auto_silence_trim") !== "false"; } catch { return true; }
   });
-  const addToQueue = useCallback((s: SongRow) => {
-    if (s.file_path) {
-      // Command-path station scoping: resolve the ACTIVE station's engine fresh (see loadDeck).
-      const engine = getEngine(stationId);
-      engine.addToQueue([{ filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined, durationMs: s.duration_ms ?? 0 } as any]);
-      setQueueLen(engine.getQueue().length);
-      window.dispatchEvent(new CustomEvent('ether:queue-changed'));
-      // Auto-detect cue points in background if not set
-      if (autoSilenceTrim && s.id && !s.intro_end) {
-        autoCueSong(s.id, s.file_path).catch(() => {});
-      }
-    }
-  }, [autoSilenceTrim, stationId]);
+  // THE LIBRARY'S A / B / C AND Q — the one path the main window, the Library window and the Library module all use
+  // (src/lib/libraryDeckActions.tsx; moved from the loadDeck / addToQueue that lived here). A/B/C never load over a
+  // deck that is on air (playing or paused) and say so; Q is the real enqueue. The engine is resolved fresh by
+  // stationId at every call (command-path station scoping).
+  const libActions = useMemo(() => libraryDeckActions({
+    engine: () => getEngine(stationId),
+    setNotice: setDeckLoadMsg,
+    autoCueOnQueue: () => autoSilenceTrim,
+    onQueued: (eng) => setQueueLen(eng.getQueue().length),
+  }), [stationId, autoSilenceTrim]);
 
   const updater = useUpdater();
   const { showTour, dismissTour } = useTour();
@@ -3201,13 +3165,13 @@ export default function App() {
                 nowPlaying={nowPlayingStr || undefined}
                 toolsCollapsed={toolsCollapsed}
                 toggleToolsCollapsed={toggleToolsCollapsed}
-                libraryDock={<LibraryPanel onLoadA={loadA} onLoadB={loadB} onLoadC={loadC} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} onSendToStudio={(s) => { try { (window as any).ether.invoke("studio:push-track", { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms }); } catch { /* not in electron */ } }} />}
+                libraryDock={<LibraryPanel {...libActions} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} />}
               />
             </div>
           )}
           {panel !== "live" && (panel as string) !== "videostudio" && panel !== "clipeditor" && (
             <div style={{ flex: 1, overflowY: "auto" }}>
-              {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onLoadC={loadC} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} onSendToStudio={(s) => { try { (window as any).ether.invoke("studio:push-track", { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms }); } catch { /* not in electron */ } }} />}
+              {panel === "library" && <LibraryPanel {...libActions} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} />}
               {panel === "clocks" && <Scheduler defaultTab={schedulerTab} />}
               {panel === "schedulebuilder" && <ProgramLog onClose={() => setPanel("live")} />}
               {/* Show+ DAW is no longer an inline takeover — it opens as its own pop-out window
@@ -3396,11 +3360,7 @@ export default function App() {
           {switchToast}
         </div>
       )}
-      {deckLoadMsg && (
-        <div style={{ position: "fixed", bottom: 72, left: "50%", transform: "translateX(-50%)", zIndex: 9999, background: "rgba(30,30,40,0.97)", border: `1px solid ${deckLoadMsg.err ? "rgba(224,64,64,0.5)" : "rgb(from var(--accent-blue) r g b / 0.4)"}`, color: deckLoadMsg.err ? "#ff6b6b" : "var(--accent-blue)", padding: "9px 20px", fontSize: 13, fontWeight: 600, fontFamily: "'Inter', system-ui, sans-serif", pointerEvents: "none" }}>
-          {deckLoadMsg.text}
-        </div>
-      )}
+      <DeckLoadNoticeBar notice={deckLoadMsg} />
       <LibrarySyncProgressBar />
       {/* Generate progress — bottom-left, above the station badge. Mounted here (not in the calendar)
           so a run started from the month view keeps reporting after the operator navigates away, and

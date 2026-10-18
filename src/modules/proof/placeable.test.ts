@@ -2,7 +2,7 @@
 // source and the tree, so a module that is not fully wired cannot be registered — enforced here, not remembered.
 //
 // For every registry entry:
-//   · its component (and its bound-props hook, if any) is IMPORTED into registry.ts from the app's own file, outside
+//   · its component is IMPORTED into registry.ts from the app's own file, outside
 //     src/modules, and that file really exports it — a module is never defined under src/modules;
 //   · its proof test exists, is under src/modules/proof, and renders this module type through ModuleFrame;
 //   · its help doc exists, is flat in docs/ as help-module-<type>.md, and follows the docs/help-sweepers.md template;
@@ -72,11 +72,6 @@ describe("S4 — every registered module is fully wired, or it is not placeable"
         assertImportedFromApp(m.type, "component");
         expect(typeof m.component).toBe("function");
       });
-      if (m.useBoundProps) {
-        it("its bound props come from the app's own hook, not a copy under src/modules", () => {
-          assertImportedFromApp(m.type, "useBoundProps");
-        });
-      }
       it("its proof test exists and renders this module through ModuleFrame", () => {
         expect(m.proof.startsWith("src/modules/proof/") && /\.test\.tsx?$/.test(m.proof), m.proof).toBe(true);
         expect(fs.existsSync(rel(m.proof)), `${m.proof} does not exist`).toBe(true);

@@ -15,10 +15,9 @@
 import type { ComponentType } from "react";
 import { BoutiqueCartWall } from "../components/DeckConfigurator";
 import ProgramLog from "../components/ProgramLog";
-// LibraryPanel is exported from App.tsx; imported from there exactly as PopoutRenderer does (§2.6: lifted out of
-// App.tsx in a later phase, as a pure move).
-import { LibraryPanel } from "../App";
-import { useLibraryWindowActions } from "../lib/libraryWindowActions";
+// The Library window (☰ → Library): the app's own LibraryPanel with the Library's one set of deck / queue actions
+// (src/lib/libraryDeckActions.tsx). LibraryPanel itself stays in App.tsx (§2.6: lifted out later, as a pure move).
+import LibraryWindow from "../components/LibraryWindow";
 
 export type ModuleType = "carts" | "programlog" | "library";
 
@@ -35,11 +34,6 @@ export interface ModuleEntry {
   title: string;
   /** The app's own component. */
   component: ComponentType<any>;
-  /** The app's own hook that supplies the props the app's window passes this component (actions living outside
-   *  the component). Called by the frame; never a re-implementation. */
-  useBoundProps?: () => Record<string, unknown>;
-  /** The component relies on its parent to scroll (LibraryPanel: the Library pop-out wraps it the same way). */
-  scroll?: boolean;
   instances: "many" | "one-per-window" | "one";
   station: "follows-layout";
   options: readonly ModuleOption[];
@@ -83,9 +77,7 @@ export const MODULES: readonly ModuleEntry[] = [
   {
     type: "library",
     title: "Song Library",
-    component: LibraryPanel,
-    useBoundProps: useLibraryWindowActions,
-    scroll: true,
+    component: LibraryWindow,
     // State is per instance. Column widths and the page are stored per station in localStorage, so two instances
     // share them (a width dragged in one shows in the other on its next mount) — documented, not changed, in Phase 1.
     instances: "many",
