@@ -40,7 +40,7 @@ interface Show {
 interface Song {
   id: number; title: string; artist_name: string | null;
   artist_id: number | null; category_id: number | null;
-  duration_ms: number; last_played_at: number | null;
+  duration_ms: number;
 }
 
 // ── Helpers ────────────────────────────────────────────────────
@@ -1164,7 +1164,7 @@ function HourModal({ date, hour, block, stationId, onClose, onEdited }: HourModa
     try {
       const rows = await query<Song>(
         `SELECT s.id, s.title, a.name as artist_name, s.artist_id,
-                s.category_id, s.duration_ms, s.last_played_at
+                s.category_id, s.duration_ms
          FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
          WHERE s.category_id = ? AND s.deleted_at IS NULL
            AND (s.title LIKE ? OR a.name LIKE ?)

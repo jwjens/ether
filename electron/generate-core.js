@@ -96,6 +96,14 @@ function _buildScheduleCtx(db, stationId) {
   // freeze precedent: never a per-candidate play_log query). songs.last_played_at is not used here.
   const { buildRestMaps } = require('./separation-enforce');
   const restMaps = enforceSeparation ? buildRestMaps(db, stationId) : { restByFile: new Map(), restByArtist: new Map(), restByTitle: new Map() };
+  // LAST AIRED COMES FROM THE PLAY RECORD (Jeff, 2026-10-18): "songs.last_played_at: leave it unwritten AND remove every
+  // read of it. Every 'last aired' shown anywhere is derived from the play record." This station's plays, by the file
+  // that aired, read ONCE per run (the 2026-07-22 freeze precedent: never a per-candidate play_log query). Where this
+  // run has placed a song, the run's own map (songLastTs) still answers first, as before.
+  const lastAiredByFile = new Map();
+  try {
+    for (const r of db.prepare("SELECT file_path f, MAX(played_at) t FROM play_log WHERE station_id = ? AND deleted_at IS NULL AND file_path IS NOT NULL GROUP BY file_path").all(stationId)) lastAiredByFile.set(r.f, r.t);
+  } catch { /* a pre-v19 play_log has no file_path: every song reads as never aired */ }
 
   // ── PHASE 3 — scheduler mode + the pure engine (2026-08-10) ────────────────────────────────────
   // scheduler-core is now the AUTHORITY for clock-mode music selection. The legacy picker still runs
@@ -131,7 +139,7 @@ function _buildScheduleCtx(db, stationId) {
     schedulerMode, core, goalCats,
     coreDiff: { agree: 0, differ: 0, skipped: 0, errors: 0, samples: [], lastError: null },
     goalShadow: { hours: 0, positions: 0, wouldDiffer: 0, samples: [] },
-    songLastTs: new Map(), artistLastTs: new Map(), titleLastTs: new Map(),
+    songLastTs: new Map(), artistLastTs: new Map(), titleLastTs: new Map(), lastAiredByFile,
     spotLastTs: new Map(), spotPlaysToday: new Map(), generatedRows: [], relaxed: [],
     // Anchor-fit (v4.4.84): breaks whose fitted landing still misses the target minute by > tolerance —
     // surfaced as a health signal so an un-fittable anchor (e.g. a category of only long songs) is visible,
@@ -150,7 +158,7 @@ function _buildScheduleCtx(db, stationId) {
     // what airs, did not. Two songs deleted 2026-07-20 still held 63 future slots on halloVeen, and
     // across the library 28 deleted songs held 729 future rows with 438 plays logged AFTER their own
     // delete timestamps. The delete worked every time — the picker simply never looked.
-    stmtCandidates: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.last_played_at, s.no_repeat_hours, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.deleted_at IS NULL AND s.category_id = ? AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND (s.content_class IS NULL OR s.content_class = 'MUSIC') AND (s.daypart_mask IS NULL OR ((s.daypart_mask >> ?) & 1) = 1) ORDER BY RANDOM()`),
+    stmtCandidates: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.no_repeat_hours, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.deleted_at IS NULL AND s.category_id = ? AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND (s.content_class IS NULL OR s.content_class = 'MUSIC') AND (s.daypart_mask IS NULL OR ((s.daypart_mask >> ?) & 1) = 1) ORDER BY RANDOM()`),
     // Same rule for a slot that names ONE specific song: a clock slot pointing at a song the
     // operator has since deleted must resolve to nothing, not to the deleted song.
     stmtSongById: db.prepare(`SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.file_path FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ? AND s.deleted_at IS NULL`),
@@ -171,7 +179,7 @@ function _buildScheduleCtx(db, stationId) {
 function _legacyPickMusic(candidates, currentTs, win, used, maps) {
   for (const song of candidates) {
     if (used.usedSongIds.has(song.id)) continue;
-    const lastSongTs = maps.songLastTs.get(song.id) ?? (song.last_played_at || 0);
+    const lastSongTs = maps.songLastTs.get(song.id) ?? ((maps.lastAiredByFile && maps.lastAiredByFile.get(song.file_path)) || 0);
     if (currentTs - lastSongTs < win.songRepeatMin * 60) continue;
     const titleKey = (song.title || '').trim().toLowerCase();
     if (titleKey) {
@@ -182,12 +190,12 @@ function _legacyPickMusic(candidates, currentTs, win, used, maps) {
     const artistBlocked = used.usedArtistIds.has(song.artist_id) || (song.artist_id && (currentTs - lastArtistTs) < win.artistSepMin * 60);
     if (!artistBlocked) return { song, relaxed: false };            // Tier 1
   }
-  const song = _lrpFallback(candidates, used.usedSongIds, maps.songLastTs);   // Tier 2/3
+  const song = _lrpFallback(candidates, used.usedSongIds, maps.songLastTs, maps.lastAiredByFile);   // Tier 2/3
   return { song: song || null, relaxed: !!song };
 }
 
-function _lrpFallback(candidates, usedSongIds, songLastTs) {
-  const lrp = (s) => songLastTs.get(s.id) ?? (s.last_played_at || 0);
+function _lrpFallback(candidates, usedSongIds, songLastTs, lastAiredByFile) {
+  const lrp = (s) => songLastTs.get(s.id) ?? ((lastAiredByFile && lastAiredByFile.get(s.file_path)) || 0);
   const fresh = candidates.filter(s => !usedSongIds.has(s.id));
   const pool = fresh.length ? fresh : candidates;   // Tier 2 (unused-this-hour) then Tier 3 (allow reuse)
   if (!pool.length) return null;
@@ -215,7 +223,7 @@ async function _genMaybeYield() {
 }
 
 async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
-  const { stmtShows, stmtSlots, stmtCandidates, stmtSongById, stmtSpotsByCategory, stmtClockBreaks, songLastTs, artistLastTs, titleLastTs, spotLastTs, spotPlaysToday, artistSepMin, songRepeatMin, titleSepMin, activeStationId, generatedRows } = ctx;
+  const { stmtShows, stmtSlots, stmtCandidates, stmtSongById, stmtSpotsByCategory, stmtClockBreaks, songLastTs, artistLastTs, titleLastTs, lastAiredByFile, spotLastTs, spotPlaysToday, artistSepMin, songRepeatMin, titleSepMin, activeStationId, generatedRows } = ctx;
   for (let h = 0; h < 24; h++) {
     if (onlyHour !== null && h !== onlyHour) continue;
     const slotDate = new Date(dayBaseDate.getTime()); slotDate.setHours(h, 0, 0, 0);
@@ -239,7 +247,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
     // can drift out of step with the rows actually being written.
     const coreStateView = {
       usedSongIds, usedArtistIds, usedTitles,
-      songLastTs, artistLastTs, titleLastTs,
+      songLastTs, artistLastTs, titleLastTs, lastAiredByFile,
       spinsByCategory: new Map(),      // clock mode ignores it; goal-mode shadow fills it per hour
     };
     const hourEnd = hourStartTs + 3600;
@@ -282,7 +290,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
         const compliant = fitTargetTs != null ? [] : null;   // collect all compliant only when fitting
         for (const song of candidates) {
           if (usedSongIds.has(song.id)) continue;
-          const lastSongTs = songLastTs.get(song.id) ?? (song.last_played_at || 0);
+          const lastSongTs = songLastTs.get(song.id) ?? (lastAiredByFile.get(song.file_path) || 0);
           if (cursorTs - lastSongTs < songRepeatMin * 60) continue;
           const titleKey = (song.title || '').trim().toLowerCase();
           if (titleKey) {
@@ -307,7 +315,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
           picked = best;
         }
         // Tier 2/3 ladder: no compliant pick → least-recently-played candidate (never random/soft).
-        if (!picked) { picked = _lrpFallback(candidates, usedSongIds, songLastTs); if (picked) ctx.relaxed.push({ hour: h, title: picked.title, artist: picked.artist_name || '', category_id: categoryId }); }
+        if (!picked) { picked = _lrpFallback(candidates, usedSongIds, songLastTs, lastAiredByFile); if (picked) ctx.relaxed.push({ hour: h, title: picked.title, artist: picked.artist_name || '', category_id: categoryId }); }
         return picked;
       };
       const recordMusic = (picked, categoryId, ts, durationS) => {
@@ -467,7 +475,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
         // behaviour change, not a tie-break artifact. Read-only: _legacyPickMusic mutates nothing.
         try {
           const legacy = _legacyPickMusic(candidates, currentTs, win,
-            { usedSongIds, usedArtistIds, usedTitles }, { songLastTs, artistLastTs, titleLastTs });
+            { usedSongIds, usedArtistIds, usedTitles }, { songLastTs, artistLastTs, titleLastTs, lastAiredByFile });
           const a = picked ? picked.id : null, b = legacy.song ? legacy.song.id : null;
           if (a === b) ctx.coreDiff.agree++;
           else {

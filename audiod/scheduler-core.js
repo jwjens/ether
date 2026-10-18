@@ -33,9 +33,12 @@ const SEC = 60;
 // ── Small pure helpers ───────────────────────────────────────────────────────────────────────────
 
 /** Last time this song played, in the same precedence the live generator uses. */
+// Last aired: this run's own placement first, else the play record (state.lastAiredByFile, by the file that aired —
+// Jeff 2026-10-18: songs.last_played_at is read nowhere). Never aired = 0.
 function lastSongTs(song, state) {
   const v = state.songLastTs.get(song.id);
-  return v === undefined ? (song.last_played_at || 0) : v;
+  if (v !== undefined) return v;
+  return (state.lastAiredByFile && state.lastAiredByFile.get(song.file_path)) || 0;
 }
 
 function titleKeyOf(song) {
@@ -221,6 +224,7 @@ function createState(seed) {
     songLastTs:    s.songLastTs    || new Map(),
     artistLastTs:  s.artistLastTs  || new Map(),
     titleLastTs:   s.titleLastTs   || new Map(),
+    lastAiredByFile: s.lastAiredByFile || new Map(),   // the play record: file → last aired (unix s)
     spinsByCategory: s.spinsByCategory || new Map(),
   };
 }

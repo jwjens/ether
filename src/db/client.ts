@@ -139,12 +139,7 @@ export async function logPlay(title: string, artist: string, deck: string, durat
     content_class: contentClass ?? 'MUSIC',   // jingles v1: JIN stamped here too so a renderer-path play never leaks as MUSIC
   });
 
-  // Stamp the library row so rotation separation + LRP actually work. The whole engine (live picker
-  // AND the day generator) filters on songs.last_played_at, but nothing ever wrote it — so every
-  // pick collapsed to pure RANDOM (no artist/title/song separation, no least-recently-played). Match
-  // by the file that aired. Best-effort: a play must never fail because the stamp didn't land.
-  if (filePath) {
-    try { await (window as any).ether.songs.markPlayed(filePath, Math.floor(Date.now() / 1000)); }
-    catch (e) { console.error('markPlayed error:', e); }
-  }
+  // songs.last_played_at is no longer stamped here (Jeff, 2026-10-18: "leave it unwritten AND remove every read of it.
+  // Every 'last aired' shown anywhere is derived from the play record"). The play row above IS the record; every picker and
+  // every screen reads last aired from play_log. (It was also a whole synced song-row mutation per play.)
 }

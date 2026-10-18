@@ -5546,8 +5546,8 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
   const builtinDateMs = (col: LibraryColumn, s: SongRow): number | null => {
     if (col.kind !== 'metadata' || col.dataType !== 'date') return null;
     const name = (col.label || '').trim().toLowerCase();
-    if (name === 'last played') {                 // native last_played_at is unix SECONDS
-      const n = Number((s as any).last_played_at);
+    if (name === 'last played') {                 // from THIS station's play record (library-health), unix SECONDS —
+      const n = Number(eligMap[s.id]?.lastPlayed); // never songs.last_played_at (Jeff 2026-10-18)
       return isFinite(n) && n > 0 ? n * 1000 : null;
     }
     const src = name === 'date modified' ? (s as any).updated_at

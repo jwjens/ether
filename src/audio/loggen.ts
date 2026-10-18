@@ -241,7 +241,10 @@ function buildBaseConditions(
   // no_repeat_hours is NULL for un-tuned songs; NULL*3600 = NULL makes the comparison NULL (falsy),
   // which would exclude a just-played song FOREVER once last_played_at is set. Coalesce to a 3h
   // default so this is a rolling separation window, not a permanent ban.
-  cond += " AND (s.last_played_at IS NULL OR s.last_played_at < (unixepoch() - COALESCE(s.no_repeat_hours, 3) * 3600))";
+  // Last aired comes from THIS station's play record (Jeff 2026-10-18: songs.last_played_at is read nowhere).
+  cond += ` AND NOT EXISTS (SELECT 1 FROM play_log pl WHERE pl.file_path = s.file_path AND pl.station_id = ? AND pl.deleted_at IS NULL
+             AND pl.played_at > (unixepoch() - COALESCE(s.no_repeat_hours, 3) * 3600))`;
+  params.push(stationId);
 
   // Artist separation: exclude any artist whose songs were played recently.
   // Uses artist_separation_min from separation_rules DB table (converted to seconds).
@@ -253,11 +256,12 @@ function buildBaseConditions(
   // condition threw at runtime — silently collapsing every live-pick path (clock /
   // SmartRule / random) back to generated_schedule. The subquery is correctly NOT
   // station-scoped. (`stationId` is retained in the signature for parity / future use.)
+  // The recent spins come from this station's play record, by the file that aired.
   cond += ` AND (s.artist_id IS NULL OR s.artist_id NOT IN (
-    SELECT DISTINCT s2.artist_id FROM songs s2
-    WHERE s2.artist_id IS NOT NULL AND s2.last_played_at > (unixepoch() - ?)
+    SELECT DISTINCT s2.artist_id FROM play_log pl JOIN songs s2 ON s2.file_path = pl.file_path
+    WHERE pl.station_id = ? AND pl.deleted_at IS NULL AND s2.artist_id IS NOT NULL AND pl.played_at > (unixepoch() - ?)
   ))`;
-  params.push(sep.artist_sep_sec);
+  params.push(stationId, sep.artist_sep_sec);
 
   return cond;
 }

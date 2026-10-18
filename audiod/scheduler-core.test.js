@@ -20,7 +20,7 @@ const song = (id, over = {}) => ({
   artist_name: over.artist_name ?? `Artist ${id}`,
   category_id: over.category_id ?? 1,
   duration_ms: over.duration_ms ?? 180_000,      // 180s
-  last_played_at: over.last_played_at ?? 0,
+  file_path: over.file_path ?? `song${id}.mp3`,
   ...over,
 });
 
@@ -176,6 +176,9 @@ describe("fallback ladder", () => {
     const state = createState();
     state.artistLastTs.set(100, T0 - 1 * MIN);              // every candidate violates artist sep
     state.artistLastTs.set(200, T0 - 1 * MIN);
+    // last aired comes from the play record (lastAiredByFile), never songs.last_played_at (Jeff, 2026-10-18)
+    state.lastAiredByFile.set("song1.mp3", T0 - 20_000);
+    state.lastAiredByFile.set("song2.mp3", T0 - 30_000);
     const r = planHour({
       slots: [musicSlot(0, 1)],
       hourStartTs: T0, hour: 9, categories: CATS,
@@ -183,8 +186,8 @@ describe("fallback ladder", () => {
       // in play — otherwise the fallback reports song_separation too and the test proves nothing
       // about artist handling.
       candidatesByCategory: new Map([[1, [
-        song(1, { artist_id: 100, last_played_at: T0 - 20_000 }),
-        song(2, { artist_id: 200, last_played_at: T0 - 30_000 }),  // older → LRP winner
+        song(1, { artist_id: 100 }),
+        song(2, { artist_id: 200 }),  // aired longer ago (play record) → LRP winner
       ]]]),
       constraints: CONSTRAINTS, state,
     });
@@ -196,7 +199,8 @@ describe("fallback ladder", () => {
 
   it("keeps the EARLIER candidate on an LRP tie (strict <, matches _lrpFallback)", () => {
     const state = createState();
-    const a = song(1, { last_played_at: 5000 }), b = song(2, { last_played_at: 5000 });
+    state.lastAiredByFile.set("song1.mp3", 5000); state.lastAiredByFile.set("song2.mp3", 5000);
+    const a = song(1), b = song(2);
     expect(lrpFallback([a, b], state).id).toBe(1);
     expect(lrpFallback([b, a], state).id).toBe(2);
   });
