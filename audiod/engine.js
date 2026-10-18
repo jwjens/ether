@@ -1453,7 +1453,7 @@ class DaemonEngine {
         this._log(`waiting: nothing is due${r.nextDueTs ? " — the next log row is at " + new Date(r.nextDueTs * 1000).toLocaleTimeString() : ""} (${f.reason})`);
         // Outside scheduled show hours there is no programming and no log: silence is correct, not a gap (Jeff,
         // 2026-10-18). Only a gap INSIDE a show hour (nothing passes the rules) is reported.
-        if (f.reason !== "no-show" && f.reason !== "silence-by-setting") { /* the PD's chosen silence is not a gap */ try { this.emit("logreader-floor", { stationId: this.stationId, reason: "waiting:" + f.reason, nextDueTs: r.nextDueTs ?? null }); } catch {} }
+        if (f.reason !== "no-show") { try { this.emit("logreader-floor", { stationId: this.stationId, reason: "waiting:" + f.reason, nextDueTs: r.nextDueTs ?? null }); } catch {} }
       }
     }
     if (r.items.length) this._lastWaitReason = null;

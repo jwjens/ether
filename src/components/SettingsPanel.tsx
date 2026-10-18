@@ -1947,75 +1947,6 @@ function PublicPageSettings() {
 // Per-station music folder + Test-sync / Re-sync (DESIGN-TRUTH §2 — each station is independent).
 // Pick THIS station's audio folder, dry-run "Test sync" to see if the files are there, and "Re-sync"
 // to relink them by title from that folder only — returning the list of songs whose file is missing.
-// ── Hour Behaviour — what an hour does when it runs short or late (2026-10-18) ──────────────────────
-//
-// The PD's choice, per station (Jeff: "you dont decide what an hour does you just make the infrastructure thats the
-// pds job"). Stored in station_config_kv; the daemon's log reader (audiod/loggen.js hourBehaviour) reads them on every
-// refill. UNSET is shown as unset, with what the reader does today as the current behaviour — nothing pretends to be a
-// stored choice. Help: docs/help-hour-behaviour.md.
-const SHORT_HOUR_OPTIONS: { v: string; label: string; hint: string }[] = [
-  { v: "fill",    label: "Fill from the hour's clock", hint: "A song from the hour's own clock is added to the log and plays until the next hour starts" },
-  { v: "silence", label: "Silence until the next hour", hint: "Nothing is added; the station is silent until the next row in the log is due" },
-];
-const LATE_HOUR_OPTIONS: { v: string; label: string; hint: string }[] = [
-  { v: "catch_up",   label: "Catch up to the clock",   hint: "Rows whose time has passed are marked missed (songs and spots) and the log jumps to the row for now" },
-  { v: "keep_spots", label: "Catch up, keep spots",    hint: "Passed songs are marked missed; passed spots still play, in log order, before the row for now" },
-  { v: "play_all",   label: "Play everything, run late", hint: "Nothing is skipped: every row plays in order and the hour runs as late as it runs" },
-];
-const SHORT_CURRENT = "fill", LATE_CURRENT = "catch_up";   // what the reader does while the setting is unset
-function HourBehaviourSection() {
-  const { stationId } = useActiveStation();
-  const [short, setShort] = useState<string | null>(null);
-  const [late, setLate] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [msg, setMsg] = useState("");
-  useEffect(() => {
-    if (!stationId) return;
-    setLoaded(false);
-    (async () => {
-      try {
-        const r: any = await (window as any).ether.stationConfigKv.list(stationId);
-        const rows: any[] = (r && r.rows) || [];
-        const get = (k: string) => rows.find(x => x.key === k && !x.deleted_at)?.value ?? null;
-        const s = get("short_hour_mode"), l = get("late_hour_mode");
-        setShort(SHORT_HOUR_OPTIONS.some(o => o.v === s) ? s : null);
-        setLate(LATE_HOUR_OPTIONS.some(o => o.v === l) ? l : null);
-      } catch { /* shown as unset */ }
-      setLoaded(true);
-    })();
-  }, [stationId]);
-  const save = async (key: string, v: string, apply: (x: string) => void) => {
-    try {
-      const r: any = await (window as any).ether.stationConfigKv.upsertByKey(stationId, key, v);
-      if (r && r.error) { setMsg("✗ Not saved: " + r.error); return; }
-      apply(v); setMsg("✓ Saved — the log reader uses it from the next song");
-    } catch (e: any) { setMsg("✗ Not saved: " + (e?.message || e)); }
-  };
-  const row = (title: string, opts: typeof SHORT_HOUR_OPTIONS, value: string | null, current: string, key: string, apply: (x: string) => void) => (
-    <div style={{ padding: "12px 0", borderBottom: "1px solid var(--border-primary)" }}>
-      <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>{title}</div>
-      <div style={{ fontSize: 12, marginTop: 2, color: value ? "var(--text-tertiary)" : "var(--accent-amber, #f59e0b)" }}>
-        {!loaded ? "Reading…" : value ? `Set: ${opts.find(o => o.v === value)!.label}` : `Not set — currently: ${opts.find(o => o.v === current)!.label}`}
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
-        {opts.map(o => (
-          <label key={o.v} style={{ display: "flex", gap: 8, alignItems: "flex-start", cursor: "pointer", fontSize: 13 }}>
-            <input type="radio" name={key} checked={value === o.v} disabled={!loaded} onChange={() => save(key, o.v, apply)} />
-            <span><b>{o.label}</b><span style={{ color: "var(--text-tertiary)" }}> — {o.hint}</span></span>
-          </label>
-        ))}
-      </div>
-    </div>
-  );
-  return (
-    <div style={{ display: "flex", flexDirection: "column" }}>
-      {row("When an hour runs short (nothing of it is left before :00)", SHORT_HOUR_OPTIONS, short, SHORT_CURRENT, "short_hour_mode", setShort)}
-      {row("When an hour runs late (rows' times have passed)", LATE_HOUR_OPTIONS, late, LATE_CURRENT, "late_hour_mode", setLate)}
-      {msg && <div style={{ marginTop: 8, fontSize: 12, color: msg.startsWith("✓") ? "var(--accent-green)" : "var(--accent-red)" }}>{msg}</div>}
-    </div>
-  );
-}
-
 // ── Jukebox — which categories the public may pick from ───────────────────────────────────────────
 //
 // The pool is CATEGORIES, not a clock. docs/jukebox-rebuild-design-2026-08-17.md §0.2 supersedes the
@@ -3357,11 +3288,6 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
           <strong style={{ color: "var(--accent-red)" }}>STRICT</strong> — rule is enforced absolutely, no exceptions.&nbsp;&nbsp;
           <strong style={{ color: "var(--text-secondary)" }}>SOFT</strong> — rule is preferred but can be broken if no better option exists.
         </div>
-      </Section>
-
-      {/* ── Hour Behaviour — the PD's choice for a short or late hour (help: docs/help-hour-behaviour.md) ── */}
-      <Section category="programming" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>} title="Hour Behaviour" description="What this station does when an hour runs short or runs late — your choice, per station">
-        <HourBehaviourSection />
       </Section>
 
       {/* ── Connections ── */}
