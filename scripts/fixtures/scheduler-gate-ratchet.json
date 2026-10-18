@@ -1,0 +1,61 @@
+{
+  "note": "Scheduler gate ratchet: a worse number than this fails the gate. Lower is better. Written by --update-ratchet, one entry as each station finishes.",
+  "metrics": {
+    "static": {
+      "T15_findings": 43,
+      "T16_pickers": 6,
+      "T16_random": 6
+    },
+    "station:75532b61-fa0c-4bc5-a5f0-0298b94c0123": {
+      "T1_onAir": 1945,
+      "T1_inLog": 2384,
+      "T2_breaking": 2346,
+      "T2_notLongest": 515,
+      "T3_failures": 1028,
+      "T4_touched": 0,
+      "T8_ahead": 43,
+      "T11_unlinked": 2506,
+      "T18_off": 0,
+      "T19_readerMs": 20
+    },
+    "station:43889edc-203d-4743-9e4f-6ea311d6e035": {
+      "T1_onAir": 4391,
+      "T1_inLog": 437,
+      "T2_breaking": 247,
+      "T2_notLongest": 835,
+      "T3_failures": 2748,
+      "T4_touched": 67,
+      "T8_ahead": 3634,
+      "T11_unlinked": 3683,
+      "T18_off": 168,
+      "T19_readerMs": 67
+    },
+    "station:dfbc68ac-e4d2-4769-9519-a28ead7884ae": {
+      "T1_onAir": 5,
+      "T1_inLog": 0,
+      "T2_breaking": 0,
+      "T2_notLongest": 3734,
+      "T3_failures": 3200,
+      "T4_touched": 0,
+      "T8_ahead": 68,
+      "T11_unlinked": 3308,
+      "T18_off": 0,
+      "T19_readerMs": 33
+    },
+    "station:f6ac7a00-d905-4b87-b0ef-f219ac3b1e1e": {
+      "T1_onAir": 4843,
+      "T1_inLog": 5556,
+      "T2_breaking": 4112,
+      "T2_notLongest": 36,
+      "T3_failures": 864,
+      "T4_touched": 0,
+      "T8_ahead": 124,
+      "T11_unlinked": 3978,
+      "T18_off": 206,
+      "T19_readerMs": 142
+    }
+  },
+  "writtenAt": "2026-10-18T17:48:37.844Z",
+  "days": 7,
+  "seed": 1
+}

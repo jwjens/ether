@@ -91,8 +91,7 @@ minutes.
 - an unscheduled position is filled only from the fallback you name; with none set it stays a hole, as in GSelector, and
   alerts.
 
-**Decisions:** Jeff answered §3.12 on 2026-10-17 (recorded there). One is still open: per-song "no repeat hours", keep or
-remove.
+**Decisions:** Jeff answered §3.12 on 2026-10-17 and 2026-10-18 (recorded there). None is open.
 
 ---
 
@@ -424,6 +423,9 @@ Jeff's rule replaces least-recently-played as a backbone, and the play-count rou
 **The rules** come from Programming preferences, per station, with nothing baked in:
 1. **Song separation:** no song plays again within the minutes set.
 2. **Artist separation:** no artist plays again within the minutes set. **Title separation** works the same way.
+2a. **Per-song no repeat hours** (Jeff, 2026-10-18: KEEP): a song that carries a value may not air again within that many
+   hours of itself. A song with no value has no such rule; nothing is assumed in its place. It is checked by the same rules
+   module, on the same recording key as song separation, and counted by the gate's checker.
 3. **These are obeyed.** They are measured against what actually aired plus what is already in the log on either side of the slot.
 
 **The pick:** among the songs in the slot's category that pass every rule, take the one that has **waited longest since it last
@@ -612,6 +614,7 @@ So the gate must tell the two cases apart (decision D1):
 | Early-start window | Hour start | 0 s |
 | Fill tolerance for a short hour, and before a break | Hour start | 30 s |
 | Break tolerance (late or early beyond this is an alert) | Hour start | 30 s |
+| Reader call limit (the longest the air loop may wait on the reader; T19) | Hour start | 10 ms (proposed) |
 | Count only the broadcast owner's plays | Music Scheduling Rules | on |
 
 **Nothing else.** Removing `enforce_separation` leaves no hidden key. A test enforces this (§4, T15).
@@ -626,8 +629,10 @@ All recommended, except 3b, 3c and 3d.
 3. **D2, STRICT / SOFT:** the button is removed. The rules are obeyed. **Decided.**
 3a. **D3, daypart:** a song outside its daypart is not in the slot's category for that hour, so it neither passes nor blocks.
    **Decided.**
-3b. **D4:** "max songs in a row from one category" is **removed** (Jeff). Per-song **"no repeat hours"**: **OPEN**, keep or
-   remove. If kept, it is enforced by the same rules module and checked by the gate.
+3b. **D4:** "max songs in a row from one category" is **removed** (Jeff). Per-song **"no repeat hours" is KEPT** (Jeff,
+   2026-10-18): enforced by the same rules module as song, artist and title separation, and counted by the checker (§3.2, 2a).
+   Today's reader assumes 3 hours when a song has no value (`COALESCE(s.no_repeat_hours, 3)`, `audiod/loggen.js:77`); that
+   hidden default is removed.
 3c. **Spot-break timing is kept** (Jeff): "The clock is law. Spot breaks land on their time through the station's hour start
    (Soft/Hard) and fill, never by bending the pick. The pick stays: longest-waiting song that passes. Any break that still lands
    late or early is an alert." Design: §3.7; test: T18.
@@ -676,7 +681,8 @@ All recommended, except 3b, 3c and 3d.
 | T13 | **Duplicates**: one recording on two song rows | one "last aired" and one separation for both; the merge keeps history and moves future rows |
 | T13a | **The screen's counts** | the Rotation screen's counts equal the checker's recount from play_log |
 | T14 | **Two machines**: a standby airs the same station | its plays don't block the owner's songs (if decision 8 = yes); both are recorded by machine |
-| T15 | **No hidden settings, no baked numbers** (static) | every key the core, reader and Generate read is in the settings registry with a UI control and a starting value; no numeric literal in rule or timing code outside that registry; `enforce_separation`, `is_hard`, `max_same_category`, `fitTargetTs` and `songs.last_played_at` are read nowhere by the pick; `no_repeat_hours` is read only by the rules module, or nowhere (3b open) |
+| T15 | **No hidden settings, no baked numbers** (static) | every key the core, reader and Generate read is in the settings registry with a UI control and a starting value; no numeric literal in rule or timing code outside that registry; `enforce_separation`, `is_hard`, `max_same_category`, `fitTargetTs` and `songs.last_played_at` are read nowhere by the pick; `no_repeat_hours` is read only by the rules module, with no default |
+| T19 | **Nothing on the air loop waits on the database** (Jeff, 2026-10-18): the reader's call is timed on a copy of every station's database as it is, before anything on the copy changes | every call the air loop makes stays under the **reader call limit** (a setting, starting value proposed 10 ms); a worse number than the ratchet fails |
 | T18 | **Spot breaks on time** (Jeff, 3c): 24 h simulated with real song-length error and every station's timed breaks, Soft and Hard | every break starts within the break tolerance of its time, or raises `break-late` / `break-early` with planned and actual time; no song was chosen for its length (T2 holds through every break); the music rows passed over by a Soft break are marked skipped |
 | T16 | **One code path** (static) | exactly one module chooses songs: no `ORDER BY RANDOM()` outside the core's tie-break; no picking in `src/audio/`; `pickEnforced` and `_legacyPickMusic` gone |
 
@@ -699,7 +705,7 @@ Jeff tests it off-air and then on OVEVENTS before it goes near ovowforestmusic. 
 | **0. Decisions + the harness** | Jeff's answers to §3.12. The gate harness, the independent checker and the ratchet, run against **today's** code. 10348f4 not shipped (decision 10). | the harness reports today's failures (T1–T16) with receipts: the tests catch what is wrong |
 | **1. The record** | Go-live writes play + row stamp in one transaction, with row id, category, content class, machine; each deck holds its own row; one row airs once; sweepers/spots/announcements stamped; Generate, Clear Day and the editors touch pending rows only; `songs.last_played_at` as display only. Reviewed from 10348f4, not copied. | T4, T11, T12, T10 (replay part) |
 | **2. One pick** | scheduler-core: the rules (song, artist, title) against what aired + the log on both sides, by recording; the longest-waiting passing song; random for exact ties; UNSCHEDULED slots + the station's fallback; artist participants; title normalising. Delete the second and third paths, and the rule switches D2/D4 remove. | T1, T2, T3, T15, T16 |
-| **3. The clock on air** | Default clock; the reader never ahead; Soft/Hard at :00 and at every timed spot break, with skipped rows; short-hour fill from the hour's clock; automation start at the row for now; every deck-loading path re-checks the rules (§3.2.2); stall recovery plays the row for now. | T1 and T3 on air, T5, T6, T8, T9, T10, T18 |
+| **3. The clock on air** | **Nothing on the air loop waits on the database** (Jeff, 2026-10-18). Today the daemon polls every 250 ms (`engine.js:559`), the poll's self-heal calls the refill (`engine.js:953` → `refillIfNeeded` → `_refillFromLog`, throttled to 2 s), and the refill calls the reader synchronously (`readLogAnchored`, node:sqlite is synchronous). Measured read-only on this machine's database (2026-10-17/18): `selectRowForNow` 286 ms on Christmas in Jully, of which its full-history `missedCount` COUNT is 217 ms and the playing-row MAX 71 ms (no `sqlite_stat1`, the COUNT walks every row of the station); 48 ms on HalloVeen. So for that call the loop stops. The reader's work moves off the loop: the loop reads only what is already in memory, and the reader's queries are bounded to what they need (the day, the current hour) with the indexes they need. Default clock; the reader never ahead; Soft/Hard at :00 and at every timed spot break, with skipped rows; short-hour fill from the hour's clock; automation start at the row for now; every deck-loading path re-checks the rules (§3.2.2); stall recovery plays the row for now. | T1 and T3 on air, T5, T6, T8, T9, T10, T18, T19 |
 | **4. Regenerate on air** | Daemon command for what is on air; Generate from the next song; the current hour planned with its aired part as fact; aired rows untouched; re-cue by row. | T7, T4 again |
 | **5. Duplicates** | Recording identity (from Phase 2), plus the Library Duplicates view and merge. | T13 |
 | **6. Screens and help** | The **Rotation screen** (§3.2.4); Music Scheduling Rules rewritten to what the code does; every §3.11 setting on screen; Program Log UNSCHEDULED / skipped / fill rows; reconciliation view; help docs (`help-rotation.md`, `help-music-scheduling-rules.md`, `help-hour-start.md`, `help-duplicates.md`, `help-default-clock.md`). | T13a, T15 + launching the app and looking at each screen (CLAUDE.md: the only valid UI test) |
@@ -917,7 +923,7 @@ as starting values. The light's level is the worst of the audio checks and the o
 - every way a rule is broken to fill a slot (Generate's least-recently-played fallback, loggen's tiers 2/3, `pickEnforced`'s relax
   ladder);
 - spot-break length fitting (`fitTargetTs`); breaks land on time through Hour start and fill (3c);
-- "max songs in a row from one category" (3b); per-song "no repeat hours" only if Jeff says remove (open).
+- "max songs in a row from one category" (3b); the reader's hidden 3-hour no-repeat default.
 
 **Kept:**
 - the clock-is-law format guard (`getFormatCategoryIds`);
