@@ -43,6 +43,7 @@ const SYNCED_TABLES = [
   'prep_notes',
   'published_episodes',
   'rtmp_destinations',
+  'screen_layouts',
   'separation_rules',
   'shows',
   'smart_schedule_rules',
@@ -798,6 +799,29 @@ const REGISTRY = {
       created_at: 'scalar',
       updated_at: 'scalar',
       deleted_at: 'scalar',
+    },
+  },
+
+  // v64 (2026-10-18, docs/screen-builder-design-2026-10-18.md §2.5; Jeff's decision 3): a built surface saved as data,
+  // per station plus per in-app user profile (owner_user_uuid NULL = the station's shared layout). Station-scoped, so a
+  // layout follows its station to every computer on the account. Window position is NOT here — it stays machine-local
+  // (popout-bounds.json).
+  screen_layouts: {
+    tableName: 'screen_layouts',
+    primaryKey: ['id'],
+    scope: 'station',
+    columns: {
+      id:              'scalar',
+      uuid:            'scalar',
+      station_id:      'scalar',
+      station_uuid:    'scalar',
+      owner_user_uuid: 'scalar',
+      name:            'scalar',
+      payload:         'scalar',
+      version:         'scalar',
+      created_at:      'scalar',
+      updated_at:      'scalar',
+      deleted_at:      'scalar',
     },
   },
 
