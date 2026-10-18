@@ -16,8 +16,14 @@ Nothing from them was applied; the copy I had put in `docs/` was removed. Built 
 
 ## Summary, in plain words (one page)
 
-**What is wrong today, in one line:** Ether has three song pickers, none of them uses what actually aired, STRICT is never read,
-the log reader plays tomorrow's rows today when nothing is due, and the record of what aired is incomplete.
+**What is wrong today, in one line:**
+- Ether has three song pickers. They pick at random first, and none of them knows what actually aired.
+- STRICT is never read.
+- The log reader plays tomorrow's rows today when nothing is due.
+- The record of what aired is incomplete.
+
+**Result on HalloVeen, 10/16–10/17:** some songs played 10 times, 7 never played, and 22 of 118 songs re-aired within 30
+minutes.
 
 **What the professionals do:**
 - **GSelector** scores every candidate song against one ranked list of rules and goals:
@@ -33,31 +39,34 @@ the log reader plays tomorrow's rows today when nothing is due, and the record o
 **What Ether will do:**
 1. **One picker for every station and every path.** Generate, Fill Day, the hour's Regenerate, auto-extend, the log reader's fill
    and the stall recovery all use it. The other two pickers and the hidden `enforce_separation` switch are deleted.
-2. **Least recently played first**, measured from **what actually aired plus what is already in the log**, in both directions.
-   Random only between songs that are exactly tied. Rotate the pool and the spacing follows.
-3. **Every rule is STRICT or SOFT, as you set it.**
-   - STRICT is never broken, anywhere, by anything.
-   - SOFT may give way only when nothing passes, and the log says which rule gave way and by how much.
-   - No rule outranks another unless you set an order.
-4. **When nothing passes,** the position is shown as **UNSCHEDULED** in the Program Log, with the rule that blocked it, and is
-   reported. What plays there is your visible setting.
-5. **The clock is law on air.**
+2. **The rules are obeyed.** Song, artist and title separation, in minutes from Programming preferences, per station, are
+   measured against what actually aired plus what is already in the log on either side of the slot.
+3. **The pick:** among the songs in the slot's category that pass every rule, take the one that has **waited longest since it
+   last aired**. Random only for exact ties. Nothing else decides.
+4. **If no song passes,** the slot is **UNSCHEDULED** in the Program Log and reported, with the rule that blocked it. What fills
+   the time comes from another category per your visible setting, under the same rules. A rule is never quietly broken.
+5. **Play counts are the proof, not the rotation.** A Rotation screen shows each category, its songs and their play counts. The
+   release gate checks that inside every category, highest − lowest never exceeds 1.
+6. **The clock is law on air.**
    - The reader never plays a row whose hour has not started.
    - A short hour is filled to the top of the hour from the hour's own clock, never with the next hour's rows.
    - Every hour of every day has a clock: a station **default clock** covers hours with no show.
-6. **Starting automation early or late** plays the log row for **now**, not the first row of the log.
-7. **Regenerate works on the hour on air.** It starts at the next song, as the engine reports it, never at a guessed time.
+7. **Starting automation early or late** plays the log row for **now**, not the first row of the log.
+8. **Regenerate works on the hour on air.** It starts at the next song, as the engine reports it, never at a guessed time.
    Anything that aired is never touched.
-8. **What aired is the record.**
+9. **What aired is the record.**
    - Every element (song, sweeper, spot, announcement) is written to play history with its log row, category and machine, at the
      moment it goes on air.
    - The log row is stamped in the same step.
    - One log row can air only once.
-9. **Every number is a setting** with a sensible starting value you can see and change. There is no hidden setting.
-10. **Proof:** a release-gate test suite runs on copies of every station's database. It generates 7 days per station and checks
-    them with a second, independent checker:
-    - zero STRICT breaks;
-    - least-recently-played order verified pick by pick;
+   - The play count is updated in the same step.
+10. **Every number is a setting** with a sensible starting value you can see and change. There is no hidden setting.
+11. **Proof:** a release-gate test suite runs on copies of every station's database. It generates and simulates 7 days per
+    station and checks them with a second, independent checker:
+    - zero song, artist or title separation violations;
+    - every pick was the longest-waiting song that passed (re-derived pick by pick);
+    - inside every category, highest play count − lowest ≤ 1 (songs added during the run excepted; see §3.2.5 for the one case
+      where the rules themselves cause 2);
     - aired rows byte-identical;
     - never ahead of the clock;
     - started-early, started-late and regenerated-on-air scenarios.
@@ -65,10 +74,10 @@ the log reader plays tomorrow's rows today when nothing is due, and the record o
     A failure blocks the release, so this cannot silently break or be rolled back again.
 
 **Where Ether differs from Zetta/GSelector on purpose** (each is your decision, see §3.12):
+- **no breakable rules and no scoring:** GSelector has both; Ether obeys the rules and leaves the slot unscheduled;
 - one combined scheduler + playout (not two products);
 - rules are per station, not per category;
-- no goal scoring until you rule on goals;
-- an unscheduled position plays your fallback instead of a hole the operator must fill.
+- an unscheduled position is filled from another category per your setting, instead of a hole the operator must fill.
 
 **Decisions I need:** listed in §3.12.
 
@@ -387,7 +396,7 @@ unless marked HEAD (10348f4, built and not installed). The 10/17 airplay figures
   - the playout re-check's replacement (§3.8);
   - the window's in-process fallback: it asks main over IPC, so there is no picker in the renderer.
 - **Deleted when this is built:**
-  - `separation-enforce.pickEnforced` (its least-recently-played-from-airplay logic moves into the core);
+  - `separation-enforce.pickEnforced` (its play_log reading moves into the core's rule check);
   - the `enforce_separation` switch;
   - `generate-core.js` `selectMusic`'s own loop (break mode calls the core);
   - `_legacyPickMusic` and the differential;
@@ -395,64 +404,97 @@ unless marked HEAD (10348f4, built and not installed). The 10/17 airplay figures
   - `src/audio/loggen.ts` and `src/audio/separationEnforce.ts` picking;
   - the goal-mode shadow planner, unless Jeff rules to promote goals (§3.12, decision 9).
 
-### 3.2 Rotation: least recently played, from what aired and what is scheduled
-- **Per position:**
-  1. **The pool** is the slot's category, in rotation and in daypart, MUSIC.
-  2. **Every song's "last time"** is the latest of:
-     - its last airing on this station: play_log, by recording (§3.5);
-     - its placement in this run;
-     - its nearest placement already in the log on either side of this position.
-     "Either side" is new: regenerating today while tomorrow's log exists must not put the same song an hour apart across midnight.
-  3. **Candidates are ordered by that time, oldest first.** Never aired comes first.
-  4. **The first candidate that passes every STRICT rule and every SOFT rule is placed.**
-  5. **Random breaks only an exact tie** (in practice, songs that have never aired).
-  6. **If nothing passes,** see §3.4.
-- **"Rotate the pool and the spacing follows":** with this order a category cycles. Every song plays once before any plays twice,
-  as long as the rules allow it. The spacing is whatever the cycle gives. Rest rules only stop a song coming back too soon.
-- **Break-mode anchor fit:** fitting a break to its minute means choosing by length, which can step out of strict order. **Ether
-  default: fit only among the N oldest passing songs.** N is a setting, starting at 3. The row's reason says "fit for the :20
-  break, 2nd oldest". N = 1 means strict order and breaks drift (shown as break-drift health events, as now). Jeff decides
-  (decision 2).
+### 3.2 Rotation: the rules, then the song that has waited longest (Jeff, 2026-10-17)
 
-### 3.3 Separation rules, STRICT or SOFT, none outranking another
-- **Rules (each with a value, STRICT/SOFT and on/off):**
-  - song rest;
-  - artist separation;
-  - title separation;
-  - max in a row from one category (wired for the first time);
-  - per-song rest (`no_repeat_hours`), which replaces the station's song rest for that song.
-- **Artist means every participant,** split on delimiters that are a station setting. Starting value: `/`, `&`, `,`, `feat.`,
-  `ft.`, `f/`, `x`, `with`. A song can switch off a participant (as in GSelector). Artist groups are a later phase (not in this
-  build).
-- **Title means a normalised title:** lower case, punctuation removed, and the bracketed or "– From …" tail removed. The tail rule
-  is a setting.
-- **STRICT** is never broken, anywhere: Generate, fill, playout, regenerate.
-- **SOFT** gives way only when nothing passes every rule. Then:
-  - **with no order set** (the starting value), the candidate that is **closest to passing** wins, measured in minutes short
-    across the SOFT rules it breaks;
-  - **if Jeff sets an order,** the lowest SOFT rule gives way first.
-- **Every give-way is written on the row** ("same artist 42 min after; rule 60, SOFT") and shown in the Program Log.
-- **Ether differs from GSelector here:** GSelector folds goals and rules into one score. Ether keeps rules as pass/fail with
-  "closest to passing" as the only measure, unless Jeff sets an order. That is readable on the log row and testable pick by pick.
+Jeff's rule replaces least-recently-played as a backbone, and the play-count rounds draft. Play counts are **only the proof**.
 
-### 3.4 When no song passes the STRICT rules
-- **The position is written to the log as UNSCHEDULED,** with the blocking rule and the closest song ("Rihanna: artist 40 min,
-  rule 60 STRICT").
-- **It is a health event and a red row in the Program Log.**
-- **What airs there** is a station setting, **"When a position is unscheduled"**:
-  - **(a) Nothing:** the position is skipped and the hour runs short. The short hour is then filled per §3.7, under STRICT,
-    from the clock's other positions' categories.
-  - **(b) A fallback category you name,** under the same STRICT rules.
-  - **(c) The closest song, breaking the STRICT rule:** only because you chose this, and said on the row.
-- **Re-running Generate fills only unscheduled positions** if you ask it to ("Fill unscheduled"), as GSelector does.
-- **Ether differs from GSelector here:** GSelector leaves a hole for the music director to fill before air. Ether is often
-  unattended, so the setting decides what airs, and STRICT stays unbroken unless you choose (c). Starting value: (a). Jeff
-  decides (decision 3).
+**The rules** come from Programming preferences, per station, with nothing baked in:
+1. **Song separation:** no song plays again within the minutes set.
+2. **Artist separation:** no artist plays again within the minutes set. **Title separation** works the same way.
+3. **These are obeyed.** They are measured against what actually aired plus what is already in the log on either side of the slot.
+
+**The pick:** among the songs in the slot's category that pass every rule, take the one that has **waited longest since it last
+aired**. Random only for exact ties. Nothing else decides.
+
+**If no song passes,** the slot is **UNSCHEDULED** and reported. It never quietly breaks a rule.
+
+#### 3.2.1 What each word means in the code
+- **The slot's category:** the clock slot's category. Songs in rotation, MUSIC. Daypart: see decision D3.
+- **Passes every rule:** at the slot's time, for every rule:
+  - **The song:** its last airing on this station (play_log, by recording, §3.5) and its nearest placement already in the log on
+    either side are both at least the song separation away.
+  - **The artist:** every credited artist, the same check with the artist separation. A participant split is a setting (§3.11).
+  - **The title:** the normalised title, the same check with the title separation.
+- **Waited longest since it last aired:** the oldest "last time".
+  - While Generate plans ahead, a song it has already placed earlier in this plan counts as having aired at that placement.
+    Without that, a 7-day plan would put the same longest-waiting song in every slot.
+  - The record itself stays what aired.
+  - A song that has never aired has waited longest. Several such songs are an exact tie, so random.
+- **Random only for exact ties:** the one place randomness is used.
+- **UNSCHEDULED:** a log row with no song. It names the category and, for the songs that came closest, the rule and the minutes
+  short ("Kids: Kidz Bop Kids, artist 22 min, rule 60"). It is a red row in the Program Log and a health event.
+
+#### 3.2.2 The same pick everywhere
+- **Generate, Fill Day, the hour's Regenerate and auto-extend** pick with it.
+- **The reader's fill for a short hour** (§3.7) picks with it.
+- **The playout check** (§3.8) uses the same rules against what aired up to that second.
+  - A row that no longer passes (because the air drifted, or something played in between) is marked **skipped** with the rule.
+  - The pick is then run again for that slot, or the slot is unscheduled.
+- **There is no other rule, weight, score or order.**
+
+#### 3.2.3 When a slot is unscheduled, what airs
+- **The log says UNSCHEDULED.** What fills the time is a station setting, "When a slot is unscheduled":
+  - **(a)** Fill from the clock's other music categories, with the same rules and the same pick. That fill is written on the
+    row. Starting value (proposed).
+  - **(b)** A fallback category you name, with the same rules and the same pick.
+- **Never a song that breaks a rule.**
+- **"Fill unscheduled"** re-runs the pick on unscheduled slots only, for example after you add songs or change a rule.
+
+#### 3.2.4 Play counts: the proof, not the rotation
+- **No play count is read by the pick.**
+- **Counts are computed from play_log:** plays per song (by recording) per category, by the station's broadcast owner.
+- **They are shown and tested:**
+  - **The Rotation screen** (Programming → Rotation, read-only): for each category, its songs with their aired count, last aired,
+    their next row in the log, and, when blocked, why ("artist: Danny Elfman 22 min ago, rule 60"). At the top, the check:
+    "highest − lowest ≤ 1 in every category" (songs added in the window are listed separately), or the category and songs that
+    are off.
+  - **The release gate's proof (§4, T3)** reads the same numbers.
+- **Help:** `docs/help-rotation.md`.
+
+#### 3.2.5 Said plainly: when the count check can fail with the rules and the pick both right
+The longest-waiting songs are the ones with the lowest count, so the pick goes through a category in turn and the counts stay
+level. **But not always.** When every song with the lowest count is blocked by a rule at that moment, the pick takes the
+longest-waiting song that passes, which has already played one more time. A small category with several songs by one artist does
+this:
+- HalloVeen Kids has 11 songs, several of them Kidz Bop Kids, with artist separation 60 min.
+- When the songs left at the lowest count are all Kidz Bop, and one just aired, the next Kids slot takes a song one count higher.
+- The spread becomes 2. The rules and the pick did exactly what they say.
+
+So the gate must tell the two cases apart (decision D1):
+- **Recommended:** the gate's checker re-runs every pick on its own and fails if any pick was not "the longest-waiting song that
+  passed".
+  - A spread above 1 then fails the gate unless, at that moment, every lower-count song in the category was blocked by a named
+    rule. That exception is listed in the report with the rule and the songs, never hidden.
+- **Or:** a spread above 1 always fails, and the station changes its rules or its category until it passes.
+
+#### 3.2.6 How this compares with the professionals
+- **MusicMaster's card-file stack is the same idea.** The song that played longest ago is next; if it fails a rule, the next one
+  down; an unscheduled position when none passes.
+- **GSelector** adds scored goals (Max Sep, Spread, Airplay Starvation, Hour Rotation) and breakable rules on top. Ether
+  deliberately has none of these. There is one pick and the rules are obeyed (decision D5).
+
+### 3.3 Who counts as the same artist, the same title
+- **Artist means every credited artist,** split on delimiters that are a station setting. Starting value: `/ & , feat. ft. f/ x
+  with`. A song can switch off a participant (as in GSelector). Artist groups are a later phase.
+- **Title means a normalised title:** lower case, no punctuation, with the bracketed or "– From …" tail removed. The tail rule is
+  a setting.
+
+### 3.4 (folded into §3.2.3)
 
 ### 3.5 One recording, one song
-- **Rest is by recording, not by song row:** the file's content hash, the one the audio resolver already keys on
+- **Separation, "last aired" and the proof's play counts are by recording, not by song row:** the file's content hash, the one the audio resolver already keys on
   (`electron/audio-resolver.js`, `local_files.content_hash`). Where a song has no hash yet, its stored file name is used. Two
-  song rows on one file are one song for rotation from day one.
+  song rows on one file are one song from day one.
   - UNVERIFIED: how many HalloVeen songs carry a hash today. That is the first count in Phase 2.
 - **A Duplicates view in the Library** finds:
   - the same recording;
@@ -488,10 +530,10 @@ unless marked HEAD (10348f4, built and not installed). The 10/17 airplay figures
 - **Covered:** the reader, the preload, the re-cue, the stall recovery, PLAY NOW from the queue, and the skip.
 - **Before a row is loaded:**
   1. **Its log row is the row for now:** the next unplayed row of the current hour in order, or a fill per §3.7.
-  2. **It passes every STRICT rule** against what has aired on this station, as recorded in §3.9.
+  2. **It passes every rule** against what has aired on this station, as recorded in §3.9.
 
-     A row that fails is marked **skipped** with the reason, and the next row is checked. A SOFT break at playout airs, and the
-     play is marked relaxed.
+     A row that fails is marked **skipped** with the rule, and the pick is run again for that slot (§3.2.2), or the slot is
+     unscheduled.
 - **The stall recovery stops playing "any idle deck with a file".** It plays the deck that holds **the log's row for now**.
   Otherwise it loads that row. A deck whose content is not that row is emptied, and that is logged.
 - **An operator's own load of a specific song is never refused.** The user is in charge. It is logged as an operator play, and
@@ -523,10 +565,8 @@ unless marked HEAD (10348f4, built and not installed). The 10/17 airplay figures
 - **There is no time limit and no guess.**
 - **The rest of the current hour is planned from that point** in the clock's order:
   - its earlier positions are taken as **filled by what actually aired**;
-  - the maps are seeded from that airplay;
-  - rows planned before the start are **never computed into the maps**.
-
-  So a small category (HV Adult, 7 songs) keeps its whole pool.
+  - the rules and "last aired" use that airplay;
+  - nothing is planned before the start, so no phantom row can block a song.
 - **Aired rows are never touched (§3.9).** The cued decks re-cue to the new rows at the next seam by row identity (10348f4's
   re-cue model).
 - **Auto-extend** (unattended) still starts at the next top of the hour, so it never reshuffles the hour on air under the
@@ -535,13 +575,10 @@ unless marked HEAD (10348f4, built and not installed). The 10/17 airplay figures
 ### 3.11 Settings (all visible, each with a starting value Jeff sets)
 | Setting | Where | Starting value (proposed) |
 |---|---|---|
-| Song rest / artist / title separation, each STRICT or SOFT, on/off | Music Scheduling Rules | as each station has them today |
-| Max in a row from one category, STRICT/SOFT | same | 3, SOFT (seeded today) |
-| SOFT give-way order | same | none (closest to passing) |
+| Song / artist / title separation (minutes), each on/off | Music Scheduling Rules (Programming preferences) | as each station has them today |
 | Artist delimiters | same | `/ & , feat. ft. f/ x with` |
 | Title tail rule | same | on |
-| Break fit: among the N oldest | same | 3 |
-| When a position is unscheduled | same | (a) nothing; the hour is filled under STRICT |
+| When a slot is unscheduled | same | (a) fill from the clock's other music categories, same rules |
 | Fallback category | same | none |
 | Duplicate length tolerance | Library → Duplicates | 2 s |
 | Default clock (hours with no show) | Programming | none (runway shows red) |
@@ -555,15 +592,25 @@ unless marked HEAD (10348f4, built and not installed). The 10/17 airplay figures
 ### 3.12 Where Ether differs from Zetta/GSelector, and other decisions Jeff makes
 1. **Scheduler and playout are one product.** Ether writes the log and plays it, so "live integration" is built in: there is no
    reimport.
-2. **Break fit:** among the N oldest (starting value 3), or strict order (N = 1)?
-3. **Unscheduled position:** starting value (a) nothing (STRICT kept), (b) a fallback category, or (c) the closest song (STRICT
-   broken by your choice)?
+2. **D1, the count proof:** a spread above 1 fails the gate unless every lower-count song was blocked by a named rule at that
+   moment, which is reported (recommended, §3.2.5). Or: any spread above 1 fails.
+3. **D2, STRICT / SOFT:** the rules are obeyed, so the STRICT/SOFT button means nothing. Remove it from Programming preferences
+   (recommended), or keep SOFT as "may give way", which your rule does not have?
+3a. **D3, daypart:** a song outside its daypart is not in the slot's category for that hour (recommended), so it neither passes
+   nor blocks.
+3b. **D4, rules that are on the screen but not in your list:** "max songs in a row from one category" (shown, never enforced)
+   and the per-song "no repeat hours" in the library. Remove both (recommended, nothing else decides), or make them rules too?
+3c. **Spot-break fit** (choosing a song by length to land a break on its minute) is removed, because nothing but the rules and
+   the wait decides. Breaks then drift and are shown as break-drift events. Agree?
+3d. **When a slot is unscheduled:** (a) fill from the clock's other music categories, or (b) a fallback category you name. Both
+   use the same rules and pick.
 4. **Rules are per station,** not per category. GSelector has a Priority List per category. Per category is a later phase if you
    want it.
-5. **No scoring.** Pass/fail plus "closest to passing", or your order, instead of GSelector's weighted score. Keep it?
+5. **D5, no scoring:** rules obeyed plus the longest-waiting song, instead of GSelector's weighted score, breakable rules,
+   Max Sep, Spread and Airplay Starvation.
 6. **A short hour is filled from the hour's own clock,** not from a fill-tagged library as in Zetta. Keep it?
 7. **Hour start** is per station (Soft/Hard). Per-clock top-of-hour types, like Zetta's ETM per log, come later?
-8. **Count only the broadcast owner's plays** for rest?
+8. **Count only the broadcast owner's plays** for the rules, "last aired" and the proof?
 9. **Goal mode:** delete the shadow planner now (no second path), or rule on promoting goals into the one core later?
 10. **10348f4 (installer 615c4632):** not shipped as it stands. Its row-identity, stamp-on-air, sweeper, category and X parts are
     reviewed and rebuilt inside Phases 1 and 3, each with its gate test. Agree?
@@ -586,21 +633,22 @@ unless marked HEAD (10348f4, built and not installed). The 10/17 airplay figures
 
 | # | Test | Pass condition |
 |---|---|---|
-| T1 | **7 days generated per station** (≥ 24 h required; 7 used), from a seeded as-aired history | the checker finds **0 STRICT breaks**; every SOFT give-way is labelled on its row with rule and amount |
-| T2 | **Least-recently-played order**, pick by pick | for every position, no passing candidate with an older "last time" was passed over, except an exact tie or the break fit (N), which must be labelled |
-| T3 | **Rotation turnover** per category | each category cycles: no song's 2nd play before every eligible song's 1st, unless a rule blocked it (labelled); spread (min/median/max per song) reported and ratcheted |
+| T1 | **Zero separation violations:** 7 days generated and simulated per station, on copies, from each station's real as-aired history, with real song-length error, :00 skips, X removals and a regenerate on air | the independent checker finds **0 song, 0 artist and 0 title separation violations**, in the log and on air, measured against what aired plus the log on both sides |
+| T2 | **The pick**, re-derived slot by slot | every placed song was, among the category's songs passing every rule at that time, the one that had waited longest (exact ties excepted); every slot where no song passed is UNSCHEDULED with its reason; nothing else ever decided |
+| T3 | **Even play counts (the proof)** | at every go-live, inside every category, highest aired count − lowest ≤ 1, songs added during the run excepted. Per decision D1, a spread of 2 passes only if every lower-count song was blocked by a named rule at that moment, and that is listed. Each station's spread is reported and ratcheted |
 | T4 | **Aired rows untouched** | snapshot every non-pending row; run Generate, Days, Fill Day, hour Regenerate, Clear Day, auto-extend, editor moves; every snapshot row byte-identical |
 | T5 | **Started early** (automation at 12:25, shows from 3 PM; with and without a default clock) | no row airs before its hour (beyond the early-start window); the hours before 3 PM air the default clock, or live fill under the rules; 0 evening rows consumed |
 | T6 | **Started late / mid-hour** (automation at :20, at :59, after a 2 h gap) | the first row aired is the log's row for now per Hour start; the passed rows are marked skipped, not aired |
 | T7 | **Regenerated on air** (at :20 with a song playing; at :58; with the station ahead; with the station behind) | the first new row starts at the engine-reported end of the song on air; nothing aired changed; the rest of the hour obeys the rules against the aired part; small categories keep their full pool |
 | T8 | **Never ahead of the clock**, 24 h simulated with real song-length error (true vs planned length, ±10%) and spots | at every go-live, the row's hour has started (± the early-start window); short hours filled from the hour's clock; drift reported |
 | T9 | **Hour start Soft and Hard** at :00, long and short hours | Soft: the song finishes, the old hour's unstarted rows are skipped, the new hour starts at its first row; Hard: cut at :00 |
-| T10 | **Playout re-check**: a STRICT violator inserted into the log; a replay attempt; a stall with a leftover track on an idle deck | the violator never airs (skipped, reason); no row airs twice; the stall recovery airs the row for now, never the leftover |
+| T10 | **Playout re-check**: a song that breaks separation inserted into the log; a replay attempt; a stall with a leftover track on an idle deck | the violator never airs (skipped, reason); no row airs twice; the stall recovery airs the row for now, never the leftover |
 | T11 | **As-aired = record**: every go-live over 24 h | one play per aired row, with row id, category, content class, machine; every sweeper/spot/announcement stamped; the reconciliation view shows zero unexplained differences |
 | T12 | **The X and editor moves on air** | a removed row never airs and stays removed through 10 refills |
-| T13 | **Duplicates**: one recording on two song rows | treated as one song for rest; the merge keeps history and moves future rows |
+| T13 | **Duplicates**: one recording on two song rows | one "last aired" and one separation for both; the merge keeps history and moves future rows |
+| T13a | **The screen's counts** | the Rotation screen's counts equal the checker's recount from play_log |
 | T14 | **Two machines**: a standby airs the same station | its plays don't block the owner's songs (if decision 8 = yes); both are recorded by machine |
-| T15 | **No hidden settings, no baked numbers** (static) | every key the core, reader and Generate read is in the settings registry with a UI control and a starting value; no numeric literal in rule or timing code outside that registry; `enforce_separation` and `songs.last_played_at` are read nowhere |
+| T15 | **No hidden settings, no baked numbers** (static) | every key the core, reader and Generate read is in the settings registry with a UI control and a starting value; no numeric literal in rule or timing code outside that registry; `enforce_separation`, `is_hard` (if D2 = remove), `max_same_category`, `no_repeat_hours` (if D4 = remove) and `songs.last_played_at` are read nowhere by the pick |
 | T16 | **One code path** (static) | exactly one module chooses songs: no `ORDER BY RANDOM()` outside the core's tie-break; no picking in `src/audio/`; `pickEnforced` and `_legacyPickMusic` gone |
 
 **Today's code is expected to fail** T1, T2, T3, T4, T5, T8, T10, T11, T15 and T16. Phase 0 proves the harness catches them
@@ -621,11 +669,11 @@ Jeff tests it off-air and then on OVEVENTS before it goes near ovowforestmusic. 
 |---|---|---|
 | **0. Decisions + the harness** | Jeff's answers to §3.12. The gate harness, the independent checker and the ratchet, run against **today's** code. 10348f4 not shipped (decision 10). | the harness reports today's failures (T1–T16) with receipts: the tests catch what is wrong |
 | **1. The record** | Go-live writes play + row stamp in one transaction, with row id, category, content class, machine; each deck holds its own row; one row airs once; sweepers/spots/announcements stamped; Generate, Clear Day and the editors touch pending rows only; `songs.last_played_at` as display only. Reviewed from 10348f4, not copied. | T4, T11, T12, T10 (replay part) |
-| **2. One picker** | scheduler-core least recently played from as-aired + scheduled (both sides), by recording; STRICT/SOFT read; closest-to-passing or Jeff's order; unscheduled positions + their setting; max-in-a-row wired; artist participants; title normalising; break fit N. Delete the second and third paths. | T1, T2, T3, T13 (rest part), T15, T16 |
-| **3. The clock on air** | Default clock; the reader never ahead; Soft/Hard at :00 with skipped rows; short-hour fill from the hour's clock; automation start at the row for now; every deck-loading path re-checks; stall recovery plays the row for now. | T5, T6, T8, T9, T10 |
+| **2. One pick** | scheduler-core: the rules (song, artist, title) against what aired + the log on both sides, by recording; the longest-waiting passing song; random for exact ties; UNSCHEDULED slots + their setting; artist participants; title normalising. Delete the second and third paths, and the rule switches D2/D4 remove. | T1, T2, T3, T15, T16 |
+| **3. The clock on air** | Default clock; the reader never ahead; Soft/Hard at :00 with skipped rows; short-hour fill from the hour's clock; automation start at the row for now; every deck-loading path re-checks the rules (§3.2.2); stall recovery plays the row for now. | T1 and T3 on air, T5, T6, T8, T9, T10 |
 | **4. Regenerate on air** | Daemon command for what is on air; Generate from the next song; the current hour planned with its aired part as fact; aired rows untouched; re-cue by row. | T7, T4 again |
-| **5. Duplicates** | Recording identity in rest from Phase 2, plus the Library Duplicates view and merge. | T13 |
-| **6. Screens and help** | Music Scheduling Rules rewritten to what the code does; every §3.11 setting on screen; Program Log UNSCHEDULED / skipped / relaxed / fill rows; reconciliation view; help docs (`help-music-scheduling-rules.md`, `help-hour-start.md`, `help-duplicates.md`, `help-default-clock.md`). | T15 + launching the app and looking at each screen (CLAUDE.md: the only valid UI test) |
+| **5. Duplicates** | Recording identity (from Phase 2), plus the Library Duplicates view and merge. | T13 |
+| **6. Screens and help** | The **Rotation screen** (§3.2.4); Music Scheduling Rules rewritten to what the code does; every §3.11 setting on screen; Program Log UNSCHEDULED / skipped / fill rows; reconciliation view; help docs (`help-rotation.md`, `help-music-scheduling-rules.md`, `help-hour-start.md`, `help-duplicates.md`, `help-default-clock.md`). | T13a, T15 + launching the app and looking at each screen (CLAUDE.md: the only valid UI test) |
 
 After Phase 6, the ovowforestmusic spread is re-measured on the next real night and compared with §2.1's numbers.
 
@@ -641,7 +689,11 @@ After Phase 6, the ovowforestmusic spread is re-measured on the next real night 
 - the stall recovery's "any idle deck with a file" choice;
 - Generate's delete of non-pending rows;
 - pickers reading `songs.last_played_at`;
-- the screen's current STRICT/SOFT wording.
+- the screen's current STRICT/SOFT wording, and the button itself if D2 = remove;
+- every way a rule is broken to fill a slot (Generate's least-recently-played fallback, loggen's tiers 2/3, `pickEnforced`'s relax
+  ladder);
+- spot-break length fitting (`fitTargetTs`), if 3c is agreed;
+- "max songs in a row from one category" and per-song "no repeat hours", if D4 = remove.
 
 **Kept:**
 - the clock-is-law format guard (`getFormatCategoryIds`);
