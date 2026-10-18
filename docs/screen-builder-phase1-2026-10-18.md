@@ -444,3 +444,109 @@ Nothing was launched. Build this branch locally and launch it. Then:
 
 **Noticed, not touched (one line):** the shortcut sheets list keys the handler does not have. App's sheet has
 "N — Live Assist view" and "G — Program Log", though G opens the Play Log. KeyboardHelp lists N / F1–F4 / F10 / F12.
+
+---
+
+## 8. Third pass: the surface window and saved layouts (Jeff, 2026-10-18, deadline 2:05 PM)
+
+**Jeff:** "finish what lets me build and use a surface myself: open a new surface, place Carts, Program Log and
+Library modules in dockview, arrange and size them, save it as a layout, and reopen it. … only what passes its parity
+tests goes in."
+
+### 8.1 Commits
+- `d10128b`: Jeff's `06bec99` (v63, scheduler branch), cherry-picked so this branch's migration chain stays
+  contiguous.
+  - **One conflict, resolved by dropping the file:** `06bec99` renames `scripts/lib/log-checker.test.js`, which
+    this branch never had. The scheduler branch keeps it at the merge.
+  - Everything else applied cleanly.
+- `daccda7`: `screen_layouts` (v64). The migration, the sync registry entry and the handler.
+- `0ec31e5`: the surface window, the ☰ door, the payload format, the tests and the help doc.
+
+### 8.2 In
+- **The surface window:** `src/components/ScreenSurface.tsx`.
+  - **The door:** ☰ → **Screens** (one entry) opens pop-out `screen`. A saved screen opens as `screen:<uuid>`, one
+    window per layout, each with its own bounds in `popout-bounds.json`. **NEW SCREEN** opens `screen:new-<time>`.
+  - **Panes:** dockview, with every pane a `ModuleFrame` under the window's one `ModuleSurface`. The station is the
+    one active when the window opened, and the window keeps it.
+  - **EDIT:** the palette (only the registered modules: Carts, Program Log, Song Library; several of each, as
+    the registry allows). New panes split to the right; drag, tab, split, size and close.
+  - **LIVE:** `disableDnd` and `locked`, and tabs without a close button.
+  - **Empty state:** "An empty screen — press EDIT, then add …".
+- **Layouts as data.**
+  - **The table:** v64 `screen_layouts` (`scripts/migrate-screen-layouts-phase-sync-64.js`), registered station-scoped
+    in `electron/sync/synced-tables.js`. Its `station_id` is what the sync engine remaps; `station_uuid` is the
+    layout's station by identity.
+  - **The handler:** `electron/sync/handlers/screen_layouts.js`, installed in `handlers/index.js`. Channels
+    `screen_layouts:list|get|save|delete`, every write through `withMutation`.
+    - The renderer reaches them through the generic `ether.invoke` (`preload.js:554`), so no preload change was
+      needed.
+  - **The payload:** `src/modules/layoutPayload.ts`, `{ v: 1, dockview, panes }`. On restore the panes map is the
+    authority, and unknown types are dropped.
+- **S5:** the baseline gains popout case `screen` and ☰ `po-screens → screen`, recorded on purpose with the reason in
+  its `_additions` field. All S5 checks still pass.
+- **Help:** `docs/help-screen-builder.md`.
+
+### 8.3 Tests (`src/modules/proof/screens.proof.test.tsx`, 9 tests; real dockview in the test DOM)
+- **Real components:** placing Carts, Program Log and Library renders the real components (the cart wall's header,
+  the log's Fill Day, the library row). The registry's component is `BoutiqueCartWall` itself.
+- **EDIT / LIVE:** the palette shows in EDIT and is gone in LIVE.
+- **Parity inside a surface:**
+  - S1: a cart fired from a surface pane makes the identical calls to the Carts page.
+  - S3: Load A and Q from a surface pane make the identical calls to the Library window (daemon `deck:cue`,
+    `queue:enqueue`).
+  - S2: a surface Program Log and the Program Log page each re-read once on one `schedule:changed`, on station 2.
+- **The round trip.** Build a screen in the UI (3 modules), then SAVE through the dialog. The real handler writes a
+  real SQLite table created by the real v64 migration: one `insert` mutation, the row on station 2 with its uuid.
+  - Then give the row real grid sizes and a non-default option (cart wall `strip`).
+  - Reopen `screen:<uuid>`. The window is in LIVE, and the carts pane is restored in strip layout.
+  - **dockview's `fromJSON` receives exactly the saved grid sizes, width and panels.**
+  - SAVE again: an `update` with identical panes and panels.
+- **S7:**
+  - Station B's window shows "That screen is not saved on this station." for A's uuid.
+  - B's OPEN… list is empty.
+  - Every layout call carries station 3.
+  - The handler refuses to save over A's uuid from B.
+  - Mutation-checked: removing the handler's station check fails this test.
+- **The migration:** every column; `schema_version` = 64; idempotent; transformer passes through. The registry entry
+  matches the columns.
+- **The pre-commit hook** (`verify-transformer-chain.js`, on the live profile DB read-only) reported:
+  "Fresh-install chain run: v0-baseline + v1–v64 clean", 64 migrations, no gaps.
+
+### 8.4 Gates
+- `npx tsc --noEmit`: exit 0, **0 errors**.
+- `npx vitest run`: **Test Files 116 passed (116), Tests 998 passed (998)**.
+- `node scripts/smoke-window-station.js`: exit 0, 47 PASS, 0 FAIL, VERDICT: PASS.
+
+### 8.5 Out (not built, or not provable here)
+- **Per-user layouts from the window.** The table, the registry and the handler's `list` all support
+  `owner_user_uuid`. But a pop-out window does not know the signed-in in-app profile, so the surface saves shared
+  layouts (`owner_user_uuid` NULL).
+- **Delete / rename from the window.** The `screen_layouts:delete` handler exists; there is no button.
+- **An options sheet per pane.** Options are saved and restored, but not editable in the UI.
+- **Clash-checked cart hotkeys at save** (design S6, second half).
+- **Export / import `.etherscreen.json`.**
+- **The Schedule Manager's layout moving into `screen_layouts`.**
+
+### 8.6 Removed or changed in behaviour
+- **Nothing removed.**
+- **Added:** ☰ gains a **Screens** row.
+- **Changed:** in `main.js`:
+  - pop-out windows keyed `screen:<uuid>` open at the screen size;
+  - `screen:new-<time>` windows are destroyed on close instead of hidden.
+  - Every other pop-out is unchanged.
+
+### 8.7 UNVERIFIED, and the check for Jeff
+**What is not proven:**
+- **Sizes in a real window.** In the test DOM every element is 0 px, so dockview re-divides the grid after
+  restoring. The test proves dockview is handed the exact saved sizes. Whether a real window keeps them is a
+  launch check.
+- **Sync of the rows:** the sync of `screen_layouts` rows to a second install is not exercised (S8 needs the sync
+  harness, which is `npm run test:sync`, not run here).
+
+**The check:** build this branch locally and launch it. Then:
+1. ☰ → **Screens**, and place **Carts**, **Program Log** and **Song Library**.
+2. Drag the dividers to size them, and tab two of them together.
+3. **SAVE** it as "Test".
+4. Close the window, open ☰ → Screens → **OPEN…** → **Test**, and confirm the same panes at the same sizes, in LIVE.
+5. In LIVE, fire a cart and load a song. Then switch the main window to another station and confirm the screen
+   still shows and works on its own station.
