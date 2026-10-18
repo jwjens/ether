@@ -23,6 +23,7 @@
  *     Encodes the raw float PCM to a WAV file at a temp path and returns the path.
  */
 
+import { isPlainKey } from "../lib/plainKey";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import TakeEditor from "./TakeEditor";
 const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
@@ -875,6 +876,11 @@ export default function PhoneDesk({ onClose }: Props) {
       const clipReady = recPCM !== null && recState === "stopped";
       if (!clipReady) return;
 
+      // Ctrl/Cmd+Z is the one combination here; every other key below is a single key (src/lib/plainKey.ts).
+      if (!isPlainKey(e)) {
+        if ((e.ctrlKey || e.metaKey) && e.key === "z" && undoRef.current) { e.preventDefault(); handleUndo(); }
+        return;
+      }
       if (e.code === "Space") {
         e.preventDefault();
         if (previewing) stopPreview(); else startPreview();
@@ -888,8 +894,6 @@ export default function PhoneDesk({ onClose }: Props) {
         stopPreview();
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (region) { e.preventDefault(); handleDeleteRegion(); }
-      } else if ((e.ctrlKey || e.metaKey) && e.key === "z") {
-        if (undoRef.current) { e.preventDefault(); handleUndo(); }
       }
     };
     window.addEventListener("keydown", onKey);

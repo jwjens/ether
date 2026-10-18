@@ -9,6 +9,7 @@
 // Actions map to the existing command dispatch system in App.tsx
 // plus direct IPC calls for audio transport, streaming, etc.
 
+import { isPlainKey } from "../lib/plainKey";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStation";
@@ -185,6 +186,7 @@ export function useMacroHotkeys(dispatch?: (cmd: string) => void) {
     const onKey = (e: KeyboardEvent) => {
       const tgt = e.target as HTMLElement;
       if (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA" || tgt.tagName === "SELECT") return;
+      if (!isPlainKey(e)) return;   // a macro hotkey is a single key (e.code); Ctrl/Alt/Meta + it is not it
       const macro = macrosRef.current.find(m => m.hotkey === e.code);
       if (macro) {
         e.preventDefault();

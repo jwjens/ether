@@ -22,6 +22,7 @@
 //   • Export WAV (OfflineAudioContext render)
 //   • Export MP3 (requires: npm install lamejs)
 
+import { isPlainKey } from "../lib/plainKey";
 import { audioLibraryDir } from "../lib/fileLocation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -603,6 +604,7 @@ export default function BroadcastEditor({
       // Undo / Redo
       if (e.key === "z" && (e.ctrlKey || e.metaKey) && !e.shiftKey) { e.preventDefault(); undo(); return; }
       if ((e.key === "z" && (e.ctrlKey || e.metaKey) && e.shiftKey) || (e.key === "y" && (e.ctrlKey || e.metaKey))) { e.preventDefault(); redo(); return; }
+      if (!isPlainKey(e)) return;   // single keys below: with Ctrl/Alt/Meta held they are not these keys (src/lib/plainKey.ts)
       if (e.key === "c" || e.key === "C") {
         e.preventDefault();
         if (cursorMs !== null) cutAtMs(cursorMs);

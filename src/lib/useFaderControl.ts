@@ -6,6 +6,7 @@
 //      all Preferences — faderFeel()).
 //   4. `active` is true while dragging (and briefly after a wheel/arrow step) so the fader's dB readout can light up.
 // Stores hold gain; the law (faderLaw.ts) only decides where a gain is drawn. One law, every fader.
+import { isPlainKey } from "./plainKey";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { gainToPos, posToGain, topGain, stepGain, faderFeel } from "./faderLaw";
 
@@ -70,7 +71,7 @@ export function useFaderControl({ gain, topDb, onChange, axis, trackRef, insetPx
   }, [axis, trackRef, insetPx, disabled]);
 
   const onKeyDown = useCallback((e: React.KeyboardEvent<HTMLElement>) => {
-    if (disabled) return;
+    if (disabled || !isPlainKey(e)) return;   // arrows step the fader; Shift (fine step) stays, Ctrl/Alt/Meta do not
     const up = e.key === "ArrowUp" || e.key === "ArrowRight";
     const down = e.key === "ArrowDown" || e.key === "ArrowLeft";
     if (!up && !down) return;

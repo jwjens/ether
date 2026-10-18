@@ -1,3 +1,4 @@
+import { isPlainKey } from "../lib/plainKey";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -621,7 +622,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
   // Capture spacebar — stop propagation so Live Assist doesn't receive it
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.code === "Space" && e.target === document.body) {
+      if (e.code === "Space" && e.target === document.body && isPlainKey(e)) {
         e.preventDefault();
         e.stopImmediatePropagation();
         if (playingRef.current) pause();
@@ -1055,7 +1056,7 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
         style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden", cursor: dragging ? "col-resize" : "text" }}
         tabIndex={-1}
         onKeyDown={e => {
-          if (e.code === "Space") { e.preventDefault(); e.stopPropagation(); playing ? pause() : play(playheadRef.current); }
+          if (e.code === "Space" && isPlainKey(e)) { e.preventDefault(); e.stopPropagation(); playing ? pause() : play(playheadRef.current); }
         }}
       >
         {loading && (

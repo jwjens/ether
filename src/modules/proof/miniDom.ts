@@ -399,12 +399,21 @@ export function fire(el: any, type: string, init: Record<string, any> = {}) {
   return el.dispatchEvent(makeEvent(type, init));
 }
 
+export interface KeyMods { ctrlKey?: boolean; altKey?: boolean; metaKey?: boolean; shiftKey?: boolean }
+
+/** The KeyboardEvent.code a single printable key arrives with. */
+export function codeOf(key: string): string {
+  if (/^\d$/.test(key)) return `Digit${key}`;
+  if (/^[a-z]$/i.test(key)) return `Key${key.toUpperCase()}`;
+  return ({ " ": "Space", "/": "Slash", "?": "Slash", Escape: "Escape" } as Record<string, string>)[key] ?? key;
+}
+
 /** A key press as the browser delivers it to window listeners (the cart wall's hotkeys listen there). */
-export function pressKey(key: string) {
+export function pressKey(key: string, mods: KeyMods = {}, code = codeOf(key)) {
   const ev = new Event("keydown", { bubbles: true, cancelable: true });
   Object.defineProperties(ev, {
-    key: { value: key }, code: { value: /^\d$/.test(key) ? `Digit${key}` : `Key${key.toUpperCase()}` },
-    ctrlKey: { value: false }, shiftKey: { value: false }, altKey: { value: false }, metaKey: { value: false },
+    key: { value: key }, code: { value: code },
+    ctrlKey: { value: !!mods.ctrlKey }, shiftKey: { value: !!mods.shiftKey }, altKey: { value: !!mods.altKey }, metaKey: { value: !!mods.metaKey },
   });
   (globalThis as any).dispatchEvent(ev);
 }

@@ -1,3 +1,4 @@
+import { isPlainKey } from "../lib/plainKey";
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { audioLibraryDir } from "../lib/fileLocation";
 import { query } from "../db/client";
@@ -833,40 +834,41 @@ export default function VoiceTracker({ inputDeviceId }: { inputDeviceId?: string
     const onKey = (e: KeyboardEvent) => {
       const tgt = e.target as HTMLElement;
       if (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA" || tgt.tagName === "SELECT") return;
-      if (e.code === "Space") {
+      const plain = isPlainKey(e);   // single keys below; the Ctrl/Cmd combinations are the last branch
+      if (plain && e.code === "Space") {
         e.preventDefault();
         if (recording) stopRecording();
         else if (editing) { if (editSrcRef.current) stopEditPlayback(); else playEdit(); }
         else startRecording();
-      } else if (editing && (e.code === "ArrowLeft" || e.code === "ArrowRight")) {
+      } else if (plain && editing && (e.code === "ArrowLeft" || e.code === "ArrowRight")) {
         // Nudge the playhead (scrub). Shift = 1s, plain = 0.1s.
         e.preventDefault();
         stopEditPlayback();
         const delta = (e.code === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 1 : 0.1);
         const newPh = Math.max(0, Math.min(editDur, editPlayheadRef.current + delta));
         setEditPlayhead(newPh); ensureVisible(newPh);
-      } else if (editing && e.code === "KeyQ") {
+      } else if (plain && editing && e.code === "KeyQ") {
         e.preventDefault(); cycleZoom();
-      } else if (editing && e.code === "BracketLeft") {
+      } else if (plain && editing && e.code === "BracketLeft") {
         // Mark In ([) — set the left edge of the selection at the playhead.
         e.preventDefault();
         const ph = editPlayheadRef.current;
         setSelection(sel => ({ start: ph, end: Math.max(ph, sel?.end ?? ph) }));
-      } else if (editing && e.code === "BracketRight") {
+      } else if (plain && editing && e.code === "BracketRight") {
         // Mark Out (]) — set the right edge of the selection at the playhead.
         e.preventDefault();
         const ph = editPlayheadRef.current;
         setSelection(sel => ({ start: Math.min(ph, sel?.start ?? ph), end: ph }));
-      } else if (editing && e.code === "KeyK") {
+      } else if (plain && editing && e.code === "KeyK") {
         // Deselect.
         e.preventDefault(); setSelection(null); markRef.current = null;
-      } else if (editing && e.code === "KeyM") {
+      } else if (plain && editing && e.code === "KeyM") {
         // Convenience toggle-mark (first M = in, second M = out → selection).
         e.preventDefault();
         const ph = editPlayheadRef.current;
         if (markRef.current === null) { markRef.current = ph; setSelection(null); }
         else { const a = markRef.current; setSelection({ start: Math.min(a, ph), end: Math.max(a, ph) }); markRef.current = null; }
-      } else if (editing && (e.key === "Backspace" || e.key === "Delete")) {
+      } else if (plain && editing && (e.key === "Backspace" || e.key === "Delete")) {
         e.preventDefault(); deleteSelection();
       } else if (editing && (e.ctrlKey || e.metaKey)) {
         const k = e.key.toLowerCase();

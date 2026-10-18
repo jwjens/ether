@@ -3,6 +3,7 @@
 // Fills the entire OS window — no floating panel chrome needed
 // since the OS window itself handles drag/resize/minimize.
 
+import { isPlainKey } from "../lib/plainKey";
 import { askText } from "../lib/askText";
 import { useState, useEffect, useRef, useCallback } from "react";
 const getCurrentWindow = () => ({ setTitle: (t: string) => document.title = t, close: () => window.close() });
@@ -131,7 +132,7 @@ export default function ProducerDeskWindow() {
         setItemsAndSave(p => [...p, newItem]);
         setSelectedNote(id);
       }
-      if (e.key === "Delete" || e.key === "Backspace") {
+      if (isPlainKey(e) && (e.key === "Delete" || e.key === "Backspace")) {   // a single key (src/lib/plainKey.ts)
         if (selectedNote && !(e.target instanceof HTMLTextAreaElement)) {
           setItemsAndSave(p => p.filter(i => i.id !== selectedNote));
           setSelectedNote(null);

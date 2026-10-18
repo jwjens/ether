@@ -1,3 +1,4 @@
+import { isPlainKey } from "./lib/plainKey";
 import { bootSeq, bootMarkAuthComplete } from "./audio/boot-seq";
 import UserLogin from "./components/UserLogin";
 import KeyboardHelp from "./components/KeyboardHelp";
@@ -122,6 +123,7 @@ import DesignationBypassBanner from "./components/DesignationBypassBanner";
 import { EtherErrorBoundary, SessionRestoreToast, HealthMonitor, HealthStatusDot, ContentStatusDot } from "./components/HealthMonitor";
 import { importIntoAudioLibrary, fileLocationItem, changeFileLocationItem, checkFilePresence, type FilePresence } from "./lib/fileLocation";
 import { openLinkPreferences } from "./hooks/useRemoteLink";
+import { appShortcut } from "./lib/appShortcuts";
 import { useMicMigration } from "./hooks/useMicMigration";
 import { OPEN_PREFS_KEY } from "./hooks/useMicInputs";
 import TrackEditor from "./components/TrackEditor";
@@ -2046,7 +2048,8 @@ export default function App() {
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || (e.target as HTMLElement).isContentEditable) return;
-      switch(e.code) {
+      // appShortcut() is null for any key held with Ctrl / Alt / Meta (isPlainKey): Ctrl+S is not S, Ctrl+A is not A.
+      switch (appShortcut(e)) {
         // Space and B REMOVED (audit 2, 2026-09-27). They played / paused / resumed decks straight from the keyboard —
         // outside the board's ON button and the daemon's serialized path (the same class of defect as KeyX below).
         // Jeff's ruling: the board is the sole gate; a key goes through ON or does not exist. No key starts, pauses or
@@ -2065,12 +2068,12 @@ export default function App() {
         //
         // Segue overlap (auto) is a SEPARATE concept and is untouched — that is the auto-playout overlap
         // a sweeper plays over, and it has nothing to do with the manual crossfade (Jeff, 2026-09-07).
-        case "KeyL": setPanel("library"); break;
-        case "KeyS": setPanel("clocks"); break;
-        case "KeyG": setPanel("logs"); break;
-        case "KeyA": e.preventDefault(); void toggleAutoRef.current(); break;
-        case "Slash": if (e.shiftKey) { e.preventDefault(); setShowShortcuts(s => !s); } break;
-        case "Escape": setShowShortcuts(false); setDrawerOpen(false); break;
+        case "library": setPanel("library"); break;
+        case "clocks": setPanel("clocks"); break;
+        case "logs": setPanel("logs"); break;
+        case "toggleAuto": e.preventDefault(); void toggleAutoRef.current(); break;
+        case "toggleShortcuts": e.preventDefault(); setShowShortcuts(s => !s); break;
+        case "close": setShowShortcuts(false); setDrawerOpen(false); break;
       }
     };
     window.addEventListener("keydown", handleKey);
@@ -3345,6 +3348,8 @@ export default function App() {
               { group: "Interface", items: [
                 { key: "Shift + ?", desc: "Toggle this shortcut overlay" },
                 { key: "≡ Menu", desc: "Theme Studio" },
+                // src/lib/plainKey.ts — Ctrl+S is not S, Ctrl+A is not A (docs/help-keyboard-shortcuts.md)
+                { key: "Ctrl / Alt / ⌘ + key", desc: "Not a shortcut — does nothing" },
               ]},
             ].map(({ group, items }) => (
               <div key={group} style={{ marginBottom: 20 }}>
@@ -4589,6 +4594,7 @@ function SingleChoicePopover({
   useEffect(() => {
     const count = allItemsRef.current.length;
     const onKey = (e: KeyboardEvent) => {
+      if (!isPlainKey(e)) return;   // list keys are single keys (src/lib/plainKey.ts)
       if (e.key === 'Escape') { onClose(); return; }
       if (e.key === 'ArrowDown') {
         e.preventDefault();

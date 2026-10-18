@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, useId } from "react";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useModuleInstanceId } from "../hooks/useModuleInstance";
+import { isPlainKey } from "../lib/plainKey";
 import { queryScoped } from "../db/stationScoped";
 import { checkFilePresence, fileLocationReason, changeFileLocationItem, importIntoAudioLibrary, type FilePresence } from "../lib/fileLocation";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -890,6 +891,7 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (!isPlainKey(e)) return;   // Ctrl/Alt/Meta + a cart key is not a cart key
       if (!ownsCartHotkeys(wallId)) return;
       const cart = carts.find(c => c.key === e.key.toUpperCase());
       if (cart?.filePath) {

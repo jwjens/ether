@@ -1,3 +1,4 @@
+import { isPlainKey } from "../lib/plainKey";
 import { useRef, useEffect, useState, useMemo } from "react";
 import WaveformEditor from "./WaveformEditor";
 import { extractPeaksRange, spliceOut, sliceRegion, insertAt, makeSilence, applyFadeRegion } from "../audio/wavEdit";
@@ -123,6 +124,20 @@ export default function TakeEditor({ initialBuffer, onDiscard, sendActions }: {
   // ── Keyboard — scoped to the editor (onKeyDown on a focusable root) ──
   const onKeyDown = (e: React.KeyboardEvent) => {
     const k = e.key, code = e.code;
+    // The Ctrl/Cmd combinations first; every other key below is a single key (src/lib/plainKey.ts).
+    if (!isPlainKey(e)) {
+      if (e.ctrlKey || e.metaKey) {
+        const kk = k.toLowerCase();
+        if (kk === "z" && e.shiftKey) { e.preventDefault(); redoEdit(); }
+        else if (kk === "z") { e.preventDefault(); undoEdit(); }
+        else if (kk === "y") { e.preventDefault(); redoEdit(); }
+        else if (kk === "a") { e.preventDefault(); selectAll(); }
+        else if (kk === "c") { e.preventDefault(); copySelection(); }
+        else if (kk === "x") { e.preventDefault(); cutSelection(); }
+        else if (kk === "v") { e.preventDefault(); pasteClip(); }
+      }
+      return;
+    }
     if (code === "Space") { e.preventDefault(); e.stopPropagation(); playing ? stopPlayback() : playEdit(); return; }
     if (code === "ArrowLeft" || code === "ArrowRight") {
       e.preventDefault();
@@ -142,16 +157,6 @@ export default function TakeEditor({ initialBuffer, onDiscard, sendActions }: {
       return;
     }
     if (k === "Backspace" || k === "Delete") { e.preventDefault(); deleteSelection(); return; }
-    if (e.ctrlKey || e.metaKey) {
-      const kk = k.toLowerCase();
-      if (kk === "z" && e.shiftKey) { e.preventDefault(); redoEdit(); }
-      else if (kk === "z") { e.preventDefault(); undoEdit(); }
-      else if (kk === "y") { e.preventDefault(); redoEdit(); }
-      else if (kk === "a") { e.preventDefault(); selectAll(); }
-      else if (kk === "c") { e.preventDefault(); copySelection(); }
-      else if (kk === "x") { e.preventDefault(); cutSelection(); }
-      else if (kk === "v") { e.preventDefault(); pasteClip(); }
-    }
   };
 
   const navBtn: React.CSSProperties = { height: 34, padding: "0 11px", borderRadius: 0, cursor: "pointer", fontSize: 11, fontWeight: 700, background: "var(--bg-tertiary)", border: "1px solid var(--border-secondary)", color: "var(--text-secondary)", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 };

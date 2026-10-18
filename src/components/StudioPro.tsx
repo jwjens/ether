@@ -30,6 +30,7 @@
 //   actual AudioParam via linearRampToValueAtTime — sample-accurate, no
 //   per-frame JS work.
 
+import { isPlainKey } from "../lib/plainKey";
 import { askText } from "../lib/askText";
 import React, {
   useCallback, useEffect, useMemo, useReducer, useRef, useState,
@@ -1690,7 +1691,7 @@ export default function StudioPro({ deckAPath, deckATitle, deckBPath, deckBTitle
       }
       const tgt = e.target as HTMLElement | null;
       if (tgt && (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA" || tgt.isContentEditable)) return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (!isPlainKey(e)) return;   // single keys below: with Ctrl/Alt/Meta held they are not these keys (src/lib/plainKey.ts)
       const k = e.key.toLowerCase();
       if ((k === "backspace" || k === "delete")) {
         if (selectedAutoPoint) {

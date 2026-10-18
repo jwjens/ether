@@ -44,7 +44,8 @@ Screen Builder (the next step); this page will say how when it arrives.
 ## How it behaves on air
 
 - **Click a loaded tile** to fire it. It flashes and counts down while it plays. **Click it again** to stop it.
-- **Keyboard:** the first 24 tiles have keys — `1`–`8`, `Q`–`I`, `A`–`K`.
+- **Keyboard:** the first 24 tiles have keys — `1`–`8`, `Q`–`I`, `A`–`K`. Press the key on its own: with
+  **Ctrl, Alt or Cmd** held, no cart fires (Ctrl+1 is not 1). See `docs/help-keyboard-shortcuts.md`.
 - **Two Carts on one screen:** the keys belong to the wall you **last clicked**. Click anywhere on a wall to give
   it the keyboard. Before you have clicked either, the wall added last has them. One key press fires one cart,
   once — never one on each wall.

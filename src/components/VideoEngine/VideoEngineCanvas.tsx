@@ -11,6 +11,7 @@
 // • Layout-preset chip strip across the top
 // • LIVE / REC indicator top-right
 
+import { isPlainKey } from "../../lib/plainKey";
 import React, { useRef, useEffect, useState, useCallback } from "react";
 import {
   useVideoEngine, SceneLayer, VideoSource,
@@ -445,6 +446,7 @@ export default function VideoEngineCanvas() {
       if (tgt && (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA")) return;
       const l = layers[selectedLayerIdx];
       if (!l) return;
+      if (!isPlainKey(e)) return;   // arrow nudges are single keys; Shift (bigger step) stays
       const step = e.shiftKey ? 0.05 : 0.01;
       let patch: Partial<SceneLayer> | null = null;
       if (e.key === "ArrowLeft")  patch = { x: Math.max(0, l.x - step) };

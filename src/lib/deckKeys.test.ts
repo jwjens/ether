@@ -15,6 +15,10 @@ describe("no keyboard shortcut starts, pauses or resumes a deck (audit 2)", () =
   it("Space and B have no case", () => {
     expect(handler).not.toMatch(/case "Space"/);
     expect(handler).not.toMatch(/case "KeyB"/);
+    // the mapping App dispatches on (src/lib/appShortcuts.ts, 2026-10-18)
+    const map = fs.readFileSync(path.join(__dirname, "appShortcuts.ts"), "utf8");
+    expect(map).not.toMatch(/case "Space"/);
+    expect(map).not.toMatch(/case "KeyB"/);
   });
   it("the handler calls no deck transport", () => {
     expect(handler).not.toMatch(/\.(play|pause|resume|stop)\(\)/);

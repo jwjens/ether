@@ -2,6 +2,7 @@
 // Video podcast recording & streaming studio.
 // Dark steel aesthetic: #111114 backgrounds, sharp edges, zero border-radius.
 
+import { isPlainKey } from "../lib/plainKey";
 import React, {
   useState, useEffect, useRef, useCallback, useMemo,
 } from "react";
@@ -1027,7 +1028,7 @@ function SceneSwitcher({ scenes, activeId, onSwitch, onAdd, onRename, onDelete }
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const n = parseInt(e.key);
-      if (n >= 1 && n <= scenes.length && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (n >= 1 && n <= scenes.length && isPlainKey(e)) {
         const target = document.activeElement as HTMLElement;
         if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA") return;
         onSwitch(scenes[n - 1].id);
