@@ -2,60 +2,56 @@
   "note": "Scheduler gate ratchet: a worse number than this fails the gate. Lower is better. Written by --update-ratchet, one entry as each station finishes.",
   "metrics": {
     "static": {
-      "T15_findings": 43,
+      "T15_findings": 38,
       "T16_pickers": 6,
       "T16_random": 6
     },
     "station:75532b61-fa0c-4bc5-a5f0-0298b94c0123": {
-      "T1_onAir": 1911,
-      "T1_inLog": 2341,
-      "T2_breaking": 2308,
-      "T2_notLongest": 509,
-      "T3_failures": 1028,
+      "T1_onAir": 1907,
+      "T1_inLog": 2486,
+      "T2_breaking": 2456,
+      "T2_notLongest": 540,
+      "T3_failures": 958,
       "T4_touched": 0,
-      "T8_ahead": 37,
+      "T8_ahead": 39,
       "T11_unlinked": 0,
-      "T18_off": 0,
-      "T19_readerMs": 20
+      "T18_off": 0
     },
     "station:43889edc-203d-4743-9e4f-6ea311d6e035": {
-      "T1_onAir": 4391,
-      "T1_inLog": 390,
-      "T2_breaking": 220,
-      "T2_notLongest": 818,
-      "T3_failures": 2748,
+      "T1_onAir": 4297,
+      "T1_inLog": 394,
+      "T2_breaking": 221,
+      "T2_notLongest": 806,
+      "T3_failures": 2908,
       "T4_touched": 0,
-      "T8_ahead": 3634,
+      "T8_ahead": 3830,
       "T11_unlinked": 0,
-      "T18_off": 168,
-      "T19_readerMs": 67
+      "T18_off": 168
     },
     "station:dfbc68ac-e4d2-4769-9519-a28ead7884ae": {
-      "T1_onAir": 3,
+      "T1_onAir": 13,
       "T1_inLog": 0,
       "T2_breaking": 0,
-      "T2_notLongest": 3719,
-      "T3_failures": 3200,
+      "T2_notLongest": 3980,
+      "T3_failures": 3208,
       "T4_touched": 0,
       "T8_ahead": 68,
       "T11_unlinked": 0,
-      "T18_off": 0,
-      "T19_readerMs": 33
+      "T18_off": 0
     },
     "station:f6ac7a00-d905-4b87-b0ef-f219ac3b1e1e": {
-      "T1_onAir": 4843,
-      "T1_inLog": 5556,
-      "T2_breaking": 4091,
-      "T2_notLongest": 36,
-      "T3_failures": 864,
+      "T1_onAir": 6544,
+      "T1_inLog": 6111,
+      "T2_breaking": 4491,
+      "T2_notLongest": 27,
+      "T3_failures": 2522,
       "T4_touched": 0,
       "T8_ahead": 124,
       "T11_unlinked": 0,
-      "T18_off": 206,
-      "T19_readerMs": 81
+      "T18_off": 241
     }
   },
-  "writtenAt": "2026-10-18T18:33:14.372Z",
+  "writtenAt": "2026-10-18T18:52:08.568Z",
   "days": 7,
   "seed": 1
 }

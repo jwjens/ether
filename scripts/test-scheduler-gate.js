@@ -75,10 +75,27 @@ class FakeDate extends RealDate {
   static now() { return fakeNowMs != null ? fakeNowMs : RealDate.now(); }
 }
 const setNow = (sec) => { fakeNowMs = sec * 1000; };
+let ANCHOR = null;   // the simulated week's start (see above); set per copy in runChild
+function seedSqlRandom(rawDb, seed) {
+  let a = seed >>> 0;
+  rawDb.function("random", { deterministic: false }, () => {
+    a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) - 2147483648;
+  });
+}
 const nowSec = () => Math.floor(FakeDate.now() / 1000);
 global.Date = FakeDate;
 
-// seeded RNG for song-length error (Generate's own ORDER BY RANDOM() is not seedable; reported)
+// IDENTICAL CODE GIVES IDENTICAL NUMBERS (Jeff, 2026-10-18: "Give Generate a fixed random seed inside the harness so
+// identical code gives identical numbers; the ratchet stays exact"). Three things made two runs differ, and all three are
+// fixed here, inside the harness only — the product is unchanged:
+//   1. SQLite's random(), behind every ORDER BY RANDOM() in Generate and the reader's floor: each copy's connection
+//      gets an application-defined random() of the same name (it takes precedence over the built-in), seeded per
+//      station and per copy.
+//   2. JavaScript's Math.random(): seeded the same way.
+//   3. The wall clock: the simulated week starts at the first local midnight after the newest play in the database
+//      (ANCHOR), not at "the next top of the hour", so the same database gives the same week whenever the gate runs.
+// Song-length error on air is drawn from its own seeded stream (rng below).
 function rng(seed) { let a = seed >>> 0; return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
 // ── node:sqlite with better-sqlite3's db.transaction(), which main.js's code calls ───────────────
@@ -217,7 +234,7 @@ async function runGenerate(P, w, sid, dayBases) {
 async function simulateStation(w, P, F, R) {
   const sid = F.sid;
   const rand = rng(SEED * 1000 + sid);
-  const simStart = Math.ceil(RealDate.now() / 1000 / 3600) * 3600;
+  const simStart = ANCHOR;
   const simEnd = simStart + DAYS * 86400;
   setNow(simStart);
 
@@ -447,24 +464,32 @@ async function simulateStation(w, P, F, R) {
 // daemon pays on this database today. The air loop is engine.js:559 setInterval(poll, 250) → _maintain()
 // (engine.js:953) → refillIfNeeded → _refillFromLog (throttled 2 s) → readLogAnchored, and node:sqlite is
 // synchronous, so the whole call is time the loop is not running.
-function measureReader(w, P, sid, calls = 15) {
+// Judged as the MEDIAN OF 3 RUNS (Jeff, 2026-10-18), each run the median of `calls` calls, against the limit setting. A
+// timing is not exact, so T19 is judged against its limit and is not in the exact ratchet.
+function measureReader(w, P, sid, calls = 15, runs = 3) {
   setNow(Math.ceil(RealDate.now() / 1000 / 3600) * 3600);
-  const ms = [];
-  for (let i = 0; i < calls; i++) {
-    const t0 = process.hrtime.bigint();
-    try { P.loggen.readLogAnchored(w, sid, 20); } catch {}
-    ms.push(Number(process.hrtime.bigint() - t0) / 1e6);
+  const runMedians = [];
+  let max = 0;
+  for (let k = 0; k < runs; k++) {
+    const ms = [];
+    for (let i = 0; i < calls; i++) {
+      const t0 = process.hrtime.bigint();
+      try { P.loggen.readLogAnchored(w, sid, 20); } catch {}
+      ms.push(Number(process.hrtime.bigint() - t0) / 1e6);
+    }
+    ms.sort((a, b) => a - b);
+    runMedians.push(ms[Math.floor(calls / 2)]); max = Math.max(max, ms[calls - 1]);
   }
   fakeNowMs = null;
-  ms.sort((a, b) => a - b);
-  return { calls, medianMs: +ms[Math.floor(calls / 2)].toFixed(1), maxMs: +ms[calls - 1].toFixed(1), limitMs: READER_LIMIT_MS, pollIntervalMs: 250,
-    generatedScheduleRows: w.prepare("SELECT count(*) n FROM generated_schedule WHERE station_id=?").get(sid).n };
+  const sorted = [...runMedians].sort((a, b) => a - b);
+  return { calls, runs, runMediansMs: runMedians.map(x => +x.toFixed(1)), medianMs: +sorted[Math.floor(runs / 2)].toFixed(1), maxMs: +max.toFixed(1),
+    limitMs: READER_LIMIT_MS, pollIntervalMs: 250, generatedScheduleRows: w.prepare("SELECT count(*) n FROM generated_schedule WHERE station_id=?").get(sid).n };
 }
 
 // ── T5: started early (automation at 12:25, the log starts at 3 PM) ───────────────────────────────
 async function scenarioStartedEarly(w, P, F) {
   const sid = F.sid;
-  const d = new FakeDate(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + 2); // a clean future day
+  const d = new FakeDate(ANCHOR * 1000); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + 9); // a clean day after the simulated week
   const dayStart = Math.floor(d.getTime() / 1000);
   setNow(dayStart - 3600);
   const bases = [new FakeDate(dayStart * 1000)];
@@ -496,7 +521,7 @@ async function scenarioStartedEarly(w, P, F) {
 async function scenarioViolatorInLog(w, P, F) {
   const sid = F.sid;
   if (F.rules.songMin == null) return { station: sid, ran: false, why: "song separation is off on this station" };
-  const d = new FakeDate(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + 4);
+  const d = new FakeDate(ANCHOR * 1000); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + 11);
   const dayStart = Math.floor(d.getTime() / 1000);
   setNow(dayStart - 3600);
   await runGenerate(P, w, sid, [new FakeDate(dayStart * 1000)]);
@@ -582,7 +607,39 @@ function staticChecks() {
     bakedRuleDefaults: hits(/artistSepMin\s*=\s*\d|songRepeatMin\s*=\s*\d|titleSepMin\s*=\s*\d|'artist_separation_min',\s*\d|'song_separation_min',\s*\d|'title_separation_min',\s*\d|no_repeat_hours,\s*\d|\|\|\s*60\)\s*\*\s*60/, pickFiles),
     bakedTimingNumbers: hits(/slackSec\s*=\s*\d|scheduled_at\s*>=\s*\?\s*-\s*\d|FIT_TOL_S\s*=|FIT_WINDOW_S\s*=|STALL_MS\s*=\s*\d|duration_min\s*\|\|\s*4|length_sec\s*\|\|\s*30|defaultDurS\s*=\s*\d/, null),
   };
-  t15.findings = t15.enforceSeparationRead.length + t15.lastPlayedAtReadByPick.length + t15.maxSameCategoryRead.length + t15.noRepeatHoursRead.length
+  // NOTHING READS songs.last_played_at (Jeff, 2026-10-18: "leave it unwritten AND remove every read of it. Every 'last
+  // aired' shown anywhere is derived from the play record. Add to the gate: nothing reads last_played_at"). Every
+  // mention in the product (electron/, audiod/, src/, tests and smoke fixtures excepted) must be on this list, which
+  // names the OTHER table it belongs to; anything else is a finding, with its file and line.
+  const LP_ALLOW = [
+    [/^electron[\/]sync[\/]/, null, "sync registry / handlers copy the column between machines (no reader; songsMarkPlayed has no caller)"],
+    [/^electron[\/]generate-core\.js$/, /SPOT_SELECT|FROM spots|\bsp\.last_played_at|length_sec, last_played_at, max_plays_day/, "spots.last_played_at (spot rotation)"],
+    [/^electron[\/]main\.js$/, /ALTER TABLE songs ADD COLUMN last_played_at|announcement|row\.last_played_at|s\.last_played_at AS last_played_at/, "the column's creation, and announcements / announcement_schedule"],
+    [/^audiod[\/]playlog\.js$/, /UPDATE spots/, "spots accounting"],
+    [/^src[\/]components[\/]Announcements\.tsx$/, null, "announcement_schedule lines"],
+    [/^src[\/]lib[\/]ccData\.ts$/, null, "announcement_schedule lines (the Park page's mirror)"],
+  ];
+  const lpHits = [];
+  const walk = (dir) => { let out = []; for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+    const rel = path.join(dir, e.name);
+    if (e.isDirectory()) { if (e.name !== "node_modules") out = out.concat(walk(rel)); }
+    else if (/\.(js|ts|tsx)$/.test(e.name) && !/\.test\.|^smoke-/.test(e.name)) out.push(rel);
+  } return out; };
+  for (const rel of [...walk("electron"), ...walk("audiod"), ...walk("src")]) {
+    let src; try { src = fs.readFileSync(path.join(ROOT, rel), "utf8"); } catch { continue; }
+    if (!src.includes("last_played_at")) continue;
+    src.split("\n").forEach((line, i) => {
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;               // a comment line
+      const code = line.replace(/\/\/.*$/, "");                       // a trailing comment
+      if (!code.includes("last_played_at")) return;
+      const relN = rel.replace(/\\/g, "/");                            // one slash, on every OS
+      const ok = LP_ALLOW.some(([f, l]) => f.test(relN) && (!l || l.test(code)));
+      if (!ok) lpHits.push(`${rel.replace(/\\/g, "/")}:${i + 1}`);
+    });
+  }
+  t15.songsLastPlayedRead = lpHits;
+  t15.markPlayedCallers = hits(/\.markPlayed\(/, null);
+  t15.findings = t15.songsLastPlayedRead.length + t15.markPlayedCallers.length + t15.enforceSeparationRead.length + t15.lastPlayedAtReadByPick.length + t15.maxSameCategoryRead.length + t15.noRepeatHoursRead.length
     + t15.breakLengthFit.length + t15.bakedRuleDefaults.length + t15.bakedTimingNumbers.length + (t15.settingsRegistry.startsWith("ABSENT") ? 1 : 0) + (t15.isHardRead.length ? 0 : 1);
   t15.isHardNote = t15.isHardRead.length ? "is_hard is read" : "is_hard (STRICT) is read by NO picker — the STRICT button decides nothing";
 
@@ -619,10 +676,10 @@ function verdicts(sim, t5, t10, hist, stat) {
     else add("T18", s.T18.outsideTolerance === 0, `${st}: ${s.T18.outsideTolerance} of ${s.T18.timedBreaksAired} timed breaks started outside ±${BREAK_TOL_S} s; of the ${s.T18.airedInOwnHour} aired inside their own hour, ${s.T18.inOwnHourOutsideTolerance} were off (up to ${s.T18.inOwnHourMaxLateSec} s late, ${s.T18.inOwnHourMaxEarlySec} s early)`);
   }
   for (const h of hist) if (h.plays) add("T11", h.playsWithoutLogRowId === 0 && h.musicPlaysWithoutCategory === 0 && h.logRowsStampedWithNoPlayWithin10s === 0, `station ${h.station} (this machine's record, ${h.window}, ${h.hoursWithPlays} hours with plays): ${h.playsWithoutLogRowId}/${h.plays} plays without a log row id, ${h.musicPlaysWithoutCategory} music plays without category, ${h.logRowsStampedWithNoPlayWithin10s} rows stamped aired with no play, ${h.sweeperPlays} sweeper plays vs ${h.sweeperRowsStampedAired} sweeper rows stamped`);
-  for (const s of sim) if (s.T19) add("T19", s.T19.maxMs <= s.T19.limitMs, `station ${s.station}: the reader takes ${s.T19.medianMs} ms a call (max ${s.T19.maxMs} ms, ${s.T19.calls} calls, ${s.T19.generatedScheduleRows} log rows) against a limit of ${s.T19.limitMs} ms, inside the ${s.T19.pollIntervalMs} ms air loop`);
+  for (const s of sim) if (s.T19) add("T19", s.T19.medianMs <= s.T19.limitMs, `station ${s.station}: the reader takes ${s.T19.medianMs} ms a call (median of ${s.T19.runs || 1} runs: ${(s.T19.runMediansMs || [s.T19.medianMs]).join(" / ")} ms; slowest call ${s.T19.maxMs} ms; ${s.T19.generatedScheduleRows} log rows) against a limit of ${s.T19.limitMs} ms, inside the ${s.T19.pollIntervalMs} ms air loop`);
   for (const t of t5) add("T5", t.eveningRowsAiredBefore3PM === 0, `station ${t.station}: automation at 12:25 with the log starting at 3 PM — ${t.eveningRowsAiredBefore3PM} evening rows aired before 3 PM (of ${t.eveningRowsInLog})`);
   for (const t of t10) if (t.ran) add("T10", !t.violatorAirsNext, `station ${t.station}: "${t.song}" placed again right after it aired (song rule ${t.songRuleMin} min) — ${t.violatorAirsNext ? `the reader AIRS it next, ${t.gapMin} min after it aired` :"not aired: the reader chose " + t.readerChose}`);
-  if (stat) add("T15", stat.T15.findings === 0, `${stat.T15.findings} findings: registry ${stat.T15.settingsRegistry.split(" ")[0]}; enforce_separation read at ${stat.T15.enforceSeparationRead.length} places; last_played_at by the pick at ${stat.T15.lastPlayedAtReadByPick.length}; no_repeat_hours at ${stat.T15.noRepeatHoursRead.length}; max_same_category at ${stat.T15.maxSameCategoryRead.length}; break length fit at ${stat.T15.breakLengthFit.length}; baked rule defaults at ${stat.T15.bakedRuleDefaults.length}; baked timing numbers at ${stat.T15.bakedTimingNumbers.length}; ${stat.T15.isHardNote}`);
+  if (stat) add("T15", stat.T15.findings === 0, `${stat.T15.findings} findings: registry ${stat.T15.settingsRegistry.split(" ")[0]}; songs.last_played_at read at ${stat.T15.songsLastPlayedRead.length} places${stat.T15.songsLastPlayedRead.length ? " (" + stat.T15.songsLastPlayedRead.slice(0, 4).join(", ") + ")" : ""}; enforce_separation read at ${stat.T15.enforceSeparationRead.length} places; last_played_at by the pick at ${stat.T15.lastPlayedAtReadByPick.length}; no_repeat_hours at ${stat.T15.noRepeatHoursRead.length}; max_same_category at ${stat.T15.maxSameCategoryRead.length}; break length fit at ${stat.T15.breakLengthFit.length}; baked rule defaults at ${stat.T15.bakedRuleDefaults.length}; baked timing numbers at ${stat.T15.bakedTimingNumbers.length}; ${stat.T15.isHardNote}`);
   if (stat) add("T16", stat.T16.modulesThatChooseSongs === 1 && stat.T16.orderByRandom.length === 0, `${stat.T16.modulesThatChooseSongs} modules choose songs; ORDER BY RANDOM() at ${stat.T16.orderByRandom.length} places`);
   return v;
 }
@@ -632,7 +689,6 @@ function ratchetMetrics(sim, stat) {
   for (const s of sim) m["station:" + s.uuid] = {
     T1_onAir: s.T1_onAir.violations, T1_inLog: s.T1_inLog.violations, T2_breaking: s.T2.placedBreakingARule, T2_notLongest: s.T2.notTheLongestWaiting,
     T3_failures: s.T3.failures, T4_touched: s.T4.deleted + s.T4.changed, T8_ahead: s.T8.rowsAiredBeforeTheirHour, T11_unlinked: s.T11_sim.playsWithoutLogRowId, T18_off: s.T18.outsideTolerance,
-    T19_readerMs: s.T19 ? Math.ceil(s.T19.medianMs) : null,
   };
   return m;
 }
@@ -670,6 +726,9 @@ async function runChild() {
   const tag = path.basename(path.dirname(src)) + "-st" + sid;
   const aPath = copyDb(src, tag + "-sim"), bPath = copyDb(src, tag + "-scen");
   const A = wrapDb(new DatabaseSync(aPath)), B = wrapDb(new DatabaseSync(bPath));
+  seedSqlRandom(A.raw, SEED * 1000 + sid); seedSqlRandom(B.raw, SEED * 1000 + sid + 500);
+  { const r = rng(SEED * 7919 + sid); Math.random = r; }
+  { const n = A.prepare("SELECT MAX(played_at) t FROM play_log").get().t; const d = new RealDate((n || Math.floor(RealDate.now() / 1000)) * 1000); d.setHours(24, 0, 0, 0); ANCHOR = Math.floor(d.getTime() / 1000); }
   const out = { db: src, station: sid };
   try {
     const st = A.prepare("SELECT id, name, uuid FROM stations WHERE id=?").get(sid);
@@ -681,7 +740,7 @@ async function runChild() {
     // The copies only (a copy that is deleted afterwards needs no durability; ANALYZE changes plans, never
     // results; history rows > 2 days old that nothing decides from are removed — see the run report's model).
     for (const X of [A, B]) { X.exec("PRAGMA synchronous=OFF"); X.exec("PRAGMA journal_mode=MEMORY"); }
-    const cut = Math.floor(RealDate.now() / 1000) - 2 * 86400;
+    const cut = ANCHOR - 2 * 86400;   // from the data anchor, so the same database trims the same rows
     for (const X of [A, B]) X.prepare("DELETE FROM generated_schedule WHERE state IS NOT NULL AND state != 'pending' AND scheduled_at < ?").run(cut);
     // The copies reach this tree's schema the way the app does on launch: main.js's own runMigrationChain, lifted and run
     // as-is (a database copied from an older build gets this build's migrations, e.g. v63's play columns and triggers).

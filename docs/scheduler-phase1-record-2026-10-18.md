@@ -189,3 +189,43 @@ OVEVENTS, ovowforestmusic, ovowjensj). Never only some.
 4. **Press the X on the song cued on the next deck:** that deck empties and the next song is cued.
 5. **In the Program Log, try to delete a row marked missed:** it refuses, with the reason.
 6. **From another machine on the LAN, open `http://<this machine>:3400/api/alerts`.** You get `{ ok: true, v: 1, alerts: [...] }`.
+
+## Addendum, the same day: Jeff's decisions on this report (2026-10-18)
+1. **"No ratchet tolerance. Give Generate a fixed random seed inside the harness so identical code gives identical numbers;
+   the ratchet stays exact. Reader timing (T19): median of 3 runs against the limit setting."**
+   - **The harness only, the product is unchanged:**
+     - each DB copy's connection gets a seeded `random()` that takes precedence over SQLite's built-in, behind every
+       `ORDER BY RANDOM()`;
+     - `Math.random` is seeded;
+     - the simulated week starts at the first local midnight after the newest play in the database, not at "the next top
+       of the hour". The history trim keys off the same anchor.
+   - **Receipt:** two full 7-day runs on this machine are identical on every test (T19 timing and the history window's
+     text aside). A third full run against the fresh ratchet reports nothing worse.
+   - **The ratchet was re-baselined** from the first of those runs, because the simulated week moved to the data anchor.
+     T19 left the ratchet (a timing cannot be exact). It is judged as the median of 3 runs of 15 calls against the limit
+     setting.
+2. **"songs.last_played_at: leave it unwritten AND remove every read of it. Every 'last aired' shown anywhere is derived
+   from the play record. Add to the gate: nothing reads last_played_at."**
+   - **Generate** (`electron/generate-core.js`) reads this station's plays once per run, last aired by the file that aired
+     (`ctx.lastAiredByFile`). The candidate query no longer selects the column. The legacy differential, `_lrpFallback`
+     and break mode all use the same map.
+   - **The scheduler core** (`audiod/scheduler-core.js lastSongTs`): this run's own placement first, else
+     `state.lastAiredByFile`. Its unit tests now give last aired through the play record.
+   - **The renderer picker** (`src/audio/loggen.ts`, the window-mode path): song rest and artist separation come from this
+     station's `play_log`.
+   - **The Library's "Last Played" column** (`src/App.tsx`): from library-health's per-station play-log eligibility, which
+     the Library already loads.
+   - **The Program Log's swap list** no longer selects a column it never showed.
+   - **The last writer is gone:** `src/db/client.ts` no longer calls `songs.markPlayed` (it wrote a full synced song-row
+     mutation per play). The handler `songsMarkPlayed` remains in the sync foundation with no caller.
+   - **Gate (T15):** every mention of `last_played_at` in electron/, audiod/ and src/ must be on a named allowlist of the
+     other tables that have such a column (spots, announcements, announcement_schedule, station_programming, the sync
+     column registry). Any other is a finding with its file and line. No caller of `.markPlayed(` may exist. Today: 0 and
+     0.
+   - **Behaviour change (the rule):** where Generate's fallback read a song's last airing, it read the column, which was
+     filled for few songs ("populated ~54/530", `separation-enforce.js:10`) and stale. It now reads the play record, so
+     least-recently-played orders by what really aired.
+3. **"Missed rows locked in the editors: agreed."** As built.
+
+Gates after these changes: tsc 0 · vitest 923/923 · `test:record` 6/6 · calendar-anchor, stale-rows, window-station PASS ·
+log-checker 7/7 · the gate's T15: 38 findings (was 43), `songs.last_played_at` read at 0 places.
