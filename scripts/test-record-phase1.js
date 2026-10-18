@@ -31,20 +31,21 @@ const argv = process.argv.slice(2);
 const opt = (n, d) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : d; };
 const ROOT = path.join(__dirname, "..");
 const ENGINE_ROOT = opt("--engine-dir", null) ? path.resolve(opt("--engine-dir")) : ROOT;
-const SID = Number(opt("--station", 2));
-const SRC = opt("--db", (() => {
+// THE TEST'S OWN STATION (Jeff, 2026-10-18: "Stop testing my real stations"): the gate fixture's FX-EVENING, built on a
+// blank database (scripts/lib/gate-fixture.js). An installed database lends only its schema.
+const SID = 1;
+const SCHEMA_FROM = (() => {
   const prof = path.join(process.env.LOCALAPPDATA || "", "Ether", "profiles");
   for (const d of (fs.existsSync(prof) ? fs.readdirSync(prof) : [])) {
     if (d.includes(".retired") || d.startsWith("_")) continue;
     const f = path.join(prof, d, "openair.db"); if (fs.existsSync(f)) return f;
   }
   return null;
-})());
-if (!SRC) { console.log("no database found; pass --db <copy>"); process.exit(2); }
+})();
 
 // ── the clock ─────────────────────────────────────────────────────────────────────────────────────────────────
 const RealDate = Date;
-const T0 = (() => { const d = new RealDate(); d.setDate(d.getDate() + 3); d.setHours(18, 0, 0, 0); return Math.floor(d.getTime() / 1000); })();
+const T0 = (() => { const d = new RealDate(2026, 10, 2); d.setHours(18, 0, 0, 0); return Math.floor(d.getTime() / 1000); })();   // the fixture's first evening
 let NOW = T0 * 1000;
 class FakeDate extends RealDate {
   constructor(...a) { if (a.length === 0) super(NOW); else super(...a); }
@@ -57,7 +58,13 @@ const hhmm = (sec) => new RealDate(sec * 1000).toTimeString().slice(0, 8);
 // ── the copy ──────────────────────────────────────────────────────────────────────────────────────────────────
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), "ether-record-test-"));
 const COPY = path.join(TMP, "record.db");
-{ const ro = new DatabaseSync(SRC, { readOnly: true }); try { ro.exec(`VACUUM INTO '${COPY.replace(/'/g, "''")}'`); } finally { ro.close(); } }
+{
+  const { createRequire } = require("module");
+  const MAIN0 = fs.readFileSync(path.join(ROOT, "electron", "main.js"), "utf8");
+  const st0 = MAIN0.indexOf("\nfunction runMigrationChain("); const m0 = /\r?\n\}\r?\n/.exec(MAIN0.slice(st0 + 1));
+  const chain = new Function("path", "__dirname", "require", "console", MAIN0.slice(st0 + 1, st0 + 1 + m0.index + m0[0].length) + "\nreturn runMigrationChain;")(path, path.join(ROOT, "electron"), createRequire(path.join(ROOT, "electron", "main.js")), { log() {}, error() {}, warn() {} });
+  require(path.join(ROOT, "scripts", "lib", "gate-fixture.js")).buildFixtureDb(COPY, { schemaFrom: SCHEMA_FROM, migrate: chain });
+}
 const db = new DatabaseSync(COPY);
 db.exec("PRAGMA synchronous=OFF");
 // better-sqlite3's db.transaction(), which the migration and main.js's code call

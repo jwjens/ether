@@ -1438,8 +1438,12 @@ class DaemonEngine {
     // next song through the one pick, written into the log first, and the log is read again. No show this hour, less
     // than the fill tolerance before :00, or no song passes: the station waits (never a later hour's row, never a
     // rule broken). In MANUAL nothing is filled: the jock owns the hour.
-    if (r.mode === "nothing-due" && !r.items.length && this._mayDecide()) {
-      const f = loggen.fillShortHour(this.db, this.stationId, Math.max(Math.floor(now / 1000), seamTs));
+    // A fill that found nothing is not retried until the moment it can change: the closest blocked song becoming free,
+    // or the top of the hour (fillShortHour says when). Never a database read every 2 s on the air loop.
+    const fillAt = Math.max(Math.floor(now / 1000), seamTs);
+    if (r.mode === "nothing-due" && !r.items.length && this._mayDecide() && !(this._fillRetryAt && fillAt < this._fillRetryAt)) {
+      const f = loggen.fillShortHour(this.db, this.stationId, fillAt);
+      this._fillRetryAt = f.rowId == null ? (f.retryAt || null) : null;
       if (f.rowId != null) {
         this._log(`short hour: filled "${f.title}" from the hour's own clock (log row ${f.rowId})`);
         try { this.emit("logreader-operator-write", { stationId: this.stationId, title: f.title || "" }); } catch {}
@@ -1464,6 +1468,15 @@ class DaemonEngine {
         this._log(`PLAYOUT CHECK: "${k.title || "(untitled)"}" (row ${k.rowId}) skipped — ${k.rule} ${k.measuredMin} of ${k.settingMin} min`);
       }
       try { this.emit("logreader-missed", { stationId: this.stationId, count: r.skip.length, driftSec: r.driftSec, reason: "playout-check" }); } catch {}
+      // ...and the slot is picked again (design §3.2.2): the one pick, from the refused row's own category first, written
+      // to the log, so a refused song never leaves its category's rotation a song behind.
+      if (this._mayDecide()) {
+        const f = loggen.fillShortHour(this.db, this.stationId, fillAt, { categoryId: r.skip[0].categoryId });
+        if (f.rowId != null) {
+          this._log(`playout check: the slot is picked again — "${f.title}" (log row ${f.rowId})`);
+          try { r = loggen.readLogAnchored(this.db, this.stationId, 20, undefined, { seamTs }); } catch (e) { this._log("logreader refill error: " + String(e)); return; }
+        }
+      }
     }
 
     // THE BOUND HEAD IS THE CUED DECKS, AND IT STAYS IN THE QUEUE. (Reverted 2026-09-14, same night.)
