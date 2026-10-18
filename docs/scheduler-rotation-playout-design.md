@@ -59,7 +59,6 @@ minutes.
      moment it goes on air.
    - The log row is stamped in the same step.
    - One log row can air only once.
-   - The play count is updated in the same step.
 10. **Every number is a setting** with a sensible starting value you can see and change. There is no hidden setting.
 11. **Proof:** a release-gate test suite runs on copies of every station's database. It generates and simulates 7 days per
     station and checks them with a second, independent checker:
