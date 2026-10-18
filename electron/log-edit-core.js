@@ -71,4 +71,13 @@ function isOperatorOwned(source) {
 const NOT_OPERATOR_OWNED_SQL =
   `(source IS NULL OR TRIM(LOWER(source)) NOT IN (${[...OPERATOR_SOURCES].map(s => `'${s}'`).join(', ')}))`;
 
-module.exports = { overlaps, filterToGaps, isOperatorOwned, OPERATOR_SOURCES, NOT_OPERATOR_OWNED_SQL };
+/**
+ * WHAT AIRED IS THE RECORD (docs/scheduler-rotation-playout-design.md §3.9, Phase 1): only a PENDING row is a plan.
+ * played / playing / missed / skipped / unscheduled are the record and no Generate, Clear or editor may delete or
+ * rewrite them. A NULL state is a row written before the lifecycle column existed: it was never aired, so it is a plan.
+ * One definition, used by the window delete, the editors' guard and the relink.
+ */
+const NOT_AIRED_SQL = `(state IS NULL OR state = 'pending')`;
+function isPlan(state) { return state == null || state === '' || state === 'pending'; }
+
+module.exports = { overlaps, filterToGaps, isOperatorOwned, OPERATOR_SOURCES, NOT_OPERATOR_OWNED_SQL, NOT_AIRED_SQL, isPlan };

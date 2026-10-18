@@ -7,6 +7,7 @@ import { PanelStack, HealthPanel, PanelMeter, StatTile } from "./health/sectionC
 import MicInputsHealth from "./health/MicInputsHealth";
 import RemoteLinkHealth from "./health/RemoteLinkHealth";
 import PflCueHealth from "./health/PflCueHealth";
+import AlertsHealth from "./health/AlertsHealth";
 import { dbToPercent } from "./health/meterScale";
 import { SpotTimeline } from "./health/SpotTimeline";
 import { useContainerSize, WALL_W, WALL_H } from "./health/useContainerWidth";
@@ -1336,6 +1337,10 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
             authoritative reading in the panel as the oldest. A quick-scan dashboard that has to be
             scrolled to is not a quick scan. */}
         {dashboard}
+
+        {/* ── ALERTS (Phase 1): every alert the station raised, newest first. Outside the rearrangeable stack on
+            purpose — it is never collapsed, hidden or filtered as "routine". ── */}
+        <AlertsHealth id="health-alerts" stationUuid={stationUuid || null} />
 
         {/* ── LIVE Health Monitor (primary; the real telemetry, updates every second) ── */}
         {liveTelemetry}

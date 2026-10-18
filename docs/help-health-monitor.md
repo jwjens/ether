@@ -136,6 +136,32 @@ What to do:
 If the red row comes back after a full quit and reopen, tell support and include the time. The startup
 log will have a `[stage-engine]` line naming the file that could not be replaced.
 
+## Alerts — when something went wrong on air
+
+Right under the cards at the top is the **Alerts** list: every alert this station raised, newest first, in plain
+words. It is never collapsed or filtered: it only ever shows things that went wrong on air.
+
+**What you can see there:**
+- **Aired twice** (red) — a log row went to air a second time after it had already aired.
+- **Aired log row changed** (red) — a log row that had already aired, or had been marked missed, was changed or deleted
+  afterwards. The log is the record of what happened. Ether catches this whatever made the change, including a sync from
+  another computer.
+- **Not recorded** — something aired, and Ether could not write it to play history or stamp its log row. Ether keeps
+  trying for 30 seconds before it raises this. It also appears when a song aired as a log row that is no longer in the log.
+- **Aired after it was marked missed** — a row the log had already marked missed went to air anyway.
+
+**How to use it:**
+1. Open the **Health Monitor** (☰ → Health Monitor).
+2. The Alerts list is the first thing under the cards. A red count next to **ALERTS** means at least one red alert.
+3. Hover the time on a line to see when it happened, when it was recorded, which computer recorded it and which part of
+   Ether saw it.
+4. Tick **every station** to see alerts from all your stations, not just the one you are on.
+
+**Good to know:**
+- The list only reports. Nothing in it fixes, silences or acknowledges anything. What went wrong stays on the list and in
+  the health log.
+- Iris and other tools can follow the same alerts; nothing extra is needed on your side.
+
 ## The bottom half — the detail
 
 - **Audio Processing** — the loudness chain. IN and OUT loudness lead as figures, then meters for the

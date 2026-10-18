@@ -223,6 +223,53 @@ const _ledger = HealthLedger.createLedger({
 function _ledgerAppend(obj) { _ledger.append(obj); }
 app.on("will-quit", () => { try { _ledger.drainSync(); } catch {} });
 
+// THE ONE ALERT STREAM (docs/scheduler-rotation-playout-design.md §6.2, Phase 1): every alert is one structured, versioned
+// event on one stream — the health log, every window ('health:alert'), the :3400 live stream (SSE 'health:alert') and
+// GET /api/alerts?since=. Detect and report only (electron/health-alerts.js).
+let _alertMachineId;
+const _alerts = require("./health-alerts").createAlerts({
+  ledgerAppend: (o) => _ledgerAppend(o),
+  publish: (a) => {
+    try { sendToAllWindows("health:alert", a); } catch {}
+    try { for (const res of sseClients) sseWrite(res, "health:alert", a); } catch {}
+  },
+  stationUuidById: (id) => { try { return _stationUuidById(id); } catch { return null; } },
+  machineId: () => {
+    if (_alertMachineId === undefined) {
+      try { const r = db && db.open ? db.prepare("SELECT client_id FROM client_identity LIMIT 1").get() : null; _alertMachineId = r && r.client_id ? String(r.client_id).toLowerCase() : null; }
+      catch { _alertMachineId = null; }
+    }
+    return _alertMachineId;
+  },
+  // Catch-up after a restart: the newest 2 MB of the current health log, read off the main thread's hot path.
+  readLedgerTail: async () => {
+    const p = path.join(P.profileDir(P.activeKey()), "health-events.jsonl");
+    const fh = await fs.promises.open(p, "r").catch(() => null);
+    if (!fh) return "";
+    try {
+      const { size } = await fh.stat();
+      const len = Math.min(size, 2 * 1024 * 1024);
+      const buf = Buffer.alloc(len);
+      await fh.read(buf, 0, len, size - len);
+      return buf.toString("utf8");
+    } finally { await fh.close(); }
+  },
+});
+// aired-row-changed: the v63 triggers append to log_row_changes; every 15 s (and once at start) the new rows become
+// alerts. The last id reported is kept in system_state (this machine only), so a change made while Ether was closed is
+// still reported when it opens.
+function _scanLogRowChanges() {
+  try {
+    if (!db || !db.open) return;
+    const k = db.prepare("SELECT value FROM system_state WHERE key='log_row_changes_seen'").get();
+    const last = k ? Number(k.value) || 0 : 0;
+    const r = require("./health-alerts").scanLogRowChanges(db, last, (kind, d) => _alerts.raise(kind, d));
+    if (!r.unavailable && r.lastId !== last) db.prepare("INSERT OR REPLACE INTO system_state (key, value, updated_at) VALUES ('log_row_changes_seen', ?, unixepoch())").run(String(r.lastId));
+  } catch (e) { try { console.error("[alerts] log_row_changes scan failed:", e && e.message); } catch {} }
+}
+setTimeout(_scanLogRowChanges, 20_000);
+setInterval(_scanLogRowChanges, 15_000);
+
 // Stop leaving a Roaming\openair folder behind: store this app's userData under an "Ether" folder
 // instead of the legacy "openair" app-name default. We redirect the userData PATH only (not the
 // Electron app name) so the updater, single-instance lock, and watchdog identity are untouched.
@@ -1302,10 +1349,14 @@ if (AUDIO_DAEMON_DESIRED) {
         // Slice B: a row was skipped/dropped as unresolvable → feed the library-health skipped-at-load
         // sense (+ health-events.jsonl). Never silent. deck/filePath ride along when the daemon knows them.
         try { _libHealth && _libHealth.noteSkip(m.stationId, m.title, m.reason, { deck: m.deck, filePath: m.filePath }); } catch {}
-      } else if (m.event === "logreader-floor" || m.event === "logreader-missed" || m.event === "logreader-ahead" || m.event === "logreader-operator-write" || m.event === "fill-starved" || m.event === "separation-relaxed" || m.event === "position-authority" || m.event === "spot-missed") {
+      } else if (m.event === "alert") {
+        // Phase 1: the engine detected and reports; one alert, every place (electron/health-alerts.js).
+        try { _alerts.raise(m.kind, m); } catch {}
+      } else if (m.event === "logreader-floor" || m.event === "logreader-missed" || m.event === "logreader-ahead" || m.event === "logreader-operator-write" || m.event === "fill-starved" || m.event === "separation-relaxed" || m.event === "position-authority" || m.event === "spot-missed" || m.event === "log-row-removed") {
         // logreader-missed / spot-missed = the daemon stamped rows 'missed' (engine.js:1342); an
-        // operator write = a row inserted by a deck-load. The Program Log re-reads on these.
-        if (m.event === "logreader-missed" || m.event === "spot-missed" || m.event === "logreader-operator-write") _scheduleChanged(m.stationId, m.event);
+        // operator write = a row inserted by a deck-load; log-row-removed = the Up Next X took a row out of the log.
+        // The Program Log re-reads on these.
+        if (m.event === "logreader-missed" || m.event === "spot-missed" || m.event === "logreader-operator-write" || m.event === "log-row-removed") _scheduleChanged(m.stationId, m.event);
         // Log-Reader Flip (ACTIVATION): loud flip-time events — emergency floor (log exhausted), a
         // behind-anchor missed sweep, an ahead early-play beyond slack, or an operator deck-load written
         // to the log. Plus fill-starved: the refill ladder found NO playable song in ANY of the station's
@@ -6043,10 +6094,12 @@ async function fireAnnouncement(stationId, uuid, entryUuid, opts = {}) {
   //    AFTER the engine call succeeded, like the stamps: an announcement that never played must not
   //    appear in the as-run log. Wrapped, because a logging fault must never reach playout.
   try {
+    // Phase 1: the play carries the announcement it aired (row_uuid = announcements.uuid) and, through logPlay, this
+    // machine. No ANN row ever goes into generated_schedule (Option C, unchanged).
     require('../audiod/playlog').logPlay(db, {
       stationId, title: row.title || 'Announcement', artist: '', deck: firedOn[0],
       durationMs: _durMs, sessionId: null, filePath: row.file_path,
-      contentClass: 'ANN', source: 'announcement',
+      contentClass: 'ANN', source: 'announcement', rowUuid: row.uuid || null,
     });
   } catch (e) { try { logStartup('[announce] play_log write failed: ' + (e && e.message)); } catch {} }
 
@@ -9893,6 +9946,16 @@ const irisHttpServer = require('http').createServer((req, res) => {
     return;
   }
 
+  // GET /api/alerts?since=<alert id | ISO time>&station=<uuid>&limit=<n> — the alert stream's catch-up (Phase 1): a
+  // subscriber that reconnects asks for what it missed, then follows 'health:alert' on /api/stream. Read-only.
+  if (req.method === 'GET' && url === '/api/alerts') {
+    let q; try { q = new URL(req.url, 'http://local').searchParams; } catch { q = new URLSearchParams(); }
+    _alerts.list({ since: q.get('since') || null, stationUuid: q.get('station') || null, limit: q.get('limit') || null })
+      .then(alerts => res.end(JSON.stringify({ ok: true, v: 1, alerts })))
+      .catch(e => { res.statusCode = 500; res.end(JSON.stringify({ ok: false, error: String(e && e.message || e) })); });
+    return;
+  }
+
   // GET /api/stream — Iris live-wire SSE (L1). An open connection = Iris present.
   if (req.method === 'GET' && url === '/api/stream') {
     res.writeHead(200, {
@@ -9914,7 +9977,7 @@ const irisHttpServer = require('http').createServer((req, res) => {
   }
 
   res.statusCode = 404;
-  res.end(JSON.stringify({ ok: false, error: 'Not found. Endpoints: /api/status, /api/now-playing, /api/stream, /api/transport/:action, /api/log, /api/macros, /api/macro/:id/run, /api/gpio/status, /api/repl/changes, /api/repl/site-id, /api/captions/iris' }));
+  res.end(JSON.stringify({ ok: false, error: 'Not found. Endpoints: /api/status, /api/now-playing, /api/stream, /api/alerts, /api/transport/:action, /api/log, /api/macros, /api/macro/:id/run, /api/gpio/status, /api/repl/changes, /api/repl/site-id, /api/captions/iris' }));
 });
 
 irisHttpServer.on('error', (err) => {
@@ -11182,7 +11245,7 @@ function _scheduleChanged(stationId, reason, extra) {
 try { require("./sync/handlers/songs").onLogRetitled(sids => { for (const s of sids) _scheduleChanged(s, 'song-renamed'); }); } catch {}
 function _commitDayRows(stationId, effStart, dayEnd, rows) {
   const { generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
-  const { filterToGaps, NOT_OPERATOR_OWNED_SQL } = require('./log-edit-core');
+  const { filterToGaps, NOT_OPERATOR_OWNED_SQL, NOT_AIRED_SQL } = require('./log-edit-core');
   let result = { kept: 0, skipped: 0 };
   db.transaction(() => {
     // OPERATOR ROWS SURVIVE REGENERATE (Manual Log Editing / Fix 2, design §4.1). This used to delete
@@ -11197,8 +11260,12 @@ function _commitDayRows(stationId, effStart, dayEnd, rows) {
     // source='auto' as PROVENANCE, so "NULL only" made every auto-generated row permanent and froze
     // the future log. The predicate now comes from log-edit-core so it cannot drift from
     // isOperatorOwned() again: only 'operator' survives.
+    // AND ONLY A PLAN (Phase 1). A row in the window that has already aired — the station ran ahead and played
+    // tomorrow's 3 PM row this morning — is the record, not a plan, and is never deleted (10/17: the 6:10 PM
+    // regenerate deleted 67 such rows in the gate's replay, T4). It stays, and as a kept row it blocks its own slot
+    // from being refilled below, so nothing is placed over it.
     db.prepare(
-      `DELETE FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ? AND ${NOT_OPERATOR_OWNED_SQL}`
+      `DELETE FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ? AND ${NOT_OPERATOR_OWNED_SQL} AND ${NOT_AIRED_SQL}`
     ).run(stationId, effStart, dayEnd);
 
     // GAP-ONLY FILL. Preserving the operator's rows is not enough: the walk still produced a machine
@@ -11272,14 +11339,17 @@ ipcMain.handle('schedule:clearDay', (_, dayTs, opts) => {
 //   1. The PAST IS A RECORD. A row that has aired (state='played'/'playing') is never mutated.
 //   2. Every touched row is stamped source='operator', which is what makes Generate leave it alone.
 //   3. Warnings never block. The operator overrides; the ledger records that they did.
-const _EDIT_LOCKED = new Set(['played', 'playing']);
+// ONLY A PLAN IS EDITABLE (Phase 1). This used to lock 'played' and 'playing' only, so a 'missed' row — "SPOT DID NOT
+// AIR", evidence — could be moved, swapped or deleted. Every state but pending is the record now (log-edit-core isPlan).
 function _logRow(uuid) {
   return db.prepare("SELECT * FROM generated_schedule WHERE uuid = ? AND deleted_at IS NULL").get(uuid);
 }
 function _guardEditable(row, what) {
   if (!row) return `that row no longer exists — the log may have been regenerated`;
-  if (_EDIT_LOCKED.has(String(row.state || ''))) {
-    return `"${row.title || 'that row'}" has already aired — the log is a record of what happened, not a plan, so it cannot be ${what}`;
+  if (!require('./log-edit-core').isPlan(row.state)) {
+    const st = String(row.state);
+    const said = st === 'played' || st === 'playing' ? 'has already aired' : `is marked ${st}`;
+    return `"${row.title || 'that row'}" ${said} — the log is a record of what happened, not a plan, so it cannot be ${what}`;
   }
   return null;
 }
@@ -11588,7 +11658,7 @@ async function _generateRange(stationId, fromTs, toTs, opts) {
     // written and only over rows still NULL, so an 'operator' row can never be relabelled.
     if (opts && opts.source) {
       try {
-        db.prepare("UPDATE generated_schedule SET source = ? WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ? AND source IS NULL")
+        db.prepare("UPDATE generated_schedule SET source = ? WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ? AND source IS NULL AND (state IS NULL OR state = 'pending')")
           .run(opts.source, stationId, effStart, dayEnd);
       } catch {}
     }
@@ -11845,6 +11915,11 @@ try {
 // so it grows without limit and reading it whole would eventually stall the panel. This seeks the
 // last TAIL_BYTES and discards the first (probably partial) line.
 try {
+  // The Alerts list (Health Monitor) and anything else in the app: the same alerts the stream carries.
+  ipcMain.handle("health:alerts", async (_evt, opts) => {
+    try { return { ok: true, v: 1, alerts: await _alerts.list(opts || {}) }; }
+    catch (e) { return { ok: false, error: e.message, alerts: [] }; }
+  });
   ipcMain.handle("health:recent-events", (_evt, opts) => {
     const TAIL_BYTES = 256 * 1024;
     const kinds = opts && Array.isArray(opts.kinds) ? opts.kinds : null;

@@ -67,6 +67,31 @@ Scheduling-tier and read-only commands need no such flag (autonomous is allowed)
   answers with her brain, speaks via ElevenLabs, and POSTs **reply text + `speaking` on/off** back up to
   `:3400` (correlated by request id). Iris stays a pure client — no inbound port on her side.
 
+### 3a. Alert stream (read-only) — Iris's eyes
+
+Ether's health monitor detects and reports; it never decides or fixes anything. Every alert is **one structured
+event on one stream**, and Iris can follow that stream with no change to Ether (docs/scheduler-rotation-playout-design.md
+§6; built 2026-10-18, scheduler Phase 1; `electron/health-alerts.js`).
+
+- **Live:** SSE event **`health:alert`** on the same `:3400` live-wire (`GET /api/stream`) that carries `iris:state`.
+- **Catch-up after a reconnect:** `GET :3400/api/alerts?since=<last alert id, or an ISO time>&station=<uuid>&limit=<n>`
+  → `{ ok, v: 1, alerts: [...] }`, oldest first. Ask with the id of the last alert you saw, then follow the stream.
+- **Shape (schema `v: 1`, additive only — new fields may appear, none change meaning):**
+
+  ```
+  { v: 1, id, kind, severity, stationUuid, at, observedAt, machineId,
+    row:  { id, uuid, scheduledAt, title } | null,      // the log row it is about (uuid is stable across machines)
+    song: { title, artist, file } | null,               // what aired
+    rule: { key, setting, measured, unit } | null,      // a broken rule: the setting against what was measured
+    path, message }                                      // which code path saw it; plain words for a person
+  ```
+  `at` = when it happened, `observedAt` = when this machine recorded it, `severity` = `red` | `yellow`.
+- **Kinds so far:** `row-aired-twice`, `aired-row-changed`, `not-stamped`, `retired-row-aired` (Phase 1). Later phases add
+  `separation-aired`, `separation-in-log`, `unscheduled`, `clock-ahead`, `clock-behind`, `stall`, `off-log-play`,
+  `break-late`, `break-early`. A subscriber must ignore a kind it does not know.
+- **Read-only for Iris:** subscribing changes nothing. Anything Iris wants to *do* about an alert goes through the
+  two-tier command gate (§2) like any other command; the stream itself carries no commands.
+
 ---
 
 ## 4. Presence surface + THE GLOW

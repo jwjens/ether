@@ -67,8 +67,9 @@ what it noticed and then gets out of your way. The warning uses the same rules F
 
 ## What you cannot edit
 
-**Rows that have already aired or are on air now.** They are dimmed, cannot be dragged, swapped or
-removed, and if you try, the reason is shown at the top of the editor:
+**Rows that have already aired, are on air now, or were marked missed.** They are dimmed, cannot be dragged,
+swapped or removed, and if you try, the reason is shown at the top of the editor. A missed row is evidence too:
+"SPOT DID NOT AIR" must stay exactly as it was recorded:
 
 > *"…" — Already aired — a record, not a plan*
 

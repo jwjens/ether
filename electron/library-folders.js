@@ -206,9 +206,15 @@ function applyRelink(db, stationId, result, deps) {
   // row look edited to every peer's merge, which is the opposite of "this changed nothing but where
   // the bytes are on MY disk".
   const setSongPathLocal = db.prepare("UPDATE songs SET file_path = ? WHERE id = ?");
-  const setGs   = db.prepare("UPDATE generated_schedule SET file_path = ? WHERE station_id = ? AND song_id IS ?");
-  const setGsT  = db.prepare("UPDATE generated_schedule SET file_path = ? WHERE station_id = ? AND title = ? AND song_id IS NULL");
-  const nullGs  = db.prepare("UPDATE generated_schedule SET file_path = NULL WHERE station_id = ? AND song_id IS ?");
+  // The log's PLANNED rows only (Phase 1): a row that aired is the record of what aired from where, and is never
+  // rewritten (log-edit-core NOT_AIRED_SQL). The play itself is in play_log with the file it aired from.
+  // (A log table from before the lifecycle column has no aired rows to protect: the filter applies where `state` exists.)
+  let hasState = false;
+  try { hasState = db.prepare("PRAGMA table_info(generated_schedule)").all().some(c => c.name === "state"); } catch {}
+  const plan = hasState ? ` AND ${require("./log-edit-core").NOT_AIRED_SQL}` : "";
+  const setGs   = db.prepare(`UPDATE generated_schedule SET file_path = ? WHERE station_id = ? AND song_id IS ?${plan}`);
+  const setGsT  = db.prepare(`UPDATE generated_schedule SET file_path = ? WHERE station_id = ? AND title = ? AND song_id IS NULL${plan}`);
+  const nullGs  = db.prepare(`UPDATE generated_schedule SET file_path = NULL WHERE station_id = ? AND song_id IS ?${plan}`);
   let nulled = 0, relinkedAssets = 0;
   const tx = db.transaction(() => {
     for (const m of result.matches) {
