@@ -30,3 +30,16 @@ Also seen: T18. Timed breaks start up to 23 min off their minute; this is the sa
 ## Not possible as specified
 
 A show change at 9:30: `shows` has only `start_hour` / `end_hour`, so shows change on the hour. The test station changes shows at 21:00.
+
+## Late-hour scenario: today's engine vs 6558e57 (the build on air)
+
+Same fixture station and same log: the 1 AM hour ends 62 s short of 2:00, the 2 AM hour is back-to-back songs with two
+spots at 2:22, and every element plays exactly its planned length. Driven through each checkout's real engine
+(DaemonEngine) by a scratch copy of test-record-phase1.js. This is a harness result; on-air behaviour is UNVERIFIED.
+
+| | 6558e57 (on air) | 032c111 (1018 build) |
+|---|---|---|
+| 2:00 hour joined | 2:15:39 (15 min 39 s late) | 2:01:58 (1 min 58 s late) |
+| planned songs dropped ("missed") | 6 (1:55:30, 2:08, 2:12, 2:15, 2:19 ×... see run) | 0 |
+| planned spots dropped (of 2 at 2:23) | 1 | 2 |
+| fill rows not aired | none (no fill) | 3 (1 skipped, 2 missed) |
