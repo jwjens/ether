@@ -85,9 +85,14 @@ console.log("\n== 2. the cart assign paths specifically ==");
   if (/importIntoAudioLibrary/.test(drop.slice(0, 1400))) pass("BoutiqueCartWall handleDrop (drag) copies on import");
   else fail("BoutiqueCartWall handleDrop does not copy on import");
 
-  const appAssign = app.split("const assignCart")[1] || "";
-  if (/importIntoAudioLibrary/.test(appAssign.slice(0, 900))) pass("CartWallPanel assignCart (picker) copies on import");
-  else fail("CartWallPanel assignCart does not copy on import");
+  // App.tsx's localStorage CartWallPanel was deleted in Screen Builder phase 1 (68a95ac, unreachable). If any wall
+  // comes back in App.tsx, it must copy on import like every other door.
+  if (!/const assignCart/.test(app)) pass("App.tsx has no second cart wall (CartWallPanel deleted, Screen Builder phase 1)");
+  else {
+    const appAssign = app.split("const assignCart")[1] || "";
+    if (/importIntoAudioLibrary/.test(appAssign.slice(0, 900))) pass("App.tsx assignCart (picker) copies on import");
+    else fail("App.tsx assignCart does not copy on import");
+  }
 }
 
 console.log("\n== 3. generated audio is written INTO the catalogue, not beside it ==");
