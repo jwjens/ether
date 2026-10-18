@@ -738,6 +738,11 @@ const REGISTRY = {
       // state): play_log is history that already travels, and a mark that stayed home would make the
       // history honest on one machine and misleading everywhere else.
       source:              'scalar',
+      // v63 (2026-10-18, docs/scheduler-rotation-playout-design.md §3.9): the schedule row this play fulfils (a
+      // generated_schedule uuid, or the announcements row's uuid when source = 'announcement') and the machine
+      // that aired it. Uuids, never local integer ids — this table travels.
+      row_uuid:            'scalar',
+      machine_id:          'scalar',
     },
   },
 
