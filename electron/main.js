@@ -3433,8 +3433,9 @@ function buildMenu() {
   const popout = (panel) => openPopoutWindow(panel);
   const template = [
     { label: "File", submenu: [
+      // "Save Layout" (Ctrl+S → file:save) is gone with the widget canvas it saved: no window could show that
+      // layout (docs/screen-builder-design-2026-10-18.md §2.9). Layouts become saved surfaces in a later phase.
       { label: "New Session", accelerator: "CmdOrCtrl+N", click: () => send("file:new-session") },
-      { label: "Save Layout", accelerator: "CmdOrCtrl+S", click: () => send("file:save") },
       { type: "separator" },
       { label: "Import Music...", click: () => menuNav("file:import", "library") },
       { label: "Preferences", click: () => send("file:preferences") },
