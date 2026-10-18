@@ -94,6 +94,16 @@ class DaemonEngine {
     // and gets CLEAN EDGES — never the segue overlap, never a jingle over/into it (Jeff's broadcast ruling,
     // 2026-07-23). Set at loadToDeck (the single load funnel); null = unknown/none.
     this.deckContentClass = { A: null, B: null, C: null };
+    // THE QUEUE ENTRY EACH DECK HOLDS (design §3.9, Phase 1: "each deck holds its own row; only that row is consumed
+    // at go-live"). Before this, a go-live took out WHATEVER WAS FIRST in the queue (dequeue) and a calendar re-cue
+    // emptied a deck without letting go of its entry, so the queue fell one entry out of step with the decks and the
+    // entry that had just aired was cued again: eight rows aired twice on ovowforestmusic 10/16
+    // (docs/playout-change-audit-2026-10-17.md). null = the deck holds nothing from the queue (a hand load).
+    this.deckQid = { A: null, B: null, C: null };
+    // ROWS THAT HAVE GONE TO AIR, in memory, set the moment a deck goes live — so no path can cue one again even while
+    // its database stamp is being retried. Bounded; the reader only reaches back over today.
+    this._airedRows = new Set();
+    this._recordGen = 0;                 // bumps per go-live, so a late retry never stamps a row over a newer one
     this.deckReady = new Set();
     // Bug A fix (source-wipe race): per-deck LOAD GENERATION — bumped on every fresh loadToDeck. A
     // deferred post-crossfade stop captures this at rotate time and no-ops if it changed (the deck was
@@ -631,6 +641,7 @@ class DaemonEngine {
     this.deckContentClass[id] = t.contentClass || null;   // set on every occupant change; never inherited
     this.deckSched[id]   = t.scheduledAt ?? null;
     this.deckSchedId[id] = t.schedId ?? null;
+    this.deckQid[id]     = t.qid ?? null;                 // which queue entry this deck holds; replaced with the occupant
     this.deckGen[id] = (this.deckGen[id] || 0) + 1;       // Bug-A: a fresh source invalidates a pending stop
     this.endTriggered.delete(id);
     this._setDeck(id, {
@@ -852,8 +863,8 @@ class DaemonEngine {
         this._setDeck(cued, { status: "playing", positionSec: 0 });
         this.endTriggered.delete(cued);
         this.deckReady.delete(cued);
-        if (this.manualCue.has(cued)) this.manualCue.delete(cued);  // it just went live; don't dequeue against it
-        else if (this.queue.length > 0) this.dequeue();
+        if (this.manualCue.has(cued)) this.manualCue.delete(cued);  // it just went live
+        this._consumeDeckEntry(cued);                                 // its own entry, never "whatever is first"
         this._fireStart(cued);
         this._log("resume-playout: deck " + cued + " LIVE — " + (this._deckState(cued).title || "(untitled)"));
         return true;
@@ -863,7 +874,8 @@ class DaemonEngine {
     await this.refillIfNeeded();
     let guard = 0;
     while (this.queue.length > 0 && guard++ < 100) {
-      const next = this.dequeue();
+      const next = this._takePending();
+      if (!next) break;
       if (this.loadToDeck("A", next)) {
         this.deckChainType.A = next.chainType || "segue";
         if (this._play("A") === false) {   // same contract: a refused play is not a play
@@ -1218,7 +1230,7 @@ class DaemonEngine {
         // A hand-loaded deck wasn't fed from the queue — don't dequeue against it (that would drop
         // an unrelated upcoming song). Auto-cued decks DO consume their queue slot.
         if (this.manualCue.has(toId)) this.manualCue.delete(toId);
-        else if (this.queue.length > 0) this.dequeue();
+        this._consumeDeckEntry(toId);   // the entry THIS deck holds (none for a hand load), never the first in the queue
         this._armAfterRotate(toId, cfMs);
         return true;
     }
@@ -1247,7 +1259,8 @@ class DaemonEngine {
         // dead track never stalls the rotation. Bounded so an all-missing queue can't spin forever.
         let loaded = false, guard = 0;
         while (this.queue.length > 0 && guard++ < 100) {
-          const next = this.dequeue();
+          const next = this._takePending();
+          if (!next) break;
           if (this.loadToDeck(deckId, next)) { this.deckChainType[deckId] = next.chainType || "segue"; loaded = true; break; }
           this.emit("error", { stationId: this.stationId, where: "handleLoadNext", error: "skipped unplayable: " + (next.filePath || "") });
           this._noteLoadSkip(next.title, "unplayable at load (handleLoadNext)");
@@ -1285,18 +1298,29 @@ class DaemonEngine {
     return this._advance("preload:" + deckId, () => this._preloadNow(deckId, queueIndex));
   }
   // The body. ONLY call this from code that is already executing on the advance chain.
-  async _preloadNow(deckId, queueIndex = 0) {
+  // ONLY A PENDING ENTRY IS CUED (Phase 1). `queueIndex` used to be a position in the WHOLE queue, so position 0
+  // could be an entry another deck already held, or one that had aired. Every deck now takes the FIRST pending
+  // entry (pending = in the queue, held by no deck, not aired): a deck already cued holds its own entry, which is
+  // therefore not pending, so "the next deck takes the next song" follows without counting. `queueIndex` is kept
+  // for the callers' signature and no longer used. `opts.qid` (a calendar re-cue) names the exact entry.
+  async _preloadNow(deckId, queueIndex = 0, opts = null) {
+    void queueIndex;
     if (this.deckReady.has(deckId)) return;                   // re-check inside the chain
     const st2 = this._deckState(deckId);
     if (st2.status === "playing" || st2.status === "paused") return;
     // Never cue a file that's already playing/cued on another deck — that stacked the same song.
     const onOtherDecks = ["A", "B", "C"].filter(d => d !== deckId).map(d => this._deckState(d).filePath).filter(Boolean);
     let guard = 0;
-    while (this.queue.length > queueIndex && guard++ < 100) {
-      const next = this.queue[queueIndex];
-      if (onOtherDecks.includes(next.filePath)) { queueIndex++; continue; } // already on another deck — skip
-      if (this.loadToDeck(deckId, next)) { this.deckChainType[deckId] = next.chainType || "segue"; this.deckReady.add(deckId); if (next.qid) this.boundQids.add(next.qid); return; }
-      this.queue.splice(queueIndex, 1);
+    while (guard++ < 100) {
+      const pending = this.queue.filter(q => !this.boundQids.has(q.qid));
+      let next = opts && opts.qid ? pending.find(q => q.qid === opts.qid) : null;
+      if (opts && opts.qid && !next) return;                  // the named entry is gone: the next refill decides
+      if (!next) next = pending.find(q => !onOtherDecks.includes(q.filePath));
+      if (!next) return;
+      if (this._isAired(next)) { this._dropAired(next, "preload"); if (opts) opts = null; continue; }
+      if (this.loadToDeck(deckId, { ...next })) { this.deckChainType[deckId] = next.chainType || "segue"; this.deckReady.add(deckId); if (next.qid) this.boundQids.add(next.qid); return; }
+      const qi = this.queue.indexOf(next); if (qi >= 0) this.queue.splice(qi, 1);
+      if (opts) opts = null;
       this.emit("queue", { stationId: this.stationId, items: this.queue });
       this.emit("error", { stationId: this.stationId, where: "preload", error: "dropped unplayable: " + (next.filePath || "") });
       this._noteLoadSkip(next.title, "unplayable at load (preload)");
@@ -1438,6 +1462,12 @@ class DaemonEngine {
       return;
     }
 
+    // A ROW A DECK HOLDS IS NEVER MARKED MISSED (Phase 1). The reader names every pending row before the anchor, and that
+    // included rows already cued on a standby deck — which then aired, so the record said 'missed' for songs that played
+    // (the Phase 1 test: 15 of 38 rows in a drifting evening). A cued row is going to air; whether it should (Hour start,
+    // the clock on air) is Phase 3's decision, never the record's.
+    const _held = new Set(["A", "B", "C"].map(d => this.deckSchedId[d]).filter(x => x != null));
+    if (_held.size && r.missedRowIds.length) r.missedRowIds = r.missedRowIds.filter(id => !_held.has(id));
     // BEHIND — stamp the skipped-past pending rows 'missed' (day-bounded, from readLogAnchored). Loud.
     if (r.missedRowIds.length) {
       try {
@@ -1480,6 +1510,8 @@ class DaemonEngine {
       this._resumingFromManual = false;
     }
 
+    this._retirePassedSweepers();
+
     // AHEAD (rider A) — the early row is already in r.items and will air when the current song ends. NEVER
     // wait / dead-air; within slack it airs silently, beyond slack we health-event it (music floats forward).
     if (r.mode === "ahead" && r.aheadBySec > FLIP_AHEAD_SLACK_SEC) {
@@ -1492,6 +1524,7 @@ class DaemonEngine {
     const seen = new Set(boundSchedIds); const kept = [];
     for (const it of r.items) {
       if (it.schedId != null && seen.has(it.schedId)) continue;
+      if (this._isAired(it)) continue;      // it went to air; its stamp may still be landing — never offer it again
       // Resolve rather than merely test: a row from another install names a folder we do not have,
       // and the library tier finds it by basename. Keep the RESOLVED path or the deck loads the one
       // that does not exist.
@@ -1701,6 +1734,48 @@ class DaemonEngine {
     } catch (e) { /* never break the operator load */ }
   }
 
+  /** A deck went live: take ITS entry out of the queue (by qid). A deck holding nothing from the queue takes out
+   *  nothing — never "whatever is first". */
+  _consumeDeckEntry(deckId) {
+    const qid = this.deckQid[deckId];
+    if (!qid) return;
+    this.boundQids.delete(qid);
+    const i = this.queue.findIndex(q => q.qid === qid);
+    if (i >= 0) { this.queue.splice(i, 1); this.emit("queue", { stationId: this.stationId, items: this.queue }); }
+  }
+  /** A cued deck lets go of its entry (a re-cue, the X): no longer "on a deck". The entry stays in the queue as
+   *  pending if it is still there, so the log decides where it goes next. */
+  _releaseDeckEntry(deckId) {
+    const qid = this.deckQid[deckId];
+    this.deckQid[deckId] = null;
+    if (qid) this.boundQids.delete(qid);
+  }
+  /** Has this queue entry's row gone to air? (in memory, set at go-live) */
+  _isAired(item) { return !!item && item.schedId != null && this._airedRows.has(item.schedId); }
+  _noteAired(schedId) {
+    if (schedId == null) return;
+    this._airedRows.add(schedId);
+    if (this._airedRows.size > 4000) this._airedRows.delete(this._airedRows.values().next().value);
+  }
+  _dropAired(item, where) {
+    const qi = this.queue.indexOf(item); if (qi >= 0) this.queue.splice(qi, 1);
+    if (item.qid) this.boundQids.delete(item.qid);
+    this._log(`${where}: dropped "${item.title || "(untitled)"}" (row ${item.schedId}) — it has already aired`);
+    this.emit("queue", { stationId: this.stationId, items: this.queue });
+  }
+  /** Take the first PENDING entry (held by no deck, not aired) out of the queue. */
+  _takePending() {
+    for (let i = 0; i < this.queue.length; i++) {
+      const q = this.queue[i];
+      if (this.boundQids.has(q.qid)) continue;
+      if (this._isAired(q)) { this._dropAired(q, "queue"); i--; continue; }
+      this.queue.splice(i, 1);
+      this.emit("queue", { stationId: this.stationId, items: this.queue });
+      return q;
+    }
+    return null;
+  }
+
   dequeue() {
     const idx = this.shuffle ? Math.floor(Math.random() * this.queue.length) : 0;
     const item = this.queue.splice(idx, 1)[0];
@@ -1820,7 +1895,10 @@ class DaemonEngine {
     // Item 10 Phase 2 Step 4: the daemon owns play logging in daemon-driven mode (the
     // renderer's logPlay is gated off), so Play History survives a UI/app restart. Never
     // throws into the playout path.
-    try { playlog.logPlay(this.db, { stationId: this.stationId, title: st.title, artist: st.artist, deck: deckId, durationMs: Math.round((st.durationSec || 0) * 1000), sessionId: SESSION, filePath: st.filePath }); } catch {}
+    // WHAT AIRED IS THE RECORD (design §3.9, Phase 1): the play and the row's stamp in ONE transaction, now, on this
+    // path — not a moment later off the chain inside a catch that swallowed every error, which is how a busy
+    // database left an aired row 'pending' for the reader to offer again (10/16).
+    this._recordGoLive(deckId, st);
     // Log-Reader Flip Phase 1/3 — SHADOW (observational), DEFERRED OFF THE ADVANCE CRITICAL PATH
     // (2026-07-22 incident fix). These do DB read/write (a COUNT + two UPDATEs); under DB contention a
     // slow op here previously stalled _fireStart → stalled the serialized advance chain → delayed the
@@ -1829,11 +1907,71 @@ class DaemonEngine {
     // principle ("must never perturb playout"), now enforced by placement. Capture the row id now
     // (deckSchedId may be overwritten by a later load before this fires). Order preserved: EVAL (compares
     // while the row is still 'pending') THEN STAMP.
+    // The stamp is no longer here (it is in _recordGoLive, above). The shadow evaluation stays deferred and is told
+    // which row just aired, so it still compares "what aired" with "what the reader would air".
     const _shadowSchedId = this.deckSchedId[deckId];
     setImmediate(() => {
       try { this._shadowEvalTimeAnchor(deckId, _shadowSchedId); } catch { /* never perturb playout */ }
-      try { this._shadowStampPlayhead(_shadowSchedId); } catch { /* never perturb playout */ }
     });
+  }
+
+  /** The go-live record. In memory first (no path can cue this row again from this second), then the database, in
+   *  one transaction (audiod/playlog.js recordGoLive). A failed write is retried every 500 ms for 30 s; a retry that
+   *  a newer go-live overtakes stamps its row 'played', never 'playing' over the newer one; a write that never lands
+   *  is an alert (`not-stamped`). Never throws into playout. */
+  _recordGoLive(deckId, st) {
+    try {
+      const schedId = this.deckSchedId[deckId] ?? null;
+      const at = Math.floor(Date.now() / 1000);
+      const gen = ++this._recordGen;
+      const twiceInMemory = schedId != null && this._airedRows.has(schedId);
+      this._noteAired(schedId);
+      const args = { stationId: this.stationId, title: st.title, artist: st.artist, deck: deckId, durationMs: Math.round((st.durationSec || 0) * 1000),
+        sessionId: SESSION, filePath: st.filePath, contentClass: this.deckContentClass[deckId] || null, rowId: schedId, playedAt: at };
+      const done = (r) => {
+        if (r.repeat || twiceInMemory) this._alert("row-aired-twice", { severity: "red", rowId: schedId, rowUuid: r.rowUuid, at, title: st.title, artist: st.artist, filePath: st.filePath, path: "go-live:" + deckId,
+          message: `"${st.title || "(untitled)"}" (log row ${schedId}) went to air again — it had already aired` });
+        if (r.retired) this._alert("retired-row-aired", { severity: "yellow", rowId: schedId, rowUuid: r.rowUuid, at, title: st.title, artist: st.artist, filePath: st.filePath, path: "go-live:" + deckId,
+          message: `"${st.title || "(untitled)"}" (log row ${schedId}) aired after the log had marked it ${r.retired}` });
+        if (r.missingRow) this._alert("not-stamped", { severity: "yellow", rowId: schedId, at, title: st.title, artist: st.artist, filePath: st.filePath, path: "go-live:" + deckId,
+          message: `"${st.title || "(untitled)"}" aired as log row ${schedId}, which is no longer in the log — the play is recorded without its row` });
+      };
+      const r = playlog.recordGoLive(this.db, args);
+      if (r.ok) { done(r); return; }
+      this._log(`RECORD failed for "${st.title || "(untitled)"}" (row ${schedId ?? "—"}): ${r.error} — retrying; the row is already held as aired`);
+      let tries = 0;
+      const retry = () => {
+        tries++;
+        // Overtaken by a newer go-live: this play still happened and is still written, but its row is no longer
+        // the one on air, so it is stamped 'played', never 'playing'.
+        const r2 = playlog.recordGoLive(this.db, gen === this._recordGen ? args : { ...args, overlay: true });
+        if (r2.ok) { this._log(`RECORD landed for row ${schedId ?? "—"} after ${tries} retr${tries === 1 ? "y" : "ies"}`); done(r2); return; }
+        if (tries < 60) { setTimeout(retry, 500); return; }
+        this._alert("not-stamped", { severity: "red", rowId: schedId, at, title: st.title, artist: st.artist, filePath: st.filePath, path: "go-live:" + deckId,
+          message: `"${st.title || "(untitled)"}" aired at ${new Date(at * 1000).toLocaleTimeString()} but neither its play nor its log row could be written for 30 s: ${r2.error}` });
+      };
+      setTimeout(retry, 500);
+    } catch (e) { this._log("record error (playout unaffected): " + String(e)); }
+  }
+
+  /** One structured alert (design §6.2): main stamps it into the v1 schema, the ledger, the stream and the list. The
+   *  engine only detects and reports. */
+  _alert(kind, d) {
+    try { this.emit("alert", { stationId: this.stationId, kind, ...d }); } catch {}
+  }
+
+  /** SWEEPER ROWS: one that fired was stamped 'played' when it fired (_logJinglePlay). One whose seam went by without
+   *  it firing is stamped 'missed' here: scheduled before the music row now on air, today, not the one armed. */
+  _retirePassedSweepers() {
+    try {
+      const p = this.db.prepare("SELECT MAX(scheduled_at) AS ts FROM generated_schedule WHERE station_id=? AND state='playing' AND deleted_at IS NULL AND (content_class IS NULL OR content_class NOT IN ('JIN','SWP'))").get(this.stationId);
+      if (!p || p.ts == null) return;
+      const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+      const keep = this._jingle && this._jingle.rowId != null ? this._jingle.rowId : -1;
+      const r = this.db.prepare(`UPDATE generated_schedule SET state='missed' WHERE station_id=? AND state='pending' AND deleted_at IS NULL
+          AND content_class IN ('JIN','SWP') AND scheduled_at >= ? AND scheduled_at < ? AND id != ?`).run(this.stationId, Math.floor(d0.getTime() / 1000), p.ts, keep);
+      if (r && r.changes) this._log(`sweepers: ${r.changes} sweeper row(s) whose seam passed without firing stamped 'missed'`);
+    } catch { /* never break playout */ }
   }
 
   // Log-Reader Flip Phase 3 — TIME-ANCHORED boundary SHADOW (design §2.7). At each go-live boundary,
@@ -1845,7 +1983,9 @@ class DaemonEngine {
   _shadowEvalTimeAnchor(deckId, airedSchedId) {
     try {
       const nowTs = Math.floor(Date.now() / 1000);
-      const d = loggen.selectRowForNow(this.db, this.stationId, nowTs);
+      // The aired row is already stamped (Phase 1 records at go-live), so the reader is asked as if it were still
+      // pending: "which row would you air now?" must be answered with the row that just went live still in the running.
+      const d = loggen.selectRowForNow(this.db, this.stationId, nowTs, undefined, { asPending: airedSchedId });
       const airedAt = this.deckSched[deckId] ?? null;            // aired row's scheduled_at (back-link)
       const wouldId = d.playRow ? d.playRow.row_id : null;
       const rec = {
@@ -1860,33 +2000,6 @@ class DaemonEngine {
       this.emit("logreader-shadow", rec);
       if (!rec.agrees) this._log(`[LOGREADER-SHADOW] ${d.mode}: aired row ${airedSchedId} — flip would air row ${wouldId} (drift ${d.driftSec}s, missed ${d.missedCount})`);
     } catch (e) { /* shadow must NEVER perturb playout */ }
-  }
-
-  // Log-Reader Flip Phase 1 — SHADOW playhead writer (design §7 Phase 1). As each deck goes live, record
-  // the true playhead in generated_schedule's LOCAL-ONLY lifecycle columns (never synced, §5) so a later
-  // phase can read the playout position straight from the log — and so we can verify, over a burn-in, that
-  // the stamped playhead matches play_log. This is a direct local write on the daemon's own DB handle
-  // (same pattern as playlog.logPlay); it does NOT go through the sync mutation path. It changes NO
-  // playout behavior. A live-picked (off-log) item has no schedId → retire the prior playhead and count
-  // the divergence (the exact decks-vs-calendar mismatch the flip eliminates). Never throws into playout.
-  _shadowStampPlayhead(schedId) {
-    try {
-      const now = Math.floor(Date.now() / 1000);
-      if (schedId != null) {
-        // New playhead: this row is 'playing'; any other 'playing' row for this station is now 'played'.
-        this.db.prepare("UPDATE generated_schedule SET state='played' WHERE station_id=? AND state='playing' AND id!=?").run(this.stationId, schedId);
-        this.db.prepare("UPDATE generated_schedule SET state='playing', played_at=? WHERE id=? AND station_id=?").run(now, schedId, this.stationId);
-        if (this._playheadOffLog) console.log(`[PLAYHEAD] station ${this.stationId}: back ON-LOG (row ${schedId}).`);
-        this._playheadOffLog = false;
-      } else {
-        // Off-log content on air — the calendar has no row for what's playing. Retire the prior playhead
-        // and record the divergence (logged once per off-log run so a long stretch stays visible).
-        this.db.prepare("UPDATE generated_schedule SET state='played' WHERE station_id=? AND state='playing'").run(this.stationId);
-        this._offLogPlays = (this._offLogPlays || 0) + 1;
-        if (!this._playheadOffLog) console.warn(`[PLAYHEAD] station ${this.stationId}: OFF-LOG on air (no generated_schedule row) — decks/queue diverged from the calendar. offLogPlays=${this._offLogPlays}`);
-        this._playheadOffLog = true;
-      }
-    } catch (e) { /* shadow write must NEVER perturb playout */ }
   }
 
   // ── operator/queue API (called from daemon command handlers) ──
@@ -1944,14 +2057,52 @@ class DaemonEngine {
   // queue:enqueue — append to the bottom (daemon stamps qids). Same effect as legacy addToQueue.
   intentEnqueue(items) { this.addToQueue(items); return true; }
 
-  // queue:remove — drop the pending entry with this qid. No-op if unknown or bound (cued on a deck).
+  // queue:remove — THE X (Phase 1, T12). Removing an entry takes its ROW OUT OF THE LOG (a pending row only, soft
+  // delete, the same as the Program Log's delete), so the next refill — which re-reads the log every 2 s — cannot
+  // bring it back. Before, only the in-memory entry went and the row stayed pending, so it returned at once ("X not
+  // removing songs", 10/17). An entry cued on a deck comes off that deck and the deck is cued with the next one. The
+  // song on air is not in the queue; it is not removed here (the board's OFF does that).
   intentRemove(qid) {
-    if (!qid || this.boundQids.has(qid)) return false;
+    if (!qid) return false;
     const idx = this.queue.findIndex(it => it.qid === qid);
     if (idx < 0) return false;
+    const item = this.queue[idx];
+    const onDeck = ["A", "B", "C"].find(d => this.deckQid[d] === qid);
+    if (onDeck && (this._deckState(onDeck).status === "playing" || this._deckState(onDeck).status === "paused")) {
+      this._log(`queue X refused: "${item.title || "(untitled)"}" is on air on deck ${onDeck}`);
+      return false;
+    }
+    this._removeLogRow(item, "removed from Up Next");
+    if (onDeck) {
+      this._advance("x-off-deck:" + onDeck, async () => {
+        if (this._deckState(onDeck).status === "playing" || this.deckQid[onDeck] !== qid) return;
+        this._stop(onDeck);
+        this.deckReady.delete(onDeck); this.endTriggered.delete(onDeck);
+        this._releaseDeckEntry(onDeck);
+        this._setDeck(onDeck, { status: "idle", title: "", artist: "", filePath: "", positionSec: 0 });
+        const i = this.queue.findIndex(q => q.qid === qid); if (i >= 0) this.queue.splice(i, 1);
+        this._log(`queue X: "${item.title || "(untitled)"}" taken off deck ${onDeck} and out of the log`);
+        this.emit("queue", { stationId: this.stationId, items: this.queue });
+        if (this._mayDecide()) await this._preloadNow(onDeck, 0);
+        this._maybeEmitDeck(onDeck);
+      });
+      return true;
+    }
     this.queue.splice(idx, 1);
+    this._log(`queue X: "${item.title || "(untitled)"}" out of Up Next and out of the log`);
     this.emit("queue", { stationId: this.stationId, items: this.queue });
     return true;
+  }
+
+  /** Take a queue entry's row out of the log: pending rows only (the record is never touched), soft delete. */
+  _removeLogRow(item, why) {
+    if (!item || item.schedId == null) return;
+    try {
+      const iso = new Date().toISOString();
+      const r = this.db.prepare("UPDATE generated_schedule SET deleted_at=?, updated_at=? WHERE id=? AND station_id=? AND deleted_at IS NULL AND (state IS NULL OR state='pending')")
+        .run(iso, iso, item.schedId, this.stationId);
+      if (r && r.changes) { try { this.emit("log-row-removed", { stationId: this.stationId, rowId: item.schedId, title: item.title || "", why }); } catch {} }
+    } catch (e) { this._log("queue X: could not take the row out of the log — " + String(e)); }
   }
 
   // queue:reorder — move a pending entry to toIndex (clamped into the pending region; never above a
@@ -2044,7 +2195,7 @@ class DaemonEngine {
         this._log("operator start: deck " + target + " LIVE — " + (this._deckState(target).title || "(untitled)"));
         this.deckReady.delete(target); this.endTriggered.delete(target);
         if (this.manualCue.has(target)) this.manualCue.delete(target);
-        else if (this.queue.length > 0) this.dequeue();
+        this._consumeDeckEntry(target);
         this._armAfterRotate(target);
         return { ok: true, reason: "started", to: target };
       }
@@ -2167,7 +2318,8 @@ class DaemonEngine {
     // Load the first PLAYABLE track into A, skipping any missing-file items.
     let loaded = false, guard = 0;
     while (this.queue.length > 0 && guard++ < 100) {
-      const first = this.dequeue();
+      const first = this._takePending();
+      if (!first) break;
       if (this.loadToDeck("A", first)) { this.deckChainType.A = first.chainType || "segue"; loaded = true; break; }
       this.emit("error", { stationId: this.stationId, where: "start", error: "skipped unplayable: " + (first.filePath || "") });
       if (this.queue.length === 0) await this.refillIfNeeded();
@@ -2293,35 +2445,58 @@ class DaemonEngine {
         // moment the incoming would start; a couple of seconds beyond it is the honest floor.
         if (!(remaining > (this.segueOverlap || 0) + 2)) return;
       }
-      const pending = this.queue.filter(q => !this.boundQids.has(q.qid));
-      if (!pending.length) return;
-      let want = 0;
-      for (const d of order) {
-        if (d === playing) continue;
+      // BY ROW (Phase 1). The standby decks, in the order they will go to air, must hold the next entries of the log,
+      // in log order. Before, the check compared FILES and a replaced deck kept its entry marked "on a deck", so the
+      // queue drifted out of step with the decks (the 10/16 replays). Now each standby deck's entry is compared with
+      // the entry the log wants there; a deck that differs lets go of its entry (back to pending if the log still has
+      // it) and is cued with the exact entry, by qid.
+      const i0 = order.indexOf(playing || "A");
+      const standby = [];
+      for (const d of (playing ? [order[(i0 + 1) % 3], order[(i0 + 2) % 3]] : order)) {
         if (this._deckState(d).status === "playing" || this._deckState(d).status === "paused") continue;
         if (this.manualCue.has(d)) continue;                      // the operator cued this by hand — theirs
-        if (!this.deckReady.has(d)) continue;                     // nothing cued here; preload will fill it
-        const target = pending[want];
-        if (!target) break;
-        const loaded = this._deckState(d).filePath || "";
-        if (loaded && target.filePath && loaded === target.filePath) { want++; continue; }   // already right
-        this._advance("recue:" + d, async () => {
-          // Re-check inside the chain: a rotate may have taken this deck live since we decided.
-          const s2 = this._deckState(d);
+        standby.push(d);
+      }
+      const keyOf = (q) => (q && q.schedId != null ? "r" + q.schedId : q ? "q" + q.qid : null);
+      const upcoming = this.queue.filter(q => !this._isAired(q))
+        .map((q, i) => ({ q, i })).sort((x, y) => ((x.q.scheduledAt ?? Infinity) - (y.q.scheduledAt ?? Infinity)) || (x.i - y.i)).map(x => x.q);
+      if (!upcoming.length) return;
+      const wrong = [];
+      standby.forEach((d, k) => {
+        if (!this.deckReady.has(d)) return;                        // nothing cued here; preload will fill it
+        const want = upcoming[k];
+        if (!want) return;
+        const holds = this.queue.find(q => q.qid === this.deckQid[d]);
+        if (holds && keyOf(holds) === keyOf(want)) return;          // already right
+        wrong.push({ d, want, was: this._deckState(d).title || "(untitled)" });
+      });
+      if (!wrong.length) return;
+      this._advance("recue:" + wrong.map(w => w.d).join(""), async () => {
+        // Re-check inside the chain: a rotate may have taken a deck live since we decided. Any change → do nothing;
+        // the next refill decides again.
+        if (this._jingle) return;
+        for (const w of wrong) {
+          const s2 = this._deckState(w.d);
           if (s2.status === "playing" || s2.status === "paused") return;
-          if (this._jingle) return;
-          this._stop(d);
-          this.deckReady.delete(d);
-          this.endTriggered.delete(d);
+          if (this.manualCue.has(w.d)) return;
+        }
+        const todo = wrong;
+        // First every wrong deck lets go (so an entry one of them held is free for another), then each is cued.
+        for (const w of todo) {
+          this._stop(w.d);
+          this.deckReady.delete(w.d);
+          this.endTriggered.delete(w.d);
+          this._releaseDeckEntry(w.d);
           // Our side of the deck is emptied WITH the file, not just the status: a title left behind on
           // an empty deck is what the stall recovery used to pick (see _resumePlayout).
-          this._setDeck(d, { status: "idle", title: "", artist: "", filePath: "", positionSec: 0 });
-          this._log(`calendar re-cue: deck ${d} held "${s2.title || "(untitled)"}" — the log now says "${target.title || "(untitled)"}"`);
+          this._setDeck(w.d, { status: "idle", title: "", artist: "", filePath: "", positionSec: 0 });
+        }
+        for (const w of todo) {
+          this._log(`calendar re-cue: deck ${w.d} held "${w.was}" — the log now says "${w.want.title || "(untitled)"}" (row ${w.want.schedId ?? "—"})`);
           // We ARE the advance chain here — call the body, never the chained wrapper (see preload()).
-          await this._preloadNow(d, this._pendingStart());
-        });
-        want++;
-      }
+          await this._preloadNow(w.d, 0, { qid: w.want.qid });
+        }
+      });
     } catch (e) { this._log("recue error (playout unaffected): " + String(e)); }
   }
 
@@ -2456,8 +2631,11 @@ class DaemonEngine {
   // isolation excludes it from music math / affidavit. deck="CART" (overlay, not a rotation deck).
   _logJinglePlay(j) {
     try {
-      playlog.logPlay(this.db, { stationId: this.stationId, title: j.title, artist: j.artist, deck: (j.channels && j.channels[0]) || "CART",
-        durationMs: Math.round((j.jinDur || 0) * 1000), sessionId: SESSION, filePath: j.filePath, contentClass: j.contentClass || "JIN" });
+      // The sweeper's own log row is stamped 'played' in the same transaction (Phase 1: "sweepers stamped").
+      const r = playlog.recordGoLive(this.db, { stationId: this.stationId, title: j.title, artist: j.artist, deck: (j.channels && j.channels[0]) || "CART",
+        durationMs: Math.round((j.jinDur || 0) * 1000), sessionId: SESSION, filePath: j.filePath, contentClass: j.contentClass || "JIN", rowId: j.rowId ?? null, overlay: true });
+      if (!r.ok) this._alert("not-stamped", { severity: "yellow", rowId: j.rowId ?? null, at: Math.floor(Date.now() / 1000), title: j.title, filePath: j.filePath, path: "sweeper",
+        message: `sweeper "${j.title || "(untitled)"}" fired but could not be recorded: ${r.error}` });
     } catch {}
   }
 
@@ -2851,10 +3029,12 @@ class DaemonEngine {
     const order = ["A", "B", "C"];
     const playing = order.find(d => this._deckState(d).status === "playing");
     const next = playing ? order[(order.indexOf(playing) + 1) % 3] : "A";
-    // Load the next PLAYABLE track, skipping missing-file items.
-    let loaded = false, guard = 0;
-    while (this.queue.length > 0 && guard++ < 100) {
-      const item = this.dequeue();
+    // The next deck is already cued (its own entry, in log order): play what it holds. Otherwise load the next
+    // PLAYABLE pending entry, skipping missing-file items.
+    let loaded = this.deckReady.has(next) && !!this._deckState(next).filePath && this._deckState(next).status !== "playing", guard = 0;
+    while (!loaded && this.queue.length > 0 && guard++ < 100) {
+      const item = this._takePending();
+      if (!item) break;
       if (this.loadToDeck(next, item)) { this.deckChainType[next] = item.chainType || "segue"; loaded = true; break; }
       this.emit("error", { stationId: this.stationId, where: "skip", error: "skipped unplayable: " + (item.filePath || "") });
       if (this.queue.length === 0) await this.refillIfNeeded();
@@ -2862,7 +3042,9 @@ class DaemonEngine {
     if (!loaded) return false;
     this._play(next);
     this._setDeck(next, { status: "playing", positionSec: 0 });
-    this.endTriggered.delete(next);
+    this.endTriggered.delete(next); this.deckReady.delete(next);
+    if (this.manualCue.has(next)) this.manualCue.delete(next);
+    this._consumeDeckEntry(next);
     this._fireStart(next);
     this._log("skip: deck " + next + " LIVE — " + (this._deckState(next).title || "(untitled)"));
     if (playing && playing !== next) this._stop(playing);

@@ -263,12 +263,15 @@ function readGeneratedSchedule(db, count, stationId) {
 // JIN/SWP overlays are excluded (seam overlays, never a deck track), matching the daemon reader's
 // content_class guard (loggen.readGeneratedSchedule). driftSec = now − chosen row's scheduled_at
 // (positive = the chosen slot is in the past = running behind). Never throws.
-function selectRowForNow(db, stationId, nowTs, slackSec = 60) {
+// opts.asPending (Phase 1, 2026-10-18): a row id to treat as still pending — the engine's go-live shadow asks "what would
+// you air now?" just after it has stamped the row that went live, and must ask it with that row still in the running.
+function selectRowForNow(db, stationId, nowTs, slackSec = 60, opts = null) {
   try {
     const fmt = getFormatCategoryIds(db, stationId);
     const catClause = fmt.length ? `AND (s.id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
+    const asP = opts && opts.asPending != null && Number.isInteger(Number(opts.asPending)) ? Number(opts.asPending) : null;
     const base = `FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
-                  WHERE gs.station_id = ? AND gs.state = 'pending' AND gs.deleted_at IS NULL
+                  WHERE gs.station_id = ? AND (gs.state = 'pending'${asP != null ? " OR gs.id = " + asP : ""}) AND gs.deleted_at IS NULL
                     AND (gs.content_class IS NULL OR gs.content_class NOT IN ('JIN','SWP')) ${catClause}`;
     const cols = `gs.id AS row_id, gs.title, gs.scheduled_at, COALESCE(gs.file_path, s.file_path) AS file_path`;
     const fmtP = fmt.length ? fmt : [];

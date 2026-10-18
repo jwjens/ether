@@ -47,7 +47,9 @@ console.log('\n== AUTO anchors to the calendar ==');
   // also appears in resume-playout (and once in the since-removed top-of-hour cut), so slicing on the function name alone
   // picked up an unrelated one and failed a correct ordering.
   const i = src.indexOf('_refillFromLog({ force: true })');
-  const j = src.indexOf('const first = this.dequeue();', i);
+  // Phase 1 (2026-10-18): the first track is taken with _takePending() — the first entry no deck holds and that has
+  // not aired — instead of dequeue(). The ordering this asserts is unchanged.
+  const j = src.indexOf('const first = this._takePending();', i);
   if (i > 0 && j > i && (j - i) < 1200) pass('the anchor happens BEFORE the first track is taken');
   else fail(`the anchor runs after the track is chosen — it would correct nothing (i=${i}, j=${j})`);
 }
