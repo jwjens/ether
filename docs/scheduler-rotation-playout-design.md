@@ -71,6 +71,12 @@ minutes.
     - started-early, started-late and regenerated-on-air scenarios.
 
     A failure blocks the release, so this cannot silently break or be rolled back again.
+12. **The health monitor is Iris's eyes** (§6).
+    - One air check watches every element as it airs, with the same rules, and reports every problem as one alert: in Ether, on
+      the Remote admin app and in the health log.
+    - It only detects. It never decides or fixes.
+    - Iris can subscribe to the same stream later.
+    - A replay of 10/16 and 10/17 in the release gate proves it raises every alert.
 
 **Where Ether differs from Zetta/GSelector on purpose** (each is your decision, see §3.12):
 - **no breakable rules and no scoring:** GSelector has both; Ether obeys the rules and leaves the slot unscheduled;
@@ -675,6 +681,200 @@ Jeff tests it off-air and then on OVEVENTS before it goes near ovowforestmusic. 
 | **6. Screens and help** | The **Rotation screen** (§3.2.4); Music Scheduling Rules rewritten to what the code does; every §3.11 setting on screen; Program Log UNSCHEDULED / skipped / fill rows; reconciliation view; help docs (`help-rotation.md`, `help-music-scheduling-rules.md`, `help-hour-start.md`, `help-duplicates.md`, `help-default-clock.md`). | T13a, T15 + launching the app and looking at each screen (CLAUDE.md: the only valid UI test) |
 
 After Phase 6, the ovowforestmusic spread is re-measured on the next real night and compared with §2.1's numbers.
+
+---
+
+## 6. Health monitor: Iris's eyes
+
+### In plain words
+**Why it missed tonight:**
+- Of the ten failures Jeff listed, the monitor **checks only two, and alerts on neither.**
+  - It saw the station running ahead (67 "logreader-ahead" lines this morning, up to **371 min ahead**). It filed them grey, in a
+    log nobody is shown.
+  - It saw upcoming songs breaking song separation (54 "queue-lint" lines tonight, for example **Goo Goo Muck "139 min early"**
+    eleven minutes before it aired). It files those as "routine" and hides them by default.
+- **It never checks** what actually aired against the rules, a row airing twice, a stall, the watchdog's leftover track,
+  Generate rewriting aired rows, sweepers left unmarked, or blank categories.
+- **The station light only knows audio:** frames, silence, queue depth, engine restarts. So it stayed green all evening.
+- **The Remote app gets only that light,** never an alert.
+
+**The design:**
+- **One air check watches every element as it goes on air**, with the same rule code the picker uses, reading the same Programming
+  preferences. Every threshold is a setting.
+- **It only detects and reports.** It never decides and never fixes.
+- **Each problem becomes one alert event** (what, when, station, row, song, rule, measured against setting) on **one stream**:
+  - shown in Ether's Health Monitor (never hidden);
+  - shown on the Remote admin app;
+  - written to the health log;
+  - available for Iris to subscribe to later, without changing the monitor.
+
+**The proof:** a release-gate test replays 10/16 and 10/17 and fails unless every one of those alerts is raised at the right
+moment.
+
+### 6.1 Why it missed tonight (receipts)
+
+**What existed on these nights:**
+- **10/16:** ovowforestmusic's engine log (`docs/halloveen-engine-log-2026-10-16.txt`). Its health log is on ovowforestmusic and
+  is not here.
+- **10/17:** this machine's health log
+  (`%LOCALAPPDATA%\Ether\profiles\ETH-STN-BAA8-E056-6FC8\health-events.jsonl`) for its own HalloVeen run, 8:31 AM–12:12 PM and
+  3:58–6:15 PM, plus play_log and generated_schedule (read-only handle). ovowforestmusic's 10/17 health log is not here
+  (UNVERIFIED).
+
+**Tally of this machine's health log, 10/17, HalloVeen:**
+
+| Events | Kind |
+|---|---|
+| 855 | audio-rt |
+| 359 | processing |
+| 281 | jingle |
+| 185 | library-health |
+| 70 | level changes |
+| **67** | **logreader-ahead** |
+| **54** | **queue-lint** |
+| 47 | sweeper-placement |
+| 11 | generate-timing |
+| 7 | board-state-mismatch |
+| 6 | announcement-fired |
+| 5 | logreader-missed |
+| 5 | spot-missed |
+
+**No event exists** for a separation break on air, a replay, a stall, a leftover track, an aired-row rewrite, a sweeper not
+stamped, or a blank category.
+
+| Failure | Checked at all? | Why no alert |
+|---|---|---|
+| **A song aired inside its song separation** | **Only before air, and not against what aired.** `lintUpcoming` (`electron/library-health.js:606`) checks the next rows in the log against play_log. | It flagged them: 54 `queue-lint` lines 10/17, for example 17:11:31 "Goo Goo Muck, song, 139 min early", which aired at 17:22; 18:15:32 "Thriller, 30 min early". But `queue-lint` is in `ROUTINE_KINDS` and **hidden by default** (`src/components/health/healthUtils.ts:179-188`). It is otherwise only a chip in Up Next. It never reaches the station light, the Remote app or an alert. It also uses its **own copy of the rules** (`sepConfig`, `library-health.js:339`): per-song `no_repeat_hours`, not the song separation minutes, and rounded to whole hours at `:366`. And nothing checks the song **when it airs**. |
+| **An artist aired inside its artist separation** (title the same) | Artist: the same lint, the same hiding. **Title: not checked anywhere** (`lintUpcoming` has no title rule). | as above |
+| **Running ahead / behind the clock** | **Ahead:** the reader emits `logreader-ahead` (`audiod/engine.js:1616`), written to the ledger (`electron/main.js:1305`). **Behind:** only as `logreader-missed` when rows are dropped. | 67 events 10/17, 08:37:44 "22 min" up to 08:49:03 **"371 min"** and 12:12:05 "168 min". `eventLevel()` colours by name; "ahead" matches neither the red nor the yellow pattern (`healthUtils.ts:168-170`), so it is **grey**. It is not part of the station light (`electron/audio-health.js:279-322`), nor of the Remote frame. **Behind:** `logreader-missed` (5 on 10/17, for example 15:58:45, 1124 s) is yellow in the list but not in the station light. |
+| **A log row airing twice** | **No.** | Nothing compares a go-live with the rows that already aired. On 10/16, 8 rows aired twice (`docs/halloveen-playout-findings-2026-10-17.md`); no line in any log names it. |
+| **The watchdog playing a leftover deck track** | **No.** | `_resumePlayout` (`engine.js:822` at 6558e57) logs "resume-playout: deck A LIVE — <title>" to the daemon log only. Nothing checks that the deck's content is the log's row for now. |
+| **A stall (song ended, next didn't start)** | **Engine only.** The watchdog emits `error` with `where:"watchdog"` (`engine.js:828`). | `main.js` routes only `where:"play-skip"` and `where:"resume-playout"` (`main.js:1402-1409`). The watchdog's own error **falls through unrouted**; the comment there names it as a known gap. The station light's silence rules need 10 s for yellow and 30 s for red (`audio-health.js:19-20`, baked numbers). A 1 s gap never shows. Receipt: 4 stalls on 10/16, at 01:59:40Z, 02:04:00Z, 03:50:22Z and 04:04:06Z, in the engine log only. |
+| **Generate deleting or rewriting aired rows** | **No.** | `_commitDayRows` deletes every non-operator row in the window whatever its state (`main.js:11201` at 6558e57) and logs nothing about aired rows. No sense watches writes to non-pending rows. Whether it happened on 10/17 (Jeff's 6:10 PM regenerate on ovowforestmusic, with the station ahead) is UNVERIFIED; one read on ovowforestmusic settles it. |
+| **Aired items not marked played (sweepers); blank category** | **No.** | Sweeper plays are written to play_log (`engine.js:2457`), and their log rows stay pending. Every sweeper row on this machine's 10/17 log is still pending. `category_code` is hard-coded null (`audiod/playlog.js:56`): 316 of 316 cloud plays since noon 10/17 are blank. Nothing compares a play with its row. |
+| **A slot UNSCHEDULED because nothing passed** | **Cannot exist today.** Generate never leaves a slot empty; it bends the rules instead. | The bend is counted in `pick_reason` / `ctx.relaxed` and on the `auto-extend` line. Receipt: "Christmas in Jully" 10/17 08:26, `relaxedPicks: 5826` of 6624 rows. It is in the ledger and nowhere visible as a problem. |
+
+**Also missing:**
+- **The Remote admin app receives only the station's light and reason** (the health frame, `electron/health-frame.js`;
+  station_cc_data `health`, read 10/17). No alert reaches it.
+- **The station light's thresholds are baked in** (`audio-health.js:16-26`): `FROZEN_MS` 3000, `SILENT_RED_MS` 30000,
+  `SILENT_YELLOW_MS` 10000, `QUEUE_LOW` 5, `NEXT_DECK_TRACK_LEFT_MS` 30000, `PING_LAG_MS` 500 and the rest.
+- **So is the watchdog's:** `STALL_MS` 1000 (`engine.js:52`).
+
+### 6.2 The design
+**One air check, in the daemon, next to go-live.** That is where the truth happens. It reads only what happened:
+- go-live and end of every element;
+- deck loads and re-cues;
+- the watchdog's recoveries;
+- every write to generated_schedule;
+- the log as written.
+
+**It uses the one rule module.**
+- The rules live in one module (`audiod/rules.js`: song, artist and title separation, reading Programming preferences). The
+  picker uses it to choose and the air check uses it to judge.
+- There is no second copy: `library-health.js` `sepConfig` and its own song-rest arithmetic are removed, and the queue preview
+  calls the same module.
+- A bug in that module is caught by the release gate's **independent** checker (§4), which is a test tool and never part of
+  the product.
+
+**What it detects** (each is one alert kind; thresholds are settings):
+
+| Alert | When it is checked | What is measured against what | Setting (proposed starting value) |
+|---|---|---|---|
+| `separation-aired` (song / artist / title) | at every go-live | minutes since the last airing of that song / artist / title (owner's plays, by recording), against the Programming-preferences minutes | none: the rule is the setting |
+| `separation-in-log` | when Generate commits, and every few minutes over the next hours of the log | the same, for rows already in the log, against what aired plus the log on both sides | look-ahead hours (2) |
+| `clock-ahead` | at every go-live | the row's scheduled time against now | alert beyond the early-start window (§3.7, 0 s) |
+| `clock-behind` | at every go-live and at :00 | now against the row's scheduled time | alert when behind by more than (120 s) |
+| `row-aired-twice` | at every go-live | the row id against the rows already aired | none |
+| `off-log-play` | at every go-live | the element against the log's row for now. Names the path: stall recovery, re-cue, preload, operator. An operator's own load is reported as `operator-play`, not as a fault. | none |
+| `stall` | when a rotation deck ends and nothing goes live | seconds of gap, the song that ended, what recovered and with what | alert when the gap exceeds (1 s). The watchdog's `STALL_MS` becomes this same setting. |
+| `aired-row-changed` | on any write | any UPDATE or DELETE of a generated_schedule row whose state is not pending, caught by a database trigger into an append-only table, so every code path is caught including ones not yet written | none |
+| `not-stamped` | at every go-live | the element's log row is not playing/played within the time set; the play has no row id or no category | stamp deadline (30 s) |
+| `unscheduled` | when Generate writes it, and again when its time comes on air | the slot, its category, the closest songs and rules | none |
+
+**Every alert is one event, one shape** (versioned):
+```
+{ v: 1, id, kind, severity, stationUuid, at, observedAt, machineId,
+  row:  { id, scheduledAt, title } | null,
+  song: { recording, title, artist, categoryId } | null,
+  rule: { key, setting, measured, unit } | null,      // e.g. { key: "artist_separation_min", setting: 60, measured: 22, unit: "min" }
+  path: "go-live" | "stall-recovery" | "re-cue" | "generate" | "editor" | ...,
+  message: "Goo Goo Muck aired 9 min after it last aired; song separation is 120 min." }
+```
+- **Severity** per kind is a setting. Starting values:
+  - **red:** separation-aired, row-aired-twice, off-log-play, stall, aired-row-changed;
+  - **yellow:** clock-ahead, clock-behind, not-stamped, unscheduled (red when its time comes on air).
+- **The message is plain words:** what, when, which song or row, the rule and the numbers.
+
+**One stream, three places, nothing hidden:**
+1. **Health log:** through the one ledger writer (`electron/main.js:212`), kind `alert`.
+2. **Ether:**
+   - an **Alerts** list at the top of the Health Monitor, never in "routine";
+   - the station light takes the worst open alert;
+   - the Program Log row it concerns carries a marker that opens the alert.
+3. **Remote admin app** (app.ether-cast.com, Health): pushed with the health frame as a list of the last alerts. Each one is
+   pushed once; nothing is pushed to the public listener page.
+
+**Nothing is fixed silently.** The monitor never acts. Where playout itself does something (§3.8 skipping a row that no longer
+passes, §3.2.3 an unscheduled slot filled from another category), playout writes its own event to the same stream, so the user
+sees every action.
+
+**Iris:**
+- **One stream:** the alert stream is the one Iris will read. The monitor writes each alert once to the ledger, and the same
+  object goes out on the SSE live-wire as event `health:alert`. That is the live-wire Iris already connects to (`:3400`,
+  `main.js:9904`; `docs/iris-ether-contract.md` §3).
+- **Replay after a reconnect:** a reconnecting subscriber asks for alerts since a given `id` (`GET /alerts?since=`), so nothing
+  is lost.
+- **The contract:** a new section in `docs/iris-ether-contract.md`, "Alert stream (read-only)", holds:
+  - the schema above and its version rule (fields are only ever added);
+  - that the stream is detection only;
+  - that the monitor reads nothing from Iris and waits on no subscriber.
+- **No Iris logic is built.** What Iris may do about an alert is already governed by her two tiers (§2 of the contract), and is
+  out of scope here.
+
+**The station light** keeps its audio checks, and their numbers become settings (`audio-health.js:16-26`), with today's values
+as starting values. The light's level is the worst of the audio checks and the open alerts.
+
+### 6.3 Proof: the replay test (release gate, T17)
+**`scripts/test-air-check-replay.js`, on copies, no audio:**
+- **Inputs:**
+  - 10/16: ovowforestmusic's engine log, parsed into go-live / end / re-cue / stall events, plus that night's log rows. The rows
+    need a **read-only copy of ovowforestmusic's database**, taken with Ether fully closed. Until Jeff provides it, the rows the
+    findings doc already proved stand in.
+  - 10/17: this machine's play_log and generated_schedule for its two HalloVeen runs (copy), plus ovowforestmusic's 10/17
+    copy, needed in the same way.
+- **The expected alerts are written out in advance**, from the receipts, in
+  `scripts/fixtures/air-check-2026-10-16-17.expected.json`. Each entry has its kind, time window, row or song, and rule:
+
+  | Night | Expected alert |
+  |---|---|
+  | 10/16 | `row-aired-twice` for rows 721491, 721501, 721520, 721521, 721539, 721540, 721543 and 721544, each at its second go-live |
+  | 10/16 | `stall` at 01:59:40Z, 02:04:00Z, 03:50:22Z and 04:04:06Z, each with the `off-log-play` / recovery it led to |
+  | 10/17, this machine | `clock-ahead` from 08:37:44 PDT (22 min) through 371 min |
+  | 10/17, this machine | `separation-aired` for Love Ain't It 16:23 and 16:38, Havana 16:43, Wolves 17:18, Goo Goo Muck 17:22 |
+  | 10/17, ovowforestmusic | Thriller 15:23, Ghostbusters 15:49 and 18:04, Goo Goo Muck 17:57 |
+  | 10/17, both | `not-stamped` for every sweeper; `not-stamped` (blank category) for every play |
+
+- **Scenarios with no receipt on these nights are injected on the copy:**
+  - a Generate run over aired rows, which must raise `aired-row-changed` (or, once Phase 1 is built, change nothing);
+  - a slot with no passing song, which must raise `unscheduled` at commit and at air.
+- **Pass:** every expected alert is raised once, inside its window, with the right row, song and rule numbers. Every red alert
+  raised that is not on the list is printed, and fails the test unless it is added to the list with a receipt.
+- **Today's monitor fails this test**, which is the point. Phase 0 runs it to prove that.
+
+### 6.4 Where it goes in the build order
+- **Phase 0:**
+  - the replay fixture and expected list;
+  - T17 run against today's monitor, which fails;
+  - the alert schema;
+  - the Iris contract section.
+- **Phase 1:** the alert stream (ledger, SSE `health:alert`, Remote push, Alerts list) plus `row-aired-twice`,
+  `aired-row-changed` (the trigger), `not-stamped`.
+- **Phase 2:** the one rule module, plus `separation-aired`, `separation-in-log` and `unscheduled`. The lint's second copy is
+  removed.
+- **Phase 3:** `clock-ahead`, `clock-behind`, `stall` (the watchdog's number becomes the setting) and `off-log-play`. The
+  station light's numbers become settings.
+- **Every phase:** T17 grows to cover what the phase adds, and stays in the release gate.
 
 ---
 
