@@ -15,6 +15,7 @@ import { HealthMonitor } from "./HealthMonitor";
 import { BoutiqueCartWall } from "./DeckConfigurator";
 import Scheduler from "./Scheduler";
 import LibraryWindow from "./LibraryWindow";
+import ScreenSurface from "./ScreenSurface";
 import StudioPro from "./StudioPro";
 import VideoStudio from "./ShowPlus";
 import Jukebox from "./Jukebox";
@@ -160,7 +161,7 @@ function PopoutFaders() {
 
 
 export default function PopoutRenderer({ panel }: { panel: string }) {
-  const title = TITLES[panel] ?? panel;
+  const title = panel === "screen" || panel.startsWith("screen:") ? "Screen" : (TITLES[panel] ?? panel);
 
   // JUKEBOX — the public jukebox. It is the ONE pop-out that does not wear PopoutShell: the shell adds
   // a 28px EtherCast titlebar, and this window faces an audience fullscreen. It also needs no station
@@ -168,7 +169,8 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
   if (panel === "jukebox") return <Jukebox />;
 
   let content: React.ReactNode;
-  switch (panel) {
+  // A saved screen's window is "screen:<layout uuid>" (one window per layout); every screen routes to the one case.
+  switch (panel.startsWith("screen:") ? "screen" : panel) {
     case "decks":
       // THE SAME BOARD THE DASHBOARD RENDERS — not a monitor-mode copy of it.
       // This used to be StandaloneDecksPanel, a months-old widget that predated source channels and
@@ -214,6 +216,10 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
       break;
     case "categories":
       content = <Scheduler defaultTab="categories" embedded />;
+      break;
+    case "screen":
+      // THE SURFACE WINDOW (Screen Builder): a screen built from registered modules. src/components/ScreenSurface.tsx.
+      content = <ScreenSurface layoutUuid={panel.startsWith("screen:") && !panel.startsWith("screen:new-") ? panel.slice("screen:".length) : null} />;
       break;
     case "library":
       content = <LibraryWindow />;   // the Library window: src/components/LibraryWindow.tsx

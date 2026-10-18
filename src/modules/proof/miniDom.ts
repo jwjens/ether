@@ -77,6 +77,24 @@ class MiniNode {
     return c;
   }
   replaceChild(n: MiniNode, old: MiniNode) { this.insertBefore(n, old); this.removeChild(old); return old; }
+  private _nodes(xs: any[]): MiniNode[] { return xs.map(x => (typeof x === "string" ? this.ownerDocument.createTextNode(x) : x)); }
+  append(...xs: any[]) { for (const n of this._nodes(xs)) this.appendChild(n); }
+  prepend(...xs: any[]) { const first = this.firstChild; for (const n of this._nodes(xs)) this.insertBefore(n, first); }
+  replaceChildren(...xs: any[]) { for (const c of [...this.childNodes]) this.removeChild(c); this.append(...xs); }
+  after(...xs: any[]) { const p = this.parentNode; if (!p) return; const next = this.nextSibling; for (const n of this._nodes(xs)) p.insertBefore(n, next); }
+  before(...xs: any[]) { const p = this.parentNode; if (!p) return; for (const n of this._nodes(xs)) p.insertBefore(n, this); }
+  replaceWith(...xs: any[]) { this.before(...xs); this.remove(); }
+  get firstElementChild(): MiniNode | null { return this.childNodes.find(c => c.nodeType === ELEMENT_NODE) ?? null; }
+  get lastElementChild(): MiniNode | null { return [...this.childNodes].reverse().find(c => c.nodeType === ELEMENT_NODE) ?? null; }
+  get childElementCount() { return this.childNodes.filter(c => c.nodeType === ELEMENT_NODE).length; }
+  get nextElementSibling(): MiniNode | null { let n = this.nextSibling; while (n && n.nodeType !== ELEMENT_NODE) n = n.nextSibling; return n; }
+  get previousElementSibling(): MiniNode | null { let n = this.previousSibling; while (n && n.nodeType !== ELEMENT_NODE) n = n.previousSibling; return n; }
+  insertAdjacentElement(where: string, el: MiniNode) {
+    if (where === "beforebegin") this.before(el); else if (where === "afterend") this.after(el);
+    else if (where === "afterbegin") this.prepend(el); else this.append(el);
+    return el;
+  }
+  get ownerDocumentOrSelf() { return this.ownerDocument ?? this; }
   remove() { this.parentNode?.removeChild(this); }
   contains(n: MiniNode | null) { for (let x = n; x; x = x.parentNode) if (x === this) return true; return false; }
   getRootNode() { let n: MiniNode = this; while (n.parentNode) n = n.parentNode; return n; }
@@ -202,7 +220,11 @@ class MiniElement extends MiniNode {
   }
   _dataset: Record<string, string> = {};
   get dataset() { return this._dataset; }
-  get children() { return this.childNodes.filter(c => c.nodeType === ELEMENT_NODE) as MiniElement[]; }
+  get children() {
+    const list = this.childNodes.filter(c => c.nodeType === ELEMENT_NODE) as MiniElement[] & { item?: (i: number) => MiniElement | null };
+    list.item = (i: number) => list[i] ?? null;
+    return list;
+  }
   get innerHTML() { return this.innerHTMLValue; }
   set innerHTML(v: string) { this.textContent = ""; this.innerHTMLValue = v; }
   get innerText() { return this.textContent; }

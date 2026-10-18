@@ -3021,6 +3021,8 @@ export default function App() {
                   { key: "po-jukebox",     emoji: "🕹", label: "Jukebox",            panel: "jukebox" },
                   { key: "po-videostudio", emoji: "🎥", label: "Show+",              panel: "videostudio" },
                   { key: "po-studiopro",   emoji: "🎬", label: "Show+ DAW",          panel: "studiopro" },
+                  // SCREENS (Screen Builder): a new screen window — its own bar has OPEN… for saved screens and NEW SCREEN.
+                  { key: "po-screens",     emoji: "🧩", label: "Screens",            panel: "screen" },
                 ] as const).map(item => (
                   <button
                     key={item.key}
