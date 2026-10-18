@@ -1,0 +1,650 @@
+# Scheduler, rotation and playout: the design
+
+**Date:** 2026-10-17 · **Status:** DESIGN. Nothing is built, and nothing gets built until Jeff approves it. No code was
+changed for this document and nothing touched the air machine.
+
+**Asked (Jeff, verbatim):** "NO PATCHES. NO TEMPORARY FIXES. … This must be designed correctly, to the standard an RCS Zetta /
+GSelector engineer would sign off on. Write ONE design document … 1. HOW THE PROS DO IT … 2. HOW ETHER DOES IT TODAY … 3. THE
+CORRECT DESIGN. One scheduler, one rotation behavior for every station, no hidden settings, no second code path, no baked numbers
+… 4. PROOF … 5. Build order in phases, each with its test. Plain words at the top: a one-page summary."
+
+The patch on P:/H: (`ether-patch-regenerate-from-next-song-2026-10-17.diff`) and the earlier fix lists are reference only.
+Nothing from them was applied; the copy I had put in `docs/` was removed. Built but not installed anywhere: commit 10348f4
+(installer 615c4632). This design decides what becomes of it (§5, Phase 0).
+
+---
+
+## Summary, in plain words (one page)
+
+**What is wrong today, in one line:** Ether has three song pickers, none of them uses what actually aired, STRICT is never read,
+the log reader plays tomorrow's rows today when nothing is due, and the record of what aired is incomplete.
+
+**What the professionals do:**
+- **GSelector** scores every candidate song against one ranked list of rules and goals:
+  - an **unbreakable** rule can never be broken;
+  - a **breakable** rule is broken only when the score says it costs least;
+  - when nothing can pass, the position is **left unscheduled** and reported. It is never filled with a rule-breaker.
+- **Zetta** plays the log **in order**. The top of the hour is a marker in the log:
+  - **soft:** the song on air finishes, then the rest of the old hour is skipped and marked skipped;
+  - **hard:** the song on air is cut.
+- **A short hour** is filled to the marker with **fill songs**, not by starting the next hour early.
+- **Every play is sent back to the scheduler at once**, so song rest is always measured from what really aired.
+
+**What Ether will do:**
+1. **One picker for every station and every path.** Generate, Fill Day, the hour's Regenerate, auto-extend, the log reader's fill
+   and the stall recovery all use it. The other two pickers and the hidden `enforce_separation` switch are deleted.
+2. **Least recently played first**, measured from **what actually aired plus what is already in the log**, in both directions.
+   Random only between songs that are exactly tied. Rotate the pool and the spacing follows.
+3. **Every rule is STRICT or SOFT, as you set it.**
+   - STRICT is never broken, anywhere, by anything.
+   - SOFT may give way only when nothing passes, and the log says which rule gave way and by how much.
+   - No rule outranks another unless you set an order.
+4. **When nothing passes,** the position is shown as **UNSCHEDULED** in the Program Log, with the rule that blocked it, and is
+   reported. What plays there is your visible setting.
+5. **The clock is law on air.**
+   - The reader never plays a row whose hour has not started.
+   - A short hour is filled to the top of the hour from the hour's own clock, never with the next hour's rows.
+   - Every hour of every day has a clock: a station **default clock** covers hours with no show.
+6. **Starting automation early or late** plays the log row for **now**, not the first row of the log.
+7. **Regenerate works on the hour on air.** It starts at the next song, as the engine reports it, never at a guessed time.
+   Anything that aired is never touched.
+8. **What aired is the record.**
+   - Every element (song, sweeper, spot, announcement) is written to play history with its log row, category and machine, at the
+     moment it goes on air.
+   - The log row is stamped in the same step.
+   - One log row can air only once.
+9. **Every number is a setting** with a sensible starting value you can see and change. There is no hidden setting.
+10. **Proof:** a release-gate test suite runs on copies of every station's database. It generates 7 days per station and checks
+    them with a second, independent checker:
+    - zero STRICT breaks;
+    - least-recently-played order verified pick by pick;
+    - aired rows byte-identical;
+    - never ahead of the clock;
+    - started-early, started-late and regenerated-on-air scenarios.
+
+    A failure blocks the release, so this cannot silently break or be rolled back again.
+
+**Where Ether differs from Zetta/GSelector on purpose** (each is your decision, see §3.12):
+- one combined scheduler + playout (not two products);
+- rules are per station, not per category;
+- no goal scoring until you rule on goals;
+- an unscheduled position plays your fallback instead of a hole the operator must fill.
+
+**Decisions I need:** listed in §3.12.
+
+---
+
+## 1. How the professionals do it
+
+**Sources:** RCS's own pages (rcsworks.com blog, Director help) and MusicMaster's public pages.
+- rcsworks.com blocks direct reads. Its text here comes from search-engine extracts of those pages, so it is paraphrased.
+- The ZettaCloud **Playout Settings – Sequencer Settings** help page was read in full. It describes ZettaCloud; on-prem Zetta may
+  differ.
+- No public GSelector manual exists; RCS points to its in-app help.
+- **UNSOURCED** marks what no public source states. It is inference and is treated as a question, not a fact.
+
+The source URLs are listed at the end of this section.
+
+### 1.1 Rotation and song rest
+- **GSelector:**
+  - **Three phases:**
+    - plotting, by daypart;
+    - scheduling: every candidate gets a score;
+    - optimization: GSelector looks a few elements ahead, and for a week, across the whole week, for a better total score.
+  - **Rest is "Min Sep"** on a field (song, artist and so on): the time before the same thing may schedule again.
+  - **"Max Sep"** forces a song that has waited too long.
+  - **Other rotation controls:**
+    - Hour Rotation (a song must move through the other hours of a daypart before returning to the same hour);
+    - Past Days / Yesterday (avoid the same slot day to day);
+    - No Repeat, Drive Protection;
+    - Airplay Starvation (pushes songs that have not played, around 150–200% of a category cycle).
+  - **UNSOURCED:** the base candidate order, whether there is randomness, and the tie-break.
+- **MusicMaster** (cross-reference): a category is a **card file**, a stack.
+  - With no rules, songs play in strict stack order: the song that played longest ago comes next.
+  - The scheduler looks down the stack ("search depth") for the first song that passes the rules.
+  - "Optimum goals" can choose the best of that depth. Minimum rest is called "the most important rule".
+- **Zetta:** does not pick songs. It plays the log GSelector wrote.
+
+### 1.2 Artist, title and song separation
+- **GSelector:**
+  - **Artist fields are split into participants** on delimiters you set ("/", "&", "f/"). "A f/ B & C" is three artists, each
+    separated on its own.
+  - **A participant can be switched off for one song.**
+  - **Artist Groups** separate artists who are not the same name (Lennon / McCartney).
+  - **Title + artist identity** decides which songs are the same song.
+  - **Separation is time based** (Min Sep). Sound-code segues (Pop into Pop into Pop) are also rules.
+- **MusicMaster:** the same rule types exist, set in its Rule Tree.
+
+### 1.3 Hard vs soft rules
+- **GSelector:**
+  - **Two kinds of rule:** **Breakable** (a passing score of 65 or more) and **Unbreakable** (score 0: the song cannot schedule
+    there).
+  - **Goals cannot be made unbreakable.**
+  - **Rules and goals sit in one ranked Priority List.** A category can have its own list.
+  - **RCS's advice:** make a rule breakable at one depth and unbreakable at a deeper one, rather than one blanket ban.
+  - **UNSOURCED:** the exact formula for which breakable rule gives way first. Inferred: rank weights the score, and the
+    highest-scoring candidate wins.
+- **MusicMaster:** Breakable and Unbreakable folders. Typically a wider rule is breakable and a tighter copy of it unbreakable.
+
+### 1.4 When no song passes
+- **GSelector:**
+  - **The position is left unscheduled.** It is never filled with a song that breaks an unbreakable rule.
+  - **It is shown and explained:** the scheduler lists unscheduled positions, and a hand insert shows "Failure Details" with the
+    song's score. An Unscheduled report names the unbreakable rules that blocked it (documented for Selector 12/15).
+  - **Re-running the scheduler fills only the unscheduled positions.**
+- **MusicMaster:**
+  - **Unscheduled positions** are marked; "jump to next failure" moves between them.
+  - **A Recap report** says which unbreakable rule failed and how often.
+
+### 1.5 Hour start (Zetta)
+- **Zetta's top of the hour is an Exact Time Marker (ETM)** in the log:
+  - **Soft ETM:** the element on air plays to its end, then the events up to the ETM are **skipped**. Zetta records them as
+    *skipped*; it does not delete them. This is the usual music-station top of hour.
+  - **Hard ETM:** the element on air is cut and the next event fires at once (news joins, network).
+  - **Hit ETM:** a guide only, showing how far off time the log is; it changes nothing.
+  - **Reset ETM:** resets the log's air time.
+- **Settings** (ZettaCloud, read in full):
+  - a **Soft ETM window** (seconds early or late);
+  - an event due inside the window with more audio after the ETM than before is skipped;
+  - **maximum stretch / squeeze %**;
+  - **"Play through Soft ETM when underfilled"**;
+  - ETMs enabled in Live Assist.
+- **UNSOURCED:** what Zetta does at the top of the hour when the log has no ETM. Inferred: it plays on in sequence.
+
+### 1.6 Automation started before or after the log
+- **Zetta:** Auto (every event segues), Live Assist (chains can stop), Manual. Pressing play resumes the log.
+- **UNSOURCED:** whether entering Auto mid-hour resumes at the next event in sequence or jumps to the event for the clock time.
+  Inferred from the ETM design: Zetta plays in sequence and comes back to time only at an ETM.
+- **Zetta's "Emergency Playlist" fills hours that have no log.**
+- **NexGen** (cross-reference): a station guide says Auto mode "keeps the clocks in order".
+
+### 1.7 Running ahead or behind
+- **Zetta:**
+  - **On-Air** shows the ETM and the **actual gap** (over or under).
+  - **Underfill:** filled from songs tagged as **ETM fill**, which start in Auto when the station is about to run out of audio.
+    "Play through Soft ETM when underfilled" is an option.
+  - **Overfill:** the soft-ETM skip, the hard-ETM cut, and stretch/squeeze limits.
+  - **Spot blocks** have their own fill, stretch and "always fixed" settings.
+- **UNSOURCED:** whether Zetta ever starts the next hour early. Not documented. At most, the play-through option might allow it.
+- **WideOrbit** (cross-reference): timing targets per segment ("end at 59:50"), filled with stretch/squeeze or spread silence.
+
+### 1.8 Regenerating or editing a log while on air
+- **GSelector + Zetta "live integration"** (vendor claim): a change in one shows in the other, and a re-saved current hour is
+  "automatically available in Zetta". In 5.24.1 it runs over site replication.
+- **The Zetta Log module** loads one hour at a time and can regenerate, delete or copy a log.
+- **Flat-file schedulers** reimport through a manual button.
+- **UNSOURCED:** what a reimport does to the playing hour and to events that already aired.
+
+### 1.9 How aired items are recorded
+- **Zetta → GSelector** (vendor claim):
+  - **Every play or skip is recorded in GSelector at once**, so the next scheduling uses real history. The same data feeds the
+    ASCAP / BMI / SoundExchange reports.
+  - **A dropped song is reconciled at once**, and its score is reset.
+  - **Songs fired from hot keys count as aired.**
+- **MusicMaster:**
+  - **Reconciles from the automation's as-run file:** dropped songs are removed from history, added songs are added, moved songs
+    get their true time, and a report lists the changes.
+  - **Its advice is to reconcile after the broadcast day.**
+
+### What no public source states (questions, not facts)
+- GSelector's candidate order and tie-break.
+- The break-order formula for breakable rules.
+- Where Zetta resumes when put into Auto mid-hour.
+- Zetta at :00 with no ETM.
+- Whether Zetta ever starts the next hour early.
+- What a reimport does to the hour on air.
+
+Settling these needs RCS's in-app help or a test on a real Zetta / GSelector system. **If Jeff has access to either, those six
+answers would firm up §3.**
+
+**Sources:**
+- RCS:
+  - help.director.rcsworks.com …/Playout_Settings-Sequencer_Settings.htm (read in full)
+  - rcsworks.com blog:
+    - building-better-rotations-with-gselectors-priority-lists
+    - advanced-gselector-scheduling-techniques
+    - gselector-priority-list-scheduling-tips
+    - gselectors-rotation-rules-window
+    - gselectors-no-repeat-drive-protection
+    - gselector-5-1-1-new-features
+    - artist-control-then-and-now
+    - tips-tricks-by-rcs-support
+    - building-gselector-clocks
+    - how-zetta-compliments-news-talk-formats
+    - zettas-on-air-module
+    - zettas-log-module-did-you-know
+    - working-ahead-with-zettas-mini-logs-shows
+    - zetta-gselector-live-integration
+    - zetta-5-24-1-new-features
+    - zettas-flat-file-assignments
+- MusicMaster: musicmaster.com ?p=861, ?p=8205, ?p=2183, ?p=965, ?p=161; newsletters/1221; Nexus API reconcileElements.
+- WideOrbit: segment-rulesets.
+- Goshen WGCS Zetta handbook.
+- KRFC NexGen guide.
+
+---
+
+## 2. How Ether does it today (receipts)
+
+**The build on air** at ovowforestmusic and on this machine is **1278bdeb = commit 6558e57**. Line numbers below are from 6558e57
+unless marked HEAD (10348f4, built and not installed). The 10/17 airplay figures are from `docs/playout-change-audit-2026-10-17.md`.
+
+### 2.1 Rotation / song rest
+- **Generate's first choice is random:**
+  - The candidates are read `ORDER BY RANDOM()` (`electron/generate-core.js:153`).
+  - scheduler-core's tier 1 takes the **first** candidate that passes (`audiod/scheduler-core.js:117-125`).
+  - Break mode does the same (`generate-core.js:283-297`), or takes the closest length among the passers near a break.
+- **Least recently played is only the fallback** when nothing passes (`scheduler-core.js:62-68`, `generate-core.js:189-195`).
+- **"Last played" comes from `songs.last_played_at`** (`generate-core.js:174`, `:285`, and scheduler-core's `lastSongTs`), plus
+  the picks made in the same run.
+  - **That field is never written in daemon mode.** Its only writer is the window's `logPlay` (`src/db/client.ts:147`), skipped
+    when the daemon plays (`src/App.tsx:2275`).
+  - The daemon's play logger writes play_log only (`audiod/playlog.js:71`).
+  - **Receipt:** of HalloVeen's 155 songs on this machine, 75 were never stamped, 80 are older than their real last airplay (up to
+    81 days), and **0 are right**.
+- **The run's own maps start empty** (`generate-core.js:134`), so rest across the boundary of a Generate run is not known.
+  Neither are the rows already in the log after the window.
+- **The floor fill** (`audiod/loggen.js fillQueue`): clock slots, then tier 1 `ORDER BY RANDOM()` (`loggen.js:192`, `:213`).
+  Tiers 2 and 3 drop the rules and use least recently played from play_log.
+- **The renderer twin** (`src/audio/loggen.ts:318,357,495`): `ORDER BY RANDOM()`. This is a second code path for the same job.
+- **Goal mode** (`stations.scheduler_mode='goal'`, `generate-core.js:104-108`, `:502-529`): a third planner that runs in shadow
+  only, plus a wider category universe in loggen (`loggen.js getFormatCategoryIds`).
+- **Result, ovowforestmusic 10/16–10/17:**
+
+  | Measure | Result |
+  |---|---|
+  | Plays per song | min 0, median 4, max 10 |
+  | Songs never played | 7 |
+  | Same title re-aired within 30 min (since noon 10/17) | 22 of 118 |
+
+### 2.2 Artist / title / song separation
+- **The rules are three numbers per station:** artist, song and title (`generate-core.js:78-83`), read with `station_id` since
+  7/27.
+- **Artist separation matches `artist_id` only** (`scheduler-core.js violationOf`). "Selena Gomez" and "Selena Gomez,
+  Marshmello" are two different artists. There is no participant split, no artist groups and no featuring handling.
+- **The title key is lower-cased and trimmed only.** "Grim, Grinning Ghosts" and "Grim Grinning Ghosts – From …" are different
+  titles.
+- **Song identity is the song row.** Duplicate rows for one file are two songs.
+  - **Receipt:** Goo Goo Muck #807 and #808 share one file. Thriller, Wolves, Jack's Lament, The Monster, Kidnap, On Our Own,
+    Remember Me and I'm In Love With a Monster also have duplicates (audit doc).
+- **Per-song rest** (`songs.no_repeat_hours`) is honoured only by the hidden enforced picker and the floor fill.
+- **"Max songs in a row from same category"** is seeded (`electron/seed-station-config.js:16`) and shown (`SettingsPanel.tsx:2734`
+  at 6558e57), and enforced **nowhere**.
+
+### 2.3 Hard vs soft rules
+- **STRICT/SOFT is `separation_rules.is_hard`.** It is stored, synced (`electron/sync/synced-tables.js:808`) and shown, with the
+  words "STRICT — rule is enforced absolutely, no exceptions" (`SettingsPanel.tsx:3288` at 6558e57).
+- **It is read by no picker:** not by generate-core, scheduler-core, separation-enforce or loggen. **STRICT has never been
+  wired.**
+- **HalloVeen's three rules are all STRICT**, and are broken on air every evening (§2.1 receipt).
+
+### 2.4 When no song passes
+- **Generate places the least recently played candidate anyway.** All rules are bent. The bend is recorded in `pick_reason`
+  (`generate-core.js:309-310`, `:462`) and `ctx.relaxed`, and is not shown as a failure.
+- **The floor fill drops the rules in tiers 2/3,** with a `console.warn` only (`loggen.js` fillQueue tiers).
+- **Nothing is ever left unscheduled. Nothing tells the operator that a STRICT rule was broken.**
+
+### 2.5 Hour start
+- **Since 10/04 (bb32265, Jeff's ruling)** there is no top-of-hour cut. The song crossing :00 plays out and the new hour "joins"
+  after it (`audiod/hour-join.js`).
+- **Catch-up is by time:** the reader takes the latest pending row whose time has come (`loggen.js:266-331`), so rows that fall
+  behind are skipped and stamped missed.
+- **HEAD (10348f4) adds a Soft/Hard setting** with latest-start and slack values. Not installed.
+
+### 2.6 Automation started before or after the log
+- **When nothing in the log is due,** the reader airs **the earliest future pending row**, by design: "AHEAD … the play-early
+  candidate" (`loggen.js:318`; Rider A, "never wait, never dead air").
+- **Receipt, 10/17:**
+  - HalloVeen's shows run 3–10 PM.
+  - On this machine, automation at 8:31 AM aired 3–5 PM rows between 9:14 and 11:40 AM (Latch: scheduled 3:11 PM, aired 9:14 AM).
+  - ovowforestmusic started at 12:24 PM. The patch header written there gives "~47–63 min ahead all evening"; that figure was not
+    read by me.
+- **There is no default clock for hours without a show.** Such hours have no log, so the reader pulls the evening forward.
+
+### 2.7 Running ahead / behind
+- **Ahead:** see §2.6. **Short hour:** the next hour starts early, by the same rule.
+- **Behind:** catch-up stamps the passed rows missed (`loggen.js:333+`).
+- **No fill-to-time from the hour's own clock exists.**
+
+### 2.8 Regenerating while on air
+- **Generate starts at the next top of the hour:** `effStart = max(dayStart, ceil(now/3600)*3600)` (`electron/main.js:11452`,
+  `:11500`, `:11574`, and Clear Day `:11255`), since 6/10 (709b67c, "never regenerate the past").
+- **Every hour before it is skipped** (`generate-core.js:224`). **The hour on air cannot be rebuilt.**
+- **"Regenerate from the playhead" was designed on 7/27** (`docs/instant-regen-and-rebuild-forward-design-2026-07-27.md`,
+  Feature A) **and never built.**
+- **Aired rows in the window are deleted.**
+  - The delete removes every non-operator row in the window **whatever its state** (`main.js:11201`). A row of the next hour that
+    already aired early is deleted and replaced with a fresh pending row, which can air again.
+  - **HEAD (10348f4) keeps played/playing rows** (`main.js` HEAD:11210). Not installed.
+- **The cued decks keep their old rows** until the re-cue notices the change (§2.10).
+
+### 2.9 How aired items are recorded
+- **play_log is written at go-live** (`audiod/engine.js:1823`), with:
+  - `scheduled_log_id: null` and `category_code: null` hard-coded (`audiod/playlog.js:56`): **no link to the log row, blank
+    category** since about 4:47 PM 10/16 at the latest. (HEAD writes the category.)
+  - **no machine id.** Two machines airing one station are mixed together. On 10/17 this machine aired HalloVeen 8:31–12:12 and
+    3:58–6:15 while ovowforestmusic was on air.
+- **The log row is stamped by a "shadow" step after go-live** (`engine.js:1835`, `:1872-1884`), not in the same step as the play.
+  - The 10/16 evening's replays were all stamped played and still aired twice (proved in the simulation; audit doc).
+- **Sweepers:** written to play_log (`engine.js:2457`) and **never stamped on their log row**; every sweeper row stays pending.
+  (HEAD stamps them.)
+- **Songs:** `songs.last_played_at` is not written (§2.1).
+
+### 2.10 Decks, replays and stall recovery
+- **The calendar re-cue** (`_resyncCuedDecks`, `engine.js:2282`) came in on 9/14 (fb4ab4f, "the decks are a slave to the
+  calendar", Jeff's request). 995fa97 (9/16) stopped it wedging, so from then on it completed.
+- **The replays:**
+  - A go-live removes the **first** queue entry (`this.dequeue()` at `engine.js:1221`, `:2047`, `:856`), not the deck's own.
+  - A re-cue left the replaced entry bound in the queue.
+  - Preload took position 0 of the whole queue.
+  - Proved from the 10/16 engine log: 8 rows aired twice, each after a re-cue (`docs/halloveen-playout-findings-2026-10-17.md`).
+  - ovowforestmusic's same-title re-airs within 30 min rose from 1–4% to 10–13% of music every day from 9/17.
+- **The stall recovery** (`_resumePlayout`, `engine.js:822`) plays, in order:
+  1. a hand-cued deck;
+  2. a ready deck;
+  3. **any idle deck that still has a file loaded**;
+  4. otherwise the queue's first entry.
+
+  It never asks whether that deck's content is the log's row for now, and it checks no rule. That is how a leftover deck track
+  airs.
+  - **Receipt, 10/16 engine log:** 4 stalls in 2½ hours. Each came when a song ended without the next one starting, and the
+    watchdog then aired deck A's content 1 second later (01:59:40Z, 02:04:00Z, 03:50:22Z, 04:04:06Z).
+  - The rotate that should have fired before the end did not; why is not established. UNVERIFIED.
+- **The X:** with the log reader on, Up Next is rebuilt from the log every 2 s and the removed row comes back. (HEAD removes it
+  from the log.)
+
+### 2.11 Past fixes that were rolled back or left half-wired
+| Fix | When | What happened |
+|---|---|---|
+| Least recently played from play_log + separation enforcement (`separation-enforce.js`) | 7/27, 2e3d2b3 (the doc calls the releases 4.4.88/4.4.89; Jeff remembers it as September) | Built **behind a per-station switch, default OFF** (`generate-core.js:90-94`). The UI toggle in its design (`RulesEditor.tsx`) was never built, and no station has it on. Hidden ever since. |
+| The renderer twin of that picker (`src/audio/separationEnforce.ts`) | 7/27 | Same switch, same state. |
+| Regenerate from the playhead | 7/27 design | Never built. |
+| Generate's least-recently-played ladder (13df91d) | 7/06 | Made least recently played the **fallback** only. The first choice stayed random. |
+| Title separation in Generate (1fde024) | 6/15 | Built. Never seeded from real airplay. |
+| `songs.last_played_at` writer (`markPlayed`) | — | Only in the window path. Daemon mode, the default, never calls it. |
+| Top-of-hour hard cut | removed 10/04 (bb32265, Jeff's ruling) | Replaced by the hour join. No soft/hard choice until 10348f4, not installed. |
+| The calendar re-cue | 9/14–9/16 | Works, and causes the replays. Fixed in 10348f4, not installed. |
+| Goal-driven scheduler (`docs/goal-driven-scheduler-redesign-2026-08-10.md`) | 8/10 | Bounded reversal of "clock is law" granted for category choice. **Shadow only**: a second planner that never airs. |
+
+---
+
+## 3. The correct design
+
+**Binding rules this design follows:**
+- **The user is in charge** (memory: user-controls-on-off).
+- **No hidden defaults:** every on-air number is Jeff's (memory: no-hidden-defaults).
+- **The clock is law** (`docs/generate-clock-law-deleted-slots-2026-07-21.md:3`; for structure, goal doc §6.1).
+- **No rule outranks another unless Jeff sets it** (Jeff, this request).
+- **Rotate the pool and the spacing follows** (Jeff, this request).
+- **The log reader is the single playout source** (`docs/log-reader-single-source-playout-design-2026-07-20.md`).
+- **Offline-first.**
+
+### 3.1 One scheduler, one code path
+- **`audiod/scheduler-core.js` is the only thing that chooses a song,** for every station and every caller:
+  - Generate: day, days, Fill Day, the hour's Regenerate;
+  - auto-extend / Iris (`_generateRange`);
+  - the reader's fill for a short or empty hour (§3.7);
+  - the playout re-check's replacement (§3.8);
+  - the window's in-process fallback: it asks main over IPC, so there is no picker in the renderer.
+- **Deleted when this is built:**
+  - `separation-enforce.pickEnforced` (its least-recently-played-from-airplay logic moves into the core);
+  - the `enforce_separation` switch;
+  - `generate-core.js` `selectMusic`'s own loop (break mode calls the core);
+  - `_legacyPickMusic` and the differential;
+  - `loggen.js` pickTier/fillQueue picking;
+  - `src/audio/loggen.ts` and `src/audio/separationEnforce.ts` picking;
+  - the goal-mode shadow planner, unless Jeff rules to promote goals (§3.12, decision 9).
+
+### 3.2 Rotation: least recently played, from what aired and what is scheduled
+- **Per position:**
+  1. **The pool** is the slot's category, in rotation and in daypart, MUSIC.
+  2. **Every song's "last time"** is the latest of:
+     - its last airing on this station: play_log, by recording (§3.5);
+     - its placement in this run;
+     - its nearest placement already in the log on either side of this position.
+     "Either side" is new: regenerating today while tomorrow's log exists must not put the same song an hour apart across midnight.
+  3. **Candidates are ordered by that time, oldest first.** Never aired comes first.
+  4. **The first candidate that passes every STRICT rule and every SOFT rule is placed.**
+  5. **Random breaks only an exact tie** (in practice, songs that have never aired).
+  6. **If nothing passes,** see §3.4.
+- **"Rotate the pool and the spacing follows":** with this order a category cycles. Every song plays once before any plays twice,
+  as long as the rules allow it. The spacing is whatever the cycle gives. Rest rules only stop a song coming back too soon.
+- **Break-mode anchor fit:** fitting a break to its minute means choosing by length, which can step out of strict order. **Ether
+  default: fit only among the N oldest passing songs.** N is a setting, starting at 3. The row's reason says "fit for the :20
+  break, 2nd oldest". N = 1 means strict order and breaks drift (shown as break-drift health events, as now). Jeff decides
+  (decision 2).
+
+### 3.3 Separation rules, STRICT or SOFT, none outranking another
+- **Rules (each with a value, STRICT/SOFT and on/off):**
+  - song rest;
+  - artist separation;
+  - title separation;
+  - max in a row from one category (wired for the first time);
+  - per-song rest (`no_repeat_hours`), which replaces the station's song rest for that song.
+- **Artist means every participant,** split on delimiters that are a station setting. Starting value: `/`, `&`, `,`, `feat.`,
+  `ft.`, `f/`, `x`, `with`. A song can switch off a participant (as in GSelector). Artist groups are a later phase (not in this
+  build).
+- **Title means a normalised title:** lower case, punctuation removed, and the bracketed or "– From …" tail removed. The tail rule
+  is a setting.
+- **STRICT** is never broken, anywhere: Generate, fill, playout, regenerate.
+- **SOFT** gives way only when nothing passes every rule. Then:
+  - **with no order set** (the starting value), the candidate that is **closest to passing** wins, measured in minutes short
+    across the SOFT rules it breaks;
+  - **if Jeff sets an order,** the lowest SOFT rule gives way first.
+- **Every give-way is written on the row** ("same artist 42 min after; rule 60, SOFT") and shown in the Program Log.
+- **Ether differs from GSelector here:** GSelector folds goals and rules into one score. Ether keeps rules as pass/fail with
+  "closest to passing" as the only measure, unless Jeff sets an order. That is readable on the log row and testable pick by pick.
+
+### 3.4 When no song passes the STRICT rules
+- **The position is written to the log as UNSCHEDULED,** with the blocking rule and the closest song ("Rihanna: artist 40 min,
+  rule 60 STRICT").
+- **It is a health event and a red row in the Program Log.**
+- **What airs there** is a station setting, **"When a position is unscheduled"**:
+  - **(a) Nothing:** the position is skipped and the hour runs short. The short hour is then filled per §3.7, under STRICT,
+    from the clock's other positions' categories.
+  - **(b) A fallback category you name,** under the same STRICT rules.
+  - **(c) The closest song, breaking the STRICT rule:** only because you chose this, and said on the row.
+- **Re-running Generate fills only unscheduled positions** if you ask it to ("Fill unscheduled"), as GSelector does.
+- **Ether differs from GSelector here:** GSelector leaves a hole for the music director to fill before air. Ether is often
+  unattended, so the setting decides what airs, and STRICT stays unbroken unless you choose (c). Starting value: (a). Jeff
+  decides (decision 3).
+
+### 3.5 One recording, one song
+- **Rest is by recording, not by song row:** the file's content hash, the one the audio resolver already keys on
+  (`electron/audio-resolver.js`, `local_files.content_hash`). Where a song has no hash yet, its stored file name is used. Two
+  song rows on one file are one song for rotation from day one.
+  - UNVERIFIED: how many HalloVeen songs carry a hash today. That is the first count in Phase 2.
+- **A Duplicates view in the Library** finds:
+  - the same recording;
+  - the same normalised title + artist with length within a setting (starting value 2 s).
+
+  It offers to merge: the operator picks the one to keep, future log rows move to it, the others are deleted through the songs
+  writer (synced), and history is kept. **Never by script on a live database.**
+
+### 3.6 The clock covers every hour
+- **Each station gets a default clock** (setting), used for any hour with no show. **Generate fills those hours too**, so the
+  log is 24 hours a day and the reader is never short of a row for now.
+- **Until a default clock is set,** hours without a show are a red line in the runway, and in those hours the reader fills live
+  from the last clock that aired, under the rules. It **never** plays a later hour's rows.
+- **Matches Zetta's Emergency Playlist idea,** but made from the station's own clock and rules.
+
+### 3.7 On air: the clock is law
+- **The reader plays the log in order within the hour.** It never airs a row whose hour has not started, except within the
+  **early-start window** (setting, starting value 0 s): a row may start that many seconds before its hour.
+- **Top of the hour: the Hour start setting** (Soft / Hard, as built in 10348f4: latest start for an old-hour song 0 s,
+  catch-up slack 60 s):
+  - **Soft:** the song on air finishes; the old hour's unstarted rows are marked **skipped** (named "skipped", not "missed", as
+    in Zetta); the new hour starts at its first row.
+  - **Hard:** the song on air is cut at :00.
+  - A per-clock top-of-hour type (Soft/Hard per clock, like a Zetta ETM per log) is a later option (decision 7).
+- **A short hour** (the hour's rows end before :00): the core fills from **this hour's clock** (its categories, in clock order),
+  under the rules, until the remaining time is less than the **fill tolerance** (setting, starting value 30 s). Then the next
+  hour starts at :00. The filled songs are written to the log as fill rows, so the record is complete.
+  - **Ether differs from Zetta here:** Zetta fills from songs tagged as fill. Ether fills from the hour's own clock under the same
+    rules, so there is no fill library to maintain. Jeff decides (decision 6).
+- **A long hour:** Soft or Hard, above.
+
+### 3.8 Every path that puts a song on a deck checks it
+- **Covered:** the reader, the preload, the re-cue, the stall recovery, PLAY NOW from the queue, and the skip.
+- **Before a row is loaded:**
+  1. **Its log row is the row for now:** the next unplayed row of the current hour in order, or a fill per §3.7.
+  2. **It passes every STRICT rule** against what has aired on this station, as recorded in §3.9.
+
+     A row that fails is marked **skipped** with the reason, and the next row is checked. A SOFT break at playout airs, and the
+     play is marked relaxed.
+- **The stall recovery stops playing "any idle deck with a file".** It plays the deck that holds **the log's row for now**.
+  Otherwise it loads that row. A deck whose content is not that row is emptied, and that is logged.
+- **An operator's own load of a specific song is never refused.** The user is in charge. It is logged as an operator play, and
+  its rule breaks are shown, not blocked.
+
+### 3.9 What aired is the record
+- **At go-live, in one transaction:**
+  - the play is written (song, sweeper, spot, announcement, cart) with its log row id, category, content class, recording,
+    machine id and session;
+  - the log row is stamped **playing** (the previous one **played**).
+
+  If the write fails, it retries and shows a red health line (10348f4's `_stampOnAir` model).
+- **A log row airs once.** Each deck holds its own row, and only that row is consumed at go-live (10348f4's model).
+- **Generate, Clear Day and every editor touch pending rows only.** played / playing / skipped / missed / unscheduled are the
+  record and are never deleted or rewritten.
+- **Rotation counts plays of the broadcast owner only** (setting, starting value on).
+  - Today two machines aired one station and both counted.
+  - A test or standby machine must not block songs on air.
+  - Its plays stay in history, marked by machine.
+- **A reconciliation view** in the Program Log shows log against as-aired for any hour: added, skipped, moved, replayed. Nothing
+  needs a separate reconcile step, because the record is written as things air (as Zetta → GSelector does).
+- **`songs.last_played_at` / `play_count`** are written by the daemon on every play, as display values. **No picker reads them.**
+
+### 3.10 Regenerating while on air
+- **Generate may start at the next song.** The start is **asked of the engine:** the deck on air, its row, its position and its
+  length, from a new daemon command.
+  - **If the engine says nothing is playing,** the start is now.
+  - **If the engine cannot be asked** (no daemon), the start is the next row boundary of the log, and the report says so.
+- **There is no time limit and no guess.**
+- **The rest of the current hour is planned from that point** in the clock's order:
+  - its earlier positions are taken as **filled by what actually aired**;
+  - the maps are seeded from that airplay;
+  - rows planned before the start are **never computed into the maps**.
+
+  So a small category (HV Adult, 7 songs) keeps its whole pool.
+- **Aired rows are never touched (§3.9).** The cued decks re-cue to the new rows at the next seam by row identity (10348f4's
+  re-cue model).
+- **Auto-extend** (unattended) still starts at the next top of the hour, so it never reshuffles the hour on air under the
+  operator. That is the distinction the patch header drew, and it is kept.
+
+### 3.11 Settings (all visible, each with a starting value Jeff sets)
+| Setting | Where | Starting value (proposed) |
+|---|---|---|
+| Song rest / artist / title separation, each STRICT or SOFT, on/off | Music Scheduling Rules | as each station has them today |
+| Max in a row from one category, STRICT/SOFT | same | 3, SOFT (seeded today) |
+| SOFT give-way order | same | none (closest to passing) |
+| Artist delimiters | same | `/ & , feat. ft. f/ x with` |
+| Title tail rule | same | on |
+| Break fit: among the N oldest | same | 3 |
+| When a position is unscheduled | same | (a) nothing; the hour is filled under STRICT |
+| Fallback category | same | none |
+| Duplicate length tolerance | Library → Duplicates | 2 s |
+| Default clock (hours with no show) | Programming | none (runway shows red) |
+| Hour start Soft / Hard, latest start, catch-up slack | Hour start | Soft, 0 s, 60 s (Jeff, 10/17) |
+| Early-start window | Hour start | 0 s |
+| Fill tolerance for a short hour | Hour start | 30 s |
+| Count only the broadcast owner's plays | Music Scheduling Rules | on |
+
+**Nothing else.** Removing `enforce_separation` leaves no hidden key. A test enforces this (§4, T15).
+
+### 3.12 Where Ether differs from Zetta/GSelector, and other decisions Jeff makes
+1. **Scheduler and playout are one product.** Ether writes the log and plays it, so "live integration" is built in: there is no
+   reimport.
+2. **Break fit:** among the N oldest (starting value 3), or strict order (N = 1)?
+3. **Unscheduled position:** starting value (a) nothing (STRICT kept), (b) a fallback category, or (c) the closest song (STRICT
+   broken by your choice)?
+4. **Rules are per station,** not per category. GSelector has a Priority List per category. Per category is a later phase if you
+   want it.
+5. **No scoring.** Pass/fail plus "closest to passing", or your order, instead of GSelector's weighted score. Keep it?
+6. **A short hour is filled from the hour's own clock,** not from a fill-tagged library as in Zetta. Keep it?
+7. **Hour start** is per station (Soft/Hard). Per-clock top-of-hour types, like Zetta's ETM per log, come later?
+8. **Count only the broadcast owner's plays** for rest?
+9. **Goal mode:** delete the shadow planner now (no second path), or rule on promoting goals into the one core later?
+10. **10348f4 (installer 615c4632):** not shipped as it stands. Its row-identity, stamp-on-air, sweeper, category and X parts are
+    reviewed and rebuilt inside Phases 1 and 3, each with its gate test. Agree?
+11. **The early-start window** starting at 0 s means the station is never ahead of the clock. Your earlier "never wait, never
+    dead air" (Rider A) is kept by the short-hour fill (§3.7) instead of by playing the next hour. Agree?
+
+---
+
+## 4. Proof: tests an RCS engineer would accept
+
+**How they run:**
+- **One harness,** `scripts/test-scheduler-gate.js`, run with no audio, on **copies** of every station's database found on the
+  build machine. Copies only, deleted after; never the live file. The audio engine is needed only for T9–T12, and those use a
+  private daemon on a private pipe, muted, as `scripts/test-cart-exhaustion.js` does.
+- **A second, independent checker** (`scripts/lib/log-checker.js`) re-derives every rule from play_log + the log. It shares no
+  code with scheduler-core, so a bug in the picker cannot hide itself.
+- **Added to the release gate** (the packaged-build gate, `audiod/verify-packaged.js` → `gate-logs/`). **Any failure fails the
+  gate.**
+- **A ratchet file** records each station's results. A worse result than the last gate fails, even if within the rules.
+
+| # | Test | Pass condition |
+|---|---|---|
+| T1 | **7 days generated per station** (≥ 24 h required; 7 used), from a seeded as-aired history | the checker finds **0 STRICT breaks**; every SOFT give-way is labelled on its row with rule and amount |
+| T2 | **Least-recently-played order**, pick by pick | for every position, no passing candidate with an older "last time" was passed over, except an exact tie or the break fit (N), which must be labelled |
+| T3 | **Rotation turnover** per category | each category cycles: no song's 2nd play before every eligible song's 1st, unless a rule blocked it (labelled); spread (min/median/max per song) reported and ratcheted |
+| T4 | **Aired rows untouched** | snapshot every non-pending row; run Generate, Days, Fill Day, hour Regenerate, Clear Day, auto-extend, editor moves; every snapshot row byte-identical |
+| T5 | **Started early** (automation at 12:25, shows from 3 PM; with and without a default clock) | no row airs before its hour (beyond the early-start window); the hours before 3 PM air the default clock, or live fill under the rules; 0 evening rows consumed |
+| T6 | **Started late / mid-hour** (automation at :20, at :59, after a 2 h gap) | the first row aired is the log's row for now per Hour start; the passed rows are marked skipped, not aired |
+| T7 | **Regenerated on air** (at :20 with a song playing; at :58; with the station ahead; with the station behind) | the first new row starts at the engine-reported end of the song on air; nothing aired changed; the rest of the hour obeys the rules against the aired part; small categories keep their full pool |
+| T8 | **Never ahead of the clock**, 24 h simulated with real song-length error (true vs planned length, ±10%) and spots | at every go-live, the row's hour has started (± the early-start window); short hours filled from the hour's clock; drift reported |
+| T9 | **Hour start Soft and Hard** at :00, long and short hours | Soft: the song finishes, the old hour's unstarted rows are skipped, the new hour starts at its first row; Hard: cut at :00 |
+| T10 | **Playout re-check**: a STRICT violator inserted into the log; a replay attempt; a stall with a leftover track on an idle deck | the violator never airs (skipped, reason); no row airs twice; the stall recovery airs the row for now, never the leftover |
+| T11 | **As-aired = record**: every go-live over 24 h | one play per aired row, with row id, category, content class, machine; every sweeper/spot/announcement stamped; the reconciliation view shows zero unexplained differences |
+| T12 | **The X and editor moves on air** | a removed row never airs and stays removed through 10 refills |
+| T13 | **Duplicates**: one recording on two song rows | treated as one song for rest; the merge keeps history and moves future rows |
+| T14 | **Two machines**: a standby airs the same station | its plays don't block the owner's songs (if decision 8 = yes); both are recorded by machine |
+| T15 | **No hidden settings, no baked numbers** (static) | every key the core, reader and Generate read is in the settings registry with a UI control and a starting value; no numeric literal in rule or timing code outside that registry; `enforce_separation` and `songs.last_played_at` are read nowhere |
+| T16 | **One code path** (static) | exactly one module chooses songs: no `ORDER BY RANDOM()` outside the core's tie-break; no picking in `src/audio/`; `pickEnforced` and `_legacyPickMusic` gone |
+
+**Today's code is expected to fail** T1, T2, T3, T4, T5, T8, T10, T11, T15 and T16. Phase 0 proves the harness catches them
+before anything is fixed.
+
+---
+
+## 5. Build order, in phases, each with its test
+
+Each phase:
+- is a branch with local commits only;
+- has its gate tests passing on DB copies;
+- is reported with receipts.
+
+Jeff tests it off-air and then on OVEVENTS before it goes near ovowforestmusic. No phase ships without Jeff's GO.
+
+| Phase | Builds | Proved by |
+|---|---|---|
+| **0. Decisions + the harness** | Jeff's answers to §3.12. The gate harness, the independent checker and the ratchet, run against **today's** code. 10348f4 not shipped (decision 10). | the harness reports today's failures (T1–T16) with receipts: the tests catch what is wrong |
+| **1. The record** | Go-live writes play + row stamp in one transaction, with row id, category, content class, machine; each deck holds its own row; one row airs once; sweepers/spots/announcements stamped; Generate, Clear Day and the editors touch pending rows only; `songs.last_played_at` as display only. Reviewed from 10348f4, not copied. | T4, T11, T12, T10 (replay part) |
+| **2. One picker** | scheduler-core least recently played from as-aired + scheduled (both sides), by recording; STRICT/SOFT read; closest-to-passing or Jeff's order; unscheduled positions + their setting; max-in-a-row wired; artist participants; title normalising; break fit N. Delete the second and third paths. | T1, T2, T3, T13 (rest part), T15, T16 |
+| **3. The clock on air** | Default clock; the reader never ahead; Soft/Hard at :00 with skipped rows; short-hour fill from the hour's clock; automation start at the row for now; every deck-loading path re-checks; stall recovery plays the row for now. | T5, T6, T8, T9, T10 |
+| **4. Regenerate on air** | Daemon command for what is on air; Generate from the next song; the current hour planned with its aired part as fact; aired rows untouched; re-cue by row. | T7, T4 again |
+| **5. Duplicates** | Recording identity in rest from Phase 2, plus the Library Duplicates view and merge. | T13 |
+| **6. Screens and help** | Music Scheduling Rules rewritten to what the code does; every §3.11 setting on screen; Program Log UNSCHEDULED / skipped / relaxed / fill rows; reconciliation view; help docs (`help-music-scheduling-rules.md`, `help-hour-start.md`, `help-duplicates.md`, `help-default-clock.md`). | T15 + launching the app and looking at each screen (CLAUDE.md: the only valid UI test) |
+
+After Phase 6, the ovowforestmusic spread is re-measured on the next real night and compared with §2.1's numbers.
+
+---
+
+**Removed by this design, if built:**
+- `ORDER BY RANDOM()` as the first choice (Generate, `loggen.js`, `loggen.ts`);
+- `separation-enforce.pickEnforced` and the `enforce_separation` switch;
+- `_legacyPickMusic` and the differential;
+- the renderer pickers (`src/audio/loggen.ts`, `separationEnforce.ts`);
+- the goal-mode shadow planner (if decision 9 = delete);
+- the reader's "AHEAD, play the earliest future row" rule (Rider A, kept instead by the short-hour fill);
+- the stall recovery's "any idle deck with a file" choice;
+- Generate's delete of non-pending rows;
+- pickers reading `songs.last_played_at`;
+- the screen's current STRICT/SOFT wording.
+
+**Kept:**
+- the clock-is-law format guard (`getFormatCategoryIds`);
+- the hour join, as Soft;
+- operator rows surviving Generate;
+- auto-extend starting at the next top of the hour.
