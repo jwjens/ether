@@ -1,3 +1,4 @@
+import { isPlainKey } from "../lib/plainKey";
 import { useState, useEffect } from "react";
 
 export default function KeyboardHelp() {
@@ -5,6 +6,7 @@ export default function KeyboardHelp() {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (!isPlainKey(e)) return;   // Shift+/ is deliberate; Ctrl/Alt/Meta + it is not it (src/lib/plainKey.ts)
       if (e.code === "Slash" && e.shiftKey) {
         setShow(prev => !prev);
       }

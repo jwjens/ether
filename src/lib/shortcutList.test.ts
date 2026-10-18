@@ -18,7 +18,11 @@ describe("the shortcut lists offer no key the app doesn't have (audit 3)", () =>
   it("the handler still has no X case and Esc still only closes things", () => {
     const start = app.indexOf("const handleKey = (e: KeyboardEvent)");
     const handler = app.slice(start, app.indexOf('window.addEventListener("keydown", handleKey)', start));
+    // The key → action mapping lives in src/lib/appShortcuts.ts since 2026-10-18 (plain keys only); App dispatches on it.
+    const map = fs.readFileSync(path.join(__dirname, "appShortcuts.ts"), "utf8");
     expect(handler).not.toMatch(/case "KeyX"/);
-    expect(handler).toMatch(/case "Escape": setShowShortcuts\(false\); setDrawerOpen\(false\); break;/);
+    expect(map).not.toMatch(/case "KeyX"/);
+    expect(map).toMatch(/case "Escape": return "close";/);
+    expect(handler).toMatch(/case "close": setShowShortcuts\(false\); setDrawerOpen\(false\); break;/);
   });
 });

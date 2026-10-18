@@ -9,7 +9,7 @@
  *   if (!isReady) return null; // wait before issuing scoped queries
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, createContext, useContext, type ReactNode } from "react";
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -30,6 +30,33 @@ export interface UseActiveStationResult {
   stationUuid: string;
   /** False until the first IPC response arrives. Gate queries behind this. */
   isReady: boolean;
+}
+
+// ─── Station scope (Screen Builder, docs/screen-builder-design-2026-10-18.md §2.3) ────
+//
+// A module on a built surface belongs to ONE station — the layout's (decision 1) — named explicitly,
+// never read off the machine-global cache below. <StationScope> carries that station; the hook reads
+// the NEAREST scope first and falls back to the global active station only where no scope exists, so
+// every caller outside a scope behaves exactly as before.
+//
+// A scope is a resolved station by construction (whoever mounts it already knows the row), so it is
+// always ready — there is no id=1 loading window inside a scope.
+
+export interface ScopedStation {
+  id: number;
+  name: string;
+  uuid: string;
+}
+
+const StationScopeContext = createContext<ScopedStation | null>(null);
+
+export function StationScope({ station, children }: { station: ScopedStation; children: ReactNode }) {
+  return <StationScopeContext.Provider value={station}>{children}</StationScopeContext.Provider>;
+}
+
+/** The nearest StationScope's station, or null outside every scope. */
+export function useStationScope(): ScopedStation | null {
+  return useContext(StationScopeContext);
 }
 
 // ─── Module-level cache (shared across all hook instances) ────
@@ -85,6 +112,7 @@ export function getActiveStationIdSync(): number {
 // ─── Hook ─────────────────────────────────────────────────────
 
 export function useActiveStation(): UseActiveStationResult {
+  const scope = useContext(StationScopeContext);
   const [station, setStation] = useState<ActiveStation | null>(_cached);
   const [ready, setReady]     = useState(_cachedReady);
 
@@ -111,6 +139,10 @@ export function useActiveStation(): UseActiveStationResult {
     window.addEventListener("station-switched", handler);
     return () => window.removeEventListener("station-switched", handler);
   }, []);
+
+  // Inside a scope the scope IS the station. The hooks above still run (hook order never changes),
+  // so a component that moves in or out of a scope keeps working.
+  if (scope) return { stationId: scope.id, stationName: scope.name, stationUuid: scope.uuid, isReady: true };
 
   const stationId   = station?.id ?? 1;
   const stationName = station?.name ?? "";

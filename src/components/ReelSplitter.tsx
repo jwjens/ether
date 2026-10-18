@@ -6,6 +6,7 @@
 //   • render+write: slice AudioBuffer → encodeWav (wavEdit.ts) → ether.ffmpeg.writeAudio (media:writeAudio, WORKS)
 //   • import: shipped normal pipeline — songs.create({file_path,…}) + songs.updateById({content_class,jingle_category_id})
 // NOT used: ether.fs.writeFile (dead, no handler); content-hash/songs_v2 (not shipped — file_path identity).
+import { isPlainKey } from "../lib/plainKey";
 import { useState, useRef, useCallback, useEffect } from "react";
 import { detectSilenceRegions, type Region } from "../audio/silenceRegions";
 import { auditionRegion } from "../audio/regionAudition";
@@ -90,6 +91,7 @@ export default function ReelSplitter({ stationId, embedded, onCommitted }: { sta
     const el = rootRef.current; if (!el) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === "INPUT") return;
+      if (!isPlainKey(e)) return;   // single keys below: with Ctrl/Alt/Meta held they are not these keys (src/lib/plainKey.ts)
       if (e.code === "Space") { e.preventDefault(); togglePlay(); }
       else if (e.code === "ArrowRight") { e.preventDefault(); setSel(s => Math.min(regions.length - 1, s + 1)); stop(); }
       else if (e.code === "ArrowLeft") { e.preventDefault(); setSel(s => Math.max(0, s - 1)); stop(); }

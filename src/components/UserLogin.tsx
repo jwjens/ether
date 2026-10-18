@@ -1,3 +1,4 @@
+import { isPlainKey } from "../lib/plainKey";
 import { useState, useEffect } from "react";
 import etherLogoMark from "../assets/ether-atom.png";
 import ethercastWordmark from "../assets/ethercast-wordmark.svg";
@@ -97,6 +98,7 @@ export default function UserLogin({ onLogin }: Props) {
   useEffect(() => {
     if (!selected || !selected.pin_hash) return;
     const onKey = (e: KeyboardEvent) => {
+      if (!isPlainKey(e)) return;   // PIN digits are single keys (src/lib/plainKey.ts)
       if (e.key >= "0" && e.key <= "9") { setError(""); setPin(p => (p.length >= 4 ? p : p + e.key)); e.preventDefault(); }
       else if (e.key === "Backspace") { setError(""); setPin(p => p.slice(0, -1)); e.preventDefault(); }
       else if (e.key === "Escape") { setSelected(null); setPin(""); setError(""); }

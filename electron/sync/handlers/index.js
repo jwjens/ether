@@ -29,6 +29,7 @@ const { installOperators } = require('./operators');
 const { installPinnedSongs } = require('./pinned_songs');
 const { installPlayLog } = require('./play_log');
 const { installPrepNotes } = require('./prep_notes');
+const { installScreenLayouts } = require('./screen_layouts');   // v64, hand-written (not generated)
 const { installPublishedEpisodes } = require('./published_episodes');
 const { installRtmpDestinations } = require('./rtmp_destinations');
 const { installSeparationRules } = require('./separation_rules');
@@ -75,6 +76,7 @@ function installAll(ipcMain, db) {
   installPinnedSongs(ipcMain, db);
   installPlayLog(ipcMain, db);
   installPrepNotes(ipcMain, db);
+  installScreenLayouts(ipcMain, db);
   installPublishedEpisodes(ipcMain, db);
   installRtmpDestinations(ipcMain, db);
   installSeparationRules(ipcMain, db);

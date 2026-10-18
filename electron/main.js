@@ -3484,8 +3484,9 @@ function buildMenu() {
   const popout = (panel) => openPopoutWindow(panel);
   const template = [
     { label: "File", submenu: [
+      // "Save Layout" (Ctrl+S → file:save) is gone with the widget canvas it saved: no window could show that
+      // layout (docs/screen-builder-design-2026-10-18.md §2.9). Layouts become saved surfaces in a later phase.
       { label: "New Session", accelerator: "CmdOrCtrl+N", click: () => send("file:new-session") },
-      { label: "Save Layout", accelerator: "CmdOrCtrl+S", click: () => send("file:save") },
       { type: "separator" },
       { label: "Import Music...", click: () => menuNav("file:import", "library") },
       { label: "Preferences", click: () => send("file:preferences") },
@@ -8211,6 +8212,7 @@ ipcMain.handle("relaunch", () => { markHaExpectedRestart(); markKeepSession(); a
 // Each popped panel gets a frameless BrowserWindow loading #popout/<panel>
 const POPOUT_SIZES = {
   "decks":       { width: 1320, height: 460 },  // all visible decks in a row
+  "screen":      { width: 1280, height: 800 },  // a built screen (Screen Builder) — "screen:<uuid>" uses it too
   "mic":         { width: 400,  height: 300 },
   "master":      { width: 800,  height: 600 },
   // The processor rack: two stage cards side by side plus a meter row. Tall and narrow — it is meant to
@@ -8370,7 +8372,8 @@ function openPopoutWindow(panel) {
   if (existing) { existing.show(); existing.focus(); return existing; }
 
   const { screen } = require("electron");
-  const size  = POPOUT_SIZES[panel] || { width: 640, height: 520 };
+  // Screen windows are "screen:<layout uuid>" — one per layout, each with its own remembered bounds (by panel key).
+  const size  = POPOUT_SIZES[panel] || (panel.startsWith("screen:") && POPOUT_SIZES.screen) || { width: 640, height: 520 };
   const saved = loadPopoutBounds()[panel];
   let x, y, width = size.width, height = size.height;
   if (saved && boundsOnScreen(saved)) {
@@ -8432,7 +8435,9 @@ function openPopoutWindow(panel) {
   win.on("resized", persist);
   _popoutWins.set(panel, win);
   win.on("closed", () => { if (_popoutWins.get(panel) === win) _popoutWins.delete(panel); });
-  if (!POPOUT_DESTROY_ON_CLOSE.has(panel)) {
+  // A screen opened by NEW SCREEN ("screen:new-<time>") is a one-off window: closing it closes it, rather than
+  // leaving a hidden window per press for the rest of the session.
+  if (!POPOUT_DESTROY_ON_CLOSE.has(panel) && !panel.startsWith("screen:new-")) {
     win.on("close", (e) => {
       if (app.isQuitting) return;            // a real quit closes it
       e.preventDefault();

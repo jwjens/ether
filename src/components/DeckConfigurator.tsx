@@ -1,5 +1,7 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback, useId } from "react";
 import { useAudioEngine } from "../audio/AudioEngineContext";
+import { useModuleInstanceId } from "../hooks/useModuleInstance";
+import { isPlainKey } from "../lib/plainKey";
 import { queryScoped } from "../db/stationScoped";
 import { checkFilePresence, fileLocationReason, changeFileLocationItem, importIntoAudioLibrary, type FilePresence } from "../lib/fileLocation";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -673,6 +675,22 @@ function defaultCarts(): CartSlot[] {
   }));
 }
 
+// ── WHICH WALL OWNS THE KEYBOARD ───────────────────────────────────────────────────────────────────
+//
+// Every wall used to add its own window-wide keydown, so with two walls in one window (a built surface with two cart
+// banks, or the dashboard's push-up strip beside a deck slot typed Cart) one key fired the cart on EVERY wall. The
+// hotkeys belong to the FOCUSED wall only (docs/screen-builder-design-2026-10-18.md §2.4): the one last clicked or
+// tabbed into. Until one has been, the most recently mounted wall owns them — so a window with a single wall (the
+// Carts pop-out, the push-up strip) keeps its hotkeys exactly as before, with no click needed first.
+//
+// Per renderer: each window has its own module scope, so walls in different windows never contend.
+const mountedCartWalls: string[] = [];            // this window's walls, oldest first
+let focusedCartWall: string | null = null;
+function ownsCartHotkeys(id: string): boolean {
+  if (focusedCartWall && mountedCartWalls.includes(focusedCartWall)) return focusedCartWall === id;
+  return mountedCartWalls[mountedCartWalls.length - 1] === id;
+}
+
 interface CartProps {
   // NO deckSlot. It used to be here and it was a trap: callers passed one (the popout passed "C", a
   // MUSIC deck), the wall ignored it for audio and fired into the hardcoded "CART" channel, and the
@@ -855,10 +873,26 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   };
 
-  // Keyboard shortcuts
+  // This wall's identity for hotkey ownership: the ModuleFrame's instance id on a built surface, else React's own.
+  const reactWallId = useId();
+  const wallId = useModuleInstanceId() ?? reactWallId;
+  useEffect(() => {
+    mountedCartWalls.push(wallId);
+    return () => {
+      const i = mountedCartWalls.lastIndexOf(wallId);
+      if (i >= 0) mountedCartWalls.splice(i, 1);
+      if (focusedCartWall === wallId) focusedCartWall = null;
+    };
+  }, [wallId]);
+  /** On the wall's root: a click or focus anywhere inside makes this the wall the keyboard fires. */
+  const claimHotkeys = () => { focusedCartWall = wallId; };
+
+  // Keyboard shortcuts — this wall's only while it owns them (see ownsCartHotkeys).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (!isPlainKey(e)) return;   // Ctrl/Alt/Meta + a cart key is not a cart key
+      if (!ownsCartHotkeys(wallId)) return;
       const cart = carts.find(c => c.key === e.key.toUpperCase());
       if (cart?.filePath) {
         fireCart(cart.key);
@@ -866,7 +900,11 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [carts]);
+  }, [carts, wallId]);
+
+  // IN FLIGHT. fireCart awaits the deck-config read and each load/play before it records the cart as playing, so a
+  // second press (or key repeat) inside that window used to fire the cart again. Set before the first await.
+  const firingRef = useRef(false);
 
   // FIRE / STOP TOGGLE. Click a loaded cart to fire it; click it again while it is playing and it
   // stops immediately. A cart could previously be started and not stopped, which on a live board is
@@ -884,6 +922,7 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
   const fireCart = async (key: string) => {
     const cart = carts.find(c => c.key === key);
     if (!cart?.filePath) return;
+    if (firingRef.current) return;   // a fire is already on its way out — this press is the same press
     // Already playing THIS cart → stop it. Read the deck rather than trusting the flag: the poll
     // effect clears playing state on its own beat, so the deck is the authority on what is audible.
     if (playingKeyRef.current === key) {
@@ -906,24 +945,29 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
     // The operator pressed it, so it fires. A failure on one channel is REPORTED and the rest still
     // fire — this whole block used to sit in `catch {}`, which produced the load line in the console
     // and then absolute silence: no error, no refusal, no clue.
-    const chans = await resolveFireChannels();
-    // BOTH HALVES OF THE ADDRESS. This said only which CHANNEL a cart went to, and a channel letter
-    // is not an address — the pop-out windows fired onto the right letter of the WRONG STATION for
-    // as long as they did precisely because nothing on screen or in any log named the station. It is
-    // the same line the daemon now writes on its side (audiod/ether-audiod.js `load`), so the two
-    // can be read against each other.
-    consoleLog("audio", `[CART] "${cart.label}" → ${chans.join("+")} (station ${engine.station})`);
-    for (const ch of chans) {
-      try {
-        await engine.loadToDeck(ch, cart.filePath, cart.label, "");
-        await engine.getDeck(ch)?.play();
-      } catch (e) {
-        console.error(`[cart] "${cart.label}" on ${ch}:`, e);
+    firingRef.current = true;
+    try {
+      const chans = await resolveFireChannels();
+      // BOTH HALVES OF THE ADDRESS. This said only which CHANNEL a cart went to, and a channel letter
+      // is not an address — the pop-out windows fired onto the right letter of the WRONG STATION for
+      // as long as they did precisely because nothing on screen or in any log named the station. It is
+      // the same line the daemon now writes on its side (audiod/ether-audiod.js `load`), so the two
+      // can be read against each other.
+      consoleLog("audio", `[CART] "${cart.label}" → ${chans.join("+")} (station ${engine.station})`);
+      for (const ch of chans) {
+        try {
+          await engine.loadToDeck(ch, cart.filePath, cart.label, "");
+          await engine.getDeck(ch)?.play();
+        } catch (e) {
+          console.error(`[cart] "${cart.label}" on ${ch}:`, e);
+        }
       }
+      playingChannelsRef.current = chans;
+      playingKeyRef.current = key;
+      setCarts(p => p.map(c => ({ ...c, playing: c.key === key }))); // flash clears when the deck stops (effect)
+    } finally {
+      firingRef.current = false;
     }
-    playingChannelsRef.current = chans;
-    playingKeyRef.current = key;
-    setCarts(p => p.map(c => ({ ...c, playing: c.key === key }))); // flash clears when the deck stops (effect)
   };
 
   // ── RIGHT-CLICK → DELETE ────────────────────────────────────────────────────────────────────
@@ -1211,7 +1255,8 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
 
   if (variant === "strip") {
     return (
-      <div style={{ height: "100%", display: "flex", alignItems: "stretch", gap: 6, padding: "8px 10px", fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <div onPointerDownCapture={claimHotkeys} onFocusCapture={claimHotkeys}
+        style={{ height: "100%", display: "flex", alignItems: "stretch", gap: 6, padding: "8px 10px", fontFamily: "'Inter', system-ui, sans-serif" }}>
         <style>{`@keyframes ether-cart-flash { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }`}</style>
         {/* Scroll parent holds the height; the GRID inside is what gets measured. */}
         <div style={{
@@ -1292,7 +1337,8 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
   }
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column" as const, fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <div onPointerDownCapture={claimHotkeys} onFocusCapture={claimHotkeys}
+      style={{ height: "100%", display: "flex", flexDirection: "column" as const, fontFamily: "'Inter', system-ui, sans-serif" }}>
       {/* Header — hidden in compact to save space */}
       {!compact && (
         <div style={{ padding: "10px 14px 8px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -1363,6 +1409,8 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
             onDragOver={e => { e.preventDefault(); setDragOver(cart.key); }}
             onDragLeave={() => setDragOver(null)}
             onDrop={e => handleDrop(e, cart.key)}
+            // The same tooltip the push-up strip's tiles carry: an empty tile names the action that fills it.
+            title={cart.filePath ? (cart.playing ? cart.label + " — click to STOP" : cart.label + " — click to fire, right-click to delete") : "Empty — click to assign"}
             style={{
               borderRadius: 0,
               background: cart.playing ? cart.color + "22" : dragOver === cart.key ? `${cart.color}14` : cart.filePath ? `${cart.color}0c` : "var(--bg-tertiary)",

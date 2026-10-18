@@ -13,7 +13,7 @@
 //
 //   2. THERE IS NO `engine:getQueue` IPC. Nothing in the tree registers that channel. The queue is
 //      daemon-owned and mirrored into the renderer's engine object; the length is read in-process as
-//      `engine.getQueue().length` (the pattern src/canvas/widgets/Widgets.tsx:18 already uses).
+//      `engine.getQueue().length` (the pattern App.tsx's addToQueue already uses).
 //
 //   3. The KV handler lives at `electron/sync/handlers/station_config_kv.js`, not
 //      `electron/station_config_kv.js`.

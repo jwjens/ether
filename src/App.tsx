@@ -1,3 +1,4 @@
+import { isPlainKey } from "./lib/plainKey";
 import { bootSeq, bootMarkAuthComplete } from "./audio/boot-seq";
 import UserLogin from "./components/UserLogin";
 import KeyboardHelp from "./components/KeyboardHelp";
@@ -115,15 +116,15 @@ import { useLibraryBorrowed } from "./hooks/useLibraryBorrowed";
 import LibraryColumnsPanel from "./components/LibraryColumnsPanel";
 import BulkAssignModal from "./components/BulkAssignModal";
 import { ALL_LIB_COLS, LIB_COL_LABELS, LIB_COL_DEFAULT_WIDTHS, HIDDEN_BUILTIN_COL_NAMES, type LibCol, type LibraryColumn, type MetadataColumn, type MetadataDefinition, type MetadataVocabulary } from "./types/metadata";
-import { useCanvasEngine } from "./canvas/CanvasEngine";
 import AutoCue from "./components/AutoCue";
 import { useUpdater, UpdateBanner } from "./components/Updater";
 import DaemonVersionBanner from "./components/DaemonVersionBanner";
 import DesignationBypassBanner from "./components/DesignationBypassBanner";
 import { EtherErrorBoundary, SessionRestoreToast, HealthMonitor, HealthStatusDot, ContentStatusDot } from "./components/HealthMonitor";
 import { importIntoAudioLibrary, fileLocationItem, changeFileLocationItem, checkFilePresence, type FilePresence } from "./lib/fileLocation";
-import WidgetCanvas from "./canvas/WidgetCanvas";
 import { openLinkPreferences } from "./hooks/useRemoteLink";
+import { appShortcut } from "./lib/appShortcuts";
+import { libraryDeckActions, DeckLoadNoticeBar } from "./lib/libraryDeckActions";
 import { useMicMigration } from "./hooks/useMicMigration";
 import { OPEN_PREFS_KEY } from "./hooks/useMicInputs";
 import TrackEditor from "./components/TrackEditor";
@@ -144,7 +145,7 @@ import VUMeter from "./components/VUMeter";
 import IrisBadge from "./components/IrisBadge";
 import { SchedulerHealthHost } from "./components/SchedulerHealthPanel";
 
-type Panel = "live" | "imaging" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "cartwall" | "playlist" | "smartschedule" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "reasons" | "vtinbox" | "gselector" | "rotation" | "schedulehub" | "schedulehubfixed" | "help";
+type Panel = "live" | "imaging" | "library" | "clocks" | "logs" | "spots" | "voicetrack" | "announce" | "streaming" | "settings" | "showprep" | "trackedit" | "subscription" | "autocue" | "health" | "playlist" | "smartschedule" | "schedulebuilder" | "studio" | "broadcasteditor" | "phonedesk" | "analytics" | "cloudbackup" | "multioutput" | "stationmanager" | "managedevices" | "videostudio" | "importlibrary" | "spotifyimport" | "macros" | "midi" | "clipeditor" | "captions" | "eas" | "pdpicks" | "reasons" | "vtinbox" | "gselector" | "rotation" | "schedulehub" | "schedulehubfixed" | "help";
 
 interface SongRow {
   id: number; title: string; file_path: string | null;
@@ -603,7 +604,7 @@ export default function App() {
   // returns the correct engine directly — re-evaluated on every render, so it
   // tracks station switches via useActiveStation(). Child components rendered
   // inside <AudioEngineProvider> (ConsoleStrip, UpNext, ThreeSlotBar, etc.) use
-  // useAudioEngine() normally. CartWallPanel, PlaylistPanel, LivePanel,
+  // useAudioEngine() normally. PlaylistPanel, LivePanel,
   // LibraryPanel are top-level functions in this file (NOT inside App()) — they
   // still reference the module-level singleton and are migrated in Commit 6.
   // Do not remove the module-level `engine` import until Commit 6 clears them.
@@ -1229,7 +1230,7 @@ export default function App() {
   // Native menu IPC handler
   useEffect(() => {
     const handler = (window as any).ether.on("menu-action", (cmd: string) => {
-      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:cartwall":"cartwall","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:logs":"logs","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio","nav:importlibrary":"importlibrary","nav:cloudbackup":"cloudbackup","nav:clipeditor":"clipeditor","nav:captions":"captions","nav:eas":"eas","nav:rotation":"rotation","nav:schedulehub":"schedulehub" };
+      const panels: Record<string,string> = { "nav:library":"library","nav:spots":"spots","nav:voicetrack":"voicetrack","nav:trackedit":"trackedit","nav:clocks":"clocks","nav:logs":"logs","nav:broadcasteditor":"broadcasteditor","nav:autocue":"autocue","nav:playlist":"playlist","nav:phonedesk":"phonedesk","nav:announce":"announce","nav:showprep":"showprep","nav:streaming":"streaming","nav:smartschedule":"smartschedule","nav:analytics":"analytics","nav:multioutput":"multioutput","nav:stationmanager":"stationmanager","nav:health":"health","nav:videostudio":"videostudio","nav:importlibrary":"importlibrary","nav:cloudbackup":"cloudbackup","nav:clipeditor":"clipeditor","nav:captions":"captions","nav:eas":"eas","nav:rotation":"rotation","nav:schedulehub":"schedulehub" };
       if (panels[cmd]) { setPanel(panels[cmd] as Panel); return; }
       // Schedule ▸ Program Log — the Program Log window (Program Log slice 3, 2026-09-20). Until now
       // this opened the Schedule Manager and focused its "log" pane — a different document under the
@@ -1241,8 +1242,7 @@ export default function App() {
       if (cmd === "nav:scheduler-tab:categories") { setSchedulerTab("categories"); return; }
       if (cmd === "file:import") setPanel("library");
       if (cmd === "file:preferences") setPanel("settings");
-      if (cmd === "file:save") canvasEngine.saveCurrentLayout(canvasEngine.activeLayoutName);
-      if (cmd === "file:new-session") { canvasEngine.resetLayout(); setPanel("live"); }
+      if (cmd === "file:new-session") setPanel("live");
       if (cmd === "view:configure-decks") setShowDeckConfig(true);
       if (cmd === "view:reset") { setVisiblePanels({ queue:true,deckA:true,deckB:true,deckC:true,mic:true,clock:false,history:false,cartwall:false }); setPanel("live"); }
       if (cmd === "view:queue") toggleVisible("queue");
@@ -2049,7 +2049,8 @@ export default function App() {
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || (e.target as HTMLElement).isContentEditable) return;
-      switch(e.code) {
+      // appShortcut() is null for any key held with Ctrl / Alt / Meta (isPlainKey): Ctrl+S is not S, Ctrl+A is not A.
+      switch (appShortcut(e)) {
         // Space and B REMOVED (audit 2, 2026-09-27). They played / paused / resumed decks straight from the keyboard —
         // outside the board's ON button and the daemon's serialized path (the same class of defect as KeyX below).
         // Jeff's ruling: the board is the sole gate; a key goes through ON or does not exist. No key starts, pauses or
@@ -2068,12 +2069,12 @@ export default function App() {
         //
         // Segue overlap (auto) is a SEPARATE concept and is untouched — that is the auto-playout overlap
         // a sweeper plays over, and it has nothing to do with the manual crossfade (Jeff, 2026-09-07).
-        case "KeyL": setPanel("library"); break;
-        case "KeyS": setPanel("clocks"); break;
-        case "KeyG": setPanel("logs"); break;
-        case "KeyA": e.preventDefault(); void toggleAutoRef.current(); break;
-        case "Slash": if (e.shiftKey) { e.preventDefault(); setShowShortcuts(s => !s); } break;
-        case "Escape": setShowShortcuts(false); setDrawerOpen(false); break;
+        case "library": setPanel("library"); break;
+        case "clocks": setPanel("clocks"); break;
+        case "logs": setPanel("logs"); break;
+        case "toggleAuto": e.preventDefault(); void toggleAutoRef.current(); break;
+        case "toggleShortcuts": e.preventDefault(); setShowShortcuts(s => !s); break;
+        case "close": setShowShortcuts(false); setDrawerOpen(false); break;
       }
     };
     window.addEventListener("keydown", handleKey);
@@ -2496,63 +2497,23 @@ export default function App() {
 
   const toggleShuffle = () => { const n = !shuffle; setShuffle(n); engine.shuffle = n; };
 
-  // A/B/C = load the song onto that exact deck. If the deck is on air, leave it alone — never
-  // override the playing song. (Q below appends to the bottom of the queue.)
-  const loadDeck = useCallback(async (deckId: "A" | "B" | "C", s: SongRow) => {
-    const fail = (text: string) => { setDeckLoadMsg({ text, err: true }); setTimeout(() => setDeckLoadMsg(m => (m && m.text === text ? null : m)), 6000); };
-    if (!s.file_path) { fail(`Can't load "${s.title}" — no file on record`); return; }
-    // Command-path station scoping: resolve the ACTIVE station's engine fresh at call time (getEngine
-    // froze to station 1 under a useCallback that closed over render-0 engine — see VU cross-talk).
-    const engine = getEngine(stationId);
-    if (engine.getDeck(deckId).getState().status === "playing") return; // don't kill what's on air
-    // Slice B — loud refusal: resolve the SAME way the cue editor does (local-first → R2-by-file_key),
-    // so an R2-only library song loads onto the deck instead of dying silently; on failure, SAY WHY.
-    // The resolve is off the deck-load hot path (it's a manual button), so it may fetch from the cloud.
-    let filePath = s.file_path;
-    setDeckLoadMsg({ text: `Loading "${s.title}" onto ${deckId}…`, err: false });
-    try {
-      const r = await (window as any).ether.invoke("audio:resolve-local-path", s.file_path);
-      if (!r?.ok || !r.filePath) {
-        fail(`Can't load "${s.title}" — ${r?.error === 'no local file, no file_key' ? 'unavailable, needs re-import' : (r?.error || 'file not on this machine')}`);
-        return;
-      }
-      filePath = r.filePath;
-    } catch { /* resolver unreachable — proceed with the raw path; the engine surfaces its own error */ }
-    if (engine.isDaemonDriven) {
-      engine.deckCue(deckId, { filePath, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 });
-    } else {
-      engine.loadToDeck(deckId, filePath, s.title, s.artist_name || "", 0, s.duration_ms ?? 0);
-    }
-    setDeckLoadMsg(null);   // success — clear the Loading… note
-    window.dispatchEvent(new CustomEvent('ether:queue-changed'));
-    if (s.id && !s.intro_end) autoCueSong(s.id, s.file_path).catch(() => {});
-  }, [stationId]);
-  const loadA = useCallback((s: SongRow) => loadDeck("A", s), [loadDeck]);
-  const loadB = useCallback((s: SongRow) => loadDeck("B", s), [loadDeck]);
-  const loadC = useCallback((s: SongRow) => loadDeck("C", s), [loadDeck]);
   const [autoSilenceTrim, setAutoSilenceTrim] = useState(() => {
     try { return localStorage.getItem("ether_auto_silence_trim") !== "false"; } catch { return true; }
   });
-  const addToQueue = useCallback((s: SongRow) => {
-    if (s.file_path) {
-      // Command-path station scoping: resolve the ACTIVE station's engine fresh (see loadDeck).
-      const engine = getEngine(stationId);
-      engine.addToQueue([{ filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined, durationMs: s.duration_ms ?? 0 } as any]);
-      setQueueLen(engine.getQueue().length);
-      window.dispatchEvent(new CustomEvent('ether:queue-changed'));
-      // Auto-detect cue points in background if not set
-      if (autoSilenceTrim && s.id && !s.intro_end) {
-        autoCueSong(s.id, s.file_path).catch(() => {});
-      }
-    }
-  }, [autoSilenceTrim, stationId]);
+  // THE LIBRARY'S A / B / C AND Q — the one path the main window, the Library window and the Library module all use
+  // (src/lib/libraryDeckActions.tsx; moved from the loadDeck / addToQueue that lived here). A/B/C never load over a
+  // deck that is on air (playing or paused) and say so; Q is the real enqueue. The engine is resolved fresh by
+  // stationId at every call (command-path station scoping).
+  const libActions = useMemo(() => libraryDeckActions({
+    engine: () => getEngine(stationId),
+    setNotice: setDeckLoadMsg,
+    autoCueOnQueue: () => autoSilenceTrim,
+    onQueued: (eng) => setQueueLen(eng.getQueue().length),
+  }), [stationId, autoSilenceTrim]);
 
-  const canvasEngine = useCanvasEngine();
   const updater = useUpdater();
   const { showTour, dismissTour } = useTour();
   const [sessionEditing, setSessionEditing] = useState(false);
-  // Canvas mode — only true when user explicitly activates custom layout
-  const [useCanvas, setUseCanvas] = useState(false);
   const [visiblePanels, setVisiblePanels] = useState<Record<string, boolean>>({
     queue: true, deckA: true, deckB: true, deckC: true, mic: true,
     clock: false, history: false, cartwall: false,
@@ -2565,21 +2526,9 @@ export default function App() {
   const [skinPickerPos, setSkinPickerPos] = useState<{ x: number; y: number } | null>(null);
 
   const handleContextMenu = (_e: React.MouseEvent) => {
-    // Global right-click context menu removed — Theme Studio and Reset Layout moved to ≡ menu
+    // Global right-click context menu removed — Theme Studio moved to ≡ menu
   };
 
-  // ≡ menu → Reset Layout. IN PLACE — no reload.
-  //
-  // This was `window.location.reload()`. A reload drops `accountSignedIn` (useState at :571, held in
-  // memory), so the account gate re-evaluates and the operator is dumped on the SIGN-IN SCREEN by a
-  // control labelled "Reset Layout". Found 2026-08-10 when the Schedule Manager's own Reset Layout
-  // did the same thing; this is the same defect, and it was here first.
-  //
-  // canvasEngine.resetLayout() is the real reset: setWidgets(DEFAULT_LAYOUT) + the default layout
-  // name, purely in React state. It is already the path "file:new-session" uses (:1035), so this is
-  // the established call rather than a new one. A layout control must touch the layout and nothing
-  // else — no reload, no navigation, session untouched.
-  const resetLayout = () => { canvasEngine.resetLayout(); };
 
   // Clock accent follows the on-air deck's color (A red / B blue / C green), teal when idle. From the on-air SELECTION —
   // changes on a track change, never on a position tick.
@@ -3072,6 +3021,8 @@ export default function App() {
                   { key: "po-jukebox",     emoji: "🕹", label: "Jukebox",            panel: "jukebox" },
                   { key: "po-videostudio", emoji: "🎥", label: "Show+",              panel: "videostudio" },
                   { key: "po-studiopro",   emoji: "🎬", label: "Show+ DAW",          panel: "studiopro" },
+                  // SCREENS (Screen Builder): a new screen window — its own bar has OPEN… for saved screens and NEW SCREEN.
+                  { key: "po-screens",     emoji: "🧩", label: "Screens",            panel: "screen" },
                 ] as const).map(item => (
                   <button
                     key={item.key}
@@ -3182,15 +3133,6 @@ export default function App() {
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="13.5" cy="6.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r="1.5" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r="1.5" fill="currentColor" stroke="none"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
                   <span style={{ flex: 1 }}>Theme Studio</span>
                 </button>
-                <button
-                  onClick={() => { resetLayout(); setDrawerOpen(false); }}
-                  style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 13, fontWeight: 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "var(--bg-tertiary)"; }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
-                >
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-4.95"/></svg>
-                  <span style={{ flex: 1 }}>Reset Layout</span>
-                </button>
 
               </div>
             </div>
@@ -3205,41 +3147,33 @@ export default function App() {
         <main style={{ flex: 1, overflow: "hidden", padding: ((panel as string) === "videostudio" || panel === "clipeditor") ? 0 : 16, display: "flex", flexDirection: "column" }}>
           {panel === "live" && (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, position: "relative" as const }}>
-              {useCanvas ? (
-                <WidgetCanvasLive
-                  canvasEngine={canvasEngine}
-                  audioEngine={engine}
-                />
-              ) : (
-                <LivePanel
-                  jingleOverlay={jingleOverlay}
-                  onCloseDock={() => setProgPanel(null)}
-                  onOpenImaging={() => { setProgPanel(null); setPanel("imaging"); }}
-                  autoAdv={autoAdv} shuffle={shuffle}
-                  toggleAuto={toggleAuto} toggleShuffle={toggleShuffle}
-                  queueLen={queueLen} showCarts={showCarts}
-                  toggleCarts={() => { setShowCarts(!showCarts); setProgPanel(null); }}
-                  progPanel={progPanel}
-                  inputDevice={inputDevice}
-                  visiblePanels={visiblePanels}
-                  deckConfigs={visibleEnabledDecks}
-                  onConfigureDecks={() => setShowDeckConfig(true)}
-                  autoSilenceTrim={autoSilenceTrim}
-                  setAutoSilenceTrim={v => { setAutoSilenceTrim(v); localStorage.setItem("ether_auto_silence_trim", String(v)); }}
-                  globalSearch={globalSearch}
-                  setGlobalSearch={setGlobalSearch}
-                  nowPlaying={nowPlayingStr || undefined}
-                  toolsCollapsed={toolsCollapsed}
-                  toggleToolsCollapsed={toggleToolsCollapsed}
-                  onOpenCarts={() => setPanel("cartwall")}
-                  libraryDock={<LibraryPanel onLoadA={loadA} onLoadB={loadB} onLoadC={loadC} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} onSendToStudio={(s) => { try { (window as any).ether.invoke("studio:push-track", { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms }); } catch { /* not in electron */ } }} />}
-                />
-              )}
+              <LivePanel
+                jingleOverlay={jingleOverlay}
+                onCloseDock={() => setProgPanel(null)}
+                onOpenImaging={() => { setProgPanel(null); setPanel("imaging"); }}
+                autoAdv={autoAdv} shuffle={shuffle}
+                toggleAuto={toggleAuto} toggleShuffle={toggleShuffle}
+                queueLen={queueLen} showCarts={showCarts}
+                toggleCarts={() => { setShowCarts(!showCarts); setProgPanel(null); }}
+                progPanel={progPanel}
+                inputDevice={inputDevice}
+                visiblePanels={visiblePanels}
+                deckConfigs={visibleEnabledDecks}
+                onConfigureDecks={() => setShowDeckConfig(true)}
+                autoSilenceTrim={autoSilenceTrim}
+                setAutoSilenceTrim={v => { setAutoSilenceTrim(v); localStorage.setItem("ether_auto_silence_trim", String(v)); }}
+                globalSearch={globalSearch}
+                setGlobalSearch={setGlobalSearch}
+                nowPlaying={nowPlayingStr || undefined}
+                toolsCollapsed={toolsCollapsed}
+                toggleToolsCollapsed={toggleToolsCollapsed}
+                libraryDock={<LibraryPanel {...libActions} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} />}
+              />
             </div>
           )}
           {panel !== "live" && (panel as string) !== "videostudio" && panel !== "clipeditor" && (
             <div style={{ flex: 1, overflowY: "auto" }}>
-              {panel === "library" && <LibraryPanel onLoadA={loadA} onLoadB={loadB} onLoadC={loadC} onQueue={addToQueue} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} onSendToStudio={(s) => { try { (window as any).ether.invoke("studio:push-track", { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms }); } catch { /* not in electron */ } }} />}
+              {panel === "library" && <LibraryPanel {...libActions} onEdit={(s) => { setEditSong(s); setPanel("trackedit"); }} />}
               {panel === "clocks" && <Scheduler defaultTab={schedulerTab} />}
               {panel === "schedulebuilder" && <ProgramLog onClose={() => setPanel("live")} />}
               {/* Show+ DAW is no longer an inline takeover — it opens as its own pop-out window
@@ -3301,11 +3235,6 @@ export default function App() {
               )}
               {panel === "smartschedule" && (
                 <SmartScheduler onClose={() => setPanel("live")} />
-              )}
-              {panel === "cartwall" && (
-                <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
-                  <CartWallPanel onClose={() => setPanel("live")} />
-                </div>
               )}
               {panel === "playlist" && (
                 <div style={{ height: "100%", background: "var(--bg-secondary)", borderRadius: 0, border: "1px solid var(--border-primary)", overflow: "hidden" }}>
@@ -3384,7 +3313,9 @@ export default function App() {
               ]},
               { group: "Interface", items: [
                 { key: "Shift + ?", desc: "Toggle this shortcut overlay" },
-                { key: "≡ Menu", desc: "Theme Studio & Reset Layout" },
+                { key: "≡ Menu", desc: "Theme Studio" },
+                // src/lib/plainKey.ts — Ctrl+S is not S, Ctrl+A is not A (docs/help-keyboard-shortcuts.md)
+                { key: "Ctrl / Alt / ⌘ + key", desc: "Not a shortcut — does nothing" },
               ]},
             ].map(({ group, items }) => (
               <div key={group} style={{ marginBottom: 20 }}>
@@ -3431,11 +3362,7 @@ export default function App() {
           {switchToast}
         </div>
       )}
-      {deckLoadMsg && (
-        <div style={{ position: "fixed", bottom: 72, left: "50%", transform: "translateX(-50%)", zIndex: 9999, background: "rgba(30,30,40,0.97)", border: `1px solid ${deckLoadMsg.err ? "rgba(224,64,64,0.5)" : "rgb(from var(--accent-blue) r g b / 0.4)"}`, color: deckLoadMsg.err ? "#ff6b6b" : "var(--accent-blue)", padding: "9px 20px", fontSize: 13, fontWeight: 600, fontFamily: "'Inter', system-ui, sans-serif", pointerEvents: "none" }}>
-          {deckLoadMsg.text}
-        </div>
-      )}
+      <DeckLoadNoticeBar notice={deckLoadMsg} />
       <LibrarySyncProgressBar />
       {/* Generate progress — bottom-left, above the station badge. Mounted here (not in the calendar)
           so a run started from the month view keeps reporting after the operator navigates away, and
@@ -3700,159 +3627,6 @@ function DragHandle({ onPointerDown }: { onPointerDown: (e: React.PointerEvent<H
 }
 
 
-// ── Full-page Cart Wall Panel ─────────────────────────────────
-function CartWallPanel({ onClose }: { onClose: () => void }) {
-  const engine = useAudioEngine();
-  const KEYS = ["1","2","3","4","5","6","7","8","9","0","Q","W","E","R","T","Y","U","I","O","P","A","S","D","F"];
-  const COLORS = ["#ef4444","#f97316","#fbbf24","#34d399","var(--accent-cyan)","var(--accent-blue)","#a78bfa","#ec4899","#14b8a6","#6366f1","#84cc16","#f43f5e"];
-
-  const [carts, setCarts] = useState(() =>
-    KEYS.map((k, i) => ({ key: k, label: `Cart ${i+1}`, filePath: "", color: COLORS[i % COLORS.length], playing: false }))
-  );
-  const [editing, setEditing] = useState<string | null>(null);
-  const [dragOver, setDragOver] = useState<string | null>(null);
-
-  useEffect(() => {
-    const saved = localStorage.getItem("ether_carts_v1");
-    if (saved) try { setCarts(JSON.parse(saved)); } catch {}
-  }, []);
-
-  const save = (next: typeof carts) => { setCarts(next); localStorage.setItem("ether_carts_v1", JSON.stringify(next)); };
-
-  const titleFromFile = (p: string) => (p.split(/[\\/]/).pop() || p).replace(/\.[^.]+$/, "").replace(/[_-]/g, " ");
-  const assignCart = async (key: string) => {
-    const f = await (window as any).ether.dialog.openFile({ multiple: false, title: "Select audio", filters: [{ name: "Audio", extensions: ["mp3","flac","ogg","wav","m4a","aac"] }] });
-    if (!f) return;
-    // COPY-ON-IMPORT. This wall persists to localStorage rather than the DB, but persisted is
-    // persisted: a path stored here survives restarts and points outside the library just the same.
-    // (NOTE: this is a SECOND cart-wall implementation, separate from DeckConfigurator's
-    // BoutiqueCartWall which stores to cart_slots. Flagged, not consolidated here.)
-    const fp = await importIntoAudioLibrary(Array.isArray(f) ? f[0] : f);
-    if (!fp) return;
-    save(carts.map(c => c.key === key ? { ...c, filePath: fp, label: titleFromFile(fp) } : c));
-  };
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (editing || e.target instanceof HTMLInputElement) return;
-      const cart = carts.find(c => c.key === e.key.toUpperCase());
-      if (cart?.filePath) fire(cart.key);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [carts, editing]);
-
-  const fire = async (key: string) => {
-    const cart = carts.find(c => c.key === key);
-    if (!cart?.filePath) return;
-    try {
-      await engine.loadToDeck("C", cart.filePath, cart.label, "");
-      engine.getDeck("C")?.play();
-      setCarts(p => p.map(c => c.key === key ? { ...c, playing: true } : c));
-      setTimeout(() => setCarts(p => p.map(c => c.key === key ? { ...c, playing: false } : c)), 3000);
-    } catch {}
-  };
-
-  const loaded = carts.filter(c => c.filePath).length;
-
-  return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column" as const, fontFamily: "'Inter', system-ui, sans-serif" }}>
-      {/* Header */}
-      <div style={{ padding: "16px 20px 12px", borderBottom: "1px solid var(--border-primary)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "0.16em", color: "#fbbf24", textTransform: "uppercase" as const, marginBottom: 3 }}>Cart Wall</div>
-          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)", fontFamily: "'Inter', sans-serif" }}>Sound Effects & Stingers</div>
-          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginTop: 2 }}>{loaded}/{carts.length} slots loaded · Press key or click to fire · Drop audio to assign · Double-click to rename</div>
-        </div>
-        <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 0, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
-      </div>
-
-      {/* Grid */}
-      <div style={{ flex: 1, padding: 16, overflowY: "auto" as const, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 10, alignContent: "start" }}>
-        {carts.map(cart => (
-          <div
-            key={cart.key}
-            onClick={() => { if (cart.filePath) { fire(cart.key); } else { assignCart(cart.key); } }}
-            onDoubleClick={() => setEditing(cart.key)}
-            onDragOver={e => { e.preventDefault(); setDragOver(cart.key); }}
-            onDragLeave={() => setDragOver(null)}
-            onDrop={async e => {
-              e.preventDefault();
-              setDragOver(null);
-              // COPY-ON-IMPORT, same as this wall's picker path above. localStorage is still
-              // persistence: a path stored here outlives the session and points outside the
-              // catalogue just the same.
-              const dropped = e.dataTransfer.getData("text/plain");
-              if (!dropped) return;
-              const fp = await importIntoAudioLibrary(dropped);
-              if (!fp) return;
-              save(carts.map(c => c.key === cart.key ? { ...c, filePath: fp } : c));
-            }}
-            style={{
-              padding: "12px 12px 10px",
-              borderRadius: 0,
-              background: cart.playing ? cart.color
-                : dragOver === cart.key ? `${cart.color}20`
-                : cart.filePath ? `${cart.color}12` : "var(--bg-tertiary)",
-              border: `1px solid ${cart.playing ? cart.color : dragOver === cart.key ? cart.color : cart.filePath ? cart.color + "40" : "var(--border-primary)"}`,
-              cursor: "pointer",
-              transition: "all 0.12s",
-              boxShadow: cart.playing ? `0 0 20px ${cart.color}60` : "none",
-              position: "relative" as const, minHeight: 80,
-              userSelect: "none" as const,
-            }}
-          >
-            {/* Hotkey */}
-            <div style={{
-              position: "absolute" as const, top: 8, right: 9,
-              fontSize: 12, fontWeight: 900, fontFamily: "'JetBrains Mono', ui-monospace, monospace",
-              color: cart.playing ? "rgba(0,0,0,0.6)" : cart.filePath ? cart.color : "var(--text-tertiary)",
-              letterSpacing: "0.04em",
-            }}>{cart.key}</div>
-
-            {/* Playing waveform bars */}
-            {cart.playing && (
-              <div style={{ display: "flex", gap: 2, alignItems: "flex-end", height: 16, marginBottom: 6 }}>
-                {[0.5,1,0.7,0.9,0.6,1,0.8].map((h,i) => (
-                  <div key={i} style={{ flex: 1, height: `${h*100}%`, background: "rgba(0,0,0,0.45)", borderRadius: 0, animation: `on-air-breathe ${0.4 + i*0.1}s ease-in-out infinite` }} />
-                ))}
-              </div>
-            )}
-
-            {/* Label */}
-            {editing === cart.key ? (
-              <input
-                autoFocus
-                defaultValue={cart.label}
-                onBlur={e => { save(carts.map(c => c.key === cart.key ? { ...c, label: e.target.value || c.label } : c)); setEditing(null); }}
-                onKeyDown={e => { if (e.key === "Enter" || e.key === "Escape") (e.target as HTMLInputElement).blur(); }}
-                onClick={e => e.stopPropagation()}
-                style={{ width: "100%", background: "none", border: "none", borderBottom: "1px solid currentColor", outline: "none", fontSize: 12, fontWeight: 700, color: "inherit", padding: "2px 0" }}
-              />
-            ) : (
-              <div style={{ fontSize: 12, fontWeight: cart.filePath ? 700 : 400, color: cart.playing ? "#000" : cart.filePath ? "var(--text-primary)" : "var(--text-tertiary)", lineHeight: 1.3, paddingRight: 18, fontStyle: cart.filePath ? "normal" : "italic" }}>
-                {cart.filePath ? cart.label : "Empty slot"}
-              </div>
-            )}
-
-            {!cart.filePath && !cart.playing && (
-              <div style={{ marginTop: 6, fontSize: 13, color: "var(--text-tertiary)" }}>Drop audio here</div>
-            )}
-
-            {/* Clear button */}
-            {cart.filePath && !cart.playing && (
-              <button
-                onClick={e => { e.stopPropagation(); save(carts.map(c => c.key === cart.key ? { ...c, filePath: "" } : c)); }}
-                style={{ position: "absolute" as const, bottom: 6, right: 7, background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: 12, opacity: 0.5, padding: 0, lineHeight: 1 }}
-              >×</button>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ── Full-page Playlist Panel ───────────────────────────────────
 function PlaylistPanel({ onClose }: { onClose: () => void }) {
   const engine = useAudioEngine();
@@ -3997,12 +3771,8 @@ function JockStripLive(props: Omit<React.ComponentProps<typeof JockStrip>, "deck
   const d = useDecks(useAudioEngine());
   return <JockStrip deckA={d.A} deckB={d.B} {...props} />;
 }
-function WidgetCanvasLive(props: Omit<React.ComponentProps<typeof WidgetCanvas>, "deckStates">) {
-  const d = useDecks(props.audioEngine as any);
-  return <WidgetCanvas {...props} deckStates={{ A: d.A, B: d.B, C: d.C }} />;
-}
 
-function LivePanel({ autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, onOpenCarts, libraryDock, jingleOverlay, onCloseDock, onOpenImaging }: {
+function LivePanel({ autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, showCarts, toggleCarts, progPanel, inputDevice, visiblePanels, deckConfigs, onConfigureDecks, autoSilenceTrim, setAutoSilenceTrim, globalSearch, setGlobalSearch, nowPlaying, toolsCollapsed, toggleToolsCollapsed, libraryDock, jingleOverlay, onCloseDock, onOpenImaging }: {
   autoAdv: boolean | null; shuffle: boolean;
   toggleAuto: () => void | Promise<void>; toggleShuffle: () => void;
   queueLen: number; showCarts: boolean; toggleCarts: () => void;
@@ -4018,7 +3788,6 @@ function LivePanel({ autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, show
   nowPlaying?: string;
   toolsCollapsed: boolean;
   toggleToolsCollapsed: () => void;
-  onOpenCarts: () => void;
   libraryDock: JSX.Element;
   jingleOverlay: { deck: string | null; state: string; title: string | null; contentClass: string | null; jinDurSec: number | null } | null;
   onCloseDock: () => void;
@@ -4787,6 +4556,7 @@ function SingleChoicePopover({
   useEffect(() => {
     const count = allItemsRef.current.length;
     const onKey = (e: KeyboardEvent) => {
+      if (!isPlainKey(e)) return;   // list keys are single keys (src/lib/plainKey.ts)
       if (e.key === 'Escape') { onClose(); return; }
       if (e.key === 'ArrowDown') {
         e.preventDefault();

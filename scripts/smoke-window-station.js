@@ -98,12 +98,26 @@ console.log("\n== 3. no call site re-introduces a station guess ==");
 {
   // `?? 1` next to a station is the shape the fix removed from PopoutRenderer. It is a guess wearing
   // a fallback's clothes: it cannot be distinguished from a real station 1 at runtime.
-  const files = ["src/components/PopoutRenderer.tsx"];
+  //
+  // SCREEN BUILDER (S7, docs/screen-builder-design-2026-10-18.md §2.3): every file under src/modules
+  // too — a module takes its station from its surface and never guesses — and the Library window
+  // and its actions, which moved out of PopoutRenderer (src/components/LibraryWindow.tsx,
+  // src/lib/libraryDeckActions.tsx).
+  const walk = (dir) => fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true }).flatMap((e) => {
+    const rel = `${dir}/${e.name}`;
+    return e.isDirectory() ? walk(rel) : /\.(tsx?|jsx?)$/.test(e.name) ? [rel] : [];
+  });
+  const moduleFiles = fs.existsSync(path.join(ROOT, "src/modules")) ? walk("src/modules") : [];
+  if (moduleFiles.length) pass(`src/modules: ${moduleFiles.length} file(s) checked`);
+  else fail("src/modules has no files — the registry has moved and this check is stale");
+  const files = ["src/components/PopoutRenderer.tsx", "src/components/LibraryWindow.tsx", "src/lib/libraryDeckActions.tsx", ...moduleFiles];
   for (const f of files) {
     const src = code(f);
     const hits = src.split("\n")
       .map((l, i) => ({ n: i + 1, l }))
-      .filter(({ l }) => /getEngine\([^)]*\?\?\s*1\s*\)/.test(l) || /stationId\s*\?\?\s*1/.test(l));
+      .filter(({ l }) => /getEngine\([^)]*\?\?\s*1\s*\)/.test(l) || /stationId\s*\?\?\s*1/.test(l)
+        // in a module file, ANY `?? 1` is refused: there is no legitimate default of one there
+        || (moduleFiles.includes(f) && /\?\?\s*1(?![\d.])/.test(l)));
     if (hits.length) {
       for (const h of hits) fail(`${f}:${h.n} guesses station 1 — ${h.l.trim()}`);
     } else {

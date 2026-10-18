@@ -35,6 +35,7 @@ them normally and mark them as sweepers in the Library, then manage them in the 
    - **Space** — audition the selected region.
    - **← / →** — move between regions.
    - **Delete** — remove the selected region.
+   - These are single keys: with **Ctrl, Alt or Cmd** held they do nothing (`docs/help-keyboard-shortcuts.md`).
    - Drag a selected region's **left/right edge** on the waveform to fine-tune its boundaries.
    - Row buttons: **▶** audition · **⌥** split in half · **⌄** merge with the next · **✕** delete.
 4. **Name.** Each region is pre-named `<reel> 01`, `<reel> 02`… Click **EDIT** on any name to change it.
