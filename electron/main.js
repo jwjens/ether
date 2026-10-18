@@ -11218,8 +11218,27 @@ async function _generateDayChunked(dayBase, ctx, effStart, meta) {
 //
 // Every call is individually guarded: observation must never break a generate that has already
 // committed its rows.
+// Generate's UNSCHEDULED slots in plain words, for the screen (Phase 2): hour, time, category, and why — the rule that
+// blocked the closest songs.
+function _unschedReport(ctx) {
+  return ((ctx && ctx.unscheduled) || []).map(x => ({
+    hourLabel: _fmtHour(new Date(x.ts * 1000).getHours()) + ', ' + new Date(x.ts * 1000).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }),
+    at: x.ts, category: x.categoryCode,
+    why: x.closest && x.closest.length ? x.closest.map(c => `${c.title}: ${c.rule} ${c.measuredMin} of ${c.settingMin} min`).join('; ') : 'the category has no song for this hour',
+  }));
+}
 function finishGenerateRun(stationId, ctx, days) {
   try { _noteSchedulerCore(stationId, ctx); } catch {}
+  // UNSCHEDULED (Phase 2): every slot no song could fill under the rules is an alert, named with the closest songs and
+  // the rule that blocked each. One per slot; nothing capped, nothing hidden.
+  try {
+    const u = (ctx && ctx.unscheduled) || [];
+    u.forEach(x => _alerts.raise('unscheduled', { stationId, at: Math.floor(Date.now() / 1000), scheduledAt: x.ts, path: 'generate', severity: 'yellow',
+      rule: x.closest && x.closest[0] ? { key: x.closest[0].rule, setting: x.closest[0].settingMin, measured: x.closest[0].measuredMin, unit: 'min' } : null,
+      message: `UNSCHEDULED ${new Date(x.ts * 1000).toLocaleString()} — ${x.categoryCode}: no song passes the rules` +
+        (x.closest && x.closest.length ? ` (closest: ${x.closest.map(c => `${c.title}, ${c.rule} ${c.measuredMin} of ${c.settingMin} min`).join('; ')})` : ' (the category has no song)') +
+        (x.fallbackTried ? ' — the fallback category had none either' : ' — no fallback category is set') }));
+  } catch {}
   try { _libHealth && _libHealth.noteGenerate(stationId, { relaxed: ctx.relaxed, emptyCatIds: [...ctx.diag.emptyCats], breakDrift: ctx.breakDrift }); } catch {}
   try { _noteGenerateTiming(stationId, ctx, days); } catch {}
 }
@@ -11478,7 +11497,8 @@ ipcMain.handle('schedule:checkRow', (_e, stationId, uuid, atTs) => {
     if (!row) return { ok: true, warnings: [] };
     const { buildRestMaps, checkSeparation } = require('./separation-enforce');
     const ctx = buildScheduleCtx(db, sid);
-    const win = { artistSepMin: ctx.artistSepMin, songRepeatMin: ctx.songRepeatMin, titleSepMin: ctx.titleSepMin };
+    // The station's rules as Programming preferences hold them (an inactive rule is off: 0 here).
+    const win = { artistSepMin: ctx.rules.artistMin || 0, songRepeatMin: ctx.rules.songMin || 0, titleSepMin: ctx.rules.titleMin || 0 };
     // Widest rule decides how far to look — no point scanning a day for a 60-minute window.
     const span = Math.max(win.artistSepMin, win.songRepeatMin, win.titleSepMin, 0) * 60;
     const neighbours = db.prepare(
@@ -11514,6 +11534,11 @@ ipcMain.handle('schedule:generateDays', async (_, dayTsList) => {
     _genEmit({ phase: "start", dayIdx: 0, dayTotal: days.length });
     const nowTs = Math.floor(Date.now() / 1000);
     const ctx = buildScheduleCtx(db, stationId);
+    {
+      // The window this run replaces (the one pick measures against the log OUTSIDE it, and against operator rows in it).
+      const starts = days.map(t => { const d = new Date(t * 1000); d.setHours(0, 0, 0, 0); return Math.floor(d.getTime() / 1000); });
+      if (starts.length) ctx.planWindow(Math.max(Math.min(...starts), Math.ceil(nowTs / 3600) * 3600), Math.max(...starts) + 86_400);
+    }
     let total = 0, committed = 0, cancelled = false;
     for (let i = 0; i < days.length; i++) {
       if (_genCancel) { cancelled = true; break; }
@@ -11546,7 +11571,7 @@ ipcMain.handle('schedule:generateDays', async (_, dayTsList) => {
     finishGenerateRun(stationId, ctx, committed);
     console.log(`[schedule:generateDays] ${committed}/${days.length} day(s), ${total} tracks${cancelled ? " — CANCELLED" : ""}`);
     _genEmit({ phase: "end", cancelled, daysCommitted: committed, count: total, dayTotal: days.length });
-    return { ok: true, cancelled, daysCommitted: committed, count: total, station, gaps, relaxed: ctx.relaxed.length };
+    return { ok: true, cancelled, daysCommitted: committed, count: total, station, gaps, relaxed: ctx.relaxed.length, unscheduled: _unschedReport(ctx) };
   } catch (e) {
     console.error('[schedule:generateDays]', e.message);
     _genEmit({ phase: "end", cancelled: false, error: e.message, dayTotal: (dayTsList || []).length });
@@ -11581,6 +11606,7 @@ ipcMain.handle('schedule:generateDay', async (_, dayTs, fromTs) => {
     // Build ctx BEFORE any delete — it reads play_log/separation_rules/songs, never generated_schedule,
     // so moving the delete after the pick cannot change what gets picked.
     const ctx = buildScheduleCtx(db, activeStationId);
+    ctx.planWindow(effStart, dayEnd);
     const run = await _generateDayChunked(dayBase, ctx, effStart, { day: dayBase.toDateString(), dayIdx: 0, dayTotal: 1 });
     if (run.cancelled) { _genEmit({ phase: "end", cancelled: true, daysCommitted: 0, count: 0, dayTotal: 1 }); return { ok: true, cancelled: true, count: 0 }; }
     _placeJingles(db, activeStationId, ctx.generatedRows);
@@ -11616,7 +11642,7 @@ ipcMain.handle('schedule:generateDay', async (_, dayTs, fromTs) => {
     const relaxed = ctx.relaxed.map(r => ({ hour: r.hour, hourLabel: _fmtHour(r.hour), title: r.title, artist: r.artist, category: catName(r.category_id) }));
     console.log(`[schedule:generateDay] ${ctx.generatedRows.length} tracks for ${dayBase.toDateString()}${reasons.length ? " · issues: " + reasons.length : ""}${relaxed.length ? " · relaxed: " + relaxed.length : ""}`);
     _genEmit({ phase: "end", cancelled: false, daysCommitted: 1, count: ctx.generatedRows.length, dayTotal: 1 });
-    return { ok: true, count: ctx.generatedRows.length, station, date, dateTs: Math.floor(dayBase.getTime() / 1000), gaps, relaxed, reasons };
+    return { ok: true, count: ctx.generatedRows.length, station, date, dateTs: Math.floor(dayBase.getTime() / 1000), gaps, relaxed, reasons, unscheduled: _unschedReport(ctx) };
   } catch (e) {
     console.error('[schedule:generateDay]', e.message);
     _genEmit({ phase: "end", cancelled: false, error: e.message, dayTotal: 1 });
@@ -11637,6 +11663,8 @@ async function _generateRange(stationId, fromTs, toTs, opts) {
   const ctx = buildScheduleCtx(db, stationId);
   const start = new Date(Math.max(fromTs, nowTs) * 1000); start.setHours(0, 0, 0, 0);
   const endMs = toTs * 1000;
+  { const e = new Date(endMs); e.setHours(0, 0, 0, 0); const last = Math.floor(e.getTime() / 1000) + (e.getTime() < endMs ? 86_400 : 0);
+    ctx.planWindow(Math.max(Math.floor(start.getTime() / 1000), Math.ceil(nowTs / 3600) * 3600), Math.max(last, Math.floor(start.getTime() / 1000) + 86_400)); }
   let dayIdx = 0;
   for (let d = new Date(start); d.getTime() < endMs; d.setDate(d.getDate() + 1)) {
     const dayBase = new Date(d); dayBase.setHours(0, 0, 0, 0);

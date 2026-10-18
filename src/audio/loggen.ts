@@ -16,7 +16,6 @@
 import { query, execute, queryOne } from "../db/client";
 import { getActiveStationIdSync } from "../hooks/useActiveStation";
 import { getEngine } from "./engine-registry";
-import { pickEnforced, RestMaps, SepWin } from "./separationEnforce";
 
 interface SmartRule {
   id: string;
@@ -95,274 +94,6 @@ export function getActiveRule(): SmartRule | null {
 
 // ── Content filter from localStorage ──────────────────────────
 
-function getContentFilter(): { blockExplicit: boolean } {
-  try {
-    const stored = localStorage.getItem("ether_content_filter");
-    return stored ? JSON.parse(stored) : { blockExplicit: false };
-  } catch {
-    return { blockExplicit: false };
-  }
-}
-
-// ── Separation rules from DB ───────────────────────────────────
-
-async function getSepRules(stationId: number): Promise<SepRules> {
-  try {
-    const rows = await query<{ rule_type: string; value: number }>(
-      "SELECT rule_type, value FROM separation_rules WHERE is_active = 1 AND station_id = ?",
-      [stationId]
-    );
-    const artistRow = rows.find(r => r.rule_type === "artist_separation_min");
-    const songRow   = rows.find(r => r.rule_type === "song_separation_min");
-    return {
-      artist_sep_sec: (artistRow?.value ?? 60)  * 60,   // default 60 min
-      song_sep_sec:   (songRow?.value   ?? 120) * 60,   // default 120 min
-    };
-  } catch {
-    return { artist_sep_sec: 3600, song_sep_sec: 7200 };
-  }
-}
-
-// ── Enforce-separation (2026-07-27, slice 3) — renderer twin of the daemon enforced floor ─────────────
-// Per-station toggle (station_config_kv key 'enforce_separation'), default OFF. When ON, the live-pick
-// fallback below uses the shared enforced picker (separationEnforce.pickEnforced) instead of the
-// clock/rule/random ladder. Tier 0 (generated_schedule) is unaffected. Mirrors audiod/loggen.js slice 2.
-async function enforceSeparationOn(stationId: number): Promise<boolean> {
-  try {
-    const rows = await query<{ value: string }>(
-      "SELECT value FROM station_config_kv WHERE key='enforce_separation' AND station_id=? AND deleted_at IS NULL",
-      [stationId]);
-    const v = rows[0]?.value;
-    return v === "1" || v === "true";
-  } catch { return false; }
-}
-
-async function sepWindowsMin(stationId: number): Promise<SepWin> {
-  const g = async (rt: string, def: number) => {
-    try {
-      const r = await query<{ value: number }>(
-        "SELECT value FROM separation_rules WHERE station_id=? AND rule_type=? AND is_active=1 LIMIT 1", [stationId, rt]);
-      return r[0]?.value ?? def;
-    } catch { return def; }
-  };
-  return { artistSepMin: await g("artist_separation_min", 60), songRepeatMin: await g("song_separation_min", 180), titleSepMin: await g("title_separation_min", 120) };
-}
-
-async function buildRestMapsTwin(stationId: number): Promise<Pick<RestMaps, "restByFile" | "restByArtist" | "restByTitle">> {
-  const restByFile = new Map<string, number>(), restByArtist = new Map<number, number>(), restByTitle = new Map<string, number>();
-  try { for (const r of await query<{ file_path: string; m: number }>("SELECT file_path, MAX(played_at) m FROM play_log WHERE station_id=? AND deleted_at IS NULL AND file_path IS NOT NULL GROUP BY file_path", [stationId])) restByFile.set(r.file_path, r.m || 0); } catch { /* */ }
-  try { for (const r of await query<{ aid: number; m: number }>("SELECT s.artist_id aid, MAX(pl.played_at) m FROM play_log pl JOIN songs s ON s.file_path=pl.file_path WHERE pl.station_id=? AND pl.deleted_at IS NULL AND s.artist_id IS NOT NULL GROUP BY s.artist_id", [stationId])) restByArtist.set(r.aid, r.m || 0); } catch { /* */ }
-  try { for (const r of await query<{ tk: string; m: number }>("SELECT LOWER(TRIM(title)) tk, MAX(played_at) m FROM play_log WHERE station_id=? AND deleted_at IS NULL AND title IS NOT NULL AND (content_class IS NULL OR content_class = 'MUSIC') GROUP BY LOWER(TRIM(title))", [stationId])) restByTitle.set(r.tk, r.m || 0); } catch { /* */ }
-  return { restByFile, restByArtist, restByTitle };
-}
-
-// Enforced live-pick: fill `count` slots from the clock's music categories (else on-format), each via the
-// shared pickEnforced. Returns Song[] in air order (rest-driven — NOT BPM-reordered). Empty ⇒ caller falls
-// through to the legacy ladder (never dead air). relaxedCount is logged loud.
-async function enforcedFill(count: number, stationId: number): Promise<Song[]> {
-  const win = await sepWindowsMin(stationId);
-  const rest = await buildRestMapsTwin(stationId);
-  const maps: RestMaps = { ...rest, songLastTs: new Map(), artistLastTs: new Map(), titleLastTs: new Map() };
-  const used = { usedSongIds: new Set<number>(), usedArtistIds: new Set<number>(), usedTitles: new Set<string>() };
-  const showClock = await getActiveShowClock(stationId);
-  let cats: number[] = [];
-  if (showClock) {
-    const rows = await query<{ category_id: number }>("SELECT category_id FROM clock_slots WHERE clock_id=? AND slot_type='music' AND category_id IS NOT NULL AND station_id=? AND deleted_at IS NULL ORDER BY position", [showClock.clockId, stationId]);
-    cats = rows.map(r => r.category_id);
-  }
-  if (!cats.length) cats = await getFormatCategoryIds(stationId, showClock?.clockId);
-  if (!cats.length) return [];
-  const out: Song[] = []; let cursorTs = Math.floor(Date.now() / 1000); let ci = 0, relaxedCount = 0;
-  for (let i = 0; i < count; i++) {
-    let picked: any = null, guard = 0;
-    while (!picked && guard++ < cats.length) {
-      const cat = cats[ci++ % cats.length];
-      const cands = await query<Song>("SELECT s.id, s.title, a.name AS artist_name, s.artist_id, s.duration_ms, s.file_path, s.intro_end, s.outro_start, s.no_repeat_hours FROM songs s LEFT JOIN artists a ON a.id=s.artist_id WHERE s.deleted_at IS NULL AND s.category_id=? AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status!='inactive') AND (s.content_class IS NULL OR s.content_class='MUSIC') AND (s.daypart_mask IS NULL OR ((s.daypart_mask>>?)&1)=1)", [cat, new Date(cursorTs * 1000).getHours()]);
-      if (!cands.length) continue;
-      const r = pickEnforced(cands as any[], cursorTs, maps, win, used, null, 240);
-      if (!r) continue;
-      picked = r.picked; if (r.relaxed) relaxedCount++;
-    }
-    if (!picked) break;
-    used.usedSongIds.add(picked.id); if (picked.artist_id) used.usedArtistIds.add(picked.artist_id);
-    const tk = (picked.title || "").trim().toLowerCase(); if (tk) used.usedTitles.add(tk);
-    maps.songLastTs.set(picked.id, cursorTs); if (picked.artist_id) maps.artistLastTs.set(picked.artist_id, cursorTs); if (tk) maps.titleLastTs.set(tk, cursorTs);
-    out.push(picked as Song);
-    cursorTs += picked.duration_ms ? Math.round(picked.duration_ms / 1000) : 240;
-  }
-  if (relaxedCount) console.warn(`[loggen] ENFORCED (twin) relaxed ${relaxedCount}/${out.length} — category pool exhausted`);
-  return out;
-}
-
-// ── Energy level → SQL filter ──────────────────────────────────
-
-function energyFilter(level: "high" | "medium" | "low" | "mixed"): string {
-  switch (level) {
-    case "high":   return "AND (energy >= 0.55 OR energy IS NULL)";
-    case "medium": return "AND (energy BETWEEN 0.25 AND 0.65 OR energy IS NULL)";
-    case "low":    return "AND (energy <= 0.35 OR energy IS NULL)";
-    case "mixed":  return "";
-  }
-}
-
-// ── Build base conditions shared by both pickers ──────────────
-//
-// Every song candidate must pass these before any SmartRule filters:
-
-function buildBaseConditions(
-  hour: number,
-  sep: SepRules,
-  blockExplicit: boolean,
-  params: any[],
-  stationId: number
-): string {
-  // NEVER PLAY A DELETED SONG. This was missing from every candidate query in all three generators
-  // (2026-08-13): two songs deleted on 2026-07-20 still held 63 future slots, and across the library
-  // 28 deleted songs held 729 future rows with 438 plays recorded after their own delete timestamps.
-  // A soft delete the picker ignores is not a delete.
-  let cond = "s.deleted_at IS NULL AND s.file_path IS NOT NULL";
-
-  // Never auto-play songs marked inactive in rotation
-  cond += " AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')";
-
-  // Daypart mask: bit N of daypart_mask must be 1 for the current hour N.
-  // Default mask is 16777215 (all 24 bits set = unrestricted).
-  cond += " AND ((s.daypart_mask >> ?) & 1) = 1";
-  params.push(hour);
-
-  // Explicit content block — controlled by ether_content_filter.blockExplicit
-  if (blockExplicit) {
-    cond += " AND s.is_explicit = 0";
-    console.warn(`[loggen] RULE: explicit content blocked`);
-  }
-
-  // Song separation: use each song's own no_repeat_hours, not a hardcoded value.
-  // A song that was played fewer than no_repeat_hours*3600 seconds ago is excluded.
-  // no_repeat_hours is NULL for un-tuned songs; NULL*3600 = NULL makes the comparison NULL (falsy),
-  // which would exclude a just-played song FOREVER once last_played_at is set. Coalesce to a 3h
-  // default so this is a rolling separation window, not a permanent ban.
-  // Last aired comes from THIS station's play record (Jeff 2026-10-18: songs.last_played_at is read nowhere).
-  cond += ` AND NOT EXISTS (SELECT 1 FROM play_log pl WHERE pl.file_path = s.file_path AND pl.station_id = ? AND pl.deleted_at IS NULL
-             AND pl.played_at > (unixepoch() - COALESCE(s.no_repeat_hours, 3) * 3600))`;
-  params.push(stationId);
-
-  // Artist separation: exclude any artist whose songs were played recently.
-  // Uses artist_separation_min from separation_rules DB table (converted to seconds).
-  // The subquery finds all artist_ids with a recent spin, then excludes them.
-  //
-  // NOTE: `songs` is a single SHARED library — it has NO station_id column (stations
-  // differentiate via clocks/shows/schedule, which are station-scoped). A prior
-  // `s2.station_id = ?` here referenced a column that doesn't exist, so this whole
-  // condition threw at runtime — silently collapsing every live-pick path (clock /
-  // SmartRule / random) back to generated_schedule. The subquery is correctly NOT
-  // station-scoped. (`stationId` is retained in the signature for parity / future use.)
-  // The recent spins come from this station's play record, by the file that aired.
-  cond += ` AND (s.artist_id IS NULL OR s.artist_id NOT IN (
-    SELECT DISTINCT s2.artist_id FROM play_log pl JOIN songs s2 ON s2.file_path = pl.file_path
-    WHERE pl.station_id = ? AND pl.deleted_at IS NULL AND s2.artist_id IS NOT NULL AND pl.played_at > (unixepoch() - ?)
-  ))`;
-  params.push(stationId, sep.artist_sep_sec);
-
-  return cond;
-}
-
-// ── Pick songs matching current rule ──────────────────────────
-
-async function pickSongsForRule(
-  rule: SmartRule,
-  count: number,
-  sep: SepRules,
-  blockExplicit: boolean,
-  stationId: number,
-  categoryIds?: number[]
-): Promise<Song[]> {
-  const hour = new Date().getHours();
-  const params: any[] = [];
-
-  let conditions = buildBaseConditions(hour, sep, blockExplicit, params, stationId);
-
-  // Stay ON FORMAT: restrict to the rotation category universe (active clock's cats, or
-  // the categories of active-show clocks) so a SmartRule top-up can't pull off-rotation
-  // categories like Christmas from a dormant seasonal clock.
-  if (categoryIds && categoryIds.length) {
-    conditions += ` AND s.category_id IN (${categoryIds.map(() => "?").join(",")})`;
-    params.push(...categoryIds);
-  }
-
-  // Energy filter
-  const ef = energyFilter(rule.energyLevel);
-  if (ef) conditions += " " + ef;
-
-  // BPM filter
-  if (rule.bpmMin) {
-    conditions += " AND (s.bpm >= ? OR s.bpm IS NULL)";
-    params.push(rule.bpmMin);
-  }
-  if (rule.bpmMax) {
-    conditions += " AND (s.bpm <= ? OR s.bpm IS NULL)";
-    params.push(rule.bpmMax);
-  }
-
-  // Genre filter — from SmartRule.genres
-  if (rule.genres && rule.genres.length > 0) {
-    const placeholders = rule.genres.map(() => "?").join(",");
-    conditions += ` AND (s.genre IN (${placeholders}) OR s.genre IS NULL)`;
-    params.push(...rule.genres);
-    console.log(`[loggen] RULE: genre restricted to [${rule.genres.join(", ")}]`);
-  }
-
-  params.push(count * 3); // fetch 3× and shuffle for variety
-
-  const sql = `
-    SELECT s.id, s.title, a.name as artist_name, s.file_path,
-           s.duration_ms, s.bpm, s.energy, s.intro_end, s.outro_start
-    FROM songs s
-    LEFT JOIN artists a ON a.id = s.artist_id
-    WHERE ${conditions}
-    ORDER BY RANDOM()
-    LIMIT ?
-  `;
-
-  const songs = await query<Song>(sql, params);
-  const shuffled = songs.sort(() => Math.random() - 0.5);
-  return shuffled.slice(0, count);
-}
-
-// ── Fallback: filtered random — same safety rules always apply ─
-//
-// The fallback path is NOT a free pass. Every base rotation rule
-// (inactive, daypart, explicit, separation) still applies here.
-
-async function pickRandom(
-  count: number,
-  sep: SepRules,
-  blockExplicit: boolean,
-  stationId: number,
-  categoryIds?: number[]
-): Promise<Song[]> {
-  const hour = new Date().getHours();
-  const params: any[] = [];
-  let conditions = buildBaseConditions(hour, sep, blockExplicit, params, stationId);
-  // Stay ON FORMAT: when given a category set (the active clock's categories, or the
-  // in-rotation categories), the last-resort random pull is restricted to them so
-  // seasonal / off-rotation categories like Christmas never leak into the queue.
-  if (categoryIds && categoryIds.length) {
-    conditions += ` AND s.category_id IN (${categoryIds.map(() => "?").join(",")})`;
-    params.push(...categoryIds);
-  }
-  params.push(count);
-
-  return query<Song>(
-    `SELECT s.id, s.title, a.name as artist_name, s.file_path,
-            s.duration_ms, s.bpm, s.energy, s.intro_end, s.outro_start
-     FROM songs s
-     LEFT JOIN artists a ON a.id = s.artist_id
-     WHERE ${conditions}
-     ORDER BY RANDOM() LIMIT ?`,
-    params
-  );
-}
-
 // ── Format-clock based song selection ────────────────────────
 //
 // When the current hour has an active show with a format clock assigned,
@@ -424,16 +155,26 @@ export async function getActiveShowClock(stationId: number): Promise<{ clockId: 
   }
 }
 
-// ── On-format category universe ───────────────────────────────
+// ── Read upcoming tracks from generated_schedule ──────────────
 //
-// The set of category_ids the auto-filler is allowed to pull from when it falls back
-// past the active clock (SmartRule top-up, filtered random, hour-boundary fallback).
-//   • With an active clock now → that clock's own music categories.
-//   • Otherwise → categories from clocks that an ACTIVE SHOW actually uses. This is the
-//     fix for the Christmas leak: a dormant seasonal clock (e.g. a "Christmas" clock with
-//     no scheduled show) must NOT contribute its category to the rotation universe — so
-//     Christmas only airs when a Christmas show is genuinely scheduled. (The old code used
-//     `DISTINCT category_id FROM clock_slots` across ALL clocks, dormant ones included.)
+// Reads the next `count` tracks from the pre-generated schedule,
+// starting from now (with a 5-minute back-window so we don't miss
+// the current slot if we're slightly late).  Joins songs to get
+// the local file_path — entries with no matching local file are skipped.
+
+interface ScheduledTrack {
+  title: string;
+  artist: string;
+  file_path: string | null;
+  file_key: string;
+  intro_end: number | null;
+  outro_start: number | null;
+  scheduled_at: number;
+  duration_ms?: number | null;
+}
+
+interface ScheduledTrackRow extends ScheduledTrack { row_id: number; }
+
 export async function getFormatCategoryIds(stationId: number, clockId?: number): Promise<number[]> {
   try {
     const rows = clockId
@@ -454,79 +195,6 @@ export async function getFormatCategoryIds(stationId: number, clockId?: number):
   } catch { return []; }
 }
 
-async function pickSongsFromClock(
-  clockId: number,
-  count: number,
-  sep: SepRules,
-  blockExplicit: boolean,
-  stationId: number
-): Promise<Song[]> {
-  const slots = await query<ClockSlotRow>(
-    `SELECT category_id FROM clock_slots
-     WHERE clock_id = ? AND slot_type = 'music' AND category_id IS NOT NULL AND station_id = ?
-     ORDER BY position`,
-    [clockId, stationId]
-  );
-  if (slots.length === 0) {
-    console.warn(`[loggen] Clock ${clockId} has no music slots with categories assigned`);
-    return [];
-  }
-  console.log(`[loggen] Clock ${clockId}: ${slots.length} music slots`);
-
-  const hour = new Date().getHours();
-  const songs: Song[] = [];
-  const usedIds: number[] = [];
-
-  for (const slot of slots) {
-    if (songs.length >= count) break;
-
-    const params: any[] = [];
-    let cond = buildBaseConditions(hour, sep, blockExplicit, params, stationId);
-    cond += " AND s.category_id = ?";
-    params.push(slot.category_id);
-
-    if (usedIds.length > 0) {
-      cond += ` AND s.id NOT IN (${usedIds.map(() => "?").join(",")})`;
-      params.push(...usedIds);
-    }
-    params.push(1); // LIMIT
-
-    const rows = await query<Song>(
-      `SELECT s.id, s.title, a.name as artist_name, s.file_path,
-              s.duration_ms, s.bpm, s.energy, s.intro_end, s.outro_start
-       FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
-       WHERE ${cond}
-       ORDER BY RANDOM() LIMIT ?`,
-      params
-    );
-    if (rows.length > 0) {
-      songs.push(rows[0]);
-      usedIds.push(rows[0].id);
-    }
-  }
-
-  return songs;
-}
-
-// ── Read upcoming tracks from generated_schedule ──────────────
-//
-// Reads the next `count` tracks from the pre-generated schedule,
-// starting from now (with a 5-minute back-window so we don't miss
-// the current slot if we're slightly late).  Joins songs to get
-// the local file_path — entries with no matching local file are skipped.
-
-interface ScheduledTrack {
-  title: string;
-  artist: string;
-  file_path: string | null;
-  file_key: string;
-  intro_end: number | null;
-  outro_start: number | null;
-  scheduled_at: number;
-  duration_ms?: number | null;
-}
-
-interface ScheduledTrackRow extends ScheduledTrack { row_id: number; }
 
 async function readGeneratedSchedule(count: number, stationId: number): Promise<ScheduledTrack[]> {
   const nowTs = Math.floor(Date.now() / 1000);
@@ -619,78 +287,11 @@ export async function fillQueueFromSchedule(targetCount = 20, stationIdArg?: num
       }
     }
 
-    console.log("[loggen] generated_schedule empty — falling back to live picking");
-
-    // ENFORCE-SEPARATION (slice 3): when ON, use the enforced picker (LRP eligible from play_log, relax
-    // only on exhaustion) and SKIP the clock/rule/random ladder + BPM reorder (order is rest-driven).
-    // Falls through to the legacy ladder only if enforced picking yields nothing (never dead air).
-    if (await enforceSeparationOn(stationId)) {
-      const enforced = await enforcedFill(targetCount, stationId);
-      if (enforced.length) {
-        const items = enforced.map(s => ({ filePath: s.file_path, title: s.title, artist: s.artist_name || "", introEnd: s.intro_end ?? undefined, outroStart: s.outro_start ?? undefined, durationMs: s.duration_ms ?? 0 }));
-        engine.addToQueue(items);
-        console.log(`[loggen] fillQueue: source=enforced | ${items.length} tracks`);
-        return items.length;
-      }
-    }
-
-    const sep  = await getSepRules(stationId);
-    const { blockExplicit } = getContentFilter();
-    let songs: Song[] = [];
-    let source = "random";
-
-    // ── Priority 2: active show's format clock ────────────────
-    const showClock = await getActiveShowClock(stationId);
-    if (showClock) {
-      songs = await pickSongsFromClock(showClock.clockId, targetCount, sep, blockExplicit, stationId);
-      source = `clock "${showClock.showName}"`;
-    }
-
-    // On-format category universe for the fallback paths below: the active clock's cats,
-    // or (no active clock) the cats of clocks that ACTIVE SHOWS use — never a dormant
-    // seasonal clock. Empty = station isn't using clocks → no restriction (legacy behavior).
-    const formatCats = await getFormatCategoryIds(stationId, showClock?.clockId);
-
-    // ── Priority 3: localStorage SmartRules ───────────────────
-    if (songs.length < targetCount / 2) {
-      const rule = getActiveRule();
-      if (rule) {
-        const ruleSongs = await pickSongsForRule(rule, targetCount - songs.length, sep, blockExplicit, stationId, formatCats);
-        songs = [...songs, ...ruleSongs];
-        source = showClock ? `${source} + rule "${rule.description}"` : `rule "${rule.description}"`;
-      }
-    }
-
-    // ── Priority 4: filtered random — but STAY ON FORMAT ──────
-    if (songs.length < targetCount / 2) {
-      const extra = await pickRandom(targetCount - songs.length, sep, blockExplicit, stationId, formatCats);
-      songs = [...songs, ...extra];
-      if (songs.length > 0 && source === "random") source = "random (on-format)";
-    }
-    console.log(`[loggen] on-format categories: [${formatCats.join(", ") || "unrestricted"}] (clock=${showClock?.clockId ?? "none"})`);
-
-    console.log(`[loggen] fillQueue: source=${source} | hour=${hour} | artistSep=${sep.artist_sep_sec / 60}min`);
-
-    if (songs.length === 0) {
-      console.warn(
-        "[loggen] WARNING: No eligible songs found. Check rotation_status, daypart_mask, and separation rules."
-      );
-      return 0;
-    }
-
-    songs = orderByBpmFlow(songs);
-
-    const items = songs.map(s => ({
-      filePath:    s.file_path,
-      title:       s.title,
-      artist:      s.artist_name || "",
-      introEnd:    s.intro_end ?? undefined,
-      outroStart:  s.outro_start ?? undefined,
-      durationMs:  s.duration_ms ?? 0,
-    }));
-
-    engine.addToQueue(items);
-    return items.length;
+    // THE RENDERER PICKS NOTHING (Phase 2, 2026-10-18: one pick, audiod/scheduler-core.js). Its live-pick ladder
+    // (clock / SmartRule / random, and the enforce_separation twin picker) is deleted. In-process playout plays the log;
+    // a short hour is filled by the one pick in the daemon. An empty log here is said, never papered over.
+    console.warn("[loggen] the log has nothing to play now (in-process path) — the renderer does not pick songs");
+    return 0;
   } catch (e) {
     console.error("[loggen] fillQueueFromSchedule failed:", e);
     return 0;
@@ -704,45 +305,6 @@ export async function refillFromSchedule(stationIdArg?: number): Promise<void> {
   if (queueLen < 5) {
     await fillQueueFromSchedule(20 - queueLen, sid);
   }
-}
-
-// ── BPM flow ordering ─────────────────────────────────────────
-//
-// Reorders a song list so adjacent tracks are within ±15 BPM.
-// Uses a greedy nearest-neighbor approach starting from the first song.
-// Songs without BPM data slot in anywhere (treated as compatible).
-
-function orderByBpmFlow(songs: Song[]): Song[] {
-  if (songs.length <= 2) return songs;
-  const hasBpm = songs.filter(s => s.bpm && s.bpm > 0);
-  const noBpm  = songs.filter(s => !s.bpm || s.bpm <= 0);
-  if (hasBpm.length <= 1) return songs;
-
-  // Greedy nearest-neighbor by BPM
-  const ordered: Song[] = [hasBpm[0]];
-  const remaining = new Set(hasBpm.slice(1));
-
-  while (remaining.size > 0) {
-    const lastBpm = ordered[ordered.length - 1].bpm!;
-    let best: Song | null = null;
-    let bestDist = Infinity;
-    for (const s of remaining) {
-      const dist = Math.abs(s.bpm! - lastBpm);
-      if (dist < bestDist) { best = s; bestDist = dist; }
-    }
-    if (best) { ordered.push(best); remaining.delete(best); }
-  }
-
-  // Interleave no-BPM songs evenly throughout the ordered list
-  if (noBpm.length > 0) {
-    const step = Math.max(1, Math.floor(ordered.length / (noBpm.length + 1)));
-    for (let i = 0; i < noBpm.length; i++) {
-      const pos = Math.min(ordered.length, (i + 1) * step);
-      ordered.splice(pos, 0, noBpm[i]);
-    }
-  }
-
-  return ordered;
 }
 
 // ── Queue status info for the UI ──────────────────────────────

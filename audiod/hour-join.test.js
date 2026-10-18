@@ -85,9 +85,14 @@ describe("the new hour joins after the song that crosses :00", () => {
   it("in the last minute before :00 (inside the 60s slack) the head is not skipped either", () => {
     crossingHour();
     setNow(12, 59, 50);                                     // now+slack reaches 13:00:40
-    const r = loggen.readLogAnchored(db, 1, 20);
+    // Phase 3 (2026-10-18): the 13:00 rows are offered only because the next seam is AFTER :00 — the crossing song
+    // ends 13:02, so they cannot start early. The engine passes that seam (engine._projectedSeamTs).
+    const r = loggen.readLogAnchored(db, 1, 20, undefined, { seamTs: at(13, 2, 0) });
     expect(ids(r)[0]).toBe(10);
     expect(r.missedRowIds).toEqual([]);
+    // With no seam past :00 (the hour's songs ran short), a 13:00 row is never offered at 12:59: never ahead.
+    const early = loggen.readLogAnchored(db, 1, 20, undefined, { seamTs: at(12, 59, 50) });
+    expect(ids(early)).not.toContain(10);
   });
 
   it("once the head has joined late, the rows whose slots passed during the overrun still play in order", () => {

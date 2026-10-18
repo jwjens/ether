@@ -1,361 +1,89 @@
-// Unit tests for the pure scheduler core (Phase 2.5, 2026-08-10).
-//   npm test              (vitest — matches electron/ha-elevate.test.js, the repo's .test.js convention)
-//
-// The engine is pure, so these need no database, no daemon, no Electron and no clock. That is the
-// point of the phase: the scheduler has never been unit-testable before.
-//
-// Design: docs/goal-driven-scheduler-redesign-2026-08-10.md §4 Phase 2.5
+// audiod/scheduler-core.test.js — THE ONE PICK (Phase 2, docs/scheduler-rotation-playout-design.md §3.2).
+// The old tests here exercised planHour / pickForCategory / lrpFallback (goal ranking, the least-recently-played
+// fallback that broke rules to fill a slot). Those are deleted; these pin what replaced them.
 import { describe, it, expect } from "vitest";
-import core from "./scheduler-core.js";
+import { createRequire } from "node:module";
+const require_ = createRequire(import.meta.url);
+const core = require_("./scheduler-core.js");
 
-const { planHour, createState, rankCategories, lrpFallback, violationOf } = core;
-
-const T0 = 1_754_000_000;          // a fixed epoch — the engine never reads a clock, so this is arbitrary
+const T0 = 1_800_000_000;
 const MIN = 60;
+const song = (id, over = {}) => ({ id, title: `Song ${id}`, artist: `Artist ${id}`, file: `C:/m/song${id}.mp3`, duration_ms: 180_000, ...over });
+const RULES = { songMin: 120, artistMin: 60, titleMin: 120 };
+const tlWith = (...events) => { const tl = new core.Timeline(); for (const [s, ts] of events) core.commit(tl, s, ts); return tl; };
 
-const song = (id, over = {}) => ({
-  id,
-  title: over.title ?? `Song ${id}`,
-  artist_id: over.artist_id ?? id * 100,
-  artist_name: over.artist_name ?? `Artist ${id}`,
-  category_id: over.category_id ?? 1,
-  duration_ms: over.duration_ms ?? 180_000,      // 180s
-  file_path: over.file_path ?? `song${id}.mp3`,
-  ...over,
-});
-
-const musicSlot = (index, categoryId, durationS = 180) => ({ index, type: "music", categoryId, durationS });
-
-const CONSTRAINTS = { songRepeatMin: 180, artistSepMin: 60, titleSepMin: 120 };
-
-const CATS = [
-  { id: 1, code: "GO", name: "Gold",  spinsPerHour: 4, priority: 0 },
-  { id: 2, code: "PW", name: "Power", spinsPerHour: 2, priority: 0 },
-];
-
-// ─────────────────────────────────────────────────────────────────────────────────────────────────
-describe("purity", () => {
-  it("returns identical output for identical input", () => {
-    const build = () => planHour({
-      slots: [musicSlot(0, 1), musicSlot(1, 1)],
-      hourStartTs: T0, hour: 9, categories: CATS,
-      candidatesByCategory: new Map([[1, [song(1), song(2), song(3)]]]),
-      constraints: CONSTRAINTS,
-    });
-    const a = build(), b = build();
-    expect(a.picks.map(p => p.songId)).toEqual(b.picks.map(p => p.songId));
-    expect(a.endTs).toBe(b.endTs);
-  });
-
-  it("never reads a clock — timing derives only from hourStartTs and durations", () => {
-    const r = planHour({
-      slots: [musicSlot(0, 1, 180), musicSlot(1, 1, 180)],
-      hourStartTs: T0, hour: 9, categories: CATS,
-      candidatesByCategory: new Map([[1, [song(1), song(2)]]]),
-      constraints: CONSTRAINTS,
-    });
-    expect(r.picks[0].scheduledAt).toBe(T0);
-    expect(r.picks[1].scheduledAt).toBe(T0 + 180);   // first song's real duration, not the slot's
-    expect(r.endTs).toBe(T0 + 360);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────────────────────────
-describe("clock-driven mode (parity with _generateDayRows)", () => {
-  it("fills each slot from the category the clock names", () => {
-    const r = planHour({
-      slots: [musicSlot(0, 1), musicSlot(1, 2)],
-      hourStartTs: T0, hour: 9, categories: CATS,
-      candidatesByCategory: new Map([[1, [song(1)]], [2, [song(9, { category_id: 2 })]]]),
-      constraints: CONSTRAINTS, mode: "clock",
-    });
-    expect(r.picks.map(p => [p.slotIndex, p.categoryId, p.songId])).toEqual([[0, 1, 1], [1, 2, 9]]);
-    expect(r.picks.every(p => p.categoryId === p.slotCategoryId)).toBe(true);   // never leaves the slot's category
-  });
-
-  it("takes the FIRST compliant candidate in the given order (Tier 1)", () => {
-    const r = planHour({
-      slots: [musicSlot(0, 1)],
-      hourStartTs: T0, hour: 9, categories: CATS,
-      candidatesByCategory: new Map([[1, [song(7), song(1), song(2)]]]),
-      constraints: CONSTRAINTS, mode: "clock",
-    });
-    expect(r.picks[0].songId).toBe(7);
-    expect(r.picks[0].reasonCode).toBe("tier1_clock");
-  });
-
-  it("advances by the SLOT duration when nothing can be placed", () => {
-    const r = planHour({
-      slots: [musicSlot(0, 1, 240)],
-      hourStartTs: T0, hour: 9, categories: CATS,
-      candidatesByCategory: new Map([[1, []]]),
-      constraints: CONSTRAINTS, mode: "clock",
-    });
-    expect(r.picks).toHaveLength(0);
-    expect(r.skipped).toHaveLength(1);
-    expect(r.endTs).toBe(T0 + 240);
-    expect(r.diagnostics.emptyCategories).toEqual([1]);
-  });
-
-  it("does not select for non-music slots, but still advances time", () => {
-    const r = planHour({
-      slots: [{ index: 0, type: "spot_break", durationS: 60 }, musicSlot(1, 1)],
-      hourStartTs: T0, hour: 9, categories: CATS,
-      candidatesByCategory: new Map([[1, [song(1)]]]),
-      constraints: CONSTRAINTS,
-    });
-    expect(r.picks).toHaveLength(1);
-    expect(r.picks[0].scheduledAt).toBe(T0 + 60);
-    expect(r.skipped[0].type).toBe("spot_break");
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────────────────────────
-describe("constraint enforcement", () => {
-  it("blocks the same artist inside the separation window", () => {
-    const state = createState();
-    state.artistLastTs.set(500, T0 - 30 * MIN);            // 30 min ago, window is 60
-    const r = planHour({
-      slots: [musicSlot(0, 1)],
-      hourStartTs: T0, hour: 9, categories: CATS,
-      candidatesByCategory: new Map([[1, [song(5, { artist_id: 500 }), song(6, { artist_id: 600 })]]]),
-      constraints: CONSTRAINTS, state,
-    });
-    expect(r.picks[0].songId).toBe(6);                      // skipped the blocked artist
-    expect(r.picks[0].detail.vetoed.artist_separation).toBe(1);
-  });
-
-  it("blocks a song replayed inside its repeat window", () => {
-    const state = createState();
-    state.songLastTs.set(1, T0 - 60 * MIN);                 // 60 min ago, window is 180
-    const r = planHour({
-      slots: [musicSlot(0, 1)],
-      hourStartTs: T0, hour: 9, categories: CATS,
-      candidatesByCategory: new Map([[1, [song(1), song(2)]]]),
-      constraints: CONSTRAINTS, state,
-    });
-    expect(r.picks[0].songId).toBe(2);
-  });
-
-  it("blocks a duplicate title even from a different artist", () => {
-    const r = planHour({
-      slots: [musicSlot(0, 1), musicSlot(1, 1)],
-      hourStartTs: T0, hour: 9, categories: CATS,
-      candidatesByCategory: new Map([[1, [
-        song(1, { title: "Halo" }),
-        song(2, { title: "halo", artist_id: 777 }),         // same title, different artist
-        song(3, { title: "Other" }),
-      ]]]),
-      constraints: CONSTRAINTS,
-    });
-    expect(r.picks.map(p => p.songId)).toEqual([1, 3]);      // the title clash was skipped
-  });
-
-  it("enforces dayparting when the song carries a mask", () => {
-    const r = planHour({
-      slots: [musicSlot(0, 1)],
-      hourStartTs: T0, hour: 3, categories: CATS,
-      candidatesByCategory: new Map([[1, [
-        song(1, { daypart_mask: 0 }),                        // legal in no hour
-        song(2, { daypart_mask: 1 << 3 }),                   // legal at 3am
-      ]]]),
-      constraints: CONSTRAINTS,
-    });
-    expect(r.picks[0].songId).toBe(2);
-    expect(r.picks[0].constraintsApplied).toContain("daypart");
-  });
-
-  it("treats a song with no mask as unrestricted (caller pre-filtered — parity)", () => {
-    expect(violationOf(song(1), T0, createState(), CONSTRAINTS, 3)).toBeNull();
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────────────────────────
-describe("fallback ladder", () => {
-  it("falls back to least-recently-played and RECORDS what it relaxed", () => {
-    const state = createState();
-    state.artistLastTs.set(100, T0 - 1 * MIN);              // every candidate violates artist sep
-    state.artistLastTs.set(200, T0 - 1 * MIN);
-    // last aired comes from the play record (lastAiredByFile), never songs.last_played_at (Jeff, 2026-10-18)
-    state.lastAiredByFile.set("song1.mp3", T0 - 20_000);
-    state.lastAiredByFile.set("song2.mp3", T0 - 30_000);
-    const r = planHour({
-      slots: [musicSlot(0, 1)],
-      hourStartTs: T0, hour: 9, categories: CATS,
-      // Both are well outside the 180-min song-repeat window, so ARTIST separation is the only rule
-      // in play — otherwise the fallback reports song_separation too and the test proves nothing
-      // about artist handling.
-      candidatesByCategory: new Map([[1, [
-        song(1, { artist_id: 100 }),
-        song(2, { artist_id: 200 }),  // aired longer ago (play record) → LRP winner
-      ]]]),
-      constraints: CONSTRAINTS, state,
-    });
-    expect(r.picks[0].songId).toBe(2);
-    expect(r.picks[0].reasonCode).toBe("lrp_relaxed");
-    expect(r.picks[0].relaxed).toContain("artist_separation");
-    expect(r.diagnostics.relaxations).toBe(1);
-  });
-
-  it("keeps the EARLIER candidate on an LRP tie (strict <, matches _lrpFallback)", () => {
-    const state = createState();
-    state.lastAiredByFile.set("song1.mp3", 5000); state.lastAiredByFile.set("song2.mp3", 5000);
+describe("the rules are obeyed, against what aired AND the log on either side", () => {
+  it("a song inside its separation is never picked, even if it waited longest", () => {
     const a = song(1), b = song(2);
-    expect(lrpFallback([a, b], state).id).toBe(1);
-    expect(lrpFallback([b, a], state).id).toBe(2);
+    const tl = tlWith([a, T0 - 30 * MIN], [b, T0 - 10 * 3600]);
+    expect(core.pick([a, b], T0, tl, RULES).song.id).toBe(2);
   });
-
-  it("allows reuse (Tier 3) only when every candidate is already used", () => {
-    const state = createState();
-    state.usedSongIds.add(1);
-    expect(lrpFallback([song(1)], state).id).toBe(1);
+  it("the AFTER side counts: a song already in the log 30 min later is blocked now", () => {
+    const a = song(1), b = song(2);
+    const tl = tlWith([a, T0 + 30 * MIN], [b, T0 - 3 * 3600]);
+    expect(core.pick([a, b], T0, tl, RULES).song.id).toBe(2);
   });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────────────────────────
-describe("goal-driven mode", () => {
-  it("prioritises the category furthest behind pace", () => {
-    const state = createState();
-    state.spinsByCategory.set(1, 0);                        // Gold: target 4, none placed
-    state.spinsByCategory.set(2, 2);                        // Power: target 2, already met
-    const r = planHour({
-      // Slot 0 names Power; the hour also uses Gold, so Gold is rankable here.
-      slots: [musicSlot(0, 2), musicSlot(1, 1)],            // clock says Power first…
-      hourStartTs: T0, hour: 9, categories: CATS,
-      candidatesByCategory: new Map([[1, [song(1)]], [2, [song(9, { category_id: 2 })]]]),
-      constraints: CONSTRAINTS, state, mode: "goal",
-    });
-    expect(r.picks[0].categoryId).toBe(1);                  // …goals said Gold
-    expect(r.picks[0].slotCategoryId).toBe(2);              // the override is visible
-    expect(r.picks[0].reasonCode).toBe("tier1_goal");
+  it("artist: every credited artist; title: the normalised title", () => {
+    const tl = tlWith([song(9, { artist: "Danny Elfman & Catherine O'Hara", title: "This Is Halloween (2006)" }), T0 - 20 * MIN]);
+    const byArtist = song(1, { artist: "Catherine O'Hara" });
+    const byTitle = song(2, { title: "This Is Halloween - From The Nightmare Before Christmas" });
+    const free = song(3);
+    expect(core.pick([byArtist, byTitle, free], T0, tl, RULES).song.id).toBe(3);
   });
-
-  it("uses FRACTIONAL urgency — a 100% starved small target beats a partly-served large one", () => {
-    const cats = [
-      { id: 1, name: "Big",   spinsPerHour: 8, priority: 0 },
-      { id: 2, name: "Small", spinsPerHour: 2, priority: 0 },
-    ];
-    const state = createState();
-    state.spinsByCategory.set(1, 2);                        // 25% served
-    state.spinsByCategory.set(2, 0);                        // 0% served — starved
-    const ranked = rankCategories([1, 2], cats, state, 8, 8);
-    expect(ranked[0].categoryId).toBe(2);                   // raw deficit would have picked Big (6 vs 2)
+  it("a gap EQUAL to the rule passes; one second shorter does not", () => {
+    const a = song(1);
+    expect(core.pick([a], T0, tlWith([a, T0 - 120 * MIN]), RULES).song.id).toBe(1);
+    expect(core.pick([a], T0, tlWith([a, T0 - 120 * MIN + 1]), RULES).song).toBe(null);
   });
-
-  it("paces against position in the hour rather than the full-hour target", () => {
-    const cats = [{ id: 1, name: "Gold", spinsPerHour: 4, priority: 0 }];
-    const state = createState();
-    state.spinsByCategory.set(1, 2);
-    // Pace measures the position being FILLED, so index 4 of 10 means "half the hour once this lands":
-    // target 4 × 0.5 = 2 expected, 2 placed → exactly on pace, urgency 0.
-    expect(rankCategories([1], cats, state, 4, 10)[0].urgency).toBe(0);
-    // Still 2 placed but nine-tenths through → 3.6 expected → behind.
-    expect(rankCategories([1], cats, state, 8, 10)[0].urgency).toBeGreaterThan(0);
+  it("a rule that is off is off — nothing is assumed in its place", () => {
+    const a = song(1);
+    expect(core.pick([a], T0, tlWith([a, T0 - 5 * MIN]), { songMin: null, artistMin: null, titleMin: null }).song.id).toBe(1);
   });
-
-  it("leaves a satisfied hour in clock order — goals never churn what already meets target", () => {
-    const state = createState();
-    state.spinsByCategory.set(1, 4);
-    state.spinsByCategory.set(2, 2);
-    const r = planHour({
-      slots: [musicSlot(0, 2)],
-      hourStartTs: T0, hour: 9, categories: CATS,
-      candidatesByCategory: new Map([[1, [song(1)]], [2, [song(9, { category_id: 2 })]]]),
-      constraints: CONSTRAINTS, state, mode: "goal",
-    });
-    expect(r.picks[0].categoryId).toBe(2);                  // the clock's own category
-    expect(r.picks[0].reasonCode).toBe("goal_met");
-  });
-
-  it("moves to the next category when the preferred one has no legal song", () => {
-    const state = createState();
-    state.spinsByCategory.set(1, 0);                        // Gold most urgent…
-    const r = planHour({
-      // BOTH categories must appear in the hour's clock: goal mode ranks only across the categories
-      // the clock actually uses (see "never selects a category the clock's hour does not use"), so a
-      // single cat-2 slot would never even consider Gold.
-      slots: [musicSlot(0, 2), musicSlot(1, 1)],
-      hourStartTs: T0, hour: 9, categories: CATS,
-      candidatesByCategory: new Map([[1, []], [2, [song(9, { category_id: 2 })]]]),   // …but empty
-      constraints: CONSTRAINTS, state, mode: "goal",
-    });
-    expect(r.picks[0].categoryId).toBe(2);
-    expect(r.diagnostics.emptyCategories).toContain(1);
-  });
-
-  it("never selects a category the clock's hour does not use", () => {
-    const cats = [...CATS, { id: 3, name: "Unused", spinsPerHour: 99, priority: 9 }];
-    const state = createState();
-    const r = planHour({
-      slots: [musicSlot(0, 1)],
-      hourStartTs: T0, hour: 9, categories: cats,
-      candidatesByCategory: new Map([[1, [song(1)]], [3, [song(30, { category_id: 3 })]]]),
-      constraints: CONSTRAINTS, state, mode: "goal",
-    });
-    expect(r.picks[0].categoryId).toBe(1);                  // category 3 is not in this hour's clock
+  it("per-song no-repeat hours: its own window, when longer than the song rule", () => {
+    const a = song(1, { noRepeatHours: 6 });
+    expect(core.pick([a], T0, tlWith([a, T0 - 3 * 3600]), RULES).song).toBe(null);
+    expect(core.pick([a], T0, tlWith([a, T0 - 6 * 3600]), RULES).song.id).toBe(1);
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────────────────────────
-describe("explainability", () => {
-  it("every pick carries a human-readable reason and the constraints checked", () => {
-    const r = planHour({
-      slots: [musicSlot(0, 1)],
-      hourStartTs: T0, hour: 9, categories: CATS,
-      candidatesByCategory: new Map([[1, [song(1)]]]),
-      constraints: CONSTRAINTS,
-    });
-    const p = r.picks[0];
-    expect(typeof p.reason).toBe("string");
-    expect(p.reason.length).toBeGreaterThan(0);
-    expect(p.constraintsApplied).toEqual(expect.arrayContaining(["song_separation", "artist_separation", "title_separation"]));
+describe("the pick: the longest-waiting song that passes; random only for an exact tie", () => {
+  it("never aired waits longest", () => {
+    const a = song(1), b = song(2);
+    expect(core.pick([a, b], T0, tlWith([a, T0 - 20 * 3600]), RULES).song.id).toBe(2);
   });
-
-  it("names the goal figures in the reason, in the brief's phrasing", () => {
-    const state = createState();
-    state.spinsByCategory.set(1, 2);
-    const r = planHour({
-      slots: [musicSlot(0, 1)],
-      hourStartTs: T0, hour: 9, categories: CATS,
-      candidatesByCategory: new Map([[1, [song(1)]]]),
-      constraints: CONSTRAINTS, state, mode: "goal",
-    });
-    expect(r.picks[0].reason).toMatch(/Gold below target \(2\/4\)/);
+  it("of those that aired, the one that aired longest ago", () => {
+    const a = song(1), b = song(2), c = song(3);
+    const tl = tlWith([a, T0 - 5 * 3600], [b, T0 - 9 * 3600], [c, T0 - 7 * 3600]);
+    expect(core.pick([a, b, c], T0, tl, RULES).song.id).toBe(2);
   });
-
-  it("records the vetoed counts that produced the decision", () => {
-    const state = createState();
-    state.artistLastTs.set(100, T0 - 1 * MIN);
-    const r = planHour({
-      slots: [musicSlot(0, 1)],
-      hourStartTs: T0, hour: 9, categories: CATS,
-      candidatesByCategory: new Map([[1, [song(1, { artist_id: 100 }), song(2, { artist_id: 200 })]]]),
-      constraints: CONSTRAINTS, state,
-    });
-    expect(r.picks[0].detail.vetoed.artist_separation).toBe(1);
-    expect(r.picks[0].detail.poolSize).toBe(2);
+  it("an exact tie is broken by the random source, and only then", () => {
+    const a = song(1), b = song(2);
+    expect(core.pick([a, b], T0, new core.Timeline(), RULES, () => 0).song.id).toBe(1);
+    expect(core.pick([a, b], T0, new core.Timeline(), RULES, () => 0.99).song.id).toBe(2);
+    expect(core.pick([a, b], T0, tlWith([a, T0 - 9 * 3600]), RULES, () => 0).song.id).toBe(2);   // not a tie
+  });
+  it("this run's own placement counts as last aired from then on (a week cannot repeat one song)", () => {
+    const pool = [song(1), song(2), song(3)];
+    const tl = new core.Timeline();
+    const got = [];
+    for (let i = 0; i < 6; i++) { const r = core.pick(pool, T0 + i * 3 * 3600, tl, RULES, () => 0); core.commit(tl, r.song, T0 + i * 3 * 3600); got.push(r.song.id); }
+    expect(got).toEqual([1, 2, 3, 1, 2, 3]);
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────────────────────────
-describe("state threading", () => {
-  it("carries separation memory across an hour so later slots see earlier picks", () => {
-    const r = planHour({
-      slots: [musicSlot(0, 1), musicSlot(1, 1)],
-      hourStartTs: T0, hour: 9, categories: CATS,
-      candidatesByCategory: new Map([[1, [song(1, { artist_id: 42 }), song(2, { artist_id: 42 }), song(3, { artist_id: 43 })]]]),
-      constraints: CONSTRAINTS,
-    });
-    expect(r.picks.map(p => p.songId)).toEqual([1, 3]);      // song 2 shares artist 42 with the first pick
+describe("nothing passes: UNSCHEDULED, with the rule — never a rule broken to fill the slot", () => {
+  it("returns no song and names the closest songs and their rules", () => {
+    const a = song(1), b = song(2, { artist: "Artist 1" });
+    const r = core.pick([a, b], T0, tlWith([a, T0 - 50 * MIN]), RULES);
+    expect(r.song).toBe(null);
+    expect(r.closest[0].rule).toBe("artist");
+    expect(r.closest[0].measuredMin).toBe(50);
   });
+});
 
-  it("counts spins per category for the next hour to pace against", () => {
-    const r = planHour({
-      slots: [musicSlot(0, 1), musicSlot(1, 1)],
-      hourStartTs: T0, hour: 9, categories: CATS,
-      candidatesByCategory: new Map([[1, [song(1), song(2)]]]),
-      constraints: CONSTRAINTS,
-    });
-    expect(r.state.spinsByCategory.get(1)).toBe(2);
+describe("identity", () => {
+  it("one recording on two song rows is one song (by its stored file name)", () => {
+    const a = song(1, { file: "C:/x/Thriller.mp3" }), dup = song(2, { file: "D:\\y\\thriller.MP3", artist: "Other", title: "Other" });
+    expect(core.pick([dup], T0, tlWith([a, T0 - 30 * MIN]), RULES).song).toBe(null);
   });
 });

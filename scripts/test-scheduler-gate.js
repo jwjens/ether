@@ -215,6 +215,11 @@ async function runGenerate(P, w, sid, dayBases) {
   const genTs = nowSec();
   const ctx = P.gen.buildScheduleCtx(w, sid);
   const committed = [];
+  // The window this run replaces, as main's callers say it (Phase 2: the one pick measures against the log outside it).
+  if (ctx.planWindow && dayBases.length) {
+    const first = Math.floor(dayBases[0].getTime() / 1000), last = Math.floor(dayBases[dayBases.length - 1].getTime() / 1000) + 86400;
+    ctx.planWindow(Math.max(first, Math.ceil(genTs / 3600) * 3600), last);
+  }
   for (const dayBase of dayBases) {
     const dayStart = Math.floor(dayBase.getTime() / 1000), dayEnd = dayStart + 86400;
     const effStart = Math.max(dayStart, Math.ceil(genTs / 3600) * 3600);
@@ -256,7 +261,11 @@ async function simulateStation(w, P, F, R) {
       else if (JSON.stringify(a) !== js) t4.changed.push({ id, label, before: JSON.parse(js), after: a });
     }
     t4.snapshots += snap.size;
-    runs.push({ label, genTs: g.genTs, rows: genRows(g.genTs), relaxed: g.ctx.relaxed.length, breakDrift: g.ctx.breakDrift.length, enforce: g.ctx.enforceSeparation });
+    // The log AS IT STOOD when this run committed: the pending rows it did not write. Read now, not after the simulated
+    // week has aired them (a row pending at 6:14 PM and played at 6:23 PM was "the log on the after side" for the 6:14
+    // regenerate, and the checker must see it the way the picker did).
+    const keptAtCommit = w.prepare("SELECT * FROM generated_schedule WHERE station_id=? AND deleted_at IS NULL AND state='pending' AND scheduled_at >= ? AND (generated_at IS NULL OR generated_at != ?)").all(sid, g.genTs, g.genTs);
+    runs.push({ label, genTs: g.genTs, rows: genRows(g.genTs), keptAtCommit, relaxed: g.ctx.relaxed.length, breakDrift: g.ctx.breakDrift.length, enforce: g.ctx.enforceSeparation });
     return g;
   };
 
@@ -266,17 +275,35 @@ async function simulateStation(w, P, F, R) {
 
   // ── air it ──
   const goLives = [];
-  let floorPlays = 0, missedStamped = 0, regenDone = false;
+  let floorPlays = 0, missedStamped = 0, regenDone = false, skippedAtPlayout = 0, fills = 0, waitedSec = 0;
   const prof = { reader: 0, logPlay: 0, stamp: 0 };
   const regenTs = (() => { const d = new FakeDate(simStart * 1000); d.setDate(d.getDate() + REGEN_AT.day); d.setHours(REGEN_AT.hour, REGEN_AT.minute, 0, 0); let t = Math.floor(d.getTime() / 1000); if (t < simStart) t += 86400; return t; })();
   let guard = 0;
   while (nowSec() < simEnd && guard++ < 200000) {
     if (!regenDone && nowSec() >= regenTs) { regenDone = true; await doGenerate(1, "Regenerate on air " + fmt(nowSec())); }
     let tq = RealDate.now();
-    const r = P.loggen.readLogAnchored(w, sid, 20);
+    let r = P.loggen.readLogAnchored(w, sid, 20);
     prof.reader += RealDate.now() - tq;
     let item = null, offLog = false;
-    if (r.mode === "exhausted" || r.mode === "error" || !r.items.length) {
+    if (P.loggen.fillShortHour) {
+      // Phase 2/3 engine (engine.js _refillFromLog), modelled the same way: rows the playout check refused are stamped
+      // 'skipped'; nothing due → the hour's own clock fills (the row is written to the log first) or the station waits.
+      const stampSkips = (rr) => { for (const k of (rr.skip || [])) { w.prepare("UPDATE generated_schedule SET state='skipped', pick_reason=? WHERE id=? AND station_id=? AND state='pending'").run(`skipped at playout: ${k.rule} ${k.measuredMin}/${k.settingMin} min`, k.rowId, sid); skippedAtPlayout++; } };
+      stampSkips(r);
+      if (!r.items.length) {
+        const f = P.loggen.fillShortHour(w, sid, nowSec());
+        if (f.rowId != null) { fills++; r = P.loggen.readLogAnchored(w, sid, 20); stampSkips(r); }
+        if (!r.items.length) {
+          // waiting: jump to the next moment anything can change — the next row's time, or the next hour
+          const hEnd = (() => { const d = new FakeDate(nowSec() * 1000); d.setMinutes(0, 0, 0); return Math.floor(d.getTime() / 1000) + 3600; })();
+          const nxt = r.nextDueTs && r.nextDueTs > nowSec() ? Math.min(r.nextDueTs, hEnd) : hEnd;
+          waitedSec += Math.max(1, nxt - nowSec());
+          setNow(Math.max(nowSec() + 1, nxt));
+          continue;
+        }
+      }
+    }
+    if (!P.loggen.fillShortHour && (r.mode === "exhausted" || r.mode === "error" || !r.items.length)) {
       const fill = P.loggen.fillQueue(w, sid, 20);
       item = fill.items && fill.items[0];
       offLog = true;
@@ -320,7 +347,7 @@ async function simulateStation(w, P, F, R) {
   }
 
   // ── check ──
-  const res = { station: F.sid, window: `${fmt(simStart)} → ${fmt(simEnd)}`, generateSec: Math.round(genMs / 1000), airSec: Math.round((RealDate.now() - ta0) / 1000), airProfileMs: prof, goLives: goLives.length, floorPlays, missedStamped, runs: runs.map(r => ({ label: r.label, rows: r.rows.length, relaxedByGenerate: r.relaxed, breakDriftByGenerate: r.breakDrift, enforceSeparation: r.enforce })) };
+  const res = { station: F.sid, window: `${fmt(simStart)} → ${fmt(simEnd)}`, generateSec: Math.round(genMs / 1000), airSec: Math.round((RealDate.now() - ta0) / 1000), airProfileMs: prof, goLives: goLives.length, floorPlays, missedStamped, skippedAtPlayout, fillRows: fills, silentHours: +(waitedSec / 3600).toFixed(1), runs: runs.map(r => ({ label: r.label, rows: r.rows.length, relaxedByGenerate: r.relaxed, breakDriftByGenerate: r.breakDrift, enforceSeparation: r.enforce })) };
 
   // on-air timeline: history + simulated plays (MUSIC)
   const simPlays = w.prepare("SELECT id, title, artist, file_path, played_at, content_class, scheduled_log_id, category_code FROM play_log WHERE station_id=? AND session_id='scheduler-gate' ORDER BY played_at, id").all(sid);
@@ -345,7 +372,7 @@ async function simulateStation(w, P, F, R) {
     for (const p of allPlaysAt.all(sid, HISTORY_FROM, run.genTs)) if (isMusicPlay(p)) tl.add(playEvent(F, p));
     const runIds = new Set(run.rows.map(r => r.id));
     // what was already in the log, on either side, that this run did not write (kept rows)
-    const kept = w.prepare("SELECT * FROM generated_schedule WHERE station_id=? AND deleted_at IS NULL AND state='pending' AND scheduled_at >= ? AND scheduled_at < ? AND (generated_at IS NULL OR generated_at != ?)").all(sid, run.genTs - 4 * 3600, run.genTs + (DAYS + 2) * 86400, run.genTs);
+    const kept = run.keptAtCommit;
     for (const k of kept) if (isMusicRow(k) && !runIds.has(k.id)) tl.add(rowEvent(F, k));
     // full log after the commit for the T1 in-log check
     const full = new C.Timeline();
@@ -379,7 +406,7 @@ async function simulateStation(w, P, F, R) {
   }
   const t1LogList = [...t1Log.values()];
   res.T1_inLog = { violations: t1LogList.length, byRule: countBy(t1LogList, "rule"), examples: t1LogList.slice(0, 8) };
-  res.T2 = { checked: t2.checked, placedBreakingARule: t2.nBreaking, notTheLongestWaiting: t2.nNotLongest, slotsWhereNothingPassedButASongWasPlaced: t2.nothingPassedButPlaced, unscheduledSlots: 0, examplesBreaking: t2.notPassing.slice(0, 5), examplesNotLongest: t2.notLongest.slice(0, 5) };
+  res.T2 = { checked: t2.checked, placedBreakingARule: t2.nBreaking, notTheLongestWaiting: t2.nNotLongest, slotsWhereNothingPassedButASongWasPlaced: t2.nothingPassedButPlaced, unscheduledSlots: runs.reduce((n, r) => n + r.rows.filter(x => x.content_class === "UNSCHEDULED").length, 0), examplesBreaking: t2.notPassing.slice(0, 5), examplesNotLongest: t2.notLongest.slice(0, 5) };
 
   // T3: the count proof over the simulated week, per clock category
   const pools = new Map();
@@ -387,6 +414,10 @@ async function simulateStation(w, P, F, R) {
   const proof = new C.CountProof(pools);
   const tAir = new C.Timeline();
   for (const p of histPlays) if (isMusicPlay(p)) tAir.add(playEvent(F, p));
+  // every music row any run planned (whatever became of it), for the after side of a T3 exception
+  const tLog = new C.Timeline();
+  for (const run of runs) for (const r of run.rows) if (isMusicRow(r)) tLog.add(rowEvent(F, r));
+  for (const r of w.prepare("SELECT * FROM generated_schedule WHERE station_id=? AND deleted_at IS NULL AND source='fill'").all(sid)) if (isMusicRow(r)) tLog.add(rowEvent(F, r));
   const playByUuid = new Map(w.prepare("SELECT uuid, id, title, artist, file_path, played_at, content_class FROM play_log WHERE station_id=? AND session_id='scheduler-gate'").all(sid).map(p => [p.uuid, p]));
   for (const g of goLives) {
     const p = playByUuid.get(g.playUuid); if (!p || !isMusicPlay(p)) continue;
@@ -400,7 +431,11 @@ async function simulateStation(w, P, F, R) {
       if (so.daypart_mask != null && ((so.daypart_mask >> hour) & 1) !== 1) return "daypart";
       const probe = C.makeEvent({ ts: g.ts, file: so.file_path || so.file_key, artist: so.artist, title: so.title, kind: "probe", ref: null, noRepeatHours: so.no_repeat_hours }, F.split);
       const b = C.breaches(tAir, probe, F.rules, { sides: "before" });
-      return b.length ? `${b[0].rule} ${b[0].measuredMin}/${b[0].settingMin} min` : null;
+      if (b.length) return `${b[0].rule} ${b[0].measuredMin}/${b[0].settingMin} min`;
+      // ...or by the LOG on the after side (design §3.2: the rules are measured against what aired plus the log on either
+      // side): a song already planned within its rule after this moment cannot be placed here.
+      const a2 = C.breaches(tLog, probe, F.rules, { sides: "after" });
+      return a2.length ? `${a2[0].rule} (in the log) ${a2[0].measuredMin}/${a2[0].settingMin} min` : null;
     });
     tAir.add(ev);
   }
@@ -646,11 +681,11 @@ function staticChecks() {
   const t16 = {
     orderByRandom: hits(/ORDER BY RANDOM\(\)/i, null),
     pickers: {
-      "generate-core: first compliant from ORDER BY RANDOM + _lrpFallback": hits(/function _legacyPickMusic|function _lrpFallback|const selectMusic/, ["electron/generate-core.js"]),
-      "scheduler-core: pickForCategory / planHour": hits(/function pickForCategory|function planHour/, ["audiod/scheduler-core.js"]),
+      "scheduler-core: the one pick": hits(/^function pick\(/, ["audiod/scheduler-core.js"]),
+      "generate-core: a picker of its own (first compliant / LRP fallback / ORDER BY RANDOM)": hits(/function _legacyPickMusic|function _lrpFallback|ORDER BY RANDOM|stmtCandidates/, ["electron/generate-core.js"]),
       "separation-enforce: pickEnforced": hits(/function pickEnforced/, ["electron/separation-enforce.js"]),
-      "loggen (daemon): pickFromClock / pickTier / fillQueueEnforced": hits(/function pickFromClock|function pickTier|function fillQueueEnforced/, ["audiod/loggen.js"]),
-      "src/audio/loggen.ts (renderer, imported by App.tsx; runs in daemon mode: UNVERIFIED)": files["src/audio/loggen.ts"] ? hits(/ORDER BY RANDOM|function pick/i, ["src/audio/loggen.ts"]) : [],
+      "loggen (daemon): pickFromClock / pickTier / fillQueueEnforced / ORDER BY RANDOM": hits(/function pickFromClock|function pickTier|function fillQueueEnforced|ORDER BY RANDOM/, ["audiod/loggen.js"]),
+      "src/audio/loggen.ts (renderer)": files["src/audio/loggen.ts"] ? hits(/ORDER BY RANDOM|function pick/i, ["src/audio/loggen.ts"]) : [],
       "src/audio/separationEnforce.ts (renderer)": files["src/audio/separationEnforce.ts"] ? hits(/function pick|export function/i, ["src/audio/separationEnforce.ts"]) : [],
     },
   };
@@ -667,7 +702,7 @@ function verdicts(sim, t5, t10, hist, stat) {
   for (const s of sim) {
     const st = `station ${s.station}`;
     add("T1", s.T1_onAir.violations === 0 && s.T1_inLog.violations === 0, `${st}: ${s.T1_onAir.violations} separation violations on air, ${s.T1_inLog.violations} in the log (${JSON.stringify(s.T1_onAir.byRule)} / ${JSON.stringify(s.T1_inLog.byRule)})`);
-    add("T2", s.T2.placedBreakingARule === 0 && s.T2.notTheLongestWaiting === 0, `${st}: of ${s.T2.checked} picks, ${s.T2.placedBreakingARule} broke a rule and ${s.T2.notTheLongestWaiting} were not the longest-waiting song that passed; 0 UNSCHEDULED slots exist (${s.T2.slotsWhereNothingPassedButASongWasPlaced} slots had no passing song and got one anyway)`);
+    add("T2", s.T2.placedBreakingARule === 0 && s.T2.notTheLongestWaiting === 0, `${st}: of ${s.T2.checked} picks, ${s.T2.placedBreakingARule} broke a rule and ${s.T2.notTheLongestWaiting} were not the longest-waiting song that passed; ${s.T2.unscheduledSlots} slots UNSCHEDULED (no song passed), ${s.T2.slotsWhereNothingPassedButASongWasPlaced} slots had no passing song and got one anyway`);
     add("T3", s.T3.failures === 0, `${st}: ${s.T3.failures} go-lives pushed a category past spread 1 while a lower-count song was free (D1 exceptions: ${s.T3.d1Exceptions}); worst spread ${Math.max(0, ...s.T3.maxSpreadByCategory.map(c => c.maxSpread))}`);
     add("T4", s.T4.deleted === 0 && s.T4.changed === 0, `${st}: of ${s.T4.nonPendingRowsSnapshotted} non-pending rows, Generate deleted ${s.T4.deleted} and changed ${s.T4.changed}`);
     add("T8", s.T8.rowsAiredBeforeTheirHour === 0, `${st}: ${s.T8.rowsAiredBeforeTheirHour} of ${s.T8.goLives} go-lives aired a row before its hour began (up to ${s.T8.maxAheadMin} min early); ${s.T8.offLogPlays} off-log floor plays`);

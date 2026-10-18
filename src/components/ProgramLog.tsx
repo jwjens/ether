@@ -63,7 +63,9 @@ function todayStr(): string { return localDateStr(new Date()); }
 const SHOWS_SQL = `SELECT s.*, c.name as clock_name FROM shows s
   LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.station_id = ? AND s.deleted_at IS NULL ORDER BY s.start_hour`;
 /** The type chip for a row with no category code (spots, sweepers, carts, voice). */
-const TYPE_LABEL: Record<string, string> = { spot_break: "SPOT", music: "SONG", sweeper: "SWEEPER", cart: "CART", voice: "VOICE" };
+const TYPE_LABEL: Record<string, string> = { spot_break: "SPOT", music: "SONG", sweeper: "SWEEPER", cart: "CART", voice: "VOICE", unscheduled: "UNSCHED" };
+// Generate's UNSCHEDULED report (Phase 2): every slot no song could fill under the station's rules, by hour, with why.
+type UnschedItem = { hourLabel: string; at: number; category: string; why: string };
 const typeChip = (e: { category_code: string | null; slot_type: string }) => e.category_code || TYPE_LABEL[e.slot_type] || e.slot_type.toUpperCase();
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAYS_SHORT = ["Su","Mo","Tu","We","Th","Fr","Sa"];
@@ -125,6 +127,8 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
   const [shows, setShows] = useState<Show[]>([]);
   const [hourBlocks, setHourBlocks] = useState<HourBlock[]>([]);
   const [globalStatus, setGlobalStatus] = useState("");
+  // The last Generate's UNSCHEDULED slots, on screen until the next Generate (Jeff: "the user must SEE it before air").
+  const [unsched, setUnsched] = useState<UnschedItem[] | null>(null);
   const [filling, setFilling] = useState(false);
   const [expandedHours, setExpandedHours] = useState<Set<number>>(new Set());
   const [selectedShowId, setSelectedShowId] = useState<number | null>(null);
@@ -256,7 +260,8 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
       msg = res?.ok === false ? `✗ ${res.error || "generate failed"}`
           : res?.cancelled ? "↷ Generate cancelled"
           : res?.skipped ? "↷ Nothing to fill — the day has aired"
-          : `✓ ${res?.count ?? 0} rows generated`;
+          : `✓ ${res?.count ?? 0} rows generated${res?.unscheduled?.length ? ` · ${res.unscheduled.length} UNSCHEDULED` : ""}`;
+      setUnsched(Array.isArray(res?.unscheduled) ? res.unscheduled : null);
     } catch (e: any) { msg = `✗ ${e?.message || e}`; }
     await loadDayData(selectedDate);
     loadScheduledDates();
@@ -296,7 +301,8 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
       const rows = res?.count ?? 0, days = res?.daysCommitted ?? 0;
       msg = res?.ok === false ? `✗ ${res.error || "generate failed"}`
           : res?.cancelled ? `↷ Cancelled — ${rows} rows across ${days} of ${FILL_WEEK_DAYS} days kept`
-          : `✓ ${rows} rows across ${days} of ${FILL_WEEK_DAYS} days`;
+          : `✓ ${rows} rows across ${days} of ${FILL_WEEK_DAYS} days${res?.unscheduled?.length ? ` · ${res.unscheduled.length} UNSCHEDULED` : ""}`;
+      setUnsched(Array.isArray(res?.unscheduled) ? res.unscheduled : null);
     } catch (e: any) { msg = `✗ ${e?.message || e}`; }
     // Re-read the SELECTED day (the one on screen); the other six are re-read when they are opened,
     // and schedule:changed has already told the other tree to re-read whichever day it is showing.
@@ -696,6 +702,18 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
               <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-tertiary)", cursor: "pointer", fontSize: "var(--t-lead)", padding: "0 2px" }}>✕</button>
             )}
           </div>
+          {unsched && unsched.length > 0 && (
+            <div role="alert" style={{ margin: "6px 12px", padding: "8px 10px", border: "1px solid #ef4444", background: "rgba(239,68,68,0.10)", fontSize: "var(--t-small)" }}>
+              <div style={{ fontWeight: 800, color: "#ef4444", marginBottom: 4 }}>
+                {unsched.length} slot{unsched.length === 1 ? "" : "s"} UNSCHEDULED — no song passes your rules there. Nothing will air in {unsched.length === 1 ? "it" : "them"} until you change a rule, add songs, or set a fallback category.
+              </div>
+              {Object.entries(unsched.reduce((m: Record<string, UnschedItem[]>, u) => { (m[u.hourLabel] = m[u.hourLabel] || []).push(u); return m; }, {})).map(([h, list]) => (
+                <div key={h} style={{ marginTop: 2 }}>
+                  <b>{h}</b> — {list.length}: {list.slice(0, 6).map(u => `${new Date(u.at * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} ${u.category} (${u.why})`).join("; ")}{list.length > 6 ? ` +${list.length - 6} more` : ""}
+                </div>
+              ))}
+            </div>
+          )}
           {globalStatus && (
             <div style={{ fontSize: "var(--t-micro)", marginTop: 4, color: globalStatus.startsWith("✓") ? "#34d399" : globalStatus.startsWith("✗") ? "#ef4444" : "#94a3b8" }}>
               {globalStatus}
@@ -1013,8 +1031,9 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
                     </div>
 
                     {block.entries.map((entry, i) => {
-                      const color = entry.category_color || (entry.slot_type === "spot_break" ? "#ef4444" : entry.slot_type === "talk_break" ? "#a78bfa" : "var(--accent-blue)");
-                      const isUnfilled = entry.status === "unfilled";
+                      const isUnsched = entry.slot_type === "unscheduled";
+                      const color = isUnsched ? "#ef4444" : entry.category_color || (entry.slot_type === "spot_break" ? "#ef4444" : entry.slot_type === "talk_break" ? "#a78bfa" : "var(--accent-blue)");
+                      const isUnfilled = entry.status === "unfilled" || isUnsched;
                       const isOverflow = entry.overflow === 1;
                       return (
                         <div key={entry.id} onClick={() => { void toggleWhy(entry); }}
@@ -1023,7 +1042,7 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
                           cursor: entry.slot_type === "music" ? "pointer" : undefined,
                           display: "grid", gridTemplateColumns: "64px 48px 1fr 160px 56px 52px",
                           padding: "0 12px", minHeight: isOverflow ? 36 : 30, alignItems: "center",
-                          background: isOverflow ? "rgba(167,139,250,0.06)" : i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)",
+                          background: isUnsched ? "rgba(239,68,68,0.12)" : isOverflow ? "rgba(167,139,250,0.06)" : i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.01)",
                           borderBottom: "1px solid rgba(255,255,255,0.02)",
                           borderLeft: isOverflow ? "3px solid rgba(167,139,250,0.5)" : "3px solid transparent",
                         }}>
@@ -1037,7 +1056,7 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
                           </span>
                           <div style={{ minWidth: 0, paddingRight: 8 }}>
                             <span style={{ fontSize: "var(--t-small)", fontWeight: 500, color: isUnfilled ? "#ef4444" : isOverflow ? "#a78bfa" : "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, display: "block" }}>
-                              {isUnfilled ? "⚠ No eligible song" : entry.song_title || entry.label || "—"}
+                              {isUnsched ? `⚠ ${entry.label || entry.song_title || "UNSCHEDULED — no song passes the rules"}` : isUnfilled ? "⚠ No eligible song" : entry.song_title || entry.label || "—"}
                             </span>
                             {isOverflow && (
                               <span style={{ fontSize: "var(--t-micro)", color: "rgba(167,139,250,0.6)" }}>

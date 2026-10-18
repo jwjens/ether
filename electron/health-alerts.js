@@ -29,6 +29,7 @@ const KINDS = {
   "aired-row-changed": "red",     // a row that had aired (or been retired) was rewritten or deleted — any code path
   "not-stamped":       "yellow",  // an element aired and its play / row stamp could not be written, or has no row
   "retired-row-aired": "yellow",  // a row the log had marked missed/skipped aired anyway
+  "unscheduled":       "yellow",  // Phase 2: a slot where no song passes the rules (and no fallback filled it)
 };
 
 function _iso(at) {

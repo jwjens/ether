@@ -73,6 +73,7 @@ export function slotTypeOf(r: { content_class?: string | null; song_id: number |
   if (cc === "JIN" || cc === "SWP") return "sweeper";
   if (cc === "CART") return "cart";
   if (cc === "VOICE" || cc === "VT") return "voice";
+  if (cc === "UNSCHEDULED") return "unscheduled";   // Phase 2: a slot no song could fill under the rules — shown red
   return r.song_id ? "music" : "spot_break";
 }
 

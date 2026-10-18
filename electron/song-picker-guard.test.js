@@ -22,9 +22,11 @@ const ROOT = process.cwd();
  *  triggers, migrations and R2 backfills legitimately see everything. These are the selection
  *  paths, listed explicitly so adding a new generator is a deliberate act. */
 const PICKERS = [
+  // Phase 2 (2026-10-18): ONE pick. Its pool is scheduler-core.poolFor; Generate keeps only the pinned-song lookup;
+  // the renderer (src/audio/loggen.ts) no longer picks at all.
+  "audiod/scheduler-core.js",
   "electron/generate-core.js",
   "audiod/loggen.js",
-  "src/audio/loggen.ts",
 ];
 
 /** A `FROM songs` occurrence plus the window that would hold its WHERE clause. */
@@ -68,11 +70,9 @@ describe("song pickers exclude deleted songs", () => {
 
   // The delegated builders. Without these, a query could pass the sweep above merely by using
   // `${cond}` while the builder had no filter at all — which is exactly the state before this fix.
-  it("src/audio/loggen.ts buildBaseConditions carries the guard", () => {
+  it("the renderer picks nothing: src/audio/loggen.ts has no song query left to guard", () => {
     const src = readFileSync(join(ROOT, "src/audio/loggen.ts"), "utf8");
-    const m = src.match(/function buildBaseConditions[\s\S]{0,900}/);
-    expect(m, "buildBaseConditions not found — has it been renamed?").toBeTruthy();
-    expect(m[0]).toMatch(/s\.deleted_at\s+IS\s+NULL/i);
+    expect(src).not.toMatch(/function buildBaseConditions|ORDER BY RANDOM/);
   });
 
   it("audiod/loggen.js NOT_DELETED is the guard, and every ${SELECT} WHERE uses it", () => {
@@ -84,10 +84,10 @@ describe("song pickers exclude deleted songs", () => {
     for (const w of wheres) expect(w, `unguarded: ${w.slice(0, 90)}`).toMatch(/NOT_DELETED/);
   });
 
-  it("pins the specific query that put 729 deleted-song rows in the log", () => {
-    const src = readFileSync(join(ROOT, "electron/generate-core.js"), "utf8");
-    const m = src.match(/stmtCandidates:[\s\S]{0,600}/);
-    expect(m, "stmtCandidates not found — has it been renamed?").toBeTruthy();
+  it("pins the specific query that put 729 deleted-song rows in the log (now the one pick's pool)", () => {
+    const src = readFileSync(join(ROOT, "audiod/scheduler-core.js"), "utf8");
+    const m = src.match(/function poolFor[\s\S]{0,600}/);
+    expect(m, "poolFor not found — has it been renamed?").toBeTruthy();
     expect(m[0]).toMatch(/s\.deleted_at\s+IS\s+NULL/i);
   });
 

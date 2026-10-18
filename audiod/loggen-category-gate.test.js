@@ -22,7 +22,13 @@ import { DatabaseSync } from "node:sqlite";
 
 const require_ = createRequire(import.meta.url);
 const { _test } = require_("./loggen.js");
-const { baseConditions, pickTier } = _test;
+const { baseConditions } = _test;
+// Phase 2 (2026-10-18): the random-first ladder (pickTier / pickFromClock) is deleted. Every pick is the ONE pick, and
+// its pool is scheduler-core.poolFor — the same two guarantees are pinned on it below.
+const core = require_("./scheduler-core.js");
+// poolFor(db, category, hour) with the categories the old tiers were called with: [] (no restriction) has no
+// equivalent any more — the one pick only ever draws from a named category — so "every category" is used.
+const pickTier = (db, _count, hour, _sid, cats) => (cats && cats.length ? cats : [7, null]).flatMap(c => c == null ? [] : core.poolFor(db, c, hour)).map(s => ({ file_path: s.file_path }));
 
 let db;
 

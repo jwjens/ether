@@ -1429,8 +1429,42 @@ class DaemonEngine {
     if (!opts.force && now - (this._lastRefillAt || 0) < 2000) return;
     this._lastRefillAt = now;
     let r;
-    try { r = loggen.readLogAnchored(this.db, this.stationId, 20); }
+    // The seam: when the queue's next entry would start. Rows of the hour it falls in may be offered; never a later
+    // hour's (Phase 3: the station never runs ahead).
+    const seamTs = this._projectedSeamTs();
+    try { r = loggen.readLogAnchored(this.db, this.stationId, 20, undefined, { seamTs }); }
     catch (e) { this._log("logreader refill error: " + String(e)); return; }
+    // A SHORT HOUR FILLS FROM ITS OWN CLOCK (Phase 3): nothing of a started hour is left, so the hour's clock supplies the
+    // next song through the one pick, written into the log first, and the log is read again. No show this hour, less
+    // than the fill tolerance before :00, or no song passes: the station waits (never a later hour's row, never a
+    // rule broken). In MANUAL nothing is filled: the jock owns the hour.
+    if (r.mode === "nothing-due" && !r.items.length && this._mayDecide()) {
+      const f = loggen.fillShortHour(this.db, this.stationId, Math.max(Math.floor(now / 1000), seamTs));
+      if (f.rowId != null) {
+        this._log(`short hour: filled "${f.title}" from the hour's own clock (log row ${f.rowId})`);
+        try { this.emit("logreader-operator-write", { stationId: this.stationId, title: f.title || "" }); } catch {}
+        try { r = loggen.readLogAnchored(this.db, this.stationId, 20, undefined, { seamTs }); } catch (e) { this._log("logreader refill error: " + String(e)); return; }
+      } else if (this._lastWaitReason !== f.reason) {
+        this._lastWaitReason = f.reason;
+        this._log(`waiting: nothing is due${r.nextDueTs ? " — the next log row is at " + new Date(r.nextDueTs * 1000).toLocaleTimeString() : ""} (${f.reason})`);
+        // Outside scheduled show hours there is no programming and no log: silence is correct, not a gap (Jeff,
+        // 2026-10-18). Only a gap INSIDE a show hour (nothing passes the rules) is reported.
+        if (f.reason !== "no-show") { try { this.emit("logreader-floor", { stationId: this.stationId, reason: "waiting:" + f.reason, nextDueTs: r.nextDueTs ?? null }); } catch {} }
+      }
+    }
+    if (r.items.length) this._lastWaitReason = null;
+    // THE PLAYOUT CHECK (Phase 3): rows refused because, by now, they break a rule against what aired. A row a deck already
+    // holds is not refused here: it was checked when it was offered, and the deck airs it (stamping it 'skipped' would make
+    // the record lie, as 'missed' did — the Phase 1 lesson).
+    { const held = new Set(["A", "B", "C"].map(d => this.deckSchedId[d]).filter(x => x != null));
+      if (r.skip && r.skip.length && held.size) r.skip = r.skip.filter(k => !held.has(k.rowId)); }
+    if (r.skip && r.skip.length) {
+      for (const k of r.skip) {
+        try { this.db.prepare("UPDATE generated_schedule SET state='skipped', pick_reason=? WHERE id=? AND station_id=? AND state='pending'").run(`skipped at playout: ${k.rule} ${k.measuredMin}/${k.settingMin} min`, k.rowId, this.stationId); } catch {}
+        this._log(`PLAYOUT CHECK: "${k.title || "(untitled)"}" (row ${k.rowId}) skipped — ${k.rule} ${k.measuredMin} of ${k.settingMin} min`);
+      }
+      try { this.emit("logreader-missed", { stationId: this.stationId, count: r.skip.length, driftSec: r.driftSec, reason: "playout-check" }); } catch {}
+    }
 
     // THE BOUND HEAD IS THE CUED DECKS, AND IT STAYS IN THE QUEUE. (Reverted 2026-09-14, same night.)
     //
@@ -1448,17 +1482,14 @@ class DaemonEngine {
     const boundHead = this.queue.filter(q => this.boundQids.has(q.qid));
     const boundSchedIds = new Set(boundHead.map(q => q.schedId).filter(x => x != null));
 
-    // EMERGENCY FLOOR — no pending log row for now (log exhausted / error). Loud, then fall to the
-    // clock/on-format tiers so a flipped station never dead-airs (§2.6). Off-log, and screamed.
-    if (r.mode === "exhausted" || r.mode === "error") {
-      try { this.emit("logreader-floor", { stationId: this.stationId, reason: r.mode }); } catch {}
-      this._log("LOG-READER FLOOR: log " + r.mode + " — emergency clock/on-format fill (never dead-air)");
-      let fill; try { fill = loggen.fillQueue(this.db, this.stationId, 20); } catch { fill = { items: [], source: "none" }; }
-      const kept = this._ensureIds((fill.items || []).filter(it => this._fileOk(it.filePath)));
-      this.queue = [...boundHead, ...kept];
-      this.emit("queue", { stationId: this.stationId, source: "logreader-floor:" + fill.source, items: this.queue });
-      if (fill.starved) this._noteStarved();   // in-station library empty even at the floor — loud, no foreign borrow
-      if (fill.relaxedCount) this._noteSepRelaxed(fill.relaxedCount);   // enforced floor bent rest — loud
+    // NOTHING TO OFFER (nothing due and nothing filled, or a read error): the pending region is empty. The cued decks
+    // keep what they hold. The old emergency floor — off-log picks by a second picker that relaxed every rule — is gone
+    // (Phase 2: one pick; Phase 3: never ahead).
+    if (!r.items.length) {
+      if (this.queue.some(q => !this.boundQids.has(q.qid))) {
+        this.queue = [...boundHead];
+        this.emit("queue", { stationId: this.stationId, source: "logreader:" + r.mode, items: this.queue });
+      }
       return;
     }
 
@@ -1512,12 +1543,6 @@ class DaemonEngine {
 
     this._retirePassedSweepers();
 
-    // AHEAD (rider A) — the early row is already in r.items and will air when the current song ends. NEVER
-    // wait / dead-air; within slack it airs silently, beyond slack we health-event it (music floats forward).
-    if (r.mode === "ahead" && r.aheadBySec > FLIP_AHEAD_SLACK_SEC) {
-      try { this.emit("logreader-ahead", { stationId: this.stationId, aheadSec: r.aheadBySec }); } catch {}
-      this._log("LOG-READER: ahead " + Math.round(r.aheadBySec / 60) + "m — next row plays early (never wait)");
-    }
 
     // A cued deck that is no longer the calendar's next row is re-cued below (_resyncCuedDecks).
     // Rebuild the PENDING region from the anchored log rows (dedup vs the bound head).
@@ -1552,8 +1577,7 @@ class DaemonEngine {
     //
     // The decks follow the calendar instead: _resyncCuedDecks re-cues a standby deck whose row is no
     // longer what the calendar says is next — the same job, done from the right end.
-    // seamTs stays: the observation-only auto-fitter below still reads it.
-    const seamTs = this._projectedSeamTs();
+    // seamTs (read at the top of the refill) stays: the observation-only auto-fitter below still reads it.
     const freshPending = this._ensureIds(kept);
     // Only emit if the pending region actually changed (avoid a queue-event storm on the 2s tick).
     const oldPendingItems = this.queue.filter(q => !this.boundQids.has(q.qid));
