@@ -18,7 +18,13 @@ pushed, tagged or released. No installer built (no version bump; Jeff asked for 
 **Commits:**
 - `68a95ac`: delete the widget canvas, `LiveAssistPage.tsx` and the dead `CartWallPanel`.
 - `c0e83fb`: module registry, station scope and module frame, the three modules, the proofs and the ratchet.
-- this report.
+- this report (`e1614aa`).
+
+**Second pass** (Jeff's rulings on the three findings, same day; §7):
+- `d6befc1`: single-key shortcuts ignore Ctrl/Alt/Meta, in every handler.
+- `3b0490e`: one Library load/queue path for all three surfaces; never load over a deck on air; Q is the real
+  enqueue.
+- this report's update.
 
 ---
 
@@ -51,14 +57,19 @@ pushed, tagged or released. No installer built (no version bump; Jeff asked for 
 |---|---|---|---|---|---|
 | `carts` (`:53`) | `BoutiqueCartWall` (`src/components/DeckConfigurator.tsx`) | many | `variant`: grid / strip | `docs/help-module-carts.md` | tile tooltip "Empty — click to assign" |
 | `programlog` (`:69`) | `ProgramLog` (`src/components/ProgramLog.tsx`) | many | `embedded` | `docs/help-module-programlog.md` | "No shows configured for this day" |
-| `library` (`:84`) | `LibraryPanel` (`src/App.tsx`, as PopoutRenderer imports it) + `useLibraryWindowActions` (`src/lib/libraryWindowActions.ts`) | many | none | `docs/help-module-library.md` | "Import audio to add items to the library." |
+| `library` (`:80`) | `LibraryWindow` (`src/components/LibraryWindow.tsx`): the Library window, i.e. `LibraryPanel` from App.tsx with the Library's one action set (§7.2) | many | none | `docs/help-module-library.md` | "Import audio to add items to the library." |
 
 **`LibraryPanel` was not lifted out of App.tsx.** It is ~1,500 lines leaning on App.tsx helpers, and Jeff allowed
 the lift only as a pure move. It is imported from App.tsx, as `PopoutRenderer.tsx:17` does.
 
-**What was moved:** the Library window's actions, unchanged, from `PopoutRenderer`'s `PopoutLibrary` into
-`src/lib/libraryWindowActions.ts`. `PopoutLibrary` (`PopoutRenderer.tsx:162`) now calls the same hook. So the
-module and the page call one path (design §2.8).
+**What was moved (first pass):** the Library window's actions, unchanged, from `PopoutRenderer`'s `PopoutLibrary` into
+`src/lib/libraryWindowActions.ts`.
+
+**Superseded in the second pass (§7.2):**
+- `PopoutLibrary` moved out to `src/components/LibraryWindow.tsx`. It is now both the Library window and the module.
+- `libraryWindowActions.ts` was removed. The main window, the Library window and the module all call
+  `src/lib/libraryDeckActions.tsx`.
+- The registry's `useBoundProps` / `scroll` fields went with it.
 
 ### 1.4 Two of the same, made safe (design §2.4)
 **Carts.** In `src/components/DeckConfigurator.tsx`:
@@ -112,7 +123,7 @@ module and the page call one path (design §2.8).
 |---|---|---|
 | S1 | `carts.proof.test.tsx` | **The two carts surfaces match.** The Carts page (`<AudioEngineProvider gate><PopoutRenderer panel="carts"/>`, as `main.tsx` mounts it) and a Carts module fire the same cart with the identical bridge sequence (`deckConfigs.list(2)`, `console.emit`, `audio.load("D", file, …, 2)`, `audio.play("D", 2)`, …), on station 2. |
 | S2 | `programlog.proof.test.tsx` | **An edit in one log reaches them all.** Two Program Log modules plus the Program Log page: a delete in module A shows in B and the page after ONE `schedule:changed`, with one re-read each, all on station 2. The module's write equals the page's write (`invoke("schedule:deleteRow","r1")`). Another station's `schedule:changed` is ignored. |
-| S3 | `library.proof.test.tsx` | **Load A matches.** Load A from a Library module and from the Library page (`PopoutRenderer panel="library"`) give identical calls (`audio.daemon("deck:cue", {stationId: 2, …})`). Queue matches too: identical, and see §5. |
+| S3 | `library.proof.test.tsx` | **All three Library surfaces match** (second pass, §7.2): the main window's Library, the Library window (`PopoutRenderer panel="library"`) and the module. With a deck idle or cued, Load A is the identical sequence `invoke("audio:resolve-local-path")` → `audio.load` (in-process) or `audio.daemon("deck:cue")` (daemon). Q is `audio.daemon("queue:enqueue", {stationId: 2, items: [song]})` (daemon) or the engine queue (in-process). With a deck playing or paused: nothing is sent, and the refusal shows. |
 | S4 | `placeable.test.ts` | **Every entry is wired.** Each registry entry's component and bound hook are imported into `registry.ts` from an app file outside `src/modules` that exports them. Its proof exists and renders `type="<type>"` through `ModuleFrame`. Its help doc exists at `docs/help-module-<type>.md` with the template's sections. Its empty state is asserted by its proof. And no file under `src/modules` defines a component except the frame. |
 | S5 | `noNewPage.test.ts` + `no-new-page.baseline.json` | **The page lists cannot grow.** The `type Panel` union (42), the PopoutRenderer cases (29), the ☰ list (17, parsed as `drawerDoors.test.ts` parses it) and the `new BrowserWindow(` sites (6, by enclosing function or ipcMain channel) are frozen. The test fails if any list grows, and also if the baseline names something the tree dropped, so a converted page is struck in the same commit. |
 | S6 | `carts.proof.test.tsx` | **One key, one fire.** The page alone: key 1 fires (unchanged). Two modules with the first clicked: one fire. Then the second clicked: one fire, from B (no pause, so not A's stop). Two modules, none clicked: one fire. A double press inside one fire's awaits: one fire. |
@@ -195,7 +206,8 @@ Each was checked by grep before deletion. After it, `tsc` is clean, so nothing i
   - Program Log and Library are documented per §2.4 (see §1.4 above).
 - **Help and empty state.** Design §2.7: a help doc and an empty state per module, enforced by S4.
 - **One path, two doors.** Design §2.8:
-  - Library actions are moved, not copied (`libraryWindowActions.ts`).
+  - Library actions are moved, not copied: one module, `src/lib/libraryDeckActions.tsx`, called by all three
+    surfaces (§7.2).
   - Carts and Program Log modules call exactly what their component calls (S1, S2).
   - **Not built:** the `cart:fire` command-service extraction (§2.8 "first extraction"). Phase 1's parity is
     proved on the component's own fire path, which both doors share.
@@ -216,7 +228,7 @@ Each was checked by grep before deletion. After it, `tsc` is clean, so nothing i
 
 ---
 
-## 5. Findings (noted, not fixed: outside the scope)
+## 5. Findings (first pass). Jeff ruled on 1–3 the same day: see §7
 
 1. **The Library window's Q (add to queue) reaches nothing, in the code.**
    - `useLibraryWindowActions().onQueue` (moved unchanged from `PopoutLibrary`) calls `(eng as any).enqueue?.(...)`.
@@ -253,3 +265,182 @@ test is launching the app (CLAUDE.md).
 6. Press **Ctrl+S** on the main window and note what happens (finding 3).
 
 There is no screen yet where a module is placed: the builder window is the next phase.
+
+**Second-pass checks:** see §7.5.
+
+---
+
+## 7. Second pass: Jeff's rulings on findings 1–3 (2026-10-18)
+
+### 7.1 Single-key shortcuts ignore Ctrl / Alt / Meta (finding 3)
+**Jeff:** "Single-key shortcuts must ignore any key pressed with Ctrl/Alt/Meta. Find every single-key shortcut
+handler."
+
+**What 6558e57 did, in the code.** These facts are from the coordinator; I confirmed the handler:
+- App's `handleKey` checked no modifier, and no menu item claims Ctrl+A.
+- So Ctrl+A toggled automation like A, and Ctrl+L / Ctrl+S / Ctrl+G opened Library / Clocks / Logs.
+- **Runtime: UNVERIFIED** (nobody pressed them).
+
+**The fix.**
+- **One helper: `src/lib/plainKey.ts` `isPlainKey(e)`** means no Ctrl, Alt or Meta.
+  - Shift is allowed: Shift+/ and Shift-for-a-bigger/finer-step are deliberate.
+  - AltGr (Ctrl+Alt on Windows) never fires a shortcut.
+- **App's keys go through a pure mapping**, `src/lib/appShortcuts.ts` `appShortcut(e)`, which returns null
+  for any modified key. App dispatches on it (`App.tsx:2053`).
+- **No Save Layout item was re-added** to swallow Ctrl+S. The guard is the fix.
+
+**Every single-key handler found, and its guard** (file:line of the guard):
+
+| Window | Handler | Keys | Guard |
+|---|---|---|---|
+| main | App.tsx `handleKey` | L, S, G, A, Shift+/, Esc | `App.tsx:2053` → `appShortcuts.ts` |
+| main | App.tsx metadata dropdown list | Esc, ↑, ↓, Enter | `App.tsx:4557` |
+| main + pop-outs | the cart wall (`DeckConfigurator.tsx`) | 1–8, Q–I, A–K | `DeckConfigurator.tsx:894` |
+| main | KeyboardHelp | Shift+/, Esc | `KeyboardHelp.tsx:9` |
+| main | macro hotkeys (`useMacroHotkeys`) | any stored single key | `MacroEngine.tsx:189` |
+| any with a fader | fader arrow keys (`useFaderControl`) | ←↑→↓ (Shift = fine) | `useFaderControl.ts:74` |
+| Broadcast Editor | C, J, S, Space, Delete, Esc | (Ctrl+Z/Y kept) | `BroadcastEditor.tsx:607` |
+| Phone Desk recorder | Space, ←, →, Delete | (Ctrl+Z kept, moved up) | `PhoneDesk.tsx:880` |
+| Producer Desk window | Delete / Backspace | (Ctrl+C/V kept) | `ProducerDeskWindow.tsx:135` |
+| Reel Splitter | Space, ←, →, Delete | | `ReelSplitter.tsx:94` |
+| Show+ scene switcher | 1–9 | (already guarded, now via the helper) | `ShowPlus.tsx:1031` |
+| Show+ DAW (StudioPro) | Space, S, Home, End, comma, period, backslash, Z, +/-, 1–9, M, ?, V/G/C/T/F, Delete | (already guarded, now via the helper; Ctrl combos kept) | `StudioPro.tsx:1694` |
+| Cue editor (TrackEditor) | Space (window + editor) | | `TrackEditor.tsx:625`, `:1059` |
+| Take editor | Space, ←→, Q, brackets, K, M, Delete | (Ctrl combos moved up) | `TakeEditor.tsx:128` |
+| Voice Tracker | Space, ←→, Q, brackets, K, M, Delete | (Ctrl combos kept) | `VoiceTracker.tsx:837` |
+| Video canvas | ←↑→↓ (Shift = bigger) | | `VideoEngineCanvas.tsx:449` |
+| User login (PIN) | 0–9, Backspace, Esc | | `UserLogin.tsx:101` |
+
+**Not shortcut handlers (left as they are):**
+- Esc-only menu dismissers: App.tsx metadata popover, DebugPanel, the cart menu, FloatingWindow, fileLocation,
+  songActions.
+- Ctrl/Cmd-only handlers: ClocksTab copy/paste, ProducerDesk / ProducerDeskWindow Ctrl+S.
+- Text-box Enter/Escape handlers.
+- The macro hotkey RECORDER (it records the key; it acts on nothing).
+- The Program Log, PopoutRenderer and the Jukebox have no single-key handler. Jukebox has only Enter in its search box.
+
+**Tests.**
+- **`src/lib/plainKey.test.ts`:**
+  - `isPlainKey`;
+  - `appShortcut`: Ctrl+S and Ctrl+A do nothing; Ctrl/Alt/Meta (and Ctrl+Shift, Ctrl+Alt) + every dashboard key
+    does nothing; plain keys do what they did; Shift+/ still toggles the sheet;
+  - App dispatches on `appShortcut`;
+  - **a static check over every keydown handler in src/** (window/document/element listeners, JSX
+    `onKeyDown`, `onKeyDown` definitions). Any handler testing a single key without a Ctrl/Meta requirement on
+    that line must call `isPlainKey` (or `appShortcut`) before it.
+  - Mutation-checked: removing the ReelSplitter and UserLogin guards fails it, naming both lines.
+- **`src/lib/plainKey.behaviour.test.tsx`**, through the real components:
+  - the Carts page: each of the 24 cart keys × Ctrl/Alt/Meta fires nothing, and plain 1 fires;
+  - KeyboardHelp;
+  - macro hotkeys (Ctrl/Alt/Meta+M runs nothing, M runs);
+  - a fader (modified arrows move nothing, plain and Shift arrows step).
+- **The other handlers' behaviour is proved by the static check only.** StudioPro, VoiceTracker, BroadcastEditor,
+  PhoneDesk, ReelSplitter, the Show+ scenes, TrackEditor, TakeEditor, UserLogin, the video canvas, the Producer
+  Desk and the dropdown are not mounted.
+- **Two existing tests follow the mapping into `appShortcuts.ts`:** `deckKeys.test.ts` and
+  `shortcutList.test.ts`. The no-Space/B/X assertions still hold, now on both files.
+
+**Docs.**
+- `docs/help-keyboard-shortcuts.md` (new);
+- `help-module-carts.md` and `help-reel-splitter.md`;
+- the in-app shortcut sheet gains "Ctrl / Alt / ⌘ + key — Not a shortcut — does nothing".
+
+### 7.2 Library Q wired to the real enqueue (finding 1), and one load path (finding 2 / Jeff's ruling 3)
+**Jeff:** "wire it to the real queueEnqueue in the Library window AND the module. No dead buttons kept for parity."
+And: "refuse to load over a deck that is on air, everywhere (main window Library, Library window, module). Test it."
+
+**The real enqueue path, verified by grep:**
+1. `engine-rodio.ts:630` `queueEnqueue(items)` → `daemonCmd("queue:enqueue", { stationId, items })` →
+   `window.ether.audio.daemon`.
+2. `electron/preload.js:127` `daemon: (cmd, args) => ipcRenderer.invoke("audio:daemon", cmd, args)`.
+3. `electron/main.js:7201` `ipcMain.handle("audio:daemon", …)` → `audiodClient.cmd(cmd, args)`.
+4. `audiod/ether-audiod.js:775` `"queue:enqueue": (m) => getEngine(m.stationId).intentEnqueue(m.items)`.
+5. `audiod/engine.js:1945` `intentEnqueue(items) { this.addToQueue(items) }`.
+
+The handler answers "audio daemon disabled" when the daemon is off. So in-process mode uses the engine's own queue
+(`engine.addToQueue`), the same split the web remote's `queue:enqueue` uses (`App.tsx` execCmd).
+
+**One path: `src/lib/libraryDeckActions.tsx`.** It is a pure move of App.tsx's `loadDeck` / `addToQueue`, made the rule:
+- **`deckOnAir` (`:35`):** playing or paused, as the engine reports the deck.
+- **`onAirRefusal` (`:41`):** "Deck A is on air — "…" was not loaded. Stop deck A first."
+- **`loadSongToDeck` (`:68`):** the on-air check before the resolve (`:73`) and again after it (`:89`), since the
+  resolve can take a cloud round trip. Then the R2/local resolve, then `deckCue` (daemon) or `loadToDeck`
+  (in-process), then the auto-cue.
+- **`enqueueSong` (`:102`):** `queueEnqueue` (daemon) or `addToQueue` (in-process), in the dashboard's item shape.
+- **`libraryDeckActions` (`:115`):** the LibraryPanel props for every surface.
+- **`DeckLoadNoticeBar` (`:126`):** the dashboard's toast, moved.
+
+**Who calls it:**
+- **Main window:** `App.tsx:2507` `libActions = libraryDeckActions({ engine: () => getEngine(stationId), … })`,
+  used by both LibraryPanels (`:3168` dock, `:3174` panel). Its toast is `<DeckLoadNoticeBar>` (`:3363`).
+- **Library window and module:** `src/components/LibraryWindow.tsx` (PopoutLibrary moved out, a pure move plus the
+  notice). PopoutRenderer `case "library"` renders it (`:218`), and the registry's library entry is it
+  (`registry.ts:80`).
+
+**Tests** (`library.proof.test.tsx`, 15 tests):
+- With A, B or C playing or paused: Load from main, page and module sends nothing to the engine, not even the
+  resolve, and shows the refusal.
+- Idle or cued (a file loaded, not playing), in-process and daemon: the identical sequence from all three.
+- Q, daemon: identical `audio.daemon("queue:enqueue", …)` from all three.
+- Q, in-process: the song is on the engine queue from all three.
+- S7 (station 3 module).
+- A static check that App.tsx wires both LibraryPanels to `libraryDeckActions`.
+- **Mutation-checked:** on-air reduced to playing-only fails the three paused cases; Q reverted off `queueEnqueue`
+  fails the daemon Q test.
+- **The "main" surface is not App itself.** It is App's own `libraryDeckActions` call in a small test component;
+  the static check holds App.tsx to that exact call. App was not mounted, because it is the whole app behind the
+  account gate.
+
+**Docs:** `docs/help-module-library.md` (Q works; on-air refusal; troubleshooting line).
+
+### 7.3 Removed, or changed in behaviour (Jeff's rule)
+
+**Removed:**
+- `src/lib/libraryWindowActions.ts`, replaced by `src/lib/libraryDeckActions.tsx`.
+- PopoutRenderer's `PopoutLibrary`, moved to `src/components/LibraryWindow.tsx`.
+- App.tsx's `loadDeck`, `loadA/B/C` and `addToQueue` (moved), and its inline toast (moved).
+- The registry's `useBoundProps` / `scroll` fields.
+
+**Changed in behaviour** (from the code; runtime UNVERIFIED):
+1. **Ctrl / Alt / Meta + any single-key shortcut now does nothing, in every handler above.** Before:
+   - Ctrl+A toggled automation; Ctrl+L / Ctrl+S / Ctrl+G opened screens;
+   - Ctrl/Alt+1 fired a cart; Ctrl+M ran an M macro;
+   - Ctrl+Space played in the cue editor, Reel Splitter, Voice Tracker and phone recorder;
+   - Ctrl+arrow stepped a fader;
+   - Ctrl+digit entered a PIN digit;
+   - Ctrl+Esc closed the shortcut sheet and drawer.
+2. **Paused decks are now refused.** Before, the main window's Library loaded over a **paused** deck, and refused a
+   playing one silently. Now both are refused, with the message.
+3. **The Library window now refuses on-air decks.** Before, it never checked and cued over a playing deck.
+4. **The Library window now uses the dashboard's load path.** Before, it cued with the raw file path through the
+   daemon only (in-process mode answers "audio daemon disabled"). Now it resolves local-first → R2 and works in both
+   modes.
+5. **The Library window's Q now queues.** Before, it sent nothing.
+6. **The main window's Q now sends `queue:enqueue` in daemon mode.** Before, it sent the legacy `enqueue` command.
+   Both run the daemon's `addToQueue` (`ether-audiod.js:688` vs `:775` → `engine.js:1945`).
+7. **The Library window shows the dashboard's load notices** ("Loading … onto A…", the refusal, a failed resolve).
+   Before, it showed none.
+
+### 7.4 Gates (second pass)
+- `npx tsc --noEmit`: exit 0, **0 errors**.
+- `npx vitest run`: **Test Files 115 passed (115), Tests 989 passed (989)**.
+  - After the shortcut commit alone: 115 / 978.
+- `node scripts/smoke-window-station.js`: exit 0, 45 PASS, VERDICT: PASS. Section 3 now also covers
+  `LibraryWindow.tsx` and `libraryDeckActions.tsx`.
+- `node scripts/smoke-programlog-popout.js`: exit 1, output identical to the base `9d2e187` run. It is the same
+  pre-existing `_popoutWins` ReferenceError.
+
+### 7.5 UNVERIFIED, and the check for Jeff
+Nothing was launched. Build this branch locally and launch it. Then:
+1. **On the main window, outside any text box:**
+   - Press **Ctrl+S**: nothing happens. Press **S**: Clocks opens.
+   - Press **Ctrl+A**: AUTO does not change. Press **A**: AUTO toggles.
+2. **Open ☰ → Carts:** press **Ctrl+1**: nothing fires. Press **1**: it fires.
+3. **Open ☰ → Library and press Q on a song:** it appears in Up Next.
+4. **Play deck A, then press A on a song** in ☰ → Library and in the main window's Library. Both show "Deck A is on
+   air — … was not loaded. Stop deck A first." and the deck is untouched.
+5. **Pause deck A and press A again:** the same refusal.
+6. **With deck A stopped, press A:** the song cues, the same as from the main window.
+
+**Noticed, not touched (one line):** the shortcut sheets list keys the handler does not have. App's sheet has
+"N — Live Assist view" and "G — Program Log", though G opens the Play Log. KeyboardHelp lists N / F1–F4 / F10 / F12.
