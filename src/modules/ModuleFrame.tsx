@@ -1,0 +1,57 @@
+// The frame every module renders in — Screen Builder Phase 1 (docs/screen-builder-design-2026-10-18.md §2.1, §2.3).
+//
+// ONE STATION PER LAYOUT (Jeff's decision 1). <ModuleSurface station> takes the station once for the whole surface:
+// a StationScope (so useActiveStation() in every module reads it, not the machine-global cache) and the engine
+// provider under it (so useAudioEngine() resolves that station's engine, fresh, by id). A module cannot name a
+// station of its own — that is option (b), later, per layout.
+//
+// <ModuleFrame type instanceId options> gives the module the other two things and nothing else:
+//   · its instance id (ModuleInstanceContext) — hotkeys, DOM ids, stored view prefs are per instance;
+//   · its options, as props.
+// The frame adds no buttons of its own. Outside a ModuleSurface it refuses to render: a module never guesses its
+// station (S7).
+import type { ReactNode } from "react";
+import { StationScope, useStationScope, type ScopedStation } from "../hooks/useActiveStation";
+import { AudioEngineProvider } from "../audio/AudioEngineContext";
+import { ModuleInstanceContext } from "../hooks/useModuleInstance";
+import { moduleEntry, type ModuleEntry, type ModuleType } from "./registry";
+
+export function ModuleSurface({ station, children }: { station: ScopedStation; children: ReactNode }) {
+  return (
+    <StationScope station={station}>
+      <AudioEngineProvider>{children}</AudioEngineProvider>
+    </StationScope>
+  );
+}
+
+export interface ModuleFrameProps {
+  type: ModuleType;
+  instanceId: string;
+  options?: Record<string, unknown>;
+}
+
+export function ModuleFrame({ type, instanceId, options }: ModuleFrameProps) {
+  const scope = useStationScope();
+  if (!scope) {
+    throw new Error(
+      `ModuleFrame "${type}" (${instanceId}) has no station: every module renders inside <ModuleSurface station>. ` +
+      "A module never falls back to the machine's active station."
+    );
+  }
+  const entry = moduleEntry(type);
+  return (
+    <ModuleInstanceContext.Provider value={instanceId}>
+      {/* keyed by type: a pane whose type changes remounts, so useBoundProps' hook order never changes */}
+      <ModuleBody key={type} entry={entry} options={options} />
+    </ModuleInstanceContext.Provider>
+  );
+}
+
+function ModuleBody({ entry, options }: { entry: ModuleEntry; options?: Record<string, unknown> }) {
+  const bound = entry.useBoundProps ? entry.useBoundProps() : {};
+  const Component = entry.component;
+  const body = <Component {...bound} {...options} />;
+  // Same wrapper the Library pop-out uses (PopoutRenderer PopoutLibrary): the panel relies on its parent to scroll.
+  if (entry.scroll) return <div style={{ height: "100%", overflowY: "auto", overflowX: "hidden", padding: 16 }}>{body}</div>;
+  return <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column" }}>{body}</div>;
+}

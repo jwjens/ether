@@ -38,6 +38,7 @@ import LibraryImport from "./LibraryImport";
 import { PlanGate } from "../hooks/usePlan";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useActiveStation } from "../hooks/useActiveStation";
+import { useLibraryWindowActions } from "../lib/libraryWindowActions";
 
 // ── StandaloneUpNext — wraps UpNext; syncs queue via broadcast relay ──
 // The main window emits "ether:broadcast" { channel: "queue:sync", data: queueLen }
@@ -159,29 +160,15 @@ function PopoutFaders() {
 }
 
 function PopoutLibrary() {
-  // WAS `getEngine(stationId ?? 1)` — the one place that hand-worked around the missing provider,
-  // and it still carried the `?? 1` guess. main.tsx mounts <AudioEngineProvider gate> over every
-  // window now, so this reads the live station like the dashboard does, and a window with no
-  // provider throws instead of quietly addressing station 1.
-  const eng = useAudioEngine();
-  const cue = (deck: "A" | "B" | "C", s: any) => {
-    try { eng.deckCue?.(deck, { filePath: s.file_path, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 }); } catch { /* engine not ready */ }
-  };
+  // The deck / queue / studio actions live in useLibraryWindowActions (moved there unchanged) so the
+  // Library module on a built surface calls the same ones. onEdit stays off — see that file.
+  const actions = useLibraryWindowActions();
   // PopoutShell's content area is overflow:hidden; LibraryPanel is a plain flex-column with no
   // internal scroll (in the main app the surrounding page scrolls). Give the pop-out its own
   // vertical scroll so a library taller than the window is reachable.
   return (
     <div style={{ height: "100%", overflowY: "auto", overflowX: "hidden", padding: 16 }}>
-      <LibraryPanel
-        onLoadA={s => cue("A", s)} onLoadB={s => cue("B", s)} onLoadC={s => cue("C", s)}
-        onQueue={s => { try { (eng as any).enqueue?.({ filePath: s.file_path, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 }); } catch {} }}
-        // THESE WERE BOTH NO-OPS — controls that rendered and did nothing, in the window that is now
-        // the ONLY Library. Send to Studio is genuinely fixable and is fixed: studio:push-track is a
-        // real IPC and is exactly what the dashboard calls. Edit is NOT: the cue editor is a dashboard
-        // PANEL, not a window, so there is nothing for this renderer to open. Rather than fake it,
-        // onEdit is left off, and LibraryPanel now HIDES both cue items when it is absent.
-        onSendToStudio={s => { try { (window as any).ether?.invoke("studio:push-track", { filePath: s.file_path, title: s.title, artist: s.artist_name || "", duration_ms: s.duration_ms }); } catch {} }}
-      />
+      <LibraryPanel {...actions} />
     </div>
   );
 }
