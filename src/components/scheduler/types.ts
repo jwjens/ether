@@ -9,6 +9,7 @@
 // the rule intact.
 export interface Show {
   id: number; name: string; start_hour: number; end_hour: number;
+  start_minute?: number | null; end_minute?: number | null;   // v65: shows start and end at any minute
   days: string; color: string | null; description: string | null;
   is_active: number; clock_id: number | null; clock_name: string | null;
 }

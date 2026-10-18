@@ -40,9 +40,11 @@ describe("the daemon has no top-of-hour hard cut", () => {
     expect(loggen).not.toMatch(/function fillFromHour/);
   });
 
-  it("the anchored reader routes its choice through the hour-join rule", () => {
+  it("the reader plays the log in order: the next row after the one on air, gated only at a piece boundary", () => {
+    // 2026-10-18 (Jeff): the last song of the hour always finishes (no hard stop); the new hour's first row is next.
     const sel = loggen.slice(loggen.indexOf("function selectRowForNow"), loggen.indexOf("function readLogAnchored"));
-    expect(sel).toMatch(/hourJoin\.joinWindow\(/);
+    expect(sel).toMatch(/showWindow\.pieceAt\(/);
+    expect(sel).not.toMatch(/hourJoin/);
   });
 });
 

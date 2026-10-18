@@ -7,7 +7,7 @@ import { useState, useEffect } from "react";
 import { queryScoped } from "../../db/stationScoped";
 import { useActiveStation } from "../../hooks/useActiveStation";
 import type { Show, Clock } from "./types";
-import { HOURS, DAYS, fmtHour } from "./shared";
+import { HOURS, DAYS, fmtHour, fmtShowTime, toTimeInput, fromTimeInput } from "./shared";
 
 /** All optional. With none supplied this behaves EXACTLY as before — the tabbed panel, the popout and
  *  the embedded programming panel pass nothing and keep self-fetching. The hub supplies data and a
@@ -57,12 +57,14 @@ export function ShowsTab({ shows: showsProp, clocks: clocksProp, onMutated, sele
       if (editing.id) {
         await (window as any).ether.shows.updateById(editing.id, {
           name: editing.name, start_hour: editing.start_hour || 0, end_hour: editing.end_hour || 0,
+          start_minute: editing.start_minute || 0, end_minute: editing.end_minute || 0,
           color: editing.color || null, description: editing.description || null, days, is_active: isActive,
         });
       } else {
         await (window as any).ether.shows.create({
           station_id: stationId, name: editing.name, start_hour: editing.start_hour || 0,
-          end_hour: editing.end_hour || 0, color: editing.color || null,
+          end_hour: editing.end_hour || 0, start_minute: editing.start_minute || 0, end_minute: editing.end_minute || 0,
+          color: editing.color || null,
           description: editing.description || null, days, is_active: isActive,
         });
       }
@@ -116,8 +118,9 @@ export function ShowsTab({ shows: showsProp, clocks: clocksProp, onMutated, sele
             </div>
           ))}
           {shows.map(s => {
-            const start = s.start_hour;
-            const end = s.end_hour <= s.start_hour ? s.end_hour + 24 : s.end_hour;
+            const start = s.start_hour + (s.start_minute || 0) / 60;
+            const end0 = s.end_hour + (s.end_minute || 0) / 60;
+            const end = end0 <= start ? end0 + 24 : end0;
             const width = ((end - start) / 24) * 100;
             const left = (start / 24) * 100;
             return <div key={s.id} className="absolute top-0 h-full flex items-center justify-center text-[9px] font-bold text-white" style={{ left: left + "%", width: Math.min(width, 100 - left) + "%", backgroundColor: s.color || "#444", opacity: 0.3 }}>{s.name}</div>;
@@ -130,12 +133,11 @@ export function ShowsTab({ shows: showsProp, clocks: clocksProp, onMutated, sele
         <div className="bg-zinc-900 rounded-none border border-zinc-800 p-3 space-y-2">
           <div className="grid grid-cols-4 gap-2">
             <input className="col-span-2 px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded-none text-xs text-zinc-100" placeholder="Show name" value={editing.name || ""} onChange={e => setEditing({...editing, name: e.target.value})} />
-            <select className="px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded-none text-xs text-zinc-100" value={editing.start_hour || 0} onChange={e => setEditing({...editing, start_hour: parseInt(e.target.value)})}>
-              {HOURS.map(h => <option key={h} value={h}>{fmtHour(h)}</option>)}
-            </select>
-            <select className="px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded-none text-xs text-zinc-100" value={editing.end_hour || 0} onChange={e => setEditing({...editing, end_hour: parseInt(e.target.value)})}>
-              {HOURS.map(h => <option key={h} value={h}>{fmtHour(h)}</option>)}
-            </select>
+            {/* Shows start and end at ANY minute (v65). The show schedule is the boundary: a show ending at 1:30 automates until 1:30. */}
+            <input type="time" step={60} title="Starts" aria-label="Show starts" className="px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded-none text-xs text-zinc-100"
+              value={toTimeInput(editing.start_hour, editing.start_minute)} onChange={e => { const [h, m] = fromTimeInput(e.target.value); setEditing({ ...editing, start_hour: h, start_minute: m }); }} />
+            <input type="time" step={60} title="Ends (00:00 = midnight)" aria-label="Show ends" className="px-2 py-1.5 bg-zinc-800 border border-zinc-700 rounded-none text-xs text-zinc-100"
+              value={toTimeInput(editing.end_hour, editing.end_minute)} onChange={e => { const [h, m] = fromTimeInput(e.target.value); setEditing({ ...editing, end_hour: h, end_minute: m }); }} />
           </div>
           <div className="grid grid-cols-4 gap-2">
             <input type="color" className="h-8 w-full bg-zinc-800 border border-zinc-700 rounded-none" value={editing.color || "#3b82f6"} onChange={e => setEditing({...editing, color: e.target.value})} />
@@ -202,7 +204,7 @@ export function ShowsTab({ shows: showsProp, clocks: clocksProp, onMutated, sele
                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
               title={s.description || undefined}>{s.name}</span>
             <span style={{ flex: "0 0 96px", fontSize: "var(--t-small)", color: "var(--text-tertiary)", fontFamily: "'DM Mono', monospace" }}>
-              {fmtHour(s.start_hour)}–{fmtHour(s.end_hour)}
+              {fmtShowTime(s.start_hour, s.start_minute)}–{fmtShowTime(s.end_hour, s.end_minute)}
             </span>
             <select value={s.clock_id || ""} onClick={e => e.stopPropagation()}
               onChange={e => assignClock(s.id, e.target.value ? parseInt(e.target.value) : null)}

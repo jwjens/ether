@@ -16,7 +16,7 @@
 // RULES-OFF actually means off here: with no ACTIVE separation rule, Tier 1 applies no separation
 // (it no longer silently falls back to a hidden 60-min default).
 
-const hourJoin = require("./hour-join");   // the new hour joins after the song crossing :00 (no hard cut)
+const showWindow = require("./show-window");   // the show schedule is the boundary (v65: shows start and end at any minute)
 
 // ── Separation config — station-scoped, honors rules-off ──
 // rulesOn = an ACTIVE artist-separation rule exists for this station. No active rule → separation OFF.
@@ -72,26 +72,11 @@ function baseConditions(hour, params, stationId, opts) {
 
 // ── Active show + its clock right now (loggen.ts getActiveShowClock) ──
 function getActiveShowClock(db, stationId) {
-  const hour = new Date().getHours();
-  const day = String(new Date().getDay());
-  const rows = db.prepare(
-    `SELECT clock_id, name, start_hour, end_hour, days FROM shows
-     WHERE is_active = 1 AND clock_id IS NOT NULL AND deleted_at IS NULL AND station_id = ?
-     ORDER BY CASE
-       WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour
-       WHEN end_hour = 0 OR end_hour = start_hour THEN 24
-       WHEN end_hour > start_hour THEN end_hour - start_hour
-       ELSE 24 - start_hour + end_hour END ASC`).all(stationId);
-  for (const r of rows) {
-    if (!r.days.includes(day)) continue;
-    const sh = r.start_hour, eh = r.end_hour;
-    let active;
-    if (eh === 0 || eh === sh) active = hour >= sh;
-    else if (eh > sh) active = hour >= sh && hour < eh;
-    else active = hour >= sh || hour < eh;
-    if (active) return { clockId: r.clock_id, showName: r.name };
-  }
-  return null;
+  // To the minute (v65, audiod/show-window.js): at 21:15 a show running 15:00–21:30 is on, not the one starting 21:30.
+  let rows = [];
+  try { rows = db.prepare(`SELECT * FROM shows WHERE is_active = 1 AND clock_id IS NOT NULL AND deleted_at IS NULL AND station_id = ?`).all(stationId); } catch { return null; }
+  const s = showWindow.showAt(rows, Math.floor(Date.now() / 1000));
+  return s ? { clockId: s.clock_id, showName: s.name } : null;
 }
 
 // ── On-format category universe (loggen.ts getFormatCategoryIds) — Christmas-leak fix ──
@@ -214,65 +199,91 @@ function readGeneratedSchedule(db, count, stationId) {
 // in the morning on 10/17. Now that case is mode 'nothing-due', with the time the next row becomes due.
 // UNSCHEDULED rows (Phase 2: a slot no song could fill) are never offered: they are not audio.
 function _hourEnd(ts) { const d = new Date(ts * 1000); d.setMinutes(0, 0, 0); return Math.floor(d.getTime() / 1000) + 3600; }
+
+// THE SHOW SCHEDULE IS THE BOUNDARY; THE LOG PLAYS AS BUILT (Jeff, 2026-10-18: "a show that ends at 1:30 automates until
+// 1:30. Shows start and end at any minute. The log plays what the programmer built. No built-in fill, no catch-up
+// drops."). Which show owns a moment: audiod/show-window.js.
+//   • A LOG ROW IS ON AIR (opts.onAirRowId, else the row stamped 'playing' that is still inside its own length): the row
+//     for now is the NEXT row in log order after it. Nothing is passed over for being late, nothing is filled. The one
+//     wait is a show boundary: a row of a different show run (or of no show) does not start before its show's start
+//     (mode 'nothing-due', nextDueTs = that start).
+//   • NOTHING OF THE LOG IS ON AIR (automation just started, or the operator played something off the log): the row for
+//     now is the latest row whose time has arrived INSIDE A SHOW THAT IS ON NOW — never a row of a show that has ended
+//     (a show ending at 1:30 does not air at 1:45), never a row of a show that has not begun. Rows of today before it are
+//     returned to be stamped 'missed': they passed while nothing of the log was on air.
+// UNSCHEDULED rows (a slot no song could fill) and imaging are never offered: they are not deck audio.
+// opts.asPending: a row id to treat as still pending (the engine's go-live shadow). Never throws.
+function _activeShows(db, stationId) {
+  try { return db.prepare("SELECT * FROM shows WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL").all(stationId); } catch { return []; }
+}
+function _onAirRow(db, stationId, nowTs, slackSec, opts) {
+  try {
+    if (opts && opts.onAirRowId != null) return db.prepare("SELECT id, scheduled_at FROM generated_schedule WHERE id = ? AND station_id = ?").get(opts.onAirRowId, stationId) || null;
+    if (opts && opts.onAirRowId === null) return null;   // the engine says: nothing of the log is on air
+    const r = db.prepare(`SELECT id, scheduled_at, played_at, duration_s FROM generated_schedule WHERE station_id = ? AND state = 'playing' AND deleted_at IS NULL
+        AND (content_class IS NULL OR content_class NOT IN ('JIN','SWP','UNSCHEDULED')) ORDER BY played_at DESC, id DESC LIMIT 1`).get(stationId);
+    if (r && r.played_at != null && r.played_at + (r.duration_s || 0) + slackSec >= nowTs) return r;   // still inside its own length
+  } catch {}
+  return null;
+}
 function selectRowForNow(db, stationId, nowTs, slackSec = 60, opts = null) {
   try {
     const fmt = getFormatCategoryIds(db, stationId);
     const catClause = fmt.length ? `AND (s.id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
     const asP = opts && opts.asPending != null && Number.isInteger(Number(opts.asPending)) ? Number(opts.asPending) : null;
-    const limitTs = _hourEnd(Math.max(nowTs, (opts && opts.seamTs) || nowTs));
+    const t = Math.max(nowTs, (opts && opts.seamTs) || nowTs);   // when the next row would start
     const base = `FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
                   WHERE gs.station_id = ? AND (gs.state = 'pending'${asP != null ? " OR gs.id = " + asP : ""}) AND gs.deleted_at IS NULL
                     AND (gs.content_class IS NULL OR gs.content_class NOT IN ('JIN','SWP','UNSCHEDULED')) ${catClause}`;
     const cols = `gs.id AS row_id, gs.title, gs.scheduled_at, COALESCE(gs.file_path, s.file_path) AS file_path`;
     const fmtP = fmt.length ? fmt : [];
-    // Current slot: the latest pending row whose scheduled_at has arrived (within slack), in an hour that has started.
-    let playRow = db.prepare(
-      `SELECT ${cols} ${base} AND gs.scheduled_at <= ? AND gs.scheduled_at < ? ORDER BY gs.scheduled_at DESC, gs.id DESC LIMIT 1`
-    ).get(stationId, ...fmtP, nowTs + slackSec, limitTs);
-    // HOUR JOIN (2026-10-04, top-of-hour hard cut removed): the new hour plays AFTER the song that
-    // crosses :00 — its head is never skipped or stamped `missed` because that song ran over. See
-    // audiod/hour-join.js; a null window leaves the ordinary catch-up below unchanged.
-    if (playRow) {
-      const H = hourJoin.hourStartOf(playRow.scheduled_at);
-      const playing = db.prepare(
-        `SELECT MAX(scheduled_at) AS ts FROM generated_schedule
-          WHERE station_id = ? AND state = 'playing' AND deleted_at IS NULL`).get(stationId);
-      const aired = db.prepare(
-        `SELECT scheduled_at, played_at FROM generated_schedule
-          WHERE station_id = ? AND state IN ('played','playing') AND deleted_at IS NULL
-            AND (content_class IS NULL OR content_class NOT IN ('JIN','SWP'))
-            AND scheduled_at >= ? AND scheduled_at < ?
-          ORDER BY scheduled_at, id LIMIT 1`).get(stationId, H, H + 3600);
-      const win = hourJoin.joinWindow({
-        nowTs, candidateTs: playRow.scheduled_at,
-        playingTs: playing && playing.ts != null ? playing.ts : null,
-        firstAired: aired ? { scheduledAt: aired.scheduled_at, playedAt: aired.played_at } : null,
-      });
-      if (win) {
-        const head = db.prepare(
-          `SELECT ${cols} ${base} AND gs.scheduled_at ${win.fromInclusive ? ">=" : ">"} ? AND gs.scheduled_at <= ?
-             AND gs.scheduled_at < ? ORDER BY gs.scheduled_at, gs.id LIMIT 1`
-        ).get(stationId, ...fmtP, win.fromTs, win.toTs, playRow.scheduled_at);
-        if (head) playRow = head;
+    const shows = _activeShows(db, stationId);
+    const pieceNow = showWindow.pieceAt(shows, t);
+    const runNow = pieceNow.show ? pieceNow : null;   // a show owns this moment
+    const onAir = _onAirRow(db, stationId, nowTs, slackSec, opts);
+    if (onAir && (asP == null || asP !== onAir.id)) {
+      // The next row in log order — but a row may only START inside its own piece: the hour, cut at show starts/ends.
+      // A row whose piece has ended by the time it would start is not played (Jeff: "the last song before the top of the
+      // hour is the last song for that hour"; a show ending at 1:30 automates until 1:30). The song on air finishes.
+      let next = null;
+      for (const c of db.prepare(`SELECT ${cols} ${base} AND (gs.scheduled_at > ? OR (gs.scheduled_at = ? AND gs.id > ?)) ORDER BY gs.scheduled_at, gs.id LIMIT 400`)
+        .all(stationId, ...fmtP, onAir.scheduled_at, onAir.scheduled_at, onAir.id)) {
+        if (showWindow.pieceAt(shows, c.scheduled_at).endTs > t) { next = c; break; }
+      }
+      if (!next) return { playRow: null, missedCount: 0, mode: "nothing-due", driftSec: 0, nextDueTs: null, inShow: !!runNow, onAirRowId: onAir.id };
+      // The only wait: the next row is in the NEXT piece (a new hour, or a show starting or ending inside the hour) —
+      // it starts at that piece's start, never before (silence after the hour's last song until the top of the hour).
+      const a = showWindow.pieceAt(shows, onAir.scheduled_at), b = showWindow.pieceAt(shows, next.scheduled_at);
+      const gateTs = a.key === b.key ? null : b.startTs;
+      if (gateTs != null && t < gateTs) return { playRow: null, missedCount: 0, mode: "nothing-due", driftSec: 0, nextDueTs: gateTs, inShow: !!runNow, onAirRowId: onAir.id };
+      const missedCount = db.prepare(`SELECT COUNT(*) AS n ${base} AND gs.scheduled_at < ? AND gs.scheduled_at >= ?`).get(stationId, ...fmtP, next.scheduled_at, _dayStart(nowTs)).n;
+      const drift = t - next.scheduled_at;
+      return { playRow: next, missedCount, mode: drift > slackSec ? "behind" : "on-time", driftSec: drift, onAirRowId: onAir.id, continuing: true };
+    }
+    // Nothing of the log on air: the latest arrived row of a show that is on now — or, when AUTO came on at the show's
+    // start (opts.fromPieceStart), the piece's FIRST row: the first song of the hour is the first one scheduled.
+    if (runNow && opts && opts.fromPieceStart) {
+      const head = db.prepare(`SELECT ${cols} ${base} AND gs.scheduled_at >= ? AND gs.scheduled_at < ? ORDER BY gs.scheduled_at, gs.id LIMIT 1`)
+        .get(stationId, ...fmtP, runNow.startTs, runNow.endTs);
+      if (head && head.scheduled_at <= t + slackSec) return { playRow: head, missedCount: 0, mode: "on-time", driftSec: t - head.scheduled_at };
+    }
+    if (runNow) {
+      const playRow = db.prepare(`SELECT ${cols} ${base} AND gs.scheduled_at >= ? AND gs.scheduled_at <= ? AND gs.scheduled_at < ? ORDER BY gs.scheduled_at DESC, gs.id DESC LIMIT 1`)
+        .get(stationId, ...fmtP, runNow.startTs, t + slackSec, runNow.endTs);
+      if (playRow) {
+        const missedCount = db.prepare(`SELECT COUNT(*) AS n ${base} AND gs.scheduled_at < ? AND gs.scheduled_at >= ?`).get(stationId, ...fmtP, playRow.scheduled_at, _dayStart(nowTs)).n;
+        const drift = t - playRow.scheduled_at;
+        return { playRow, missedCount, mode: drift > slackSec ? "behind" : "on-time", driftSec: drift };
       }
     }
-    if (playRow) {
-      const missedCount = db.prepare(
-        `SELECT COUNT(*) AS n ${base} AND gs.scheduled_at < ?`
-      ).get(stationId, ...fmtP, playRow.scheduled_at).n;
-      const drift = nowTs - playRow.scheduled_at;   // >0 = chosen slot is in the past (running behind)
-      return { playRow, missedCount, mode: drift > slackSec ? "behind" : "on-time", driftSec: drift, limitTs };
-    }
-    // Nothing due yet, but the hour has started and still has rows later on: the station is a little early INSIDE its
-    // own hour (songs ran short). The next row of THIS hour plays — that is not ahead of the clock.
-    const inHour = db.prepare(`SELECT ${cols} ${base} AND gs.scheduled_at >= ? AND gs.scheduled_at < ? ORDER BY gs.scheduled_at LIMIT 1`)
-      .get(stationId, ...fmtP, limitTs - 3600, limitTs);
-    if (inHour) return { playRow: inHour, missedCount: 0, mode: "on-time", driftSec: nowTs - inHour.scheduled_at, limitTs };
-    // NOTHING DUE: no row of a started hour. Never a future hour's row. The next due time is reported.
-    const next = db.prepare(`SELECT MIN(gs.scheduled_at) AS ts ${base} AND gs.scheduled_at >= ?`).get(stationId, ...fmtP, limitTs);
-    return { playRow: null, missedCount: 0, mode: "nothing-due", driftSec: 0, limitTs, nextDueTs: next && next.ts != null ? next.ts : null };
+    // Nothing due: the next row, and when it may start — its piece's start (a later piece), or its own time.
+    const next = db.prepare(`SELECT ${cols} ${base} AND gs.scheduled_at > ? ORDER BY gs.scheduled_at, gs.id LIMIT 1`).get(stationId, ...fmtP, t + slackSec);
+    let nextDueTs = null;
+    if (next) { const b = showWindow.pieceAt(shows, next.scheduled_at); nextDueTs = b.key === pieceNow.key ? next.scheduled_at : Math.max(b.startTs, t); }
+    return { playRow: null, missedCount: 0, mode: "nothing-due", driftSec: 0, nextDueTs, inShow: !!runNow };
   } catch { return { playRow: null, missedCount: 0, mode: "error", driftSec: 0 }; }
 }
+function _dayStart(ts) { const d = new Date(ts * 1000); d.setHours(0, 0, 0, 0); return Math.floor(d.getTime() / 1000); }
 
 // ── THE PLAYOUT CHECK (design §3.8, Phase 3): before a log row is offered to air, it must pass every rule against what
 // has AIRED on this station by now. Generate placed it under the rules; drift on air (songs longer or shorter than
@@ -305,8 +316,8 @@ function _playoutChecker(db, stationId, nowTs) {
 function readLogAnchored(db, stationId, count = 20, slackSec = 60, opts = null) {
   const nowTs = Math.floor(Date.now() / 1000);
   const seamTs = opts && opts.seamTs ? opts.seamTs : nowTs;
-  const d = selectRowForNow(db, stationId, nowTs, slackSec, { seamTs });
-  if (!d.playRow) return { items: [], mode: d.mode, missedRowIds: [], skip: [], driftSec: 0, aheadBySec: 0, nextDueTs: d.nextDueTs ?? null, limitTs: d.limitTs ?? null };
+  const d = selectRowForNow(db, stationId, nowTs, slackSec, { seamTs, ...(opts && "onAirRowId" in opts ? { onAirRowId: opts.onAirRowId } : {}), ...(opts && opts.fromPieceStart ? { fromPieceStart: true } : {}) });
+  if (!d.playRow) return { items: [], mode: d.mode, missedRowIds: [], skip: [], driftSec: 0, aheadBySec: 0, nextDueTs: d.nextDueTs ?? null, inShow: !!d.inShow };
   const anchorTs = d.playRow.scheduled_at;
   const fmt = getFormatCategoryIds(db, stationId);
   const catClause = fmt.length ? `AND (s.id IS NULL OR s.category_id IN (${fmt.map(() => "?").join(",")}))` : "";
@@ -323,15 +334,17 @@ function readLogAnchored(db, stationId, count = 20, slackSec = 60, opts = null) 
     missedRowIds = db.prepare(`SELECT gs.id AS row_id ${pendBase} AND gs.scheduled_at >= ? AND gs.scheduled_at < ? ORDER BY gs.scheduled_at`)
       .all(stationId, ...fmtP, dayStart, anchorTs).map(r => r.row_id);
   } catch { /* leave empty */ }
-  // ITEMS: the row-for-now forward, inside the hours that have started (never ahead of the clock).
+  // ITEMS: the row-for-now forward in log order, up to the next show boundary (a row of another show run, or of no
+  // show, is offered only once its show has started — the next read offers it).
+  const anchorId = d.playRow.row_id;
   let rows = [];
   try {
     rows = db.prepare(
       `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, COALESCE(gs.file_key, s.file_key) AS file_key,
               COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start, gs.content_class,
               COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms, s.title AS song_title, a.name AS song_artist, s.no_repeat_hours, gs.category_id
-       ${pendBase} AND gs.scheduled_at >= ? AND gs.scheduled_at < ? ORDER BY gs.scheduled_at LIMIT ?`
-    ).all(stationId, ...fmtP, anchorTs, d.limitTs, count);
+       ${pendBase} AND (gs.scheduled_at > ? OR (gs.scheduled_at = ? AND gs.id >= ?)) ORDER BY gs.scheduled_at, gs.id LIMIT ?`
+    ).all(stationId, ...fmtP, anchorTs, anchorTs, anchorId, count);
   } catch {
     // An older or partial database (no artists table, no no_repeat_hours column): the same rows without the song's
     // own artist and rest. The playout check then measures on the row's own title and artist.
@@ -340,9 +353,16 @@ function readLogAnchored(db, stationId, count = 20, slackSec = 60, opts = null) 
         `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, COALESCE(gs.file_key, s.file_key) AS file_key,
                 COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start, gs.content_class,
                 COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms
-         ${pendBase.replace(" LEFT JOIN artists a ON a.id = s.artist_id", "")} AND gs.scheduled_at >= ? AND gs.scheduled_at < ? ORDER BY gs.scheduled_at LIMIT ?`
-      ).all(stationId, ...fmtP, anchorTs, d.limitTs, count);
+         ${pendBase.replace(" LEFT JOIN artists a ON a.id = s.artist_id", "")} AND (gs.scheduled_at > ? OR (gs.scheduled_at = ? AND gs.id >= ?)) ORDER BY gs.scheduled_at, gs.id LIMIT ?`
+      ).all(stationId, ...fmtP, anchorTs, anchorTs, anchorId, count);
     } catch { /* leave empty */ }
+  }
+  { // cut at the boundary
+    const shows = _activeShows(db, stationId);
+    const t = Math.max(nowTs, seamTs);
+    const pA = showWindow.pieceAt(shows, anchorTs);
+    const k = rows.findIndex(r => { const b = showWindow.pieceAt(shows, r.scheduled_at); return b.key !== pA.key && b.startTs > t; });
+    if (k > 0) rows = rows.slice(0, k);
   }
   // THE PLAYOUT CHECK on the rows about to air: from the anchor forward, every music row that now breaks a rule against
   // what aired is refused, until one passes. Rows further on are checked when they come up.
@@ -357,75 +377,11 @@ function readLogAnchored(db, stationId, count = 20, slackSec = 60, opts = null) 
     rows.shift();
   }
   const items = rows.filter(r => r.file_path).map(r => ({ ...toItem(r), schedId: r.row_id }));
-  return { items, mode: items.length ? d.mode : "nothing-due", missedRowIds, skip, driftSec: d.driftSec, aheadBySec: 0, limitTs: d.limitTs,
+  // Rows the playout check refused, and nothing passed after them in this read: 'skipping' — the caller stamps them and
+  // reads again. Never 'nothing-due' (that is a wait, and at no show it turns AUTO off).
+  const inShow = !!showWindow.pieceAt(_activeShows(db, stationId), Math.max(nowTs, seamTs)).show;
+  return { items, mode: items.length ? d.mode : (skip.length ? "skipping" : "nothing-due"), missedRowIds, skip, driftSec: d.driftSec, aheadBySec: 0, continuing: !!d.continuing, inShow,
     nextDueTs: items.length ? null : (d.nextDueTs ?? null) };
-}
-
-// ── A SHORT HOUR FILLS FROM ITS OWN CLOCK (design §3.7, Phase 3) ─────────────────────────────────────────────────────
-// Nothing of this hour is left to air and :00 is still ahead: the hour's own clock supplies the next song, chosen by the
-// ONE pick (scheduler-core) under the station's rules against what aired and the log on either side, and it is WRITTEN
-// INTO THE LOG as a fill row (source 'fill') before it airs, so the record stays complete. Returns the new row id, or
-// null with a reason when there is nothing to fill from:
-//   'no-show'   — no show (clock) covers this hour: the station WAITS for its next row (Jeff: automation started
-//                 before the first log row waits for it);
-//   'tolerance' — less than the station's fill tolerance (setting fill_tolerance_sec; none unless set) is left before :00;
-//   'nothing-passes' — no song in the clock's categories (or the fallback) passes the rules.
-// opts.categoryId: the slot's own category first (a row the playout check refused: "the pick is run again for that slot",
-// design §3.2.2), then the clock's order.
-function fillShortHour(db, stationId, atTs, opts = null) {
-  try {
-    const core = require("./scheduler-core.js");
-    const hourEnd = _hourEnd(atTs);
-    let tol = 0;   // nothing built in (Jeff, 2026-10-18): until the station sets fill_tolerance_sec, a short hour fills up to :00
-    try { const r = db.prepare("SELECT value FROM station_config_kv WHERE station_id=? AND key='fill_tolerance_sec' AND deleted_at IS NULL").get(stationId); if (r && r.value !== "" && Number.isFinite(Number(r.value)) && Number(r.value) >= 0) tol = Number(r.value); } catch {}
-    if (hourEnd - atTs < tol) return { rowId: null, reason: "tolerance", retryAt: hourEnd };
-    const hour = new Date(atTs * 1000).getHours(), day = String(new Date(atTs * 1000).getDay());
-    const show = db.prepare(`SELECT clock_id, start_hour, end_hour, days FROM shows WHERE is_active = 1 AND clock_id IS NOT NULL AND deleted_at IS NULL AND station_id = ?`).all(stationId)
-      .find(r => r.days.includes(day) && ((r.end_hour === 0 || r.end_hour === r.start_hour) ? hour >= r.start_hour : r.end_hour > r.start_hour ? (hour >= r.start_hour && hour < r.end_hour) : (hour >= r.start_hour || hour < r.end_hour)));
-    if (!show) return { rowId: null, reason: "no-show", retryAt: hourEnd };
-    const cats = db.prepare(`SELECT category_id FROM clock_slots WHERE clock_id = ? AND slot_type = 'music' AND category_id IS NOT NULL AND deleted_at IS NULL ORDER BY position`).all(show.clock_id).map(r => r.category_id);
-    if (!cats.length) return { rowId: null, reason: "no-show", retryAt: hourEnd };
-    // The clock's next music category: after the last music row of this hour (in clock order), else the first.
-    const hs = hourEnd - 3600;
-    const last = db.prepare(`SELECT category_id FROM generated_schedule WHERE station_id = ? AND deleted_at IS NULL AND song_id IS NOT NULL AND (content_class IS NULL OR content_class = 'MUSIC')
-        AND scheduled_at >= ? AND scheduled_at < ? ORDER BY scheduled_at DESC LIMIT 1`).get(stationId, hs, hourEnd);
-    let i = last ? cats.indexOf(last.category_id) : -1;
-    if (opts && opts.categoryId != null && cats.includes(opts.categoryId)) i = cats.indexOf(opts.categoryId) - 1;
-    const rules = core.stationRules(db, stationId);
-    const fallback = core.fallbackCategory(db, stationId);
-    // ON THE AIR LOOP: read only what the rules can reach (the longest rule, or the longest per-song no-repeat hours)
-    // plus each candidate's one last airing — never the whole history (T19: nothing on the air loop waits on the DB).
-    const pools = new Map();
-    for (const c of [...new Set([...cats, ...(fallback ? [fallback] : [])])]) pools.set(c, core.poolFor(db, c, hour));
-    let reach = Math.max(rules.songMin || 0, rules.artistMin || 0, rules.titleMin || 0);
-    for (const pl of pools.values()) for (const so of pl) if (so.noRepeatHours) reach = Math.max(reach, Number(so.noRepeatHours) * 60);
-    const files = [...new Set([...pools.values()].flat().map(so => so.file_path).filter(Boolean))];
-    const tl = core.loadTimeline(db, stationId, { beforeTs: atTs, sinceTs: atTs - reach * 60, poolFiles: files });
-    // Songs already planned later TODAY are spoken for (scheduler-core pick opts.spokenFor).
-    const spokenFor = new Map();
-    try {
-      const d1 = new Date(atTs * 1000); d1.setHours(24, 0, 0, 0);
-      for (const r of db.prepare(`SELECT COALESCE(gs.file_key, gs.file_path, s.file_path) f, MIN(gs.scheduled_at) t FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
-          WHERE gs.station_id = ? AND gs.deleted_at IS NULL AND gs.state = 'pending' AND gs.song_id IS NOT NULL AND gs.scheduled_at > ? AND gs.scheduled_at < ? GROUP BY 1`).all(stationId, atTs, Math.floor(d1.getTime() / 1000)))
-        { const k = core.recordingKey(r.f); if (k) spokenFor.set(k, r.t); }
-    } catch {}
-    let chosen = null, cat = null, shortest = Infinity;
-    const tryCat = (c) => { const r = core.pick(pools.get(c) || [], atTs, tl, rules, Math.random, { spokenFor }); if (r.song) return r; for (const x of (r.closest || [])) shortest = Math.min(shortest, x.shortMin); return null; };
-    for (let k = 0; k < cats.length && !chosen; k++) {
-      i = (i + 1) % cats.length;
-      const r = tryCat(cats[i]);
-      if (r) { chosen = r; cat = cats[i]; }
-    }
-    if (!chosen && fallback) { const r = tryCat(fallback); if (r) { chosen = r; cat = fallback; } }
-    // Nothing passes: try again when the closest blocked song becomes free (the rule says when), or at :00.
-    if (!chosen) return { rowId: null, reason: "nothing-passes", retryAt: Number.isFinite(shortest) ? Math.min(hourEnd, atTs + Math.ceil(shortest * 60)) : hourEnd };
-    const s = chosen.song, iso = new Date().toISOString();
-    const res = db.prepare(`INSERT INTO generated_schedule (scheduled_at, song_id, title, artist, file_key, file_path, duration_s, category_id, clock_id, station_id, uuid, state, source, content_class, pick_reason, created_at, updated_at, generated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'fill', 'MUSIC', ?, ?, ?, ?)`)
-      .run(atTs, s.id, s.title, s.artist || "", String(s.file_path || s.file || "").split(/[\\/]/).pop(), s.file_path || null, s.duration_ms ? Math.round(s.duration_ms / 1000) : null,
-           cat, show.clock_id, stationId, require("crypto").randomUUID(), JSON.stringify({ m: "fill", cat, lastAired: chosen.lastAired, passing: chosen.passing }), iso, iso, atTs);
-    return { rowId: Number(res.lastInsertRowid), reason: null, title: s.title };
-  } catch (e) { return { rowId: null, reason: "error: " + String(e && e.message || e) }; }
 }
 
 // ── AUTO-FITTER SUPPORT (2026-07-30) — the ELIGIBLE pool a fit may draw from ──────────────────────────
@@ -580,7 +536,7 @@ function fillQueue(db, stationId, count = 12) {
   return { source: clock ? `one pick: clock "${clock.showName}"` : "no clock", tier: 1, formatCats: cats, items, starved };
 }
 
-module.exports = { fillQueue, getActiveShowClock, getFormatCategoryIds, getStationCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, readAutoPostForSong, selectRowForNow, readLogAnchored, fillShortHour, eligibleForFit,
+module.exports = { fillQueue, getActiveShowClock, getFormatCategoryIds, getStationCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, readAutoPostForSong, selectRowForNow, readLogAnchored, eligibleForFit,
   // Internals, exposed for tests only — not part of the daemon's API. The category gate is the kind
   // of rule that is silently deleted by a future refactor unless something asserts it.
   _test: { baseConditions } };

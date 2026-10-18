@@ -35,7 +35,8 @@ const SCAN_DAYS = 30;
  *  end_hour 0 with start_hour 0, or end_hour == start_hour, is a full 24 hours; end_hour 0 with a
  *  start is "start through midnight"; otherwise a plain range, wrapping midnight when end < start. */
 function showCoversHour(show, hour) {
-  const s = show.start_hour | 0, e = show.end_hour | 0;
+  // v65: a show ending at :30 still covers that hour's first half — the hour counts as covered.
+  const s = show.start_hour | 0, e = ((show.end_hour | 0) + ((show.end_minute | 0) ? 1 : 0)) % 24;
   if (e === s) return true;              // covers 0-0 (all day) and any full-24h show
   if (e === 0) return hour >= s;         // start .. midnight
   if (e > s) return hour >= s && hour < e;
@@ -51,7 +52,7 @@ function computeRunway(db, stationId, nowSec) {
   const now = nowSec != null ? nowSec : Math.floor(Date.now() / 1000);
   try {
     const shows = db.prepare(
-      `SELECT start_hour, end_hour, days FROM shows
+      `SELECT * FROM shows
         WHERE station_id = ? AND is_active = 1 AND clock_id IS NOT NULL AND deleted_at IS NULL`
     ).all(stationId) || [];
     if (!shows.length) {

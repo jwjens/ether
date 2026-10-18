@@ -14,7 +14,7 @@ const { REGISTRY } = require('../synced-tables');
 
 const TABLE              = 'shows';
 const HAS_STATION_ID_COL = true;
-const PATCHABLE          = ["name","start_hour","end_hour","days","color","description","is_active","clock_id","updated_at"];
+const PATCHABLE          = ["name","start_hour","end_hour","start_minute","end_minute","days","color","description","is_active","clock_id","updated_at"];
 
 // ── Scope guard ───────────────────────────────────────────────────────────────
 
@@ -75,8 +75,8 @@ function showsCreate(db, payload) {
     actor_id:       payload.actor_id ?? null,
   }, () => {
     db.prepare(
-      `INSERT INTO ${TABLE} (name, start_hour, end_hour, days, color, description, is_active, clock_id, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(row.name, row.start_hour, row.end_hour, row.days, row.color, row.description, row.is_active, row.clock_id, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at);
+      `INSERT INTO ${TABLE} (name, start_hour, end_hour, start_minute, end_minute, days, color, description, is_active, clock_id, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(row.name, row.start_hour, row.end_hour, row.start_minute ?? 0, row.end_minute ?? 0, row.days, row.color, row.description, row.is_active, row.clock_id, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at);
   });
   return showsGet(db, uuid);
 }

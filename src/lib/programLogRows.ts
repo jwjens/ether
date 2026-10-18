@@ -113,7 +113,9 @@ export function toEntries(
 }
 
 /** The hours a show covers (handles end_hour=0 / end==start = all day, and overnight ranges). */
-export function showHours(s: { start_hour: number; end_hour: number }): number[] {
+export function showHours(s0: { start_hour: number; end_hour: number; start_minute?: number | null; end_minute?: number | null }): number[] {
+  // v65: a show ending at 21:30 still covers the 21:00 hour (its first half).
+  const s = { start_hour: s0.start_hour, end_hour: (s0.end_minute ? (s0.end_hour + 1) % 24 : s0.end_hour) };
   const out: number[] = [];
   const end = s.end_hour === 0 || s.end_hour === s.start_hour ? 24 : s.end_hour;
   if (end > s.start_hour) {

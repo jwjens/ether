@@ -368,6 +368,47 @@ function getTalk(stationId) {
 // Per-station promise chain for the MANUAL/AUTO toggle. Per station, so a jock toggling one station
 // never queues behind another station's automation — the three untouched stations keep deciding.
 const _modeChain = new Map();
+// ── AUTO TURNS ON WHEN A SHOW STARTS (Jeff, 2026-10-18: "when a show hour is scheduled auto turns on") ─────────────────
+// …and the engine turns it off when the log is done and no show follows (engine.js _refillFromLog). ONE MACHINE PER
+// STATION: a station may sit on several machines and only one may broadcast it (the backend keeps one owner,
+// broadcast-owner.js), so a show start turns AUTO on only on a machine where the operator's LAST press for that
+// station was AUTO — pressing MANUAL or STOP disarms it. The arm is machine-local, beside this machine's database
+// (auto-armed.json in the profile folder), never synced. Nothing is armed until someone presses AUTO on the machine.
+const _fsA = require("fs");
+const _armFile = () => { return process.env.ETHER_PROFILE_DIR ? path.join(process.env.ETHER_PROFILE_DIR, "auto-armed.json") : null; };
+function _armRead() { try { const f = _armFile(); return f && _fsA.existsSync(f) ? JSON.parse(_fsA.readFileSync(f, "utf8")) || {} : {}; } catch { return {}; } }
+function autoArm(stationId, on) {
+  try {
+    if (!process.env.ETHER_PROFILE_DIR) { try { getDb(); } catch {} }   // an operator press opens it anyway (automationStart)
+    const f = _armFile(); if (!f || stationId == null) return;
+    const m = _armRead(); m[String(stationId)] = { armed: !!on, at: new Date().toISOString() };
+    _fsA.writeFileSync(f, JSON.stringify(m, null, 2));
+  } catch (e) { log("auto-arm write failed:", e && e.message); }
+}
+const _showRunKey = new Map();   // stationId → the show run on now, as last seen ("" = none)
+function _showStartTick() {
+  // Only while this daemon already holds the database open (it opens it for playout): never open it here — a restore
+  // closes it on purpose (releaseDb) and must not find it reopened underneath the swap. Signed out: nothing to automate.
+  const db = _db; if (!db) return;
+  const arms = _armRead();
+  let rows = [];
+  try { rows = db.prepare("SELECT id FROM stations WHERE deleted_at IS NULL").all(); } catch { return; }
+  const list = [];
+  for (const { id } of rows) {
+    let shows = [];
+    try { shows = db.prepare("SELECT * FROM shows WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL").all(id); } catch { continue; }
+    const e = engines.get(id);
+    list.push({ id, shows, armed: !!(arms[String(id)] && arms[String(id)].armed), started: !!(e && e._started) });
+  }
+  const d = require("./show-start").decideShowStarts(_showRunKey, list, Math.floor(Date.now() / 1000));
+  for (const x of d.notArmed) log(`show start (station ${x.id}, "${x.show}") — AUTO not armed on this machine, left as is`);
+  for (const x of d.start) {
+    log(`show start (station ${x.id}, "${x.show}") — AUTO on`);
+    modeToggle(x.id, () => getEngine(x.id).start({ fromPieceStart: true })).catch(err => log("show-start AUTO failed:", err && err.message));
+  }
+}
+setInterval(() => { try { _showStartTick(); } catch (e) { log("show-start tick error:", e && e.message); } }, 5000);
+
 function modeToggle(stationId, fn) {
   const prev = _modeChain.get(stationId) || Promise.resolve();
   const next = prev.then(fn, fn);   // a failed toggle must not wedge the chain for the next press
@@ -644,11 +685,11 @@ const handlers = {
   // interleave: on 2026-07-31 an automationStop landed 2ms after an automationStart mid-adopt, and it
   // took the jock four presses to recover. Chaining each toggle onto the previous one makes rapid
   // clicking QUEUE rather than race, so the last press wins and one press is always enough.
-  automationStart:    (m) => modeToggle(m.stationId, () => getEngine(m.stationId).start()),
-  automationStop:     (m) => modeToggle(m.stationId, () => { const e = engines.get(m.stationId); if (e) e.stop(); return true; }),
+  automationStart:    (m) => { autoArm(m.stationId, true); return modeToggle(m.stationId, () => getEngine(m.stationId).start()); },
+  automationStop:     (m) => { autoArm(m.stationId, false); return modeToggle(m.stationId, () => { const e = engines.get(m.stationId); if (e) e.stop(); return true; }); },
   // Slice 4 — STOP: silence a station and keep it silent. Stop automation (e.stop() disables the stall
   // watchdog so it can't auto-recover) AND stop all three decks. Idempotent; no-op if never started.
-  stopAll:            (m) => { const e = engines.get(m.stationId); if (e) e.stop(); for (const d of ["A", "B", "C"]) { try { A.audioStop(d, m.stationId); } catch {} } return true; },
+  stopAll:            (m) => { autoArm(m.stationId, false); const e = engines.get(m.stationId); if (e) e.stop(); for (const d of ["A", "B", "C"]) { try { A.audioStop(d, m.stationId); } catch {} } return true; },
   skip:               (m) => getEngine(m.stationId).skip(),                    // force-advance to next track
   // Step 5 — streaming (ffmpeg → Icecast) inside the daemon, off the daemon's program bus.
   startStream:        (m) => getStream(m.stationId).start(m.config || {}),

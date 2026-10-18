@@ -210,7 +210,8 @@ function bindProduct(w) {
   const deps = { db: w, require: mainRequire, _scheduleChanged: () => {}, _healthEvent: () => {}, console: { log: () => {}, error: console.error, warn: () => {} } };
   const commitDayRows = liftFromMain("_commitDayRows", deps);
   const retireStale = liftFromMain("retireStaleScheduleRows", deps);
-  return { gen, loggen, playlog, commitDayRows, retireStale };
+  const loggenSrc = fs.readFileSync(path.join(ROOT, "audiod", "loggen.js"), "utf8");
+  return { gen, loggen, loggenSrc, playlog, commitDayRows, retireStale };
 }
 
 // Generate, the way schedule:generateDays / generateDay run it (main.js:11437-11555): one ctx across the
@@ -283,10 +284,15 @@ async function simulateStation(w, P, F, R) {
   const prof = { reader: 0, logPlay: 0, stamp: 0 };
   const regenTs = (() => { const d = new FakeDate(simStart * 1000); d.setDate(d.getDate() + REGEN_AT.day); d.setHours(REGEN_AT.hour, REGEN_AT.minute, 0, 0); let t = Math.floor(d.getTime() / 1000); if (t < simStart) t += 86400; return t; })();
   let guard = 0;
+  // THE LOG PLAYS AS BUILT (2026-10-18): the engine passes the last log row that aired in this AUTO session; AUTO turns
+  // off when the log is done and no show is on, and on again at the next show's start, from that piece's first row.
+  let lastRow = null, fromPieceStart = false, autoOffs = 0;
+  const showBoundaryReader = !P.loggen.fillShortHour && !!P.loggen.readLogAnchored && /pieceAt/.test(P.loggenSrc || "");
   while (nowSec() < simEnd && guard++ < 200000) {
     if (!regenDone && nowSec() >= regenTs) { regenDone = true; await doGenerate(1, "Regenerate on air " + fmt(nowSec())); }
     let tq = RealDate.now();
-    let r = P.loggen.readLogAnchored(w, sid, 20);
+    let r = showBoundaryReader ? P.loggen.readLogAnchored(w, sid, 20, undefined, { seamTs: nowSec(), onAirRowId: lastRow, ...(fromPieceStart ? { fromPieceStart: true } : {}) })
+                               : P.loggen.readLogAnchored(w, sid, 20);
     prof.reader += RealDate.now() - tq;
     let item = null, offLog = false;
     if (P.loggen.fillShortHour) {
@@ -314,7 +320,20 @@ async function simulateStation(w, P, F, R) {
         }
       }
     }
-    if (!P.loggen.fillShortHour && (r.mode === "exhausted" || r.mode === "error" || !r.items.length)) {
+    if (showBoundaryReader) {
+      const stampSkips = (rr) => { for (const k of (rr.skip || [])) { w.prepare("UPDATE generated_schedule SET state='skipped', pick_reason=? WHERE id=? AND station_id=? AND state='pending'").run(`skipped at playout: ${k.rule} ${k.measuredMin}/${k.settingMin} min`, k.rowId, sid); skippedAtPlayout++; } };
+      stampSkips(r);
+      for (let k = 0; k < 10 && r.mode === "skipping"; k++) { r = P.loggen.readLogAnchored(w, sid, 20, undefined, { seamTs: nowSec(), onAirRowId: lastRow, ...(fromPieceStart ? { fromPieceStart: true } : {}) }); stampSkips(r); }
+      if (!r.items.length) {
+        if (!r.inShow && lastRow != null) { lastRow = null; fromPieceStart = true; autoOffs++; }   // AUTO off; on at the next show
+        const hEnd = (() => { const d = new FakeDate(nowSec() * 1000); d.setMinutes(0, 0, 0); return Math.floor(d.getTime() / 1000) + 3600; })();
+        const nxt = r.nextDueTs && r.nextDueTs > nowSec() ? Math.min(r.nextDueTs, hEnd) : hEnd;
+        waitedSec += Math.max(1, nxt - nowSec());
+        setNow(Math.max(nowSec() + 1, nxt));
+        continue;
+      }
+    }
+    if (!showBoundaryReader && !P.loggen.fillShortHour && (r.mode === "exhausted" || r.mode === "error" || !r.items.length)) {
       const fill = P.loggen.fillQueue(w, sid, 20);
       item = fill.items && fill.items[0];
       offLog = true;
@@ -354,12 +373,13 @@ async function simulateStation(w, P, F, R) {
     }
     const row = item.schedId != null ? w.prepare("SELECT id, scheduled_at, category_id, clock_id, content_class, song_id FROM generated_schedule WHERE id=?").get(item.schedId) : null;
     prof.stamp += RealDate.now() - tq;
+    if (item.schedId != null) { lastRow = item.schedId; fromPieceStart = false; }
     goLives.push({ ts: t, schedId: item.schedId ?? null, row, title: item.title, filePath: item.filePath, contentClass: item.contentClass || (row && row.content_class) || "MUSIC", offLog, mode: r.mode, playUuid: playId });
     setNow(t + actualS);
   }
 
   // ── check ──
-  const res = { station: F.sid, window: `${fmt(simStart)} → ${fmt(simEnd)}`, generateSec: Math.round(genMs / 1000), airSec: Math.round((RealDate.now() - ta0) / 1000), airProfileMs: prof, goLives: goLives.length, floorPlays, missedStamped, skippedAtPlayout, fillRows: fills, silentHours: +(waitedSec / 3600).toFixed(1), runs: runs.map(r => ({ label: r.label, rows: r.rows.length, relaxedByGenerate: r.relaxed, breakDriftByGenerate: r.breakDrift, enforceSeparation: r.enforce })) };
+  const res = { station: F.sid, window: `${fmt(simStart)} → ${fmt(simEnd)}`, generateSec: Math.round(genMs / 1000), airSec: Math.round((RealDate.now() - ta0) / 1000), airProfileMs: prof, goLives: goLives.length, floorPlays, missedStamped, skippedAtPlayout, fillRows: fills, autoOffs, silentHours: +(waitedSec / 3600).toFixed(1), runs: runs.map(r => ({ label: r.label, rows: r.rows.length, relaxedByGenerate: r.relaxed, breakDriftByGenerate: r.breakDrift, enforceSeparation: r.enforce })) };
 
   // on-air timeline: history + simulated plays (MUSIC)
   const simPlays = w.prepare("SELECT id, title, artist, file_path, played_at, content_class, scheduled_log_id, category_code FROM play_log WHERE station_id=? AND session_id='scheduler-gate' ORDER BY played_at, id").all(sid);

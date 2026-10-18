@@ -25,6 +25,7 @@
 // code — the 496 moved lines below remain byte-identical to the originals, except (2026-09-30) the five
 // `file_key` basenames, which now use storedBasename: a stored Windows path on a Mac came back whole.
 const { storedBasename } = require('./audio-library-index');
+const showWindow = require('../audiod/show-window.js');   // the show schedule is the boundary (v65: any minute)
 
 // ── Spot rotation (clock spot_break slots → spots library) ────────────────────
 // A spot_break clock slot pulls from the spots table: active, inside its date window, and —
@@ -105,7 +106,7 @@ function _buildScheduleCtx(db, stationId) {
     // Why-nothing-filled diagnostics (surfaced to the operator so Generate never fails silently).
     diag: { noShowHours: new Set(), noClock: new Set(), emptyClocks: new Set(), emptyCats: new Set() },
     // CLOCK IS LAW (2026-07-21): read only LIVE (non-deleted) shows + slots.
-    stmtShows: db.prepare(`SELECT id, start_hour, end_hour, clock_id FROM shows WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ? AND deleted_at IS NULL ORDER BY CASE WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour WHEN end_hour = 0 OR end_hour = start_hour THEN 24 WHEN end_hour > start_hour THEN end_hour - start_hour ELSE 24 - start_hour + end_hour END ASC`),
+    stmtShows: db.prepare(`SELECT * FROM shows WHERE instr(days, ?) > 0 AND is_active = 1 AND station_id = ? AND deleted_at IS NULL ORDER BY CASE WHEN end_hour = 0 AND start_hour > 0 THEN 24 - start_hour WHEN end_hour = 0 OR end_hour = start_hour THEN 24 WHEN end_hour > start_hour THEN end_hour - start_hour ELSE 24 - start_hour + end_hour END ASC`),
     stmtSlots: db.prepare(`SELECT cs.position, cs.slot_type, cs.category_id, cs.song_id, cs.spot_type, cs.spot_category_id, cs.duration_min FROM clock_slots cs WHERE cs.clock_id = ? AND cs.deleted_at IS NULL ORDER BY cs.position`),
     // A slot that names ONE specific song: a clock slot pointing at a song the operator has since deleted must
     // resolve to nothing, not to the deleted song.
@@ -182,19 +183,20 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
     const slotDate = new Date(dayBaseDate.getTime()); slotDate.setHours(h, 0, 0, 0);
     const jsDay = slotDate.getDay();
     const hourStartTs = Math.floor(slotDate.getTime() / 1000);
-    if (hourStartTs < minTs) continue; // never regenerate an hour that has already aired
+    if (hourStartTs + 3600 <= minTs) continue; // never regenerate an hour that has already aired
     const shows = stmtShows.all(String(jsDay), activeStationId);
-    const show = shows.find(s => {
-      if (s.end_hour === 0 || s.end_hour === s.start_hour) return h >= s.start_hour;
-      if (s.end_hour > s.start_hour) return h >= s.start_hour && h < s.end_hour;
-      return h >= s.start_hour || h < s.end_hour;
-    });
+    // THE SHOW SCHEDULE IS THE BOUNDARY (Jeff, 2026-10-18): the hour is cut at every show start/end minute inside it
+    // (audiod/show-window.js); each piece is built from its own show's clock, from the piece's start to its end — a
+    // show ending at 1:30 is built to 1:30, the next show from 1:30. No show = no log.
+    for (const seg of showWindow.hourSegments(shows, hourStartTs)) {
+    if (seg.fromTs < minTs) continue;         // never regenerate a piece that has already aired
+    const show = seg.show;
     if (!show) { ctx.diag.noShowHours.add(h); continue; }
     if (!show.clock_id) { ctx.diag.noClock.add(h); continue; }
     const slots = stmtSlots.all(show.clock_id);
     if (!slots.length) { ctx.diag.emptyClocks.add(show.clock_id); continue; }
-    const hourEnd = hourStartTs + 3600;
-    let currentTs = hourStartTs;
+    const hourEnd = seg.toTs;                 // this piece's end: the show's boundary, or :00
+    let currentTs = seg.fromTs;
     const dayStr = _localDayStr(slotDate);
 
     // One music slot, by the one pick: a song, or an UNSCHEDULED row. Returns the seconds it takes.
@@ -235,6 +237,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
       const TOL_S = 30;   // the break tolerance's starting value (§3.11); on air the alert uses the setting
       for (const brk of breaks.slice().sort((a, b) => (a.minute || 0) - (b.minute || 0))) {
         const target = hourStartTs + (brk.minute || 0) * 60;
+        if (target < seg.fromTs) continue;    // the break's minute is in another show's piece of this hour
         if (target >= hourEnd) break;
         while (currentTs < target) {
           await _genMaybeYield();
@@ -257,7 +260,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
 
     for (const slot of slots) {
       await _genMaybeYield();                // keep main's message pump alive mid-hour
-      if (currentTs >= hourEnd) break; // each hour is planned from its own :00 — no slot STARTS past :00
+      if (currentTs >= hourEnd) break; // no slot STARTS past the piece's end (the show boundary, or :00)
       const slotDurationS = (slot.duration_min || 4) * 60;
       // Pinned element: this slot plays ONE specific song/jingle/talk break (set by cart # in the scheduler). It is
       // the operator's choice and is placed as set; it goes on the timeline so the picks around it obey the rules.
@@ -280,6 +283,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
       if (slot.slot_type !== 'music' || !slot.category_id) { currentTs += slotDurationS; continue; }
       currentTs += placeMusic(slot.category_id, currentTs, slotDurationS);
     }
+    }   // each piece of the hour
   }
 }
 

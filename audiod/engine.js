@@ -795,6 +795,9 @@ class DaemonEngine {
     // — 8 hours of dead air on OV, 1h33m on OVEVENTS (docs/ovevents-crash-loop-alarm-2026-09-15.md §4).
     const haveContent = order.some(d => !!this._deckState(d).filePath) || this.queue.length > 0 || this.continuous;
     if (!haveContent) return;                               // genuinely nothing to play — not a stall
+    // A PLANNED SILENCE is not a stall (2026-10-18): the log has nothing due until the next piece — the top of the hour,
+    // a show's start — or no show is on. The refill starts the next row when it is due.
+    if (this._logWait && this.queue.length === 0) { this._lastPlayingAt = now; return; }
     if (now - this._lastPlayingAt < STALL_MS) return;       // not stalled long enough (could be mid-transition)
     // Fire ONCE per stall (armed). If that recovery can't find content, fall back to a bounded retry
     // every RETRY_MS so a transiently-empty schedule can't leave us permanently disarmed.
@@ -1429,34 +1432,60 @@ class DaemonEngine {
     if (!opts.force && now - (this._lastRefillAt || 0) < 2000) return;
     this._lastRefillAt = now;
     let r;
-    // The seam: when the queue's next entry would start. Rows of the hour it falls in may be offered; never a later
-    // hour's (Phase 3: the station never runs ahead).
+    // The seam: when the queue's next entry would start (a row of the next show is offered once that show has started).
     const seamTs = this._projectedSeamTs();
-    try { r = loggen.readLogAnchored(this.db, this.stationId, 20, undefined, { seamTs }); }
+    // THE LOG PLAYS AS BUILT (Jeff, 2026-10-18): the reader is told which log row is on air, and offers the row after it.
+    // The reference is the LAST LOG ROW THAT WENT TO AIR in this AUTO session (on air now, or finished — a planned
+    // silence until the top of the hour keeps the place, so the new hour opens with its first row). null = nothing of
+    // the log has aired since AUTO came on: the row for now (or, at a show's start, that piece's first row).
+    const readOpts = { seamTs, onAirRowId: this._lastLogRowAired ?? null, ...(this._startAtPieceHead ? { fromPieceStart: true } : {}) };
+    try { r = loggen.readLogAnchored(this.db, this.stationId, 20, undefined, readOpts); }
     catch (e) { this._log("logreader refill error: " + String(e)); return; }
-    // A SHORT HOUR FILLS FROM ITS OWN CLOCK (Phase 3): nothing of a started hour is left, so the hour's clock supplies the
-    // next song through the one pick, written into the log first, and the log is read again. No show this hour, less
-    // than the fill tolerance before :00, or no song passes: the station waits (never a later hour's row, never a
-    // rule broken). In MANUAL nothing is filled: the jock owns the hour.
-    // A fill that found nothing is not retried until the moment it can change: the closest blocked song becoming free,
-    // or the top of the hour (fillShortHour says when). Never a database read every 2 s on the air loop.
-    const fillAt = Math.max(Math.floor(now / 1000), seamTs);
-    if (r.mode === "nothing-due" && !r.items.length && this._mayDecide() && !(this._fillRetryAt && fillAt < this._fillRetryAt)) {
-      const f = loggen.fillShortHour(this.db, this.stationId, fillAt);
-      this._fillRetryAt = f.rowId == null ? (f.retryAt || null) : null;
-      if (f.rowId != null) {
-        this._log(`short hour: filled "${f.title}" from the hour's own clock (log row ${f.rowId})`);
-        try { this.emit("logreader-operator-write", { stationId: this.stationId, title: f.title || "" }); } catch {}
-        try { r = loggen.readLogAnchored(this.db, this.stationId, 20, undefined, { seamTs }); } catch (e) { this._log("logreader refill error: " + String(e)); return; }
-      } else if (this._lastWaitReason !== f.reason) {
-        this._lastWaitReason = f.reason;
-        this._log(`waiting: nothing is due${r.nextDueTs ? " — the next log row is at " + new Date(r.nextDueTs * 1000).toLocaleTimeString() : ""} (${f.reason})`);
-        // Outside scheduled show hours there is no programming and no log: silence is correct, not a gap (Jeff,
-        // 2026-10-18). Only a gap INSIDE a show hour (nothing passes the rules) is reported.
-        if (f.reason !== "no-show") { try { this.emit("logreader-floor", { stationId: this.stationId, reason: "waiting:" + f.reason, nextDueTs: r.nextDueTs ?? null }); } catch {} }
+    // Every row the read offered was refused by the playout check: stamp them and read again (bounded), so a refusal is
+    // never taken for the end of the log.
+    for (let k = 0; k < 10 && r.mode === "skipping"; k++) {
+      const held = new Set(["A", "B", "C"].map(d => this.deckSchedId[d]).filter(x => x != null));
+      for (const sk of (r.skip || [])) {
+        if (held.has(sk.rowId)) continue;
+        try { this.db.prepare("UPDATE generated_schedule SET state='skipped', pick_reason=? WHERE id=? AND station_id=? AND state='pending'").run(`skipped at playout: ${sk.rule} ${sk.measuredMin}/${sk.settingMin} min`, sk.rowId, this.stationId); } catch {}
+        this._log(`PLAYOUT CHECK: "${sk.title || "(untitled)"}" (row ${sk.rowId}) skipped — ${sk.rule} ${sk.measuredMin} of ${sk.settingMin} min`);
+      }
+      try { r = loggen.readLogAnchored(this.db, this.stationId, 20, undefined, readOpts); } catch (e) { this._log("logreader refill error: " + String(e)); return; }
+    }
+    // NOTHING DUE. No built-in fill (Jeff, 2026-10-18): the station waits for the next row it may play — the next show's
+    // start, or a row's own time. A wait INSIDE a show (the log has nothing more for it) is reported; outside every show
+    // there is no programming and silence is correct.
+    const _wasWaiting = !!this._logWait;
+    this._logWait = r.mode === "nothing-due" && !r.items.length;   // a planned silence: the stall watchdog stands down
+    if (r.mode === "nothing-due" && !r.items.length) {
+      const why = r.inShow ? "inside-show" : "no-show";
+      const key = why + ":" + (r.nextDueTs || "");
+      if (this._lastWaitReason !== key) {
+        this._lastWaitReason = key;
+        this._log(`waiting: nothing is due${r.nextDueTs ? " — the next log row may start at " + new Date(r.nextDueTs * 1000).toLocaleTimeString() : " — the log has no more rows"} (${why})`);
+        if (r.inShow) { try { this.emit("logreader-floor", { stationId: this.stationId, reason: "waiting:log-ended-inside-show", nextDueTs: r.nextDueTs ?? null }); } catch {} }
+      }
+      // THE LOG IS DONE AND NO SHOW FOLLOWS → AUTO TURNS OFF (Jeff, 2026-10-18: "when rows are done being played and there
+      // is no show following scheduled auto turns off and nothing plays"). Only after log rows have aired in this AUTO
+      // session (automation started before the first row still waits for it), and only once no deck is playing.
+      const anyPlaying = ["A", "B", "C"].some(d => { const st = this._deckState(d); return st && st.status === "playing"; });
+      if (!r.inShow && this._started && this._logAiredSinceStart && !anyPlaying) {
+        this._log("AUTO OFF: the log rows are done and no show follows — automation turned off, nothing plays");
+        this.stop();
+        this._logAiredSinceStart = false;
+        try { this.emit("enginestate", { stationId: this.stationId, state: this._engineState || "off", started: false }); } catch {}
+        try { this.emit("logreader-auto-off", { stationId: this.stationId, reason: "log-done-no-show" }); } catch {}
+        return;
       }
     }
     if (r.items.length) this._lastWaitReason = null;
+    // THE WAIT IS OVER (the next piece has started — the top of the hour, or a show's start): its first row goes to air
+    // now, not when the stall watchdog notices the silence.
+    if (_wasWaiting && r.items.length && this._started && this._mayDecide()
+        && !["A", "B", "C"].some(d => { const st = this._deckState(d); return st && st.status === "playing"; })) {
+      this._lastPlayingAt = Date.now();
+      setImmediate(() => { this._advance("log-due", () => this._resumePlayout()); });
+    }
     // THE PLAYOUT CHECK (Phase 3): rows refused because, by now, they break a rule against what aired. A row a deck already
     // holds is not refused here: it was checked when it was offered, and the deck airs it (stamping it 'skipped' would make
     // the record lie, as 'missed' did — the Phase 1 lesson).
@@ -1468,15 +1497,6 @@ class DaemonEngine {
         this._log(`PLAYOUT CHECK: "${k.title || "(untitled)"}" (row ${k.rowId}) skipped — ${k.rule} ${k.measuredMin} of ${k.settingMin} min`);
       }
       try { this.emit("logreader-missed", { stationId: this.stationId, count: r.skip.length, driftSec: r.driftSec, reason: "playout-check" }); } catch {}
-      // ...and the slot is picked again (design §3.2.2): the one pick, from the refused row's own category first, written
-      // to the log, so a refused song never leaves its category's rotation a song behind.
-      if (this._mayDecide()) {
-        const f = loggen.fillShortHour(this.db, this.stationId, fillAt, { categoryId: r.skip[0].categoryId });
-        if (f.rowId != null) {
-          this._log(`playout check: the slot is picked again — "${f.title}" (log row ${f.rowId})`);
-          try { r = loggen.readLogAnchored(this.db, this.stationId, 20, undefined, { seamTs }); } catch (e) { this._log("logreader refill error: " + String(e)); return; }
-        }
-      }
     }
 
     // THE BOUND HEAD IS THE CUED DECKS, AND IT STAYS IN THE QUEUE. (Reverted 2026-09-14, same night.)
@@ -1957,6 +1977,7 @@ class DaemonEngine {
    *  a newer go-live overtakes stamps its row 'played', never 'playing' over the newer one; a write that never lands
    *  is an alert (`not-stamped`). Never throws into playout. */
   _recordGoLive(deckId, st) {
+    if (this.deckSchedId && this.deckSchedId[deckId] != null) { this._logAiredSinceStart = true; this._lastLogRowAired = this.deckSchedId[deckId]; this._startAtPieceHead = false; }
     try {
       const schedId = this.deckSchedId[deckId] ?? null;
       const at = Math.floor(Date.now() / 1000);
@@ -2289,12 +2310,16 @@ class DaemonEngine {
   }
 
   // Fill (if empty), load deck A, play, and preload B/C — the unattended start.
-  async start() {
+  async start(opts = {}) {
     this.init();
     const wasStarted = this._started;
+    // A fresh AUTO session starts from the log's time, not from where an earlier session left off. A show's start
+    // (ether-audiod.js _showStartTick) begins at that piece's FIRST row.
+    if (!wasStarted) { this._lastLogRowAired = null; this._startAtPieceHead = !!opts.fromPieceStart; }
     // Coming back from MANUAL: the next refill's row-retirement is a handover, not a "behind" alarm.
     this._resumingFromManual = !wasStarted;
     this._started = true;   // Stage 3b: automation engaged — the stall watchdog is now allowed to recover.
+    if (!wasStarted) this._logAiredSinceStart = false;   // AUTO OFF at the log's end needs a log row aired in THIS session
     this._log("automationStart: requested" + (wasStarted ? " (already _started)" : " — _started false → true (automation engaged)"));
     // Log-Reader Flip Phase 3: announce the gate so a burn-in run (flag OFF) vs a flip run (flag ON) is
     // unambiguous in the daemon log. OFF = legacy playout + §2.7 boundary shadow only.

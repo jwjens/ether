@@ -854,6 +854,8 @@ const REGISTRY = {
       name:        'scalar',
       start_hour:  'scalar',
       end_hour:    'scalar',
+      start_minute: 'scalar',   // v65: shows start and end at any minute (audiod/show-window.js)
+      end_minute:   'scalar',
       days:        'scalar',
       color:       'scalar',
       description: 'scalar',

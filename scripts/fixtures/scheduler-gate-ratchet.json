@@ -11,7 +11,7 @@
       "T1_inLog": 0,
       "T2_breaking": 0,
       "T2_notLongest": 0,
-      "T3_failures": 23,
+      "T3_failures": 154,
       "T4_touched": 0,
       "T8_ahead": 0,
       "T11_unlinked": 0,
@@ -22,14 +22,14 @@
       "T1_inLog": 0,
       "T2_breaking": 0,
       "T2_notLongest": 0,
-      "T3_failures": 1762,
+      "T3_failures": 1268,
       "T4_touched": 0,
       "T8_ahead": 0,
       "T11_unlinked": 0,
-      "T18_off": 136
+      "T18_off": 328
     }
   },
-  "writtenAt": "2026-10-18T20:27:05.212Z",
+  "writtenAt": "2026-10-18T22:03:20.411Z",
   "days": 7,
   "seed": 1
 }

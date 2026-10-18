@@ -179,7 +179,7 @@ function pressX(which) {
   let guard = 0;
   while (nowS() < END && guard++ < 5000) {
     const live = ["A", "B", "C"].find(d => card[d].status === "playing");
-    if (!live) { await e._advance("watchdog-recover", () => e._resumePlayout()); await flush(); continue; }
+    if (!live) { NOW += 2000; await refill(); await e._advance("watchdog-recover", () => e._resumePlayout()); await flush(); continue; }   // a planned silence: the clock still moves
     const len = REAL_LEN.get(card[live].file) || 180;
     // events during the song
     if (!did.x1 && nowS() >= T0 + 1200) { did.x1 = true; pressX("pending"); await flush(); }

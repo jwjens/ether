@@ -98,6 +98,13 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
   const [showName, setShowName]       = useState("");
   const [startHour, setStartHour]     = useState(6);
   const [endHour, setEndHour]         = useState(10);
+  // v65: shows start and end at any minute (the show schedule is the boundary)
+  const [startMin, setStartMin]       = useState(0);
+  const [endMin, setEndMin]           = useState(0);
+  const _t = (h: number, m: number) => `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  const _p = (v: string): [number, number] => { const [a, b] = String(v || "0:0").split(":"); return [Math.max(0, Math.min(23, parseInt(a) || 0)), Math.max(0, Math.min(59, parseInt(b) || 0))]; };
+  const _f = (h: number, m: number) => m ? `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}` : fmtHour(h);
+  const _overnight = (endHour * 60 + endMin) !== 0 && (endHour * 60 + endMin) <= (startHour * 60 + startMin);
   const [activeDays, setActiveDays]   = useState("0123456");
   const [showColor, setShowColor]     = useState("var(--accent-blue)");
 
@@ -174,7 +181,7 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
     setSaveError("");
     try {
       await (window as any).ether.shows.create({
-        station_id: stationId, name: showName.trim(), start_hour: startHour, end_hour: endHour,
+        station_id: stationId, name: showName.trim(), start_hour: startHour, end_hour: endHour, start_minute: startMin, end_minute: endMin,
         color: showColor, days: activeDays || "0123456", is_active: 1, clock_id: selectedClockId,
       });
       onDone();
@@ -246,19 +253,15 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
               <Card>
                 <Label>Time Range</Label>
                 <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                  <select value={startHour} onChange={e => setStartHour(+e.target.value)}
-                    style={{ flex: 1, padding: "8px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
-                    {HOURS.map(h => <option key={h} value={h}>{fmtHour(h)}</option>)}
-                  </select>
+                  <input type="time" step={60} aria-label="Show starts" value={_t(startHour, startMin)} onChange={e => { const [h, m] = _p(e.target.value); setStartHour(h); setStartMin(m); }}
+                    style={{ flex: 1, padding: "8px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
                   <span style={{ color: "var(--text-tertiary)", fontSize: 13 }}>to</span>
-                  <select value={endHour} onChange={e => setEndHour(+e.target.value)}
-                    style={{ flex: 1, padding: "8px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
-                    {HOURS.map(h => <option key={h} value={h}>{fmtHour(h)}</option>)}
-                  </select>
+                  <input type="time" step={60} aria-label="Show ends" value={_t(endHour, endMin)} onChange={e => { const [h, m] = _p(e.target.value); setEndHour(h); setEndMin(m); }}
+                    style={{ flex: 1, padding: "8px 10px", borderRadius: 0, fontSize: 12, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
                 </div>
-                {endHour !== 0 && endHour <= startHour && (
+                {_overnight && (
                   <div style={{ marginTop: 6, fontSize: 10, color: "#fbbf24" }}>
-                    ⚠ End hour is before start hour — this will be treated as an overnight show.
+                    ⚠ The end is before the start — this will be treated as an overnight show.
                   </div>
                 )}
               </Card>
@@ -423,8 +426,8 @@ export default function CreateShowWizard({ onClose, onDone }: Props) {
                   <div>
                     <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'Newsreader', Georgia, serif", color: "var(--text-primary)", letterSpacing: "-0.02em" }}>{showName || "(no name)"}</div>
                     <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
-                      {fmtHour(startHour)} – {fmtHour(endHour)}
-                      {endHour !== 0 && endHour <= startHour ? " (overnight)" : ""}
+                      {_f(startHour, startMin)} – {_f(endHour, endMin)}
+                      {_overnight ? " (overnight)" : ""}
                     </div>
                     <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
                       {activeDays.split("").map(d => DAYS[+d]).join(" · ")}

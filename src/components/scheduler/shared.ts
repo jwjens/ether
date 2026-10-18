@@ -23,6 +23,17 @@ export function fmtHour(h: number): string {
 }
 
 
+/** A show time, to the minute (v65: shows start and end at any minute). 9:30 PM, 3 PM. */
+export function fmtShowTime(h: number, m?: number | null): string {
+  const mm = m ? m | 0 : 0;
+  if (!mm) return fmtHour(h | 0);
+  const hh = h | 0, h12 = hh % 12 === 0 ? 12 : hh % 12;
+  return `${h12}:${String(mm).padStart(2, "0")} ${hh < 12 ? "AM" : "PM"}`;
+}
+/** "HH:MM" for an <input type="time"> */
+export const toTimeInput = (h?: number | null, m?: number | null) => `${String(h ?? 0).padStart(2, "0")}:${String(m ?? 0).padStart(2, "0")}`;
+export const fromTimeInput = (v: string): [number, number] => { const [a, b] = String(v || "0:0").split(":"); return [Math.max(0, Math.min(23, parseInt(a) || 0)), Math.max(0, Math.min(59, parseInt(b) || 0))]; };
+
 export function fmtClockPos(totalMin: number): string {
   const m = Math.floor(totalMin);
   const s = Math.round((totalMin - m) * 60);

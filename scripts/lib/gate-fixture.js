@@ -81,7 +81,7 @@ function buildFixtureDb(outPath, { schemaFrom, migrate } = {}) {
   const rule = (sid, type, value, active = 1) => insert(db, "separation_rules", { station_id: sid, rule_type: type, value, is_active: active, is_hard: 1, scope: "station", uuid: uid(`rule:${sid}:${type}`), created_at: iso, updated_at: iso });
   const clock = (sid, name) => insert(db, "clocks", { station_id: sid, name, uuid: uid(`clock:${sid}:${name}`), created_at: iso, updated_at: iso });
   const slot = (sid, clockId, pos, type, catId, extra = {}) => insert(db, "clock_slots", { clock_id: clockId, position: pos, slot_type: type, category_id: catId, duration_min: 4, station_id: sid, uuid: uid(`slot:${clockId}:${pos}`), created_at: iso, updated_at: iso, ...extra });
-  const show = (sid, name, start, end, clockId) => insert(db, "shows", { station_id: sid, name, start_hour: start, end_hour: end, days: "0123456", is_active: 1, clock_id: clockId, uuid: uid(`show:${sid}:${name}`), created_at: iso, updated_at: iso });
+  const show = (sid, name, start, end, clockId, startMin = 0, endMin = 0) => insert(db, "shows", { station_id: sid, name, start_hour: start, end_hour: end, start_minute: startMin, end_minute: endMin, days: "0123456", is_active: 1, clock_id: clockId, uuid: uid(`show:${sid}:${name}`), created_at: iso, updated_at: iso });
 
   // ── FX-EVENING ──
   const e = mkStation("evening", "FX-EVENING");
@@ -96,12 +96,11 @@ function buildFixtureDb(outPath, { schemaFrom, migrate } = {}) {
   for (let i = 1; i <= 5; i++) eSongs.push({ cat: eSmall, id: song(eSmall, `Small Song ${i}`, `Small Artist ${(i % 2) + 1}`, `e-small-${i}.mp3`, 200 + i * 11), file: `C:/fixture/e-small-${i}.mp3`, title: `Small Song ${i}`, artist: `Small Artist ${(i % 2) + 1}` });
   const eClock = clock(e, "Evening clock");
   for (let p = 0; p < 15; p++) slot(e, eClock, p, "music", p % 3 === 2 ? eSmall : eBig);
-  // A SHOW CHANGE mid-evening: Evening Show 15–21, then Late Show 21–22 on its own clock (shows change on the hour; the
-  // schema has no minutes for a show's start).
-  show(e, "Evening Show", 15, 21, eClock);
+  // A SHOW CHANGE at 21:30: Evening Show 15:00–21:30, then Late Show 21:30–22:30 on its own clock, nothing after.
+  show(e, "Evening Show", 15, 21, eClock, 0, 30);       // ends 21:30 (v65: any minute)
   const lateClock = clock(e, "Late clock");
   for (let p = 0; p < 15; p++) slot(e, lateClock, p, "music", p % 2 ? eSmall : eBig);
-  show(e, "Late Show", 21, 22, lateClock);
+  show(e, "Late Show", 21, 22, lateClock, 30, 30);      // 21:30–22:30, nothing after it: AUTO turns off
 
   // ── FX-ALLDAY ──
   const d = mkStation("allday", "FX-ALLDAY");
