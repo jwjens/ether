@@ -61,12 +61,16 @@
    - A log edit made in one module must show at once in the other.
    - A static check fails the build if anyone adds a page that isn't a layout of registered modules.
 
-**Decisions I need from you** (§5):
-1. Per-module station.
-2. dockview as the one layout engine.
-3. Layout ownership.
-4. The order modules are converted in.
-5. Whether the main window converts in this project or after.
+**Decisions: Jeff ruled all six on 2026-10-18** (§5):
+- one station per layout now;
+- dockview, and the canvas deleted;
+- a synced `screen_layouts` table, per station plus per user profile;
+- Carts, Program Log and Library first;
+- the main window after the scheduler ships;
+- the canvas rows left alone.
+
+**Phase 1 is GO:** the registry, the Carts, Program Log and Library modules, their parity tests, and the no-hard-coded-page
+check. It is built in a separate git worktree for `ui/screen-builder`, never on the scheduler branch.
 
 ---
 
@@ -341,17 +345,29 @@ Phase 0 and get a row in this table before their phase starts. None is converted
 
 ---
 
-## 5. Decisions for Jeff
-1. **Per-module station:**
-   - **(a)** A layout is one station; every module follows it; two stations means two surfaces. Keeps the "station is a
-     context" ruling.
-   - **(b)** A module may name its own station, shown in its header in that station's colour.
-   - **Recommended: (a) now, (b) as a per-layout option.**
-2. **dockview as the one layout engine,** and the canvas deleted? Recommended.
-3. **Layout ownership:** shared per station plus per user profile, in a synced `screen_layouts` table. Recommended.
-4. **First modules:** Carts, Program Log, Library (your list), then the order in Phase 4?
-5. **The main window:** convert it in this project (Phase 5), or after the scheduler work ships? It is the largest piece, and
-   everything else stands without it.
-6. **The `canvas_*` rows on installs:** leave them (recommended), or a later cleanup?
+## 5. Jeff's decisions (2026-10-18)
+1. **Station:** one station per layout now. Per-module station comes later, as an option per layout (§2.3 (a), then (b)).
+2. **dockview is the one layout engine. The canvas is deleted** (§2.2, §2.9).
+3. **Layouts** live in a synced `screen_layouts` table, per station plus per user profile (§2.5).
+4. **Module order:** Carts, Program Log and Library first. Then decks, faders/board, meters, announcements and clocks. Then
+   the rest of Phase 4 as listed.
+5. **The main window** converts **after the scheduler ships** (Phase 5 waits).
+6. **The old `canvas_*` rows** on installs are left alone.
 
-**Stop.** Nothing is built until Jeff says GO.
+**GO on Phase 1** (Jeff's scope, 2026-10-18):
+- the registry;
+- the Carts, Program Log and Library modules;
+- their parity tests;
+- the no-hard-coded-page check.
+
+It is built in a separate git worktree for `ui/screen-builder`, so it never swaps out the scheduler branch. Local commits
+only. Stop after Phase 1 and report.
+
+That merges this plan's Phases 0–2 as follows:
+- **in:** the registry and frame (station scope, instance id, options) and S4/S5 from Phase 0–1;
+- **in:** the three modules with their help, empty states and proofs S1–S4/S6/S7 from Phase 2;
+- **in:** the canvas deletion (decision 2);
+- **later:** the builder window (dockview surface, palette, save/open) and the `screen_layouts` table, unless Jeff adds them
+  to Phase 1.
+
+**Stop after Phase 1 and report.**
