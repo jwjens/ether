@@ -214,6 +214,37 @@ function readGeneratedSchedule(db, count, stationId) {
 // in the morning on 10/17. Now that case is mode 'nothing-due', with the time the next row becomes due.
 // UNSCHEDULED rows (Phase 2: a slot no song could fill) are never offered: they are not audio.
 function _hourEnd(ts) { const d = new Date(ts * 1000); d.setMinutes(0, 0, 0); return Math.floor(d.getTime() / 1000) + 3600; }
+
+// ── WHAT AN HOUR DOES IS THE PD'S CHOICE (Jeff, 2026-10-18: "you dont decide what an hour does you just make the
+// infrastructure thats the pds job"). Per station, in station_config_kv; Preferences → Hour Behaviour sets them.
+//   late_hour_mode   'catch_up'   — rows whose time has passed are stamped missed and the log jumps to the row for now
+//                    'keep_spots' — as catch_up, but passed-over SPOTS still play (in log order) before the row for now
+//                    'play_all'   — nothing is passed over: every row plays in order after the last one that aired
+//                                   today, and the hour runs as late as it runs
+//   short_hour_mode  'fill'       — nothing of the hour is left before :00: a song from the hour's own clock (fillShortHour)
+//                    'silence'    — nothing of the hour is left: silence until the next row is due
+// UNSET is shown on screen as unset, with what the reader does today (catch_up / fill) as the current behaviour.
+const LATE_MODES = ["catch_up", "keep_spots", "play_all"];
+const SHORT_MODES = ["fill", "silence"];
+function hourBehaviour(db, stationId) {
+  const out = { late: null, short: null };
+  try {
+    for (const r of db.prepare("SELECT key, value FROM station_config_kv WHERE station_id = ? AND key IN ('late_hour_mode','short_hour_mode') AND deleted_at IS NULL").all(stationId)) {
+      if (r.key === "late_hour_mode" && LATE_MODES.includes(r.value)) out.late = r.value;
+      if (r.key === "short_hour_mode" && SHORT_MODES.includes(r.value)) out.short = r.value;
+    }
+  } catch {}
+  return { late: out.late, short: out.short, lateEffective: out.late || "catch_up", shortEffective: out.short || "fill" };
+}
+// The scheduled time of the last log row that went to air today (music or spot; imaging is not a log position).
+function _lastAiredToday(db, stationId, nowTs) {
+  try {
+    const d0 = new Date(nowTs * 1000); d0.setHours(0, 0, 0, 0);
+    const r = db.prepare(`SELECT MAX(scheduled_at) ts FROM generated_schedule WHERE station_id = ? AND deleted_at IS NULL AND state IN ('played','playing')
+        AND (content_class IS NULL OR content_class NOT IN ('JIN','SWP','UNSCHEDULED')) AND scheduled_at >= ? AND scheduled_at <= ?`).get(stationId, Math.floor(d0.getTime() / 1000), nowTs + 86400);
+    return r && r.ts != null ? r.ts : null;
+  } catch { return null; }
+}
 function selectRowForNow(db, stationId, nowTs, slackSec = 60, opts = null) {
   try {
     const fmt = getFormatCategoryIds(db, stationId);
@@ -254,6 +285,16 @@ function selectRowForNow(db, stationId, nowTs, slackSec = 60, opts = null) {
              AND gs.scheduled_at < ? ORDER BY gs.scheduled_at, gs.id LIMIT 1`
         ).get(stationId, ...fmtP, win.fromTs, win.toTs, playRow.scheduled_at);
         if (head) playRow = head;
+      }
+    }
+    // PLAY ALL (late_hour_mode): nothing is passed over — the row for now is the first still-pending row after the last
+    // one that aired today. Before anything has aired today the ordinary choice stands (automation started late).
+    if (playRow && hourBehaviour(db, stationId).lateEffective === "play_all") {
+      const lastTs = _lastAiredToday(db, stationId, nowTs);
+      if (lastTs != null) {
+        const first = db.prepare(`SELECT ${cols} ${base} AND gs.scheduled_at >= ? AND gs.scheduled_at < ? ORDER BY gs.scheduled_at, gs.id LIMIT 1`)
+          .get(stationId, ...fmtP, lastTs, playRow.scheduled_at);
+        if (first) playRow = first;
       }
     }
     if (playRow) {
@@ -323,6 +364,25 @@ function readLogAnchored(db, stationId, count = 20, slackSec = 60, opts = null) 
     missedRowIds = db.prepare(`SELECT gs.id AS row_id ${pendBase} AND gs.scheduled_at >= ? AND gs.scheduled_at < ? ORDER BY gs.scheduled_at`)
       .all(stationId, ...fmtP, dayStart, anchorTs).map(r => r.row_id);
   } catch { /* leave empty */ }
+  // KEEP SPOTS (late_hour_mode): a spot the catch-up would pass over is not stamped missed — it plays, in log order,
+  // before the row for now. Only spots after the last row that aired today (before anything aired: from the anchor's
+  // hour), so a late start never replays hours of old breaks.
+  let keptSpots = [];
+  if (missedRowIds.length && hourBehaviour(db, stationId).lateEffective === "keep_spots") {
+    try {
+      const lastTs = _lastAiredToday(db, stationId, nowTs);
+      const fromTs = lastTs != null ? lastTs : _hourEnd(anchorTs) - 3600;
+      keptSpots = db.prepare(
+        `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, COALESCE(gs.file_key, s.file_key) AS file_key,
+                COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start, gs.content_class,
+                COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms, gs.category_id
+         FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
+         WHERE gs.station_id = ? AND gs.state = 'pending' AND gs.deleted_at IS NULL AND gs.content_class = 'SPOT'
+           AND gs.scheduled_at >= ? AND gs.scheduled_at < ? ORDER BY gs.scheduled_at, gs.id`).all(stationId, fromTs, anchorTs);
+      const keep = new Set(keptSpots.map(r => r.row_id));
+      missedRowIds = missedRowIds.filter(id => !keep.has(id));
+    } catch { keptSpots = []; }
+  }
   // ITEMS: the row-for-now forward, inside the hours that have started (never ahead of the clock).
   let rows = [];
   try {
@@ -356,7 +416,7 @@ function readLogAnchored(db, stationId, count = 20, slackSec = 60, opts = null) 
     skip.push({ rowId: r0.row_id, title: r0.title, categoryId: r0.category_id ?? null, rule: b.rule, measuredMin: b.measuredMin, settingMin: b.settingMin });
     rows.shift();
   }
-  const items = rows.filter(r => r.file_path).map(r => ({ ...toItem(r), schedId: r.row_id }));
+  const items = [...keptSpots, ...rows].filter(r => r.file_path).map(r => ({ ...toItem(r), schedId: r.row_id }));
   return { items, mode: items.length ? d.mode : "nothing-due", missedRowIds, skip, driftSec: d.driftSec, aheadBySec: 0, limitTs: d.limitTs,
     nextDueTs: items.length ? null : (d.nextDueTs ?? null) };
 }
@@ -379,6 +439,9 @@ function fillShortHour(db, stationId, atTs, opts = null) {
     let tol = 0;   // nothing built in (Jeff, 2026-10-18): until the station sets fill_tolerance_sec, a short hour fills up to :00
     try { const r = db.prepare("SELECT value FROM station_config_kv WHERE station_id=? AND key='fill_tolerance_sec' AND deleted_at IS NULL").get(stationId); if (r && r.value !== "" && Number.isFinite(Number(r.value)) && Number(r.value) >= 0) tol = Number(r.value); } catch {}
     if (hourEnd - atTs < tol) return { rowId: null, reason: "tolerance", retryAt: hourEnd };
+    // short_hour_mode 'silence': the PD chose silence until the next row is due — nothing is added to the log.
+    // (A refused slot's re-pick, opts.categoryId, is that slot's own song, not a short hour: it is not affected.)
+    if (!(opts && opts.categoryId != null) && hourBehaviour(db, stationId).shortEffective === "silence") return { rowId: null, reason: "silence-by-setting", retryAt: hourEnd };
     const hour = new Date(atTs * 1000).getHours(), day = String(new Date(atTs * 1000).getDay());
     const show = db.prepare(`SELECT clock_id, start_hour, end_hour, days FROM shows WHERE is_active = 1 AND clock_id IS NOT NULL AND deleted_at IS NULL AND station_id = ?`).all(stationId)
       .find(r => r.days.includes(day) && ((r.end_hour === 0 || r.end_hour === r.start_hour) ? hour >= r.start_hour : r.end_hour > r.start_hour ? (hour >= r.start_hour && hour < r.end_hour) : (hour >= r.start_hour || hour < r.end_hour)));
@@ -580,7 +643,7 @@ function fillQueue(db, stationId, count = 12) {
   return { source: clock ? `one pick: clock "${clock.showName}"` : "no clock", tier: 1, formatCats: cats, items, starved };
 }
 
-module.exports = { fillQueue, getActiveShowClock, getFormatCategoryIds, getStationCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, readAutoPostForSong, selectRowForNow, readLogAnchored, fillShortHour, eligibleForFit,
+module.exports = { fillQueue, getActiveShowClock, getFormatCategoryIds, getStationCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, readAutoPostForSong, selectRowForNow, readLogAnchored, fillShortHour, hourBehaviour, eligibleForFit,
   // Internals, exposed for tests only — not part of the daemon's API. The category gate is the kind
   // of rule that is silently deleted by a future refactor unless something asserts it.
   _test: { baseConditions } };
