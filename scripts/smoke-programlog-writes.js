@@ -142,7 +142,7 @@ const sandbox = new Function(
   "ipcMain", "db", "require", "getActiveStationId", "_healthEvent", "_genEmit", "_placeJingles",
   "finishGenerateRun", "retireStaleScheduleRows", "_hourRanges", "_fmtHour", "buildScheduleCtx",
   "generateDayRows", "resetGenSlice", "Date", "console", "sendToAllWindows", "path",
-  "_stationUuidById", "storedBasename",
+  "_stationUuidById", "storedBasename", "_unschedReport",
   src
 );
 const handlers = {};
@@ -157,7 +157,9 @@ sandbox(
   (id) => db.prepare("SELECT uuid FROM stations WHERE id = ?").get(id)?.uuid || null,
   // main.js imports it at the top level (electron/main.js: `const { storedBasename } = require('./audio-library-index')`);
   // the lifted handlers use it (editRowFields' swap), so the sandbox passes the real one.
-  require(path.join(root, "electron", "audio-library-index.js")).storedBasename
+  require(path.join(root, "electron", "audio-library-index.js")).storedBasename,
+  // Generate's UNSCHEDULED report (main.js _unschedReport, Phase 2) is a top-level helper the lifted handlers call
+  (ctx) => (ctx && ctx.unscheduled) || []
 );
 check("handlers registered: generateDay, generateDays, clearDay, get, moveRow, deleteRow, editRowFields, checkRow", ["schedule:generateDay", "schedule:generateDays", "schedule:clearDay", "schedule:get", "schedule:moveRow", "schedule:deleteRow", "schedule:editRowFields", "schedule:checkRow"].every(k => !!handlers[k]));
 const get = (from, to, sid = 1) => { const r = handlers["schedule:get"](null, from, to, sid); if (r.error) throw new Error("schedule:get → " + r.error); return r.data; };

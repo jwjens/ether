@@ -100,13 +100,18 @@ function breach(tl, song, ts, rules) {
  * Returns { song, lastAired } for the longest-waiting song that passes every rule, or { song: null, closest } naming the
  * songs that came closest and the rule that blocked each. `rand` breaks an exact tie (Math.random by default).
  */
-function pick(pool, ts, tl, rules, rand = Math.random) {
+// opts.spokenFor (the reader's fill only): Map recording → the time a song is already planned LATER in today's log. Such
+// a song is spoken for — it will air then — so for "waited longest" it counts as aired at that planned time. Without it a
+// fill takes the longest-waiting song now and the log airs it again an hour later while others have not aired at all.
+function pick(pool, ts, tl, rules, rand = Math.random, opts = null) {
   let best = Infinity; const ties = []; const blocked = [];
+  const spoken = opts && opts.spokenFor;
   for (const s of pool) {
     const b = breach(tl, s, ts, rules);
     if (b) { blocked.push({ s, b }); continue; }
     const last = tl.lastBefore(s.file, ts);
-    const w = last == null ? -Infinity : last;
+    let w = last == null ? -Infinity : last;
+    if (spoken) { const at = spoken.get(recordingKey(s.file)); if (at != null && at > w) w = at; }
     if (w < best) { best = w; ties.length = 0; ties.push(s); }
     else if (w === best) ties.push(s);
   }
@@ -154,7 +159,7 @@ function poolFor(db, categoryId, hour) {
  * its log still to air (scheduled at or after `beforeTs`) that will still be there after the run (outside `replace` =
  * [from, to), or operator-owned inside it).
  */
-function loadTimeline(db, stationId, { beforeTs, replace } = {}) {
+function loadTimeline(db, stationId, { beforeTs, replace, sinceTs, poolFiles } = {}) {
   const split = makeSplitter();
   const tl = new Timeline(split);
   const byFile = new Map();
@@ -162,9 +167,23 @@ function loadTimeline(db, stationId, { beforeTs, replace } = {}) {
     const k = recordingKey(s.f || s.k); if (k && !byFile.has(k)) byFile.set(k, s);
   } } catch {}
   try {
-    for (const p of db.prepare("SELECT file_path, title, artist, played_at FROM play_log WHERE station_id = ? AND deleted_at IS NULL AND (content_class IS NULL OR content_class = 'MUSIC') AND played_at < ? ORDER BY played_at").all(stationId, beforeTs ?? 9e12)) {
+    // sinceTs (the reader's fill, on the air loop): only the plays inside the rules' reach, plus — for "waited longest" —
+    // each candidate's one last airing before that. Generate reads the whole history once per run (main process).
+    for (const p of db.prepare("SELECT file_path, title, artist, played_at FROM play_log WHERE station_id = ? AND deleted_at IS NULL AND (content_class IS NULL OR content_class = 'MUSIC') AND played_at < ? AND played_at >= ? ORDER BY played_at").all(stationId, beforeTs ?? 9e12, sinceTs ?? 0)) {
       const s = byFile.get(recordingKey(p.file_path));
       tl.add({ file: p.file_path, artist: s ? s.artist : p.artist, title: s ? s.title : p.title }, p.played_at);
+    }
+    if (sinceTs && poolFiles && poolFiles.length) {
+      // BY RECORDING, not by stored path: one recording can sit on two song rows under two paths (a duplicate), and it
+      // aired under whichever path its row had. Matching paths missed the other row's airings and the duplicate looked
+      // never aired (found in the gate: one recording twice in 68 min while 75 others waited 3½ h).
+      const want = new Set(poolFiles.map(recordingKey).filter(Boolean));
+      const last = new Map();
+      for (const r of db.prepare("SELECT file_path, MAX(played_at) t FROM play_log WHERE station_id = ? AND deleted_at IS NULL AND played_at < ? AND file_path IS NOT NULL GROUP BY file_path").all(stationId, sinceTs)) {
+        const k = recordingKey(r.file_path);
+        if (k && want.has(k) && r.t != null && !(last.get(k) >= r.t)) last.set(k, r.t);
+      }
+      for (const [k, t] of last) Timeline._ins(tl.rec, k, t);
     }
   } catch {}
   try {

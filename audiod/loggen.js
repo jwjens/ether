@@ -329,7 +329,7 @@ function readLogAnchored(db, stationId, count = 20, slackSec = 60, opts = null) 
     rows = db.prepare(
       `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, COALESCE(gs.file_key, s.file_key) AS file_key,
               COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start, gs.content_class,
-              COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms, s.title AS song_title, a.name AS song_artist, s.no_repeat_hours
+              COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms, s.title AS song_title, a.name AS song_artist, s.no_repeat_hours, gs.category_id
        ${pendBase} AND gs.scheduled_at >= ? AND gs.scheduled_at < ? ORDER BY gs.scheduled_at LIMIT ?`
     ).all(stationId, ...fmtP, anchorTs, d.limitTs, count);
   } catch {
@@ -353,7 +353,7 @@ function readLogAnchored(db, stationId, count = 20, slackSec = 60, opts = null) 
     if (r0.content_class && r0.content_class !== "MUSIC") break;          // spots and imaging are not songs
     const b = fails(r0);
     if (!b) break;
-    skip.push({ rowId: r0.row_id, title: r0.title, rule: b.rule, measuredMin: b.measuredMin, settingMin: b.settingMin });
+    skip.push({ rowId: r0.row_id, title: r0.title, categoryId: r0.category_id ?? null, rule: b.rule, measuredMin: b.measuredMin, settingMin: b.settingMin });
     rows.shift();
   }
   const items = rows.filter(r => r.file_path).map(r => ({ ...toItem(r), schedId: r.row_id }));
@@ -370,35 +370,55 @@ function readLogAnchored(db, stationId, count = 20, slackSec = 60, opts = null) 
 //                 before the first log row waits for it);
 //   'tolerance' — less than the station's fill tolerance (setting fill_tolerance_sec; none unless set) is left before :00;
 //   'nothing-passes' — no song in the clock's categories (or the fallback) passes the rules.
-function fillShortHour(db, stationId, atTs) {
+// opts.categoryId: the slot's own category first (a row the playout check refused: "the pick is run again for that slot",
+// design §3.2.2), then the clock's order.
+function fillShortHour(db, stationId, atTs, opts = null) {
   try {
     const core = require("./scheduler-core.js");
     const hourEnd = _hourEnd(atTs);
     let tol = 0;   // nothing built in (Jeff, 2026-10-18): until the station sets fill_tolerance_sec, a short hour fills up to :00
     try { const r = db.prepare("SELECT value FROM station_config_kv WHERE station_id=? AND key='fill_tolerance_sec' AND deleted_at IS NULL").get(stationId); if (r && r.value !== "" && Number.isFinite(Number(r.value)) && Number(r.value) >= 0) tol = Number(r.value); } catch {}
-    if (hourEnd - atTs < tol) return { rowId: null, reason: "tolerance" };
+    if (hourEnd - atTs < tol) return { rowId: null, reason: "tolerance", retryAt: hourEnd };
     const hour = new Date(atTs * 1000).getHours(), day = String(new Date(atTs * 1000).getDay());
     const show = db.prepare(`SELECT clock_id, start_hour, end_hour, days FROM shows WHERE is_active = 1 AND clock_id IS NOT NULL AND deleted_at IS NULL AND station_id = ?`).all(stationId)
       .find(r => r.days.includes(day) && ((r.end_hour === 0 || r.end_hour === r.start_hour) ? hour >= r.start_hour : r.end_hour > r.start_hour ? (hour >= r.start_hour && hour < r.end_hour) : (hour >= r.start_hour || hour < r.end_hour)));
-    if (!show) return { rowId: null, reason: "no-show" };
+    if (!show) return { rowId: null, reason: "no-show", retryAt: hourEnd };
     const cats = db.prepare(`SELECT category_id FROM clock_slots WHERE clock_id = ? AND slot_type = 'music' AND category_id IS NOT NULL AND deleted_at IS NULL ORDER BY position`).all(show.clock_id).map(r => r.category_id);
-    if (!cats.length) return { rowId: null, reason: "no-show" };
+    if (!cats.length) return { rowId: null, reason: "no-show", retryAt: hourEnd };
     // The clock's next music category: after the last music row of this hour (in clock order), else the first.
     const hs = hourEnd - 3600;
     const last = db.prepare(`SELECT category_id FROM generated_schedule WHERE station_id = ? AND deleted_at IS NULL AND song_id IS NOT NULL AND (content_class IS NULL OR content_class = 'MUSIC')
         AND scheduled_at >= ? AND scheduled_at < ? ORDER BY scheduled_at DESC LIMIT 1`).get(stationId, hs, hourEnd);
     let i = last ? cats.indexOf(last.category_id) : -1;
+    if (opts && opts.categoryId != null && cats.includes(opts.categoryId)) i = cats.indexOf(opts.categoryId) - 1;
     const rules = core.stationRules(db, stationId);
-    const tl = core.loadTimeline(db, stationId, { beforeTs: atTs });
     const fallback = core.fallbackCategory(db, stationId);
-    let chosen = null, cat = null;
+    // ON THE AIR LOOP: read only what the rules can reach (the longest rule, or the longest per-song no-repeat hours)
+    // plus each candidate's one last airing — never the whole history (T19: nothing on the air loop waits on the DB).
+    const pools = new Map();
+    for (const c of [...new Set([...cats, ...(fallback ? [fallback] : [])])]) pools.set(c, core.poolFor(db, c, hour));
+    let reach = Math.max(rules.songMin || 0, rules.artistMin || 0, rules.titleMin || 0);
+    for (const pl of pools.values()) for (const so of pl) if (so.noRepeatHours) reach = Math.max(reach, Number(so.noRepeatHours) * 60);
+    const files = [...new Set([...pools.values()].flat().map(so => so.file_path).filter(Boolean))];
+    const tl = core.loadTimeline(db, stationId, { beforeTs: atTs, sinceTs: atTs - reach * 60, poolFiles: files });
+    // Songs already planned later TODAY are spoken for (scheduler-core pick opts.spokenFor).
+    const spokenFor = new Map();
+    try {
+      const d1 = new Date(atTs * 1000); d1.setHours(24, 0, 0, 0);
+      for (const r of db.prepare(`SELECT COALESCE(gs.file_key, gs.file_path, s.file_path) f, MIN(gs.scheduled_at) t FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id
+          WHERE gs.station_id = ? AND gs.deleted_at IS NULL AND gs.state = 'pending' AND gs.song_id IS NOT NULL AND gs.scheduled_at > ? AND gs.scheduled_at < ? GROUP BY 1`).all(stationId, atTs, Math.floor(d1.getTime() / 1000)))
+        { const k = core.recordingKey(r.f); if (k) spokenFor.set(k, r.t); }
+    } catch {}
+    let chosen = null, cat = null, shortest = Infinity;
+    const tryCat = (c) => { const r = core.pick(pools.get(c) || [], atTs, tl, rules, Math.random, { spokenFor }); if (r.song) return r; for (const x of (r.closest || [])) shortest = Math.min(shortest, x.shortMin); return null; };
     for (let k = 0; k < cats.length && !chosen; k++) {
       i = (i + 1) % cats.length;
-      const r = core.pick(core.poolFor(db, cats[i], hour), atTs, tl, rules);
-      if (r.song) { chosen = r; cat = cats[i]; }
+      const r = tryCat(cats[i]);
+      if (r) { chosen = r; cat = cats[i]; }
     }
-    if (!chosen && fallback) { const r = core.pick(core.poolFor(db, fallback, hour), atTs, tl, rules); if (r.song) { chosen = r; cat = fallback; } }
-    if (!chosen) return { rowId: null, reason: "nothing-passes" };
+    if (!chosen && fallback) { const r = tryCat(fallback); if (r) { chosen = r; cat = fallback; } }
+    // Nothing passes: try again when the closest blocked song becomes free (the rule says when), or at :00.
+    if (!chosen) return { rowId: null, reason: "nothing-passes", retryAt: Number.isFinite(shortest) ? Math.min(hourEnd, atTs + Math.ceil(shortest * 60)) : hourEnd };
     const s = chosen.song, iso = new Date().toISOString();
     const res = db.prepare(`INSERT INTO generated_schedule (scheduled_at, song_id, title, artist, file_key, file_path, duration_s, category_id, clock_id, station_id, uuid, state, source, content_class, pick_reason, created_at, updated_at, generated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'fill', 'MUSIC', ?, ?, ?, ?)`)

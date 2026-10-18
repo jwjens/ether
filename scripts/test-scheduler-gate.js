@@ -56,13 +56,17 @@ const RUN_DIR = opt("--run-dir", null);
 
 const dbPaths = [];
 for (let i = 0; i < argv.length; i++) if (argv[i] === "--db") dbPaths.push(argv[i + 1]);
+// THE GATE TESTS ITS OWN STATIONS (Jeff, 2026-10-18). With no --db, the fixture database is built (scripts/lib/
+// gate-fixture.js) and only its stations are tested; an installed database lends its SCHEMA, never its rows.
+const FIXTURE = !dbPaths.length || flag("--fixture");
+const SCHEMA_SOURCES = [];
 if (!dbPaths.length) {
   const prof = path.join(process.env.LOCALAPPDATA || "", "Ether", "profiles");
   try {
     for (const d of fs.readdirSync(prof)) {
       if (d.includes(".retired") || d.startsWith("_")) continue;
       const f = path.join(prof, d, "openair.db");
-      if (fs.existsSync(f)) dbPaths.push(f);
+      if (fs.existsSync(f)) SCHEMA_SOURCES.push(f);
     }
   } catch { /* none */ }
 }
@@ -289,14 +293,21 @@ async function simulateStation(w, P, F, R) {
       // Phase 2/3 engine (engine.js _refillFromLog), modelled the same way: rows the playout check refused are stamped
       // 'skipped'; nothing due → the hour's own clock fills (the row is written to the log first) or the station waits.
       const stampSkips = (rr) => { for (const k of (rr.skip || [])) { w.prepare("UPDATE generated_schedule SET state='skipped', pick_reason=? WHERE id=? AND station_id=? AND state='pending'").run(`skipped at playout: ${k.rule} ${k.measuredMin}/${k.settingMin} min`, k.rowId, sid); skippedAtPlayout++; } };
-      stampSkips(r);
+      if (r.skip && r.skip.length) {
+        stampSkips(r);
+        // engine.js: the refused row's slot is picked again from its own category (design §3.2.2)
+        const f0 = P.loggen.fillShortHour(w, sid, nowSec(), { categoryId: r.skip[0].categoryId });
+        if (f0.rowId != null) { fills++; r = P.loggen.readLogAnchored(w, sid, 20); stampSkips(r); }
+      }
       if (!r.items.length) {
         const f = P.loggen.fillShortHour(w, sid, nowSec());
         if (f.rowId != null) { fills++; r = P.loggen.readLogAnchored(w, sid, 20); stampSkips(r); }
         if (!r.items.length) {
-          // waiting: jump to the next moment anything can change — the next row's time, or the next hour
+          // waiting: jump to the next moment anything can change — the fill's own retry time (the closest blocked song
+          // becoming free), the next row's time, or the next hour
           const hEnd = (() => { const d = new FakeDate(nowSec() * 1000); d.setMinutes(0, 0, 0); return Math.floor(d.getTime() / 1000) + 3600; })();
-          const nxt = r.nextDueTs && r.nextDueTs > nowSec() ? Math.min(r.nextDueTs, hEnd) : hEnd;
+          let nxt = r.nextDueTs && r.nextDueTs > nowSec() ? Math.min(r.nextDueTs, hEnd) : hEnd;
+          if (f.retryAt && f.retryAt > nowSec()) nxt = Math.min(nxt, f.retryAt);
           waitedSec += Math.max(1, nxt - nowSec());
           setNow(Math.max(nowSec() + 1, nxt));
           continue;
@@ -328,6 +339,7 @@ async function simulateStation(w, P, F, R) {
       // _recordGoLive) — the play and the row's stamp in one transaction. Nothing copied.
       const rec = P.playlog.recordGoLive(w.raw, { stationId: sid, title: item.title, artist: item.artist, deck: "A", durationMs: actualS * 1000, sessionId: "scheduler-gate", filePath: item.filePath, contentClass: item.contentClass, rowId: item.schedId ?? null, playedAt: t });
       playId = rec.playUuid;
+      if (!rec.ok && !globalThis.__recErr) { globalThis.__recErr = 1; console.log("    go-live record failed: " + rec.error); }
       prof.logPlay += RealDate.now() - tq; tq = RealDate.now();
     } else {
       playId = P.playlog.logPlay(w.raw, { stationId: sid, title: item.title, artist: item.artist, deck: "A", durationMs: actualS * 1000, sessionId: "scheduler-gate", filePath: item.filePath, contentClass: item.contentClass });
@@ -440,7 +452,7 @@ async function simulateStation(w, P, F, R) {
     tAir.add(ev);
   }
   const spreads = [...proof.maxSpread.entries()].map(([c, v]) => ({ category: F.catName.get(c) || c, songs: pools.get(c).size, maxSpread: v }));
-  res.T3 = { failures: proof.failures.length, d1Exceptions: proof.exceptions.length, maxSpreadByCategory: spreads, examples: proof.failures.slice(0, 5).map(f => ({ at: fmt(f.ts), category: F.catName.get(f.cat), aired: f.aired, countBefore: f.countBefore, lowest: f.minCount, unblockedLowerCountSongs: f.passedOverCount })) };
+  res.T3 = { failures: proof.failures.length, d1Exceptions: proof.exceptions.length, maxSpreadByCategory: spreads, examples: proof.failures.slice(0, 5).map(f => ({ at: fmt(f.ts), category: F.catName.get(f.cat), aired: f.aired, countBefore: f.countBefore, lowest: f.minCount, unblockedLowerCountSongs: f.passedOverCount, passedOver: f.passedOver })) };
 
   // T4: aired rows untouched by Generate / regenerate
   res.T4 = { nonPendingRowsSnapshotted: t4.snapshots, deleted: t4.deleted.length, changed: t4.changed.length,
@@ -770,7 +782,7 @@ async function runChild() {
     const F = stationFacts(A, sid);
     console.log(`  station ${sid} ${st.name}: rules song ${F.rules.songMin ?? "off"} / artist ${F.rules.artistMin ?? "off"} / title ${F.rules.titleMin ?? "off"} min; per-song no-repeat-hours on ${F.songs.filter(x => !x.deleted_at && x.no_repeat_hours != null && F.clockCats.has(x.category_id)).length} songs`);
     // this machine's own record (T11) and the reader's call time (T19) are read before the copy is touched
-    const hist = { ...historyRecord(A, F, Math.floor(RealDate.now() / 1000) - 7 * 86400), name: st.name };
+    const hist = flag("--fixture") ? { station: sid, plays: 0 } : { ...historyRecord(A, F, Math.floor(RealDate.now() / 1000) - 7 * 86400), name: st.name };
     const t19 = measureReader(A, bindProduct(A), sid);
     // The copies only (a copy that is deleted afterwards needs no durability; ANALYZE changes plans, never
     // results; history rows > 2 days old that nothing decides from are removed — see the run report's model).
@@ -817,7 +829,15 @@ async function runDriver() {
   fs.mkdirSync(runDir, { recursive: true });
   console.log(`scheduler gate — ${new RealDate().toLocaleString()} — ${DAYS} days per station, seed ${SEED}, one station at a time`);
   console.log(`results folder: ${runDir}`);
-  if (!dbPaths.length) { console.log("NO DATABASE FOUND — nothing to test. Pass --db <copy>."); process.exit(2); }
+  if (FIXTURE && !dbPaths.length) {
+    const fx = require("./lib/gate-fixture");
+    const fpath = path.join(TMP, "gate-fixture.db");
+    const runChain = (X) => liftFromMain("runMigrationChain", { path, __dirname: path.join(ROOT, "electron"), require: createRequire(path.join(ROOT, "electron", "main.js")), console: { log() {}, error() {}, warn() {} } })(X);
+    const built = fx.buildFixtureDb(fpath, { schemaFrom: SCHEMA_SOURCES[0] || null, migrate: runChain });
+    console.log(`fixture database built (${built.schemaFrom}): ${built.stations.map(s => s.name).join(", ")}`);
+    dbPaths.push(fpath);
+  }
+  if (!dbPaths.length) { console.log("NO DATABASE — nothing to test."); process.exit(2); }
   const stat = staticChecks();
   const sv = verdicts([], [], [], [], stat);
   const sworse = ratchetMerge({ static: { T15_findings: stat.T15.findings, T16_pickers: stat.T16.modulesThatChooseSongs, T16_random: stat.T16.orderByRandom.length } });
@@ -832,7 +852,7 @@ async function runDriver() {
       .filter(s => { const n = ro.prepare("SELECT count(*) n FROM shows WHERE station_id=? AND is_active=1 AND deleted_at IS NULL AND clock_id IS NOT NULL").get(s.id).n; if (!n) console.log(`  station ${s.id} ${s.name}: no active show with a clock — skipped`); return n > 0; });
     ro.close();
     for (const st of sts) {
-      const args = [__filename, "--child", "--db", src, "--stations", String(st.id), "--run-dir", runDir, "--days", String(DAYS), "--seed", String(SEED), "--reader-limit-ms", String(READER_LIMIT_MS)];
+      const args = [__filename, "--child", "--db", src, "--stations", String(st.id), "--run-dir", runDir, "--days", String(DAYS), "--seed", String(SEED), "--reader-limit-ms", String(READER_LIMIT_MS), ...(FIXTURE ? ["--fixture"] : [])];
       for (const f of ["--update-ratchet", "--keep-copies", "--no-analyze"]) if (flag(f)) args.push(f);
       const r = spawnSync(process.execPath, ["--no-warnings", ...args], { stdio: "inherit" });
       if (r.status !== 0 && r.status !== 1) console.log(`  station ${st.id}: the station's run ended with code ${r.status}${r.signal ? " (" + r.signal + ")" : ""} — its results were not written`);
