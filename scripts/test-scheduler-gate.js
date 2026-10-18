@@ -278,14 +278,23 @@ async function simulateStation(w, P, F, R) {
     const plannedS = Math.max(1, Math.round((item.durationMs || 240000) / 1000));
     const actualS = Math.max(1, Math.round(plannedS * (1 + (rand() * 2 - 1) * LENGTH_ERR)));
     tq = RealDate.now();
-    const playId = P.playlog.logPlay(w.raw, { stationId: sid, title: item.title, artist: item.artist, deck: "A", durationMs: actualS * 1000, sessionId: "scheduler-gate", filePath: item.filePath, contentClass: item.contentClass });
-    prof.logPlay += RealDate.now() - tq; tq = RealDate.now();
-    // engine.js:1876-1884, verbatim
-    if (item.schedId != null) {
-      w.prepare("UPDATE generated_schedule SET state='played' WHERE station_id=? AND state='playing' AND id!=?").run(sid, item.schedId);
-      w.prepare("UPDATE generated_schedule SET state='playing', played_at=? WHERE id=? AND station_id=?").run(t, item.schedId, sid);
+    let playId;
+    if (P.playlog.recordGoLive) {
+      // Phase 1 and after: the engine's own go-live record (audiod/playlog.js recordGoLive, called by engine
+      // _recordGoLive) — the play and the row's stamp in one transaction. Nothing copied.
+      const rec = P.playlog.recordGoLive(w.raw, { stationId: sid, title: item.title, artist: item.artist, deck: "A", durationMs: actualS * 1000, sessionId: "scheduler-gate", filePath: item.filePath, contentClass: item.contentClass, rowId: item.schedId ?? null, playedAt: t });
+      playId = rec.playUuid;
+      prof.logPlay += RealDate.now() - tq; tq = RealDate.now();
     } else {
-      w.prepare("UPDATE generated_schedule SET state='played' WHERE station_id=? AND state='playing'").run(sid);
+      playId = P.playlog.logPlay(w.raw, { stationId: sid, title: item.title, artist: item.artist, deck: "A", durationMs: actualS * 1000, sessionId: "scheduler-gate", filePath: item.filePath, contentClass: item.contentClass });
+      prof.logPlay += RealDate.now() - tq; tq = RealDate.now();
+      // engine.js:1876-1884 (6558e57), verbatim
+      if (item.schedId != null) {
+        w.prepare("UPDATE generated_schedule SET state='played' WHERE station_id=? AND state='playing' AND id!=?").run(sid, item.schedId);
+        w.prepare("UPDATE generated_schedule SET state='playing', played_at=? WHERE id=? AND station_id=?").run(t, item.schedId, sid);
+      } else {
+        w.prepare("UPDATE generated_schedule SET state='played' WHERE station_id=? AND state='playing'").run(sid);
+      }
     }
     const row = item.schedId != null ? w.prepare("SELECT id, scheduled_at, category_id, clock_id, content_class, song_id FROM generated_schedule WHERE id=?").get(item.schedId) : null;
     prof.stamp += RealDate.now() - tq;
@@ -396,9 +405,14 @@ async function simulateStation(w, P, F, R) {
     largest: ahead.length ? (() => { const m = ahead.reduce((a, b) => (hourStartOf(b.row.scheduled_at) - b.ts > hourStartOf(a.row.scheduled_at) - a.ts ? b : a)); return { rowId: m.schedId, scheduledAt: m.row.scheduled_at, airedAt: m.ts, scheduled: fmt(m.row.scheduled_at), aired: fmt(m.ts), title: m.title, mode: m.mode }; })() : null };
 
   // T11 (simulated part): every go-live recorded with its row and category
-  const unlinked = simPlays.filter(p => p.scheduled_log_id == null).length;
-  const noCat = simPlays.filter(p => isMusicPlay(p) && p.category_code == null).length;
-  res.T11_sim = { plays: simPlays.length, playsWithoutLogRowId: unlinked, musicPlaysWithoutCategory: noCat };
+  // A play that came from a log row must carry that row (v63 row_uuid; before v63 there was no link at all, and the
+  // retired scheduled_log_id was always NULL) and, for music, its category. Off-log floor plays have no row to carry.
+  const hasLink = w.prepare("PRAGMA table_info(play_log)").all().some(c => c.name === "row_uuid");
+  const linkOf = new Map(hasLink ? w.prepare("SELECT uuid, row_uuid, category_code, content_class FROM play_log WHERE station_id=? AND session_id='scheduler-gate'").all(sid).map(p => [p.uuid, p]) : []);
+  const fromLog = goLives.filter(g => g.schedId != null);
+  const unlinked = fromLog.filter(g => { const p = linkOf.get(g.playUuid); return !p || !p.row_uuid; }).length;
+  const noCat = fromLog.filter(g => { const p = linkOf.get(g.playUuid); return g.row && g.row.category_id != null && (g.contentClass === "MUSIC") && (!p || p.category_code == null); }).length;
+  res.T11_sim = { plays: simPlays.length, logPlays: fromLog.length, playsWithoutLogRowId: unlinked, musicPlaysWithoutCategory: noCat };
 
   // T18: spot breaks on time (3c). First spot of each break against its clock_breaks minute.
   const breaksByClock = new Map();
@@ -467,8 +481,11 @@ async function scenarioStartedEarly(w, P, F) {
     const item = r.items && r.items[0];
     if (!item) { setNow(nowSec() + 60); continue; }
     const row = w.prepare("SELECT scheduled_at FROM generated_schedule WHERE id=?").get(item.schedId);
-    w.prepare("UPDATE generated_schedule SET state='played' WHERE station_id=? AND state='playing' AND id!=?").run(sid, item.schedId);
-    w.prepare("UPDATE generated_schedule SET state='playing', played_at=? WHERE id=? AND station_id=?").run(nowSec(), item.schedId, sid);
+    if (P.playlog.recordGoLive) P.playlog.recordGoLive(w.raw, { stationId: sid, title: item.title, artist: item.artist, deck: "A", durationMs: item.durationMs || 0, sessionId: "scheduler-gate-t5", filePath: item.filePath, contentClass: item.contentClass, rowId: item.schedId, playedAt: nowSec() });
+    else {
+      w.prepare("UPDATE generated_schedule SET state='played' WHERE station_id=? AND state='playing' AND id!=?").run(sid, item.schedId);
+      w.prepare("UPDATE generated_schedule SET state='playing', played_at=? WHERE id=? AND station_id=?").run(nowSec(), item.schedId, sid);
+    }
     if (row && row.scheduled_at >= three) consumed.push({ aired: fmt(nowSec()), rowFor: fmt(row.scheduled_at), title: item.title, mode: r.mode });
     setNow(nowSec() + Math.max(1, Math.round((item.durationMs || 240000) / 1000)));
   }
@@ -493,8 +510,11 @@ async function scenarioViolatorInLog(w, P, F) {
   setNow(aired.scheduled_at);
   let r = P.loggen.readLogAnchored(w, sid, 20);
   const fp = (r.items || []).find(it => it.schedId === aired.id);
-  w.prepare("UPDATE generated_schedule SET state='playing', played_at=? WHERE id=?").run(nowSec(), aired.id);
-  P.playlog.logPlay(w.raw, { stationId: sid, title: aired.title, artist: aired.artist, deck: "A", durationMs: (aired.duration_s || 200) * 1000, sessionId: "scheduler-gate-t10", filePath: fp ? fp.filePath : aired.file_path });
+  if (P.playlog.recordGoLive) P.playlog.recordGoLive(w.raw, { stationId: sid, title: aired.title, artist: aired.artist, deck: "A", durationMs: (aired.duration_s || 200) * 1000, sessionId: "scheduler-gate-t10", filePath: fp ? fp.filePath : aired.file_path, rowId: aired.id, playedAt: nowSec() });
+  else {
+    w.prepare("UPDATE generated_schedule SET state='playing', played_at=? WHERE id=?").run(nowSec(), aired.id);
+    P.playlog.logPlay(w.raw, { stationId: sid, title: aired.title, artist: aired.artist, deck: "A", durationMs: (aired.duration_s || 200) * 1000, sessionId: "scheduler-gate-t10", filePath: fp ? fp.filePath : aired.file_path });
+  }
   const airedAt = nowSec();
   // the next row becomes the same song (as a swap in the editor, a sync from another machine, or a bug can do)
   w.prepare("UPDATE generated_schedule SET song_id=?, title=?, artist=?, file_key=?, file_path=?, duration_s=?, category_id=? WHERE id=?")
@@ -594,7 +614,7 @@ function verdicts(sim, t5, t10, hist, stat) {
     add("T3", s.T3.failures === 0, `${st}: ${s.T3.failures} go-lives pushed a category past spread 1 while a lower-count song was free (D1 exceptions: ${s.T3.d1Exceptions}); worst spread ${Math.max(0, ...s.T3.maxSpreadByCategory.map(c => c.maxSpread))}`);
     add("T4", s.T4.deleted === 0 && s.T4.changed === 0, `${st}: of ${s.T4.nonPendingRowsSnapshotted} non-pending rows, Generate deleted ${s.T4.deleted} and changed ${s.T4.changed}`);
     add("T8", s.T8.rowsAiredBeforeTheirHour === 0, `${st}: ${s.T8.rowsAiredBeforeTheirHour} of ${s.T8.goLives} go-lives aired a row before its hour began (up to ${s.T8.maxAheadMin} min early); ${s.T8.offLogPlays} off-log floor plays`);
-    add("T11", s.T11_sim.playsWithoutLogRowId === 0 && s.T11_sim.musicPlaysWithoutCategory === 0, `${st} (simulated): ${s.T11_sim.playsWithoutLogRowId} of ${s.T11_sim.plays} plays carry no log row id, ${s.T11_sim.musicPlaysWithoutCategory} music plays no category`);
+    add("T11", s.T11_sim.playsWithoutLogRowId === 0 && s.T11_sim.musicPlaysWithoutCategory === 0, `${st} (simulated): ${s.T11_sim.playsWithoutLogRowId} of ${s.T11_sim.logPlays ?? s.T11_sim.plays} plays from log rows carry no link to their row, ${s.T11_sim.musicPlaysWithoutCategory} music plays no category`);
     if (s.T18.timedBreaksAired === 0) add("T18", null, `station ${s.station}: not applicable — this station's clocks have no timed breaks`);
     else add("T18", s.T18.outsideTolerance === 0, `${st}: ${s.T18.outsideTolerance} of ${s.T18.timedBreaksAired} timed breaks started outside ±${BREAK_TOL_S} s; of the ${s.T18.airedInOwnHour} aired inside their own hour, ${s.T18.inOwnHourOutsideTolerance} were off (up to ${s.T18.inOwnHourMaxLateSec} s late, ${s.T18.inOwnHourMaxEarlySec} s early)`);
   }
@@ -627,7 +647,14 @@ function ratchetMerge(entries) {
   }
   if (flag("--update-ratchet")) {
     const next = prev && prev.metrics ? prev : { note: "Scheduler gate ratchet: a worse number than this fails the gate. Lower is better. Written by --update-ratchet, one entry as each station finishes.", metrics: {} };
-    Object.assign(next.metrics, entries);
+    // A RATCHET ONLY TIGHTENS: each metric keeps the better (lower) of what it held and what this run measured. A worse
+    // run is reported above and never loosens the file.
+    for (const [k, obj] of Object.entries(entries)) {
+      const was = next.metrics[k] || {};
+      const merged = { ...was };
+      for (const [mk, val] of Object.entries(obj)) merged[mk] = (val == null) ? was[mk] ?? null : (was[mk] == null ? val : Math.min(was[mk], val));
+      next.metrics[k] = merged;
+    }
     next.writtenAt = new RealDate().toISOString(); next.days = DAYS; next.seed = SEED;
     fs.mkdirSync(path.dirname(RATCHET_FILE), { recursive: true });
     const tmp = RATCHET_FILE + ".tmp"; fs.writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n"); fs.renameSync(tmp, RATCHET_FILE);
@@ -656,6 +683,14 @@ async function runChild() {
     for (const X of [A, B]) { X.exec("PRAGMA synchronous=OFF"); X.exec("PRAGMA journal_mode=MEMORY"); }
     const cut = Math.floor(RealDate.now() / 1000) - 2 * 86400;
     for (const X of [A, B]) X.prepare("DELETE FROM generated_schedule WHERE state IS NOT NULL AND state != 'pending' AND scheduled_at < ?").run(cut);
+    // The copies reach this tree's schema the way the app does on launch: main.js's own runMigrationChain, lifted and run
+    // as-is (a database copied from an older build gets this build's migrations, e.g. v63's play columns and triggers).
+    const chainLog = [];
+    for (const X of [A, B]) {
+      const runChain = liftFromMain("runMigrationChain", { path, __dirname: path.join(ROOT, "electron"), require: createRequire(path.join(ROOT, "electron", "main.js")), console: { log: (m) => chainLog.push(String(m)), error: (...m) => chainLog.push("ERROR " + m.join(" ")), warn: () => {} } });
+      runChain(X);
+    }
+    if (chainLog.length) console.log("    migrations on the copies: " + [...new Set(chainLog)].slice(0, 4).join(" | "));
     if (!flag("--no-analyze")) { A.exec("ANALYZE"); B.exec("ANALYZE"); }
     const ts = RealDate.now();
     const r = await simulateStation(A, bindProduct(A), stationFacts(A, sid), []);

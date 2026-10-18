@@ -1,4 +1,4 @@
-// node scripts/lib/log-checker.test.js — the checker is the gate's judge, so it is proven on its own.
+// node scripts/lib/log-checker-selftest.js (plain node, not vitest) — the checker is the gate's judge, so it is proven on its own.
 "use strict";
 const assert = require("assert");
 const C = require("./log-checker");

@@ -107,7 +107,7 @@ What the station numbers are:
 - `scripts/lib/log-checker.js`: the independent checker. It requires nothing from `electron/` or `audiod/`. Every rule in it is
   written from the design's words: song (by recording), every credited artist, the normalised title; the pick (longest waiting
   among the songs that pass); the count proof with decision D1.
-- `scripts/lib/log-checker.test.js`: the checker's own test (7 cases, including per-song no-repeat-hours). The judge is proven before it judges.
+- `scripts/lib/log-checker-selftest.js`: the checker's own test (7 cases, including per-song no-repeat-hours). The judge is proven before it judges.
 - `scripts/test-scheduler-gate.js`: the harness.
 - `scripts/fixtures/scheduler-gate-ratchet.json`: the ratchet. Today's numbers are the worst a later build may have.
 - `npm run test:scheduler-gate` runs the checker's test, then the gate.
