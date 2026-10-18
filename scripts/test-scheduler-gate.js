@@ -638,7 +638,7 @@ function staticChecks() {
     const out = [];
     for (const [f, src] of Object.entries(files)) {
       if (!src || (only && !only.includes(f))) continue;
-      src.split("\n").forEach((line, i) => { if (re.test(line) && !/^\s*(\/\/|\*)/.test(line)) out.push(`${f}:${i + 1}`); });
+      src.split(/\r?\n/).forEach((line, i) => { if (re.test(line) && !/^\s*(\/\/|\*)/.test(line)) out.push(`${f}:${i + 1}`); });
     }
     return out;
   };
@@ -675,8 +675,8 @@ function staticChecks() {
   for (const rel of [...walk("electron"), ...walk("audiod"), ...walk("src")]) {
     let src; try { src = fs.readFileSync(path.join(ROOT, rel), "utf8"); } catch { continue; }
     if (!src.includes("last_played_at")) continue;
-    src.split("\n").forEach((line, i) => {
-      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;               // a comment line
+    src.split(/\r?\n/).forEach((line, i) => {   // CRLF checkouts too: `.` stops at \r, so `//.*$` kept a trailing comment
+      if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;              // a comment line
       const code = line.replace(/\/\/.*$/, "");                       // a trailing comment
       if (!code.includes("last_played_at")) return;
       const relN = rel.replace(/\\/g, "/");                            // one slash, on every OS
