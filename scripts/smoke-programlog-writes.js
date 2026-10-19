@@ -79,6 +79,7 @@ const src = [
   "let _genCancel = false;",
   braceBlock("function _scheduleChanged("),
   braceBlock("function _genStartTs("),
+  braceBlock("function _regenPoint("),            // rule 4 (2026-10-19): every Generate starts from the end of the song on air
   braceBlock("async function _generateDayChunked("),
   braceBlock("function _commitDayRows("),
   braceBlock("ipcMain.handle('schedule:generateDay',"),
@@ -98,7 +99,8 @@ const src = [
 check("main.js: generateDay handler takes fromTs", /ipcMain\.handle\('schedule:generateDay', async \(_, dayTs, fromTs\)/.test(src));
 check("main.js: clearDay handler exists and only touches state = 'pending'", /schedule:clearDay/.test(src) && /AND state = 'pending'/.test(src));
 check("main.js: clearDay is a SOFT delete (deleted_at), the editor's own delete", /UPDATE generated_schedule SET deleted_at = \?, updated_at = \? WHERE station_id = \? AND scheduled_at >= \? AND scheduled_at < \? AND deleted_at IS NULL AND state = 'pending'/.test(src));
-check("main.js: generateDay starts at the CURRENT hour, never earlier — effStart = max(dayStart, nextTop, fromHour), nextTop = _genStartTs(now) (Jeff 2026-10-19)", /const effStart = Math\.max\(dayStart, nextTop, fromHour\)/.test(src) && /const nextTop = _genStartTs\(nowTs\)/.test(src));
+// Rule 4 (Jeff, 2026-10-19, second ruling): "Regenerate starts from the next song … including the rest of the current hour."
+check("main.js: generateDay starts at the piece ON AIR, from the end of the song on air — effStart = max(dayStart, regen.pieceLk, fromHour), regen = _regenPoint(now)", /const effStart = Math\.max\(dayStart, regen\.pieceLk, fromHour\)/.test(src) && /const regen = _regenPoint\(activeStationId, nowTs\)/.test(src));
 
 // ── pinned clock: "now" = 10:30 local on TEST DAY (tomorrow, so the whole day is generatable) ──
 const RealDate = Date;
@@ -209,13 +211,18 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
   check("b · played rows untouched (state, played_at, not deleted)", ["played-8", "played-9"].every(u => { const r = byUuid(u); return r && r.state === "played" && r.played_at && !r.deleted_at; }));
   check("b · the missed spot untouched", (() => { const r = byUuid("missed-9"); return r && r.state === "missed" && !r.deleted_at; })());
   check("b · the playing row untouched", (() => { const r = byUuid("playing-10"); return r && r.state === "playing" && !r.deleted_at; })());
-  check("b · the current hour is ON AIR (a playing row, written before v66 so it has no log hour): its pending 10:40 row is untouched", !!byUuid("pending-1040") && !byUuid("pending-1040").deleted_at);
-  check("b · …and nothing new was placed in that hour", db.prepare("SELECT count(*) n FROM generated_schedule WHERE station_id=1 AND deleted_at IS NULL AND scheduled_at >= ? AND scheduled_at < ?").get(curTop, nextTop).n === 2);
+  // RULE 4 (Jeff, 2026-10-19): "Regenerate starts from the next song: keep the song on air and everything played, playing,
+  // missed or placed by hand; rebuild all pending rows from the end of the song on air onward, including the rest of the
+  // current hour." Here the 10:00 row's song ended at 10:03:20 (a stale 'playing' row) — nothing is on air at 10:30 — and
+  // one row of the hour has aired, so the hour continues from now.
+  check("b · rule 4: the current hour's pending 10:40 machine row is rebuilt (not kept)", !byUuid("pending-1040"));
+  const hour10Pending = () => db.prepare("SELECT scheduled_at FROM generated_schedule WHERE station_id=1 AND deleted_at IS NULL AND state='pending' AND COALESCE(log_hour_ts, scheduled_at) >= ? AND COALESCE(log_hour_ts, scheduled_at) < ?").all(curTop, nextTop);
+  check("b · rule 4: the rest of the current hour is rebuilt from the next song — new rows of the 10:00 hour, none before 10:30", hour10Pending().length > 0 && hour10Pending().every(r => r.scheduled_at >= hourTs(10) + 1800), JSON.stringify(hour10Pending().slice(0, 3)));
   check("b · the operator's future row survives Generate (log-edit-core NOT_OPERATOR_OWNED_SQL)", !!byUuid("pending-14-op") && !byUuid("pending-14-op").deleted_at);
   check("b · the machine's future row was replaced", !byUuid("pending-15"));
   check("b · the other station's row untouched", !!byUuid("st2-15") && !byUuid("st2-15").deleted_at);
   const rowsB = get(dayStart, dayEnd);
-  check("b · generated rows again start at 11:00; the day now has aired + generated rows", rowsB.some(r => r.scheduled_at >= nextTop && r.state === "pending") && rowsB.filter(r => r.scheduled_at < nextTop).length === 5);
+  check("b · the day now has the aired rows kept and generated rows after them", rowsB.some(r => r.scheduled_at >= nextTop && r.state === "pending") && ["played-8", "played-9", "missed-9", "playing-10"].every(u => rowsB.some(r => r.uuid === u)));
 
   // ── (c) generateDay's fromTs (kept for the handler's callers/tests; the Program Log no longer sends it — slice 2a) ──
   const before15 = get(dayStart, hourTs(15)).map(r => r.uuid).join(",");
@@ -225,20 +232,23 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
   check("c · rows from 15:00 on were regenerated (9 hours: 15 → 23)", new Set(get(hourTs(15), dayEnd).map(r => new RealDate(r.scheduled_at * 1000).getHours())).size === 9);
   const rcPast = await handlers["schedule:generateDay"](null, dayStart, hourTs(9));
   check("c · fromTs in a past hour is REFUSED by name, not moved forward", rcPast && rcPast.ok === false && /already passed/.test(rcPast.error), JSON.stringify(rcPast));
-  const before10 = get(curTop, nextTop).map(r => r.uuid).join(",");
   const rcCur = await handlers["schedule:generateDay"](null, dayStart, hourTs(10) + 1800);
-  check("c · fromTs in the CURRENT hour is accepted; that hour is on air, so its rows stay as they are", rcCur && rcCur.ok === true && get(curTop, nextTop).map(r => r.uuid).join(",") === before10, JSON.stringify(rcCur));
+  check("c · rule 4: fromTs in the CURRENT hour is accepted — what aired stays, the pending rest is rebuilt from the next song",
+    rcCur && rcCur.ok === true && !!byUuid("playing-10") && !byUuid("playing-10").deleted_at && hour10Pending().length > 0 && hour10Pending().every(r => r.scheduled_at >= hourTs(10) + 1800), JSON.stringify(rcCur));
   const rcOff = await handlers["schedule:generateDay"](null, dayStart, dayEnd + 60);
   check("c · fromTs outside the day is refused", rcOff && rcOff.ok === false, JSON.stringify(rcOff));
 
   // ── (d) Clear Day: pending rows from the next top-of-hour go (soft); played / playing / missed / current hour stay ──
   const pendingFutureBefore = db.prepare("SELECT count(*) n FROM generated_schedule WHERE station_id = 1 AND state='pending' AND deleted_at IS NULL AND scheduled_at >= ?").get(nextTop).n;
+  const hour10Before = hour10Pending().filter(r => r.scheduled_at < nextTop).length;
   const rd = handlers["schedule:clearDay"](null, dayStart);
   check("d · clearDay ok", rd && rd.ok === true && rd.cleared === pendingFutureBefore, JSON.stringify(rd) + " expected " + pendingFutureBefore);
   check("d · schedule:get shows nothing from 11:00 on", get(nextTop, dayEnd).length === 0);
   check("d · the rows are SOFT-deleted (still in the table, deleted_at set)", db.prepare("SELECT count(*) n FROM generated_schedule WHERE station_id=1 AND scheduled_at >= ? AND deleted_at IS NOT NULL").get(nextTop).n === pendingFutureBefore);
   check("d · played / playing / missed untouched", ["played-8", "played-9", "playing-10", "missed-9"].every(u => { const r = byUuid(u); return r && !r.deleted_at; }));
-  check("d · the current hour's pending row untouched", !!byUuid("pending-1040") && !byUuid("pending-1040").deleted_at);
+  // Clear Day clears by TIME from the next top of hour (unchanged): the 10:00 hour's extra rows timed past 11:00 go with it
+  // (by rule 1 they could never air — their hour ends at 11:00); its rows before 11:00 stay.
+  check("d · the current hour's pending rows before 11:00 untouched by Clear Day", hour10Pending().filter(r => r.scheduled_at < nextTop).length === hour10Before);
   check("d · the operator's pending row IS cleared (Clear Day is the operator's own explicit act)", !!byUuid("pending-14-op") && !!byUuid("pending-14-op").deleted_at);
   check("d · the other station untouched", !!byUuid("st2-15") && !byUuid("st2-15").deleted_at);
   check("d · a log-edit health event named the clear", health.some(h => h.kind === "log-edit" && h.action === "clear-day" && h.cleared === pendingFutureBefore));

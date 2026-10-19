@@ -1357,6 +1357,8 @@ if (AUDIO_DAEMON_DESIRED) {
         // operator write = a row inserted by a deck-load; log-row-removed = the Up Next X took a row out of the log.
         // The Program Log re-reads on these.
         if (m.event === "logreader-missed" || m.event === "spot-missed" || m.event === "logreader-operator-write" || m.event === "log-row-removed") _scheduleChanged(m.stationId, m.event);
+        // A show ran out of music: the one automatic Generate (Jeff, 2026-10-19). The floor is still reported below.
+        if (m.event === "logreader-floor" && m.reason === "waiting:log-ended-inside-show") _outOfMusicRegenerate(m.stationId).catch(() => {});
         // Log-Reader Flip (ACTIVATION): loud flip-time events — emergency floor (log exhausted), a
         // behind-anchor missed sweep, an ahead early-play beyond slack, or an operator deck-load written
         // to the log. Plus fill-starved: the refill ladder found NO playable song in ANY of the station's
@@ -11386,6 +11388,42 @@ try { require("./sync/handlers/songs").onLogRetitled(sids => { for (const s of s
 // refused in it) is still never rebuilt: generate-core _pieceHasAired skips it and the delete below keeps its rows.
 function _genStartTs(nowTs) { const d = new Date(nowTs * 1000); d.setMinutes(0, 0, 0); return Math.floor(d.getTime() / 1000); }
 
+// ── REGENERATE STARTS FROM THE NEXT SONG (Jeff, 2026-10-19, rule 4) ─────────────────────────────────────────────
+// "Regenerate starts from the next song: keep the song on air and everything played, playing, missed or placed by hand;
+// rebuild all pending rows from the end of the song on air onward, including the rest of the current hour."
+// The point every Generate starts from: the END of the song on air (its row is 'playing'), in the piece that row belongs
+// to (its log hour — when the station runs ahead, a later hour than the clock's), continuing that piece's clock after the
+// rows that already happened there (played, playing, didn't play — never a hand-placed row). Nothing on air → now, in the
+// piece the show schedule has now. { fromTs, pieceLk, consumed }
+function _regenPoint(stationId, nowTs) {
+  const lk = "COALESCE(log_hour_ts, scheduled_at)";
+  let fromTs = nowTs, pieceLk = null;
+  try {
+    const onAir = db.prepare(
+      `SELECT played_at, duration_s, ${lk} AS lk FROM generated_schedule WHERE station_id = ? AND state = 'playing' AND deleted_at IS NULL
+         AND (content_class IS NULL OR content_class NOT IN ('JIN','SWP','UNSCHEDULED')) ORDER BY played_at DESC, id DESC LIMIT 1`).get(stationId);
+    if (onAir && onAir.played_at != null && onAir.played_at + (onAir.duration_s || 0) >= nowTs - 60) {
+      fromTs = Math.max(nowTs, onAir.played_at + (onAir.duration_s || 0));
+      pieceLk = onAir.lk;
+    }
+  } catch {}
+  if (pieceLk == null) {
+    try { pieceLk = require('../audiod/loggen.js').pieceStartFor(db, stationId, nowTs); } catch { pieceLk = _genStartTs(nowTs); }
+  }
+  let consumed = 0;
+  try {
+    consumed = db.prepare(
+      `SELECT COUNT(*) n FROM generated_schedule WHERE station_id = ? AND ${lk} = ? AND deleted_at IS NULL
+         AND state IN ('played','playing','missed','skipped') AND (source IS NULL OR TRIM(LOWER(source)) <> 'operator')
+         AND (content_class IS NULL OR content_class IN ('MUSIC','UNSCHEDULED'))`).get(stationId, pieceLk).n;
+  } catch {}
+  // Nothing on air and nothing of this piece has happened yet: the piece is built whole, timed from its start, and AUTO
+  // joins it at the row for now (Jeff, 2026-10-19, b02a58b: "Fill Day / Fill Week build the CURRENT hour, timed from its
+  // :00 … AUTO joins it at once"). Something of it already aired (the station stopped mid-hour): it continues from now.
+  if (fromTs === nowTs && consumed === 0) fromTs = pieceLk;
+  return { fromTs, pieceLk, consumed };
+}
+
 function _commitDayRows(stationId, effStart, dayEnd, rows) {
   const { generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
   const { filterToGaps, NOT_OPERATOR_OWNED_SQL, NOT_AIRED_SQL } = require('./log-edit-core');
@@ -11410,21 +11448,13 @@ function _commitDayRows(stationId, effStart, dayEnd, rows) {
     // THE WINDOW IS BY LOG HOUR (v66): every clock row is placed, so the 11 PM hour's rows can start after midnight —
     // they are this day's rows, and the next day's regenerate never touches them.
     const lk = "COALESCE(log_hour_ts, scheduled_at)";
-    // A row written before v66 has no log hour: it belongs to the local hour its time falls in. Generate starts at the
-    // CURRENT hour (_genStartTs), so an hour on air with such rows must keep its pending rest too — Generate skips it.
-    const _hourOf = (ts) => { const d = new Date(ts * 1000); d.setMinutes(0, 0, 0); return Math.floor(d.getTime() / 1000); };
-    const reachedHours = new Set(db.prepare(
-      `SELECT log_hour_ts lh, scheduled_at ts FROM generated_schedule WHERE station_id = ? AND state IN ('played','playing','missed','skipped') AND deleted_at IS NULL
-         AND ${lk} >= ? AND ${lk} < ?`).all(stationId, effStart - 3600, dayEnd).map(r => r.lh ?? _hourOf(r.ts)));
-    const keepOld = db.prepare(
-      `SELECT id, scheduled_at FROM generated_schedule WHERE station_id = ? AND log_hour_ts IS NULL AND state = 'pending' AND deleted_at IS NULL
-         AND scheduled_at >= ? AND scheduled_at < ?`).all(stationId, effStart, dayEnd).filter(r => reachedHours.has(_hourOf(r.scheduled_at))).map(r => r.id);
+    // RULE 4 (Jeff, 2026-10-19): every PENDING row Generate placed in the window is rebuilt — including the rest of the
+    // hour on air (the window starts at the piece on air, main.js _regenPoint). What played, is playing, didn't play or
+    // was refused (NOT_AIRED_SQL) and what was placed by hand (NOT_OPERATOR_OWNED_SQL) stays. The old "an hour the log
+    // has reached keeps all its rows" exception is gone: that pending rest is exactly what regenerate rebuilds.
     db.prepare(
-      `DELETE FROM generated_schedule WHERE station_id = ? AND ${lk} >= ? AND ${lk} < ? AND ${NOT_OPERATOR_OWNED_SQL} AND ${NOT_AIRED_SQL}
-         AND NOT (log_hour_ts IS NOT NULL AND log_hour_ts IN (SELECT a.log_hour_ts FROM generated_schedule a WHERE a.station_id = ? AND a.log_hour_ts IS NOT NULL
-                                                                AND a.state IN ('played','playing','missed','skipped') AND a.deleted_at IS NULL))
-         AND id NOT IN (SELECT value FROM json_each(?))`
-    ).run(stationId, effStart, dayEnd, stationId, JSON.stringify(keepOld));   // an hour the log has reached (even ahead of the clock) keeps its rows
+      `DELETE FROM generated_schedule WHERE station_id = ? AND ${lk} >= ? AND ${lk} < ? AND ${NOT_OPERATOR_OWNED_SQL} AND ${NOT_AIRED_SQL}`
+    ).run(stationId, effStart, dayEnd);
 
     // GAP-ONLY FILL. Preserving the operator's rows is not enough: the walk still produced a machine
     // row for that minute, and inserting it would double-book the slot. Drop any generated row whose
@@ -11435,8 +11465,11 @@ function _commitDayRows(stationId, effStart, dayEnd, rows) {
     // in the editor is a SOFT delete, so without this clause a row the operator just deleted would
     // still block its own gap from refilling — the delete would appear to do nothing on the next
     // Generate, which is the whole point of deleting it.
+    // Only rows still to air hold their minutes (the hand-placed ones). A row that already aired is the record, but its
+    // PLANNED minutes block nothing: the log plays in order, and the piece on air is rebuilt from the end of the song on
+    // air (a row planned for 3:40 that aired at 3:10 would otherwise punch a hole in the rebuilt hour around 3:40).
     const kept = db.prepare(
-      `SELECT scheduled_at, duration_s, log_hour_ts FROM generated_schedule WHERE station_id = ? AND ${lk} >= ? AND ${lk} < ? AND deleted_at IS NULL`
+      `SELECT scheduled_at, duration_s, log_hour_ts FROM generated_schedule WHERE station_id = ? AND ${lk} >= ? AND ${lk} < ? AND deleted_at IS NULL AND ${NOT_AIRED_SQL}`
     ).all(stationId, effStart, dayEnd);
 
     const { fill, skipped } = filterToGaps(rows, kept);
@@ -11674,17 +11707,19 @@ ipcMain.handle('schedule:generateDays', async (_, dayTsList) => {
     _genEmit({ phase: "start", dayIdx: 0, dayTotal: days.length });
     const nowTs = Math.floor(Date.now() / 1000);
     const ctx = buildScheduleCtx(db, stationId);
+    const regen = _regenPoint(stationId, nowTs);   // rule 4: from the end of the song on air
+    ctx.regen = regen;
     {
       // The window this run replaces (the one pick measures against the log OUTSIDE it, and against operator rows in it).
       const starts = days.map(t => { const d = new Date(t * 1000); d.setHours(0, 0, 0, 0); return Math.floor(d.getTime() / 1000); });
-      if (starts.length) ctx.planWindow(Math.max(Math.min(...starts), _genStartTs(nowTs)), Math.max(...starts) + 86_400);
+      if (starts.length) ctx.planWindow(Math.max(Math.min(...starts), regen.pieceLk), Math.max(...starts) + 86_400);
     }
     let total = 0, committed = 0, cancelled = false;
     for (let i = 0; i < days.length; i++) {
       if (_genCancel) { cancelled = true; break; }
       const dayBase = new Date(days[i] * 1000); dayBase.setHours(0, 0, 0, 0);
       const dayStart = Math.floor(dayBase.getTime() / 1000), dayEnd = dayStart + 86_400;
-      const effStart = Math.max(dayStart, _genStartTs(nowTs));   // from the current hour (reached hours are skipped)
+      const effStart = Math.max(dayStart, regen.pieceLk);   // from the piece on air (rule 4); earlier pieces are the record
       if (effStart >= dayEnd) continue;                       // already aired — leave it
       const before = ctx.generatedRows.length;                // this day's slice starts here
       const run = await _generateDayChunked(dayBase, ctx, effStart, { day: dayBase.toDateString(), dayIdx: i, dayTotal: days.length });
@@ -11732,7 +11767,8 @@ ipcMain.handle('schedule:generateDay', async (_, dayTs, fromTs) => {
     const dayBase = new Date(dayTs * 1000); dayBase.setHours(0, 0, 0, 0);
     const dayStart = Math.floor(dayBase.getTime() / 1000), dayEnd = dayStart + 86_400;
     const nowTs = Math.floor(Date.now() / 1000);
-    const nextTop = _genStartTs(nowTs);   // the current hour (named nextTop for history): reached hours are skipped
+    const regen = _regenPoint(activeStationId, nowTs);   // rule 4: from the end of the song on air
+    const nextTop = Math.min(regen.pieceLk, _genStartTs(nowTs));   // the piece on air: nothing before it is rebuilt
     let fromHour = 0;
     if (fromTs != null) {
       const f = new Date(fromTs * 1000); f.setMinutes(0, 0, 0);
@@ -11740,12 +11776,13 @@ ipcMain.handle('schedule:generateDay', async (_, dayTs, fromTs) => {
       if (fromHour < dayStart || fromHour >= dayEnd) return { ok: false, error: "that hour is not in the selected day" };
       if (fromHour < nextTop) return { ok: false, error: "that hour has already passed — it is a record now, not a plan; regenerate from this hour or a later one" };
     }
-    const effStart = Math.max(dayStart, nextTop, fromHour); // the current hour; never an earlier one
+    const effStart = Math.max(dayStart, regen.pieceLk, fromHour); // the piece on air; never an earlier one
     if (effStart >= dayEnd) return { ok: true, count: 0, skipped: true }; // whole day already aired — leave it
     _genEmit({ phase: "start", dayIdx: 0, dayTotal: 1, day: dayBase.toDateString() });
     // Build ctx BEFORE any delete — it reads play_log/separation_rules/songs, never generated_schedule,
     // so moving the delete after the pick cannot change what gets picked.
     const ctx = buildScheduleCtx(db, activeStationId);
+    ctx.regen = regen;
     ctx.planWindow(effStart, dayEnd);
     const run = await _generateDayChunked(dayBase, ctx, effStart, { day: dayBase.toDateString(), dayIdx: 0, dayTotal: 1 });
     if (run.cancelled) { _genEmit({ phase: "end", cancelled: true, daysCommitted: 0, count: 0, dayTotal: 1 }); return { ok: true, cancelled: true, count: 0 }; }
@@ -11801,15 +11838,17 @@ ipcMain.handle('schedule:generateDay', async (_, dayTs, fromTs) => {
 async function _generateRange(stationId, fromTs, toTs, opts) {
   const nowTs = Math.floor(Date.now() / 1000);
   const ctx = buildScheduleCtx(db, stationId);
+  const regen = _regenPoint(stationId, nowTs);   // rule 4: from the end of the song on air, like every Generate
+  ctx.regen = regen;
   const start = new Date(Math.max(fromTs, nowTs) * 1000); start.setHours(0, 0, 0, 0);
   const endMs = toTs * 1000;
   { const e = new Date(endMs); e.setHours(0, 0, 0, 0); const last = Math.floor(e.getTime() / 1000) + (e.getTime() < endMs ? 86_400 : 0);
-    ctx.planWindow(Math.max(Math.floor(start.getTime() / 1000), Math.ceil(nowTs / 3600) * 3600), Math.max(last, Math.floor(start.getTime() / 1000) + 86_400)); }
+    ctx.planWindow(Math.max(Math.floor(start.getTime() / 1000), regen.pieceLk), Math.max(last, Math.floor(start.getTime() / 1000) + 86_400)); }
   let dayIdx = 0;
   for (let d = new Date(start); d.getTime() < endMs; d.setDate(d.getDate() + 1)) {
     const dayBase = new Date(d); dayBase.setHours(0, 0, 0, 0);
     const dayStart = Math.floor(dayBase.getTime() / 1000), dayEnd = dayStart + 86_400;
-    const effStart = Math.max(dayStart, Math.ceil(nowTs / 3600) * 3600);
+    const effStart = Math.max(dayStart, regen.pieceLk);
     if (effStart >= dayEnd) continue;
     // Chunked + yielding, exactly like the operator path: the unattended auto-extend must never be
     // able to freeze the window either. Each day commits atomically as it finishes, so the range no
@@ -11888,6 +11927,45 @@ function _stationRunwaySec(stationId) {
 // Stations whose degraded (too-sparse) schedule we've already force-regenerated this session — so a
 // clock that genuinely can't fill densely doesn't get hammered every tick.
 const _sparseHealed = new Set();
+
+// ── THE ONE AUTOMATIC GENERATE: a scheduled show ran out of music (Jeff, 2026-10-19) ─────────────────────────────
+// "Auto-regenerate stays ONLY inside a scheduled show when it runs out of music. If no show is scheduled, nothing
+// generates and nothing plays." The daemon reports the moment (logreader-floor, "the log ended inside the show"); this
+// generates from the next song (rule 4) through the end of that show's run, on the machine designated to generate. Once
+// per station at a time; the next floor (if the show runs out again) fires it again.
+const _outOfMusicBusy = new Set();
+async function _outOfMusicRegenerate(stationId) {
+  if (stationId == null || _outOfMusicBusy.has(stationId)) return;
+  _outOfMusicBusy.add(stationId);
+  try {
+    const nowTs = Math.floor(Date.now() / 1000);
+    let run = null;
+    try {
+      const shows = db.prepare("SELECT * FROM shows WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL").all(stationId);
+      run = require('../audiod/show-window.js').showRunAt(shows, nowTs);
+    } catch {}
+    if (!run || !run.show) { console.log(`[out-of-music] station ${stationId}: no show is on — nothing generates`); return; }
+    // The per-machine switch (Program Log → "Generate when a show runs out") is the user's: OFF, this machine never writes
+    // the log unattended.
+    if (!_autoGenerateEnabled(stationId)) { console.log(`[out-of-music] station ${stationId}: this machine's "generate when a show runs out" is OFF`); return; }
+    // The same gate as the unattended extender: only the machine designated to generate this station writes its log.
+    const _me = _machineIdentity();
+    const _gate = _desig.mayAutoGenerate({
+      record: _desig.parseRecord(_kvGet(stationId, _desig.KEY)), machineId: _me.id,
+      killSwitch: String(_kvGet(stationId, 'kill_designation') || '') === '1',
+    });
+    if (!_gate.allow) { console.log(`[out-of-music] station ${stationId}: not the designated generator — ${_gate.reason}`); return; }
+    const toTs = Math.max(run.endTs, nowTs + 3600);
+    const r = await _generateRange(stationId, nowTs, toTs, { source: 'auto' });
+    console.log(`[out-of-music] station ${stationId}: the show ran out of music — generated ${r.count} rows to ${new Date(toTs * 1000).toLocaleTimeString()}`);
+    _healthEvent('auto-extend', { stationId, trigger: 'show-out-of-music', rows: r.count, relaxedPicks: r.relaxedPicks, untilTs: toTs, reasons: r.reasons });
+  } catch (e) {
+    console.error(`[out-of-music] station ${stationId} failed:`, e.message);
+    _healthEvent('auto-extend-failed', { stationId, trigger: 'show-out-of-music', error: e.message });
+  } finally {
+    _outOfMusicBusy.delete(stationId);
+  }
+}
 
 // A real generated log is dense (tracks are ~3–4 min → ~12–18 rows/hour). A degraded log — e.g. a
 // stale 1-row-per-hour artifact — is <2/hour but can still fill weeks of runway, so the runway check
@@ -12665,41 +12743,10 @@ async function _autoExtendTick() {
     if (_autoDeferralCheck(st)) continue;                // in-process audio: defer, do not generate
     const runwaySec = _stationRunwaySec(st.id);
     try { sseBroadcast("runway", { stationId: st.id, station: st.name, runwaySec, runwayHours: Math.round(runwaySec / 360) / 10 }); } catch {}
-    // Self-heal a degraded (too-sparse) schedule the runway check can't see: rebuild it once through
-    // the real generator (LRP ladder + separation). This is the scheduler correcting a schedule that
-    // "slid wrong" — not a playout patch.
-    if (!_sparseHealed.has(st.id) && _scheduleIsSparse(st.id, nowTs)) {
-      _sparseHealed.add(st.id);
-      try {
-        const r = await _generateRange(st.id, nowTs, nowTs + AUTO_EXTEND_TARGET_DAYS * 86_400, { source: 'auto' });
-      _generatedThisTick.add(st.id);
-        console.log(`[auto-extend] ${st.name}: sparse schedule detected (<2 rows/hr) → regenerated ${r.count} tracks (${r.relaxedPicks} relaxed)`);
-        // `metric` is recorded on every row: this engine currently measures runway as
-        // MAX(scheduled_at) - now, which counts straight past a gap. When that is corrected to
-        // first-gap, the ledger will show the firing pattern change with the metric that produced
-        // each decision attached, rather than leaving a mystery burst of generation.
-        _healthEvent('auto-extend', { stationId: st.id, station: st.name, trigger: 'sparse-schedule',
-          metric: 'first-gap', runwaySecBefore: runwaySec, runwaySecAfter: _stationRunwaySec(st.id),
-          runwayDaysAfter: r.runwayDays, rows: r.count, relaxedPicks: r.relaxedPicks,
-          targetDays: AUTO_EXTEND_TARGET_DAYS, reasons: r.reasons });
-        try { sseBroadcast("autoextend", { stationId: st.id, station: st.name, count: r.count, runwayDays: r.runwayDays, relaxedPicks: r.relaxedPicks, reasons: r.reasons, sparseHeal: true }); } catch {}
-      } catch (e) {
-        console.error(`[auto-extend] ${st.name} sparse-heal failed:`, e.message);
-        _healthEvent('auto-extend-failed', { stationId: st.id, station: st.name, trigger: 'sparse-schedule', metric: 'first-gap', runwaySecBefore: runwaySec, error: e.message });
-      }
-      continue;
-    }
-    if (runwaySec >= AUTO_EXTEND_THRESHOLD_H * 3600) continue;
-    try {
-      const r = await _generateRange(st.id, nowTs, nowTs + AUTO_EXTEND_TARGET_DAYS * 86_400, { source: 'auto' });
-      _generatedThisTick.add(st.id);
-      console.log(`[auto-extend] ${st.name}: runway ${Math.round(runwaySec / 3600)}h < ${AUTO_EXTEND_THRESHOLD_H}h → +${r.count} tracks (runway now ${r.runwayDays}d, ${r.relaxedPicks} relaxed)`);
-      _healthEvent('auto-extend', { stationId: st.id, station: st.name, trigger: 'runway-below-threshold',
-        metric: 'first-gap', thresholdSec: AUTO_EXTEND_THRESHOLD_H * 3600, runwaySecBefore: runwaySec,
-        runwaySecAfter: _stationRunwaySec(st.id), runwayDaysAfter: r.runwayDays, rows: r.count,
-        relaxedPicks: r.relaxedPicks, targetDays: AUTO_EXTEND_TARGET_DAYS, reasons: r.reasons });
-      try { sseBroadcast("autoextend", { stationId: st.id, station: st.name, count: r.count, runwayDays: r.runwayDays, relaxedPicks: r.relaxedPicks, reasons: r.reasons }); } catch {}
-    } catch (e) { console.error(`[auto-extend] ${st.name} failed:`, e.message); }
+    // NO GENERATING ON A TIMER (Jeff, 2026-10-19: "Auto-regenerate stays ONLY inside a scheduled show when it runs out of
+    // music. If no show is scheduled, nothing generates and nothing plays."). The sparse-schedule self-heal and the
+    // runway top-up both generated on this 30-minute tick whatever was on; both are gone. The one automatic Generate is
+    // _outOfMusicRegenerate, fired by the daemon the moment a show's log runs out (logreader-floor).
   }
   // Designation heartbeat rides the extender's own 30-minute cadence: the same tick that decides
   // whether to generate is the one that proves this machine is alive and watching.

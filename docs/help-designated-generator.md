@@ -130,7 +130,7 @@ Three exceptions, all deliberate:
 1. **A station nobody has claimed still gets built.** If no computer is designated, the first one to
    auto-generate claims it. A brand-new station must never sit with an empty log waiting to be
    assigned.
-2. **Pressing Generate yourself always works.** The rule applies only to the *automatic* top-up. If
+2. **Pressing Generate yourself always works.** The rule applies only to the *automatic* generate (when a show on air runs out of music). If
    you are sitting at a computer and press **Generate**, it generates — you are there, and you asked.
 3. **The bypass still bypasses.** When the bypass is on for a station, every computer with **Keep the
    log filled** ON generates it, and the row reads **Bypassed** (see below).

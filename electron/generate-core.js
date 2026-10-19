@@ -138,15 +138,6 @@ function _pool(ctx, categoryId, hour) {
   return ctx.poolCache.get(k);
 }
 /** THE ONE PICK for a music slot, then the station's fallback category if one is named. null = UNSCHEDULED. */
-/** Has the log reached the piece starting at `pieceTs` (any row no longer pending)? By log hour (v66); false before v66. */
-function _pieceHasAired(ctx, pieceTs, pieceEndTs = pieceTs + 3600) {
-  if (ctx.stmtPieceAired === undefined) {
-    // A row written before v66 has no log hour: it belongs to the piece its time falls in.
-    try { ctx.stmtPieceAired = ctx.db.prepare("SELECT 1 AS x FROM generated_schedule WHERE station_id = ? AND (log_hour_ts = ? OR (log_hour_ts IS NULL AND scheduled_at >= ? AND scheduled_at < ?)) AND state IN ('played','playing','missed','skipped') AND deleted_at IS NULL LIMIT 1"); }
-    catch { ctx.stmtPieceAired = null; }
-  }
-  try { return !!(ctx.stmtPieceAired && ctx.stmtPieceAired.get(ctx.activeStationId, pieceTs, pieceTs, pieceEndTs)); } catch { return false; }
-}
 function _pickMusic(ctx, categoryId, ts, hour) {
   const tl = _timeline(ctx, Math.floor(Date.now() / 1000));
   let r = ctx.core.pick(_pool(ctx, categoryId, hour), ts, tl, ctx.rules);
@@ -211,24 +202,31 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
     const slotDate = new Date(dayBaseDate.getTime()); slotDate.setHours(h, 0, 0, 0);
     const jsDay = slotDate.getDay();
     const hourStartTs = Math.floor(slotDate.getTime() / 1000);
-    if (hourStartTs + 3600 <= minTs) continue; // never regenerate an hour that has already aired
+    // REGENERATE STARTS FROM THE NEXT SONG (Jeff, 2026-10-19: "keep the song on air and everything played, playing,
+    // missed or placed by hand; rebuild all pending rows from the end of the song on air onward, including the rest of
+    // the current hour. Remove the started-hour skips."). `minTs` is now the START OF THE PIECE ON AIR (main.js
+    // _regenPoint), so the only hours left out are the ones wholly before it. The hour on air is built — see ctx.regen.
+    if (hourStartTs + 3600 <= minTs) continue;
     const shows = stmtShows.all(String(jsDay), activeStationId);
     // THE SHOW SCHEDULE IS THE BOUNDARY (Jeff, 2026-10-18): the hour is cut at every show start/end minute inside it
     // (audiod/show-window.js); each piece is built from its own show's clock, from the piece's start to its end — a
     // show ending at 1:30 is built to 1:30, the next show from 1:30. No show = no log.
     for (const seg of showWindow.hourSegments(shows, hourStartTs)) {
-    if (seg.fromTs < minTs) continue;         // never regenerate a piece that has already aired
-    // …by the clock, OR by the log: inside a show the log plays straight on (it never waits for :00), so a station can be
-    // in a later hour before its time. A piece the log has reached — any row played, playing, didn't play or refused at
-    // playout — is the record, not a plan (v66). Its rows stay as they are.
-    if (_pieceHasAired(ctx, seg.fromTs, seg.toTs)) continue;
+    if (seg.fromTs < minTs) continue;         // a piece wholly before the piece on air
+    // (The "piece the log has reached is the record" skip is gone: its played/playing/missed rows ARE kept — Generate's
+    // delete never touches them — and its pending rest is rebuilt from the end of the song on air. Rule 4, 2026-10-19.)
     const show = seg.show;
     if (!show) { ctx.diag.noShowHours.add(h); continue; }
     if (!show.clock_id) { ctx.diag.noClock.add(h); continue; }
     const slots = stmtSlots.all(show.clock_id);
     if (!slots.length) { ctx.diag.emptyClocks.add(show.clock_id); continue; }
     const hourEnd = seg.toTs;                 // this piece's end: the show's boundary, or :00
-    let currentTs = seg.fromTs;
+    // THE PIECE ON AIR CONTINUES (rule 4): its clock goes on from the position after the rows that already happened
+    // (played, playing, didn't play — ctx.regen.consumed), timed from the end of the song on air. Every other piece is
+    // built whole from its start.
+    const regen = ctx.regen && seg.fromTs === ctx.regen.pieceLk ? ctx.regen : null;
+    let currentTs = regen ? Math.max(seg.fromTs, regen.fromTs) : seg.fromTs;
+    let skipMusic = regen ? (regen.consumed || 0) : 0;
     const dayStr = _localDayStr(slotDate);
     // EVERY ROW ON THE CLOCK IS PLACED (Jeff, 2026-10-18: "Generate places EVERY row on the clock. Nothing is trimmed to
     // fit the hour."). Rows past the piece's end are written too, timed in sequence; they belong to THIS piece
@@ -239,17 +237,15 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
     // never before the piece's start.
     let prevClass = null;
     const startFor = (cls) => Math.max(seg.fromTs, currentTs - segue.overlapBetween(prevClass, cls, ctx.overlapSec));
-    // Rows timed at or past this piece's end: they keep the rules among themselves while the piece is built, then come
-    // off the timeline — they air only if the hour runs short, so they never block the next piece's picks (they would
-    // otherwise count songs that are marked didn't-play as aired).
-    const pastEnd = [];
+    // Rows timed past this piece's end STAY on the timeline (Jeff, 2026-10-19: "Generate sees every row before a slot,
+    // including the previous hour's rows, so it never repeats a song the previous hour already has"). They used to come
+    // off it once the piece was built, so the next hour's first slots could repeat them.
     try {
 
     // One music slot, by the one pick: a song, or an UNSCHEDULED row. Moves currentTs to where the next row starts.
     const placeMusic = (categoryId, defaultDurS) => {
       const ts = startFor('MUSIC');
       const r = _pickMusic(ctx, categoryId, ts, h);
-      if (r.song && ts >= hourEnd) pastEnd.push({ song: r.song, ts });
       if (r.song) {
         const d = r.song.duration_ms ? Math.round(r.song.duration_ms / 1000) : defaultDurS;
         generatedRows.push(_musicRow(ctx, r, categoryId, ts, d, show.clock_id));
@@ -289,7 +285,8 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
       const TOL_S = 30;   // the break tolerance's starting value (§3.11); on air the alert uses the setting
       const due = breaks.slice().sort((a, b) => (a.minute || 0) - (b.minute || 0))
         .map(brk => ({ brk, target: hourStartTs + (brk.minute || 0) * 60 }))
-        .filter(x => x.target >= seg.fromTs && x.target < hourEnd);   // a break's minute in another show's piece is that piece's
+        .filter(x => x.target >= seg.fromTs && x.target < hourEnd)    // a break's minute in another show's piece is that piece's
+        .filter(x => !(regen && x.target < regen.fromTs));             // a break whose minute has passed on the piece on air happened (or didn't)
       let bi = 0;
       const placeBreak = ({ brk, target }) => {
         const startTs = currentTs;
@@ -299,15 +296,23 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
       };
       for (const ms of musicSlots) {
         await _genMaybeYield();
+        if (skipMusic > 0) { skipMusic--; continue; }   // a clock position that already happened (rule 4)
         while (bi < due.length && currentTs >= due[bi].target) placeBreak(due[bi++]);
         placeMusic(ms.category_id, (ms.duration_min || 4) * 60);
       }
-      while (bi < due.length) placeBreak(due[bi++]);
+      // A break goes where the clock puts it — after the row that reaches its minute — and nowhere else (Jeff, 2026-10-19:
+      // "Remove the break re-placement. Every clock is generated as a full hour"). One whose minute the clock's rows never
+      // reach is not moved after the last row any more: it is reported, so the clock can be fixed.
+      for (; bi < due.length; bi++) ctx.breakDrift.push({ hour: h, minute: due[bi].brk.minute || 0, driftSec: null, direction: 'unreached' });
       continue;
     }
 
     for (const slot of slots) {
       await _genMaybeYield();                // keep main's message pump alive mid-hour
+      if (skipMusic > 0) {                   // a clock position that already happened on the piece on air (rule 4)
+        if (slot.song_id || (slot.slot_type === 'music' && slot.category_id)) skipMusic--;
+        continue;
+      }
       const slotDurationS = (slot.duration_min || 4) * 60;
       // Pinned element: this slot plays ONE specific song/jingle/talk break (set by cart # in the scheduler). It is
       // the operator's choice and is placed as set; it goes on the timeline so the picks around it obey the rules.
@@ -319,7 +324,6 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
           generatedRows.push({ scheduled_at: at, song_id: pinned.id, title: pinned.title, artist: pinned.artist_name || '', file_key: pinned.file_path ? storedBasename(pinned.file_path) : '', duration_s: durationS, category_id: slot.category_id, clock_id: show.clock_id });
           const pin = { file: pinned.file_path, artist: pinned.artist_name, title: pinned.title, duration_ms: pinned.duration_ms };
           ctx.core.commit(_timeline(ctx, Math.floor(Date.now() / 1000)), pin, at);
-          if (at >= hourEnd) pastEnd.push({ song: pin, ts: at });
           currentTs = at + durationS; prevClass = 'MUSIC';
         } else { currentTs += slotDurationS; }
         continue;
@@ -336,7 +340,6 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
     } finally {
       // Every row of this piece belongs to it, wherever its start time falls (v66).
       for (let i = firstRow; i < generatedRows.length; i++) generatedRows[i].log_hour_ts = seg.fromTs;
-      if (ctx.tl) for (const x of pastEnd) ctx.core.uncommit(ctx.tl, x.song, x.ts);
     }
     }   // each piece of the hour
   }

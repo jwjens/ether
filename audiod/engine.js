@@ -786,7 +786,13 @@ class DaemonEngine {
     const order = ["A", "B", "C"];
     const now = Date.now();
     const playing = order.find(d => this._deckState(d).status === "playing");
-    if (playing) { this._lastPlayingAt = now; this._watchdogArmed = true; return; }  // healthy → re-arm
+    if (playing) {
+      this._lastPlayingAt = now; this._watchdogArmed = true;   // healthy → re-arm
+      // What is on air, and where it is — the song the watchdog resumes if it stalls (Jeff, 2026-10-19).
+      const st = this._deckState(playing);
+      this._lastLive = { deck: playing, filePath: st.filePath || "", title: st.title || "", positionSec: st.positionSec || 0, durationSec: st.durationSec || 0 };
+      return;
+    }
 
     // Is there anything to recover WITH? A cued/loaded deck, or queued (or continuous-refillable) content.
     // A deck "has content" when it has a FILE (filePath) — never a title. Rust's audio_stop clears the
@@ -825,7 +831,60 @@ class DaemonEngine {
   // cued/loaded-idle), PLAY that deck rather than loading a different track over it; only when nothing
   // is loaded anywhere do we pull the next track from the queue onto deck A.
   _recoverStall() {
-    this._advance("watchdog-recover", () => this._resumePlayout());
+    this._advance("watchdog-recover", () => this._resumeStalled());
+  }
+
+  // ── THE WATCHDOG RESUMES THE STALLED SONG, NEVER A DIFFERENT DECK (Jeff, 2026-10-19) ─────────────────────
+  // "Watchdog: after a stall, resume the stalled song at the exact spot it stalled. Never play a different deck."
+  // It used to play whatever idle deck held a file (a cued standby, any loaded deck), or load the queue onto deck A.
+  // Now: the deck that was last on air is the one that resumes. If it still holds its song, it plays on from where the
+  // engine holds it. If its song had ended (a segue that failed to start), the stalled thing is the log's NEXT row —
+  // the deck cued with it by the log goes on, nothing else. If the stalled deck lost its source, nothing else is played:
+  // it is reported loudly (resuming mid-song needs a seek the native engine does not have yet — see the build report).
+  async _resumeStalled() {
+    const order = ["A", "B", "C"];
+    if (order.some(d => this._deckState(d).status === "playing")) return false;
+    const last = this._lastLive;
+    if (last && last.deck) {
+      const st = this._deckState(last.deck);
+      const endedNaturally = Number.isFinite(last.durationSec) && last.durationSec > 0 && last.positionSec >= last.durationSec - 1.5;
+      if (!endedNaturally) {
+        if (st.filePath && st.filePath === last.filePath && this._play(last.deck) !== false) {
+          this._setDeck(last.deck, { status: "playing" });
+          this.endTriggered.delete(last.deck);
+          this._log(`watchdog: resumed the stalled song on deck ${last.deck} — "${last.title || "(untitled)"}" (at ${Math.round(last.positionSec)}s)`);
+          return true;
+        }
+        this._log(`watchdog: the stalled song on deck ${last.deck} ("${last.title || "(untitled)"}") cannot be resumed — its source is gone; nothing else is played`);
+        this.emit("error", { stationId: this.stationId, where: "watchdog", kind: "stalled-unresumable", deck: last.deck, title: last.title || "", filePath: last.filePath || "",
+          error: `stalled song "${last.title || ""}" on deck ${last.deck} lost its source at ${Math.round(last.positionSec)}s — not resumed, no other deck played` });
+        return false;
+      }
+    }
+    // The song had ended: the log's next row goes on — the deck the log cued with it (the queue's head entry), else load it.
+    const head = this.queue.find(q => !this._isAired(q));
+    const cuedDeck = head ? order.find(d => this.deckQid[d] === head.qid && this._deckState(d).status === "idle" && !!this._deckState(d).filePath) : null;
+    if (cuedDeck) {
+      if (this._play(cuedDeck) === false) { this._log(`watchdog: deck ${cuedDeck} refused the log's next row`); return false; }
+      this._setDeck(cuedDeck, { status: "playing", positionSec: 0 });
+      this.endTriggered.delete(cuedDeck); this.deckReady.delete(cuedDeck);
+      this._consumeDeckEntry(cuedDeck);
+      this._fireStart(cuedDeck);
+      this._log(`watchdog: the song had ended — the log's next row on deck ${cuedDeck}: "${this._deckState(cuedDeck).title || "(untitled)"}"`);
+      return true;
+    }
+    await this.refillIfNeeded();
+    const next = this._takePending();
+    if (!next) return false;
+    const deck = (last && last.deck) || "A";
+    if (!this.loadToDeck(deck, next)) return false;
+    this.deckChainType[deck] = next.chainType || "segue";
+    if (this._play(deck) === false) return false;
+    this._setDeck(deck, { status: "playing", positionSec: 0 });
+    this.endTriggered.delete(deck);
+    this._fireStart(deck);
+    this._log(`watchdog: the song had ended — the log's next row loaded on deck ${deck}: "${next.title || "(untitled)"}"`);
+    return true;
   }
 
   // Shared "get audio flowing NOW" primitive — used by the stall watchdog (_recoverStall) AND the
@@ -1338,25 +1397,25 @@ class DaemonEngine {
   // Log-Reader Flip (ACTIVATION) — is the time-anchored log-reader ON for THIS station? Per-station via
   // station_config_kv key='log_reader_flip' (LOCAL-AUTHORITATIVE, rider B — never synced), plus the dev
   // env global override. Cached 5s so a canary toggle takes effect within seconds, no restart. Read-only.
-  _logReaderOn() {
-    if (LOG_READER_FLIP) return true;
-    const now = Date.now();
-    if (now - (this._flagCheckedAt || 0) < 5000) return this._flagCached || false;
-    this._flagCheckedAt = now;
-    try {
-      const r = this.db.prepare("SELECT value FROM station_config_kv WHERE station_id=? AND key='log_reader_flip' AND deleted_at IS NULL").get(this.stationId);
-      this._flagCached = !!(r && (r.value === "1" || r.value === "true"));
-    } catch { this._flagCached = false; }
-    return this._flagCached;
-  }
+  //
+  // ALWAYS ON (Jeff, 2026-10-19: "Log reader for everything: on for every station on every computer, retire the old
+  // path. One way to play the log, no per-machine switch."). The switch was per computer and never synced, so two
+  // machines could play the same station two different ways; the old path had no hour boundary at all, so every row of
+  // an hour that overran :00 played into the next hour. The method stays so its callers read the same; the key is ignored.
+  _logReaderOn() { return true; }
 
   async refillIfNeeded() {
     if (!this.continuous) return;
     // Log-Reader Flip: when ON for this station, playout is a READ-THROUGH of generated_schedule via the
     // §2.7 selector — the queue becomes a cache of log rows >= the playhead (§2.3). OFF path below is
     // byte-identical to the pre-flip legacy behaviour.
-    if (this._logReaderOn()) return this._refillFromLog();
-    // ── legacy queue-sourced refill (unchanged) ──
+    return this._refillFromLog();
+  }
+
+  // The retired queue-sourced refill (loggen.fillQueue), kept only so its health senses' wording is on record; nothing
+  // calls it. One way to play the log (Jeff, 2026-10-19).
+  async _retiredQueueRefill() {
+    // ── legacy queue-sourced refill (retired) ──
     // Refill BEFORE the queue hits 0 (low watermark), so it never sits empty and starves preload.
     if (this.queue.length >= 5) return;
     // Throttle so we don't hammer loggen every 250ms tick when the schedule genuinely returns nothing.
@@ -1428,6 +1487,8 @@ class DaemonEngine {
     // THIS second, not up to two seconds later, because the row it picks is the one that goes to air.
     if (!opts.force && now - (this._lastRefillAt || 0) < 2000) return;
     this._lastRefillAt = now;
+    // Rule 1 (Jeff, 2026-10-19): a cued row whose hour has ended never airs — let it go before reading.
+    this._releaseEndedHourRows(Math.floor(now / 1000));
     let r;
     // The seam: when the queue's next entry would start (a row of the next show is offered once that show has started).
     const seamTs = this._projectedSeamTs();
@@ -1657,13 +1718,65 @@ class DaemonEngine {
 
   /** The next seam, in epoch SECONDS: now + what remains on the playing deck. No deck playing → now.
    *  Reads only the state _segueTick already uses; never writes. */
+  //
+  // THE LATEST-ENDING PLAYING DECK (2026-10-19). It took the first playing deck in A,B,C order — during a segue overlap
+  // that can be the OUTGOING song with seconds left, so the seam came out early and a row of an hour that was about to
+  // end still looked startable before :00 (rule 1: the 2 PM leftovers that played 3:00–3:15).
   _projectedSeamTs() {
     const nowSec = Math.floor(Date.now() / 1000);
-    const P = ["A", "B", "C"].find(d => this._deckState(d).status === "playing");
-    if (!P) return nowSec;
-    const st = this._deckState(P);
-    const remaining = (st.durationSec || 0) - (st.positionSec || 0);
+    let remaining = 0;
+    for (const d of ["A", "B", "C"]) {
+      const st = this._deckState(d);
+      if (st.status !== "playing") continue;
+      remaining = Math.max(remaining, (st.durationSec || 0) - (st.positionSec || 0));
+    }
     return nowSec + (remaining > 0 ? Math.round(remaining) : 0);
+  }
+
+  // ── RULE 1: THE TOP OF THE HOUR (Jeff, 2026-10-19) ───────────────────────────────────────────────────────
+  // "The song crossing :00 plays out, then the NEW hour's first row. The old hour's remaining rows are marked
+  // didn't-play and never air in the new hour." The reader already passes them over when it reads — but a row it had
+  // cued on a STANDBY deck before :00 was never judged again and aired (the 2 PM leftovers, 3:00–3:15 on OV). So, the
+  // moment a piece has ended by the clock, every standby deck still holding an automatic row of it lets go, the row is
+  // stamped didn't-play, and the decks are cued from the new hour — while the crossing song is still on air.
+  // A row added by hand is exempt (Jeff, 2026-10-19: it plays after the crossing song). Returns the rows let go.
+  _releaseEndedHourRows(nowSec) {
+    const ended = [];
+    for (const d of ["A", "B", "C"]) {
+      const id = this.deckSchedId[d];
+      if (id == null || this.manualCue.has(d)) continue;
+      const st = this._deckState(d);
+      if (st.status === "playing" || st.status === "paused") continue;
+      let row = null;
+      try { row = this.db.prepare(`SELECT gs.id, gs.source, gs.title, ${loggen.logKeySql(this.db)} AS lk FROM generated_schedule gs WHERE gs.id = ? AND gs.station_id = ?`).get(id, this.stationId); } catch {}
+      if (!row || loggen.isOperatorRow(row)) continue;
+      let endTs = null;
+      try { endTs = loggen.pieceEndFor(this.db, this.stationId, row.lk); } catch {}
+      if (endTs == null || nowSec < endTs) continue;
+      ended.push({ d, id, title: row.title || st.title || "(untitled)" });
+    }
+    if (!ended.length) return ended;
+    try {
+      const ph = ended.map(() => "?").join(",");
+      this.db.prepare(`UPDATE generated_schedule SET state='missed' WHERE id IN (${ph}) AND station_id=? AND state='pending' AND ${loggen.notOperatorSql("generated_schedule")}`)
+        .run(...ended.map(e => e.id), this.stationId);
+    } catch { /* stamping is best-effort; the deck still lets go */ }
+    this._advance("hour-ended:" + ended.map(e => e.d).join(""), async () => {
+      for (const e of ended) {
+        const st = this._deckState(e.d);
+        if (st.status === "playing" || st.status === "paused" || this.manualCue.has(e.d) || this.deckSchedId[e.d] !== e.id) continue;
+        this._stop(e.d);
+        this.deckReady.delete(e.d); this.endTriggered.delete(e.d);
+        this._releaseDeckEntry(e.d);
+        this.deckSchedId[e.d] = null;
+        this.queue = this.queue.filter(q => q.schedId !== e.id);
+        this._setDeck(e.d, { status: "idle", title: "", artist: "", filePath: "", positionSec: 0 });
+        this._log(`top of the hour: standby deck ${e.d} let go of "${e.title}" (row ${e.id}) — its hour has ended; marked didn't-play`);
+        this._maybeEmitDeck(e.d);
+      }
+    });
+    try { this.emit("logreader-missed", { stationId: this.stationId, count: ended.length, driftSec: 0, why: "hour-ended" }); } catch {}
+    return ended;
   }
 
   _resolveHandLoadClass(filePath) {

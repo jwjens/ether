@@ -1186,11 +1186,8 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
           if (playing) seamTs = now + Math.max(0, Math.round((playing.durationSec || 0) - (playing.positionSec || 0)));
         } catch { /* engine not ready — project from now */ }
         // Flip state decides whether the nearest-anchor selector can promote a spot ahead of a song.
-        let flipped = false;
-        try {
-          const f = await (window as any).ether?.invoke?.("station_config_kv:get-value", stationId, "log_reader_flip");
-          flipped = !!(f && f.ok && (f.value === "1" || f.value === "true"));
-        } catch { /* leave false — legacy projection is the honest default */ }
+        // Every station plays through the log reader now (2026-10-19) — there is no legacy projection to fall back to.
+        const flipped = true;
         const nextHourTs = from + 3600;
         if (!stop) setSpotRows(projectSpots(spots, queue, seamTs, flipped, nextHourTs));
       } catch { if (!stop) setSpotRows([]); }
@@ -1848,11 +1845,12 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
           </HealthPanel>
         )}
 
-        {/* ── LOG-READER FLIP — per-station CANARY toggle (activation). Local-only; never syncs. ── */}
+        {/* ── PLAYOUT — the log reader, always (Jeff, 2026-10-19: "Log reader for everything: on for every station on every
+            computer, retire the old path. One way to play the log, no per-machine switch."). The canary switch is gone. ── */}
         {libHealth?.stations?.length > 0 && (
-          <HealthPanel id="canary" title="Log-Reader Flip — Canary">
+          <HealthPanel id="canary" title="Playout & Generate">
             <div style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 10, lineHeight: 1.5 }}>
-              Switch a station to the §2.7 time-anchored log-reader (playout reads the calendar directly). Per-station and local-only — it never syncs. Flip <strong>Magical Forest</strong> first and verify on air before the next.
+              Every station plays its log through the log reader, on every computer — there is no other way and no switch.
             </div>
             {libHealth.stations.map((st: any) => {
               // Tri-state, straight from the last READ: true = ON, false = LEGACY, null/undefined = we
@@ -1863,34 +1861,24 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
               const err = flipErr[st.stationId];
               const known = state === true || state === false;
               const on = state === true;
-              const label = busy ? "…" : !known ? "UNKNOWN" : on ? "LOG-READER ON" : "LEGACY";
+              void busy; void known; void on; void err;
               return (
                 <div key={st.stationId} style={{ padding: "6px 2px", borderBottom: "1px solid var(--border-primary)" }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                     <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text-secondary)" }}>{st.name}</span>
-                    <button
-                      onClick={() => toggleFlip(st.stationId)}
-                      disabled={busy}
-                      title={busy ? "Reading the stored value…" : !known ? "Stored value unreadable — click to re-read and set" : on ? "Playout: time-anchored log-reader" : "Playout: legacy queue"}
-                      style={{
-                        fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", padding: "4px 12px", borderRadius: 0,
-                        cursor: busy ? "wait" : "pointer",
-                        background: on ? "#8868D8" : "transparent",
-                        border: `1px solid ${on ? "#8868D8" : !known ? "var(--accent-amber, #fbbf24)" : "var(--border-primary)"}`,
-                        color: on ? "#fff" : !known ? "var(--accent-amber, #fbbf24)" : "var(--text-tertiary)",
-                        opacity: busy ? 0.6 : 1,
-                      }}
-                    >{label}</button>
+                    <span title="Playout reads the program log directly — always, on every computer"
+                      style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", padding: "4px 12px", background: "#8868D8", color: "#fff" }}>
+                      LOG READER</span>
                   </div>
                   {/* Auto-generation — a READ-ONLY mirror (audit 19). The switch lives in the Program Log beside Fill Day;
                       this row only says what is stored and where to change it. */}
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 4 }}>
                     <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
-                      Auto-generate {autoGen[st.stationId] === true ? "ON — this machine keeps the log topped up" : autoGen[st.stationId] === false ? "OFF — this machine will not extend the log" : "— can't read the stored value"}
-                      {" · "}switch it in the Program Log (Keep the log filled)
+                      Generate when a show runs out {autoGen[st.stationId] === true ? "ON — this machine generates when a scheduled show runs out of music" : autoGen[st.stationId] === false ? "OFF — this machine never generates on its own" : "— can't read the stored value"}
+                      {" · "}switch it in the Program Log
                     </span>
                     <button onClick={() => { try { window.dispatchEvent(new CustomEvent("ether:open-programlog")); } catch { /* non-Electron */ } }}
-                      title="Open the Program Log — the Keep the log filled switch is under Fill Day"
+                      title="Open the Program Log — the Generate when a show runs out switch is under Fill Day"
                       style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 0, cursor: "pointer", background: "transparent", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", whiteSpace: "nowrap" as const }}>
                       Program Log →
                     </button>

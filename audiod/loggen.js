@@ -243,6 +243,9 @@ function notOperatorSql(alias = "gs") {
 function isOperatorRow(r) { return String((r && r.source) ?? "").trim().toLowerCase() === "operator"; }
 /** The start of the piece (the hour, cut at show starts/ends) that owns `ts` on this station: a new row's log hour. */
 function pieceStartFor(db, stationId, ts) { return showWindow.pieceAt(_activeShows(db, stationId), ts).startTs; }
+/** The END of the piece that owns log hour `lk`: when that hour (or show piece) is over. Rule 1 (Jeff, 2026-10-19): a row
+ *  of a piece that has ended never starts — the song crossing :00 plays out, then the NEW hour's first row. */
+function pieceEndFor(db, stationId, lk) { return showWindow.pieceAt(_activeShows(db, stationId), lk).endTs; }
 /** "After row X in log order", for a row X with lk/scheduled_at/id. Three ? placeholders' worth of params via afterParams. */
 function _afterSql(lk, orEqual) {
   return `(${lk} > ? OR (${lk} = ? AND (gs.scheduled_at > ? OR (gs.scheduled_at = ? AND gs.id ${orEqual ? ">=" : ">"} ?))))`;
@@ -293,6 +296,10 @@ function selectRowForNow(db, stationId, nowTs, slackSec = 60, opts = null) {
         const b = showWindow.pieceAt(shows, c.lk);
         if (b.endTs > t) { next = c; break; }
         if (isOperatorRow(c) && runNow && b.show && b.show.id === runNow.show.id) { next = c; break; }
+        // A row added by hand to the hour of the song crossing :00 plays after it — even when a new show starts at :00
+        // (Jeff, 2026-10-19: a hand-added row of the old hour "plays after the crossing song"; today's 3:00 was also the
+        // Morning → HalloVeen Hour One show change, where the show test alone passed it over).
+        if (isOperatorRow(c) && b.key === a.key) { next = c; break; }
         passed++;
       }
       if (!next) return { playRow: null, missedCount: 0, mode: "nothing-due", driftSec: 0, nextDueTs: null, inShow: !!runNow, onAirRowId: onAir.id };
@@ -319,10 +326,19 @@ function selectRowForNow(db, stationId, nowTs, slackSec = 60, opts = null) {
         return { playRow, missedCount: missedBefore(playRow), mode: drift > slackSec ? "behind" : "on-time", driftSec: drift };
       }
     }
-    // Nothing due: the next row, and when it may start — its piece's start (a later piece), or its own time.
-    const next = db.prepare(`SELECT ${cols} ${base} AND ${lk} >= ? AND gs.scheduled_at > ? ${order} LIMIT 1`).get(stationId, ...fmtP, pieceNow.startTs, t + slackSec);
+    // INSIDE A SHOW THE PLAYER NEVER WAITS FOR A ROW'S TIME (Jeff, 2026-10-19: "No top-of-hour gate, no on-time wait. When
+    // a row ends, the next row plays." Today: ~6 min of dead air waiting for 3:15:33). Nothing of this piece has reached
+    // its time — the station is ahead of the clock, or the row it was on is gone — so the NEXT row in log order plays now
+    // when it belongs to the show that is on (this piece, or a piece that plays straight on from it). Only a row of another
+    // show, of no show or of another day waits — for that piece's start, never for its own time.
+    const next = db.prepare(`SELECT ${cols} ${base} AND ${lk} >= ? ${order} LIMIT 1`).get(stationId, ...fmtP, pieceNow.startTs);
     let nextDueTs = null;
-    if (next) { const b = showWindow.pieceAt(shows, next.lk); nextDueTs = b.key === pieceNow.key ? next.scheduled_at : Math.max(b.startTs, t); }
+    if (next) {
+      const b = showWindow.pieceAt(shows, next.lk);
+      const sameShow = runNow && (b.key === pieceNow.key || showWindow.playsStraightInto(shows, pieceNow, b));
+      if (sameShow) return { playRow: next, missedCount: 0, mode: "on-time", driftSec: t - next.scheduled_at, ahead: true };
+      nextDueTs = Math.max(b.startTs, t);
+    }
     return { playRow: null, missedCount: 0, mode: "nothing-due", driftSec: 0, nextDueTs, inShow: !!runNow };
   } catch { return { playRow: null, missedCount: 0, mode: "error", driftSec: 0 }; }
 }
@@ -416,6 +432,18 @@ function readLogAnchored(db, stationId, count = 20, slackSec = 60, opts = null) 
     const pA = showWindow.pieceAt(shows, anchor.lk);
     const k = rows.findIndex(r => { const b = showWindow.pieceAt(shows, r.lk); return b.startTs > t && !showWindow.playsStraightInto(shows, pA, b); });
     if (k > 0) rows = rows.slice(0, k);
+  }
+  { // RULE 1 (Jeff, 2026-10-19): "The old hour's remaining rows are marked didn't-play and never air in the new hour." An
+    // automatic row whose piece has ended by the time the next row would start is never offered — not after a hand-added
+    // row of that hour either — and is marked didn't-play with the rows before the anchor.
+    const shows = _activeShows(db, stationId);
+    const t = Math.max(nowTs, seamTs);
+    const ended = rows.filter(r => !isOperatorRow(r) && showWindow.pieceAt(shows, r.lk).endTs <= t && r.row_id !== anchor.id);
+    if (ended.length) {
+      const gone = new Set(ended.map(r => r.row_id));
+      rows = rows.filter(r => !gone.has(r.row_id));
+      missedRowIds = missedRowIds.concat(ended.map(r => r.row_id));
+    }
   }
   { // the window: `count` rows, or through the last hand-added row still to come
     let lastHand = -1;
@@ -549,7 +577,7 @@ function fillQueue(db, stationId, count = 12) {
 }
 
 module.exports = { fillQueue, getActiveShowClock, getFormatCategoryIds, getStationCategoryIds, resetScheduleCursor, sepConfig, readJingleForSeam, readAutoPostForSong, selectRowForNow, readLogAnchored,
-  logKeySql, notOperatorSql, isOperatorRow, pieceStartFor, hasLogHour: _hasLogHour,
+  logKeySql, notOperatorSql, isOperatorRow, pieceStartFor, pieceEndFor, hasLogHour: _hasLogHour,
   // Internals, exposed for tests only — not part of the daemon's API. The category gate is the kind
   // of rule that is silently deleted by a future refactor unless something asserts it.
   _test: { baseConditions } };

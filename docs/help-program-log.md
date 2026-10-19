@@ -44,14 +44,20 @@ the number of hours listed: the hours your shows cover, plus any hour that alrea
 
 ## Fill Day
 
-**Fill Day** builds the log for the selected day from your shows and clocks. It fills **from the current hour to the end of the day**:
+**Fill Day** builds the log for the selected day from your shows and clocks. It starts **from the next song** and fills to the end of the day:
 
-- **The current hour is built too**, timed from its :00, as long as nothing has played in it yet. Add a show at 10:35,
-  press Fill Day, press AUTO: the station starts straight away with the row for 10:35. The rows before it are marked
-  **didn't play**.
-- An hour that has started playing (anything played, playing or marked didn't play in it) is never touched, and neither
-  is any earlier hour. What aired is a record, not a plan.
+- **The song on air stays, and so does everything that played, is playing, was marked didn't play, or was placed by
+  hand.** Every pending row after the song on air is rebuilt, **including the rest of the current hour**, starting
+  when the song on air ends.
+- **The clock carries on where it is.** If five of the hour's clock rows have already happened, the rebuilt part of the
+  hour starts with the clock's sixth row. A break whose time has already passed is not placed again.
+- Nothing on air? It builds from now (or from the current hour's :00 if nothing has happened in that hour yet).
+- What aired is a record, not a plan: no played, playing or didn't-play row is ever changed.
 - Items you placed by hand (they wear the YOURS badge in the hour editor) survive a Fill.
+- **Every song is checked against every row before it** — including the previous hour's rows, even ones that ran past
+  :00 — so a Fill never repeats a song the previous hour already has.
+- **A break the clock never reaches** (the clock's songs end before the break's minute) is not moved to the end of the
+  hour. Fill Day reports it instead, so you can fix the clock.
 - Filling a day that has already fully aired does nothing and says so.
 
 Fill Day acts on the **station you are switched into**. Switch stations first if you mean another one.
@@ -108,9 +114,11 @@ them. If you have the Program Log open in both the dock and its own window, both
 
 ## Keep the log filled (automatic)
 
-Under Fill Day and Fill Week, **Keep the log filled: ON / OFF** is this station's auto-generate switch.
+Under Fill Day and Fill Week, **Generate when a show runs out: ON / OFF** is this station's auto-generate switch.
 
-- **ON** — this computer extends the station's log on its own as the runway drops, so it never runs dry.
+- **ON** — when a scheduled show is on and its log runs out of music, this computer generates the rest of that show
+  straight away, so a show is never silent. That is the only time anything generates by itself: there is no timer, and
+  if no show is scheduled, nothing generates and nothing plays.
 - **OFF** (the default) — the log is filled only when someone presses Fill Day or Fill Week.
 
 It is **per station and local to this computer**: turning it on here does not turn it on at another studio. A

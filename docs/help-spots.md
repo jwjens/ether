@@ -134,8 +134,10 @@ need it gone immediately, remove that entry in the Program Log's hour editor (âœ
 
 ## Notes
 
-- A spot at the **top of the hour** airs exactly at :00; breaks at other minutes drop at the nearest song
-  boundary so a song is never cut off mid-play.
+- A break at the **top of the hour** is the new hour's first row: it plays as soon as the song crossing :00 ends.
+  Breaks at other minutes play in their place in the log, between songs, so a song is never cut off mid-play.
+- A break goes where the clock puts it. If the clock's songs end before a break's minute, Fill Day reports the break as
+  not reached instead of moving it.
 - Spots are excluded from music-rotation separation and from the music/plays reporting â€” they have their own
   play logging for advertiser affidavits.
 

@@ -44,7 +44,7 @@ describe("the auto-generate switch (audit 19)", () => {
   it("the Program Log carries the switch beside Fill Day", () => {
     const pl = fs.readFileSync(path.join(__dirname, "..", "components", "ProgramLog.tsx"), "utf8");
     expect(pl).toMatch(/useAutoGenerate\(stationId\)/);
-    expect(pl).toMatch(/Keep the log filled/);
+    expect(pl).toMatch(/Generate when a show runs out/);   // renamed 2026-10-19: it no longer tops the log up on a timer
   });
   it("the Canary panel only mirrors it and names where the real switch is", () => {
     const hm = fs.readFileSync(path.join(__dirname, "..", "components", "HealthMonitor.tsx"), "utf8");

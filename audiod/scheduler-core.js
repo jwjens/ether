@@ -198,9 +198,9 @@ function poolFor(db, categoryId, hour) {
 }
 
 /**
- * The timeline for a run: every MUSIC play this station has on record before `beforeTs`, and every pending MUSIC row of
- * its log still to air (scheduled at or after `beforeTs`) that will still be there after the run (outside `replace` =
- * [from, to), or operator-owned inside it).
+ * The timeline for a run: every MUSIC play this station has on record before `beforeTs`, and every row of its log that
+ * will still be there after the run — pending, didn't-play or refused rows anywhere, hand-placed rows, and pending rows
+ * outside `replace` = [from, to) — from one day before the window on (rule 3, Jeff 2026-10-19).
  */
 function loadTimeline(db, stationId, { beforeTs, replace, sinceTs, poolFiles } = {}) {
   const split = makeSplitter();
@@ -233,34 +233,29 @@ function loadTimeline(db, stationId, { beforeTs, replace, sinceTs, poolFiles } =
     // THE REPLACE WINDOW IS BY LOG HOUR (v66), exactly as Generate's delete (main.js _commitDayRows): every clock row is
     // placed, so an hour still on air keeps its extra rows timed past :00 — they are not replaced, so they ARE the log on
     // the other side of the picks that follow them.
-    // An hour the log has reached (a row played, playing, didn't play or refused) is the record, never replaced — even
-    // when the station is ahead of the clock
-    // (Generate skips it and keeps its rows: generate-core _pieceHasAired, main.js _commitDayRows).
+    // The window being replaced holds only PENDING rows Generate placed (Jeff, 2026-10-19, rule 4: regenerate keeps what
+    // played, is playing, didn't play or was placed by hand, and rebuilds every pending row from the end of the song on
+    // air). Those are left off here — they are about to be rebuilt; everything else counts, inside the window too.
     let lk = "gs.scheduled_at";
-    const airedHours = new Set();
     try {
-      if (db.prepare("PRAGMA table_info(generated_schedule)").all().some(c => c.name === "log_hour_ts")) {
-        lk = "COALESCE(gs.log_hour_ts, gs.scheduled_at)";
-        for (const a of db.prepare("SELECT DISTINCT log_hour_ts h FROM generated_schedule WHERE station_id = ? AND log_hour_ts IS NOT NULL AND state IN ('played','playing','missed','skipped') AND deleted_at IS NULL").all(stationId)) airedHours.add(a.h);
-      }
+      if (db.prepare("PRAGMA table_info(generated_schedule)").all().some(c => c.name === "log_hour_ts")) lk = "COALESCE(gs.log_hour_ts, gs.scheduled_at)";
     } catch {}
-    const rows = db.prepare(`SELECT gs.scheduled_at, ${lk} AS lk, gs.title, gs.source, COALESCE(gs.file_key, gs.file_path, s.file_path) f, s.title st, a.name sa, COALESCE(s.duration_ms, gs.duration_s * 1000) ms
+    // GENERATE SEES EVERY ROW BEFORE A SLOT (Jeff, 2026-10-19: "Generate sees every row before a slot, including the
+    // previous hour's rows, so it never repeats a song the previous hour already has."). Every row of the log that is not
+    // being replaced — still to air, already timed in the past, the previous hour's extra rows timed past its :00, and rows
+    // marked didn't-play — counts on the timeline, the aired ones through play_log. It used to take only pending rows
+    // timed after "now" and to skip every row past its hour's end, so the first slots of an hour could repeat a song the
+    // hour before already held. Bounded to one day before the window (beyond any rule's reach).
+    const lookFrom = Math.min(beforeTs ?? 0, replace ? replace[0] : (beforeTs ?? 0)) - 86400;
+    const rows = db.prepare(`SELECT gs.scheduled_at, ${lk} AS lk, gs.state, gs.title, gs.source, COALESCE(gs.file_key, gs.file_path, s.file_path) f, s.title st, a.name sa, COALESCE(s.duration_ms, gs.duration_s * 1000) ms
         FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id LEFT JOIN artists a ON a.id = s.artist_id
-       WHERE gs.station_id = ? AND gs.deleted_at IS NULL AND (gs.state IS NULL OR gs.state = 'pending') AND gs.song_id IS NOT NULL
-         AND (gs.content_class IS NULL OR gs.content_class = 'MUSIC') AND gs.scheduled_at >= ?`).all(stationId, beforeTs ?? 0);
-    // "The log on either side" = rows still to air. A pending row whose slot has already passed will never air (the
-    // reader retires it as missed); it is neither what aired nor what will.
-    // A ROW PAST ITS HOUR'S END does not air (Jeff, 2026-10-18: the song crossing the top of the hour plays out, then the
-    // next hour's first row; the old hour's other rows are didn't-play). Every clock row is placed, so an hour's extra
-    // rows are timed into the next hour; counted, they would block the next hour's picks with songs that never air. The
-    // hour's end is its piece's end by the show schedule (audiod/show-window.js) — what Generate uses (a show ending at
-    // 22:30 ends its hour at 22:30, not 23:00).
-    const endOf = pieceEndFn(db, stationId);
+       WHERE gs.station_id = ? AND gs.deleted_at IS NULL AND (gs.state IS NULL OR gs.state IN ('pending', 'missed', 'skipped')) AND gs.song_id IS NOT NULL
+         AND (gs.content_class IS NULL OR gs.content_class = 'MUSIC') AND gs.scheduled_at >= ?`).all(stationId, lookFrom);
     for (const r of rows) {
-      const inWindow = replace && r.lk >= replace[0] && r.lk < replace[1] && !airedHours.has(r.lk);
+      const inWindow = replace && r.lk >= replace[0] && r.lk < replace[1];
       const operator = r.source && String(r.source).trim().toLowerCase() === "operator";
-      if (inWindow && !operator) continue;
-      if (!operator && r.scheduled_at >= endOf(r.lk)) continue;
+      const pending = r.state == null || r.state === "pending";
+      if (inWindow && pending && !operator) continue;   // being rebuilt by this run
       tl.add({ file: r.f, artist: r.sa, title: r.st || r.title, durationMs: r.ms }, r.scheduled_at);
     }
   } catch {}

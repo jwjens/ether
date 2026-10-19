@@ -320,12 +320,23 @@ describe("AUTO comes on inside a show with nothing due yet", () => {
     expect(ids(r)[0]).toBe(2);
     expect(r.missedRowIds).toEqual([1]);
   });
-  it("never jumps ahead to a later hour's rows: waits for the next row's time", () => {
+  // RULE 2 (Jeff, 2026-10-19): "Inside a show the player never waits for a row's time. No top-of-hour gate, no on-time
+  // wait. When a row ends, the next row plays." (10/19: ~6 min of dead air waiting for 3:15:33.) This used to wait for
+  // 11:00; the 11:00 row is the same show's, the same day — it plays now.
+  it("inside a show it never waits for a row's time: the next row of the same show plays now", () => {
     shows([[1, 9, 0, 15, 0]]);
     row(1, at(11, 0), { hour: at(11, 0) });
     setNow(10, 36);
     const r = read(null);
+    expect(ids(r)[0]).toBe(1);
+    expect(r.nextDueTs).toBe(null);
+  });
+  it("…but a row of a show that has not started yet still waits for that show's start", () => {
+    shows([[1, 9, 0, 11, 0], [2, 12, 0, 15, 0]]);
+    row(1, at(12, 0), { hour: at(12, 0) });
+    setNow(10, 36);
+    const r = read(null);
     expect(r.items.length).toBe(0);
-    expect(r.nextDueTs).toBe(at(11, 0));
+    expect(r.nextDueTs).toBe(at(12, 0));
   });
 });

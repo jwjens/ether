@@ -32,11 +32,17 @@ Ether never adds songs of its own, and never skips songs because the station is 
   :00 still belong to their own hour in the Program Log.
 - **Times use your segue overlap.** Each song is timed to start when the one before it hands over (Settings → **Segue overlap
   (auto)**), not at the end of its file, so the log's times match what airs.
-- **The log plays in order, straight through the show.** When a row ends, the next row plays. If the hour's rows
-  run out before :00, the next hour's first row plays right away, with no silence.
+- **The log plays in order, straight through the show.** When a row ends, the next row plays. **Inside a show the
+  player never waits for a row's time** — no waiting for the top of the hour, no waiting for a row's start time. If
+  the hour's rows run out before :00, the next hour's first row plays right away, with no silence.
 - **The song playing at the top of the hour always finishes** (there's no hard stop). Then the new hour's **first
-  row** plays. The old hour's rows that didn't get to play are marked **didn't play** in the Program Log. They're never
-  deleted.
+  row** plays. The old hour's rows that didn't get to play are marked **didn't play** in the Program Log, even one that
+  was already loaded on a deck. They never air in the new hour, and they're never deleted.
+- **Songs you added by hand to the old hour play after the song crossing :00**, then the new hour's first row.
+- **There is always music inside a show.** When no song passes your rules, the song in that row's category that has
+  waited longest goes in. With **Generate when a show runs out** ON, a show whose log runs out generates the rest of
+  itself at once.
+- **If a song stalls**, the watchdog restarts that same song on its own deck. It never plays a different deck instead.
 - **Shows are the boundary.** A row of the next show never plays before that show starts, and the log never pulls
   rows from another day. When a show's last row ends and no show follows, nothing plays.
 - **Songs you add stay.** A song you add to Up Next (Library **Q**, a drop on Up Next, or the jock strip search) goes
@@ -52,7 +58,8 @@ Ether never adds songs of its own, and never skips songs because the station is 
   on a machine means that machine won't turn AUTO on by itself until you press AUTO there again. This keeps a second
   machine that holds the same station from going on air. After installing this version, press AUTO once on the machine
   that broadcasts.
-- Starting AUTO before the first show of the day: the station waits for the show's first row.
+- Starting AUTO before the first show of the day: the station waits for the show's first row. Starting AUTO **inside**
+  a show: the next row plays at once.
 
 ## Good to know
 

@@ -863,13 +863,13 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
             </button>
           </div>
           <button onClick={autoGen.toggle} disabled={autoGen.busy} aria-pressed={autoGen.on === true}
-            title="Local to this machine. When ON, this machine extends this station's log automatically as the runway drops. OFF means the log is only filled when someone presses Fill Day / Fill Week."
+            title="Local to this machine. When ON and a scheduled show runs out of music, this machine generates from the next song to the end of that show. Nothing is generated on a timer, and nothing outside a show. OFF: the log is filled only when someone presses Fill Day / Fill Week."
             style={{ padding: "6px 4px", borderRadius: 0, fontSize: "var(--t-micro)", fontWeight: 800, letterSpacing: "0.04em",
                      cursor: autoGen.busy ? "wait" : "pointer", opacity: autoGen.busy ? 0.6 : 1,
                      background: autoGen.on === true ? "var(--accent-green)" : "transparent",
                      color: autoGen.on === true ? "#062" : autoGen.on === null ? "var(--accent-amber, #fbbf24)" : "var(--text-tertiary)",
                      border: `1px solid ${autoGen.on === true ? "var(--accent-green)" : autoGen.on === null ? "var(--accent-amber, #fbbf24)" : "var(--border-primary)"}` }}>
-            Keep the log filled: {autoGen.on === null ? "— (can't read)" : autoGen.on ? "ON" : "OFF"}
+            Generate when a show runs out: {autoGen.on === null ? "— (can't read)" : autoGen.on ? "ON" : "OFF"}
           </button>
           {autoGen.error && <div style={{ fontSize: "var(--t-micro)", color: "var(--accent-red)" }}>{autoGen.error}</div>}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 }}>

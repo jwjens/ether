@@ -222,8 +222,10 @@ function bindProduct(w) {
   const deps = { db: w, require: mainRequire, _scheduleChanged: () => {}, _healthEvent: () => {}, console: { log: () => {}, error: console.error, warn: () => {} } };
   const commitDayRows = liftFromMain("_commitDayRows", deps);
   const retireStale = liftFromMain("retireStaleScheduleRows", deps);
+  // Rule 4 (Jeff, 2026-10-19): every Generate starts from the end of the song on air — main.js _regenPoint, the product's own.
+  const regenPoint = liftFromMain("_regenPoint", { ...deps, _genStartTs: (ts) => hourStartOf(ts) });
   const loggenSrc = fs.readFileSync(path.join(ROOT, "audiod", "loggen.js"), "utf8");
-  return { gen, loggen, loggenSrc, playlog, commitDayRows, retireStale };
+  return { gen, loggen, loggenSrc, playlog, commitDayRows, retireStale, regenPoint };
 }
 
 // Generate, the way schedule:generateDays / generateDay run it (main.js:11437-11555): one ctx across the
@@ -233,14 +235,17 @@ async function runGenerate(P, w, sid, dayBases) {
   const genTs = nowSec();
   const ctx = P.gen.buildScheduleCtx(w, sid);
   const committed = [];
+  // As main.js's Generate handlers (rule 4, Jeff 2026-10-19): from the end of the song on air, in the piece it belongs to.
+  const regen = P.regenPoint(sid, genTs);
+  ctx.regen = regen;
   // The window this run replaces, as main's callers say it (Phase 2: the one pick measures against the log outside it).
   if (ctx.planWindow && dayBases.length) {
     const first = Math.floor(dayBases[0].getTime() / 1000), last = Math.floor(dayBases[dayBases.length - 1].getTime() / 1000) + 86400;
-    ctx.planWindow(Math.max(first, curHour(genTs)), last);
+    ctx.planWindow(Math.max(first, regen.pieceLk), last);
   }
   for (const dayBase of dayBases) {
     const dayStart = Math.floor(dayBase.getTime() / 1000), dayEnd = dayStart + 86400;
-    const effStart = Math.max(dayStart, curHour(genTs));   // the CURRENT hour, as main.js _genStartTs (Jeff 2026-10-19)
+    const effStart = Math.max(dayStart, regen.pieceLk);   // the piece on air, as main.js (rule 4)
     if (effStart >= dayEnd) continue;
     const before = ctx.generatedRows.length;
     P.gen.resetGenSlice();
@@ -284,7 +289,9 @@ async function simulateStation(w, P, F, R) {
     // The log AS IT STOOD when this run committed: the pending rows it did not write. Read now, not after the simulated
     // week has aired them (a row pending at 6:14 PM and played at 6:23 PM was "the log on the after side" for the 6:14
     // regenerate, and the checker must see it the way the picker did).
-    const keptAtCommit = w.prepare("SELECT * FROM generated_schedule WHERE station_id=? AND deleted_at IS NULL AND state='pending' AND scheduled_at >= ? AND (generated_at IS NULL OR generated_at != ?)").all(sid, g.genTs, g.genTs);
+    // Every row this run did not write that is still in the log, from a day before the run (Generate's loadTimeline look-back,
+    // rule 3): pending, didn't-play and refused rows (aired rows are counted through play_log).
+    const keptAtCommit = w.prepare("SELECT * FROM generated_schedule WHERE station_id=? AND deleted_at IS NULL AND (state IS NULL OR state IN ('pending','missed','skipped')) AND scheduled_at >= ? AND (generated_at IS NULL OR generated_at != ?)").all(sid, g.genTs - 86400, g.genTs);
     runs.push({ label, genTs: g.genTs, rows: genRows(g.genTs), keptAtCommit, relaxed: g.ctx.relaxed.length, breakDrift: g.ctx.breakDrift.length, enforce: g.ctx.enforceSeparation });
     return g;
   };
@@ -436,7 +443,12 @@ async function simulateStation(w, P, F, R) {
     // what was already in the log, on either side, that this run did not write (kept rows)
     const kept = run.keptAtCommit;
     const pastEnd = pastEndFn(w, sid);
-    for (const k of kept) if (isMusicRow(k) && !runIds.has(k.id) && !pastEnd(k)) tl.add(rowEvent(F, k));
+    // RULE 3 (Jeff, 2026-10-19): "Generate sees every row before a slot, including the previous hour's rows, so it never
+    // repeats a song the previous hour already has." Exactly Generate's timeline (scheduler-core loadTimeline): what
+    // aired counts through play_log; every other row still in the log — pending, didn't-play, refused, the previous
+    // hour's rows timed past its :00 — counts by its row.
+    const aired = (k) => k.state === "played" || k.state === "playing";
+    for (const k of kept) if (isMusicRow(k) && !runIds.has(k.id) && !aired(k)) tl.add(rowEvent(F, k));
     // full log after the commit for the T1 in-log check: the rows that air (not past their hour's end), and a least
     // recently played row breaks a rule by the ruling
     const full = new C.Timeline();
@@ -450,13 +462,9 @@ async function simulateStation(w, P, F, R) {
       const pair = [ev.ref, b.other.ref].sort().join("~") + "|" + b.rule + "|" + b.key;
       if (!t1Log.has(pair)) t1Log.set(pair, { at: fmt(Math.min(ev.ts, b.other.ts)), rule: b.rule, key: b.key, measuredMin: b.measuredMin, settingMin: b.settingMin, run: run.label });
     }
-    // T2: walk this run's rows in order; each music row re-derived against what came before it. A row past its hour's end
-    // is on the timeline while its own hour is built and comes off when the next hour starts (generate-core pastEnd).
-    let curLk = null; const pastEndEvs = [];
+    // T2: walk this run's rows in order; each music row re-derived against what came before it — every row before it,
+    // including the previous hour's rows timed past its :00 (rule 3, 2026-10-19: they no longer come off the timeline).
     for (const [r, ev] of runEvents) {
-      const lk = r.log_hour_ts ?? r.scheduled_at;
-      if (lk !== curLk) { for (const x of pastEndEvs) tl.remove(x); pastEndEvs.length = 0; curLk = lk; }
-      if (pastEnd(r)) pastEndEvs.push(ev);
       const hour = new RealDate(r.scheduled_at * 1000).getHours();
       const pool = F.pool(r.category_id, hour);
       const d = C.rederivePick(tl, pool, r.scheduled_at, F.rules);
@@ -636,7 +644,16 @@ async function scenarioStartedEarly(w, P, F) {
     if (row && row.scheduled_at >= three) consumed.push({ aired: fmt(nowSec()), rowFor: fmt(row.scheduled_at), title: item.title, mode: r.mode });
     setNow(nowSec() + Math.max(1, Math.round((item.durationMs || 240000) / 1000)));
   }
-  return { station: sid, day: fmt(dayStart), eveningRowsInLog: evening, eveningRowsAiredBefore3PM: consumed.length, examples: consumed.slice(0, 5) };
+  // RULE 2 (Jeff, 2026-10-19): "Inside a show the player never waits for a row's time." A station whose show is ON at 12:25
+  // plays the next row at once (here the 3 PM rows — same show, same day); one whose show is not on airs nothing before it.
+  const SWin = require(path.join(ROOT, "audiod", "show-window.js"));
+  const showRows = w.prepare("SELECT * FROM shows WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL").all(sid);
+  const start = dayStart + 12 * 3600 + 25 * 60;
+  // "Inside a show" for this test = the show on at 12:25 is the 3 PM rows' own show (a different show still waits for its start).
+  const at1225 = SWin.showAt(showRows, start), at3 = SWin.showAt(showRows, three);
+  const inShowAt1225 = !!(at1225 && at3 && at1225.id === at3.id);
+  return { station: sid, day: fmt(dayStart), eveningRowsInLog: evening, eveningRowsAiredBefore3PM: consumed.length, inShowAt1225,
+    startedAt1225: consumed.length > 0 && consumed[0].aired === fmt(start), examples: consumed.slice(0, 5) };
 }
 
 // ── T10: a row that breaks separation is in the log; does it air? ─────────────────────────────────
@@ -941,7 +958,10 @@ function verdicts(sim, t5, t10, hist, stat, t20 = []) {
   }
   for (const h of hist) if (h.plays) add("T11", h.playsWithoutLogRowId === 0 && h.musicPlaysWithoutCategory === 0 && h.logRowsStampedWithNoPlayWithin10s === 0, `station ${h.station} (this machine's record, ${h.window}, ${h.hoursWithPlays} hours with plays): ${h.playsWithoutLogRowId}/${h.plays} plays without a log row id, ${h.musicPlaysWithoutCategory} music plays without category, ${h.logRowsStampedWithNoPlayWithin10s} rows stamped aired with no play, ${h.sweeperPlays} sweeper plays vs ${h.sweeperRowsStampedAired} sweeper rows stamped`);
   for (const s of sim) if (s.T19) add("T19", s.T19.medianMs <= s.T19.limitMs, `station ${s.station}: the reader takes ${s.T19.medianMs} ms a call (median of ${s.T19.runs || 1} runs: ${(s.T19.runMediansMs || [s.T19.medianMs]).join(" / ")} ms; slowest call ${s.T19.maxMs} ms; ${s.T19.generatedScheduleRows} log rows) against a limit of ${s.T19.limitMs} ms, inside the ${s.T19.pollIntervalMs} ms air loop`);
-  for (const t of t5) add("T5", t.eveningRowsAiredBefore3PM === 0, `station ${t.station}: automation at 12:25 with the log starting at 3 PM — ${t.eveningRowsAiredBefore3PM} evening rows aired before 3 PM (of ${t.eveningRowsInLog})`);
+  for (const t of t5) add("T5", t.inShowAt1225 ? t.startedAt1225 : t.eveningRowsAiredBefore3PM === 0,
+    t.inShowAt1225
+      ? `station ${t.station}: automation at 12:25 INSIDE its show, the log starting at 3 PM — rule 2: the next row plays at once (${t.startedAt1225 ? "started 12:25, no wait" : "it WAITED"}; ${t.eveningRowsAiredBefore3PM} rows aired before 3 PM)`
+      : `station ${t.station}: automation at 12:25 with no show on, the log starting at 3 PM — ${t.eveningRowsAiredBefore3PM} evening rows aired before 3 PM (of ${t.eveningRowsInLog})`);
   for (const t of t10) if (t.ran) add("T10", !t.violatorAirsNext, `station ${t.station}: "${t.song}" placed again right after it aired (song rule ${t.songRuleMin} min) — ${t.violatorAirsNext ? `the reader AIRS it next, ${t.gapMin} min after it aired` :"not aired: the reader chose " + t.readerChose}`);
   if (stat) add("T15", stat.T15.findings === 0, `${stat.T15.findings} findings: registry ${stat.T15.settingsRegistry.split(" ")[0]}; songs.last_played_at read at ${stat.T15.songsLastPlayedRead.length} places${stat.T15.songsLastPlayedRead.length ? " (" + stat.T15.songsLastPlayedRead.slice(0, 4).join(", ") + ")" : ""}; enforce_separation read at ${stat.T15.enforceSeparationRead.length} places; last_played_at by the pick at ${stat.T15.lastPlayedAtReadByPick.length}; no_repeat_hours at ${stat.T15.noRepeatHoursRead.length}; max_same_category at ${stat.T15.maxSameCategoryRead.length}; break length fit at ${stat.T15.breakLengthFit.length}; baked rule defaults at ${stat.T15.bakedRuleDefaults.length}; baked timing numbers at ${stat.T15.bakedTimingNumbers.length}; ${stat.T15.isHardNote}`);
   if (stat) add("T16", stat.T16.modulesThatChooseSongs === 1 && stat.T16.orderByRandom.length === 0, `${stat.T16.modulesThatChooseSongs} modules choose songs; ORDER BY RANDOM() at ${stat.T16.orderByRandom.length} places`);
