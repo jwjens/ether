@@ -307,3 +307,25 @@ describe("show-window: which show owns a minute", () => {
     expect(SW.showAt([{ id: 5, days: "0123456", start_hour: 0, end_hour: 0 }], at(9, 0)).id).toBe(5);
   });
 });
+
+// ── AUTO mid-show with nothing of the log due yet (Jeff, 2026-10-19: "it should attach to the time of that hour and be
+// instant"). The reader never jumps ahead to a later hour's rows: Fill builds the CURRENT hour (main.js _genStartTs), and
+// AUTO joins it at the row for now. With no row due, it waits for the next row's own time. ──────────────────────────────
+describe("AUTO comes on inside a show with nothing due yet", () => {
+  it("joins the current hour at the row for now (earlier rows are didn't-play)", () => {
+    shows([[1, 9, 0, 15, 0]]);
+    row(1, at(10, 0), { hour: at(10, 0) }); row(2, at(10, 33), { hour: at(10, 0) }); row(3, at(10, 40), { hour: at(10, 0) });
+    setNow(10, 36);
+    const r = read(null);
+    expect(ids(r)[0]).toBe(2);
+    expect(r.missedRowIds).toEqual([1]);
+  });
+  it("never jumps ahead to a later hour's rows: waits for the next row's time", () => {
+    shows([[1, 9, 0, 15, 0]]);
+    row(1, at(11, 0), { hour: at(11, 0) });
+    setNow(10, 36);
+    const r = read(null);
+    expect(r.items.length).toBe(0);
+    expect(r.nextDueTs).toBe(at(11, 0));
+  });
+});

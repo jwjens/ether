@@ -78,6 +78,7 @@ function braceBlock(startNeedle) {
 const src = [
   "let _genCancel = false;",
   braceBlock("function _scheduleChanged("),
+  braceBlock("function _genStartTs("),
   braceBlock("async function _generateDayChunked("),
   braceBlock("function _commitDayRows("),
   braceBlock("ipcMain.handle('schedule:generateDay',"),
@@ -97,7 +98,7 @@ const src = [
 check("main.js: generateDay handler takes fromTs", /ipcMain\.handle\('schedule:generateDay', async \(_, dayTs, fromTs\)/.test(src));
 check("main.js: clearDay handler exists and only touches state = 'pending'", /schedule:clearDay/.test(src) && /AND state = 'pending'/.test(src));
 check("main.js: clearDay is a SOFT delete (deleted_at), the editor's own delete", /UPDATE generated_schedule SET deleted_at = \?, updated_at = \? WHERE station_id = \? AND scheduled_at >= \? AND scheduled_at < \? AND deleted_at IS NULL AND state = 'pending'/.test(src));
-check("main.js: generateDay still refuses the past — effStart = max(dayStart, nextTop, fromHour)", /const effStart = Math\.max\(dayStart, nextTop, fromHour\)/.test(src) && /const nextTop = Math\.ceil\(nowTs \/ 3600\) \* 3600/.test(src));
+check("main.js: generateDay starts at the CURRENT hour, never earlier — effStart = max(dayStart, nextTop, fromHour), nextTop = _genStartTs(now) (Jeff 2026-10-19)", /const effStart = Math\.max\(dayStart, nextTop, fromHour\)/.test(src) && /const nextTop = _genStartTs\(nowTs\)/.test(src));
 
 // ── pinned clock: "now" = 10:30 local on TEST DAY (tomorrow, so the whole day is generatable) ──
 const RealDate = Date;
@@ -111,6 +112,7 @@ const dayBase = new RealDate(NOW_MS); dayBase.setHours(0, 0, 0, 0);
 const dayStart = Math.floor(dayBase.getTime() / 1000), dayEnd = dayStart + 86_400;
 const hourTs = (h) => { const d = new RealDate(dayBase.getTime()); d.setHours(h, 0, 0, 0); return Math.floor(d.getTime() / 1000); };
 const nextTop = hourTs(11);
+const curTop = hourTs(10);   // "now" is 10:30: Fill Day starts at the current hour when the log has not reached it (Jeff, 2026-10-19)
 
 // ── seed: station 1 with a clock, a show, one category, 40 songs; station 2 with a row of its own ──
 db.prepare("INSERT INTO stations (name) VALUES (?)").run("Station 2");
@@ -172,15 +174,17 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
   check("a · generateDay ok", ra && ra.ok === true && !ra.skipped, JSON.stringify(ra));
   const rowsA = get(dayStart, dayEnd);
   check("a · schedule:get returns the generated rows (" + rowsA.length + ")", rowsA.length > 0 && rowsA.length === ra.count, `get=${rowsA.length} count=${ra.count}`);
-  check("a · no row before the next top-of-hour (11:00) — the past and the current hour are never generated",
-    rowsA.every(r => r.scheduled_at >= nextTop), String(rowsA.filter(r => r.scheduled_at < nextTop).length));
-  check("a · rows span the rest of the day (13 hours: 11 → 23)", new Set(rowsA.map(r => new RealDate(r.scheduled_at * 1000).getHours())).size === 13, [...new Set(rowsA.map(r => new RealDate(r.scheduled_at * 1000).getHours()))].join(","));
+  check("a · no row before the CURRENT hour (10:00) — an earlier hour is never generated",
+    rowsA.every(r => r.scheduled_at >= curTop), String(rowsA.filter(r => r.scheduled_at < curTop).length));
+  check("a · the current hour (10:00, nothing aired in it) IS built, timed from 10:00 — AUTO joins it at once",
+    rowsA.some(r => r.scheduled_at >= curTop && r.scheduled_at < nextTop) && rowsA.some(r => r.scheduled_at === curTop));
+  check("a · rows span the rest of the day (14 hours: 10 → 23)", new Set(rowsA.map(r => new RealDate(r.scheduled_at * 1000).getHours())).size === 14, [...new Set(rowsA.map(r => new RealDate(r.scheduled_at * 1000).getHours()))].join(","));
   check("a · every row is pending with no played_at", rowsA.every(r => r.state === "pending" && r.played_at === null));
   check("a · nothing written to songs.last_played_at by the generate path", db.prepare("SELECT count(*) n FROM songs WHERE last_played_at IS NOT NULL").get().n === 0);
   // slice 3 — the broadcast every Program Log surface re-reads on
   const genB = broadcasts.filter(b => b.channel === "schedule:changed");
   check("a · schedule:changed fired ONCE for the Fill (station 1's UUID, reason generate, window carried)",
-    genB.length === 1 && genB[0].payload.stationUuid === S1_UUID && genB[0].payload.reason === "generate" && genB[0].payload.from === nextTop && genB[0].payload.to === dayEnd && genB[0].payload.rows === ra.count,
+    genB.length === 1 && genB[0].payload.stationUuid === S1_UUID && genB[0].payload.reason === "generate" && genB[0].payload.from === curTop && genB[0].payload.to === dayEnd && genB[0].payload.rows === ra.count,
     JSON.stringify(genB));
   // The ratchet's invariant, asserted where the contract is tested: the frame crosses the process
   // boundary keyed on the UUID and carries NO integer station id (scripts/test-station-identity-leak.js).
@@ -205,7 +209,8 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
   check("b · played rows untouched (state, played_at, not deleted)", ["played-8", "played-9"].every(u => { const r = byUuid(u); return r && r.state === "played" && r.played_at && !r.deleted_at; }));
   check("b · the missed spot untouched", (() => { const r = byUuid("missed-9"); return r && r.state === "missed" && !r.deleted_at; })());
   check("b · the playing row untouched", (() => { const r = byUuid("playing-10"); return r && r.state === "playing" && !r.deleted_at; })());
-  check("b · the current hour's pending row untouched (10:40 < next top-of-hour)", !!byUuid("pending-1040") && !byUuid("pending-1040").deleted_at);
+  check("b · the current hour is ON AIR (a playing row, written before v66 so it has no log hour): its pending 10:40 row is untouched", !!byUuid("pending-1040") && !byUuid("pending-1040").deleted_at);
+  check("b · …and nothing new was placed in that hour", db.prepare("SELECT count(*) n FROM generated_schedule WHERE station_id=1 AND deleted_at IS NULL AND scheduled_at >= ? AND scheduled_at < ?").get(curTop, nextTop).n === 2);
   check("b · the operator's future row survives Generate (log-edit-core NOT_OPERATOR_OWNED_SQL)", !!byUuid("pending-14-op") && !byUuid("pending-14-op").deleted_at);
   check("b · the machine's future row was replaced", !byUuid("pending-15"));
   check("b · the other station's row untouched", !!byUuid("st2-15") && !byUuid("st2-15").deleted_at);
@@ -219,9 +224,10 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
   check("c · rows before 15:00 byte-identical (uuids unchanged)", get(dayStart, hourTs(15)).map(r => r.uuid).join(",") === before15);
   check("c · rows from 15:00 on were regenerated (9 hours: 15 → 23)", new Set(get(hourTs(15), dayEnd).map(r => new RealDate(r.scheduled_at * 1000).getHours())).size === 9);
   const rcPast = await handlers["schedule:generateDay"](null, dayStart, hourTs(9));
-  check("c · fromTs in an aired hour is REFUSED by name, not moved forward", rcPast && rcPast.ok === false && /already started/.test(rcPast.error), JSON.stringify(rcPast));
+  check("c · fromTs in a past hour is REFUSED by name, not moved forward", rcPast && rcPast.ok === false && /already passed/.test(rcPast.error), JSON.stringify(rcPast));
+  const before10 = get(curTop, nextTop).map(r => r.uuid).join(",");
   const rcCur = await handlers["schedule:generateDay"](null, dayStart, hourTs(10) + 1800);
-  check("c · fromTs in the CURRENT hour is refused too (it has started)", rcCur && rcCur.ok === false, JSON.stringify(rcCur));
+  check("c · fromTs in the CURRENT hour is accepted; that hour is on air, so its rows stay as they are", rcCur && rcCur.ok === true && get(curTop, nextTop).map(r => r.uuid).join(",") === before10, JSON.stringify(rcCur));
   const rcOff = await handlers["schedule:generateDay"](null, dayStart, dayEnd + 60);
   check("c · fromTs outside the day is refused", rcOff && rcOff.ok === false, JSON.stringify(rcOff));
 
@@ -386,12 +392,12 @@ const countAll = (sid = 1) => db.prepare("SELECT count(*) n FROM generated_sched
   // operator row removed reports EXACTLY what landed.
   check("j · reported count exceeds what landed by exactly the ONE operator-collision skip", rj.count - wkGenerated.length === 1, `count=${rj.count} landed=${wkGenerated.length}`);
   check("j · every one of the 7 days got rows", weekTs.every(ts => get(ts, ts + 86_400).length > 0), weekTs.map(ts => get(ts, ts + 86_400).length).join(","));
-  check("j · day 0 still starts at the next top-of-hour — an hour that has STARTED is never filled", get(weekTs[0], dayEnd).filter(r => r.scheduled_at >= nextTop && r.source !== "operator").length > 0 && get(weekTs[0], nextTop).every(r => ["wk-played-8", "wk-pending-1040", "wk-op-14"].includes(r.uuid) || r.scheduled_at < nextTop));
+  check("j · day 0 starts at the CURRENT hour (nothing aired in it): 10:00 is built, nothing before it", get(weekTs[0], dayEnd).filter(r => r.scheduled_at >= curTop && r.scheduled_at < nextTop && !String(r.uuid).startsWith("wk-")).length > 0 && get(weekTs[0], curTop).every(r => String(r.uuid).startsWith("wk-")));
   check("j · days 1-6 are whole days (24 hours each), not clipped to the first day's effStart",
     weekTs.slice(1).every(ts => new Set(get(ts, ts + 86_400).map(r => new RealDate(r.scheduled_at * 1000).getHours())).size === 24),
     weekTs.slice(1).map(ts => new Set(get(ts, ts + 86_400).map(r => new RealDate(r.scheduled_at * 1000).getHours())).size).join(","));
   check("j · the played row is a record — untouched", (() => { const r = byUuid("wk-played-8"); return r && r.state === "played" && r.played_at && !r.deleted_at; })());
-  check("j · the current hour's pending row untouched", !!byUuid("wk-pending-1040") && !byUuid("wk-pending-1040").deleted_at);
+  check("j · the current hour's machine row (nothing aired in that hour) was replaced by the hour's build", !byUuid("wk-pending-1040"));
   check("j · the operator's YOURS row survives the week fill", !!byUuid("wk-op-14") && !byUuid("wk-op-14").deleted_at && byUuid("wk-op-14").source === "operator");
   check("j · the other station is never touched", !!byUuid("wk-st2-15") && !byUuid("wk-st2-15").deleted_at);
   const wkB = broadcasts.filter(b => b.channel === "schedule:changed" && b.payload.reason === "generate");

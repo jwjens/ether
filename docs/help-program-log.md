@@ -44,9 +44,13 @@ the number of hours listed: the hours your shows cover, plus any hour that alrea
 
 ## Fill Day
 
-**Fill Day** builds the log for the selected day from your shows and clocks. It fills **from the next top-of-hour to the end of the day**:
+**Fill Day** builds the log for the selected day from your shows and clocks. It fills **from the current hour to the end of the day**:
 
-- Hours that have already started are never touched. What aired is a record, not a plan.
+- **The current hour is built too**, timed from its :00, as long as nothing has played in it yet. Add a show at 10:35,
+  press Fill Day, press AUTO: the station starts straight away with the row for 10:35. The rows before it are marked
+  **didn't play**.
+- An hour that has started playing (anything played, playing or marked didn't play in it) is never touched, and neither
+  is any earlier hour. What aired is a record, not a plan.
 - Items you placed by hand (they wear the YOURS badge in the hour editor) survive a Fill.
 - Filling a day that has already fully aired does nothing and says so.
 
@@ -81,8 +85,8 @@ week's. Three presses from three different start days gives you three weeks.
 
 Every rule Fill Day follows, Fill Week follows on **each** of the seven days:
 
-- Hours that have already started are never touched — only the first day can have any, since the rest
-  are entirely in the future.
+- The current hour is built if nothing has played in it yet; an hour that has started playing, and every earlier hour,
+  is never touched. Only the first day can have any, since the rest are entirely in the future.
 - Items you placed by hand (the **YOURS** badge) survive.
 - Days that have already fully aired are skipped.
 

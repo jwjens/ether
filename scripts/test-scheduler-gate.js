@@ -228,6 +228,7 @@ function bindProduct(w) {
 
 // Generate, the way schedule:generateDays / generateDay run it (main.js:11437-11555): one ctx across the
 // range, each day hour by hour from effStart = max(dayStart, next top of hour), committed per day.
+const curHour = (ts) => { const d = new Date(ts * 1000); d.setMinutes(0, 0, 0); return Math.floor(d.getTime() / 1000); };
 async function runGenerate(P, w, sid, dayBases) {
   const genTs = nowSec();
   const ctx = P.gen.buildScheduleCtx(w, sid);
@@ -235,11 +236,11 @@ async function runGenerate(P, w, sid, dayBases) {
   // The window this run replaces, as main's callers say it (Phase 2: the one pick measures against the log outside it).
   if (ctx.planWindow && dayBases.length) {
     const first = Math.floor(dayBases[0].getTime() / 1000), last = Math.floor(dayBases[dayBases.length - 1].getTime() / 1000) + 86400;
-    ctx.planWindow(Math.max(first, Math.ceil(genTs / 3600) * 3600), last);
+    ctx.planWindow(Math.max(first, curHour(genTs)), last);
   }
   for (const dayBase of dayBases) {
     const dayStart = Math.floor(dayBase.getTime() / 1000), dayEnd = dayStart + 86400;
-    const effStart = Math.max(dayStart, Math.ceil(genTs / 3600) * 3600);
+    const effStart = Math.max(dayStart, curHour(genTs));   // the CURRENT hour, as main.js _genStartTs (Jeff 2026-10-19)
     if (effStart >= dayEnd) continue;
     const before = ctx.generatedRows.length;
     P.gen.resetGenSlice();

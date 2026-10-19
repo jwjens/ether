@@ -843,7 +843,7 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
         <div style={{ padding: "10px 12px", display: "flex", flexDirection: "column" as const, gap: 6 }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 5 }}>
             <button onClick={fillDay} disabled={filling}
-              title="Fills the selected day from the next top-of-hour on. An hour that has started is never touched."
+              title="Fills the selected day from the current hour on (built from :00 if nothing has played in it yet). An hour that has started playing is never touched."
               style={{ padding: "8px 4px", borderRadius: 0, fontSize: "var(--t-small)", fontWeight: 700, cursor: filling ? "default" : "pointer", background: "rgba(52,211,153,0.12)", color: "#34d399", border: "1px solid rgba(52,211,153,0.3)", opacity: filling ? 0.6 : 1 }}>
               {filling ? "⏳ …" : "⚡ Fill Day"}
             </button>

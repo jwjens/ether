@@ -11275,6 +11275,12 @@ function _scheduleChanged(stationId, reason, extra) {
 }
 // A song rename retitles its pending log rows in the songs writer (audit 8); the Program Log re-reads on this.
 try { require("./sync/handlers/songs").onLogRetitled(sids => { for (const s of sids) _scheduleChanged(s, 'song-renamed'); }); } catch {}
+// WHERE GENERATE STARTS (Jeff, 2026-10-19: "it should attach to the time of that hour and be instant"): the CURRENT hour,
+// local time — not the next one. A show added (or a Fill pressed) at 10:35 builds the 10:00 hour too, timed from 10:00, so
+// AUTO joins it at the row for 10:35 at once. An hour the log has reached (anything played, playing, didn't play or
+// refused in it) is still never rebuilt: generate-core _pieceHasAired skips it and the delete below keeps its rows.
+function _genStartTs(nowTs) { const d = new Date(nowTs * 1000); d.setMinutes(0, 0, 0); return Math.floor(d.getTime() / 1000); }
+
 function _commitDayRows(stationId, effStart, dayEnd, rows) {
   const { generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
   const { filterToGaps, NOT_OPERATOR_OWNED_SQL, NOT_AIRED_SQL } = require('./log-edit-core');
@@ -11299,11 +11305,21 @@ function _commitDayRows(stationId, effStart, dayEnd, rows) {
     // THE WINDOW IS BY LOG HOUR (v66): every clock row is placed, so the 11 PM hour's rows can start after midnight —
     // they are this day's rows, and the next day's regenerate never touches them.
     const lk = "COALESCE(log_hour_ts, scheduled_at)";
+    // A row written before v66 has no log hour: it belongs to the local hour its time falls in. Generate starts at the
+    // CURRENT hour (_genStartTs), so an hour on air with such rows must keep its pending rest too — Generate skips it.
+    const _hourOf = (ts) => { const d = new Date(ts * 1000); d.setMinutes(0, 0, 0); return Math.floor(d.getTime() / 1000); };
+    const reachedHours = new Set(db.prepare(
+      `SELECT log_hour_ts lh, scheduled_at ts FROM generated_schedule WHERE station_id = ? AND state IN ('played','playing','missed','skipped') AND deleted_at IS NULL
+         AND ${lk} >= ? AND ${lk} < ?`).all(stationId, effStart - 3600, dayEnd).map(r => r.lh ?? _hourOf(r.ts)));
+    const keepOld = db.prepare(
+      `SELECT id, scheduled_at FROM generated_schedule WHERE station_id = ? AND log_hour_ts IS NULL AND state = 'pending' AND deleted_at IS NULL
+         AND scheduled_at >= ? AND scheduled_at < ?`).all(stationId, effStart, dayEnd).filter(r => reachedHours.has(_hourOf(r.scheduled_at))).map(r => r.id);
     db.prepare(
       `DELETE FROM generated_schedule WHERE station_id = ? AND ${lk} >= ? AND ${lk} < ? AND ${NOT_OPERATOR_OWNED_SQL} AND ${NOT_AIRED_SQL}
          AND NOT (log_hour_ts IS NOT NULL AND log_hour_ts IN (SELECT a.log_hour_ts FROM generated_schedule a WHERE a.station_id = ? AND a.log_hour_ts IS NOT NULL
-                                                                AND a.state IN ('played','playing','missed','skipped') AND a.deleted_at IS NULL))`
-    ).run(stationId, effStart, dayEnd, stationId);   // an hour the log has reached (even ahead of the clock) keeps its rows
+                                                                AND a.state IN ('played','playing','missed','skipped') AND a.deleted_at IS NULL))
+         AND id NOT IN (SELECT value FROM json_each(?))`
+    ).run(stationId, effStart, dayEnd, stationId, JSON.stringify(keepOld));   // an hour the log has reached (even ahead of the clock) keeps its rows
 
     // GAP-ONLY FILL. Preserving the operator's rows is not enough: the walk still produced a machine
     // row for that minute, and inserting it would double-book the slot. Drop any generated row whose
@@ -11556,14 +11572,14 @@ ipcMain.handle('schedule:generateDays', async (_, dayTsList) => {
     {
       // The window this run replaces (the one pick measures against the log OUTSIDE it, and against operator rows in it).
       const starts = days.map(t => { const d = new Date(t * 1000); d.setHours(0, 0, 0, 0); return Math.floor(d.getTime() / 1000); });
-      if (starts.length) ctx.planWindow(Math.max(Math.min(...starts), Math.ceil(nowTs / 3600) * 3600), Math.max(...starts) + 86_400);
+      if (starts.length) ctx.planWindow(Math.max(Math.min(...starts), _genStartTs(nowTs)), Math.max(...starts) + 86_400);
     }
     let total = 0, committed = 0, cancelled = false;
     for (let i = 0; i < days.length; i++) {
       if (_genCancel) { cancelled = true; break; }
       const dayBase = new Date(days[i] * 1000); dayBase.setHours(0, 0, 0, 0);
       const dayStart = Math.floor(dayBase.getTime() / 1000), dayEnd = dayStart + 86_400;
-      const effStart = Math.max(dayStart, Math.ceil(nowTs / 3600) * 3600);
+      const effStart = Math.max(dayStart, _genStartTs(nowTs));   // from the current hour (reached hours are skipped)
       if (effStart >= dayEnd) continue;                       // already aired — leave it
       const before = ctx.generatedRows.length;                // this day's slice starts here
       const run = await _generateDayChunked(dayBase, ctx, effStart, { day: dayBase.toDateString(), dayIdx: i, dayTotal: days.length });
@@ -11611,15 +11627,15 @@ ipcMain.handle('schedule:generateDay', async (_, dayTs, fromTs) => {
     const dayBase = new Date(dayTs * 1000); dayBase.setHours(0, 0, 0, 0);
     const dayStart = Math.floor(dayBase.getTime() / 1000), dayEnd = dayStart + 86_400;
     const nowTs = Math.floor(Date.now() / 1000);
-    const nextTop = Math.ceil(nowTs / 3600) * 3600;
+    const nextTop = _genStartTs(nowTs);   // the current hour (named nextTop for history): reached hours are skipped
     let fromHour = 0;
     if (fromTs != null) {
       const f = new Date(fromTs * 1000); f.setMinutes(0, 0, 0);
       fromHour = Math.floor(f.getTime() / 1000);
       if (fromHour < dayStart || fromHour >= dayEnd) return { ok: false, error: "that hour is not in the selected day" };
-      if (fromHour < nextTop) return { ok: false, error: "that hour has already started — it is a record now, not a plan; regenerate from the next hour" };
+      if (fromHour < nextTop) return { ok: false, error: "that hour has already passed — it is a record now, not a plan; regenerate from this hour or a later one" };
     }
-    const effStart = Math.max(dayStart, nextTop, fromHour); // next top-of-hour; never the past
+    const effStart = Math.max(dayStart, nextTop, fromHour); // the current hour; never an earlier one
     if (effStart >= dayEnd) return { ok: true, count: 0, skipped: true }; // whole day already aired — leave it
     _genEmit({ phase: "start", dayIdx: 0, dayTotal: 1, day: dayBase.toDateString() });
     // Build ctx BEFORE any delete — it reads play_log/separation_rules/songs, never generated_schedule,

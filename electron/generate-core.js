@@ -139,12 +139,13 @@ function _pool(ctx, categoryId, hour) {
 }
 /** THE ONE PICK for a music slot, then the station's fallback category if one is named. null = UNSCHEDULED. */
 /** Has the log reached the piece starting at `pieceTs` (any row no longer pending)? By log hour (v66); false before v66. */
-function _pieceHasAired(ctx, pieceTs) {
+function _pieceHasAired(ctx, pieceTs, pieceEndTs = pieceTs + 3600) {
   if (ctx.stmtPieceAired === undefined) {
-    try { ctx.stmtPieceAired = ctx.db.prepare("SELECT 1 AS x FROM generated_schedule WHERE station_id = ? AND log_hour_ts = ? AND state IN ('played','playing','missed','skipped') AND deleted_at IS NULL LIMIT 1"); }
+    // A row written before v66 has no log hour: it belongs to the piece its time falls in.
+    try { ctx.stmtPieceAired = ctx.db.prepare("SELECT 1 AS x FROM generated_schedule WHERE station_id = ? AND (log_hour_ts = ? OR (log_hour_ts IS NULL AND scheduled_at >= ? AND scheduled_at < ?)) AND state IN ('played','playing','missed','skipped') AND deleted_at IS NULL LIMIT 1"); }
     catch { ctx.stmtPieceAired = null; }
   }
-  try { return !!(ctx.stmtPieceAired && ctx.stmtPieceAired.get(ctx.activeStationId, pieceTs)); } catch { return false; }
+  try { return !!(ctx.stmtPieceAired && ctx.stmtPieceAired.get(ctx.activeStationId, pieceTs, pieceTs, pieceEndTs)); } catch { return false; }
 }
 function _pickMusic(ctx, categoryId, ts, hour) {
   const tl = _timeline(ctx, Math.floor(Date.now() / 1000));
@@ -220,7 +221,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
     // …by the clock, OR by the log: inside a show the log plays straight on (it never waits for :00), so a station can be
     // in a later hour before its time. A piece the log has reached — any row played, playing, didn't play or refused at
     // playout — is the record, not a plan (v66). Its rows stay as they are.
-    if (_pieceHasAired(ctx, seg.fromTs)) continue;
+    if (_pieceHasAired(ctx, seg.fromTs, seg.toTs)) continue;
     const show = seg.show;
     if (!show) { ctx.diag.noShowHours.add(h); continue; }
     if (!show.clock_id) { ctx.diag.noClock.add(h); continue; }
