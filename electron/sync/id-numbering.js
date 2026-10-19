@@ -19,17 +19,22 @@
 const crypto = require('crypto');
 const { REGISTRY } = require('./synced-tables');
 const { withMutation, serializePayload, getClientId } = require('./mutation-writer');
+const { PARENTS, labelOf } = require('./parent-rows');
 
 const KEY_PREFIX = 'id_numbering:';
 const NUMBERING_VERSION = 1;
 // The tables a synced reference can point at that the repair and legacy translation need (synced-tables refs).
-const NUMBERED_TABLES = ['categories', 'jingle_categories', 'artists', 'albums', 'songs', 'shows', 'clocks'];
+const NUMBERED_TABLES = ['categories', 'jingle_categories', 'spot_categories', 'artists', 'albums', 'songs', 'shows', 'clocks'];
 
 const physical = (t) => (REGISTRY[t] && REGISTRY[t].tableName) || t;
 
-/** This machine's numbering: { table: { id: uuid } } for every row that has a uuid, deleted rows included. */
+/**
+ * This machine's numbering: { tables: { table: { id: uuid } }, labels: { table: { uuid: label } } } for every row that has
+ * a uuid, deleted rows included. The labels (parent-rows.js) let another machine create a missing artist/album, or
+ * recognise a named row, from an assignment this machine made — the repair needs that, not only the uuid.
+ */
 function buildNumbering(db) {
-  const tables = {};
+  const tables = {}, labels = {};
   for (const t of NUMBERED_TABLES) {
     const map = {};
     try {
@@ -38,8 +43,13 @@ function buildNumbering(db) {
       }
     } catch { /* table absent on this install */ }
     tables[t] = map;
+    if (PARENTS[t]) {
+      const lm = {};
+      for (const id of Object.keys(map)) { const l = labelOf(db, t, Number(id)); if (l) lm[l.uuid] = l; }
+      labels[t] = lm;
+    }
   }
-  return tables;
+  return { tables, labels };
 }
 
 /**
@@ -50,15 +60,15 @@ function publishNumbering(db) {
   const clientId = getClientId(db);
   if (!clientId) return { published: false, reason: 'no client_id' };
   const key = KEY_PREFIX + clientId;
-  const tables = buildNumbering(db);
+  const { tables, labels } = buildNumbering(db);
   const existing = db.prepare('SELECT * FROM install_config_kv WHERE key = ?').get(key) || null;
   try {
     const prev = existing && existing.value ? JSON.parse(existing.value) : null;
-    if (prev && JSON.stringify(prev.tables) === JSON.stringify(tables) && !existing.deleted_at) {
+    if (prev && JSON.stringify(prev.tables) === JSON.stringify(tables) && JSON.stringify(prev.labels || {}) === JSON.stringify(labels) && !existing.deleted_at) {
       return { published: false, key, reason: 'unchanged' };
     }
   } catch { /* unreadable → republish */ }
-  const value = JSON.stringify({ v: NUMBERING_VERSION, client_id: clientId, at: new Date().toISOString(), tables });
+  const value = JSON.stringify({ v: NUMBERING_VERSION, client_id: clientId, at: new Date().toISOString(), tables, labels });
   const now = new Date().toISOString();
   const row = existing
     ? { ...existing, value, updated_at: now, deleted_at: null }
@@ -83,7 +93,7 @@ function publishNumbering(db) {
 }
 
 // Parsed maps, cached by the row's updated_at so a republish from the other machine is picked up on the next read.
-const _cache = new Map();   // clientId → { updated_at, tables }
+const _cache = new Map();   // clientId → { updated_at, tables, labels }
 
 /** Another (or this) machine's published numbering, or null when it has not published one. */
 function readNumbering(db, clientId) {
@@ -95,10 +105,18 @@ function readNumbering(db, clientId) {
   const hit = _cache.get(clientId);
   if (hit && hit.updated_at === row.updated_at) return hit.tables;
   try {
-    const tables = JSON.parse(row.value).tables || null;
-    _cache.set(clientId, { updated_at: row.updated_at, tables });
+    const doc = JSON.parse(row.value);
+    const tables = doc.tables || null;
+    _cache.set(clientId, { updated_at: row.updated_at, tables, labels: doc.labels || {} });
     return tables;
   } catch { return null; }
+}
+
+/** The label another machine published for a parent row (by uuid), or null. */
+function labelThroughNumbering(db, clientId, table, uuid) {
+  if (!readNumbering(db, clientId)) return null;
+  const hit = _cache.get(clientId);
+  return (hit && hit.labels && hit.labels[table] && hit.labels[table][uuid]) || null;
 }
 
 /**
@@ -117,4 +135,4 @@ function uuidThroughNumbering(db, senderClientId, table, id) {
 
 function _resetCacheForTest() { _cache.clear(); }
 
-module.exports = { KEY_PREFIX, NUMBERED_TABLES, buildNumbering, publishNumbering, readNumbering, uuidThroughNumbering, _resetCacheForTest };
+module.exports = { KEY_PREFIX, NUMBERED_TABLES, buildNumbering, publishNumbering, readNumbering, uuidThroughNumbering, labelThroughNumbering, _resetCacheForTest };

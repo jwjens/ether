@@ -395,12 +395,16 @@ const REGISTRY = {
       created_at:   'scalar',
       updated_at:   'scalar',
       deleted_at:   'scalar',
+      // ALL METADATA SYNCS (2026-10-19, Jeff: "all metadata must sync"). Both columns exist since v21 / v57 but were
+      // never listed here, so a slot pinned to a song (generate-core.js:314) never reached the other machine.
+      song_id:      'scalar',
+      chain_type:   'scalar',
     },
     // UUID-identity (Tier-2): local-integer reference columns → the table they point at. On push the
     // sender resolves each to the parent's stable uuid (ref_uuids); on apply the receiver resolves
     // back to its OWN local id. station_id is the universal default for all scope:'station' tables;
     // declared here in full for the columns that also carry parent FKs.
-    refs: { station_id: 'stations', clock_id: 'clocks', category_id: 'categories', spot_category_id: 'spot_categories' },
+    refs: { station_id: 'stations', clock_id: 'clocks', category_id: 'categories', spot_category_id: 'spot_categories', song_id: 'songs' },
   },
 
   clocks: {
@@ -1005,6 +1009,7 @@ const REGISTRY = {
       updated_at:          'scalar',
       raw_metadata:        'json-text',
       spotify_uri:         'scalar',
+      cart_id:             'scalar',   // the song's cart number — metadata; was never listed, so it never synced (2026-10-19)
       uuid:                'scalar',
       deleted_at:          'scalar',
     },

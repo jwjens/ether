@@ -140,3 +140,37 @@ a round; with a sync between them both survive. A field-level merge is its own d
   The desktop now accepts `<column>_uuid` / `category_uuid` / `song_uuid` / `programming_uuid` and a create `uuid`,
   and the mirror carries the uuids — the dashboard change is the remaining half; deploying it is outward-facing.
 - Site replication (dormant) and the staged-programming import (dead writer) — left, recorded above.
+
+## Addendum — artists, and "all metadata must sync" (2026-10-19, same day)
+
+Jeff (verbatim): "This includes song→artist: today's new songs arrived on OV without artist names. Artists travel by
+UUID, and missing artists are created on arrival. The repair also fixes every song's artist on both machines, and the
+report lists every song whose artist it changed." · "all metadata must sync" · restated spec adds "Nothing on the air
+machine."
+
+**Missing parents (electron/sync/parent-rows.js).** The sender attaches a small label of each parent (`ref_uuids
+"<column>@"` — older receivers read only registry columns and never see it). On arrival, a parent that is not here:
+- **artists / albums → created with the SAME uuid** (never matched by name: "Kids Bop" and "Santana" each exist twice on
+  OVEVENTS). The artist's own row, when it arrives, lands on the same row.
+- **categories / jingle / spot categories / clocks / shows → the row with the same name in the same station**, only when
+  exactly one matches. (Spot categories were seeded per station on each machine — "Sponsors" has a different uuid on
+  each — so without this a spot from the other machine would arrive without its category.)
+- otherwise nothing is written (never a wrong row).
+The published numbering carries the same labels, so the **repair creates a missing artist** from the assigning
+machine's label (or the row's own last mutation in the log), and **reports every song whose artist changed** — including
+a song whose created artist took the very number it already held ("Lost Song: (none) → Lost Artist").
+
+**All metadata (registry audit vs the real schema).** Columns that existed but were never listed — so never synced —
+now sync: `songs.cart_id`, `clock_slots.song_id` (a slot pinned to a song — Generate plays it, generate-core.js:314;
+travels as a song uuid) and `clock_slots.chain_type`. Recorded, deliberately NOT synced (machine state, not metadata):
+`deck_configs.channel_on` (a board's ON/OFF must not switch the other machine's air), `stations.scheduler_mode`,
+`stations.owner_license_key`, `announcement_schedule.skipped_at` (runtime), the `station_uuid` copies (each machine
+derives its own), the legacy seconds cue columns (superseded by the `_ms` columns, which sync). Unsynced tables are all
+machine-local or runtime (mutation log, FTS, crash recovery, GPIO/MIDI, studio sessions, jukebox requests). No schema
+change — the columns already exist; only their registry entries were missing.
+
+**Gate now 26/26**: adds — an artist whose row never reaches B (P1.4 reproduces "no artist name"; P2.4a the repair
+creates it on B under the same uuid and the song shows its name; P2.4b the report lists every artist and category
+change); a song arriving before its new artist (P3.6 created on arrival; P3.7 no duplicate when the row arrives);
+P3.8 every song field arrives (genre, bpm, energy, cue, intro, cart number).
+**Preview on OVEVENTS' data**: 0 to move here; 107 waiting on OV (categories + artists); 4 settings.

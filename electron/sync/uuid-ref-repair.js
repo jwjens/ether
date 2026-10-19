@@ -25,7 +25,8 @@
 const { REGISTRY } = require('./synced-tables');
 const { compareHLC } = require('./merge-engine');
 const { getClientId } = require('./mutation-writer');
-const { uuidThroughNumbering } = require('./id-numbering');
+const { uuidThroughNumbering, labelThroughNumbering } = require('./id-numbering');
+const { PARENTS, materializeParent } = require('./parent-rows');
 
 const STATE_KEY = 'uuid_ref_repair_v1';
 
@@ -75,6 +76,17 @@ function authorUuid(db, ownClient, author, refTable, id) {
   return u == null ? { missing: true } : { uuid: u };
 }
 
+/** A parent's label from the row's own last mutation in this machine's log (artists/albums carry their fields). */
+function labelFromLog(db, table, uuid) {
+  try {
+    const rows = db.prepare("SELECT hlc, payload_after FROM mutations WHERE table_name = ? AND row_id = ? AND payload_after IS NOT NULL").all(table, uuid);
+    rows.sort((a, b) => compareHLC(b.hlc, a.hlc));
+    const p = rows[0] ? parse(rows[0].payload_after) : null;
+    if (!p) return null;
+    return table === 'albums' ? { uuid, title: p.title, year: p.year ?? null } : { uuid, name: p.name, sort_name: p.sort_name ?? null, gender: p.gender ?? null };
+  } catch { return null; }
+}
+
 function nameOf(db, refTable, id) {
   if (id == null) return null;
   const col = refTable === 'albums' ? 'title' : 'name';
@@ -89,7 +101,7 @@ function nameOf(db, refTable, id) {
 function runRepair(db, { apply = true } = {}) {
   const ownClient = getClientId(db);
   const songsTable = physical('songs');
-  const report = { clientId: ownClient, checked: 0, noHistory: 0, moved: [], kvMoved: [], waiting: [], missing: [] };
+  const report = { clientId: ownClient, checked: 0, noHistory: 0, moved: [], kvMoved: [], created: [], waiting: [], missing: [] };
 
   // Every song mutation, grouped by song, newest first by HLC.
   const byRow = new Map();
@@ -116,16 +128,33 @@ function runRepair(db, { apply = true } = {}) {
       if (res.waiting) { report.waiting.push(base); continue; }
       if (res.missing) { report.missing.push({ ...base, why: 'that machine has no such row' }); continue; }
       let target = null;
+      let createdHere = false;
+      // What the song shows NOW (before any row is created): an id pointing at nothing shows no name.
+      const shownBefore = nameOf(db, ref, s[column] ?? null);
       if (res.uuid) {
         const t = db.prepare(`SELECT id FROM ${physical(ref)} WHERE uuid = ?`).get(res.uuid);
-        if (!t) { report.missing.push({ ...base, why: `not on this machine (uuid ${res.uuid})` }); continue; }
-        target = t.id;
+        if (t) target = t.id;
+        else {
+          // Not on this machine: an artist/album is created with that uuid from the label the assigning machine
+          // published (or the row's own last mutation here); a named row is recognised by name in its station.
+          const label = labelThroughNumbering(db, event.client_id, ref, res.uuid) || (PARENTS[ref] && PARENTS[ref].create ? labelFromLog(db, ref, res.uuid) : null);
+          const got = apply ? materializeParent(db, ref, res.uuid, label) : null;
+          if (got) {
+            target = got.id;
+            if (got.how === 'created') { createdHere = true; report.created.push({ table: ref, uuid: res.uuid, name: label && (label.name || label.title) }); }
+          } else if (!apply && label && PARENTS[ref] && PARENTS[ref].create) {
+            report.created.push({ table: ref, uuid: res.uuid, name: label.name || label.title, preview: true });
+            continue;
+          } else { report.missing.push({ ...base, why: `not on this machine (uuid ${res.uuid})` }); continue; }
+        }
       }
       const current = s[column] ?? null;
-      if (current === target) continue;
+      // A created row can take the very number the song already held (another machine's number for it) — the song's
+      // artist still changed (from none to the right one), so it is reported, never skipped as "same id".
+      if (current === target && !createdHere) continue;
       writes.push({ id: s.id, column, target });
       report.moved.push({
-        ...base, from: { id: current, name: nameOf(db, ref, current) }, to: { id: target, name: nameOf(db, ref, target), uuid: res.uuid },
+        ...base, from: { id: current, name: shownBefore }, to: { id: target, name: nameOf(db, ref, target), uuid: res.uuid },
         made_here: event.client_id === ownClient,
       });
     }
@@ -186,7 +215,9 @@ function formatReport(r, { machineLabel = '', at = new Date() } = {}) {
   L.push(`Ether — songs re-filed by reference (one-time repair), ${at.toLocaleString()}`);
   if (machineLabel) L.push(`This computer: ${machineLabel} (${r.clientId})`);
   L.push('');
-  L.push(`Songs checked: ${r.checked}. Re-filed: ${r.moved.length}. Settings rewritten: ${r.kvMoved.length}. ` +
+  const cats = r.moved.filter(x => x.reference === 'category').length, arts = r.moved.filter(x => x.reference === 'artist').length;
+  L.push(`Songs whose CATEGORY changed: ${cats}. Songs whose ARTIST changed: ${arts}. Artists/albums created: ${r.created.length}.`);
+  L.push(`Songs checked: ${r.checked}. All changes: ${r.moved.length}. Settings rewritten: ${r.kvMoved.length}. ` +
     `Waiting for the other computer's numbering: ${r.waiting.length}. Could not be placed: ${r.missing.length}. No history: ${r.noHistory}.`);
   for (const label of ['category', 'jingle category', 'artist', 'album']) {
     const rows = r.moved.filter(x => x.reference === label);
@@ -196,6 +227,10 @@ function formatReport(r, { machineLabel = '', at = new Date() } = {}) {
       L.push(`  ${x.song}: ${x.from.name ?? '(none)'} [${x.from.id ?? '-'}] → ${x.to.name ?? '(none)'} [${x.to.id ?? '-'}]` +
         `  (assigned ${x.made_here ? 'on this computer' : 'on the other computer'})`);
     }
+  }
+  if (r.created.length) {
+    L.push('', 'CREATED here (they were missing — same id as on the computer that made them):');
+    for (const x of r.created) L.push(`  ${x.table === 'albums' ? 'album' : 'artist'}: ${x.name}`);
   }
   if (r.kvMoved.length) {
     L.push('', 'SETTINGS rewritten as stable ids:');

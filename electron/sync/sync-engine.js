@@ -11,6 +11,7 @@
 //   compact()     — 90-day retention via compactMutations() [§22]
 
 const { REGISTRY, isSyncExcluded, refsOf }       = require('./synced-tables');
+const { PARENTS, labelOf }                       = require('./parent-rows');
 const { toWireFormat, compactMutations }          = require('./mutation-writer');
 const { MergeEngine, compareHLC }                = require('./merge-engine');
 const { CausalOrderQueue }                       = require('./causal-order');
@@ -544,7 +545,13 @@ class SyncEngine {
       let row = null;
       try { row = this._uuidStmt(refTable).get(localId); }
       catch { row = null; }                             // referenced table absent on this install — never fail a push
-      if (row?.uuid) refUuids[col] = row.uuid;
+      if (row?.uuid) {
+        refUuids[col] = row.uuid;
+        // The parent's label rides along (parent-rows.js) so a receiver that does not have it yet can create it
+        // (artists, albums) or recognise it by name in its station — instead of leaving the song without it.
+        // Key `<column>@`: a receiver on an older build reads only the registry's columns and never sees it.
+        if (PARENTS[refTable]) { const label = labelOf(this._db, refTable, localId); if (label) refUuids[col + '@'] = label; }
+      }
     }
     const scoped = this._uuidIdentity && entry.scope === 'station';
     if (scoped || Object.keys(refUuids).length) wire.ref_uuids = refUuids;

@@ -8775,15 +8775,18 @@ function _uuidRefTick(reason) {
       `waiting ${report.waiting.length}, could not place ${report.missing.length}${file ? ` — report ${file}` : ''}`);
     try {
       _ledgerAppend({ t: new Date().toISOString(), kind: 'uuid-ref-repair', reason, checked: report.checked,
-        moved: report.moved.length, kvMoved: report.kvMoved.length, waiting: report.waiting.length,
+        moved: report.moved.length, created: report.created.length, kvMoved: report.kvMoved.length, waiting: report.waiting.length,
         missing: report.missing.length, noHistory: report.noHistory, file });
     } catch {}
     if (changed) {
       const cats = report.moved.filter(x => x.reference === 'category').length;
+      const arts = report.moved.filter(x => x.reference === 'artist').length;
+      const other = report.moved.length - cats - arts;
       try {
         _alerts.raise('songs-refiled', { severity: 'yellow', path: file,
-          message: `Songs re-filed by stable id: ${cats} to their right category` +
-            (report.moved.length > cats ? `, ${report.moved.length - cats} other references` : '') +
+          message: `Songs re-filed by stable id: ${cats} to their right category, ${arts} to their right artist` +
+            (report.created.length ? ` (${report.created.length} missing artists/albums created)` : '') +
+            (other ? `, ${other} other references` : '') +
             (report.kvMoved.length ? `, ${report.kvMoved.length} settings` : '') +
             `. Every move is listed in ${file || 'the health log'}.` });
       } catch {}

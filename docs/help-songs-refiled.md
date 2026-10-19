@@ -23,6 +23,9 @@ computer could land under the category next to it on the other.
 From this update, a song's category (and its artist, album and jingle category, and the jukebox and sweeper-pool
 settings) travel by a **stable id** that is the same on every computer. Nothing lands one off any more.
 
+A song that arrives before its **artist** gets the artist created on arrival (the same artist, not a copy), so a new
+import never shows up without artist names on the other computer.
+
 Songs already filed in the wrong place are fixed **once**, automatically, on each computer the first time it opens
 this version. For each song Ether looks at who made its category assignment, reads that computer's numbering, and
 puts the song back where it was filed. You do not re-file anything by hand.
@@ -38,7 +41,8 @@ puts the song back where it was filed. You do not re-file anything by hand.
 
 1. **Update both computers** to this version. Each one fixes its own copy.
 2. Open the report the alert names (a `songs-refiled-<date>.txt` file in this computer's Ether profile folder). It
-   lists every song that moved: **from** which category **to** which, and on which computer it had been filed.
+   lists every song whose **category** changed and every song whose **artist** changed — **from** what **to** what, and
+   on which computer it had been filed — and any artist it had to create because it was missing here.
 3. Nothing else. Running it again moves nothing.
 
 ## How it behaves on air

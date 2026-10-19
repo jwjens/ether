@@ -14,7 +14,8 @@
 
 const { deserializePayload }                      = require('./mutation-writer');
 const { REGISTRY, refsOf }                        = require('./synced-tables');
-const { uuidThroughNumbering }                    = require('./id-numbering');
+const { uuidThroughNumbering, labelThroughNumbering } = require('./id-numbering');
+const { materializeParent }                       = require('./parent-rows');
 const { applyTransformerChain } = require('./transformer-chain');
 
 // ── HLC comparison [N-46] ─────────────────────────────────────────────────────
@@ -73,7 +74,7 @@ class MergeEngine {
     // References that could not be honoured on arrival (docs/sync-uuid-references-2026-10-19.md): counted here and
     // handed to onRefIssue (main → the health ledger). `unresolved` = the parent's uuid is not on this install;
     // `noNumbering` = a sender with no uuid and no published numbering, whose integer was kept as before.
-    this.refStats             = { translated: 0, viaNumbering: 0, unresolved: 0, noNumbering: 0 };
+    this.refStats             = { translated: 0, viaNumbering: 0, created: 0, matchedByName: 0, unresolved: 0, noNumbering: 0 };
     this._onRefIssue          = typeof onRefIssue === 'function' ? onRefIssue : null;
 
     // Prepare reusable statements
@@ -427,6 +428,8 @@ class MergeEngine {
       if (uuid != null) {
         const localId = this._resolveLocalId(refTable, uuid);
         if (localId != null) { row[col] = localId; this.refStats.translated++; continue; }
+        // Not here: an artist/album is created with that uuid, a named row is recognised in its station (parent-rows.js).
+        if (this._standUp(refTable, uuid, refUuids[col + '@'], row, col)) continue;
         this._keepLocalValue(m, row, col);
         this._refIssue('unresolved', m, col, { uuid });
         continue;
@@ -436,9 +439,19 @@ class MergeEngine {
       if (viaSender === undefined) { this._refIssue('noNumbering', m, col, { id: row[col] }); continue; }
       const localId = viaSender == null ? null : this._resolveLocalId(refTable, viaSender);
       if (localId != null) { row[col] = localId; this.refStats.viaNumbering++; continue; }
+      if (viaSender && this._standUp(refTable, viaSender, labelThroughNumbering(this._db, m.client_id, refTable, viaSender), row, col)) continue;
       this._keepLocalValue(m, row, col);
       this._refIssue('unresolved', m, col, { id: row[col], uuid: viaSender });
     }
+  }
+
+  _standUp(refTable, uuid, label, row, col) {
+    const got = materializeParent(this._db, refTable, uuid, label);
+    if (!got) return false;
+    row[col] = got.id;
+    if (got.how === 'created') this.refStats.created++; else this.refStats.matchedByName++;
+    if (got.how === 'created') console.log(`[merge-engine] created ${refTable} ${uuid} on arrival (${label && (label.name || label.title)})`);
+    return true;
   }
 
   // An unresolvable reference is not written: this install's own value stays (an update, or a re-insert of a row we

@@ -88,7 +88,7 @@ const colsOf = (db, t) => new Set(db.prepare(`PRAGMA table_info(${t})`).all().ma
 
 // ── the backend double: what ether-backend /sync/push + /sync/pull do, in memory ───────────────────────────────
 class Backend {
-  constructor() { this.rows = []; this.seq = 0; this.seen = new Map(); this.held = null; }
+  constructor() { this.rows = []; this.seq = 0; this.seen = new Map(); this.held = null; this.dropped = null; }
   transport() {
     const be = this;
     return new (class extends EtherTransport {
@@ -96,6 +96,7 @@ class Backend {
         for (const m of b.batch) {
           if (be.rows.some(r => r.id === m.id)) continue;            // ON CONFLICT (license, id) DO NOTHING
           const row = JSON.parse(JSON.stringify(m));
+          if (be.dropped && be.dropped(row)) continue;                // never delivered (lost on the way)
           if (be.held && be.held(row)) { be.heldRows.push(row); continue; }
           row.server_seq = ++be.seq;
           be.rows.push(row);
@@ -113,6 +114,8 @@ class Backend {
   }
   /** Hold back mutations matching `pred` (delivered later by release()) — out-of-order delivery. */
   hold(pred) { this.held = pred; this.heldRows = []; }
+  /** Lose mutations matching `pred` for good (null to stop). */
+  drop(pred) { this.dropped = pred; }
   release() { for (const row of this.heldRows) { row.server_seq = ++this.seq; this.rows.push(row); } this.held = null; this.heldRows = []; }
 }
 
@@ -175,7 +178,8 @@ function newSong(M, title, catCode, artistName) {
   const uuid = crypto.randomUUID();
   const cat = catByCode(M, catCode);
   const ar = artistName ? artist(M, artistName) : null;
-  on(M, db => H.songs.songsCreate(db, { uuid, title, file_path: `C:/fixture/${title}.mp3`, category_id: cat.id, artist_id: ar ? ar.id : null, duration_ms: 180000 }));
+  on(M, db => H.songs.songsCreate(db, { uuid, title, file_path: `C:/fixture/${title}.mp3`, category_id: cat.id, artist_id: ar ? ar.id : null, duration_ms: 180000,
+    genre: 'Fixture', bpm: 120, energy: 3, cue_in_ms: 250, intro_end_ms: 9000, cart_id: 'C-' + title.slice(0, 4) }));
   return uuid;
 }
 function refile(M, songUuid, catCode) { const cat = catByCode(M, catCode); on(M, db => H.songs.songsUpdate(db, songUuid, { category_id: cat.id })); }
@@ -184,6 +188,7 @@ function editCue(M, songUuid, ms) { on(M, db => H.songs.songsUpdate(db, songUuid
 // ── reading the truth by uuid ──────────────────────────────────────────────────────────────────────────────────
 const songCatUuid = (M, su) => M.db.prepare('SELECT c.uuid u FROM songs s LEFT JOIN categories c ON c.id = s.category_id WHERE s.uuid = ?').get(su)?.u ?? null;
 const songArtistUuid = (M, su) => M.db.prepare('SELECT a.uuid u FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.uuid = ?').get(su)?.u ?? null;
+const songArtistName = (M, su) => M.db.prepare('SELECT a.name n FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.uuid = ?').get(su)?.n ?? null;
 const intended = new Map();   // song uuid → { cat: category uuid, artist: artist uuid } — what the operator last chose
 function wrongOn(M) {
   const bad = [];
@@ -237,7 +242,12 @@ function wrongOn(M) {
   const shop = ['Prologue (Little Shop Of Horrors)', 'Suddenly Seymour'].map(t => newSong(B, t, 'MOVIESDTK', 'Little Shop Cast'));
   const disney = newSong(B, 'This Is Halloween', 'DISNEY', null);
   const adult = newSong(A, 'Thriller', 'HVADULT', null);
+  // The artist row of a new import never reaches B (today's songs "arrived on OV without artist names").
+  backend.drop(r => r.table_name === 'artists' && r.payload_after && r.payload_after.name === 'Lost Artist');
+  const lost = newSong(A, 'Lost Song', 'KIDS', 'Lost Artist');
   await sync(A, B);
+  backend.drop(null);
+  intended.set(lost, { cat: catByCode(A, 'KIDS').uuid, artist: artist(A, 'Lost Artist').uuid });
   for (const su of kidz)  intended.set(su, { cat: catByCode(A, 'KIDS').uuid, artist: artist(A, 'Kidz Bop Kids').uuid });
   for (const su of shop)  intended.set(su, { cat: catByCode(B, 'MOVIESDTK').uuid, artist: artist(B, 'Little Shop Cast').uuid });
   intended.set(disney, { cat: catByCode(B, 'DISNEY').uuid, artist: null });
@@ -256,6 +266,8 @@ function wrongOn(M) {
 
   const badA1 = wrongOn(A), badB1 = wrongOn(B);
   log(`    wrong before the fix: A ${badA1.length}, B ${badB1.length} of ${intended.size} songs`);
+  check('P1.4', 'the song whose artist never arrived shows no artist name (or the wrong one) on B', songArtistName(B, lost) !== 'Lost Artist',
+    `B shows "${songArtistName(B, lost)}"`);
   check('P1.2', 'the defect reproduces on B (songs filed on A land wrong on B)', badB1.length > 0);
   check('P1.3', 'the defect reproduces on A (songs filed on B land wrong on A, and B\'s cue edit re-sends a wrong number)', badA1.length > 0);
 
@@ -283,6 +295,12 @@ function wrongOn(M) {
   const badA2 = wrongOn(A), badB2 = wrongOn(B);
   check('P2.4', 'every song is on the category (and artist) it was filed to, on A', badA2.length === 0, JSON.stringify(badA2.slice(0, 3)));
   check('P2.5', 'every song is on the category (and artist) it was filed to, on B', badB2.length === 0, JSON.stringify(badB2.slice(0, 3)));
+  check('P2.4a', 'the missing artist was CREATED on B, under the same uuid, and the song shows its name',
+    songArtistName(B, lost) === 'Lost Artist' && songArtistUuid(B, lost) === intended.get(lost).artist && rB.created.some(c => c.name === 'Lost Artist')
+    && rB.moved.some(x => x.song === 'Lost Song' && x.reference === 'artist'));   // …and it is in the report
+  check('P2.4b', 'the report lists every song whose ARTIST changed and every song whose CATEGORY changed',
+    rB.moved.some(x => x.reference === 'artist') && rB.moved.some(x => x.reference === 'category') &&
+    REPAIR.formatReport(rB).includes('ARTIST — ') && REPAIR.formatReport(rB).includes('CATEGORY — '));
   const movedA = rA1.moved.length + rA2.moved.length;
   check('P2.6', 'every move is reported: what was wrong is exactly what moved (A)',
     new Set([...rA1.moved, ...rA2.moved].map(x => x.song_uuid + x.reference)).size === movedA && movedA >= badA1.length);
@@ -330,6 +348,22 @@ function wrongOn(M) {
   const stats = [A, B].map(M => M.engine._mergeEngine.refStats);
   log(`    references on arrival: A ${JSON.stringify(stats[0])}  B ${JSON.stringify(stats[1])}`);
   check('P3.3', 'new-wire messages translate by uuid (A and B received translated references)', stats.every(s => s.translated > 0));
+
+  // A song arrives before its NEW artist's row: the artist is created on arrival, and the row that follows is the same one.
+  backend.hold(r => r.table_name === 'artists');
+  const s4 = newSong(A, 'Arrival Song', 'KIDS', 'Arrival Artist');
+  intended.set(s4, { cat: catByCode(A, 'KIDS').uuid, artist: artist(A, 'Arrival Artist').uuid });
+  await sync(A, B);
+  check('P3.6', 'a song whose artist has not arrived yet gets the artist created on arrival (name shown)', songArtistName(B, s4) === 'Arrival Artist',
+    `got "${songArtistName(B, s4)}"`);
+  backend.release();
+  await sync(A, B);
+  const dupes = B.db.prepare("SELECT COUNT(*) n FROM artists WHERE name = 'Arrival Artist'").get().n;
+  check('P3.7', 'when the artist row arrives it is the same artist — no duplicate', dupes === 1 && songArtistUuid(B, s4) === intended.get(s4).artist, `count ${dupes}`);
+  // All metadata travels: the song's fields as written on A, read on B.
+  const meta = (M, su) => M.db.prepare('SELECT genre, bpm, energy, cue_in_ms, intro_end_ms, cart_id FROM songs WHERE uuid = ?').get(su);
+  check('P3.8', 'every song field arrives (genre, bpm, energy, cue, intro, cart number)', JSON.stringify(meta(A, s4)) === JSON.stringify(meta(B, s4)),
+    `A ${JSON.stringify(meta(A, s4))} B ${JSON.stringify(meta(B, s4))}`);
 
   // A child that arrives before its parent: never written as a foreign number.
   backend.hold(r => r.table_name === 'categories');
