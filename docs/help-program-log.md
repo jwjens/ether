@@ -55,6 +55,21 @@ Fill Day acts on the **station you are switched into**. Switch stations first if
 There is no per-hour generate: to rebuild part of a day, clear the hours you want rebuilt (the ✕ on
 each hour row) and press Fill Day — it fills the gaps and leaves everything else in place.
 
+## How each song is picked
+
+- **Your rules first.** Each clock row gets the song in its category that has waited longest since it last
+  played, among the songs that pass your separation rules (Programming preferences: song, artist, title).
+- **If no song passes, the least recently played song goes in.** Once every song in the category has played,
+  the first one comes round again. The slot is never left empty. Fill Day says how many slots this happened
+  in ("N least recently played"), and Health shows them as relaxed picks. If you named a fallback category,
+  it is tried first, under your rules.
+- **UNSCHEDULED** now only means the category has no songs at all.
+- **Same title, different length is a different song.** The title rule only treats two songs as the same when
+  the title and the length (to the second) both match. The Kids Bop "A Nightmare On My Street" (3:56) and Will
+  Smith's (4:59) don't block each other.
+- **Rows past the end of an hour don't count.** Every row of your clock goes into its hour. Rows that run past
+  the hour's end only air if the hour runs short, so the next hour's picks aren't blocked by them.
+
 ## Fill Week — scheduling weeks ahead
 
 **Fill Week** sits next to Fill Day and builds **seven days in one run: the selected day and the six

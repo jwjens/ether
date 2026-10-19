@@ -157,7 +157,7 @@ function stationFacts(db, sid) {
   }
   const songs = db.prepare(
     `SELECT s.id, s.title, a.name AS artist, s.category_id, s.file_path, s.file_key, s.daypart_mask, s.rotation_status,
-            s.content_class, s.deleted_at, s.no_repeat_hours, s.created_at
+            s.content_class, s.deleted_at, s.no_repeat_hours, s.created_at, s.duration_ms
        FROM songs s LEFT JOIN artists a ON a.id = s.artist_id`).all();
   const clockCats = new Set(db.prepare(
     `SELECT DISTINCT cs.category_id FROM clock_slots cs JOIN clocks c ON c.id = cs.clock_id
@@ -178,7 +178,7 @@ function stationFacts(db, sid) {
   const pool = (cat, hour) => {
     const k = cat + "|" + hour;
     if (!poolCache.has(k)) poolCache.set(k, songs.filter(s => inPool(s, cat, hour)).map(s => ({
-      songId: s.id, rec: C.recordingKey(s.file_path || s.file_key), artists: split(s.artist), title: C.normaliseTitle(s.title), name: s.title,
+      songId: s.id, rec: C.recordingKey(s.file_path || s.file_key), artists: split(s.artist), title: C.titleKey(s.title, s.duration_ms), name: s.title,
       noRepeatMin: s.no_repeat_hours != null && Number(s.no_repeat_hours) > 0 ? Number(s.no_repeat_hours) * 60 : null,
     })).filter(p => p.rec));
     return poolCache.get(k);
@@ -190,14 +190,25 @@ function stationFacts(db, sid) {
 function playEvent(F, p) {
   const rec = C.recordingKey(p.file_path);
   const s = rec ? F.byRec.get(rec) : null;
-  return C.makeEvent({ ts: p.played_at, file: p.file_path, artist: s ? s.artist : p.artist, title: s ? s.title : p.title, kind: "aired", ref: "p" + p.id, songId: s ? s.id : null, noRepeatHours: s ? s.no_repeat_hours : null }, F.split);
+  return C.makeEvent({ ts: p.played_at, file: p.file_path, artist: s ? s.artist : p.artist, title: s ? s.title : p.title, kind: "aired", ref: "p" + p.id, songId: s ? s.id : null, noRepeatHours: s ? s.no_repeat_hours : null, durationMs: s ? s.duration_ms : null }, F.split);
 }
 function rowEvent(F, r) {
   const s = r.song_id != null ? F.byId.get(r.song_id) : null;
-  return C.makeEvent({ ts: r.scheduled_at, file: r.file_key || r.file_path || (s && (s.file_path || s.file_key)), artist: s ? s.artist : r.artist, title: s ? s.title : r.title, kind: "log", ref: "r" + r.id, categoryId: r.category_id, songId: r.song_id, noRepeatHours: s ? s.no_repeat_hours : null }, F.split);
+  return C.makeEvent({ ts: r.scheduled_at, file: r.file_key || r.file_path || (s && (s.file_path || s.file_key)), artist: s ? s.artist : r.artist, title: s ? s.title : r.title, kind: "log", ref: "r" + r.id, categoryId: r.category_id, songId: r.song_id, noRepeatHours: s ? s.no_repeat_hours : null, durationMs: s ? s.duration_ms : (r.duration_s ? r.duration_s * 1000 : null) }, F.split);
 }
 const isMusicRow = (r) => r.song_id != null && (r.content_class == null || r.content_class === "MUSIC");
 const isMusicPlay = (p) => p.content_class == null || p.content_class === "MUSIC";
+// Generate placed it because no song passed the rules: the least recently played song (Jeff, 2026-10-19). A rule it
+// breaks is the ruling, not a defect.
+const isLeastRecentRow = (r) => { try { return !!r && !!r.pick_reason && JSON.parse(r.pick_reason).m === "least-recent"; } catch { return false; } };
+// A row past its hour's end does not air (the crossing song plays out, then the next hour's first row; the rest are
+// didn't-play), and the picker does not count it against the next hour. The hour's end = its piece's end by the show
+// schedule (audiod/show-window.js), as Generate and scheduler-core loadTimeline.
+function pastEndFn(w, sid) {
+  const endOf = require(path.join(ROOT, "audiod", "scheduler-core.js")).pieceEndFn(w, sid);
+  const lkOf = (r) => r.log_hour_ts ?? r.scheduled_at;
+  return (r) => !(r.source && String(r.source).trim().toLowerCase() === "operator") && r.scheduled_at >= endOf(lkOf(r));
+}
 const hourStartOf = (ts) => { const d = new RealDate(ts * 1000); d.setMinutes(0, 0, 0); return Math.floor(d.getTime() / 1000); };
 const fmt = (ts) => { const d = new RealDate(ts * 1000); return d.toLocaleString("en-US", { month: "2-digit", day: "2-digit", hour: "numeric", minute: "2-digit", hour12: true }); };
 
@@ -400,8 +411,16 @@ async function simulateStation(w, P, F, R) {
 
   // T1 on air: every simulated play against what aired before it
   const t1Air = [];
-  for (const ev of simEvents) for (const b of C.breaches(air, ev, F.rules, { sides: "before" })) t1Air.push({ at: fmt(ev.ts), rule: b.rule, key: b.key, measuredMin: b.measuredMin, settingMin: b.settingMin });
-  res.T1_onAir = { violations: t1Air.length, byRule: countBy(t1Air, "rule"), examples: t1Air.slice(0, 8) };
+  const lrpRowUuids = new Set(w.prepare("SELECT uuid, pick_reason FROM generated_schedule WHERE station_id=? AND pick_reason LIKE '%least-recent%'").all(sid).filter(isLeastRecentRow).map(r => r.uuid));
+  const lrpPlayRefs = new Set();
+  if (w.prepare("PRAGMA table_info(play_log)").all().some(c => c.name === "row_uuid"))
+    for (const p of w.prepare("SELECT id, row_uuid FROM play_log WHERE station_id=? AND session_id='scheduler-gate'").all(sid)) if (p.row_uuid && lrpRowUuids.has(p.row_uuid)) lrpPlayRefs.add("p" + p.id);
+  let t1AirLrp = 0;
+  for (const ev of simEvents) for (const b of C.breaches(air, ev, F.rules, { sides: "before" })) {
+    if (lrpPlayRefs.has(ev.ref)) { t1AirLrp++; continue; }
+    t1Air.push({ at: fmt(ev.ts), rule: b.rule, key: b.key, measuredMin: b.measuredMin, settingMin: b.settingMin });
+  }
+  res.T1_onAir = { violations: t1Air.length, byRule: countBy(t1Air, "rule"), examples: t1Air.slice(0, 8), leastRecentPlays: t1AirLrp };
 
   // T1 in the log + T2 the pick, per Generate run, against the state at that run
   const t1Log = new Map(); const t2 = { checked: 0, notPassing: [], notLongest: [], nothingPassedButPlaced: 0, nBreaking: 0, nNotLongest: 0 };
@@ -415,26 +434,37 @@ async function simulateStation(w, P, F, R) {
     const runIds = new Set(run.rows.map(r => r.id));
     // what was already in the log, on either side, that this run did not write (kept rows)
     const kept = run.keptAtCommit;
-    for (const k of kept) if (isMusicRow(k) && !runIds.has(k.id)) tl.add(rowEvent(F, k));
-    // full log after the commit for the T1 in-log check
+    const pastEnd = pastEndFn(w, sid);
+    for (const k of kept) if (isMusicRow(k) && !runIds.has(k.id) && !pastEnd(k)) tl.add(rowEvent(F, k));
+    // full log after the commit for the T1 in-log check: the rows that air (not past their hour's end), and a least
+    // recently played row breaks a rule by the ruling
     const full = new C.Timeline();
     for (const p of allPlaysAt.all(sid, run.genTs - 2 * 86400, run.genTs)) if (isMusicPlay(p)) full.add(playEvent(F, p));   // rules reach ≤ 1 day
-    for (const k of kept) if (isMusicRow(k)) full.add(rowEvent(F, k));
+    for (const k of kept) if (isMusicRow(k) && !pastEnd(k)) full.add(rowEvent(F, k));
     const runEvents = run.rows.filter(isMusicRow).map(r => [r, rowEvent(F, r)]);
-    for (const [, ev] of runEvents) full.add(ev);
-    for (const [, ev] of runEvents) for (const b of C.breaches(full, ev, F.rules)) {
+    const lrpRefs = new Set([...kept, ...run.rows].filter(isLeastRecentRow).map(r => "r" + r.id));
+    for (const [r, ev] of runEvents) if (!pastEnd(r)) full.add(ev);
+    for (const [r, ev] of runEvents) if (!pastEnd(r) && !lrpRefs.has(ev.ref)) for (const b of C.breaches(full, ev, F.rules)) {
+      if (lrpRefs.has(b.other.ref)) continue;
       const pair = [ev.ref, b.other.ref].sort().join("~") + "|" + b.rule + "|" + b.key;
       if (!t1Log.has(pair)) t1Log.set(pair, { at: fmt(Math.min(ev.ts, b.other.ts)), rule: b.rule, key: b.key, measuredMin: b.measuredMin, settingMin: b.settingMin, run: run.label });
     }
-    // T2: walk this run's rows in order; each music row re-derived against what came before it
+    // T2: walk this run's rows in order; each music row re-derived against what came before it. A row past its hour's end
+    // is on the timeline while its own hour is built and comes off when the next hour starts (generate-core pastEnd).
+    let curLk = null; const pastEndEvs = [];
     for (const [r, ev] of runEvents) {
+      const lk = r.log_hour_ts ?? r.scheduled_at;
+      if (lk !== curLk) { for (const x of pastEndEvs) tl.remove(x); pastEndEvs.length = 0; curLk = lk; }
+      if (pastEnd(r)) pastEndEvs.push(ev);
       const hour = new RealDate(r.scheduled_at * 1000).getHours();
       const pool = F.pool(r.category_id, hour);
       const d = C.rederivePick(tl, pool, r.scheduled_at, F.rules);
       t2.checked++;
       const placedPasses = !C.breaches(tl, { ...ev, ts: r.scheduled_at }, F.rules).length;
-      if (!d.passing.length) t2.nothingPassedButPlaced++;
-      if (!placedPasses) {
+      // Nothing passed → the least recently played song goes in, rules set aside (Jeff, 2026-10-19): a rule broken there
+      // is the ruling, not a defect; it must still be the least recently played.
+      if (d.leastRecent) t2.nothingPassedButPlaced++;
+      if (!placedPasses && !d.leastRecent) {
         t2.nBreaking++;
         if (t2.notPassing.length < 400) t2.notPassing.push({ at: fmt(r.scheduled_at), category: F.catName.get(r.category_id), placed: r.title, passingSongs: d.passing.length, rules: C.breaches(tl, { ...ev, ts: r.scheduled_at }, F.rules).map(b => `${b.rule} ${b.measuredMin}/${b.settingMin} min`).join(", ") });
       } else if (!d.longestWaiting.some(s => s.rec === ev.rec)) {
@@ -448,7 +478,7 @@ async function simulateStation(w, P, F, R) {
   }
   const t1LogList = [...t1Log.values()];
   res.T1_inLog = { violations: t1LogList.length, byRule: countBy(t1LogList, "rule"), examples: t1LogList.slice(0, 8) };
-  res.T2 = { checked: t2.checked, placedBreakingARule: t2.nBreaking, notTheLongestWaiting: t2.nNotLongest, slotsWhereNothingPassedButASongWasPlaced: t2.nothingPassedButPlaced, unscheduledSlots: runs.reduce((n, r) => n + r.rows.filter(x => x.content_class === "UNSCHEDULED").length, 0), examplesBreaking: t2.notPassing.slice(0, 5), examplesNotLongest: t2.notLongest.slice(0, 5) };
+  res.T2 = { checked: t2.checked, placedBreakingARule: t2.nBreaking, notTheLongestWaiting: t2.nNotLongest, slotsWhereNothingPassedLeastRecentWentIn: t2.nothingPassedButPlaced, unscheduledSlots: runs.reduce((n, r) => n + r.rows.filter(x => x.content_class === "UNSCHEDULED").length, 0), examplesBreaking: t2.notPassing.slice(0, 5), examplesNotLongest: t2.notLongest.slice(0, 5) };
 
   // T3: the count proof over the simulated week, per clock category
   const pools = new Map();
@@ -471,7 +501,7 @@ async function simulateStation(w, P, F, R) {
       const so = F.byRec.get(rec);
       if (!so) return "not in library";
       if (so.daypart_mask != null && ((so.daypart_mask >> hour) & 1) !== 1) return "daypart";
-      const probe = C.makeEvent({ ts: g.ts, file: so.file_path || so.file_key, artist: so.artist, title: so.title, kind: "probe", ref: null, noRepeatHours: so.no_repeat_hours }, F.split);
+      const probe = C.makeEvent({ ts: g.ts, file: so.file_path || so.file_key, artist: so.artist, title: so.title, kind: "probe", ref: null, noRepeatHours: so.no_repeat_hours, durationMs: so.duration_ms }, F.split);
       const b = C.breaches(tAir, probe, F.rules, { sides: "before" });
       if (b.length) return `${b[0].rule} ${b[0].measuredMin}/${b[0].settingMin} min`;
       // ...or by the LOG on the after side (design §3.2: the rules are measured against what aired plus the log on either
@@ -900,7 +930,7 @@ function verdicts(sim, t5, t10, hist, stat, t20 = []) {
   for (const s of sim) {
     const st = `station ${s.station}`;
     add("T1", s.T1_onAir.violations === 0 && s.T1_inLog.violations === 0, `${st}: ${s.T1_onAir.violations} separation violations on air, ${s.T1_inLog.violations} in the log (${JSON.stringify(s.T1_onAir.byRule)} / ${JSON.stringify(s.T1_inLog.byRule)})`);
-    add("T2", s.T2.placedBreakingARule === 0 && s.T2.notTheLongestWaiting === 0, `${st}: of ${s.T2.checked} picks, ${s.T2.placedBreakingARule} broke a rule and ${s.T2.notTheLongestWaiting} were not the longest-waiting song that passed; ${s.T2.unscheduledSlots} slots UNSCHEDULED (no song passed), ${s.T2.slotsWhereNothingPassedButASongWasPlaced} slots had no passing song and got one anyway`);
+    add("T2", s.T2.placedBreakingARule === 0 && s.T2.notTheLongestWaiting === 0, `${st}: of ${s.T2.checked} picks, ${s.T2.placedBreakingARule} broke a rule and ${s.T2.notTheLongestWaiting} were not the longest-waiting song (of those that passed, or of the whole category where none passed); ${s.T2.unscheduledSlots} slots UNSCHEDULED (empty category), ${s.T2.slotsWhereNothingPassedLeastRecentWentIn} slots had no passing song and got the least recently played`);
     add("T3", s.T3.failures === 0, `${st}: ${s.T3.failures} go-lives pushed a category past spread 1 while a lower-count song was free (D1 exceptions: ${s.T3.d1Exceptions}); worst spread ${Math.max(0, ...s.T3.maxSpreadByCategory.map(c => c.maxSpread))}`);
     add("T4", s.T4.deleted === 0 && s.T4.changed === 0, `${st}: of ${s.T4.nonPendingRowsSnapshotted} non-pending rows, Generate deleted ${s.T4.deleted} and changed ${s.T4.changed}`);
     add("T8", s.T8.rowsAiredBeforeTheirHour === 0, `${st}: ${s.T8.rowsAiredBeforeTheirHour} of ${s.T8.goLives} go-lives aired a row before its hour began outside its own show and day (up to ${s.T8.maxAheadMin} min early); ${s.T8.offLogPlays} off-log floor plays`);

@@ -77,8 +77,9 @@ function _pickSpot(stmt, filterValue, stationId, dayStr, spotLastTs, spotPlaysTo
 // waited longest, random only for an exact tie. Removed with it: the first-compliant ORDER BY RANDOM() walk, the
 // least-recently-played fallback that broke rules to fill a slot, the enforce_separation switch and its second picker,
 // the legacy differential, the goal-mode shadow planner, and the break "anchor-fit" that chose songs by length (3c: a
-// break lands on time through Hour start and fill, never by bending the pick). A slot where nothing passes is
-// UNSCHEDULED (content_class 'UNSCHEDULED', never aired) unless the station named a fallback category.
+// break lands on time through Hour start and fill, never by bending the pick). A slot where nothing passes gets the
+// station's fallback category if one is named, then the slot category's least recently played song (Jeff, 2026-10-19);
+// it is UNSCHEDULED (content_class 'UNSCHEDULED', never aired) only when the category has no song.
 function _buildScheduleCtx(db, stationId) {
   const core = require('../audiod/scheduler-core.js');
   const rules = core.stationRules(db, stationId);
@@ -104,7 +105,7 @@ function _buildScheduleCtx(db, stationId) {
     // side"; everything outside it, and operator rows inside it, are.
     tl: null, replace: null, poolCache: new Map(),
     spotLastTs: new Map(), spotPlaysToday: new Map(), generatedRows: [],
-    relaxed: [],                 // nothing is ever relaxed now; kept so callers' reports stay shaped the same
+    relaxed: [],                 // slots where no song passed and the least recently played song went in (Jeff, 2026-10-19)
     unscheduled: [],             // { hour, ts, category_id, categoryCode, closest[] } — every slot no song could fill
     // A break that started more than the break tolerance from its minute (§3.7, 3c): visible, never fitted.
     breakDrift: [],
@@ -153,8 +154,19 @@ function _pickMusic(ctx, categoryId, ts, hour) {
     const r2 = ctx.core.pick(_pool(ctx, ctx.fallbackCat, hour), ts, tl, ctx.rules);
     if (r2.song) { r = r2; usedCat = ctx.fallbackCat; viaFallback = true; }
   }
+  // NOTHING PASSES → the slot category's least recently played song (Jeff, 2026-10-19: "its or least recently played").
+  // The row says which rule it breaks. UNSCHEDULED only when the category has no song at all.
+  let leastRecent = false;
+  if (!r.song) {
+    const lr = ctx.core.leastRecent(_pool(ctx, categoryId, hour), ts, tl, ctx.rules);
+    if (lr.song) {
+      r = { ...lr, closest: r.closest };
+      leastRecent = true;
+      ctx.relaxed.push({ hour, ts, category_id: categoryId, title: lr.song.title, artist: lr.song.artist || '', broke: lr.broke || null });
+    }
+  }
   if (r.song) ctx.core.commit(tl, r.song, ts);
-  return { ...r, categoryId: usedCat, viaFallback };
+  return { ...r, categoryId: usedCat, viaFallback, leastRecent };
 }
 function _catCode(ctx, id) { try { const c = ctx.stmtCatCode.get(id); return c ? (c.code || c.name || ('#' + id)) : ('#' + id); } catch { return '#' + id; } }
 function _musicRow(ctx, r, slotCat, ts, durationS, clockId) {
@@ -162,7 +174,9 @@ function _musicRow(ctx, r, slotCat, ts, durationS, clockId) {
   return {
     scheduled_at: ts, song_id: s.id, title: s.title, artist: s.artist || '', file_key: s.file_path ? storedBasename(s.file_path) : (s.file || ''),
     duration_s: durationS, category_id: r.categoryId, clock_id: clockId,
-    pick_reason: JSON.stringify({ m: 'one-pick', cat: r.categoryId, slotCat, lastAired: r.lastAired, passing: r.passing, ties: r.ties, fallback: r.viaFallback || undefined }),
+    pick_reason: JSON.stringify(r.leastRecent
+      ? { m: 'least-recent', cat: r.categoryId, slotCat, lastAired: r.lastAired, ties: r.ties, broke: r.broke || null }
+      : { m: 'one-pick', cat: r.categoryId, slotCat, lastAired: r.lastAired, passing: r.passing, ties: r.ties, fallback: r.viaFallback || undefined }),
   };
 }
 function _unscheduledRow(ctx, r, slotCat, ts, durationS, clockId, hour) {
@@ -224,12 +238,17 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
     // never before the piece's start.
     let prevClass = null;
     const startFor = (cls) => Math.max(seg.fromTs, currentTs - segue.overlapBetween(prevClass, cls, ctx.overlapSec));
+    // Rows timed at or past this piece's end: they keep the rules among themselves while the piece is built, then come
+    // off the timeline — they air only if the hour runs short, so they never block the next piece's picks (they would
+    // otherwise count songs that are marked didn't-play as aired).
+    const pastEnd = [];
     try {
 
     // One music slot, by the one pick: a song, or an UNSCHEDULED row. Moves currentTs to where the next row starts.
     const placeMusic = (categoryId, defaultDurS) => {
       const ts = startFor('MUSIC');
       const r = _pickMusic(ctx, categoryId, ts, h);
+      if (r.song && ts >= hourEnd) pastEnd.push({ song: r.song, ts });
       if (r.song) {
         const d = r.song.duration_ms ? Math.round(r.song.duration_ms / 1000) : defaultDurS;
         generatedRows.push(_musicRow(ctx, r, categoryId, ts, d, show.clock_id));
@@ -297,7 +316,9 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
           const at = startFor('MUSIC');
           const durationS = pinned.duration_ms ? Math.round(pinned.duration_ms / 1000) : slotDurationS;
           generatedRows.push({ scheduled_at: at, song_id: pinned.id, title: pinned.title, artist: pinned.artist_name || '', file_key: pinned.file_path ? storedBasename(pinned.file_path) : '', duration_s: durationS, category_id: slot.category_id, clock_id: show.clock_id });
-          ctx.core.commit(_timeline(ctx, Math.floor(Date.now() / 1000)), { file: pinned.file_path, artist: pinned.artist_name, title: pinned.title }, at);
+          const pin = { file: pinned.file_path, artist: pinned.artist_name, title: pinned.title, duration_ms: pinned.duration_ms };
+          ctx.core.commit(_timeline(ctx, Math.floor(Date.now() / 1000)), pin, at);
+          if (at >= hourEnd) pastEnd.push({ song: pin, ts: at });
           currentTs = at + durationS; prevClass = 'MUSIC';
         } else { currentTs += slotDurationS; }
         continue;
@@ -314,6 +335,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
     } finally {
       // Every row of this piece belongs to it, wherever its start time falls (v66).
       for (let i = firstRow; i < generatedRows.length; i++) generatedRows[i].log_hour_ts = seg.fromTs;
+      if (ctx.tl) for (const x of pastEnd) ctx.core.uncommit(ctx.tl, x.song, x.ts);
     }
     }   // each piece of the hour
   }

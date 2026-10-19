@@ -87,3 +87,40 @@ describe("identity", () => {
     expect(core.pick([dup], T0, tlWith([a, T0 - 30 * MIN]), RULES).song).toBe(null);
   });
 });
+
+describe("title rule: same name AND same length (Jeff, 2026-10-19)", () => {
+  it("same title, different length is a different song — the title rule does not block it", () => {
+    const kids = song(1, { title: "A Nightmare On My Street", artist: "kids bop", duration_ms: 235_500, file: "C:/m/kids.mp3" });
+    const will = song(2, { title: "A Nightmare On My Street", artist: "Will Smith", duration_ms: 298_700, file: "C:/m/will.mp3" });
+    expect(core.pick([will], T0, tlWith([kids, T0 - 30 * MIN]), RULES).song.id).toBe(2);
+  });
+  it("same title and the same length to the second is the same song — blocked", () => {
+    const a = song(1, { title: "Thriller", artist: "A", duration_ms: 357_900, file: "C:/m/a.mp3" });
+    const b = song(2, { title: "Thriller (Remaster)", artist: "B", duration_ms: 358_100, file: "C:/m/b.mp3" });
+    expect(core.pick([b], T0, tlWith([a, T0 - 30 * MIN]), RULES).song).toBe(null);
+  });
+});
+
+describe("nothing passes → least recently played (Jeff, 2026-10-19)", () => {
+  it("returns the pool's least recently played song and the rule it breaks", () => {
+    const a = song(1), b = song(2), c = song(3);
+    const tl = tlWith([a, T0 - 50 * MIN], [b, T0 - 90 * MIN], [c, T0 - 20 * MIN]);
+    expect(core.pick([a, b, c], T0, tl, RULES).song).toBe(null);
+    const r = core.leastRecent([a, b, c], T0, tl, RULES);
+    expect(r.song.id).toBe(2);
+    expect(r.broke.rule).toBe("song");
+  });
+  it("once every song has played, the first one played comes round again", () => {
+    const pool = [song(1), song(2), song(3)];
+    const tl = new core.Timeline(); const got = [];
+    for (let i = 0; i < 6; i++) {
+      const ts = T0 + i * 4 * MIN;
+      const r = core.pick(pool, ts, tl, RULES, () => 0).song ? core.pick(pool, ts, tl, RULES, () => 0) : core.leastRecent(pool, ts, tl, RULES, () => 0);
+      core.commit(tl, r.song, ts); got.push(r.song.id);
+    }
+    expect(got).toEqual([1, 2, 3, 1, 2, 3]);
+  });
+  it("an empty pool has no song", () => {
+    expect(core.leastRecent([], T0, new core.Timeline(), RULES).song).toBe(null);
+  });
+});

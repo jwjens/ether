@@ -63,6 +63,12 @@ function todayStr(): string { return localDateStr(new Date()); }
 const SHOWS_SQL = `SELECT s.*, c.name as clock_name FROM shows s
   LEFT JOIN clocks c ON c.id = s.clock_id WHERE s.station_id = ? AND s.deleted_at IS NULL ORDER BY s.start_hour`;
 /** The type chip for a row with no category code (spots, sweepers, carts, voice). */
+// Slots where no song passed the rules and the least recently played song went in (Generate's `relaxed`: a list from
+// Fill Day, a count from Fill Week).
+const lrpNote = (relaxed: unknown): string => {
+  const n = Array.isArray(relaxed) ? relaxed.length : Number(relaxed) || 0;
+  return n ? ` · ${n} least recently played (no song passed the rules)` : "";
+};
 const TYPE_LABEL: Record<string, string> = { spot_break: "SPOT", music: "SONG", sweeper: "SWEEPER", cart: "CART", voice: "VOICE", unscheduled: "UNSCHED" };
 // Generate's UNSCHEDULED report (Phase 2): every slot no song could fill under the station's rules, by hour, with why.
 type UnschedItem = { hourLabel: string; at: number; category: string; why: string };
@@ -263,7 +269,7 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
       msg = res?.ok === false ? `✗ ${res.error || "generate failed"}`
           : res?.cancelled ? "↷ Generate cancelled"
           : res?.skipped ? "↷ Nothing to fill — the day has aired"
-          : `✓ ${res?.count ?? 0} rows generated${res?.unscheduled?.length ? ` · ${res.unscheduled.length} UNSCHEDULED` : ""}`;
+          : `✓ ${res?.count ?? 0} rows generated${lrpNote(res?.relaxed)}${res?.unscheduled?.length ? ` · ${res.unscheduled.length} UNSCHEDULED` : ""}`;
       setUnsched(Array.isArray(res?.unscheduled) ? res.unscheduled : null);
     } catch (e: any) { msg = `✗ ${e?.message || e}`; }
     await loadDayData(selectedDate);
@@ -304,7 +310,7 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
       const rows = res?.count ?? 0, days = res?.daysCommitted ?? 0;
       msg = res?.ok === false ? `✗ ${res.error || "generate failed"}`
           : res?.cancelled ? `↷ Cancelled — ${rows} rows across ${days} of ${FILL_WEEK_DAYS} days kept`
-          : `✓ ${rows} rows across ${days} of ${FILL_WEEK_DAYS} days${res?.unscheduled?.length ? ` · ${res.unscheduled.length} UNSCHEDULED` : ""}`;
+          : `✓ ${rows} rows across ${days} of ${FILL_WEEK_DAYS} days${lrpNote(res?.relaxed)}${res?.unscheduled?.length ? ` · ${res.unscheduled.length} UNSCHEDULED` : ""}`;
       setUnsched(Array.isArray(res?.unscheduled) ? res.unscheduled : null);
     } catch (e: any) { msg = `✗ ${e?.message || e}`; }
     // Re-read the SELECTED day (the one on screen); the other six are re-read when they are opened,
@@ -708,7 +714,7 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
           {unsched && unsched.length > 0 && (
             <div role="alert" style={{ margin: "6px 12px", padding: "8px 10px", border: "1px solid #ef4444", background: "rgba(239,68,68,0.10)", fontSize: "var(--t-small)" }}>
               <div style={{ fontWeight: 800, color: "#ef4444", marginBottom: 4 }}>
-                {unsched.length} slot{unsched.length === 1 ? "" : "s"} UNSCHEDULED — no song passes your rules there. Nothing will air in {unsched.length === 1 ? "it" : "them"} until you change a rule, add songs, or set a fallback category.
+                {unsched.length} slot{unsched.length === 1 ? "" : "s"} UNSCHEDULED — the slot's category has no song to play. Nothing will air in {unsched.length === 1 ? "it" : "them"} until you add songs to the category or set a fallback category.
               </div>
               {Object.entries(unsched.reduce((m: Record<string, UnschedItem[]>, u) => { (m[u.hourLabel] = m[u.hourLabel] || []).push(u); return m; }, {})).map(([h, list]) => (
                 <div key={h} style={{ marginTop: 2 }}>

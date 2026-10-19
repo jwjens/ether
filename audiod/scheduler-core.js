@@ -6,7 +6,9 @@
 //   THE RULES (Programming preferences, per station; a rule that is off is off — nothing is assumed in its place):
 //     song   — the same recording (the stored file name) may not air again within the song separation, either side;
 //     artist — no credited artist (split on the station's delimiters) within the artist separation, either side;
-//     title  — no normalised title within the title separation, either side;
+//     title  — no other song of the same normalised title AND the same length (to the second) within the title
+//              separation, either side. Same name, different length = a different song (Jeff, 2026-10-19: "just because the
+//              song has the same name look at the length they are not the same song");
 //     per-song no-repeat hours — a song that carries a value may not air again within that many hours of itself.
 //   They are measured against what AIRED on this station (play_log) plus what is ALREADY IN THE LOG on either side of
 //   the slot, plus what this run has already placed. A gap equal to the rule passes; a shorter one does not.
@@ -15,8 +17,11 @@
 //   (or was last placed by this run). Never aired = waited longest. Random ONLY for an exact tie. Nothing else decides —
 //   no score, no length fitting, no "closest to passing".
 //
-//   NOTHING PASSES: the slot is UNSCHEDULED, with the rule that blocked the closest songs. Only the station's own
-//   fallback category (a setting the user names; none by default) may fill it, under the same rules and the same pick.
+//   NOTHING PASSES (Jeff, 2026-10-19: "its [the rules] or least recently played … once all songs have been played you
+//   start with the least recently played so that would be the first song again"): the station's own fallback category
+//   is tried first if the user named one (none by default), under the same rules; then the slot gets the slot
+//   category's LEAST RECENTLY PLAYED song (`leastRecent`), whatever the rules say, and the row says so. A slot is
+//   UNSCHEDULED only when its category has no song at all.
 //
 // Pure over its inputs except `loadTimeline` / `poolFor` / `stationRules`, which read the database once and never write.
 "use strict";
@@ -38,6 +43,13 @@ function normaliseTitle(t) {
   s = s.replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
   return s || null;
 }
+/** The title rule's key: the normalised title plus the length to the second. No known length = the title alone. */
+function titleKey(title, durationMs) {
+  const t = normaliseTitle(title);
+  if (!t) return null;
+  const sec = Number(durationMs) > 0 ? Math.round(Number(durationMs) / 1000) : null;
+  return sec != null ? `${t}|${sec}` : t;
+}
 function makeSplitter(delims = DEFAULT_DELIMITERS) {
   const esc = (d) => d.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(delims.map(d => /^[a-z]/i.test(d) ? `\\s+${esc(d)}(?=\\s)\\s*` : `\\s*${esc(d)}\\s*`).join("|"), "i");
@@ -53,12 +65,22 @@ class Timeline {
     if (!a.length || a[a.length - 1] <= ts) a.push(ts);
     else { let i = a.length; while (i > 0 && a[i - 1] > ts) i--; a.splice(i, 0, ts); }
   }
-  /** One airing or placement: {file, artist, title} at ts. */
+  /** One airing or placement: {file, artist, title, durationMs} at ts. */
   add(item, ts) {
-    const rec = recordingKey(item.file), title = normaliseTitle(item.title);
+    const rec = recordingKey(item.file), title = titleKey(item.title, item.durationMs);
     Timeline._ins(this.rec, rec, ts);
     for (const a of this.split(item.artist)) Timeline._ins(this.art, a, ts);
     Timeline._ins(this.tit, title, ts);
+  }
+  static _del(m, k, ts) {
+    const a = k && m.get(k); if (!a) return;
+    const i = a.lastIndexOf(ts); if (i >= 0) a.splice(i, 1);
+  }
+  /** Take one placement back off the timeline (a row that will not air: past its hour's end). */
+  remove(item, ts) {
+    Timeline._del(this.rec, recordingKey(item.file), ts);
+    for (const a of this.split(item.artist)) Timeline._del(this.art, a, ts);
+    Timeline._del(this.tit, titleKey(item.title, item.durationMs), ts);
   }
   /** Nearest time with this key strictly before ts, and at-or-after ts. */
   static _near(arr, ts) {
@@ -84,7 +106,7 @@ function breach(tl, song, ts, rules) {
   let r = chk("song", rules.songMin, tl.rec.get(rec), rec);
   if (r) return r;
   for (const a of tl.split(song.artist)) { r = chk("artist", rules.artistMin, tl.art.get(a), a); if (r) return r; }
-  const t = normaliseTitle(song.title);
+  const t = titleKey(song.title, song.duration_ms ?? song.durationMs);
   r = chk("title", rules.titleMin, tl.tit.get(t), t);
   if (r) return r;
   const nrMin = song.noRepeatHours != null && Number(song.noRepeatHours) > 0 ? Number(song.noRepeatHours) * 60 : null;
@@ -125,6 +147,27 @@ function pick(pool, ts, tl, rules, rand = Math.random, opts = null) {
   return { song: null, closest, poolSize: pool.length };
 }
 
+/**
+ * NOTHING PASSES → the pool's LEAST RECENTLY PLAYED song, rules set aside (Jeff, 2026-10-19). Same measure as the pick:
+ * waited longest since it last aired or was placed (never aired = longest); random only for an exact tie. Returns
+ * { song, lastAired, ties, broke } where `broke` is the rule this song breaks at ts (said on the row), or { song: null }
+ * for an empty pool.
+ */
+function leastRecent(pool, ts, tl, rules, rand = Math.random, opts = null) {
+  let best = Infinity; const ties = [];
+  const spoken = opts && opts.spokenFor;
+  for (const s of pool) {
+    const last = tl.lastBefore(s.file, ts);
+    let w = last == null ? -Infinity : last;
+    if (spoken) { const at = spoken.get(recordingKey(s.file)); if (at != null && at > w) w = at; }
+    if (w < best) { best = w; ties.length = 0; ties.push(s); }
+    else if (w === best) ties.push(s);
+  }
+  if (!ties.length) return { song: null, poolSize: 0 };
+  const song = ties.length === 1 ? ties[0] : ties[Math.min(ties.length - 1, Math.floor(rand() * ties.length))];
+  return { song, lastAired: best === -Infinity ? null : best, ties: ties.length, broke: breach(tl, song, ts, rules) };
+}
+
 // ── what the database says (read once per run; never writes) ──────────────────────────────────────────────────────
 /** The station's rules from Programming preferences: active rows only. Inactive or missing = off. */
 function stationRules(db, stationId) {
@@ -163,15 +206,15 @@ function loadTimeline(db, stationId, { beforeTs, replace, sinceTs, poolFiles } =
   const split = makeSplitter();
   const tl = new Timeline(split);
   const byFile = new Map();
-  try { for (const s of db.prepare("SELECT s.file_path f, s.file_key k, s.title, a.name artist FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.deleted_at IS NULL").all()) {
+  try { for (const s of db.prepare("SELECT s.file_path f, s.file_key k, s.title, a.name artist, s.duration_ms FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.deleted_at IS NULL").all()) {
     const k = recordingKey(s.f || s.k); if (k && !byFile.has(k)) byFile.set(k, s);
   } } catch {}
   try {
     // sinceTs (the reader's fill, on the air loop): only the plays inside the rules' reach, plus — for "waited longest" —
     // each candidate's one last airing before that. Generate reads the whole history once per run (main process).
-    for (const p of db.prepare("SELECT file_path, title, artist, played_at FROM play_log WHERE station_id = ? AND deleted_at IS NULL AND (content_class IS NULL OR content_class = 'MUSIC') AND played_at < ? AND played_at >= ? ORDER BY played_at").all(stationId, beforeTs ?? 9e12, sinceTs ?? 0)) {
+    for (const p of db.prepare("SELECT file_path, title, artist, played_at, duration_ms FROM play_log WHERE station_id = ? AND deleted_at IS NULL AND (content_class IS NULL OR content_class = 'MUSIC') AND played_at < ? AND played_at >= ? ORDER BY played_at").all(stationId, beforeTs ?? 9e12, sinceTs ?? 0)) {
       const s = byFile.get(recordingKey(p.file_path));
-      tl.add({ file: p.file_path, artist: s ? s.artist : p.artist, title: s ? s.title : p.title }, p.played_at);
+      tl.add({ file: p.file_path, artist: s ? s.artist : p.artist, title: s ? s.title : p.title, durationMs: (s && s.duration_ms) || p.duration_ms }, p.played_at);
     }
     if (sinceTs && poolFiles && poolFiles.length) {
       // BY RECORDING, not by stored path: one recording can sit on two song rows under two paths (a duplicate), and it
@@ -201,20 +244,36 @@ function loadTimeline(db, stationId, { beforeTs, replace, sinceTs, poolFiles } =
         for (const a of db.prepare("SELECT DISTINCT log_hour_ts h FROM generated_schedule WHERE station_id = ? AND log_hour_ts IS NOT NULL AND state IN ('played','playing','missed','skipped') AND deleted_at IS NULL").all(stationId)) airedHours.add(a.h);
       }
     } catch {}
-    const rows = db.prepare(`SELECT gs.scheduled_at, ${lk} AS lk, gs.title, gs.source, COALESCE(gs.file_key, gs.file_path, s.file_path) f, s.title st, a.name sa
+    const rows = db.prepare(`SELECT gs.scheduled_at, ${lk} AS lk, gs.title, gs.source, COALESCE(gs.file_key, gs.file_path, s.file_path) f, s.title st, a.name sa, COALESCE(s.duration_ms, gs.duration_s * 1000) ms
         FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id LEFT JOIN artists a ON a.id = s.artist_id
        WHERE gs.station_id = ? AND gs.deleted_at IS NULL AND (gs.state IS NULL OR gs.state = 'pending') AND gs.song_id IS NOT NULL
          AND (gs.content_class IS NULL OR gs.content_class = 'MUSIC') AND gs.scheduled_at >= ?`).all(stationId, beforeTs ?? 0);
     // "The log on either side" = rows still to air. A pending row whose slot has already passed will never air (the
     // reader retires it as missed); it is neither what aired nor what will.
+    // A ROW PAST ITS HOUR'S END does not air (Jeff, 2026-10-18: the song crossing the top of the hour plays out, then the
+    // next hour's first row; the old hour's other rows are didn't-play). Every clock row is placed, so an hour's extra
+    // rows are timed into the next hour; counted, they would block the next hour's picks with songs that never air. The
+    // hour's end is its piece's end by the show schedule (audiod/show-window.js) — what Generate uses (a show ending at
+    // 22:30 ends its hour at 22:30, not 23:00).
+    const endOf = pieceEndFn(db, stationId);
     for (const r of rows) {
       const inWindow = replace && r.lk >= replace[0] && r.lk < replace[1] && !airedHours.has(r.lk);
       const operator = r.source && String(r.source).trim().toLowerCase() === "operator";
       if (inWindow && !operator) continue;
-      tl.add({ file: r.f, artist: r.sa, title: r.st || r.title }, r.scheduled_at);
+      if (!operator && r.scheduled_at >= endOf(r.lk)) continue;
+      tl.add({ file: r.f, artist: r.sa, title: r.st || r.title, durationMs: r.ms }, r.scheduled_at);
     }
   } catch {}
   return tl;
+}
+
+/** lk (a piece's start) → that piece's end by the station's show schedule. */
+function pieceEndFn(db, stationId) {
+  const sw = require("./show-window.js");
+  let shows = [];
+  try { shows = db.prepare("SELECT * FROM shows WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL").all(stationId); } catch {}
+  const cache = new Map();
+  return (lk) => { if (!cache.has(lk)) cache.set(lk, sw.pieceAt(shows, lk).endTs); return cache.get(lk); };
 }
 
 /** The station's fallback category for an UNSCHEDULED slot (Jeff 3d): a category the user names, or null. */
@@ -227,6 +286,8 @@ function fallbackCategory(db, stationId) {
 }
 
 /** Place a chosen song on the timeline (this run's placement counts as "last aired" from here on). */
-function commit(tl, song, ts) { tl.add({ file: song.file, artist: song.artist, title: song.title }, ts); }
+function commit(tl, song, ts) { tl.add({ file: song.file, artist: song.artist, title: song.title, durationMs: song.duration_ms ?? song.durationMs }, ts); }
+/** Take a placement back (the inverse of commit). */
+function uncommit(tl, song, ts) { tl.remove({ file: song.file, artist: song.artist, title: song.title, durationMs: song.duration_ms ?? song.durationMs }, ts); }
 
-module.exports = { pick, breach, commit, Timeline, loadTimeline, poolFor, stationRules, fallbackCategory, recordingKey, normaliseTitle, makeSplitter, DEFAULT_DELIMITERS };
+module.exports = { pick, leastRecent, titleKey, breach, commit, uncommit, pieceEndFn, Timeline, loadTimeline, poolFor, stationRules, fallbackCategory, recordingKey, normaliseTitle, makeSplitter, DEFAULT_DELIMITERS };

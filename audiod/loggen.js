@@ -328,6 +328,12 @@ function selectRowForNow(db, stationId, nowTs, slackSec = 60, opts = null) {
 }
 function _dayStart(ts) { const d = new Date(ts * 1000); d.setHours(0, 0, 0, 0); return Math.floor(d.getTime() / 1000); }
 
+/** Generate placed this row because no song passed the rules: the least recently played song (Jeff, 2026-10-19). */
+function isLeastRecentRow(r) {
+  if (!r || !r.pick_reason) return false;
+  try { return JSON.parse(r.pick_reason).m === "least-recent"; } catch { return false; }
+}
+
 // ── THE PLAYOUT CHECK (design §3.8, Phase 3): before a log row is offered to air, it must pass every rule against what
 // has AIRED on this station by now. Generate placed it under the rules; drift on air (songs longer or shorter than
 // planned) can still bring it inside a rule. A row that fails is returned in `skip` with the rule; the engine stamps it
@@ -340,12 +346,12 @@ function _playoutChecker(db, stationId, nowTs) {
   if (!(maxMin > 0)) return () => null;
   const tl = new core.Timeline(core.makeSplitter());
   try {
-    for (const p of db.prepare(`SELECT pl.file_path, pl.played_at, COALESCE(s.title, pl.title) title, COALESCE(a.name, pl.artist) artist
+    for (const p of db.prepare(`SELECT pl.file_path, pl.played_at, COALESCE(s.title, pl.title) title, COALESCE(a.name, pl.artist) artist, COALESCE(s.duration_ms, pl.duration_ms) duration_ms
         FROM play_log pl LEFT JOIN songs s ON s.file_path = pl.file_path AND s.deleted_at IS NULL LEFT JOIN artists a ON a.id = s.artist_id
        WHERE pl.station_id = ? AND pl.deleted_at IS NULL AND (pl.content_class IS NULL OR pl.content_class = 'MUSIC') AND pl.played_at > ? AND pl.played_at <= ?`)
-      .all(stationId, nowTs - maxMin * 60, nowTs)) tl.add({ file: p.file_path, artist: p.artist, title: p.title }, p.played_at);
+      .all(stationId, nowTs - maxMin * 60, nowTs)) tl.add({ file: p.file_path, artist: p.artist, title: p.title, durationMs: p.duration_ms }, p.played_at);
   } catch {}
-  return (row) => core.breach(tl, { file: row.file_path || row.file_key, title: row.song_title || row.title, artist: row.song_artist || row.artist, noRepeatHours: row.no_repeat_hours }, nowTs, rules);
+  return (row) => core.breach(tl, { file: row.file_path || row.file_key, title: row.song_title || row.title, artist: row.song_artist || row.artist, durationMs: row.duration_ms, noRepeatHours: row.no_repeat_hours }, nowTs, rules);
 }
 
 // ── Log-Reader Flip Phase 3 (ACTIVATION): the time-anchored read-through fill (§2.3 + §2.7) ────────────
@@ -388,7 +394,7 @@ function readLogAnchored(db, stationId, count = 20, slackSec = 60, opts = null) 
     rows = db.prepare(
       `SELECT gs.id AS row_id, gs.title, gs.artist, gs.scheduled_at, ${lk} AS lk, gs.source, COALESCE(gs.file_key, s.file_key) AS file_key,
               COALESCE(gs.file_path, s.file_path) AS file_path, s.intro_end, s.outro_start, gs.content_class,
-              COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms, s.title AS song_title, a.name AS song_artist, s.no_repeat_hours, gs.category_id
+              COALESCE(s.duration_ms, gs.duration_s * 1000) AS duration_ms, s.title AS song_title, a.name AS song_artist, s.no_repeat_hours, gs.category_id, gs.pick_reason
        ${pendBase} AND ${_afterSql(lk, true)} ${order} LIMIT ?`
     ).all(stationId, ...fmtP, ..._orderParams(anchor), WINDOW);
   } catch {
@@ -418,13 +424,15 @@ function readLogAnchored(db, stationId, count = 20, slackSec = 60, opts = null) 
   }
   // THE PLAYOUT CHECK on the rows about to air: from the anchor forward, every music row that now breaks a rule against
   // what aired is refused, until one passes. Rows further on are checked when they come up. A row added by hand is the
-  // operator's choice and is never refused.
+  // operator's choice and is never refused; nor is a row Generate placed as the least recently played song (no song
+  // passed the rules there, so the rule was already set aside).
   const skip = [];
   const fails = _playoutChecker(db, stationId, nowTs);
   while (rows.length) {
     const r0 = rows[0];
     if (r0.content_class && r0.content_class !== "MUSIC") break;          // spots and imaging are not songs
     if (isOperatorRow(r0)) break;                                          // added by hand: it airs
+    if (isLeastRecentRow(r0)) break;                                       // no song passed at Generate: least recently played airs
     const b = fails(r0);
     if (!b) break;
     skip.push({ rowId: r0.row_id, title: r0.title, categoryId: r0.category_id ?? null, rule: b.rule, measuredMin: b.measuredMin, settingMin: b.settingMin });

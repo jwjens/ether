@@ -65,13 +65,22 @@ function artistSplitter(delimiters = DEFAULT_DELIMITERS) {
 
 // ── an airing or a planned placement ──────────────────────────────────────────────────────────────
 // { ts, rec, artists[], title, kind: 'aired'|'log', ref } — ref identifies it (play id / row id).
-function makeEvent({ ts, file, artist, title, kind, ref, categoryId = null, songId = null, noRepeatHours = null }, split) {
+// The title rule's key: the normalised title plus the length to the second (Jeff, 2026-10-19: same name, different length
+// = a different song). No known length = the title alone. Same as audiod/scheduler-core.js titleKey.
+function titleKey(title, durationMs) {
+  const t = normaliseTitle(title);
+  if (!t) return null;
+  const sec = Number(durationMs) > 0 ? Math.round(Number(durationMs) / 1000) : null;
+  return sec != null ? `${t}|${sec}` : t;
+}
+
+function makeEvent({ ts, file, artist, title, kind, ref, categoryId = null, songId = null, noRepeatHours = null, durationMs = null }, split) {
   return {
     ts, kind, ref, categoryId, songId,
     noRepeatMin: noRepeatHours != null && Number(noRepeatHours) > 0 ? Number(noRepeatHours) * 60 : null,
     rec: recordingKey(file),
     artists: split(artist),
-    title: normaliseTitle(title),
+    title: titleKey(title, durationMs),
   };
 }
 
@@ -91,6 +100,15 @@ class Timeline {
     for (const ar of ev.artists) Timeline._ins(this.byArtist, ar, ev);
     Timeline._ins(this.byTitle, ev.title, ev);
     this.n++;
+    return this;
+  }
+  // take one event back off (a row past its hour's end, once the next hour is being judged)
+  remove(ev) {
+    const del = (map, key) => { const a = key && map.get(key); if (!a) return; const i = a.indexOf(ev); if (i >= 0) a.splice(i, 1); };
+    del(this.byRec, ev.rec);
+    for (const ar of ev.artists) del(this.byArtist, ar);
+    del(this.byTitle, ev.title);
+    this.n--;
     return this;
   }
   // nearest event with this key strictly before / at-or-after ts, skipping `self`
@@ -143,14 +161,16 @@ function rederivePick(tl, pool, ts, rules) {
     const probe = { ...s, ts, kind: "probe", ref: null };
     if (!breaches(tl, probe, rules).length) passing.push(s);
   }
+  // Nothing passes → the whole pool's least recently played (Jeff, 2026-10-19), rules set aside.
+  const leastRecent = !passing.length;
   let best = Infinity; const ties = [];
-  for (const s of passing) {
+  for (const s of (leastRecent ? pool : passing)) {
     const last = tl.lastBefore(s.rec, ts);
     const w = last == null ? -Infinity : last;
     if (w < best) { best = w; ties.length = 0; ties.push(s); }
     else if (w === best) ties.push(s);
   }
-  return { passing, longestWaiting: ties, bestLastTs: best };
+  return { passing, longestWaiting: ties, bestLastTs: best, leastRecent };
 }
 
 // ── the count proof (T3, D1) ──────────────────────────────────────────────────────────────────────
@@ -184,5 +204,5 @@ class CountProof {
 }
 
 module.exports = {
-  DEFAULT_DELIMITERS, recordingKey, normaliseTitle, artistSplitter, makeEvent, Timeline, breaches, rederivePick, CountProof,
+  DEFAULT_DELIMITERS, recordingKey, normaliseTitle, titleKey, artistSplitter, makeEvent, Timeline, breaches, rederivePick, CountProof,
 };
