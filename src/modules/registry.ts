@@ -52,7 +52,9 @@ export const MODULES: readonly ModuleEntry[] = [
     instances: "many",
     station: "follows-layout",
     options: [
-      { key: "variant", kind: "enum", label: "Layout", values: ["grid", "strip"], default: "grid" },
+      // Jeff, 2026-10-19: "the screenbuilder can be same as cart window" — 2 × 3 big bright buttons, six blocks,
+      // scroll. One value; a layout saved with "grid"/"strip" renders as this (ModuleFrame resolveOptions).
+      { key: "variant", kind: "enum", label: "Layout", values: ["window"], default: "window" },
     ],
     help: "docs/help-module-carts.md",
     // An unassigned tile reads "Empty" and its tooltip names the one action: click to assign.

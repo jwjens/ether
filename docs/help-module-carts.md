@@ -22,8 +22,10 @@ As a **screen module**, it is exactly the wall you already have in the **Carts**
 for the station, firing through the same channel. It is not a copy. Anything you fire from a screen you build
 plays the same way it does from the Carts window.
 
-You can put **more than one** Carts module on a screen — for example one with the full wall and one as a
-short strip.
+It looks like the **Carts** window too: **six big, bright buttons** at a time — 2 across, 3 down, no space between
+them, just colour — and **five more blocks of six** below, reached by scrolling down (36 carts in all).
+
+You can put **more than one** Carts module on a screen.
 
 ## When to use it
 
@@ -63,7 +65,7 @@ Screen Builder (the next step); this page will say how when it arrives.
 
 ## Not in this version (by design)
 
-- Choosing which carts or how many rows a module shows. Every Carts module shows the whole wall.
+- Choosing which carts or how many rows a module shows. Every Carts module shows the first 36 carts, six at a time.
 - Your own hotkeys per wall. The keys are the 24 above, on whichever wall has the keyboard.
 
 ## Related

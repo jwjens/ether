@@ -649,7 +649,7 @@ function useSquareGridAuto(gap: number, minTile: number, maxCols: number) {
 }
 
 const CART_WALL_GAP = 8;
-const CART_STRIP_GAP = 6;
+const CART_STRIP_GAP = 0;   // Jeff, 2026-10-19: no space between push-up carts, just color separation (as the Carts window)
 /** Smallest tile that is still a usable click target with a readable label. */
 const CART_MIN_TILE = 64;
 export const CART_ROW = 8;                // tiles per row at full width
@@ -1320,7 +1320,7 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
           gridAutoRows: stripGrid.tile ? `${stripGrid.tile}px` : undefined,   // row height = column width
           alignContent: "start",
         }}>
-        {carts.map(cart => (
+        {carts.map((cart, i) => (
           <div
             key={cart.key}
             onClick={() => { if (cart.filePath) fireCart(cart.key); else assignCart(cart.key); }}
@@ -1333,13 +1333,15 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
             style={{
               // No aspectRatio: the grid's row height IS the column width (gridAutoRows), so the tile
               // is square by construction and stretch fills a square cell.
+              // Jeff, 2026-10-19: same layout, but the Carts window's bright colors — the tile IS the cart color,
+              // no border, no gap; empty tiles alternate two greys so they still read as separate.
               minWidth: 0, minHeight: 0,
-              borderRadius: 4,
-              background: cart.playing ? cart.color + "22" : dragOver === cart.key ? `${cart.color}14` : cart.filePath ? `${cart.color}0c` : "var(--bg-tertiary)",
-              border: `1px solid ${cart.playing ? cart.color + "90" : dragOver === cart.key ? cart.color + "50" : cart.filePath ? cart.color + "30" : "var(--border-primary)"}`,
-              boxShadow: cart.playing ? `0 0 10px ${cart.color}55` : "none",
+              borderRadius: 0,
+              background: cart.filePath ? cart.color : (i % 2 === 0 ? "#2b2b36" : "#1d1d26"),
+              filter: dragOver === cart.key ? "brightness(1.25)" : undefined,
+              boxShadow: cart.playing ? "inset 0 0 0 4px #ffffff" : "none",
               animation: cart.playing ? "ether-cart-flash 0.9s ease-in-out infinite" : undefined,
-              cursor: "pointer", transition: "all 0.1s",
+              cursor: "pointer",
               position: "relative" as const, overflow: "hidden",
               display: "flex", flexDirection: "column" as const, alignItems: "center", justifyContent: "center",
               textAlign: "center" as const, padding: 4, gap: 3,
@@ -1351,7 +1353,7 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
             {cart.playing && (
               <span aria-hidden style={{
                 position: "absolute", top: 3, right: 4, zIndex: 2, pointerEvents: "none",
-                fontSize: 9, lineHeight: 1, color: cart.color, opacity: 0.95,
+                fontSize: 9, lineHeight: 1, color: "#ffffff", opacity: 0.95,
                 textShadow: "0 0 4px rgba(0,0,0,0.6)",
               }}>■</span>
             )}
@@ -1360,12 +1362,12 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
                 keyboard; it just stops competing with the label for the space. */}
             <span style={{
               fontSize: 13, fontWeight: cart.filePath ? 800 : 400, lineHeight: 1.2,
-              color: cart.playing ? cart.color : cart.filePath ? "var(--text-primary)" : "var(--text-tertiary)",
+              color: cart.filePath ? "#ffffff" : "rgba(255,255,255,0.45)", textShadow: cart.filePath ? "0 1px 3px rgba(0,0,0,0.55)" : "none",
               overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" as const,
               fontStyle: cart.filePath ? "normal" : "italic", wordBreak: "break-word" as const, maxWidth: "100%",
             }}>{cartLabelContent(cart)}</span>
             {cart.playing && remainingMs > 0 && (
-              <span style={{ position: "absolute" as const, bottom: 3, fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: cart.color }}>{fmtRemain(remainingMs)}</span>
+              <span style={{ position: "absolute" as const, bottom: 3, fontSize: 9, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: "#ffffff", textShadow: "0 1px 3px rgba(0,0,0,0.6)" }}>{fmtRemain(remainingMs)}</span>
             )}
           </div>
         ))}

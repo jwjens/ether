@@ -49,5 +49,15 @@ export function ModuleFrame({ type, instanceId, options }: ModuleFrameProps) {
 
 function ModuleBody({ entry, options }: { entry: ModuleEntry; options?: Record<string, unknown> }) {
   const Component = entry.component;
-  return <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column" }}><Component {...options} /></div>;
+  return <div style={{ height: "100%", minHeight: 0, display: "flex", flexDirection: "column" }}><Component {...resolveOptions(entry, options)} /></div>;
+}
+
+/** A saved enum value the registry no longer offers renders as that option's default — a layout saved before the
+ *  values changed (e.g. Carts "grid", retired 2026-10-19) shows what a new pane would, not a retired look. */
+export function resolveOptions(entry: ModuleEntry, options?: Record<string, unknown>): Record<string, unknown> {
+  const o: Record<string, unknown> = { ...(options || {}) };
+  for (const opt of entry.options) {
+    if (opt.kind === "enum" && opt.key in o && !opt.values?.includes(o[opt.key] as string)) o[opt.key] = opt.default;
+  }
+  return o;
 }

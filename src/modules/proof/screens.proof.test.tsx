@@ -195,10 +195,10 @@ describe("the layout round trip: save → reopen → identical", () => {
     expect(mutations.map(m => m.op)).toEqual(["insert"]);           // the write went through the sync mutation path
     const doc = parseLayoutDoc(row.payload, ["carts", "programlog", "library"]);
     expect(Object.values(doc.panes).map(p => p.type).sort()).toEqual(["carts", "library", "programlog"]);
-    expect(doc.panes["carts-1"].options).toEqual({ variant: "grid" });
+    expect(doc.panes["carts-1"].options).toEqual({ variant: "window" });
     expect(doc.panes["programlog-1"].options).toEqual({ embedded: false });
 
-    // Give the saved screen real sizes and a non-default option, as an operator's arrangement would.
+    // Give the saved screen real sizes and a retired option value (a layout saved before 2026-10-19 said "strip").
     const arranged = JSON.parse(row.payload);
     arranged.panes["carts-1"].options = { variant: "strip" };
     arranged.dockview.grid.width = 1280; arranged.dockview.grid.height = 800;
@@ -228,8 +228,8 @@ describe("the layout round trip: save → reopen → identical", () => {
     expect(r.container.textContent).toContain(SONG.title);
     // the reopened screen is in LIVE (locked)
     expect(findAllByText(r.container, "LIVE").length).toBe(1);
-    // the carts pane came back with its saved option: the strip layout has no "loaded" header
-    expect(r.container.textContent).not.toContain("/64 loaded");
+    // the retired "strip" renders as the Carts window layout (2 × 3 big buttons): the strip has no "loaded" header, the window does
+    expect(r.container.textContent).toContain("/64 loaded");
 
     await saveScreen(r);                                             // a known name: no dialog, an update
     expect(rows()).toHaveLength(1);
