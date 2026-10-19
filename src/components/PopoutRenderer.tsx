@@ -206,7 +206,7 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
       content = <HealthMonitor onClose={() => window.close()} />;
       break;
     case "carts":
-      content = <BoutiqueCartWall />;
+      content = <BoutiqueCartWall variant="window" />;   // the Carts window: 2 × 3 big buttons, six blocks, scroll
       break;
     case "shows":
       content = <Scheduler defaultTab="shows" embedded />;

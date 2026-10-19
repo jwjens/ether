@@ -697,7 +697,7 @@ interface CartProps {
   // prop's existence implied a routing that did not happen. The wall resolves its own channel from
   // the patched deck config now, so there is nothing for a caller to get wrong.
   compact?: boolean;
-  variant?: "grid" | "strip"; // "strip" = single row of 8 square carts + side VU
+  variant?: "grid" | "strip" | "window"; // "strip" = single row of 8 square carts + side VU; "window" = the Carts window
 }
 
 export function BoutiqueCartWall({ compact, variant }: CartProps) {
@@ -1253,6 +1253,57 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
       </div>
   );
 
+  // THE CARTS WINDOW (Jeff, 2026-10-18): "no little squares. 6 big buttons visible, 2 columns × 3 rows, big bright
+  // colors, no spacing between buttons, just color separation. Below them, 5 more blocks of 6 the same way, reached by
+  // scrolling down." Six blocks of six, each block exactly the window's height (CSS only — nothing is measured, so
+  // nothing can feed back into the size). Slots past the sixth block are not in this window.
+  const WINDOW_BLOCKS = 6, WINDOW_PER_BLOCK = 6;
+  const windowBlocks = Array.from({ length: WINDOW_BLOCKS }, (_, b) => carts.slice(b * WINDOW_PER_BLOCK, (b + 1) * WINDOW_PER_BLOCK)).filter(x => x.length);
+  const windowWall = (
+    <div style={{ flex: 1, minHeight: 0, minWidth: 0, height: "100%", overflowY: "auto" as const, scrollbarGutter: "stable" }}>
+      {windowBlocks.map((block, b) => (
+        <div key={b} style={{ height: "100%", display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr 1fr", gap: 0 }}>
+          {block.map((cart, i) => {
+            const filled = !!cart.filePath;
+            const empty = (b * WINDOW_PER_BLOCK + i) % 2 === 0 ? "#2b2b36" : "#1d1d26";   // empty tiles still read as separate
+            return (
+              <div
+                key={cart.key}
+                onClick={() => { if (cart.filePath) { fireCart(cart.key); } else { assignCart(cart.key); } }}
+                onContextMenu={e => { if (!cart.filePath) return; e.preventDefault(); e.stopPropagation(); setCartMenu({ key: cart.key, x: e.clientX, y: e.clientY }); }}
+                onDoubleClick={() => editLabel(cart.key)}
+                onDragOver={e => { e.preventDefault(); setDragOver(cart.key); }}
+                onDragLeave={() => setDragOver(null)}
+                onDrop={e => handleDrop(e, cart.key)}
+                title={cart.filePath ? (cart.playing ? cart.label + " — click to STOP" : cart.label + " — click to fire, right-click to delete") : "Empty — click to assign"}
+                style={{
+                  position: "relative" as const, overflow: "hidden", minWidth: 0, minHeight: 0, cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center", padding: "8px 12px", borderRadius: 0,
+                  background: filled ? cart.color : empty,
+                  filter: dragOver === cart.key ? "brightness(1.25)" : undefined,
+                  boxShadow: cart.playing ? "inset 0 0 0 5px #ffffff" : "none",
+                  animation: cart.playing ? "ether-cart-flash 0.9s ease-in-out infinite" : undefined,
+                }}
+              >
+                <span style={{
+                  fontSize: 22, fontWeight: 800, lineHeight: 1.2, textAlign: "center" as const,
+                  color: filled ? "#ffffff" : "rgba(255,255,255,0.45)", textShadow: filled ? "0 1px 3px rgba(0,0,0,0.55)" : "none",
+                  fontStyle: filled ? "normal" : "italic",
+                  overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" as const, wordBreak: "break-word" as const,
+                }}>{cartLabelContent(cart)}</span>
+                {cart.playing && remainingMs > 0 && (
+                  <div style={{ position: "absolute" as const, bottom: 8, left: 10, fontSize: 14, fontWeight: 800, fontFamily: "'DM Mono', monospace", color: "#ffffff", textShadow: "0 1px 3px rgba(0,0,0,0.6)" }}>
+                    {fmtRemain(remainingMs)}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+
   if (variant === "strip") {
     return (
       <div onPointerDownCapture={claimHotkeys} onFocusCapture={claimHotkeys}
@@ -1261,6 +1312,7 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
         {/* Scroll parent holds the height; the GRID inside is what gets measured. */}
         <div style={{
           flex: 1, minWidth: 0, overflowY: "auto" as const, alignSelf: "flex-start",
+          scrollbarGutter: "stable",   // see the wall's scroll parent: no scrollbar-driven resize loop
           height: stripViewportH ?? undefined, maxHeight: stripViewportH ?? undefined,
         }}>
         <div ref={stripGrid.ref} style={{
@@ -1394,7 +1446,13 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
             CART_ROW (8) so the wall stays consistent with the strip and can widen in one place.
             Scroll parent carries the padding and the overflow; the GRID inside is what gets measured
             for square rows. */}
-        <div style={{ flex: 1, minHeight: 0, padding: 12, overflowY: "auto" as const }}>
+        {/* THE FLICKER (Jeff, 2026-10-18: "it gets bigger and smaller very fast"): the tiles are sized from the grid's
+            measured width (useSquareGridAuto, 9afb8c0). Square rows made the wall taller than the window → a vertical
+            scrollbar appeared → the grid got narrower → smaller tiles → shorter wall → the scrollbar went away → wider
+            → bigger tiles → … a ResizeObserver loop. scrollbarGutter: stable keeps the scrollbar's space reserved, so the
+            width the tiles are sized from never changes when the scrollbar comes and goes. */}
+        {variant === "window" ? windowWall : (
+        <div style={{ flex: 1, minHeight: 0, padding: 12, overflowY: "auto" as const, scrollbarGutter: "stable" }}>
         <div ref={wallGrid.ref} style={{
           display: "grid", gridTemplateColumns: `repeat(${wallGrid.cols}, 1fr)`, gap: CART_WALL_GAP,
           gridAutoRows: wallGrid.tile ? `${wallGrid.tile}px` : undefined,   // row height = column width
@@ -1469,6 +1527,7 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
         ))}
         </div>
         </div>
+        )}
 
         {/* CART LEVEL + VU — right side. The fader sets the CART channel (slot 6) these tiles fire on;
             the meter reads the same channel post-fader, so they move together. */}
