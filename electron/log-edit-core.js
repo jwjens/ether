@@ -31,8 +31,12 @@ function filterToGaps(rows, kept) {
   const list = Array.isArray(kept) ? kept : [];
   if (!list.length) return { fill: Array.isArray(rows) ? rows.slice() : [], skipped: [] };
   const fill = [], skipped = [];
+  // Only rows of the SAME log hour can clash (v66): every clock row is placed, so the hour's rows can run past :00 and
+  // share wall-clock minutes with the next hour's rows without being on top of them — only one of the two airs.
+  // A row that does not know its hour (written before v66) clashes by time alone, as before.
+  const sameHour = (r, k) => r.log_hour_ts == null || k.log_hour_ts == null || r.log_hour_ts === k.log_hour_ts;
   for (const r of (rows || [])) {
-    const clash = list.some(k => overlaps(r.scheduled_at, r.duration_s, k.scheduled_at, k.duration_s));
+    const clash = list.some(k => sameHour(r, k) && overlaps(r.scheduled_at, r.duration_s, k.scheduled_at, k.duration_s));
     (clash ? skipped : fill).push(r);
   }
   return { fill, skipped };

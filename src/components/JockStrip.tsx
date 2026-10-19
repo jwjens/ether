@@ -56,7 +56,10 @@ export default function JockStrip({ deckA, deckB, dropDown = false, externalSear
   }, [search]);
 
   const addToQueue = (song: SongResult) => {
-    if (song.file_path) engine.addToQueue([{ filePath: song.file_path, title: song.title, artist: song.artist_name || "" }]);
+    // The operator's add: the explicit queue:enqueue (as the Library's Q and Up Next use) — on the log reader it becomes a
+    // hand-added log row that nothing automatic removes. Legacy addToQueue was wiped by the next rebuild.
+    const item = { filePath: song.file_path || "", title: song.title, artist: song.artist_name || "" };
+    if (song.file_path) { if (engine.isDaemonDriven) void engine.queueEnqueue([item]); else engine.addToQueue([item]); }
     setSearch(""); setShowResults(false);
   };
   const loadToDeckA = (song: SongResult) => {

@@ -75,13 +75,12 @@ describe("song pickers exclude deleted songs", () => {
     expect(src).not.toMatch(/function buildBaseConditions|ORDER BY RANDOM/);
   });
 
-  it("audiod/loggen.js NOT_DELETED is the guard, and every ${SELECT} WHERE uses it", () => {
+  it("audiod/loggen.js picks nothing: it has no song query left to guard (the one pick is scheduler-core.poolFor)", () => {
     const src = readFileSync(join(ROOT, "audiod/loggen.js"), "utf8");
-    expect(src).toMatch(/const NOT_DELETED\s*=\s*`s\.deleted_at IS NULL`/);
-    // Every `${SELECT} WHERE` must apply it — a new call site that forgets is the whole risk.
-    const wheres = src.match(/\$\{SELECT\}\s*WHERE[^`]*/g) || [];
-    expect(wheres.length, "no ${SELECT} WHERE call sites found").toBeGreaterThan(0);
-    for (const w of wheres) expect(w, `unguarded: ${w.slice(0, 90)}`).toMatch(/NOT_DELETED/);
+    // The last caller of loggen's song SELECT — the auto-fitter's candidate pool — was removed 2026-10-18. A song query
+    // that comes back here must bring the deleted-song guard with it.
+    expect(src).not.toMatch(/\$\{SELECT\}\s*WHERE/);
+    expect(src).not.toMatch(/FROM songs s LEFT JOIN artists a ON a\.id = s\.artist_id`/);
   });
 
   it("pins the specific query that put 729 deleted-song rows in the log (now the one pick's pool)", () => {

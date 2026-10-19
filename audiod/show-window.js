@@ -81,9 +81,11 @@ function showRunAt(shows, ts) {
 /**
  * THE PIECE that owns `ts`: the clock hour, cut at every show start/end minute inside it (Jeff, 2026-10-18: "the last
  * song before the top of the hour is the last song for that hour so it should be silent after that — the first song of
- * the new hour should always be the first song scheduled for that hour's show"). { show, startTs, endTs, key }, where
- * show is null when no show owns it. Rows of one piece play in log order; a row of the NEXT piece does not start
- * before that piece's start.
+ * the new hour should always be the first song scheduled for that hour's show" — the silence half was replaced later the
+ * same day, see playsStraightInto). { show, startTs, endTs, key }, where
+ * show is null when no show owns it. Rows of one piece play in log order. A row of the NEXT piece starts as soon as the
+ * row before it ends when both pieces are the same show's on the same day (playsStraightInto); otherwise not before
+ * that piece's start.
  */
 function pieceAt(shows, ts) {
   const d = new Date(ts * 1000); d.setMinutes(0, 0, 0);
@@ -92,4 +94,27 @@ function pieceAt(shows, ts) {
   return { show: seg.show, startTs: seg.fromTs, endTs: seg.toTs, key: (seg.show ? seg.show.id : "none") + "@" + seg.fromTs };
 }
 
-module.exports = { startMin, endMin, showLength, coversMinute, showAt, hourSegments, showRunAt, pieceAt };
+/**
+ * INSIDE A SHOW THE LOG NEVER WAITS FOR :00 (Jeff, 2026-10-18): "When a row ends, the next row plays: the rest of this
+ * hour, then the next hour's first row. 'Never run ahead' only means: never play rows from outside the show schedule,
+ * never jump past the show's end, never pull rows from another day."
+ *
+ * Can the log go from a row of piece `a` straight into a row of the later piece `b`, without waiting for b's start?
+ * Yes only when both pieces belong to the SAME show, on the SAME local day, and every piece between them is that
+ * show's too. A different show, no show, or another day: b's rows wait for b's start.
+ */
+function playsStraightInto(shows, a, b) {
+  if (!a || !b) return false;
+  if (a.key === b.key || b.startTs <= a.startTs) return true;
+  if (!a.show || !b.show || a.show.id !== b.show.id) return false;
+  const day = (ts) => { const d = new Date(ts * 1000); return d.getFullYear() * 10000 + d.getMonth() * 100 + d.getDate(); };
+  if (day(a.startTs) !== day(b.startTs)) return false;
+  let p = a;
+  for (let i = 0; i < 200 && p.endTs < b.startTs; i++) {
+    p = pieceAt(shows, p.endTs);
+    if (!p.show || p.show.id !== a.show.id) return false;
+  }
+  return true;
+}
+
+module.exports = { startMin, endMin, showLength, coversMinute, showAt, hourSegments, showRunAt, pieceAt, playsStraightInto };

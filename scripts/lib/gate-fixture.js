@@ -19,7 +19,10 @@
 //     rules: song 90 · artist 45 · title off
 //     GOLD  60 songs, 35 artists, one recording on TWO song rows (a duplicate under two paths)
 //     NEW   15 songs, 12 artists
-//   Two days of play history before the run for both (round-robin through the categories, inside show hours).
+//   FX-PLAYTHROUGH  segue overlap 8 s; Through Show 12–14 on a 15-row clock that ends early on air (overlays), Extra
+//     Show 15–17 on a 20-row clock (extra rows); nothing outside them. No history (T20 is its scenario).
+//   Two days of play history before the run for FX-EVENING and FX-ALLDAY (round-robin through the categories, inside
+//   show hours).
 "use strict";
 const fs = require("fs");
 const path = require("path");
@@ -118,6 +121,25 @@ function buildFixtureDb(outPath, { schemaFrom, migrate } = {}) {
   for (let p = 0; p < 14; p++) slot(d, dClock, p, "music", p % 4 === 3 ? dNew : dGold);
   for (const [k, minute] of [[0, 20], [1, 40]]) insert(db, "clock_breaks", { clock_id: dClock, minute, spot_category_id: spotCat, count: 2, sort_order: k, station_id: d, uuid: uid("break:" + minute), created_at: iso, updated_at: iso });
   show(d, "All Day", 0, 0, dClock);
+
+  // ── FX-PLAYTHROUGH (Jeff, 2026-10-18: "a clock with extra rows, songs with overlays, a hand-added row, the hour crossing
+  // into the next"; "an hour whose rows end early because of overlays plays straight into the next hour's first row
+  // with no silence; a show's last row ends and nothing plays after the show") ──
+  //   segue overlap 8 s; every song 244 s; rules: song 60 min, artist and title off
+  //   Through Show 12:00–14:00, SHORT clock: 15 rows = 61:00 of file length, 59:08 on air with the overlaps
+  //   Extra Show   15:00–17:00, EXTRA clock: 20 rows = 81:20 of file length — more than the hour holds
+  //   nothing outside the two shows
+  const p = mkStation("playthrough", "FX-PLAYTHROUGH");
+  insert(db, "station_config_kv", { station_id: p, key: "segue_overlap_sec", value: "8", uuid: uid("playthrough:segue"), created_at: iso, updated_at: iso });
+  rule(p, "song_separation_min", 60); rule(p, "artist_separation_min", 60, 0); rule(p, "title_separation_min", 60, 0);
+  const pCat = category(p, "PT");
+  for (let i = 1; i <= 45; i++) song(pCat, `Through Song ${i}`, `Through Artist ${i}`, `p-${i}.mp3`, 244);
+  const shortClock = clock(p, "Short clock");
+  for (let q = 0; q < 15; q++) slot(p, shortClock, q, "music", pCat);
+  show(p, "Through Show", 12, 14, shortClock);
+  const extraClock = clock(p, "Extra clock");
+  for (let q = 0; q < 20; q++) slot(p, extraClock, q, "music", pCat);
+  show(p, "Extra Show", 15, 17, extraClock);
 
   // ── two days of history, before the run ──
   const t0 = Math.floor(FIXTURE_DAY0.getTime() / 1000);

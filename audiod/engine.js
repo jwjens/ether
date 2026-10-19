@@ -21,7 +21,7 @@ const A = require(path.join(__dirname, "..", "native", "ether-audio.node"));
 const RackSeed = require(path.join(__dirname, "rack-seed.js"));
 const MicInput = require(path.join(__dirname, "mic-input.js"));
 const loggen = require("./loggen");
-const autofit = require("./autofit");   // §2.7 auto-fitter — OBSERVATION ONLY this release (writes nothing)
+const segueOverlap = require("./segue-overlap");   // the station's segue overlap — one reader, shared with Generate
 const playlog = require("./playlog");
 const { classifyCartFlow } = require("./cart-observe");   // 2026-10-04: a cart on a dead aux is a FAULT, not FIRING
 
@@ -795,8 +795,8 @@ class DaemonEngine {
     // — 8 hours of dead air on OV, 1h33m on OVEVENTS (docs/ovevents-crash-loop-alarm-2026-09-15.md §4).
     const haveContent = order.some(d => !!this._deckState(d).filePath) || this.queue.length > 0 || this.continuous;
     if (!haveContent) return;                               // genuinely nothing to play — not a stall
-    // A PLANNED SILENCE is not a stall (2026-10-18): the log has nothing due until the next piece — the top of the hour,
-    // a show's start — or no show is on. The refill starts the next row when it is due.
+    // A PLANNED SILENCE is not a stall (2026-10-18): the log has nothing that may play until the next show starts (or
+    // another day's rows), or no show is on. The refill starts the next row when it is due.
     if (this._logWait && this.queue.length === 0) { this._lastPlayingAt = now; return; }
     if (now - this._lastPlayingAt < STALL_MS) return;       // not stalled long enough (could be mid-transition)
     // Fire ONCE per stall (armed). If that recovery can't find content, fall back to a bounded retry
@@ -1112,13 +1112,9 @@ class DaemonEngine {
     if (now - (this._segueKvAt || 0) < 3000) return;
     this._segueKvAt = now;
     try {
-      const row = this.db.prepare(
-        "SELECT value FROM station_config_kv WHERE station_id=? AND key='segue_overlap_sec' AND deleted_at IS NULL"
-      ).get(this.stationId);
-      if (!row || row.value == null || row.value === "") return;   // unset → leave what we have
-      const v = parseInt(row.value, 10);
-      if (isNaN(v)) return;
-      const next = Math.max(0, Math.min(10, v));
+      // The one reader (audiod/segue-overlap.js) — Generate times the log with the same number.
+      const next = segueOverlap.readSegueOverlapSec(this.db, this.stationId);
+      if (next == null) return;                                      // unset or unreadable → leave what we have
       if (next === this.segueOverlap) return;
       this.segueOverlap = next;
       this._log(`segue overlap = ${next}s (from the station's settings)`);
@@ -1386,7 +1382,8 @@ class DaemonEngine {
       // restored pollutant (no scheduledAt) so the daemon queue can ONLY hold scheduled rows.
       if (fill.source === "generated_schedule") {
         const before = this.queue.length;
-        this.queue = this.queue.filter(q => typeof q.scheduledAt === "number");
+        // …but never a song the operator added (queue:enqueue): manually added songs are never taken out (Jeff, 2026-10-18).
+        this.queue = this.queue.filter(q => typeof q.scheduledAt === "number" || q.handAdded);
         if (this.queue.length !== before) this._log("purgeUnscheduled: dropped " + (before - this.queue.length) + " non-scheduled");
       }
       this._log("refill: +" + items.length + " from " + fill.source + " (queue=" + this.queue.length + ")");
@@ -1435,8 +1432,8 @@ class DaemonEngine {
     // The seam: when the queue's next entry would start (a row of the next show is offered once that show has started).
     const seamTs = this._projectedSeamTs();
     // THE LOG PLAYS AS BUILT (Jeff, 2026-10-18): the reader is told which log row is on air, and offers the row after it.
-    // The reference is the LAST LOG ROW THAT WENT TO AIR in this AUTO session (on air now, or finished — a planned
-    // silence until the top of the hour keeps the place, so the new hour opens with its first row). null = nothing of
+    // The reference is the LAST LOG ROW THAT WENT TO AIR in this AUTO session (on air now, or finished — a wait for the
+    // next show keeps the place, so that show opens with its first row). null = nothing of
     // the log has aired since AUTO came on: the row for now (or, at a show's start, that piece's first row).
     const readOpts = { seamTs, onAirRowId: this._lastLogRowAired ?? null, ...(this._startAtPieceHead ? { fromPieceStart: true } : {}) };
     try { r = loggen.readLogAnchored(this.db, this.stationId, 20, undefined, readOpts); }
@@ -1479,7 +1476,7 @@ class DaemonEngine {
       }
     }
     if (r.items.length) this._lastWaitReason = null;
-    // THE WAIT IS OVER (the next piece has started — the top of the hour, or a show's start): its first row goes to air
+    // THE WAIT IS OVER (the next show has started, or the next day): its first row goes to air
     // now, not when the stall watchdog notices the silence.
     if (_wasWaiting && r.items.length && this._started && this._mayDecide()
         && !["A", "B", "C"].some(d => { const st = this._deckState(d); return st && st.status === "playing"; })) {
@@ -1515,14 +1512,25 @@ class DaemonEngine {
     const boundHead = this.queue.filter(q => this.boundQids.has(q.qid));
     const boundSchedIds = new Set(boundHead.map(q => q.schedId).filter(x => x != null));
 
-    // NOTHING TO OFFER (nothing due and nothing filled, or a read error): the pending region is empty. The cued decks
-    // keep what they hold. The old emergency floor — off-log picks by a second picker that relaxed every rule — is gone
-    // (Phase 2: one pick; Phase 3: never ahead).
+    // NOTHING TO OFFER. The end-of-hour reset that stood here — every 2 s it emptied everything not on a deck, so a song
+    // the operator added during the wait for :00 vanished — is gone (Jeff, 2026-10-18). Inside a show the log no longer
+    // waits for :00, so the reader says 'nothing-due' only where the show schedule says nothing of this log may play
+    // now: the show has ended, the next row is another show's or another day's, or the log is done. Then:
+    //   • songs added by hand that are not log rows stay in Up Next (manually added songs are never taken out);
+    //   • LOG rows the reader no longer offers come out of Up Next and off the standby decks — they belong to an hour
+    //     that has ended (they are stamped didn't-air at the next read) or to a piece that has not started, and a row
+    //     left cued would air after the show (Jeff: "a show's last row ends and nothing plays after the show"). A row
+    //     added by hand stays in the log, untouched; it airs once its show is on again.
+    // A read ERROR changes nothing: a database hiccup must never empty a cued deck.
     if (!r.items.length) {
-      if (this.queue.some(q => !this.boundQids.has(q.qid))) {
-        this.queue = [...boundHead];
+      if (r.mode !== "nothing-due") return;
+      const pend = this.queue.filter(q => !this.boundQids.has(q.qid));
+      const keep = pend.filter(q => q.handAdded && q.schedId == null);
+      if (keep.length !== pend.length) {
+        this.queue = [...boundHead, ...keep];
         this.emit("queue", { stationId: this.stationId, source: "logreader:" + r.mode, items: this.queue });
       }
+      this._releaseStandbyLogRows("the log has nothing that may play now");
       return;
     }
 
@@ -1536,7 +1544,8 @@ class DaemonEngine {
     if (r.missedRowIds.length) {
       try {
         const ph = r.missedRowIds.map(() => "?").join(",");
-        this.db.prepare(`UPDATE generated_schedule SET state='missed' WHERE id IN (${ph}) AND station_id=? AND state='pending'`).run(...r.missedRowIds, this.stationId);
+        // Never a row added by hand (Jeff, 2026-10-18): the reader already leaves them out; the statement says so too.
+        this.db.prepare(`UPDATE generated_schedule SET state='missed' WHERE id IN (${ph}) AND station_id=? AND state='pending' AND ${loggen.notOperatorSql("generated_schedule")}`).run(...r.missedRowIds, this.stationId);
       } catch { /* stamping is best-effort; never break playout */ }
       try { this.emit("logreader-missed", { stationId: this.stationId, count: r.missedRowIds.length, driftSec: r.driftSec }); } catch {}
       // A COMMERCIAL THAT DID NOT AIR IS NAMED.
@@ -1610,13 +1619,15 @@ class DaemonEngine {
     //
     // The decks follow the calendar instead: _resyncCuedDecks re-cues a standby deck whose row is no
     // longer what the calendar says is next — the same job, done from the right end.
-    // seamTs (read at the top of the refill) stays: the observation-only auto-fitter below still reads it.
     const freshPending = this._ensureIds(kept);
     // Only emit if the pending region actually changed (avoid a queue-event storm on the 2s tick).
     const oldPendingItems = this.queue.filter(q => !this.boundQids.has(q.qid));
-    const oldPending = oldPendingItems.map(q => q.schedId).join(",");
-    const newPending = freshPending.map(q => q.schedId).join(",");
-    this.queue = [...boundHead, ...freshPending];
+    // A song added by hand that is not a log row (a cart, a voice track, a spot) is kept, after the log's rows: the
+    // rebuild reads only the log, and before 2026-10-18 it dropped every such entry within 2 s.
+    const handKept = oldPendingItems.filter(q => q.handAdded && q.schedId == null);
+    const oldPending = oldPendingItems.map(q => q.schedId ?? ("q" + q.qid)).join(",");
+    const newPending = [...freshPending, ...handKept].map(q => q.schedId ?? ("q" + q.qid)).join(",");
+    this.queue = [...boundHead, ...freshPending, ...handKept];
     if (oldPending !== newPending) {
       this.emit("queue", { stationId: this.stationId, source: "logreader", items: this.queue });
       this._log("logreader refill: " + freshPending.length + " pending from log (mode=" + r.mode + ", queue=" + this.queue.length + ")");
@@ -1641,77 +1652,7 @@ class DaemonEngine {
           (dropped.length > 4 ? ` +${dropped.length - 4} more` : ""));
       }
     }
-    // AUTO-FITTER — OBSERVATION ONLY (§2.7). Computes what it WOULD do to make a seam land on the next
-    // hard anchor, logs it as a DECISION, and WRITES NOTHING. No row is altered, no queue is reordered,
-    // no deck is touched. One observation day on real air before authoring is even proposed.
-    this._observeFit(seamTs);
 
-  }
-
-  // ── AUTO-FITTER, OBSERVATION PHASE (§2.7) ───────────────────────────────────────────────────────
-  // Computes the fit and says what it WOULD do. It writes nothing — no generated_schedule row, no queue
-  // change, no deck command. The whole point of the observation release is a day of real air saying what
-  // it would have swapped, BEFORE it is allowed to author a row.
-  //
-  // Throttled by SIGNATURE, not by time: the refill runs every couple of seconds and the fit for a given
-  // window is stable, so re-logging it would drown the Decisions view. A line appears when the window or
-  // the proposed action actually changes.
-  _observeFit(seamTs) {
-    try {
-      const anchorTs = this._nextHardAnchorTs(seamTs);
-      if (!anchorTs) { this._lastFitSig = ""; return; }
-
-      // Pending MUSIC/SPOT rows in play order — the same region the reader just published.
-      const pending = this.queue.filter(q => !this.boundQids.has(q.qid));
-      if (!pending.length) { this._lastFitSig = ""; return; }
-
-      // Candidates are separation-filtered by loggen, so a proposed swap can never break separation.
-      // Narrow to the category of the row most likely to be swapped (the last one in the window).
-      let categoryId = null;
-      try {
-        const last = pending[pending.length - 1];
-        if (last && last.schedId != null) {
-          const r = this.db.prepare("SELECT s.category_id c FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id WHERE gs.id = ?").get(last.schedId);
-          categoryId = r && r.c != null ? r.c : null;
-        }
-      } catch { /* fall through to the whole on-format set */ }
-      const candidates = loggen.eligibleForFit(this.db, this.stationId, categoryId, 200);
-
-      const fit = autofit.computeFit(seamTs, anchorTs, pending, candidates);
-      const a = fit.action;
-      const sig = `${anchorTs}|${fit.mode}|${a ? (a.type + ":" + (a.from ? a.from.filePath : "") + ">" + (a.to ? a.to.filePath : a.fill ? a.fill.filePath : "")) : ""}`;
-      if (sig === this._lastFitSig) return;
-      this._lastFitSig = sig;
-
-      const line = autofit.describeFit(fit, anchorTs, /* observationOnly */ true);
-      if (line) this._log(line);
-
-      // A window the fitter cannot close is the condition that starves it — surface it beyond the log.
-      if (fit.mode === "no-fit") {
-        try {
-          this.emit("error", { stationId: this.stationId, where: "autofit",
-            error: `no fit for the ${new Date(anchorTs * 1000).toLocaleTimeString([], { hour12: false })} window — ${fit.reason}` });
-        } catch {}
-      }
-    } catch (e) { this._log("autofit observe error (playout unaffected): " + String(e)); }
-  }
-
-  /** The next HARD anchor at or after the seam: the top of the hour, or the next pending SPOT row —
-   *  whichever comes first. Null when neither is inside the fitter's look-ahead. */
-  _nextHardAnchorTs(seamTs) {
-    const candidates = [];
-    const hourTs = this._nextTopOfHourTs();
-    if (hourTs > seamTs) candidates.push(hourTs);
-    try {
-      const r = this.db.prepare(
-        `SELECT scheduled_at FROM generated_schedule
-          WHERE station_id = ? AND content_class = 'SPOT' AND state = 'pending' AND deleted_at IS NULL
-            AND scheduled_at > ? ORDER BY scheduled_at LIMIT 1`).get(this.stationId, seamTs);
-      if (r && Number.isFinite(r.scheduled_at)) candidates.push(r.scheduled_at);
-    } catch { /* the hour anchor alone is still a valid window */ }
-    if (!candidates.length) return null;
-    const next = Math.min(...candidates);
-    return (next - seamTs) <= autofit.LOOKAHEAD_SEC ? next : null;
   }
 
   /** The next seam, in epoch SECONDS: now + what remains on the playing deck. No deck playing → now.
@@ -1723,13 +1664,6 @@ class DaemonEngine {
     const st = this._deckState(P);
     const remaining = (st.durationSec || 0) - (st.positionSec || 0);
     return nowSec + (remaining > 0 ? Math.round(remaining) : 0);
-  }
-
-  /** Start of the NEXT top of the hour, epoch seconds — the hour anchor the auto-fitter aims a seam at (no cut fires there). */
-  _nextTopOfHourTs() {
-    const d = new Date();
-    d.setMinutes(0, 0, 0);
-    return Math.floor(d.getTime() / 1000) + 3600;
   }
 
   _resolveHandLoadClass(filePath) {
@@ -1765,8 +1699,8 @@ class DaemonEngine {
    *  info: {title,artist,filePath,fileKey,songId,durationMs}. `deck` and `via` are for the log line —
    *  a title-only message is why a cart fire was mistaken for an operator library-load for two rounds.
    */
-  _writeOperatorLogRow(info, deck, via) {
-    if (!this._logReaderOn() || !info || !info.filePath) return;
+  _writeOperatorLogRow(info, deck, via, place = null) {
+    if (!this._logReaderOn() || !info || !info.filePath) return null;
     const where = `deck=${deck || "?"} via=${via || "?"}`;
     const base = String(info.filePath).split(/[\\/]/).pop();
     const cls = this._resolveHandLoadClass(info.filePath);
@@ -1775,20 +1709,33 @@ class DaemonEngine {
     if (cls !== "MUSIC") {
       this._log(`LOG-READER hand-load: ${where} class=${cls || "UNKNOWN"} file="${base}" → NO ROW ` +
                 `(${cls ? "not music — imaging/commercial never enters the airable music log" : "unresolved — not in songs, spots or cart_slots"})`);
-      return;
+      return null;
     }
 
     try {
+      // WHERE THE ROW GOES. A deck hand-load is at the playhead: now, in the log hour that owns now. A song added to Up
+      // Next is placed by the caller (place = { scheduledAt, logHourTs }): right after the last entry in Up Next.
       const nowTs = Math.floor(Date.now() / 1000);
+      const at = place && Number.isFinite(place.scheduledAt) ? place.scheduledAt : nowTs;
+      const hourTs = place && Number.isFinite(place.logHourTs) ? place.logHourTs : loggen.pieceStartFor(this.db, this.stationId, at);
+      let songId = info.songId ?? null, durS = info.durationMs ? Math.round(info.durationMs / 1000) : null;
+      if (songId == null) {   // the library row behind the file: the playout check and the Program Log read the song
+        try {
+          const s = this.db.prepare("SELECT id, duration_ms FROM songs WHERE file_path = ? AND deleted_at IS NULL LIMIT 1").get(info.filePath);
+          if (s) { songId = s.id; if (durS == null && s.duration_ms) durS = Math.round(s.duration_ms / 1000); }
+        } catch {}
+      }
       const iso = new Date().toISOString();
+      const withHour = loggen.hasLogHour(this.db);
       const r = this.db.prepare(
-        `INSERT INTO generated_schedule (scheduled_at, song_id, title, artist, file_path, file_key, duration_s, station_id, uuid, state, source, content_class, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'operator', 'MUSIC', ?, ?)`
-      ).run(nowTs, info.songId ?? null, info.title || "", info.artist || "", info.filePath, info.fileKey || null,
-            info.durationMs ? Math.round(info.durationMs / 1000) : null, this.stationId, crypto.randomUUID(), iso, iso);
+        `INSERT INTO generated_schedule (scheduled_at, song_id, title, artist, file_path, file_key, duration_s, station_id, uuid, state, source, content_class, created_at, updated_at${withHour ? ", log_hour_ts" : ""})
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'operator', 'MUSIC', ?, ?${withHour ? ", ?" : ""})`
+      ).run(at, songId, info.title || "", info.artist || "", info.filePath, info.fileKey || null,
+            durS, this.stationId, crypto.randomUUID(), iso, iso, ...(withHour ? [hourTs] : []));
       try { this.emit("logreader-operator-write", { stationId: this.stationId, title: info.title || "" }); } catch {}
       this._log(`LOG-READER hand-load: ${where} class=MUSIC file="${base}" → wrote row id=${r.lastInsertRowid}`);
-    } catch (e) { /* never break the operator load */ }
+      return { id: Number(r.lastInsertRowid), scheduled_at: at, lk: hourTs };
+    } catch (e) { this._log(`LOG-READER hand-load: ${where} file="${base}" → the row could not be written: ${String(e)}`); return null; }
   }
 
   /** A deck went live: take ITS entry out of the queue (by qid). A deck holding nothing from the queue takes out
@@ -2112,8 +2059,73 @@ class DaemonEngine {
   // Index of the first PENDING (non-bound) entry — bound entries sit at the head as the cued decks.
   _pendingStart() { const i = this.queue.findIndex(it => !this.boundQids.has(it.qid)); return i < 0 ? this.queue.length : i; }
 
-  // queue:enqueue — append to the bottom (daemon stamps qids). Same effect as legacy addToQueue.
-  intentEnqueue(items) { this.addToQueue(items); return true; }
+  // queue:enqueue — THE OPERATOR ADDS TO UP NEXT (the Library's Q, a drop on Up Next, the jock strip's search, the
+  // remote). Jeff, 2026-10-18: "manually adding songs should never be taken out." On the log reader the queue is rebuilt
+  // from the log every 2 s, so an entry that is not a log row was wiped within 2 s. Now a library song added here BECOMES
+  // A LOG ROW ADDED BY HAND (source='operator'), placed at the bottom of Up Next: right after the last entry there, in
+  // that entry's log hour. Nothing automatic removes, skips or stamps it (loggen: never passed over while its show is on,
+  // never refused by the playout check, never stamped didn't-air; Generate keeps operator rows; the Program Log shows
+  // it). Only the user removes it (the X, or the Program Log's delete). Anything that cannot be a music row (a cart,
+  // a voice track, a spot — _writeOperatorLogRow's rule) stays in Up Next as a hand-added entry every rebuild keeps.
+  // Legacy addToQueue (crash-recovery restores, the renderer's own playout) is NOT an operator add and is unchanged.
+  intentEnqueue(items) {
+    const list = (items || []).filter(it => it && it.filePath);
+    if (!this._logReaderOn()) {
+      this.queue.push(...this._ensureIds(this._playable(list).map(it => ({ ...it, handAdded: true }))));
+      this.emit("queue", { stationId: this.stationId, items: this.queue });
+      return true;
+    }
+    let place = this._bottomOfUpNext();
+    const rest = [];
+    for (const it of list) {
+      const row = this._writeOperatorLogRow(it, "-", "queue:enqueue", place);
+      if (row) place = { scheduledAt: row.scheduled_at + 1, logHourTs: row.lk };
+      else rest.push(it);
+    }
+    if (rest.length) this.queue.push(...this._ensureIds(this._playable(rest).map(it => ({ ...it, handAdded: true }))));
+    this.emit("queue", { stationId: this.stationId, items: this.queue });
+    // Show it in Up Next now, not on the next 2 s tick.
+    Promise.resolve().then(() => this._refillFromLog({ force: true, why: "queue:enqueue" })).catch(() => {});
+    return true;
+  }
+
+  /** Where a song added to the bottom of Up Next goes in the log: one second after the last log row in Up Next (or the
+   *  row on air when Up Next holds none), in that row's log hour — so it sorts right after it (log order is log hour,
+   *  scheduled_at, id). Nothing of the log anywhere → null: now, in the log hour that owns now. */
+  _bottomOfUpNext() {
+    try {
+      const lastQ = [...this.queue].reverse().find(q => q.schedId != null);
+      const id = lastQ ? lastQ.schedId : this._lastLogRowAired;
+      if (id == null) return null;
+      const r = this.db.prepare(`SELECT gs.scheduled_at, ${loggen.logKeySql(this.db)} AS lk FROM generated_schedule gs WHERE gs.id = ? AND gs.station_id = ?`).get(id, this.stationId);
+      return r ? { scheduledAt: r.scheduled_at + 1, logHourTs: r.lk } : null;
+    } catch { return null; }
+  }
+
+  /** The log has nothing that may play now (the show has ended, the next row is another show's or another day's, the
+   *  log is done): a standby deck holding a LOG row lets go of it, so it cannot air after the show. Never a deck the
+   *  operator cued by hand, never a playing or paused deck. The row itself is not touched. */
+  _releaseStandbyLogRows(why) {
+    const held = ["A", "B", "C"].filter(d => {
+      const st = this._deckState(d);
+      return this.deckSchedId[d] != null && st.status !== "playing" && st.status !== "paused" && !this.manualCue.has(d);
+    });
+    if (!held.length || this._jingle) return;
+    this._advance("release-standby:" + held.join(""), async () => {
+      for (const d of held) {
+        const st = this._deckState(d);
+        if (st.status === "playing" || st.status === "paused" || this.manualCue.has(d) || this.deckSchedId[d] == null) continue;
+        const was = st.title || "(untitled)";
+        this._stop(d);
+        this.deckReady.delete(d); this.endTriggered.delete(d);
+        this._releaseDeckEntry(d);
+        this.deckSchedId[d] = null;
+        this._setDeck(d, { status: "idle", title: "", artist: "", filePath: "", positionSec: 0 });
+        this._log(`standby deck ${d} let go of "${was}" — ${why}`);
+        this._maybeEmitDeck(d);
+      }
+    });
+  }
 
   // queue:remove — THE X (Phase 1, T12). Removing an entry takes its ROW OUT OF THE LOG (a pending row only, soft
   // delete, the same as the Program Log's delete), so the next refill — which re-reads the log every 2 s — cannot
@@ -2521,7 +2533,8 @@ class DaemonEngine {
       }
       const keyOf = (q) => (q && q.schedId != null ? "r" + q.schedId : q ? "q" + q.qid : null);
       const upcoming = this.queue.filter(q => !this._isAired(q))
-        .map((q, i) => ({ q, i })).sort((x, y) => ((x.q.scheduledAt ?? Infinity) - (y.q.scheduledAt ?? Infinity)) || (x.i - y.i)).map(x => x.q);
+        .map((q, i) => ({ q, i })).sort((x, y) => ((x.q.logHourTs ?? x.q.scheduledAt ?? Infinity) - (y.q.logHourTs ?? y.q.scheduledAt ?? Infinity))
+          || ((x.q.scheduledAt ?? Infinity) - (y.q.scheduledAt ?? Infinity)) || (x.i - y.i)).map(x => x.q);   // LOG order: a row past :00 stays in its own hour (v66)
       if (!upcoming.length) return;
       const wrong = [];
       standby.forEach((d, k) => {

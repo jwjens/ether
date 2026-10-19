@@ -138,7 +138,7 @@ e._stop = (d) => { card[d] = { status: "idle", file: "", title: "", pos: 0 }; };
 e._state = () => { const m = (d) => ({ status: card[d].status, file_path: card[d].file, title: card[d].title, position_sec: card[d].pos }); return { deckA: m("A"), deckB: m("B"), deckC: m("C") }; };
 e._dur = (fp) => REAL_LEN.get(fp) || 0;
 e._resolveLocal = (fp) => fp || null;
-e._observeFit = () => {};
+
 e._projectedSeamTs = () => nowS();
 e._armAfterRotate = () => {};                 // armed by hand below, without the real-time timers
 e._started = true; e.continuous = true; e.segueOverlap = 0; e.crossfadeDuration = 0;

@@ -2,9 +2,14 @@
 //
 //   "The show schedule is the boundary: a show that ends at 1:30 automates until 1:30. Shows start and end at any
 //    minute. The log plays what the programmer built. No built-in fill, no catch-up drops."
-//   "the last song before the top of the hour is the last song for that hour so it should be silent after that — the
-//    first song of the new hour should always be the first song scheduled for that hour's show"
 //   "but the last song of the hour should always finish no hard stop"
+//   Later the same day (replacing "it should be silent after that"):
+//   "The log plays in order. When a song crosses the top of the hour, it plays out and the next hour's first row
+//    follows. Rows of the old hour that didn't get to air are marked didn't-air, never deleted."
+//   "Inside a show, the log never waits for :00. When a row ends, the next row plays: the rest of this hour, then the
+//    next hour's first row. 'Never run ahead' only means: never play rows from outside the show schedule, never jump
+//    past the show's end, never pull rows from another day."
+//   "A row added by hand is NEVER removed by anything automatic."
 //
 // Drives the REAL loggen.readLogAnchored against an in-memory SQLite with the clock pinned. The engine tells the reader
 // which log row is on air (opts.onAirRowId); null = nothing of the log is on air (automation just started).
@@ -19,11 +24,13 @@ const SW = require_("./show-window.js");
 let db;
 const at = (h, m, s = 0) => Math.floor(new Date(2026, 9, 4, h, m, s).getTime() / 1000);
 const setNow = (h, m, s = 0) => vi.setSystemTime(new Date(2026, 9, 4, h, m, s));
+// opts.hour: the log hour the row belongs to (v66 log_hour_ts — Generate writes it on every row); omitted = NULL, a row
+// written before v66, which belongs to the hour of its own time. opts.source 'operator' = added by hand.
 function row(id, ts, opts = {}) {
-  db.prepare(`INSERT INTO generated_schedule (id,scheduled_at,song_id,title,file_path,station_id,state,played_at,content_class,duration_s)
-              VALUES (?,?,?,?,?,1,?,?,?,?)`)
-    .run(id, ts, opts.cls === "SPOT" ? null : 1, opts.title || ("row " + id), "r" + id + ".mp3",
-      opts.state || "pending", opts.playedAt ?? null, opts.cls || "MUSIC", opts.dur ?? 200);
+  db.prepare(`INSERT INTO generated_schedule (id,scheduled_at,song_id,title,file_path,station_id,state,played_at,content_class,duration_s,source,log_hour_ts)
+              VALUES (?,?,?,?,?,1,?,?,?,?,?,?)`)
+    .run(id, ts, opts.cls === "SPOT" ? null : (opts.songId ?? 1), opts.title || ("row " + id), "r" + id + ".mp3",
+      opts.state || "pending", opts.playedAt ?? null, opts.cls || "MUSIC", opts.dur ?? 200, opts.source ?? null, opts.hour ?? null);
 }
 const ids = (r) => r.items.map(i => i.schedId);
 const read = (onAirRowId, seam) => loggen.readLogAnchored(db, 1, 20, undefined, { onAirRowId, ...(seam ? { seamTs: seam } : {}) });
@@ -49,7 +56,7 @@ beforeEach(() => {
       start_hour INTEGER, end_hour INTEGER, start_minute INTEGER NOT NULL DEFAULT 0, end_minute INTEGER NOT NULL DEFAULT 0, deleted_at TEXT);
     CREATE TABLE generated_schedule (id INTEGER PRIMARY KEY, scheduled_at INTEGER, song_id INTEGER, title TEXT,
       artist TEXT, file_path TEXT, file_key TEXT, duration_s INTEGER, station_id INTEGER, state TEXT DEFAULT 'pending',
-      played_at INTEGER, content_class TEXT, category_id INTEGER, deleted_at TEXT);
+      played_at INTEGER, content_class TEXT, category_id INTEGER, deleted_at TEXT, source TEXT, log_hour_ts INTEGER);
     INSERT INTO stations (id, scheduler_mode) VALUES (1, 'clock');
     INSERT INTO categories (id, station_id) VALUES (1, 1);
     INSERT INTO clock_slots (id,clock_id,station_id,slot_type,category_id,position) VALUES (1,1,1,'music',1,0);
@@ -76,12 +83,12 @@ describe("the last song of the hour always finishes; the new hour opens with its
     expect(ids(r).slice(0, 4)).toEqual([10, 11, 12, 13]);
     expect(r.missedRowIds).toEqual([]);
   });
-  it("the hour's last song ends BEFORE :00: silence until the top of the hour — the new hour's row is not offered early", () => {
+  it("the hour's last song ends BEFORE :00 (overlays): the next hour's first row plays straight on — no silence", () => {
     crossingHour(); setNow(12, 59, 0);
     const r = read(2, at(12, 59, 20));                     // the song on air ends at 12:59:20
-    expect(ids(r)).toEqual([]);
-    expect(r.mode).toBe("nothing-due");
-    expect(r.nextDueTs).toBe(at(13, 0, 0));
+    expect(ids(r).slice(0, 4)).toEqual([10, 11, 12, 13]);
+    expect(r.mode).not.toBe("nothing-due");
+    expect(r.missedRowIds).toEqual([]);
   });
   it("at the top of the hour the first row of the hour is offered", () => {
     crossingHour(); setNow(13, 0, 0);
@@ -178,6 +185,106 @@ describe("the show schedule is the boundary — shows start and end at any minut
     const r = read(50, at(13, 31, 0));
     expect(ids(r)).toEqual([]);
     expect(r.inShow).toBe(false);
+  });
+});
+
+describe("every clock row is placed: an hour's extra rows past :00 stay in their own hour (v66 log_hour_ts)", () => {
+  // The 12:00 hour: a song on air from 12:50, then the clock's extra rows timed past :00 (12:59, 13:02, 13:05), all of
+  // the 12:00 hour. The 13:00 hour opens at 13:00 with its own head.
+  function extraRows() {
+    row(1, at(12, 50), { state: "playing", playedAt: at(12, 50), hour: at(12, 0) });
+    row(2, at(12, 54), { hour: at(12, 0), title: "12 · fits" });
+    row(3, at(12, 58), { hour: at(12, 0), title: "12 · extra 1" });
+    row(4, at(13, 2), { hour: at(12, 0), title: "12 · extra 2" });
+    row(5, at(13, 6), { hour: at(12, 0), title: "12 · extra 3" });
+    row(10, at(13, 0), { hour: at(13, 0), title: "13 · head" });
+    row(11, at(13, 4), { hour: at(13, 0), title: "13 · second" });
+  }
+  it("Up Next is in LOG order: the 12:00 hour's extra rows (timed 13:02, 13:06) come before the 13:00 head", () => {
+    extraRows(); setNow(12, 52, 0);
+    expect(ids(read(1, at(12, 54, 0)))).toEqual([2, 3, 4, 5, 10, 11]);
+  });
+  it("the hour ran short (overlays): an extra row of the SAME hour plays before :00 — the rows the PD built", () => {
+    extraRows(); db.prepare("UPDATE generated_schedule SET state='played' WHERE id IN (1)").run();
+    db.prepare("UPDATE generated_schedule SET state='playing', played_at=? WHERE id=2").run(at(12, 53));
+    setNow(12, 55, 0);
+    expect(ids(read(2, at(12, 56, 30)))[0]).toBe(3);        // "12 · extra 1" starts 12:56:30, inside its hour
+  });
+  it("a song crosses :00: it plays out; the 12:00 hour's rows that did not start are didn't-air; the 13:00 head is next", () => {
+    extraRows();
+    db.prepare("UPDATE generated_schedule SET state='played' WHERE id IN (1,2)").run();
+    db.prepare("UPDATE generated_schedule SET state='playing', played_at=? WHERE id=3").run(at(12, 57));
+    setNow(13, 0, 30);
+    const r = read(3, at(13, 1, 0));                        // "12 · extra 1" ends 13:01
+    expect(ids(r).slice(0, 2)).toEqual([10, 11]);
+    expect(r.missedRowIds).toEqual([4, 5]);                 // stamped 'missed' (didn't air) — never deleted
+  });
+  it("the 12:00 hour's rows run out at 12:57 (every extra row aired): the 13:00 head plays at once, no silence", () => {
+    extraRows();
+    db.prepare("UPDATE generated_schedule SET state='played' WHERE id IN (1,2,3,4)").run();
+    db.prepare("UPDATE generated_schedule SET state='playing', played_at=? WHERE id=5").run(at(12, 54));
+    setNow(12, 56, 0);
+    const r = read(5, at(12, 57, 0));
+    expect(ids(r)[0]).toBe(10);
+    expect(r.mode).not.toBe("nothing-due");
+  });
+});
+
+describe("a row added by hand is never removed by anything automatic", () => {
+  it("added after the hour's last row: when the last song crosses :00 the hand-added row still plays, then the 13:00 head", () => {
+    row(1, at(12, 56), { state: "playing", playedAt: at(12, 57), hour: at(12, 0) });
+    row(2, at(12, 59), { hour: at(12, 0), title: "12 · machine row" });
+    row(3, at(12, 59, 1), { hour: at(12, 0), title: "added by hand", source: "operator" });
+    row(10, at(13, 0), { hour: at(13, 0), title: "13 · head" });
+    setNow(13, 0, 30);
+    const r = read(1, at(13, 1, 0));
+    expect(ids(r).slice(0, 2)).toEqual([3, 10]);
+    expect(r.missedRowIds).toEqual([2]);                    // the machine row did not air; the hand-added row is not 'missed'
+  });
+  it("is never in the missed sweep, even when automation starts after its time", () => {
+    row(21, at(13, 24), { source: "operator", title: "added by hand" }); row(22, at(13, 27)); row(23, at(13, 40));
+    setNow(13, 30, 0);
+    const r = read(null);
+    expect(r.missedRowIds).not.toContain(21);
+  });
+  it("passes the format gate: a song from a category on no clock still plays when the operator added it", () => {
+    db.exec("INSERT INTO songs (id,title,category_id,file_path,duration_ms,content_class) VALUES (2,'Off clock',2,'o.mp3',200000,'MUSIC')");
+    row(1, at(12, 50), { state: "playing", playedAt: at(12, 50), hour: at(12, 0) });
+    row(2, at(12, 50, 1), { hour: at(12, 0), songId: 2, title: "machine row, off clock" });
+    row(3, at(12, 50, 2), { hour: at(12, 0), songId: 2, title: "added by hand, off clock", source: "operator" });
+    setNow(12, 52, 0);
+    expect(ids(read(1, at(12, 53, 0)))).toEqual([3]);
+  });
+});
+
+describe("never run ahead = never outside the show schedule, never past the show's end, never another day", () => {
+  it("a show's last row ends and nothing plays after the show — not even the last hour's extra rows", () => {
+    shows([[1, 12, 0, 13, 0]]);                             // one show, 12:00–13:00, nothing after it
+    row(1, at(12, 57), { state: "playing", playedAt: at(12, 57), hour: at(12, 0), dur: 240 });
+    row(2, at(13, 1), { hour: at(12, 0), title: "12 · extra row past :00" });
+    setNow(13, 0, 30);
+    const r = read(1, at(13, 1, 0));                        // the crossing song ends 13:01
+    expect(ids(r)).toEqual([]);
+    expect(r.mode).toBe("nothing-due");
+    expect(r.inShow).toBe(false);                           // → AUTO turns off once the deck is quiet (engine)
+  });
+  it("the show's rows run out before its end: the next SHOW's row waits for that show's start", () => {
+    shows([[1, 12, 0, 13, 0], [2, 13, 0, 14, 0]]);           // two different shows back to back
+    row(1, at(12, 53), { state: "playing", playedAt: at(12, 53), hour: at(12, 0) });
+    row(10, at(13, 0), { hour: at(13, 0), title: "show 2 head" });
+    setNow(12, 56, 0);
+    const r = read(1, at(12, 57, 0));
+    expect(ids(r)).toEqual([]);
+    expect(r.nextDueTs).toBe(at(13, 0));
+  });
+  it("never pulls rows from another day: the 23:00 hour runs out at 23:57, tomorrow's 00:00 row waits for midnight", () => {
+    const tomorrow = (h, m) => Math.floor(new Date(2026, 9, 5, h, m).getTime() / 1000);
+    row(1, at(23, 53), { state: "playing", playedAt: at(23, 53), hour: at(23, 0) });
+    row(10, tomorrow(0, 0), { hour: tomorrow(0, 0), title: "tomorrow 00:00" });
+    setNow(23, 56, 0);
+    const r = read(1, at(23, 57, 0));
+    expect(ids(r)).toEqual([]);
+    expect(r.nextDueTs).toBe(tomorrow(0, 0));
   });
 });
 

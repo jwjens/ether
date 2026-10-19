@@ -23,7 +23,7 @@ db.exec(`
     id INTEGER PRIMARY KEY, uuid TEXT, station_id INTEGER, scheduled_at INTEGER NOT NULL,
     song_id INTEGER, title TEXT, artist TEXT, file_key TEXT, file_path TEXT, duration_s REAL,
     category_id INTEGER, source TEXT, state TEXT DEFAULT 'pending', played_at INTEGER,
-    content_class TEXT, channel TEXT, deleted_at INTEGER
+    content_class TEXT, channel TEXT, deleted_at INTEGER, log_hour_ts INTEGER
   );
   CREATE TABLE songs (id INTEGER PRIMARY KEY, category_id INTEGER);
   CREATE TABLE categories (id INTEGER PRIMARY KEY, station_id INTEGER);

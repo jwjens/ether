@@ -1,7 +1,7 @@
 ---
 feature: show-schedule
 title: Show times and AUTO
-summary: Shows start and end at any minute. The show schedule is the boundary; AUTO comes on when a show starts and goes off when the log is done and no show follows.
+summary: Shows start and end at any minute. Every clock row goes into its hour; the log plays in order straight through the show; the show schedule is the boundary; songs you add are never taken out.
 where: Schedule → Shows (and the Create Show wizard)
 since: 4.6.59 (1018, schema v65)
 audience: program director
@@ -27,15 +27,22 @@ Ether never adds songs of its own, and never skips songs because the station is 
 
 ## How the hour plays
 
-- **Every hour is its own piece.** The song playing when the top of the hour arrives is that hour's last song, and it
-  always finishes: there's no hard stop. The new hour then opens with **its first scheduled row**.
-- If the hour's songs run out before :00, the station is **silent until the top of the hour**. Then the hour's first
-  row plays.
-- A show's start or end inside an hour works the same way. At 9:30 the song on air finishes, then the next show's
-  first row plays.
-- Inside an hour nothing is skipped for being late. Rows play in order.
-- Clocks carry extra rows so an hour can fill when songs run short. Rows that don't fit before the end are simply
-  never placed.
+- **Your clock decides how many rows an hour gets.** Fill Day / Fill Week puts **every row of the clock** into its
+  hour: nothing is added and nothing is cut, even when the rows add up to more than 60 minutes. Rows that run past
+  :00 still belong to their own hour in the Program Log.
+- **Times use your segue overlap.** Each song is timed to start when the one before it hands over (Settings → **Segue overlap
+  (auto)**), not at the end of its file, so the log's times match what airs.
+- **The log plays in order, straight through the show.** When a row ends, the next row plays. If the hour's rows
+  run out before :00, the next hour's first row plays right away, with no silence.
+- **The song playing at the top of the hour always finishes** (there's no hard stop). Then the new hour's **first
+  row** plays. The old hour's rows that didn't get to play are marked **didn't play** in the Program Log. They're never
+  deleted.
+- **Shows are the boundary.** A row of the next show never plays before that show starts, and the log never pulls
+  rows from another day. When a show's last row ends and no show follows, nothing plays.
+- **Songs you add stay.** A song you add to Up Next (Library **Q**, a drop on Up Next, or the jock strip search) goes
+  into the log right after the last song in Up Next, marked as added by hand. Nothing automatic removes it, skips it
+  or marks it didn't play: not Fill Day, not the top of the hour, not the playout rules. Only you remove it (the **×**
+  in Up Next, or delete in the Program Log). It plays while its show is on.
 
 ## AUTO on and off
 

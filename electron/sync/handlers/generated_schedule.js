@@ -177,8 +177,12 @@ function generatedScheduleBulkCreate(db, stationId, rows) {
   validateScope();
   if (!rows.length) return { ok: true, inserted: 0 };
   const now = new Date().toISOString();
+  // v66 log_hour_ts — the log hour (or show piece) the row belongs to; written when the column exists (a database the
+  // migration has not reached yet still generates, as before).
+  let withHour = false;
+  try { withHour = db.prepare(`PRAGMA table_info(${TABLE})`).all().some(c => c.name === 'log_hour_ts'); } catch {}
   const stmtInsert = db.prepare(
-    `INSERT INTO ${TABLE} (scheduled_at, song_id, title, artist, file_key, file_path, duration_s, category_id, clock_id, generated_at, content_class, channel, lead_in_sec, underlap_sec, jingle_category_id, pick_reason, chain_type, chain_type_effective, post_ms, cut_end_ms, station_id, uuid, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO ${TABLE} (scheduled_at, song_id, title, artist, file_key, file_path, duration_s, category_id, clock_id, generated_at, content_class, channel, lead_in_sec, underlap_sec, jingle_category_id, pick_reason, chain_type, chain_type_effective, post_ms, cut_end_ms, station_id, uuid, created_at, updated_at, deleted_at${withHour ? ', log_hour_ts' : ''}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${withHour ? ', ?' : ''})`
   );
   const nowSec = Math.floor(Date.now() / 1000);
   db.transaction(() => {
@@ -203,7 +207,8 @@ function generatedScheduleBulkCreate(db, stationId, rows) {
         // ORDER MATTERS — these sit after pick_reason in the column list above. A mismatch here writes
         // a post into pick_reason and is invisible until something reads it back.
         row.chain_type ?? null, row.chain_type_effective ?? null, row.post_ms ?? null, row.cut_end_ms ?? null,
-        row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at
+        row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at,
+        ...(withHour ? [row.log_hour_ts ?? null] : [])
       );
       logMutation(db, {
         table_name: TABLE, row_id: uuid, op: 'insert',

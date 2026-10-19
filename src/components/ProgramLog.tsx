@@ -67,6 +67,9 @@ const TYPE_LABEL: Record<string, string> = { spot_break: "SPOT", music: "SONG", 
 // Generate's UNSCHEDULED report (Phase 2): every slot no song could fill under the station's rules, by hour, with why.
 type UnschedItem = { hourLabel: string; at: number; category: string; why: string };
 const typeChip = (e: { category_code: string | null; slot_type: string }) => e.category_code || TYPE_LABEL[e.slot_type] || e.slot_type.toUpperCase();
+// A row of an hour that ended before it got to air (Jeff, 2026-10-18: "Rows of the old hour that didn't get to play are logged as didn't-play. Never deleted."). The stored
+// state stays 'missed'; this is what the operator reads.
+const statusLabel = (s: string) => (s === "missed" ? "didn't play" : s);
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 const DAYS_SHORT = ["Su","Mo","Tu","We","Th","Fr","Sa"];
 
@@ -1076,7 +1079,7 @@ export default function ProgramLog({ onClose, embedded = false }: Props) {
                             {fmtMs(entry.duration_ms)}
                           </span>
                           <span style={{ fontSize: "var(--t-micro)", textAlign: "right" as const, color: isOverflow ? "#a78bfa" : entry.status === "played" ? "#34d399" : entry.status === "playing" ? "var(--accent-blue)" : entry.status === "missed" || isUnfilled ? "#ef4444" : "rgba(255,255,255,0.2)", fontWeight: entry.status === "playing" ? 700 : 400 }}>
-                            {isOverflow ? "overflow" : entry.status}
+                            {isOverflow ? "overflow" : statusLabel(entry.status)}
                           </span>
                         </div>
                       );
@@ -1363,7 +1366,7 @@ function HourModal({ date, hour, block, stationId, onClose, onEdited }: HourModa
                                    color: "#8868D8", background: "rgba(136,104,216,0.14)", border: "1px solid rgba(136,104,216,0.5)", letterSpacing: "0.06em", flexShrink: 0 }}>YOURS</span>
                       )}
                       <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{entry.song_title || entry.label || "—"}</span>
-                      {entry.status !== "pending" && <span style={{ fontSize: "var(--t-micro)", color: entry.status === "playing" ? "var(--accent-blue)" : entry.status === "missed" ? "#ef4444" : "var(--text-tertiary)", flexShrink: 0 }}>{entry.status}</span>}
+                      {entry.status !== "pending" && <span style={{ fontSize: "var(--t-micro)", color: entry.status === "playing" ? "var(--accent-blue)" : entry.status === "missed" ? "#ef4444" : "var(--text-tertiary)", flexShrink: 0 }}>{statusLabel(entry.status)}</span>}
                     </div>
                     {warns.length > 0 && (
                       <div style={{ fontSize: "var(--t-micro)", color: "#fbbf24" }} title="A separation rule this placement bends — it informs, it does not block">

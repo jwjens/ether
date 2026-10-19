@@ -496,6 +496,7 @@ const REGISTRY = {
       played_at:    'local-only',   // unix seconds the row actually aired (engine-stamped, Phase 1)
       seq:          'local-only',   // local play-order (decoupled from scheduled_at); sync treatment revisited at Phase 4 reorder
       source:       'local-only',   // v34: provenance — NULL/'machine' | 'operator' (jock deck-load) | 'autofit'. Local-authoritative playout state (§2.5)
+      log_hour_ts:  'local-only',   // v66: the log hour (or show piece) the row belongs to — a row can start past :00 (every clock row is placed)
       station_id:   'scalar',
       uuid:         'scalar',
       created_at:   'scalar',

@@ -2728,6 +2728,10 @@ function _runMigrationsInner() {
   // The design doc (§5.3) chose a column over a side table so the reason travels with the row through
   // regenerate, delete and sync, and because the natural query is "why this row?", not an aggregate.
   alterSafe("ALTER TABLE generated_schedule ADD COLUMN pick_reason TEXT");
+  // v66 (scripts/migrate-generated-schedule-log-hour-phase-sync-66.js): the log hour a row BELONGS to. Generate places
+  // every clock row, so a row can start past :00 and still belong to the hour its clock built. Belt and braces with the
+  // migration, like pick_reason above.
+  alterSafe("ALTER TABLE generated_schedule ADD COLUMN log_hour_ts INTEGER");
 
   // Account ownership: each station records the license_key of the account that created it.
   // NOTE: this column is recorded but NOT currently enforced at the list layer — `stations:list`
@@ -10726,13 +10730,16 @@ function retireStaleScheduleRows(stationId, reason) {
       if (r && r.value != null) { const v = parseInt(r.value, 10); if (Number.isFinite(v) && v >= 0) grace = v; }
     } catch {}
     const cutoff = Math.floor(Date.now() / 1000) - grace;
+    // NEVER A ROW ADDED BY HAND (Jeff, 2026-10-18: "A row added by hand is NEVER removed by anything automatic"). It
+    // stays pending until it airs or the user removes it. Same ownership rule as Generate's (log-edit-core).
+    const { NOT_OPERATOR_OWNED_SQL } = require('./log-edit-core');
     const before = db.prepare(
-      "SELECT COUNT(*) n FROM generated_schedule WHERE station_id = ? AND state = 'pending' AND deleted_at IS NULL AND scheduled_at < ?"
+      `SELECT COUNT(*) n FROM generated_schedule WHERE station_id = ? AND state = 'pending' AND deleted_at IS NULL AND scheduled_at < ? AND ${NOT_OPERATOR_OWNED_SQL}`
     ).get(stationId, cutoff).n;
     if (!before) return { retired: 0 };
     const info = db.prepare(
       `UPDATE generated_schedule SET state = 'missed', updated_at = ?
-        WHERE station_id = ? AND state = 'pending' AND deleted_at IS NULL AND scheduled_at < ?`
+        WHERE station_id = ? AND state = 'pending' AND deleted_at IS NULL AND scheduled_at < ? AND ${NOT_OPERATOR_OWNED_SQL}`
     ).run(new Date().toISOString(), stationId, cutoff);
     const retired = info.changes || 0;
     // LOUD. A silent sweep that retires 36,000 rows is indistinguishable from data loss.
@@ -10821,21 +10828,21 @@ ipcMain.handle('schedule:insertVoiceTrack', (_, { stationId, hour, beforeTitle, 
     const sid = stationId ?? getActiveStationId();
     const nowTs = Math.floor(Date.now() / 1000);
     let row = db.prepare(
-      `SELECT id, scheduled_at FROM generated_schedule
+      `SELECT id, scheduled_at, log_hour_ts FROM generated_schedule
        WHERE station_id = ? AND title = ? AND (artist = ? OR ? = '') AND scheduled_at >= ? - 300 AND deleted_at IS NULL
        ORDER BY scheduled_at LIMIT 1`
     ).get(sid, beforeTitle, beforeArtist || '', beforeArtist || '', nowTs);
     if (!row) row = db.prepare(
-      `SELECT id, scheduled_at FROM generated_schedule
+      `SELECT id, scheduled_at, log_hour_ts FROM generated_schedule
        WHERE station_id = ? AND title = ? AND scheduled_at >= ? - 300 AND deleted_at IS NULL
        ORDER BY scheduled_at LIMIT 1`
     ).get(sid, beforeTitle, nowTs);
     if (!row) return { ok: false, error: 'that song is not in the upcoming schedule yet' };
     const at = row.scheduled_at - 1;
     db.prepare(
-      `INSERT INTO generated_schedule (scheduled_at, song_id, title, artist, file_path, duration_s, station_id, uuid, generated_at)
-       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, unixepoch())`
-    ).run(at, title, artist || '', filePath, Math.round((durationMs || 0) / 1000), sid, require('crypto').randomUUID());
+      `INSERT INTO generated_schedule (scheduled_at, song_id, title, artist, file_path, duration_s, station_id, uuid, generated_at, log_hour_ts)
+       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, unixepoch(), ?)`
+    ).run(at, title, artist || '', filePath, Math.round((durationMs || 0) / 1000), sid, require('crypto').randomUUID(), row.log_hour_ts ?? null);   // the hour of the row it goes before (v66)
     _scheduleChanged(sid, 'voice-track');
     return { ok: true, scheduledAt: at };
   } catch (e) { return { ok: false, error: e.message }; }
@@ -10884,8 +10891,9 @@ function _placeJingles(db, stationId, rows) {
     // generated day through THIS query rather than a copy of it.
     poolReader = require('./sweeper-pool').preparePoolCandidates(db);
   } catch { return; }
+  // LOG ORDER (v66): a row past :00 belongs to its own hour, so order by the log hour first, then the start time.
   const music = rows.filter(r => (r.content_class || 'MUSIC') === 'MUSIC' && r.song_id)
-                    .slice().sort((a, b) => a.scheduled_at - b.scheduled_at);
+                    .slice().sort((a, b) => ((a.log_hour_ts ?? a.scheduled_at) - (b.log_hour_ts ?? b.scheduled_at)) || (a.scheduled_at - b.scheduled_at));
   if (!music.length) return;
   // SEAMS WHERE A COMMERCIAL ENDS. A sweeper's LEAD fires it N seconds before the OUTGOING element
   // ends; where that element is a spot, the lead would play over the commercial's tail. The daemon
@@ -11047,7 +11055,7 @@ function _placeJingles(db, stationId, rows) {
       const cls = 'SWP';                       // v52: the only imaging class
       const def = SWEEPER_DEFAULT;
       jinRows.push({
-        scheduled_at: incoming.scheduled_at, song_id: pick.id,
+        scheduled_at: incoming.scheduled_at, log_hour_ts: incoming.log_hour_ts ?? null, song_id: pick.id,
         title: pick.title, artist: pick.artist_name || '',
         file_key: pick.file_path ? storedBasename(pick.file_path) : '',
         duration_s: pick.duration_ms ? Math.round(pick.duration_ms / 1000) : 0,
@@ -11288,9 +11296,14 @@ function _commitDayRows(stationId, effStart, dayEnd, rows) {
     // tomorrow's 3 PM row this morning — is the record, not a plan, and is never deleted (10/17: the 6:10 PM
     // regenerate deleted 67 such rows in the gate's replay, T4). It stays, and as a kept row it blocks its own slot
     // from being refilled below, so nothing is placed over it.
+    // THE WINDOW IS BY LOG HOUR (v66): every clock row is placed, so the 11 PM hour's rows can start after midnight —
+    // they are this day's rows, and the next day's regenerate never touches them.
+    const lk = "COALESCE(log_hour_ts, scheduled_at)";
     db.prepare(
-      `DELETE FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ? AND ${NOT_OPERATOR_OWNED_SQL} AND ${NOT_AIRED_SQL}`
-    ).run(stationId, effStart, dayEnd);
+      `DELETE FROM generated_schedule WHERE station_id = ? AND ${lk} >= ? AND ${lk} < ? AND ${NOT_OPERATOR_OWNED_SQL} AND ${NOT_AIRED_SQL}
+         AND NOT (log_hour_ts IS NOT NULL AND log_hour_ts IN (SELECT a.log_hour_ts FROM generated_schedule a WHERE a.station_id = ? AND a.log_hour_ts IS NOT NULL
+                                                                AND a.state IN ('played','playing','missed','skipped') AND a.deleted_at IS NULL))`
+    ).run(stationId, effStart, dayEnd, stationId);   // an hour the log has reached (even ahead of the clock) keeps its rows
 
     // GAP-ONLY FILL. Preserving the operator's rows is not enough: the walk still produced a machine
     // row for that minute, and inserting it would double-book the slot. Drop any generated row whose
@@ -11302,7 +11315,7 @@ function _commitDayRows(stationId, effStart, dayEnd, rows) {
     // still block its own gap from refilling — the delete would appear to do nothing on the next
     // Generate, which is the whole point of deleting it.
     const kept = db.prepare(
-      "SELECT scheduled_at, duration_s FROM generated_schedule WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ? AND deleted_at IS NULL"
+      `SELECT scheduled_at, duration_s, log_hour_ts FROM generated_schedule WHERE station_id = ? AND ${lk} >= ? AND ${lk} < ? AND deleted_at IS NULL`
     ).all(stationId, effStart, dayEnd);
 
     const { fill, skipped } = filterToGaps(rows, kept);
@@ -11390,9 +11403,10 @@ ipcMain.handle('schedule:moveRow', (_e, uuidA, uuidB) => {
     if (a.station_id !== b.station_id) return { ok: false, error: 'those rows belong to different stations' };
     const now = new Date().toISOString();
     db.transaction(() => {
-      const stmt = db.prepare("UPDATE generated_schedule SET scheduled_at = ?, source = 'operator', updated_at = ? WHERE uuid = ?");
-      stmt.run(b.scheduled_at, now, a.uuid);
-      stmt.run(a.scheduled_at, now, b.uuid);
+      // The log hour moves with the time (v66): a row moved into another hour belongs to that hour.
+      const stmt = db.prepare("UPDATE generated_schedule SET scheduled_at = ?, log_hour_ts = ?, source = 'operator', updated_at = ? WHERE uuid = ?");
+      stmt.run(b.scheduled_at, b.log_hour_ts ?? null, now, a.uuid);
+      stmt.run(a.scheduled_at, a.log_hour_ts ?? null, now, b.uuid);
     })();
     _healthEvent('log-edit', { action: 'move', stationId: a.station_id,
       movedTitle: a.title, fromTs: a.scheduled_at, toTs: b.scheduled_at, swappedWith: b.title });
@@ -12660,10 +12674,12 @@ ipcMain.handle('schedule:get', (_, fromTs, toTs, stationId) => {
       // be addressed by for mutation, source says who owns it, state says whether it has already
       // aired (and is therefore a record, not a plan).
       // played_at (v33, engine-stamped) added 2026-09-18 for the Program Log's as-run time cell.
+      // log_hour_ts (v66): the hour the row belongs to — every clock row is placed, so a row can start past :00 and
+      // is still shown (and windowed) under its own hour and day.
       `SELECT g.id, g.uuid, g.scheduled_at, g.song_id, g.title, g.artist, g.file_key, g.file_path,
-              g.duration_s, g.category_id, g.source, g.state, g.content_class, g.channel, g.played_at
+              g.duration_s, g.category_id, g.source, g.state, g.content_class, g.channel, g.played_at, g.log_hour_ts
        FROM generated_schedule g
-       WHERE g.station_id = ? AND g.scheduled_at >= ? AND g.scheduled_at < ? AND g.deleted_at IS NULL
+       WHERE g.station_id = ? AND COALESCE(g.log_hour_ts, g.scheduled_at) >= ? AND COALESCE(g.log_hour_ts, g.scheduled_at) < ? AND g.deleted_at IS NULL
          AND NOT EXISTS (
            SELECT 1 FROM songs s JOIN categories c ON c.id = s.category_id
            WHERE s.id = g.song_id AND c.station_id IS NOT NULL AND c.station_id <> g.station_id

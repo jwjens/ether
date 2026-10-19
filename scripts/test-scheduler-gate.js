@@ -36,6 +36,7 @@ const { DatabaseSync } = require("node:sqlite");
 
 const ROOT = path.join(__dirname, "..");
 const C = require("./lib/log-checker");
+const SEGUE = require(path.join(__dirname, "..", "audiod", "segue-overlap.js"));   // the station's segue overlap, as the engine reads it
 
 // ── arguments ─────────────────────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -253,7 +254,9 @@ async function simulateStation(w, P, F, R) {
 
   const runs = [];
   const t4 = { snapshots: 0, changed: [], deleted: [] };
-  const genRows = (genTs) => w.prepare("SELECT * FROM generated_schedule WHERE station_id=? AND generated_at=? AND deleted_at IS NULL ORDER BY scheduled_at, id").all(sid, genTs);
+  // In LOG order (v66: log hour, then time) — the order Generate placed them, so T2 re-derives each pick against what was
+  // placed before it. A clock's extra rows past :00 belong to their own hour and were placed before the next hour's rows.
+  const genRows = (genTs) => w.prepare(`SELECT * FROM generated_schedule WHERE station_id=? AND generated_at=? AND deleted_at IS NULL ORDER BY ${P.loggen.logKeySql ? P.loggen.logKeySql(w, "generated_schedule") : "scheduled_at"}, scheduled_at, id`).all(sid, genTs);
   const doGenerate = async (days, label) => {
     // T4: snapshot every non-pending row, then compare after the commit
     const snap = new Map(w.prepare("SELECT * FROM generated_schedule WHERE station_id=? AND state IS NOT NULL AND state != 'pending'").all(sid).map(r => [r.id, JSON.stringify(r)]));
@@ -287,6 +290,10 @@ async function simulateStation(w, P, F, R) {
   // THE LOG PLAYS AS BUILT (2026-10-18): the engine passes the last log row that aired in this AUTO session; AUTO turns
   // off when the log is done and no show is on, and on again at the next show's start, from that piece's first row.
   let lastRow = null, fromPieceStart = false, autoOffs = 0;
+  // OVERLAYS (2026-10-18): the engine starts the next song the station's segue overlap before the song on air ends
+  // (engine.js _segueTick), music → music only. The model does the same, from the same setting.
+  const overlapS = SEGUE.readSegueOverlapSec(w, sid) || 0;
+  let prevEnd = null;
   const showBoundaryReader = !P.loggen.fillShortHour && !!P.loggen.readLogAnchored && /pieceAt/.test(P.loggenSrc || "");
   while (nowSec() < simEnd && guard++ < 200000) {
     if (!regenDone && nowSec() >= regenTs) { regenDone = true; await doGenerate(1, "Regenerate on air " + fmt(nowSec())); }
@@ -342,12 +349,14 @@ async function simulateStation(w, P, F, R) {
     } else {
       if (r.missedRowIds.length) {
         const ph = r.missedRowIds.map(() => "?").join(",");
-        // engine.js:1445, verbatim
-        const info = w.prepare(`UPDATE generated_schedule SET state='missed' WHERE id IN (${ph}) AND station_id=? AND state='pending'`).run(...r.missedRowIds, sid);
+        // engine.js _refillFromLog, verbatim (never a row added by hand)
+        const info = w.prepare(`UPDATE generated_schedule SET state='missed' WHERE id IN (${ph}) AND station_id=? AND state='pending' AND ${P.loggen.notOperatorSql ? P.loggen.notOperatorSql("generated_schedule") : "1"}`).run(...r.missedRowIds, sid);
         missedStamped += Number(info.changes || 0);
       }
       item = r.items[0];
     }
+    const itemIsMusic = !item.contentClass || item.contentClass === "MUSIC";
+    if (!itemIsMusic && prevEnd != null && nowSec() < prevEnd) setNow(prevEnd);   // a spot edge never overlaps
     const t = nowSec();
     const plannedS = Math.max(1, Math.round((item.durationMs || 240000) / 1000));
     const actualS = Math.max(1, Math.round(plannedS * (1 + (rand() * 2 - 1) * LENGTH_ERR)));
@@ -371,11 +380,12 @@ async function simulateStation(w, P, F, R) {
         w.prepare("UPDATE generated_schedule SET state='played' WHERE station_id=? AND state='playing'").run(sid);
       }
     }
-    const row = item.schedId != null ? w.prepare("SELECT id, scheduled_at, category_id, clock_id, content_class, song_id FROM generated_schedule WHERE id=?").get(item.schedId) : null;
+    const row = item.schedId != null ? w.prepare(`SELECT id, scheduled_at, category_id, clock_id, content_class, song_id, ${P.loggen.logKeySql ? P.loggen.logKeySql(w, "generated_schedule") : "scheduled_at"} AS lk FROM generated_schedule WHERE id=?`).get(item.schedId) : null;
     prof.stamp += RealDate.now() - tq;
     if (item.schedId != null) { lastRow = item.schedId; fromPieceStart = false; }
     goLives.push({ ts: t, schedId: item.schedId ?? null, row, title: item.title, filePath: item.filePath, contentClass: item.contentClass || (row && row.content_class) || "MUSIC", offLog, mode: r.mode, playUuid: playId });
-    setNow(t + actualS);
+    prevEnd = t + actualS;
+    setNow(t + actualS - (itemIsMusic ? overlapS : 0));
   }
 
   // ── check ──
@@ -479,14 +489,28 @@ async function simulateStation(w, P, F, R) {
     examples: [...t4.deleted.slice(0, 4).map(d => ({ what: "DELETED", by: d.label, row: `${fmt(d.row.scheduled_at)} ${d.row.title} [${d.row.state}${d.row.played_at ? " at " + fmt(d.row.played_at) : ""}]` })),
                ...t4.changed.slice(0, 4).map(d => ({ what: "CHANGED", by: d.label, row: `${fmt(d.before.scheduled_at)} ${d.before.title}`, fields: Object.keys(d.before).filter(k => String(d.before[k]) !== String(d.after[k])) }))] };
 
-  // T8: never ahead of the clock
-  const ahead = goLives.filter(g => g.row && hourStartOf(g.row.scheduled_at) > g.ts + EARLY_START_WINDOW_S);
-  res.T8 = { goLives: goLives.length, rowsAiredBeforeTheirHour: ahead.length, maxAheadMin: ahead.length ? Math.round(Math.max(...ahead.map(g => hourStartOf(g.row.scheduled_at) - g.ts)) / 60) : 0,
+  // T8: never ahead. Jeff, 2026-10-18: "'Never run ahead' only means: never play rows from outside the show schedule,
+  // never jump past the show's end, never pull rows from another day." Inside a show the next hour's rows play as soon
+  // as the hour before runs out — that is not ahead. A row is ahead when it aired before its own piece (the hour, cut at
+  // show starts/ends — its log hour, v66) began AND either no show was on when it aired, a different show was, or it was
+  // another day.
+  const SW = require(path.join(ROOT, "audiod", "show-window.js"));
+  const t8Shows = w.prepare("SELECT * FROM shows WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL").all(sid);
+  const dayOf = (ts) => { const d = new RealDate(ts * 1000); return d.getFullYear() * 10000 + d.getMonth() * 100 + d.getDate(); };
+  const rowPieceStart = (g) => SW.pieceAt(t8Shows, g.row.lk ?? g.row.scheduled_at).startTs;
+  const ahead = goLives.filter(g => {
+    if (!g.row) return false;
+    const pRow = SW.pieceAt(t8Shows, g.row.lk ?? g.row.scheduled_at);
+    if (pRow.startTs <= g.ts + EARLY_START_WINDOW_S) return false;              // aired inside or after its own piece
+    const pAir = SW.pieceAt(t8Shows, g.ts);
+    return !(pAir.show && pRow.show && pAir.show.id === pRow.show.id && dayOf(pAir.startTs) === dayOf(pRow.startTs));
+  });
+  res.T8 = { goLives: goLives.length, rowsAiredBeforeTheirHour: ahead.length, maxAheadMin: ahead.length ? Math.round(Math.max(...ahead.map(g => rowPieceStart(g) - g.ts)) / 60) : 0,
     offLogPlays: floorPlays, examples: ahead.slice(0, 5).map(g => ({ aired: fmt(g.ts), rowFor: fmt(g.row.scheduled_at), title: g.title })),
     // every one, for checking by hand: the row id, when it was scheduled, when the reader aired it, and what
     // the reader said about the moment (mode ahead / on-time / behind)
     all: ahead.slice(0, 3000).map(g => ({ rowId: g.schedId, scheduledAt: g.row.scheduled_at, airedAt: g.ts, aheadMin: Math.round((g.row.scheduled_at - g.ts) / 60), mode: g.mode, title: g.title })),
-    largest: ahead.length ? (() => { const m = ahead.reduce((a, b) => (hourStartOf(b.row.scheduled_at) - b.ts > hourStartOf(a.row.scheduled_at) - a.ts ? b : a)); return { rowId: m.schedId, scheduledAt: m.row.scheduled_at, airedAt: m.ts, scheduled: fmt(m.row.scheduled_at), aired: fmt(m.ts), title: m.title, mode: m.mode }; })() : null };
+    largest: ahead.length ? (() => { const m = ahead.reduce((a, b) => (rowPieceStart(b) - b.ts > rowPieceStart(a) - a.ts ? b : a)); return { rowId: m.schedId, scheduledAt: m.row.scheduled_at, airedAt: m.ts, scheduled: fmt(m.row.scheduled_at), aired: fmt(m.ts), title: m.title, mode: m.mode }; })() : null };
 
   // T11 (simulated part): every go-live recorded with its row and category
   // A play that came from a log row must carry that row (v63 row_uuid; before v63 there was no link at all, and the
@@ -620,6 +644,147 @@ async function scenarioViolatorInLog(w, P, F) {
   return { station: sid, ran: true, song: aired.title, songRuleMin: F.rules.songMin, gapMin: Math.round((nowSec() - airedAt) / 60), violatorAirsNext: airs, readerChose: nextUp ? `${nextUp.title} (row ${nextUp.schedId})` : null, violatorRow: next.id };
 }
 
+// ── T20: the log plays straight through the show (Jeff, 2026-10-18) — FX-PLAYTHROUGH only ──────────────────────────
+//   1 Generate places EVERY row on the clock; 2 timing uses the segue overlap, not the file length; 3 a song that crosses
+//   :00 plays out, then the next hour's first row; the old hour's rows that did not air are didn't-air, never deleted;
+//   4 a row added by hand is never removed by anything automatic; 6 inside a show the log never waits for :00;
+//   7 an hour whose rows end early because of overlays plays straight into the next hour's first row with no silence,
+//   and a show's last row ends and nothing plays after the show.
+// The product's own Generate (generate-core + main.js _commitDayRows), reader (loggen.readLogAnchored) and record
+// (playlog.recordGoLive); the deck machinery is modelled as in the week (one row per seam, overlap from the setting),
+// with every song at exactly its planned length so the hours are known in advance.
+async function scenarioPlaysThrough(w, P, F, stationName) {
+  const sid = F.sid;
+  if (stationName !== "FX-PLAYTHROUGH") return null;
+  const SW = require(path.join(ROOT, "audiod", "show-window.js"));
+  const out = { station: sid, checks: [] };
+  const check = (rule, pass, line) => out.checks.push({ rule, pass: !!pass, line });
+  const d = new FakeDate(ANCHOR * 1000); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + 13);
+  const dayStart = Math.floor(d.getTime() / 1000);
+  const at = (h, m = 0, sec = 0) => dayStart + h * 3600 + m * 60 + sec;
+  const lkSql = P.loggen.logKeySql(w, "generated_schedule");
+  const overlapS = SEGUE.readSegueOverlapSec(w, sid) || 0;
+  const shows = w.prepare("SELECT * FROM shows WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL").all(sid);
+  const clockRows = (name) => w.prepare("SELECT COUNT(*) n FROM clock_slots cs JOIN clocks c ON c.id = cs.clock_id WHERE c.name = ? AND c.station_id = ? AND cs.deleted_at IS NULL AND cs.slot_type = 'music'").get(name, sid).n;
+  const hourRows = (h) => w.prepare(`SELECT id, scheduled_at, duration_s, source, state, deleted_at, ${lkSql} AS lk FROM generated_schedule WHERE station_id = ? AND ${lkSql} = ? AND (content_class IS NULL OR content_class = 'MUSIC') ORDER BY scheduled_at, id`).all(sid, at(h));
+
+  // ── Generate the day (and the next, so tomorrow's rows exist and must not be pulled) ──
+  setNow(dayStart - 3600);
+  await runGenerate(P, w, sid, [new FakeDate(dayStart * 1000), new FakeDate((dayStart + 86400) * 1000)]);
+  // 1 — every row on the clock is placed, in every hour of both shows; rows past :00 belong to their hour
+  for (const [h, clockName] of [[12, "Short clock"], [13, "Short clock"], [15, "Extra clock"], [16, "Extra clock"]]) {
+    const rows = hourRows(h), want = clockRows(clockName);
+    const past = rows.filter(r => r.scheduled_at >= at(h + 1)).length;
+    check(1, rows.length === want, `${String(h).padStart(2, "0")}:00 hour: ${rows.length} of the ${clockName}'s ${want} rows placed${past ? `, ${past} of them timed past ${String(h + 1).padStart(2, "0")}:00 and still in the ${String(h).padStart(2, "0")}:00 hour` : ""}`);
+  }
+  // 2 — each song starts the segue overlap before the one before it ends
+  {
+    let n = 0, bad = 0;
+    for (const h of [12, 13, 15, 16]) {
+      const rows = hourRows(h);
+      for (let i = 1; i < rows.length; i++) { n++; if (rows[i].scheduled_at - rows[i - 1].scheduled_at !== rows[i - 1].duration_s - overlapS) bad++; }
+    }
+    check(2, n > 0 && bad === 0, `${n - bad} of ${n} back-to-back songs start ${overlapS} s before the song before them ends (the station's segue overlap), ${bad} do not`);
+    const r12 = hourRows(12);
+    const lastEnd = r12.length ? r12[r12.length - 1].scheduled_at + r12[r12.length - 1].duration_s : null;
+    out.hour12EndsAt = lastEnd ? fmt(lastEnd) : null;
+  }
+
+  // 4 — a row added by hand survives a regenerate (Generate keeps operator rows)
+  const handInsert = (afterRow, title) => {
+    const song = w.prepare("SELECT s.id, s.title, s.file_path, s.duration_ms FROM songs s JOIN categories c ON c.id = s.category_id WHERE c.station_id = ? AND s.title = ?").get(sid, title);
+    // as the engine writes it (engine.js _writeOperatorLogRow, the Up Next add): right after the row it follows, in that row's hour
+    const r = w.prepare(`INSERT INTO generated_schedule (scheduled_at, song_id, title, artist, file_path, duration_s, station_id, uuid, state, source, content_class, created_at, updated_at, log_hour_ts)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'operator', 'MUSIC', ?, ?, ?)`)
+      .run(afterRow.scheduled_at + 1, song.id, song.title, "Through Artist", song.file_path, Math.round(song.duration_ms / 1000), sid, require("crypto").randomUUID(), new RealDate().toISOString(), new RealDate().toISOString(), afterRow.lk);
+    return Number(r.lastInsertRowid);
+  };
+  const keepRow = hourRows(16)[5];
+  const keptId = handInsert(keepRow, "Through Song 44");
+  setNow(at(10));
+  await runGenerate(P, w, sid, [new FakeDate(dayStart * 1000)]);
+  const kept = w.prepare("SELECT state, deleted_at, source FROM generated_schedule WHERE id = ?").get(keptId);
+  check(4, kept && !kept.deleted_at && kept.state === "pending", `a row added by hand in the 16:00 hour, then a regenerate: ${kept ? (kept.deleted_at ? "DELETED" : "kept, " + kept.state) : "GONE"}`);
+
+  // 4 + 3 — a row added by hand right after the song that will cross 16:00 (the Extra clock overruns the hour)
+  const r15 = hourRows(15);
+  const crossing = r15.find(r => r.scheduled_at < at(16) && r.scheduled_at + r.duration_s > at(16));
+  const handId = crossing ? handInsert(crossing, "Through Song 45") : null;
+
+  // ── air it, 11:55 → 18:00 ──
+  const goLives = [];
+  let lastRow = null, fromPieceStart = false, prevEnd = null, guard = 0;
+  setNow(at(11, 55));
+  while (nowSec() < at(18) && guard++ < 5000) {
+    const opts = { seamTs: nowSec(), onAirRowId: lastRow, ...(fromPieceStart ? { fromPieceStart: true } : {}) };
+    let r = P.loggen.readLogAnchored(w, sid, 20, undefined, opts);
+    for (let k = 0; k < 10 && r.mode === "skipping"; k++) {
+      for (const sk of (r.skip || [])) w.prepare("UPDATE generated_schedule SET state='skipped' WHERE id=? AND state='pending'").run(sk.rowId);
+      r = P.loggen.readLogAnchored(w, sid, 20, undefined, opts);
+    }
+    if (!r.items.length) {
+      if (!r.inShow && lastRow != null) { lastRow = null; fromPieceStart = true; }   // AUTO off; on at the next show
+      const hEnd = (() => { const x = new FakeDate(nowSec() * 1000); x.setMinutes(0, 0, 0); return Math.floor(x.getTime() / 1000) + 3600; })();
+      const nxt = r.nextDueTs && r.nextDueTs > nowSec() ? Math.min(r.nextDueTs, hEnd) : hEnd;
+      setNow(Math.max(nowSec() + 1, prevEnd && prevEnd > nowSec() ? Math.min(prevEnd, nxt) : nxt));
+      continue;
+    }
+    if (r.missedRowIds.length) {
+      const ph = r.missedRowIds.map(() => "?").join(",");
+      w.prepare(`UPDATE generated_schedule SET state='missed' WHERE id IN (${ph}) AND station_id=? AND state='pending' AND ${P.loggen.notOperatorSql("generated_schedule")}`).run(...r.missedRowIds, sid);
+    }
+    const item = r.items[0];
+    const t = nowSec();
+    const durS = Math.round((item.durationMs || 0) / 1000);
+    P.playlog.recordGoLive(w.raw, { stationId: sid, title: item.title, artist: item.artist, deck: "A", durationMs: durS * 1000, sessionId: "scheduler-gate-t20", filePath: item.filePath, contentClass: item.contentClass, rowId: item.schedId, playedAt: t });
+    const row = w.prepare(`SELECT id, scheduled_at, ${lkSql} AS lk, source FROM generated_schedule WHERE id = ?`).get(item.schedId);
+    goLives.push({ t, end: t + durS, id: item.schedId, lk: row.lk, source: row.source, title: item.title });
+    lastRow = item.schedId; fromPieceStart = false; prevEnd = t + durS;
+    setNow(t + durS - overlapS);
+  }
+  out.goLives = goLives.length;
+  const first = (h) => goLives.find(g => g.lk === at(h));
+  const lastOfHour = (h) => [...goLives].reverse().find(g => g.lk === at(h));
+
+  // 7a / 6 — the 12:00 hour ends early because of the overlays: the 13:00 head plays straight on, no silence
+  {
+    const head = first(13), before = head ? goLives[goLives.indexOf(head) - 1] : null;
+    const gap = head && before ? head.t - before.end : null;
+    check(7, head && before && before.lk === at(12) && gap <= 0 && head.t < at(13),
+      head ? `12:00 hour's last song ends ${fmt(before.end)}; the 13:00 hour's first row starts ${fmt(head.t)} (${gap <= 0 ? -gap + " s overlap, no silence" : gap + " s of SILENCE"})` : "the 13:00 hour's first row never aired");
+    let silences = 0;
+    for (let i = 1; i < goLives.length; i++) { const g = goLives[i], p = goLives[i - 1]; if (g.t < at(14) && g.t > p.end) silences++; }
+    check(6, silences === 0, `inside the Through Show (12:00–14:00) the log never waited: ${silences} silences between rows`);
+  }
+  // 7b — a show's last row ends and nothing plays after the show (before the next show, nor after the last one)
+  {
+    const lastA = lastOfHour(13);
+    const between = goLives.filter(g => lastA && g.t >= lastA.end && g.t < at(15));
+    check(7, lastA && between.length === 0, `the Through Show's last row ends ${lastA ? fmt(lastA.end) : "?"}; ${between.length} rows aired before the Extra Show at 15:00`);
+    const lastB = [...goLives].reverse().find(g => g.t < at(17));
+    const after = goLives.filter(g => lastB && g.t >= lastB.end);
+    check(7, lastB && after.length === 0, `the Extra Show's last song (started ${lastB ? fmt(lastB.t) : "?"}) ends ${lastB ? fmt(lastB.end) : "?"}; ${after.length} rows aired after it (tomorrow's rows are in the log)`);
+  }
+  // 3 + 4 — the song crossing 16:00 plays out; the hand-added row after it plays; the 15:00 hour's other rows are
+  // didn't-air (missed, not deleted); the 16:00 head follows
+  {
+    const crossed = goLives.find(g => g.lk === at(15) && g.t < at(16) && g.end > at(16));
+    const i = crossed ? goLives.indexOf(crossed) : -1;
+    const next1 = i >= 0 ? goLives[i + 1] : null, next2 = i >= 0 ? goLives[i + 2] : null;
+    check(4, crossed && next1 && next1.id === handId, crossed ? `the song on air at 16:00 ("${crossed.title}", ${fmt(crossed.t)}–${fmt(crossed.end)}) is followed by the row added by hand: ${next1 ? (next1.id === handId ? "yes" : `no — "${next1.title}"`) : "nothing"}` : "no song crossed 16:00");
+    check(3, next2 && next2.id === (hourRows(16)[0] || {}).id, `then the 16:00 hour's first row: ${next2 ? (next2.lk === at(16) ? `"${next2.title}"` : `NO — "${next2.title}" of another hour`) : "nothing"}`);
+    const left = hourRows(15).filter(r => r.source !== "operator" && !goLives.some(g => g.id === r.id));
+    const notMissed = left.filter(r => r.state !== "missed" || r.deleted_at);
+    check(3, left.length > 0 && notMissed.length === 0, `the 15:00 hour's ${left.length} rows that did not air: ${left.length - notMissed.length} marked didn't-air (missed), ${notMissed.filter(r => r.deleted_at).length} deleted, ${notMissed.filter(r => !r.deleted_at).length} left pending`);
+    const hand = w.prepare("SELECT state, deleted_at FROM generated_schedule WHERE id = ?").get(handId);
+    check(4, hand && hand.state === "played" && !hand.deleted_at, `the row added by hand: ${hand ? hand.state : "GONE"}`);
+    const keptAfter = w.prepare("SELECT state, deleted_at FROM generated_schedule WHERE id = ?").get(keptId);
+    check(4, keptAfter && !keptAfter.deleted_at && keptAfter.state !== "missed", `the row added by hand in the 16:00 hour after the regenerate: ${keptAfter ? keptAfter.state : "GONE"} (never 'missed')`);
+  }
+  out.pass = out.checks.every(c => c.pass);
+  return out;
+}
+
 // ── T11 (history part): what this machine's own record says, last 7 days ─────────────────────────
 function historyRecord(w, F, sinceTs) {
   const sid = F.sid;
@@ -728,16 +893,17 @@ function staticChecks() {
 function countBy(arr, k) { const m = {}; for (const x of arr) { const v = x[k] == null ? "null" : String(x[k]); m[v] = (m[v] || 0) + 1; } return m; }
 
 // ── pass / fail ───────────────────────────────────────────────────────────────────────────────────
-function verdicts(sim, t5, t10, hist, stat) {
+function verdicts(sim, t5, t10, hist, stat, t20 = []) {
   const v = [];
   const add = (t, pass, line) => v.push({ test: t, pass, line });
+  for (const t of t20) if (t) for (const c of t.checks) add("T20", c.pass, `station ${t.station} (rule ${c.rule}): ${c.line}`);
   for (const s of sim) {
     const st = `station ${s.station}`;
     add("T1", s.T1_onAir.violations === 0 && s.T1_inLog.violations === 0, `${st}: ${s.T1_onAir.violations} separation violations on air, ${s.T1_inLog.violations} in the log (${JSON.stringify(s.T1_onAir.byRule)} / ${JSON.stringify(s.T1_inLog.byRule)})`);
     add("T2", s.T2.placedBreakingARule === 0 && s.T2.notTheLongestWaiting === 0, `${st}: of ${s.T2.checked} picks, ${s.T2.placedBreakingARule} broke a rule and ${s.T2.notTheLongestWaiting} were not the longest-waiting song that passed; ${s.T2.unscheduledSlots} slots UNSCHEDULED (no song passed), ${s.T2.slotsWhereNothingPassedButASongWasPlaced} slots had no passing song and got one anyway`);
     add("T3", s.T3.failures === 0, `${st}: ${s.T3.failures} go-lives pushed a category past spread 1 while a lower-count song was free (D1 exceptions: ${s.T3.d1Exceptions}); worst spread ${Math.max(0, ...s.T3.maxSpreadByCategory.map(c => c.maxSpread))}`);
     add("T4", s.T4.deleted === 0 && s.T4.changed === 0, `${st}: of ${s.T4.nonPendingRowsSnapshotted} non-pending rows, Generate deleted ${s.T4.deleted} and changed ${s.T4.changed}`);
-    add("T8", s.T8.rowsAiredBeforeTheirHour === 0, `${st}: ${s.T8.rowsAiredBeforeTheirHour} of ${s.T8.goLives} go-lives aired a row before its hour began (up to ${s.T8.maxAheadMin} min early); ${s.T8.offLogPlays} off-log floor plays`);
+    add("T8", s.T8.rowsAiredBeforeTheirHour === 0, `${st}: ${s.T8.rowsAiredBeforeTheirHour} of ${s.T8.goLives} go-lives aired a row before its hour began outside its own show and day (up to ${s.T8.maxAheadMin} min early); ${s.T8.offLogPlays} off-log floor plays`);
     add("T11", s.T11_sim.playsWithoutLogRowId === 0 && s.T11_sim.musicPlaysWithoutCategory === 0, `${st} (simulated): ${s.T11_sim.playsWithoutLogRowId} of ${s.T11_sim.logPlays ?? s.T11_sim.plays} plays from log rows carry no link to their row, ${s.T11_sim.musicPlaysWithoutCategory} music plays no category`);
     if (s.T18.timedBreaksAired === 0) add("T18", null, `station ${s.station}: not applicable — this station's clocks have no timed breaks`);
     else add("T18", s.T18.outsideTolerance === 0, `${st}: ${s.T18.outsideTolerance} of ${s.T18.timedBreaksAired} timed breaks started outside ±${BREAK_TOL_S} s; of the ${s.T18.airedInOwnHour} aired inside their own hour, ${s.T18.inOwnHourOutsideTolerance} were off (up to ${s.T18.inOwnHourMaxLateSec} s late, ${s.T18.inOwnHourMaxEarlySec} s early)`);
@@ -784,7 +950,7 @@ function ratchetMerge(entries) {
   }
   return worse;
 }
-const ORDER = ["T1", "T2", "T3", "T4", "T5", "T8", "T10", "T11", "T15", "T16", "T18", "T19"];
+const ORDER = ["T1", "T2", "T3", "T4", "T5", "T8", "T10", "T11", "T15", "T16", "T18", "T19", "T20"];
 const table = (v) => ORDER.flatMap(t => v.filter(y => y.test === t).map(x => `${x.pass === null ? "N/A " : x.pass ? "PASS" : "FAIL"}  ${t.padEnd(4)} ${x.line}`)).join("\n");
 
 // ── child: ONE station of ONE database ────────────────────────────────────────────────────────────
@@ -825,14 +991,15 @@ async function runChild() {
     const FB = stationFacts(B, sid);
     const t5 = await scenarioStartedEarly(B, bindProduct(B), FB);
     const t10 = await scenarioViolatorInLog(B, bindProduct(B), FB);
+    const t20 = await scenarioPlaysThrough(B, bindProduct(B), FB, st.name);
     fakeNowMs = null;
-    Object.assign(out, { name: st.name, uuid: st.uuid, sim: r, t5, t10, hist });
+    Object.assign(out, { name: st.name, uuid: st.uuid, sim: r, t5, t10, t20, hist });
   } finally {
     A.raw.close(); B.raw.close();
     if (!flag("--keep-copies")) { for (const p of [aPath, bPath]) { try { fs.rmSync(p); } catch {} } try { fs.rmSync(TMP, { recursive: true, force: true }); } catch {} }
     else console.log(`    copies kept: ${aPath} ${bPath}`);
   }
-  const v = verdicts([out.sim], [out.t5], [out.t10], [out.hist], null);
+  const v = verdicts([out.sim], [out.t5], [out.t10], [out.hist], null, [out.t20]);
   const worse = ratchetMerge(ratchetMetrics([out.sim], null));
   out.verdicts = v; out.ratchetWorse = worse;
   fs.writeFileSync(path.join(RUN_DIR, `station-${sid}.json`), JSON.stringify(out, null, 2));

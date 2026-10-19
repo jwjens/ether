@@ -187,14 +187,28 @@ function loadTimeline(db, stationId, { beforeTs, replace, sinceTs, poolFiles } =
     }
   } catch {}
   try {
-    const rows = db.prepare(`SELECT gs.scheduled_at, gs.title, gs.source, COALESCE(gs.file_key, gs.file_path, s.file_path) f, s.title st, a.name sa
+    // THE REPLACE WINDOW IS BY LOG HOUR (v66), exactly as Generate's delete (main.js _commitDayRows): every clock row is
+    // placed, so an hour still on air keeps its extra rows timed past :00 — they are not replaced, so they ARE the log on
+    // the other side of the picks that follow them.
+    // An hour the log has reached (a row played, playing, didn't play or refused) is the record, never replaced — even
+    // when the station is ahead of the clock
+    // (Generate skips it and keeps its rows: generate-core _pieceHasAired, main.js _commitDayRows).
+    let lk = "gs.scheduled_at";
+    const airedHours = new Set();
+    try {
+      if (db.prepare("PRAGMA table_info(generated_schedule)").all().some(c => c.name === "log_hour_ts")) {
+        lk = "COALESCE(gs.log_hour_ts, gs.scheduled_at)";
+        for (const a of db.prepare("SELECT DISTINCT log_hour_ts h FROM generated_schedule WHERE station_id = ? AND log_hour_ts IS NOT NULL AND state IN ('played','playing','missed','skipped') AND deleted_at IS NULL").all(stationId)) airedHours.add(a.h);
+      }
+    } catch {}
+    const rows = db.prepare(`SELECT gs.scheduled_at, ${lk} AS lk, gs.title, gs.source, COALESCE(gs.file_key, gs.file_path, s.file_path) f, s.title st, a.name sa
         FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id LEFT JOIN artists a ON a.id = s.artist_id
        WHERE gs.station_id = ? AND gs.deleted_at IS NULL AND (gs.state IS NULL OR gs.state = 'pending') AND gs.song_id IS NOT NULL
          AND (gs.content_class IS NULL OR gs.content_class = 'MUSIC') AND gs.scheduled_at >= ?`).all(stationId, beforeTs ?? 0);
     // "The log on either side" = rows still to air. A pending row whose slot has already passed will never air (the
     // reader retires it as missed); it is neither what aired nor what will.
     for (const r of rows) {
-      const inWindow = replace && r.scheduled_at >= replace[0] && r.scheduled_at < replace[1];
+      const inWindow = replace && r.lk >= replace[0] && r.lk < replace[1] && !airedHours.has(r.lk);
       const operator = r.source && String(r.source).trim().toLowerCase() === "operator";
       if (inWindow && !operator) continue;
       tl.add({ file: r.f, artist: r.sa, title: r.st || r.title }, r.scheduled_at);

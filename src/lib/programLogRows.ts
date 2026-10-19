@@ -12,6 +12,8 @@ export interface ScheduleGetRow {
   duration_s: number | null; category_id: number | null; source: string | null;
   state: string | null; content_class: string | null; channel: string | null;
   played_at: number | null;
+  /** v66: the log hour the row belongs to (every clock row is placed, so a row can start past :00). Null = its own time. */
+  log_hour_ts?: number | null;
 }
 
 /** The row shape ProgramLog.tsx renders. The legacy fields (slot_type, label, overflow, …) are kept so
@@ -77,18 +79,19 @@ export function slotTypeOf(r: { content_class?: string | null; song_id: number |
   return r.song_id ? "music" : "spot_break";
 }
 
-/** schedule:get rows → ProgramLog entries, grouped by LOCAL hour, positioned by scheduled_at order
- *  within the hour. Rows outside [dayStart, dayEnd) are not expected (the handler windows them) but
- *  are still filed by their own local hour if present. */
+/** schedule:get rows → ProgramLog entries, grouped by the LOCAL hour each row BELONGS to (v66 log_hour_ts — a clock's
+ *  extra rows that run past :00 stay under their own hour), positioned in log order within it. Rows outside
+ *  [dayStart, dayEnd) are not expected (the handler windows them) but are still filed by their own hour if present. */
 export function toEntries(
   rows: ScheduleGetRow[],
   selectedDate: string,
   cats: Map<number, CategoryRef>,
 ): ProgramLogEntry[] {
-  const sorted = [...rows].sort((a, b) => a.scheduled_at - b.scheduled_at || a.id - b.id);
+  const lk = (r: ScheduleGetRow) => r.log_hour_ts ?? r.scheduled_at;
+  const sorted = [...rows].sort((a, b) => lk(a) - lk(b) || a.scheduled_at - b.scheduled_at || a.id - b.id);
   const posByHour = new Map<number, number>();
   return sorted.map(r => {
-    const hour = localHour(r.scheduled_at);
+    const hour = localHour(lk(r));
     const position = posByHour.get(hour) ?? 0;
     posByHour.set(hour, position + 1);
     const cat = r.category_id != null ? cats.get(r.category_id) : undefined;

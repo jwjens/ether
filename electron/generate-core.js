@@ -26,6 +26,7 @@
 // `file_key` basenames, which now use storedBasename: a stored Windows path on a Mac came back whole.
 const { storedBasename } = require('./audio-library-index');
 const showWindow = require('../audiod/show-window.js');   // the show schedule is the boundary (v65: any minute)
+const segue = require('../audiod/segue-overlap.js');      // the station's segue overlap — the number the engine starts the next song on
 
 // ── Spot rotation (clock spot_break slots → spots library) ────────────────────
 // A spot_break clock slot pulls from the spots table: active, inside its date window, and —
@@ -93,6 +94,10 @@ function _buildScheduleCtx(db, stationId) {
   try { stmtClockBreaks = db.prepare(`SELECT minute, spot_category_id, count FROM clock_breaks WHERE clock_id = ? AND deleted_at IS NULL ORDER BY minute, sort_order`); } catch {}
   const ctx = {
     db, core, rules, activeStationId: stationId, stmtSpotsByCategory, stmtClockBreaks,
+    // ALL TIMING USES THE REAL SEGUE POINT (Jeff, 2026-10-18): on air the next song starts this many seconds before the
+    // song before it ends (music → music; never at a spot edge), so the log's hour is timed the same way. Unset = 0,
+    // as the engine does.
+    overlapSec: segue.readSegueOverlapSec(db, stationId) || 0,
     fallbackCat: core.fallbackCategory(db, stationId),
     // The timeline is built on the first hour generated, once the caller has said which window this run replaces
     // (planWindow). Rows of the log inside that window are about to be replaced, so they are not "the log on either
@@ -132,6 +137,14 @@ function _pool(ctx, categoryId, hour) {
   return ctx.poolCache.get(k);
 }
 /** THE ONE PICK for a music slot, then the station's fallback category if one is named. null = UNSCHEDULED. */
+/** Has the log reached the piece starting at `pieceTs` (any row no longer pending)? By log hour (v66); false before v66. */
+function _pieceHasAired(ctx, pieceTs) {
+  if (ctx.stmtPieceAired === undefined) {
+    try { ctx.stmtPieceAired = ctx.db.prepare("SELECT 1 AS x FROM generated_schedule WHERE station_id = ? AND log_hour_ts = ? AND state IN ('played','playing','missed','skipped') AND deleted_at IS NULL LIMIT 1"); }
+    catch { ctx.stmtPieceAired = null; }
+  }
+  try { return !!(ctx.stmtPieceAired && ctx.stmtPieceAired.get(ctx.activeStationId, pieceTs)); } catch { return false; }
+}
 function _pickMusic(ctx, categoryId, ts, hour) {
   const tl = _timeline(ctx, Math.floor(Date.now() / 1000));
   let r = ctx.core.pick(_pool(ctx, categoryId, hour), ts, tl, ctx.rules);
@@ -190,6 +203,10 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
     // show ending at 1:30 is built to 1:30, the next show from 1:30. No show = no log.
     for (const seg of showWindow.hourSegments(shows, hourStartTs)) {
     if (seg.fromTs < minTs) continue;         // never regenerate a piece that has already aired
+    // …by the clock, OR by the log: inside a show the log plays straight on (it never waits for :00), so a station can be
+    // in a later hour before its time. A piece the log has reached — any row played, playing, didn't play or refused at
+    // playout — is the record, not a plan (v66). Its rows stay as they are.
+    if (_pieceHasAired(ctx, seg.fromTs)) continue;
     const show = seg.show;
     if (!show) { ctx.diag.noShowHours.add(h); continue; }
     if (!show.clock_id) { ctx.diag.noClock.add(h); continue; }
@@ -198,90 +215,105 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
     const hourEnd = seg.toTs;                 // this piece's end: the show's boundary, or :00
     let currentTs = seg.fromTs;
     const dayStr = _localDayStr(slotDate);
+    // EVERY ROW ON THE CLOCK IS PLACED (Jeff, 2026-10-18: "Generate places EVERY row on the clock. Nothing is trimmed to
+    // fit the hour."). Rows past the piece's end are written too, timed in sequence; they belong to THIS piece
+    // (log_hour_ts, v66), air only if it runs short, and never mix with the next piece's rows. The reader decides at air
+    // time: the song playing at :00 is the hour's last, the rest of the hour is stamped didn't-air.
+    const firstRow = generatedRows.length;
+    // Timing by the real segue point: the row starts `overlap` seconds before the row before it ends (music → music),
+    // never before the piece's start.
+    let prevClass = null;
+    const startFor = (cls) => Math.max(seg.fromTs, currentTs - segue.overlapBetween(prevClass, cls, ctx.overlapSec));
+    try {
 
-    // One music slot, by the one pick: a song, or an UNSCHEDULED row. Returns the seconds it takes.
-    const placeMusic = (categoryId, ts, defaultDurS) => {
+    // One music slot, by the one pick: a song, or an UNSCHEDULED row. Moves currentTs to where the next row starts.
+    const placeMusic = (categoryId, defaultDurS) => {
+      const ts = startFor('MUSIC');
       const r = _pickMusic(ctx, categoryId, ts, h);
       if (r.song) {
         const d = r.song.duration_ms ? Math.round(r.song.duration_ms / 1000) : defaultDurS;
         generatedRows.push(_musicRow(ctx, r, categoryId, ts, d, show.clock_id));
-        return d;
+        currentTs = ts + d; prevClass = 'MUSIC';
+        return;
       }
-      generatedRows.push(_unscheduledRow(ctx, r, categoryId, ts, defaultDurS, show.clock_id, h));
-      return defaultDurS;
+      const at = startFor('UNSCHEDULED');   // not audio: nothing overlaps into it
+      generatedRows.push(_unscheduledRow(ctx, r, categoryId, at, defaultDurS, show.clock_id, h));
+      currentTs = at + defaultDurS; prevClass = 'UNSCHEDULED';
     };
-    // Place a break's `count` spots back-to-back from its category (rotation + daily caps via the run-wide maps).
-    const placeSpots = (spotCategoryId, count, ts) => {
-      let cur = ts;
+    // Place a break's `count` spots back-to-back from its category (rotation + daily caps via the run-wide maps). A spot
+    // edge never overlaps.
+    const placeSpots = (spotCategoryId, count) => {
+      let placed = 0;
       for (let k = 0; k < (count || 1); k++) {
-        if (cur >= hourEnd) break;
         const sp = _pickSpot(stmtSpotsByCategory, spotCategoryId, activeStationId, dayStr, spotLastTs, spotPlaysToday);
         if (!sp) break;
+        const cur = currentTs;
         spotLastTs.set(sp.id, cur);
         spotPlaysToday.set(dayStr + '|' + sp.id, (spotPlaysToday.get(dayStr + '|' + sp.id) || 0) + 1);
         const durationS = sp.length_sec || 30;
         generatedRows.push({ scheduled_at: cur, song_id: null, title: sp.title, artist: sp.advertiser || '', file_key: sp.file_path ? storedBasename(sp.file_path) : '', file_path: sp.file_path, duration_s: durationS, category_id: null, clock_id: show.clock_id, content_class: 'SPOT' });
-        cur += durationS;
+        currentTs = cur + durationS; prevClass = 'SPOT'; placed++;
       }
-      return cur;
+      return placed;
     };
 
-    // ── BREAK MODE (v26): a clock with timed spot breaks. Music fills to each break's minute in clock order; the break
-    // starts after the song that reaches its minute (3c: never a song chosen for its length). A break that starts more
-    // than the tolerance after its minute is a visible break-drift line. ──
+    // ── BREAK MODE (v26): a clock with timed spot breaks. EXACTLY THE CLOCK'S ROWS (Jeff, 2026-10-18: "Generate places
+    // exactly the rows on the clock: every row, nothing added, nothing trimmed. Ether decides nothing about how many rows
+    // an hour gets; that is the programmer's clock."). Each music row once, in clock order; each break goes in after the
+    // row that reaches its minute (3c: never a song chosen for its length); a break whose minute the rows never reach goes
+    // after the clock's last row. Nothing is repeated to fill. A break that starts more than the tolerance from its
+    // minute is a visible break-drift line. ──
     const breaks = stmtClockBreaks ? stmtClockBreaks.all(show.clock_id) : [];
     if (breaks.length > 0) {
       const musicSlots = slots.filter(s => s.slot_type === 'music' && s.category_id);
-      let musicIdx = 0;
-      const nextMusicSlot = () => (musicSlots.length ? musicSlots[musicIdx++ % musicSlots.length] : null);
       const TOL_S = 30;   // the break tolerance's starting value (§3.11); on air the alert uses the setting
-      for (const brk of breaks.slice().sort((a, b) => (a.minute || 0) - (b.minute || 0))) {
-        const target = hourStartTs + (brk.minute || 0) * 60;
-        if (target < seg.fromTs) continue;    // the break's minute is in another show's piece of this hour
-        if (target >= hourEnd) break;
-        while (currentTs < target) {
-          await _genMaybeYield();
-          const ms = nextMusicSlot(); if (!ms) break;
-          currentTs += placeMusic(ms.category_id, currentTs, (ms.duration_min || 4) * 60);
-        }
-        if (currentTs >= hourEnd) break;
+      const due = breaks.slice().sort((a, b) => (a.minute || 0) - (b.minute || 0))
+        .map(brk => ({ brk, target: hourStartTs + (brk.minute || 0) * 60 }))
+        .filter(x => x.target >= seg.fromTs && x.target < hourEnd);   // a break's minute in another show's piece is that piece's
+      let bi = 0;
+      const placeBreak = ({ brk, target }) => {
         const startTs = currentTs;
-        currentTs = placeSpots(brk.spot_category_id, brk.count, currentTs);
+        placeSpots(brk.spot_category_id, brk.count);
         const driftSec = startTs - target;
         if (Math.abs(driftSec) > TOL_S) ctx.breakDrift.push({ hour: h, minute: brk.minute || 0, driftSec, direction: driftSec > 0 ? 'over' : 'under' });
-      }
-      while (currentTs < hourEnd) {
+      };
+      for (const ms of musicSlots) {
         await _genMaybeYield();
-        const ms = nextMusicSlot(); if (!ms) break;
-        currentTs += placeMusic(ms.category_id, currentTs, (ms.duration_min || 4) * 60);
+        while (bi < due.length && currentTs >= due[bi].target) placeBreak(due[bi++]);
+        placeMusic(ms.category_id, (ms.duration_min || 4) * 60);
       }
+      while (bi < due.length) placeBreak(due[bi++]);
       continue;
     }
 
     for (const slot of slots) {
       await _genMaybeYield();                // keep main's message pump alive mid-hour
-      if (currentTs >= hourEnd) break; // no slot STARTS past the piece's end (the show boundary, or :00)
       const slotDurationS = (slot.duration_min || 4) * 60;
       // Pinned element: this slot plays ONE specific song/jingle/talk break (set by cart # in the scheduler). It is
       // the operator's choice and is placed as set; it goes on the timeline so the picks around it obey the rules.
       if (slot.song_id) {
         const pinned = stmtSongById.get(slot.song_id);
         if (pinned && pinned.file_path) {
+          const at = startFor('MUSIC');
           const durationS = pinned.duration_ms ? Math.round(pinned.duration_ms / 1000) : slotDurationS;
-          generatedRows.push({ scheduled_at: currentTs, song_id: pinned.id, title: pinned.title, artist: pinned.artist_name || '', file_key: pinned.file_path ? storedBasename(pinned.file_path) : '', duration_s: durationS, category_id: slot.category_id, clock_id: show.clock_id });
-          ctx.core.commit(_timeline(ctx, Math.floor(Date.now() / 1000)), { file: pinned.file_path, artist: pinned.artist_name, title: pinned.title }, currentTs);
-          currentTs += durationS;
+          generatedRows.push({ scheduled_at: at, song_id: pinned.id, title: pinned.title, artist: pinned.artist_name || '', file_key: pinned.file_path ? storedBasename(pinned.file_path) : '', duration_s: durationS, category_id: slot.category_id, clock_id: show.clock_id });
+          ctx.core.commit(_timeline(ctx, Math.floor(Date.now() / 1000)), { file: pinned.file_path, artist: pinned.artist_name, title: pinned.title }, at);
+          currentTs = at + durationS; prevClass = 'MUSIC';
         } else { currentTs += slotDurationS; }
         continue;
       }
       // Spot break: the least-recently-aired eligible spot from the slot's SPOT category (clock is the master).
       if (slot.slot_type === 'spot_break') {
-        const after = placeSpots(slot.spot_category_id, 1, currentTs);
-        currentTs = after > currentTs ? after : currentTs + slotDurationS;   // no eligible spot → the slot's time passes
+        if (!placeSpots(slot.spot_category_id, 1)) currentTs += slotDurationS;   // no eligible spot → the slot's time passes
         continue;
       }
       if (slot.slot_type !== 'music' || !slot.category_id) { currentTs += slotDurationS; continue; }
-      currentTs += placeMusic(slot.category_id, currentTs, slotDurationS);
+      placeMusic(slot.category_id, slotDurationS);
+    }
+
+    } finally {
+      // Every row of this piece belongs to it, wherever its start time falls (v66).
+      for (let i = firstRow; i < generatedRows.length; i++) generatedRows[i].log_hour_ts = seg.fromTs;
     }
     }   // each piece of the hour
   }
