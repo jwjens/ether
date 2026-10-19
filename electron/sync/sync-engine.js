@@ -10,7 +10,7 @@
 //   syncCycle()   — push then pull, retry causal queue, check staleness
 //   compact()     — 90-day retention via compactMutations() [§22]
 
-const { REGISTRY, isSyncExcluded }               = require('./synced-tables');
+const { REGISTRY, isSyncExcluded, refsOf }       = require('./synced-tables');
 const { toWireFormat, compactMutations }          = require('./mutation-writer');
 const { MergeEngine, compareHLC }                = require('./merge-engine');
 const { CausalOrderQueue }                       = require('./causal-order');
@@ -136,6 +136,8 @@ class SyncEngine {
       // [N-23a]. Supplied by whoever constructs the sync engine (main.js knows getMusicDir); absent
       // in tests, where the bare-basename branch is exercised instead.
       localAudioDir:      opts.localAudioDir ?? null,
+      // A reference that could not be honoured on arrival → main (the health ledger). docs/sync-uuid-references-2026-10-19.md
+      onRefIssue:         opts.onRefIssue ?? null,
     });
 
     // Prepared statements for push
@@ -523,21 +525,30 @@ class SyncEngine {
   // UUID-identity (Tier-2): attach stable parent uuids to a station-scoped wire mutation so the
   // receiver can remap to its own local ids. station_uuid (the row's station) is lifted out for the
   // backend's scoping. Resolves each reference column's local id → parent uuid from the live tables.
+  //
+  // EVERY REFERENCE, EVERY TABLE, ALWAYS (2026-10-19). The parents' uuids used to be attached only for station-scoped
+  // tables and only when this install's `sync_uuid_identity` flag was on — so songs.category_id (install-scoped) went
+  // out as this machine's integer and landed one category off on a machine that numbers categories differently. The
+  // uuids are now attached for every declared reference (refsOf) regardless of scope or flag. The flag keeps its one
+  // other job — station_uuid, which the BACKEND scopes station rows by — so delivery is exactly as before; an
+  // install-scoped row never gets a station_uuid (the backend would re-scope it). docs/sync-uuid-references-2026-10-19.md
   _enrichWire(wire) {
-    if (!this._uuidIdentity) return wire;
     const entry = REGISTRY[wire.table_name];
-    if (!entry || entry.scope !== 'station') return wire;
-    const refs = entry.refs || { station_id: 'stations' };
+    if (!entry || isSyncExcluded(wire.table_name)) return wire;
+    const refs = refsOf(wire.table_name);
     const src  = wire.payload_after || wire.payload_before || {};
     const refUuids = {};
     for (const [col, refTable] of Object.entries(refs)) {
       const localId = src[col];
       if (localId == null) continue;                    // null FK (e.g. no show_id) — nothing to map
-      const row = this._uuidStmt(refTable).get(localId);
+      let row = null;
+      try { row = this._uuidStmt(refTable).get(localId); }
+      catch { row = null; }                             // referenced table absent on this install — never fail a push
       if (row?.uuid) refUuids[col] = row.uuid;
     }
-    wire.ref_uuids    = refUuids;
-    wire.station_uuid = refUuids.station_id ?? null;     // null for the stations row itself → install-scope
+    const scoped = this._uuidIdentity && entry.scope === 'station';
+    if (scoped || Object.keys(refUuids).length) wire.ref_uuids = refUuids;
+    if (scoped) wire.station_uuid = refUuids.station_id ?? null;   // null for the stations row itself → install-scope
     return wire;
   }
 

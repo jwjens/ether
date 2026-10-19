@@ -42,6 +42,7 @@ import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { getLocalArt, fetchMusicStoreArt } from "../lib/albumArt";
 import { pushJukeboxState } from "../lib/ccData";
+import { idsFromStoredList } from "../lib/refValue";
 
 // ── Payment layer (08-04 §4) — kept as the seam, still free ────────────────────────────────────────
 // The pick path calls authorize() and enqueues ONLY on ok:true, so a donation/card step drops in here
@@ -390,11 +391,8 @@ export default function Jukebox({ onExit }: { onExit?: () => void }) {
         const get = (k: string) => rows.find(x => x.key === k)?.value;
 
         let ids: number[] = [];
-        try {
-          const raw = get("jukebox_categories");
-          const parsed = raw ? JSON.parse(raw) : [];
-          if (Array.isArray(parsed)) ids = parsed.map((n: any) => parseInt(n, 10)).filter(Number.isFinite);
-        } catch { ids = []; }
+        try { ids = await idsFromStoredList("categories", get("jukebox_categories")); }   // uuids or legacy ids
+        catch { ids = []; }
 
         // THE BOARD IS THE GATE. The dashboard's channel ON/OFF for this deck is stored here, and the
         // jukebox reports it rather than inferring air from its own AUTO. A cut channel is silence no

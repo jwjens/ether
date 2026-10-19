@@ -3,6 +3,7 @@ import { SyncCleanupRow, HealthLogRow } from "./SyncCleanupRows";
 import { getJukeboxPayouts, connectJukeboxPayouts, refreshJukeboxPayouts, setJukeboxDonationSettings, type JukeboxPayouts } from "../lib/ccData";
 const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
 import { query, execute } from "../db/client";
+import { idsFromStoredList, storedFromIds } from "../lib/refValue";
 import { queryScoped } from "../db/stationScoped";
 import DuckerSection from "./DuckerSection";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -2022,11 +2023,10 @@ function JukeboxSection() {
         const r: any = await kv().list(stationId);
         const kvRows: any[] = (r && r.rows) || [];
         const get = (k: string) => kvRows.find(x => x.key === k)?.value;
+        // Stored as category UUIDS from 2026-10-19 (a synced value must not hold this machine's numbers); an older
+        // value of plain ids still reads as this machine's ids. src/lib/refValue.ts
         let ids: number[] = [];
-        try {
-          const parsed = JSON.parse(get("jukebox_categories") ?? "[]");
-          if (Array.isArray(parsed)) ids = parsed.map((n: any) => parseInt(n, 10)).filter(Number.isFinite);
-        } catch { ids = []; }
+        try { ids = await idsFromStoredList("categories", get("jukebox_categories")); } catch { ids = []; }
         const u = String(get("jukebox_request_url") ?? "");
         // Defaults mirror _jukeboxLimits() in electron/main.js, which is the enforcing side. Two
         // copies of a default is one more than there should be; the honest fix is an IPC that reads
@@ -2056,7 +2056,9 @@ function JukeboxSection() {
    *  the same class of lie the designation bug taught this codebase about. */
   const persist = async (ids: number[]) => {
     if (stationId == null) return;
-    const value = JSON.stringify(ids);
+    let value: string;
+    try { value = JSON.stringify(await storedFromIds("categories", ids)); }   // uuids — see src/lib/refValue.ts
+    catch (e: any) { setMsg(e?.message || "Could not save."); return; }
     try {
       await kv().upsertByKey(stationId, "jukebox_categories", value);
       const r: any = await kv().list(stationId);

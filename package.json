@@ -61,6 +61,7 @@
     "test:local-playback": "node scripts/test-local-playback-guard.js",
     "test:log-checker": "node scripts/lib/log-checker-selftest.js",
     "test:record": "node scripts/test-record-phase1.js",
+    "test:uuid-refs": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/test-uuid-refs-gate.js",
     "test:scheduler-gate": "node scripts/lib/log-checker-selftest.js && node scripts/test-scheduler-gate.js",
     "test:board-restore": "node scripts/smoke-board-restore.js",
     "test:attach-restore": "node scripts/smoke-attach-after-restore.js --control",

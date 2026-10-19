@@ -73,6 +73,10 @@ const REGISTRY = {
       updated_at: 'scalar',
       deleted_at: 'scalar',
     },
+    // REFERENCES TRAVEL BY UUID (2026-10-19, docs/sync-uuid-references-2026-10-19.md). The sender attaches each parent's
+    // uuid; the receiver writes its OWN local id for it. Before this, albums.artist_id went out as the sender's integer and landed
+    // on whatever row has that number on the other machine (the category-one-off defect).
+    refs: { artist_id: 'artists' },
   },
 
   // THE ANNOUNCEMENT SCHEDULE (v47) — one row per (announcement, time) attached to weekdays or to a
@@ -157,6 +161,10 @@ const REGISTRY = {
       raw_metadata: 'scalar', r2_uploaded_at: 'scalar',
       created_at: 'scalar', updated_at: 'scalar', deleted_at: 'scalar',
     },
+    // REFERENCES TRAVEL BY UUID (2026-10-19, docs/sync-uuid-references-2026-10-19.md). The sender attaches each parent's
+    // uuid; the receiver writes its OWN local id for it. Before this, library_asset.artist_id / album_id went out as the sender's integer and landed
+    // on whatever row has that number on the other machine (the category-one-off defect).
+    refs: { artist_id: 'artists', album_id: 'albums' },
   },
 
   // TRAFFIC DETAIL — STATION-SCOPED, because the same audio file can be sold to two stations on
@@ -187,6 +195,10 @@ const REGISTRY = {
       id: 'scalar', asset_uuid: 'scalar', sweeper_category_id: 'scalar',
       uuid: 'scalar', created_at: 'scalar', updated_at: 'scalar', deleted_at: 'scalar',
     },
+    // REFERENCES TRAVEL BY UUID (2026-10-19, docs/sync-uuid-references-2026-10-19.md). The sender attaches each parent's
+    // uuid; the receiver writes its OWN local id for it. Before this, asset_sweeper_meta.sweeper_category_id (a jingle category — v50 filled it from songs.jingle_category_id) went out as the sender's integer and landed
+    // on whatever row has that number on the other machine (the category-one-off defect).
+    refs: { sweeper_category_id: 'jingle_categories' },
   },
 
   announcements: {
@@ -279,6 +291,10 @@ const REGISTRY = {
       updated_at:     'scalar',
       deleted_at:     'scalar',
     },
+    // REFERENCES TRAVEL BY UUID (2026-10-19, docs/sync-uuid-references-2026-10-19.md). The sender attaches each parent's
+    // uuid; the receiver writes its OWN local id for it. Before this, categories.overlay_song_id / overlay_category_id went out as the sender's integer and landed
+    // on whatever row has that number on the other machine (the category-one-off defect).
+    refs: { station_id: 'stations', overlay_song_id: 'songs', overlay_category_id: 'categories' },
   },
 
   spot_categories: {
@@ -783,6 +799,10 @@ const REGISTRY = {
       updated_at:   'scalar',
       deleted_at:   'scalar',
     },
+    // REFERENCES TRAVEL BY UUID (2026-10-19, docs/sync-uuid-references-2026-10-19.md). The sender attaches each parent's
+    // uuid; the receiver writes its OWN local id for it. Before this, published_episodes.show_id went out as the sender's integer and landed
+    // on whatever row has that number on the other machine (the category-one-off defect).
+    refs: { station_id: 'stations', show_id: 'shows' },
   },
 
   rtmp_destinations: {
@@ -988,6 +1008,10 @@ const REGISTRY = {
       uuid:                'scalar',
       deleted_at:          'scalar',
     },
+    // REFERENCES TRAVEL BY UUID (2026-10-19, docs/sync-uuid-references-2026-10-19.md). The sender attaches each parent's
+    // uuid; the receiver writes its OWN local id for it. Before this, songs.category_id / jingle_category_id / artist_id / album_id went out as the sender's integer and landed
+    // on whatever row has that number on the other machine (the category-one-off defect).
+    refs: { category_id: 'categories', jingle_category_id: 'jingle_categories', artist_id: 'artists', album_id: 'albums' },
   },
 
   spots: {
@@ -1168,4 +1192,20 @@ function isSyncExcluded(tableName) {
   return !!e && (e.syncExcluded === true || e.scope === 'local-only');
 }
 
-module.exports = { SYNCED_TABLES, REGISTRY, isSyncExcluded };
+/**
+ * A table's references: column → referenced table. The ONE definition both halves of sync read (sync-engine attaches
+ * each parent's uuid, merge-engine writes the local id for it) and the uuid-reference repair walks.
+ *
+ * Every synced table, install-scoped as well as station-scoped (2026-10-19). It used to be station-scoped only — both
+ * halves returned early for any other scope — so songs.category_id, which is install-scoped, went out as the sender's
+ * integer. A station-scoped table with no `refs` still references its station; an excluded or local-only table has
+ * none (it never travels). docs/sync-uuid-references-2026-10-19.md.
+ */
+function refsOf(tableName) {
+  const e = REGISTRY[tableName];
+  if (!e || isSyncExcluded(tableName)) return {};
+  if (e.refs) return e.refs;
+  return e.scope === 'station' ? { station_id: 'stations' } : {};
+}
+
+module.exports = { SYNCED_TABLES, REGISTRY, isSyncExcluded, refsOf };

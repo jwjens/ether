@@ -4060,6 +4060,8 @@ app.whenReady().then(() => {
         // is how one machine's user directory used to land in the other's rows. A getter, not a
         // string: changing the library folder takes effect on the next apply, not the next restart.
         localAudioDir: () => getMusicDir(),
+        // A reference that could not be honoured on arrival (uuid not here / older sender) → the health ledger.
+        onRefIssue: _onSyncRefIssue,
         // An inbound pull that touched the saved board refreshes the board watch's copy (event-driven, no polling).
         onProgress: (ev) => {
           try { const bt = (ev && ev.byTable) || {}; if (bt.station_config_kv || bt.deck_configs) _boardWatch.savedChanged(null, _stationIds); } catch {}
@@ -4071,6 +4073,9 @@ app.whenReady().then(() => {
       // "sync:set-active" with true on sign-in and false on sign-out. This is what stops Ether from
       // assuming a license and pushing/pulling data before anyone has signed in. [account-isolation]
       app._syncScheduler = scheduler;
+      // References by uuid: publish this computer's numbering and run the one-time re-file (a moment after start, so
+      // the first pull can bring the other computer's numbering in). docs/sync-uuid-references-2026-10-19.md
+      setTimeout(() => _uuidRefTick('startup'), UUID_REF_FIRST_RUN_DELAY_MS);
 
       // ── Member peer-sync — OPT-IN PER COMPUTER (the operator CHOOSES, nothing is auto-pulled) ──────
       // Member stations the operator picks on the sync screen are persisted in install_config_kv
@@ -4106,6 +4111,7 @@ app.whenReady().then(() => {
         const localId = () => { const r = db.prepare('SELECT id FROM stations WHERE uuid = ?').get(uuid); return r ? String(r.id) : null; };
         const me = new SyncEngine(db, mt, {
           uuidIdentity: true,
+          onRefIssue: _onSyncRefIssue,
           // Bidirectional when member-operate is on; pull-only otherwise (safe default).
           pullOnly: !memberOperate,
           cursorKey: 'sync_cursor_member_' + uuid,
@@ -8700,6 +8706,96 @@ ipcMain.handle("jukebox:request-close", (_evt, id, outcome) => {
   }
 });
 
+// ── REFERENCES BY UUID (2026-10-19, docs/sync-uuid-references-2026-10-19.md) ─────────────────────────────────────────
+// Jeff: "every reference between rows (song→category and any other) travels by UUID and is looked up on arrival" and
+// "One-time repair, runs on each machine at upgrade … Report every song it moved."
+//
+// The renderer asks the sync registry for a table's references (one definition — never a renderer copy).
+ipcMain.handle('sync:refs-of', (_e, table) => {
+  try { return require('./sync/synced-tables').refsOf(String(table)); } catch { return {}; }
+});
+
+// A reference merge-engine could not honour (its uuid is not on this computer yet, or an older sender with no published
+// numbering) — gathered for a minute and written as ONE ledger line, so a backlog cannot flood the health log.
+const _refIssues = { counts: {}, samples: [], timer: null };
+function _onSyncRefIssue(issue) {
+  try {
+    _refIssues.counts[issue.kind] = (_refIssues.counts[issue.kind] || 0) + 1;
+    if (_refIssues.samples.length < 10) _refIssues.samples.push(issue);
+    if (!_refIssues.timer) {
+      _refIssues.timer = setTimeout(() => {
+        const line = { t: new Date().toISOString(), kind: 'sync-ref-issue', counts: _refIssues.counts, samples: _refIssues.samples };
+        _refIssues.counts = {}; _refIssues.samples = []; _refIssues.timer = null;
+        try { _ledgerAppend(line); } catch {}
+      }, 60 * 1000);
+    }
+  } catch { /* a report must never break an apply */ }
+}
+
+// The one-time re-file: first run a moment after sync starts; while it waits for another computer's numbering (that
+// computer publishes it when it first runs this build), it retries on this interval. Both numbers are timing, not
+// on-air behaviour.
+const UUID_REF_FIRST_RUN_DELAY_MS = 30 * 1000;
+const UUID_REF_RETRY_MS = 10 * 60 * 1000;
+let _uuidRefTimer = null;
+let _uuidRefRunning = false;
+function _uuidRefTick(reason) {
+  if (_uuidRefRunning) return;
+  _uuidRefRunning = true;
+  try {
+    const d = getDb();
+    if (!d || !d.open) return;
+    // 1. This computer's numbering, so the other computer can read the assignments this one made.
+    try {
+      const pub = require('./sync/id-numbering').publishNumbering(d);
+      if (pub.published) console.log(`[uuid-refs] published this computer's numbering ${JSON.stringify(pub.sizes)}`);
+    } catch (e) { console.warn('[uuid-refs] numbering publish failed:', e.message); }
+
+    // 2. The re-file.
+    const R = require('./sync/uuid-ref-repair');
+    const state = R.repairState(d);
+    if (state === 'done') { if (_uuidRefTimer) { clearInterval(_uuidRefTimer); _uuidRefTimer = null; } return; }
+    let report;
+    try { report = R.runRepair(d, { apply: true }); }
+    catch (e) {
+      console.error('[uuid-refs] re-file failed:', e.message);
+      try { _ledgerAppend({ t: new Date().toISOString(), kind: 'uuid-ref-repair', reason, error: e.message }); } catch {}
+      return;
+    }
+    const changed = report.moved.length + report.kvMoved.length;
+    let file = null;
+    if (changed || state == null) {
+      try {
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        file = path.join(P.profileDir(P.activeKey()), `songs-refiled-${stamp}.txt`);
+        fs.writeFileSync(file, R.formatReport(report, { machineLabel: require('os').hostname() }));
+      } catch (e) { console.warn('[uuid-refs] report write failed:', e.message); file = null; }
+    }
+    console.log(`[uuid-refs] re-file (${reason}): checked ${report.checked}, moved ${report.moved.length}, settings ${report.kvMoved.length}, ` +
+      `waiting ${report.waiting.length}, could not place ${report.missing.length}${file ? ` — report ${file}` : ''}`);
+    try {
+      _ledgerAppend({ t: new Date().toISOString(), kind: 'uuid-ref-repair', reason, checked: report.checked,
+        moved: report.moved.length, kvMoved: report.kvMoved.length, waiting: report.waiting.length,
+        missing: report.missing.length, noHistory: report.noHistory, file });
+    } catch {}
+    if (changed) {
+      const cats = report.moved.filter(x => x.reference === 'category').length;
+      try {
+        _alerts.raise('songs-refiled', { severity: 'yellow', path: file,
+          message: `Songs re-filed by stable id: ${cats} to their right category` +
+            (report.moved.length > cats ? `, ${report.moved.length - cats} other references` : '') +
+            (report.kvMoved.length ? `, ${report.kvMoved.length} settings` : '') +
+            `. Every move is listed in ${file || 'the health log'}.` });
+      } catch {}
+    }
+    R.setRepairState(d, report.waiting.length ? 'waiting' : 'done');
+    if (report.waiting.length && !_uuidRefTimer) _uuidRefTimer = setInterval(() => _uuidRefTick('retry'), UUID_REF_RETRY_MS);
+    if (!report.waiting.length && _uuidRefTimer) { clearInterval(_uuidRefTimer); _uuidRefTimer = null; }
+  } finally {
+    _uuidRefRunning = false;
+  }
+}
+
 // ── Show+ DAW dirty-state + force-close (the close-guard back-channel) ──
 ipcMain.on("studio:set-dirty", (evt, dirty) => {
   const w = BrowserWindow.fromWebContents(evt.sender);
@@ -10873,7 +10969,13 @@ function _placeJingles(db, stationId, rows) {
   let fallbackCatId = null;
   try {
     const fb = db.prepare("SELECT value FROM station_config_kv WHERE key='overlay_fallback_category_id' AND station_id = ? AND deleted_at IS NULL").get(stationId);
-    if (fb && fb.value) fallbackCatId = parseInt(fb.value, 10) || null;
+    // A jingle category's UUID from 2026-10-19 (a synced value must not hold one machine's number); a legacy plain id
+    // still reads as this machine's id. docs/sync-uuid-references-2026-10-19.md
+    if (fb && fb.value) {
+      fallbackCatId = /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(fb.value)
+        ? (db.prepare("SELECT id FROM jingle_categories WHERE uuid = ?").get(fb.value)?.id ?? null)
+        : (parseInt(fb.value, 10) || null);
+    }
   } catch {}
   // AUTO-POST is a STATION setting, switched in the Sweepers panel (audit 11). Off → the LEAD path, unchanged.
   const stationAutoPost = require('./auto-post-switch').readAutoPost(db, stationId);

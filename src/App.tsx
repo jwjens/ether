@@ -1312,11 +1312,15 @@ export default function App() {
     // Resolve a library song (by local id, or file_key) to a playable filePath — fetching
     // from the R2 cloud cache if it's not materialized locally. Used by the dashboard's
     // remote A/B/C (deck:load) + Q (queue:enqueue) actions.
-    const resolveSong = async (songId?: number, fileKey?: string): Promise<{ filePath: string; title: string; artist: string; durationMs: number } | null> => {
+    // The song by UUID, then by file_key (a content identity), and by integer id LAST: the dashboard's song_id is the
+    // numbering of whichever machine pushed the mirror, which may not be this one (docs/sync-uuid-references-2026-10-19.md).
+    const resolveSong = async (songId?: number, fileKey?: string, songUuid?: string): Promise<{ filePath: string; title: string; artist: string; durationMs: number } | null> => {
       try {
+        const SEL = "SELECT s.*, a.name AS artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE ";
         let row: any = null;
-        if (songId != null) row = await queryOne<any>("SELECT s.*, a.name AS artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.id = ?", [songId]);
-        if (!row && fileKey) row = await queryOne<any>("SELECT s.*, a.name AS artist_name FROM songs s LEFT JOIN artists a ON a.id = s.artist_id WHERE s.file_key = ?", [fileKey]);
+        if (songUuid) row = await queryOne<any>(SEL + "s.uuid = ?", [songUuid]);
+        if (!row && fileKey) row = await queryOne<any>(SEL + "s.file_key = ?", [fileKey]);
+        if (!row && songId != null) row = await queryOne<any>(SEL + "s.id = ?", [songId]);
         if (!row) return null;
         let filePath: string = row.file_path || "";
         const key = row.file_key || fileKey;
@@ -1555,7 +1559,7 @@ export default function App() {
             const deck = String(data.deck || "A").toUpperCase() as "A" | "B" | "C";
             if (!["A", "B", "C"].includes(deck)) { refuse(`deck:load — no deck ${deck}`); break; }
             if (!isActive) { refuse("deck:load skipped — non-active station (deferred)"); break; }
-            const song = await resolveSong(data.song_id, data.file_key);
+            const song = await resolveSong(data.song_id, data.file_key, data.song_uuid ?? data.uuid);
             if (!song) { refuse("deck:load — that song is not playable on this machine"); break; }
             {
               if (useDaemon) {
@@ -1717,7 +1721,7 @@ export default function App() {
           }
           case "queue:enqueue": {
             if (!isActive) { refuse("queue:enqueue skipped — non-active station (deferred)"); break; }
-            const song = await resolveSong(data.song_id, data.file_key);
+            const song = await resolveSong(data.song_id, data.file_key, data.song_uuid ?? data.uuid);
             if (!song) { refuse("queue:enqueue — that song is not playable on this machine"); break; }
             {
               const item = { filePath: song.filePath, title: song.title, artist: song.artist, durationMs: song.durationMs };

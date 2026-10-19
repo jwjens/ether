@@ -17,6 +17,7 @@
 // Selection lives here in the ONE scheduler (Generate); the daemon only orchestrates the fire. Cadence retired.
 import { useEffect, useState, useCallback, Fragment } from "react";
 import { query } from "../db/client";
+import { idFromStoredOne, storedFromIds } from "../lib/refValue";
 import { SWP_INDIGO } from "../lib/classColors";
 import ReelSplitter from "./ReelSplitter";
 import InlineNameEditor from "./InlineNameEditor";
@@ -125,7 +126,7 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
       const r = await ether()?.stationConfigKv?.list(stationId);
       const rows = (r?.rows || []) as { key: string; value: string }[];
       const v = rows.find(x => x.key === "overlay_fallback_category_id")?.value;
-      setFallbackId(v ? (parseInt(v, 10) || null) : null);
+      setFallbackId(await idFromStoredOne("jingle_categories", v));   // a uuid, or a legacy local id
       setAutoPost(rows.find(x => x.key === "overlay_auto_post")?.value === "1");
       const so = parseInt(rows.find(x => x.key === "segue_overlap_sec")?.value ?? "", 10);
       setSegueOverlap(isNaN(so) ? 0 : Math.max(0, Math.min(10, so)));
@@ -172,7 +173,8 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
     const next = !autoPost;
     try { await ether()?.stationConfigKv?.upsertByKey(stationId, "overlay_auto_post", next ? "1" : "0"); setAutoPost(next); } catch {}
   };
-  const setFallback = async (poolId: number | null) => { if (ro) return; try { await ether()?.stationConfigKv?.upsertByKey(stationId, "overlay_fallback_category_id", poolId != null ? String(poolId) : ""); setFallbackId(poolId); } catch {} };
+  // Stored as the pool's UUID (2026-10-19): a synced value must not hold this machine's number. src/lib/refValue.ts
+  const setFallback = async (poolId: number | null) => { if (ro) return; try { const stored = poolId != null ? (await storedFromIds("jingle_categories", [poolId]))[0] : ""; await ether()?.stationConfigKv?.upsertByKey(stationId, "overlay_fallback_category_id", String(stored ?? "")); setFallbackId(poolId); } catch {} };
 
   // Category assignment: encode as "item:<songId>" | "pool:<poolId>" | "".
   const assignCategory = async (c: MusicCat, value: string) => {

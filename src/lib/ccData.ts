@@ -1,5 +1,6 @@
 import { ETHER_BACKEND_URL, blockedByDevGuard } from "./etherBackend";
 import { query } from "../db/client";
+import { idsFromStoredList } from "./refValue";
 import { queryScoped } from "../db/stationScoped";
 import { selectAttachedStationsToMaterialize, chooseActiveStation } from "./provisioning";
 import { hasEngine, getEngine } from "../audio/engine-registry";
@@ -99,11 +100,8 @@ export async function pushJukeboxPool(
     if (!slug) return;   // no public URL configured → nothing to publish, and no QR to scan either
 
     let categoryIds: number[] = [];
-    try {
-      const raw = get("jukebox_categories");
-      const parsed = raw ? JSON.parse(raw) : [];
-      if (Array.isArray(parsed)) categoryIds = parsed.map((n: any) => parseInt(n, 10)).filter(Number.isFinite);
-    } catch { categoryIds = []; }
+    try { categoryIds = await idsFromStoredList("categories", get("jukebox_categories")); }   // uuids or legacy ids
+    catch { categoryIds = []; }
     if (!categoryIds.length) return;   // nothing ticked → an empty pool is not worth publishing
 
     const inList = categoryIds.map(() => "?").join(",");
@@ -253,6 +251,7 @@ export async function pushCcTable(
   } catch (e) { console.log(`[CCPUSH] ${table} list failed:`, (e as any)?.message ?? e); return; }
   // IPC list handlers return { rows: [...] } (or { ok, rows }), NOT a bare array.
   const rows: unknown[] = Array.isArray(res) ? res : ((res && res.rows) || []);
+  await addRefUuids(table, rows as any[]);   // `<column>_uuid` beside each reference — see "REFERENCES BY UUID"
   console.log(`[CCPUSH] ${table}: ${rows.length} rows from station ${stationId}`);
   await pushCcData(licenseKey, stationUuid, table, rows);
 }
@@ -538,6 +537,7 @@ export async function pushLibrary(
          s.file_key      AS file_key,
          CASE WHEN s.file_path IS NOT NULL AND s.file_path != '' THEN 1 ELSE 0 END AS has_local,
          COALESCE(sp.category_id,     s.category_id)     AS category_id,
+         c.uuid          AS category_uuid,
          c.code          AS category_code,
          c.name          AS category_name,
          c.color         AS category_color,
@@ -690,12 +690,25 @@ export async function addLibrarySong(
   licenseKey: string | null | undefined,
   data: {
     file_key?: string; title?: string; artist?: string;
-    category_id?: number | null; duration_ms?: number | null;
+    category_id?: number | null; category_uuid?: string | null; duration_ms?: number | null;
+    song_uuid?: string | null; programming_uuid?: string | null;
     station_id?: number; station_uuid?: string;
   },
 ): Promise<void> {
   const ether = (window as any).ether;
-  const { file_key, title, artist, category_id, duration_ms, station_uuid } = data;
+  const { file_key, title, artist, duration_ms, station_uuid } = data;
+  // The category by uuid when the dashboard sends one (this machine's id for it); its integer is another machine's
+  // numbering and is used only when no uuid came (a dashboard from before 2026-10-19). "REFERENCES BY UUID" above.
+  let category_id: number | null = data.category_id ?? null;
+  if (data.category_uuid) {
+    const r = await resolveRefUuids("songs", { category_id_uuid: data.category_uuid });
+    category_id = "category_id" in r ? r.category_id : null;
+  }
+  // The same song on every desktop: with a uuid, a desktop that already has it (synced first) does not make another.
+  if (data.song_uuid && await rowExists("songs", data.song_uuid)) {
+    console.log(`[addSong] "${title}" (${data.song_uuid}) is already here — not creating a second copy`);
+    return;
+  }
   // Resolve the install's local station_id from the UUID (dashboard never supplies the integer).
   let station_id: number | null = data.station_id ?? null;
   if (station_uuid) {
@@ -717,6 +730,7 @@ export async function addLibrarySong(
       artist_id = a?.row?.id ?? a?.id ?? null;
     }
     const songRes = await ether.songs.create({
+      ...(data.song_uuid ? { uuid: data.song_uuid } : {}),
       title: String(title).trim(),
       artist_id,
       file_key,
@@ -727,9 +741,13 @@ export async function addLibrarySong(
     });
     const songId = songRes?.row?.id ?? songRes?.id ?? null;
     if (songId != null) {
-      await ether.stationProgramming.create({
-        song_id: songId, station_id, category_id: category_id ?? null, rotation_status: "active",
-      });
+      // Named by the dashboard when it can (every desktop then makes the SAME row, not one each).
+      if (!(await rowExists("station_programming", data.programming_uuid))) {
+        await ether.stationProgramming.create({
+          ...(data.programming_uuid ? { uuid: data.programming_uuid } : {}),
+          song_id: songId, station_id, category_id: category_id ?? null, rotation_status: "active",
+        });
+      }
     } else {
       console.warn("[addSong] no song id returned — skipped station_programming");
     }
@@ -743,6 +761,66 @@ export async function addLibrarySong(
     return;
   }
   await pushLibrary(licenseKey, station_uuid, station_id);
+}
+
+// ── REFERENCES BY UUID ON THE DASHBOARD CHANNEL (2026-10-19, docs/sync-uuid-references-2026-10-19.md) ────────────────
+//
+// The dashboard learns rows from the mirror below and sends edits back over db:apply, which fans out to EVERY desktop
+// on the account. A mirror row's integers are the numbering of whichever machine pushed it last, and each desktop read
+// them against its own — the same category-one-off defect as the mutation sync, through a second door. So:
+//   · every mirrored row also carries `<column>_uuid` for each of its references (and the library row `category_uuid`);
+//   · a command that sends `<column>_uuid` is resolved to THIS machine's id; a uuid not here is never replaced by the
+//     dashboard's integer;
+//   · a create that names a `uuid` this machine already holds (it arrived by sync first) updates it instead of making a
+//     second copy — what an un-uuid'd dashboard create did on every machine (one row per desktop, each its own uuid).
+// The reference map is the sync registry's, asked of main — never a second copy here.
+const _refsOf = new Map<string, Record<string, string>>();
+async function refsOf(table: string): Promise<Record<string, string>> {
+  if (!_refsOf.has(table)) {
+    let refs: Record<string, string> = {};
+    try { refs = (await (window as any).ether.invoke("sync:refs-of", table)) || {}; } catch { refs = {}; }
+    _refsOf.set(table, refs);
+  }
+  return _refsOf.get(table)!;
+}
+
+/** Add `<column>_uuid` beside each reference of each row (station_id excluded — the mirror is keyed by station uuid). */
+async function addRefUuids(table: string, rows: any[]): Promise<void> {
+  const refs = await refsOf(table);
+  for (const [col, refTable] of Object.entries(refs)) {
+    if (col === "station_id") continue;
+    const ids = [...new Set(rows.map(r => r?.[col]).filter((v: any) => v != null))];
+    if (!ids.length) continue;
+    let found: Array<{ id: number; uuid: string }> = [];
+    try { found = await query(`SELECT id, uuid FROM ${refTable} WHERE id IN (${ids.map(() => "?").join(",")})`, ids); }
+    catch { continue; }
+    const m = new Map(found.map(f => [f.id, f.uuid]));
+    for (const r of rows) if (r && r[col] != null) r[`${col}_uuid`] = m.get(r[col]) ?? null;
+  }
+}
+
+/** Resolve `<column>_uuid` fields to this machine's ids; strip them so handlers never see unknown columns. */
+async function resolveRefUuids(table: string, payload: any): Promise<any> {
+  if (!payload || typeof payload !== "object") return payload;
+  const out = { ...payload };
+  const refs = await refsOf(table);
+  for (const [col, refTable] of Object.entries(refs)) {
+    const key = `${col}_uuid`;
+    if (!(key in out)) continue;
+    const u = out[key];
+    delete out[key];
+    if (u == null) { out[col] = null; continue; }
+    let row: any[] = [];
+    try { row = await query(`SELECT id FROM ${refTable} WHERE uuid = ?`, [u]); } catch { row = []; }
+    if (row[0]) out[col] = row[0].id;
+    else { delete out[col]; console.warn(`[db:apply] ${table}.${col}: ${refTable} ${u} is not on this install — left unchanged`); }
+  }
+  return out;
+}
+
+async function rowExists(table: string, uuid: string | null | undefined): Promise<boolean> {
+  if (!uuid) return false;
+  try { return (await query(`SELECT 1 FROM ${table} WHERE uuid = ? LIMIT 1`, [uuid])).length > 0; } catch { return false; }
 }
 
 // Whitelist of CC-mirrored tables -> the window.ether preload namespace that owns them.
@@ -1192,11 +1270,20 @@ export async function applyDbMutation(
   }
 
   try {
+    // References by uuid → this machine's ids (see "REFERENCES BY UUID").
+    const resolved = await resolveRefUuids(data.table, data.payload);
     if (data.op === "create") {
-      const payload = STATION_SCOPED.has(data.table) ? { ...data.payload, station_id: localStationId } : data.payload;
-      await ns.create(payload);
+      const payload = STATION_SCOPED.has(data.table) ? { ...resolved, station_id: localStationId } : resolved;
+      const createUuid = payload?.uuid ?? data.uuid;
+      if (await rowExists(data.table, createUuid)) {
+        // Already here (arrived by sync from another desktop): the same row, not a second copy.
+        const { uuid: _u, id: _i, ...rest } = payload;
+        await ns.update(createUuid, rest);
+      } else {
+        await ns.create(createUuid && !payload.uuid ? { ...payload, uuid: createUuid } : payload);
+      }
     } else if (data.op === "update") {
-      await ns.update(data.uuid, data.payload);
+      await ns.update(data.uuid, resolved);
     } else if (data.op === "delete") {
       await ns.delete(data.uuid, STATION_SCOPED.has(data.table) ? (localStationId ?? undefined) : data.station_id);
     } else { console.warn("[db:apply] unsupported op:", data.op); return; }

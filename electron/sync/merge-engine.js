@@ -13,7 +13,8 @@
 // Returns one of: 'applied' | 'loser' | 'idempotent' | 'held' | 'quarantined' | 'rejected' | 'conflicted'
 
 const { deserializePayload }                      = require('./mutation-writer');
-const { REGISTRY }                                = require('./synced-tables');
+const { REGISTRY, refsOf }                        = require('./synced-tables');
+const { uuidThroughNumbering }                    = require('./id-numbering');
 const { applyTransformerChain } = require('./transformer-chain');
 
 // ── HLC comparison [N-46] ─────────────────────────────────────────────────────
@@ -51,7 +52,7 @@ class MergeEngine {
    * @param {import('./causal-order').CausalOrderQueue} opts.causalQueue
    * @param {function} opts.onCursorAdvance  (clientId: string, hlc: string) => void
    */
-  constructor(db, { localSchemaVersion, causalQueue, onCursorAdvance, uuidIdentity, localAudioDir }) {
+  constructor(db, { localSchemaVersion, causalQueue, onCursorAdvance, uuidIdentity, localAudioDir, onRefIssue }) {
     this._db                  = db;
     // [N-23a] — THIS machine's catalogue, so an inbound blob-ref becomes a path this receiver
     // CONSTRUCTED rather than the sender's directory copied verbatim. A function, not a string: the
@@ -69,6 +70,11 @@ class MergeEngine {
     // SCOPES (sync-engine.js: station_uuid on the wire, uuid-scoped pull).
     this._uuidIdentity        = uuidIdentity ?? false;
     this._refStmts            = {};
+    // References that could not be honoured on arrival (docs/sync-uuid-references-2026-10-19.md): counted here and
+    // handed to onRefIssue (main → the health ledger). `unresolved` = the parent's uuid is not on this install;
+    // `noNumbering` = a sender with no uuid and no published numbering, whose integer was kept as before.
+    this.refStats             = { translated: 0, viaNumbering: 0, unresolved: 0, noNumbering: 0 };
+    this._onRefIssue          = typeof onRefIssue === 'function' ? onRefIssue : null;
 
     // Prepare reusable statements
     this._stmtExists = db.prepare('SELECT 1 FROM mutations WHERE id = ? LIMIT 1');
@@ -394,27 +400,64 @@ class MergeEngine {
       // legitimately references a deleted song (e.g. a preserved `played` history row) keeps its
       // reference instead of silently serializing null. Product reads use the live view; identity
       // resolution does not. docs/deleted-songs-still-air-design-2026-08-06.md §11.5.
-      this._refStmts[table] = this._db.prepare(`SELECT id FROM ${this._physical(table)} WHERE uuid = ?`);
+      try { this._refStmts[table] = this._db.prepare(`SELECT id FROM ${this._physical(table)} WHERE uuid = ?`); }
+      catch { return null; }                       // referenced table absent on this install
     }
     return this._refStmts[table].get(uuid)?.id ?? null;
   }
 
-  // Rewrite each reference column on `row` from the sender's local id to this install's local id,
-  // using the parent uuids the sender attached (m.ref_uuids: column → parent uuid) and the registry's
-  // refs map (column → referenced table). station_id is the universal default for station-scoped
-  // tables. An unresolved uuid means the parent isn't on this install yet — left as-is and logged;
-  // ordered delivery (parents before children, by server_seq) makes this the rare case.
+  // Rewrite each reference column on `row` from the sender's local id to this install's local id.
+  //
+  // EVERY TABLE, AND NEVER THE SENDER'S INTEGER (2026-10-19). This ran for station-scoped tables only, so songs (install-
+  // scoped) kept the sender's category number — the category-one-off defect. And a uuid that did not resolve here left
+  // the sender's integer in place, which names whatever row has that number on THIS machine: a wrong reference, written
+  // silently. Now, per declared reference (refsOf):
+  //   uuid attached, resolves here     → this install's id
+  //   uuid attached, not here (yet)    → not written: an update keeps this install's value, a new row leaves it empty
+  //   no uuid (older sender / in-flight) → through the SENDER's published numbering (id-numbering.js); when the sender
+  //                                      has published none, today's behaviour (its integer) — counted, never silent
+  //   station_id with no uuid          → unchanged (station scoping of legacy senders is its own project)
+  // docs/sync-uuid-references-2026-10-19.md
   _remapRefs(m, row) {
-    const entry = REGISTRY[m.table_name];
-    if (!entry || entry.scope !== 'station') return;
-    const refs = entry.refs || { station_id: 'stations' };
+    const refs = refsOf(m.table_name);
     const refUuids = m.ref_uuids || {};
     for (const [col, refTable] of Object.entries(refs)) {
+      if (row[col] == null) continue;                    // absent from the payload, or a genuine NULL — nothing to map
       const uuid = refUuids[col];
-      if (uuid == null) continue;               // sender had no value for this ref (e.g. null show_id)
-      const localId = this._resolveLocalId(refTable, uuid);
-      if (localId != null) row[col] = localId;
-      else console.warn(`[merge-engine] uuid-identity: ${m.table_name}.${col} uuid=${uuid} not resolvable on this install`);
+      if (uuid != null) {
+        const localId = this._resolveLocalId(refTable, uuid);
+        if (localId != null) { row[col] = localId; this.refStats.translated++; continue; }
+        this._keepLocalValue(m, row, col);
+        this._refIssue('unresolved', m, col, { uuid });
+        continue;
+      }
+      if (col === 'station_id') continue;
+      const viaSender = uuidThroughNumbering(this._db, m.client_id, refTable, row[col]);
+      if (viaSender === undefined) { this._refIssue('noNumbering', m, col, { id: row[col] }); continue; }
+      const localId = viaSender == null ? null : this._resolveLocalId(refTable, viaSender);
+      if (localId != null) { row[col] = localId; this.refStats.viaNumbering++; continue; }
+      this._keepLocalValue(m, row, col);
+      this._refIssue('unresolved', m, col, { id: row[col], uuid: viaSender });
+    }
+  }
+
+  // An unresolvable reference is not written: this install's own value stays (an update, or a re-insert of a row we
+  // have — INSERT OR REPLACE would otherwise blank it), and a row new here gets none.
+  _keepLocalValue(m, row, col) {
+    let current;
+    try {
+      current = m.row_id ? this._db.prepare(`SELECT ${col} AS v FROM ${this._physical(m.table_name)} WHERE uuid = ?`).get(m.row_id) : undefined;
+    } catch { current = undefined; }
+    if (current) row[col] = current.v;
+    else delete row[col];
+  }
+
+  _refIssue(kind, m, col, detail) {
+    this.refStats[kind]++;
+    console.warn(`[merge-engine] reference ${kind}: ${m.table_name}.${col} row=${m.row_id} from=${m.client_id} ${JSON.stringify(detail)}`);
+    if (this._onRefIssue) {
+      try { this._onRefIssue({ kind, table: m.table_name, column: col, row_id: m.row_id, from: m.client_id, ...detail }); }
+      catch { /* a report must never break an apply */ }
     }
   }
 
