@@ -49,7 +49,14 @@ const cartModule = (instanceId: string, station = GLOBAL) =>
  *  engine's own background deck-state poll (it runs on a timer whether or not anything is pressed). The console
  *  line's wall-clock stamp is the one field that cannot match between two fires. */
 function fireCalls(): BridgeCall[] {
-  const calls = ether.calls.filter(c => c.path !== "on" && c.path !== "off" && c.path !== "audio.getState");
+  // THE FIRE ENDS AT audio.play. The wall polls its cart deck every 200 ms (the flash and countdown), and each poll reads
+  // audio.daemonEnabled. On a loaded machine the click took ~410 ms to settle, a poll landed inside the recording, and
+  // the module showed 9 calls to the page's 8 — the same component (the page IS the Carts window now), different timing.
+  // Measured 2026-10-19: the extra calls were audio.daemonEnabled ×2 after audio.play. Everything up to and including
+  // the play is still compared exactly; what the poll reads afterwards is not the fire.
+  const all = ether.calls.filter(c => c.path !== "on" && c.path !== "off" && c.path !== "audio.getState");
+  const end = all.findIndex(c => c.path === "audio.play");
+  const calls = end >= 0 ? all.slice(0, end + 1) : all;
   return JSON.parse(JSON.stringify(calls, (k, v) => (k === "ts" && typeof v === "number" ? "[time]" : v)));
 }
 const tileOf = (m: Mounted) => findAllByAttr(m.container, "title", FIRE_TITLE)[0];
