@@ -14,6 +14,7 @@
 
 const { deserializePayload }                      = require('./mutation-writer');
 const { REGISTRY, refsOf }                        = require('./synced-tables');
+const heldRefs                                    = require('./held-refs');
 const { uuidThroughNumbering, labelThroughNumbering } = require('./id-numbering');
 const { materializeParent }                       = require('./parent-rows');
 const { applyTransformerChain } = require('./transformer-chain');
@@ -74,7 +75,7 @@ class MergeEngine {
     // References that could not be honoured on arrival (docs/sync-uuid-references-2026-10-19.md): counted here and
     // handed to onRefIssue (main → the health ledger). `unresolved` = the parent's uuid is not on this install;
     // `noNumbering` = a sender with no uuid and no published numbering, whose integer was kept as before.
-    this.refStats             = { translated: 0, viaNumbering: 0, created: 0, matchedByName: 0, unresolved: 0, noNumbering: 0 };
+    this.refStats             = { translated: 0, viaNumbering: 0, created: 0, matchedByName: 0, unresolved: 0, noNumbering: 0, held: 0, heldNotRecorded: 0 };
     this._onRefIssue          = typeof onRefIssue === 'function' ? onRefIssue : null;
 
     // Prepare reusable statements
@@ -416,7 +417,8 @@ class MergeEngine {
   //   uuid attached, resolves here     → this install's id
   //   uuid attached, not here (yet)    → not written: an update keeps this install's value, a new row leaves it empty
   //   no uuid (older sender / in-flight) → through the SENDER's published numbering (id-numbering.js); when the sender
-  //                                      has published none, today's behaviour (its integer) — counted, never silent
+  //                                      has published none, HELD: this install's value stays and the change is filed
+  //                                      later by held-refs.js (2026-10-20) — never the sender's integer
   //   station_id with no uuid          → unchanged (station scoping of legacy senders is its own project)
   // docs/sync-uuid-references-2026-10-19.md
   _remapRefs(m, row) {
@@ -436,7 +438,18 @@ class MergeEngine {
       }
       if (col === 'station_id') continue;
       const viaSender = uuidThroughNumbering(this._db, m.client_id, refTable, row[col]);
-      if (viaSender === undefined) { this._refIssue('noNumbering', m, col, { id: row[col] }); continue; }
+      if (viaSender === undefined) {
+        // HELD, NEVER FILED UNDER OUR NUMBER (Jeff, 2026-10-20). The sender's number means nothing here until its
+        // numbering is known — writing it is the category-one-off defect. This computer's value stays; the change is
+        // recorded and filed later by held-refs.resolveHeld (only if nothing newer set this field). Counted + reported.
+        const theirId = row[col];
+        this._keepLocalValue(m, row, col);
+        let recorded = false;
+        try { recorded = heldRefs.hold(this._db, { mutation_id: m.id, client_id: m.client_id, table: m.table_name, column: col, ref_table: refTable, row_id: m.row_id, their_id: theirId, hlc: m.hlc }); }
+        catch (e) { console.warn('[merge-engine] could not record a held reference:', e.message); }
+        this._refIssue(recorded ? 'held' : 'heldNotRecorded', m, col, { id: theirId });
+        continue;
+      }
       const localId = viaSender == null ? null : this._resolveLocalId(refTable, viaSender);
       if (localId != null) { row[col] = localId; this.refStats.viaNumbering++; continue; }
       if (viaSender && this._standUp(refTable, viaSender, labelThroughNumbering(this._db, m.client_id, refTable, viaSender), row, col)) continue;

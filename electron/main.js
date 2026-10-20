@@ -4081,6 +4081,7 @@ app.whenReady().then(() => {
       // References by uuid: publish this computer's numbering and run the one-time re-file (a moment after start, so
       // the first pull can bring the other computer's numbering in). docs/sync-uuid-references-2026-10-19.md
       setTimeout(() => _uuidRefTick('startup'), UUID_REF_FIRST_RUN_DELAY_MS);
+      setInterval(() => _heldRefsTick('tick'), 60 * 1000);   // held references: filed once their sender's numbering arrives
 
       // ── Member peer-sync — OPT-IN PER COMPUTER (the operator CHOOSES, nothing is auto-pulled) ──────
       // Member stations the operator picks on the sync screen are persisted in install_config_kv
@@ -8736,6 +8737,31 @@ function _onSyncRefIssue(issue) {
     }
   } catch { /* a report must never break an apply */ }
 }
+
+// HELD REFERENCES (Jeff, 2026-10-20; electron/sync/held-refs.js): a change from another computer that carried a reference
+// as that computer's bare number is held by the merge, never filed under our number. This files them once that
+// computer's numbering is known (a LOCAL write — nothing is sent), reports what it filed, and feeds the Health Monitor
+// line. Cheap when nothing is held (one system_state read).
+let _heldRefsLast = { at: null, filed: 0, superseded: 0, missing: 0 };
+function _heldRefsTick(reason) {
+  try {
+    const d = getDb(); if (!d || !d.open) return;
+    const H = require('./sync/held-refs');
+    if (!H.list(d).length) return;
+    const r = H.resolveHeld(d);
+    _heldRefsLast = { at: new Date().toISOString(), filed: r.filed.length, superseded: r.superseded.length, missing: r.missing.length };
+    if (r.filed.length || r.superseded.length || r.missing.length) {
+      console.log(`[held-refs] (${reason}) filed ${r.filed.length}, superseded by a newer change ${r.superseded.length}, could not place ${r.missing.length}, still held ${r.waiting.length}`);
+      try { _ledgerAppend({ t: new Date().toISOString(), kind: 'sync-held-refs-filed', reason, filed: r.filed.slice(0, 50), superseded: r.superseded.length, missing: r.missing.slice(0, 50), stillHeld: r.waiting.length }); } catch {}
+    }
+  } catch (e) { console.error('[held-refs] tick failed:', e.message); }
+}
+try {
+  ipcMain.handle('sync:held-status', () => {
+    try { const d = getDb(); return { ok: true, ...require('./sync/held-refs').summary(d), last: _heldRefsLast }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+} catch {}
 
 // The one-time re-file: first run a moment after sync starts; while it waits for another computer's numbering (that
 // computer publishes it when it first runs this build), it retries on this interval. Both numbers are timing, not

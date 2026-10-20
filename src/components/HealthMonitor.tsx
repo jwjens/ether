@@ -783,6 +783,9 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   // A COMMERCIAL THAT DID NOT AIR. Jeff, 2026-09-14: "A missed spot must be loud — Health Monitor,
   // naming the spot and the time. Six today and I only found out by asking."
   const [missedSpots, setMissedSpots] = useState<any[]>([]);
+  // SYNC CHANGES HELD (Jeff, 2026-10-20): a change from another computer that carried a reference as that computer's bare
+  // number is held — never filed under ours (electron/sync/held-refs.js). Shown while any are held.
+  const [heldRefs, setHeldRefs] = useState<{ count: number; byComputer: Record<string, { count: number; oldest: string }> } | null>(null);
   // Applies rows and stamps the read time. Errors are SURFACED, not swallowed: the previous version
   // caught everything silently, so an unregistered handler and a healthy empty result looked
   // identical — the button appeared to do nothing and said nothing.
@@ -835,6 +838,13 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     const id = setInterval(loadMissedSpots, 60000);
     return () => clearInterval(id);
   }, [loadMissedSpots]);
+  const loadHeldRefs = useCallback(async () => {
+    try {
+      const r = await (window as any).ether?.invoke?.("sync:held-status");
+      if (r && r.ok) setHeldRefs({ count: r.count || 0, byComputer: r.byComputer || {} });
+    } catch { /* not running under Electron — no panel */ }
+  }, []);
+  useEffect(() => { loadHeldRefs(); const id = setInterval(loadHeldRefs, 60000); return () => clearInterval(id); }, [loadHeldRefs]);
   // Clear pending banner timers on unmount — a timer firing into an unmounted tree is a leak.
   useEffect(() => () => { for (const t of Object.values(bannerTimers.current)) clearTimeout(t); }, []);
 
@@ -1720,6 +1730,24 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
 
             It is deliberately NOT a red alarm on a quiet day: the panel hides itself when there is
             nothing to report, so its presence IS the signal. */}
+        {/* ── SYNC CHANGES HELD — present only while some are (its presence is the signal) ─────────────── */}
+        {heldRefs && heldRefs.count > 0 && (
+          <HealthPanel id="sync-held" title="Sync changes held">
+            <div style={{ fontSize: 13, color: "var(--accent-amber)", fontWeight: 600, lineHeight: 1.5 }}>
+              {heldRefs.count} change{heldRefs.count === 1 ? "" : "s"} from another computer held — not filed yet
+            </div>
+            {Object.entries(heldRefs.byComputer).map(([who, v]) => (
+              <div key={who} style={{ fontSize: 12, color: "var(--text-secondary)", fontFamily: "'DM Mono', monospace", lineHeight: 1.5 }}>
+                computer {who.slice(0, 8)}: {v.count} · held since {v.oldest ? new Date(v.oldest).toLocaleString() : "?"}
+              </div>
+            ))}
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)", lineHeight: 1.5, marginTop: 4 }}>
+              These changes name a category (or artist, album) by the other computer's own number. Until that computer
+              publishes its numbering, they are held so a song is never filed under the wrong category here. They are
+              filed automatically when it does — unless a newer change has set the same thing since.
+            </div>
+          </HealthPanel>
+        )}
         {missedSpots.length > 0 && (
           <HealthPanel id="missed-spots" title="Spots that did not air" right={
               <button onClick={loadMissedSpots}
