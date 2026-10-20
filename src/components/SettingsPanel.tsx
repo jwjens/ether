@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, createContext, useContext } f
 import { SyncCleanupRow, HealthLogRow } from "./SyncCleanupRows";
 import { getJukeboxPayouts, connectJukeboxPayouts, refreshJukeboxPayouts, setJukeboxDonationSettings, type JukeboxPayouts } from "../lib/ccData";
 const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
+import CloudAudioCleanup from "./CloudAudioCleanup";
 import BackupsPanel from "./BackupsPanel";
 import SendRestoreCard from "./SendRestoreCard";
 import { query } from "../db/client";
@@ -3706,6 +3707,8 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
 
         {/* "How often to send your setup" moved to Backups on this computer (2026-10-20): ONE place sets the cloud backup
             interval, with the local one beside it, per computer (BackupsPanel / electron/backups.js). */}
+        {/* Cloud audio cleanup — an admin button; it never runs on its own (2026-10-20). */}
+        <CloudAudioCleanup />
         {/* THE TWO DIRECTIONS, NAMED SEPARATELY, BECAUSE THEY BEHAVE DIFFERENTLY (2026-09-11).
             Coming down is automatic as of Phase 0: a timer calls the incremental catalogue
             download, which fetches only files this computer does not already have. Going up is

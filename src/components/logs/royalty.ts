@@ -4,7 +4,7 @@
 // from play_log.duration_ms. A play whose length was not recorded gets an empty duration: a royalty report must not
 // carry a number nobody measured (it used to write "3:30" / "3.5" on every row).
 
-import { airedOnLabel, airedOnClause } from "./airedOn";
+import { airedOnClause } from "./airedOn";
 
 export interface RoyaltyRow { played_at: number; title: string; artist: string | null; duration_ms: number | null; machine_id?: string | null; machine_name?: string | null }
 
@@ -48,16 +48,17 @@ const q = (v: unknown) => '"' + String(v ?? "").replace(/"/g, '""') + '"';
 
 export function royaltyCsv(format: "bmi" | "ascap", rows: RoyaltyRow[], stationName: string): string {
   if (format === "bmi") {
-    // "Aired On" last (2026-10-20): which computer aired each play — the column every Play Log export carries.
-    const header = "Title,Performer,Date Of Use,Time Of Use,Duration,Aired On";
+    // EACH SOCIETY'S EXACT FORMAT (Jeff, 2026-10-20: "Leave the Aired On column out of the BMI and ASCAP files so they stay
+    // in each society's exact format; the computer filter still applies to them"). No Aired On column here.
+    const header = "Title,Performer,Date Of Use,Time Of Use,Duration";
     return header + "\n" + rows.map(e => {
       const d = new Date(e.played_at * 1000);
-      return [e.title, e.artist || "Unknown", d.toLocaleDateString("en-US"), d.toLocaleTimeString("en-US", { hour12: false }), fmtMinSec(e.duration_ms), airedOnLabel(e)].map(q).join(",");
+      return [e.title, e.artist || "Unknown", d.toLocaleDateString("en-US"), d.toLocaleTimeString("en-US", { hour12: false }), fmtMinSec(e.duration_ms)].map(q).join(",");
     }).join("\n");
   }
-  const header = "Title,Artist,Date,Start Time,Duration (min),Source,Aired On";
+  const header = "Title,Artist,Date,Start Time,Duration (min),Source";
   return header + "\n" + rows.map(e => {
     const d = new Date(e.played_at * 1000);
-    return [e.title, e.artist || "Unknown", (d.getMonth() + 1) + "/" + d.getDate() + "/" + d.getFullYear(), d.toLocaleTimeString("en-US", { hour12: false }), fmtMinutes(e.duration_ms), stationName, airedOnLabel(e)].map(q).join(",");
+    return [e.title, e.artist || "Unknown", (d.getMonth() + 1) + "/" + d.getDate() + "/" + d.getFullYear(), d.toLocaleTimeString("en-US", { hour12: false }), fmtMinutes(e.duration_ms), stationName].map(q).join(",");
   }).join("\n");
 }

@@ -17,7 +17,7 @@ describe("royalty exports — real durations, every play (audit 6, 7)", () => {
   it("BMI: 1,000 plays in → 1,000 rows out, each with its own m:ss", () => {
     const csv = royaltyCsv("bmi", plays, "Test FM");
     const lines = csv.trim().split("\n");
-    expect(lines[0]).toBe("Title,Performer,Date Of Use,Time Of Use,Duration,Aired On");
+    expect(lines[0]).toBe("Title,Performer,Date Of Use,Time Of Use,Duration");   // the society's exact format — no Aired On
     expect(lines.length - 1).toBe(1000);
     expect(lines[2]).toContain(`"${fmtMinSec(61000)}"`);          // play 1 is 61 s → 1:01
     expect(lines.filter(l => l.endsWith('"3:30"')).length).toBeLessThan(10);   // no placeholder flood
@@ -31,10 +31,16 @@ describe("royalty exports — real durations, every play (audit 6, 7)", () => {
     expect(lines[2]).toContain('"Test FM"');
   });
 
+  it("BMI and ASCAP stay in each society's exact format — no Aired On column (Jeff, 2026-10-20)", () => {
+    const row = { played_at: day, title: "X", artist: "Y", duration_ms: 60000, machine_id: "m", machine_name: "OVEVENTS" };
+    expect(royaltyCsv("bmi", [row], "S")).not.toContain("Aired On");
+    expect(royaltyCsv("bmi", [row], "S")).not.toContain("OVEVENTS");
+    expect(royaltyCsv("ascap", [row], "S").split("\n")[0]).toBe("Title,Artist,Date,Start Time,Duration (min),Source");
+  });
+
   it("an unknown length is left blank — never invented", () => {
     const bmi = royaltyCsv("bmi", [{ played_at: day, title: "X", artist: "Y", duration_ms: null }], "S").trim().split("\n")[1];
-    expect(bmi.split(",")[4]).toBe('""');                       // the Duration cell
-    expect(bmi.endsWith('"Not recorded"')).toBe(true);         // Aired On: a play with no computer recorded
+    expect(bmi.endsWith('""')).toBe(true);
     expect(fmtMinSec(210000)).toBe("3:30");
     expect(fmtMinutes(210000)).toBe("3.50");
   });

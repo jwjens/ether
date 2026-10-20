@@ -64,8 +64,9 @@ all computers of the account. The **Aired on** column shows that computer's name
 **Filter by computer.** The **All computers** menu (next to the deck filter) narrows the list to one computer — for
 example HalloVeen on OVEVENTS, 3–6 PM: pick the station, set From and To to that day, set the two times to 3:00 PM and
 6:00 PM (leave them empty for whole days), choose OVEVENTS, and print. The
-count, **Export CSV**, **BMI**, **ASCAP**, **PDF** and the reconcile export all follow the same computer choice, and every
-one of them carries an **Aired On** column. (BMI and ASCAP list it as the last column.)
+count, **Export CSV**, **BMI**, **ASCAP**, **PDF** and the reconcile export all follow the same computer choice. Export CSV,
+PDF and the reconcile export carry an **Aired On** column; **BMI and ASCAP do not** — they stay in each society's exact
+format.
 
 **Each computer's rotation counts only what aired on that computer.** Plays from other computers are in this list for
 the record; they do not rest songs on this computer.

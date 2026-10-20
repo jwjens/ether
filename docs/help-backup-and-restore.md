@@ -151,6 +151,15 @@ retry.
 
 ---
 
+## Cloud audio cleanup (admin)
+
+Deleting a song never removes its audio from the cloud straight away. **Release cloud audio now** (Settings → Backup &
+Restore → Advanced, **Cloud audio cleanup**) removes the audio of songs deleted long enough ago — never a file a live song
+still uses or something scheduled needs. It asks for an admin PIN and a confirm, and it **only runs when an admin presses
+it**: no computer does it on its own (since 4.6.62). It cannot be undone.
+
+---
+
 ## What each thing protects you from
 
 | | Covers your setup | Covers your music | Survives the computer dying |

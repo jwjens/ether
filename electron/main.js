@@ -12672,53 +12672,40 @@ function _stampSweepLastRun(now) {
  *  flight — could enter before the stamp is meaningful. Exactly one sweep per install at a time. */
 let _sweepInFlight = false;
 
-let _sweepPausedSaid = false;
-function _maybeRunDeletionSweep(stationId) {
-  if (_sweepInFlight) return;
+// CLOUD AUDIO CLEANUP IS AN ADMIN BUTTON (Jeff, 2026-10-20: "no computer is picked. Move it to the backend (it sees every
+// machine), or make it an admin button. Nothing claims it."). It never runs on its own any more — builder designation,
+// which kept the old daily sweep to one computer, is gone. An admin presses Release cloud audio now (Preferences →
+// Backup & Restore); the same checks and release pass run (electron/deletion-sweep.js), on that computer, once.
+function _maybeRunDeletionSweep(_stationId) { /* scheduled sweep retired 2026-10-20 — see _runCloudAudioCleanup */ }
+async function _runCloudAudioCleanup(who) {
+  if (_sweepInFlight) return { ok: false, error: "a cleanup is already running" };
+  _sweepInFlight = true;
   try {
     const now = Math.floor(Date.now() / 1000);
-    const last = _sweepLastRun();
-    if (Number.isFinite(last) && (now - last) < SWEEP_INTERVAL_SEC) return;
-
-    // PAUSED (2026-10-20). The sweep deletes cloud audio after checks against THIS computer's database; builder
-    // designation was what kept it to one computer. Designation is removed, and which computer may sweep is Jeff's
-    // decision — until then nothing is released, and the Health Monitor says so once per session.
-    if (!_sweepPausedSaid) {
-      _sweepPausedSaid = true;
-      console.log('[deletion-sweep] paused — which computer releases cloud audio is not decided yet (builder designation removed)');
-      _healthEvent('deletion-sweep-paused', { message: 'Cloud audio cleanup is paused: which computer may delete released audio from the cloud is waiting for a decision. Nothing is deleted meanwhile.' });
-    }
-    return;
-
-    _sweepInFlight = true;
-
-    // STAMP FIRST, then sweep. The stamp is what makes this a singleton, so it has to be in place
-    // before anything slow or async starts — a stamp written afterwards would leave the whole
-    // duration of the sweep open to a second entrant.
-    let stamped = false;
-    try { stamped = _stampSweepLastRun(now); }
-    catch (e) { console.error('[deletion-sweep] stamp write threw:', e.message); }
-    if (!stamped) {
-      // No durable singleton → do not send DELETEs. Evaluating is still safe and still useful.
-      console.error('[deletion-sweep] no durable last-run stamp — evaluating only, NO releases this tick');
-      try { require('./deletion-sweep').runSweep(db, { machineId, logDir: P.profileDir(P.activeKey()), now }); }
-      finally { _sweepInFlight = false; }
-      return;
-    }
-
     const sweep = require('./deletion-sweep');
-    sweep.runSweep(db, { machineId, logDir: P.profileDir(P.activeKey()), now });
-
-    // The release pass. Async, so the flag is cleared in its own completion rather than here.
-    // Rows the checks cleared are released now instead of waiting another 24h for the next tick.
-    Promise.resolve(sweep.releaseMarked(db, { now }))
-      .catch(e => console.error('[deletion-sweep] release pass failed:', e.message))
-      .finally(() => { _sweepInFlight = false; });
+    const checked = sweep.runSweep(db, { machineId: _machineIdentity().id, logDir: P.profileDir(P.activeKey()), now });
+    const released = await sweep.releaseMarked(db, { now });
+    try { _stampSweepLastRun(now); } catch {}
+    _healthEvent('cloud-audio-cleanup', { by: who, checked, released, message: `${who} ran the cloud audio cleanup: ${released.done || 0} released, ${released.error || 0} failed` });
+    console.log(`[cloud-audio-cleanup] by ${who}: checked ${JSON.stringify(checked)} · released ${JSON.stringify(released)}`);
+    return { ok: true, by: who, checked, released };
   } catch (e) {
-    _sweepInFlight = false;
-    console.error('[deletion-sweep] tick failed:', e.message);
-  }
+    console.error('[cloud-audio-cleanup] failed:', e.message);
+    return { ok: false, error: e.message };
+  } finally { _sweepInFlight = false; }
 }
+try {
+  ipcMain.handle('cleanup:release-cloud-audio', async (_e, pin) => {
+    try {
+      const admins = db.prepare("SELECT name, pin_hash FROM users WHERE role = 'admin' AND deleted_at IS NULL AND pin_hash IS NOT NULL").all();
+      if (!admins.length) return { ok: false, error: 'No admin PIN is set on this computer — set one first.' };
+      let who = null;
+      for (const a of admins) if ((await PinHash.verifyPin(String(pin || ''), a.pin_hash)).ok) { who = a.name; break; }
+      if (!who) return { ok: false, error: 'Incorrect admin PIN.' };
+      return await _runCloudAudioCleanup(who);
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+} catch {}
 
 /** THE ONE PLACE THE APP ASKS R2 TO DROP AN OBJECT — and it does not talk to R2 at all. It asks the
  *  BACKEND, which builds the key as `${license.id}/<file_key>` from the license it RESOLVES. The
