@@ -2371,8 +2371,20 @@ async function _swapDatabaseFileGated(srcPath, onProgress) {
     try { fs.rmSync(preRestore, { force: true }); } catch {}
     throw new Error(`restore failed; rolled back to the previous database: ${swapErr.message}`);
   }
+  // WHAT A RESTORE DOES TO SYNC (Jeff, 2026-10-20; electron/sync/restore-sync.js). From the database being replaced, keep
+  // this computer's own already-sent changes that the backup does not have (for "Send this restore to every machine");
+  // then retire every unsent change in the restored file so switching sync back on never sends the mistake out.
+  try {
+    const RS = require('./sync/restore-sync');
+    const pt = RS.captureRestorePoint(getDb(), preRestore, { dir: path.dirname(dbPath), backupLabel: path.basename(srcPath) });
+    const discarded = RS.discardUnsent(getDb());
+    _lastRestoreSync = { at: Date.now(), backup: path.basename(srcPath), discarded, mistakeRows: pt.rows, mistakeChanges: pt.changes };
+    console.log(`[restore] unsent changes discarded: ${discarded}; this computer's changes since the backup: ${pt.changes} on ${pt.rows} row(s)`);
+    _healthEvent('restore-sync', { ..._lastRestoreSync, message: `Restored ${path.basename(srcPath)}: ${discarded} unsent change(s) discarded; ${pt.rows} row(s) this computer changed since the backup can be sent back to every computer` });
+  } catch (e) { console.error('[restore] sync bookkeeping failed:', e.message); _healthEvent('restore-sync-failed', { error: e.message }); }
   try { fs.rmSync(preRestore, { force: true }); } catch {}   // success — drop the rollback copy
 }
+let _lastRestoreSync = null;
 
 function runMigrationChain(db) {
   const applied = new Set(
@@ -3061,6 +3073,31 @@ function syncFlagForActiveStation(db, key) {
       "SELECT value FROM station_config_kv WHERE key = ? AND station_id = ? AND deleted_at IS NULL LIMIT 1"
     ).get(key, stationId)?.value ?? null;
   } catch { return null; }
+}
+
+// ── THE SYNC SWITCH: ONE ON/OFF FOR THIS COMPUTER (Jeff, 2026-10-20) ─────────────────────────────────────────────────
+// "(a) One on/off for the whole computer, starting on where any station has it on today. Its purpose: if a mistake is
+// made on a computer (like the library on OVEVENTS), I switch sync off so it can't spread, restore a recent backup, then
+// switch sync back on." It replaces the per-station sync_enabled (read from whichever station was active, so switching
+// stations could switch sync). Stored in system_state — this computer's own bookkeeping, which never syncs — so one
+// computer's switch can never travel to another. The per-station sync_enabled rows are left in place, read by nothing.
+// Off = nothing goes out, nothing comes in; changes made while off still wait in the outgoing queue.
+const SYNC_SWITCH_KEY = 'sync_switch';
+function _syncSwitchOn() {
+  try {
+    const r = db.prepare("SELECT value FROM system_state WHERE key = ?").get(SYNC_SWITCH_KEY);
+    if (r) return r.value === 'on';
+    // First run of 4.6.62: on where any station had sync on.
+    const any = !!db.prepare("SELECT 1 FROM station_config_kv WHERE key = 'sync_enabled' AND value = 'true' AND deleted_at IS NULL LIMIT 1").get();
+    _writeSyncSwitch(any, 'migrated from the per-station setting');
+    return any;
+  } catch { return false; }
+}
+function _writeSyncSwitch(on, why) {
+  db.prepare("INSERT OR REPLACE INTO system_state (key, value, updated_at) VALUES (?, ?, ?)").run(SYNC_SWITCH_KEY, on ? 'on' : 'off', new Date().toISOString());
+  console.log(`[SYNC] this computer's sync switch: ${on ? 'ON' : 'OFF'} (${why})`);
+  try { _healthEvent(on ? 'sync-switched-on' : 'sync-switched-off', { why, message: `Sync on this computer switched ${on ? 'ON' : 'OFF'} (${why})` }); } catch {}
+  try { sendToAllWindows('sync:switch', { on, at: Date.now(), why }); } catch {}
 }
 
 // ── Account-scoped station ownership ───────────────────────────
@@ -3995,10 +4032,10 @@ app.whenReady().then(() => {
     // station helpers). It used to be an unscoped "WHERE key = ? LIMIT 1", which is the bug this
     // block now avoids — see that function's comment for what it cost.
     // deleted_at IS NULL — a tombstoned row would otherwise still switch sync on.
-    const enabledRow = { value: syncFlagForActiveStation(db, 'sync_enabled') };
-    if (enabledRow?.value !== 'true') {
-      console.log('[SYNC] disabled (set sync_enabled=true in station_config_kv to activate)');
-    } else {
+    // ALWAYS BUILT (2026-10-20): the computer's sync switch (_syncSwitchOn) decides whether it RUNS, and switching it
+    // takes effect at once (sync:set-switch) — no restart. It still runs only after an operator has signed in.
+    console.log(`[SYNC] this computer's sync switch is ${_syncSwitchOn() ? 'ON' : 'OFF'}`);
+    {
       const { HttpTransport }   = require('./sync/transport-http');
       const { SyncScheduler }   = require('./sync/sync-scheduler');
       // THE SYNC TOGGLE ENABLED AN ENGINE THAT HAD NOWHERE TO SEND TO (fixed 2026-08-12).
@@ -4031,7 +4068,8 @@ app.whenReady().then(() => {
       // OFF by default (shadow-first); set sync_uuid_identity='true' in station_config_kv to enable.
       // NOT enabled for v4.4.24 — cross-machine uuid sync is proven in the harness but not yet
       // validated on the real two machines, so this build ships it disabled.
-      const uuidIdentity = syncFlagForActiveStation(db, 'sync_uuid_identity') === 'true';
+      // IDENTITY IS ALWAYS ON (Jeff, 2026-10-20: "Remove the sync_uuid_identity switch; identity is always on").
+      const uuidIdentity = true;
       // member-operate (default off): when on, a member-accessed station (e.g. OV) is operated as a
       // FULL switchable station and its edits push BACK under the member token (bidirectional). When
       // off, member stations stay pull-only (v4.4.7 behavior) — safe until the harness proof is green.
@@ -4039,6 +4077,10 @@ app.whenReady().then(() => {
       // The local ids of member stations the operator chose — the owner sync must NOT push their edits
       // under THIS install's license key (each member station pushes its own edits under its member
       // token, per-context isolation). Resolved live so newly-chosen stations are picked up.
+      const getChosenMemberStationUuids = () => {
+        try { return JSON.parse(db.prepare("SELECT value FROM install_config_kv WHERE key = 'member_stations'").get()?.value || '[]').map(c => c.station_uuid).filter(Boolean); }
+        catch (_) { return []; }
+      };
       const memberStationLocalIds = () => {
         try {
           const chosen = JSON.parse(db.prepare("SELECT value FROM install_config_kv WHERE key = 'member_stations'").get()?.value || '[]');
@@ -4046,12 +4088,26 @@ app.whenReady().then(() => {
         } catch (_) { return []; }
       };
       const scheduler = new SyncScheduler(getDb, transport, {   // getDb (function) → rebuilds its engine if the connection reopens
-        // Read active station on every pull so mid-session station switches are handled
-        // correctly. main.js owns getActiveStationId(); SyncEngine stores only the getter.
-        getStationId:   () => String(getActiveStationId()),
-        // The active station's stable UUID — used for UUID-identity scoping when enabled.
-        getStationUuid: () => db.prepare('SELECT uuid FROM stations WHERE id = ?').get(getActiveStationId())?.uuid ?? null,
+        // The main engine pushes every station's changes and pulls ACCOUNT-WIDE rows only (no station scope); every
+        // station pulls through its own engine below (makeStationEngine), by its uuid, with its own position.
+        getStationId:   () => null,
+        getStationUuid: () => null,
         uuidIdentity,
+        // Every station of this account on this computer — not the member stations (they pull on their own token).
+        stationUuids: () => {
+          const member = new Set(getChosenMemberStationUuids());
+          return db.prepare("SELECT uuid FROM stations WHERE deleted_at IS NULL AND uuid IS NOT NULL").all().map(r => r.uuid).filter(u => !member.has(u));
+        },
+        makeStationEngine: (conn, uuid, opts) => {
+          const { SyncEngine } = require('./sync/sync-engine');
+          const t = new HttpTransport(getDb, { baseUrl, cursorKey: 'sync_server_seq_station_' + uuid });
+          return new SyncEngine(conn, t, {
+            ...opts, uuidIdentity: true, pullOnly: true,
+            cursorKey: 'sync_cursor_station_' + uuid,
+            getStationId:   () => { const r = conn.prepare('SELECT id FROM stations WHERE uuid = ?').get(uuid); return r ? String(r.id) : null; },
+            getStationUuid: () => uuid,
+          });
+        },
         // Owner push excludes member stations (their edits go up under the member token, not the license).
         getPushExcludeStationIds: () => memberOperate ? memberStationLocalIds() : [],
         // On-air predicate (Tier-2 re-baseline safety): gates ONLY the heavy one-shot corrective re-pull,
@@ -4070,7 +4126,7 @@ app.whenReady().then(() => {
           try { const bt = (ev && ev.byTable) || {}; if (bt.station_config_kv || bt.deck_configs) _boardWatch.savedChanged(null, _stationIds); } catch {}
         },
       });
-      if (uuidIdentity) console.log('[SYNC] UUID-identity scoping ENABLED (station programming syncs by station UUID)');
+      console.log('[SYNC] every station syncs by its identity, each with its own position');
       // Do NOT start sync here. Sync must never run off a license_key that's merely sitting in the
       // database — it runs ONLY after an operator has actually signed in. The renderer calls
       // "sync:set-active" with true on sign-in and false on sign-out. This is what stops Ether from
@@ -4174,13 +4230,21 @@ app.whenReady().then(() => {
         } catch (e) { return { ok: false, error: e.message }; }
       });
 
+      // Runs only while BOTH: an operator is signed in (sync:set-active) AND this computer's switch is on.
+      let _syncSignedIn = false;
+      const _applySyncRun = () => {
+        if (_syncSignedIn && _syncSwitchOn()) { scheduler.start(); startChosenMemberSync(); }   // pull ONLY the member stations the operator chose
+        else { scheduler.stop(); stopMemberSync(); }
+      };
       ipcMain.handle("sync:set-active", (_e, active) => {
-        try {
-          if (active) { scheduler.start(); startChosenMemberSync(); }   // pull ONLY the stations the operator chose
-          else { scheduler.stop(); stopMemberSync(); }
-        }
+        try { _syncSignedIn = !!active; _applySyncRun(); }
         catch (e) { console.error("[sync:set-active]", e.message); }
         return { ok: true };
+      });
+      // THE SWITCH (Preferences → Keep my stuff synced). Takes effect now.
+      ipcMain.handle("sync:set-switch", (_e, on, why) => {
+        try { _writeSyncSwitch(!!on, why || 'operator'); _applySyncRun(); return { ok: true, on: _syncSwitchOn() }; }
+        catch (e) { console.error("[sync:set-switch]", e.message); return { ok: false, error: e.message }; }
       });
 
       powerMonitor.on('suspend',       () => scheduler.pause());
@@ -5060,7 +5124,7 @@ function handleHaBootstrapFlags() {
 // Sync
 ipcMain.handle('sync:getStats', () => {
   const scheduler = app._syncScheduler ?? null;
-  const enabled = syncFlagForActiveStation(db, 'sync_enabled') === 'true';
+  const enabled = _syncSwitchOn();
   if (scheduler) {
     return { enabled, running: true, ...scheduler.getStats() };
   }
@@ -7695,7 +7759,7 @@ ipcMain.handle("db:restore", async (_, backupName) => {
     if (!fs.existsSync(backupPath)) return { error: "Backup not found" };
     // close → copy → reopen(retry) → verify → rollback-on-failure; throws a real error (never bricks).
     await swapDatabaseFile(backupPath);
-    return { data: "Restored successfully", error: null };
+    return { data: "Restored successfully", error: null, sync: _lastRestoreSync };
   } catch (e) { return { data: null, error: e.message }; }
 });
 
@@ -7889,7 +7953,10 @@ ipcMain.handle("restore_db", async (_, { backupName } = {}) => {
     const backupPath = _profileData("backups", backupName);
     if (!fs.existsSync(backupPath)) throw new Error("Backup not found: " + backupName);
     await swapDatabaseFile(backupPath);   // close → copy → reopen(retry) → verify → rollback-on-failure
-    return "Restored from " + backupName + ". Restart Ether for all changes to take effect.";
+    const rs = _lastRestoreSync;
+    return "Restored from " + backupName + "." + (rs ? ` ${rs.discarded} unsent change(s) were discarded — they will never be sent.` +
+      (rs.mistakeRows ? ` This computer had changed ${rs.mistakeRows} row(s) since that backup; an admin can send this restore to every computer (Preferences → Multi-Device Sync) before switching sync back on.` : "") : "") +
+      " Restart Ether for all changes to take effect.";
   } catch (e) { throw new Error(e.message); }
 });
 
@@ -13305,57 +13372,43 @@ ipcMain.handle('sync:get-state', () => {
 // IPC-only: this is engineering surface, not an operator feature, and a button that force-drains a
 // mutation queue does not belong in the UI.
 
-/** `sync_uuid_identity` decides whether station-scoped rows this install SENDS are scoped by station
- *  UUID instead of by the LOCAL INTEGER station id.
- *
- *  It no longer needs a restart: the scheduler rebuilds its engine in place (setUuidIdentity), the
- *  same rebuild it already performs when the database handle is reopened.
- *
- *  It also no longer governs INBOUND integer identity. Preserving this machine's local ids across an
- *  apply is unconditional in merge-engine.js as of 2026-08-17 — it used to be gated on this flag,
- *  which is how a peer with the flag OFF re-keyed this install's stations twice. A flag must never be
- *  able to make another machine renumber our rows. docs/fix-pass-2026-08-17-sync.md §2.
- *
- *  Written with the SYNCABLE writer, not `stationConfigKvSetLocal`: this key is not in
- *  LOCAL_ONLY_KEYS, and set-local REFUSES any key that is not — the same silent-refusal trap that
- *  made the designation record unwritable (4.4.193). Whether this key SHOULD be local-only is a
- *  real question (syncing it lets one machine change another's sync semantics) and is deliberately
- *  left alone here rather than changed as a side effect of adding a command. */
-ipcMain.handle('sync:set-uuid-identity', (_evt, arg) => {
+/** sync_uuid_identity is RETIRED (Jeff, 2026-10-20: "Remove the sync_uuid_identity switch; identity is always on").
+ *  Kept as a handler so a hand-typed call says so plainly instead of failing as unregistered. Stored rows are read by
+ *  nothing. */
+ipcMain.handle('sync:set-uuid-identity', () => ({ ok: true, uuidIdentity: true, retired: true,
+  note: 'Identity is always on since 4.6.62: every station syncs by its uuid, each with its own position. There is no switch.' }));
+// "SEND THIS RESTORE TO EVERY MACHINE" (Jeff, 2026-10-20) — admin only, with a confirm, while sync is OFF after a
+// restore. Preview first (sync:restore-point), then send (sync:send-restore with an admin PIN); main verifies the PIN.
+ipcMain.handle('sync:restore-point', () => {
   try {
-    // Accepts `true`, `{ enabled: true }`, or `'true'` — this is typed by hand in a dev console.
-    const enabled = typeof arg === 'object' && arg !== null ? !!arg.enabled : !!arg;
-    const db = getDb();
-    const stationId = getActiveStationId();
-    if (stationId == null) return { ok: false, error: 'no active station — sign in and select a station first' };
-    const { stationConfigKvUpsertByKey, stationConfigKvGetValue } =
-      require('./sync/handlers/station_config_kv');
-    stationConfigKvUpsertByKey(db, stationId, 'sync_uuid_identity', enabled ? 'true' : 'false');
-    // Read it BACK. A write that reports success without re-reading is how the designation bug hid.
-    const readBack = stationConfigKvGetValue(db, stationId, 'sync_uuid_identity');
-    // Apply it to the RUNNING engine, then report what the engine actually holds — not what we hoped
-    // it would hold. A toggle that reports success without re-reading the live engine is the same
-    // class of lie as a write that reports success without re-reading the row.
-    let applied = { changed: false, uuidIdentity: null };
-    try { applied = app._syncScheduler?.setUuidIdentity?.(enabled) ?? applied; }
-    catch (e) { console.error('[sync:set-uuid-identity] live apply failed:', e.message); }
-    const engineIsUsingIt = !!(app._syncScheduler && app._syncScheduler._engineOpts?.uuidIdentity);
-    return {
-      ok: readBack === (enabled ? 'true' : 'false') && engineIsUsingIt === enabled,
-      key: 'sync_uuid_identity', stationId, wrote: enabled ? 'true' : 'false', readBack,
-      engineIsUsingIt,
-      engineRebuilt: applied.changed,
-      restartRequired: false,
-      note: app._syncScheduler
-        ? 'Stored and applied to the running sync engine — no restart needed. This affects what this '
-        + 'install SENDS/scopes only; inbound rows never re-key this machine regardless of the flag.'
-        : 'Stored. No sync scheduler is running yet, so it will be picked up when sync starts.',
-    };
-  } catch (e) {
-    console.error('[sync:set-uuid-identity]', e.message);
-    return { ok: false, error: e.message };
-  }
+    const RS = require('./sync/restore-sync');
+    const dir = P.profileDir(P.activeKey());
+    const pt = RS.readRestorePoint(dir);
+    if (!pt) return { ok: true, point: null, syncOn: _syncSwitchOn() };
+    return { ok: true, syncOn: _syncSwitchOn(), point: { at: pt.at, backup: pt.backup, changes: pt.changes, rows: pt.rows.length, sent: pt.sent }, preview: RS.previewRestore(getDb(), pt) };
+  } catch (e) { return { ok: false, error: e.message }; }
 });
+ipcMain.handle('sync:send-restore', async (_e, pin) => {
+  try {
+    if (_syncSwitchOn()) return { ok: false, error: 'Switch sync off on this computer first — the restore is sent while sync is off, then sync comes back on.' };
+    const admins = getDb().prepare("SELECT id, name, pin_hash FROM users WHERE role = 'admin' AND deleted_at IS NULL AND pin_hash IS NOT NULL").all();
+    if (!admins.length) return { ok: false, error: 'No admin PIN is set on this computer — set one first.' };
+    let who = null;
+    for (const a of admins) if ((await PinHash.verifyPin(String(pin || ''), a.pin_hash)).ok) { who = a.name; break; }
+    if (!who) return { ok: false, error: 'Incorrect admin PIN.' };
+    const RS = require('./sync/restore-sync');
+    const dir = P.profileDir(P.activeKey());
+    const pt = RS.readRestorePoint(dir);
+    if (!pt) return { ok: false, error: 'There is no restore to send.' };
+    if (pt.sent) return { ok: false, error: `This restore was already sent (${pt.sent.at}).` };
+    const r = RS.sendRestore(getDb(), pt, dir);
+    _healthEvent('restore-sent-to-every-machine', { by: who, backup: pt.backup, ...r, message: `${who} sent the restore of ${pt.backup} to every computer: ${r.putBack} row(s) put back, ${r.removed} removed` });
+    console.log(`[restore] sent to every machine by ${who}: put back ${r.putBack}, removed ${r.removed}, skipped ${r.skipped}`);
+    return { ok: true, by: who, ...r };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+// THIS COMPUTER'S SYNC SWITCH, readable whether or not the scheduler started (the header's SYNC OFF line reads it).
+ipcMain.handle('sync:get-switch', () => { try { return { ok: true, on: _syncSwitchOn() }; } catch (e) { return { ok: false, error: e.message }; } });
 
 /** Read-only. Run this on BOTH machines and compare before pushing anything: if the station UUIDs
  *  do not match, UUID identity cannot merge them and a push is the corruption case, not the fix. */
@@ -13438,10 +13491,10 @@ ipcMain.handle('sync:preflight', () => {
       // infer it from a pending count that looks the same either way.
       baseline: (() => { try { return require('./sync/baseline').getBaseline(db); } catch { return null; } })(),
       flags: {
-        sync_enabled: kv('sync_enabled'),
-        sync_uuid_identity: kv('sync_uuid_identity'),
-        // What the RUNNING engine is actually using, which is not the same thing as what is stored
-        // — the flag is read at startup, so a stored value can differ from the live one.
+        // This computer's switch (system_state) — the only thing deciding whether sync runs (2026-10-20).
+        sync_switch: _syncSwitchOn() ? 'on' : 'off',
+        sync_enabled: _syncSwitchOn() ? 'true' : 'false',   // the same switch, under its old name for older panels
+        sync_uuid_identity: 'true',                          // always on — no switch since 4.6.62
         engineUuidIdentity: scheduler ? !!scheduler._engineOpts?.uuidIdentity : null,
       },
       schedulerRunning: scheduler ? !!scheduler._running : false,

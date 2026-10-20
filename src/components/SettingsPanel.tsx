@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, createContext, useContext } f
 import { SyncCleanupRow, HealthLogRow } from "./SyncCleanupRows";
 import { getJukeboxPayouts, connectJukeboxPayouts, refreshJukeboxPayouts, setJukeboxDonationSettings, type JukeboxPayouts } from "../lib/ccData";
 const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
+import SendRestoreCard from "./SendRestoreCard";
 import { query } from "../db/client";
 import { idsFromStoredList, storedFromIds } from "../lib/refValue";
 import { queryScoped } from "../db/stationScoped";
@@ -1098,7 +1099,7 @@ interface SyncPreflight {
   machineId?: string | null;
   stations?: Array<{ id: number; uuid: string; name: string; is_active?: number }>;
   activeStationId?: number | null;
-  flags?: { sync_enabled: string | null; sync_uuid_identity: string | null; engineUuidIdentity: boolean | null };
+  flags?: { sync_switch?: string | null; sync_enabled: string | null; sync_uuid_identity: string | null; engineUuidIdentity: boolean | null };
   schedulerRunning?: boolean;
   mutations?: {
     pending: number | null; total: number | null;
@@ -1176,23 +1177,11 @@ function MultiMachineSyncSection() {
     finally { setBusy(null); setClearArmed(false); setClearTyped(""); refresh(); }
   };
 
-  const toggleUuid = async () => {
-    const next = pf?.flags?.sync_uuid_identity !== "true";
-    setBusy("uuid"); setMsg("");
-    try {
-      const r: any = await call("sync:set-uuid-identity", { enabled: next });
-      setMsg(r?.ok ? `✓ stored ${r.wrote} — RESTART REQUIRED before it affects any push or pull`
-                   : `✗ ${r?.error || "could not store"}`);
-    } catch (e: any) { setMsg(`✗ ${e?.message || String(e)}`); }
-    finally { setBusy(null); refresh(); }
-  };
 
   // NO gate here. `Section` already calls useShouldRender itself, defaulting to "station" when no
   // `category` is passed — so an outer gate of "backup" plus Section's default of "station" were
   // mutually exclusive and this section could never render on ANY tab. The category is passed to
   // Section below, which is the one place that decides.
-  const stored = pf?.flags?.sync_uuid_identity === "true";
-  const live = pf?.flags?.engineUuidIdentity === true;
   const everReceived = (pf?.mutations?.byOrigin || []).some(o => o.origin !== "local");
   const lbl: React.CSSProperties = { fontSize: 11, color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 };
   const btn: React.CSSProperties = {
@@ -1315,30 +1304,18 @@ function MultiMachineSyncSection() {
           </span>
         </div>
         <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1.5 }}>
-          Stored: <b>{pf?.flags?.sync_enabled ?? "unset"}</b> · engine right now:{" "}
-          <b>{(status?.running ?? pf?.schedulerRunning) ? "running" : "not running"}</b>. These differ
-          until a restart, because the flag is read when Ether starts. Requires a Network licence.
+          This computer: <b>{pf?.flags?.sync_switch === "on" ? "ON" : pf?.flags?.sync_switch === "off" ? "OFF" : "unknown"}</b> · engine right now:{" "}
+          <b>{(status?.running ?? pf?.schedulerRunning) ? "running" : "not running"}</b>. Switching takes effect at once.
+          Requires a Network licence.
           <br />Turn it on or off with <b>Keep my stuff synced</b> above — this is status only, so the
           two halves cannot disagree.
         </div>
       </div>
 
-      {/* Stored and live are shown separately on purpose: the flag is read once when the sync engine
-          is built at startup, so after toggling they disagree until Ether restarts. Showing one
-          number would make a pending restart invisible. */}
-      <div style={{ padding: "10px 12px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", marginBottom: 12 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
-          <input type="checkbox" checked={stored} disabled={busy !== null || !pf?.ok} onChange={toggleUuid} />
-          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-primary)" }}>Enable UUID-based station identity</span>
-        </label>
-        <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 6, lineHeight: 1.5 }}>
-          Routes station-scoped rows by station UUID instead of by this machine's local integer id.
-          Stored: <b>{pf?.flags?.sync_uuid_identity ?? "unset"}</b> · in the running engine: <b>{String(live)}</b>.
-          {pf?.ok && stored !== live && (
-            <span style={{ color: "#fbbf24", fontWeight: 700 }}> Restart required — the stored value is
-            not the one in use. Quit Ether fully from the tray and reopen it.</span>
-          )}
-        </div>
+      {/* Station identity: always on since 4.6.62 (Jeff, 2026-10-20) — every station syncs by its uuid, each with its own
+          position. The old checkbox is gone; there is nothing to choose. */}
+      <div style={{ padding: "10px 12px", background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", marginBottom: 12, fontSize: 12, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
+        Every station syncs by its own identity, each keeping its own place — the active station or not.
       </div>
 
       {/* Stuck sync entries + the health log (Jeff, 2026-10-13; docs/help-sync-cleanup.md). */}
@@ -2569,9 +2546,9 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
     let alive = true;
     (async () => {
       try {
-        const rows = await query<{ value: string }>(
-          "SELECT value FROM station_config_kv WHERE key = 'sync_enabled' AND station_id = ?", [stationId]);
-        if (alive) setSyncOn(rows?.[0]?.value === "true");
+        // This computer's switch (main: system_state 'sync_switch'), not a per-station value (2026-10-20).
+        const r = await (window as any).ether.invoke("sync:get-switch");
+        if (alive) setSyncOn(r && r.ok ? !!r.on : null);
       } catch { if (alive) setSyncOn(null); }
     })();
     return () => { alive = false; };
@@ -2581,9 +2558,10 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
     const next = !(syncOn && r2Enabled);
     setSyncSwitchMsg("");
     try {
-      const kv = (window as any).ether.stationConfigKv;
-      await kv.upsertByKey(stationId, 'sync_enabled', next ? 'true' : 'false');
-      if (next) await kv.upsertByKey(stationId, 'sync_backend_url', 'https://ether-backend-production.up.railway.app');
+      // ONE SWITCH FOR THIS COMPUTER (Jeff, 2026-10-20). Main writes it and starts or stops sync at once.
+      const sw = await (window as any).ether.invoke("sync:set-switch", next, "Keep my stuff synced");
+      if (!sw || !sw.ok) throw new Error((sw && sw.error) || "the switch did not change");
+      if (next) await (window as any).ether.stationConfigKv.upsertByKey(stationId, 'sync_backend_url', 'https://ether-backend-production.up.railway.app');
       // THE FILES HALF IS THIS SAME WRITE (2026-09-11). There is no second flag any longer: main's
       // r2Ready() reads sync_enabled for the active station, so the line above turned BOTH halves
       // off or on. The first attempt at this shipped a stored `enabled` boolean instead, and it
@@ -2603,11 +2581,9 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
         const cfg: any = await (window as any).ether.cloudBackup.getR2Config();
         setR2Enabled(!!cfg?.enabled);
       } catch { setR2Enabled(next); }
-      // Honest about the restart. The engine reads sync_enabled at startup, so claiming it is on
-      // this instant would be the same lie the old panel told.
       setSyncSwitchMsg(next
-        ? "On. Your audio starts going up now; your setup joins in after you next restart Ether."
-        : "Off. Nothing is going to the cloud.");
+        ? "On. This computer sends and receives again now — your setup and your audio."
+        : "Off on this computer. Nothing goes out and nothing comes in until you switch it back on.");
     } catch (e: any) {
       setSyncSwitchMsg(`Couldn't change that — ${e?.message || String(e)}`);
     }
@@ -3679,6 +3655,8 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
         {syncSwitchMsg && (
           <div style={{ fontSize: 12, marginBottom: 16, color: "var(--text-secondary)" }}>{syncSwitchMsg}</div>
         )}
+        {/* After a restore: send it to every computer (admin, confirm) — or just switch sync back on (2026-10-20). */}
+        <SendRestoreCard />
         {!r2BackingNow && r2BackupNowStatus && (
           <div style={{ fontSize: 12.5, marginTop: -10, marginBottom: 18, color: r2BackupNowStatus.startsWith("✓") ? "var(--accent-green)" : r2BackupNowStatus.startsWith("✗") ? "var(--accent-red)" : "var(--text-secondary)" }}>{r2BackupNowStatus}</div>
         )}

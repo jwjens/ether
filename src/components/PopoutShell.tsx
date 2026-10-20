@@ -2,6 +2,7 @@
 // Provides a thin drag handle (titlebar) + close button around any panel.
 
 import React from "react";
+import SyncOffBadge from "./SyncOffBadge";
 
 interface Props {
   title: string;
@@ -45,6 +46,8 @@ export default function PopoutShell({ title, children, headerExtra }: Props) {
             fontSize: 10, fontWeight: 600, letterSpacing: "0.06em",
             color: "#50607a", textTransform: "uppercase",
           }}>{title}</span>
+          {/* Sync switched off on this computer — shown in every pop-out too (2026-10-20). */}
+          <SyncOffBadge compact />
         </div>
 
         {/* Right side: optional extras + close */}

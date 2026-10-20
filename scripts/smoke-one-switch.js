@@ -172,29 +172,33 @@ console.log("\n== 6. the pending count is not the pushable count ==");
   else fail("Clear pending still names the raw pending count — an irreversible act armed against the wrong number");
 }
 
-console.log("\n== 7. sync_enabled has exactly ONE writer ==");
+console.log("\n== 7. the sync switch has exactly ONE writer ==");
 {
-  // Jeff, 2026-09-09: "It shouldn't be settable in two places." Advanced carried its own
-  // "Enable the sync engine" checkbox, which was a second master switch for HALF of what the top
-  // toggle does — untick it there and the card claimed on while the rows half was off. Two writers
-  // on one key is the srcChannelOn class of defect, which §6 of smoke-window-station.js already
-  // guards for the board. This is the same guard for the sync flag.
-  const writers = [];
+  // Jeff, 2026-09-09: "It shouldn't be settable in two places." — and 2026-10-20: "One on/off for the whole computer".
+  // Since 4.6.62 the switch is THIS COMPUTER's (main: system_state 'sync_switch', written only by _writeSyncSwitch);
+  // the renderer sets it only through sync:set-switch, from ONE place: toggleKeepSynced. No renderer writes the old
+  // per-station sync_enabled any more.
+  const setters = [], oldWriters = [];
   for (const f of RENDERER) {
     code(f).split("\n").forEach((l, i) => {
-      if (/upsertByKey\s*\(/.test(l) && /'sync_enabled'|"sync_enabled"/.test(l)) writers.push(`${f}:${i + 1}`);
-      // The multi-line form: the key sits on its own line inside the call.
-      else if (/^\s*(stationId|sid)\s*,\s*'sync_enabled'/.test(l)) writers.push(`${f}:${i + 1}`);
+      if (/["']sync:set-switch["']/.test(l)) setters.push(`${f}:${i + 1}`);
+      if (/upsertByKey\s*\(/.test(l) && /'sync_enabled'|"sync_enabled"/.test(l)) oldWriters.push(`${f}:${i + 1}`);
     });
   }
-  if (writers.length === 1) pass(`one writer of sync_enabled (${writers[0]})`);
-  else if (writers.length === 0) fail("nothing writes sync_enabled — the master switch cannot turn the engine on");
-  else fail(`sync_enabled is written in ${writers.length} places (${writers.join(", ")}) — one switch means one writer`);
+  if (setters.length === 1) pass(`one renderer caller sets the switch (${setters[0]})`);
+  else if (setters.length === 0) fail("nothing sets the sync switch — the master switch cannot turn the engine on");
+  else fail(`the switch is set from ${setters.length} places (${setters.join(", ")}) — one switch means one writer`);
+  if (!oldWriters.length) pass("nothing writes the retired per-station sync_enabled");
+  else fail(`the retired per-station sync_enabled is still written (${oldWriters.join(", ")})`);
+  const mainSrc = code("electron/main.js");
+  const mainWriters = (mainSrc.match(/INSERT OR REPLACE INTO system_state[^\n]*SYNC_SWITCH_KEY/g) || []).length;
+  if (mainWriters === 1) pass("main writes the switch in one place (_writeSyncSwitch)");
+  else fail(`main writes the switch in ${mainWriters} places`);
 
-  // Whoever writes the flag must write the destination in the same act.
+  // Whoever turns it on must write the destination in the same act.
   const sp = code("src/components/SettingsPanel.tsx");
-  if (/sync_enabled[\s\S]{0,400}sync_backend_url/.test(sp)) pass("the writer sets sync_backend_url alongside it");
-  else fail("sync_enabled is written without sync_backend_url — main resolves the host to '' and starts an engine with nowhere to send (4.4.202)");
+  if (/sync:set-switch[\s\S]{0,500}sync_backend_url/.test(sp)) pass("the writer sets sync_backend_url alongside it");
+  else fail("the switch is set without sync_backend_url — main resolves the host to '' and starts an engine with nowhere to send (4.4.202)");
 
   // The retired second control, by its own label.
   if (!sp.includes("Enable the sync engine")) pass("the second master switch is gone from Advanced");
@@ -253,10 +257,10 @@ console.log("\n== 8. the FILES half is not a flag at all ==");
   else fail(`${writers.length} caller(s) still set the files half independently (${writers.join(", ")})`);
 
   // (b) the gate is derived from the one flag.
-  if (/function\s+filesHalfEnabled\s*\(/.test(cb) && /sync_enabled/.test(cb)) {
-    pass("cloud-backup derives the files half from sync_enabled");
+  if (/function\s+filesHalfEnabled\s*\(/.test(cb) && /sync_switch/.test(cb)) {
+    pass("cloud-backup derives the files half from this computer's sync switch");
   } else {
-    fail("cloud-backup has no filesHalfEnabled() reading sync_enabled — the files half is a flag again");
+    fail("cloud-backup has no filesHalfEnabled() reading the sync switch — the files half is a flag again");
   }
   const ready = cb.slice(cb.indexOf("function r2Ready"), cb.indexOf("function r2Ready") + 400);
   if (/filesHalfEnabled\s*\(\s*\)/.test(ready)) pass("r2Ready() asks filesHalfEnabled()");

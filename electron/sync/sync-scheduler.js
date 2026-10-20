@@ -26,6 +26,10 @@ const BACKOFF_MS = [10_000, 30_000, 60_000]; // indexed by (failures - 1), cappe
 // cursor still emits sync:initial-complete on the next drain to zero.
 const INITIAL_DRAINED_KEY = 'sync_initial_drained';
 
+// Changes applied per pull tick across all stations before the rest wait for the next tick (a first catch-up after
+// 4.6.62 can be large; it must never land on the main thread in one go — the 4.6.60 freeze lesson).
+const PULL_APPLY_BUDGET = 500;
+
 class SyncScheduler {
   /**
    * @param {import('better-sqlite3').Database} db
@@ -69,6 +73,17 @@ class SyncScheduler {
       },
     };
 
+    // EVERY STATION, EACH BY ITS IDENTITY, EACH WITH ITS OWN POSITION (Jeff, 2026-10-20: "sync every station the account
+    // holds, each by identity with its own position marker, pushes for every station regardless of which is active").
+    // When `stationUuids` is given, the main engine pushes everything and pulls only account-wide rows, and every station
+    // gets its own PULL-ONLY engine with its own cursor (makeStationEngine) — so a station that is not active here still
+    // receives, and one station's position can never skip another station's rows. Each pull tick works through the
+    // stations within PULL_APPLY_BUDGET applied changes, so a first catch-up is spread over ticks, never one burst on main.
+    this._stationUuids      = typeof opts.stationUuids === 'function' ? opts.stationUuids : null;
+    this._makeStationEngine = typeof opts.makeStationEngine === 'function' ? opts.makeStationEngine : null;
+    this._stationEngines    = new Map();   // uuid → { engine, conn }
+    this._stationTurn       = 0;
+    delete engineOpts.stationUuids; delete engineOpts.makeStationEngine;
     this._engineOpts = engineOpts;                          // kept so _ensureEngine can rebuild
     this._engineConn = this._getDb();                       // the Database the engine is bound to
     this._engine     = new SyncEngine(this._engineConn, transport, engineOpts);
@@ -143,6 +158,37 @@ class SyncScheduler {
     this._engine = new SyncEngine(this._engineConn, this._transport, this._engineOpts);
     console.log(`[SYNC] uuid-identity ${next ? 'ENABLED' : 'disabled'} — engine rebuilt in place (no restart)`);
     return { changed: true, uuidIdentity: next };
+  }
+
+  /** The per-station pull engine for `uuid`, built (or rebuilt on a reopened connection) on demand. */
+  _stationEngine(uuid) {
+    const cur = this._getDb();
+    const have = this._stationEngines.get(uuid);
+    if (have && have.conn === cur) return have.engine;
+    const engine = this._makeStationEngine(cur, uuid, this._engineOpts);
+    this._stationEngines.set(uuid, { engine, conn: cur });
+    return engine;
+  }
+
+  /** Pull every station (round robin from where the last tick stopped) until the apply budget is spent. */
+  async _pullStations() {
+    const out = { pulled: 0, applied: 0, stations: 0 };
+    if (!this._stationUuids || !this._makeStationEngine) return out;
+    let uuids = [];
+    try { uuids = (this._stationUuids() || []).filter(Boolean); } catch (_) { uuids = []; }
+    for (const u of [...this._stationEngines.keys()]) if (!uuids.includes(u)) this._stationEngines.delete(u);
+    if (!uuids.length) return out;
+    const start = this._stationTurn % uuids.length;
+    for (let k = 0; k < uuids.length; k++) {
+      const uuid = uuids[(start + k) % uuids.length];
+      try {
+        const r = await this._stationEngine(uuid).pull();
+        out.pulled += r.pulled ?? 0; out.applied += r.applied ?? 0; out.stations++;
+      } catch (e) { console.warn(`[SYNC] station ${uuid} pull failed: ${e.message}`); }
+      this._stationTurn = (start + k + 1) % uuids.length;
+      if (out.applied >= PULL_APPLY_BUDGET) break;   // the rest go first on the next pull tick
+    }
+    return out;
   }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -283,6 +329,8 @@ class SyncScheduler {
       let push, pull;
       if (doPull) {
         ({ push, pull } = await this._engine.syncCycle());
+        const st = await this._pullStations();
+        pull = { ...pull, pulled: (pull.pulled ?? 0) + st.pulled, applied: (pull.applied ?? 0) + st.applied };
       } else {
         push = await this._engine.push();
         pull = { pulled: 0, applied: 0 };
@@ -351,6 +399,9 @@ class SyncScheduler {
   // goes live mid-drain (resuming from the persisted cursor on a later off-air tick).
   _driveRebaseline() {
     if (this._rebaselineInFlight) return;
+    // Per-station engines start every station from position 0, which re-delivers what the old active-station-only scope
+    // missed — the job the re-baseline existed for. It never runs alongside them.
+    if (this._stationUuids && this._makeStationEngine) return;
     if (!this._engine.rebaselinePending()) return;   // uuid-identity off, or already complete
     if (this._isOnAir()) return;                      // stay deferred; normal incremental sync still flows
     this._rebaselineInFlight = true;

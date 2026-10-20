@@ -74,6 +74,7 @@ import UpNext from "./components/UpNext";
 import InlineNameEditor from "./components/InlineNameEditor";
 import Scheduler from "./components/Scheduler";
 import ProgramLog from "./components/ProgramLog";
+import SyncOffBadge from "./components/SyncOffBadge";
 import Logs from "./components/Logs";
 import RotationAnalytics from "./components/RotationAnalytics";
 import ScheduleManager from "./components/ScheduleManager";
@@ -2796,6 +2797,8 @@ export default function App() {
 
         {/* LEFT zone: show name + search (search shrinks/clips; never reaches the centered clock) */}
         <div style={{ display: "flex", alignItems: "center", minWidth: 0, alignSelf: "stretch" }}>
+        {/* Sync switched off on this computer — never silent (2026-10-20). Renders nothing while sync is on. */}
+        <SyncOffBadge />
 
         {/* On-air show name — top-left (only when a show is on air; no "ETHER" fallback). Click returns to Mixer. */}
         {headerShow && (

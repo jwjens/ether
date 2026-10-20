@@ -54,14 +54,14 @@ function activeStationId() {
   try { return getDb().prepare("SELECT id FROM stations WHERE is_active=1 LIMIT 1").get()?.id ?? null; }
   catch { return null; }
 }
+// THE COMPUTER'S SYNC SWITCH (2026-10-20, Jeff: "One on/off for the whole computer") — system_state 'sync_switch', the
+// same value main's _syncSwitchOn() reads (electron/main.js). Before main has written it (first run of 4.6.62) the old
+// per-station rule decides: on where any station had sync_enabled = 'true'.
 function filesHalfEnabled() {
-  const sid = activeStationId();
-  if (sid == null) return false;           // no active station = nothing to send
   try {
-    const row = getDb().prepare(
-      "SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'sync_enabled' AND deleted_at IS NULL"
-    ).get(sid);
-    return row?.value === "true";          // absent = off. An unset switch sends nothing.
+    const r = getDb().prepare("SELECT value FROM system_state WHERE key = 'sync_switch'").get();
+    if (r) return r.value === "on";
+    return !!getDb().prepare("SELECT 1 FROM station_config_kv WHERE key = 'sync_enabled' AND value = 'true' AND deleted_at IS NULL LIMIT 1").get();
   } catch { return false; }
 }
 
