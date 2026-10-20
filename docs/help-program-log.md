@@ -125,8 +125,8 @@ starts**:
   hour **✕**) is built again within a minute.
 - Hours that already have their log are **never touched**. Nothing is built outside your shows, and nothing is topped
   up on a timer.
-- One computer builds each station's log — its **designated generator** (Health Monitor). If no computer holds that yet,
-  the first one to build the log takes it.
+- One computer builds each station's log — its **designated generator** (Health Monitor). A station with no designated
+  computer is not built automatically (the Health Monitor shows it in yellow); Fill Day still builds it.
 - Fill Day and Fill Week still work exactly as before when you want to rebuild a day yourself.
 
 ## Clear Day and the hour ✕

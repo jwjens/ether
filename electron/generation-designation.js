@@ -49,14 +49,16 @@ function parseRecord(raw) {
  * What this machine should do on a tick.
  * @returns {{action:'designate'|'stamp'|'observe'|'skip', reason:string, designated:boolean}}
  */
+// THE BUILDER FOLLOWS THE EXISTING DESIGNATION (Jeff, 2026-10-19: "The machine that builds a station's log follows the
+// existing machine designation. Not 'first machine to build takes the role.'"). No machine claims an unheld station any
+// more: 'designate' is never decided. The holder stamps its heartbeat; every other machine observes. `autoOn` is kept
+// for callers that still pass it and only ever narrows (false → observe).
 function decide({ record, machineId, autoOn, killSwitch }) {
   const designated = !!(record && record.machine_id === machineId);
   const base = { designated, holder: record ? record.machine_id : null };
   if (killSwitch) return { ...base, action: 'skip', reason: 'kill_designation set — designation bypassed' };
-  // Opt-in first: a machine the operator switched off must never take the designation, or it would
-  // own a station it has been told not to generate.
-  if (!autoOn) return { ...base, action: 'observe', reason: 'auto-generation off on this machine' };
-  if (!record) return { ...base, action: 'designate', reason: 'no designated machine — claiming by first generate' };
+  if (!record) return { ...base, action: 'observe', reason: 'no machine is designated for this station — none builds its log automatically' };
+  if (autoOn === false) return { ...base, action: 'observe', reason: 'auto-generation off on this machine' };
   if (designated) return { ...base, action: 'stamp', reason: 'designated — recording heartbeat' };
   // NEVER taken automatically. This is the whole difference from the lease it replaced.
   return { ...base, action: 'observe', reason: `designated to ${record.machine_name || record.machine_id}` };
@@ -75,10 +77,9 @@ function mayAutoGenerate({ record, machineId, killSwitch }) {
   // The emergency switch outranks the gate. If designation itself is misbehaving, the operator must
   // still be able to get their log built — a gate with no override is a way to lose a station.
   if (killSwitch) return { allow: true, reason: 'kill_designation set — enforcement bypassed', holder: null };
-  // NO RECORD → ALLOWED, and the caller's tick will claim it (the zero-config rule, design §1).
-  // Refusing here would mean a brand-new station never builds a log at all: the enforcement causing
-  // dead air, which is worse than the two-writer problem it exists to prevent.
-  if (!record) return { allow: true, reason: 'no designated machine — this machine claims it by generating', holder: null };
+  // NO RECORD → NOT ALLOWED (Jeff, 2026-10-19): the builder follows the existing designation; nobody claims by building.
+  // The Health Monitor shows the station as undesignated (yellow) so it is never silent about it.
+  if (!record) return { allow: false, reason: 'no machine is designated for this station', holder: null };
   if (!machineId) return { allow: true, reason: 'this machine has no identity — cannot prove it is not the holder', holder: record.machine_id };
   if (record.machine_id === machineId) return { allow: true, reason: 'this machine is designated', holder: machineId };
   return { allow: false, reason: `designated to ${record.machine_name || record.machine_id}`, holder: record.machine_id };
@@ -89,7 +90,7 @@ function mayAutoGenerate({ record, machineId, killSwitch }) {
  * @returns {{ allow: boolean, reason: string }}
  */
 function mayBypass({ record, machineId, now }) {
-  if (!record) return { allow: false, reason: 'No machine holds the designation for this station — there is nothing to bypass. The first machine to build a log for this station will claim it.' };
+  if (!record) return { allow: false, reason: 'No machine holds the designation for this station — there is nothing to bypass.' };
   if (machineId && record.machine_id === machineId) return { allow: false, reason: 'This machine is the designated generator — there is nothing to bypass.' };
   const name = record.machine_name || record.machine_id;
   const age = record.last_checked != null ? Math.max(0, now - record.last_checked) : null;
@@ -127,8 +128,10 @@ function status({ record, now, machineId, killSwitch, bypass }) {
     //
     // So this state is still normal, still not at risk, and still grey. An alarm that is usually
     // wrong is one people learn to ignore.
-    return { level: 'grey', state: 'none', holder: null, lastChecked: null, lastGenerated: null,
-             text: 'none — no machine has auto-generated this station yet' };
+    // YELLOW since 2026-10-19: with no claim-by-building, an undesignated station's log is built by no machine
+    // automatically — a real consequence, so it is a warning, not a neutral grey.
+    return { level: 'yellow', state: 'none', holder: null, lastChecked: null, lastGenerated: null,
+             text: "none — no machine is designated, so no machine builds this station's log automatically (Fill Day still works)" };
   }
   const age = record.last_checked != null ? Math.max(0, now - record.last_checked) : null;
   const level = age == null ? 'yellow' : age < STALE_YELLOW_SEC ? 'green' : age < STALE_RED_SEC ? 'yellow' : 'red';

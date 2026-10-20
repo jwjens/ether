@@ -104,22 +104,22 @@ would fill with dozens of identical lines a day and tell you nothing.
 
 **RELOAD** re-reads the list. It is a plain read — it changes nothing.
 
-### Who takes the designation
+### Who builds the log
 
-There is no switch (2026-10-19). Every computer that holds the station can take the designation; the
-**first one to build the station's log** while nobody holds it becomes the designated generator, and
-every other computer watches. The rows keep updating on their own every 30 seconds.
+There is no switch (2026-10-19). **The designated computer builds the station's log — nobody else**,
+and no computer takes the designation by building. A station with no designated computer shows
+**None** in yellow: no computer builds its log automatically (Fill Day still works). The rows keep
+updating on their own every 30 seconds.
 
 ## It is enforced
 
 **A computer that is not the designated generator will not automatically build that station's log.** It checks in, it
 shows you the state, and it leaves the log alone.
 
-Three exceptions, all deliberate:
+How it works, deliberately:
 
-1. **A station nobody has claimed still gets built.** If no computer is designated, the first one to
-   build its log claims it. A brand-new station must never sit with an empty log waiting to be
-   assigned.
+1. **A station with no designated computer is not built automatically.** It shows **None** in yellow;
+   Fill Day still builds it.
 2. **Pressing Generate yourself always works.** The rule applies only to the *automatic* build (each show's log, built before the show starts). If
    you are sitting at a computer and press **Generate**, it generates — you are there, and you asked.
 3. **The bypass still bypasses.** When the bypass is on for a station, every computer that holds the

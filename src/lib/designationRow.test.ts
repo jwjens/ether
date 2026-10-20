@@ -45,7 +45,9 @@ describe("designationView — auto-generation OFF", () => {
   it("never leaves a bare 'None' unexplained", () => {
     expect(v.value).toBe("None");
     expect(v.sub).toContain("Auto-generate is off");
-    expect(v.sub).toContain("Nothing is wrong");   // this state is correct, not a fault
+    // Since 2026-10-19 no machine claims a station by building it, so an undesignated station gets no automatic log —
+    // the row says so plainly instead of "Nothing is wrong".
+    expect(v.sub).toContain("none builds its log automatically");
     expect(v.sub).not.toBe(NONE.text);
   });
 });

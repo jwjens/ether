@@ -110,7 +110,7 @@ export function designationView(
   const sub =
     state === "none" && blocked
       ? "Auto-generate is off for this station on this machine, so it will not take the designation. " +
-        "Nothing is wrong — this machine takes the designation when it next builds a show's log."
+        "No machine is designated for this station, so none builds its log automatically."
       : (d && d.text) || fallback;
 
   const buttonTitle = blocked

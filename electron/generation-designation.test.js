@@ -28,12 +28,11 @@ describe("mayAutoGenerate — the Phase B gate", () => {
     expect(g.reason).toContain("OV");        // names the holder, for the log line and the ledger
   });
 
-  it("ALLOWS an UNDESIGNATED station — refusing would be the gate causing dead air", () => {
-    // A brand-new station has no record. If the gate refused here it would never build a log at
-    // all, which is worse than the two-writer problem the gate exists to prevent. The tick claims
-    // it by generating (the zero-config rule).
+  it("REFUSES an undesignated station — the builder follows the existing designation (Jeff, 2026-10-19)", () => {
+    // "The machine that builds a station's log follows the existing machine designation. Not 'first machine to build
+    // takes the role.'"
     const g = mayAutoGenerate({ record: null, machineId: ME });
-    expect(g.allow).toBe(true);
+    expect(g.allow).toBe(false);
     expect(g.holder).toBe(null);
   });
 
@@ -57,14 +56,16 @@ describe("mayAutoGenerate — the Phase B gate", () => {
   });
 
   it("survives a malformed record rather than throwing inside the tick", () => {
-    expect(mayAutoGenerate({ record: parseRecord("not json"), machineId: ME }).allow).toBe(true);
-    expect(mayAutoGenerate({ record: undefined, machineId: ME }).allow).toBe(true);
+    // A malformed record is ABSENT: no throw, and (since 2026-10-19) absent means no machine builds automatically.
+    expect(mayAutoGenerate({ record: parseRecord("not json"), machineId: ME }).allow).toBe(false);
+    expect(mayAutoGenerate({ record: undefined, machineId: ME }).allow).toBe(false);
   });
 });
 
 describe("decide", () => {
-  it("designates when nothing is designated — zero-config for a single machine", () => {
-    expect(decide({ record: null, machineId: ME, autoOn: true }).action).toBe("designate");
+  it("never claims an unheld station — no 'first machine to build takes the role'", () => {
+    expect(decide({ record: null, machineId: ME, autoOn: true }).action).toBe("observe");
+    expect(decide({ record: null, machineId: ME }).action).toBe("observe");
   });
   it("stamps a heartbeat when it is the designated machine", () => {
     expect(decide({ record: rec({ machine_id: ME }), machineId: ME, autoOn: true }).action).toBe("stamp");
@@ -103,10 +104,11 @@ describe("status — what the operator reads", () => {
     // Phase A gates nothing, so an undesignated station is still being topped up by every
     // switched-on machine. Red would be an alarm for a normal state, and an alarm that is usually
     // wrong is one people stop reading. It becomes a warning in Phase B, when the consequence is real.
+    // Since 2026-10-19 nobody claims an unheld station, so its log is built by no machine automatically: a warning.
     const s = status({ record: null, now: NOW, machineId: ME });
-    expect(s.level).toBe("grey");
+    expect(s.level).toBe("yellow");
     expect(s.state).toBe("none");
-    expect(s.text).toContain("no machine has auto-generated");
+    expect(s.text).toContain("no machine is designated");
   });
   it("reports last_generated SEPARATELY from the heartbeat", () => {
     // A machine can be watching (fresh last_checked) and correctly generating nothing, because the
