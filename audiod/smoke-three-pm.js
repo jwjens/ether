@@ -105,6 +105,18 @@ function logRow(db, r) {
 }
 
 const loggen = require(path.join(ROOT, "audiod", "loggen.js"));
+// The product's own main.js functions, lifted against the fixture database (the scheduler gate's pattern).
+const { createRequire } = require("module");
+const MAIN_SRC = fs.readFileSync(path.join(ROOT, "electron", "main.js"), "utf8");
+function liftFromMain(name, deps) {
+  const start = MAIN_SRC.indexOf(`\nfunction ${name}(`) >= 0 ? MAIN_SRC.indexOf(`\nfunction ${name}(`) : MAIN_SRC.indexOf(`\nasync function ${name}(`);
+  if (start < 0) throw new Error(`main.js has no function ${name}`);
+  const m = /\r?\n\}\r?\n/.exec(MAIN_SRC.slice(start + 1));
+  const src = MAIN_SRC.slice(start + 1, start + 1 + m.index + m[0].length);
+  const names = Object.keys(deps);
+  // eslint-disable-next-line no-new-func
+  return new Function(...names, `${src}\nreturn ${name};`)(...names.map(n => deps[n]));
+}
 const core = require(path.join(ROOT, "audiod", "scheduler-core.js"));
 const gc = require(path.join(ROOT, "electron", "generate-core.js"));
 
@@ -196,13 +208,17 @@ function threePm(db) {
     const r = threePm(db);
     // A didn't-play row of the 2 PM hour, too.
     db.prepare("UPDATE generated_schedule SET state = 'missed' WHERE id = ?").run(r.leftovers[22]);
+    // A 2 PM row timed before 3:00 that has not aired yet (still pending) — it can still air.
+    logRow(db, { song_id: 70, title: "2PM pending before 3:00", scheduled_at: at(14, 58, 30), log_hour_ts: at(14, 0) });
     setNow(15, 3, 1);
     const tl = core.loadTimeline(db, SID, { beforeTs: Math.floor(NOW / 1000), replace: [at(15, 0), at(16, 0)] });
     const rules = { songMin: 120, artistMin: 0, titleMin: 0 };
     const song = (id) => { const s = db.prepare("SELECT s.file_path f, s.title, a.name artist, s.duration_ms FROM songs s JOIN artists a ON a.id = s.artist_id WHERE s.id = ?").get(id); return { file: s.f, title: s.title, artist: s.artist, durationMs: s.duration_ms }; };
-    check("3a · a 2 PM row timed past 3:00 (an extra row of the old hour) blocks that song in the 3 PM hour", !!core.breach(tl, song(1), at(15, 5), rules));
-    check("3b · a 2 PM pending row timed before now blocks its song", !!core.breach(tl, song(5), at(15, 5), rules));
-    check("3c · a 2 PM row marked didn't-play blocks its song", !!core.breach(tl, song(23), at(15, 5), rules));
+    // Only rows that air count (2026-10-19, the rotation fix): an extra 2 PM row timed past 3:00 never airs (rule 1), so it
+    // does not burn its song — counting it took the gate's rotation from 131 to 236.
+    check("3a · a 2 PM row timed past 3:00 (it never airs) does not burn its song", !core.breach(tl, song(1), at(15, 5), rules));
+    check("3b · a 2 PM pending row timed before 3:00 (it can still air) blocks its song", !!core.breach(tl, song(70), at(15, 5), rules));
+    check("3c · a 2 PM row marked didn't-play (never aired) does not count", !core.breach(tl, song(23), at(15, 5), rules));
     check("3d · the hand-added 2 PM row blocks its song", !!core.breach(tl, song(60), at(15, 5), rules));
     check("3e · a song nowhere near the log does not", !core.breach(tl, song(100), at(15, 5), rules));
   }
@@ -264,6 +280,49 @@ function threePm(db) {
     check("5d · one way to play the log: the log reader, no per-machine switch", /_logReaderOn\(\) \{ return true; \}/.test(eng) && /return this\._refillFromLog\(\);/.test(eng));
     check("5e · the watchdog resumes the stalled song, never another deck", /_recoverStall\(\) \{\s*this\._advance\("watchdog-recover", \(\) => this\._resumeStalled\(\)\);/.test(eng));
     check("5f · no generating on a timer: only a show that ran out of music generates", !/_scheduleIsSparse\(st\.id, nowTs\)\)/.test(main) && /reason === "waiting:log-ended-inside-show"\) _outOfMusicRegenerate/.test(main) && /no show is on — nothing generates/.test(main));
+  }
+
+  // ════ RULE 6 — no switch: the log is built before a show starts ════════════════════════════════════════════
+  // Jeff, 2026-10-19: "Remove the 'Generate when a show runs out' switch. No switches. Inside a show there is always
+  // music; the log is built before a show starts, never silence while it generates."
+  {
+    const { db } = buildStation();
+    try { db.prepare("INSERT OR REPLACE INTO system_state (key, value, updated_at) VALUES ('hlc_last', '0:0:three-pm-fixture', 'x')").run(); } catch {}
+    const mainRequire = createRequire(path.join(ROOT, "electron", "main.js"));
+    const base = { db, require: mainRequire, console: { log() {}, error: console.error, warn() {} }, _scheduleChanged: () => {}, _healthEvent: () => {} };
+    const _genStartTs = (ts) => { const d = new Date(ts * 1000); d.setMinutes(0, 0, 0); return Math.floor(d.getTime() / 1000); };
+    const _regenPoint = liftFromMain("_regenPoint", { ...base, _genStartTs });
+    const _generateDayChunked = liftFromMain("_generateDayChunked", { ...base, _genCancel: false, _genEmit: () => {}, generateDayRows: gc.generateDayRows, resetGenSlice: gc.resetGenSlice });
+    const _commitDayRows = liftFromMain("_commitDayRows", base);
+    const _generateRange = liftFromMain("_generateRange", { ...base, buildScheduleCtx: gc.buildScheduleCtx, _regenPoint, _generateDayChunked, _placeJingles: () => {}, _commitDayRows,
+      retireStaleScheduleRows: () => {}, finishGenerateRun: () => {} });
+    const _missingShowSpans = liftFromMain("_missingShowSpans", base);
+    const shows = () => db.prepare("SELECT * FROM shows WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL").all(SID);
+    const rowsIn = (a, b) => db.prepare("SELECT id, state, deleted_at FROM generated_schedule WHERE station_id = ? AND deleted_at IS NULL AND COALESCE(log_hour_ts, scheduled_at) >= ? AND COALESCE(log_hour_ts, scheduled_at) < ?").all(SID, a, b);
+    // 2 PM: Morning (9–15) has its log; HalloVeen Hour One (15–18) has none.
+    for (let h = 9; h < 15; h++) logRow(db, { song_id: 1 + h, title: `Morning ${h}:00`, scheduled_at: at(h, 0), log_hour_ts: at(h, 0), state: h < 14 ? "played" : "pending", played_at: h < 14 ? at(h, 0) : null });
+    const twoPmRow = db.prepare("SELECT id FROM generated_schedule WHERE log_hour_ts = ?").get(at(14, 0)).id;
+    setNow(14, 0, 30);
+    const spans = _missingShowSpans(SID, shows(), Math.floor(NOW / 1000));
+    check("6a · at 2 PM the next show (HalloVeen Hour One, 3–6 PM) has no log: it is found to be built", spans.length === 1 && spans[0].fromLk === at(15, 0) && spans[0].toTs === at(18, 0),
+      JSON.stringify(spans.map(x => [new RealDate(x.fromLk * 1000).toTimeString().slice(0, 5), new RealDate(x.toTs * 1000).toTimeString().slice(0, 5)])));
+    const r = await _generateRange(SID, spans[0].fromLk, spans[0].toTs, { source: "auto", window: spans[0] });
+    check("6b · it is built before it starts: every hour 3–6 PM has its clock's rows (33 songs each)",
+      [15, 16, 17].every(h => rowsIn(at(h, 0), at(h + 1, 0)).length >= 33), [15, 16, 17].map(h => rowsIn(at(h, 0), at(h + 1, 0)).length).join("/") + ` (${r && r.count} built)`);
+    check("6c · nothing else is touched: the 2 PM hour's pending row is still there, no row after 6 PM",
+      !!db.prepare("SELECT 1 FROM generated_schedule WHERE id = ? AND deleted_at IS NULL").get(twoPmRow) && rowsIn(at(18, 0), at(23, 59)).length === 0);
+    check("6d · built once: the next pass finds nothing to build", _missingShowSpans(SID, shows(), Math.floor(NOW / 1000)).length === 0);
+    db.prepare("UPDATE generated_schedule SET deleted_at = 'cleared' WHERE station_id = ? AND COALESCE(log_hour_ts, scheduled_at) = ?").run(SID, at(16, 0));
+    const sp2 = _missingShowSpans(SID, shows(), Math.floor(NOW / 1000));
+    check("6e · an hour of the show cleared before it airs is found and built again — only that hour", sp2.length === 1 && sp2[0].fromLk === at(16, 0) && sp2[0].toTs === at(17, 0), JSON.stringify(sp2));
+    const before17 = rowsIn(at(17, 0), at(18, 0)).map(x => x.id).join(",");
+    await _generateRange(SID, sp2[0].fromLk, sp2[0].toTs, { source: "auto", window: sp2[0] });
+    check("6f · …and the hours around it keep their rows exactly", rowsIn(at(16, 0), at(17, 0)).length >= 33 && rowsIn(at(17, 0), at(18, 0)).map(x => x.id).join(",") === before17);
+    // Between shows nothing is built: at 7 PM with no show until tomorrow 9 AM, only tomorrow's Morning is the next show.
+    setNow(19, 0, 0);
+    const sp3 = _missingShowSpans(SID, shows(), Math.floor(NOW / 1000));
+    check("6g · after the last show the next one is tomorrow's Morning — nothing between shows is built",
+      sp3.length === 1 && sp3[0].fromLk === at(9, 0) + 86400 && sp3[0].toTs === at(15, 0) + 86400, JSON.stringify(sp3.map(x => new RealDate(x.fromLk * 1000).toString().slice(0, 21))));
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);

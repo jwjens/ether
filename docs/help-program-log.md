@@ -54,8 +54,9 @@ the number of hours listed: the hours your shows cover, plus any hour that alrea
 - Nothing on air? It builds from now (or from the current hour's :00 if nothing has happened in that hour yet).
 - What aired is a record, not a plan: no played, playing or didn't-play row is ever changed.
 - Items you placed by hand (they wear the YOURS badge in the hour editor) survive a Fill.
-- **Every song is checked against every row before it** — including the previous hour's rows, even ones that ran past
-  :00 — so a Fill never repeats a song the previous hour already has.
+- **Every song is checked against every row before it that airs** — including the previous hour's — so a Fill never
+  repeats a song the previous hour already has. Rows that never air (marked didn't play, or timed past their hour's end)
+  don't count: nobody hears them.
 - **A break the clock never reaches** (the clock's songs end before the break's minute) is not moved to the end of the
   hour. Fill Day reports it instead, so you can fix the clock.
 - Filling a day that has already fully aired does nothing and says so.
@@ -112,19 +113,21 @@ them. If you have the Program Log open in both the dock and its own window, both
 > rather than double-booking your slot — so the number shown can be slightly higher than the number of
 > new rows actually in the log. Your rows are the ones that win.
 
-## Keep the log filled (automatic)
+## Every show's log is built before it starts (automatic, no switch)
 
-Under Fill Day and Fill Week, **Generate when a show runs out: ON / OFF** is this station's auto-generate switch.
+There is no switch. **Inside a show there is always music**, so Ether builds each show's log **before the show
+starts**:
 
-- **ON** — when a scheduled show is on and its log runs out of music, this computer generates the rest of that show
-  straight away, so a show is never silent. That is the only time anything generates by itself: there is no timer, and
-  if no show is scheduled, nothing generates and nothing plays.
-- **OFF** (the default) — the log is filled only when someone presses Fill Day or Fill Week.
-
-It is **per station and local to this computer**: turning it on here does not turn it on at another studio. A
-computer with it ON is the one that can become the station's **designated generator**. The button shows what is
-actually stored — if a change doesn't stick, it says so in red underneath. The Health Monitor shows the same
-state (read-only) and links back here.
+- As soon as a show is the **next** one to start (later today, or the next day it runs), every hour of it that has no
+  log yet is built, using that show's clock and your rules. It is ready long before it airs — never built while the
+  station waits in silence.
+- The show **on air now** is checked the same way: an hour of it with no log (for example, one you cleared with the
+  hour **✕**) is built again within a minute.
+- Hours that already have their log are **never touched**. Nothing is built outside your shows, and nothing is topped
+  up on a timer.
+- One computer builds each station's log — its **designated generator** (Health Monitor). If no computer holds that yet,
+  the first one to build the log takes it.
+- Fill Day and Fill Week still work exactly as before when you want to rebuild a day yourself.
 
 ## Clear Day and the hour ✕
 

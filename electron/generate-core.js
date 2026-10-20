@@ -237,15 +237,20 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
     // never before the piece's start.
     let prevClass = null;
     const startFor = (cls) => Math.max(seg.fromTs, currentTs - segue.overlapBetween(prevClass, cls, ctx.overlapSec));
-    // Rows timed past this piece's end STAY on the timeline (Jeff, 2026-10-19: "Generate sees every row before a slot,
-    // including the previous hour's rows, so it never repeats a song the previous hour already has"). They used to come
-    // off it once the piece was built, so the next hour's first slots could repeat them.
+    // Rows timed at or past this piece's end keep the rules among themselves while the piece is built, then come off the
+    // timeline: they never air (rule 1 marks them didn't-play when the hour ends), so they must not count as plays for the
+    // next piece. Counting them (2026-10-19, first cut of rule 3) burned every song placed there — it was passed over and
+    // never aired, and rotation went from 131 to 236 on the gate's station 3 (docs/rotation-regression-2026-10-19.md).
+    // An on-air repeat is still impossible: if such a row does air because the hour ran short, the reader refuses a
+    // song that breaks separation against what aired.
+    const pastEnd = [];
     try {
 
     // One music slot, by the one pick: a song, or an UNSCHEDULED row. Moves currentTs to where the next row starts.
     const placeMusic = (categoryId, defaultDurS) => {
       const ts = startFor('MUSIC');
       const r = _pickMusic(ctx, categoryId, ts, h);
+      if (r.song && ts >= hourEnd) pastEnd.push({ song: r.song, ts });
       if (r.song) {
         const d = r.song.duration_ms ? Math.round(r.song.duration_ms / 1000) : defaultDurS;
         generatedRows.push(_musicRow(ctx, r, categoryId, ts, d, show.clock_id));
@@ -324,6 +329,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
           generatedRows.push({ scheduled_at: at, song_id: pinned.id, title: pinned.title, artist: pinned.artist_name || '', file_key: pinned.file_path ? storedBasename(pinned.file_path) : '', duration_s: durationS, category_id: slot.category_id, clock_id: show.clock_id });
           const pin = { file: pinned.file_path, artist: pinned.artist_name, title: pinned.title, duration_ms: pinned.duration_ms };
           ctx.core.commit(_timeline(ctx, Math.floor(Date.now() / 1000)), pin, at);
+          if (at >= hourEnd) pastEnd.push({ song: pin, ts: at });
           currentTs = at + durationS; prevClass = 'MUSIC';
         } else { currentTs += slotDurationS; }
         continue;
@@ -340,6 +346,7 @@ async function _generateDayRows(dayBaseDate, ctx, minTs = 0, onlyHour = null) {
     } finally {
       // Every row of this piece belongs to it, wherever its start time falls (v66).
       for (let i = firstRow; i < generatedRows.length; i++) generatedRows[i].log_hour_ts = seg.fromTs;
+      if (ctx.tl) for (const x of pastEnd) ctx.core.uncommit(ctx.tl, x.song, x.ts);
     }
     }   // each piece of the hour
   }

@@ -242,8 +242,8 @@ function loadTimeline(db, stationId, { beforeTs, replace, sinceTs, poolFiles } =
     } catch {}
     // GENERATE SEES EVERY ROW BEFORE A SLOT (Jeff, 2026-10-19: "Generate sees every row before a slot, including the
     // previous hour's rows, so it never repeats a song the previous hour already has."). Every row of the log that is not
-    // being replaced — still to air, already timed in the past, the previous hour's extra rows timed past its :00, and rows
-    // marked didn't-play — counts on the timeline, the aired ones through play_log. It used to take only pending rows
+    // being replaced and that airs — still to air, timed in the past but pending, placed by hand — counts on the timeline,
+    // the aired ones through play_log. Rows that never air (didn't-play, or timed past their hour's end) do not. It used to take only pending rows
     // timed after "now" and to skip every row past its hour's end, so the first slots of an hour could repeat a song the
     // hour before already held. Bounded to one day before the window (beyond any rule's reach).
     const lookFrom = Math.min(beforeTs ?? 0, replace ? replace[0] : (beforeTs ?? 0)) - 86400;
@@ -251,11 +251,17 @@ function loadTimeline(db, stationId, { beforeTs, replace, sinceTs, poolFiles } =
         FROM generated_schedule gs LEFT JOIN songs s ON s.id = gs.song_id LEFT JOIN artists a ON a.id = s.artist_id
        WHERE gs.station_id = ? AND gs.deleted_at IS NULL AND (gs.state IS NULL OR gs.state IN ('pending', 'missed', 'skipped')) AND gs.song_id IS NOT NULL
          AND (gs.content_class IS NULL OR gs.content_class = 'MUSIC') AND gs.scheduled_at >= ?`).all(stationId, lookFrom);
+    const endOf = pieceEndFn(db, stationId);
     for (const r of rows) {
       const inWindow = replace && r.lk >= replace[0] && r.lk < replace[1];
       const operator = r.source && String(r.source).trim().toLowerCase() === "operator";
       const pending = r.state == null || r.state === "pending";
       if (inWindow && pending && !operator) continue;   // being rebuilt by this run
+      // ONLY ROWS THAT AIR COUNT. A row marked didn't-play never aired, and an automatic row timed past its hour's end never
+      // will (rule 1 marks it didn't-play at the hour's end) — nobody can hear it repeat. Counting them burned the songs
+      // placed there: rotation went 131 → 236 on the gate's station 3 (docs/rotation-regression-2026-10-19.md).
+      if (r.state === "missed" || r.state === "skipped") continue;
+      if (!operator && r.scheduled_at >= endOf(r.lk)) continue;
       tl.add({ file: r.f, artist: r.sa, title: r.st || r.title, durationMs: r.ms }, r.scheduled_at);
     }
   } catch {}

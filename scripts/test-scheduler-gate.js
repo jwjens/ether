@@ -447,13 +447,15 @@ async function simulateStation(w, P, F, R) {
     // repeats a song the previous hour already has." Exactly Generate's timeline (scheduler-core loadTimeline): what
     // aired counts through play_log; every other row still in the log — pending, didn't-play, refused, the previous
     // hour's rows timed past its :00 — counts by its row.
-    const aired = (k) => k.state === "played" || k.state === "playing";
-    for (const k of kept) if (isMusicRow(k) && !runIds.has(k.id) && !aired(k)) tl.add(rowEvent(F, k));
+    // Only rows that air count (exactly Generate's loadTimeline): not the aired ones (counted through play_log), not
+    // didn't-play or refused rows, not automatic rows timed past their hour's end (rule 1 marks them didn't-play).
+    const counts = (k) => !(k.state === "played" || k.state === "playing" || k.state === "missed" || k.state === "skipped") && !pastEnd(k);
+    for (const k of kept) if (isMusicRow(k) && !runIds.has(k.id) && counts(k)) tl.add(rowEvent(F, k));
     // full log after the commit for the T1 in-log check: the rows that air (not past their hour's end), and a least
     // recently played row breaks a rule by the ruling
     const full = new C.Timeline();
     for (const p of allPlaysAt.all(sid, run.genTs - 2 * 86400, run.genTs)) if (isMusicPlay(p)) full.add(playEvent(F, p));   // rules reach ≤ 1 day
-    for (const k of kept) if (isMusicRow(k) && !pastEnd(k)) full.add(rowEvent(F, k));
+    for (const k of kept) if (isMusicRow(k) && !pastEnd(k) && k.state !== "missed" && k.state !== "skipped") full.add(rowEvent(F, k));   // rows that air
     const runEvents = run.rows.filter(isMusicRow).map(r => [r, rowEvent(F, r)]);
     const lrpRefs = new Set([...kept, ...run.rows].filter(isLeastRecentRow).map(r => "r" + r.id));
     for (const [r, ev] of runEvents) if (!pastEnd(r)) full.add(ev);
@@ -462,9 +464,14 @@ async function simulateStation(w, P, F, R) {
       const pair = [ev.ref, b.other.ref].sort().join("~") + "|" + b.rule + "|" + b.key;
       if (!t1Log.has(pair)) t1Log.set(pair, { at: fmt(Math.min(ev.ts, b.other.ts)), rule: b.rule, key: b.key, measuredMin: b.measuredMin, settingMin: b.settingMin, run: run.label });
     }
-    // T2: walk this run's rows in order; each music row re-derived against what came before it — every row before it,
-    // including the previous hour's rows timed past its :00 (rule 3, 2026-10-19: they no longer come off the timeline).
+    // T2: walk this run's rows in order; each music row re-derived against what came before it. A row past its hour's end
+    // is on the timeline while its own hour is built and comes off when the next hour starts (generate-core pastEnd):
+    // it never airs.
+    let curLk = null; const pastEndEvs = [];
     for (const [r, ev] of runEvents) {
+      const lk = r.log_hour_ts ?? r.scheduled_at;
+      if (lk !== curLk) { for (const x of pastEndEvs) tl.remove(x); pastEndEvs.length = 0; curLk = lk; }
+      if (pastEnd(r)) pastEndEvs.push(ev);
       const hour = new RealDate(r.scheduled_at * 1000).getHours();
       const pool = F.pool(r.category_id, hour);
       const d = C.rederivePick(tl, pool, r.scheduled_at, F.rules);

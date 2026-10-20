@@ -12,10 +12,6 @@ import { dbToPercent } from "./health/meterScale";
 import { SpotTimeline } from "./health/SpotTimeline";
 import { useContainerSize, WALL_W, WALL_H } from "./health/useContainerWidth";
 
-// Must match electron/main.js _autoGenerateEnabled and the LOCAL_ONLY_KEYS allowlist in
-// electron/sync/handlers/station_config_kv.js. A key absent from that allowlist is REFUSED by
-// set-local — the 4.4.183/184 defect.
-const AUTO_KEY = "auto_generate_enabled";
 import { query, dbHealthCheck } from "../db/client";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useActiveStation, getActiveStationIdSync } from "../hooks/useActiveStation";
@@ -738,11 +734,6 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   const [flipFlags, setFlipFlags] = useState<Record<number, boolean | null>>({});
   const [flipBusy, setFlipBusy] = useState<number | null>(null);
   const [flipErr, setFlipErr] = useState<Record<number, string>>({});
-  // Auto-generation switch — same local-only station_config_kv shape as the flip canary above.
-  // UNSET MEANS ON: a station whose operator has never seen this setting must still not run out of
-  // log, so the tri-state here is (true = on, false = off, null = unreadable) and null renders as ON
-  // with a warning rather than as OFF.
-  const [autoGen, setAutoGen] = useState<Record<number, boolean | null>>({});
   // Generation designation (Phase A: observe only — it reports, it does not gate generation).
   const [desig, setDesig] = useState<Record<number, any>>({});
   // The same rows, unkeyed. This panel needs them by station id; the dashboard's designationFor()
@@ -910,44 +901,13 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     } catch { return null; }
   }, []);
 
-  // Merge per station with a functional update instead of replacing the whole map. Two overlapping
-  // refreshes (libHealth re-polls, so this effect can re-enter) can no longer clobber each other, and
-  // one station failing to read leaves the others alone instead of resetting everything.
-  // Reads the STORED value. Default when unset is OFF (4.4.185): an unattended writer to the playout
-  // log is switched on deliberately, never inherited.
-  const readAutoGen = useCallback(async (sid: number): Promise<boolean | null> => {
-    try {
-      const res = await (window as any).ether?.invoke?.("station_config_kv:get-value", sid, AUTO_KEY);
-      const parsed = parseKvFlag(res, false);
-      console.log(`[auto-generate] read station=${sid} raw=${JSON.stringify(res)} -> ${parsed === null ? "UNREADABLE" : parsed ? "ON" : "OFF"}`);
-      return parsed;
-    } catch (e) {
-      console.warn(`[auto-generate] read FAILED station=${sid}`, e);
-      return null;
-    }
-  }, []);
-
-  // Race guard. The Health Monitor re-polls, and refreshFlipFlags walks stations one at a time with
-  // an await per station — so a click landing mid-walk would be overwritten by a read that was
-  // already in flight before the write. Each click bumps this station's sequence; a refresh discards
-  // its own result if the sequence moved while it was reading.
-  const autoSeq = useRef<Record<number, number>>({});
-  const autoSeqNext = useRef(0);
-
   const refreshFlipFlags = useCallback(async () => {
     const sts = (libHealth?.stations || []) as any[];
     for (const st of sts) {
       const v = await readFlip(st.stationId);
       setFlipFlags(prev => ({ ...prev, [st.stationId]: v }));
-      // Same per-station, one-at-a-time read for the auto-generate switch: a station that fails to
-      // read leaves the others alone rather than resetting the whole map.
-      const seqBefore = autoSeq.current[st.stationId] || 0;
-      const a = await readAutoGen(st.stationId);
-      // Discard a read that a click overtook while it was in flight — that stale value landing after
-      // the click is precisely what makes a toggle flicker back.
-      if ((autoSeq.current[st.stationId] || 0) === seqBefore) setAutoGen(prev => ({ ...prev, [st.stationId]: a }));
     }
-  }, [libHealth, readFlip, readAutoGen]);
+  }, [libHealth, readFlip]);
   useEffect(() => { refreshFlipFlags(); }, [refreshFlipFlags]);
 
   const toggleFlip = async (sid: number) => {
@@ -1562,7 +1522,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                   <DesignationRows d={desig[st.stationId]} busy={desigBusy === st.stationId}
                     onRefresh={() => refreshDesig(st.stationId)} readAt={desigAt}
                     err={desigErr[st.stationId] || desigLoadErr}
-                    autoOn={autoGen[st.stationId] === undefined ? null : autoGen[st.stationId]}
+                    autoOn={true}
                     banner={desigBanner[st.stationId] || null}
                     onBypass={(on, pin) => bypassDesig(st.stationId, on, pin)} />
                   {/* SCHEDULE RUNWAY — the fuel gauge. First row on purpose: "how long until this
@@ -1870,18 +1830,8 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                       style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", padding: "4px 12px", background: "#8868D8", color: "#fff" }}>
                       LOG READER</span>
                   </div>
-                  {/* Auto-generation — a READ-ONLY mirror (audit 19). The switch lives in the Program Log beside Fill Day;
-                      this row only says what is stored and where to change it. */}
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 4 }}>
-                    <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
-                      Generate when a show runs out {autoGen[st.stationId] === true ? "ON — this machine generates when a scheduled show runs out of music" : autoGen[st.stationId] === false ? "OFF — this machine never generates on its own" : "— can't read the stored value"}
-                      {" · "}switch it in the Program Log
-                    </span>
-                    <button onClick={() => { try { window.dispatchEvent(new CustomEvent("ether:open-programlog")); } catch { /* non-Electron */ } }}
-                      title="Open the Program Log — the Generate when a show runs out switch is under Fill Day"
-                      style={{ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 0, cursor: "pointer", background: "transparent", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", whiteSpace: "nowrap" as const }}>
-                      Program Log →
-                    </button>
+                  <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 4 }}>
+                    Every show's log is built before the show starts — no switch.
                   </div>
                   {err && (
                     <div style={{ fontSize: 11, color: "#f87171", marginTop: 3, textAlign: "right" as const }}>{err}</div>

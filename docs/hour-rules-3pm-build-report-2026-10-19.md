@@ -22,7 +22,7 @@ Follow-up rulings (verbatim): hand-added rows — "Plays after crossing song". "
 | 1 | `audiod/engine.js` `_releaseEndedHourRows` | A standby deck holding an automatic row of an ended hour (cued before :00) lets go of it at the hour's end; the row is stamped missed. The on-air deck and hand-added rows are never touched. |
 | 1 | `audiod/engine.js` `_projectedSeamTs` | The seam is the latest-ending playing deck (the song really on air), not the outgoing one in a segue overlap. |
 | 2 | `audiod/loggen.js` selectRowForNow | Nothing on air inside a show → the next pending row plays now. Only a row of another show / another day waits for its start. |
-| 3 | `audiod/scheduler-core.js` loadTimeline | Generate's timeline holds every row from a day before: pending, didn't-play, refused, previous-hour rows timed past :00, hand rows. Only the pending automatic rows this run rebuilds are left out. |
+| 3 | `audiod/scheduler-core.js` loadTimeline | Generate's timeline holds every row from a day before that airs: pending, timed earlier, hand rows, the previous hour's. **Corrected the same evening:** rows that never air (didn't-play, or timed past their hour's end) do not count — counting them made rotation worse (docs/rotation-regression-2026-10-19.md). |
 | 4 | `electron/main.js` `_regenPoint` + `electron/generate-core.js` ctx.regen | Every Generate starts at the end of the song on air, inside the piece it belongs to; the clock continues after the positions already used; breaks whose time passed are not placed again. The started-hour skips are removed. `_commitDayRows` replaces every pending automatic row in the window. |
 | 5 | `electron/generate-core.js` | The trailing break re-placement is removed: a break the clock never reaches is reported (`breakDrift` direction `unreached`), never moved. |
 | 5 | `electron/main.js` | The 30-min sparse-heal and runway top-up are removed. The only automatic generate is `_outOfMusicRegenerate`: a scheduled show is on, its log ran out (`waiting:log-ended-inside-show`), the station's switch is ON, and this machine may generate it (designation). No show → nothing generates. |
@@ -56,3 +56,14 @@ Runtime on a real station: **UNVERIFIED** — the check is OV's next top of hour
 ## Help
 
 Updated: `docs/help-program-log.md` (Fill Day, the switch), `docs/help-show-schedule.md` (How the hour plays, AUTO), `docs/help-spots.md` (top-of-hour break, unreached breaks), `docs/help-designated-generator.md`.
+
+## Later the same evening — no switch, the log is built before every show (Jeff, verbatim)
+
+> Remove the "Generate when a show runs out" switch. No switches. Inside a show there is always music; the log is built before a show starts, never silence while it generates.
+
+- The switch is gone from the Program Log, the Health Monitor and main.js (`_autoGenerateEnabled` retired; `src/hooks/useAutoGenerate.ts`, `src/lib/autoGenerate.ts` and its test removed; stored `auto_generate_enabled` values left in place, read by nothing).
+- **`_buildShowLogs` (main.js), every minute:** for each station, the show on now and the next show to start — every log hour of them with no row yet is built at once (`_generateRange` with `window`: only those hours; nothing else is rebuilt). A show is built as soon as it is the next one, never while the station waits. Nothing outside shows is built; hours that have their log are never touched.
+- One writer per station is still the designation: with no switch, any machine may take an unheld designation (the first to build); others observe. The bypass is unchanged.
+- `_outOfMusicRegenerate` stays as the last resort, without the switch.
+- Test: `npm run test:three-pm` rule 6 (6a–6g): at 2 PM the 3–6 PM show with no log is found and built (33 songs an hour), nothing else touched, built once, a cleared hour rebuilt alone, after the last show only tomorrow's first show is next. Vitest `src/lib/noGenerateSwitch.test.ts` guards that the switch stays gone.
+- The "consequence of no timer top-up" noted above (seconds of silence at a show with an empty log) no longer applies.

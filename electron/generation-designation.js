@@ -89,7 +89,7 @@ function mayAutoGenerate({ record, machineId, killSwitch }) {
  * @returns {{ allow: boolean, reason: string }}
  */
 function mayBypass({ record, machineId, now }) {
-  if (!record) return { allow: false, reason: 'No machine holds the designation for this station — there is nothing to bypass. A machine with Keep the log filled ON will claim it on its next check.' };
+  if (!record) return { allow: false, reason: 'No machine holds the designation for this station — there is nothing to bypass. The first machine to build a log for this station will claim it.' };
   if (machineId && record.machine_id === machineId) return { allow: false, reason: 'This machine is the designated generator — there is nothing to bypass.' };
   const name = record.machine_name || record.machine_id;
   const age = record.last_checked != null ? Math.max(0, now - record.last_checked) : null;
@@ -115,7 +115,7 @@ function status({ record, now, machineId, killSwitch, bypass }) {
       ? ` on ${bypass.machine || 'this machine'} by ${bypass.operator || 'an unnamed operator'}` : '';
     return { level: 'yellow', state: 'bypassed', holder: null, lastChecked: null, lastGenerated: null,
              bypass: bypass || null,
-             text: `Designation bypassed${by} — every machine with Keep the log filled ON generates this station` };
+             text: `Designation bypassed${by} — every machine that holds this station builds its log` };
   }
   if (!record) {
     // STILL NEUTRAL UNDER PHASE B, and that is a deliberate choice in the gate rather than an

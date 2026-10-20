@@ -11866,34 +11866,42 @@ async function _generateRange(stationId, fromTs, toTs, opts) {
   const nowTs = Math.floor(Date.now() / 1000);
   const ctx = buildScheduleCtx(db, stationId);
   const regen = _regenPoint(stationId, nowTs);   // rule 4: from the end of the song on air, like every Generate
-  ctx.regen = regen;
-  const start = new Date(Math.max(fromTs, nowTs) * 1000); start.setHours(0, 0, 0, 0);
+  // opts.window = { fromLk, toTs }: build ONLY the log hours (pieces) in [fromLk, toTs) — the hours of a show that have no
+  // log yet (_buildShowLogs). Nothing outside it is rebuilt. The "next song" point applies only when the window starts at
+  // the piece on air.
+  const win = opts && opts.window ? opts.window : null;
+  const startLk = win ? Math.max(win.fromLk, regen.pieceLk) : regen.pieceLk;
+  ctx.regen = (!win || startLk === regen.pieceLk) ? regen : null;
+  const start = new Date(Math.max(win ? startLk : fromTs, nowTs) * 1000); start.setHours(0, 0, 0, 0);
   const endMs = toTs * 1000;
   { const e = new Date(endMs); e.setHours(0, 0, 0, 0); const last = Math.floor(e.getTime() / 1000) + (e.getTime() < endMs ? 86_400 : 0);
-    ctx.planWindow(Math.max(Math.floor(start.getTime() / 1000), regen.pieceLk), Math.max(last, Math.floor(start.getTime() / 1000) + 86_400)); }
+    ctx.planWindow(Math.max(Math.floor(start.getTime() / 1000), startLk), win ? win.toTs : Math.max(last, Math.floor(start.getTime() / 1000) + 86_400)); }
   let dayIdx = 0;
   for (let d = new Date(start); d.getTime() < endMs; d.setDate(d.getDate() + 1)) {
     const dayBase = new Date(d); dayBase.setHours(0, 0, 0, 0);
     const dayStart = Math.floor(dayBase.getTime() / 1000), dayEnd = dayStart + 86_400;
-    const effStart = Math.max(dayStart, regen.pieceLk);
+    const effStart = Math.max(dayStart, startLk);
     if (effStart >= dayEnd) continue;
+    const winEnd = win ? Math.min(dayEnd, win.toTs) : dayEnd;
+    if (effStart >= winEnd) continue;
     // Chunked + yielding, exactly like the operator path: the unattended auto-extend must never be
     // able to freeze the window either. Each day commits atomically as it finishes, so the range no
     // longer leaves days deleted-and-unwritten while it works.
     const before = ctx.generatedRows.length;
     const run = await _generateDayChunked(dayBase, ctx, effStart, { day: dayBase.toDateString(), dayIdx: dayIdx++, dayTotal: 0 });
     if (run.cancelled) break;
-    const dayRows = ctx.generatedRows.slice(before);
+    let dayRows = ctx.generatedRows.slice(before);
+    if (win) dayRows = dayRows.filter(r => (r.log_hour_ts ?? r.scheduled_at) < winEnd);
     _placeJingles(db, stationId, dayRows);
-    _commitDayRows(stationId, effStart, dayEnd, dayRows);
+    _commitDayRows(stationId, effStart, winEnd, dayRows);
     retireStaleScheduleRows(stationId, 'generate');
     // Stamped AFTER the commit rather than carried through generatedScheduleBulkCreate, whose column
     // list has no `source` and is shared with every manual generate. Scoped to the window just
     // written and only over rows still NULL, so an 'operator' row can never be relabelled.
     if (opts && opts.source) {
       try {
-        db.prepare("UPDATE generated_schedule SET source = ? WHERE station_id = ? AND scheduled_at >= ? AND scheduled_at < ? AND source IS NULL AND (state IS NULL OR state = 'pending')")
-          .run(opts.source, stationId, effStart, dayEnd);
+        db.prepare("UPDATE generated_schedule SET source = ? WHERE station_id = ? AND COALESCE(log_hour_ts, scheduled_at) >= ? AND COALESCE(log_hour_ts, scheduled_at) < ? AND source IS NULL AND (state IS NULL OR state = 'pending')")
+          .run(opts.source, stationId, effStart, winEnd);
       } catch {}
     }
   }
@@ -11972,9 +11980,8 @@ async function _outOfMusicRegenerate(stationId) {
       run = require('../audiod/show-window.js').showRunAt(shows, nowTs);
     } catch {}
     if (!run || !run.show) { console.log(`[out-of-music] station ${stationId}: no show is on — nothing generates`); return; }
-    // The per-machine switch (Program Log → "Generate when a show runs out") is the user's: OFF, this machine never writes
-    // the log unattended.
-    if (!_autoGenerateEnabled(stationId)) { console.log(`[out-of-music] station ${stationId}: this machine's "generate when a show runs out" is OFF`); return; }
+    // NO SWITCH (Jeff, 2026-10-19: "Remove the 'Generate when a show runs out' switch. No switches."). The last resort if
+    // a show's log still runs short; the log is built before the show starts (_buildShowLogs), so this should not fire.
     // The same gate as the unattended extender: only the machine designated to generate this station writes its log.
     const _me = _machineIdentity();
     const _gate = _desig.mayAutoGenerate({
@@ -11991,6 +11998,84 @@ async function _outOfMusicRegenerate(stationId) {
     _healthEvent('auto-extend-failed', { stationId, trigger: 'show-out-of-music', error: e.message });
   } finally {
     _outOfMusicBusy.delete(stationId);
+  }
+}
+
+// ── THE LOG IS BUILT BEFORE A SHOW STARTS (Jeff, 2026-10-19) ──────────────────────────────────────────────────────
+// "Remove the 'Generate when a show runs out' switch. No switches. Inside a show there is always music; the log is built
+// before a show starts, never silence while it generates."
+//
+// Every minute, per station: the show on now and the NEXT show to start (later today, or a later day). Every log hour
+// (piece) of them that has no row in the log yet is built — the moment that show becomes the next one, so it is ready
+// long before it starts. Hours that already have rows are never touched (no top-up, no rebuild); nothing outside a
+// show is built. One writer per station: the machine holding the designation (an unheld designation is taken by the
+// first machine that builds). A show hour whose clock yields nothing is reported once, not retried every minute.
+function _missingShowSpans(stationId, shows, nowTs) {
+  const SW = require('../audiod/show-window.js');
+  const hasRows = db.prepare(
+    "SELECT 1 FROM generated_schedule WHERE station_id = ? AND deleted_at IS NULL AND COALESCE(log_hour_ts, scheduled_at) >= ? AND COALESCE(log_hour_ts, scheduled_at) < ? LIMIT 1");
+  const pieces = [];
+  // Walk forward piece by piece (≤ 8 days): the run on now (if a show is on) and the next run. A run = consecutive pieces
+  // of one show.
+  const runs = SW.pieceAt(shows, nowTs).show ? 2 : 1;
+  let runsSeen = 0, lastShowId = null, t = nowTs;
+  for (let i = 0; i < 8 * 24 * 4; i++) {
+    const p = SW.pieceAt(shows, t);
+    if (p.show) {
+      if (p.show.id !== lastShowId) { runsSeen++; if (runsSeen > runs) break; }
+      if (p.show.clock_id != null) pieces.push(p);
+      lastShowId = p.show.id;
+    } else lastShowId = null;
+    t = p.endTs;
+  }
+  const spans = [];
+  for (const p of pieces) {
+    if (hasRows.get(stationId, p.startTs, p.endTs)) continue;
+    const last = spans[spans.length - 1];
+    if (last && last.toTs === p.startTs) last.toTs = p.endTs;
+    else spans.push({ fromLk: p.startTs, toTs: p.endTs, show: p.show.name });
+  }
+  return spans;
+}
+const _showBuildBusy = new Set();
+const _showBuildEmpty = new Set();          // "<station>@<fromLk>" built once and yielded nothing — reported, not retried
+async function _buildShowLogs() {
+  if (!db) return;
+  let stations = [];
+  try { stations = db.prepare("SELECT id, name FROM stations WHERE deleted_at IS NULL").all(); } catch { return; }
+  const nowTs = Math.floor(Date.now() / 1000);
+  for (const st of stations) {
+    if (_showBuildBusy.has(st.id)) continue;
+    let shows = [];
+    try { shows = db.prepare("SELECT * FROM shows WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL").all(st.id); } catch { continue; }
+    if (!shows.length) continue;
+    let spans = [];
+    try { spans = _missingShowSpans(st.id, shows, nowTs).filter(sp => !_showBuildEmpty.has(`${st.id}@${sp.fromLk}`)); } catch (e) { console.error(`[show-build] ${st.name}:`, e.message); continue; }
+    if (!spans.length) continue;
+    const _me = _machineIdentity();
+    const _gate = _desig.mayAutoGenerate({
+      record: _desig.parseRecord(_kvGet(st.id, _desig.KEY)), machineId: _me.id,
+      killSwitch: String(_kvGet(st.id, 'kill_designation') || '') === '1',
+    });
+    if (!_gate.allow) continue;              // another machine builds this station (reported by the designation tick)
+    _showBuildBusy.add(st.id);
+    try {
+      for (const sp of spans) {
+        const r = await _generateRange(st.id, sp.fromLk, sp.toTs, { source: 'auto', window: sp });
+        const from = new Date(sp.fromLk * 1000).toLocaleString(), to = new Date(sp.toTs * 1000).toLocaleTimeString();
+        if (!r || !r.count) {
+          _showBuildEmpty.add(`${st.id}@${sp.fromLk}`);
+          console.log(`[show-build] ${st.name}: ${sp.show} ${from}–${to} has no log and its clock built nothing — ${(r && r.reasons || []).join('; ')}`);
+          _healthEvent('show-log-build-empty', { stationId: st.id, show: sp.show, fromTs: sp.fromLk, toTs: sp.toTs, reasons: (r && r.reasons) || [] });
+          continue;
+        }
+        console.log(`[show-build] ${st.name}: built ${sp.show} ${from}–${to} before it airs — ${r.count} rows`);
+        _healthEvent('show-log-built', { stationId: st.id, show: sp.show, fromTs: sp.fromLk, toTs: sp.toTs, rows: r.count, relaxedPicks: r.relaxedPicks });
+      }
+    } catch (e) {
+      console.error(`[show-build] ${st.name} failed:`, e.message);
+      _healthEvent('show-log-build-failed', { stationId: st.id, error: e.message });
+    } finally { _showBuildBusy.delete(st.id); }
   }
 }
 
@@ -12021,13 +12106,10 @@ function _scheduleIsSparse(stationId, nowTs) {
 //
 // The trade-off is stated rather than hidden: a station nobody switches on will eventually run out
 // of log. That is what the runway gauge is for — it goes RED at under a day, on screen, per station.
-function _autoGenerateEnabled(stationId) {
-  try {
-    const r = db.prepare("SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'auto_generate_enabled' LIMIT 1").get(stationId);
-    if (!r || r.value == null || r.value === '') return false;      // UNSET = OFF (see below)
-    return String(r.value) === '1';
-  } catch { return false; }                                          // unreadable = OFF, never generate blind
-}
+// RETIRED 2026-10-19 (Jeff: "Remove the 'Generate when a show runs out' switch. No switches. Inside a show there is
+// always music; the log is built before a show starts, never silence while it generates."). The stored
+// auto_generate_enabled values are left in place and read by nothing. One writer per station is still the designation's
+// job: the first machine to build a station's log holds it, every other machine observes (generation-designation.js).
 
 // Deferral: while the daemon is down the app plays audio IN-PROCESS, on this thread. An unattended
 // generate burns ~0.96 cores there (docs/generate-phase0-measurement-2026-08-11.md), competing with
@@ -12439,7 +12521,7 @@ function _designationTick(generatedFor, label) {
   const tally = { designate: 0, stamp: 0, observe: 0, skip: 0, wrote: 0, failed: 0 };
   for (const st of stations) {
     const kill = String(_kvGet(st.id, 'kill_designation') || '') === '1';
-    const autoOn = _autoGenerateEnabled(st.id);
+    const autoOn = true;                                  // no switch (2026-10-19): any machine may take an unheld designation
     const record = _desig.parseRecord(_kvGet(st.id, _desig.KEY));
     const d = _desig.decide({ record, machineId: me.id, autoOn, killSwitch: kill });
 
@@ -12720,7 +12802,6 @@ async function _autoExtendTick() {
     // Runs BEFORE the auto-generate switch: releasing storage is not the same decision as building
     // a log, and a station with auto-generate off still deletes songs.
     _maybeRunDeletionSweep(st.id);
-    if (!_autoGenerateEnabled(st.id)) continue;          // switched off for this machine — silently, by design
 
     // ── PHASE B — ENFORCEMENT (4.4.201) ────────────────────────────────────────────────────────
     // Phase A recorded who should build this station's log. From here the engine OBEYS it.
@@ -12809,6 +12890,10 @@ function startAutoExtend() {
   try { _sampleRunway(); } catch (e) { console.error('[runway-history] first sample:', e.message); }
   setTimeout(() => { try { _autoExtendTick(); } catch (e) { console.error('[auto-extend] first tick:', e.message); } }, 60_000);
   _autoExtendTimer = setInterval(() => { try { _autoExtendTick(); } catch (e) { console.error('[auto-extend] tick:', e.message); } }, AUTO_EXTEND_EVERY_MS);
+  // The log is built before a show starts (_buildShowLogs): checked every minute, so a show added or cleared shortly
+  // before it airs is still built ahead of it. Cheap when there is nothing to build (one indexed lookup per show hour).
+  setTimeout(() => { _buildShowLogs().catch(e => console.error('[show-build] first pass:', e.message)); }, 15_000);
+  setInterval(() => { _buildShowLogs().catch(e => console.error('[show-build] pass:', e.message)); }, 60_000);
   console.log(`[auto-extend] armed — keep runway ≥ ${AUTO_EXTEND_THRESHOLD_H}h, top up to ${AUTO_EXTEND_TARGET_DAYS}d, every ${AUTO_EXTEND_EVERY_MS / 60000}min`);
 }
 // Runway readout for the UI (visualizer gauge, #5) + Iris.

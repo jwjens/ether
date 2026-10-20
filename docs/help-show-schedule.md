@@ -40,8 +40,7 @@ Ether never adds songs of its own, and never skips songs because the station is 
   was already loaded on a deck. They never air in the new hour, and they're never deleted.
 - **Songs you added by hand to the old hour play after the song crossing :00**, then the new hour's first row.
 - **There is always music inside a show.** When no song passes your rules, the song in that row's category that has
-  waited longest goes in. With **Generate when a show runs out** ON, a show whose log runs out generates the rest of
-  itself at once.
+  waited longest goes in. Every show's log is built before the show starts, so a show never waits for one.
 - **If a song stalls**, the watchdog restarts that same song on its own deck. It never plays a different deck instead.
 - **Shows are the boundary.** A row of the next show never plays before that show starts, and the log never pulls
   rows from another day. When a show's last row ends and no show follows, nothing plays.

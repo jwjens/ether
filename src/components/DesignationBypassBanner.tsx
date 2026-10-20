@@ -27,7 +27,7 @@ export default function DesignationBypassBanner() {
         return (
           <div key={r.stationId}>
             ⚠ DESIGNATION BYPASSED — {r.station}: on {b.machine || "this machine"} by {b.operator || "an unnamed operator"}{since}.
-            {" "}Every machine with "Generate when a show runs out" ON generates this station. End it: Health Monitor → Designated generator.
+            {" "}Every machine that holds this station builds its log. End it: Health Monitor → Designated generator.
           </div>
         );
       })}

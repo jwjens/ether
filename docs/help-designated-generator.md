@@ -104,21 +104,11 @@ would fill with dozens of identical lines a day and tell you nothing.
 
 **RELOAD** re-reads the list. It is a plain read — it changes nothing.
 
-### "Auto-gen off – cannot designate"
+### Who takes the designation
 
-If **Auto-generate is off** for this station on this computer, the REFRESH NOW button is **greyed
-out** and that note sits beside it.
-
-This is not a fault. A computer with auto-generation switched off must never take the designation —
-it would then own a station it has been told not to build. So there is genuinely nothing to check
-in, and the button says so rather than looking live and doing nothing.
-
-**To designate this computer:** turn **Keep the log filled** ON for the station (Program Log → under
-**Fill Day**), then press REFRESH NOW. The row
-flips to **This machine** in green and stays there.
-
-The rows keep updating on their own every 30 seconds regardless, so nothing is hidden from you while
-the button is greyed out — if another computer takes the designation, you will still see it appear.
+There is no switch (2026-10-19). Every computer that holds the station can take the designation; the
+**first one to build the station's log** while nobody holds it becomes the designated generator, and
+every other computer watches. The rows keep updating on their own every 30 seconds.
 
 ## It is enforced
 
@@ -128,12 +118,12 @@ shows you the state, and it leaves the log alone.
 Three exceptions, all deliberate:
 
 1. **A station nobody has claimed still gets built.** If no computer is designated, the first one to
-   auto-generate claims it. A brand-new station must never sit with an empty log waiting to be
+   build its log claims it. A brand-new station must never sit with an empty log waiting to be
    assigned.
-2. **Pressing Generate yourself always works.** The rule applies only to the *automatic* generate (when a show on air runs out of music). If
+2. **Pressing Generate yourself always works.** The rule applies only to the *automatic* build (each show's log, built before the show starts). If
    you are sitting at a computer and press **Generate**, it generates — you are there, and you asked.
-3. **The bypass still bypasses.** When the bypass is on for a station, every computer with **Keep the
-   log filled** ON generates it, and the row reads **Bypassed** (see below).
+3. **The bypass still bypasses.** When the bypass is on for a station, every computer that holds the
+   station builds its log, and the row reads **Bypassed** (see below).
 
 When a computer skips a station for this reason it says so — in the log, in the health ledger as
 `auto-extend-skipped-not-designated`, and on the row itself, which reads *"…· this machine will not
