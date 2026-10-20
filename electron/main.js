@@ -1595,6 +1595,7 @@ if (global.__bootMark) global.__bootMark("setupAudioBackend() returned");
 // ── Database ──────────────────────────────────────────────────
 let db;
 let cloudBackupTrigger = null; // set when cloud-backup module loads
+let _backups = null;            // electron/backups.js, created with cloud backup (per-computer backup settings + schedule)
 
 // THE ACTIVE PROFILE'S data folder (machine-local; never the redirected Roaming/SMB path — see
 // getDbPath). Was a single install-wide directory; it is now one directory per account, selected by
@@ -3864,6 +3865,14 @@ app.whenReady().then(() => {
     installCloudBackup(ipcMain, getDb, { dbPath: getDbPath() });   // getDb (function) so backups always use the live handle after a reopen
     cloudBackupTrigger = triggerUpload;
     app._getR2Config = getR2Config;
+    // BACKUPS BY SETTING, PER COMPUTER (2026-10-20; electron/backups.js): local + cloud schedules from this computer's
+    // settings, due times that survive restarts, the work in a worker. Checked every minute.
+    _backups = require("./backups.js").create({
+      getDb, dbPath: () => getDbPath(), backupsDir: () => _profileData("backups"),
+      cloudRun: ({ keep }) => require("./cloud-backup.js").runScheduledCloud({ keep }),
+      healthEvent: (k, d) => { try { _healthEvent(k, d); } catch {} },
+    });
+    setInterval(() => { _backups.tick().catch(e => console.error("[backups] tick:", e.message)); }, 60 * 1000);
 
     // ARM THE CATALOGUE PULL. Deferred, and that is load-bearing rather than stylistic: the timer
     // state (_catPullTimer) is declared ~8,000 lines below this, so calling startCataloguePull()
@@ -7691,24 +7700,13 @@ async function _upgradePlainPins() {
 }
 
 // Backup
-ipcMain.handle("db:backup", () => {
+ipcMain.handle("db:backup", async () => {
+  // Through electron/backups.js since 4.6.62: SQLite's online backup in a worker, verified, kept to this computer's count
+  // (before: a plain file copy of the live database without its WAL — a backup that could miss recent work).
   try {
-    const dbPath = getDbPath();
-    const backupDir = _profileData("backups");
-    fs.mkdirSync(backupDir, { recursive: true });
-    const timestamp = Math.floor(Date.now() / 1000);
-    const backupName = `openair-backup-${timestamp}.db`;
-    const backupPath = path.join(backupDir, backupName);
-    fs.copyFileSync(dbPath, backupPath);
-    // Delete backups older than 7 days
-    const cutoff = timestamp - 7 * 24 * 3600;
-    fs.readdirSync(backupDir).forEach(name => {
-      const match = name.match(/openair-backup-(\d+)\.db/);
-      if (match && parseInt(match[1]) < cutoff) {
-        fs.unlinkSync(path.join(backupDir, name));
-      }
-    });
-    return { data: backupPath, error: null };
+    if (!_backups) throw new Error("backups are not ready yet");
+    const r = await _backups.runLocal("manual");
+    return r.ok ? { data: _profileData("backups", r.name), error: null } : { data: null, error: r.error };
   } catch (e) { return { data: null, error: e.message }; }
 });
 
@@ -7914,26 +7912,83 @@ ipcMain.handle("get_local_ip", () => audio.getLocalIp());
 // These were Tauri commands in the original build. Now aliased here so
 // the renderer doesn't need to change its invoke names.
 ipcMain.handle("backup_db", async () => {
+  // The same safe local backup as db:backup (electron/backups.js), then a cloud upload when this computer can.
+  if (!_backups) throw new Error("Backup failed: backups are not ready yet");
+  const r = await _backups.runLocal("manual");
+  if (!r.ok) throw new Error("Backup failed: " + r.error);
+  if (cloudBackupTrigger) {
+    cloudBackupTrigger().then(x => { if (x && !x.skipped) console.log("[CLOUD-BACKUP] post-backup_db R2 upload:", x.ok ? "ok" : x.error); })
+      .catch(e => console.warn("[CLOUD-BACKUP] post-backup_db R2 upload failed:", e.message));
+  }
+  return r.name;
+});
+
+// ── BACKUPS: settings, every backup, run now, restore a chosen cloud backup (2026-10-20; electron/backups.js) ──────────
+ipcMain.handle("backups:get-settings", () => { try { return { ok: true, ...(_backups ? _backups.settings() : {}) }; } catch (e) { return { ok: false, error: e.message }; } });
+ipcMain.handle("backups:set-settings", (_e, p) => { try { return { ok: true, ..._backups.setSettings(p || {}) }; } catch (e) { return { ok: false, error: e.message }; } });
+ipcMain.handle("backups:run", async (_e, where) => {
   try {
-    const ts = Math.floor(Date.now() / 1000);
-    const backupDir = _profileData("backups");
-    fs.mkdirSync(backupDir, { recursive: true });
-    const backupName = `openair-backup-${ts}.db`;
-    fs.copyFileSync(getDbPath(), path.join(backupDir, backupName));
-    // Prune backups older than 7 days
-    const cutoff = ts - 7 * 24 * 3600;
-    fs.readdirSync(backupDir).forEach(n => {
-      const m = n.match(/openair-backup-(\d+)\.db/);
-      if (m && parseInt(m[1]) < cutoff) try { fs.unlinkSync(path.join(backupDir, n)); } catch {}
-    });
-    // Fire R2 upload if configured — non-blocking so local backup always succeeds fast
-    if (cloudBackupTrigger) {
-      cloudBackupTrigger().then(r => {
-        if (r && !r.skipped) console.log("[CLOUD-BACKUP] post-backup_db R2 upload:", r.ok ? "ok" : r.error);
-      }).catch(e => console.warn("[CLOUD-BACKUP] post-backup_db R2 upload failed:", e.message));
+    if (!_backups) return { ok: false, error: "backups are not ready yet" };
+    return where === "cloud" ? await _backups.runCloud("manual") : await _backups.runLocal("manual");
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+// Every backup this computer can restore: its own local ones and every cloud backup of the account (any computer's).
+ipcMain.handle("backups:list", async () => {
+  const out = { ok: true, local: [], cloud: [], cloudError: null, thisMachine: null };
+  try { out.local = _backups ? _backups.listLocal() : []; } catch (e) { out.local = []; }
+  try { out.thisMachine = require("./cloud-backup.js").thisMachineId(); } catch {}
+  try {
+    const licenseKey = accountLicenseKey();
+    if (!licenseKey) { out.cloudError = "sign in to see cloud backups"; return out; }
+    const { default: fetchFn } = await import("node-fetch").catch(() => ({ default: global.fetch }));
+    const res = await fetchFn(`${ETHER_BACKEND_URL}/backup/list`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ license_key: licenseKey }) });
+    if (res.status === 404) { out.cloudError = "the cloud list needs the backend update (not deployed yet)"; return out; }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { out.cloudError = data.error || `HTTP ${res.status}`; return out; }
+    // Name each computer from what this computer knows: itself, or the name its plays carry (play_log.machine_name).
+    const names = new Map();
+    try { for (const r of getDb().prepare("SELECT machine_id, MAX(machine_name) n FROM play_log WHERE machine_id IS NOT NULL GROUP BY machine_id").all()) if (r.n) names.set(String(r.machine_id).toLowerCase(), r.n); } catch {}
+    out.cloud = (data.backups || []).map(b => ({ ...b, where: "cloud",
+      computer: !b.machine_id ? "account (before per-computer backups)" : b.machine_id === out.thisMachine ? `${require("os").hostname()} (this computer)` : (names.get(b.machine_id) || `computer ${b.machine_id.slice(0, 8)}`) }));
+  } catch (e) { out.cloudError = e.message; }
+  return out;
+});
+ipcMain.handle("backups:restore-cloud", async (_e, key) => {
+  try {
+    const licenseKey = accountLicenseKey();
+    if (!licenseKey) return { ok: false, error: "No license key — sign in first." };
+    const { default: fetchFn } = await import("node-fetch").catch(() => ({ default: global.fetch }));
+    const urlRes = await fetchFn(`${ETHER_BACKEND_URL}/backup/download-url`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ license_key: licenseKey, key }) });
+    if (!urlRes.ok) return { ok: false, error: `Couldn't get the backup (${urlRes.status})` };
+    const { db_signed_url } = await urlRes.json();
+    // This computer's identity and signed-in session survive the swap (the same re-stamp as install-from-cloud).
+    let myClientId = null, myJwt = null, myEmail = null;
+    try { myClientId = db.prepare("SELECT client_id FROM client_identity LIMIT 1").get()?.client_id || null; } catch {}
+    try { myJwt = db.prepare("SELECT value FROM install_config_kv WHERE key='account_jwt' AND deleted_at IS NULL").get()?.value || null; } catch {}
+    try { myEmail = db.prepare("SELECT value FROM install_config_kv WHERE key='account_email' AND deleted_at IS NULL").get()?.value || null; } catch {}
+    const dbRes = await fetchFn(db_signed_url);
+    if (!dbRes.ok) return { ok: false, error: `Backup download failed (${dbRes.status}).` };
+    // gunzip on the thread pool (zlib async), not on main.
+    const raw = await require("util").promisify(require("zlib").gunzip)(Buffer.from(await dbRes.arrayBuffer()));
+    const tmp = _profileData("cloud-restore.db");
+    await fs.promises.writeFile(tmp, raw);
+    if (fs.statSync(tmp).size !== raw.length) { try { fs.rmSync(tmp, { force: true }); } catch {} return { ok: false, error: "the downloaded backup didn't save completely — check free disk space" }; }
+    const pre = await verifyDatabaseFileAsync(tmp);
+    if (!pre.ok) { try { fs.rmSync(tmp, { force: true }); } catch {} return { ok: false, error: `The downloaded backup is not readable (${pre.reason}). Your current station is untouched.` }; }
+    await swapDatabaseFile(tmp);
+    try { fs.rmSync(tmp, { force: true }); } catch {}
+    if (myClientId) { try { getDb().prepare("UPDATE client_identity SET client_id = ?").run(myClientId); } catch {} }
+    const nowIso = new Date().toISOString();
+    for (const [k, v] of [["account_jwt", myJwt], ["account_email", myEmail]]) {
+      if (v == null) continue;
+      try {
+        if (getDb().prepare("SELECT 1 FROM install_config_kv WHERE key=?").get(k)) getDb().prepare("UPDATE install_config_kv SET value=?, updated_at=?, deleted_at=NULL WHERE key=?").run(v, nowIso, k);
+        else getDb().prepare("INSERT INTO install_config_kv (key,value,uuid,created_at,updated_at) VALUES (?,?,?,?,?)").run(k, v, require("crypto").randomUUID(), nowIso, nowIso);
+      } catch {}
     }
-    return backupName;
-  } catch (e) { throw new Error("Backup failed: " + e.message); }
+    try { markKeepSession(); } catch {}
+    return { ok: true, songs: pre.songs || 0, sync: _lastRestoreSync };
+  } catch (e) { return { ok: false, error: e.message }; }
 });
 
 ipcMain.handle("list_backups", () => {

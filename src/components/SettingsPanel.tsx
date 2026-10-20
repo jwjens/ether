@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, createContext, useContext } f
 import { SyncCleanupRow, HealthLogRow } from "./SyncCleanupRows";
 import { getJukeboxPayouts, connectJukeboxPayouts, refreshJukeboxPayouts, setJukeboxDonationSettings, type JukeboxPayouts } from "../lib/ccData";
 const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
+import BackupsPanel from "./BackupsPanel";
 import SendRestoreCard from "./SendRestoreCard";
 import { query } from "../db/client";
 import { idsFromStoredList, storedFromIds } from "../lib/refValue";
@@ -2852,12 +2853,14 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
     setTimeout(() => setBackupStatus(""), 4000);
   };
 
-  const restore = async (name: string) => {
-    if (!confirm("Restore from " + formatBackupName(name) + "?\n\nYour current library and settings will be replaced. Ether will need to restart.")) return;
+  // Returns the result line (BackupsPanel shows it). Restoring expects sync OFF; main discards unsent changes.
+  const restore = async (name: string): Promise<string | undefined> => {
+    if (!confirm("Restore from " + formatBackupName(name) + "?\n\nYour current library and settings will be replaced. Switch sync off first (above) so nothing spreads. Ether will need to restart.")) return;
     try {
       const msg = await invoke<string>("restore_db", { backupName: name });
       setBackupStatus(msg);
-    } catch (e) { setBackupStatus("Error: " + String(e)); }
+      return "✓ " + msg;
+    } catch (e) { setBackupStatus("Error: " + String(e)); return "✗ " + String(e); }
   };
 
   const saveR2Config = async () => {
@@ -3701,34 +3704,8 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
           </div>
         </div>
 
-        {/* How often the scheduled half runs. An implementation detail of ONE of the two
-            mechanisms, which is exactly why it does not belong beside the switch. */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" as any, paddingBottom: 18, borderBottom: "1px solid var(--border-primary)", marginBottom: 18 }}>
-          <div style={{ minWidth: 220 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 600, color: "var(--text-primary)" }}>How often to send your setup</div>
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 2 }}>
-              Only applies while Ether is open, and it covers your <b>setup</b> only — audio is a
-              separate transfer, described below.
-              <br />On or off is <b>Keep my stuff synced</b> above — this row only sets how often.
-            </div>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <select value={r2Interval} onChange={e => setR2Interval(Number(e.target.value))} disabled={!r2Enabled}
-              style={{ padding: "8px 10px", fontSize: 12.5, background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", borderRadius: 0, cursor: r2Enabled ? "pointer" : "default", outline: "none", opacity: r2Enabled ? 1 : 0.45 }}>
-              <option value={1}>Every hour</option>
-              <option value={6}>Every 6 hours</option>
-              <option value={12}>Every 12 hours</option>
-              <option value={24}>Once a day</option>
-            </select>
-            {/* The on/off that used to sit here moved to its own row at the top of Advanced
-                (2026-09-11) — at 12px beside this dropdown it read like a typo and went unfound.
-                It was never a switch: the files half is sync_enabled, set by the one switch only. */}
-            <button onClick={saveR2Config} disabled={r2Saving}
-              style={{ padding: "8px 14px", fontSize: 12, fontWeight: 600, background: "var(--accent-blue)", color: "#fff", border: "none", cursor: "pointer", borderRadius: 0, opacity: r2Saving ? 0.6 : 1 }}>
-              {r2Saving ? "Saving…" : "Save"}
-            </button>
-          </div>
-        </div>
+        {/* "How often to send your setup" moved to Backups on this computer (2026-10-20): ONE place sets the cloud backup
+            interval, with the local one beside it, per computer (BackupsPanel / electron/backups.js). */}
         {/* THE TWO DIRECTIONS, NAMED SEPARATELY, BECAUSE THEY BEHAVE DIFFERENTLY (2026-09-11).
             Coming down is automatic as of Phase 0: a timer calls the incremental catalogue
             download, which fetches only files this computer does not already have. Going up is
@@ -3849,30 +3826,9 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
       )}
 
       {/* ── Save a copy on this computer (secondary, manual snapshot) ── */}
-      <Section category="backup" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>} title="Roll back this computer" description="A manual snapshot kept on this PC only — handy right before a big change so you can undo it. Your audio files are not part of a snapshot.">
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: backups.length > 0 ? 16 : 0 }}>
-          <button onClick={backup} disabled={backupLoading} style={{ padding: "10px 20px", borderRadius: 0, fontSize: 13, fontWeight: 600, background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", cursor: "pointer", opacity: backupLoading ? 0.6 : 1 }}>
-            {backupLoading ? "Saving…" : "Save a snapshot"}
-          </button>
-          {backupStatus && <span style={{ fontSize: 12.5, color: backupStatus.startsWith("✓") ? "var(--accent-green)" : "var(--accent-red)" }}>{backupStatus}</span>}
-        </div>
-        {backups.length > 0 && (
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-tertiary)", letterSpacing: "0.06em", textTransform: "uppercase" as any, marginBottom: 8 }}>Your saved snapshots</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {backups.map(name => (
-                <div key={name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "var(--bg-tertiary)", borderRadius: 0, padding: "10px 14px", border: "1px solid var(--border-primary)" }}>
-                  <span style={{ fontSize: 12.5, color: "var(--text-secondary)" }}>{formatBackupName(name)}</span>
-                  <button onClick={() => restore(name)} style={{ padding: "5px 14px", borderRadius: 0, fontSize: 12.5, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-primary)", cursor: "pointer" }}>
-                    Restore
-                  </button>
-                </div>
-              ))}
-            </div>
-            <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 8 }}>Snapshots older than 7 days are removed automatically.</div>
-          </div>
-        )}
-        {backups.length === 0 && <div style={{ fontSize: 12.5, color: "var(--text-tertiary)", marginTop: 8 }}>No snapshots yet.</div>}
+      <Section category="backup" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>} title="Backups on this computer" description="How often this computer backs up — on this PC and in the cloud — and how many it keeps. Every backup is listed below with its date and time, so you can restore the one from just before a mistake. Your audio files are not part of a backup.">
+        {/* Backups by setting, per computer, and every backup in one list (2026-10-20; BackupsPanel / electron/backups.js). */}
+        <BackupsPanel onRestoreLocal={restore} />
       </Section>
 
       {/* Experience Mode removed — deck visibility is now controlled

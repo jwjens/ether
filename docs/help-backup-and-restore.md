@@ -3,7 +3,7 @@ feature: backup-and-restore
 title: Backing up your station, and putting it on another computer
 summary: One switch — Keep my stuff synced — keeps your setup and your audio in the cloud. The status card says exactly what is safe and shows the one button you need; any computer you sign into can become your station.
 where: Settings → Backup & Restore
-since: 4.6.49
+since: 4.6.62 backups by setting, per computer; 4.6.49
 audience: operator
 tour: true
 ---
@@ -45,9 +45,8 @@ sends your setup to the cloud on a schedule and brings new audio down from your 
 every computer signed into your account. Audio added on *this* computer goes up when you send it (see
 **Audio arriving from your other computers** below). Leave the switch on.
 
-To change how often your setup goes up, open **Advanced** and use **How often to send your setup** (every
-hour up to once a day), then press **Save**. That row only sets the schedule; on and off is the switch
-above it. It covers your **setup** only — audio goes up when you send it (see below), not on a timer.
+How often your setup goes up — and how often this computer keeps a copy of its own — is set in **Backups on this
+computer** (below). It covers your **setup** only — audio goes up when you send it (see below), not on a timer.
 
 If you've just imported a big batch, send it straight away: press the button on the status card, or
 **Send just the audio** under **Advanced**.
@@ -107,12 +106,31 @@ If the music never finished uploading, the new computer gets a station it can't 
 
 ---
 
-## Save a copy on this computer
+## Backups on this computer
 
-**Save a snapshot** keeps a copy of your setup on this PC only — handy right before a big change so you can
-roll back (Settings → Backup & Restore → **Roll back this computer**). Audio files aren't included, and it
-doesn't protect you if the computer dies. It's a quick undo, not a backup. Snapshots older than 7 days
-are removed automatically.
+Settings → Backup & Restore → **Backups on this computer**. Every computer has its own settings — what you choose here
+never changes another computer.
+
+- **On this computer** — how often a backup is saved on this PC (Off, or every 5 minutes up to once a day), and how
+  many are kept (the oldest beyond that number are removed). The line under it shows the last and next backup and
+  about how much disk space the kept backups take.
+- **In the cloud** — how often this computer sends a backup to the cloud, and how many of **this computer's** cloud
+  backups are kept (**0 keeps all**). Cloud backups need **Keep my stuff synced** on and a Studio plan or higher.
+- **Back up now** — makes one right away, local or cloud.
+
+Starting values are what Ether did before: local backups **Off**, cloud **every 6 hours** (or your old setting),
+cloud backups **all kept**. A computer that restarts often still backs up on time — the next time is remembered.
+Backups are made in the background: playout is never held up by one.
+
+### Restoring — pick the one from just before a mistake
+
+Below the settings is **every backup** — this computer's and every cloud backup of your account, from any computer —
+newest first, each with its **date and time**, the computer that made it, where it is and its size. Press **Restore**
+on the one you want.
+
+**Switch sync off first** (Keep my stuff synced), so nothing spreads while you fix it. A restore throws away every
+change that had not been sent yet; then see *A mistake on one computer* in Multi-Machine Sync for **Send this restore
+to every machine**. Audio files aren't part of a backup.
 
 ---
 
@@ -140,4 +158,4 @@ retry.
 | **Back up now** (cloud) | yes | yes | yes |
 | **Keep my stuff synced** (the switch) | yes | downloads only — send new audio up yourself | yes |
 | **Send just the audio** (Advanced) | no | yes | yes |
-| **Save a snapshot** | yes | no | no |
+| **Backup on this computer** | yes | no | no |

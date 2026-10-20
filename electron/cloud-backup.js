@@ -85,12 +85,13 @@ function isoTimestampForBackup(date) {
 
 // POST /backup/upload-url. Returns { db_signed_url, meta_signed_url, expires_at }
 // or throws on any non-200 response. Caller maps the error to a history row.
-async function requestBackupUploadUrls(licenseKey, timestamp) {
+async function requestBackupUploadUrls(licenseKey, timestamp, machineId) {
   const { default: fetch } = await import("node-fetch").catch(() => ({ default: global.fetch }));
   const res = await fetch(`${ETHER_BACKEND_URL}/backup/upload-url`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ license_key: licenseKey, timestamp }),
+    // machine_id: this computer's own folder on the backend (2026-10-20); an older backend ignores it.
+    body: JSON.stringify({ license_key: licenseKey, timestamp, machine_id: machineId || undefined }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.db_signed_url || !data.meta_signed_url) {
@@ -263,7 +264,7 @@ function installCloudBackup(ipcMain, database, opts = {}) {
 
 // ── Backup execution ─────────────────────────────────────────
 
-async function runBackup(dbPath) {
+async function runBackup(dbPath, opts = {}) {
   const startTime = Date.now();
   try {
     // 1. Tier gate — backup is a pro+ (Studio+) feature
@@ -302,33 +303,19 @@ async function runBackup(dbPath) {
     if (!dbPath || !fs.existsSync(dbPath)) {
       throw new Error("Database file not found: " + dbPath);
     }
-    const snapPath = dbPath + ".backup-snapshot";
-    try { fs.rmSync(snapPath, { force: true }); } catch {}
-    try {
-      await getDb().backup(snapPath);
-    } catch (e) {
-      throw new Error(`consistent snapshot failed (backup aborted rather than upload a torn file): ${e.message}`);
-    }
-    // Verify the snapshot OPENS and reads before it is ever uploaded. A backup nobody can restore is
-    // worse than no backup — it is a promise that fails on the day it matters.
-    try {
-      const Database = require('better-sqlite3');
-      const probe = new Database(snapPath, { readonly: true, fileMustExist: true });
-      const songs = probe.prepare("SELECT COUNT(*) AS n FROM songs").get().n;
-      const integrity = probe.prepare("PRAGMA integrity_check").get().integrity_check;
-      probe.close();
-      if (integrity !== 'ok') throw new Error(`integrity_check said "${integrity}"`);
-      console.log(`[CLOUD-BACKUP] snapshot verified — ${songs} songs, integrity ok`);
-    } catch (e) {
-      try { fs.rmSync(snapPath, { force: true }); } catch {}
-      throw new Error(`snapshot failed verification, not uploading: ${e.message}`);
-    }
-    const dbData = fs.readFileSync(snapPath);
-    try { fs.rmSync(snapPath, { force: true }); } catch {}
-
-    // 4. Gzip the DB
-    const gzippedDb = zlib.gzipSync(dbData, { level: 6 });
-    const checksum  = crypto.createHash("sha256").update(gzippedDb).digest("hex").slice(0, 16);
+    // OFF THE MAIN THREAD since 4.6.62 (electron/backup-worker.js): the same online backup and integrity check, then a
+    // streamed gzip + checksum. Before, integrity_check and gzipSync of the whole database ran on main — tolerable every
+    // 6 h, a freeze at "every few minutes" (Jeff, 2026-10-20).
+    // Its own path per run: "Back up now" during a scheduled run must never share (and delete) the other's snapshot.
+    const snapPath = `${dbPath}.backup-snapshot-${Date.now()}-${process.pid}`;
+    const snap = await snapshotInWorker(dbPath, snapPath);
+    if (!snap.ok) throw new Error(`snapshot failed, not uploading: ${snap.error}`);
+    console.log(`[CLOUD-BACKUP] snapshot verified in the worker — ${snap.songs} songs, integrity ok, ${snap.ms} ms`);
+    let gzippedDb;
+    try { gzippedDb = await fs.promises.readFile(snap.gzPath); }
+    finally { for (const p2 of [snapPath, snap.gzPath]) { try { fs.rmSync(p2, { force: true }); } catch {} } }
+    const dbData = { length: snap.bytes };
+    const checksum = snap.checksum;
 
     // 5. Build metadata sidecar
     const timestamp = isoTimestampForBackup(new Date());
@@ -347,7 +334,7 @@ async function runBackup(dbPath) {
     // 6. Request the dual signed URLs (backend signs both atomically; see Phase 1.3e amendment d24bf11)
     let urls;
     try {
-      urls = await requestBackupUploadUrls(licenseKey, timestamp);
+      urls = await requestBackupUploadUrls(licenseKey, timestamp, thisMachineId());
     } catch (e) {
       throw new Error("Could not get backup upload URLs: " + e.message);
     }
@@ -396,7 +383,9 @@ async function runBackup(dbPath) {
         .run("r2 (backend-signed)", gzippedDb.length, checksum, "success", durationMs);
     } catch {}
     console.log(`[CLOUD-BACKUP] Success: ${(gzippedDb.length / 1024).toFixed(1)}KB + meta in ${durationMs}ms (ts=${timestamp}, ${checksum})`);
-    return { ok: true, size: gzippedDb.length, checksum, durationMs };
+    let pruned = null;
+    if (opts.keep > 0) pruned = await pruneCloud(licenseKey, opts.keep).catch(e => ({ error: e.message }));
+    return { ok: true, size: gzippedDb.length, checksum, durationMs, pruned };
   } catch (e) {
     config.lastStatus = "error: " + e.message;
     saveConfig();
@@ -407,6 +396,42 @@ async function runBackup(dbPath) {
     console.error("[CLOUD-BACKUP] Failed:", e.message);
     return { ok: false, error: e.message };
   }
+}
+
+// ── Off-main snapshot, this computer, pruning ─────────────────
+
+function snapshotInWorker(dbPath, outPath) {
+  const { Worker } = require("worker_threads");
+  return new Promise((resolve) => {
+    const w = new Worker(path.join(__dirname, "backup-worker.js"), { workerData: { dbPath, outPath, gzip: true } });
+    let done = false;
+    w.once("message", (m) => { done = true; resolve(m); });
+    w.once("error", (e) => { if (!done) { done = true; resolve({ ok: false, error: e.message }); } });
+    w.once("exit", (c) => { if (!done) { done = true; resolve({ ok: false, error: `backup worker exited (${c})` }); } });
+  });
+}
+function thisMachineId() {
+  try { return getDb().prepare("SELECT client_id FROM client_identity LIMIT 1").get()?.client_id?.toLowerCase() || null; } catch { return null; }
+}
+/** Keep this computer's newest `keep` cloud backups (backend /backup/prune). An older backend without the route → said. */
+async function pruneCloud(licenseKey, keep) {
+  const machineId = thisMachineId();
+  if (!machineId) return { skipped: "no machine id" };
+  const { default: fetch } = await import("node-fetch").catch(() => ({ default: global.fetch }));
+  const res = await fetch(`${ETHER_BACKEND_URL}/backup/prune`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ license_key: licenseKey, machine_id: machineId, keep }),
+  });
+  if (res.status === 404) { console.warn("[CLOUD-BACKUP] pruning waits for the backend update (/backup/prune not there yet)"); return { skipped: "backend update pending" }; }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  console.log(`[CLOUD-BACKUP] this computer's cloud backups: kept ${data.kept}, removed ${data.removed}`);
+  return data;
+}
+/** The scheduled cloud backup (electron/backups.js). Skipped — and said — when this computer cannot back up to the cloud. */
+async function runScheduledCloud({ keep } = {}) {
+  if (!r2Ready()) return { ok: false, skipped: "cloud backups need sync on for this computer, a Studio plan or higher, and a license" };
+  return runBackup(_dbPath, { keep });
 }
 
 // ── Helpers ──────────────────────────────────────────────────
@@ -494,12 +519,10 @@ function saveIntervalHours() {
 
 // ── Auto-backup ──────────────────────────────────────────────
 
-function startAutoBackup(dbPath) {
-  stopAutoBackup();
-  const hours = r2Config.intervalHours || config.intervalHours || 6;
-  console.log(`[CLOUD-BACKUP] Auto-backup every ${hours}h via backend-signed R2`);
-  backupInterval = setInterval(() => runBackup(dbPath), hours * 3600 * 1000);
-}
+// THE SCHEDULE MOVED to electron/backups.js (2026-10-20): per-computer settings, a due time that survives restarts, the
+// work in a worker. This timer started counting at every launch, so a computer restarted more often than the interval
+// never made a scheduled cloud backup. Kept as a no-op so the callers above stay valid.
+function startAutoBackup(_dbPath) { stopAutoBackup(); }
 
 function stopAutoBackup() {
   if (backupInterval) { clearInterval(backupInterval); backupInterval = null; }
@@ -546,4 +569,4 @@ function getR2Config() {
 // filesHalfEnabled is exported so the catalogue PULL timer in main.js asks the same question this
 // module asks — "is Keep my stuff synced on for the active station". A second copy of that test in
 // main.js is how the files half grew three writers in the first place. One definition, two callers.
-module.exports = { installCloudBackup, triggerUpload, getR2Config, filesHalfEnabled };
+module.exports = { installCloudBackup, triggerUpload, getR2Config, filesHalfEnabled, runScheduledCloud, thisMachineId };

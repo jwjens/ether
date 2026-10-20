@@ -56,6 +56,7 @@
     "test:users-sync": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-users-sync.js",
     "test:plays-here": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-plays-here.js",
     "prove:two-computers": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/prove-two-computers.js",
+    "test:backups": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-backups.js",
     "test:hour-rollover": "cross-env ELECTRON_RUN_AS_NODE=1 electron audiod/smoke-hour-rollover.js",
     "test:jukebox-gate": "node scripts/smoke-jukebox-gate.js",
     "test:spot-retraction": "node scripts/smoke-spot-retraction.js",

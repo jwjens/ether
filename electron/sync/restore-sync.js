@@ -38,11 +38,15 @@ function discardUnsent(db) {
  * @returns {{ rows: number, changes: number, file: string|null }}
  */
 function captureRestorePoint(db, preRestore, { dir, backupLabel } = {}) {
-  const me = getClientId(db);
-  if (!me || !preRestore || !fs.existsSync(preRestore)) return { rows: 0, changes: 0, file: null };
+  if (!preRestore || !fs.existsSync(preRestore)) return { rows: 0, changes: 0, file: null };
   db.prepare("ATTACH DATABASE ? AS pre").run(preRestore);
-  let list = [];
+  let list = [], me = null;
   try {
+    // THIS computer is who the REPLACED database says it is — a backup restored from another computer carries that
+    // computer's identity until main re-stamps ours after the swap.
+    try { me = db.prepare("SELECT client_id FROM pre.client_identity LIMIT 1").get()?.client_id || null; } catch { me = null; }
+    if (!me) me = getClientId(db);
+    if (!me) return { rows: 0, changes: 0, file: null };
     list = db.prepare(
       `SELECT m.id, m.table_name, m.row_id, m.hlc, m.station_id, m.op, m.payload_before, m.payload_after, m.created_at
          FROM pre.mutations m
