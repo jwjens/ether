@@ -14,7 +14,7 @@ const row = (o: Partial<AsRunRow> = {}): AsRunRow => ({
 describe("as-run CSV shape", () => {
   it("has exactly the affidavit columns, in order", () => {
     expect(toCsv(AS_RUN_COLUMNS, []).split("\n")[0]).toBe(
-      "Start Time,End Time,Duration,Date,Title,Artist,Deck,Category,Advertiser,ISCI,Cart Number,Status");
+      "Start Time,End Time,Duration,Date,Title,Artist,Deck,Category,Advertiser,ISCI,Cart Number,Status,Aired On");
   });
 
   it("no longer carries Show or Clock", () => {
@@ -86,7 +86,14 @@ describe("row content", () => {
     // Scheduled/Missed are states of generated_schedule — a spot that never aired leaves no row
     // here to label. Those belong to the Traffic view, which reads the schedule.
     const line = toCsv(AS_RUN_COLUMNS, [row()]).split("\n")[1].split(",");
-    expect(line[line.length - 1]).toBe('"Aired"');
+    expect(line[line.length - 2]).toBe('"Aired"');
+  });
+
+  it("names the computer that aired each play — its name, its short id, or Not recorded (2026-10-20)", () => {
+    const last = (o: Partial<AsRunRow>) => { const l = toCsv(AS_RUN_COLUMNS, [row(o)]).split(String.fromCharCode(10))[1].split(","); return l[l.length - 1]; };
+    expect(last({ machine_id: "8e8f6181-b68a-433f-a93d-8005787b641b", machine_name: "OVEVENTS" })).toBe('"OVEVENTS"');
+    expect(last({ machine_id: "041ceb96-3d66-4d39-85c0-e2f5aa6e3b1e", machine_name: null })).toBe('"computer 041ceb96"');
+    expect(last({ machine_id: null })).toBe('"Not recorded"');
   });
 
   it("escapes quotes in a title", () => {

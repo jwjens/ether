@@ -790,6 +790,8 @@ const REGISTRY = {
       // that aired it. Uuids, never local integer ids — this table travels.
       row_uuid:            'scalar',
       machine_id:          'scalar',
+      // v68 (2026-10-20): the airing computer's NAME at the moment it aired — the Play Log's "Aired on" column.
+      machine_name:        'scalar',
     },
   },
 

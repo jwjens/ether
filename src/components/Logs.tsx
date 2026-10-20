@@ -1,12 +1,14 @@
 import { ClassBadge, ClassFilter, passesClassFilter } from "../lib/contentClass";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useLayoutEffect } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { queryScoped } from "../db/stationScoped";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { DataGrid } from "./grid/DataGrid";
 import { toCsv, downloadCsv } from "./grid/csv";
 import { trafficColumns, statusOf, deltaSec, actualTs as actualTsOf, aired as airedOf, type TrafficRow } from "./traffic/columns";
 import { AS_RUN_COLUMNS, type AsRunRow } from "./logs/columns";
-import { royaltyCsv, ROYALTY_SQL, PERIOD_PLAYS_SQL, type RoyaltyRow } from "./logs/royalty";
+import { royaltyCsv, royaltySql, periodPlaysSql, periodQuery, type RoyaltyRow } from "./logs/royalty";
+import { airedOnLabel, airedOnClause, AIRED_ON_NOT_RECORDED, AIRED_ON_COMPUTERS_SQL } from "./logs/airedOn";
 
 interface LogEntry {
   id: number;
@@ -17,7 +19,14 @@ interface LogEntry {
   clock_name: string | null;
   deck: string | null;
   played_at: number;
+  content_class?: string | null;
+  machine_id?: string | null;    // which computer aired it (v63)
+  machine_name?: string | null;  // its name when it aired (v68) — the "Aired on" column
 }
+
+// The plays list's columns (a grid, so rows can be drawn only while on screen — useVirtualizer).
+const PLAY_COLS = "96px minmax(160px, 2.2fr) minmax(110px, 1.4fr) 64px minmax(80px, 1fr) 56px minmax(110px, 1fr)";
+const PLAY_ROW_PX = 41;
 
 // ── TRAFFIC / AS-RUN (2026-08-09) ───────────────────────────────────────────────────────────────
 // A spot row in `generated_schedule` already carries its own as-run truth: `scheduled_at` (when it
@@ -58,6 +67,15 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
   const [filter, setFilter] = useState<"today" | "week" | "month" | "all">("today");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  // Optional times on the From/To range (Jeff, 2026-10-20: "for any time range (e.g. HalloVeen on OVEVENTS, 3–6 PM)").
+  // Empty = the whole day. Dates and times are LOCAL time (a bare "YYYY-MM-DD" parsed by Date is UTC midnight, which
+  // started a picked day the evening before on Pacific time — fixed here for the list and every export alike).
+  const [timeFrom, setTimeFrom] = useState("");
+  const [timeTo, setTimeTo] = useState("");
+  const customFrom = (): number | null => dateFrom ? Math.floor(new Date(`${dateFrom}T${timeFrom || "00:00"}`).getTime() / 1000) : null;
+  const customTo = (): number | null => !dateTo ? null
+    : timeTo ? Math.floor(new Date(`${dateTo}T${timeTo}`).getTime() / 1000)
+    : Math.floor(new Date(`${dateTo}T00:00`).getTime() / 1000) + 86400;
   // PARITY with the simple play-log page this one replaces (4.4.218). Both were real filters an
   // operator used to answer "did that song air, and off which deck" — consolidating onto this page
   // without them would have been a downgrade dressed as a cleanup.
@@ -67,6 +85,15 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
   // that aired; this narrows what is on screen and is undone with one press. Empty set = everything,
   // which is the default and must never be confused with "show nothing".
   const [classFilter, setClassFilter] = useState<Set<string>>(new Set());
+  // COMPUTER FILTER (Jeff, 2026-10-20: "a filter by computer, so a PD on any computer can see and print exactly what a
+  // station aired on any computer for any time range"). "" = every computer. Applied in the query, so the list, the
+  // count and every export (logs/airedOn.ts airedOnClause) describe exactly the same plays.
+  const [computer, setComputer] = useState("");
+  const [computers, setComputers] = useState<{ machine_id: string | null; machine_name: string | null; plays: number }[]>([]);
+  useEffect(() => {
+    if (!stationId) return;
+    queryScoped<any>(AIRED_ON_COMPUTERS_SQL, [stationId], stationId, { skipScoping: true }).then(r => setComputers(r || [])).catch(() => {});
+  }, [stationId]);
   // Customer's actual station name — used in CSV exports + printed traffic
   // log header instead of a hardcoded placeholder. Empty until KV fetch
   // resolves; headers and exports gracefully omit the prefix when empty.
@@ -83,41 +110,44 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
     })();
   }, [stationId]);
 
-  const load = async () => {
+  // EVERY PLAY IN THE PERIOD — no row cap for any period (Jeff, 2026-10-20: "Remove the 200-row cap in the Play Log for
+  // every range"). The list draws only the rows on screen (useVirtualizer below), so a 120,000-play "All" stays light,
+  // and the 5 s refresh asks only for plays ADDED since the last read — by local row id, not by time, so a play that
+  // arrives late from another computer (an older played_at) is caught too.
+  const periodWhere = (): { sql: string; params: any[] } => {
     // station_id scoping: Strategy C — dynamic WHERE builder; station_id is the base condition
-    let sql = "SELECT * FROM play_log WHERE station_id = ?";
+    let sql = " WHERE station_id = ?";
     const params: any[] = [stationId];
-    let countSql = "SELECT COUNT(*) as c FROM play_log WHERE station_id = ?";
-    const countParams: any[] = [stationId];
-
     if (filter === "today") {
-      const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
-      sql += " AND played_at >= " + startOfDay;
-      countSql += " AND played_at >= " + startOfDay;
+      sql += " AND played_at >= " + Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
     } else if (filter === "week") {
-      const weekAgo = Math.floor(Date.now() / 1000) - 7 * 86400;
-      sql += " AND played_at >= " + weekAgo;
-      countSql += " AND played_at >= " + weekAgo;
+      sql += " AND played_at >= " + (Math.floor(Date.now() / 1000) - 7 * 86400);
     } else if (filter === "month") {
-      const monthAgo = Math.floor(Date.now() / 1000) - 30 * 86400;
-      sql += " AND played_at >= " + monthAgo;
-      countSql += " AND played_at >= " + monthAgo;
+      sql += " AND played_at >= " + (Math.floor(Date.now() / 1000) - 30 * 86400);
     } else if (dateFrom && dateTo) {
-      const from = Math.floor(new Date(dateFrom).getTime() / 1000);
-      const to = Math.floor(new Date(dateTo).getTime() / 1000) + 86400;
-      sql += " AND played_at >= " + from + " AND played_at <= " + to;
-      countSql += " AND played_at >= " + from + " AND played_at <= " + to;
+      sql += " AND played_at >= " + customFrom() + " AND played_at < " + customTo();
     }
-    // A DAY IS NEVER CUT SHORT (Jeff, 2026-10-20: "I can't scroll up or down to see earlier rows (this morning)").
-    // The 200-row cap made a busy day's morning simply absent from the list. Today, or a picked range of one day,
-    // lists every play; only longer periods keep the newest-200 screen cap (the count tile still shows the total).
-    const oneDay = filter === "today" || (filter === "all" && !!dateFrom && !!dateTo && dateFrom === dateTo);
-    sql += " ORDER BY played_at DESC" + (oneDay ? "" : " LIMIT 200");
-
-    const rows = await queryScoped<LogEntry>(sql, params, stationId, { skipScoping: true });
+    const c = airedOnClause(computer);
+    return { sql: sql + c.sql, params: [...params, ...c.params] };
+  };
+  const lastIdRef = useRef(0);
+  const load = async (incremental = false) => {
+    const w = periodWhere();
+    if (incremental && lastIdRef.current > 0) {
+      const fresh = await queryScoped<LogEntry>(`SELECT * FROM play_log${w.sql} AND id > ? ORDER BY played_at DESC, id DESC`,
+        [...w.params, lastIdRef.current], stationId, { skipScoping: true });
+      if (fresh && fresh.length) {
+        lastIdRef.current = fresh.reduce((m, r) => Math.max(m, r.id), lastIdRef.current);
+        setEntries(prev => [...fresh, ...prev].sort((a, b) => b.played_at - a.played_at || b.id - a.id));
+        setTotal(t => t + fresh.length);
+      }
+      return;
+    }
+    const rows = (await queryScoped<LogEntry>(`SELECT * FROM play_log${w.sql} ORDER BY played_at DESC, id DESC`,
+      w.params, stationId, { skipScoping: true })) || [];
+    lastIdRef.current = rows.reduce((m, r) => Math.max(m, r.id), 0);
     setEntries(rows);
-    const r = await queryScoped<{ c: number }>(countSql, countParams, stationId, { skipScoping: true });
-    setTotal(r.length > 0 ? r[0].c : 0);
+    setTotal(rows.length);
   };
 
   // The one place the selected period becomes epochs. Previously each consumer recomputed it and
@@ -128,8 +158,8 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
     if (filter === "today") start = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
     else if (filter === "week") start = Math.floor(Date.now() / 1000) - 7 * 86400;
     else if (filter === "month") start = Math.floor(Date.now() / 1000) - 30 * 86400;
-    else if (dateFrom) start = Math.floor(new Date(dateFrom).getTime() / 1000);
-    if (filter === "all" && dateTo) end = Math.floor(new Date(dateTo).getTime() / 1000) + 86400;
+    else if (dateFrom) start = customFrom() as number;
+    if (filter === "all" && dateTo) end = (customTo() as number) - 1;   // exports use <= end; the list uses < customTo()
     return [start, end];
   };
 
@@ -161,8 +191,8 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
     setTraffic(rows);
   };
 
-  useEffect(() => { load(); const id = setInterval(load, 5000); return () => clearInterval(id); }, [filter, dateFrom, dateTo]);
-  useEffect(() => { if (view === "traffic") loadTraffic(); }, [view, filter, dateFrom, dateTo, stationId]);
+  useEffect(() => { load(); const id = setInterval(() => load(true), 5000); return () => clearInterval(id); }, [filter, dateFrom, dateTo, timeFrom, timeTo, computer, stationId]);
+  useEffect(() => { if (view === "traffic") loadTraffic(); }, [view, filter, dateFrom, dateTo, timeFrom, timeTo, stationId]);
 
   const [showReconcile, setShowReconcile] = useState(false);
   const [reconcileData, setReconcileData] = useState<{ scheduled: any[]; actual: any[]; matched: any[] } | null>(null);
@@ -194,9 +224,10 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
       stationId,
       { skipScoping: true }
     ) || [];
+    const ac = airedOnClause(computer);
     const actual = await queryScoped<any>(
-      "SELECT * FROM play_log WHERE station_id = ? AND played_at >= ? AND played_at <= ? ORDER BY played_at",
-      [stationId, startEpoch, endEpoch],
+      `SELECT * FROM play_log WHERE station_id = ? AND played_at >= ? AND played_at <= ?${ac.sql} ORDER BY played_at`,
+      [stationId, startEpoch, endEpoch, ...ac.params],
       stationId,
       { skipScoping: true }
     ) || [];
@@ -233,7 +264,7 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
 
   const exportAsRun = () => {
     if (!reconcileData) return;
-    const header = "Time,Scheduled Title,Scheduled Artist,Actual Title,Actual Artist,Status,Duration";
+    const header = "Time,Scheduled Title,Scheduled Artist,Actual Title,Actual Artist,Status,Duration,Aired On";
     const rows = reconcileData.matched.map((m: any) => {
       // generated_schedule carries a real epoch; the old hour/position arithmetic belonged to
       // the old log table and produced a fabricated clock time.
@@ -247,6 +278,7 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
         m.actual?.artist || "",
         m.status === "match" ? "MATCH" : m.status === "missed" ? "MISSED" : "UNSCHED",
         m.actual?.duration_ms ? (m.actual.duration_ms / 1000).toFixed(0) : "",
+        m.actual ? (m.actual.machine_id !== undefined || m.actual.machine_name !== undefined ? airedOnLabel(m.actual) : "This computer") : "",
       ].map(v => '"' + String(v).replace(/"/g, '""') + '"').join(",");
     });
     const csv = header + "\n" + rows.join("\n");
@@ -306,7 +338,8 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
       // Royalty reports: every play in the period (its own query — not the 200-row screen list) with each play's REAL
       // length from play_log; an unrecorded length stays blank (audit 6, 7 — it used to write one fixed placeholder duration on every row).
       const [from, to] = rangeEpochs();
-      const plays = await queryScoped<RoyaltyRow>(ROYALTY_SQL, [stationId, from, to], stationId, { skipScoping: true });
+      const pq = periodQuery(royaltySql, stationId, from, to, computer);   // the computer filter too (logs/airedOn.ts)
+      const plays = await queryScoped<RoyaltyRow>(pq.sql, pq.params, stationId, { skipScoping: true });
       downloadCsv("ether-" + format + "-" + new Date().toISOString().split("T")[0] + ".csv", royaltyCsv(format, plays || [], stationName));
       return;
     } else {
@@ -321,17 +354,18 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
       //
       // Order stays played_at DESC, matching both the screen and the file this replaces.
       const [from, to] = rangeEpochs();
+      const ac = airedOnClause(computer, "pl");   // the computer filter too (logs/airedOn.ts)
       const rows2 = await queryScoped<AsRunRow>(
-        `SELECT pl.played_at, pl.title, pl.artist, pl.deck, pl.duration_ms, pl.content_class,
+        `SELECT pl.played_at, pl.title, pl.artist, pl.deck, pl.duration_ms, pl.content_class, pl.machine_id, pl.machine_name,
                 COALESCE(c.code, c.name) AS category,
                 sp.advertiser, sp.isci_code, sp.cart_number
            FROM play_log pl
            LEFT JOIN spots sp ON sp.file_path = pl.file_path AND sp.station_id = pl.station_id AND sp.deleted_at IS NULL
            LEFT JOIN songs sg ON sg.file_path = pl.file_path
            LEFT JOIN categories c ON c.id = sg.category_id
-          WHERE pl.station_id = ? AND pl.played_at >= ? AND pl.played_at <= ?
+          WHERE pl.station_id = ? AND pl.played_at >= ? AND pl.played_at <= ?${ac.sql}
           ORDER BY pl.played_at DESC`,
-        [stationId, from, to], stationId, { skipScoping: true });
+        [stationId, from, to, ...ac.params], stationId, { skipScoping: true });
       downloadCsv("ether-" + format + "-" + new Date().toISOString().split("T")[0] + ".csv",
                   toCsv(AS_RUN_COLUMNS, rows2 || []));
       return;
@@ -342,23 +376,28 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
     // Open the print window inside the click (before any await), then fill it from its own whole-period query — not
     // the 200-row list on screen (audit 7).
     const win = window.open("", "_blank");
-    const dateRange = filter === "today" ? "Today" : filter === "week" ? "Last 7 Days" : filter === "month" ? "Last 30 Days" : "All Time";
+    const dateRange = filter === "today" ? "Today" : filter === "week" ? "Last 7 Days" : filter === "month" ? "Last 30 Days"
+      : (dateFrom && dateTo) ? `${dateFrom}${timeFrom ? " " + timeFrom : ""} – ${dateTo}${timeTo ? " " + timeTo : ""}` : "All Time";
     const [from, to] = rangeEpochs();
-    const plays = (await queryScoped<LogEntry>(PERIOD_PLAYS_SQL, [stationId, from, to], stationId, { skipScoping: true })) || [];
+    const pq = periodQuery(periodPlaysSql, stationId, from, to, computer);   // the computer filter too (logs/airedOn.ts)
+    const plays = (await queryScoped<LogEntry>(pq.sql, pq.params, stationId, { skipScoping: true })) || [];
+    const computerLabel = !computer ? "All computers"
+      : computer === AIRED_ON_NOT_RECORDED ? "Computer not recorded"
+      : airedOnLabel(computers.find(c => c.machine_id === computer) || { machine_id: computer });
     const rows = plays.map((e, i) => {
       const d = new Date(e.played_at * 1000);
       return `<tr style="background:${i % 2 === 0 ? "#f9f9f9" : "#fff"}">
         <td>${i+1}</td><td>${d.toLocaleDateString()}</td><td>${d.toLocaleTimeString()}</td>
         <td><strong>${e.title}</strong></td><td>${e.artist || "Unknown"}</td>
-        <td>${e.category_code || "—"}</td><td>${e.show_name || "—"}</td>
+        <td>${e.category_code || "—"}</td><td>${e.show_name || "—"}</td><td>${airedOnLabel(e)}</td>
       </tr>`;
     }).join("\n");
     const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Ether — Traffic Log</title>
 <style>body{font-family:Arial,sans-serif;font-size:11px;color:#333;margin:20px}h1{font-size:18px;margin-bottom:4px}.meta{color:#666;font-size:10px;margin-bottom:16px}table{width:100%;border-collapse:collapse}th{background:#1e293b;color:#fff;padding:6px 8px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.05em}td{padding:5px 8px;border-bottom:1px solid #e5e7eb}</style>
 </head><body>
 <h1>${stationName ? stationName + " — " : ""}Traffic Log</h1>
-<div class="meta">Period: ${dateRange} | Generated: ${new Date().toLocaleString()} | Total: ${plays.length} plays</div>
-<table><thead><tr><th>#</th><th>Date</th><th>Time</th><th>Title</th><th>Artist</th><th>Cat</th><th>Show</th></tr></thead>
+<div class="meta">Period: ${dateRange} | Aired on: ${computerLabel} | Generated: ${new Date().toLocaleString()} | Total: ${plays.length} plays</div>
+<table><thead><tr><th>#</th><th>Date</th><th>Time</th><th>Title</th><th>Artist</th><th>Cat</th><th>Show</th><th>Aired on</th></tr></thead>
 <tbody>${rows}</tbody></table></body></html>`;
     if (win) { win.document.write(html); win.document.close(); setTimeout(() => win.print(), 500); }
   };
@@ -375,6 +414,13 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
     return matchSearch && matchDeck && matchClass;
   });
   const decks = Array.from(new Set(entries.map(e => e.deck).filter(Boolean))) as string[];
+  // Only the rows on screen are drawn. The scroll region is the panel's own wrapper (scrollRef); the list body sits
+  // below the header, stats and filters, so its offset in that region is the virtualizer's scrollMargin.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [bodyTop, setBodyTop] = useState(0);
+  useLayoutEffect(() => { const t = bodyRef.current ? bodyRef.current.offsetTop : 0; if (t !== bodyTop) setBodyTop(t); });
+  const rows = useVirtualizer({ count: visible.length, getScrollElement: () => scrollRef.current, estimateSize: () => PLAY_ROW_PX, overscan: 15, scrollMargin: bodyTop });
   const uniqueArtists = new Set(visible.filter(e => e.artist).map(e => e.artist)).size;
   const uniqueSongs = new Set(visible.map(e => e.title)).size;
 
@@ -393,7 +439,7 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
     // the pop-out window (PopoutShell content overflow hidden) and the schedule workspace pane (PaneFrame flush,
     // overflow hidden). Without this the rows below the window's edge could never be reached. A separate wrapper, not the
     // flex column itself: as a scrolling flex column it would shrink the table's (overflow hidden) box to fit and clip again.
-    <div style={{ flex: 1, height: "100%", minHeight: 0, overflowY: "auto" }}>
+    <div ref={scrollRef} style={{ flex: 1, height: "100%", minHeight: 0, overflowY: "auto", position: "relative" }}>
     <div style={{ display: "flex", flexDirection: "column" as any, gap: 16, fontFamily: "'Inter', system-ui, sans-serif" }}>
 
       {/* Header */}
@@ -441,6 +487,12 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
           <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>→</span>
           <input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setFilter("all"); }}
             style={{ padding: "5px 8px", borderRadius: 0, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+          {/* Times narrow the From/To range to part of a day (empty = the whole day). */}
+          <input type="time" value={timeFrom} onChange={e => { setTimeFrom(e.target.value); setFilter("all"); }} title="From time (empty = start of the From day)"
+            style={{ padding: "5px 6px", borderRadius: 0, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
+          <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>–</span>
+          <input type="time" value={timeTo} onChange={e => { setTimeTo(e.target.value); setFilter("all"); }} title="To time (empty = end of the To day)"
+            style={{ padding: "5px 6px", borderRadius: 0, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }} />
 
           {/* Search + deck — carried over from the simple page (parity, 4.4.218). Plays view only:
               neither applies to the traffic affidavit, which is spots by advertiser. */}
@@ -453,13 +505,20 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
               <option value="">All decks</option>
               {decks.map(d => <option key={d} value={d}>Deck {d}</option>)}
             </select>
+            <select value={computer} onChange={e => setComputer(e.target.value)} title="Show and print the plays that aired on one computer"
+              style={{ padding: "5px 8px", borderRadius: 0, fontSize: 11, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)", outline: "none" }}>
+              <option value="">All computers</option>
+              {computers.map(c => c.machine_id
+                ? <option key={c.machine_id} value={c.machine_id}>{airedOnLabel(c)}</option>
+                : <option key="__none" value={AIRED_ON_NOT_RECORDED}>Not recorded (before 10-18)</option>)}
+            </select>
             <ClassFilter selected={classFilter} onChange={setClassFilter}
               counts={entries.reduce((m: any, e: any) => {
                 const k = String(e.content_class || "MUSIC").toUpperCase();
                 m[k] = (m[k] || 0) + 1; return m;
               }, {})} />
-            {(search || deckFilter || classFilter.size > 0) && (
-              <button onClick={() => { setSearch(""); setDeckFilter(""); setClassFilter(new Set()); }} title="Clear search, deck and element-type filters"
+            {(search || deckFilter || classFilter.size > 0 || computer) && (
+              <button onClick={() => { setSearch(""); setDeckFilter(""); setClassFilter(new Set()); setComputer(""); }} title="Clear search, deck, computer and element-type filters"
                 style={{ padding: "5px 10px", borderRadius: 0, fontSize: 11, fontWeight: 600, background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", color: "var(--text-tertiary)", cursor: "pointer" }}>Clear</button>
             )}
           </>)}
@@ -558,43 +617,46 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
       {/* Table */}
       {visible.length === 0 ? (
         <div style={{ padding: "var(--s-5)", fontSize: "var(--t-body)", color: "var(--text-tertiary)", border: "1px solid var(--border-primary)", background: "var(--bg-secondary)" }}>
-          {search || deckFilter || classFilter.size > 0
+          {search || deckFilter || classFilter.size > 0 || computer
             ? "Nothing in this period matches that search."
             : "Nothing aired in this period."}
         </div>
       ) : (
-        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, overflow: "hidden" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" as any, fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)" }}>
-                {["Time", "Title", "Artist", "Cat", "Show", "Deck"].map(h => (
-                  <th key={h} style={{ padding: "10px 14px", textAlign: "left" as any, fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((e, i) => (
-                <tr key={e.id}
-                  style={{ borderBottom: i < visible.length - 1 ? "1px solid var(--border-primary)" : "none" }}
+        <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-primary)", borderRadius: 0, fontSize: 13 }}>
+          <div style={{ display: "grid", gridTemplateColumns: PLAY_COLS, borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", position: "sticky", top: 0, zIndex: 1 }}>
+            {["Time", "Title", "Artist", "Cat", "Show", "Deck", "Aired on"].map(h => (
+              <div key={h} style={{ padding: "10px 14px", fontSize: 10, fontWeight: 700, color: "var(--text-tertiary)", textTransform: "uppercase" as any, letterSpacing: "0.1em" }}>{h}</div>
+            ))}
+          </div>
+          <div ref={bodyRef} style={{ height: rows.getTotalSize(), position: "relative" }}>
+            {rows.getVirtualItems().map(vi => {
+              const e = visible[vi.index];
+              const cell = { padding: "10px 14px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any };
+              return (
+                <div key={e.id}
+                  style={{ position: "absolute", top: 0, left: 0, right: 0, height: vi.size, transform: `translateY(${vi.start - bodyTop}px)`,
+                           display: "grid", gridTemplateColumns: PLAY_COLS, alignItems: "center",
+                           borderBottom: vi.index < visible.length - 1 ? "1px solid var(--border-primary)" : "none" }}
                   onMouseEnter={ev => (ev.currentTarget.style.background = "var(--bg-hover)")}
                   onMouseLeave={ev => (ev.currentTarget.style.background = "transparent")}
                 >
-                  <td style={{ padding: "10px 14px", fontFamily: "'DM Mono', monospace", fontSize: 11, color: "var(--text-tertiary)", whiteSpace: "nowrap" as any }}>{fmtTimestamp(e.played_at)}</td>
-                  <td style={{ padding: "10px 14px", color: "var(--text-primary)", fontWeight: 500, maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}><span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><ClassBadge value={(e as any).content_class} />{e.title}</span></td>
-                  <td style={{ padding: "10px 14px", color: "var(--text-secondary)", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{e.artist || "—"}</td>
-                  <td style={{ padding: "10px 14px", color: "var(--text-tertiary)", fontSize: 11 }}>{e.category_code || "—"}</td>
-                  <td style={{ padding: "10px 14px", color: "var(--text-tertiary)", fontSize: 11, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any }}>{e.show_name || "—"}</td>
-                  <td style={{ padding: "10px 14px" }}>
+                  <div style={{ ...cell, fontFamily: "'DM Mono', monospace", fontSize: 11, color: "var(--text-tertiary)" }}>{fmtTimestamp(e.played_at)}</div>
+                  <div style={{ ...cell, color: "var(--text-primary)", fontWeight: 500 }}><span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><ClassBadge value={e.content_class} />{e.title}</span></div>
+                  <div style={{ ...cell, color: "var(--text-secondary)" }}>{e.artist || "—"}</div>
+                  <div style={{ ...cell, color: "var(--text-tertiary)", fontSize: 11 }}>{e.category_code || "—"}</div>
+                  <div style={{ ...cell, color: "var(--text-tertiary)", fontSize: 11 }}>{e.show_name || "—"}</div>
+                  <div style={cell}>
                     {e.deck ? (
                       <span style={{ fontSize: 10, fontWeight: 700, color: DECK_COLORS[e.deck] || "var(--text-tertiary)", background: (DECK_COLORS[e.deck] || "var(--text-tertiary)") + "20", padding: "2px 7px", borderRadius: 0 }}>
                         {e.deck}
                       </span>
                     ) : "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </div>
+                  <div style={{ ...cell, color: e.machine_id ? "var(--text-secondary)" : "var(--text-tertiary)", fontSize: 11 }} title={e.machine_id || "recorded before computers were stored"}>{airedOnLabel(e)}</div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
       </>)}

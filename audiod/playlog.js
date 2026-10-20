@@ -67,6 +67,7 @@ function _playRow(db, { stationId, title, artist, deck, durationMs, sessionId, f
     source: source || null,        // v39: 'jukebox' | 'announcement' | null — honest history, never a playout input
     row_uuid: rowUuid || null,     // v63: the schedule row this play fulfils
     machine_id: machineIdOf(db),   // v63: the machine that aired it
+    machine_name: require("os").hostname() || null,   // v68: its name, as it was when it aired — the Play Log's "Aired on"
   };
 }
 
@@ -80,14 +81,24 @@ function hasRecordColumns(db) {
   return ok;
 }
 
+// v68 machine_name, written only where the table has it (same rule as the v63 columns).
+const _hasV68 = new WeakMap();
+function hasMachineName(db) {
+  if (_hasV68.has(db)) return _hasV68.get(db);
+  let ok = false;
+  try { ok = db.prepare("PRAGMA table_info(play_log)").all().some(r => r.name === "machine_name"); } catch {}
+  _hasV68.set(db, ok);
+  return ok;
+}
+
 // The insert + its sync mutation + spot accounting. Runs INSIDE the caller's transaction.
 function _insertPlay(db, row) {
   const payloadAfter = serializePayload(row, "play_log");
-  const v63 = hasRecordColumns(db);
+  const v63 = hasRecordColumns(db), v68 = v63 && hasMachineName(db);
   db.prepare(
-    `INSERT INTO play_log (title, artist, deck, deck_id, duration_ms, session_id, played_at, scheduled_log_id, show_name, category_code, station_id, uuid, created_at, updated_at, deleted_at, programming_row_id, file_path, content_class, source${v63 ? ", row_uuid, machine_id" : ""})
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${v63 ? ", ?, ?" : ""})`
-  ).run(row.title, row.artist, row.deck, row.deck_id, row.duration_ms, row.session_id, row.played_at, row.scheduled_log_id, row.show_name, row.category_code, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at, row.programming_row_id, row.file_path, row.content_class, row.source, ...(v63 ? [row.row_uuid, row.machine_id] : []));
+    `INSERT INTO play_log (title, artist, deck, deck_id, duration_ms, session_id, played_at, scheduled_log_id, show_name, category_code, station_id, uuid, created_at, updated_at, deleted_at, programming_row_id, file_path, content_class, source${v63 ? ", row_uuid, machine_id" : ""}${v68 ? ", machine_name" : ""})
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?${v63 ? ", ?, ?" : ""}${v68 ? ", ?" : ""})`
+  ).run(row.title, row.artist, row.deck, row.deck_id, row.duration_ms, row.session_id, row.played_at, row.scheduled_log_id, row.show_name, row.category_code, row.station_id, row.uuid, row.created_at, row.updated_at, row.deleted_at, row.programming_row_id, row.file_path, row.content_class, row.source, ...(v63 ? [row.row_uuid, row.machine_id] : []), ...(v68 ? [row.machine_name] : []));
   // Spot accounting: count the spin if the aired file is a spot (no-op for songs).
   if (row.file_path) {
     db.prepare(`UPDATE spots SET play_count = play_count + 1, last_played_at = unixepoch(), updated_at = ? WHERE file_path = ? AND station_id = ? AND deleted_at IS NULL`).run(row.updated_at, row.file_path, row.station_id);

@@ -17,7 +17,7 @@ describe("royalty exports — real durations, every play (audit 6, 7)", () => {
   it("BMI: 1,000 plays in → 1,000 rows out, each with its own m:ss", () => {
     const csv = royaltyCsv("bmi", plays, "Test FM");
     const lines = csv.trim().split("\n");
-    expect(lines[0]).toBe("Title,Performer,Date Of Use,Time Of Use,Duration");
+    expect(lines[0]).toBe("Title,Performer,Date Of Use,Time Of Use,Duration,Aired On");
     expect(lines.length - 1).toBe(1000);
     expect(lines[2]).toContain(`"${fmtMinSec(61000)}"`);          // play 1 is 61 s → 1:01
     expect(lines.filter(l => l.endsWith('"3:30"')).length).toBeLessThan(10);   // no placeholder flood
@@ -33,7 +33,8 @@ describe("royalty exports — real durations, every play (audit 6, 7)", () => {
 
   it("an unknown length is left blank — never invented", () => {
     const bmi = royaltyCsv("bmi", [{ played_at: day, title: "X", artist: "Y", duration_ms: null }], "S").trim().split("\n")[1];
-    expect(bmi.endsWith('""')).toBe(true);
+    expect(bmi.split(",")[4]).toBe('""');                       // the Duration cell
+    expect(bmi.endsWith('"Not recorded"')).toBe(true);         // Aired On: a play with no computer recorded
     expect(fmtMinSec(210000)).toBe("3:30");
     expect(fmtMinutes(210000)).toBe("3.50");
   });
@@ -57,12 +58,13 @@ describe("royalty exports — real durations, every play (audit 6, 7)", () => {
 // fix 7 (PDF): the printable log was the on-screen list too — the 200 most recent plays, whatever the period.
 describe("the PDF log covers the whole period (audit 7)", () => {
   it("exportPDF reads the whole-period query (no LIMIT), not the 200-row screen list", async () => {
-    const { PERIOD_PLAYS_SQL } = await import("./royalty");
+    const { PERIOD_PLAYS_SQL, periodPlaysSql } = await import("./royalty");
+    expect(periodPlaysSql(" AND machine_id = ?")).not.toMatch(/LIMIT/i);
     expect(PERIOD_PLAYS_SQL).not.toMatch(/LIMIT/i);
     expect(PERIOD_PLAYS_SQL).not.toMatch(/ANN/);   // the as-run printable log keeps announcements
     const src = fs.readFileSync(path.join(__dirname, "..", "Logs.tsx"), "utf8");
     const pdf = src.slice(src.indexOf("const exportPDF"), src.indexOf("const visible"));
-    expect(pdf).toMatch(/PERIOD_PLAYS_SQL/);
+    expect(pdf).toMatch(/periodPlaysSql/);   // the whole-period query (+ the computer filter, 2026-10-20)
     expect(pdf).not.toMatch(/entries\.(map|length)/);
   });
 });

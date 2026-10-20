@@ -20,6 +20,7 @@
 //
 // docs/help-logs.md
 import type { GridColumn } from "../grid/csv";
+import { airedOnLabel } from "./airedOn";
 
 export interface AsRunRow {
   played_at: number;
@@ -32,6 +33,8 @@ export interface AsRunRow {
   isci_code: string | null;
   cart_number: string | null;
   content_class: string | null;
+  machine_id?: string | null;   // which computer aired it (v63) — the "Aired On" column
+  machine_name?: string | null; // its name when it aired (v68)
 }
 
 const two = (n: number) => String(n).padStart(2, "0");
@@ -71,4 +74,5 @@ export const AS_RUN_COLUMNS: GridColumn<AsRunRow>[] = [
   // schedule. Constant by construction, and kept because an affidavit column that says what is
   // being asserted is the point of the document.
   { id: "status", header: "Status", accessor: () => "Aired" },
+  { id: "airedOn", header: "Aired On", accessor: r => airedOnLabel(r) },
 ];

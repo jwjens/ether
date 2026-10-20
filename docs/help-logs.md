@@ -3,7 +3,7 @@ feature: logs-exports
 title: Play Log exports (as-run affidavit, BMI, ASCAP)
 summary: What each export button produces, which columns an affidavit carries, and why a column can be empty.
 where: Menu → Play Log → the export buttons, top right
-since: 4.4.180 (as-run affidavit rebuilt)
+since: 4.4.180 (as-run affidavit rebuilt); Aired on + computer filter 4.6.62
 audience: programmer
 tour: true
 ---
@@ -22,10 +22,10 @@ Each export button makes a different document. They are not variations of one fi
 
 ## The as-run affidavit — Export CSV
 
-Twelve columns, in this order:
+Thirteen columns, in this order:
 
 **Start Time · End Time · Duration · Date · Title · Artist · Deck · Category · Advertiser · ISCI ·
-Cart Number · Status**
+Cart Number · Status · Aired On**
 
 - **Start Time** is when it actually aired. **End Time** is Start Time plus its length. **Duration**
   is that length, as M:SS — a thirty-second spot reads `0:30`.
@@ -53,10 +53,22 @@ An empty cell means Ether does not know, and it will not invent a value:
 
 **Every export covers the whole period** you picked — not just the plays shown on screen.
 
-**The list on screen scrolls.** Scroll the Play Log (in its own window, the menu panel, or the Program Log's
-Play Log pane) to reach earlier plays. **Today**, or a From/To range of a single day, lists every play of that
-day, back to midnight. Longer periods (7 Days, 30 Days, All, a multi-day range) list the 200 most recent on
-screen; the Songs Played count and every export still cover the whole period.
+**The list on screen scrolls, and every period lists every play** — Today, 7 Days, 30 Days, All or any From/To range,
+back to its first play (no 200-row limit since 4.6.62). Scroll the Play Log (in its own window, the menu panel, or the
+Program Log's Play Log pane) to reach earlier plays.
+
+**Aired on — which computer played it.** Every play records the computer that aired it, and the Play Log syncs between
+all computers of the account. The **Aired on** column shows that computer's name. Plays recorded before 10-18-2026 show
+**Not recorded**; a play from a computer that had not yet stored its name shows *computer* and the first part of its id.
+
+**Filter by computer.** The **All computers** menu (next to the deck filter) narrows the list to one computer — for
+example HalloVeen on OVEVENTS, 3–6 PM: pick the station, set From and To to that day, set the two times to 3:00 PM and
+6:00 PM (leave them empty for whole days), choose OVEVENTS, and print. The
+count, **Export CSV**, **BMI**, **ASCAP**, **PDF** and the reconcile export all follow the same computer choice, and every
+one of them carries an **Aired On** column. (BMI and ASCAP list it as the last column.)
+
+**Each computer's rotation counts only what aired on that computer.** Plays from other computers are in this list for
+the record; they do not rest songs on this computer.
 
 **BMI and ASCAP lengths** come from the play log. A play whose length was never recorded has an **empty**
 duration rather than a guessed one — check those rows before you file.
