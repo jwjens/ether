@@ -236,6 +236,8 @@ pub(crate) enum RtCmd {
     /// `reload` = a fresh decoder for a deck whose source had gone (Stop/natural end) but whose path is known.
     Play { slot: u8, reload: Option<DeckFeed>, gen: u64 },
     Pause { slot: u8 },
+    /// The deck's sample clock, set right after a Load that started part-way into a file (build_source_at).
+    SetPosition { slot: u8, frames: u64 },
     Stop { slot: u8 },
     /// REMOTE LINK (linknet.rs) — install (Some) or remove (None) the SEND tap: the clean programme, post-master,
     /// pre-processor, into the sender thread's ring. The replaced tap travels back as Garbage.

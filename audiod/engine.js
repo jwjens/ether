@@ -547,6 +547,13 @@ class DaemonEngine {
     if (typeof DaemonEngine.loadHook === "function") return DaemonEngine.loadHook(deck, fp, title, artist, this.stationId);
     return A.audioLoad(deck, fp, title || "", artist || "", 0, this.stationId);
   }
+  /** Load a deck starting `startSec` into the file (the engine's audio_load_from): the watchdog resuming a stalled song
+   *  at the exact spot. Through the same normalizer as every load. False when the engine cannot (an older engine). */
+  _loadFrom(deck, fp, title, artist, startSec) {
+    if (typeof DaemonEngine.loadHook === "function") return DaemonEngine.loadHook(deck, fp, title, artist, this.stationId, startSec);
+    if (typeof A.audioLoadFrom !== "function") return false;
+    return A.audioLoadFrom(deck, fp, title || "", artist || "", 0, startSec, this.stationId);
+  }
   // Pure + testable: which deck ids are rotation decks. CART is the jingle overlay, not a rotation deck.
   _isRotationDeck(deck) { return deck === "A" || deck === "B" || deck === "C"; }
   // A deck plays at whatever fader the OPERATOR set — automation NEVER moves a deck fader (those are
@@ -790,7 +797,7 @@ class DaemonEngine {
       this._lastPlayingAt = now; this._watchdogArmed = true;   // healthy → re-arm
       // What is on air, and where it is — the song the watchdog resumes if it stalls (Jeff, 2026-10-19).
       const st = this._deckState(playing);
-      this._lastLive = { deck: playing, filePath: st.filePath || "", title: st.title || "", positionSec: st.positionSec || 0, durationSec: st.durationSec || 0 };
+      this._lastLive = { deck: playing, filePath: st.filePath || "", title: st.title || "", artist: st.artist || "", positionSec: st.positionSec || 0, durationSec: st.durationSec || 0 };
       return;
     }
 
@@ -853,6 +860,17 @@ class DaemonEngine {
           this._setDeck(last.deck, { status: "playing" });
           this.endTriggered.delete(last.deck);
           this._log(`watchdog: resumed the stalled song on deck ${last.deck} — "${last.title || "(untitled)"}" (at ${Math.round(last.positionSec)}s)`);
+          return true;
+        }
+        // THE SOURCE IS GONE: reload the same song on the same deck AT THE EXACT SPOT it stalled (Jeff, 2026-10-19: "after a
+        // stall, resume the stalled song at the exact spot it stalled. Never play a different deck."). The position is the
+        // last one heard on air (this poll tick's live position stream).
+        if (last.filePath && this._loadFrom(last.deck, last.filePath, last.title, last.artist, last.positionSec) !== false
+            && this._play(last.deck) !== false) {
+          this._setDeck(last.deck, { status: "playing", filePath: last.filePath, title: last.title || "", positionSec: last.positionSec, durationSec: last.durationSec });
+          this.endTriggered.delete(last.deck);
+          this._log(`watchdog: reloaded the stalled song on deck ${last.deck} at the exact spot — "${last.title || "(untitled)"}" from ${last.positionSec.toFixed(1)}s`);
+          try { this.emit("stall-resumed", { stationId: this.stationId, deck: last.deck, title: last.title || "", filePath: last.filePath, positionSec: last.positionSec, how: "reloaded-at-position" }); } catch {}
           return true;
         }
         this._log(`watchdog: the stalled song on deck ${last.deck} ("${last.title || "(untitled)"}") cannot be resumed — its source is gone; nothing else is played`);

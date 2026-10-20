@@ -1349,6 +1349,9 @@ if (AUDIO_DAEMON_DESIRED) {
         // Slice B: a row was skipped/dropped as unresolvable → feed the library-health skipped-at-load
         // sense (+ health-events.jsonl). Never silent. deck/filePath ride along when the daemon knows them.
         try { _libHealth && _libHealth.noteSkip(m.stationId, m.title, m.reason, { deck: m.deck, filePath: m.filePath }); } catch {}
+      } else if (m.event === "stall-resumed") {
+        // The watchdog reloaded a stalled song on its own deck at the exact spot it stalled (engine.js _resumeStalled).
+        try { _healthEvent('stall-resumed-at-position', { stationId: m.stationId, deck: m.deck, title: m.title, filePath: m.filePath, positionSec: m.positionSec, how: m.how }); } catch {}
       } else if (m.event === "alert") {
         // Phase 1: the engine detected and reports; one alert, every place (electron/health-alerts.js).
         try { _alerts.raise(m.kind, m); } catch {}
@@ -12521,7 +12524,7 @@ function _designationTick(generatedFor, label) {
   const tally = { designate: 0, stamp: 0, observe: 0, skip: 0, wrote: 0, failed: 0 };
   for (const st of stations) {
     const kill = String(_kvGet(st.id, 'kill_designation') || '') === '1';
-    const autoOn = true;                                  // no switch (2026-10-19): any machine may take an unheld designation
+    const autoOn = true;                                  // no switch (2026-10-19); the builder follows the existing designation — decide() never claims
     const record = _desig.parseRecord(_kvGet(st.id, _desig.KEY));
     const d = _desig.decide({ record, machineId: me.id, autoOn, killSwitch: kill });
 
@@ -12809,11 +12812,9 @@ async function _autoExtendTick() {
     // Three ways through, and the order matters:
     //   kill_designation set  → bypass entirely. The emergency switch must outrank the gate, or a
     //                           bug in designation could stop a station being built with no way out.
-    //   no record             → ALLOWED, and the tick will claim it. This is the zero-config rule
-    //                           from the design (§1): a station nobody has generated designates the
-    //                           machine that next generates it. Refusing here would mean a brand-new
-    //                           station never builds a log at all — the gate causing dead air, which
-    //                           is worse than the two-writer problem it exists to prevent.
+    //   no record             → NOT ALLOWED (Jeff, 2026-10-19): the builder follows the existing
+    //                           designation; no machine claims a station by building it. The Health
+    //                           Monitor shows such a station yellow, and Fill Day still works.
     //   record is another's   → SKIP. This is the whole feature.
     //
     // Manual Generate is NOT gated. An operator pressing Generate is an explicit instruction from a

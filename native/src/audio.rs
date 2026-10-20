@@ -356,7 +356,9 @@ impl FinishedFlags {
 
 #[derive(Debug)]
 pub enum AudioCmd {
-    Load { deck: String, file_path: String, title: String, artist: String, gain_db: f32 },
+    /// `start_sec` > 0: the deck starts at that point of the file (the watchdog resuming a stalled song at the exact spot
+    /// it stalled — Jeff, 2026-10-19). 0 = from the top, exactly as every load before it.
+    Load { deck: String, file_path: String, title: String, artist: String, gain_db: f32, start_sec: f64 },
     Play(String),
     Pause(String),
     Stop(String),
@@ -1220,6 +1222,7 @@ impl BusState {
                     self.decks[i].active = true;
                 }
                 RtCmd::Pause { slot } => { self.decks[slot as usize].paused = true; }
+                RtCmd::SetPosition { slot, frames } => { self.decks[slot as usize].frames_played = frames; }
                 RtCmd::LinkTap(t) => {
                     let old = std::mem::replace(&mut self.link_tap, t);
                     if let Some(o) = old { self.discard(Garbage::LinkTap(o)); }
@@ -1404,7 +1407,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                 match rx.recv_timeout(std::time::Duration::from_millis(50)) {
                     Ok(cmd) => {
                         match cmd {
-                            AudioCmd::Load { deck, file_path, title, artist, gain_db } => {
+                            AudioCmd::Load { deck, file_path, title, artist, gain_db, .. } => {
                                 if let Some(old) = sinks.remove(&deck) { old.stop(); }
                                 loaded_files.insert(deck.clone(), (file_path.clone(), title.clone(), artist.clone()));
                                 playing_decks.remove(&deck);
@@ -3198,18 +3201,24 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             // ── S3: every arm below edits the dispatch thread's OWN copy of the state (ctl) and
                             // queues a message. None of them touches BusState: the callback owns it, and
                             // applies these at the top of its next buffer (docs/dsp-rt-callback.md §4).
-                            AudioCmd::Load { deck, file_path, title, artist, gain_db } => {
+                            AudioCmd::Load { deck, file_path, title, artist, gain_db, start_sec } => {
                                 let Some(idx) = deck_index(&deck) else { continue };
                                 if mics.is_live(idx) { mics.refused(idx, "load"); continue; }
                                 if links.is_live(idx) { links.refused(idx, "load"); continue; }
-                                // Decode setup off the audio thread, as always.
-                                let src = build_source(&file_path, sr).map(|d| ctl.feed_for(idx, d));
+                                // Decode setup off the audio thread, as always. A start position seeks the decoder
+                                // here (build_source_at), so the callback only ever sees samples.
+                                let src = build_source_at(&file_path, sr, start_sec).map(|d| ctl.feed_for(idx, d));
                                 let has = src.is_some();
                                 let gen = ctl.next_gen();
                                 // THE FADER LEVEL IS THE JOCK'S — a track load must never move it. Only the
                                 // track's own trim (gain_db) travels with the load; it is applied PRE-FADER
                                 // at the mix, on top of whatever level the operator set.
                                 let seq = ctl.enqueue(RtCmd::Load { slot: idx as u8, src, gain_db, gen });
+                                // The sample clock starts where the audio starts, so the position (and the countdown
+                                // built on it) is the file's real position. Applied right after the Load, in order.
+                                if has && start_sec > 0.0 {
+                                    ctl.enqueue(RtCmd::SetPosition { slot: idx as u8, frames: (start_sec * PROGRAM_RATE as f64).round() as u64 });
+                                }
                                 let d = &mut ctl.decks[idx];
                                 d.path = file_path;
                                 d.title = title;
@@ -4191,14 +4200,33 @@ fn open_named_output_device(station_id: u32, name: &str) -> Option<(cpal::Device
 
 pub(crate) fn build_source(
     file_path: &str,
+    sample_rate: u32,
+) -> Option<Box<dyn Iterator<Item = f32> + Send>> {
+    build_source_at(file_path, sample_rate, 0.0)
+}
+
+/// The deck's source, starting `start_sec` into the file (0 = from the top: the exact path every load has always taken).
+/// The decoder seeks when the format allows it; when it cannot, the audio before the point is decoded and discarded —
+/// slower to start, the same audio. Either way the callback receives only samples from the point on.
+pub(crate) fn build_source_at(
+    file_path: &str,
     _sample_rate: u32,
+    start_sec: f64,
 ) -> Option<Box<dyn Iterator<Item = f32> + Send>> {
     use rodio::source::UniformSourceIterator;
     use rodio::Source;
     use std::fs::File;
     use std::io::BufReader;
     let file    = File::open(file_path).ok()?;
-    let decoder = rodio::Decoder::new(BufReader::new(file)).ok()?;
+    let mut decoder = rodio::Decoder::new(BufReader::new(file)).ok()?;
+    if start_sec > 0.0 && start_sec.is_finite() {
+        let at = std::time::Duration::from_secs_f64(start_sec);
+        if decoder.try_seek(at).is_err() {
+            let skipped = decoder.skip_duration(at);
+            let norm = UniformSourceIterator::<_, f32>::new(skipped.convert_samples::<f32>(), 2, PROGRAM_RATE);
+            return Some(Box::new(norm));
+        }
+    }
     // Always resample to PROGRAM_RATE so ring buffer → ffmpeg is always 44100 Hz.
     // The cpal callback resamples to device rate separately for hardware output.
     let norm    = UniformSourceIterator::<_, f32>::new(
@@ -6926,6 +6954,83 @@ mod interchange_matrix {
             fin.set(s);
             assert!(fin.take(s), "{s} finishing was not recorded");
             assert!(!fin.take(s), "{s}'s flag did not clear on take");
+        }
+    }
+}
+
+// ── EXACT-SPOT RESUME (Jeff, 2026-10-19: "after a stall, resume the stalled song at the exact spot it stalled") ──────
+// build_source_at(f, t) must be build_source(f) with its first t seconds removed — the same samples, from the point on.
+#[cfg(test)]
+mod seek_tests {
+    use super::*;
+
+    /// A 44.1 kHz stereo 16-bit WAV whose every sample is distinct (a ramp per channel), so an offset is unmistakable.
+    fn write_wav(path: &std::path::Path, secs: u32) {
+        let frames = 44_100 * secs;
+        let data_len = frames * 4;
+        let mut b: Vec<u8> = Vec::with_capacity(44 + data_len as usize);
+        b.extend_from_slice(b"RIFF"); b.extend_from_slice(&(36 + data_len).to_le_bytes()); b.extend_from_slice(b"WAVE");
+        b.extend_from_slice(b"fmt "); b.extend_from_slice(&16u32.to_le_bytes()); b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&2u16.to_le_bytes()); b.extend_from_slice(&44_100u32.to_le_bytes()); b.extend_from_slice(&(44_100u32 * 4).to_le_bytes());
+        b.extend_from_slice(&4u16.to_le_bytes()); b.extend_from_slice(&16u16.to_le_bytes());
+        b.extend_from_slice(b"data"); b.extend_from_slice(&data_len.to_le_bytes());
+        for i in 0..frames {
+            let l = ((i % 60_000) as i32 - 30_000) as i16;
+            let r = (((i * 7) % 60_000) as i32 - 30_000) as i16;
+            b.extend_from_slice(&l.to_le_bytes()); b.extend_from_slice(&r.to_le_bytes());
+        }
+        std::fs::write(path, b).unwrap();
+    }
+
+    #[test]
+    fn a_load_from_a_point_is_the_same_audio_from_that_point() {
+        let dir = std::env::temp_dir().join(format!("ether-seek-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("ramp.wav");
+        write_wav(&f, 6);
+        let p = f.to_str().unwrap();
+        let whole: Vec<f32> = build_source(p, 44_100).unwrap().collect();
+        assert_eq!(whole.len(), 44_100 * 6 * 2, "the whole file decodes");
+        for start in [1.0f64, 2.5, 3.25] {
+            let from: Vec<f32> = build_source_at(p, 44_100, start).unwrap().collect();
+            let skip = (start * 44_100.0).round() as usize * 2;
+            assert_eq!(from.len(), whole.len() - skip, "from {start}s: the rest of the file, no more, no less");
+            assert!(from.iter().zip(&whole[skip..]).all(|(a, b)| a == b), "from {start}s: the same samples as the file from that point");
+        }
+        // 0 is the untouched path: identical to build_source.
+        let zero: Vec<f32> = build_source_at(p, 44_100, 0.0).unwrap().collect();
+        assert!(zero == whole, "start 0 is exactly today's load");
+        let _ = std::fs::remove_dir_all(&dir);
+        println!("[seek] 6 s ramp: loads from 1.0 / 2.5 / 3.25 s are the file's own samples from that point; 0 is unchanged");
+    }
+    /// A real MP3 (ETHER_SEEK_MP3=<path>, read only): where does a load from a point land against the whole decode?
+    /// 0 frames off = exact. Run: cargo test --release --lib seek_tests -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn mp3_load_from_a_point_lands_on_that_point() {
+        let Ok(p) = std::env::var("ETHER_SEEK_MP3") else { println!("[seek mp3] ETHER_SEEK_MP3 not set"); return; };
+        // Pushed one by one: the decoder's size hint is unbounded, so collect() would try to pre-allocate it.
+        let mut whole: Vec<f32> = Vec::new();
+        for x in build_source(&p, 44_100).unwrap() { whole.push(x); }
+        for start in [30.0f64, 61.7, 95.25] {
+            let mut from: Vec<f32> = Vec::new();
+            for x in build_source_at(&p, 44_100, start).unwrap().take(44_100 * 2) { from.push(x); }
+            let want = (start * 44_100.0).round() as i64;
+            // Search ±0.5 s of frames for where `from` lines up with the whole decode.
+            let mut found: Option<i64> = None;
+            for off in -22_050i64..=22_050 {
+                let f0 = want + off; if f0 < 0 { continue; }
+                let base = (f0 as usize) * 2;
+                // Judged from 0.1 s into the load: an MP3 frame decoded right after a seek lacks its predecessor's
+                // overlap, so its first few ms legitimately differ from a continuous decode.
+                let settle = 4_410 * 2;
+                if base + from.len() > whole.len() { continue; }
+                if from[settle..].iter().zip(&whole[base + settle..base + from.len()]).all(|(a, b)| (a - b).abs() < 1e-3) { found = Some(off); break; }
+            }
+            match found {
+                Some(o) => println!("[seek mp3] from {start}s: lands {o} frames ({:.2} ms) from the exact point", o as f64 / 44.1),
+                None => println!("[seek mp3] from {start}s: no sample-identical alignment within ±0.5 s (decoder state differs after a seek)"),
+            }
         }
     }
 }

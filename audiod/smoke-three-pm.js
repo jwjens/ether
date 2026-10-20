@@ -282,6 +282,40 @@ function threePm(db) {
     check("5f · no generating on a timer: only a show that ran out of music generates", !/_scheduleIsSparse\(st\.id, nowTs\)\)/.test(main) && /reason === "waiting:log-ended-inside-show"\) _outOfMusicRegenerate/.test(main) && /no show is on — nothing generates/.test(main));
   }
 
+  // ════ RULE 5 — the watchdog resumes the stalled song AT THE EXACT SPOT, on its own deck ═════════════════════
+  // Jeff, 2026-10-19: "after a stall, resume the stalled song at the exact spot it stalled. Never play a different deck."
+  {
+    const { db } = buildStation();
+    const { DaemonEngine } = require(path.join(ROOT, "audiod", "engine.js"));
+    const e = new DaemonEngine(SID, db, () => {});
+    e._log = () => {}; e._stop = () => {}; e.preload = () => Promise.resolve(); e._maybeEmitDeck = () => {};
+    const loads = [], plays = [];
+    const prevHook = DaemonEngine.loadHook;
+    DaemonEngine.loadHook = (deck, fp, title, artist, sid, startSec) => { loads.push({ deck, fp, startSec }); return true; };
+    e._play = (d) => { plays.push(d); return true; };
+    // B on air at 123.4 s of a 210 s song; B's source then vanishes (Rust emptied it); C holds a cued row.
+    e.stateB = { status: "playing", title: "Monster Mash", artist: "Bobby Pickett", filePath: "C:/fx/mash.mp3", positionSec: 123.4, durationSec: 210 };
+    e.stateC = { status: "idle", title: "next row", filePath: "C:/fx/next.mp3", positionSec: 0, durationSec: 200 };
+    e._started = true;
+    e._watchdog();                                   // healthy tick: records what is on air and where
+    e.stateB = { status: "idle", title: "Monster Mash", filePath: "", positionSec: 0, durationSec: 210 };
+    const ok = await e._resumeStalled();
+    check("5g · source gone mid-song: the same song is reloaded on its own deck (B) at the exact spot (123.4 s)",
+      ok === true && loads.length === 1 && loads[0].deck === "B" && loads[0].fp === "C:/fx/mash.mp3" && loads[0].startSec === 123.4, JSON.stringify({ ok, loads }));
+    check("5h · …and only that deck plays — never a different deck", plays.length === 1 && plays[0] === "B", JSON.stringify(plays));
+    check("5i · the deck shows the song at that position", e.stateB.status === "playing" && e.stateB.positionSec === 123.4 && e.stateB.filePath === "C:/fx/mash.mp3", JSON.stringify(e.stateB));
+    // An engine that cannot load from a point: refused loudly, nothing else played.
+    loads.length = 0; plays.length = 0;
+    DaemonEngine.loadHook = () => false;
+    e.stateB = { status: "playing", title: "Monster Mash", filePath: "C:/fx/mash.mp3", positionSec: 50, durationSec: 210 };
+    e._watchdog();
+    e.stateB = { status: "idle", title: "Monster Mash", filePath: "", positionSec: 0, durationSec: 210 };
+    const errs = []; e.emit = (ev, p) => { if (ev === "error") errs.push(p); };
+    const ok2 = await e._resumeStalled();
+    check("5j · if the song cannot be reloaded, nothing else plays and it says so", ok2 === false && plays.length === 0 && errs.some(x => x.kind === "stalled-unresumable"), JSON.stringify({ ok2, plays, errs: errs.map(x => x.kind) }));
+    DaemonEngine.loadHook = prevHook;
+  }
+
   // ════ RULE 6 — no switch: the log is built before a show starts ════════════════════════════════════════════
   // Jeff, 2026-10-19: "Remove the 'Generate when a show runs out' switch. No switches. Inside a show there is always
   // music; the log is built before a show starts, never silence while it generates."

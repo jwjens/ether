@@ -78,6 +78,18 @@ pub fn init_audio_engine(station_id: Option<u32>) -> bool {
 
 #[napi]
 pub fn audio_load(deck: String, file_path: String, title: String, artist: String, gain_db: Option<f64>, station_id: Option<u32>) -> bool {
+    load_at(deck, file_path, title, artist, gain_db, 0.0, station_id)
+}
+
+/// Load a deck starting `start_sec` into the file — the watchdog resuming a stalled song at the exact spot it stalled
+/// (Jeff, 2026-10-19: "after a stall, resume the stalled song at the exact spot it stalled"). The deck's position starts
+/// there too. Like audio_load, it only loads: audio_play starts it.
+#[napi]
+pub fn audio_load_from(deck: String, file_path: String, title: String, artist: String, gain_db: Option<f64>, start_sec: f64, station_id: Option<u32>) -> bool {
+    load_at(deck, file_path, title, artist, gain_db, if start_sec.is_finite() && start_sec > 0.0 { start_sec } else { 0.0 }, station_id)
+}
+
+fn load_at(deck: String, file_path: String, title: String, artist: String, gain_db: Option<f64>, start_sec: f64, station_id: Option<u32>) -> bool {
     let engine = get_or_create_engine(station_id.unwrap_or(1), None);
     let Ok(mut audio) = engine.lock() else { return false };
     let g = gain_db.unwrap_or(0.0) as f32;
@@ -89,7 +101,7 @@ pub fn audio_load(deck: String, file_path: String, title: String, artist: String
         meta.status = "idle".to_string();
         meta.gain_db = g;
     }
-    audio.sender.send(AudioCmd::Load { deck, file_path, title, artist, gain_db: g }).is_ok()
+    audio.sender.send(AudioCmd::Load { deck, file_path, title, artist, gain_db: g, start_sec }).is_ok()
 }
 
 /// Returns FALSE — without claiming "playing" — when the deck has nothing to play.

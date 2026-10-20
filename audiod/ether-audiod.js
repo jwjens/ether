@@ -900,7 +900,8 @@ function loudnessTargetFor(sid) {
   return v;
 }
 /** THE load every daemon path uses. Any gain a caller passes is IGNORED — there are no per-item trims. */
-function loadNormalized(deck, fp, title, artist, stationId) {
+// startSec > 0: load from that point of the file (engine audio_load_from) — the watchdog's exact-spot resume.
+function loadNormalized(deck, fp, title, artist, stationId, startSec) {
   const sid = Number(stationId);
   let g = { gainDb: 0, measured: false, clamped: false, lufs: null };
   if (Loud && fp && !/^[a-z]+:\/\//i.test(fp)) {
@@ -914,6 +915,10 @@ function loadNormalized(deck, fp, title, artist, stationId) {
       log(`[loudness s${sid}] ${deck} "${title || path.basename(fp)}" ${g.lufs} LUFS needs ${g.wantDb.toFixed(1)} dB for ${target} — the engine's trim range holds it at ${g.gainDb} dB`);
       broadcast({ event: "loudness", stationUuid: stationUuidOf(sid), deck, file: fp, state: "clamped", lufs: g.lufs, wantDb: g.wantDb, gainDb: g.gainDb });
     }
+  }
+  if (startSec > 0) {
+    if (typeof A.audioLoadFrom !== "function") { log(`[load s${sid}] ${deck}: this engine cannot load from a point — resume at ${startSec}s refused`); return false; }
+    return A.audioLoadFrom(deck, fp, title || "", artist || "", g.gainDb, startSec, sid);
   }
   return A.audioLoad(deck, fp, title || "", artist || "", g.gainDb, sid);
 }
