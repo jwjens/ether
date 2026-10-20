@@ -14,14 +14,16 @@
 // Each maps an identity → the most recent played_at (unix seconds) on THIS station.
 function buildRestMaps(db, stationId) {
   const restByFile = new Map(), restByArtist = new Map(), restByTitle = new Map();
+  // Only plays that aired on THIS computer (and the old ones with no computer recorded) — audiod/plays-here.js.
+  const here = (alias) => require('../audiod/plays-here').playsHere(db, alias);
   try {
     for (const r of db.prepare(
-      "SELECT file_path, MAX(played_at) m FROM play_log WHERE station_id=? AND deleted_at IS NULL AND file_path IS NOT NULL GROUP BY file_path").all(stationId))
+      `SELECT file_path, MAX(played_at) m FROM play_log WHERE station_id=? AND deleted_at IS NULL AND ${here()} AND file_path IS NOT NULL GROUP BY file_path`).all(stationId))
       restByFile.set(r.file_path, r.m || 0);
   } catch { /* empty play_log → all songs read as never-aired */ }
   try {
     for (const r of db.prepare(
-      "SELECT s.artist_id aid, MAX(pl.played_at) m FROM play_log pl JOIN songs s ON s.file_path=pl.file_path WHERE pl.station_id=? AND pl.deleted_at IS NULL AND s.artist_id IS NOT NULL GROUP BY s.artist_id").all(stationId))
+      `SELECT s.artist_id aid, MAX(pl.played_at) m FROM play_log pl JOIN songs s ON s.file_path=pl.file_path WHERE pl.station_id=? AND pl.deleted_at IS NULL AND ${here('pl')} AND s.artist_id IS NOT NULL GROUP BY s.artist_id`).all(stationId))
       restByArtist.set(r.aid, r.m || 0);
   } catch { /* */ }
   try {
@@ -32,7 +34,7 @@ function buildRestMaps(db, stationId) {
       // silently resting a song is exactly the rotation effect announcements must never have. This
       // was the ONLY genuine rotation risk the play_log consumer audit found.
     for (const r of db.prepare(
-      "SELECT LOWER(TRIM(title)) tk, MAX(played_at) m FROM play_log WHERE station_id=? AND deleted_at IS NULL AND title IS NOT NULL AND (content_class IS NULL OR content_class = 'MUSIC') GROUP BY LOWER(TRIM(title))").all(stationId))
+      `SELECT LOWER(TRIM(title)) tk, MAX(played_at) m FROM play_log WHERE station_id=? AND deleted_at IS NULL AND ${here()} AND title IS NOT NULL AND (content_class IS NULL OR content_class = 'MUSIC') GROUP BY LOWER(TRIM(title))`).all(stationId))
       restByTitle.set(r.tk, r.m || 0);
   } catch { /* */ }
   return { restByFile, restByArtist, restByTitle };

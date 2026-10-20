@@ -16,7 +16,8 @@
 // RULES-OFF actually means off here: with no ACTIVE separation rule, Tier 1 applies no separation
 // (it no longer silently falls back to a hidden 60-min default).
 
-const showWindow = require("./show-window");   // the show schedule is the boundary (v65: shows start and end at any minute)
+const showWindow = require("./show-window");
+const { playsHere } = require("./plays-here");   // rotation counts the plays that aired on THIS computer (2026-10-20)   // the show schedule is the boundary (v65: shows start and end at any minute)
 
 // ── Separation config — station-scoped, honors rules-off ──
 // rulesOn = an ACTIVE artist-separation rule exists for this station. No active rule → separation OFF.
@@ -33,6 +34,7 @@ function sepConfig(db, stationId) {
 //   opts.daypart      (default on)  — current-hour daypart mask
 //   opts.songSep      (bool)        — per-song no_repeat_hours, station-scoped via play_log
 //   opts.artistSepSec (seconds, >0) — artist separation, station-scoped via play_log
+//   opts.db           (handle)      — counts only plays that aired on this computer (audiod/plays-here.js)
 // rotation_status='inactive' is ALWAYS excluded (that song is deliberately out of rotation), so the
 // "category has an active song" invariant is well-defined.
 function baseConditions(hour, params, stationId, opts) {
@@ -55,14 +57,14 @@ function baseConditions(hour, params, stationId, opts) {
   if (opts.daypart !== false) { c += " AND ((s.daypart_mask >> ?) & 1) = 1"; params.push(hour); }
   if (opts.songSep) {
     c += ` AND NOT EXISTS (SELECT 1 FROM play_log pl
-             WHERE pl.file_path = s.file_path AND pl.station_id = ? AND pl.deleted_at IS NULL
+             WHERE pl.file_path = s.file_path AND pl.station_id = ? AND pl.deleted_at IS NULL AND ${playsHere(opts.db, "pl")}
                AND pl.played_at > (unixepoch() - COALESCE(s.no_repeat_hours, 3) * 3600))`;
     params.push(stationId);
   }
   if (opts.artistSepSec && opts.artistSepSec > 0) {
     c += ` AND (s.artist_id IS NULL OR s.artist_id NOT IN (
              SELECT s2.artist_id FROM play_log pl JOIN songs s2 ON s2.file_path = pl.file_path
-             WHERE pl.station_id = ? AND pl.deleted_at IS NULL AND pl.played_at > (unixepoch() - ?)
+             WHERE pl.station_id = ? AND pl.deleted_at IS NULL AND ${playsHere(opts.db, "pl")} AND pl.played_at > (unixepoch() - ?)
                AND s2.artist_id IS NOT NULL
                AND (s2.content_class IS NULL OR s2.content_class = 'MUSIC')))`;
     params.push(stationId, opts.artistSepSec);
@@ -364,7 +366,7 @@ function _playoutChecker(db, stationId, nowTs) {
   try {
     for (const p of db.prepare(`SELECT pl.file_path, pl.played_at, COALESCE(s.title, pl.title) title, COALESCE(a.name, pl.artist) artist, COALESCE(s.duration_ms, pl.duration_ms) duration_ms
         FROM play_log pl LEFT JOIN songs s ON s.file_path = pl.file_path AND s.deleted_at IS NULL LEFT JOIN artists a ON a.id = s.artist_id
-       WHERE pl.station_id = ? AND pl.deleted_at IS NULL AND (pl.content_class IS NULL OR pl.content_class = 'MUSIC') AND pl.played_at > ? AND pl.played_at <= ?`)
+       WHERE pl.station_id = ? AND pl.deleted_at IS NULL AND ${playsHere(db, "pl")} AND (pl.content_class IS NULL OR pl.content_class = 'MUSIC') AND pl.played_at > ? AND pl.played_at <= ?`)
       .all(stationId, nowTs - maxMin * 60, nowTs)) tl.add({ file: p.file_path, artist: p.artist, title: p.title, durationMs: p.duration_ms }, p.played_at);
   } catch {}
   return (row) => core.breach(tl, { file: row.file_path || row.file_key, title: row.song_title || row.title, artist: row.song_artist || row.artist, durationMs: row.duration_ms, noRepeatHours: row.no_repeat_hours }, nowTs, rules);

@@ -31,25 +31,30 @@ const SELECT_COLS = `s.id, s.title, a.name AS artist_name, s.file_path, s.durati
        s.cue_out, s.cue_out_ms, s.outro_start`;
 const FILTERS = `s.content_class = ? AND s.file_path IS NOT NULL
         AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive')`;
-const ORDER = `ORDER BY COALESCE((SELECT MAX(pl.played_at) FROM play_log pl
-               WHERE pl.file_path = s.file_path AND pl.station_id = ? AND pl.deleted_at IS NULL), 0) ASC, s.id ASC`;
+// Least recently played ON THIS COMPUTER (audiod/plays-here.js; Jeff, 2026-10-20). `here` is that condition; the exported
+// MEMBER_SQL / LEGACY_SQL keep the station-only form for callers with no database in hand.
+const order = (here) => `ORDER BY COALESCE((SELECT MAX(pl.played_at) FROM play_log pl
+               WHERE pl.file_path = s.file_path AND pl.station_id = ? AND pl.deleted_at IS NULL AND ${here}), 0) ASC, s.id ASC`;
+const ORDER = order("1=1");
 
 /** v55 and later — membership is a join table, so a cut can be in many pools. */
-const MEMBER_SQL = `SELECT ${SELECT_COLS}
+const memberSql = (ord) => `SELECT ${SELECT_COLS}
        FROM sweeper_pool_member m
        JOIN songs s ON s.uuid = m.asset_uuid
        LEFT JOIN artists a ON a.id = s.artist_id
       WHERE m.pool_id = ? AND m.deleted_at IS NULL
         AND ${FILTERS}
-      ${ORDER}`;
+      ${ord}`;
+const MEMBER_SQL = memberSql(ORDER);
 
 /** Pre-v55 — one integer on the song row. Kept verbatim, including the absence of a deleted_at check
  *  on songs: adding a filter here would change which cuts a pool returns, and this shape exists to
  *  reproduce the old behaviour exactly, not to improve it. */
-const LEGACY_SQL = `SELECT ${SELECT_COLS}
+const legacySql = (ord) => `SELECT ${SELECT_COLS}
        FROM songs s LEFT JOIN artists a ON a.id = s.artist_id
       WHERE s.jingle_category_id = ? AND ${FILTERS}
-      ${ORDER}`;
+      ${ord}`;
+const LEGACY_SQL = legacySql(ORDER);
 
 function hasMemberTable(db) {
   try {
@@ -64,7 +69,8 @@ function hasMemberTable(db) {
  */
 function preparePoolCandidates(db, force) {
   const shape = force || (hasMemberTable(db) ? 'member' : 'legacy');
-  const stmt = db.prepare(shape === 'member' ? MEMBER_SQL : LEGACY_SQL);
+  const ord = order(require('../audiod/plays-here').playsHere(db, 'pl'));
+  const stmt = db.prepare(shape === 'member' ? memberSql(ord) : legacySql(ord));
   return {
     shape,
     all(poolId, contentClass, stationId) {

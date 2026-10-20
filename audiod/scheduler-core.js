@@ -212,7 +212,9 @@ function loadTimeline(db, stationId, { beforeTs, replace, sinceTs, poolFiles } =
   try {
     // sinceTs (the reader's fill, on the air loop): only the plays inside the rules' reach, plus — for "waited longest" —
     // each candidate's one last airing before that. Generate reads the whole history once per run (main process).
-    for (const p of db.prepare("SELECT file_path, title, artist, played_at, duration_ms FROM play_log WHERE station_id = ? AND deleted_at IS NULL AND (content_class IS NULL OR content_class = 'MUSIC') AND played_at < ? AND played_at >= ? ORDER BY played_at").all(stationId, beforeTs ?? 9e12, sinceTs ?? 0)) {
+    // Only plays that aired on THIS computer (and the old ones with no computer recorded) — audiod/plays-here.js.
+    const here = require("./plays-here").playsHere(db, "");
+    for (const p of db.prepare(`SELECT file_path, title, artist, played_at, duration_ms FROM play_log WHERE station_id = ? AND deleted_at IS NULL AND ${here} AND (content_class IS NULL OR content_class = 'MUSIC') AND played_at < ? AND played_at >= ? ORDER BY played_at`).all(stationId, beforeTs ?? 9e12, sinceTs ?? 0)) {
       const s = byFile.get(recordingKey(p.file_path));
       tl.add({ file: p.file_path, artist: s ? s.artist : p.artist, title: s ? s.title : p.title, durationMs: (s && s.duration_ms) || p.duration_ms }, p.played_at);
     }
@@ -222,7 +224,7 @@ function loadTimeline(db, stationId, { beforeTs, replace, sinceTs, poolFiles } =
       // never aired (found in the gate: one recording twice in 68 min while 75 others waited 3½ h).
       const want = new Set(poolFiles.map(recordingKey).filter(Boolean));
       const last = new Map();
-      for (const r of db.prepare("SELECT file_path, MAX(played_at) t FROM play_log WHERE station_id = ? AND deleted_at IS NULL AND played_at < ? AND file_path IS NOT NULL GROUP BY file_path").all(stationId, sinceTs)) {
+      for (const r of db.prepare(`SELECT file_path, MAX(played_at) t FROM play_log WHERE station_id = ? AND deleted_at IS NULL AND ${here} AND played_at < ? AND file_path IS NOT NULL GROUP BY file_path`).all(stationId, sinceTs)) {
         const k = recordingKey(r.file_path);
         if (k && want.has(k) && r.t != null && !(last.get(k) >= r.t)) last.set(k, r.t);
       }
