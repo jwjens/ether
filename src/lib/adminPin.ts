@@ -5,13 +5,14 @@
 import { query } from "../db/client";
 
 export async function verifyAdminPin(pin: string): Promise<{ ok: true; operator: string } | { ok: false; error: string }> {
-  const admins = (await query<{ name: string | null; pin_hash: string | null }>("SELECT name, pin_hash FROM users WHERE role = 'admin'")) || [];
+  const admins = (await query<{ id: number; name: string | null; pin_hash: string | null }>("SELECT id, name, pin_hash FROM users WHERE role = 'admin' AND deleted_at IS NULL")) || [];
   const withPin = admins.filter(a => a.pin_hash);
   if (!withPin.length) return { ok: false, error: "No admin PIN is set on this computer. Set one on an admin profile first — this switch is PIN-only." };
   if (!/^\d{4}$/.test(pin || "")) return { ok: false, error: "Enter your 4-digit admin PIN." };
   const ether = (window as any).ether;
   for (const a of withPin) {
-    const ok = ether?.users?.verifyPin ? await ether.users.verifyPin(pin, a.pin_hash) : pin === a.pin_hash;
+    // By id: verified in main, and an old-format stored PIN is upgraded to scrypt (electron/pin-hash.js).
+    const ok = !!(await ether?.users?.verifyUserPin?.(a.id, pin))?.ok;
     if (ok) return { ok: true, operator: a.name || "admin" };
   }
   return { ok: false, error: "Incorrect admin PIN." };

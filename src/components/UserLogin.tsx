@@ -2,7 +2,7 @@ import { isPlainKey } from "../lib/plainKey";
 import { useState, useEffect } from "react";
 import etherLogoMark from "../assets/ether-atom.png";
 import ethercastWordmark from "../assets/ethercast-wordmark.svg";
-import { query, execute } from "../db/client";
+import { query } from "../db/client";
 
 export interface AppUser {
   id: number;
@@ -58,7 +58,7 @@ export default function UserLogin({ onLogin }: Props) {
         const sid = active?.id ?? 1;
         setStationId(sid);
         // Install-level: show ALL profiles, not just the active station's (see note above).
-        const rows = await query<AppUser>("SELECT * FROM users ORDER BY id");
+        const rows = await query<AppUser>("SELECT * FROM users WHERE deleted_at IS NULL ORDER BY id");
         // TEST-ONLY auto-login (double-gated in main: env var AND profile marker; never true on a
         // real launch). Deliberately routed through the SAME onLogin callback a human click takes,
         // so "AUTH COMPLETE — account signed in + PIN accepted" is still emitted exactly once, from
@@ -82,9 +82,8 @@ export default function UserLogin({ onLogin }: Props) {
     if (!selected || pin.length !== 4) return;
     let cancelled = false;
     const ether = (window as any).ether;
-    const verify = ether?.users?.verifyPin
-      ? ether.users.verifyPin(pin, selected.pin_hash)
-      : Promise.resolve(pin === selected.pin_hash);
+    // By id: verified in main (scrypt), and an old-format stored PIN is upgraded on a correct entry.
+    const verify: Promise<boolean> = (ether?.users?.verifyUserPin?.(selected.id, pin) ?? Promise.resolve({ ok: false })).then((r: any) => !!(r && r.ok));
     verify.then((ok: boolean) => {
       if (cancelled) return;
       if (ok) onLogin(selected);
@@ -114,11 +113,9 @@ export default function UserLogin({ onLogin }: Props) {
     setCreating(true); setSetupErr("");
     try {
       const ether = (window as any).ether;
-      let pinHash: string = setupPin;
-      if (ether?.users?.hashPin) pinHash = await ether.users.hashPin(setupPin);
-      await execute("INSERT INTO users (name, role, pin_hash, color, station_id) VALUES (?,?,?,?,?)", [name, "admin", pinHash, "#f87171", stationId]);
-      const created = await query<AppUser>("SELECT * FROM users WHERE station_id = ? ORDER BY id DESC LIMIT 1", [stationId]);
-      if (created.length > 0) { onLogin(created[0]); return; }
+      // Through main (users sync, v67): journaled, PIN hashed there with scrypt.
+      const r = await ether?.users?.add?.({ name, role: "admin", pin: setupPin, color: "#f87171", station_id: stationId });
+      if (r && r.ok && r.user) { onLogin(r.user); return; }
       setCreating(false); setSetupErr("Couldn’t create your profile. Please try again.");
     } catch {
       setCreating(false); setSetupErr("Couldn’t create your profile. Please try again.");
@@ -143,12 +140,7 @@ export default function UserLogin({ onLogin }: Props) {
     if (!selected) return;
     const ether = (window as any).ether;
     let ok = false;
-    if (ether?.users?.verifyPin) {
-      ok = await ether.users.verifyPin(pin, selected.pin_hash);
-    } else {
-      // Fallback for legacy / no preload bridge
-      ok = pin === selected.pin_hash;
-    }
+    ok = !!(await ether?.users?.verifyUserPin?.(selected.id, pin))?.ok;
     if (ok) {
       onLogin(selected);
     } else {

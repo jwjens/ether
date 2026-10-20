@@ -106,7 +106,7 @@ export default function OnShiftScreen({ onStart }: Props) {
         // MEMBERS — the same rows UserLogin.tsx:60 authenticates against, read the same way
         // (unscoped: a person belongs to the profile, not to one station).
         const rows = await query<{ id: number; name: string; role: string | null }>(
-          "SELECT id, name, role FROM users ORDER BY id");
+          "SELECT id, name, role FROM users WHERE deleted_at IS NULL ORDER BY id");
         const ops: Operator[] = rows.map(r => ({ id: r.id, name: r.name, initials: initialsOf(r.name), role: r.role }));
         if (v !== loadVersionRef.current) return;
         setOperators(ops);

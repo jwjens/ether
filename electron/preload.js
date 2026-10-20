@@ -426,6 +426,13 @@ contextBridge.exposeInMainWorld("ether", {
   users: {
     hashPin:   (pin) => ipcRenderer.invoke("user:hash-pin", pin),
     verifyPin: (pin, stored) => ipcRenderer.invoke("user:verify-pin", pin, stored),
+    // By id: verifies AND upgrades an old-format stored PIN to scrypt (electron/pin-hash.js). → { ok }
+    verifyUserPin: (id, pin) => ipcRenderer.invoke("user:verify-user-pin", id, pin),
+    // Users sync (v67): every write goes through main, journaled, so it reaches every computer. PINs are hashed in main.
+    add:    (payload)  => ipcRenderer.invoke("user:add", payload),
+    update: (id, patch) => ipcRenderer.invoke("user:update", id, patch),
+    setPin: (id, pin)  => ipcRenderer.invoke("user:set-pin", id, pin),
+    remove: (id)       => ipcRenderer.invoke("user:remove", id),
     // TEST-ONLY, double-gated in main (env var AND profile marker). Never true on a real launch.
     testAutoLogin: () => ipcRenderer.invoke("test:auto-login"),
   },

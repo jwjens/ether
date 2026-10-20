@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, createContext, useContext } f
 import { SyncCleanupRow, HealthLogRow } from "./SyncCleanupRows";
 import { getJukeboxPayouts, connectJukeboxPayouts, refreshJukeboxPayouts, setJukeboxDonationSettings, type JukeboxPayouts } from "../lib/ccData";
 const invoke = <T = any>(cmd: string, args?: any): Promise<T> => (window as any).ether.invoke(cmd, args);
-import { query, execute } from "../db/client";
+import { query } from "../db/client";
 import { idsFromStoredList, storedFromIds } from "../lib/refValue";
 import { queryScoped } from "../db/stationScoped";
 import DuckerSection from "./DuckerSection";
@@ -4150,20 +4150,16 @@ function UserManagement() {
   const { stationId } = useActiveStation();
 
   const loadUsers = useCallback(async () => {
-    const rows = await query<ManagedUser>("SELECT * FROM users ORDER BY id");
+    const rows = await query<ManagedUser>("SELECT * FROM users WHERE deleted_at IS NULL ORDER BY id");
     setUsers(rows || []);
   }, []);
   useEffect(() => { loadUsers(); }, [loadUsers]);
 
   const handleAddUser = async () => {
     if (!addName.trim()) return;
-    let pinHash: string | null = null;
-    if (addPin.length === 4 && ether?.users?.hashPin) {
-      pinHash = await ether.users.hashPin(addPin);
-    } else if (addPin.length === 4) {
-      pinHash = addPin;
-    }
-    await execute("INSERT INTO users (name, role, pin_hash, color, station_id) VALUES (?, ?, ?, ?, ?)", [addName.trim(), addRole, pinHash, addColor, stationId]);
+    // Through main (users sync, v67): journaled, PIN hashed there with scrypt. Never a PIN stored as typed.
+    const r = await ether?.users?.add?.({ name: addName.trim(), role: addRole, pin: addPin.length === 4 ? addPin : null, color: addColor, station_id: stationId });
+    if (!r || !r.ok) { alert((r && r.error) || "Could not add the user."); return; }
     setShowAdd(false); setAddName(""); setAddRole("jock"); setAddPin(""); setAddColor("var(--accent-cyan)");
     loadUsers();
     window.dispatchEvent(new Event("ether:users-changed"));
@@ -4171,7 +4167,8 @@ function UserManagement() {
 
   const handleEditUser = async () => {
     if (!editUser || !editUser.name.trim()) return;
-    await execute("UPDATE users SET name = ?, role = ?, color = ? WHERE id = ?", [editUser.name.trim(), editUser.role, editUser.color, editUser.id]);
+    const r = await ether?.users?.update?.(editUser.id, { name: editUser.name.trim(), role: editUser.role, color: editUser.color });
+    if (!r || !r.ok) { alert((r && r.error) || "Could not save the user."); return; }
     setEditUser(null); loadUsers();
     window.dispatchEvent(new Event("ether:users-changed"));
   };
@@ -4180,7 +4177,8 @@ function UserManagement() {
     const adminCount = users.filter(x => x.role === "admin").length;
     if (u.role === "admin" && adminCount <= 1) { alert("Cannot delete the last administrator."); return; }
     if (!confirm(`Delete user "${u.name}"?`)) return;
-    await execute("DELETE FROM users WHERE id = ?", [u.id]);
+    const r = await ether?.users?.remove?.(u.id);
+    if (!r || !r.ok) { alert((r && r.error) || "Could not delete the user."); return; }
     loadUsers();
     window.dispatchEvent(new Event("ether:users-changed"));
   };
@@ -4189,13 +4187,8 @@ function UserManagement() {
     if (!pinModal) return;
     if (newPin.length > 0 && newPin.length !== 4) { setPinError("PIN must be exactly 4 digits"); return; }
     if (newPin !== confirmPin) { setPinError("PINs do not match"); return; }
-    let pinHash: string | null = null;
-    if (newPin.length === 4 && ether?.users?.hashPin) {
-      pinHash = await ether.users.hashPin(newPin);
-    } else if (newPin.length === 4) {
-      pinHash = newPin;
-    }
-    await execute("UPDATE users SET pin_hash = ? WHERE id = ?", [pinHash, pinModal.id]);
+    const r = await ether?.users?.setPin?.(pinModal.id, newPin.length === 4 ? newPin : null);
+    if (!r || !r.ok) { setPinError((r && r.error) || "Could not save the PIN."); return; }
     setPinModal(null); setNewPin(""); setConfirmPin(""); setPinError("");
     loadUsers();
     window.dispatchEvent(new Event("ether:users-changed"));
@@ -4203,7 +4196,8 @@ function UserManagement() {
 
   const handleRemovePin = async (u: ManagedUser) => {
     if (!confirm(`Remove PIN for "${u.name}"? They can log in without a PIN.`)) return;
-    await execute("UPDATE users SET pin_hash = NULL WHERE id = ?", [u.id]);
+    const r = await ether?.users?.setPin?.(u.id, null);
+    if (!r || !r.ok) { alert((r && r.error) || "Could not remove the PIN."); return; }
     loadUsers();
     window.dispatchEvent(new Event("ether:users-changed"));
   };
@@ -4369,15 +4363,15 @@ function StationManagementSection() {
       // Gate on the operator's admin PIN — verified against the install's admin profiles
       // (install-level, not station-scoped; otherwise a station with no local admin row
       // would skip the PIN gate entirely). If no admin has a PIN set, nothing to verify.
-      const admins = await query<{ pin_hash: string | null }>(
-        "SELECT pin_hash FROM users WHERE role = 'admin'"
+      const admins = await query<{ id: number; pin_hash: string | null }>(
+        "SELECT id, pin_hash FROM users WHERE role = 'admin' AND deleted_at IS NULL"
       );
       const withPin = (admins || []).filter(a => a.pin_hash);
       if (withPin.length > 0) {
         if (pin.length !== 4) { setErr("Enter your 4-digit admin PIN."); setBusy(false); return; }
         let ok = false;
         for (const a of withPin) {
-          ok = ether?.users?.verifyPin ? await ether.users.verifyPin(pin, a.pin_hash) : pin === a.pin_hash;
+          ok = !!(await ether?.users?.verifyUserPin?.(a.id, pin))?.ok;
           if (ok) break;
         }
         if (!ok) { setErr("Incorrect admin PIN."); setBusy(false); return; }

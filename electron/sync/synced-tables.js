@@ -54,6 +54,7 @@ const SYNCED_TABLES = [
   'station_programming',
   'station_programming_moods',
   'stations',
+  'users',
   'voice_tracks',
 ];
 
@@ -700,6 +701,28 @@ const REGISTRY = {
       theme:      'scalar',
       station_id: 'scalar',
       uuid:       'scalar',
+      updated_at: 'scalar',
+      deleted_at: 'scalar',
+    },
+  },
+
+  // USERS (v67, Jeff 2026-10-20: "add users to sync as planned (same name + same station = one person)"). The in-app
+  // profiles of Preferences → Users & Security — permissions only, nothing to do with the account. pin_hash travels as
+  // the scrypt value (electron/pin-hash.js); the first sync merges a person who exists on both computers
+  // (electron/sync/handlers/users.js mergeSamePerson).
+  users: {
+    tableName: 'users',
+    primaryKey: ['id'],
+    scope: 'station',
+    columns: {
+      id:         'scalar',
+      name:       'scalar',
+      role:       'scalar',
+      pin_hash:   'scalar',
+      color:      'scalar',
+      station_id: 'scalar',
+      uuid:       'scalar',
+      created_at: 'scalar',
       updated_at: 'scalar',
       deleted_at: 'scalar',
     },

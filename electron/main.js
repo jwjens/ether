@@ -2969,6 +2969,8 @@ function _runMigrationsInner() {
   } catch (e) { console.error("[DB] stable machine identity:", e.message); }
 
   console.log("[DB] Schema ready");
+  // Plain-text user PINs → scrypt (electron/pin-hash.js). Deferred: off the startup path, after the module-level PIN code ran.
+  setTimeout(() => { _upgradePlainPins().catch(() => {}); }, 8000);
 
   const maxVer = db.prepare("SELECT MAX(version) AS v FROM schema_version").get();
   if (maxVer?.v) {
@@ -4082,6 +4084,8 @@ app.whenReady().then(() => {
       // the first pull can bring the other computer's numbering in). docs/sync-uuid-references-2026-10-19.md
       setTimeout(() => _uuidRefTick('startup'), UUID_REF_FIRST_RUN_DELAY_MS);
       setInterval(() => _heldRefsTick('tick'), 60 * 1000);   // held references: filed once their sender's numbering arrives
+      setInterval(() => _usersMergeTick('tick'), 60 * 1000);  // same name + same station = one person (users sync, v67)
+      setTimeout(() => _usersMergeTick('startup'), 20 * 1000);
 
       // ── Member peer-sync — OPT-IN PER COMPUTER (the operator CHOOSES, nothing is auto-pulled) ──────
       // Member stations the operator picks on the sync screen are persisted in install_config_kv
@@ -7593,19 +7597,38 @@ ipcMain.handle("test:auto-login", () => {
 
 // ── User / PIN security ──────────────────────────────────────
 const crypto = require("crypto");
-ipcMain.handle("user:hash-pin", (_evt, pin) => {
-  const salt = crypto.randomBytes(16).toString("hex");
-  const hash = crypto.createHash("sha256").update(salt + pin).digest("hex");
-  return salt + ":" + hash;
+// SLOW HASH (Jeff, 2026-10-20; electron/pin-hash.js): new PINs are scrypt. The old salt:sha256 and plain-text values still
+// verify, and are upgraded to scrypt the first time their PIN is entered correctly (user:verify-user-pin), or at startup
+// for plain text (_upgradePlainPins) — nobody has to re-enter a PIN.
+const PinHash = require("./pin-hash");
+ipcMain.handle("user:hash-pin", (_evt, pin) => PinHash.hashPin(pin));
+ipcMain.handle("user:verify-pin", async (_evt, pin, stored) => (await PinHash.verifyPin(pin, stored)).ok);
+// Verify a stored user's PIN by id, and upgrade its stored hash when it is an old format. → { ok }
+ipcMain.handle("user:verify-user-pin", async (_evt, userId, pin) => {
+  try {
+    const u = db.prepare("SELECT id, pin_hash FROM users WHERE id = ? AND deleted_at IS NULL").get(userId);
+    if (!u || !u.pin_hash) return { ok: false };
+    const v = await PinHash.verifyPin(pin, u.pin_hash);
+    if (v.ok && v.needsUpgrade) {
+      try { _setUserPinHash(u.id, await PinHash.hashPin(pin)); console.log(`[users] PIN of user ${u.id} upgraded to scrypt`); }
+      catch (e) { console.warn("[users] PIN upgrade failed:", e.message); }
+    }
+    return { ok: v.ok };
+  } catch (e) { return { ok: false, error: e.message }; }
 });
-ipcMain.handle("user:verify-pin", (_evt, pin, stored) => {
-  if (!stored) return false;
-  // Support both legacy plaintext PINs and new salt:hash format
-  if (!stored.includes(":")) return pin === stored;
-  const [salt, hash] = stored.split(":");
-  const attempt = crypto.createHash("sha256").update(salt + pin).digest("hex");
-  return attempt === hash;
-});
+// The one place a stored PIN hash is rewritten by main.
+// Journaled (users sync, v67), so the upgraded hash reaches every computer.
+function _setUserPinHash(userId, pinHash) {
+  require("./sync/handlers/users").userStorePinHash(db, userId, pinHash);
+}
+// Plain-text PINs (very old installs, and a renderer fallback that saved the PIN itself) → scrypt, once, at startup.
+async function _upgradePlainPins() {
+  try {
+    const rows = db.prepare("SELECT id, pin_hash FROM users WHERE pin_hash IS NOT NULL AND pin_hash != '' AND deleted_at IS NULL").all().filter(u => PinHash.isPlain(u.pin_hash));
+    for (const u of rows) _setUserPinHash(u.id, await PinHash.hashPin(u.pin_hash));
+    if (rows.length) { console.log(`[users] ${rows.length} plain-text PIN(s) stored as scrypt`); _healthEvent("users-pins-upgraded", { count: rows.length, from: "plain" }); }
+  } catch (e) { console.warn("[users] plain-PIN upgrade failed:", e.message); }
+}
 
 // Backup
 ipcMain.handle("db:backup", () => {
@@ -8762,6 +8785,20 @@ try {
     catch (e) { return { ok: false, error: e.message }; }
   });
 } catch {}
+
+// USERS: SAME NAME + SAME STATION = ONE PERSON (Jeff, 2026-10-20; electron/sync/handlers/users.js mergeSamePerson). After
+// users start syncing, a person who was added on both computers arrives twice; every computer keeps the same one.
+function _usersMergeTick(reason) {
+  try {
+    const d = getDb(); if (!d || !d.open) return;
+    const merged = require('./sync/handlers/users').mergeSamePerson(d);
+    if (merged.length) {
+      console.log(`[users] (${reason}) merged ${merged.length} duplicate user(s): ${merged.map(m => m.name).join(', ')}`);
+      _healthEvent('users-merged', { reason, merged, message: `Users: ${merged.length} person(s) found on two computers merged into one (${merged.map(m => m.name).join(', ')})` });
+      try { sendToAllWindows('users:changed', {}); } catch {}
+    }
+  } catch (e) { console.error('[users] merge tick failed:', e.message); }
+}
 
 // The one-time re-file: first run a moment after sync starts; while it waits for another computer's numbering (that
 // computer publishes it when it first runs this build), it retries on this interval. Both numbers are timing, not

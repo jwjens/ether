@@ -18,7 +18,7 @@ interface LocalUser {
 export async function pushInstallUsers(licenseKey: string | null | undefined): Promise<void> {
   if (!licenseKey) return;
   try {
-    const rows = await query<LocalUser>("SELECT name, role, pin_hash FROM users", []);
+    const rows = await query<LocalUser>("SELECT name, role, pin_hash FROM users WHERE deleted_at IS NULL", []);
     const users = rows
       .filter((u) => u.pin_hash)
       .map((u) => ({ name: u.name, role: u.role, pin_hash: u.pin_hash }));

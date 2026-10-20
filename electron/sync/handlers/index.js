@@ -49,8 +49,10 @@ const { installStationProgrammingMoods } = require('./station_programming_moods'
 const { installVoiceTracks } = require('./voice_tracks');
 const { installJingleCategories } = require('./jingle_categories');
 const { installSweeperPoolMember } = require('./sweeper_pool_member');
+const { installUsers } = require('./users');   // v67, hand-written (PIN hashing + same-person merge)
 
 function installAll(ipcMain, db) {
+  installUsers(ipcMain, db);
   installStationProgramming(ipcMain, db);
   installAlbums(ipcMain, db);
   installAnnouncements(ipcMain, db);
