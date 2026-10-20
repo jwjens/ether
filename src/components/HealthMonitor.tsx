@@ -1,7 +1,5 @@
 import { useState, useEffect, useCallback, useRef, Component, ReactNode } from "react";
 import { parseKvFlag } from "../lib/kvFlag";
-import { designationView, refreshBanner, type RefreshBanner } from "../lib/designationRow";
-import { verifyAdminPin } from "../lib/adminPin";
 import { HealthDashboard } from "./health/HealthDashboard";
 import { PanelStack, HealthPanel, PanelMeter, StatTile } from "./health/sectionChrome";
 import MicInputsHealth from "./health/MicInputsHealth";
@@ -58,142 +56,6 @@ function useTwoColumn(): readonly [React.RefObject<HTMLDivElement>, boolean] {
 
 interface ErrorBoundaryState { hasError: boolean; error: Error | null; }
 interface ErrorBoundaryProps { children: ReactNode; }
-
-// ── Designation rows (Phase A) ──────────────────────────────────────────────────────────────────
-// A real component rather than an inline IIFE inside the station map. The IIFE version broke the
-// Health Monitor's render tree in 4.4.189 — the auto-generate toggles and the whole Library &
-// Rotation section stopped appearing. An immediately-invoked function in the middle of a map is
-// hard to reason about and, if anything inside it throws, it takes the surrounding subtree with it.
-//
-// This renders unconditionally: `d` undefined means no tick has run yet, which is a state to state,
-// not a reason to vanish. Every field is read defensively so a malformed record can never remove
-// rows that have nothing to do with designation.
-// The "Designation read …" stamp, ticking once a second in its OWN component so the whole Health
-// Monitor does not re-render for it. Previously it only recomputed when something else caused a
-// render, so it sat frozen and then jumped — which reads as broken rather than live.
-function RefreshAgo({ at }: { at: number | null }) {
-  const [, force] = useState(0);
-  useEffect(() => { const t = setInterval(() => force(n => n + 1), 1000); return () => clearInterval(t); }, []);
-  const text = (() => {
-    if (!at) return "never";
-    const s = Math.max(0, Math.round((Date.now() - at) / 1000));
-    return s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)}h ago`;
-  })();
-  // Bigger and brighter than the 9px tertiary it was: this is the answer to "is this reading live?",
-  // which is the question the operator actually has when they look at this row.
-  return (
-    <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-secondary)",
-                   fontFamily: "'DM Mono', monospace" }}>
-      Designation read <span style={{ color: "var(--text-primary)" }}>{text}</span>
-    </span>
-  );
-}
-
-function DesignationRows({ d, busy, onRefresh, readAt, err, autoOn, banner, onBypass }: {
-  d: any; busy: boolean; onRefresh: () => void; readAt: number | null; err?: string | null;
-  autoOn: boolean | null; banner?: RefreshBanner | null;
-  onBypass: (on: boolean, pin: string) => Promise<string | null>;
-}) {
-  // THE BYPASS DOOR (audit 20): ON asks for the admin PIN and is refused by the main process while the designated
-  // machine is seen online; OFF needs no PIN — ending an override is always safe.
-  const bypassed = !!(d && d.state === "bypassed");
-  const [pinOpen, setPinOpen] = useState(false);
-  const [pin, setPin] = useState("");
-  const [bypassErr, setBypassErr] = useState<string | null>(null);
-  const [bypassBusy, setBypassBusy] = useState(false);
-  const runBypass = async (on: boolean) => {
-    setBypassBusy(true); setBypassErr(null);
-    try {
-      const e = await onBypass(on, pin);
-      setBypassErr(e);
-      if (!e) { setPinOpen(false); setPin(""); }
-    } finally { setBypassBusy(false); }
-  };
-  // Every rule below lives in src/lib/designationRow.ts so it can be tested without a DOM.
-  const v = designationView(d, autoOn, busy);
-  const { value, status, blocked, sub } = v;
-  let lastGen = "not since this machine started watching";
-  try { if (d && d.lastGenerated) lastGen = new Date(d.lastGenerated * 1000).toLocaleString(); } catch {}
-  // A failed write is reported HERE, per station, not swallowed in the main process. From 4.4.188 to
-  // 4.4.192 the designation record could not be saved on any machine and this panel showed a serene
-  // "None" — a state that looks identical to "nothing has happened yet". They are not the same and
-  // must never look the same again.
-  const writeErr = d && d.writeError ? String(d.writeError) : null;
-  return (
-    <>
-      <HealthRow label="Designated generator" value={value} status={status as any} sub={sub} />
-      {writeErr && (
-        <HealthRow label="Designation record" value="NOT SAVED" status={"error" as any}
-          sub={`this machine could not write the designation record — ${writeErr}`} />
-      )}
-      <HealthRow label="Log last extended" value={lastGen} status={"ok" as any}
-        sub="separate from the check-in above — a healthy machine generates nothing while the runway is long" />
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0 6px", flexWrap: "wrap" as const }}>
-        {/* DISABLED, not silently inert. With auto-generate off this machine can never take the
-            designation, so a live button that reads, succeeds, and changes nothing on screen is the
-            worst of the three options — it is indistinguishable from a broken one. The 30s poll keeps
-            the rows current regardless, so disabling costs no information. */}
-        <button onClick={onRefresh} disabled={v.buttonDisabled} title={v.buttonTitle}
-          style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", padding: "3px 10px",
-                   background: "transparent", border: "1px solid var(--border-primary)",
-                   color: blocked ? "var(--text-tertiary)" : "var(--text-secondary)",
-                   opacity: blocked ? 0.5 : busy ? 0.7 : 1,
-                   cursor: blocked ? "not-allowed" : busy ? "wait" : "pointer" }}>
-          {v.buttonLabel}
-        </button>
-        {/* Said out loud next to the button, not hidden in a tooltip nobody hovers. */}
-        {v.note && (
-          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-tertiary)" }} title={v.buttonTitle}>{v.note}</span>
-        )}
-        <RefreshAgo at={readAt} />
-        {bypassed ? (
-          <button onClick={() => runBypass(false)} disabled={bypassBusy}
-            title="End the bypass: designation applies again on this machine."
-            style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", padding: "3px 10px", background: "var(--accent-red, #ef4444)", border: "none", color: "#fff", cursor: bypassBusy ? "wait" : "pointer" }}>
-            END BYPASS
-          </button>
-        ) : (
-          <button onClick={() => { setPinOpen(o => !o); setBypassErr(null); }} disabled={bypassBusy}
-            title="For a DEAD designated machine only: lets this machine generate this station although another machine holds the designation. Admin PIN. Refused while the designated machine is online."
-            style={{ fontSize: 12, fontWeight: 800, letterSpacing: "0.08em", padding: "3px 10px", background: "transparent", border: "1px solid var(--accent-red, #ef4444)", color: "var(--accent-red, #ef4444)", cursor: "pointer" }}>
-            BYPASS…
-          </button>
-        )}
-      </div>
-      {pinOpen && !bypassed && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 0 6px", flexWrap: "wrap" as const }}>
-          <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>Bypass the designation for a dead generator — admin PIN:</span>
-          <input type="password" inputMode="numeric" maxLength={4} value={pin} autoFocus
-            onChange={e => setPin(e.target.value.replace(/\D/g, ""))}
-            onKeyDown={e => { if (e.key === "Enter") void runBypass(true); if (e.key === "Escape") { setPinOpen(false); setPin(""); } }}
-            style={{ width: 70, padding: "3px 6px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)", color: "var(--text-primary)" }} />
-          <button onClick={() => runBypass(true)} disabled={bypassBusy}
-            style={{ fontSize: 12, fontWeight: 800, padding: "3px 10px", background: "var(--accent-red, #ef4444)", border: "none", color: "#fff", cursor: bypassBusy ? "wait" : "pointer" }}>
-            TURN BYPASS ON
-          </button>
-          <button onClick={() => { setPinOpen(false); setPin(""); setBypassErr(null); }}
-            style={{ fontSize: 12, padding: "3px 10px", background: "transparent", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", cursor: "pointer" }}>Cancel</button>
-        </div>
-      )}
-      {bypassErr && <div style={{ fontSize: 12, color: "var(--accent-red)", padding: "0 0 6px" }}>{bypassErr}</div>}
-      {/* The click's OWN evidence. The read stamp above cannot serve this purpose: it also resets on
-          the 30-second background poll, so it says nothing about whether the button did anything. */}
-      {banner && (
-        <div style={{
-          fontSize: 13, fontWeight: 700, padding: "5px 8px", marginBottom: 6,
-          border: `1px solid ${banner.tone === "success" ? "var(--accent-green, #22c55e)" : "var(--border-primary)"}`,
-          color: banner.tone === "success" ? "var(--accent-green, #22c55e)" : "var(--text-secondary)",
-          background: banner.tone === "success" ? "rgba(34,197,94,0.08)" : "transparent",
-        }}>{banner.text}</div>
-      )}
-      {/* Under the row, on its own line, in red — an error squeezed onto the end of the button line
-          was easy to miss and easy to mistake for part of the timestamp. */}
-      {err && (
-        <div style={{ fontSize: 11, color: "var(--accent-red)", padding: "0 0 6px" }}>{err}</div>
-      )}
-    </>
-  );
-}
 
 export class EtherErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
@@ -345,9 +207,9 @@ interface HealthData {
 // is legible from across a room in a way a 10px dot never was. Nothing else referenced it.
 function HealthRow({ label, value, status, sub, actions }: { label: string; value: string; status: "ok" | "warn" | "error"; sub?: string; actions?: ReactNode }) {
   // HealthRow is the workhorse of the bottom half — Core Systems, High Availability, Library &
-  // Rotation, the canary and the designation rows are ALL built from it, 31 call sites. So its
+  // Rotation and the canary are ALL built from it. So its
   // design IS the bottom half's design, and changing it here changes all of them at once rather
-  // than by editing thirty-one blocks of inline style.
+  // than by editing every block of inline style.
   //
   // It used to be a dot, a label and a small coloured word on an underline — a row of text. Now it
   // is a tile: a status edge you can read at a distance, the reading set as a FIGURE on the right,
@@ -442,7 +304,7 @@ function HaRollupBanner({ dash }: { dash: HaDashboard | null }) {
 // Receipt (2026-08-26): getEngine's boot trace rides the render path, and this loop drove it to
 // 211,951 identical lines and a 341 MB ether-startup.log at 18–20 lines/sec, sustained.
 //
-// Same shape as RefreshAgo above: a leaf that owns its own fast clock so the panel around it does
+// A leaf that owns its own fast clock so the panel around it does
 // not re-render for it. `id` is forwarded to HealthPanel AND read off THIS element by PanelStack
 // (sectionChrome.tsx inspects child.props.id), so drag-order and collapsed state are unchanged.
 function AudioProcessingPanel({ id, stationId, stationUuid }: {
@@ -650,8 +512,8 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   // canvas, no scrolling, read-only, big type — everything at a glance from across a room. OPS is
   // this panel as it has always been: a scrolling diagnostic surface with every control on it.
   //
-  // They cannot be the same screen. Seven sections carry controls (the canary and auto-generate
-  // toggles, designation refresh, DMCA export, dismiss, the unresolvable expander, HA refresh), and
+  // They cannot be the same screen. Six sections carry controls (the canary and auto-generate
+  // toggles, DMCA export, dismiss, the unresolvable expander, HA refresh), and
   // a wall display with buttons on it is neither glanceable nor safe to walk past.
   //
   // The popout defaults to WALL because the popout is how this reaches a wall — its own window, to
@@ -734,34 +596,6 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
   const [flipFlags, setFlipFlags] = useState<Record<number, boolean | null>>({});
   const [flipBusy, setFlipBusy] = useState<number | null>(null);
   const [flipErr, setFlipErr] = useState<Record<number, string>>({});
-  // Generation designation (Phase A: observe only — it reports, it does not gate generation).
-  const [desig, setDesig] = useState<Record<number, any>>({});
-  // The same rows, unkeyed. This panel needs them by station id; the dashboard's designationFor()
-  // wants the array. Kept from the SAME read rather than fetched again — the single-owner rule
-  // (v3 Phase 1): one fetch, one clock, one number on the screen.
-  const [desigRows, setDesigRows] = useState<any[]>([]);
-  const [desigAt, setDesigAt] = useState<number | null>(null);
-  // PER STATION, not global. One `busy` boolean drove FOUR buttons, so clicking one station's REFRESH
-  // NOW put every station's button into the busy state at once — four controls twitching for one
-  // click is a large part of what read as a flicker.
-  const [desigBusy, setDesigBusy] = useState<number | null>(null);
-  const [desigErr, setDesigErr] = useState<Record<number, string>>({});
-  // The 30s poll reads ALL stations, so its failure genuinely belongs to all of them. Kept separate
-  // from the per-station click errors above so one station's failed click cannot masquerade as an
-  // outage, and an outage cannot be cleared by clicking one station.
-  const [desigLoadErr, setDesigLoadErr] = useState<string | null>(null);
-  // Sequence guard. The 30s poll and a click both call applyDesig, and whichever RESOLVED last won —
-  // so a poll issued before the click could land after it and paint the pre-click rows back over the
-  // fresh ones. That is the state change that "immediately reverts". Same ticket pattern the
-  // auto-generate toggle already uses (autoSeq); designation never had one.
-  const desigSeqNext = useRef(0);
-  const desigApplied = useRef(0);
-  // Per-station success banner, auto-dismissed. Keyed by station so refreshing one does not flash a
-  // confirmation on the other three.
-  const [desigBanner, setDesigBanner] = useState<Record<number, RefreshBanner>>({});
-  const bannerTimers = useRef<Record<number, any>>({});
-  // Recent designation history, read back from the honest ledger (health-events.jsonl).
-  const [desigEvents, setDesigEvents] = useState<any[]>([]);
   // SWEEPERS — the live state per station (SCHEDULED → ARMED → FIRING), straight from the daemon's own events
   // (audio:daemon-jingle, keyed by stationUuid). CLEARED / ARMED_CANCELLED → idle. Observed, never inferred (audit 15).
   const [sweepLive, setSweepLive] = useState<Record<string, { state: string; title: string | null }>>({});
@@ -779,51 +613,12 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     });
     return () => { try { audio.offJingle?.(h); } catch { /* ignore */ } };
   }, []);
-  const [desigEventsErr, setDesigEventsErr] = useState<string | null>(null);
   // A COMMERCIAL THAT DID NOT AIR. Jeff, 2026-09-14: "A missed spot must be loud — Health Monitor,
   // naming the spot and the time. Six today and I only found out by asking."
   const [missedSpots, setMissedSpots] = useState<any[]>([]);
   // SYNC CHANGES HELD (Jeff, 2026-10-20): a change from another computer that carried a reference as that computer's bare
   // number is held — never filed under ours (electron/sync/held-refs.js). Shown while any are held.
   const [heldRefs, setHeldRefs] = useState<{ count: number; byComputer: Record<string, { count: number; oldest: string }> } | null>(null);
-  // Applies rows and stamps the read time. Errors are SURFACED, not swallowed: the previous version
-  // caught everything silently, so an unregistered handler and a healthy empty result looked
-  // identical — the button appeared to do nothing and said nothing.
-  const applyDesig = useCallback((rows: any[]) => {
-    const m: Record<number, any> = {};
-    for (const r of rows || []) m[r.stationId] = r;
-    setDesig(m);
-    setDesigRows(rows || []);
-    setDesigAt(Date.now());
-  }, []);
-  const loadDesig = useCallback(async () => {
-    const seq = ++desigSeqNext.current;
-    try {
-      const rows = await (window as any).ether?.invoke?.("designation:status");
-      if (!Array.isArray(rows)) throw new Error("no response from designation:status");
-      if (seq < desigApplied.current) return;   // overtaken by a newer read — discard, never repaint
-      desigApplied.current = seq;
-      applyDesig(rows);
-      setDesigLoadErr(null);
-    } catch (e: any) {
-      setDesigLoadErr(e?.message || String(e));
-      setDesigAt(Date.now());     // the read HAPPENED; it failed. Never leave the stamp frozen.
-    }
-  }, [applyDesig]);
-  useEffect(() => { loadDesig(); const t = setInterval(loadDesig, 30_000); return () => clearInterval(t); }, [loadDesig]);
-  // Reads the designation slice of the honest ledger. Bounded by the handler (tail bytes + limit).
-  const loadDesigEvents = useCallback(async () => {
-    try {
-      const r = await (window as any).ether?.invoke?.("health:recent-events", {
-        kinds: ["designation-refreshed", "station-designation-changed", "station-designation-write-failed",
-                "designation-bypass-on", "designation-bypass-off", "designation-bypass-refused"],
-        limit: 12,
-      });
-      if (r && r.ok) { setDesigEvents(r.rows || []); setDesigEventsErr(null); }
-      else setDesigEventsErr((r && r.error) || "could not read the health ledger");
-    } catch (e: any) { setDesigEventsErr(e?.message || String(e)); }
-  }, []);
-  useEffect(() => { loadDesigEvents(); }, [loadDesigEvents]);
 
   // Same ledger, same reader, one kind. The daemon emits spot-missed once per catch-up sweep with
   // every spot named, so this is a handful of rows, not a stream.
@@ -845,57 +640,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
     } catch { /* not running under Electron — no panel */ }
   }, []);
   useEffect(() => { loadHeldRefs(); const id = setInterval(loadHeldRefs, 60000); return () => clearInterval(id); }, [loadHeldRefs]);
-  // Clear pending banner timers on unmount — a timer firing into an unmounted tree is a leak.
-  useEffect(() => () => { for (const t of Object.values(bannerTimers.current)) clearTimeout(t); }, []);
 
-  // Returns an error to show under the row, or null on success. The main process re-checks everything (mayBypass).
-  const bypassDesig = async (sid: number, on: boolean, pin: string): Promise<string | null> => {
-    let operator: string | null = null;
-    if (on) {
-      const v = await verifyAdminPin(pin);
-      if (!v.ok) return v.error;
-      operator = v.operator;
-    }
-    try {
-      const r = await (window as any).ether?.invoke?.("designation:bypass", sid, on, operator);
-      if (r && Array.isArray(r.rows) && r.rows.length) applyDesig(r.rows);
-      loadDesigEvents();
-      try { window.dispatchEvent(new CustomEvent("ether:designation-changed")); } catch { /* non-Electron */ }
-      return r && r.ok ? null : ((r && r.error) || "no response from designation:bypass");
-    } catch (e: any) { return e?.message || String(e); }
-  };
-
-  const refreshDesig = async (sid: number) => {
-    setDesigBusy(sid);
-    setDesigErr(prev => { const n = { ...prev }; delete n[sid]; return n; });
-    const seq = ++desigSeqNext.current;
-    try {
-      // One round trip: the handler returns the rows it just computed, so there is no window in
-      // which the refresh succeeded and the follow-up read failed.
-      const r = await (window as any).ether?.invoke?.("designation:refresh", sid);
-      if (r && r.ok) {
-        // NO OPTIMISTIC PAINT ANYWHERE ON THIS PATH: the rows rendered are the rows the main process
-        // just read back, and a stale in-flight poll can no longer overwrite them.
-        if (seq >= desigApplied.current) { desigApplied.current = seq; applyDesig(r.rows || []); setDesigLoadErr(null); }
-        // Banner from the ROW THAT CAME BACK — never from what was on screen before the click.
-        const row = (r.rows || []).find((x: any) => x.stationId === sid);
-        setDesigBanner(prev => ({ ...prev, [sid]: refreshBanner(row) }));
-        clearTimeout(bannerTimers.current[sid]);
-        bannerTimers.current[sid] = setTimeout(
-          () => setDesigBanner(prev => { const n = { ...prev }; delete n[sid]; return n; }), 6000);
-        loadDesigEvents();     // the click just wrote a ledger line — show it
-      } else {
-        setDesigErr(prev => ({ ...prev, [sid]: (r && r.error) || "refresh returned no response" }));
-        setDesigAt(Date.now());
-      }
-    } catch (e: any) {
-      setDesigErr(prev => ({ ...prev, [sid]: e?.message || String(e) }));
-      setDesigAt(Date.now());
-    } finally {
-      // Only clear if it is still OUR click: two overlapping refreshes must not switch each other off.
-      setDesigBusy(cur => (cur === sid ? null : cur));
-    }
-  };
   const agoText = (ms: number | null) => {
     if (!ms) return "never";
     const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
@@ -1179,15 +924,12 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
 
   // ── Shared regions ────────────────────────────────────────────────────────────────────────────
   // Built once and placed by whichever mode is rendering, so WALL and OPS cannot drift apart. Both
-  // are fed the SAME snapshot and designation rows this component already polls — see desigRows.
+  // are fed the SAME snapshot this component already polls.
   const dashboard = (
     <HealthDashboard
       stationId={stationId}
       wall={wall}
       snapshot={libHealth}
-      designation={desigRows}
-      onScrollToDesignation={() =>
-        document.getElementById("health-designation")?.scrollIntoView({ behavior: "smooth", block: "start" })}
     />
   );
   const liveTelemetry = <LiveHealthMonitor />;
@@ -1526,15 +1268,6 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                     <span style={{ width: 8, height: 8, borderRadius: "50%", background: dotCol }} />
                     <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-secondary)" }}>{st.name}</span>
                   </div>
-                  {/* Designation (Phase A). Always rendered — see DesignationRows.
-                      id anchors the dashboard's "Designated generator" card (Phase 1 §4). */}
-                  <div id={st.stationId === stationId ? "health-designation" : undefined} />
-                  <DesignationRows d={desig[st.stationId]} busy={desigBusy === st.stationId}
-                    onRefresh={() => refreshDesig(st.stationId)} readAt={desigAt}
-                    err={desigErr[st.stationId] || desigLoadErr}
-                    autoOn={true}
-                    banner={desigBanner[st.stationId] || null}
-                    onBypass={(on, pin) => bypassDesig(st.stationId, on, pin)} />
                   {/* SCHEDULE RUNWAY — the fuel gauge. First row on purpose: "how long until this
                       station runs out of log" is the most urgent thing this panel can answer, and on
                       a flipped station a dry log is dead air. Distance to the first GAP, not to the
@@ -1776,60 +1509,6 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
               These were scheduled and their slot passed without them playing. Anything already aired is
               unaffected — this is about what did not.
             </div>
-          </HealthPanel>
-        )}
-
-        {/* ── DESIGNATION ACTIVITY — the ledger, read back ──────────────────────────────────────
-            health-events.jsonl was append-only since it shipped: everything wrote, nothing read, so
-            an operator's own history lived in a file in AppData they would never open. The Live
-            Activity terminal is NOT this — it tails the daemon's log, so main-process events such as
-            a designation refresh never appeared anywhere on screen. */}
-        {libHealth?.stations?.length > 0 && (
-          <HealthPanel id="designation-activity" title="Designation Activity" right={
-              <button onClick={loadDesigEvents}
-                title="Re-read the health ledger. A plain read — it changes nothing."
-                style={{ fontSize: "var(--t-micro, 9px)", fontWeight: 800, letterSpacing: "0.08em",
-                         padding: "2px 8px", background: "transparent",
-                         border: "1px solid var(--border-primary)", borderRadius: "var(--r-0, 0px)",
-                         color: "var(--text-tertiary)", cursor: "pointer" }}>RELOAD</button>
-            }>
-            {desigEventsErr && (
-              <div style={{ fontSize: 12, color: "var(--accent-red)", marginBottom: 4 }}>{desigEventsErr}</div>
-            )}
-            {desigEvents.length === 0 && !desigEventsErr && (
-              <div style={{ fontSize: 13, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
-                No designation activity recorded yet. Pressing REFRESH NOW, or a station changing
-                which machine is designated, is recorded here.
-              </div>
-            )}
-            {desigEvents.map((e: any, i: number) => {
-              const when = (() => { try { return new Date(e.t).toLocaleString(); } catch { return String(e.t || ""); } })();
-              const failed = e.kind === "station-designation-write-failed" || e.kind === "designation-bypass-on";
-              const label = e.kind === "designation-refreshed" ? "Last refreshed"
-                          : e.kind === "station-designation-changed" ? "Designation changed"
-                          : e.kind === "designation-bypass-on" ? "Bypass ON"
-                          : e.kind === "designation-bypass-off" ? "Bypass OFF"
-                          : e.kind === "designation-bypass-refused" ? "Bypass refused"
-                          : "Designation NOT SAVED";
-              const detail = e.kind.startsWith("designation-bypass-")
-                ? `${e.station || "station"} — on ${e.machine || "this machine"}${e.operator ? ` by ${e.operator}` : ""}${e.reason ? ` · ${e.reason}` : ""}`
-                : e.kind === "designation-refreshed"
-                ? `${e.station || "station"} — ${e.state === "mine" ? "this machine is designated"
-                    : e.state === "other" ? `${e.holderName || e.holder || "another machine"} is designated`
-                    : e.state === "bypassed" ? "designation bypassed"
-                    : "no machine is designated"}`
-                : e.kind === "station-designation-changed"
-                  ? `${e.station || "station"} — ${e.from || "none"} → ${e.to || "none"}${e.reason ? ` (${e.reason})` : ""}`
-                  : `${e.station || "station"} — ${e.error || "unknown error"}`;
-              return (
-                <div key={i} style={{ display: "flex", gap: 8, alignItems: "baseline", padding: "3px 0",
-                                      borderBottom: "1px solid var(--border-primary)" }}>
-                  <span style={{ fontSize: 12, fontFamily: "'DM Mono', monospace", color: "var(--text-tertiary)", whiteSpace: "nowrap" as const }}>{when}</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: failed ? "var(--accent-red)" : "var(--text-secondary)", whiteSpace: "nowrap" as const }}>{label}</span>
-                  <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{detail}</span>
-                </div>
-              );
-            })}
           </HealthPanel>
         )}
 

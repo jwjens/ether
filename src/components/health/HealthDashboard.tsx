@@ -1,18 +1,17 @@
 // ── HealthDashboard — the quick-scan card row (Phase 1) ─────────────────────────────────────────
 //
-// Health Monitor redesign. Four cards: Runway · Designated generator · Rotation health · Queue.
+// Health Monitor redesign. Three cards: Runway · Rotation health · Queue.
 //
 // IT IS ADDITIVE, NOT A REPLACEMENT — deliberately, and the spec allows it ("or keep both").
-// HealthMonitor.tsx is ~1,500 lines and carries a lot more than these four numbers: the auto-generate
-// toggles, the designation controls and REFRESH NOW, the log-reader canary flips, the §2.7 shadow
-// burn-in, the DMCA export, Audio Processing, HA, the spot schedule, Designation Activity. Swapping
+// HealthMonitor.tsx is ~1,500 lines and carries a lot more than these three numbers: the auto-generate
+// toggles, the log-reader canary flips, the §2.7 shadow burn-in, the DMCA export, Audio Processing,
+// HA, the spot schedule. Swapping
 // the component out would delete every one of those. Several were used this week. So the dashboard
 // renders ABOVE the existing content and the rest stays reachable until each section has a
 // replacement — doors before rooms.
 //
-// Data sources are the ones that actually exist; see healthData.ts for the three corrections to the
-// spec's §0/§2 (designation is its own IPC, there is no engine:getQueue channel, and the KV handler
-// path differs).
+// Data sources are the ones that actually exist; see healthData.ts for the corrections to the
+// spec's §0/§2 (there is no engine:getQueue channel, and the KV handler path differs).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useActiveStation } from "../../hooks/useActiveStation";
 import { useAudioEngine } from "../../audio/AudioEngineContext";
@@ -25,11 +24,11 @@ import { HealthChart } from "./HealthChart";
 import { HealthMeters } from "./HealthMeters";
 import { useContainerWidth, WALL_MIN_PX } from "./useContainerWidth";
 import {
-  fetchLibraryHealth, fetchDesignation, stationFrom, designationFor,
+  fetchLibraryHealth, stationFrom,
   POLL_SNAPSHOT_MS, POLL_QUEUE_MS,
-  type LibrarySnapshot, type DesignationRow,
+  type LibrarySnapshot,
 } from "./healthData";
-import { runwayValue, goalsValue, queueLevel, designationValue, toLevel,
+import { runwayValue, goalsValue, queueLevel, toLevel,
          noGoalsDeclared, type CategoryGoal } from "./healthUtils";
 
 /** Navigate by the app's established pattern: App.tsx listens for `ether:open-*` and calls setPanel. */
@@ -45,18 +44,16 @@ export interface HealthDashboardProps {
    *  overview) without being rewritten. When omitted it falls back to the hook, so the component
    *  still works standing alone. */
   stationId?: number | null;
-  onScrollToDesignation?: () => void;
   /** The library-health snapshot, supplied by the owner.
    *
    *  SINGLE OWNER (v3 Phase 1). This component and HealthMonitor were each polling
-   *  `library-health:get` and `designation:status` on their own 30s timer, so the two could land out
+   *  `library-health:get` on their own 30s timer, so the two could land out
    *  of phase and the panel could show two different numbers for the SAME station fact at the same
    *  moment. On a wall display an operator reads as truth, that is an honesty defect.
    *
    *  `undefined` means "not supplied — poll for yourself" and keeps the component able to stand
    *  alone; `null` means "supplied, and there is no snapshot". The two must not be conflated. */
   snapshot?: LibrarySnapshot | null;
-  designation?: DesignationRow[];
   /** Force the wall layout instead of measuring.
    *
    *  Required inside the wall canvas: that canvas is authored at 1920 and CSS-scaled to fit, and
@@ -67,8 +64,8 @@ export interface HealthDashboardProps {
 }
 
 export function HealthDashboard({
-  stationId: stationIdProp, onScrollToDesignation,
-  snapshot: snapshotProp, designation: designationProp, wall: wallProp,
+  stationId: stationIdProp,
+  snapshot: snapshotProp, wall: wallProp,
 }: HealthDashboardProps) {
   // useActiveStation() returns an OBJECT, not the id — the spec's §0 calls it "the active station
   // ID". Destructured the way every other caller in the tree does (App.tsx:548).
@@ -85,21 +82,18 @@ export function HealthDashboard({
   // Owned only when nothing was supplied. See the `snapshot` prop for why this distinction matters.
   const owns = snapshotProp === undefined;
   const [ownSnap, setOwnSnap] = useState<LibrarySnapshot | null>(null);
-  const [ownDesig, setOwnDesig] = useState<DesignationRow[]>([]);
   const [ownErr, setOwnErr] = useState<string | null>(null);
   const [queueLen, setQueueLen] = useState<number | null>(null);
 
   const snap = owns ? ownSnap : (snapshotProp ?? null);
-  const desig = designationProp ?? ownDesig;
   // Only an ABSENT snapshot is an error worth showing. An empty station list is a legitimate
   // "nothing measured yet" and the cards say so themselves.
   const err = owns ? ownErr : (snapshotProp === null ? "health data unavailable" : null);
 
-  // ── snapshot + designation, 30s (the cadence the existing panel already uses) ──────────────────
+  // ── snapshot, 30s (the cadence the existing panel already uses) ──────────────────
   const load = useCallback(async () => {
-    const [s, d] = await Promise.all([fetchLibraryHealth(), fetchDesignation()]);
+    const s = await fetchLibraryHealth();
     setOwnSnap(s);
-    setOwnDesig(d);
     setOwnErr(s ? null : "health data unavailable");
   }, []);
   useEffect(() => {
@@ -156,7 +150,6 @@ export function HealthDashboard({
   }, [engine]);
 
   const st = useMemo(() => stationFrom(snap, stationId), [snap, stationId]);
-  const dg = useMemo(() => designationFor(desig, stationId), [desig, stationId]);
 
   // Rotation-goal bars. `categories` is added by goalCheck() and is present whether or not any
   // target is declared, so a station with no goals still sees what it actually aired.
@@ -177,7 +170,6 @@ export function HealthDashboard({
   const measured = !!st;
   const runway = runwayValue(st?.runway, measured);
   const goals  = goalsValue(st?.goals);
-  const design = designationValue(dg);
   const qLevel = queueLevel(queueLen);
 
   return (
@@ -202,7 +194,7 @@ export function HealthDashboard({
         {err && <span style={{ fontSize: 11, color: "var(--accent-red)" }}>{err}</span>}
       </div>
 
-      {/* Four across, wrapping under ~768px — auto-fit does it without a media query, which matters
+      {/* Three across, wrapping under ~768px — auto-fit does it without a media query, which matters
           because this panel also renders inside a narrow popout. */}
       <div style={{ display: "grid", gap: "var(--s-3, 6px)", marginBottom: "var(--s-4, 8px)",
                     gridTemplateColumns: "repeat(auto-fit, minmax(184px, 1fr))" }}>
@@ -213,15 +205,6 @@ export function HealthDashboard({
           status={toLevel(st?.runway?.level)}
           onClick={() => openPanel("programlog")}
           wall={wall}          hint="How long until this station's log runs out. Click to open the Program Log."
-        />
-        <HealthCard
-          title="Designated generator"
-          value={design.value}
-          sub={design.sub}
-          status={design.level}
-          onClick={onScrollToDesignation}
-          wall={wall}
-          hint="Which machine builds this station's log. Click to jump to the designation controls."
         />
         <HealthCard
           title="Rotation health"

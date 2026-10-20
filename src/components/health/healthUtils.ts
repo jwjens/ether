@@ -277,17 +277,3 @@ export function eventTime(t: unknown): string {
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   } catch { return ""; }
 }
-
-/** Designation → the card face. Mirrors generation-designation.js status(), which the row already uses. */
-export function designationValue(
-  // holder/holderName are nullable on the wire — generation-designation.js sets them to null when
-  // there is no record. Accepting null here rather than at the call site keeps the caller honest.
-  d: { state?: string; holderName?: string | null; holder?: string | null; level?: string } | null | undefined):
-  { value: string; sub: string; level: HealthLevel } {
-  const state = d && d.state ? d.state : "none";
-  if (state === "mine")     return { value: "This machine", sub: "builds this station's log", level: toLevel(d?.level) };
-  if (state === "other")    return { value: (d?.holderName || d?.holder || "Another machine"),
-                                     sub: "this machine will not auto-generate", level: toLevel(d?.level) };
-  if (state === "bypassed") return { value: "Bypassed", sub: "every switched-on machine generates", level: "yellow" };
-  return { value: "None", sub: "no machine has claimed this station", level: "grey" };
-}

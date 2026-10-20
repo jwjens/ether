@@ -5,7 +5,7 @@
 // categories" when the station had two. The snapshot was correct throughout — the lookup simply did
 // not match, so every card fell back to unknown.
 import { describe, it, expect } from "vitest";
-import { stationFrom, designationFor } from "./healthData";
+import { stationFrom } from "./healthData";
 
 const snap = {
   stations: [
@@ -42,20 +42,5 @@ describe("stationFrom", () => {
     expect(stationFrom(null, 2)).toBe(null);
     expect(stationFrom({} as any, 2)).toBe(null);
     expect(stationFrom({ stations: "nope" } as any, 2)).toBe(null);
-  });
-});
-
-describe("designationFor", () => {
-  const rows = [{ stationId: 1, state: "mine" }, { stationId: 2, state: "other" }] as any;
-
-  it("finds by id, across types", () => {
-    expect(designationFor(rows, 2)?.state).toBe("other");
-    expect(designationFor(rows, "2" as any)?.state).toBe("other");
-  });
-
-  it("returns null for an unknown or absent id", () => {
-    expect(designationFor(rows, 99)).toBe(null);
-    expect(designationFor(rows, null)).toBe(null);
-    expect(designationFor([], 1)).toBe(null);
   });
 });

@@ -1,7 +1,7 @@
 // The card colours and the words on them. Pure, so the mapping that tells an operator "you are
 // fine" or "you are about to run out" is testable without rendering.
 import { describe, it, expect } from "vitest";
-import { toLevel, levelColor, runwayValue, goalsValue, queueLevel, designationValue,
+import { toLevel, levelColor, runwayValue, goalsValue, queueLevel,
          barState, noGoalsDeclared, eventLevel, eventTitle, eventSummary, eventTime,
          type CategoryGoal } from "./healthUtils";
 
@@ -257,38 +257,5 @@ describe("eventTitle / eventTime / eventSummary", () => {
   it("never throws on junk", () => {
     expect(eventSummary(null)).toBe("");
     expect(eventSummary({} as any)).toBe("");
-  });
-});
-
-describe("designationValue", () => {
-  it("names this machine when it holds it", () => {
-    const d = designationValue({ state: "mine", level: "green" });
-    expect(d.value).toBe("This machine");
-    expect(d.level).toBe("green");
-  });
-
-  it("names the other machine, and says this one will not generate", () => {
-    const d = designationValue({ state: "other", holderName: "OVEVENTS", level: "green" });
-    expect(d.value).toBe("OVEVENTS");
-    expect(d.sub).toContain("will not auto-generate");
-  });
-
-  it("falls back to the id, then to a generic name", () => {
-    expect(designationValue({ state: "other", holder: "8e8f6181" }).value).toBe("8e8f6181");
-    expect(designationValue({ state: "other" }).value).toBe("Another machine");
-  });
-
-  it("shows the bypass as amber", () => {
-    expect(designationValue({ state: "bypassed" }).level).toBe("yellow");
-  });
-
-  it("no record is grey — normal on a station nobody has generated", () => {
-    expect(designationValue(null).value).toBe("None");
-    expect(designationValue(null).level).toBe("grey");
-  });
-
-  it("tolerates null holder fields, which is what the IPC actually sends", () => {
-    expect(() => designationValue({ state: "other", holder: null, holderName: null })).not.toThrow();
-    expect(designationValue({ state: "other", holder: null, holderName: null }).value).toBe("Another machine");
   });
 });

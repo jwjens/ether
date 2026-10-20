@@ -9,6 +9,7 @@
 //   2. A 24/7 show is one endless run, so the walk ran its full 768 hours (32 days). Now: the show on now and the next
 //      show — an OCCURRENCE ends where the show's day ends (a daily 0:00–0:00 show is a new occurrence each midnight).
 //   3. The spans were worked out for every station before asking whether this machine builds it. Now the gate is first.
+//      (Since 2026-10-20 there is no builder designation: the worker's gate allows every station.)
 // It runs on a worker thread, so the main thread never waits on the database for it (Jeff, 2026-10-20).
 "use strict";
 const SW = require("../audiod/show-window.js");

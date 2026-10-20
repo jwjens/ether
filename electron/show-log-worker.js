@@ -8,7 +8,6 @@
 const { parentPort, workerData } = require("worker_threads");
 const Database = require("better-sqlite3");
 const { stationsToBuild } = require("./show-log-spans");
-const desig = require("./generation-designation");
 
 let db = null, dbPath = null;
 function open(want) {
@@ -19,24 +18,14 @@ function open(want) {
   db.pragma("busy_timeout = 5000");
   return db;
 }
-const kv = (d, sid, key) => {
-  const r = d.prepare("SELECT value FROM station_config_kv WHERE station_id = ? AND key = ? AND deleted_at IS NULL LIMIT 1").get(sid, key);
-  return r ? r.value : null;
-};
 
 parentPort.on("message", (m) => {
   if (!m || m.type !== "check") return;
   const t0 = Date.now();
   try {
     const d = open(m.dbPath || workerData.dbPath);
-    // The same gate main used (generation-designation.js mayAutoGenerate), asked FIRST for every station.
-    // This machine's identity, read here (main sends none): the same client_identity main's _machineIdentity() reads.
-    const me = d.prepare("SELECT client_id FROM client_identity LIMIT 1").get();
-    const machineId = me && me.client_id ? me.client_id : null;
-    const gate = (sid) => desig.mayAutoGenerate({
-      record: desig.parseRecord(kv(d, sid, desig.KEY)), machineId,
-      killSwitch: String(kv(d, sid, "kill_designation") || "") === "1",
-    });
+    // No builder designation (Jeff, 2026-10-20): every computer builds its OWN log for every station.
+    const gate = () => ({ allow: true });
     const stations = stationsToBuild(d, m.nowTs, gate);
     parentPort.postMessage({ type: "result", id: m.id, ok: true, stations, ms: Date.now() - t0 });
   } catch (e) {

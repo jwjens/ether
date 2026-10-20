@@ -42,14 +42,6 @@ const SNAPSHOT = {
   recentEvents: [],
 };
 
-// designation:status rows — real field names from electron/generation-designation.js:111-122
-// plus what main.js adds at the _desigStatus.set call.
-const DESIGNATIONS = [
-  { stationId: 1, station: "Open Format", level: "green", state: "mine",
-    holder: "machine-abc", holderName: "OVEVENTS", lastChecked: 1755555555,
-    lastGenerated: 1755550000, checkedAgeSec: 42, autoOn: true, writeError: null,
-    text: "This machine — checked in 42s ago" },
-];
 
 // runway.computeRunway shape — electron/runway.js:58,96.
 const RUNWAY = {
@@ -78,7 +70,6 @@ const SERIES = {
 
 const frames = buildHealthFrames({
   snapshot: SNAPSHOT,
-  designations: DESIGNATIONS,
   runwayFor: (sid) => RUNWAY[sid] || null,
   runwaySeriesFor: (sid) => SERIES[sid] || null,
   procFor: (sid) => PROC[sid] || null,
@@ -116,16 +107,8 @@ test("level and reason come through verbatim", () => {
   assert.equal(frames[1].row.level, "RED");
   assert.equal(frames[1].row.reason, "queue empty");
 });
-test("designation uses the module's real field names", () => {
-  const d = frames[0].row.designation;
-  assert.equal(d.state, "mine");
-  assert.equal(d.holder, "machine-abc");
-  assert.equal(d.holderName, "OVEVENTS");
-  assert.equal(d.checkedAgeSec, 42);
-  assert.equal(d.text, "This machine — checked in 42s ago");
-});
-test("a station with no designation row reports null, not a fabricated one", () => {
-  assert.equal(frames[1].row.designation, null);
+test("builder designation is retired: every frame carries designation null (2026-10-20)", () => {
+  assert.ok(frames.every(f => f.row.designation === null));
 });
 test("runway days:null survives as null — 'no active show' is NOT zero days", () => {
   assert.equal(frames[1].row.runway.days, null);
@@ -160,7 +143,7 @@ test("a station with processing off reports null rather than a zeroed trio", () 
 test("in-process mode is carried — it is itself a degraded state", () => {
   const f = buildHealthFrame({
     station: SNAPSHOT.stations[0], engine: SNAPSHOT.engine, mode: "in-process",
-    designation: null, runway: null, proc: null, machineId: "m", cadenceSec: 60,
+    runway: null, proc: null, machineId: "m", cadenceSec: 60,
     nowIso: "2026-08-18T23:30:00.000Z",
   });
   assert.equal(f.mode, "in-process");

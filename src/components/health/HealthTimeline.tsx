@@ -5,7 +5,7 @@
 // has no rotation and reading it whole would eventually stall the panel.
 //
 // NOT the Live Activity terminal. That tails the DAEMON's log (ether-audiod.log) and shows playout
-// chatter; this shows what the MAIN PROCESS recorded — generates, designation changes, log edits,
+// chatter; this shows what the MAIN PROCESS recorded — generates, log edits,
 // sync failures. Main-process events have never had an on-screen home until now.
 import { memo, useCallback, useEffect, useState } from "react";
 import { eventLevel, eventTitle, eventSummary, eventTime, levelColor, isRoutine } from "./healthUtils";
@@ -142,7 +142,7 @@ function HealthTimelineImpl({ id, maxHeight = 300 }: { id?: string; maxHeight?: 
         <div style={{ fontSize: 11, color: "var(--text-tertiary)", lineHeight: 1.6,
                       padding: "var(--s-4, 8px) var(--s-5, 12px)" }}>
           {note === "no ledger yet"
-            ? "No events recorded yet. Generates, designation changes, log edits and sync failures appear here as they happen."
+            ? "No events recorded yet. Generates, log edits and sync failures appear here as they happen."
             : routineCount > 0
               ? `Nothing notable in the recent window — only ${routineCount} routine health checks. That is the quiet you want. Press ALL to see them.`
               : "No events in the recent window."}

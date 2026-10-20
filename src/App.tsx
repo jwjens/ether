@@ -119,7 +119,6 @@ import { ALL_LIB_COLS, LIB_COL_LABELS, LIB_COL_DEFAULT_WIDTHS, HIDDEN_BUILTIN_CO
 import AutoCue from "./components/AutoCue";
 import { useUpdater, UpdateBanner } from "./components/Updater";
 import DaemonVersionBanner from "./components/DaemonVersionBanner";
-import DesignationBypassBanner from "./components/DesignationBypassBanner";
 import { EtherErrorBoundary, SessionRestoreToast, HealthMonitor, HealthStatusDot, ContentStatusDot } from "./components/HealthMonitor";
 import { importIntoAudioLibrary, fileLocationItem, changeFileLocationItem, checkFilePresence, type FilePresence } from "./lib/fileLocation";
 import { openLinkPreferences } from "./hooks/useRemoteLink";
@@ -3351,7 +3350,6 @@ export default function App() {
       {/* Renders only when the daemon is actually stale, and cannot be dismissed — it is a statement
           about whether the readings below can be trusted, not a notification. */}
       <DaemonVersionBanner />
-      <DesignationBypassBanner />
 
       {!updater.dismissed && <UpdateBanner
         state={updater.state}

@@ -29,14 +29,15 @@ and they never look alike.
 
 ## The top half — at a glance
 
-Four cards across the top, then four panels below them.
+Three cards across the top, then four panels below them.
 
 - **Runway** — how many days of log this station has left before it runs out. Click it to open the
   Program Log.
-- **Designated generator** — which machine builds this station's log. Click to jump to the controls.
 - **Rotation health** — your declared rotation goals against what the clocks actually call. Click to
   open Schedule Manager.
 - **Queue** — how many items are waiting behind what is on air, and roughly how much time that buys.
+
+Each computer builds its own program log for every station; there is no designated computer (since 4.6.62).
 
 Below the cards:
 
@@ -175,7 +176,7 @@ words. It is never collapsed or filtered: it only ever shows things that went wr
   misses, not after.
 - **Mic Inputs** and **PFL Output** — whether each mic and the headphone (PFL) output are working.
 - **Spots that did not air** — breaks that were due and did not play.
-- **Core Systems**, **High Availability**, **Library & Rotation**, **Designation Activity**, the
+- **Core Systems**, **High Availability**, **Library & Rotation**, the
   **Log-Reader** panels and **DMCA Play Log Export** — the underlying detail behind the cards above.
 
 ### Library & Rotation — the Sweepers row
@@ -223,7 +224,7 @@ Nothing is restarted and nothing goes off air: the running app is adopted, not r
 
 ## Rearranging the panels
 
-Every panel below the four cards can be moved and hidden, so you can make the top of the screen show what
+Every panel below the three cards can be moved and hidden, so you can make the top of the screen show what
 *your* station worries about.
 
 1. **To move a panel**, click and hold its **header bar** — the strip with the title and the ⠿ handle
@@ -239,7 +240,7 @@ Two things worth knowing:
   export button — so dragging from inside a panel would make those unusable.
 - **Panels move only within their own group.** There are three: the four panels under the cards, the
   live Engine / Stations / Level transitions panels, and the detail sections below. You can reorder
-  within a group, but not move a panel from one into another. **The four cards at the very top stay
+  within a group, but not move a panel from one into another. **The three cards at the very top stay
   fixed.**
 
 ## Putting it back
@@ -276,6 +277,5 @@ with other local preferences.
 
 - [Audio Processing](help-audio-processing.md) — the loudness chain itself, and its settings
 - [Rotation Goals](help-rotation-goals.md) — declaring the targets the goal bars measure against
-- [Designated Generator](help-designated-generator.md) — which machine builds the log
 - [Live Activity](help-live-activity.md) — the running activity feed
 - [Spots](help-spots.md) — scheduling the breaks the Spot Schedule projects

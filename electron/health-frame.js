@@ -4,7 +4,7 @@
 // table "health" (docs/web-health-monitor-design-2026-08-18.md §1). No second channel.
 //
 // THIS IS A PROJECTION, NOT A MEASUREMENT. Every value here is already observed somewhere in the
-// running app — the Health Monitor snapshot, the designation tick, the runway reader, the processing
+// running app — the Health Monitor snapshot, the runway reader, the processing
 // meters. Nothing is computed for the first time here and nothing is claimed. If a source is missing,
 // the field is null and the page says so, rather than a zero standing in for "unknown".
 //
@@ -28,7 +28,6 @@ function num(v, p = 2) {
  * @param station     one entry from the audio-health snapshot's `stations[]`
  * @param engine      snapshot.engine  { pid, uptimeSec, restartCount, pingMs }
  * @param mode        "daemon" | "in-process"
- * @param designation this station's row from designation:status, or null
  * @param runway      { days, level, throughDate } from runway.computeRunway, or null
  * @param runwaySeries summarised 7-day trend [{at, days}], or null — see the field comment below
  * @param proc        the decimated processing sample for this station, or null (§3.3)
@@ -37,7 +36,7 @@ function num(v, p = 2) {
  *                    thresholds are relative to it (§4), so it must be the live value, not a constant
  * @param nowIso      observation timestamp, machine clock (the SERVER's clock decides staleness)
  */
-function buildHealthFrame({ station, engine, mode, designation, runway, runwaySeries, proc, machineId, cadenceSec, nowIso }) {
+function buildHealthFrame({ station, engine, mode, runway, runwaySeries, proc, machineId, cadenceSec, nowIso }) {
   const s = station || {};
   return {
     // ── identity ────────────────────────────────────────────────────────────────────────────────
@@ -81,23 +80,9 @@ function buildHealthFrame({ station, engine, mode, designation, runway, runwaySe
     // ── stream ──────────────────────────────────────────────────────────────────────────────────
     stream: { streaming: s.streaming ?? null, drainBps: s.drainBps ?? null },
 
-    // ── the designated generator and when it last checked in ────────────────────────────────────
-    // Field names are the designation module's own (electron/generation-designation.js:111-122):
-    // state is 'mine' | 'other' | 'none' | 'bypassed', holder is a machine_id, lastChecked is the
-    // check-in stamp and checkedAgeSec is how long ago that was. `text` is the sentence the in-app
-    // row already shows — carried verbatim so the web page says the same thing, never a paraphrase.
-    designation: designation ? {
-      level: designation.level ?? null,
-      state: designation.state ?? null,
-      holder: designation.holder ?? null,
-      holderName: designation.holderName ?? null,
-      lastChecked: designation.lastChecked ?? null,
-      checkedAgeSec: designation.checkedAgeSec ?? null,
-      lastGenerated: designation.lastGenerated ?? null,
-      autoOn: designation.autoOn ?? null,
-      writeError: designation.writeError ?? null,
-      text: designation.text ?? null,
-    } : null,
+    // ── builder designation: RETIRED (Jeff, 2026-10-20 — every computer builds its own log for each station) ──────────
+    // Kept in the frame as null so the dashboard's reader (which already handles null) is unaffected.
+    designation: null,
 
     // ── schedule runway. Per-machine attribution is what makes this safe to send: runway is one
     //    machine's observation of its own schedule, and it stays labelled as such (§2.1).
@@ -150,13 +135,9 @@ function buildHealthFrame({ station, engine, mode, designation, runway, runwaySe
  * each to the station it belongs to — /api/account/data/sync validates station ownership per call.
  * Stations with no uuid are skipped: an un-migrated row has no cloud identity to push under.
  */
-function buildHealthFrames({ snapshot, designations, runwayFor, runwaySeriesFor, procFor, machineId, cadenceSec, now }) {
+function buildHealthFrames({ snapshot, runwayFor, runwaySeriesFor, procFor, machineId, cadenceSec, now }) {
   if (!snapshot || !Array.isArray(snapshot.stations)) return [];
   const nowIso = new Date(now ?? Date.now()).toISOString();
-  const desigBy = new Map();
-  for (const d of designations || []) {
-    if (d && d.stationId != null) desigBy.set(d.stationId, d);
-  }
   const out = [];
   for (const st of snapshot.stations) {
     if (!st || !st.uuid) continue;
@@ -172,7 +153,6 @@ function buildHealthFrames({ snapshot, designations, runwayFor, runwaySeriesFor,
         station: st,
         engine: snapshot.engine,
         mode: snapshot.mode,
-        designation: desigBy.get(st.stationId) || null,
         runway,
         runwaySeries,
         proc,

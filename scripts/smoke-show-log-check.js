@@ -127,7 +127,7 @@ function oldCheckMs(dbPath, stationId, nowTs) {
   const s1 = by[1] || { spans: [] };
   check(`station 1 (24/7, rows until +6 h): one missing span, from the first empty hour to the end of tomorrow`,
     s1.spans.length === 1 && s1.spans[0].fromLk === firstEmpty, JSON.stringify(s1.spans.map(x => [new Date(x.fromLk * 1000).toISOString(), new Date(x.toTs * 1000).toISOString()])));
-  check(`station 5 (designated to another machine): skipped before any work — "${by[5] && by[5].skipped}"`, !!(by[5] && by[5].skipped && by[5].spans.length === 0));
+  check(`station 5 (once designated to another machine): built here too — no builder designation (2026-10-20)`, !!(by[5] && !by[5].skipped && by[5].spans.length === 1));
 
   // 3 · gate first: a refused station never touches generated_schedule
   const db = new Database(file, { readonly: true });

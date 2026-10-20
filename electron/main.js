@@ -1182,11 +1182,8 @@ if (AUDIO_DAEMON_DESIRED) {
         const missing = sids.some(sid => !(sid in _runwayCache.bySid));
         if (missing || !_runwayCache.at) await _refreshRunways(sids);                 // first call: wait for it, once
         else if (Date.now() - _runwayCache.at > 60_000) _refreshRunways(sids);        // stale: refresh in the background
-        let designations = [];
-        try { designations = [..._desigStatus.values()]; } catch {}
         return buildHealthFrames({
           snapshot,
-          designations,
           machineId: getStableMachineId(),
           cadenceSec: Number(cadenceSec) > 0 ? Number(cadenceSec) : 60,
           runwayFor: (sid) => (_runwayCache.bySid[sid] || {}).runway || null,
@@ -1197,7 +1194,6 @@ if (AUDIO_DAEMON_DESIRED) {
       } catch (e) { console.error("[health:frames]", e.message); return []; }
     });
   } catch {}
-  // (designation IPC is registered at top level — see _designationTick.)
 
   // Renderer → the honest health ledger. The daemon has had this since the log-reader work; the
   // RENDERER has not, so anything it noticed could only ever reach a console nobody reads. Same
@@ -8664,7 +8660,8 @@ function jukeboxAdmit(sid, req) {
     let lastPlayed = null;
     try {
       const a = db.prepare("SELECT MAX(played_at) t FROM jukebox_requests WHERE station_id=? AND file_path=? AND status='played' AND played_at IS NOT NULL").get(sid, filePath)?.t ?? null;
-      const b = db.prepare("SELECT MAX(played_at) t FROM play_log WHERE station_id=? AND file_path=? AND deleted_at IS NULL").get(sid, filePath)?.t ?? null;
+      // This computer's airplay only (audiod/plays-here.js): what this room heard, not another computer's.
+      const b = db.prepare(`SELECT MAX(played_at) t FROM play_log WHERE station_id=? AND file_path=? AND deleted_at IS NULL AND ${require("../audiod/plays-here").playsHere(db, "")}`).get(sid, filePath)?.t ?? null;
       lastPlayed = Math.max(Number(a) || 0, Number(b) || 0) || null;
     } catch { /* no play history readable — do not refuse on an unanswerable question */ }
     if (lastPlayed && lastPlayed >= cutoff) {
@@ -12048,13 +12045,7 @@ async function _outOfMusicRegenerate(stationId) {
     if (!run || !run.show) { console.log(`[out-of-music] station ${stationId}: no show is on — nothing generates`); return; }
     // NO SWITCH (Jeff, 2026-10-19: "Remove the 'Generate when a show runs out' switch. No switches."). The last resort if
     // a show's log still runs short; the log is built before the show starts (_buildShowLogs), so this should not fire.
-    // The same gate as the unattended extender: only the machine designated to generate this station writes its log.
-    const _me = _machineIdentity();
-    const _gate = _desig.mayAutoGenerate({
-      record: _desig.parseRecord(_kvGet(stationId, _desig.KEY)), machineId: _me.id,
-      killSwitch: String(_kvGet(stationId, 'kill_designation') || '') === '1',
-    });
-    if (!_gate.allow) { console.log(`[out-of-music] station ${stationId}: not the designated generator — ${_gate.reason}`); return; }
+    // No builder designation (Jeff, 2026-10-20): every computer builds its OWN log for each station; logs never sync.
     const toTs = Math.max(run.endTs, nowTs + 3600);
     const r = await _generateRange(stationId, nowTs, toTs, { source: 'auto' });
     console.log(`[out-of-music] station ${stationId}: the show ran out of music — generated ${r.count} rows to ${new Date(toTs * 1000).toLocaleTimeString()}`);
@@ -12171,7 +12162,7 @@ function _scheduleIsSparse(stationId, nowTs) {
 // RETIRED 2026-10-19 (Jeff: "Remove the 'Generate when a show runs out' switch. No switches. Inside a show there is
 // always music; the log is built before a show starts, never silence while it generates."). The stored
 // auto_generate_enabled values are left in place and read by nothing. One writer per station is still the designation's
-// job: the first machine to build a station's log holds it, every other machine observes (generation-designation.js).
+// job — removed 2026-10-20: every computer builds its own log for each station (no builder designation).
 
 // Deferral: while the daemon is down the app plays audio IN-PROCESS, on this thread. An unattended
 // generate burns ~0.96 cores there (docs/generate-phase0-measurement-2026-08-11.md), competing with
@@ -12200,81 +12191,7 @@ function _autoDeferralCheck(st) {
   return true;
 }
 
-// Registered at TOP LEVEL, deliberately. These lived inside the health-monitor setup block, so if
-// that block did not run the handlers never existed — `invoke` rejected, the renderer's catch
-// swallowed it, and REFRESH NOW silently did nothing. A handler whose registration depends on an
-// unrelated subsystem starting is a handler that sometimes is not there.
-//
-// refresh RETURNS THE ROWS rather than just an ok flag: a caller that has to make a second round
-// trip to find out what happened can fail between the two and show nothing, which is the shape of
-// the bug being fixed.
-try {
-  ipcMain.handle("designation:status", () => { try { return [..._desigStatus.values()]; } catch { return []; } });
-  ipcMain.handle("designation:refresh", (_evt, stationId) => {
-    try {
-      _designationTick(new Set(), 'refresh (operator)');
-      const rows = [..._desigStatus.values()];
-      // LEDGER: the operator pressed the button. Logged HERE and nowhere else — the 30-minute tick
-      // and the renderer's 30-second poll must never write this, or the ledger gains 2,880 identical
-      // rows a day and stops being readable. Same rule the transition-only holder event follows.
-      try {
-        const row = stationId != null ? rows.find(r => r.stationId === stationId) : null;
-        _healthEvent('designation-refreshed', {
-          stationId: stationId != null ? stationId : null,
-          station: row ? row.station : null,
-          holder: row ? (row.holder || null) : null,
-          holderName: row ? (row.holderName || null) : null,
-          state: row ? row.state : null,
-          autoOn: row ? !!row.autoOn : null,
-          initiatedBy: _machineIdentity().id,
-        });
-      } catch { /* a lost ledger line must never fail the refresh */ }
-      return { ok: true, at: Date.now(), rows };
-    } catch (e) {
-      // Reported, not swallowed: the renderer shows this under the row.
-      console.error('[designation] refresh failed:', e.message);
-      return { ok: false, error: e.message, rows: [] };
-    }
-  });
-} catch (e) { console.error('[designation] handler registration failed:', e.message); }
-
-// designation:bypass — THE DOOR to kill_designation (audit 20; Jeff's GO 2026-09-27). The renderer has already checked
-// the admin PIN and passes the operator it matched. ON is REFUSED while the designated machine is seen online
-// (_desig.mayBypass): the bypass is for a dead designated machine, not a second generator. Who / where / when is
-// stored in the local-only kill_designation_by so the banner can name the machine and the operator; both edges go to
-// the ledger. Returns the fresh rows, like designation:refresh.
-try {
-  ipcMain.handle("designation:bypass", (_evt, stationId, on, operator) => {
-    try {
-      const sid = Number(stationId);
-      const st = db.prepare("SELECT id, name FROM stations WHERE id = ? AND deleted_at IS NULL").get(sid);
-      if (!st) return { ok: false, error: 'that station is not on this machine', rows: [] };
-      const me = _machineIdentity();
-      const now = Math.floor(Date.now() / 1000);
-      if (on) {
-        const verdict = _desig.mayBypass({ record: _desig.parseRecord(_kvGet(sid, _desig.KEY)), machineId: me.id, now });
-        if (!verdict.allow) {
-          _healthEvent('designation-bypass-refused', { stationId: sid, station: st.name, machine: me.name, operator: operator || null, reason: verdict.reason });
-          return { ok: false, refused: true, error: verdict.reason, rows: [..._desigStatus.values()] };
-        }
-        const { stationConfigKvSetLocal } = require('./sync/handlers/station_config_kv');
-        stationConfigKvSetLocal(db, sid, 'kill_designation_by', JSON.stringify({ machine: me.name || me.id, operator: operator || null, at: now }));
-        _killDesignationWriteLocal(sid, '1');
-        _healthEvent('designation-bypass-on', { stationId: sid, station: st.name, machine: me.name, machineId: me.id, operator: operator || null, basis: verdict.reason });
-      } else {
-        _killDesignationWriteLocal(sid, '0');
-        _healthEvent('designation-bypass-off', { stationId: sid, station: st.name, machine: me.name, machineId: me.id, operator: operator || null });
-      }
-      _designationTick(new Set(), on ? 'bypass on (operator)' : 'bypass off (operator)');
-      const stored = String(_kvGet(sid, 'kill_designation') || '') === '1';
-      if (stored !== !!on) return { ok: false, error: `the switch did not stick — still ${stored ? 'ON' : 'OFF'}`, rows: [..._desigStatus.values()] };
-      return { ok: true, rows: [..._desigStatus.values()] };
-    } catch (e) {
-      console.error('[designation] bypass failed:', e.message);
-      return { ok: false, error: e.message, rows: [] };
-    }
-  });
-} catch (e) { console.error('[designation] bypass handler registration failed:', e.message); }
+// (The builder-designation IPC channels were removed, 2026-10-20.)
 
 // health:runway-history — the trend series for the dashboard chart.
 //
@@ -12502,22 +12419,11 @@ function _migrateAutoGenerateDefault() {
   }
 }
 
-// ── GENERATION DESIGNATION — Phase A: OBSERVE ONLY ─────────────────────────────────────────────
-// Replaces the lease election shipped in 4.4.187 (retired the same day — see
-// docs/single-writer-election-design-2026-08-11.md §0). One machine is designated and stays
-// designated until a person says otherwise: takeover is human-only, and the runway gauge makes a
-// stalled generator visible for days, so automatic failover was machinery for a decision nobody
-// wanted made automatically.
-//
-// PHASE B IS LIVE (4.4.201): _autoExtendTick now SKIPS a station designated to another machine.
-// Bypasses: kill_designation, and a station with no record at all (which the tick then claims —
-// the zero-config rule). Manual Generate is never gated.
-const _desig = require('./generation-designation');
-let _desigHolderSeen = new Map();      // stationId -> last holder, for transition-only events
-let _desigStatus = new Map();          // stationId -> status for the Health Monitor
-let _desigWriteErr = new Map();        // stationId -> last write error, surfaced on the Health Monitor row
-let _desigSkipSeen = new Map();        // stationId -> holder we last reported skipping for (Phase B, transition-only)
-
+// ── BUILDER DESIGNATION: REMOVED (Jeff, 2026-10-20) ─────────────────────────────────────────────────────────────────
+// "Each computer generates its OWN program log for each station. Program logs are local and never sync between
+// computers. No computer claims or owns a station; there is no builder designation at all. Remove it."
+// The designated_generator / kill_designation rows already in station_config_kv are left in place and read by nothing.
+// docs/per-computer-logs-play-log-aired-on-plan-2026-10-20.md.
 function _machineIdentity() {
   try {
     const row = db.prepare('SELECT client_id FROM client_identity LIMIT 1').get();
@@ -12531,125 +12437,6 @@ function _kvGet(stationId, key) {
   catch { return null; }
 }
 
-// WRITES GO THROUGH THE SANCTIONED WRITERS. There was a hand-rolled `_kvPut` here from 4.4.188 to
-// 4.4.192 and it never once succeeded: its INSERT omitted `uuid`, which is NOT NULL with no default
-// on this table, so the FIRST write of `designated_generator` threw
-// "NOT NULL constraint failed: station_config_kv.uuid" — on every machine, every tick — and the
-// caller's try/catch swallowed it. The row was never created, so the DO UPDATE arm was unreachable
-// and zero designation rows existed anywhere. (The ON CONFLICT(station_id,key) target was NOT the
-// fault — that pair is the table's primary key, verified against the live DB.)
-//
-// TWO writers, deliberately, because the two keys have OPPOSITE sync policy:
-//   designated_generator → upsertByKey (mutation-logged, so it SYNCS — designation exists to tell
-//                                       two machines apart, and a local record cannot do that)
-//   kill_designation     → setLocal    (in LOCAL_ONLY_KEYS — upsertByKey *silently skips* local-only
-//                                       keys, which would have turned the emergency bypass into a
-//                                       no-op that reports success)
-function _desigWriteRecord(stationId, value) {
-  const { stationConfigKvUpsertByKey } = require('./sync/handlers/station_config_kv');
-  const r = stationConfigKvUpsertByKey(db, stationId, _desig.KEY, value);
-  if (r && r.skippedLocalOnly) throw new Error(`${_desig.KEY} was refused as a local-only key — it MUST sync`);
-}
-function _killDesignationWriteLocal(stationId, value) {
-  const { stationConfigKvSetLocal } = require('./sync/handlers/station_config_kv');
-  stationConfigKvSetLocal(db, stationId, 'kill_designation', value);
-}
-
-// kill_lease -> kill_designation, once. The lease is dead; its kill switch should not outlive it and
-// quietly do nothing while an operator believes it is protecting them.
-function _migrateKillLease() {
-  try {
-    for (const r of db.prepare("SELECT station_id, value FROM station_config_kv WHERE key='kill_lease'").all()) {
-      if (String(r.value) === '1' && !_kvGet(r.station_id, 'kill_designation')) {
-        _killDesignationWriteLocal(r.station_id, '1');
-        console.log(`[designation] migrated kill_lease -> kill_designation for station ${r.station_id}`);
-      }
-      db.prepare("DELETE FROM station_config_kv WHERE station_id=? AND key='kill_lease'").run(r.station_id);
-    }
-  } catch (e) { console.error('[designation] kill_lease migration:', e.message); }
-}
-
-/** Runs on every _autoExtendTick (30 min). `generatedFor` is the set of station ids that actually
- *  extended their log this tick, so last_generated stays distinct from the heartbeat. */
-function _designationTick(generatedFor, label) {
-  const tag = `[designation] ${label || 'tick'}`;
-  const me = _machineIdentity();
-  // Both early exits used to be silent, which is half of why "did it even fire?" was unanswerable.
-  if (!me.id) { console.log(`${tag}: SKIPPED — no client_identity row, this machine has no id`); return; }
-  const now = Math.floor(Date.now() / 1000);
-  let stations = [];
-  try { stations = db.prepare("SELECT id, name FROM stations WHERE deleted_at IS NULL").all(); }
-  catch (e) { console.log(`${tag}: SKIPPED — could not read stations: ${e.message}`); return; }
-  const tally = { designate: 0, stamp: 0, observe: 0, skip: 0, wrote: 0, failed: 0 };
-  for (const st of stations) {
-    const kill = String(_kvGet(st.id, 'kill_designation') || '') === '1';
-    const autoOn = true;                                  // no switch (2026-10-19); the builder follows the existing designation — decide() never claims
-    const record = _desig.parseRecord(_kvGet(st.id, _desig.KEY));
-    const d = _desig.decide({ record, machineId: me.id, autoOn, killSwitch: kill });
-
-    tally[d.action] = (tally[d.action] || 0) + 1;
-    let attemptedWrite = false;
-    if (d.action === 'designate' || d.action === 'stamp') {
-      attemptedWrite = true;
-      try {
-        _desigWriteRecord(st.id, _desig.nextRecord({ record, now, machineId: me.id, machineName: me.name,
-          generated: !!(generatedFor && generatedFor.has(st.id)) }));
-        _desigWriteErr.delete(st.id);
-        tally.wrote++;
-      } catch (e) {
-        // NOT swallowed. A write that throws on every tick behind a bare catch is exactly how this
-        // stayed invisible for five versions: nothing on screen, nothing in the ledger, nothing in
-        // the log. It now costs a log line, a ledger event, and a red row.
-        _desigWriteErr.set(st.id, e.message);
-        tally.failed++;
-        console.error(`${tag}: ${st.name} — WRITE FAILED: ${e.message}`);
-        _healthEvent('station-designation-write-failed', { stationId: st.id, station: st.name,
-          key: _desig.KEY, action: d.action, error: e.message });
-      }
-    }
-
-    const after = _desig.parseRecord(_kvGet(st.id, _desig.KEY));
-
-    // Read back what we just claimed to write. A writer that returns success while the row does not
-    // change is the same defect wearing a different hat, and only the read-back can see it.
-    if (attemptedWrite && !_desigWriteErr.has(st.id) && !(after && after.machine_id === me.id)) {
-      const msg = 'write reported success but the record did not change on disk';
-      _desigWriteErr.set(st.id, msg);
-      tally.wrote--; tally.failed++;
-      console.error(`${tag}: ${st.name} — ${msg}`);
-      _healthEvent('station-designation-write-failed', { stationId: st.id, station: st.name,
-        key: _desig.KEY, action: d.action, error: msg });
-    }
-
-    // `autoOn` and `reason` ride along so the screen can state WHY, in the decider's own words,
-    // instead of the renderer re-deriving a reason from a second read that can disagree with the one
-    // that actually made the decision. "None" with no explanation is the state Jeff saw and read as
-    // a broken button.
-    let bypass = null;
-    if (kill) { try { bypass = JSON.parse(_kvGet(st.id, 'kill_designation_by') || 'null'); } catch { bypass = null; } }
-    _desigStatus.set(st.id, { ..._desig.status({ record: after, now, machineId: me.id, killSwitch: kill, bypass }),
-                              stationId: st.id, station: st.name, machineId: me.id, at: now,
-                              autoOn, action: d.action, reason: d.reason,
-                              writeError: _desigWriteErr.get(st.id) || null });
-
-    // TRANSITION ONLY: a 30-minute heartbeat logging every tick would put 48 identical rows a day in
-    // the ledger. The live state belongs on screen; only the change belongs in the record.
-    const holder = after ? after.machine_id : null;
-    const prev = _desigHolderSeen.get(st.id);
-    if (prev !== undefined && prev !== holder) {
-      _healthEvent('station-designation-changed', { stationId: st.id, station: st.name,
-        from: prev, to: holder, initiatedBy: me.id, reason: d.reason });
-      console.log(`[designation] ${st.name}: ${prev || 'none'} -> ${holder || 'none'} (${d.reason})`);
-    }
-    _desigHolderSeen.set(st.id, holder);
-  }
-  // ONE line per tick, unconditionally. "Did it even fire?" was a question nobody could answer from
-  // the log, because every path through this function was silent unless a holder changed. A tick
-  // that decides to do nothing still says so.
-  console.log(`${tag}: ${stations.length} station(s) · designate ${tally.designate} · stamp ${tally.stamp} · ` +
-              `observe ${tally.observe} · skip ${tally.skip} · wrote ${tally.wrote} · failed ${tally.failed} ` +
-              `· machine ${me.id.slice(0, 8)} (${me.name || 'unnamed'})`);
-}
 
 
 // ── RUNWAY HISTORY — one sample per station per hour ────────────────────────────────────────────
@@ -12694,7 +12481,7 @@ function _sampleRunway() {
  *  wall-clock time, so a machine that is off overnight still sweeps on its next tick instead of
  *  waiting for a particular hour to come round while it was asleep.
  *
- *  Designation-gated with the SAME rule the generator uses (_desig.mayAutoGenerate) — one rule, two
+ *  PAUSED since 2026-10-20 (builder designation removed; see the gate below). Was: designation-gated — one rule, two
  *  consumers. FAIL-CLOSED: no record, another machine's record, or an unreadable record all mean
  *  "do not sweep". A missing record is the EXPECTED path today (the 4.4.192 write fix still has no
  *  runtime receipt), so it is logged as normal operation, not as an error. */
@@ -12763,6 +12550,7 @@ function _stampSweepLastRun(now) {
  *  flight — could enter before the stamp is meaningful. Exactly one sweep per install at a time. */
 let _sweepInFlight = false;
 
+let _sweepPausedSaid = false;
 function _maybeRunDeletionSweep(stationId) {
   if (_sweepInFlight) return;
   try {
@@ -12770,21 +12558,15 @@ function _maybeRunDeletionSweep(stationId) {
     const last = _sweepLastRun();
     if (Number.isFinite(last) && (now - last) < SWEEP_INTERVAL_SEC) return;
 
-    // Fail-closed designation gate, with WHICH of the three reasons it was.
-    let record = null, machineId = null;
-    try {
-      // Same read the generator's Phase B gate uses (main.js:7814) — one rule, one way of reading it.
-      record = _desig.parseRecord(_kvGet(stationId, _desig.KEY));
-      machineId = _machineIdentity().id;
-    } catch (e) {
-      console.log(`[deletion-sweep] designation unreadable — sweep skipped (station ${stationId}): ${e.message}`);
-      return;
+    // PAUSED (2026-10-20). The sweep deletes cloud audio after checks against THIS computer's database; builder
+    // designation was what kept it to one computer. Designation is removed, and which computer may sweep is Jeff's
+    // decision — until then nothing is released, and the Health Monitor says so once per session.
+    if (!_sweepPausedSaid) {
+      _sweepPausedSaid = true;
+      console.log('[deletion-sweep] paused — which computer releases cloud audio is not decided yet (builder designation removed)');
+      _healthEvent('deletion-sweep-paused', { message: 'Cloud audio cleanup is paused: which computer may delete released audio from the cloud is waiting for a decision. Nothing is deleted meanwhile.' });
     }
-    if (!record) { console.log(`[deletion-sweep] designation missing — sweep skipped (station ${stationId})`); return; }
-    if (!_desig.mayAutoGenerate({ record, machineId, killSwitch: false })) {
-      console.log(`[deletion-sweep] designation names another machine — sweep skipped (station ${stationId})`);
-      return;
-    }
+    return;
 
     _sweepInFlight = true;
 
@@ -12852,7 +12634,6 @@ async function _releaseR2Object(fileKey) {
 
 async function _autoExtendTick() {
   if (!db) return;
-  const _generatedThisTick = new Set();
   let stations = [];
   try { stations = db.prepare("SELECT id, name FROM stations WHERE deleted_at IS NULL").all(); } catch { return; }
   const nowTs = Math.floor(Date.now() / 1000);
@@ -12865,48 +12646,7 @@ async function _autoExtendTick() {
     // a log, and a station with auto-generate off still deletes songs.
     _maybeRunDeletionSweep(st.id);
 
-    // ── PHASE B — ENFORCEMENT (4.4.201) ────────────────────────────────────────────────────────
-    // Phase A recorded who should build this station's log. From here the engine OBEYS it.
-    //
-    // Three ways through, and the order matters:
-    //   kill_designation set  → bypass entirely. The emergency switch must outrank the gate, or a
-    //                           bug in designation could stop a station being built with no way out.
-    //   no record             → NOT ALLOWED (Jeff, 2026-10-19): the builder follows the existing
-    //                           designation; no machine claims a station by building it. The Health
-    //                           Monitor shows such a station yellow, and Fill Day still works.
-    //   record is another's   → SKIP. This is the whole feature.
-    //
-    // Manual Generate is NOT gated. An operator pressing Generate is an explicit instruction from a
-    // human at that machine; this gate is only about the UNATTENDED writer.
-    const _me = _machineIdentity();
-    const _rec = _desig.parseRecord(_kvGet(st.id, _desig.KEY));
-    const _gate = _desig.mayAutoGenerate({
-      record: _rec, machineId: _me.id,
-      killSwitch: String(_kvGet(st.id, 'kill_designation') || '') === '1',
-    });
-    if (!_gate.allow) {
-      // TRANSITION-ONLY reporting: this runs every 30 minutes per station, so an event each time
-      // would put 48 identical rows a day per station in the ledger and bury the real ones. The live
-      // state belongs on screen (the Health Monitor designation row already names the holder); only
-      // the change belongs in the record.
-      const seen = _desigSkipSeen.get(st.id);
-      if (seen !== _gate.holder) {
-        _desigSkipSeen.set(st.id, _gate.holder);
-        console.log(`[auto-extend] ${st.name}: SKIPPED — ${_gate.reason}`);
-        _healthEvent('auto-extend-skipped-not-designated', {
-          stationId: st.id, station: st.name, reason: _gate.reason,
-          designatedTo: _gate.holder, designatedToName: (_rec && _rec.machine_name) || null,
-          thisMachine: _me.id, lastCheckedByHolder: (_rec && _rec.last_checked) || null,
-        });
-      }
-      continue;
-    }
-    if (_desigSkipSeen.get(st.id) !== undefined) {
-      // We are generating this station again — record the resumption, once.
-      _desigSkipSeen.delete(st.id);
-      console.log(`[auto-extend] ${st.name}: resumed — this machine is now the designated generator`);
-      _healthEvent('auto-extend-resumed-designated', { stationId: st.id, station: st.name, thisMachine: _me.id });
-    }
+    // No builder designation (Jeff, 2026-10-20): every computer keeps every station's log itself.
 
     if (_autoDeferralCheck(st)) continue;                // in-process audio: defer, do not generate
     const runwaySec = _stationRunwaySec(st.id);
@@ -12918,7 +12658,6 @@ async function _autoExtendTick() {
   }
   // Designation heartbeat rides the extender's own 30-minute cadence: the same tick that decides
   // whether to generate is the one that proves this machine is alive and watching.
-  try { _designationTick(_generatedThisTick); } catch (e) { console.error('[designation] tick:', e.message); }
   // Runway sample rides it too — same reason, and it must be recorded whether or not this machine
   // generated, because a runway that is falling because nobody is topping it up is the case the
   // chart exists to show.
@@ -12938,13 +12677,11 @@ function startAutoExtend() {
   // This is the third time this exact trap has been hit in this file — see the GPIO / Site Replication
   // note and the artwork-cache note, both of which say the same thing: db is undefined at module load.
   // The timer below is fine here; only the db-touching work had to move.
-  try { _migrateKillLease(); } catch {}
   // Hand deletion-sweep the ONE way it may reach the network. Registered here — before the first
   // tick and before any delete path can run — because with no deleter registered the sweep silently
   // releases nothing, which would look identical to "the mirror works and there was nothing to do".
   try { require('./deletion-sweep').setObjectDeleter(_releaseR2Object); }
   catch (e) { console.error('[deletion-sweep] could not register R2 deleter:', e.message); }
-  try { _designationTick(new Set(), 'startup tick'); } catch (e) { console.error('[designation] first tick:', e.message); }
   // Sample immediately, not in 30 minutes: a fresh install would otherwise show an empty chart for
   // half an hour and read as broken rather than as new.
   try { _sampleRunway(); } catch (e) { console.error('[runway-history] first sample:', e.message); }
