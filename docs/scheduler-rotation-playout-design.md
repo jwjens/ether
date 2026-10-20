@@ -578,10 +578,13 @@ So the gate must tell the two cases apart (decision D1):
 - **A log row airs once.** Each deck holds its own row, and only that row is consumed at go-live (10348f4's model).
 - **Generate, Clear Day and every editor touch pending rows only.** played / playing / skipped / missed / unscheduled are the
   record and are never deleted or rewritten.
-- **Rotation counts plays of the broadcast owner only** (setting, starting value on).
-  - Today two machines aired one station and both counted.
-  - A test or standby machine must not block songs on air.
-  - Its plays stay in history, marked by machine.
+- **Each computer's rotation counts the plays that aired on that computer** (Jeff, 2026-10-20: "Each computer's rotation
+  rules count the plays that aired on that computer." — replaces "the broadcast owner only").
+  - Every computer builds its own log for each station (logs never sync; there is no builder designation).
+  - Plays from other computers still sync and stay in the Play Log, marked with the computer that aired them; they do not
+    count in this computer's rotation.
+  - Plays recorded before the computer was stored (before v63, 2026-10-18) count on every computer (Jeff, 2026-10-20).
+  - Plan: docs/per-computer-logs-play-log-aired-on-plan-2026-10-20.md.
 - **A reconciliation view** in the Program Log shows log against as-aired for any hour: added, skipped, moved, replayed. Nothing
   needs a separate reconcile step, because the record is written as things air (as Zetta → GSelector does).
 - **`songs.last_played_at` / `play_count`** are written by the daemon on every play, as display values. **No picker reads them.**
