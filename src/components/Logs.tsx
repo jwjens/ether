@@ -108,7 +108,11 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
       sql += " AND played_at >= " + from + " AND played_at <= " + to;
       countSql += " AND played_at >= " + from + " AND played_at <= " + to;
     }
-    sql += " ORDER BY played_at DESC LIMIT 200";
+    // A DAY IS NEVER CUT SHORT (Jeff, 2026-10-20: "I can't scroll up or down to see earlier rows (this morning)").
+    // The 200-row cap made a busy day's morning simply absent from the list. Today, or a picked range of one day,
+    // lists every play; only longer periods keep the newest-200 screen cap (the count tile still shows the total).
+    const oneDay = filter === "today" || (filter === "all" && !!dateFrom && !!dateTo && dateFrom === dateTo);
+    sql += " ORDER BY played_at DESC" + (oneDay ? "" : " LIMIT 200");
 
     const rows = await queryScoped<LogEntry>(sql, params, stationId, { skipScoping: true });
     setEntries(rows);
@@ -385,6 +389,11 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
   );
 
   return (
+    // THE PLAY LOG IS ITS OWN SCROLL REGION. Every host clips: the main panel area (App.tsx <main> overflow hidden),
+    // the pop-out window (PopoutShell content overflow hidden) and the schedule workspace pane (PaneFrame flush,
+    // overflow hidden). Without this the rows below the window's edge could never be reached. A separate wrapper, not the
+    // flex column itself: as a scrolling flex column it would shrink the table's (overflow hidden) box to fit and clip again.
+    <div style={{ flex: 1, height: "100%", minHeight: 0, overflowY: "auto" }}>
     <div style={{ display: "flex", flexDirection: "column" as any, gap: 16, fontFamily: "'Inter', system-ui, sans-serif" }}>
 
       {/* Header */}
@@ -657,6 +666,7 @@ export default function Logs({ hideHeader }: LogsProps = {}) {
           </div>
         );
       })()}
+    </div>
     </div>
   );
 }

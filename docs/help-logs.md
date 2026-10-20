@@ -51,8 +51,12 @@ An empty cell means Ether does not know, and it will not invent a value:
 
 ## Good to know
 
-**Every export covers the whole period** you picked — not just the plays shown on screen (the screen lists the 200
-most recent).
+**Every export covers the whole period** you picked — not just the plays shown on screen.
+
+**The list on screen scrolls.** Scroll the Play Log (in its own window, the menu panel, or the Program Log's
+Play Log pane) to reach earlier plays. **Today**, or a From/To range of a single day, lists every play of that
+day, back to midnight. Longer periods (7 Days, 30 Days, All, a multi-day range) list the 200 most recent on
+screen; the Songs Played count and every export still cover the whole period.
 
 **BMI and ASCAP lengths** come from the play log. A play whose length was never recorded has an **empty**
 duration rather than a guessed one — check those rows before you file.
