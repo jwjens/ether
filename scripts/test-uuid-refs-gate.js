@@ -46,6 +46,7 @@ const H = {
   artists: require(path.join(ROOT, 'electron/sync/handlers/artists')),
   songs: require(path.join(ROOT, 'electron/sync/handlers/songs')),
   kv: require(path.join(ROOT, 'electron/sync/handlers/station_config_kv')),
+  pools: require(path.join(ROOT, 'electron/sync/handlers/jingle_categories')),
 };
 
 // ── results ─────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -375,6 +376,33 @@ function wrongOn(M) {
   backend.release();
   await sync(A, B);
   check('P3.5', 'the late category itself arrives intact', !!catByCode(A, 'LATE'));
+
+  // SWEEPER ASSIGNMENTS (2026-10-19). A category's sweeper pool is a jingle_categories row: it travels by the POOL's uuid
+  // and lands on the receiver's own number for that pool — numbered differently on the two machines here. "None" travels.
+  log('\nSWEEPER ASSIGNMENTS — pools numbered differently on the two machines');
+  const poolBy = (M, name) => M.db.prepare('SELECT * FROM jingle_categories WHERE name = ? AND station_id = ? AND deleted_at IS NULL').get(name, M.stationId);
+  on(B, db => H.pools.jingleCategoriesCreate(db, { station_id: B.stationId, name: 'B Only Pool' }));
+  on(B, db => H.pools.jingleCategoriesCreate(db, { station_id: B.stationId, name: 'B Only Pool 2' }));
+  on(A, db => H.pools.jingleCategoriesCreate(db, { station_id: A.stationId, name: 'Halloween' }));
+  await sync(A, B);
+  on(B, db => H.pools.jingleCategoriesCreate(db, { station_id: B.stationId, name: 'Magic' }));
+  await sync(A, B);
+  check('SW.0', 'the pools are numbered differently on the two machines',
+    poolBy(A, 'Halloween') && poolBy(B, 'Halloween') && poolBy(A, 'Halloween').id !== poolBy(B, 'Halloween').id,
+    `Halloween A=${poolBy(A, 'Halloween')?.id} B=${poolBy(B, 'Halloween')?.id}; Magic A=${poolBy(A, 'Magic')?.id} B=${poolBy(B, 'Magic')?.id}`);
+  const assign = (M, code, poolName) => on(M, db => H.categories.categoriesUpdateById(db, catByCode(M, code).id,
+    poolName ? { overlay_kind: 'pool', overlay_category_id: poolBy(M, poolName).id, overlay_song_id: null } : { overlay_kind: null, overlay_category_id: null, overlay_song_id: null }));
+  const poolOf = (M, code) => { const c = catByCode(M, code); return c && c.overlay_kind === 'pool' ? (M.db.prepare('SELECT name FROM jingle_categories WHERE id = ?').get(c.overlay_category_id)?.name ?? `#${c.overlay_category_id} (no such pool)`) : (c && c.overlay_kind ? c.overlay_kind : 'none'); };
+  assign(A, 'KIDS', 'Halloween');      // A assigns its pool
+  assign(B, 'DISNEY', 'Magic');        // B assigns its pool
+  assign(B, 'HVADULT', 'Halloween');   // B assigns A's pool
+  await sync(A, B);
+  check('SW.1', 'A\'s assignment (KIDS → Halloween) is Halloween on B', poolOf(B, 'KIDS') === 'Halloween', `B shows ${poolOf(B, 'KIDS')}`);
+  check('SW.2', 'B\'s assignments (DISNEY → Magic, HV ADULT → Halloween) are the same pools on A',
+    poolOf(A, 'DISNEY') === 'Magic' && poolOf(A, 'HVADULT') === 'Halloween', `A shows DISNEY ${poolOf(A, 'DISNEY')}, HVADULT ${poolOf(A, 'HVADULT')}`);
+  assign(B, 'KIDS', null);             // none, set on the other machine
+  await sync(A, B);
+  check('SW.3', '"none" set on B is none on A', poolOf(A, 'KIDS') === 'none', `A shows ${poolOf(A, 'KIDS')}`);
 
   log(`\n${passes} passed, ${failures} failed`);
   const dir = path.join(os.tmpdir(), 'ether-uuid-refs-gate');

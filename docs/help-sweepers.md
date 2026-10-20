@@ -24,7 +24,9 @@ tagged as "jingles" are treated as sweepers.)
 
 Imaging is **assigned by category**: you decide, per music category, whether songs in it get imaging —
 a **specific** sweeper ("always THIS ID on the Power Gold") or a **rotating pool** (variety, no
-burnout). Some categories get imaging, some get nothing.
+burnout). Some categories get imaging, some get nothing. **The dropdowns are the only thing that decides:** a
+category set to **none** never gets a sweeper, and a category set to a pool or a sweeper gets one on every seam
+inside its active hours.
 
 ## When to use it
 
@@ -43,11 +45,15 @@ The **SWEEPERS** button in the bottom bar (next to CATEGORIES) opens this home. 
    freely; length is never an input to the seam. To rename a cut, pick its pool and press **EDIT** beside
    the cut's name — the new name shows everywhere, the Library included.
 3. **Assign per category — the core.** In **Category assignments**, each music category has an **OVERLAY**
-   dropdown: pick **— none (clean segue) —**, a **specific sweeper**, or a **sweeper pool**. Set
+   dropdown: pick **— none (no sweeper) —**, a **specific sweeper**, or a **sweeper pool**. Set
    **LEAD (s)** for that category (see below) and **ACTIVE HOURS** (default **Always**) to keep imaging
    out of hours where it doesn't belong.
-4. **Fill Day.** Sweepers are placed on the song seams when the log is filled (Program Log →
-   Fill Day). On air they fire automatically.
+4. **It's live.** Every change is saved straight away and applied to the log ahead at once — no Fill Day
+   needed. A line under the assignments says what happened, e.g. *"KIDS: sweeper saved. Log ahead updated:
+   212 sweepers placed (198 replaced)."* If a change could not be saved, that line says so in red, and the
+   dropdown shows what is really stored. Sweepers already aired and sweepers you placed by hand are never
+   touched. One sweeper already loaded for the very next seam (the last 90 seconds or so) may still play.
+5. **Fill Day** places sweepers the same way when it builds the log. On air they fire automatically.
 
 ## LEAD — the one number
 
@@ -75,8 +81,7 @@ box still shows the number that is actually airing (2) in grey, so you can alway
 over it and the box brightens: that category now has its own number. Clear the box and it goes back to grey
 and follows the station default again.
 
-Changes take effect on the **next Generate** — the number is written onto each placement when the schedule
-is built, so a song already scheduled keeps the LEAD it was scheduled with.
+Changes apply to the log ahead **at once**, like every other control here.
 
 Two practical limits:
 
@@ -85,16 +90,16 @@ Two practical limits:
   90 seconds before the end of a song, so that is the most lead it can honour. Hover the LEAD box to see
   the exact maximum.
 
-## Fallback (optional)
+## No station fallback
 
-Under the assignments, **Fallback for unassigned categories** sets a station-level pool for any category you
-didn't assign. Leave it **None (clean segue — silence is fine)** and unassigned categories play a **clean
-segue** — silence between songs is a legitimate programming choice here, **never an error**. Nothing warns
-you; nothing is placed.
+Earlier versions had a **Fallback for unassigned categories** pool. It is gone: it put sweepers on every
+category set to none, so the dropdowns said one thing and the air did another. Now **none means none** — a
+clean segue, a legitimate programming choice, **never an error**. If a station used the fallback, set each
+category's dropdown to the pool you want.
 
 ## AUTO-POST (station switch)
 
-Under the fallback, **AUTO-POST** is one switch for the whole station. **OFF** (the default): sweepers
+Under the assignments, **AUTO-POST** is one switch for the whole station. **OFF** (the default): sweepers
 start **LEAD** seconds before the seam, as above. **ON**: a sweeper from a **pool** is timed to **end
 exactly where the next song's vocal starts** — its **post**, the intro marker you set in the cue editor —
 and Ether picks a cut from the pool short enough to fit.
@@ -104,7 +109,7 @@ and Ether picks a cut from the pool short enough to fit.
 - A seam where **no cut in the pool is short enough** gets **no sweeper** — a cut that doesn't fit would
   have to talk over one of the two songs.
 
-Like LEAD, it takes effect on the **next Fill Day**.
+Like LEAD, it applies to the log ahead **at once**.
 
 ## How it behaves on air
 
@@ -145,11 +150,11 @@ works on every channel strip.
 **Look at the Health Monitor first.** Each station's **Sweepers** row counts what was placed, fired and skipped
 today, and says why each skip happened; it turns red if none fired in the last hour of air.
 
-- **Nothing assigned?** A category with **OVERLAY = none** and no station fallback plays a clean segue by
-  design.
+- **Nothing assigned?** A category with **OVERLAY = none** plays a clean segue by design.
 - **No tagged cuts / empty pool?** Mark cuts as sweepers in the Library and put them in a pool.
 - **Wrong hour?** Check the category's **ACTIVE HOURS** — it may be gated out of the current hour.
-- **Did you Generate?** Placements happen at Generate time. Regenerate after changing an assignment.
+- **Is there a log?** Sweepers are placed on the songs in the log. With no log ahead there is nothing to place
+  them on — Fill Day first.
 - **FILE MISSING in Up Next?** The sweeper's audio isn't on this computer; it will not play.
 - If a sweeper is armed but the song is skipped or the hour hard-cuts at :00, it cancels cleanly and re-arms
   for the next seam — that's expected.

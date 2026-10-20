@@ -13,11 +13,12 @@
 //   2) Assign sweepers (marked in the Library) to pools.
 //   3) The CORE: per-music-category ASSIGNMENT — each category names a SPECIFIC overlay item OR a pool,
 //      with active hours + optional timing override. This is what Generate reads to place overlays.
-//   + an optional station-level FALLBACK pool for unassigned categories (none = clean dead segue).
+//   The dropdowns are the only thing that decides (Jeff, 2026-10-19): a category set to none gets no sweeper. The
+//   station FALLBACK pool for unassigned categories is gone — it overrode every "none". Every change is saved (an error
+//   says so) and re-places the pending log's sweepers at once (main.js _replaceSweepers).
 // Selection lives here in the ONE scheduler (Generate); the daemon only orchestrates the fire. Cadence retired.
 import { useEffect, useState, useCallback, Fragment } from "react";
 import { query } from "../db/client";
-import { idFromStoredOne, storedFromIds } from "../lib/refValue";
 import { SWP_INDIGO } from "../lib/classColors";
 import ReelSplitter from "./ReelSplitter";
 import InlineNameEditor from "./InlineNameEditor";
@@ -89,7 +90,8 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
   const [selPool, setSelPool] = useState<number | null>(null);
   const [addQuery, setAddQuery] = useState("");
   const [cats, setCats] = useState<MusicCat[]>([]);
-  const [fallbackId, setFallbackId] = useState<number | null>(null);
+  // What the last change did: saved and applied to the log, or why not. Never silent (Jeff: "every dropdown is live and saved").
+  const [liveMsg, setLiveMsg] = useState<{ ok: boolean; text: string } | null>(null);
   // AUTO-POST — the station switch (audit 11). Placement reads the same key (electron/auto-post-switch.js).
   const [autoPost, setAutoPost] = useState(false);
   const [newName, setNewName] = useState("");
@@ -125,12 +127,10 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
     try {
       const r = await ether()?.stationConfigKv?.list(stationId);
       const rows = (r?.rows || []) as { key: string; value: string }[];
-      const v = rows.find(x => x.key === "overlay_fallback_category_id")?.value;
-      setFallbackId(await idFromStoredOne("jingle_categories", v));   // a uuid, or a legacy local id
       setAutoPost(rows.find(x => x.key === "overlay_auto_post")?.value === "1");
       const so = parseInt(rows.find(x => x.key === "segue_overlap_sec")?.value ?? "", 10);
       setSegueOverlap(isNaN(so) ? 0 : Math.max(0, Math.min(10, so)));
-    } catch { setFallbackId(null); }
+    } catch { /* settings unread: AUTO-POST shows OFF */ }
   }, [stationId]);
   useEffect(() => { reload(); }, [reload]);
 
@@ -168,24 +168,45 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
       await reload();
     } catch {}
   };
+  // SAVE, THEN MAKE IT LIVE. Every assignment control goes through here: the write is checked (a refused write is shown,
+  // never swallowed), the panel re-reads what was stored, and the station's pending log is re-placed at once so the
+  // sweepers ahead follow the dropdowns now — not at the next Fill Day.
+  const saveCategory = async (c: MusicCat, patch: Partial<MusicCat>, what: string) => {
+    if (ro) return;
+    try {
+      const r = await ether()?.categories?.updateById(c.id, patch);
+      if (!r || r.ok === false) { setLiveMsg({ ok: false, text: `${c.code}: not saved — ${r?.error || "no answer from the app"}` }); await reload(); return; }
+    } catch (e: any) { setLiveMsg({ ok: false, text: `${c.code}: not saved — ${e?.message || e}` }); await reload(); return; }
+    await reload(); onMutated?.(["categories"]);
+    await applyToLog(`${c.code}: ${what} saved`);
+  };
+  const applyToLog = async (saved: string) => {
+    try {
+      const r = await ether()?.schedule?.replaceSweepers(stationId);
+      if (!r || r.ok === false) { setLiveMsg({ ok: false, text: `${saved}, but the log ahead was not updated — ${r?.error || "no answer from the app"}. It applies at the next Fill Day.` }); return; }
+      setLiveMsg({ ok: true, text: `${saved}. Log ahead updated: ${r.placed} sweeper${r.placed === 1 ? "" : "s"} placed${r.removed ? ` (${r.removed} replaced)` : ""}.` });
+    } catch (e: any) { setLiveMsg({ ok: false, text: `${saved}, but the log ahead was not updated — ${e?.message || e}. It applies at the next Fill Day.` }); }
+  };
   const toggleAutoPost = async () => {
     if (ro) return;
     const next = !autoPost;
-    try { await ether()?.stationConfigKv?.upsertByKey(stationId, "overlay_auto_post", next ? "1" : "0"); setAutoPost(next); } catch {}
+    try {
+      const r = await ether()?.stationConfigKv?.upsertByKey(stationId, "overlay_auto_post", next ? "1" : "0");
+      if (r && r.ok === false) { setLiveMsg({ ok: false, text: `AUTO-POST: not saved — ${r.error}` }); return; }
+      setAutoPost(next);
+    } catch (e: any) { setLiveMsg({ ok: false, text: `AUTO-POST: not saved — ${e?.message || e}` }); return; }
+    await applyToLog(`AUTO-POST ${next ? "ON" : "OFF"} saved`);
   };
-  // Stored as the pool's UUID (2026-10-19): a synced value must not hold this machine's number. src/lib/refValue.ts
-  const setFallback = async (poolId: number | null) => { if (ro) return; try { const stored = poolId != null ? (await storedFromIds("jingle_categories", [poolId]))[0] : ""; await ether()?.stationConfigKv?.upsertByKey(stationId, "overlay_fallback_category_id", String(stored ?? "")); setFallbackId(poolId); } catch {} };
 
-  // Category assignment: encode as "item:<songId>" | "pool:<poolId>" | "".
+  // Category assignment: encode as "item:<songId>" | "pool:<poolId>" | "" (none: no sweeper on this category).
   const assignCategory = async (c: MusicCat, value: string) => {
-    if (ro) return;
     let patch: Partial<MusicCat> = { overlay_kind: null, overlay_song_id: null, overlay_category_id: null };
     if (value.startsWith("item:")) patch = { overlay_kind: "item", overlay_song_id: Number(value.slice(5)), overlay_category_id: null };
     else if (value.startsWith("pool:")) patch = { overlay_kind: "pool", overlay_category_id: Number(value.slice(5)), overlay_song_id: null };
-    try { await ether()?.categories?.updateById(c.id, patch); await reload(); onMutated?.(["categories"]); } catch {}
+    await saveCategory(c, patch, value ? "sweeper" : "none (no sweeper)");
   };
   const catValue = (c: MusicCat) => c.overlay_kind === "item" && c.overlay_song_id != null ? `item:${c.overlay_song_id}` : c.overlay_kind === "pool" && c.overlay_category_id != null ? `pool:${c.overlay_category_id}` : "";
-  const setHours = async (c: MusicCat, mask: number) => { if (ro) return; try { await ether()?.categories?.updateById(c.id, { overlay_active_hours: mask }); await reload(); onMutated?.(["categories"]); } catch {} };
+  const setHours = async (c: MusicCat, mask: number) => { await saveCategory(c, { overlay_active_hours: mask }, "active hours"); };
 
   // LEAD commit. Blank clears the override so the category falls back to the station default (and the
   // box greys to show it). Written through the same categories.updateById path as ACTIVE HOURS, so it
@@ -205,7 +226,7 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
       next = Math.max(0, Math.min(maxLead, Math.round(n)));
     }
     if (next === c.overlay_lead_in_sec) return;
-    try { await ether()?.categories?.updateById(c.id, { overlay_lead_in_sec: next }); await reload(); onMutated?.(["categories"]); } catch {}
+    await saveCategory(c, { overlay_lead_in_sec: next }, "LEAD");
   };
 
   const inp: React.CSSProperties = { width: 46, background: "var(--bg-secondary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", borderRadius: "var(--r-0)", padding: "2px 4px", fontSize: "var(--t-body)", fontFamily: "'DM Mono', monospace" };
@@ -265,7 +286,7 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
                   <span style={{ fontSize: "var(--t-small)", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.code}{c.name && c.name !== c.code ? ` · ${c.name}` : ""}</span>
                 </div>
                 <select key={c.id + "s"} value={catValue(c)} disabled={ro} onChange={e => assignCategory(c, e.target.value)} style={sel}>
-                  <option value="">— none (clean segue) —</option>
+                  <option value="">— none (no sweeper) —</option>
                   {swpItems.length > 0 && <optgroup label="Specific sweeper">{swpItems.map(s => <option key={"i" + s.id} value={`item:${s.id}`}>♫ {s.title}</option>)}</optgroup>}
 
                   {swpPools.length > 0 && <optgroup label="Sweeper pool (rotates)">{swpPools.map(p => <option key={"p" + p.id} value={`pool:${p.id}`}>◆ {p.name}</option>)}</optgroup>}
@@ -315,16 +336,14 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
           })}
         </div>
       )}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 22, fontSize: "var(--t-body)", color: "var(--text-secondary)" }}>
-        <span>Fallback for unassigned categories:</span>
-        <select value={fallbackId ?? ""} disabled={ro} onChange={e => setFallback(e.target.value ? Number(e.target.value) : null)} style={sel}>
-          <option value="">None (clean segue — silence is fine)</option>
-          {pools.map(p => <option key={p.id} value={p.id}>{p.type} · {p.name}</option>)}
-        </select>
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: -12, marginBottom: 22, fontSize: "var(--t-body)", color: "var(--text-secondary)" }}>
+      {liveMsg && (
+        <div role="status" style={{ fontSize: "var(--t-body)", marginBottom: 14, color: liveMsg.ok ? "var(--text-secondary)" : "var(--accent-red)" }}>
+          {liveMsg.text}
+        </div>
+      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 22, fontSize: "var(--t-body)", color: "var(--text-secondary)" }}>
         <button onClick={toggleAutoPost} disabled={ro} aria-pressed={autoPost}
-          title="AUTO-POST: the sweeper ends exactly where the next song's vocal starts (its post). Takes effect on the next Fill Day."
+          title="AUTO-POST: the sweeper ends exactly where the next song's vocal starts (its post). Applies to the log ahead at once."
           style={{ minWidth: 64, padding: "var(--s-1) var(--s-2)", borderRadius: "var(--r-0)", fontWeight: 800, fontSize: "var(--t-small)", letterSpacing: "0.06em", cursor: ro ? "default" : "pointer",
                    border: `1px solid ${autoPost ? "var(--accent-green)" : "var(--border-primary)"}`, background: autoPost ? "var(--accent-green)" : "var(--bg-tertiary)", color: autoPost ? "#fff" : "var(--text-secondary)" }}>
           AUTO-POST {autoPost ? "ON" : "OFF"}

@@ -294,7 +294,9 @@ const REGISTRY = {
     // REFERENCES TRAVEL BY UUID (2026-10-19, docs/sync-uuid-references-2026-10-19.md). The sender attaches each parent's
     // uuid; the receiver writes its OWN local id for it. Before this, categories.overlay_song_id / overlay_category_id went out as the sender's integer and landed
     // on whatever row has that number on the other machine (the category-one-off defect).
-    refs: { station_id: 'stations', overlay_song_id: 'songs', overlay_category_id: 'categories' },
+    // overlay_category_id is a SWEEPER POOL (jingle_categories), not a music category: declared 'categories' it went out
+    // as a music category's uuid and landed on the wrong pool or none (caught 2026-10-19, docs/sweepers-assignments-2026-10-19.md).
+    refs: { station_id: 'stations', overlay_song_id: 'songs', overlay_category_id: 'jingle_categories' },
   },
 
   spot_categories: {

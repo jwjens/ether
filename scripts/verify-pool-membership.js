@@ -53,11 +53,7 @@ function copyLive() {
 function replay(db, stationId, force) {
   const reader = preparePoolCandidates(db, force);
 
-  let fallbackCatId = null;
-  try {
-    const fb = db.prepare("SELECT value FROM station_config_kv WHERE key='overlay_fallback_category_id' AND station_id = ? AND deleted_at IS NULL").get(stationId);
-    if (fb && fb.value) fallbackCatId = parseInt(fb.value, 10) || null;
-  } catch {}
+  // No station fallback pool (2026-10-19): a category set to none gets no sweeper, as main.js _placeJingles.
 
   const stmtAssign = db.prepare('SELECT overlay_kind, overlay_song_id, overlay_category_id, overlay_lead_in_sec, overlay_active_hours FROM categories WHERE id = ?');
   const stmtItem = db.prepare("SELECT s.id, s.title FROM songs s WHERE s.id = ? AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status != 'inactive') AND s.content_class IN ('SWP','JIN')");
@@ -99,10 +95,7 @@ function replay(db, stationId, force) {
     const itemId = a ? a.overlay_song_id : null;
     let leadOverride = a ? a.overlay_lead_in_sec : null;
     let activeHours = (a && a.overlay_active_hours != null) ? a.overlay_active_hours : ALWAYS;
-    if (!kind) {
-      if (fallbackCatId) { kind = 'pool'; poolId = fallbackCatId; leadOverride = null; activeHours = ALWAYS; }
-      else continue;
-    }
+    if (!kind) continue;
     const seamHour = new Date(incoming.scheduled_at * 1000).getHours();
     if (((activeHours >> seamHour) & 1) !== 1) continue;
     let pick = null;

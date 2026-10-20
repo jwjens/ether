@@ -10966,22 +10966,16 @@ const { buildScheduleCtx, generateDayRows, resetGenSlice } = require('./generate
 // the assignment is keyed on the INCOMING song's category and the placement's scheduled_at is that song's
 // seam (unchanged placement-row shape). A placement carries content_class ('JIN'|'SWP') + channel='CART' +
 // lead_in + jingle_category_id (the pool, or null for a specific item) + song_id. The daemon only
-// READS these — no in-daemon selection. Fail-safe: pre-v32 DB / no assignment + no fallback → no placement
+// READS these — no in-daemon selection. Fail-safe: pre-v32 DB / no assignment → no placement
 // (a clean dead segue is a deliberate programming choice, NEVER an error). Never throws into Generate.
+//
+// THE DROPDOWNS ARE THE ONLY THING THAT DECIDES (Jeff, 2026-10-19): "Ether places sweepers exactly per the assignments
+// the user sets." A category whose dropdown says none gets no sweeper. The station "fallback for unassigned categories"
+// pool is gone: it put sweepers on every category set to none, so the dropdown said one thing and the air did another
+// (halloVeen: HV, Kids and Disney set to none still got 2,473 sweepers a day from the Halloween fallback). The stored
+// key (overlay_fallback_category_id) is left in place and read by nothing. docs/sweepers-assignments-2026-10-19.md
 function _placeJingles(db, stationId, rows) {
   if (!rows || !rows.length) return;
-  // Station-level generic fallback pool for unassigned categories (optional). None set → clean dead segue.
-  let fallbackCatId = null;
-  try {
-    const fb = db.prepare("SELECT value FROM station_config_kv WHERE key='overlay_fallback_category_id' AND station_id = ? AND deleted_at IS NULL").get(stationId);
-    // A jingle category's UUID from 2026-10-19 (a synced value must not hold one machine's number); a legacy plain id
-    // still reads as this machine's id. docs/sync-uuid-references-2026-10-19.md
-    if (fb && fb.value) {
-      fallbackCatId = /^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(fb.value)
-        ? (db.prepare("SELECT id FROM jingle_categories WHERE uuid = ?").get(fb.value)?.id ?? null)
-        : (parseInt(fb.value, 10) || null);
-    }
-  } catch {}
   // AUTO-POST is a STATION setting, switched in the Sweepers panel (audit 11). Off → the LEAD path, unchanged.
   const stationAutoPost = require('./auto-post-switch').readAutoPost(db, stationId);
   // Prepared reads (defensive — a pre-v32 DB lacks the overlay columns → skip, byte-identical prior behavior).
@@ -11122,11 +11116,8 @@ function _placeJingles(db, stationId, rows) {
       // THE OPT-IN — the station switch (Sweepers panel). It replaced categories.overlay_chain_type, which nothing in
       // the app could write: a behaviour with no switch is a hidden number (Jeff, 2026-09-27). Off → LEAD, unchanged.
       const wantsAutoPost = stationAutoPost;
-      // Unassigned → station fallback pool (no hours gate), else a clean dead segue (deliberate, not an error).
-      if (!kind) {
-        if (fallbackCatId) { kind = 'pool'; poolId = fallbackCatId; leadOverride = null; activeHours = 16777215; }
-        else continue;
-      }
+      // None in the dropdown → no sweeper on this seam: a clean segue (deliberate, not an error, not a skip).
+      if (!kind) continue;
       // Active-hours gate — the seam's LOCAL hour must be enabled (keeps imaging out of hours it shouldn't be in).
       const seamHour = new Date(incoming.scheduled_at * 1000).getHours();
       if (((activeHours >> seamHour) & 1) !== 1) { skip('off_hours', incoming.scheduled_at); continue; }
@@ -11185,6 +11176,42 @@ function _placeJingles(db, stationId, rows) {
     _healthEvent('sweeper-placement', { stationId, days: placeTally });
   }
 }
+
+// EVERY DROPDOWN IS LIVE (Jeff, 2026-10-19). Sweepers are written onto the log when it is built, so a changed assignment
+// used to reach air only at the next Fill Day — the dropdown said one thing while the log already ahead did another.
+// Now a change re-places the sweepers on the station's pending log at once: every pending sweeper the machine placed
+// from now on is removed and _placeJingles runs again over the pending songs, by the assignments as they now stand.
+// Played, playing and didn't-play rows and anything placed by hand are never touched. A sweeper already armed for the
+// very next seam (the engine arms ~90 s ahead) may still play once. Returns what it did, so the panel can say so.
+function _replaceSweepers(stationId, fromTs) {
+  const { generatedScheduleBulkCreate } = require('./sync/handlers/generated_schedule');
+  const { NOT_OPERATOR_OWNED_SQL, NOT_AIRED_SQL } = require('./log-edit-core');
+  const from = fromTs != null ? fromTs : Math.floor(Date.now() / 1000);
+  let removed = 0, placed = 0;
+  db.transaction(() => {
+    removed = db.prepare(
+      `DELETE FROM generated_schedule WHERE station_id = ? AND content_class IN ('SWP','JIN') AND scheduled_at >= ?
+          AND ${NOT_OPERATOR_OWNED_SQL} AND ${NOT_AIRED_SQL}`).run(stationId, from).changes;
+    const rows = db.prepare(
+      `SELECT scheduled_at, log_hour_ts, song_id, category_id, clock_id, content_class, duration_s FROM generated_schedule
+        WHERE station_id = ? AND deleted_at IS NULL AND ${NOT_AIRED_SQL}
+          AND ((COALESCE(content_class, 'MUSIC') = 'MUSIC' AND scheduled_at >= ?) OR (content_class = 'SPOT' AND scheduled_at >= ? - 600))
+        ORDER BY scheduled_at`).all(stationId, from, from);
+    const before = rows.length;
+    _placeJingles(db, stationId, rows);
+    const fresh = rows.slice(before);
+    if (fresh.length) generatedScheduleBulkCreate(db, stationId, fresh);
+    placed = fresh.length;
+  })();
+  _scheduleChanged(stationId, 'sweepers', { from, removed, placed });
+  _healthEvent('sweepers-replaced', { stationId, from, removed, placed });
+  console.log(`[sweepers] s${stationId}: assignments changed — ${removed} pending sweeper(s) removed, ${placed} placed from ${new Date(from * 1000).toLocaleString()}`);
+  return { removed, placed, from };
+}
+ipcMain.handle('sweepers:replace', (_, stationId) => {
+  try { return { ok: true, ..._replaceSweepers(stationId ?? getActiveStationId()) }; }
+  catch (e) { console.error('[sweepers:replace]', e.message); return { ok: false, error: e.message }; }
+});
 
 // Generate one day's 24 hours into ctx.generatedRows (same picking logic as schedule:generate).
 // `onlyHour` (0-23) runs exactly ONE hour of the day and returns — the slice the chunked driver

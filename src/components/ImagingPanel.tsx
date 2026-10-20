@@ -70,7 +70,7 @@ export default function ImagingPanel() {
   const [rack, setRack] = useState<RackRow[] | null>(null);
   // ── ON DECK ───────────────────────────────────────────────────────────────
   const [deck, setDeck] = useState<DeckRow[] | null>(null);
-  const [why, setWhy] = useState<{ assigned: number; cats: number; fallback: boolean } | null>(null);
+  const [why, setWhy] = useState<{ assigned: number; cats: number } | null>(null);
 
   const load = useCallback(async () => {
     if (stationId == null) return;
@@ -119,9 +119,7 @@ export default function ImagingPanel() {
         "SELECT COUNT(*) n FROM categories WHERE station_id = ? AND deleted_at IS NULL AND overlay_kind IS NOT NULL", [stationId]);
       const c = await query<{ n: number }>(
         "SELECT COUNT(*) n FROM categories WHERE station_id = ? AND deleted_at IS NULL", [stationId]);
-      const f = await query<{ value: string }>(
-        "SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'overlay_fallback_category_id' AND deleted_at IS NULL", [stationId]);
-      setWhy({ assigned: a?.[0]?.n ?? 0, cats: c?.[0]?.n ?? 0, fallback: !!(f?.[0]?.value) });
+      setWhy({ assigned: a?.[0]?.n ?? 0, cats: c?.[0]?.n ?? 0 });
     } catch { setWhy(null); }
   }, [stationId]);
 
@@ -234,17 +232,15 @@ export default function ImagingPanel() {
               <div style={EMPTY}>
                 {musicAhead.length} element{musicAhead.length === 1 ? "" : "s"} scheduled through{" "}
                 {clock(deck[deck.length - 1].scheduled_at)}, <b>no imaging placed</b>.
-                {why && why.assigned === 0 && !why.fallback && (
+                {why && why.assigned === 0 && (
                   <><br /><br />
-                    None of this station&rsquo;s {why.cats} music categor{why.cats === 1 ? "y has" : "ies have"} an
-                    overlay assigned, and there is no fallback pool. Assign one in ASSIGNMENTS, or set a
-                    fallback so unassigned categories still get imaging.
+                    None of this station&rsquo;s {why.cats} music categor{why.cats === 1 ? "y has" : "ies have"} a
+                    sweeper assigned. Assign one in ASSIGNMENTS: a category set to none gets no sweeper.
                   </>
                 )}
-                {why && (why.assigned > 0 || why.fallback) && (
+                {why && why.assigned > 0 && (
                   <><br /><br />
-                    {why.assigned} categor{why.assigned === 1 ? "y is" : "ies are"} assigned
-                    {why.fallback ? " and a fallback pool is set" : ""}, so the placements ahead may simply fall
+                    {why.assigned} categor{why.assigned === 1 ? "y is" : "ies are"} assigned, so the placements ahead may simply fall
                     outside their active hours. Check ACTIVE HOURS in ASSIGNMENTS.
                   </>
                 )}

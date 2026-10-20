@@ -76,7 +76,7 @@ It tells you which of three things is true, because they need different fixes:
 - **"Nothing is scheduled ahead of now."** There is no generated log. Go to the **Program Log** and
   press Fill Day.
 - **"N elements scheduled, no imaging placed."** The log exists but carries no imaging. The view names
-  the reason — usually that no music category has an overlay assigned and there is no fallback pool.
+  the reason — usually that no music category has a sweeper assigned (a category set to none gets none).
   Fix it in ASSIGNMENTS, then Generate again.
 - **A list.** Imaging is placed and this is what will fire.
 

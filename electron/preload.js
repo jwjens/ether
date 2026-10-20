@@ -307,6 +307,8 @@ contextBridge.exposeInMainWorld("ether", {
     // Every sweeper PLACEMENT in a window — the list the queue renders a row from. The live armed
     // state (jingleOverlay) marks which one is armed or firing; it is not the source of the list.
     sweeperPlacements: (stationId, fromTs, toTs) => ipcRenderer.invoke("schedule:sweeper-placements", stationId, fromTs, toTs),
+    // A Sweepers dropdown changed: re-place the station's pending sweepers by the assignments as they now stand.
+    replaceSweepers: (stationId) => ipcRenderer.invoke("sweepers:replace", stationId),
   },
   fs: {
     readFile: (fp) => ipcRenderer.invoke("fs:readFile", fp),

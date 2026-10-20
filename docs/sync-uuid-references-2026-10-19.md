@@ -174,3 +174,7 @@ creates it on B under the same uuid and the song shows its name; P2.4b the repor
 change); a song arriving before its new artist (P3.6 created on arrival; P3.7 no duplicate when the row arrives);
 P3.8 every song field arrives (genre, bpm, energy, cue, intro, cart number).
 **Preview on OVEVENTS' data**: 0 to move here; 107 waiting on OV (categories + artists); 4 settings.
+
+## Correction (2026-10-19, later)
+
+`categories.overlay_category_id` was declared as a reference to **categories**; it is a sweeper **pool** (`jingle_categories`). Fixed in `electron/sync/synced-tables.js`, covered by the gate's SW.0–SW.3. Found while tracing the sweeper assignments report: docs/sweepers-assignments-2026-10-19.md.

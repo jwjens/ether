@@ -74,8 +74,7 @@ function senseStation(db, stationId, now) {
     for (const c of db.prepare("SELECT overlay_active_hours FROM categories WHERE station_id = ? AND deleted_at IS NULL AND overlay_kind IS NOT NULL AND overlay_kind != ''").all(stationId)) {
       mask |= (c.overlay_active_hours != null ? c.overlay_active_hours : ALWAYS);
     }
-    const fb = db.prepare("SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'overlay_fallback_category_id' AND deleted_at IS NULL").get(stationId);
-    if (fb && fb.value) mask = ALWAYS;     // the fallback pool has no hours gate
+    // No station fallback pool any more (2026-10-19): only the categories' own dropdowns place sweepers.
   } catch { /* pre-overlay schema → nothing assigned */ }
   mask = mask >>> 0;
   const one = (sql, ...a) => { try { const r = db.prepare(sql).get(...a); return r ? Number(r.n) || 0 : 0; } catch { return 0; } };
