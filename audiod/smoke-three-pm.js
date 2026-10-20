@@ -330,7 +330,9 @@ function threePm(db) {
     const _commitDayRows = liftFromMain("_commitDayRows", base);
     const _generateRange = liftFromMain("_generateRange", { ...base, buildScheduleCtx: gc.buildScheduleCtx, _regenPoint, _generateDayChunked, _placeJingles: () => {}, _commitDayRows,
       retireStaleScheduleRows: () => {}, finishGenerateRun: () => {} });
-    const _missingShowSpans = liftFromMain("_missingShowSpans", base);
+    // 4.6.61: the check moved off main into electron/show-log-spans.js (run by show-log-worker.js); same answer, one query.
+    const SLS = require(path.join(ROOT, "electron", "show-log-spans.js"));
+    const _missingShowSpans = (sid, sh, nowTs) => SLS.missingSpans(db, sid, SLS.windowPieces(sh, nowTs));
     const shows = () => db.prepare("SELECT * FROM shows WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL").all(SID);
     const rowsIn = (a, b) => db.prepare("SELECT id, state, deleted_at FROM generated_schedule WHERE station_id = ? AND deleted_at IS NULL AND COALESCE(log_hour_ts, scheduled_at) >= ? AND COALESCE(log_hour_ts, scheduled_at) < ?").all(SID, a, b);
     // 2 PM: Morning (9–15) has its log; HalloVeen Hour One (15–18) has none.

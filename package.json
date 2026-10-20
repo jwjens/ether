@@ -52,6 +52,7 @@
     "test:calendar-anchor": "node scripts/smoke-calendar-anchor.js",
     "test:sweeper-assignments": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-sweeper-assignments.js",
     "test:three-pm": "cross-env ELECTRON_RUN_AS_NODE=1 electron audiod/smoke-three-pm.js",
+    "test:show-log-check": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-show-log-check.js",
     "test:hour-rollover": "cross-env ELECTRON_RUN_AS_NODE=1 electron audiod/smoke-hour-rollover.js",
     "test:jukebox-gate": "node scripts/smoke-jukebox-gate.js",
     "test:spot-retraction": "node scripts/smoke-spot-retraction.js",
@@ -136,5 +137,5 @@
     "email": "jensj@ov.org",
     "name": "Jeffrey Jens"
   },
-  "version": "4.6.60"
+  "version": "4.6.61"
 }

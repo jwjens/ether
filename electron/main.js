@@ -12013,54 +12013,50 @@ async function _outOfMusicRegenerate(stationId) {
 // long before it starts. Hours that already have rows are never touched (no top-up, no rebuild); nothing outside a
 // show is built. One writer per station: the machine holding the designation (an unheld designation is taken by the
 // first machine that builds). A show hour whose clock yields nothing is reported once, not retried every minute.
-function _missingShowSpans(stationId, shows, nowTs) {
-  const SW = require('../audiod/show-window.js');
-  const hasRows = db.prepare(
-    "SELECT 1 FROM generated_schedule WHERE station_id = ? AND deleted_at IS NULL AND COALESCE(log_hour_ts, scheduled_at) >= ? AND COALESCE(log_hour_ts, scheduled_at) < ? LIMIT 1");
-  const pieces = [];
-  // Walk forward piece by piece (≤ 8 days): the run on now (if a show is on) and the next run. A run = consecutive pieces
-  // of one show.
-  const runs = SW.pieceAt(shows, nowTs).show ? 2 : 1;
-  let runsSeen = 0, lastShowId = null, t = nowTs;
-  for (let i = 0; i < 8 * 24 * 4; i++) {
-    const p = SW.pieceAt(shows, t);
-    if (p.show) {
-      if (p.show.id !== lastShowId) { runsSeen++; if (runsSeen > runs) break; }
-      if (p.show.clock_id != null) pieces.push(p);
-      lastShowId = p.show.id;
-    } else lastShowId = null;
-    t = p.endTs;
-  }
-  const spans = [];
-  for (const p of pieces) {
-    if (hasRows.get(stationId, p.startTs, p.endTs)) continue;
-    const last = spans[spans.length - 1];
-    if (last && last.toTs === p.startTs) last.toTs = p.endTs;
-    else spans.push({ fromLk: p.startTs, toTs: p.endTs, show: p.show.name });
-  }
-  return spans;
+// 4.6.61: the check runs on its own thread (electron/show-log-worker.js → show-log-spans.js) — 4.6.60 did it here, one
+// unindexed query per hour over up to 32 days of every station, and froze main ~58 s every minute on ovowforestmusic.
+// Main only asks and waits for the answer without blocking; it builds (_generateRange) only what comes back.
+let _showLogWorker = null, _showLogSeq = 0, _showLogInFlight = null, _showLogLastMs = null;
+function _showLogCheck(nowTs) {
+  if (_showLogInFlight) return _showLogInFlight;          // one check at a time; a slow one is never stacked
+  _showLogInFlight = new Promise((resolve, reject) => {
+    try {
+      if (!_showLogWorker) {
+        const { Worker } = require("worker_threads");
+        _showLogWorker = new Worker(path.join(__dirname, "show-log-worker.js"), { workerData: { dbPath: getDbPath() } });
+        _showLogWorker.on("error", (e) => { console.error("[show-build] worker error:", e && e.message); _showLogWorker = null; });
+        _showLogWorker.on("exit", () => { _showLogWorker = null; });
+      }
+      const id = ++_showLogSeq, w = _showLogWorker;
+      const done = () => { w.off("message", onMsg); w.off("exit", onExit); };
+      const onMsg = (m) => {
+        if (!m || m.type !== "result" || m.id !== id) return;
+        done();
+        _showLogLastMs = m.ms;
+        if (m.ok) resolve(m.stations); else reject(new Error(m.error));
+      };
+      // A worker that dies mid-check must not leave the check pending forever (every later pass would wait on it).
+      const onExit = (code) => { done(); reject(new Error(`show-log worker exited (${code})`)); };
+      w.on("message", onMsg);
+      w.once("exit", onExit);
+      w.postMessage({ type: "check", id, nowTs, dbPath: getDbPath() });
+    } catch (e) { reject(e); }
+  }).finally(() => { _showLogInFlight = null; });
+  return _showLogInFlight;
 }
 const _showBuildBusy = new Set();
 const _showBuildEmpty = new Set();          // "<station>@<fromLk>" built once and yielded nothing — reported, not retried
 async function _buildShowLogs() {
   if (!db) return;
-  let stations = [];
-  try { stations = db.prepare("SELECT id, name FROM stations WHERE deleted_at IS NULL").all(); } catch { return; }
   const nowTs = Math.floor(Date.now() / 1000);
-  for (const st of stations) {
-    if (_showBuildBusy.has(st.id)) continue;
-    let shows = [];
-    try { shows = db.prepare("SELECT * FROM shows WHERE station_id = ? AND is_active = 1 AND deleted_at IS NULL").all(st.id); } catch { continue; }
-    if (!shows.length) continue;
-    let spans = [];
-    try { spans = _missingShowSpans(st.id, shows, nowTs).filter(sp => !_showBuildEmpty.has(`${st.id}@${sp.fromLk}`)); } catch (e) { console.error(`[show-build] ${st.name}:`, e.message); continue; }
+  let stations = [];
+  try { stations = await _showLogCheck(nowTs); }
+  catch (e) { console.error("[show-build] check failed:", e.message); _healthEvent("show-log-check-failed", { error: e.message }); return; }
+  for (const st0 of stations) {
+    const st = { id: st0.stationId, name: st0.name };
+    if (st0.skipped || _showBuildBusy.has(st.id)) continue;   // another machine builds it (gate asked first, in the worker)
+    const spans = (st0.spans || []).filter(sp => !_showBuildEmpty.has(`${st.id}@${sp.fromLk}`));
     if (!spans.length) continue;
-    const _me = _machineIdentity();
-    const _gate = _desig.mayAutoGenerate({
-      record: _desig.parseRecord(_kvGet(st.id, _desig.KEY)), machineId: _me.id,
-      killSwitch: String(_kvGet(st.id, 'kill_designation') || '') === '1',
-    });
-    if (!_gate.allow) continue;              // another machine builds this station (reported by the designation tick)
     _showBuildBusy.add(st.id);
     try {
       for (const sp of spans) {
@@ -12892,7 +12888,7 @@ function startAutoExtend() {
   setTimeout(() => { try { _autoExtendTick(); } catch (e) { console.error('[auto-extend] first tick:', e.message); } }, 60_000);
   _autoExtendTimer = setInterval(() => { try { _autoExtendTick(); } catch (e) { console.error('[auto-extend] tick:', e.message); } }, AUTO_EXTEND_EVERY_MS);
   // The log is built before a show starts (_buildShowLogs): checked every minute, so a show added or cleared shortly
-  // before it airs is still built ahead of it. Cheap when there is nothing to build (one indexed lookup per show hour).
+  // before it airs is still built ahead of it. The check itself runs on a worker thread (4.6.61; _showLogCheck).
   setTimeout(() => { _buildShowLogs().catch(e => console.error('[show-build] first pass:', e.message)); }, 15_000);
   setInterval(() => { _buildShowLogs().catch(e => console.error('[show-build] pass:', e.message)); }, 60_000);
   console.log(`[auto-extend] armed — keep runway ≥ ${AUTO_EXTEND_THRESHOLD_H}h, top up to ${AUTO_EXTEND_TARGET_DAYS}d, every ${AUTO_EXTEND_EVERY_MS / 60000}min`);
