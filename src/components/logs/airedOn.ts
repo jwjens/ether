@@ -27,5 +27,5 @@ export function airedOnClause(filter: string, alias = ""): { sql: string; params
 
 /** The computers that aired on a station, for the filter: one per machine_id, named by its most recent name. */
 export const AIRED_ON_COMPUTERS_SQL =
-  `SELECT machine_id, MAX(machine_name) AS machine_name, COUNT(*) AS plays, MAX(played_at) AS last_played_at
+  `SELECT machine_id, MAX(machine_name) AS machine_name, COUNT(*) AS plays, MAX(played_at) AS last_aired_at
      FROM play_log WHERE station_id = ? GROUP BY machine_id ORDER BY MAX(played_at) DESC`;
