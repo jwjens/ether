@@ -49,3 +49,14 @@ categories, plays, users). The other way works: 4.6.62 applies 4.6.61's changes 
 
 From `C:\ether-backend` on `feat/park-talk` at `8c30634`: `railway up` (production, service ether-backend). Then:
 `/health` 200; a dashboard PIN login with an existing (salt:sha256) user; `/backup/list` answers for the account.
+
+## Deploy attempt — 2026-10-21 ~08:49 PDT (Jeff's OK, including `61852fc`)
+
+- Before: `/health` 200; backend tests `pin-hash` + `backup-keys` 4/4.
+- Baseline (read-only, prod Postgres): OV = **ovowforestmusic, client `041ceb96`, license 24**, pushing on schema 66 —
+  8 pushes in the last hour, latest 15:42:28Z. OVEVENTS (`8e8f6181`) last pushed 2026-10-20 23:32Z (Ether closed).
+- `railway up --service ether-backend --ci` → **"Deploys have been paused temporarily"** — refused by Railway; nothing
+  uploaded. `railway deployment list` still shows `cbba149c` (2026-10-16 15:48) as the live deploy. Railway's status
+  page lists its Builds and Deploy components as DEGRADED_PERFORMANCE — a platform-side pause, not this project.
+- The live backend is unchanged; OV keeps syncing against the same code as before. **Not deployed — retry when Railway
+  lifts the pause.** Check script (read-only): scratchpad `diag-ov-sync.js`, run with `railway run --service Postgres`.
