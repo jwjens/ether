@@ -60,3 +60,44 @@ From `C:\ether-backend` on `feat/park-talk` at `8c30634`: `railway up` (producti
   page lists its Builds and Deploy components as DEGRADED_PERFORMANCE — a platform-side pause, not this project.
 - The live backend is unchanged; OV keeps syncing against the same code as before. **Not deployed — retry when Railway
   lifts the pause.** Check script (read-only): scratchpad `diag-ov-sync.js`, run with `railway run --service Postgres`.
+
+## Retry — 2026-10-21 ~12:53 PDT (4.6.62 now on OV and OVEVENTS)
+
+### Jeff's request (verbatim)
+
+> 4.6.62 is installed on OV and OVEVENTS. Retry the backend deploy now. Confirm /health, a dashboard PIN login for an
+> existing user, and that both machines sync users, plays and categories on 4.6.62.
+
+- Before: `/health` 200 (`version 1.5.2`, live deploy still `cbba149c`, 2026-10-16 15:48). `pin-hash` tests 3/3 at `8c30634`.
+- `railway up --service ether-backend --ci` → **"Deploys have been paused temporarily"** again. Indexed, refused at upload;
+  `cbba149c` still live. **Not deployed.**
+
+### Sync on 4.6.62 — what prod Postgres shows (read-only, ~12:54 PDT)
+
+| Computer | First push on 4.6.62 (schema 68) | Users | Plays (`play_log`) | Categories |
+|---|---|---|---|---|
+| OV `041ceb96` | 12:49:36 PDT | pushed (12:49:36) | **none since upgrade.** Last play created 2026-10-20 21:02 PDT, ~15 h before the upgrade | none since upgrade. Last 2026-10-19 19:11 PDT |
+| OVEVENTS `8e8f6181` | 11:58:35 PDT | pushed (11:58:35) | **none since upgrade.** Last 2026-10-20 16:32 PDT | none since upgrade. Last 2026-10-19 10:38 PDT |
+
+- **Users: both computers push on 4.6.62.** Confirmed on the server.
+- **Plays: nothing from either computer on 4.6.62 yet.** OV stopped pushing plays at 21:02 PDT last night, well before
+  the install. Whether OV aired after that: UNVERIFIED (the server can't tell "not on air" from "on air, not pushing").
+  To settle it: OV's Play Log for today, or one song played on each computer, then re-run the check.
+- **Categories: no category edits since 10-19, so nothing to sync yet.** To settle it: rename or add one category on
+  OVEVENTS, and see it arrive on OV (and the reverse).
+- **The receive side can't be seen from the server** (no pull cursor is stored there). Proof that each computer
+  *applied* the other's changes has to come from the computers: users list, Play Log "Aired on", Categories.
+- Check scripts (read-only): scratchpad `diag-sync-4662.js`, `diag-sync-4662b.js`, `diag-lic24-users.js`
+  (`railway run --service Postgres node <script>`).
+
+### Dashboard PIN login — blocked for scrypt PINs until the deploy
+
+The live backend (`cbba149c`, pre-`c61b6ab`) checks PINs as plain or salt:sha256 only. `src/index.js` `verifyPin` at
+`84a4a6b` has no scrypt branch. On 4.6.62, OV upgraded **Admin** (lic 24) to scrypt and pushed it at 12:49:26 PDT.
+So, from the code: **Admin can't sign in to the dashboard until this backend goes out.** **ryan** and **shawna**
+(still salt:sha256) should be able to. Runtime: UNVERIFIED. One sign-in attempt for each settles it. Each 4.6.62 sign-in
+on the desktop upgrades that user to scrypt, so more users will hit this until the deploy.
+
+Lic 24 users (live): Admin (scrypt), ryan, shawna. OV's 12:49 push revoked jeff / Steve / Donavon. They have been
+revoked and recreated many times since September as the two computers push different user lists to
+`/api/account/users/sync` (its reconcile step revokes users the pushing computer doesn't have). Noted only; not investigated.
