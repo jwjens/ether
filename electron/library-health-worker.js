@@ -15,8 +15,10 @@ try { Database = require("better-sqlite3"); } catch (e) { parentPort.postMessage
 
 const ctx = { dbPath: workerData.dbPath, musicDir: workerData.musicDir || null, restoreInFlight: false,
               licenseKey: null, backendUrl: workerData.backendUrl || null };
-let db = null, dbFor = null;
+let db = null, dbFor = null, released = false;
 function getDb() {
+  // Released for a database swap (electron/db-holders.js): no reopen until main says the new file is in place.
+  if (released) throw new Error("RESTORE_IN_PROGRESS: the station database is being replaced");
   if (!db || dbFor !== ctx.dbPath) {
     try { if (db) db.close(); } catch {}
     db = new Database(ctx.dbPath, { readonly: true, fileMustExist: true });
@@ -66,6 +68,14 @@ const NOTES = {
 parentPort.on("message", async (m) => {
   if (!m || typeof m !== "object") return;
   if (m.type === "ctx") { Object.assign(ctx, m.ctx || {}); return; }
+  if (m.type === "release") {
+    released = true;
+    try { if (db) db.close(); } catch {}
+    db = null; dbFor = null;
+    parentPort.postMessage({ type: "released", id: m.id });
+    return;
+  }
+  if (m.type === "reacquire") { released = false; return; }
   if (m.type === "note") { try { NOTES[m.method] && NOTES[m.method](...(m.args || [])); } catch { /* best-effort, as in main */ } return; }
   if (m.type === "call") {
     const t0 = Date.now();

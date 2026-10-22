@@ -403,7 +403,7 @@ async function runBackup(dbPath, opts = {}) {
 function snapshotInWorker(dbPath, outPath) {
   const { Worker } = require("worker_threads");
   return new Promise((resolve) => {
-    const w = new Worker(path.join(__dirname, "backup-worker.js"), { workerData: { dbPath, outPath, gzip: true } });
+    const w = require("./db-holders").dbHolders.track("cloud backup", new Worker(path.join(__dirname, "backup-worker.js"), { workerData: { dbPath, outPath, gzip: true } }));
     let done = false;
     w.once("message", (m) => { done = true; resolve(m); });
     w.once("error", (e) => { if (!done) { done = true; resolve({ ok: false, error: e.message }); } });

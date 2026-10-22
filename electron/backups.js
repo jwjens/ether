@@ -14,6 +14,7 @@
 const fs = require("fs");
 const path = require("path");
 const { Worker } = require("worker_threads");
+const { dbHolders } = require("./db-holders");
 
 const MIN_EVERY = 5;
 const LOCAL_RE = /^openair-backup-(\d+)\.db$/;
@@ -55,7 +56,7 @@ function create({ getDb, dbPath, backupsDir, cloudRun, healthEvent, log = consol
   /** Make one backup in the worker. → result posted by electron/backup-worker.js */
   function inWorker(outPath, gzip) {
     return new Promise((resolve) => {
-      const w = new Worker(path.join(__dirname, "backup-worker.js"), { workerData: { dbPath: dbPath(), outPath, gzip } });
+      const w = dbHolders.track("local backup", new Worker(path.join(__dirname, "backup-worker.js"), { workerData: { dbPath: dbPath(), outPath, gzip } }));
       let done = false;
       w.once("message", (m) => { done = true; resolve(m); });
       w.once("error", (e) => { if (!done) { done = true; resolve({ ok: false, error: e.message }); } });

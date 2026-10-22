@@ -31,6 +31,7 @@
     "test:show-presets": "node audiod/smoke-show-presets.js",
     "test:rta": "node audiod/smoke-rta.js",
     "test:sync": "electron --no-sandbox scripts/run-sync-tests.js",
+    "test:db-release": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-db-release.js",
     "test:programlog-reads": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-programlog-reads.js",
     "test:programlog-writes": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-programlog-writes.js",
     "test:rename-log": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-rename-log.js",

@@ -165,8 +165,12 @@ function broadcast(obj) { const line = JSON.stringify(obj) + "\n"; for (const c 
 // node:sqlite library handle (read-only, WAL) for the scheduler — opened lazily on first
 // automation start. Bare Node can't use better-sqlite3 (V8-ABI); node:sqlite is ABI-stable.
 let _db = null;
+// Set by releaseDb, cleared by reacquireDb. Without it, the first timer after releaseDb (the Remote Link reads its keys
+// every 3 s) reopened the file under main's swap and re-locked -wal/-shm (docs/db-release-on-swap-2026-10-21.md).
+let _dbReleased = false;
 function getDb() {
   if (_db) return _db;
+  if (_dbReleased) throw new Error("RESTORE_IN_PROGRESS: the station database is being replaced — not reopening it mid-swap");
   const { DatabaseSync } = require("node:sqlite");
   // Resolve the DB path the SAME way the main app does: prefer the explicit ETHER_DB_PATH the app
   // sets (spawnDaemon passes it through, and profile:adopt refreshes it on an account switch), then
@@ -464,19 +468,22 @@ const handlers = {
   init:               (m) => { A.initAudioEngine(m.stationId); stations.add(m.stationId); bladeDo(m.stationId, b => b.boot()); return true; },
   // Quiesce for a database swap. This process holds openair.db open in WAL mode, which locks
   // -wal/-shm — so a restore cannot replace the file while we are running. The app calls this,
-  // waits for the reply, then swaps. Everything that reads the database stops first; the handle is
-  // reopened lazily by getDb() the next time it is needed, against the NEW file.
+  // waits for the reply, then swaps. Everything that reads the database stops first; the handle stays
+  // closed until main sends reacquireDb, then getDb() reopens it lazily, against the NEW file.
   // Playback stops. That is inherent: the station's database is being replaced underneath it.
   releaseDb:          () => {
     for (const s of streams.values())  { try { s.stop(); } catch {} }
     for (const e of engines.values())  { try { e.dispose(); } catch {} }
     for (const sid of stations)        { try { A.audioStop("A", sid); A.audioStop("B", sid); A.audioStop("C", sid); } catch {} }
     let dbWasOpen = false, closeError = null;
+    _dbReleased = true;
     try { if (_db) { _db.close(); _db = null; dbWasOpen = true; } }
     catch (e) { closeError = String(e && e.message || e); }
     log(`releaseDb — engines+streams stopped, db ${dbWasOpen ? "CLOSED" : "was not open"}${closeError ? " (close error: " + closeError + ")" : ""}`);
     return { released: !closeError, dbWasOpen, closeError, stations: stations.size };
   },
+  // The swap is over (done or rolled back): the database may be opened again, lazily, by the next getDb().
+  reacquireDb:        () => { const was = _dbReleased; _dbReleased = false; log(`reacquireDb — ${was ? "the database may be reopened" : "was not released"}`); return { ok: true, wasReleased: was }; },
   // THE LOAD LINE NAMES THE STATION. A load carries whichever stationId the caller stamped, and
   // nothing here second-guesses it — which is correct, but it also meant a load addressed to the
   // WRONG station was indistinguishable from a right one in every log we keep. That is precisely how

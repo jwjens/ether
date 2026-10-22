@@ -127,6 +127,9 @@ PerfSense.startStallSense();
 const SelfActions = require("./self-action-sense").createSelfActionSense();
 try { SelfActions.install(require("electron")); } catch (e) { console.error("[self-action-sense]", e && e.message); }
 
+// Every worker connection to the station database, closed by swapDatabaseFile before the file is replaced.
+const { dbHolders, closeWorkerConnection, stuckFilesMessage } = require("./db-holders");
+
 // ── RESTORE GATE ────────────────────────────────────────────────────────────────────────────────
 // A database cannot be replaced while anything still holds it open. The app is the main offender: the
 // renderer polls several times a second during onboarding, and ANY db-touching IPC landing after the
@@ -1259,6 +1262,8 @@ if (AUDIO_DAEMON_DESIRED) {
       inMainFallback: () => require("./library-health").createLibraryHealth(_lhOpts),
     });
     _libHealth.start();
+    // Its read-only connection stays open (sweeps, the 60 s library mirror): a database swap closes it first.
+    dbHolders.register("library-health worker", { release: () => _libHealth.release(), reacquire: () => _libHealth.reacquire() });
     _libHealthForIpc = _libHealth;   // top-level IPC handlers (schedule:playhead-view) reach the worker through this
     ipcMain.handle("library-health:get", () => { try { return _libHealth.snapshot(); } catch { return null; } });
     ipcMain.handle("library-health:eligibility", async (_e, stationId) => { try { return await _libHealth.eligibilityRows(stationId); } catch { return []; } });
@@ -2172,6 +2177,13 @@ async function swapDatabaseFile(srcPath, onProgress) {
     if (_catDownloadState.phase === 'rows') _catSetPhase('idle');
     // Whatever happened, this app must end with a usable connection.
     try { if (!db || !db.open) { initDb(); restoreLog("post-restore: database reopened"); } } catch (e) { restoreLog(`post-restore reopen failed: ${e.message}`); }
+    // Everything closed for the swap may open again — on the new file, or the old one after an abort or rollback.
+    dbHolders.reacquireAll();
+    try {
+      Promise.resolve(audiodClient.cmd("reacquireDb", {}))
+        .then(r => restoreLog(`post-restore: audio engine may reopen the database (${JSON.stringify(r)})`))
+        .catch(e => restoreLog(`post-restore: audio engine reacquire not confirmed (${e && e.message}) — an older engine reopens on its own`));
+    } catch (e) { restoreLog(`post-restore: audio engine reacquire not sent (${e && e.message})`); }
   }
 }
 
@@ -2258,6 +2270,12 @@ async function _swapDatabaseFileGated(srcPath, onProgress) {
     restoreLog(`quiesce: audio engine release failed (${e.message}) — continuing; the journal check below is the real gate`);
   }
 
+  // 1b. Every worker connection (electron/db-holders.js): the show-log and library-health workers keep one open for the
+  // life of the app, and a backup / startup / sync-cleanup worker may be mid-run. Each held -wal/-shm on its own.
+  say("closing Ether's other connections to the station");
+  const heldBy = await dbHolders.releaseAll();
+  for (const r of heldBy) restoreLog(`quiesce: ${r.name} — ${r.ok ? r.how : "did NOT release: " + r.error}`);
+
   // 2. Fold the WAL back into the main file so there is nothing left to remove, then close ours.
   try { db.pragma("wal_checkpoint(TRUNCATE)"); restoreLog("quiesce: WAL checkpointed into the database"); }
   catch (e) { restoreLog(`quiesce: WAL checkpoint skipped (${e.message})`); }
@@ -2269,9 +2287,12 @@ async function _swapDatabaseFileGated(srcPath, onProgress) {
     const stuck = dropSidecarsInsisting();
     if (stuck.length) {
       restoreLog(`quiesce FAILED — still locked after stopping the engine and closing the database: ${stuck.join(", ")}`);
+      // Ask Windows who holds them, before reopening our own connection (which would be reported too).
+      const holders = await require("./file-lockers-win").whoHolds(stuck.map(n => path.join(path.dirname(dbPath), n)));
+      restoreLog(`quiesce: Windows reports the holders as: ${holders.length ? holders.map(h => `${h.process || "?"} (pid ${h.pid}${h.app ? ", " + h.app : ""})`).join("; ") : "none reported / not available"}`);
       try { initDb(); restoreLog("quiesce: station reopened; nothing was changed"); }
       catch (e) { restoreLog(`quiesce: reopen after aborted restore failed: ${e.message}`); }
-      throw new Error(`Sync couldn't start: ${stuck.join(" and ")} could not be released, even after stopping the audio engine and closing the station database. Something outside Ether is holding those files (antivirus or backup software is the usual cause). Your current station is untouched and still running.`);
+      throw new Error(stuckFilesMessage(stuck, heldBy, holders));
     }
     restoreLog("quiesce: journal files removed and unlocked — safe to replace the database");
   }
@@ -2429,7 +2450,7 @@ function _syncCleanupView() {
 function _syncCleanupBroadcast() { try { sendToAllWindows("sync-cleanup:status", _syncCleanupView()); } catch {} }
 function _syncCleanupWorker(workerData) {
   const { Worker } = require("worker_threads");
-  return new Worker(path.join(__dirname, "sync", "purge-excluded-queue-worker.js"), { workerData: { dbPath: getDbPath(), ...workerData } });
+  return dbHolders.track("sync cleanup", new Worker(path.join(__dirname, "sync", "purge-excluded-queue-worker.js"), { workerData: { dbPath: getDbPath(), ...workerData } }));
 }
 async function _syncCleanupRunNow() {
   const c = _syncCleanup;
@@ -2513,7 +2534,7 @@ function _scheduleHeavyWork() {
       const setFlag = () => { const v = anyDeckPlaying() ? 1 : 0; if (Atomics.load(flag, 0) !== v) { Atomics.store(flag, 0, v); Atomics.notify(flag, 0); } };
       setFlag();
       const flagTimer = setInterval(setFlag, 500);
-      const w = new Worker(path.join(__dirname, "startup-heavy-worker.js"), { workerData: { dbPath: getDbPath(), onAirFlag } });
+      const w = dbHolders.track("startup background work", new Worker(path.join(__dirname, "startup-heavy-worker.js"), { workerData: { dbPath: getDbPath(), onAirFlag } }));
       w.on("exit", () => clearInterval(flagTimer));
       let ended = false;
       w.on("message", (m) => {
@@ -3831,7 +3852,7 @@ app.whenReady().then(() => {
       _onAirFlagHook = setFlag;
       const flagTimer = setInterval(setFlag, 500);
       if (_syncCleanup.running) { logStartup("[sync-queue] automatic cleanup not started — a cleanup is already running"); clearInterval(flagTimer); _onAirFlagHook = null; return; }
-      const w = new Worker(path.join(__dirname, "sync", "purge-excluded-queue-worker.js"), { workerData: { dbPath: getDbPath(), backupPath, onAirFlag } });
+      const w = dbHolders.track("automatic sync cleanup", new Worker(path.join(__dirname, "sync", "purge-excluded-queue-worker.js"), { workerData: { dbPath: getDbPath(), backupPath, onAirFlag } }));
       // The shared lock: the button and this run never overlap. While this one is only WAITING FOR SILENCE (it has not
       // touched the database), the button may stop it and run now (_syncCleanupRunNow).
       _syncCleanup = { ..._syncCleanup, running: true, kind: "auto", worker: w, waitingForSilence: anyDeckPlaying(), startedAt: Date.now(), progress: null };
@@ -12193,8 +12214,15 @@ async function _outOfMusicRegenerate(stationId) {
 // unindexed query per hour over up to 32 days of every station, and froze main ~58 s every minute on ovowforestmusic.
 // Main only asks and waits for the answer without blocking; it builds (_generateRange) only what comes back.
 let _showLogWorker = null, _showLogSeq = 0, _showLogInFlight = null, _showLogLastMs = null;
+// Its connection stays open between checks, so a database swap must close it (electron/db-holders.js): ask the worker to
+// close, then end it. The next check after the swap starts a fresh worker on the new file.
+dbHolders.register("show-log worker", {
+  release: () => { const w = _showLogWorker; _showLogWorker = null; return closeWorkerConnection(w); },
+  reacquire: () => {},
+});
 function _showLogCheck(nowTs) {
   if (_showLogInFlight) return _showLogInFlight;          // one check at a time; a slow one is never stacked
+  if (dbHolders.isReleased()) return Promise.reject(new Error("RESTORE_IN_PROGRESS: the station database is being replaced"));
   _showLogInFlight = new Promise((resolve, reject) => {
     try {
       if (!_showLogWorker) {
@@ -12223,11 +12251,14 @@ function _showLogCheck(nowTs) {
 const _showBuildBusy = new Set();
 const _showBuildEmpty = new Set();          // "<station>@<fromLk>" built once and yielded nothing — reported, not retried
 async function _buildShowLogs() {
-  if (!db) return;
+  if (!db || restoreGateActive()) return;               // a database swap owns the file
   const nowTs = Math.floor(Date.now() / 1000);
   let stations = [];
   try { stations = await _showLogCheck(nowTs); }
-  catch (e) { console.error("[show-build] check failed:", e.message); _healthEvent("show-log-check-failed", { error: e.message }); return; }
+  catch (e) {
+    if (restoreGateActive() || dbHolders.isReleased()) return;   // ended by a database swap — not a fault
+    console.error("[show-build] check failed:", e.message); _healthEvent("show-log-check-failed", { error: e.message }); return;
+  }
   for (const st0 of stations) {
     const st = { id: st0.stationId, name: st0.name };
     if (st0.skipped || _showBuildBusy.has(st.id)) continue;   // another machine builds it (gate asked first, in the worker)

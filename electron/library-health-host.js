@@ -85,6 +85,16 @@ function createLibraryHealthHost({ dbPathFn, ctxFn, userDataDir, backendUrl, bro
     query: (sql, params) => call("query", [sql, params], () => { throw new Error("the worker is not running — use db:query"); }),
     noteSkip: (...a) => note("noteSkip", a),
     noteGenerate: (...a) => note("noteGenerate", a),
+    /** A database swap: the worker closes its read-only connection and does not reopen until reacquire(). → once closed. */
+    release: () => new Promise((resolve) => {
+      if (!worker) return resolve();
+      const id = ++seq, w = worker;
+      const t = setTimeout(() => { w.off("message", onMsg); resolve(); }, 2000);
+      const onMsg = (m) => { if (m && m.type === "released" && m.id === id) { clearTimeout(t); w.off("message", onMsg); resolve(); } };
+      w.on("message", onMsg);
+      try { w.postMessage({ type: "release", id }); } catch { clearTimeout(t); w.off("message", onMsg); resolve(); }
+    }),
+    reacquire: () => { try { if (worker) worker.postMessage({ type: "reacquire" }); } catch {} },
     /** For tests and the health line: is the worker carrying it, and how long its answers took. */
     stats: () => ({ inWorker: !!worker && !fallback, recentCallMs: [...callTimes] }),
   };

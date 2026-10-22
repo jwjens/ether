@@ -20,6 +20,13 @@ function open(want) {
 }
 
 parentPort.on("message", (m) => {
+  // A database swap closes this connection before it replaces the file (electron/db-holders.js); main then ends the worker.
+  if (m && m.type === "close") {
+    try { if (db) db.close(); } catch {}
+    db = null; dbPath = null;
+    parentPort.postMessage({ type: "closed" });
+    return;
+  }
   if (!m || m.type !== "check") return;
   const t0 = Date.now();
   try {
