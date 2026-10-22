@@ -2748,7 +2748,7 @@ export default function App() {
     bootSeq("AUTH COMPLETE — account signed in + PIN accepted");
     setCurrentUser(u);
   }} /></EtherErrorBoundary>;
-  if (!shiftStarted) return <EtherErrorBoundary><OnShiftScreen onStart={() => { setShiftStarted(true); }} /></EtherErrorBoundary>;
+  if (!shiftStarted) return <EtherErrorBoundary><OnShiftScreen signedInId={currentUser.id} signedInName={currentUser.name} onStart={() => { setShiftStarted(true); }} /></EtherErrorBoundary>;
 
   // Bottom-toolbar view tabs — rendered inline on wide screens, collapsed into a
   // bottom-right hamburger menu on tablet/narrow widths (viewport.bottomCollapsed).

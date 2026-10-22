@@ -26,7 +26,22 @@ interface QueueItem { title: string; artist: string; durationMs?: number; durati
 
 type ExperienceMode = "solo" | "standard" | "live_radio";
 
-interface Props { onStart: (operator: Operator) => void; }
+/** signedInId — the user whose PIN was just accepted (App's currentUser). The shift starts as THAT person. */
+interface Props { onStart: (operator: Operator) => void; signedInId?: number | null; signedInName?: string | null; }
+
+/**
+ * Who is on shift when the screen opens: the person who signed in. Jeff, 2026-10-21 (4.6.62): "Admin login shows 'Good
+ * afternoon Shawna'". This took the lowest user id, which was Admin only while Admin happened to be id 1; when users
+ * sync merged the two computers' Admins, the kept one arrived on OV under a new id and Shawna became the lowest.
+ * If that row was merged away meanwhile, the same name is the same person (users sync's rule). Lowest id is the last
+ * fallback, so Start is never blocked. docs/admin-greets-shawna-2026-10-21.md.
+ */
+export function pickOnShift<T extends { id: number; name: string }>(ops: T[], signedInId?: number | null, signedInName?: string | null): T | null {
+  if (signedInId != null) { const me = ops.find(o => o.id === signedInId); if (me) return me; }
+  const n = String(signedInName ?? "").trim().toLowerCase();
+  if (n) { const same = ops.find(o => String(o.name ?? "").trim().toLowerCase() === n); if (same) return same; }
+  return ops[0] ?? null;   // never none: Start needs someone on shift
+}
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -58,7 +73,7 @@ function fmtSecs(s: number): string {
 
 // ── Component ─────────────────────────────────────────────────
 
-export default function OnShiftScreen({ onStart }: Props) {
+export default function OnShiftScreen({ onStart, signedInId, signedInName }: Props) {
   // NO useAudioEngine() HERE. This screen is one of App()'s gate early-returns (App.tsx:2638) and
   // every one of them renders ABOVE <AudioEngineProvider> (App.tsx:2670), so the context is null and
   // the hook throws — that is the 4.6.22 launch failure. The engine is resolved with
@@ -111,7 +126,7 @@ export default function OnShiftScreen({ onStart }: Props) {
         if (v !== loadVersionRef.current) return;
         setOperators(ops);
 
-        if (ops.length > 0) setOperator(ops[0]);
+        setOperator(pickOnShift(ops, signedInId, signedInName));
 
         // Experience mode
         const modeRow = await queryOne<{ value: string }>("SELECT value FROM station_config_kv WHERE key = 'experience_mode'");
@@ -185,7 +200,7 @@ export default function OnShiftScreen({ onStart }: Props) {
       } catch (e) { console.error("[OnShift] Load error:", e); }
     }
     doLoad();
-  }, [isReady, stationId]);
+  }, [isReady, stationId, signedInId, signedInName]);
 
   // ── Load operator note when operator changes ──────────────────
 
