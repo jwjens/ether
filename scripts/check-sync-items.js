@@ -57,6 +57,11 @@ for (const u of ids("cart_slots")) {
   console.log(`  ${u}  ${c ? `slot ${c.slot_number} "${c.title}" (${st(c.station_id)}) file ${c.file_key || path.basename(String(c.file_path || "")) || "-"}${c.deleted_at ? " DELETED" : ""} updated ${c.updated_at}` : "NOT HERE"}`);
 }
 
+// Users on this computer (docs/admin-greets-shawna-2026-10-21.md): PIN format only, never the value.
+const pinFmt = (h) => (!h ? "(none)" : /^scrypt\$/.test(h) ? "scrypt" : String(h).includes(":") ? "salt:sha256" : "plain");
+console.log(`\n── users here (lowest id first; the shift screen used to greet the lowest live id)`);
+for (const u of all("SELECT * FROM users ORDER BY id")) console.log(`  id ${u.id}  ${u.uuid || "-"}  "${u.name}"  ${u.role || "-"}  ${st(u.station_id)}  PIN ${pinFmt(u.pin_hash)}${u.deleted_at ? `  DELETED ${u.deleted_at}` : ""}`);
+
 console.log(`\n── plays recorded on this computer since then`);
 const machine = one("SELECT client_id FROM client_identity LIMIT 1")?.client_id;
 // played_at is epoch seconds. Grouped by the computer that AIRED it (machine_name): rows that arrived from the other

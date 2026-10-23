@@ -33,7 +33,20 @@ uuid (`64cd`, OVEVENTS's Admin) is kept on every computer, with the newest PIN (
 removed on every computer. Checked here: the kept Admin's PIN now equals OV's Admin PIN (equality only, no value read).
 So **Admin's PIN on OVEVENTS is now OV's Admin PIN** — by the merge's design ("takes the newest's role/colour/PIN").
 
-**OV — not yet read.** OV's database is not reachable from this machine; its rows are visible through its journal on the
+**Server journal (read 2026-10-23 20:45Z, `railway run --service Postgres`, read-only)** — every users change for lic 24:
+
+| received (UTC) | from | row | change |
+|---|---|---|---|
+| 10-21 18:58:35 | OVEVENTS `8e8f6181` | Admin `64cd` (id 1) | PIN salt:sha256 → scrypt |
+| 10-21 19:49:36 | OV `041ceb96` | Admin `717f` (OV id 1) | PIN salt:sha256 → scrypt |
+| 10-21 20:05:24 | OVEVENTS | Admin `64cd` | merge: PIN (scrypt → scrypt, OV's) |
+| 10-21 20:05:24 | OVEVENTS | Admin `717f` (OVEVENTS id 7) | merge: removed |
+
+OV pushed nothing else for users; Shawna appears nowhere in the server journal. So OV receives the merge from OVEVENTS:
+its own Admin `717f` (its id 1) removed, `64cd` created under a new id.
+
+**OV's own rows — not yet read.** `scripts/check-sync-items.js` now lists users (PIN format only); OV's run of it settles
+the ids there. OV's database is not reachable from this machine; its rows are visible through its journal on the
 server, and the Railway CLI login expired (`invalid_grant`) before that read. Expected on OV from the design: OV's own
 Admin (`717f`, OV's local id 1) removed, `64cd` arrived under a new, higher id — making Shawna the lowest live id.
 **UNVERIFIED** until the server read (`scratchpad/diag-users-server.js`).

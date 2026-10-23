@@ -44,7 +44,19 @@ OVEVENTS (client `8e8f6181`, schema 68), 20:29Z:
 Ether was **not running** on OVEVENTS at the baseline (no Ether.exe process). It has to be open for the changes to be made
 and to sync; plays from OV reach this database only while Ether here is running.
 
-Server baseline: not read — Railway CLI login expired (`invalid_grant`).
+Server, 20:45Z (pushes since each computer's 4.6.62 install, read-only):
+
+```
+client 8e8f6181 (OVEVENTS)  first schema-68 push 2026-10-21T18:58:35Z  last push 2026-10-23T20:27:06Z
+  play_log      177 since install ( 177 in last 48h)  2026-10-21T22:00:42Z -> 2026-10-23T20:27:06Z
+  users           3 since install (   0 in last 48h)
+client 041ceb96 (OV)        first schema-68 push 2026-10-21T19:49:36Z  last push 2026-10-23T20:44:09Z
+  play_log     1933 since install (1906 in last 48h)  2026-10-21T20:02:28Z -> 2026-10-23T20:44:09Z
+  users           1 since install (   0 in last 48h)
+```
+
+No categories, songs, artists or cart_slots pushes from either computer since the installs: nothing changed them, so
+the test changes are the first exercise of those tables on 4.6.62.
 
 ## Results
 
