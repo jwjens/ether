@@ -101,3 +101,19 @@ on the desktop upgrades that user to scrypt, so more users will hit this until t
 Lic 24 users (live): Admin (scrypt), ryan, shawna. OV's 12:49 push revoked jeff / Steve / Donavon. They have been
 revoked and recreated many times since September as the two computers push different user lists to
 `/api/account/users/sync` (its reconcile step revokes users the pushing computer doesn't have). Noted only; not investigated.
+
+## Deployed — 2026-10-23
+
+Jeff, 2026-10-23: "Retry the backend deploy now; if Railway still refuses, keep retrying every 30 minutes and tell me
+when it's live." The Railway CLI login had expired (`invalid_grant`); Jeff's dashboard screenshot showed every deploy of
+ether-backend runs "via GitHub" from `main` (active: `84a4a6b`, 6 days old; banner "Railway Platform Outage. A fix is out
+and we're monitoring it."). On Jeff's "push it": `git push origin 8c30634:main` (fast-forward `84a4a6b..8c30634`:
+`61852fc` park talk warm lines, `c61b6ab` scrypt PINs, `8c30634` backups per computer) at 20:34:58Z.
+
+Live receipt: `POST /backup/prune` (new in `8c30634`) answered 404 until 20:38:46Z and
+`400 {"error":"missing_fields","detail":"license_key, machine_id and keep (>= 1) are required"}` from 20:39:17Z.
+`/health` 20:40:01Z: `{"ok":true,"service":"Ether Technologies API","version":"1.5.2"}` (package version not bumped, so
+`/health` alone can't tell the builds apart).
+
+Still to confirm: a dashboard PIN login for an existing user (needs Jeff — no PIN guessed; wrong PINs count toward
+lockout), and users/plays/categories sync on 4.6.62 from the server (needs the Railway CLI login for the DB read).
