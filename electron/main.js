@@ -372,13 +372,16 @@ console.log(`[db:execute guard] active — ${SYNCED_TABLES.length} synced tables
 
 // ── Startup diagnostics log ────────────────────────────────────
 // Written to userData/ether-startup.log so packaged builds can be diagnosed
-// without a terminal attached.
+// without a terminal attached. Capped (electron/log-cap.js): 20 MB plus one previous file — it had reached 1.87 GB.
+const { createCappedLog } = require("./log-cap");
 let _startupLogPath = null;
+let _startupLog = null;
 function logStartup(msg) {
   const line = `${new Date().toISOString()} ${msg}\n`;
   process.stdout.write(`[STARTUP] ${msg}\n`);
   if (_startupLogPath) {
-    try { fs.appendFileSync(_startupLogPath, line); } catch {}
+    if (!_startupLog) _startupLog = createCappedLog(_startupLogPath);
+    _startupLog.append(line);
   }
 }
 

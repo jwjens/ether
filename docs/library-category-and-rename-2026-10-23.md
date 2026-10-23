@@ -29,7 +29,31 @@
   and the Screen Builder "Song Library" module (`src/modules/registry.ts:80`, dockview, 0ec31e5 2026-10-18). All three
   render the same `LibraryPanel`.
 
-## Not yet known — needs a runtime receipt
+## Update 21:00–21:10Z — cause found (fix deferred to the build after 4.6.63, Jeff 2026-10-23)
+
+Jeff, 2026-10-23 (verbatim): "i can click on the categories now but i cant save an artist name"
+
+- **Runtime receipt:** the live journal shows `artists insert` "Will s" (21:04:15Z) and "Will SMith" (21:04:21Z) and **no
+  songs update** — the artist was created, the song was never changed. `discogs:updateTrack` (`electron/main.js:10531`)
+  returns `{ok:false,error}` and `commitInline` (`src/App.tsx:4931-4946`) ignores the result: silent.
+- **Every live song saves** on a copy of the live database: all 551, artist and title, through the real handlers
+  (`scratchpad diag-library-edits-all.js`, rolled back per song). The data is not the problem.
+- **The Library shows 31 deleted songs as editable-looking rows.** `library_asset` rows of type SONG whose song row is
+  deleted (deleted 2026-07-06 … 2026-08-06), all **created 2026-10-21T18:57:58Z** — the minute OVEVENTS first started
+  on 4.6.62 (first schema-68 push 18:58:35Z). LibraryPanel shows a library_asset row when no LIVE song has its uuid, with a
+  negative id. On such a row: category `<select disabled>` (`App.tsx:5943`) — "doesn't open"; rename `onSave` returns
+  early when `!isSongRow` (`:5886`) — "bounces back and doesn't save"; artist → `updateTrack({id:-N})` creates the artist,
+  then `songsUpdateById` throws "row not found by id" — "can't save an artist name". Also 5 ANNOUNCEMENT and 4 SPOT
+  asset rows (legitimate non-song elements).
+- **What recreated them at 18:57:58Z:** not yet identified. Writers of library_asset: `electron/sync/handlers/asset-mirror.js:138`,
+  migrations v50/v51, `scripts/backfill-library-assets.js`. Next step.
+- **Also found (data loss, older — 486b861, 2026-05-10):** `discogs:updateTrack` builds `patch.artist_id = null` /
+  `patch.album_id = null` whenever artist/album aren't in the call (`artistId !== undefined` is always true). An inline
+  edit of album/year/genre/bpm clears the artist; an artist edit clears the album. Proven on a copy (song 544: artist
+  edit → album_id 3 → null; title via updateTrack → artist_id → null).
+- **OV:** UNVERIFIED — same check (library_asset SONG rows with a deleted song, created at OV's first 4.6.62 start).
+
+## Not yet known — needs a runtime receipt (superseded above)
 
 The cause. A select that won't open AND an edit field that reverts both fit the row being re-mounted or its events being
 swallowed by the surrounding surface — UNVERIFIED. Needed from Jeff on OVEVENTS: which Library (main window / ☰ window
