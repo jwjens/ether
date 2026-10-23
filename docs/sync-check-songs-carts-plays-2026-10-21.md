@@ -60,11 +60,31 @@ the test changes are the first exercise of those tables on 4.6.62.
 
 ## Results
 
-Pending Jeff's test changes.
+Jeff, 2026-10-23: "run the item-2 check with just the cart I added ("idoberg creepy halloweenfx v3...")". The song edits
+could not be made (docs/library-category-and-rename-2026-10-23.md).
+
+Cart `4cb0e991-0d0d-43de-8c84-c61311eaf29b`, slot 11, halloVeen (`43889edc`):
+
+| OVEVENTS (UTC) | change | server received |
+|---|---|---|
+| 20:47:22 | title "" → "idoberg creepy halloween bell trap melody 247720", file set | 20:48:01 seq 1071613 |
+| 20:47:30 | cleared | 20:48:16 seq 1071614 |
+| 20:47:42 | title → "idoberg creepy halloween fx v3 249319", file `…\catalogue\idoberg-creepy-halloween-fx-v3-249319.mp3` | 20:48:26 seq 1071615 |
+
+All three `synced` here; on the server with `ref_uuids {"station_id":"43889edc-…"}` (the right station by uuid).
+**`file_key` stayed `dragon-studio-scary-transition-401717.mp3`** (the slot's file before 10-12) — no update changed it.
+`file_key` is what another computer uses to fetch the audio from R2 (migration v59), so OV may load the old audio for
+this cart if the new file isn't in its catalogue.
+
+**OV — Jeff, 2026-10-23 (verbatim):** "Checked on OV myself: HalloVeen cart slot 11 shows "idoberg creepy halloween fx v3"
+and plays the new sound. Cart sync passes; no scripts needed on OV."
+
+**Cart: PASS** (OVEVENTS → server → OV, same uuid, right station, right title, new audio plays). The stale `file_key` did
+not stop OV playing the new file in this test; it remains a wrong value on the row (not investigated further).
 
 | item | OVEVENTS | server | OV | result |
 |---|---|---|---|---|
-| song category | | | | |
-| song artist | | | | |
-| cart | | | | |
-| OV plays recorded and syncing | | | | |
+| song category | edit could not be made (Library bug) | — | — | not tested |
+| song artist | edit could not be made (Library bug) | — | — | not tested |
+| cart | synced 20:47:42Z | received 20:48:26Z, station uuid 43889edc | slot 11 shows the new title, plays the new sound (Jeff) | **PASS** |
+| OV plays recorded and syncing | 172 OV plays arrived (10-21); 9 more 20:32–20:47Z (10-23) | OV pushed 1,933 since install, last 20:44:09Z | — | **PASS** |
