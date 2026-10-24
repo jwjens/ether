@@ -1992,6 +1992,14 @@ function initDb() {
   console.log("[DB] Connected:", dbPath);
   bootStep("Checking station database…", () => repairSchema(db));   // in-place, offline, before anything else
   bootStep("Updating station database…", () => runMigrations());
+  // Deleted songs never return: retire Library entries whose song (or spot, announcement…) is deleted — the 31 the inbound
+  // mirror revived on 4.6.62's first start (docs/library-category-and-rename-2026-10-23.md). A no-op once clean.
+  bootStep("Clearing deleted items from the Library…", () => {
+    try {
+      const r = require("./sync/handlers/asset-mirror").retireOrphanedAssets(db);
+      if (r.retired) logStartup(`[library] retired ${r.retired} Library entr${r.retired === 1 ? "y" : "ies"} for deleted items ${JSON.stringify(r.byTable)}`);
+    } catch (e) { logStartup(`[library] deleted-item repair ✗ ${e.message}`); }
+  });
   // AFTER openDb() + runMigrations(): the handle exists and artwork_cache (v41) is present. Calling
   // this at module scope caught `db === undefined` and pinned it, so nothing was ever cached.
   bootStep("Preparing artwork cache…", () => initArtworkCache());

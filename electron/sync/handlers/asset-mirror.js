@@ -120,6 +120,18 @@ function mirrorAssetInbound(db, tableName, row) {
   const baseType = assetTypeFor(tableName);
   if (!baseType) return { ok: true, skipped: 'not_audio_bearing' };
   if (!row || !row.uuid) return { ok: true, skipped: 'no_uuid' };
+  // A DELETED ROW IS NEVER AN ASSET. This used to mirror any row with a file_path, deleted or not, and wrote the asset
+  // with deleted_at = NULL. OVEVENTS, 2026-10-21 18:57:58Z (its first start on 4.6.62): the pull re-delivered 31 song
+  // updates from 2026-08-07 whose payloads carried their own tombstones (songs deleted 07-06..08-06, before deletes
+  // cleared file_path). The songs stayed deleted; their assets came back live, and the Library listed all 31
+  // (docs/library-category-and-rename-2026-10-23.md). Now a deleted row tombstones its asset, and never creates one.
+  if (row.deleted_at) {
+    try {
+      db.prepare('UPDATE library_asset SET deleted_at = ?, updated_at = ? WHERE uuid = ? AND deleted_at IS NULL')
+        .run(row.deleted_at, new Date().toISOString(), row.uuid);
+    } catch (e) { console.error(`[asset-mirror] inbound deleted ${tableName} ${row.uuid}: ${e.message}`); }
+    return { ok: true, skipped: 'deleted_row' };
+  }
   // Only mirror something that actually carries audio. A row with no path is not an asset yet.
   if (!row.file_path) return { ok: true, skipped: 'no_file_path' };
 
@@ -161,6 +173,31 @@ function mirrorAssetInboundDelete(db, tableName, uuid, deletedAt) {
   }
 }
 
+/**
+ * THE REPAIR. Tombstone every live asset whose owning row is deleted — the ghosts the inbound mirror left before it
+ * respected tombstones (31 songs on OVEVENTS). Runs on every launch: one UPDATE per audio-bearing table, a no-op once
+ * clean. Journals nothing, like the inbound mirror: the asset is derived, and every peer repairs its own.
+ * Returns { retired: n, byTable: { table: n } }.
+ */
+function retireOrphanedAssets(db) {
+  const now = new Date().toISOString();
+  const byTable = {};
+  let retired = 0;
+  for (const { table } of audioBearingTables()) {
+    const physical = (REGISTRY[table] && REGISTRY[table].tableName) || table;
+    try {
+      const n = db.prepare(
+        `UPDATE library_asset
+            SET deleted_at = (SELECT o.deleted_at FROM ${physical} o WHERE o.uuid = library_asset.uuid), updated_at = ?
+          WHERE deleted_at IS NULL
+            AND uuid IN (SELECT uuid FROM ${physical} WHERE deleted_at IS NOT NULL)`
+      ).run(now).changes;
+      if (n) { byTable[table] = n; retired += n; }
+    } catch (e) { console.error(`[asset-mirror] repair ${table}: ${e.message}`); }   // table absent on this schema
+  }
+  return { retired, byTable };
+}
+
 /** `songs.content_class` is the operator-facing marking; library_asset.type is what the panels
  *  filter on. ONE mapping, here, so a new class cannot mean two different things in two files. */
 function assetTypeForContentClass(cls) {
@@ -172,4 +209,4 @@ function assetTypeForContentClass(cls) {
 }
 
 module.exports = { mirrorAsset, mirrorAssetDelete, mirrorAssetInbound, mirrorAssetInboundDelete,
-                   assetTypeFor, audioBearingTables, assetTypeForContentClass };
+                   retireOrphanedAssets, assetTypeFor, audioBearingTables, assetTypeForContentClass };

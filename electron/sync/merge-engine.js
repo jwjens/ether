@@ -215,6 +215,20 @@ class MergeEngine {
       try { localAudioDir = this._localAudioDir ? this._localAudioDir() : null; } catch { localAudioDir = null; }
       const row = deserializePayload(payload_after, m.table_name, { localAudioDir });
 
+      // A DELETED SONG NEVER COMES BACK (Jeff, 2026-10-23). LWW lets a newer update win, and an update whose payload has
+      // deleted_at = null (written by a machine that had not yet heard of the delete, or arriving for a delete this
+      // machine never journalled) would clear the tombstone below and put the song back on air. Re-adding a song is an
+      // import, which makes a NEW row with a new uuid (songs.js songsCreate), so nothing legitimate ever needs to clear
+      // one. Songs only: the generic re-insert rule [N-112] stands for every other table.
+      if (m.table_name === 'songs' && row_id) {
+        let tomb = null;
+        try { tomb = db.prepare(`SELECT deleted_at FROM ${table_name} WHERE uuid = ?`).get(row_id); } catch { tomb = null; }
+        if (tomb && tomb.deleted_at) {
+          console.log(`[merge-engine] inbound ${op} for deleted song ${row_id} not applied — a deleted song stays deleted`);
+          return;
+        }
+      }
+
       // Remap the sender's local-integer references (station_id + parent FKs) to THIS install's local
       // ids via their stable uuids before writing, so a station that is local id 1 on the sender and
       // id 2 here lands on id 2 here (and its slots link to the local clock/category).
