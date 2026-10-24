@@ -10540,32 +10540,25 @@ ipcMain.handle("discogs:search", async (_, { title, artist }) => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
-ipcMain.handle("discogs:updateTrack", (_, { id, title, artist, album, year, genre, bpm }) => {
+// Only the fields the call carries are written — an artist edit used to clear the album and every other edit the artist
+// (electron/track-edit.js has the rule and the history).
+ipcMain.handle("discogs:updateTrack", (_, fields) => {
   try {
     const { artistsFindOrCreateByName } = require('./sync/handlers/artists');
-    const { albumsFindOrCreate } = require('./sync/handlers/albums');
-    const { songsUpdateById } = require('./sync/handlers/songs');
-
-    // Upsert artist
-    const artistRow = artist ? artistsFindOrCreateByName(db, artist) : null;
-    const artistId = artistRow?.id ?? null;
-
-    // Upsert album + year
-    let albumId = null;
-    if (album) {
-      const albumRow = albumsFindOrCreate(db, { title: album, artistId, year: year ?? null });
-      albumId = albumRow?.id ?? null;
-    }
-
-    const patch = {};
-    if (title    !== undefined) patch.title     = title;
-    if (artistId !== undefined) patch.artist_id = artistId;
-    if (albumId  !== undefined) patch.album_id  = albumId;
-    if (genre    !== undefined) patch.genre     = genre;
-    if (bpm      !== undefined) patch.bpm       = bpm;
-    if (Object.keys(patch).length === 0) return { ok: true };
-    songsUpdateById(db, id, patch);
-    return { ok: true };
+    const { albumsFindOrCreate, albumsUpdate } = require('./sync/handlers/albums');
+    const { songsUpdateById, songsGetByIntId } = require('./sync/handlers/songs');
+    const r = require('./track-edit').applyTrackEdit(db, fields, {
+      getSong: songsGetByIntId,
+      artistsFindOrCreateByName,
+      albumsFindOrCreate,
+      setAlbumYear: (d, albumId, year) => {
+        const a = d.prepare('SELECT uuid FROM albums WHERE id = ? AND deleted_at IS NULL').get(albumId);
+        if (!a || !a.uuid) throw new Error(`album ${albumId} not found`);
+        albumsUpdate(d, a.uuid, { year: year ?? null });
+      },
+      songsUpdateById,
+    });
+    return r.ok ? { ok: true } : r;
   } catch (e) { return { ok: false, error: e.message }; }
 });
 

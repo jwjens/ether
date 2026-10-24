@@ -53,6 +53,26 @@ Jeff, 2026-10-23 (verbatim): "i can click on the categories now but i cant save 
   edit → album_id 3 → null; title via updateTrack → artist_id → null).
 - **OV:** UNVERIFIED — same check (library_asset SONG rows with a deleted song, created at OV's first 4.6.62 start).
 
+## What recreated the 31: found and fixed (69fd54e, later on 2026-10-23)
+
+- **Receipt, OVEVENTS live DB (read-only copy):** each of the 31 has exactly one journal row: `songs update`, origin
+  `remote`, from client `8e8f6181…`, `created_at` 2026-08-07T16:48–17:23Z, schema v36, **`applied_at` 2026-10-21T18:57:58Z**.
+  Every payload carries the song's own tombstone (`deleted_at` = the local value), and its `file_path` is still set (deleted
+  07-06..08-06, before deletes cleared the path). On first start, 4.6.62 re-pulled history (per-station sync positions,
+  aee6ffd) and applied them.
+- **Cause:** `electron/sync/handlers/asset-mirror.js` `mirrorAssetInbound` mirrored any row with a `file_path` and wrote the
+  asset with `deleted_at = NULL`, ignoring the row's own `deleted_at`. The song rows stayed deleted; their assets came back.
+- **Fix:**
+  1. `mirrorAssetInbound`: a deleted row tombstones its asset and never creates one.
+  2. `merge-engine.js`: an inbound insert/update is not applied to a song this machine holds as deleted, so a newer update
+     with `deleted_at: null` can't put it back on air. Songs only: re-adding a song is an import (a new uuid). The generic
+     re-insert rule [N-112] stands for the other tables.
+  3. `retireOrphanedAssets` as a boot step after migrations: tombstones live assets whose owner row is deleted. On a copy
+     of the OVEVENTS DB it retired exactly 31 (songs) and nothing on the second run.
+- **Test:** `electron/sync/tests/t56-t58-deleted-songs-never-return.test.js` (5; `npm run test:sync`). Against the old code,
+  4 of 5 fail; T-58b (a live song still mirrors) passes on both.
+- **OV:** not checked. The boot repair fixes it there too on the next start, if it has the same ghosts.
+
 ## Not yet known — needs a runtime receipt (superseded above)
 
 The cause. A select that won't open AND an edit field that reverts both fit the row being re-mounted or its events being
