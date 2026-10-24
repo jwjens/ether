@@ -19,7 +19,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { buildIndex, findInIndex, storedBasename, AUDIO_TABLES } = require('./audio-library-index');
+const { buildIndex, findInIndex, storedBasename, AUDIO_TABLES, existsExactCase, libraryPathFor } = require('./audio-library-index');
 
 // Module-level bridge: lets code OUTSIDE this factory (the songs delete path) emit a health event
 // without threading the instance through every caller. Wired when the factory is constructed; a no-op
@@ -941,7 +941,8 @@ function createLibraryHealth(opts) {
 
           // The local playout path is trustworthy when it exists; a stored path that is already a
           // real file on this machine is equally fine. Neither is used as a mkdir target.
-          if (exists(r.gfp) || exists(r.sfp)) continue;
+          // Case-exact: a different-case spelling on disk is a different file (audio-library-index.js caseAltName).
+          if (existsExactCase(r.gfp) || existsExactCase(r.sfp)) continue;
 
           // 2. Re-root onto this machine's library, using the filename only.
           const t = localTargetFor(r.gfp || r.sfp || r.fk);
@@ -949,8 +950,10 @@ function createLibraryHealth(opts) {
             appendJsonl({ kind: 'prefetch', ok: false, title: r.title, skipped: true, reason: t.reason });
             continue;
           }
-          if (exists(t.path)) continue;                     // already materialized under our own name
-          targets.push({ fp: t.path, fk: r.fk, title: r.title });
+          // Already materialized under our own name, or its case-alt name; otherwise write to whichever applies.
+          const lp = libraryPathFor(path.dirname(t.path), path.basename(t.path));
+          if (lp.present) continue;
+          targets.push({ fp: lp.path, fk: r.fk, title: r.title });
         }
       } catch { /* skip station */ }
     }

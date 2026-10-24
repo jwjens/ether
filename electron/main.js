@@ -5199,8 +5199,9 @@ function _libIndexCached() {
 }
 
 async function resolveLocalAudioPath(filePath) {
-  // (1) Fast path — file exists locally.
-  if (filePath && fs.existsSync(filePath)) {
+  // (1) Fast path — file exists locally. Not when it only "exists" because a different-case spelling sits in the library:
+  // that is another file (audio-library-index.js caseShadowed), and the library tier below finds this one's own copy.
+  if (filePath && fs.existsSync(filePath) && !require('./audio-library-index').caseShadowed(_libIndexCached(), filePath)) {
     return { ok: true, filePath };
   }
   // ── (1b) THE AUDIO LIBRARY TIER (2026-09-04) ─────────────────────────────────────────────────
@@ -10909,10 +10910,13 @@ async function fetchR2Track(fileKey) {
   }
 
   const safeName  = storedBasename(fileKey).replace(/[^a-zA-Z0-9._-]/g, '_');
-  const cachePath = path.join(getMusicDir(), safeName);
+  // Case-exact: a different-case spelling already in the library is a different file, so this one goes to its case-alt
+  // name instead of being answered by (or written over) that file. audio-library-index.js caseAltName.
+  const target    = require('./audio-library-index').libraryPathFor(getMusicDir(), safeName);
+  const cachePath = target.path;
 
   // Cache hit path — short-circuit
-  if (fs.existsSync(cachePath)) return { ok: true, filePath: cachePath };
+  if (target.present) return { ok: true, filePath: cachePath };
 
   try {
     // 1. Request signed GET URL from backend — member Bearer for an operated station, else license key.
@@ -14207,6 +14211,7 @@ ipcMain.handle('catalogue:backup:download', async () => {
         onFileError: (name, reason) => logStartup(`[catalogue:restore] FAILED ${name}: ${reason}`),
       });
       for (const line of R2LIB.restoreLogLines('catalogue:restore', res)) logStartup(line);
+      if (res.downloaded > 0) _libIndexAt = 0;   // new files (case-alt names among them) resolve now, not in 30 s
       _catDownloadState = { ..._catDownloadState, in_progress: false, phase: 'done' };
       _catBroadcast('catalogue:backup:download:state', _catDownloadState);
       send('catalogue:backup:download:done', res);
@@ -14295,6 +14300,7 @@ async function _cataloguePullTick() {
     if (res.downloaded > 0 || res.errors > 0) {
       for (const line of R2LIB.restoreLogLines("catalogue:pull", res)) logStartup(line);
     }
+    if (res.downloaded > 0) _libIndexAt = 0;         // new files (case-alt names among them) resolve now, not in 30 s
     if (announced) {
       _catDownloadState = { ..._catDownloadState, in_progress: false, phase: "done" };
       _catBroadcast("catalogue:backup:download:state", _catDownloadState);

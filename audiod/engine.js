@@ -1975,7 +1975,11 @@ class DaemonEngine {
   _resolveLocal(fp) {
     if (!fp) return null;
     if (/^[a-z]+:\/\//i.test(fp)) return fp;                 // a URL is the daemon's to stream, not to stat
-    if (fs.existsSync(fp) && this._dur(fp) > 0) return fp;    // fast path — the stored path is right
+    // Fast path — the stored path is right. Not when it only "exists" because a different-case spelling sits in the
+    // library: that is another file (audio-library-index.js caseShadowed); the index below finds this one's own copy.
+    let shadowed = false;
+    try { shadowed = require('../electron/audio-library-index').caseShadowed(this._libIndex(), fp); } catch { /* index unavailable */ }
+    if (!shadowed && fs.existsSync(fp) && this._dur(fp) > 0) return fp;
     try {
       const hit = require('../electron/audio-library-index').findInIndex(this._libIndex(), fp);
       if (hit && fs.existsSync(hit) && this._dur(hit) > 0) {

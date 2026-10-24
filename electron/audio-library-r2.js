@@ -43,7 +43,7 @@ const fs = require('fs');
 const path = require('path');
 
 // One definition of "is this an audio file", shared with the index/health modules.
-const { AUDIO: AUDIO_EXTS, storedBasename } = require('./audio-library-index');
+const { AUDIO: AUDIO_EXTS, storedBasename, caseKeyOf, nameSet, libraryNameFor } = require('./audio-library-index');
 
 const MANIFEST_KEY = '_ether-catalogue-manifest.json';
 const MANIFEST_VERSION = 1;
@@ -74,7 +74,9 @@ function walkCatalogue(root) {
     if (!AUDIO_EXTS.has(path.extname(e.name).toLowerCase())) continue;
     const full = path.join(root, e.name);
     let st; try { st = fs.statSync(full); } catch { continue; }
-    out.push({ name: e.name, path: full, size: st.size, mtime: Math.floor(st.mtimeMs) });
+    // `name` is the CLOUD name (a case-alt file stands for the name it was made from, see audio-library-index.js
+    // caseAltName); `file` is the name on disk. Upload keys by `name`, so a case-alt file never becomes a key of its own.
+    out.push({ name: caseKeyOf(e.name), file: e.name, path: full, size: st.size, mtime: Math.floor(st.mtimeMs) });
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
@@ -309,12 +311,26 @@ async function downloadCatalogue(io, opts) {
   const { manifest, existed } = await readRemoteManifest(io);
   const remote = Object.entries(manifest.files || {}).map(([name, meta]) => ({ name, size: Number(meta && meta.size) || null }));
 
-  const localByName = new Map(walkCatalogue(root).map(f => [f.name, f]));
+  const local = walkCatalogue(root);
+  const localByName = new Map(local.map(f => [f.name, f]));
   const missing = remote.filter(r => {
     const l = localByName.get(r.name);
     if (!l) return true;
     return r.size !== null && Number(l.size) !== r.size;   // present but a different file
   });
+
+  // WHERE EACH ONE LANDS. A name whose plain spelling is held by a different-case file goes to its case-alt name, so the
+  // two never overwrite each other (audio-library-index.js caseAltName). Planned up front, in code-point order, because
+  // three downloads run at once: two absent spellings of one name must not both pick the plain name.
+  const onDisk = nameSet(local.map(f => f.file));
+  const targetName = new Map();
+  for (const r of missing.slice().sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+    const l = localByName.get(r.name);
+    if (l) { targetName.set(r.name, l.file); continue; }   // a different-size copy is replaced where it is
+    const t = libraryNameFor(onDisk, r.name).name;
+    onDisk.add(t);
+    targetName.set(r.name, t);
+  }
 
   const result = {
     root,
@@ -343,7 +359,7 @@ async function downloadCatalogue(io, opts) {
       if (!body) { absent = true; notInCloud.push(entry.name); throw new Error('not found in the cloud'); }
       // Write to a temp name and rename, so an interrupted download never leaves a truncated file
       // in the catalogue that looks like the real one to the resolver.
-      const finalPath = path.join(root, entry.name);
+      const finalPath = path.join(root, targetName.get(entry.name) || entry.name);
       const tmpPath = finalPath + '.part';
       fs.writeFileSync(tmpPath, body);
       fs.renameSync(tmpPath, finalPath);

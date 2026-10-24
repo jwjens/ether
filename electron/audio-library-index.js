@@ -22,8 +22,88 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const AUDIO = new Set(['.mp3', '.flac', '.wav', '.m4a', '.aac', '.ogg', '.aif', '.aiff', '.wma']);
+
+// ── NAMES THAT DIFFER ONLY IN CASE ARE DIFFERENT FILES (Jeff, 2026-10-23) ──────────────────────────
+//
+// R2 keys are case-sensitive; NTFS and APFS are not. "Deck The Halls_spotdown.org.mp3" and "Deck the Halls_spotdown.org.mp3"
+// are two cloud objects and two song rows, but one folder can hold only one of those names, so every catalogue pull wrote
+// one over the other and the next pull flipped it back (docs/halloveen-join-61-file-errors-2026-10-23.md).
+//
+// So a name keeps its own spelling on disk unless a DIFFERENT-CASE spelling already holds it; then it lives at
+// caseAltName(name): `<stem>~c<first 8 hex of sha1(name)><ext>`. The suffix is a function of the exact name, so it is the
+// same on every machine and caseKeyOf() recovers the cloud name from it (the hash proves the suffix is ours, not part
+// of a real title). Which spelling holds the plain name is whichever got there first on that machine; resolution never
+// depends on it, because both resolvers try the exact name, then the alt name.
+
+const CASE_ALT_RE = /^(.*)~c([0-9a-f]{8})(\.[^.]+)$/;
+const _hash8 = (s) => crypto.createHash('sha1').update(s, 'utf8').digest('hex').slice(0, 8);
+
+/** Where `name` lives when a different-case spelling holds its plain name. */
+function caseAltName(name) {
+  const ext = path.extname(name);
+  return `${name.slice(0, name.length - ext.length)}~c${_hash8(name)}${ext}`;
+}
+
+/** The cloud name a local file stands for: its own name, or the name a caseAltName() file was made from. */
+function caseKeyOf(localName) {
+  const m = CASE_ALT_RE.exec(localName);
+  if (!m) return localName;
+  const candidate = m[1] + m[3];
+  return _hash8(candidate) === m[2] ? candidate : localName;
+}
+
+/** A folder's file names, for libraryNameFor(). `add` records a name a caller is about to write. */
+function nameSet(names) {
+  const exact = new Set(), lower = new Set();
+  const s = { exact, lower, add(n) { exact.add(n); lower.add(n.toLowerCase()); return s; } };
+  for (const n of names || []) s.add(n);
+  return s;
+}
+
+/**
+ * The file name `name` has (or must get) in a folder holding `set`. Returns { name, present }.
+ * Exact spelling present → it. Its alt present → the alt. A different-case spelling holds the plain name → the alt, to
+ * be written. Otherwise the plain name, to be written.
+ */
+function libraryNameFor(set, name) {
+  if (set.exact.has(name)) return { name, present: true };
+  const alt = caseAltName(name);
+  if (set.exact.has(alt)) return { name: alt, present: true };
+  if (set.lower.has(name.toLowerCase())) return { name: alt, present: false };
+  return { name, present: false };
+}
+
+/** libraryNameFor() against a folder on disk. Returns { path, present }. */
+function libraryPathFor(dir, name) {
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { /* absent folder: nothing is present */ }
+  const r = libraryNameFor(nameSet(names), name);
+  return { path: path.join(dir, r.name), present: r.present };
+}
+
+/** fs.existsSync, but a different-case spelling of the file name does not count. */
+function existsExactCase(fp) {
+  try {
+    if (!fp || !fs.existsSync(fp)) return false;
+    return fs.readdirSync(path.dirname(fp)).includes(path.basename(fp));
+  } catch { return false; }
+}
+
+/**
+ * Does `storedPath` only "exist" because a different-case spelling sits in its library folder? Then fs.existsSync would
+ * open that other file, so a resolver must not take its fast path. Answered from the index, so it costs no disk access.
+ */
+function caseShadowed(index, storedPath) {
+  if (!index || !index.byExact || !storedPath) return false;
+  const name = storedBasename(storedPath);
+  if (index.byExact.has(name)) return false;
+  const hit = index.byBasename.get(name.toLowerCase());
+  if (!hit || path.basename(hit) === name) return false;
+  return path.dirname(hit).toLowerCase() === path.dirname(String(storedPath)).toLowerCase();
+}
 
 /**
  * Tolerant name key. Moved here verbatim from library-folders.js so Re-sync's matching does not
@@ -49,6 +129,7 @@ function norm(s) {
  * not displace the copy already found.
  */
 function buildIndex(root, opts = {}) {
+  const byExact = new Map();      // the name exactly as on disk -> absolute path (case-exact question)
   const byBasename = new Map();
   const byNorm = new Map();
   const maxDepth = opts.maxDepth == null ? 6 : opts.maxDepth;
@@ -63,6 +144,7 @@ function buildIndex(root, opts = {}) {
         if (e.isDirectory()) { walk(full, depth + 1); continue; }
         if (!AUDIO.has(path.extname(e.name).toLowerCase())) continue;
         files++;
+        if (!byExact.has(e.name)) byExact.set(e.name, full);
         const base = e.name.toLowerCase();
         if (!byBasename.has(base)) byBasename.set(base, full);
         const k = norm(path.parse(e.name).name);
@@ -70,7 +152,7 @@ function buildIndex(root, opts = {}) {
       }
     })(root, 0);
   }
-  return { byBasename, byNorm, files, root: root || null };
+  return { byExact, byBasename, byNorm, files, root: root || null };
 }
 
 /**
@@ -101,6 +183,12 @@ function storedBasename(p) {
 function findInIndex(index, storedPath) {
   if (!index || !storedPath) return null;
   const name = storedBasename(storedPath);
+  // The exact spelling, then its case-alt (see caseAltName), BEFORE the case-blind match: a different-case spelling is a
+  // different file. An index built before byExact existed skips straight to the old order.
+  if (index.byExact) {
+    const own = index.byExact.get(name) || index.byExact.get(caseAltName(name));
+    if (own) return own;
+  }
   const exact = index.byBasename.get(name.toLowerCase());
   if (exact) return exact;
   const k = norm(path.parse(name).name);
@@ -158,4 +246,7 @@ function tableColumns(db, table) {
   return set;
 }
 
-module.exports = { buildIndex, findInIndex, storedBasename, norm, AUDIO, AUDIO_TABLES, AUDIO_TABLE_NAMES, tableColumns };
+module.exports = {
+  buildIndex, findInIndex, storedBasename, norm, AUDIO, AUDIO_TABLES, AUDIO_TABLE_NAMES, tableColumns,
+  caseAltName, caseKeyOf, nameSet, libraryNameFor, libraryPathFor, existsExactCase, caseShadowed,
+};
