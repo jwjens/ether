@@ -298,6 +298,10 @@ async function downloadCatalogue(io, opts) {
     root, concurrency = 3,
     onProgress = () => {}, shouldAbort = () => false,
     pruneMissing = true,
+    // Called once per file that would not come down, with its name and reason — every one, unlike `failures`, which is
+    // capped. Not called for a file the cloud does not have: whether that is an error or a cleanup is only known after the
+    // prune, so those are reported from `notInCloud` at the end (see restoreLogLines).
+    onFileError = () => {},
   } = opts;
 
   try { fs.mkdirSync(root, { recursive: true }); } catch { /* surfaced by the first write */ }
@@ -333,9 +337,10 @@ async function downloadCatalogue(io, opts) {
 
   async function one(entry) {
     if (shouldAbort()) return;
+    let absent = false;
     try {
       const body = await io.getObject(entry.name);
-      if (!body) { notInCloud.push(entry.name); throw new Error('not found in the cloud'); }
+      if (!body) { absent = true; notInCloud.push(entry.name); throw new Error('not found in the cloud'); }
       // Write to a temp name and rename, so an interrupted download never leaves a truncated file
       // in the catalogue that looks like the real one to the resolver.
       const finalPath = path.join(root, entry.name);
@@ -347,6 +352,7 @@ async function downloadCatalogue(io, opts) {
     } catch (e) {
       result.errors++;
       if (result.failures.length < 200) result.failures.push({ name: entry.name, reason: e.message });
+      if (!absent) { try { onFileError(entry.name, e.message); } catch { /* a log write must never fail a download */ } }
     }
     done++;
     onProgress({ phase: 'download', done, total: missing.length, errors: result.errors, current: entry.name });
@@ -377,6 +383,11 @@ async function downloadCatalogue(io, opts) {
     try {
       await writeRemoteManifest(io, manifest);
       result.prunedFromManifest = notInCloud.length;
+      // A pruned entry is CLEANUP, not an error (jensj work PC, 2026-10-23: 61 entries for deleted, never-uploaded songs
+      // were reported as "61 file errors"). Only once the manifest write lands — an unpruned entry is still a failure.
+      const pruned = new Set(notInCloud);
+      result.errors -= notInCloud.length;
+      result.failures = result.failures.filter(f => !pruned.has(f.name));
     } catch (e) {
       result.prunedFromManifest = 0;
       result.pruneError = e.message;
@@ -387,6 +398,25 @@ async function downloadCatalogue(io, opts) {
 
   result.elapsedMs = Date.now() - result.startedAt;
   return result;
+}
+
+/**
+ * The ether-startup.log lines for a finished download: the summary, then one line per file the cloud does not have —
+ * CLEANUP when this run pruned it from the manifest, FAILED when it did not (pruneMissing off, or the manifest write
+ * failed). Files that failed for any other reason were already logged one by one through onFileError.
+ */
+function restoreLogLines(tag, res) {
+  const r = res || {};
+  const lines = [`[${tag}] ${r.aborted ? 'CANCELLED' : 'done'} — ${r.downloaded || 0}/${r.toDownload || 0} pulled, `
+    + `${r.alreadyLocal || 0} already here, ${r.errors || 0} errors, ${r.prunedFromManifest || 0} cleaned up, ROWS WRITTEN ${r.rowsWritten || 0}`
+    + (r.pruneError ? `, cloud list NOT updated: ${r.pruneError}` : '')];
+  const cleaned = (r.prunedFromManifest || 0) > 0;
+  for (const name of r.notInCloud || []) {
+    lines.push(cleaned
+      ? `[${tag}] CLEANUP ${name}: not in the cloud — removed from the cloud list`
+      : `[${tag}] FAILED ${name}: not found in the cloud`);
+  }
+  return lines;
 }
 
 module.exports = {
@@ -400,5 +430,6 @@ module.exports = {
   writeRemoteManifest,
   uploadCatalogue,
   downloadCatalogue,
+  restoreLogLines,
   contentTypeFor,
 };

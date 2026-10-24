@@ -14202,14 +14202,16 @@ ipcMain.handle('catalogue:backup:download', async () => {
           send('catalogue:backup:download:progress', _catDownloadState);
         },
         shouldAbort: () => _catDownloadAbort,
+        // Every failed file, by name and reason, into ether-startup.log. They used to reach only stdout and the renderer,
+        // so a packaged install kept no record of WHICH files failed (jensj work PC, 2026-10-23).
+        onFileError: (name, reason) => logStartup(`[catalogue:restore] FAILED ${name}: ${reason}`),
       });
-      console.log(`[catalogue:restore] ${res.aborted ? 'CANCELLED' : 'done'} — ${res.downloaded}/${res.toDownload} pulled, `
-        + `${res.alreadyLocal} already here, ${res.errors} errors, ROWS WRITTEN ${res.rowsWritten}`);
+      for (const line of R2LIB.restoreLogLines('catalogue:restore', res)) logStartup(line);
       _catDownloadState = { ..._catDownloadState, in_progress: false, phase: 'done' };
       _catBroadcast('catalogue:backup:download:state', _catDownloadState);
       send('catalogue:backup:download:done', res);
     } catch (e) {
-      console.error('[catalogue:restore] fatal:', e.message);
+      logStartup(`[catalogue:restore] fatal: ${e.message}`);
       // in_progress false on the failure path too, or Health Monitor would suppress its dead-row
       // line forever after one failed restore — the flag must never outlive the transfer.
       _catDownloadState = { ..._catDownloadState, in_progress: false, phase: 'idle' };
@@ -14267,6 +14269,7 @@ async function _cataloguePullTick() {
       root,
       pruneMissing: false,
       shouldAbort: () => _catDownloadAbort,
+      onFileError: (name, reason) => logStartup(`[catalogue:pull] FAILED ${name}: ${reason}`),
       // SILENT WHEN THERE IS NOTHING TO FETCH. A tick that finds nothing must not flip
       // in_progress: catalogueRestoreInFlight() reads that flag and library-health suppresses the
       // dead count while it is set, so a five-minute no-op heartbeat would leave the Health Monitor
@@ -14290,7 +14293,7 @@ async function _cataloguePullTick() {
     });
     _catLastPull = { at: Date.now(), downloaded: res.downloaded, checked: true, error: null };
     if (res.downloaded > 0 || res.errors > 0) {
-      console.log(`[catalogue:pull] ${res.downloaded}/${res.toDownload} pulled, ${res.alreadyLocal} already here, ${res.errors} errors`);
+      for (const line of R2LIB.restoreLogLines("catalogue:pull", res)) logStartup(line);
     }
     if (announced) {
       _catDownloadState = { ..._catDownloadState, in_progress: false, phase: "done" };
@@ -14299,7 +14302,7 @@ async function _cataloguePullTick() {
     }
   } catch (e) {
     _catLastPull = { at: Date.now(), downloaded: 0, checked: true, error: e.message };
-    console.warn("[catalogue:pull] failed:", e.message);
+    logStartup(`[catalogue:pull] failed: ${e.message}`);
     // in_progress must never outlive the transfer, on the failure path too — one failed pull would
     // otherwise suppress the dead-row line forever.
     if (announced) {

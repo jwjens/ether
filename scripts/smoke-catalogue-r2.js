@@ -251,6 +251,62 @@ const fakeDb = (rows) => ({ prepare: () => ({ all: () => rows }) });
     eq("  errors", r.errors, 0);
   }
 
+  console.log("\n== 12. every failed file is named for the log; a pruned entry is cleanup, not an error ==");
+  {
+    // jensj work PC, 2026-10-23 (docs/halloveen-join-61-file-errors-2026-10-23.md): 61 manifest entries for deleted,
+    // never-uploaded songs were reported as "61 file errors", and no file on the machine said which ones.
+    const io = makeIO();
+    await R2.uploadCatalogue(io, { root: cat, db: fakeDb([]) });
+    io.store.delete("cart-growl.mp3");                         // the cloud never had it: an entry to clean up
+    const realGet = io.getObject;
+    io.getObject = async (key) => {                            // a genuine transfer failure
+      if (key === "spot-promo.mp3") throw new Error("R2 GET 503");
+      return realGet(key);
+    };
+
+    const seen = [];
+    const r = await R2.downloadCatalogue(io, {
+      root: path.join(tmp, "catalogue-machine-12"),
+      onFileError: (name, reason) => seen.push(`${name}: ${reason}`),
+    });
+    eq("  onFileError got the real failure, with its reason, and only that", seen, ["spot-promo.mp3: R2 GET 503"]);
+    eq("  errors counts only the real failure", r.errors, 1);
+    eq("  failures holds only the real failure", r.failures.map(f => f.name), ["spot-promo.mp3"]);
+    eq("  the absent entry is counted as cleanup", r.prunedFromManifest, 1);
+    eq("  the four other files landed", r.downloaded, 4);
+
+    const lines = R2.restoreLogLines("catalogue:restore", r);
+    eq("  summary line", lines[0], "[catalogue:restore] done — 4/6 pulled, 0 already here, 1 errors, 1 cleaned up, ROWS WRITTEN 0");
+    eq("  the absent entry is logged as CLEANUP", lines.slice(1),
+      ["[catalogue:restore] CLEANUP cart-growl.mp3: not in the cloud — removed from the cloud list"]);
+  }
+  {
+    // The pull never prunes, so an absent entry stays a failure there, and is logged as one.
+    const io = makeIO();
+    await R2.uploadCatalogue(io, { root: cat, db: fakeDb([]) });
+    io.store.delete("cart-growl.mp3");
+    const seen = [];
+    const r = await R2.downloadCatalogue(io, {
+      root: path.join(tmp, "catalogue-machine-12b"), pruneMissing: false,
+      onFileError: (name, reason) => seen.push(name),
+    });
+    eq("  unpruned: errors include the absent file", r.errors, 1);
+    eq("  unpruned: nothing counted as cleanup", r.prunedFromManifest, 0);
+    eq("  unpruned: onFileError left it to the end-of-run lines (no double log)", seen, []);
+    eq("  unpruned: logged as FAILED, not CLEANUP", R2.restoreLogLines("catalogue:pull", r).slice(1),
+      ["[catalogue:pull] FAILED cart-growl.mp3: not found in the cloud"]);
+  }
+  {
+    // ...and main.js really sends both paths to ether-startup.log, not to stdout alone.
+    const main = fs.readFileSync(path.join(__dirname, "..", "electron", "main.js"), "utf8");
+    for (const tag of ["catalogue:restore", "catalogue:pull"]) {
+      if (main.includes(`onFileError: (name, reason) => logStartup(\`[${tag}] FAILED`)
+          && new RegExp(`restoreLogLines\\(["']${tag}["'], res\\)\\) logStartup\\(line\\)`).test(main)) {
+        pass(`  main.js: ${tag} logs every failed file and its end-of-run lines to ether-startup.log`);
+      } else fail(`  main.js: ${tag} is not wired to logStartup`);
+    }
+  }
+
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* temp */ }
 
   console.log(failures === 0
