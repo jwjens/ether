@@ -5,6 +5,7 @@ import type { PlanTier } from "../hooks/usePlan";
 import type { VenueProfile, VenueType } from "./FirstRunWizard";
 import { ETHER_BACKEND_URL } from "../lib/etherBackend";
 import { reconcileAccountStations, stampLicenseEverywhere } from "../lib/ccData";
+import { restoreOutcome } from "../lib/restoreOutcome";
 import ethercastWordmark from "../assets/ethercast-wordmark.svg";
 import etherAtom from "../assets/ether-atom.png";
 
@@ -691,26 +692,15 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
       const result = await downloadDone;
       offP?.(); offD?.();
 
-      const got = result?.done ?? 0;
-      const errs = result?.errors ?? 0;
-      if (result?.stalled) {
+      const outcome = restoreOutcome(result);
+      if (!outcome.ok) {
         setSyncPhase('error');
-        setSyncMsg(`The music download stopped responding — nothing transferred for two minutes. Your station's setup is installed; press Retry to download the music again.`);
-        return;
-      }
-      if (result?.aborted) {
-        setSyncPhase('error');
-        setSyncMsg('Music download was cancelled before it finished.');
-        return;
-      }
-      if (got === 0) {
-        setSyncPhase('error');
-        setSyncMsg(`Your station database was restored, but no music could be downloaded from the cloud${errs ? ` (${errs} file error${errs === 1 ? '' : 's'})` : ''}. Check that your plan includes cloud sync and that the library was uploaded from the source machine.`);
+        setSyncMsg(outcome.message);
         return;
       }
 
       setSyncPct(100);
-      setSyncSub(errs > 0 ? `${errs.toLocaleString()} file${errs === 1 ? '' : 's'} skipped` : '');
+      setSyncSub(outcome.sub);
       setSyncMsg('Finished — starting Ether…');
       window.location.reload();
     } catch (e: any) {
