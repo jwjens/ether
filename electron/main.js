@@ -4333,6 +4333,8 @@ app.whenReady().then(() => {
   logStartup(`version: ${app.getVersion()}  packaged: ${app.isPackaged}  pid: ${process.pid}`);
   logStartup(`userData: ${app.getPath('userData')}`);
   try { logStartup(`sessionData: ${app.getPath('sessionData')}`); } catch (e) { logStartup(`sessionData: (unavailable) ${e.message}`); }
+  // The catalogue folder is there from the first launch — the default, or the one the user chose (electron/catalogue-folder.js).
+  try { _catalogueFolder.ensureAtLaunch(); } catch (e) { logStartup(`[catalogue] folder check failed: ${e.message}`); }
 
   // Show native splash first; main window stays hidden behind it
   // createSplash() moved earlier — see the boot block above. Startup work must be VISIBLE.
@@ -10850,29 +10852,19 @@ const MUSIC_DIR_FILE  = _profileData('music-dir.txt');
 // music folder. It is held with the rest of the dedicated-folder arc — see
 // docs/dedicated-catalogue-folder-plan-2026-09-04.md — because it is untested at runtime and belongs
 // with the move, not ahead of it.
-function defaultLibraryDir() {
-  try { const m = app.getPath('music'); if (m) return path.join(m, 'ether music library'); } catch {}
-  return R2_CACHE_DIR;
-}
-// The catalogue folder: the user's setting (music-dir.txt), else the default. (2026-10-26) No other folder is substituted
-// when it cannot be created — that is reported, and downloads simply fail with the reason (electron/catalogue.js).
-let _musicDirSaid = false;
-function getMusicDir() {
-  let dir = defaultLibraryDir();
-  try { const p = fs.readFileSync(MUSIC_DIR_FILE, 'utf8').trim(); if (p) dir = p; } catch {}
-  try { fs.mkdirSync(dir, { recursive: true }); }
-  catch (e) { if (!_musicDirSaid) { _musicDirSaid = true; logStartup(`[catalogue] the catalogue folder ${dir} cannot be created (${e.message}) — downloads into it will fail until it can`); } }
-  return dir;
-}
-
-function setMusicDir(dir) {
-  const d = String(dir || '').trim();
-  if (!d) return { ok: false, error: 'empty path' };
-  try { fs.mkdirSync(d, { recursive: true }); fs.writeFileSync(MUSIC_DIR_FILE, d); return { ok: true, dir: d }; }
-  catch (e) { return { ok: false, error: e.message }; }
-}
+// The catalogue folder: the user's setting (music-dir.txt), else the default — and the default is created at launch
+// (electron/catalogue-folder.js; Jeff, 2026-10-27: "there is always a default"). (2026-10-26) No other folder is
+// substituted when it cannot be created — that is reported, and downloads simply fail with the reason.
+const _catalogueFolder = require('./catalogue-folder').createCatalogueFolder({
+  musicPath: () => app.getPath('music'),
+  settingFile: MUSIC_DIR_FILE,
+  fallbackDir: R2_CACHE_DIR,
+  log: (m) => logStartup(m),
+});
+function getMusicDir() { return _catalogueFolder.current(); }
+function setMusicDir(dir) { return _catalogueFolder.set(dir); }
 fs.mkdirSync(R2_CACHE_DIR, { recursive: true });
-ipcMain.handle('music:get-dir', () => ({ ok: true, dir: getMusicDir(), default: R2_CACHE_DIR }));
+ipcMain.handle('music:get-dir', () => ({ ok: true, dir: getMusicDir(), default: _catalogueFolder.defaultDir() }));
 
 // ── THE AUDIO LIBRARY RULE — bring existing rows inside it ─────────────────────────────────────
 //
