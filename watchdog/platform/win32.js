@@ -161,10 +161,19 @@ function startupStatus() {
   const r = spawnSync('schtasks', ['/Query', '/TN', TASK_NAME], { encoding: 'utf8' });
   return { registered: r.status === 0, taskName: TASK_NAME };
 }
+// The same question without blocking the caller: the app's Health screen polls it, and a spawnSync there held the main
+// thread (the board, the announcement tick, every engine command) for as long as schtasks took to answer.
+function startupStatusAsync() {
+  return new Promise((resolve) => {
+    require('child_process').execFile('schtasks', ['/Query', '/TN', TASK_NAME], { windowsHide: true }, (err) => {
+      resolve({ registered: !err, taskName: TASK_NAME });
+    });
+  });
+}
 
 module.exports = {
   userDataDir, killHard, isProcessAlive,
-  registerStartup, unregisterStartup, startupStatus,
+  registerStartup, unregisterStartup, startupStatus, startupStatusAsync,
   currentUserId, // Phase 4: ha:enable passes DOMAIN\User to the auto-logon helper
   TASK_NAME, buildTaskXml, // exported for tests
 };

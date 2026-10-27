@@ -3997,10 +3997,23 @@ app.whenReady().then(() => {
 
   // sync IPC handlers — all 30 typed handler sets via aggregator
   // (stations:* excluded from installAll — registered manually below with custom logic)
+  // THE SCREENS READ OFF MAIN (2026-10-26, electron/screen-reads.js): every typed READ channel (…:list, …:get-by-id …)
+  // is answered by the screen-read worker — the same handler code, on its own read-only connection — so a screen
+  // opening can never hold the thread the announcement tick, the board and the engine commands run on. Writes stay here.
+  _screenReads = require('./screen-reads').createScreenReadHost({
+    dbPathFn: () => getDbPath(),
+    log: (m) => logStartup(m),
+    healthEvent: (kind, data) => { try { _healthEvent(kind, data); } catch {} },
+  });
+  _screenReads.start();
+  dbHolders.register("screen-read worker", { release: () => _screenReads.release(), reacquire: () => _screenReads.reacquire() });
   console.log('[sync/handlers] ▶ installAll starting (phase-3.5)');
   try {
     const { installAll } = require('./sync/handlers/index');
-    installAll(ipcMain, getDb);   // getDb (function) → every typed handler resolves the live handle after a reopen
+    const { routeScreenReads } = require('./screen-reads');
+    const ipc = routeScreenReads(ipcMain, _screenReads);
+    installAll(ipc, getDb);   // getDb (function) → every typed write handler resolves the live handle after a reopen
+    logStartup(`[screen-reads] ${ipc.routed.length} typed read channels answered off the main thread`);
     console.log('[sync/handlers] ✓ installAll complete');
   } catch (e) {
     console.error("[sync/handlers] ✗ install failed:", e.message);
@@ -4740,14 +4753,20 @@ function _haAlarmActive() {
 // schtasks /Query is a subprocess — cache its result so the 5s ha:dashboard poll
 // (and the footer dot) don't spawn it 12×/min. Task registration is a deliberate,
 // rare action, so a 30s TTL stays plenty fresh. ha:status + ha:dashboard share it.
-let _haStartupCache = { at: 0, val: null };
-function cachedStartupStatus() {
+// ASYNC (2026-10-26): the subprocess is awaited, never run with spawnSync — the Health screen's poll held the main
+// thread (and with it the board and the announcement tick) for as long as schtasks took (electron/screen-reads.js).
+let _haStartupCache = { at: 0, val: null, pending: null };
+async function cachedStartupStatus() {
   const now = Date.now();
   if (_haStartupCache.val && (now - _haStartupCache.at) < 30000) return _haStartupCache.val;
+  if (_haStartupCache.pending) return _haStartupCache.pending;
   const plat = loadHaPlatform();
-  const val = plat && plat.startupStatus ? plat.startupStatus() : { registered: false };
-  _haStartupCache = { at: now, val };
-  return val;
+  if (!plat || !plat.startupStatusAsync) return { registered: false };
+  _haStartupCache.pending = plat.startupStatusAsync().then((val) => {
+    _haStartupCache = { at: Date.now(), val, pending: null };
+    return val;
+  }, (e) => { _haStartupCache.pending = null; throw e; });
+  return _haStartupCache.pending;
 }
 
 // Main event-loop lag sense (2026-07-22): a 1s self-timer measures its own scheduling drift. When the
@@ -4810,13 +4829,13 @@ function buildHealthSnapshot() {
 }
 ipcMain.handle("perf:report", (e, p) => { try { PerfSense.report(e.sender.id, p); } catch {} return true; });
 
-ipcMain.handle("ha:status", () => {
+ipcMain.handle("ha:status", async () => {
   const plat = loadHaPlatform();
   return {
     platform: process.platform,
     supported: !!(plat && plat.registerStartup && process.platform === "win32"),
     config: readHaConfigFile(),
-    startup: cachedStartupStatus(),
+    startup: await cachedStartupStatus(),
     watchdog: { pid: _haWatchdogPid || null, alive: _haIsAlive(_haWatchdogPid), monitoring: !!_haMonitorTimer, ..._haSupervisionState() },
     alarm: _haAlarmActive(),
     alarmAt: _haAlarmAt(),
@@ -4827,7 +4846,7 @@ ipcMain.handle("ha:status", () => {
 // Health panel's 5s poll. One round-trip. `startup` (schtasks) is cached 30s.
 // `active` distinguishes "HA running" from "app launched directly" so the UI can
 // show a neutral "HA Inactive" instead of a scary red when HA was never enabled.
-ipcMain.handle("ha:dashboard", () => {
+ipcMain.handle("ha:dashboard", async () => {
   const plat = loadHaPlatform();
   return {
     health: buildHealthSnapshot(),
@@ -4836,7 +4855,7 @@ ipcMain.handle("ha:dashboard", () => {
       supported: !!(plat && plat.registerStartup && process.platform === "win32"),
       active: !!_haWatchdogPid,
       config: readHaConfigFile(),
-      startup: cachedStartupStatus(),
+      startup: await cachedStartupStatus(),
       watchdog: { pid: _haWatchdogPid || null, alive: _haIsAlive(_haWatchdogPid), monitoring: !!_haMonitorTimer, ..._haSupervisionState() },
       alarm: _haAlarmActive(),
       alarmAt: _haAlarmAt(),
@@ -7407,10 +7426,12 @@ ipcMain.handle("audio:daemon", async (_, cmd, args) => {
 });
 
 // Database
-ipcMain.handle("db:query", (_, sql, params) => {
+// A screen's read — on the screen-read worker's read-only connection, never on this thread (electron/screen-reads.js).
+let _screenReads = null;
+ipcMain.handle("db:query", async (_, sql, params) => {
   try {
-    const stmt = getDb().prepare(sql);   // getDb() self-heals a closed handle (renderer data-layer seam)
-    return { data: stmt.all(...(params || [])), error: null };
+    if (!_screenReads) return { data: null, error: "the database is not open yet" };
+    return { data: await _screenReads.query(sql, params || []), error: null };
   } catch (e) {
     return { data: null, error: e.message };
   }
@@ -12952,65 +12973,22 @@ ipcMain.handle('schedule:runway', (_, stationId) => {
 // out an artist's whole catalog after one spin), so distinct-artist count is the headroom metric; song
 // count is raw depth. Status thresholds follow the pool math in the report (target 8–10+ distinct
 // artists per hourly-called category). Powers the Scheduler Health panel's category gauge.
-ipcMain.handle('schedule:categoryHealth', (_, stationId) => {
+ipcMain.handle('schedule:categoryHealth', async (_, stationId) => {
+  // On the screen-read worker (electron/screen-read-queries.js categoryHealth) — never on this thread.
   try {
     const id = stationId || getActiveStationId();
-    const sep = db.prepare("SELECT value FROM separation_rules WHERE rule_type='artist_separation_min' AND is_active=1 AND station_id=? LIMIT 1").get(id);
-    const artistSepMin = sep ? sep.value : 60;
-    // In-rotation categories: those an active show's clock actually calls (falls back to any category
-    // that has active songs, so a station without clocks still gets a readout).
-    let inRotation = [];
-    try {
-      inRotation = db.prepare(`SELECT DISTINCT cs.category_id FROM clock_slots cs
-        WHERE cs.slot_type='music' AND cs.category_id IS NOT NULL AND cs.deleted_at IS NULL AND cs.station_id=?
-          AND cs.clock_id IN (SELECT clock_id FROM shows WHERE is_active=1 AND clock_id IS NOT NULL AND deleted_at IS NULL AND station_id=?)`).all(id, id).map(r => r.category_id);
-    } catch {}
-    const inRot = new Set(inRotation);
-    const cats = db.prepare(`
-      SELECT c.id, c.code, c.name,
-        (SELECT COUNT(*) FROM songs s WHERE s.category_id=c.id AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status!='inactive')) AS songs,
-        (SELECT COUNT(DISTINCT s.artist_id) FROM songs s WHERE s.category_id=c.id AND s.artist_id IS NOT NULL AND s.file_path IS NOT NULL AND (s.rotation_status IS NULL OR s.rotation_status!='inactive')) AS artists
-      FROM categories c WHERE (c.station_id=? OR c.station_id IS NULL) ORDER BY c.code`).all(id);
-    const rows = cats.filter(c => c.songs > 0).map(c => {
-      const status = c.artists >= 10 ? 'healthy' : c.artists >= 6 ? 'tight' : 'at_risk';
-      return { id: c.id, code: c.code, name: c.name, songs: c.songs, artists: c.artists, status, inRotation: inRot.has(c.id) };
-    });
-    return { ok: true, stationId: id, artistSepMin, rows };
+    const r = await _screenReads.fn('categoryHealth', id);
+    return { ok: true, stationId: id, artistSepMin: r.artistSepMin, rows: r.rows };
   } catch (e) { console.error('[schedule:categoryHealth]', e.message); return { ok: false, error: e.message, rows: [] }; }
 });
 startAutoExtend();
 
-ipcMain.handle('schedule:get', (_, fromTs, toTs, stationId) => {
+ipcMain.handle('schedule:get', async (_, fromTs, toTs, stationId) => {
+  // On the screen-read worker (electron/screen-read-queries.js scheduleGet, the same SQL) — never on this thread.
+  // Main only resolves the station: the ACTIVE one when the caller names none, so a caller still gets one station.
   try {
-    // generated_schedule is per-station; without a station filter this returned EVERY station's rows
-    // in the time range (Magical Forest's calendar showing another station's songs). Scope by station —
-    // default to the ACTIVE station so a caller that passes no id still gets one station, not all.
     const sid = stationId ?? getActiveStationId();
-    // Durable cross-station guard: a row's station_id says which station OWNS the slot, but the
-    // song it points at can later be re-categorised into ANOTHER station's library (the per-station
-    // category migration did exactly this — Christmas tracks generated under HalloVeen's category
-    // were moved into OV's "Christmas" category, leaving stale rows that made HalloVeen's calendar
-    // show Christmas). Never DISPLAY a row whose song now positively belongs to a different station.
-    // Conservative by design — only drops rows we can prove are foreign: song-less rows (spots/talk),
-    // songs with no category, or categories with no station_id all pass through unchanged.
-    const rows = db.prepare(
-      // uuid/source/state added for the log editor (Fix 2): uuid is the only stable handle a row can
-      // be addressed by for mutation, source says who owns it, state says whether it has already
-      // aired (and is therefore a record, not a plan).
-      // played_at (v33, engine-stamped) added 2026-09-18 for the Program Log's as-run time cell.
-      // log_hour_ts (v66): the hour the row belongs to — every clock row is placed, so a row can start past :00 and
-      // is still shown (and windowed) under its own hour and day.
-      `SELECT g.id, g.uuid, g.scheduled_at, g.song_id, g.title, g.artist, g.file_key, g.file_path,
-              g.duration_s, g.category_id, g.source, g.state, g.content_class, g.channel, g.played_at, g.log_hour_ts
-       FROM generated_schedule g
-       WHERE g.station_id = ? AND COALESCE(g.log_hour_ts, g.scheduled_at) >= ? AND COALESCE(g.log_hour_ts, g.scheduled_at) < ? AND g.deleted_at IS NULL
-         AND NOT EXISTS (
-           SELECT 1 FROM songs s JOIN categories c ON c.id = s.category_id
-           WHERE s.id = g.song_id AND c.station_id IS NOT NULL AND c.station_id <> g.station_id
-         )
-       ORDER BY g.scheduled_at`
-    ).all(sid, fromTs ?? 0, toTs ?? 9999999999);
-    return { data: rows, error: null };
+    return { data: await _screenReads.fn('scheduleGet', sid, fromTs, toTs), error: null };
   } catch (e) {
     return { data: null, error: e.message };
   }
