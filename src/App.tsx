@@ -100,6 +100,7 @@ import { SOURCE_SLOTS, isSweeperKind, type SourceKind, type DeckType } from "./c
 import { matchesStation } from "./lib/levelsScope";
 // A slot the engine is carrying is always on the board — the invariant, with its test.
 import { boardSlots } from "./lib/boardSlots";
+import { removedSlots } from "./lib/removeSourceChannel";
 import RulesEditor from "./components/RulesEditor";
 import ProcessingPanel from "./components/ProcessingPanel";
 import NowPlayingSettings from "./components/NowPlayingSettings";
@@ -4041,8 +4042,8 @@ function LivePanel({ autoAdv, shuffle, toggleAuto, toggleShuffle, queueLen, show
   // and a meter.
   // The rule itself lives in src/lib/boardSlots.ts so it can be a TEST rather than a habit.
   const rawDeckOrder: DeckSlot[] = useMemo(
-    () => boardSlots(configuredOrder, engineSlots),
-    [JSON.stringify(configuredOrder), JSON.stringify(engineSlots)]);
+    () => boardSlots(configuredOrder, engineSlots, removedSlots(deckConfigs)),
+    [JSON.stringify(configuredOrder), JSON.stringify(engineSlots), JSON.stringify(removedSlots(deckConfigs))]);
   // Auto-hide the mic deck below 950px when no guest decks are configured.
   // Guests in conversation always keep the mic visible, otherwise it drops out
   // to give the music decks room to breathe on tablets/phones.

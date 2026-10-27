@@ -50,6 +50,8 @@ interface Props {
   onDuckChange: (duck: boolean) => void;
   /** Remove this channel from the board (the − control). */
   onRemove: () => void;
+  /** Why the last "−" was refused (the engine would not release its input) — shown under the dropdown, never silent. */
+  removeError?: string | null;
   compact?: boolean;
   /** SLICE 7 — the show this channel is waiting for (the blade's state), and TAKE NOW. */
   pendingShow?: string | null;
@@ -57,7 +59,7 @@ interface Props {
 }
 
 export default function SourceChannelStrip({
-  config, volume, isOn, onVolumeChange, onToggleOn, onSetOn, onPfl, onKindChange, duck, onDuckChange, onRemove, compact, pendingShow = null, onTakeNow,
+  config, volume, isOn, onVolumeChange, onToggleOn, onSetOn, onPfl, onKindChange, duck, onDuckChange, onRemove, removeError = null, compact, pendingShow = null, onTakeNow,
 }: Props) {
   const meta = sourceKindMeta(config.kind);
   // ONE NAME PER FADER — the board letter, never the engine slot id (src/lib/boardName.ts).
@@ -123,7 +125,7 @@ export default function SourceChannelStrip({
   const patchTried = useRef<string | null>(null);
   useEffect(() => {
     if (linkInput) { patchTried.current = null; return; }
-    if (!linkNeedsPatch({ isLink, cfgLoaded: !!link.cfg, daemon: !!link.cfg?.daemon, slot: config.slot,
+    if (!linkNeedsPatch({ isLink, enabled: config.enabled, cfgLoaded: !!link.cfg, daemon: !!link.cfg?.daemon, slot: config.slot,
                           inputSlot: link.cfg?.input ? link.cfg.input.slot : null })) return;
     if (patchTried.current === config.slot) return;
     patchTried.current = config.slot;
@@ -262,6 +264,7 @@ export default function SourceChannelStrip({
             edit={(() => { const { from: _f, ...rest } = linkInput; return rest; })()} />
         ))}
         {patchErr && <div style={{ fontSize: 8, color: TONE.bad }}>⚠ {patchErr}</div>}
+        {removeError && <div style={{ fontSize: 8, color: TONE.bad }}>⚠ {removeError}</div>}
 
         {/* DUCK — the one control §B.6 exposes today. Threshold, attack, hold, release and depth
             are implemented with the design's defaults but have no tuning UI yet, so this says ON/OFF

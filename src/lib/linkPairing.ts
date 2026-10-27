@@ -13,6 +13,8 @@ export const codeComplete = (formatted: string) => formatted.replace("-", "").le
 /** Does THIS fader need patching into this machine's engine? A fader whose source is Link always is — whether the
  *  pick happened before the Link settings loaded or the kind arrived by sync from the other computer. Never steals the
  *  station's Link from another fader (one Link input per station). */
-export function linkNeedsPatch(a: { isLink: boolean; cfgLoaded: boolean; daemon: boolean; slot: string; inputSlot: string | null }): boolean {
-  return a.isLink && a.cfgLoaded && a.daemon && a.inputSlot == null;
+// Never a channel the operator removed or is removing (enabled:false — the "−", 2026-10-27): releasing its Link must not
+// be undone by this auto-patch.
+export function linkNeedsPatch(a: { isLink: boolean; cfgLoaded: boolean; daemon: boolean; slot: string; inputSlot: string | null; enabled?: boolean }): boolean {
+  return a.isLink && a.enabled !== false && a.cfgLoaded && a.daemon && a.inputSlot == null;
 }

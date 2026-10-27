@@ -1,3 +1,12 @@
+## [4.6.68] — unreleased
+
+### Fixed
+
+- **The board's remove button (−) takes a source channel off in one click, patched or not.** A channel with a Link input
+  or a Park mic patched on it used to stay on the board. Removing it now clears its patch, releases the Link, and stops
+  the channel, and it stays removed. Nothing else on the board or on air is touched. If the engine refuses, the reason
+  is shown on the channel.
+
 ## [4.4.64] — 2026-07-20
 
 ### Added — Show+ DAW: chop & send (quick import → cut → send to deck / jingle / sweeper / library)

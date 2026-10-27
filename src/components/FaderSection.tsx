@@ -46,6 +46,9 @@ import VideoStudio from "./ShowPlus";
 import { BoutiqueCartWall } from "./DeckConfigurator";
 import { computeDeckRole } from "../lib/deckRole";
 import { boardSlots } from "../lib/boardSlots";
+import { removeSourceChannel, removedSlots } from "../lib/removeSourceChannel";
+import { useMicInputs } from "../hooks/useMicInputs";
+import { useRemoteLink } from "../hooks/useRemoteLink";
 import { dispatchCrossWindow } from "../lib/crossWindowEvent";
 import { useDeckSelect, selectBoard, sameBoard } from "../audio/deckStore";
 
@@ -124,9 +127,11 @@ export default function FaderSection({
     [deckConfigs]);
   const hasGuestDeck = !!deckConfigs?.some(c => c.enabled && c.type === "guest");
   const activeDeckOrder = useMemo(() => {
-    const raw = boardSlots(configuredOrder as any, engineSlots) as string[];
+    // A slot the operator removed with the board's remove button stays off the board whatever the engine reports
+    // (src/lib/removeSourceChannel.ts).
+    const raw = boardSlots(configuredOrder as any, engineSlots, removedSlots(deckConfigs)) as string[];
     return (narrow && !hasGuestDeck) ? raw.filter(s => s !== "mic") : raw;
-  }, [JSON.stringify(configuredOrder), JSON.stringify(engineSlots), narrow, hasGuestDeck]);
+  }, [JSON.stringify(configuredOrder), JSON.stringify(engineSlots), JSON.stringify(removedSlots(deckConfigs)), narrow, hasGuestDeck]);
 
   // ── THE ON LAMP READS THE ROW (v58) ─────────────────────────────────────────────────────────
   // Derived, never held: this component renders in two windows and unstored state asserted downward
@@ -193,10 +198,26 @@ export default function FaderSection({
     try { await setChannelOn(slot, on); } catch (e) { console.error("[SourceChannel] cut save failed:", e); }
   }, [setChannelOn, engine]);
 
+  // THE REMOVE BUTTON (2026-10-27, src/lib/removeSourceChannel.ts): off the board in one action — the row marked OFF
+  // (added if the slot has none), its Park/mic patch cleared, the Link released if it is on this slot, its deck stopped.
+  // A refused step puts the row back and the reason is shown on the channel. It used to set enabled:false only, and a
+  // patched channel came straight back.
+  const micInputs = useMicInputs(stationId);
+  const remoteLink = useRemoteLink(stationId);
+  const [removeErr, setRemoveErr] = useState<Record<string, string>>({});
   const onRemoveSourceChannel = useCallback(async (slot: string) => {
-    const merged = (deckConfigs || []).map(c => (c.slot === slot ? { ...c, enabled: false } : c));
-    try { await saveDeckConfigs(merged); } catch (e) { console.error("[SourceChannel] remove failed:", e); }
-  }, [deckConfigs, saveDeckConfigs]);
+    setRemoveErr(prev => { const n = { ...prev }; delete n[slot]; return n; });
+    const r = await removeSourceChannel(slot, {
+      configs: deckConfigs || [],
+      save: saveDeckConfigs,
+      micPatch: micInputs.patches[slot],
+      clearMicPatch: () => micInputs.setPatch(slot, null),
+      linkInputSlot: remoteLink.cfg?.input ? remoteLink.cfg.input.slot : null,
+      releaseLink: () => remoteLink.setInput(null),
+      stopDeck: async () => engine.getDeck(slot)?.stop(),
+    });
+    if (!r.ok) { console.error(`[SourceChannel] remove ${slot} refused: ${r.reason}`); setRemoveErr(prev => ({ ...prev, [slot]: r.reason || "not removed" })); }
+  }, [deckConfigs, saveDeckConfigs, micInputs, remoteLink, engine]);
 
   const canAddSourceChannel = !!nextFreeSourceSlot;
 
@@ -316,6 +337,7 @@ export default function FaderSection({
             duck={!!config.duck}
             onDuckChange={d => onSetSourceDuck?.(slot, d)}
             onRemove={() => onRemoveSourceChannel?.(slot)}
+            removeError={removeErr[slot] || null}
             onPfl={pflFor(slot)}
           />
         </div>

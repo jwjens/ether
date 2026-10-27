@@ -10,6 +10,10 @@
 // no strip, no fader, no cut and no meter — a state a mixer should not be able to express, and the
 // one that cost a full day of chasing a channel nobody could see.
 //
+// ONE EXCEPTION, the operator's own "−" (2026-10-27): a slot whose row says enabled:false was REMOVED by the operator,
+// and is not brought back on the engine's word (src/lib/removeSourceChannel.ts). The invariant above still holds for
+// every slot the configuration does not mention — the CART case — which is the one it exists for.
+//
 // Configuration decides ORDER and LABEL. The engine decides EXISTENCE. Keeping that split in a pure
 // function is what lets the rule be a TEST rather than a habit — see boardSlots.test.ts.
 //
@@ -20,11 +24,12 @@
  *
  * @param configured  enabled deck_configs slots, in the operator's order
  * @param engineLive  slot ids the engine reports as carrying audio (source loaded or mixer pulling)
+ * @param removed     slots the operator removed (rows with enabled:false) — never appended from the engine
  * @returns the configured order, followed by any live engine slot the configuration does not mention
  */
-export function boardSlots(configured: readonly string[], engineLive: readonly string[]): string[] {
+export function boardSlots(configured: readonly string[], engineLive: readonly string[], removed: readonly string[] = []): string[] {
   const out: string[] = [];
-  const seen = new Set<string>();
+  const seen = new Set<string>(removed);
   for (const s of configured) {
     if (!s || seen.has(s)) continue;      // a duplicate row must not produce two strips
     seen.add(s);
