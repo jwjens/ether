@@ -15,6 +15,11 @@ contextBridge.exposeInMainWorld("ether", {
       return () => ipcRenderer.removeListener("debug:popout-log", h);
     },
   },
+  // Sign-in and setup screens (OnboardingFlow): a compact window sized to their content, centered; the full window back after.
+  signInWindow: {
+    fit:     (size) => ipcRenderer.invoke("sign-in-window:fit", size),
+    restore: ()     => ipcRenderer.invoke("sign-in-window:restore"),
+  },
   // SLICE 7 — SHOW PRESETS (docs/dsp-show-presets.md). The blade (the audio service) holds the pending set and the
   // levels; the board reads them back (state + the two events), never keeps its own.
   show: {

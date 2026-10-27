@@ -89,8 +89,12 @@ const OVERLAY_STYLE: React.CSSProperties = {
 };
 
 const SHELL_STYLE: React.CSSProperties = {
-  width: "100%", maxWidth: 640, position: "relative",
+  width: "100%", maxWidth: 520, position: "relative",
 };
+
+// The sign-in / setup window: the shell's width plus a margin on each side; its height is measured per screen.
+const SIGN_IN_WINDOW_MARGIN = 40;
+const SIGN_IN_WINDOW_WIDTH = 520 + 2 * 24 + 2 * SIGN_IN_WINDOW_MARGIN;   // shell + overlay padding + margins
 
 const GLOW_STYLE: React.CSSProperties = {
   position: "absolute", width: 700, height: 700, borderRadius: "50%",
@@ -98,19 +102,22 @@ const GLOW_STYLE: React.CSSProperties = {
   pointerEvents: "none",
 };
 
+// The line above each heading ("Welcome to Ether", "Setting up this computer"): it was 11 px, letter-spaced capitals
+// and barely visible. Now a readable sentence in the accent colour.
 const LABEL_STYLE: React.CSSProperties = {
-  fontSize: 11, fontWeight: 600, letterSpacing: "0.2em",
-  color: "var(--accent-cyan)", textTransform: "uppercase",
-  marginBottom: 12,
+  fontSize: 16, fontWeight: 600, letterSpacing: "0.01em",
+  color: "var(--accent-cyan)",
+  marginBottom: 10,
 };
 
+// The app's own sans-serif (index.css body: Inter), not the old serif display face.
 const HEADING_STYLE: React.CSSProperties = {
-  fontFamily: "'Newsreader', Georgia, serif", fontSize: 34, fontWeight: 800,
-  letterSpacing: "-0.04em", color: "#f0f0f8", lineHeight: 1.1, marginBottom: 12,
+  fontFamily: "'Inter', system-ui, sans-serif", fontSize: 30, fontWeight: 700,
+  letterSpacing: "-0.02em", color: "#f0f0f8", lineHeight: 1.15, marginBottom: 12, whiteSpace: "pre-line",
 };
 
 const SUB_STYLE: React.CSSProperties = {
-  fontSize: 14, color: "rgba(255,255,255,0.4)", lineHeight: 1.6,
+  fontSize: 15, color: "rgba(255,255,255,0.62)", lineHeight: 1.6,
 };
 
 const CARD_STYLE: React.CSSProperties = {
@@ -188,6 +195,28 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   // avoids a flash of the welcome screen before snapping to the
   // resumed state.
   const [resumeChecking, setResumeChecking] = useState(true);
+
+  // ── A compact window, sized to this screen, centered (Jeff, 2026-10-26: "far too big and wide") ────────
+  // Every screen's content sits in one [data-onb-shell] box; its height + the margins is the window this screen needs.
+  // Measured after each render and on every size change (a form error, the progress line). Main gives the full window
+  // back when the flow is done (unmount) or the page reloads (electron/main.js sign-in-window:*).
+  useEffect(() => () => { try { (window as any).ether?.signInWindow?.restore?.(); } catch { /* not in Electron */ } }, []);
+  useEffect(() => {
+    const api = (window as any).ether?.signInWindow;
+    const el = document.querySelector('[data-onb-shell]') as HTMLElement | null;
+    if (!api || !el) return;
+    let raf = 0;
+    const fit = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        try { api.fit({ width: SIGN_IN_WINDOW_WIDTH, height: Math.ceil(el.scrollHeight) + SIGN_IN_WINDOW_MARGIN * 2 }); } catch { /* best-effort */ }
+      });
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -1191,7 +1220,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     return (
       <div style={OVERLAY_STYLE}>
         <div style={GLOW_STYLE} />
-        <div style={SHELL_STYLE}>
+        <div style={SHELL_STYLE} data-onb-shell="">
           <div style={{ animation: "onb-in 0.4s ease both" }}>
             <div style={{ textAlign: "center", marginBottom: 28 }}>
               <img src={etherAtom} alt="" style={{ width: 92, height: 92, display: "block", margin: "0 auto 16px" }} />
@@ -1232,12 +1261,12 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
               {trialRenewUrl && (
                 <button
                   onClick={() => { try { (window as any).ether.invoke("open_url", { url: trialRenewUrl }); } catch { /* ignore */ } }}
-                  style={{ width: "100%", padding: "11px 0", borderRadius: 0, background: "transparent", color: "var(--accent-cyan)", border: "1px solid var(--accent-cyan)", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Newsreader', Georgia, serif", letterSpacing: "0.02em" }}
+                  style={{ width: "100%", padding: "11px 0", borderRadius: 0, background: "transparent", color: "var(--accent-cyan)", border: "1px solid var(--accent-cyan)", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "0.02em" }}
                 >
                   Choose a plan →
                 </button>
               )}
-              <button onClick={submit} disabled={authBusy} style={{ width: "100%", padding: "13px 0", borderRadius: 0, background: "var(--accent-cyan)", color: "#000", border: "none", fontSize: 14, fontWeight: 700, cursor: authBusy ? "default" : "pointer", fontFamily: "'Newsreader', Georgia, serif", letterSpacing: "0.02em", opacity: authBusy ? 0.7 : 1, marginTop: 4 }}>
+              <button onClick={submit} disabled={authBusy} style={{ width: "100%", padding: "13px 0", borderRadius: 0, background: "var(--accent-cyan)", color: "#000", border: "none", fontSize: 14, fontWeight: 700, cursor: authBusy ? "default" : "pointer", fontFamily: "'Inter', system-ui, sans-serif", letterSpacing: "0.02em", opacity: authBusy ? 0.7 : 1, marginTop: 4 }}>
                 {authBusy ? (authMode === 'signin' ? 'Signing in…' : 'Creating account…') : (authMode === 'signin' ? 'Sign in' : 'Create account & continue')}
               </button>
               {authMode === 'signin' && (
@@ -1261,7 +1290,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     return (
       <div style={OVERLAY_STYLE}>
         <div style={GLOW_STYLE} />
-        <div style={SHELL_STYLE}>
+        <div style={SHELL_STYLE} data-onb-shell="">
           <div style={{ animation: "onb-in 0.4s ease both" }}>
             <div style={{ textAlign: "center", marginBottom: 40 }}>
               <div style={LABEL_STYLE}>Welcome to Ether</div>
@@ -1308,7 +1337,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     return (
       <div style={OVERLAY_STYLE}>
         <div style={GLOW_STYLE} />
-        <div style={SHELL_STYLE}>
+        <div style={SHELL_STYLE} data-onb-shell="">
           <div style={{ animation: "onb-in 0.4s ease both" }}>
             <div style={{ textAlign: "center", marginBottom: 32 }}>
               <div style={LABEL_STYLE}>Step 1 of 2</div>
@@ -1383,7 +1412,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
                     padding: "12px 24px", borderRadius: 0,
                     background: "transparent", color: "rgba(255,255,255,0.4)",
                     border: "1px solid rgba(255,255,255,0.1)",
-                    fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
+                    fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, fontWeight: 700,
                     letterSpacing: "0.04em", cursor: submitting ? "default" : "pointer",
                   }}
                 >
@@ -1411,7 +1440,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
       return (
         <div style={OVERLAY_STYLE}>
           <div style={GLOW_STYLE} />
-          <div style={SHELL_STYLE}>
+          <div style={SHELL_STYLE} data-onb-shell="">
             <div style={{ animation: "onb-in 0.4s ease both", textAlign: "center" }}>
               <div style={LABEL_STYLE}>Before we install</div>
               <h1 style={HEADING_STYLE}>{'Where should we keep\nyour music?'}</h1>
@@ -1424,7 +1453,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
                   <button onClick={chooseMusicFolder} style={{ flexShrink: 0, padding: "8px 16px", borderRadius: 0, background: "transparent", color: "var(--accent-cyan)", border: "1px solid var(--accent-cyan)", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Choose folder…</button>
                 </div>
                 <PrimaryButton label="Install here" onClick={() => runCloudInstall(pendingKeep)} />
-                <button onClick={() => setSyncPhase('choose')} style={{ padding: "11px 20px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.5)", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer" }}>← Back</button>
+                <button onClick={() => setSyncPhase('choose')} style={{ padding: "11px 20px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.5)", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer" }}>← Back</button>
               </div>
             </div>
           </div>
@@ -1437,14 +1466,17 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
       return (
         <div style={OVERLAY_STYLE}>
           <div style={GLOW_STYLE} />
-          <div style={SHELL_STYLE}>
+          <div style={SHELL_STYLE} data-onb-shell="">
             <div style={{ animation: "onb-in 0.4s ease both", textAlign: "center" }}>
-              <div style={LABEL_STYLE}>{syncPhase === 'error' ? 'Sync from the cloud' : 'Setting up this computer'}</div>
-              <h1 style={HEADING_STYLE}>{syncPhase === 'error' ? 'Sync failed' : 'Installing your\nstation…'}</h1>
+              <div style={LABEL_STYLE}>{syncPhase === 'error' ? 'Setting up this computer' : 'Welcome to Ether'}</div>
+              <h1 style={HEADING_STYLE}>{syncPhase === 'error' ? 'Setup didn’t finish' : 'Getting your station\nready on this computer'}</h1>
               {syncPhase === 'error' ? (
                 <p style={{ ...SUB_STYLE, maxWidth: 460, margin: "0 auto", color: "#fca5a5" }}>{syncMsg}</p>
               ) : (
-                <div style={{ maxWidth: 460, margin: "20px auto 0" }}>
+                <div style={{ maxWidth: 460, margin: "8px auto 0" }}>
+                  <p style={{ ...SUB_STYLE, margin: "0 0 20px" }}>
+                    We’re bringing your station’s settings and music over. This only happens once — you can leave it running.
+                  </p>
                   <div style={{ height: 10, borderRadius: 999, background: "rgba(255,255,255,0.08)", overflow: "hidden", marginBottom: 14 }}>
                     <div style={{ height: "100%", width: `${syncPct}%`, background: "var(--accent-cyan)", borderRadius: 999, transition: "width 0.3s ease", boxShadow: "0 0 12px rgb(from var(--accent-cyan) r g b / 0.5)" }} />
                   </div>
@@ -1459,7 +1491,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
                 <div style={{ marginTop: 24, display: "flex", justifyContent: "center", gap: 12 }}>
                   <button
                     onClick={() => { setSyncPhase('choose'); setSyncMsg(''); }}
-                    style={{ padding: "12px 24px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.5)", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer" }}
+                    style={{ padding: "12px 24px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.5)", border: "1px solid rgba(255,255,255,0.1)", fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer" }}
                   >
                     ← Back
                   </button>
@@ -1477,7 +1509,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     return (
       <div style={OVERLAY_STYLE}>
         <div style={GLOW_STYLE} />
-        <div style={SHELL_STYLE}>
+        <div style={SHELL_STYLE} data-onb-shell="">
           <div style={{ animation: "onb-in 0.4s ease both" }}>
             <div style={{ textAlign: "center", marginBottom: 28 }}>
               <div style={LABEL_STYLE}>Welcome back{connectAccountName ? `, ${connectAccountName}` : ''}</div>
@@ -1534,7 +1566,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
                 <button
                   onClick={() => { resetForWelcomePath(); setState('addStation'); }}
-                  style={{ padding: "11px 20px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.6)", border: "1px solid rgba(255,255,255,0.12)", fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer", flex: 1 }}
+                  style={{ padding: "11px 20px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.6)", border: "1px solid rgba(255,255,255,0.12)", fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer", flex: 1 }}
                 >
                   + Create new station
                 </button>
@@ -1544,7 +1576,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
                     await kv.upsertByKey(stationId, 'first_run_complete', '1');
                     setState('done');
                   }}
-                  style={{ padding: "11px 20px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.4)", border: "1px solid rgba(255,255,255,0.08)", fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer" }}
+                  style={{ padding: "11px 20px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.4)", border: "1px solid rgba(255,255,255,0.08)", fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer" }}
                 >
                   Skip
                 </button>
@@ -1563,7 +1595,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     return (
       <div style={OVERLAY_STYLE}>
         <div style={GLOW_STYLE} />
-        <div style={SHELL_STYLE}>
+        <div style={SHELL_STYLE} data-onb-shell="">
           <div style={{ animation: "onb-in 0.4s ease both" }}>
             <div style={{ textAlign: "center", marginBottom: 32 }}>
               <div style={LABEL_STYLE}>Step 2 of 2</div>
@@ -1586,7 +1618,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
                 onClick={() => setState('auth')}
                 style={{
                   padding: "12px 24px", borderRadius: 0, background: "transparent", color: "rgba(255,255,255,0.4)",
-                  border: "1px solid rgba(255,255,255,0.1)", fontFamily: "'Newsreader', Georgia, serif",
+                  border: "1px solid rgba(255,255,255,0.1)", fontFamily: "'Inter', system-ui, sans-serif",
                   fontSize: 13, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer",
                 }}
               >
@@ -1618,7 +1650,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     return (
       <div style={OVERLAY_STYLE}>
         <div style={GLOW_STYLE} />
-        <div style={SHELL_STYLE}>
+        <div style={SHELL_STYLE} data-onb-shell="">
           <div style={{ animation: "onb-in 0.4s ease both" }}>
             <div style={{ textAlign: "center", marginBottom: 32 }}>
               <div style={LABEL_STYLE}>Step 2 of 2</div>
@@ -1668,7 +1700,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
                   padding: "12px 24px", borderRadius: 0,
                   background: "transparent", color: "rgba(255,255,255,0.4)",
                   border: "1px solid rgba(255,255,255,0.1)",
-                  fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
+                  fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, fontWeight: 700,
                   letterSpacing: "0.04em", cursor: submitting ? "default" : "pointer",
                 }}
               >
@@ -1692,7 +1724,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     return (
       <div style={OVERLAY_STYLE}>
         <div style={GLOW_STYLE} />
-        <div style={SHELL_STYLE}>
+        <div style={SHELL_STYLE} data-onb-shell="">
           <div style={{ animation: "onb-in 0.4s ease both" }}>
             <div style={{ textAlign: "center", marginBottom: 32 }}>
               <div style={LABEL_STYLE}>New station</div>
@@ -1748,7 +1780,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
                     padding: "12px 24px", borderRadius: 0,
                     background: "transparent", color: "rgba(255,255,255,0.4)",
                     border: "1px solid rgba(255,255,255,0.1)",
-                    fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
+                    fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, fontWeight: 700,
                     letterSpacing: "0.04em", cursor: submitting ? "default" : "pointer",
                   }}
                 >
@@ -1776,7 +1808,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     return (
       <div style={OVERLAY_STYLE}>
         <div style={GLOW_STYLE} />
-        <div style={SHELL_STYLE}>
+        <div style={SHELL_STYLE} data-onb-shell="">
           <div style={{ animation: "onb-in 0.4s ease both" }}>
             <div style={{ textAlign: "center", marginBottom: 32 }}>
               <div style={LABEL_STYLE}>Interface</div>
@@ -1816,7 +1848,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     return (
       <div style={OVERLAY_STYLE}>
         <div style={GLOW_STYLE} />
-        <div style={SHELL_STYLE}>
+        <div style={SHELL_STYLE} data-onb-shell="">
           <div style={{ animation: "onb-in 0.4s ease both" }}>
             <div style={{ textAlign: "center", marginBottom: 32 }}>
               <div style={LABEL_STYLE}>Persona</div>
@@ -1843,7 +1875,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
                   padding: "12px 24px", borderRadius: 0,
                   background: "transparent", color: "rgba(255,255,255,0.4)",
                   border: "1px solid rgba(255,255,255,0.1)",
-                  fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
+                  fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, fontWeight: 700,
                   letterSpacing: "0.04em", cursor: "pointer",
                 }}
               >
@@ -1871,7 +1903,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     return (
       <div style={OVERLAY_STYLE}>
         <div style={GLOW_STYLE} />
-        <div style={SHELL_STYLE}>
+        <div style={SHELL_STYLE} data-onb-shell="">
           <div style={{ animation: "onb-in 0.4s ease both" }}>
             <div style={{ textAlign: "center", marginBottom: 32 }}>
               <div style={LABEL_STYLE}>Station details</div>
@@ -1914,7 +1946,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
                     padding: "12px 24px", borderRadius: 0,
                     background: "transparent", color: "rgba(255,255,255,0.4)",
                     border: "1px solid rgba(255,255,255,0.1)",
-                    fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
+                    fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, fontWeight: 700,
                     letterSpacing: "0.04em", cursor: "pointer",
                   }}
                 >
@@ -1967,7 +1999,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     return (
       <div style={OVERLAY_STYLE}>
         <div style={GLOW_STYLE} />
-        <div style={SHELL_STYLE}>
+        <div style={SHELL_STYLE} data-onb-shell="">
           <div style={{ animation: "onb-in 0.4s ease both" }}>
             <div style={{ textAlign: "center", marginBottom: 32 }}>
               <div style={LABEL_STYLE}>Step 1 of 2</div>
@@ -2006,7 +2038,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
                     padding: "12px 24px", borderRadius: 0,
                     background: "transparent", color: "rgba(255,255,255,0.4)",
                     border: "1px solid rgba(255,255,255,0.1)",
-                    fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
+                    fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, fontWeight: 700,
                     letterSpacing: "0.04em", cursor: submitting ? "default" : "pointer",
                   }}
                 >
@@ -2033,7 +2065,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   return (
     <div style={OVERLAY_STYLE}>
       <div style={GLOW_STYLE} />
-      <div style={SHELL_STYLE}>
+      <div style={SHELL_STYLE} data-onb-shell="">
         <div style={{ textAlign: "center", animation: "onb-in 0.4s ease both" }}>
           <div style={LABEL_STYLE}>OnboardingFlow — scaffold</div>
           <h1 style={HEADING_STYLE}>{stateLabel(state)}</h1>
@@ -2044,7 +2076,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
               marginTop: 32, padding: "12px 28px", borderRadius: 0,
               background: "transparent", color: "rgba(255,255,255,0.4)",
               border: "1px solid rgba(255,255,255,0.1)",
-              fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
+              fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, fontWeight: 700,
               letterSpacing: "0.04em", cursor: "pointer",
             }}
           >
@@ -2102,7 +2134,7 @@ function PathButton({ title, subtitle, onClick }: { title: string; subtitle: str
       }}
     >
       <div style={{ flex: 1 }}>
-        <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 18, fontWeight: 800, color: "#f0f0f8", letterSpacing: "-0.02em", marginBottom: 4 }}>
+        <div style={{ fontFamily: "'Inter', system-ui, sans-serif", fontSize: 18, fontWeight: 800, color: "#f0f0f8", letterSpacing: "-0.02em", marginBottom: 4 }}>
           {title}
         </div>
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
@@ -2196,7 +2228,7 @@ function StationRadioCard({ title, subtitle, description, selected, onClick, isA
       </div>
       <div style={{ flex: 1 }}>
         <div style={{
-          fontFamily: "'Newsreader', Georgia, serif", fontSize: 16, fontWeight: 700,
+          fontFamily: "'Inter', system-ui, sans-serif", fontSize: 16, fontWeight: 700,
           color: selected ? "var(--accent-cyan)" : "#f0f0f8",
           letterSpacing: "-0.02em",
           marginBottom: (subtitle || description) ? 4 : 0,
@@ -2313,7 +2345,7 @@ function PullingScreen({ stationId, stationName, onContinue }: PullingScreenProp
   return (
     <div style={OVERLAY_STYLE}>
       <div style={GLOW_STYLE} />
-      <div style={SHELL_STYLE}>
+      <div style={SHELL_STYLE} data-onb-shell="">
         <div style={{ animation: "onb-in 0.4s ease both" }}>
           <div style={{ textAlign: "center", marginBottom: 32 }}>
             <div style={LABEL_STYLE}>Setup</div>
@@ -2520,7 +2552,7 @@ function PickAudioLocationScreen({ stationId, onPull, onDone }: PickAudioLocatio
   return (
     <div style={OVERLAY_STYLE}>
       <div style={GLOW_STYLE} />
-      <div style={SHELL_STYLE}>
+      <div style={SHELL_STYLE} data-onb-shell="">
         <div style={{ animation: "onb-in 0.4s ease both" }}>
 
           {sub === 'idle' && (
@@ -2599,7 +2631,7 @@ function PickAudioLocationScreen({ stationId, onPull, onDone }: PickAudioLocatio
                     padding: "12px 24px", borderRadius: 0,
                     background: "transparent", color: "rgba(255,255,255,0.4)",
                     border: "1px solid rgba(255,255,255,0.1)",
-                    fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
+                    fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, fontWeight: 700,
                     letterSpacing: "0.04em", cursor: "pointer",
                   }}
                 >
@@ -2661,7 +2693,7 @@ function SourceCard({ title, subtitle, onClick, disabled }: { title: string; sub
       }}
     >
       <div style={{ flex: 1 }}>
-        <div style={{ fontFamily: "'Newsreader', Georgia, serif", fontSize: 18, fontWeight: 800, color: "#f0f0f8", letterSpacing: "-0.02em", marginBottom: 4 }}>
+        <div style={{ fontFamily: "'Inter', system-ui, sans-serif", fontSize: 18, fontWeight: 800, color: "#f0f0f8", letterSpacing: "-0.02em", marginBottom: 4 }}>
           {title}
         </div>
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>
@@ -2681,7 +2713,7 @@ function PrimaryButton({ label, onClick, disabled }: { label: string; onClick: (
         padding: "13px 32px", borderRadius: 0,
         background: disabled ? "rgba(255,255,255,0.06)" : "linear-gradient(135deg, var(--accent-cyan), #a78bfa)",
         color: disabled ? "rgba(255,255,255,0.2)" : "#000",
-        fontFamily: "'Newsreader', Georgia, serif", fontSize: 13, fontWeight: 700,
+        fontFamily: "'Inter', system-ui, sans-serif", fontSize: 13, fontWeight: 700,
         border: "none", cursor: disabled ? "default" : "pointer",
         letterSpacing: "0.04em",
         boxShadow: disabled ? "none" : "0 0 32px rgb(from var(--accent-cyan) r g b / 0.3)",

@@ -8731,6 +8731,49 @@ function openPopoutWindow(panel) {
 // 4.4.142 were REMOVED 2026-08-05 — the app uses NATIVE title bars only, so the renderer has no
 // window controls to serve. Do not reintroduce them without asking.
 
+// ── SIGN-IN / SETUP WINDOW — compact, sized to its content, centered (Jeff, 2026-10-26) ─────────────────────────────
+// OnboardingFlow (sign-in, account, "Setting up this computer") used to fill the 1280×800 main window. It measures its own
+// content and asks for exactly that; the window it replaced (size, position, maximized) comes back when it is done.
+// Main window only — never a pop-out. Clamped to the display's work area.
+let _signInWin = null;   // { bounds, maximized, minW, minH } while compact
+function _restoreSignInWindow(w) {
+  if (!w || w.isDestroyed() || !_signInWin) return false;
+  const s = _signInWin; _signInWin = null;
+  w.setMinimumSize(s.minW, s.minH);
+  if (s.bounds) w.setBounds(s.bounds);
+  if (s.maximized) w.maximize();
+  return true;
+}
+ipcMain.handle("sign-in-window:fit", (e, size = {}) => {
+  try {
+    const w = BrowserWindow.fromWebContents(e.sender);
+    if (!w || w !== mainWindow || w.isDestroyed()) return { ok: false, error: "not the main window" };
+    if (!_signInWin) {
+      const [minW, minH] = w.getMinimumSize();
+      _signInWin = { maximized: w.isMaximized(), minW, minH, bounds: null };
+      if (_signInWin.maximized) w.unmaximize();
+      _signInWin.bounds = w.getBounds();
+      // A reload (the flow reloads after setup) runs no React cleanup: give the full window back whenever the page
+      // starts loading again. If the next page is sign-in again, it asks for the compact window again.
+      w.webContents.once("did-start-loading", () => { try { _restoreSignInWindow(w); } catch {} });
+    }
+    const wa = require("electron").screen.getDisplayMatching(w.getBounds()).workArea;
+    const cw = Math.round(Math.min(Math.max(Number(size.width) || 0, 360), wa.width - 32));
+    const ch = Math.round(Math.min(Math.max(Number(size.height) || 0, 360), wa.height - 32));
+    w.setMinimumSize(320, 320);
+    const [curW, curH] = w.getContentSize();
+    if (curW !== cw || curH !== ch) { w.setContentSize(cw, ch); w.center(); }   // re-centre only when the size changes
+    return { ok: true, width: cw, height: ch };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+ipcMain.handle("sign-in-window:restore", (e) => {
+  try {
+    const w = BrowserWindow.fromWebContents(e.sender);
+    if (!w || w !== mainWindow) return { ok: true, restored: false };
+    return { ok: true, restored: _restoreSignInWindow(w) };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+
 ipcMain.handle("window:popout", async (_, panel) => { openPopoutWindow(panel); });
 
 // ── Jukebox requests (LOCAL-ONLY table, migration v38) ──────────────────────────────────────────
