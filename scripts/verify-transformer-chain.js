@@ -15,19 +15,31 @@ const path = require('path');
 const os   = require('os');
 const fs   = require('fs');
 
-// ── DB path ───────────────────────────────────────────────────
-
-// DB lives in LocalAppData\Ether (NOT Roaming — Roaming is redirected to a network share on managed
-// boxes like OV, where SQLite WAL fails). Resolve the same way the main app + engine do. [CLAUDE.md]
+// ── WHICH DATABASE: A COPY, NEVER THE LIVE PROFILE (Jeff, 2026-10-27) ─────────────────────────
 //
-// PROFILE-PER-ACCOUNT (4.4.216): the single install-wide data directory became one directory per
-// account, selected by profiles/active. This hook hardcoded the old path, so after the migration it
-// blocked every commit with "DB not found". It now resolves the ACTIVE profile through the same one
-// path module the app and the daemon use.
-const P = require('../electron/profile-paths');
-const active = P.resolveActive();
-const dbPath = active.pending ? null : P.dbPath(active.key);
+// "Change the pre-commit hook to check the schema against a copy, never the live profile database."
+// This used to open the ACTIVE PROFILE's openair.db — the database Ether has open on air — on every
+// commit. It now checks against:
+//   • a COPY you name: ETHER_SCHEMA_DB=<path> (or `git config ether.schemaDb <path>`). A path inside
+//     the Ether data folder (where every profile lives) is refused, never opened.
+//   • otherwise, the database this check BUILDS ITSELF from the baseline + every migration (Step 8),
+//     whose schema_version is the highest migration found. Nothing outside this repo is opened.
 const scriptsDir = path.join(__dirname);
+function namedCopy() {
+  if (process.env.ETHER_SCHEMA_DB) return process.env.ETHER_SCHEMA_DB;
+  try {
+    const v = require('child_process').execFileSync('git', ['config', '--get', 'ether.schemaDb'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return v || null;
+  } catch { return null; }
+}
+function insideEtherData(p) {
+  // A path computed, nothing opened: the folder that holds every profile's live database.
+  const root = path.resolve(require('../electron/profile-paths').etherRoot()).toLowerCase();
+  const a = path.resolve(p).toLowerCase();
+  return a === root || a.startsWith(root + path.sep);
+}
+const dbPath = namedCopy();
 
 // ── Test harness ──────────────────────────────────────────────
 
@@ -58,41 +70,36 @@ function section(title) {
   console.log('═'.repeat(60));
 }
 
-// ── Step 1: read current schema_version from DB ───────────────
+// ── Step 1: the schema_version to check against ──────────────
 
-section('STEP 1 — Read current schema_version from DB');
-
-if (!dbPath) {
-  // No account is signed in on this machine, so there is no database to check the chain against.
-  // That is not a broken transformer chain and must not block a commit — say so and pass.
-  console.log('[verify-transformer-chain] no active profile (nobody signed in) — nothing to verify, skipping.');
-  process.exit(0);
-}
-if (!fs.existsSync(dbPath)) {
-  console.error('[verify-transformer-chain] ERROR: DB not found at', dbPath);
-  console.error('  active profile:', active.key);
-  process.exit(1);
-}
-console.log('[verify-transformer-chain] profile:', active.key);
+section('STEP 1 — Read schema_version from a copy (never the live profile)');
 
 const Database = require(path.join(__dirname, '../node_modules/better-sqlite3'));
-const db = new Database(dbPath, { readonly: true });
+let currentVersion = null;   // null: the database this check builds (set after Step 2)
 
-const svRows = db.prepare('SELECT version FROM schema_version ORDER BY version').all().map(r => r.version);
-db.close();
-
-console.log('  schema_version rows:', JSON.stringify(svRows));
-
-const currentVersion = svRows[svRows.length - 1];
-if (typeof currentVersion !== 'number' || currentVersion < 2) {
-  console.error('[verify-transformer-chain] ERROR: cannot determine current schema_version from DB.');
-  process.exit(1);
+if (dbPath) {
+  if (insideEtherData(dbPath)) {
+    console.error('[verify-transformer-chain] ERROR: refusing to open', dbPath);
+    console.error('  It is inside the Ether data folder, where the live profile databases are. Copy it elsewhere and name the copy.');
+    process.exit(1);
+  }
+  if (!fs.existsSync(dbPath)) {
+    console.error('[verify-transformer-chain] ERROR: copy not found at', dbPath);
+    process.exit(1);
+  }
+  console.log('[verify-transformer-chain] copy:', dbPath);
+  const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+  const svRows = db.prepare('SELECT version FROM schema_version ORDER BY version').all().map(r => r.version);
+  db.close();
+  console.log('  schema_version rows:', JSON.stringify(svRows));
+  currentVersion = svRows[svRows.length - 1];
+  if (typeof currentVersion !== 'number' || currentVersion < 2) {
+    console.error('[verify-transformer-chain] ERROR: cannot determine current schema_version from the copy.');
+    process.exit(1);
+  }
+} else {
+  console.log('[verify-transformer-chain] no copy named (ETHER_SCHEMA_DB / git config ether.schemaDb) — checking against the database this check builds from the migrations');
 }
-console.log('  current schema_version:', currentVersion);
-
-// v1 is the implicit starting schema — no migration script expected for v1.
-info('v1 is the implicit starting schema — no migration script expected for v1.');
-info(`Transformer coverage required: v2 → v${currentVersion} (${currentVersion - 1} migration(s)).`);
 
 // ── Step 2: discover migration scripts ───────────────────────
 
@@ -119,6 +126,12 @@ if (allScripts.length === 0) {
 } else {
   pass(`${allScripts.length} migration script(s) discovered`);
 }
+
+if (currentVersion === null) currentVersion = Math.max(1, ...Object.keys(byVersion).map(Number));
+console.log('  current schema_version:', currentVersion);
+// v1 is the implicit starting schema — no migration script expected for v1.
+info('v1 is the implicit starting schema — no migration script expected for v1.');
+info(`Transformer coverage required: v2 → v${currentVersion} (${currentVersion - 1} migration(s)).`);
 
 // ── Step 3: check for duplicates ─────────────────────────────
 
