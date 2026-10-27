@@ -22,14 +22,20 @@
   ${endIf}
 !macroend
 
-; Force-close a running Ether before installing, so the installer never stalls on
-; "Ether cannot be closed" (the app hides to tray instead of quitting on the installer's
-; close request). taskkill /IM Ether.exe kills BOTH the main app and the `--ether-watchdog`
-; instance at once (same binary), so the watchdog can't respawn it mid-install. We deliberately
-; do NOT kill the detached audio engine (ether-engine.exe): it keeps playing straight through the
-; install (gapless update) and the new app version reloads it to current code at the next song
-; boundary. Runs hidden, before electron-builder's own running-app check, on every install/update.
+;  STOP THE OLD ETHER — APP, WATCHDOG AND AUDIO ENGINE — BEFORE INSTALLING (2026-10-27).
+;
+; Jeff: "The installer stops the old audio engine and the watchdog cleanly before installing, so a new version never
+; runs on an old engine." This used to force-close Ether.exe only and deliberately leave the detached audio engine
+; (ether-engine.exe) playing for a "gapless update", so a new version could start on the old engine. Now
+; build-resources/stop-ether.ps1 asks the app to Stop & Quit (--stop-and-quit, 4.6.67+), stands the watchdog down with
+; .ether-clean-exit, asks the engine to shut down over its pipe, and only then ends whatever is left; every step goes to
+; %TEMP%\ether-installer-stop.log. The taskkill lines below are the backstop if PowerShell cannot run. Hidden, before
+; electron-builder's own running-app check, on every install and update (silent ones included).
 !macro customInit
+  InitPluginsDir
+  File "/oname=$PLUGINSDIR\stop-ether.ps1" "${BUILD_RESOURCES_DIR}\stop-ether.ps1"
+  nsExec::Exec 'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\stop-ether.ps1"'
   nsExec::Exec 'taskkill /F /T /IM Ether.exe'
+  nsExec::Exec 'taskkill /F /IM ether-engine.exe'
   Sleep 1000
 !macroend

@@ -432,7 +432,18 @@ if (SMOKE_ISOLATED) {
     process.exit(0);
   }
   if (global.__etherDiag) global.__etherDiag('POINT-3: lock acquired OK');
-  app.on('second-instance', () => {
+  // --stop-and-quit (the installer, build-resources/stop-ether.ps1, 2026-10-27): with no Ether running there is nothing to
+  // stop — never start one.
+  if (process.argv.includes('--stop-and-quit')) { if (global.__etherDiag) global.__etherDiag('POINT-3b: --stop-and-quit with nothing running — exiting'); app.exit(0); process.exit(0); }
+  app.on('second-instance', (_e, argv) => {
+    // The installer asks the running Ether to Stop & Quit before it installs — the same full quit as the Close dialog's
+    // "Stop & Quit Ether": watchdog stood down, engine shut, .ether-clean-exit written. A new version never runs on an
+    // old engine (Jeff, 2026-10-27).
+    if (Array.isArray(argv) && argv.includes('--stop-and-quit')) {
+      try { logStartup('[installer] asked to Stop & Quit (--stop-and-quit) — stopping the engine and the watchdog, then exiting'); } catch {}
+      fullStopAndQuit();
+      return;
+    }
     try { SelfActions.operatorAct(); } catch {}   // the operator launched Ether again
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
