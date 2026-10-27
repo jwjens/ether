@@ -166,7 +166,8 @@ function SeatRow({
 export default function ManageDevices() {
   const { stationId, isReady } = useActiveStation();
   const [seats,              setSeats]              = useState<Seat[]>([]);
-  const [seatsMax,           setSeatsMax]           = useState(5);
+  // null = Unlimited (or not loaded yet). The limit is the license's seat tier, set by the platform owner (backend seat_tiers).
+  const [seatsMax,           setSeatsMax]           = useState<number | null>(null);
   const [loading,            setLoading]            = useState(true);
   const [error,              setError]              = useState<string | null>(null);
   const [errorCode,          setErrorCode]          = useState<string | null>(null);
@@ -223,7 +224,7 @@ export default function ManageDevices() {
       }
       const data = await res.json();
       setSeats(Array.isArray(data.seats) ? data.seats : []);
-      setSeatsMax(data.seats_max ?? 5);
+      setSeatsMax(data.seats_unlimited ? null : (data.seats_max ?? null));
       setLoading(false);
     } catch (e: any) {
       setError(e?.message || "Could not load devices — check your internet connection.");
@@ -371,13 +372,15 @@ export default function ManageDevices() {
 
 // ── Header ───────────────────────────────────────────────────────────────────
 
-function Header({ seatsUsed, seatsMax }: { seatsUsed: number; seatsMax: number }) {
+function Header({ seatsUsed, seatsMax }: { seatsUsed: number; seatsMax: number | null }) {
   return (
     <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--border-primary)", background: "var(--bg-secondary)", flexShrink: 0 }}>
       <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.16em", color: "var(--accent-cyan)", textTransform: "uppercase", marginBottom: 2 }}>Account</div>
       <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: "var(--text-primary)" }}>Manage Devices</div>
       <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
-        {seatsUsed} of {seatsMax} device{seatsMax !== 1 ? "s" : ""} in use · this machine highlighted
+        {seatsMax == null
+          ? <>{seatsUsed} device{seatsUsed !== 1 ? "s" : ""} in use · no device limit · this machine highlighted</>
+          : <>{seatsUsed} of {seatsMax} device{seatsMax !== 1 ? "s" : ""} in use · this machine highlighted</>}
       </div>
     </div>
   );

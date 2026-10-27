@@ -907,7 +907,7 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
       }
       if (data.error === 'seat_limit_reached') {
         setFormError(
-          'This license is using all 5 seats. To add this computer, ' +
+          `This license is using all ${data.seats_max ?? data.seats_used ?? ''} of its seats. To add this computer, ` +
           'deauthorize a seat in the Manage Devices panel on another machine.'
         );
         setSubmitting(false);
