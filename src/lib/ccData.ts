@@ -329,20 +329,25 @@ export type AnnouncementAiring = {
   entry_uuid: string | null; announcement_uuid: string; title: string; slot: string;
   duration_sec: number; started_at: string; position_sec: number; at: string;
 };
-export type AnnouncementStatus = { airing: AnnouncementAiring | null; failed: Record<string, { at: number; reason: string }> };
+// skipped: today's lines that were skipped and WHY (main, electron/announce-fire.js). lateLimitSec: the station's late limit —
+// how long after its time a line may still start (null = not set: only on its own second).
+export type AnnouncementStatus = { airing: AnnouncementAiring | null; failed: Record<string, { at: number; reason: string }>;
+                                   skipped: Record<string, { at: number; reason: string }>; lateLimitSec: number | null };
 const _annSeenPlaying = new Map<number, string>();   // stationId -> started_at of the airing the engine has shown playing
 export async function announcementStatus(stationId: number): Promise<AnnouncementStatus> {
   let r: any = null;
   try { r = await (window as any).ether?.invoke?.("announce:airing", stationId); } catch { /* older main */ }
-  if (!r?.ok) return { airing: null, failed: {} };
+  if (!r?.ok) return { airing: null, failed: {}, skipped: {}, lateLimitSec: null };
   const failed = (r.failed && typeof r.failed === "object") ? r.failed : {};
+  const skipped = (r.skipped && typeof r.skipped === "object") ? r.skipped : {};
+  const lateLimitSec = typeof r.lateLimitSec === "number" ? r.lateLimitSec : null;
   const a = r.airing;
-  if (!a) { _annSeenPlaying.delete(stationId); return { airing: null, failed }; }
+  if (!a) { _annSeenPlaying.delete(stationId); return { airing: null, failed, skipped, lateLimitSec }; }
   if (hasEngine(stationId)) {
     try {
       const st: any = getEngine(stationId).getDeck(a.slot)?.getState?.();
       if (st?.status === "playing") _annSeenPlaying.set(stationId, a.started_at);
-      else if (st?.status && _annSeenPlaying.get(stationId) === a.started_at) return { airing: null, failed };
+      else if (st?.status && _annSeenPlaying.get(stationId) === a.started_at) return { airing: null, failed, skipped, lateLimitSec };
     } catch { /* the engine reading is a refinement, never required */ }
   }
   return {
@@ -350,6 +355,8 @@ export async function announcementStatus(stationId: number): Promise<Announcemen
               duration_sec: Number(a.duration_sec) || 0, started_at: a.started_at, position_sec: Number(a.position_sec) || 0,
               at: new Date().toISOString() },
     failed,
+    skipped,
+    lateLimitSec,
   };
 }
 

@@ -5491,8 +5491,9 @@ ipcMain.handle("audio:set-duck", (_, stationId, deck, enabled) =>
 // station poll has run at for the life of the product (audiod/engine.js:375), so it is a proven
 // number on this machine rather than a new one.
 //
-// NOTHING ELSE CHANGED with it: same equality match, same 120s last_played_at guard, same backwards
-// midnight wrap, no grace window, no catch-up, no suppression. Resolution only.
+// (2026-10-26) The equality match and the fixed 120 s are gone (electron/announce-fire.js): a line may fire from its
+// second until its second + the station's LATE LIMIT (a setting; not set = its own second only); past the limit,
+// unplayed, it is SKIPPED, said once, with the reason.
 //
 // This tick governs ANNOUNCEMENTS AND NOTHING ELSE (verified 2026-08-26,
 // docs/scheduler-tick-blast-radius-2026-08-26.md). Spots and clock elements are not on it and
@@ -5685,8 +5686,9 @@ function closingCfgFor(stationId) {
  *  smaller evil: if it is ever absent the cache still expires on its own, so the worst case stays
  *  "2 seconds late", never "wrong". */
 function invalidateClosingCache(stationId) {
-  if (stationId == null) _closingCache.clear();
-  else _closingCache.delete(stationId);
+  // The late limit (electron/announce-fire.js) rides the same hook: the writer calls this for either key.
+  if (stationId == null) { _closingCache.clear(); _lateLimitCache.clear(); }
+  else { _closingCache.delete(stationId); _lateLimitCache.delete(stationId); }
 }
 globalThis.__etherInvalidateClosing = invalidateClosingCache;
 
@@ -5917,6 +5919,28 @@ function scheduleForDateCached(stationId, dateStr, sig) {
   return rows;
 }
 
+// ── THE LATE LIMIT AND THE VISIBLE SKIP (2026-10-26, electron/announce-fire.js) ───────────────────────────────────────
+// The decision — fire, or skip and why — is announce-fire.js's, pure and tested. What lives here: the session's memory
+// (each line's due time when last looked at and when it first appeared, so a skip can say WHY; skips already said), and
+// the late limit, per station, cached like the closing time and dropped by the same writer hook. Plays-in-a-row repeats
+// (play_count) are scheduled after a fire exactly as before (_scheduleAnnounceRepeats) — nothing here touches them.
+const AnnounceFire = require('./announce-fire');
+let _annState = AnnounceFire.createTickState(null);   // due times seen, skips said — started with the scheduler
+const _lateLimitCache = new Map();   // stationId -> { value, readAt }
+function lateLimitFor(stationId) {
+  const hit = _lateLimitCache.get(stationId);
+  if (hit && (Date.now() - hit.readAt) < CLOSING_TTL_MS) return hit.value;
+  let value = null;
+  try {
+    const row = db.prepare('SELECT value FROM station_config_kv WHERE station_id = ? AND key = ? AND deleted_at IS NULL')
+      .get(stationId, AnnounceFire.LATE_LIMIT_KEY);
+    value = AnnounceFire.parseLateLimit(row ? row.value : null);
+  } catch { /* unreadable → not set: on its own second only, as before. Never a guess. */ }
+  _lateLimitCache.set(stationId, { value, readAt: Date.now() });
+  return value;
+}
+const _localDate = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+
 async function announceTick() {
   let stations = [];
   // A cached statement must never become a PERMANENT failure. If the handle it was compiled against
@@ -5932,91 +5956,58 @@ async function announceTick() {
   }
   catch { _annStmts = null; _annStations = null; return; }
   const now = new Date();
-  const hhmmss = String(now.getHours()).padStart(2, '0') + ':' +
-                 String(now.getMinutes()).padStart(2, '0') + ':' +
-                 String(now.getSeconds()).padStart(2, '0');
+  const nowSec = Math.floor(now.getTime() / 1000);
   // TODAY'S local calendar date — the key an entry is filed under. Built from local
   // getFullYear/getMonth/getDate, never from toISOString(): that is UTC and would name the wrong day
   // for every evening announcement west of Greenwich, which is where the parks are.
-  const dateStr = now.getFullYear() + '-' +
-                  String(now.getMonth() + 1).padStart(2, '0') + '-' +
-                  String(now.getDate()).padStart(2, '0');
-  const nowEpoch = Math.floor(Date.now() / 1000);
-  // 0-6, Sunday first — the key convention byWeekday uses, and what the Park Ops backend resolves
-  // against. Local, like dateStr above: a weekday is a property of the calendar date, not of UTC.
-  const nowDow = now.getDay();
+  const dateStr = _localDate(now);
+  // YESTERDAY too, for a late limit that reaches past midnight (a 23:59:50 line, a 30 s limit): its lines can still
+  // FIRE inside their window. They are never skipped or reported from here — yesterday's tick already judged them.
+  const yesterday = _localDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12));
 
   const sig = _annDbSignature();   // once per tick: has anything been written since the lists were read?
   for (const stationId of stations) {
-    // v47 — the tick iterates SCHEDULE ENTRIES, not announcements. What changed is WHAT IS WALKED;
-    // the match, the guard and the fire path below are the same code they were before.
-    // NO FALLBACK TO THE OLD COLUMNS. announcements.trigger_time/days are dead now — the panel does
-    // not write them, so firing from them would mean firing a schedule nobody can see or edit, which
-    // is worse than not firing. A missing table means the v47 migration has not applied; the chain
-    // retries it on every launch, so the recovery is a relaunch and it is automatic. The absence is
-    // logged loudly (annStmts) and the panel says so rather than looking empty-but-fine.
+    // v47 — the tick iterates SCHEDULE ENTRIES, not announcements. NO FALLBACK TO THE OLD COLUMNS:
+    // announcements.trigger_time/days are dead now. A missing table means the v47 migration has not applied; the chain
+    // retries it on every launch. The absence is logged loudly (annStmts) and the panel says so.
     const rows = scheduleForDateCached(stationId, dateStr, sig);
     if (rows === null) continue;
-
-    // TODAY'S closing time for THIS station, resolved byDate -> byWeekday -> default. Read once per
-    // station per tick from a 2s cache, never per row: this loop runs four times a second.
-    const closingToday = resolveClosingCfg(closingCfgFor(stationId), dateStr, nowDow);
-
-    for (const row of rows) {
-      const due = dueTimeFor(row, closingToday);
-
-      // ── THE VISIBLE SKIP (2026-08-31, Jeff's ruling) ──────────────────────────────────────────
-      // An offset row's fire time moves when the closing time moves. Move closing EARLIER and a row
-      // can land in the past, where it will never match hhmmss and never fire — silently, looking
-      // scheduled the whole time. "Skip it tonight, but visibly. Never silently drop it."
-      //
-      // Only offset rows, only ones that have not fired today, and only inside a 10-minute
-      // look-back. The window is what separates "closing time moved out from under this row" from
-      // "this date was loaded after its times had already passed", which is a different thing and
-      // not a closing-time casualty. Stamped once — skipped_at is the guard as well as the record.
-      if (row.trigger_type === 'close_offset' && due && !row.skipped_at && !row.last_played_at) {
-        const dueMin = hhmmToMinutes(due);
-        const nowMin = now.getHours() * 60 + now.getMinutes();
-        if (dueMin != null && dueMin < nowMin && (nowMin - dueMin) <= 10) {
+    const lateLimit = lateLimitFor(stationId);
+    const cfg = closingCfgFor(stationId);
+    const days = [{ date: dateStr, rows, judge: true }];
+    if (lateLimit) {
+      const y = scheduleForDate(stationId, yesterday);
+      if (y && y.length) days.push({ date: yesterday, rows: y, judge: false });
+    }
+    for (const day of days) {
+      // THAT DAY'S closing time for THIS station, resolved byDate -> byWeekday -> default (2 s cache, never per row).
+      const [yy, mm, dd] = day.date.split('-').map(Number);
+      const closing = resolveClosingCfg(cfg, day.date, new Date(yy, mm - 1, dd, 12).getDay());
+      await AnnounceFire.processRows({
+        rows: day.rows, dateStr: day.date, judge: day.judge, nowSec, lateLimit, state: _annState,
+        dueOf: (row) => dueTimeFor(row, closing),
+        skip: (row, due, why) => _noteAnnounceSkipped(stationId, row, day.date, due, why, nowSec),
+        fire: async (row, { due, lateSec }) => {
           try {
-            // Null on a database without the column. The row is still skipped — it simply is not
-            // recorded, which is the cosmetic half of this feature, not the firing half.
-            annStmts().markSkipped?.run(nowEpoch, row.uuid);
-            row.skipped_at = nowEpoch;
-            _healthEvent('announcement-skipped', { stationId, entry: row.uuid, title: row.title || '', due });
-            logStartup('[announce] SKIPPED station ' + stationId + ' "' + (row.title || '') + '" — its time (' + due + ') passed when the closing time moved');
-          } catch (e) { logStartup('[announce] could not record a skip: ' + (e && e.message)); }
-        }
-      }
-
-      if (!due || due !== hhmmss) continue;
-      // Fired already? The tick is 250ms and the match is to the second, so a matching second is hit
-      // about four times — this guard is what makes that safe. Same 120s window it has always been.
-      //
-      // v47: it is now keyed on the ENTRY's last_played_at, not the announcement's, and that is
-      // load-bearing rather than tidy. "Closes in 30" at 8:45 and "closing" at 9:00 may be the SAME
-      // audio file; an asset-level guard would let the first fire suppress the second and the whole
-      // point of the schedule frame would collapse. Still per-row, never a module global — a shared
-      // global is how the old renderer timer let one station's fire suppress another's.
-      if (row.last_played_at && (nowEpoch - row.last_played_at) < 120) continue;
-      try {
-        // WHAT plays is the announcement uuid; WHICH ENTRY fired is row.uuid, and they are different
-        // things now. Passing the entry uuid here would look up an announcement that does not exist.
-        // AWAITED: without this `r` is a Promise, `r.ok` is undefined, and every fire — including a
-        // failed one — logged as a success while the failure vanished into an unhandled rejection.
-        _cancelAnnounceRepeats(stationId);   // a new scheduled fire supersedes any repeats still pending
-        const r = await fireAnnouncement(stationId, row.announcement_uuid, row.uuid);
-        if (!r.ok) {
-          logStartup('[announce] scheduled fire FAILED station ' + stationId + ' "' + (row.title || '') + '": ' + r.error);
-          _noteAnnounceFailed(stationId, row, dateStr, r.error);
-        } else {
-          logStartup('[announce] scheduled fire station ' + stationId + ' "' + (row.title || '') + '" at ' + due + ' (' + row.trigger_type + ')');
-          _scheduleAnnounceRepeats(stationId, row);
-        }
-      } catch (e) {
-        logStartup('[announce] scheduled fire threw: ' + (e && e.message));
-        _noteAnnounceFailed(stationId, row, dateStr, String(e && e.message || e));
-      }
+            // WHAT plays is the announcement uuid; WHICH ENTRY fired is row.uuid, and they are different things now.
+            // AWAITED: without this `r` is a Promise, `r.ok` is undefined, and every fire — including a failed one —
+            // logged as a success while the failure vanished into an unhandled rejection.
+            _cancelAnnounceRepeats(stationId);   // a new scheduled fire supersedes any repeats still pending
+            const r = await fireAnnouncement(stationId, row.announcement_uuid, row.uuid);
+            if (!r.ok) {
+              logStartup('[announce] scheduled fire FAILED station ' + stationId + ' "' + (row.title || '') + '": ' + r.error);
+              _noteAnnounceFailed(stationId, row, day.date, r.error);
+            } else {
+              logStartup('[announce] scheduled fire station ' + stationId + ' "' + (row.title || '') + '" at ' + due + ' (' + row.trigger_type + ')' +
+                         (lateSec > 0 ? ', ' + lateSec + ' s after its time (late limit ' + lateLimit + ' s)' : ''));
+              _scheduleAnnounceRepeats(stationId, row);
+            }
+          } catch (e) {
+            logStartup('[announce] scheduled fire threw: ' + (e && e.message));
+            _noteAnnounceFailed(stationId, row, day.date, String(e && e.message || e));
+          }
+        },
+      });
     }
   }
 }
@@ -6052,6 +6043,7 @@ function _scheduleAnnounceRepeats(stationId, row) {
 
 function startAnnouncementScheduler() {
   if (_announceTimer) return;
+  _annState = AnnounceFire.createTickState(Math.floor(Date.now() / 1000));
   // Never let a scheduling fault reach playout: the tick is wrapped, and a throw inside one station
   // must not stop the others or kill the timer.
   // announceTick is async now, so a rejection would sail past a synchronous try/catch and become an
@@ -6106,6 +6098,20 @@ function startAnnouncementScheduler() {
 // Every fire, failure and skip also goes to the health ledger (announcement-fired / -failed / -skipped).
 const _announceAiring = new Map();   // stationId -> { entry_uuid, announcement_uuid, title, slot, slots, duration_sec, started_at, started_ms }
 const _announceFailed = new Map();   // stationId -> Map(entryUuid -> { at, reason, date })
+const _announceSkipped = new Map();  // stationId -> Map(entryUuid -> { at, reason, date }) — the WHY, for the line on screen
+/** A skip (2026-10-26, electron/announce-fire.js): stamped on the entry (skipped_at — it sticks across a relaunch), said in
+ *  ether-startup.log and the health log with its reason, and kept for today so the Announcements line can say why. */
+function _noteAnnounceSkipped(stationId, row, dateStr, due, why, nowSec) {
+  try { annStmts().markSkipped?.run(nowSec, row.uuid); row.skipped_at = nowSec; }
+  catch (e) { try { logStartup('[announce] could not record a skip: ' + (e && e.message)); } catch {} }
+  try {
+    let m = _announceSkipped.get(stationId);
+    if (!m) { m = new Map(); _announceSkipped.set(stationId, m); }
+    m.set(row.uuid, { at: nowSec, reason: why, date: dateStr });
+  } catch {}
+  try { _healthEvent('announcement-skipped', { stationId, entry: row.uuid, title: row.title || '', date: dateStr, due, reason: why }); } catch {}
+  try { logStartup('[announce] SKIPPED station ' + stationId + ' "' + (row.title || '') + '" due ' + dateStr + ' ' + due + ' — ' + why); } catch {}
+}
 function _noteAnnounceFailed(stationId, row, dateStr, reason) {
   try {
     let m = _announceFailed.get(stationId);
@@ -6130,14 +6136,17 @@ ipcMain.handle('announce:airing', (_e, stationId) => {
     const a = _announceAiringNow(sid);
     const d = new Date();
     const today = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-    const failed = {};
+    const failed = {}, skipped = {};
     for (const [entry, f] of (_announceFailed.get(sid) || new Map())) if (f.date === today) failed[entry] = { at: f.at, reason: f.reason };
+    for (const [entry, k] of (_announceSkipped.get(sid) || new Map())) if (k.date === today) skipped[entry] = { at: k.at, reason: k.reason };
     return {
       ok: true,
       airing: a ? { entry_uuid: a.entry_uuid, announcement_uuid: a.announcement_uuid, title: a.title, slot: a.slot, slots: a.slots,
                     duration_sec: a.duration_sec, started_at: a.started_at,
                     position_sec: Math.max(0, (Date.now() - a.started_ms) / 1000) } : null,
       failed,
+      skipped,
+      lateLimitSec: lateLimitFor(sid),   // null = not set: a line fires only on its own second
     };
   } catch (e) { return { ok: false, error: e.message }; }
 });

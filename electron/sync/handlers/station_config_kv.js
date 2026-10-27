@@ -375,7 +375,7 @@ function installStationConfigKv(ipcMain, db) {
       // second across every station. Drop that cache the moment the value changes so an offset
       // announcement moves on the NEXT tick, not at the end of the TTL. Optional by design — if the
       // hook is absent the cache still expires on its own.
-      if (key === 'closing_time') {
+      if (key === 'closing_time' || key === 'announce_late_limit_sec') {
         try { globalThis.__etherInvalidateClosing?.(stationId); } catch { /* never block a write */ }
       }
       return { ok: true, row };

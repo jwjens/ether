@@ -779,7 +779,7 @@ function fmtStamp(sec: number | null | undefined): string {
   return new Date(sec * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 function Tonight({ stationId, entries, assets, reload }: { stationId: number | null; entries: ScheduleEntry[]; assets: Announcement[]; reload: () => void }) {
-  const [st, setSt] = useState<AnnouncementStatus>({ airing: null, failed: {} });
+  const [st, setSt] = useState<AnnouncementStatus>({ airing: null, failed: {}, skipped: {}, lateLimitSec: null });
   const [due, setDue] = useState<Record<string, string | null>>({});
   const [now, setNow] = useState(() => Date.now());
   const today = ymd(new Date(now));
@@ -802,8 +802,8 @@ function Tonight({ stationId, entries, assets, reload }: { stationId: number | n
       .then((r: any) => { if (r?.ok) setDue(r.due || {}); }).catch(() => {});
   }, [stationId, today, entries, st.airing?.started_at]);
   // A fire stamps its line (Played) in the database: re-read the list when something starts or stops airing, or fails.
-  const sig = `${st.airing?.started_at ?? ""}|${Object.keys(st.failed).sort().join(",")}`;
-  useEffect(() => { if (sig !== "|") reload(); }, [sig]);
+  const sig = `${st.airing?.started_at ?? ""}|${Object.keys(st.failed).sort().join(",")}|${Object.keys(st.skipped).sort().join(",")}`;
+  useEffect(() => { if (sig !== "||") reload(); }, [sig]);
   useEffect(() => { if (!st.airing) reload(); }, [!!st.airing]);
 
   const titleOf = new Map(assets.map(a => [a.uuid, a.title]));
@@ -815,8 +815,8 @@ function Tonight({ stationId, entries, assets, reload }: { stationId: number | n
   const left = a && a.duration_sec > 0 ? Math.max(0, Math.ceil(a.duration_sec - (a.position_sec + (now - Date.parse(a.at)) / 1000))) : null;
   const nowHms = new Date(now).toTimeString().slice(0, 8);
   const hmsSec = (t: string) => { const [h, m, x] = t.split(":").map(Number); return (h || 0) * 3600 + (m || 0) * 60 + (x || 0); };
-  // "Did not play" only once the line is two minutes past its time — the fire's own guard window — so a line is never
-  // called missed while its fire is still landing.
+  // "Did not play" only once the line is past its time plus the station's late limit — the window it may still fire in —
+  // so a line is never called missed while it can still start. A skipped line says WHY (main, electron/announce-fire.js).
   const nextUuid = rows.find(r => r.at && r.at > nowHms && !r.e.last_played_at && !r.e.skipped_at)?.e.uuid ?? null;
   const airingHere = (uuid: string) => !!a && a.entry_uuid === uuid;
 
@@ -825,6 +825,7 @@ function Tonight({ stationId, entries, assets, reload }: { stationId: number | n
       <div style={{ padding: "8px 12px", fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "var(--text-tertiary)", borderBottom: "1px solid var(--border-primary)" }}>
         TONIGHT · {new Date(now).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}
       </div>
+      <LateLimitField stationId={stationId} value={st.lateLimitSec} />
       {a && !rows.some(r => airingHere(r.e.uuid)) && (
         // Airing but not one of today's lines (fired by hand, or from another day's list): still shown, plainly.
         <div className="on-air-active" style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", background: "rgba(239,68,68,0.12)", borderBottom: "1px solid var(--border-primary)" }}>
@@ -844,9 +845,9 @@ function Tonight({ stationId, entries, assets, reload }: { stationId: number | n
         if (onAir) status = { text: left != null ? `ON AIR · ${left}s` : "ON AIR", color: "#ef4444" };
         else if (f) status = { text: `Failed ${fmtStamp(f.at)}: ${f.reason}`, color: "var(--accent-red, #ef4444)" };
         else if (playedToday) status = { text: `Played ${fmtStamp(e.last_played_at)}`, color: "var(--accent-green, #22c55e)" };
-        else if (skippedToday) status = { text: `Skipped ${fmtStamp(e.skipped_at)} — its time passed when the closing time moved`, color: "var(--accent-amber, #fbbf24)" };
+        else if (skippedToday) status = { text: `Skipped ${fmtStamp(e.skipped_at)}${st.skipped[e.uuid] ? ` — ${st.skipped[e.uuid].reason}` : ""}`, color: "var(--accent-amber, #fbbf24)" };
         else if (!at) status = { text: "No time — no closing time set, so it will not play", color: "var(--accent-amber, #fbbf24)" };
-        else if (hmsSec(nowHms) - hmsSec(at) > 120) status = { text: "Did not play", color: "var(--accent-red, #ef4444)" };
+        else if (hmsSec(nowHms) - hmsSec(at) > (st.lateLimitSec ?? 0)) status = { text: "Did not play", color: "var(--accent-red, #ef4444)" };
         else if (hmsSec(nowHms) >= hmsSec(at)) status = { text: "Due now", color: "var(--text-secondary)" };
         else status = { text: e.uuid === nextUuid ? "Up next" : "Waiting", color: "var(--text-tertiary)" };
         return (
@@ -859,6 +860,43 @@ function Tonight({ stationId, entries, assets, reload }: { stationId: number | n
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// THE LATE LIMIT (Jeff, 2026-10-26: "How late an event may still fire is a user setting."). station_config_kv
+// `announce_late_limit_sec`, per station, synced: how many seconds after its time a line may still start when Ether was
+// busy at that second. Not set = only on its own second (what Ether always did). Past it the line is skipped, and says why.
+const LATE_LIMIT_KEY = "announce_late_limit_sec";
+function LateLimitField({ stationId, value }: { stationId: number | null; value: number | null }) {
+  const [draft, setDraft] = useState<string>("");
+  const [msg, setMsg] = useState<string | null>(null);
+  useEffect(() => { setDraft(value == null ? "" : String(value)); }, [value]);
+  const save = async () => {
+    if (stationId == null) return;
+    setMsg(null);
+    try {
+      const t = draft.trim();
+      if (t === "") {
+        const r: any = await (window as any).ether.stationConfigKv.removeByKey(stationId, LATE_LIMIT_KEY);
+        setMsg(r?.ok === false ? `Not saved: ${r.error}` : "Late limit cleared — lines fire only on their own second");
+        return;
+      }
+      const n = Number(t);
+      if (!Number.isInteger(n) || n < 0 || n > 3600) { setMsg("Enter whole seconds, 0 to 3600 (or leave it empty)"); return; }
+      const r: any = await (window as any).ether.stationConfigKv.upsertByKey(stationId, LATE_LIMIT_KEY, String(n));
+      setMsg(r?.ok === false ? `Not saved: ${r.error}` : `Saved: a line may start up to ${n} s after its time`);
+    } catch (e: any) { setMsg(`Not saved: ${String(e?.message || e)}`); }
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" as any, padding: "6px 12px", borderBottom: "1px solid var(--border-primary)", fontSize: 11, color: "var(--text-secondary)" }}>
+      <span>Late limit: a line may still start up to</span>
+      <input aria-label="Late limit in seconds" value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") save(); }}
+             placeholder="not set" inputMode="numeric"
+             style={{ width: 64, fontSize: 11, padding: "2px 6px", background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-secondary)" }} />
+      <span>seconds after its time.</span>
+      <button onClick={save} style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", cursor: "pointer" }}>Save</button>
+      <span style={{ color: "var(--text-tertiary)" }}>{msg ?? (value == null ? "Not set: only on its own second." : `Now ${value} s.`)}</span>
     </div>
   );
 }
