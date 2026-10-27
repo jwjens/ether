@@ -18,6 +18,7 @@ const path = require('path');
 // the tolerant key, against the same conservative `norm`.
 const { buildIndex, norm, AUDIO_TABLES, tableColumns, libraryPathFor } = require('./audio-library-index');
 const { playableFile, catalogueName } = require('./catalogue');
+const { findNotInCatalogue } = require('./catalogue-moves');
 /** The file with this row's exact name in `folder` (or its case-alt name), or null. */
 function sameNameIn(folder, storedPath) {
   const name = folder ? catalogueName(storedPath) : null;
@@ -162,7 +163,9 @@ function matchStation(db, stationId, folder) {
            folderFiles: index.files, assets: assets.found, assetsMissing: assets.missing };
 }
 
-// Write the matches (link) and NULL the misses (so the scheduler SKIPS them instead of stalling).
+// Write the matches (link). The misses are NOT touched (2026-10-27, Jeff: "Re-sync never clears a song's file location.
+// Songs it can't find go to the same pop-up.") — they used to be NULLed in the log so the scheduler skipped them; now they
+// keep their location everywhere and are handed to the "move to the catalogue" pop-up (filesToMove below).
 //
 // ── WHY THIS NO LONGER USES THE SYNC-LOGGED WRITER (2026-09-04) ────────────────────────────────
 //
@@ -202,8 +205,7 @@ function applyRelink(db, stationId, result, deps) {
   const plan = hasState ? ` AND ${require("./log-edit-core").NOT_AIRED_SQL}` : "";
   const setGs   = db.prepare(`UPDATE generated_schedule SET file_path = ? WHERE station_id = ? AND song_id IS ?${plan}`);
   const setGsT  = db.prepare(`UPDATE generated_schedule SET file_path = ? WHERE station_id = ? AND title = ? AND song_id IS NULL${plan}`);
-  const nullGs  = db.prepare(`UPDATE generated_schedule SET file_path = NULL WHERE station_id = ? AND song_id IS ?${plan}`);
-  let nulled = 0, relinkedAssets = 0;
+  let relinkedAssets = 0;
   const tx = db.transaction(() => {
     for (const m of result.matches) {
       if (m.songId != null) {
@@ -215,10 +217,7 @@ function applyRelink(db, stationId, result, deps) {
         setGsT.run(m.file, stationId, m.title);
       }
     }
-    // Misses are NULLed so the scheduler skips them rather than stalling on a dead path. That is
-    // right — but it was SILENT, which is the same class of defect as the prefetch's silent defer.
-    // Count them so the caller can report what it just unlinked.
-    for (const m of result.missing) if (m.songId != null) { nullGs.run(stationId, m.songId); nulled++; }
+    // Misses: NOTHING is written. Their location stays as it is (song and log alike); they go to the pop-up.
     // The other audio tables. LOCAL-ONLY like the song relink above — an announcement's location on
     // this disk is no more a fact about a peer than a song's is. Statements are prepared per table
     // and cached, not per row.
@@ -234,8 +233,19 @@ function applyRelink(db, stationId, result, deps) {
     }
   });
   tx();
-  return { linked: result.matches.length, missingCount: result.missing.length, unlinked: nulled,
+  return { linked: result.matches.length, missingCount: result.missing.length,
            relinkedAssets, assetsMissing: (result.assetsMissing || []).length };
+}
+
+// The files behind Re-sync's misses, as the "move to the catalogue" pop-up lists them (electron/catalogue-moves.js).
+// Read-only. The pop-up asks; only its Yes moves or downloads anything.
+function filesToMove(db, folder, result) {
+  const want = new Set([
+    ...(result.missing || []).filter(m => m.songId != null).map(m => `songs#${m.songId}`),
+    ...(result.assetsMissing || []).map(a => `${a.table}#${a.id}`),
+  ]);
+  if (!want.size) return [];
+  return findNotInCatalogue(db, folder).files.filter(f => f.rows.some(x => want.has(`${x.table}#${x.id}`)));
 }
 
 function register(deps) {
@@ -277,7 +287,7 @@ function register(deps) {
              assetsMissingDetail: r.assetsMissing.slice(0, 20) };
   });
 
-  // RE-SYNC — link matches, skip misses. Returns the missing list.
+  // RE-SYNC — link matches; misses keep their location and go to the move-to-the-catalogue pop-up (toMove).
   ipcMain.handle('station-folder:resync', (_e, stationId) => {
     const sid = stationId ?? getActiveStationId();
     const folder = getFolder(getDb(), sid, deps);
@@ -286,9 +296,9 @@ function register(deps) {
     const r = matchStation(getDb(), sid, folder);
     const applied = applyRelink(getDb(), sid, r, deps);
     return { ok: true, stationId: sid, folder, total: r.total, linked: applied.linked,
-             unlinked: applied.unlinked, missing: r.missing.map(m => m.title),
+             missing: r.missing.map(m => m.title),
              relinkedAssets: applied.relinkedAssets, assetsMissing: applied.assetsMissing,
-             assetsMissingDetail: r.assetsMissing.slice(0, 20) };
+             assetsMissingDetail: r.assetsMissing.slice(0, 20), toMove: filesToMove(getDb(), folder, r) };
   });
 
   // Library Relocate button: pick a folder for the ACTIVE station, save it, and re-sync in one step.
@@ -302,12 +312,12 @@ function register(deps) {
     const r = matchStation(getDb(), sid, folder);
     const applied = applyRelink(getDb(), sid, r, deps);
     return { ok: true, stationId: sid, folder, total: r.total, linked: applied.linked,
-             unlinked: applied.unlinked, missing: r.missing.map(m => m.title),
+             missing: r.missing.map(m => m.title),
              relinkedAssets: applied.relinkedAssets, assetsMissing: applied.assetsMissing,
-             assetsMissingDetail: r.assetsMissing.slice(0, 20) };
+             assetsMissingDetail: r.assetsMissing.slice(0, 20), toMove: filesToMove(getDb(), folder, r) };
   });
 }
 
 // applyRelink is exported for the bench (scripts/test-relink-no-mutation.js), which asserts the
 // local-only property — that a relink writes the path and logs NO mutation.
-module.exports = { register, matchStation, indexFolder, norm, getFolder, applyRelink };
+module.exports = { register, matchStation, indexFolder, norm, getFolder, applyRelink, filesToMove };

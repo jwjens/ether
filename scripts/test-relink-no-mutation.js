@@ -68,12 +68,14 @@ check('  the match is written to songs.file_path',
   db.prepare('SELECT file_path FROM songs WHERE id=1').get().file_path, FOUND);
 check('  the match is written to generated_schedule',
   db.prepare('SELECT file_path FROM generated_schedule WHERE song_id=1').get().file_path, FOUND);
-check('  the miss is NULLed so the scheduler skips it',
-  db.prepare('SELECT file_path FROM generated_schedule WHERE song_id=2').get().file_path, null);
+// (2026-10-27, Jeff: "Re-sync never clears a song's file location. Songs it can't find go to the same pop-up.")
+check('  the miss keeps its location in the log — Re-sync never clears it',
+  db.prepare('SELECT file_path FROM generated_schedule WHERE song_id=2').get().file_path,
+  'C:\\Users\\someoneelse\\Music\\Gone Song.mp3');
 check('  linked count', applied.linked, 1);
 
 console.log('\n── no silent failure ──');
-check('  unlinked misses are COUNTED and reported', applied.unlinked, 1);
+check('  the miss is COUNTED and reported', applied.missingCount, 1);
 
 console.log('\n── THE GATE: nothing is logged for a peer ──');
 check('  the mutation log is empty',
@@ -142,6 +144,28 @@ check('  the cart is left alone rather than blanked',
   db.prepare('SELECT file_path FROM cart_slots WHERE id=1').get().file_path,
   'C:\\Users\\someoneelse\\Downloads\\never-existed.mp3');
 check('  STILL nothing logged for a peer', db.prepare('SELECT COUNT(*) n FROM mutations').get().n, 0);
+
+// ── what Re-sync cannot find goes to the pop-up (2026-10-27) ───────────────────────────────────
+// (Here, after every table exists: tableColumns is memoised per database handle.)
+console.log('\n── misses go to the move-to-the-catalogue pop-up ──');
+const { filesToMove } = require('../electron/library-folders');
+check('  the song miss is offered, as its file',
+  filesToMove(db, tmp, result).map(f => [f.name, f.state, f.rows.map(r => `${r.table}#${r.id}`).join()]),
+  [['Gone Song.mp3', 'missing', 'songs#2']]);
+check('  the cart miss is offered too',
+  filesToMove(db, tmp, r2).some(f => f.name === 'never-existed.mp3' && f.rows.some(x => x.table === 'cart_slots')), true);
+check('  and offering wrote nothing: the cart keeps its location',
+  db.prepare('SELECT file_path FROM cart_slots WHERE id=1').get().file_path,
+  'C:\\Users\\someoneelse\\Downloads\\never-existed.mp3');
+const { register } = require('../electron/library-folders');
+const handlers = {};
+register({ ipcMain: { handle: (ch, fn) => { handlers[ch] = fn; } }, dialog: null, getDb: () => db,
+           getActiveStationId: () => 1, getMachineMusicDir: () => tmp });
+const rs = handlers['station-folder:resync'](null, 1);
+check('  Re-sync returns the files for the pop-up', Array.isArray(rs.toMove) && rs.toMove.some(f => f.name === 'Gone Song.mp3'), true);
+check('  and after Re-sync the song miss STILL has its location in the log',
+  db.prepare('SELECT file_path FROM generated_schedule WHERE song_id=2').get().file_path,
+  'C:\\Users\\someoneelse\\Music\\Gone Song.mp3');
 
 try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
 console.log('\n' + '─'.repeat(70));

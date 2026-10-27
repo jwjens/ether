@@ -2352,11 +2352,13 @@ function MusicFolderSection() {
     setBusy(true); setMsg("Re-syncing…");
     const r = await api.resync(stationId); setBusy(false);
     if (!r?.ok) { setMsg(r?.error || "No folder set"); setResult(null); return; }
-    setResult(r); setMsg(`Linked ${r.linked}/${r.total}. ${r.missing.length} still missing (skipped so they won't stall the station).`);
+    setResult(r); setMsg(`Linked ${r.linked}/${r.total}. ${r.missing.length} not found — their location is left as it is.`);
+    // What Re-sync could not find goes to the move-to-the-catalogue pop-up (CatalogueMovePrompt); nothing moves without its Yes.
+    if (r.toMove?.length) window.dispatchEvent(new CustomEvent("ether:catalogue-prompt", { detail: { files: r.toMove } }));
   };
   const btn: React.CSSProperties = { padding: "7px 14px", fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer" };
   return (
-    <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>} title="Catalogue Folder & Sync" description="Where this machine's audio files live. ONE folder, shared by every station on this computer — pick it, Test sync to check the files are there, and Re-sync to relink them (anything missing is listed and skipped so it can't cause dead air).">
+    <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>} title="Catalogue Folder & Sync" description="Where this machine's audio files live. ONE folder, shared by every station on this computer — pick it, Test sync to check the files are there, and Re-sync to relink them (anything not found keeps its location and is offered to be moved to the catalogue).">
       <div style={{ display: "flex", flexDirection: "column" as any, gap: 10 }}>
         <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Folder for this station:</div>
         <div style={{ fontSize: 13, wordBreak: "break-all", padding: "6px 8px", background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)" }}>{folder || "(not set)"}</div>
@@ -2368,7 +2370,7 @@ function MusicFolderSection() {
         {msg && <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{msg}</div>}
         {result?.missing && result.missing.length > 0 && (
           <div style={{ marginTop: 4, padding: "8px 10px", background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.35)", color: "#f59e0b", fontSize: 12 }}>
-            <div style={{ fontWeight: 700, marginBottom: 6 }}>{result.missing.length} missing — add the file to the folder or fix the song title, then Re-sync:</div>
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>{result.missing.length} not found in the catalogue:</div>
             <div style={{ maxHeight: 180, overflowY: "auto", fontSize: 11, opacity: 0.95 }}>
               {result.missing.map((t, i) => <div key={i}>• {t}</div>)}
             </div>

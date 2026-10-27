@@ -5289,6 +5289,8 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
     if (!r || r.canceled) return;
     if (!r.ok) { setStatus(r.error || "Relocate failed"); setTimeout(() => setStatus(""), 5000); return; }
     setMissingSongs(r.missing || []);
+    // Not found → the move-to-the-catalogue pop-up (CatalogueMovePrompt); their location is left as it is.
+    if (r.toMove?.length) window.dispatchEvent(new CustomEvent("ether:catalogue-prompt", { detail: { files: r.toMove } }));
     setStatus(`Relocated: linked ${r.linked}/${r.total}` + (r.missing?.length ? `, ${r.missing.length} missing` : ""));
     setTimeout(() => setStatus(""), 6000); load();
   };
