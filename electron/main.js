@@ -280,7 +280,22 @@ setInterval(_scanLogRowChanges, 15_000);
 // it across so markers/backups/settings carry over. The station database is NOT here (it lives in
 // %LOCALAPPDATA%\Ether\com.ether.radio), so this never risks the library/stations. Best-effort:
 // any failure just falls through to the default location. MUST run before any getPath('userData').
-try {
+//
+// SMOKE_ISOLATED (see the single-instance lock below) is decided HERE, before userData is set, because an isolated run
+// must not touch the live app's machine folders (2026-10-27, the 4.6.66 release check). It used to be redirected like
+// any launch: its explicit --user-data-dir was overridden with the real Roaming\Ether (app.getPath("appData") is the
+// Windows known folder, not %APPDATA%), so it wrote the LIVE startup log and window state, and it connected to the
+// LIVE engine's pipe. Now it keeps its own --user-data-dir and gets its own engine pipe (set before
+// audio-daemon-client loads; the daemon it spawns inherits it).
+const SMOKE_ISOLATED = process.env.ETHER_SMOKE === '1' && app.commandLine.hasSwitch('user-data-dir');
+if (SMOKE_ISOLATED) {
+  try { app.setPath("userData", app.commandLine.getSwitchValue('user-data-dir')); } catch (e) { console.warn("[SMOKE] userData:", e.message); }
+  if (!process.env.ETHER_AUDIOD_PIPE) {
+    process.env.ETHER_AUDIOD_PIPE = process.platform === "win32"
+      ? `\\\\.\\pipe\\ether-audiod-smoke-${process.pid}`
+      : path.join(require("os").tmpdir(), `ether-audiod-smoke-${process.pid}.sock`);
+  }
+} else try {
   const _appData = app.getPath("appData");
   const _newUserData = path.join(_appData, "Ether");
   const _oldUserData = path.join(_appData, "openair");
@@ -405,8 +420,8 @@ if (process.platform === "win32") {
 // SMOKE_ISOLATED: an isolated health/CI smoke may run ALONGSIDE the live app. It skips the single-instance
 // lock (and the :3400 bind, far below) so it never fights the live app. Guarded by BOTH ETHER_SMOKE=1 AND an
 // explicit --user-data-dir — never either alone — so a stray env var on a live box can NEVER spawn an
-// unlocked second instance. Loudly self-identifying (window title + [SMOKE] logs).
-const SMOKE_ISOLATED = process.env.ETHER_SMOKE === '1' && app.commandLine.hasSwitch('user-data-dir');
+// unlocked second instance. Loudly self-identifying (window title + [SMOKE] logs). (SMOKE_ISOLATED is set above, with
+// userData: its own --user-data-dir and its own engine pipe.)
 if (SMOKE_ISOLATED) {
   console.log('[SMOKE] ISOLATED MODE — single-instance lock + :3400 bind BYPASSED (ETHER_SMOKE=1 + explicit --user-data-dir). This is NOT the live app.');
 } else {
