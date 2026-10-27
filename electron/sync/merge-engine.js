@@ -288,6 +288,32 @@ class MergeEngine {
       }
       const localId = (localRow && localRow.id != null) ? localRow.id : null;
       if (localId != null) row.id = localId;
+      // A FILE'S LOCATION IS THIS COMPUTER'S, AND SYNC NEVER GUESSES ONE (Jeff, 2026-10-26; electron/catalogue.js). An
+      // inbound UPDATE used to overwrite this machine's stored location with <catalogue>/<name> built from the sender's
+      // path — so a location the user chose here with Change File Location was silently replaced the next time another
+      // machine edited anything on the song. Now an update that did not change the FILE (the sender's before and after
+      // name the same file) leaves this computer's location exactly as it is. Only a change of file (a new name), or a row
+      // that is new here, takes the catalogue — the default location.
+      if (localRow && op === 'update') {
+        const blobCols = Object.entries((REGISTRY[m.table_name] && REGISTRY[m.table_name].columns) || {})
+          .filter(([c, kind]) => kind === 'blob-ref' && row[c] !== undefined).map(([c]) => c);
+        if (blobCols.length) {
+          const { storedBasename } = require('../audio-library-index');
+          const raw = (v) => (v && typeof v === 'object') ? (v.__blob_key != null ? v.__blob_key : v.__blob_origin) : v;
+          let here = null;
+          try { here = db.prepare(`SELECT ${blobCols.join(', ')} FROM ${table_name} WHERE uuid = ?`).get(row_id) || null; } catch { here = null; }
+          let before = m.payload_before || null;
+          if (typeof before === 'string') { try { before = JSON.parse(before); } catch { before = null; } }
+          for (const c of blobCols) {
+            if (!here) break;
+            const was = before ? raw(before[c]) : undefined, now = row[c];   // row[c]: the sender's file name, already localized
+            const unchanged = before
+              ? (was == null && now == null) || (was != null && now != null && storedBasename(was) === storedBasename(now))
+              : (here[c] != null && now != null && storedBasename(here[c]) === storedBasename(now));   // no before image: same name
+            if (unchanged) row[c] = here[c];
+          }
+        }
+      }
       // MIRROR ON ARRIVAL. This path writes rows RAW — it never calls the handlers, because it has to
       // control the integer id ([N-107], [N-108c]) in ways they do not. That is deliberate and stays.
       // But it meant the library_asset mirror, which lives in the handlers, never ran on a receiver:

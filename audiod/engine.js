@@ -1448,7 +1448,8 @@ class DaemonEngine {
     // phantom-fills the pool and separation stays honest. Queue content is identical to before.
     const kept = [];
     for (const it of (fill.items || [])) {
-      if (this._fileOk(it.filePath)) kept.push(it);
+      const rp = this._resolveLocal(it.filePath);
+      if (rp) kept.push(rp === it.filePath ? it : { ...it, filePath: rp });
       else if (!it.fileKey) this._noteLoadSkip(it.title, "unresolvable — no local file, no file_key");
       // else: R2-only → prefetch-lag; silently deferred (prefetch materializes it; next fill picks it up).
     }
@@ -1939,55 +1940,20 @@ class DaemonEngine {
   //
   // Rebuilt at most every 30s — a log refill resolves dozens of rows in a burst, and walking the
   // folder per row would be pathological on the audio thread's doorstep.
-  _libraryDir() {
-    if (this.__libDir !== undefined) return this.__libDir;
-    let dir = null;
-    try {
-      const prof = process.env.ETHER_PROFILE_DIR;
-      if (prof) dir = fs.readFileSync(path.join(prof, 'music-dir.txt'), 'utf8').trim() || null;
-    } catch { /* not set — fall through to the default */ }
-    if (!dir) {
-      // Same default as the app's defaultLibraryDir(): <Music>/ether music library.
-      try { dir = path.join(require('os').homedir(), 'Music', 'ether music library'); } catch { dir = null; }
-    }
-    this.__libDir = dir;
-    return dir;
-  }
-  _libIndex() {
-    const now = Date.now();
-    if (!this.__libIdx || now - (this.__libIdxAt || 0) > 30000) {
-      try { this.__libIdx = require('../electron/audio-library-index').buildIndex(this._libraryDir()); }
-      catch (e) { this.__libIdx = { byBasename: new Map(), byNorm: new Map(), files: 0 }; }
-      this.__libIdxAt = now;
-    }
-    return this.__libIdx;
-  }
-
   /**
-   * Resolve a stored path to something this machine can actually play.
-   * @returns an absolute path, or null.
+   * The file this machine plays for a stored path: that path, exactly — the catalogue (the default) or a file the user
+   * chose — or null. Nothing else is tried (2026-10-26, electron/catalogue.js): no same-named file in the catalogue or
+   * anywhere else, no case-blind or tolerant match. A missing file is downloaded into the catalogue by the app, which then
+   * points the row at it.
    *
-   * THIS RETURNS A PATH, NOT A BOOLEAN, and that distinction is the whole fix. `_fileOk` only ever
-   * answered "is this playable?" — so a row whose file lived in the library under a different
-   * directory could pass the gate and then be loaded from the path that does not exist. Callers
-   * must use what comes back here.
+   * THIS RETURNS A PATH, NOT A BOOLEAN. Callers load what comes back here.
    */
   _resolveLocal(fp) {
     if (!fp) return null;
     if (/^[a-z]+:\/\//i.test(fp)) return fp;                 // a URL is the daemon's to stream, not to stat
-    // Fast path — the stored path is right. Not when it only "exists" because a different-case spelling sits in the
-    // library: that is another file (audio-library-index.js caseShadowed); the index below finds this one's own copy.
-    let shadowed = false;
-    try { shadowed = require('../electron/audio-library-index').caseShadowed(this._libIndex(), fp); } catch { /* index unavailable */ }
-    if (!shadowed && fs.existsSync(fp) && this._dur(fp) > 0) return fp;
-    try {
-      const hit = require('../electron/audio-library-index').findInIndex(this._libIndex(), fp);
-      if (hit && fs.existsSync(hit) && this._dur(hit) > 0) {
-        this._log(`resolved from audio library: ${require('../electron/audio-library-index').storedBasename(fp)} -> ${hit}`);
-        return hit;
-      }
-    } catch { /* index unavailable — fall through to unresolvable */ }
-    return null;
+    let here = null;
+    try { here = require('../electron/catalogue').playableFile(fp); } catch { here = null; }
+    return here && this._dur(here) > 0 ? here : null;
   }
 
   // Kept as the boolean gate every existing call site expects, now backed by the resolver so the
@@ -2014,7 +1980,9 @@ class DaemonEngine {
   // can't load it (corrupt/unsupported) — callers must SKIP a false (never play a dead deck, or
   // the rotation stalls on a non-existent source = dead air). The old version always proceeded.
   loadToDeck(id, item) {
-    if (!item || !this._fileOk(item.filePath)) return false;
+    const rp = item ? this._resolveLocal(item.filePath) : null;   // the row's file, or nothing
+    if (!rp) return false;
+    if (rp !== item.filePath) item = { ...item, filePath: rp };
     let ok;
     try { ok = this._load(id, item.filePath, item.title, item.artist, item.gainDb); }
     catch (e) { this.emit("error", { stationId: this.stationId, where: "loadToDeck", error: String(e) }); return false; }
@@ -2744,8 +2712,9 @@ class DaemonEngine {
       if (sched == null) return false;                      // the deck has no schedule identity to key on
       const jin = loggen.readAutoPostForSong(this.db, this.stationId, sched, this._firedJinRows.slice(-100));
       if (!jin) return false;
-      if (!this._fileOk(jin.filePath)) { this._noteFiredRow(jin.rowId); return false; }
-      this._armJingle(jin, deck);
+      const rp = this._resolveLocal(jin.filePath);   // the row's file, or nothing
+      if (!rp) { this._noteFiredRow(jin.rowId); return false; }
+      this._armJingle({ ...jin, filePath: rp }, deck);
       this._log(`auto-post armed on ${deck} post=${jin.postMs}ms cut_end=${jin.cutEndMs}ms ` +
                 `fires at position ${((jin.postMs - jin.cutEndMs) / 1000).toFixed(2)}s - "${jin.title}"`);
       return true;
@@ -3129,9 +3098,10 @@ class DaemonEngine {
         // null the hint WITHOUT a CLEARED so the indicator flips grey → white in the same tick, no gap.
         const jin = loggen.readJingleForSeam(this.db, this.stationId, afterTs, beforeTs, this._firedJinRows.slice(-100));
         if (!jin) { this._clearScheduled("no-seam"); return; }
-        if (!this._fileOk(jin.filePath)) { this._noteFiredRow(jin.rowId); this._clearScheduled("dead-file"); return; }  // dead jingle file → skip, don't arm
+        const rp = this._resolveLocal(jin.filePath);   // the row's file, or nothing
+        if (!rp) { this._noteFiredRow(jin.rowId); this._clearScheduled("dead-file"); return; }  // dead jingle file → skip, don't arm
         this._scheduled = null; this._scheduledSig = "";
-        this._armJingle(jin, P);
+        this._armJingle({ ...jin, filePath: rp }, P);
         return;
       }
 

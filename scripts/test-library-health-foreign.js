@@ -63,9 +63,13 @@ console.log('\n── resolution classes ──');
 check('  H-1 file exists at the stored path → resolves, not foreign',
   cls({ file_path: LOCAL_FILE, file_key: null }), { cls: 'resolves', foreign: false });
 
-check('  H-2 foreign dir + file_key + basename IS in music dir → resolvesElsewhere + foreign',
+// (2026-10-26, electron/catalogue.js — Jeff: "no silent fallback to another folder") A row plays exactly its stored file,
+// so a same-named file in the catalogue no longer stands in for it: the row is downloadable (its cloud copy goes into the
+// catalogue and the row is pointed at it), and until then it is not airable. The one-time repair points such rows at the
+// catalogue file visibly (scripts/repair-file-locations.js).
+check('  H-2 foreign dir + file_key + basename IS in music dir → r2Only + foreign (no silent stand-in)',
   cls({ file_path: FOREIGN('moved.mp3'), file_key: 'moved.mp3' }),
-  { cls: 'resolvesElsewhere', foreign: true });
+  { cls: 'r2Only', foreign: true });
 
 check('  H-3 foreign dir + file_key + NO basename match → r2Only + foreign',
   cls({ file_path: FOREIGN('never-seen.mp3'), file_key: 'never-seen.mp3' }),
@@ -109,8 +113,10 @@ check('  H-5b a cart INSIDE the catalogue resolves and is not foreign',
 // is not a contradiction — it is the honest reading of "works, here, today".
 const OUTSIDE_BUT_REAL = path.join(dataDir, 'cart-on-the-desktop.mp3');
 fs.writeFileSync(OUTSIDE_BUT_REAL, 'x');
-check('  H-5c a REACHABLE file outside the catalogue is foreign anyway (it plays HERE and travels nowhere)',
-  cls({ file_path: OUTSIDE_BUT_REAL }), { cls: 'resolves', foreign: true });
+// INVERTED AGAIN, by Jeff (2026-10-26): "The catalogue is the default, not a lock … Library health treats a location the
+// user chose as valid." A file that is there plays from there, wherever it is, and is not foreign.
+check('  H-5c a REACHABLE file outside the catalogue (a location the user chose) resolves and is NOT foreign',
+  cls({ file_path: OUTSIDE_BUT_REAL }), { cls: 'resolves', foreign: false });
 
 // The counterpart, and the thing the new rule must NOT break: a file missing from INSIDE the
 // catalogue is a local problem (someone deleted it), not a synced-path problem. H-4b already covers
@@ -136,8 +142,8 @@ lh.resetSweepCaches();
 const all = lh.classifyAll(db, 1);
 
 check('  songs: 1 resolves',            all.byTable.songs.resolves, 1);
-check('  songs: 1 resolvesElsewhere',   all.byTable.songs.resolvesElsewhere, 1);
-check('  songs: 1 r2Only',              all.byTable.songs.r2Only, 1);
+check('  songs: 0 resolvesElsewhere (nothing airs from a file Ether picked)', all.byTable.songs.resolvesElsewhere, 0);
+check('  songs: 2 r2Only',              all.byTable.songs.r2Only, 2);
 check('  songs: 2 foreign',             all.byTable.songs.foreign, 2);
 check('  announcements: 1 dead (no file_key column ⇒ never r2Only)', all.byTable.announcements.dead, 1);
 check('  announcements: 1 foreign',     all.byTable.announcements.foreign, 1);
@@ -159,7 +165,7 @@ check('  H-6c all resolve ⇒ green',     level(0, 0, 0, 0), 'green');
 // ── the OV shape, end to end ───────────────────────────────────────────────────────────────────
 console.log('\n── the OV regression, in one assertion ──');
 const ov = cls({ file_path: FOREIGN('moved.mp3'), file_key: 'moved.mp3' });
-check('  OV row is NOT reported as r2Only (it was, and the station was silent)', ov.cls !== 'r2Only', true);
+check('  OV row is reported downloadable (r2Only), never as airing from a file Ether picked', ov.cls, 'r2Only');
 check('  OV row IS reported foreign', ov.foreign, true);
 
 // ── H-8 · the two matchers agree (2026-09-04 reconciliation) ───────────────────────────────────
@@ -169,10 +175,11 @@ check('  OV row IS reported foreign', ov.foreign, true);
 console.log('\n── the two matchers agree ──');
 fs.writeFileSync(path.join(musicDir, 'Wolves_spotdown.org.mp3'), 'x');
 lh.resetSweepCaches();
-check('  H-8 a tolerant (norm) match counts as resolvesElsewhere, not dead',
-  lh.classifyRow({ file_path: FOREIGN('Wolves.mp3'), file_key: null }).cls, 'resolvesElsewhere');
-check('  H-8b punctuation/case differences still match',
-  lh.classifyRow({ file_path: FOREIGN('wolves .MP3'), file_key: null }).cls, 'resolvesElsewhere');
+// (2026-10-26) No tolerant match any more — "no automatic path guessing": a different name is a different file.
+check('  H-8 a tolerant (norm) look-alike does NOT stand in: dead',
+  lh.classifyRow({ file_path: FOREIGN('Wolves.mp3'), file_key: null }).cls, 'dead');
+check('  H-8b nor does a punctuation/case variant',
+  lh.classifyRow({ file_path: FOREIGN('wolves .MP3'), file_key: null }).cls, 'dead');
 check('  H-8c a genuinely absent file is still dead',
   lh.classifyRow({ file_path: FOREIGN('not-a-real-track.mp3'), file_key: null }).cls, 'dead');
 
@@ -184,7 +191,7 @@ fs.readdirSync = function (...a) { reads++; return realReaddir.apply(this, a); }
 lh.resetSweepCaches();
 for (let i = 0; i < 200; i++) lh.classifyRow({ file_path: FOREIGN(`x${i}.mp3`), file_key: 'k' });
 fs.readdirSync = realReaddir;
-check('  H-7 200 rows ⇒ the music dir is walked once', reads, 1);
+check('  H-7 200 rows ⇒ the music dir is never walked (only each stored file is checked)', reads, 0);
 
 // ── report ──────────────────────────────────────────────────────────────────────────────────────
 try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}

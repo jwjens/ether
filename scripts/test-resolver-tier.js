@@ -61,14 +61,18 @@ check('  R-7 the foreign path does NOT exist (the point of the exercise)', fs.ex
 console.log('\n── one implementation, both processes ──');
 const mainSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
 const daemonSrc = fs.readFileSync(path.join(__dirname, '..', 'audiod', 'engine.js'), 'utf8');
-check('  R-8 main.js resolveLocalAudioPath consults the library index',
-  /_libIndexCached\(\)/.test(mainSrc) && /findInIndex/.test(mainSrc), true);
-check('  R-9 the daemon consults the same module',
-  /audio-library-index/.test(daemonSrc) && /_resolveLocal/.test(daemonSrc), true);
+// (2026-10-26, electron/catalogue.js — Jeff: "no automatic path guessing … no silent fallback to another folder") Both
+// sides play exactly the stored file; neither consults the library index any more. The OV condition above is now the
+// one-time repair's (scripts/repair-file-locations.js), done visibly, not by the resolver in silence.
+const resolveSrc = mainSrc.slice(mainSrc.indexOf('async function resolveLocalAudioPath'), mainSrc.indexOf('function _pointRowsAtDownload'));
+check('  R-8 main.js resolveLocalAudioPath plays the stored file and consults no library index',
+  /Cat\.playableFile\(filePath\)/.test(resolveSrc) && !/findInIndex|_libIndexCached/.test(resolveSrc), true);
+check('  R-9 the daemon uses the same module (catalogue.js playableFile) and no index',
+  /require\('\.\.\/electron\/catalogue'\)\.playableFile\(fp\)/.test(daemonSrc) && !/findInIndex/.test(daemonSrc), true);
 check('  R-10 the daemon REWRITES filePath rather than only filtering',
   /filePath: rp/.test(daemonSrc) || /filePath: r \}/.test(daemonSrc), true);
-check('  R-11 main tries the library BEFORE R2',
-  mainSrc.indexOf('library tier failed') < mainSrc.indexOf('attempting R2 fallback'), true);
+check('  R-11 a download goes into the catalogue and the rows are pointed at it',
+  /Cat\.downloadTarget\(getMusicDir\(\), filePath, fileKey\)/.test(resolveSrc) && /_pointRowsAtDownload\(fileKey, filePath, fetched\.filePath\)/.test(resolveSrc), true);
 
 // ── the leak that rode with this ──────────────────────────────────────────────────────────────
 console.log('\n── the download no longer broadcasts paths ──');

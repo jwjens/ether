@@ -19,7 +19,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { buildIndex, findInIndex, storedBasename, AUDIO_TABLES, existsExactCase, libraryPathFor } = require('./audio-library-index');
+const { storedBasename, AUDIO_TABLES, libraryPathFor, existsExactCase } = require('./audio-library-index');
 
 // Module-level bridge: lets code OUTSIDE this factory (the songs delete path) emit a health event
 // without threading the instance through every caller. Wired when the factory is constructed; a no-op
@@ -35,7 +35,7 @@ function createLibraryHealth(opts) {
   // `blob-ref` and may hold another machine's absolute path. See prefetchTick below.
   // restoreInFlightFn: () => true while a restore is pulling rows or files. Optional — absent means
   // false, so every existing caller keeps its current behaviour.
-  const { getDb, backendUrl, licenseKeyFn, broadcast, userDataDir, musicDirFn, restoreInFlightFn, appendEvent } = opts;
+  const { getDb, backendUrl, licenseKeyFn, broadcast, userDataDir, musicDirFn, restoreInFlightFn, appendEvent, onMaterialized } = opts;
   const jsonlPath = path.join(userDataDir, 'health-events.jsonl');
   const inFlight = new Set();          // file_key currently downloading (dedup)
   const skipCounts = new Map();        // stationId -> { hour: <epoch hour>, n }
@@ -80,26 +80,9 @@ function createLibraryHealth(opts) {
 
   // Per-sweep caches. Reset at the top of computeAll() so a file that appears between sweeps is
   // seen on the next one rather than cached as absent for the life of the process.
-  let _sweepBasenames = null;      // the audio library index for this sweep (see libraryIndex)
   let _sweepDirs = new Map();      // dirname -> exists (each distinct dir stat'd ONCE, not per row)
 
-  function resetSweepCaches() { _sweepBasenames = null; _sweepDirs = new Map(); }
-
-  /**
-   * The audio library index for THIS sweep — one walk, both indexes, shared with Re-sync.
-   *
-   * This used to build its own Set of exact basenames while library-folders.js built a separate
-   * tolerant index. Two definitions of "the same file" meant this classifier could report a row
-   * `dead` that Re-sync would have relinked. Now both ask one index (audio-library-index.js), and
-   * `findInIndex` answers the exact question first and the tolerant one second — so what this sense
-   * calls resolvable is exactly what the relinker can actually resolve.
-   */
-  function libraryIndex() {
-    if (_sweepBasenames) return _sweepBasenames;
-    const root = (typeof musicDirFn === 'function') ? musicDirFn() : null;
-    _sweepBasenames = buildIndex(root);
-    return _sweepBasenames;
-  }
+  function resetSweepCaches() { _sweepDirs = new Map(); }
 
   /** Does this directory exist on this machine? Memoised per sweep — a few distinct dirs, not one per row. */
   function dirExists(dir) {
@@ -167,15 +150,15 @@ function createLibraryHealth(opts) {
     // A file MISSING from inside the catalogue is still not foreign — it is `dead`, a local problem
     // (someone deleted it), not a synced-path problem. Conflating those would cry wolf on ordinary
     // housekeeping, which is the one thing the original rule got right and this keeps.
-    const foreign = !!fp && !insideLibrary(fp);
+    // (2026-10-26, Jeff: "Library health treats a location the user chose as valid.") A file that is THERE is valid
+    // wherever it is — the catalogue is the default, not a lock. `foreign` now means only what cannot be a choice made on
+    // this computer: a stored location whose folder does not exist here (another machine's path).
+    const foreign = !!fp && !exists(fp) && !dirExists(path.dirname(String(fp)));
 
-    if (exists(fp)) return { cls: 'resolves', foreign };
-
-    // The resolver tier (design doc option C) will find it by basename in this machine's library.
-    // Counting it here is what turns "mysteriously silent" into "airing on a fallback".
-    if (fp && findInIndex(libraryIndex(), fp)) {
-      return { cls: 'resolvesElsewhere', foreign };
-    }
+    // CAN IT AIR (2026-10-26, electron/catalogue.js): is the row's stored file there? That is the only file playback opens —
+    // no same-named file elsewhere stands in for it, so `resolvesElsewhere` (airing from a file Ether picked) no longer
+    // happens and is always 0.
+    if (require('./catalogue').playableFile(fp)) return { cls: 'resolves', foreign };
     // Genuinely fetchable: no local copy by either route, but the cloud knows it by key.
     if (row && row.file_key) return { cls: 'r2Only', foreign };
     return { cls: 'dead', foreign };
@@ -842,34 +825,11 @@ function createLibraryHealth(opts) {
   // to air. docs/sync-systems-map.md §B and §5.
   //
   // Resolution order now, and none of it trusts a synced column:
-  //   1. content_hash → local_files.local_path (the machine-independent design in
-  //      electron/audio-resolver.js). local_files does NOT sync — it is per-machine by construction.
-  //      A hit means the bytes are already here under whatever name this machine gave them.
-  //   2. otherwise materialize under musicDirFn() using only the BASENAME of the candidate path.
-  //      A filename is machine-neutral; the directory it came from is not.
+  //   materialize into musicDirFn() — THE CATALOGUE (electron/catalogue.js) — using only the file NAME of the candidate
+  //   path, then hand the app the new location (onMaterialized) so the rows point at it. A filename is machine-neutral;
+  //   the directory it came from is not. (A content-hash copy elsewhere is not the file playback opens.)
   // Anything that cannot be resolved to a path inside this machine's library root is SKIPPED with a
   // reason on the event ledger. Prefetch never creates a directory it did not derive itself.
-
-  // songs → content_hash, if this install has the link. songs_v2/local_files are the v2 identity
-  // tables; `songs` gained no content_hash column on some installs, and songs.file_key is a BASENAME
-  // (verified 2026-08-17: 0 of 543 songs join songs_v2 on file_key). Returns null when the link is
-  // absent, which routes the caller to step 2 rather than inventing a hash.
-  function contentHashFor(db, songId) {
-    if (songId == null) return null;
-    try {
-      const r = db.prepare('SELECT content_hash FROM songs WHERE id = ?').get(songId);
-      return (r && r.content_hash) ? String(r.content_hash) : null;
-    } catch { return null; }   // no such column on this install — expected, not an error
-  }
-
-  // Already-local check by content hash. local_files is the per-machine hash → path map.
-  function localPathByHash(db, contentHash) {
-    if (!contentHash) return null;
-    try {
-      const r = db.prepare('SELECT local_path FROM local_files WHERE content_hash = ?').get(contentHash);
-      return (r && r.local_path && exists(r.local_path)) ? r.local_path : null;
-    } catch { return null; }
-  }
 
   // Re-root a candidate onto THIS machine's library. Returns { ok, path } or { ok:false, reason }.
   function localTargetFor(candidate) {
@@ -935,16 +895,10 @@ function createLibraryHealth(opts) {
         for (const r of rows) {
           if (!r.fk || inFlight.has(r.fk)) continue;
 
-          // 1. Already here by content hash? Nothing to fetch, whatever any path column claims.
-          const hash = contentHashFor(db, r.sid);
-          if (localPathByHash(db, hash)) continue;
-
-          // The local playout path is trustworthy when it exists; a stored path that is already a
-          // real file on this machine is equally fine. Neither is used as a mkdir target.
-          // Case-exact: a different-case spelling on disk is a different file (audio-library-index.js caseAltName).
+          // (2026-10-26, electron/catalogue.js) The row's stored file is what plays: when it is there (the catalogue, or a
+          // location the user chose) there is nothing to fetch. A content-hash copy elsewhere is not what playback opens.
           if (existsExactCase(r.gfp) || existsExactCase(r.sfp)) continue;
-
-          // 2. Re-root onto this machine's library, using the filename only.
+          // Into this machine's catalogue, using the filename only; the app then points the rows at it.
           const t = localTargetFor(r.gfp || r.sfp || r.fk);
           if (!t.ok) {
             appendJsonl({ kind: 'prefetch', ok: false, title: r.title, skipped: true, reason: t.reason });
@@ -953,7 +907,7 @@ function createLibraryHealth(opts) {
           // Already materialized under our own name, or its case-alt name; otherwise write to whichever applies.
           const lp = libraryPathFor(path.dirname(t.path), path.basename(t.path));
           if (lp.present) continue;
-          targets.push({ fp: lp.path, fk: r.fk, title: r.title });
+          targets.push({ fp: lp.path, fk: r.fk, title: r.title, was: r.gfp || r.sfp || null });
         }
       } catch { /* skip station */ }
     }
@@ -966,6 +920,7 @@ function createLibraryHealth(opts) {
         const t = targets[i++]; inFlight.add(t.fk);
         const r = await fetchToPath(t.fk, t.fp);
         inFlight.delete(t.fk);
+        if (r.ok) { try { if (typeof onMaterialized === 'function') onMaterialized({ fileKey: t.fk, filePath: t.fp, was: t.was || null }); else broadcast('library-health:materialized', { fileKey: t.fk, filePath: t.fp, was: t.was || null }); } catch { /* the next play downloads-and-points it */ } }
         appendJsonl({ kind: 'prefetch', ok: r.ok, title: t.title, error: r.error || null });
       }
     }

@@ -16,7 +16,15 @@ const path = require('path');
 // definitions of "is this file in the library" — tolerant here, exact there — and the health signal
 // could call a row dead that Re-sync would relink. Behaviour here is unchanged: this still matches on
 // the tolerant key, against the same conservative `norm`.
-const { buildIndex, findInIndex, norm, AUDIO_TABLES, tableColumns } = require('./audio-library-index');
+const { buildIndex, norm, AUDIO_TABLES, tableColumns, libraryPathFor } = require('./audio-library-index');
+const { playableFile, catalogueName } = require('./catalogue');
+/** The file with this row's exact name in `folder` (or its case-alt name), or null. */
+function sameNameIn(folder, storedPath) {
+  const name = folder ? catalogueName(storedPath) : null;
+  if (!name) return null;
+  const t = libraryPathFor(folder, name);
+  return t.present ? t.path : null;
+}
 
 // Normalized-name -> absolute path, for title-based matching. One walk, shared with the health
 // classifier, which asks the exact-basename question of the same index.
@@ -37,14 +45,12 @@ function indexFolder(folder) {
 // when the per-machine one is unset, so an install that had only ever set a per-station folder does
 // not lose its library on upgrade. Nothing writes the per-station key any more (see the handlers
 // below); it is retired by migration later, once peers have stopped carrying rows for it.
+// (2026-10-26) THE CATALOGUE ONLY (electron/catalogue.js): the stale per-station 'music_dir' row is no longer read — a
+// second folder is exactly the fallback the one-catalogue rule removes. No catalogue folder → null, and Re-sync says so.
 function getFolder(db, stationId, deps) {
   try {
     const machine = deps && typeof deps.getMachineMusicDir === 'function' ? deps.getMachineMusicDir() : null;
-    if (machine) return machine;
-  } catch { /* fall through to the legacy row */ }
-  try {
-    const r = db.prepare("SELECT value FROM station_config_kv WHERE station_id = ? AND key = 'music_dir' AND deleted_at IS NULL").get(stationId);
-    return (r && r.value) || null;
+    return machine || null;
   } catch { return null; }
 }
 
@@ -71,14 +77,14 @@ function formatCategoryIds(db, stationId) {
 // could not see them. On OV all four of those categories were silent while Re-sync would have
 // reported the music fine.
 //
-// Matched on the stored path's BASENAME through the shared index (exact first, then the tolerant
-// key), rather than on title: these rows' titles are operator labels ("Legal ID", "Cart 3") and
-// carry no relationship to a filename. Rows whose file already resolves are left alone.
-function matchAssets(db, stationId, index) {
+// Matched on the stored path's exact file name in the Re-sync folder (electron/catalogue.js), never on title: these rows'
+// titles are operator labels ("Legal ID", "Cart 3") and carry no relationship to a filename. A row whose own location
+// is there is left alone.
+function matchAssets(db, stationId, folder) {
   const found = [], missing = [];
   for (const spec of AUDIO_TABLES) {
     const table = spec.table;
-    if (table === 'songs') continue;                 // handled by the title matcher above
+    if (table === 'songs') continue;                 // songs are matched in matchStation (station-scoped)
     const cols = tableColumns(db, table);
     if (!cols.has('file_path') || !cols.has('id')) continue;
     const hasStation = cols.has('station_id');
@@ -95,11 +101,9 @@ function matchAssets(db, stationId, index) {
       rows = hasStation ? st.all(stationId) : st.all();
     } catch { continue; }
     for (const r of rows) {
-      let ok = false;
-      try { ok = fs.existsSync(r.file_path); } catch { ok = false; }
-      if (ok) continue;                              // already resolves — nothing to do
-      const hit = findInIndex(index, r.file_path);
-      if (hit) found.push({ table, id: r.id, title: r._title, file: hit, was: r.file_path });
+      if (playableFile(r.file_path)) continue;       // its own location is there — the user's choice or the catalogue's; kept
+      const f = sameNameIn(folder, r.file_path);      // Re-sync, asked for: the SAME file name in this folder, nothing looser
+      if (f) found.push({ table, id: r.id, title: r._title, file: f, was: r.file_path });
       else missing.push({ table, id: r.id, title: r._title, was: r.file_path });
     }
   }
@@ -107,10 +111,9 @@ function matchAssets(db, stationId, index) {
 }
 
 function matchStation(db, stationId, folder) {
-  // ONE walk for both questions: the title matcher below uses byNorm, the asset pass uses the same
-  // index through findInIndex. Two matchers over one folder was the defect being removed.
+  // ONE rule for songs and every other audio table (electron/catalogue.js): the row's own location when it is there, else
+  // the SAME file name in this folder. The index is walked only for the folder's file count.
   const index = (folder && fs.existsSync(folder)) ? buildIndex(folder) : buildIndex(null);
-  const idx = index.byNorm;
   const cats = formatCategoryIds(db, stationId);
   let rows;
   if (cats.length) {
@@ -146,32 +149,17 @@ function matchStation(db, stationId, folder) {
   }
   const matches = [], missing = [];
   for (const r of rows) {
-    // ── THE STORED PATH IS CHECKED FIRST (2026-09-05) ────────────────────────────────────────
-    //
-    // This used to decide purely by TITLE: `idx.get(norm(r.title))`, matching a normalised title
-    // against normalised filename stems. So a row whose file is present and playable was called
-    // MISSING whenever the filename carried something the title did not — overwhelmingly an
-    // " - Artist" suffix. Measured on halloVeen 2026-09-05: 18 rows reported missing, and all 18
-    // had their file on disk. `norm("Arabian Nights")` is not `norm("Arabian Nights - Bruce Adler")`.
-    //
-    // That was not merely a wrong number. `applyRelink` NULLs generated_schedule.file_path for every
-    // miss, so a Re-sync would have UN-AIRED 18 working entries on the strength of a naming
-    // mismatch.
-    //
-    // Resolution order is now the same one the health classifier and the daemon already use:
-    // the stored path, then the catalogue index, and only then the title. Title matching keeps its
-    // job — recovering a row whose stored path no longer resolves, which is the whole point of
-    // Re-sync after a library reorg — it just no longer gets asked first.
-    let f = null;
-    if (r.filePath && fs.existsSync(r.filePath)) f = r.filePath;          // 1. stored path resolves
-    if (!f) f = findInIndex(index, r.filePath);                           // 2. same file, in the catalogue
-    if (!f) { const t = idx.get(norm(r.title)); if (t && fs.existsSync(t)) f = t; }   // 3. by title
+    // (2026-10-26, electron/catalogue.js) THE ROW'S OWN LOCATION, ELSE THE SAME FILE NAME IN THIS FOLDER — nothing Ether
+    // guesses. This used to fall through to a tolerant name match and then a match by TITLE, which linked a row to a
+    // different file ("Arabian Nights" → "Arabian Nights - Bruce Adler.mp3"). A location the user chose that is there is
+    // kept as it is. Anything else is missing, and said so.
+    const f = playableFile(r.filePath) || sameNameIn(folder, r.filePath);
     if (f) matches.push({ songId: r.songId, title: r.title, file: f });
     else missing.push({ songId: r.songId, title: r.title });
   }
-  const assets = matchAssets(db, stationId, index);
+  const assets = matchAssets(db, stationId, folder);
   return { folder: folder || null, total: rows.length, matches, missing,
-           folderFiles: idx.size, assets: assets.found, assetsMissing: assets.missing };
+           folderFiles: index.files, assets: assets.found, assetsMissing: assets.missing };
 }
 
 // Write the matches (link) and NULL the misses (so the scheduler SKIPS them instead of stalling).

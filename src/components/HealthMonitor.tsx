@@ -1320,7 +1320,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
                       st.materialization.restoreInFlight && st.materialization.dead > 0
                         ? `${st.materialization.dead} files still arriving`
                       : st.materialization.foreign > 0
-                        ? `${st.materialization.foreign} stored outside the catalogue — they will not travel; use Scan catalogue above`
+                        ? `${st.materialization.foreign} point at a folder this computer does not have — they cannot play here; use Scan catalogue above`
                       // FILES, not rows. library_asset mirrors songs/spots/announcements and is itself
                       // scanned, so one missing file used to be counted once per row that named it —
                       // 32 over 13 real files here, and it doubled the moment a backfill registered

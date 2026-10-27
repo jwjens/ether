@@ -143,11 +143,13 @@ const caseInsensitive = (() => {
     const main = fs.readFileSync(path.join(__dirname, "..", "electron", "main.js"), "utf8");
     const engine = fs.readFileSync(path.join(__dirname, "..", "audiod", "engine.js"), "utf8");
     const health = fs.readFileSync(path.join(__dirname, "..", "electron", "library-health.js"), "utf8");
-    if (/fs\.existsSync\(filePath\) && !require\('\.\/audio-library-index'\)\.caseShadowed\(/.test(main)) pass("  main.js resolveLocalAudioPath: fast path checks caseShadowed");
+    // (2026-10-26, electron/catalogue.js) A row plays exactly its stored file, checked case-exact (existsExactCase).
+    const cat = fs.readFileSync(path.join(__dirname, "..", "electron", "catalogue.js"), "utf8");
+    if (/Cat\.playableFile\(filePath\)/.test(main) && /existsExactCase\(String\(storedPath\)\)/.test(cat)) pass("  main.js resolveLocalAudioPath: the stored file, case-exact (catalogue.js playableFile)");
     else fail("  main.js resolveLocalAudioPath fast path is case-blind");
     if (/libraryPathFor\(getMusicDir\(\), safeName\)/.test(main) && /if \(target\.present\) return/.test(main)) pass("  main.js fetchR2Track: case-exact cache hit and target");
     else fail("  main.js fetchR2Track is case-blind");
-    if (/caseShadowed\(this\._libIndex\(\), fp\)/.test(engine) && /if \(!shadowed && fs\.existsSync\(fp\)/.test(engine)) pass("  daemon engine._resolveLocal: fast path checks caseShadowed");
+    if (/require\('\.\.\/electron\/catalogue'\)\.playableFile\(fp\)/.test(engine)) pass("  daemon engine._resolveLocal: the stored file, case-exact (catalogue.js playableFile)");
     else fail("  daemon engine._resolveLocal fast path is case-blind");
     if (/existsExactCase\(r\.gfp\) \|\| existsExactCase\(r\.sfp\)/.test(health) && /libraryPathFor\(path\.dirname\(t\.path\)/.test(health)) pass("  library-health prefetch: case-exact");
     else fail("  library-health prefetch is case-blind");

@@ -1247,6 +1247,8 @@ if (AUDIO_DAEMON_DESIRED) {
       // profile alongside the database it describes — not in machine-level Roaming.
       userDataDir: P.profileDir(P.activeKey()),
       appendEvent: _ledgerAppend,
+      // A prefetch download into the catalogue sets the rows' location (electron/catalogue.js) — local-only, on main.
+      onMaterialized: (d) => { try { _pointRowsAtDownload(d.fileKey, d.was, d.filePath); } catch {} },
     };
     // main keeps an instance for the module-level noteEvent bridge (cheap ledger appends) — it never sweeps.
     require("./library-health").createLibraryHealth(_lhOpts);
@@ -1263,6 +1265,7 @@ if (AUDIO_DAEMON_DESIRED) {
       log: (m) => logStartup(m),
       healthEvent: (kind, data) => { try { _healthEvent(kind, data); } catch {} },
       inMainFallback: () => require("./library-health").createLibraryHealth(_lhOpts),
+      onMaterialized: _lhOpts.onMaterialized,
     });
     _libHealth.start();
     // Its read-only connection stays open (sweeps, the 60 s library mirror): a database swap closes it first.
@@ -5205,88 +5208,56 @@ ipcMain.handle('sync:getStats', () => {
 });
 
 // Audio
-// Phase 1.3k: extended with R2 fallback for Connect-path customers whose
-// library arrived via metadata sync but whose local file_path values point at
-// the source machine's directories. If the local file is missing AND a
-// file_key exists for this file_path in the songs table, fall through to
-// fetchR2Track (which gates on Network+ tier and uses the same r2-cache as
-// the auto-scheduler). If the fetch succeeds, audio.audioLoad is called with
-// the cachePath; if it fails (tier insufficient, no license, network down,
-// no such object), audio.audioLoad is called with the original file_path and
-// fails the same way it would have today — Rust worker reports the error,
-// deck enters error status, no regression vs pre-1.3k behavior.
-//
-// Per Option B: no songsUpdateById writeback. The r2-cache's existsSync
-// short-circuit makes subsequent loads fast; writing file_path back would
-// generate sync mutation noise for zero local benefit (each machine would
-// propagate its own cachePath to others, who'd just rewrite to their own).
-// Shared audio-file resolver — the SAME local-first → file_key → R2 sequence audio:load used to do
-// inline (Phase 1.3k). Extracted so playback (audio:load) and the cue editor (audio:resolve-local-path)
-// resolve identically and can never drift. Returns { ok:true, filePath } (a locally-loadable path) or
-// { ok:false, error }. Never throws.
-// The audio-library index for the resolver tier, rebuilt at most every 30s. A log refill resolves
-// dozens of rows in a burst; walking the folder for each would be pathological. 30s is short enough
-// that a file just imported is found on the next attempt, and the fast path above means an already
-// correct row never consults this at all.
-let _libIndexAt = 0, _libIndexVal = null;
-function _libIndexCached() {
-  const now = Date.now();
-  if (!_libIndexVal || now - _libIndexAt > 30000) {
-    _libIndexVal = require('./audio-library-index').buildIndex(getMusicDir());
-    _libIndexAt = now;
+// Shared audio-file resolver — playback (audio:load), the jukebox, announcements and the cue editor
+// (audio:resolve-local-path) resolve identically and can never drift. Returns { ok:true, filePath } (a file in the
+// catalogue) or { ok:false, error }. Never throws.
+async function resolveLocalAudioPath(filePath, fileKeyIn) {
+  // WHAT THE ROW STORES, AND NOTHING ELSE ETHER PICKS (2026-10-26, electron/catalogue.js). The stored location — the
+  // catalogue, or a file the user chose — is the file. Not there: no same-named file elsewhere, no case-blind, tolerant or
+  // title match. If the cloud has the row's own copy (its file_key) it is DOWNLOADED INTO THE CATALOGUE and the row is
+  // pointed there on this computer (said in the log); otherwise it is missing, with the reason.
+  const Cat = require('./catalogue');
+  const here = Cat.playableFile(filePath);
+  if (here) return { ok: true, filePath: here, resolvedBy: 'stored' };
+  let fileKey = fileKeyIn || null;
+  if (!fileKey && filePath) {
+    try { fileKey = db.prepare("SELECT file_key FROM songs WHERE file_path = ? LIMIT 1").get(filePath)?.file_key || null; }
+    catch (e) { console.warn("[resolveLocalAudioPath] file_key lookup failed:", e.message); }
   }
-  return _libIndexVal;
+  if (!fileKey) return { ok: false, error: filePath ? `the file is not at its location (${filePath}) and has no cloud copy` : 'no file' };
+  const t = Cat.downloadTarget(getMusicDir(), filePath, fileKey);
+  if (!t) return { ok: false, error: `no file name for ${fileKey}` };
+  const fetched = await fetchR2Track(fileKey, t.name);
+  if (!fetched.ok) return { ok: false, error: `the file is not at its location (${filePath || '—'}), and the download into the catalogue failed: ${fetched.error}` };
+  _pointRowsAtDownload(fileKey, filePath, fetched.filePath);
+  return { ok: true, filePath: fetched.filePath, resolvedBy: 'downloaded' };
 }
 
-async function resolveLocalAudioPath(filePath) {
-  // (1) Fast path — file exists locally. Not when it only "exists" because a different-case spelling sits in the library:
-  // that is another file (audio-library-index.js caseShadowed), and the library tier below finds this one's own copy.
-  if (filePath && fs.existsSync(filePath) && !require('./audio-library-index').caseShadowed(_libIndexCached(), filePath)) {
-    return { ok: true, filePath };
-  }
-  // ── (1b) THE AUDIO LIBRARY TIER (2026-09-04) ─────────────────────────────────────────────────
-  //
-  // A stored path is a CLAIM about a machine, and `file_path` is a synced `blob-ref` column that in
-  // v0 ships the literal absolute path — so a row that arrived from another install names a folder
-  // this machine does not have. On OV that was 382 rows, and every announcement, sweeper and cart
-  // on the station was silent while the bytes sat in the audio library under the right name.
-  //
-  // Under the one-library rule every audio file lives in the audio library, so THE BASENAME PLUS
-  // THIS MACHINE'S LIBRARY IS THE THING THAT TRAVELS. Try it before reaching for the network: it is
-  // one stat in the common case, it needs no `file_key`, and it works for announcements, spots and
-  // carts — none of which HAVE a file_key column, and all of which the R2 tier below can therefore
-  // never help.
-  //
-  // Deliberately BEFORE R2: fetching bytes we already have is slower, costs money, and produced 375
-  // duplicate files on OV when the cache path disagreed with the real name.
-  if (filePath) {
-    try {
-      const hit = require('./audio-library-index').findInIndex(_libIndexCached(), filePath);
-      if (hit) {
-        console.log(`[resolveLocalAudioPath] library hit for ${storedBasename(filePath)} → ${hit}`);
-        return { ok: true, filePath: hit, resolvedBy: 'audio-library' };
+// A DOWNLOAD SETS THE LOCATION (2026-10-26, electron/catalogue.js). After the row's own cloud copy lands in the catalogue,
+// the rows that named a file which is not there are pointed at the download — LOCAL-ONLY (no mutation: a file location is
+// this computer's fact, never another's). A row whose stored location exists (the user's choice, or a file already here) is
+// never touched. Planned log rows only; an aired row is the record of what aired.
+function _pointRowsAtDownload(fileKey, oldPath, newPath) {
+  if (!fileKey || !newPath) return 0;
+  let n = 0;
+  try {
+    const Cat = require('./catalogue');
+    const rows = db.prepare("SELECT id, file_path FROM songs WHERE file_key = ? AND deleted_at IS NULL").all(fileKey);
+    const setSong = db.prepare("UPDATE songs SET file_path = ? WHERE id = ?");
+    let hasState = false;
+    try { hasState = db.prepare("PRAGMA table_info(generated_schedule)").all().some(c => c.name === "state"); } catch {}
+    const plan = hasState ? ` AND ${require('./log-edit-core').NOT_AIRED_SQL}` : "";
+    const setGs = db.prepare(`UPDATE generated_schedule SET file_path = ? WHERE song_id = ? AND (file_path IS NULL OR file_path = ?)${plan}`);
+    db.transaction(() => {
+      for (const r of rows) {
+        if (r.file_path && r.file_path !== newPath && Cat.playableFile(r.file_path)) continue;   // its own location is there
+        if (r.file_path !== newPath) { setSong.run(newPath, r.id); n++; }
+        setGs.run(newPath, r.id, r.file_path || oldPath || '');
       }
-    } catch (e) { console.warn('[resolveLocalAudioPath] library tier failed:', e.message); }
-  }
-  // (2) Local miss — look up file_key for this exact file_path (matches the synced songs row).
-  let fileKey = null;
-  if (filePath) {
-    try {
-      const row = db.prepare("SELECT file_key FROM songs WHERE file_path = ? LIMIT 1").get(filePath);
-      fileKey = row?.file_key || null;
-    } catch (e) {
-      console.warn("[resolveLocalAudioPath] file_key lookup failed:", e.message);
-    }
-  }
-  if (!fileKey) {
-    return { ok: false, error: 'no local file, no file_key' };
-  }
-  // (3) Have a file_key — R2 fallback. Tier gate enforced inside fetchR2Track; returns { ok, filePath }.
-  console.log(`[resolveLocalAudioPath] local miss, attempting R2 fallback for file_key=${fileKey}`);
-  const fetched = await fetchR2Track(fileKey);
-  if (!fetched.ok) console.warn(`[resolveLocalAudioPath] R2 fallback failed: ${fetched.error}`);
-  else console.log(`[resolveLocalAudioPath] R2 fallback succeeded → ${fetched.filePath}`);
-  return fetched;
+    })();
+    if (n) logStartup(`[catalogue] ${storedBasename(newPath)}: not at ${oldPath || 'its stored location'} — downloaded into the catalogue; ${n} row(s) on this computer now point at ${newPath}`);
+  } catch (e) { logStartup(`[catalogue] could not point rows at the download ${newPath}: ${e.message}`); }
+  return n;
 }
 
 // ── OPERATOR CONSOLE FAN-OUT — the honesty layer must reach the operator from ANY window ────────
@@ -5340,10 +5311,11 @@ ipcMain.handle("audio:load", async (_, deck, filePath, title, artist, gainDb, st
   const doLoad = (fp) => AUDIO_DAEMON
     ? audiodClient.cmd("load", { deck, filePath: fp, title, artist, gainDb: gainDb ?? 0, stationId })
     : _loadNormalizedInProcess(deck, fp, title, artist, stationId);
-  // Resolve exactly as before (local-first → file_key → R2). On any failure, soft-fall to the
-  // original filePath so the Rust worker reports the error exactly as pre-refactor (no regression).
+  // The row's file, or nothing (electron/catalogue.js): an unresolved row is not loaded from some other file. The reason
+  // goes to the log; the load is refused like any other failed load.
   const resolved = await resolveLocalAudioPath(filePath);
-  return doLoad(resolved.ok ? resolved.filePath : filePath);
+  if (!resolved.ok) { logStartup(`[audio:load] deck ${deck} not loaded: ${resolved.error}`); return false; }
+  return doLoad(resolved.filePath);
 });
 
 // Resolve a song's stored file_path to a locally-loadable path (used by the cue editor so it reads
@@ -5374,8 +5346,10 @@ ipcMain.handle("jukebox:play", async (_evt, req) => {
   // R2-materialization gate is a shipped defect class: a row's file_path can point at a file that is
   // not on this machine, and a public pick that produces silence is the worst failure this feature
   // has. Soft-fall to the stored path so the engine reports the error the same way it always does.
-  let fp = req.filePath;
-  try { const r = await resolveLocalAudioPath(req.filePath); if (r?.ok) fp = r.filePath; } catch { /* soft-fall */ }
+  // The row's file or nothing (electron/catalogue.js) — never a file Ether picked for it.
+  const r = await resolveLocalAudioPath(req.filePath);
+  if (!r.ok) return { ok: false, reason: "not-in-catalogue", error: r.error };
+  const fp = r.filePath;
 
   if (AUDIO_DAEMON) {
     return audiodClient.cmd("jukebox:play", {
@@ -6181,13 +6155,14 @@ async function fireAnnouncement(stationId, uuid, entryUuid, opts = {}) {
   //    cannot be found is dead air at exactly the moment someone is listening for it, so it is
   //    checked BEFORE anything is told to play — and reported, never swallowed.
   if (!row.file_path) return { ok: false, error: 'this announcement has no audio file attached' };
-  try {
-    if (!require('fs').existsSync(row.file_path)) {
-      const msg = 'audio file is not on this machine: ' + row.file_path;
-      try { logStartup('[announce] ' + msg); } catch {}
-      return { ok: false, error: msg, missingFile: true };
-    }
-  } catch (e) { return { ok: false, error: 'file check failed: ' + e.message }; }
+  // The announcement's own file (electron/catalogue.js) — never a file Ether picked for it.
+  const _res = await resolveLocalAudioPath(row.file_path);
+  if (!_res.ok) {
+    const msg = 'audio file is not on this machine: ' + _res.error;
+    try { logStartup('[announce] ' + msg); } catch {}
+    return { ok: false, error: msg, missingFile: true };
+  }
+  const _annFile = _res.filePath;
 
   // 4. Load and play on the real engine — whichever one owns the audio, AND WAIT FOR ITS ANSWER.
   //
@@ -6205,12 +6180,12 @@ async function fireAnnouncement(stationId, uuid, entryUuid, opts = {}) {
   for (const ch of slots) {
     try {
       if (AUDIO_DAEMON) {
-        const loaded = await audiodClient.cmd('load', { deck: ch, filePath: row.file_path, title: row.title || 'Announcement', artist: '', gainDb: 0, stationId, contentClass: 'ANN' });
+        const loaded = await audiodClient.cmd('load', { deck: ch, filePath: _annFile, title: row.title || 'Announcement', artist: '', gainDb: 0, stationId, contentClass: 'ANN' });
         if (loaded === false) { failures.push(ch + ': load refused'); continue; }
         const played = await audiodClient.cmd('play', { deck: ch, stationId });
         if (played === false) { failures.push(ch + ': play refused (nothing loaded)'); continue; }
       } else {
-        const loaded = _loadNormalizedInProcess(ch, row.file_path, row.title || 'Announcement', '', stationId);
+        const loaded = _loadNormalizedInProcess(ch, _annFile, row.title || 'Announcement', '', stationId);
         if (loaded === false) { failures.push(ch + ': load refused'); continue; }
         const played = audio.audioPlay(ch, stationId);
         if (played === false) { failures.push(ch + ': play refused (nothing loaded)'); continue; }
@@ -6226,7 +6201,7 @@ async function fireAnnouncement(stationId, uuid, entryUuid, opts = {}) {
   const _stampAt = Math.floor(Date.now() / 1000);
   // The file's length, read once: the airing countdown and the as-run log both use it. 0 = could not be read.
   let _durMs = 0;
-  try { _durMs = Math.round((audio.getFileDuration(row.file_path) || 0) * 1000); } catch { _durMs = 0; }
+  try { _durMs = Math.round((audio.getFileDuration(_annFile) || 0) * 1000); } catch { _durMs = 0; }
   const _airEntry = entryUuid || (opts && opts.airingEntry) || null;
   const _airMs = Date.now();
   _announceAiring.set(stationId, {
@@ -6262,7 +6237,7 @@ async function fireAnnouncement(stationId, uuid, entryUuid, opts = {}) {
     // machine. No ANN row ever goes into generated_schedule (Option C, unchanged).
     require('../audiod/playlog').logPlay(db, {
       stationId, title: row.title || 'Announcement', artist: '', deck: firedOn[0],
-      durationMs: _durMs, sessionId: null, filePath: row.file_path,
+      durationMs: _durMs, sessionId: null, filePath: _annFile,
       contentClass: 'ANN', source: 'announcement', rowUuid: row.uuid || null,
     });
   } catch (e) { try { logStartup('[announce] play_log write failed: ' + (e && e.message)); } catch {} }
@@ -10854,7 +10829,7 @@ const MUSIC_DIR_FILE  = _profileData('music-dir.txt');
 // The designated library folder. Default = <user's Music>\ether music library (per-user, so it's
 // the same relative location on every machine without hardcoding a username) — this is where cloud
 // downloads materialize AND where the uploader consolidates, so the folder is the single source of
-// truth. An operator-chosen folder (music-dir.txt) overrides it; R2_CACHE_DIR is the last resort.
+// truth. An operator-chosen folder (music-dir.txt) overrides it.
 // HELD (2026-09-05). A version of this returns a DEDICATED folder under %LOCALAPPDATA%\Ether\catalogue
 // for new installs, so a fresh machine never inherits the ambiguity of pointing at the operator's own
 // music folder. It is held with the rest of the dedicated-folder arc — see
@@ -10864,12 +10839,17 @@ function defaultLibraryDir() {
   try { const m = app.getPath('music'); if (m) return path.join(m, 'ether music library'); } catch {}
   return R2_CACHE_DIR;
 }
+// The catalogue folder: the user's setting (music-dir.txt), else the default. (2026-10-26) No other folder is substituted
+// when it cannot be created — that is reported, and downloads simply fail with the reason (electron/catalogue.js).
+let _musicDirSaid = false;
 function getMusicDir() {
   let dir = defaultLibraryDir();
   try { const p = fs.readFileSync(MUSIC_DIR_FILE, 'utf8').trim(); if (p) dir = p; } catch {}
-  try { fs.mkdirSync(dir, { recursive: true }); } catch { dir = R2_CACHE_DIR; try { fs.mkdirSync(dir, { recursive: true }); } catch {} }
+  try { fs.mkdirSync(dir, { recursive: true }); }
+  catch (e) { if (!_musicDirSaid) { _musicDirSaid = true; logStartup(`[catalogue] the catalogue folder ${dir} cannot be created (${e.message}) — downloads into it will fail until it can`); } }
   return dir;
 }
+
 function setMusicDir(dir) {
   const d = String(dir || '').trim();
   if (!d) return { ok: false, error: 'empty path' };
@@ -11020,7 +11000,9 @@ function memberTokenForActiveStation() {
   } catch (_) { return null; }
 }
 
-async function fetchR2Track(fileKey) {
+// Downloads INTO THE CATALOGUE, under the row's own file name (`name`; by default the cloud file's own name) — never a
+// renamed copy (2026-10-26, electron/catalogue.js: "Downloads go into the catalogue").
+async function fetchR2Track(fileKey, name) {
   if (!fileKey) return { ok: false, error: 'No file_key' };
 
   // Member-operated active station: fetch its audio under the MEMBER token (the operated account's R2
@@ -11039,7 +11021,10 @@ async function fetchR2Track(fileKey) {
     if (!licenseKey) return { ok: false, error: 'No license_key in station_config_kv' };
   }
 
-  const safeName  = storedBasename(fileKey).replace(/[^a-zA-Z0-9._-]/g, '_');
+  // The catalogue name, exactly — it used to be rewritten (spaces and punctuation to "_"), which made a second file the
+  // row did not name. A name this computer cannot hold as a file is refused, never renamed.
+  const safeName  = require('./catalogue').catalogueName(name || null, fileKey);
+  if (!safeName || /[<>:"\/\\|?*\u0000-\u001f]/.test(safeName)) return { ok: false, error: `"${safeName}" cannot be a file name on this computer` };
   // Case-exact: a different-case spelling already in the library is a different file, so this one goes to its case-alt
   // name instead of being answered by (or written over) that file. audio-library-index.js caseAltName.
   const target    = require('./audio-library-index').libraryPathFor(getMusicDir(), safeName);
@@ -11233,24 +11218,12 @@ ipcMain.handle('schedule:sweeper-placements', (_e, stationId, fromTs, toTs) => {
     // PLAYABLE, BY THE SAME TEST THE DAEMON APPLIES. Jeff: "A row that promises a sweeper the daemon
     // will refuse is the same lie I'm replacing the badge for."
     //
-    // audiod _resolveLocal is: the stored path if it exists, else the audio-library index by
-    // basename. Both tiers are reproduced here from the SAME module, so the two cannot drift about
-    // what "playable" means — which is the whole value of the flag.
-    //
-    // ONE HONEST DIFFERENCE, named rather than hidden: the daemon also requires _dur(path) > 0,
-    // which decodes the file. That is far too heavy for a list refreshed every 30s, so a zero-length
-    // or corrupt file still reports playable here. The common failure — the file is simply not on
-    // this machine — is caught, and that is the one this flag exists for.
-    let index = null;
-    const { findInIndex } = require('./audio-library-index');
+    // audiod _resolveLocal is the row's stored file and nothing else (electron/catalogue.js) — the same test here, so the
+    // two cannot drift. The daemon also requires a decodable length; too heavy for a list refreshed every 30 s.
     const resolves = (p) => {
       if (!p) return false;
       if (/^[a-z]+:\/\//i.test(p)) return true;          // a URL is the daemon's to stream, not to stat
-      try { if (fs.existsSync(p)) return true; } catch { return false; }
-      try {
-        if (index === null) index = _libIndexCached();
-        return !!findInIndex(index, p);
-      } catch { return false; }
+      try { return !!require('./catalogue').playableFile(p); } catch { return false; }
     };
 
     return rows.map(r => ({
@@ -14298,7 +14271,6 @@ ipcMain.handle('catalogue:backup:download', async () => {
         onFileError: (name, reason) => logStartup(`[catalogue:restore] FAILED ${name}: ${reason}`),
       });
       for (const line of R2LIB.restoreLogLines('catalogue:restore', res)) logStartup(line);
-      if (res.downloaded > 0) _libIndexAt = 0;   // new files (case-alt names among them) resolve now, not in 30 s
       _catDownloadState = { ..._catDownloadState, in_progress: false, phase: 'done' };
       _catBroadcast('catalogue:backup:download:state', _catDownloadState);
       send('catalogue:backup:download:done', res);
@@ -14387,7 +14359,6 @@ async function _cataloguePullTick() {
     if (res.downloaded > 0 || res.errors > 0) {
       for (const line of R2LIB.restoreLogLines("catalogue:pull", res)) logStartup(line);
     }
-    if (res.downloaded > 0) _libIndexAt = 0;         // new files (case-alt names among them) resolve now, not in 30 s
     if (announced) {
       _catDownloadState = { ..._catDownloadState, in_progress: false, phase: "done" };
       _catBroadcast("catalogue:backup:download:state", _catDownloadState);
@@ -14517,7 +14488,8 @@ ipcMain.handle('library:sync-r2:download', async (_evt, opts) => {
     `SELECT id, file_key, file_path FROM songs
       WHERE file_key IS NOT NULL AND file_key != ''`
   ).all();
-  const songs = candidates.filter(s => !(s.file_path && fs.existsSync(s.file_path)));
+  // Rows whose stored file is not on this computer (electron/catalogue.js) — a location the user chose that exists is kept.
+  const songs = candidates.filter(s => !require('./catalogue').playableFile(s.file_path));
 
   if (!songs.length) {
     return { ok: false, error: 'Nothing to download (all R2 songs already present locally, or no songs in R2)' };
@@ -14541,7 +14513,8 @@ ipcMain.handle('library:sync-r2:download', async (_evt, opts) => {
 
     async function downloadOne(song) {
       if (_libDownloadAbort) return;
-      const res = await fetchR2Track(song.file_key);
+      const t = require('./catalogue').downloadTarget(getMusicDir(), song.file_path, song.file_key);   // into the catalogue, under the row's own name
+      const res = await fetchR2Track(song.file_key, t ? t.name : null);
       if (!res.ok) {
         errors++;
         console.warn(`[library:sync-r2] download SKIP ${song.file_key}: ${res.error}`);

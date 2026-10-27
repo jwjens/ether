@@ -84,10 +84,10 @@ check('  the miss row is untouched in songs (only gs is NULLed)',
 check('  updated_at is NOT bumped — a relink is not an edit peers should see',
   db.prepare('SELECT updated_at FROM songs WHERE id=1').get().updated_at, '2026-01-01');
 
-// ── the library ROOT is per-machine and read-through ───────────────────────────────────────────
-// music_dir is now in LOCAL_ONLY_KEYS, so it is never broadcast. getFolder prefers the per-machine
-// value and falls back to a stale per-station row only when the machine has none — so an install
-// that only ever set a per-station folder does not lose its library on upgrade.
+// ── the library ROOT is per-machine, and there is no second folder ───────────────────────────
+// (2026-10-26, electron/catalogue.js — Jeff: "no silent fallback to another folder".) getFolder used to fall back to a
+// stale per-station 'music_dir' row when the machine had none. The app's accessor always answers (the user's setting or
+// the default), so that branch only ever ran without it; now it never runs at all.
 const { getFolder } = require('../electron/library-folders');
 const LEGACY = 'C:\\legacy\\per-station';
 const MACHINE = 'D:\\machine\\audio library';
@@ -97,12 +97,12 @@ db.prepare("INSERT INTO station_config_kv VALUES (1,'music_dir',?,NULL)").run(LE
 console.log('\n── the library root ──');
 check('  per-machine value wins',
   getFolder(db, 1, { getMachineMusicDir: () => MACHINE }), MACHINE);
-check('  falls back to the stale per-station row when the machine has none',
-  getFolder(db, 1, { getMachineMusicDir: () => null }), LEGACY);
-check('  survives a throwing accessor rather than losing the library',
-  getFolder(db, 1, { getMachineMusicDir: () => { throw new Error('nope'); } }), LEGACY);
-check('  no deps at all still resolves the legacy row',
-  getFolder(db, 1, undefined), LEGACY);
+check('  the stale per-station row is never used, even when the machine has none',
+  getFolder(db, 1, { getMachineMusicDir: () => null }), null);
+check('  a throwing accessor is no folder, not the legacy row',
+  getFolder(db, 1, { getMachineMusicDir: () => { throw new Error('nope'); } }), null);
+check('  no deps at all is no folder',
+  getFolder(db, 1, undefined), null);
 
 const { isLocalOnlyKey } = require('../electron/sync/handlers/station_config_kv');
 check('  music_dir is LOCAL-ONLY — the root is never broadcast', isLocalOnlyKey('music_dir'), true);

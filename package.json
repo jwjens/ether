@@ -76,6 +76,8 @@
     "test:attach-restore": "node scripts/smoke-attach-after-restore.js --control",
     "test:feed-no-jump": "electron scripts/smoke-feed-no-jump.js --control 193aae1",
     "test:screen-reads": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-screen-reads.js",
+    "test:repair-locations": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-repair-file-locations.js",
+    "repair:file-locations": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/repair-file-locations.js",
     "test:lh-worker": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/smoke-library-health-worker.js",
     "test:stall-sense": "electron scripts/smoke-stall-sense.js",
     "test:react-sense": "electron scripts/smoke-react-sense.js",
