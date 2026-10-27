@@ -39,6 +39,11 @@ describe("isolated launch: its own folders and its own engine pipe", () => {
     const fin = main.slice(at("finishSmoke(rootKids > 0"), at("finishSmoke(rootKids > 0") + 200);
     expect(fin).toMatch(/&& \(!fillSid \|\| fillN > 0\)/);
   });
+  it("fill mode waits for the daemon handover before judging daemon_started (cold stage boots in-process for ~5 s)", () => {
+    const wait = at("for (let i = 0; i < 80 && AUDIO_DAEMON !== true; i++) await new Promise(r => setTimeout(r, 250));");
+    expect(wait).toBeLessThan(at("const daemonStarted = AUDIO_DAEMON === true;"));
+    expect(main.slice(wait - 200, wait)).toMatch(/if \(Number\(process\.env\.ETHER_SMOKE_FILL_STATION \|\| 0\) && AUDIO_DAEMON_DESIRED\) \{/);
+  });
   it("with real data, air isolation is a copy with no account session — never stations alone", () => {
     expect(main).toMatch(/const airIsolated = stationCount === 0 \|\| \(fillSid > 0 && noAccount\);/);
     expect(main).toMatch(/SELECT 1 FROM install_config_kv WHERE key IN \('account_jwt','account_license_key'\)/);

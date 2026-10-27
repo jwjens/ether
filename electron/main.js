@@ -3428,6 +3428,11 @@ function createWindow() {
         // daemon actually reached ready, and that daemon-log.js landed in the staged engine dir.
         await audioBackendReady;
         const daemonDesired = AUDIO_DAEMON_DESIRED;
+        // In fill mode (ETHER_SMOKE_FILL_STATION, below) wait up to 20 s for the daemon handover first: a cold engine stage
+        // takes ~5 s and boots in-process meanwhile (the known cold-stage race), and the fill must be the daemon's.
+        if (Number(process.env.ETHER_SMOKE_FILL_STATION || 0) && AUDIO_DAEMON_DESIRED) {
+          for (let i = 0; i < 80 && AUDIO_DAEMON !== true; i++) await new Promise(r => setTimeout(r, 250));
+        }
         const daemonStarted = AUDIO_DAEMON === true;
         let daemonLogStaged = false;
         // Staged engine lives at %LOCALAPPDATA%\Ether\engine (audiod/stage-engine.js engineBaseDir),
@@ -3468,7 +3473,7 @@ function createWindow() {
           (fillSid ? ` fill_station=${fillSid} queue=${fillN} no_account=${noAccount}` : ""));
       } catch (e) { finishSmoke(false, `harness_error=${e.message}`); }
     });
-    setTimeout(() => finishSmoke(false, 'timeout — no did-finish-load within 30s'), 30000);
+    setTimeout(() => finishSmoke(false, 'timeout — no did-finish-load within 30s'), process.env.ETHER_SMOKE_FILL_STATION ? 60000 : 30000);
   }
 
   // Closing the window is a DECISION, not a silent tray-hide. The old behavior (vanish to tray,
