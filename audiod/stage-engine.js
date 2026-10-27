@@ -81,7 +81,9 @@ function stagePlan(srcRoot, unpacked) {
   const audiod = path.join(unpacked, "audiod");
   for (const f of daemonFiles(audiod)) plan.push({ rel: path.join("audiod", f), src: path.join(audiod, f), big: false });
   // Every app file the daemon loads, transitively (engine-fingerprint.js daemonAppFiles) — electron/ and shared/.
-  for (const rel of FP.daemonAppFiles(audiod)) plan.push({ rel: path.join(...rel.split("/")), src: path.join(unpacked, ...rel.split("/")), big: false, optional: true });
+  // REQUIRED, never optional (2026-10-27): 4.6.66 skipped a missing electron/catalogue.js here with one console line and
+  // staged an engine that could play nothing. A missing one now fails the stage, naming the file.
+  for (const rel of FP.daemonAppFiles(audiod)) plan.push({ rel: path.join(...rel.split("/")), src: path.join(unpacked, ...rel.split("/")), big: false });
   plan.push({ rel: FP.NATIVE_REL, src: path.join(unpacked, FP.NATIVE_REL), big: false });
   const ffSrc = path.join(unpacked, "node_modules", "ffmpeg-static");     // whole pkg (index.js resolves the binary)
   const walk = (d, relBase) => {
@@ -138,12 +140,18 @@ function stageEngine({ srcRoot, unpacked, version, log, baseDir, copyFile, platf
     const next = { src: {}, dst: {} };
     const replaced = [], swapped = [], pending = [];
 
-    for (const f of stagePlan(srcRoot, unpacked)) {
+    // Every required file is checked BEFORE anything is copied (2026-10-27): a stage that failed half way used to leave a
+    // half-written engine (new exe and audiod/, no electron/catalogue.js), which the fallback below then ran.
+    const plan = stagePlan(srcRoot, unpacked);
+    const absent = plan.filter(f => !f.optional && !fs.existsSync(f.src)).map(f => f.rel);
+    if (absent.length) throw Object.assign(new Error("installed file missing: " + absent.join(", ") + " — the engine requires it; nothing was staged"), { code: "ENOENT" });
+
+    for (const f of plan) {
       const dst = path.join(dir, f.rel);
       const s = hashOf(f.src, mSrc[f.rel], f.big);
       if (!s) {
-        if (f.optional) { if (f.rel.startsWith("electron")) console.error("[stage-engine] " + f.rel + " not in the install — the daemon's require of it will fail"); continue; }
-        throw Object.assign(new Error("installed file missing: " + f.src), { code: "ENOENT" });
+        if (f.optional) continue;                                      // only ffmpeg-static's walked files are optional
+        throw Object.assign(new Error("installed file missing: " + f.rel + " (" + f.src + ") — the engine requires it"), { code: "ENOENT" });
       }
       next.src[f.rel] = s;
       const d = hashOf(dst, mDst[f.rel], f.big);

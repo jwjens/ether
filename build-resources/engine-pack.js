@@ -72,6 +72,16 @@ exports.beforePack = async function beforePack(context) {
   console.log(`  • [engine-pack] macOS ${arch}: ${path.relative(ROOT, src)} → native/ether-audio.node (${got})`);
 };
 
+// EVERY APP FILE THE ENGINE LOADS must be in app.asar.unpacked, or the build fails (2026-10-27). 4.6.66 shipped
+// without electron/catalogue.js there: the staged engine could not load it and every song read as unplayable on OV.
+// The list is the stage's own derivation (audiod/engine-fingerprint.js daemonAppFiles), walked over the PACKAGED
+// audiod/ — a required file that is not there stays listed, so it is reported here by name.
+function missingEngineFiles(unpacked) {
+  const FP = require(path.join(ROOT, "audiod", "engine-fingerprint.js"));
+  return FP.daemonAppFiles(path.join(unpacked, "audiod")).filter(rel => !fs.existsSync(path.join(unpacked, ...rel.split("/"))));
+}
+exports.missingEngineFiles = missingEngineFiles;
+
 exports.afterPack = async function afterPack(context) {
   const platform = context.electronPlatformName;
   const arch = archName(context);
@@ -87,6 +97,14 @@ exports.afterPack = async function afterPack(context) {
   const got = kind(packed);
   if (got !== want) throw new Error(`[engine-pack] packaged engine is ${got}, expected ${want} for ${platform} ${arch}: ${packed}`);
   console.log(`  • [engine-pack] packaged engine OK: ${path.relative(context.appOutDir, packed)} (${got})`);
+
+  const unpacked = path.join(resources, "app.asar.unpacked");
+  const missing = missingEngineFiles(unpacked);
+  if (missing.length) {
+    throw new Error(`[engine-pack] ENGINE FILES NOT PACKAGED: ${missing.join(", ")}\n` +
+      `  the audio engine requires them and runs from app.asar.unpacked — add each to electron-builder.json "asarUnpack" (and "files")`);
+  }
+  console.log(`  • [engine-pack] every app file the engine loads is unpacked: ${require(path.join(ROOT, "audiod", "engine-fingerprint.js")).daemonAppFiles(path.join(unpacked, "audiod")).join(", ")}`);
 
   // WINDOWS: the HA helper must be packaged too. "Keep My Station On Air" launches resources\ha-setup.exe elevated
   // (electron/main.js haSetupExePath) to write the auto-logon values. Through 4.6.57 CI never built it and
