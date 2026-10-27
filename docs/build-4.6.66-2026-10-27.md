@@ -71,3 +71,21 @@ From `%TEMP%\ether-diag.txt`, pid 23420:
 
 Not covered: an install through the NSIS installer. It would run the installer's close-Ether step against the on-air app,
 so it is not run on this computer.
+
+## Installed on OVEVENTS (the dev machine, not on air) — 2026-10-27 20:46–20:49Z
+
+- Jeff closed 4.6.63 with Stop & Quit (clean-exit marker 20:46:25Z, 0 Ether/engine processes).
+- `Ether Setup 4.6.66.exe /S` exited 0 after 73 s; the installed Ether.exe reports 4.6.66.0.
+- Launched the installed app (pid 30544, 20:48:42Z). Startup log, from `=== SESSION START ===`:
+  - `version: 4.6.66  packaged: true`
+  - `[catalogue] folder: …\Local\Ether\catalogue (chosen by the user) — present`
+  - saved board applied for all 5 stations (s1, s2, s3, s4, s9)
+  - engine: a fresh daemon (pid 21968), daemon code `9f922c0b…` (4.6.63's was `9eb099f0…`), the same native engine
+    `9efb1764a140`; handover to the daemon complete; every station's live board matches the saved board
+  - startup background work done in 0.1 s
+- Scan of all 54 session lines for ✗ / ERROR / FAIL / failed / exception / SQLITE / corrupt / not found: none. Daemon
+  log since 20:48: no ERROR / WARN / fail / panic. Window responding.
+- One pre-existing line, also logged by 4.6.63 every hour today: `[link] key #2 NOT shared: your sign-in has expired`.
+- The window shows the **account sign-in screen** (screenshot), because this computer's Ether account session had
+  already expired under 4.6.63. The station's data loads underneath (boards, engine, station 1 adopted), but the
+  station screen itself is behind sign-in and was not seen. Signing in is Jeff's step.
