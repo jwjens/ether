@@ -80,7 +80,8 @@ function stagePlan(srcRoot, unpacked) {
   for (const f of RUNTIME_DATA) { const s = path.join(srcRoot, f); if (fs.existsSync(s)) plan.push({ rel: f, src: s, big: true }); }
   const audiod = path.join(unpacked, "audiod");
   for (const f of daemonFiles(audiod)) plan.push({ rel: path.join("audiod", f), src: path.join(audiod, f), big: false });
-  for (const rel of daemonElectronFiles(audiod)) plan.push({ rel: path.join("electron", rel), src: path.join(unpacked, "electron", rel), big: false, optional: true });
+  // Every app file the daemon loads, transitively (engine-fingerprint.js daemonAppFiles) — electron/ and shared/.
+  for (const rel of FP.daemonAppFiles(audiod)) plan.push({ rel: path.join(...rel.split("/")), src: path.join(unpacked, ...rel.split("/")), big: false, optional: true });
   plan.push({ rel: FP.NATIVE_REL, src: path.join(unpacked, FP.NATIVE_REL), big: false });
   const ffSrc = path.join(unpacked, "node_modules", "ffmpeg-static");     // whole pkg (index.js resolves the binary)
   const walk = (d, relBase) => {
@@ -188,4 +189,4 @@ function stageEngine({ srcRoot, unpacked, version, log, baseDir, copyFile, platf
 // daemonFilesForVerify: the SAME derivation the stage uses, exposed so the release gate
 // (audiod/verify-packaged.js) can assert every daemon require resolves to something that gets staged.
 // Exported deliberately — the gate must check what staging actually does, not a copy of the rule.
-module.exports = { stageEngine, stagedTarget, engineBaseDir, daemonFilesForVerify: daemonFiles, daemonElectronFilesForVerify: daemonElectronFiles };
+module.exports = { stageEngine, stagedTarget, engineBaseDir, daemonFilesForVerify: daemonFiles, daemonElectronFilesForVerify: daemonElectronFiles, daemonAppFilesForVerify: FP.daemonAppFiles };

@@ -14,12 +14,18 @@
     "electron/sync/mutation-writer.js",
     "electron/sync/synced-tables.js",
     "electron/audio-library-index.js",
-    "electron/profile-paths.js"
+    "electron/profile-paths.js",
+    "electron/catalogue.js",
+    "electron/asset-types.js",
+    "electron/sync/handlers/asset-mirror.js",
+    "electron/sync/handlers/library_asset.js",
+    "shared/asset-types.json"
   ],
   "files": [
     "dist/**/*",
     "electron/**/*",
     "audiod/**/*",
+    "shared/**/*",
     "scripts/**/*.js",
     "!**/scripts/diag-*.js",
     "native/**/*.node",

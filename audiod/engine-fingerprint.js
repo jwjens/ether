@@ -39,16 +39,49 @@ function daemonFiles(audiodDir) {
     .map(e => e.name)
     .sort();
 }
-// The app modules the daemon requires from ../electron/, derived from its own require() calls. The two sync files are
-// required by path.join (audiod/playlog.js), so they are named.
-const DAEMON_SYNC_FILES = ["sync/mutation-writer.js", "sync/synced-tables.js"];
-function daemonElectronFiles(audiodDir) {
-  const out = new Set(DAEMON_SYNC_FILES);
-  for (const f of daemonFiles(audiodDir)) {
-    let src; try { src = fs.readFileSync(path.join(audiodDir, f), "utf8"); } catch { continue; }
-    for (const m of src.matchAll(/require\(\s*["']\.\.\/electron\/([A-Za-z0-9_./-]+?)(?:\.js)?["']\s*\)/g)) out.add(m[1] + ".js");
+// The app files the daemon loads from outside audiod/ — TRANSITIVELY (2026-10-27, 4.6.66). This used to read only the
+// daemon's own direct requires of ../electron/ modules, and staging copied only what the install had unpacked: 4.6.66's
+// engine.js required ../electron/catalogue, which was never unpacked, the stage skipped it, and every song read as
+// unplayable on OV (docs/engine-missing-catalogue-4.6.66-2026-10-27.md). Now every relative require is followed into
+// the files it reaches (electron/catalogue.js → ./audio-library-index; mutation-writer → handlers/asset-mirror →
+// library_asset → ../../asset-types → ../shared/asset-types.json), string literals and path.join(__dirname, …) alike.
+// Paths are relative to the engine root (the dir holding audiod/); native/*.node and node_modules are staged on their own.
+// A file that is required but not there is still LISTED, so staging and packaging fail on it by name.
+// The two sync files are required by path.join with a variable (audiod/playlog.js), so they are seeded.
+const DAEMON_SYNC_FILES = ["electron/sync/mutation-writer.js", "electron/sync/synced-tables.js"];
+const REL_REQUIRE = /require\(\s*(?:["'](\.{1,2}\/[A-Za-z0-9_./-]+)["']|path\.join\(\s*__dirname\s*((?:\s*,\s*["'][A-Za-z0-9_.-]+["'])+)\s*\))\s*\)/g;
+function relRequires(src) {
+  const out = [];
+  for (const m of src.matchAll(REL_REQUIRE)) {
+    if (m[1]) out.push(m[1]);
+    else out.push("./" + [...m[2].matchAll(/["']([^"']+)["']/g)].map(x => x[1]).join("/"));
   }
-  return [...out].sort();
+  return out;
+}
+function resolveRel(root, fromAbs, rel) {
+  let t = path.resolve(path.dirname(fromAbs), rel);
+  if (!/\.(js|json|node)$/.test(t)) t += ".js";
+  return path.relative(root, t).split(path.sep).join("/");
+}
+function daemonAppFiles(audiodDir) {
+  const root = path.dirname(audiodDir);
+  const found = new Set(DAEMON_SYNC_FILES);
+  const queue = [...DAEMON_SYNC_FILES];
+  const scan = (abs) => {
+    let src; try { src = fs.readFileSync(abs, "utf8"); } catch { return; }
+    for (const rel of relRequires(src)) {
+      const r = resolveRel(root, abs, rel);
+      if (r.startsWith("..") || r.startsWith("audiod/") || r.startsWith("native/") || r.includes("node_modules/") || found.has(r)) continue;
+      found.add(r); if (r.endsWith(".js")) queue.push(r);
+    }
+  };
+  for (const f of daemonFiles(audiodDir)) scan(path.join(audiodDir, f));
+  while (queue.length) scan(path.join(root, queue.shift()));
+  return [...found].sort();
+}
+// Back-compat view for callers that name files relative to electron/ (audiod/verify-packaged.js).
+function daemonElectronFiles(audiodDir) {
+  return daemonAppFiles(audiodDir).filter(r => r.startsWith("electron/")).map(r => r.slice("electron/".length));
 }
 
 const NATIVE_REL = path.join("native", "ether-audio.node");
@@ -65,10 +98,10 @@ function engineFingerprint(root) {
     const audiod = path.join(root, "audiod");
     const lines = [];
     for (const f of daemonFiles(audiod)) lines.push("audiod/" + f + " " + (fileSha256(path.join(audiod, f)) || "missing"));
-    for (const rel of daemonElectronFiles(audiod)) lines.push("electron/" + rel + " " + (fileSha256(path.join(root, "electron", rel)) || "missing"));
+    for (const rel of daemonAppFiles(audiod)) lines.push(rel + " " + (fileSha256(path.join(root, rel)) || "missing"));
     code = crypto.createHash("sha256").update(lines.join("\n")).digest("hex");
   } catch { code = null; }
   return { native, code };
 }
 
-module.exports = { fileSha256, engineFingerprint, daemonFiles, daemonElectronFiles, isTestScript, isDaemonRuntimeFile, NATIVE_REL };
+module.exports = { fileSha256, engineFingerprint, daemonFiles, daemonAppFiles, daemonElectronFiles, isTestScript, isDaemonRuntimeFile, NATIVE_REL };
