@@ -31,6 +31,19 @@ describe("isolated launch: its own folders and its own engine pipe", () => {
     expect(fs.readFileSync(path.join(__dirname, "audio-daemon-client.js"), "utf8")).toMatch(/if \(process\.env\.ETHER_AUDIOD_PIPE\) return process\.env\.ETHER_AUDIOD_PIPE;/);
     expect(fs.readFileSync(path.join(__dirname, "..", "audiod", "ether-audiod.js"), "utf8")).toMatch(/if \(process\.env\.ETHER_AUDIOD_PIPE\) return process\.env\.ETHER_AUDIOD_PIPE;/);
   });
+  // (2026-10-27, 4.6.66: the release check must show the queue filling from today's log in the side-by-side launch.)
+  it("ETHER_SMOKE_FILL_STATION: its own engine fills that station's queue (fill — nothing plays), and PASS needs items", () => {
+    const blk = main.slice(at("const fillSid = Number(process.env.ETHER_SMOKE_FILL_STATION || 0);"), at("finishSmoke(rootKids > 0"));
+    expect(blk).toMatch(/audiodClient\.cmd\("fill", \{ stationId: fillSid \}\)/);
+    expect(blk).not.toMatch(/automationStart|startStream/);
+    const fin = main.slice(at("finishSmoke(rootKids > 0"), at("finishSmoke(rootKids > 0") + 200);
+    expect(fin).toMatch(/&& \(!fillSid \|\| fillN > 0\)/);
+  });
+  it("with real data, air isolation is a copy with no account session — never stations alone", () => {
+    expect(main).toMatch(/const airIsolated = stationCount === 0 \|\| \(fillSid > 0 && noAccount\);/);
+    expect(main).toMatch(/SELECT 1 FROM install_config_kv WHERE key IN \('account_jwt','account_license_key'\)/);
+    expect(main).toMatch(/\(!SMOKE_ISOLATED \|\| airIsolated\)/);
+  });
   it("a normal launch still takes the single-instance lock (two Ethers must never drive one engine)", () => {
     const lock = main.slice(at("if (SMOKE_ISOLATED) {\n  console.log('[SMOKE] ISOLATED MODE"), at("// ── Environment"));
     expect(lock).toMatch(/\} else \{[\s\S]*if \(!app\.requestSingleInstanceLock\(\)\) \{[\s\S]*app\.quit\(\);/);

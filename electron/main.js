@@ -3441,12 +3441,31 @@ function createWindow() {
         // no encoder → no Icecast). If the DB has stations, REFUSE to pass regardless of everything else.
         let stationCount = -1;
         try { stationCount = getDb().prepare("SELECT COUNT(*) AS c FROM stations WHERE deleted_at IS NULL").get().c; } catch { /* db not ready */ }
-        const airIsolated = stationCount === 0;
-        // air_isolated (0 stations) is MANDATORY only for an ISOLATED smoke running alongside the live app.
+        // THE QUEUE FILLS (2026-10-27, 4.6.66: the staged engine could not load electron/catalogue.js and filled nothing).
+        // ETHER_SMOKE_FILL_STATION=<id>: this run's own engine refills that station's queue from its log (`fill` — nothing
+        // plays, no stream) and the smoke passes only if the queue holds something. It runs on a COPY of real data, so
+        // air isolation is then: no account session in that copy (the app stays at sign-in, nothing can authenticate to
+        // stream or sync) — and this smoke never starts automation or a stream.
+        const fillSid = Number(process.env.ETHER_SMOKE_FILL_STATION || 0);
+        let fillN = null, fillFirst = "";
+        if (fillSid) {
+          try {
+            let q; try { q = await audiodClient.cmd("fill", { stationId: fillSid }); }
+            catch { await new Promise(r => setTimeout(r, 3000)); q = await audiodClient.cmd("getQueue", { stationId: fillSid }); }
+            fillN = Array.isArray(q) ? q.length : 0;
+            fillFirst = Array.isArray(q) && q[0] ? `${q[0].title || "?"} — ${q[0].artist || ""}` : "";
+            logStartup(`[SMOKE] fill station ${fillSid}: queue ${fillN} item(s)${fillFirst ? ` — first: ${fillFirst}` : ""}`);
+          } catch (e) { fillN = -1; logStartup(`[SMOKE] fill station ${fillSid} ✗ ${e && e.message}`); }
+        }
+        let noAccount = false;
+        try { noAccount = !getDb().prepare("SELECT 1 FROM install_config_kv WHERE key IN ('account_jwt','account_license_key') AND value IS NOT NULL AND value != ''").get(); } catch { noAccount = false; }
+        const airIsolated = stationCount === 0 || (fillSid > 0 && noAccount);
+        // air_isolated is MANDATORY only for an ISOLATED smoke running alongside the live app.
         // A sole-instance real-profile smoke (SMOKE_ISOLATED=false, live app closed) legitimately has
         // stations — there it gates on daemon_started + daemon_log_staged; station_count is informational.
-        finishSmoke(rootKids > 0 && !_rendererSawError && daemonOk && (!SMOKE_ISOLATED || airIsolated),
-          `react_mounted=${rootKids > 0} root_children=${rootKids} renderer_error=${_rendererSawError} daemon_desired=${daemonDesired} daemon_started=${daemonStarted} daemon_log_staged=${daemonLogStaged} station_count=${stationCount} air_isolated=${airIsolated}`);
+        finishSmoke(rootKids > 0 && !_rendererSawError && daemonOk && (!SMOKE_ISOLATED || airIsolated) && (!fillSid || fillN > 0),
+          `react_mounted=${rootKids > 0} root_children=${rootKids} renderer_error=${_rendererSawError} daemon_desired=${daemonDesired} daemon_started=${daemonStarted} daemon_log_staged=${daemonLogStaged} station_count=${stationCount} air_isolated=${airIsolated}` +
+          (fillSid ? ` fill_station=${fillSid} queue=${fillN} no_account=${noAccount}` : ""));
       } catch (e) { finishSmoke(false, `harness_error=${e.message}`); }
     });
     setTimeout(() => finishSmoke(false, 'timeout — no did-finish-load within 30s'), 30000);
