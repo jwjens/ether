@@ -23,7 +23,8 @@ describe("a row plays the location it stores, and nothing Ether picks", () => {
     const p = put(cat, "Thriller.mp3");
     expect(C.playableFile(p)).toBe(p);
   });
-  it("a file the user chose outside the catalogue plays from there (Change File Location stays fully available)", () => {
+  // (2026-10-27, Jeff: "After No, a file outside the catalogue keeps playing from where it is.")
+  it("a file outside the catalogue (the pop-up answered No) keeps playing from where it is", () => {
     const p = put(chosen, "Thriller (live).mp3");
     expect(C.playableFile(p)).toBe(p);
   });
@@ -114,10 +115,35 @@ describe("every place that opens a file uses this, and none falls back", () => {
     expect(f).not.toMatch(/replace\(\/\[\^a-zA-Z0-9\._-\]\/g/);
     expect(main).not.toMatch(/_pointRowsAtDownload/);
   });
-  it("Change File Location is untouched: any file the user picks is stored as picked", () => {
-    const h = slice("ipcMain.handle('audio-library:repoint'", "\n});");
-    expect(h).toMatch(/_audioMigrate\.repointOne\(db, table, id, filePath\)/);
-    expect(h).not.toMatch(/importIntoLibrary/);
+  // (Jeff, 2026-10-27: "Remove Change File Location and the Library's Relocate button. The catalogue folder location is
+  // changed only in Preferences.")
+  it("Change File Location is gone: no handler, no bridge, no menu item anywhere", () => {
+    expect(main).not.toMatch(/ipcMain\.handle\('audio-library:(repoint|suggest)'/);
+    const preload = read("electron", "preload.js");
+    expect(preload).not.toMatch(/audio-library:repoint|audio-library:suggest/);
+    expect(require("./audio-library-migrate").repointOne).toBeUndefined();
+    const srcFiles = [];
+    const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p); else if (/\.(tsx?|jsx?)$/.test(e.name) && !/\.test\./.test(e.name)) srcFiles.push(p); } };
+    walk(path.join(__dirname, "..", "src"));
+    const offenders = srcFiles.filter(p => /Change File Location…|CHANGE FILE LOCATION…|changeFileLocationItem|audioLibrary\??\.repoint/.test(fs.readFileSync(p, "utf8")));
+    expect(offenders.map(p => path.relative(path.join(__dirname, ".."), p))).toEqual([]);
+  });
+  it("the Library's Relocate button is gone, and the catalogue folder is set only from Preferences (and first-run setup)", () => {
+    expect(main).not.toMatch(/library:relocate/);
+    expect(read("electron", "library-folders.js")).not.toMatch(/ipcMain\.handle\('library:relocate'/);
+    expect(read("electron", "preload.js")).not.toMatch(/library:relocate/);
+    const app = read("src", "App.tsx");
+    expect(app).not.toMatch(/relocateLibrary|stationFolders\.relocate|>\s*Relocate\s*</);
+    // Who can set the folder: music:set-dir and station-folder:choose. Their only callers are Preferences and first-run setup.
+    const callers = [];
+    const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.tsx?$/.test(e.name) && !/\.test\./.test(e.name) && /music\?\.setDir|music\.setDir|stationFolders\.choose|api\.choose\(/.test(fs.readFileSync(p, "utf8"))) callers.push(e.name); } };
+    walk(path.join(__dirname, "..", "src"));
+    expect(callers.sort()).toEqual(["OnboardingFlow.tsx", "SettingsPanel.tsx"]);
   });
   it("the audio engine and the library-health sense use the same rule", () => {
     const eng = read("audiod", "engine.js");

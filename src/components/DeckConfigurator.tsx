@@ -3,7 +3,7 @@ import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useModuleInstanceId } from "../hooks/useModuleInstance";
 import { isPlainKey } from "../lib/plainKey";
 import { queryScoped } from "../db/stationScoped";
-import { checkFilePresence, fileLocationReason, changeFileLocationItem, importIntoAudioLibrary, type FilePresence } from "../lib/fileLocation";
+import { checkFilePresence, fileLocationReason, importIntoAudioLibrary, type FilePresence } from "../lib/fileLocation";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { matchesStation } from "../lib/levelsScope";
 // The on-screen Console is where an operator looks when something did not go where they expected.
@@ -1209,36 +1209,6 @@ export function BoutiqueCartWall({ compact, variant }: CartProps) {
             >OPEN FILE LOCATION</button>
           );
         })()}
-        {/* CHANGE FILE LOCATION — the one that clears the "points outside the library" state.
-            Carts are addressed by slot_number in this component, so the row id is resolved here
-            rather than carried in state; the repoint itself is local-only (see fileLocation.tsx). */}
-        <button
-          onClick={async () => {
-            const k = cartMenu.key;
-            const c = carts.find(x => x.key === k);
-            setCartMenu(null);
-            if (!c) return;
-            let rowId: number | null = null;
-            try {
-              const rows = await queryScoped<{ id: number }>(
-                "SELECT id FROM cart_slots WHERE station_id = ? AND slot_number = ? AND deleted_at IS NULL LIMIT 1",
-                [stationId, c.slot], stationId);
-              rowId = rows[0]?.id ?? null;
-            } catch { /* fall through to the honest refusal below */ }
-            if (rowId == null) { window.alert("This cart has no saved row yet — assign a file to it first."); return; }
-            await changeFileLocationItem({ table: "cart_slots", id: rowId }, c.filePath, () => {
-              // Re-read presence so the menu's disabled states reflect the repoint immediately.
-              void checkFilePresence(c.filePath).then(setCartPresence);
-            }).run?.();
-          }}
-          style={{
-            width: "100%", textAlign: "left", padding: "5px 8px", cursor: "pointer",
-            background: "transparent", border: "1px solid transparent", color: "var(--text-primary)",
-            fontSize: 11, fontWeight: 700, letterSpacing: "0.06em",
-          }}
-          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-tertiary)"; }}
-          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
-        >CHANGE FILE LOCATION…</button>
         <div style={{ height: 1, background: "var(--border-primary)", margin: "3px 0" }} />
         <button
           onClick={() => deleteCart(cartMenu.key)}

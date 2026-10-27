@@ -122,7 +122,7 @@ import AutoCue from "./components/AutoCue";
 import { useUpdater, UpdateBanner } from "./components/Updater";
 import DaemonVersionBanner from "./components/DaemonVersionBanner";
 import { EtherErrorBoundary, SessionRestoreToast, HealthMonitor, HealthStatusDot, ContentStatusDot } from "./components/HealthMonitor";
-import { importIntoAudioLibrary, fileLocationItem, changeFileLocationItem, checkFilePresence, type FilePresence } from "./lib/fileLocation";
+import { importIntoAudioLibrary, fileLocationItem, checkFilePresence, type FilePresence } from "./lib/fileLocation";
 import { openLinkPreferences } from "./hooks/useRemoteLink";
 import { appShortcut } from "./lib/appShortcuts";
 import { libraryDeckActions, DeckLoadNoticeBar } from "./lib/libraryDeckActions";
@@ -4766,7 +4766,6 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
   const [onlyUnmeasured, setOnlyUnmeasured] = useState(false);
   const [count, setCount] = useState(0);
   const [status, setStatus] = useState("");
-  const [missingSongs, setMissingSongs] = useState<string[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [showBulkAssign, setShowBulkAssign] = useState(false);
   // Uniform column sort — active column key + direction (default: Title ascending, matching the load order).
@@ -5280,20 +5279,6 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
     }
     setStatus("Done! Analyzed " + done + " songs."); setTimeout(() => setStatus(""), 4000);
   };
-  const relocateLibrary = async () => {
-    // Per-station relocate (DESIGN-TRUTH §2): pick THIS station's folder, save it, and relink by title
-    // ONLY from that folder — verifying each file exists. Songs with no file are skipped (no dead air),
-    // and returned so you know what to add. Replaces the old blind path-rewrite (no existence check,
-    // Windows-slash bug, and it skipped songs that had no path — i.e. exactly the ones that needed it).
-    const r = await (window as any).ether.stationFolders.relocate(stationId);
-    if (!r || r.canceled) return;
-    if (!r.ok) { setStatus(r.error || "Relocate failed"); setTimeout(() => setStatus(""), 5000); return; }
-    setMissingSongs(r.missing || []);
-    // Not found → the move-to-the-catalogue pop-up (CatalogueMovePrompt); their location is left as it is.
-    if (r.toMove?.length) window.dispatchEvent(new CustomEvent("ether:catalogue-prompt", { detail: { files: r.toMove } }));
-    setStatus(`Relocated: linked ${r.linked}/${r.total}` + (r.missing?.length ? `, ${r.missing.length} missing` : ""));
-    setTimeout(() => setStatus(""), 6000); load();
-  };
   const queueAll = () => { engine.addToQueue(filtered.filter(s => s.file_path).map(s => ({ filePath: s.file_path!, title: s.title, artist: s.artist_name || "", durationMs: s.duration_ms ?? 0 }))); window.dispatchEvent(new CustomEvent('ether:queue-changed')); };
   const filtered = songs.filter(s => {
     const matchSearch = !search ||
@@ -5479,10 +5464,6 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
             <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
             Import from Spotify
           </button>
-          <button onClick={relocateLibrary} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-            Relocate
-          </button>
           <button onClick={analyzeLufs} style={{ padding: "7px 14px", borderRadius: 0, fontSize: 12, fontWeight: 600, background: "var(--bg-secondary)", color: "var(--text-secondary)", border: "1px solid var(--border-secondary)", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
             Normalize
@@ -5498,18 +5479,6 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
           }
         </div>
       </div>
-
-      {missingSongs.length > 0 && (
-        <div style={{ padding: "8px 12px", marginBottom: 4, background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.35)", color: "#f59e0b", fontSize: 12 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-            <strong>{missingSongs.length} song{missingSongs.length === 1 ? "" : "s"} missing a file in this station&apos;s folder — add the file or fix the title, then Re-sync.</strong>
-            <button onClick={() => setMissingSongs([])} style={{ background: "none", border: "none", color: "#f59e0b", cursor: "pointer", fontSize: 14 }}>✕</button>
-          </div>
-          <div style={{ maxHeight: 140, overflowY: "auto", fontSize: 11, opacity: 0.9 }}>
-            {missingSongs.map((t, i) => <div key={i}>• {t}</div>)}
-          </div>
-        </div>
-      )}
 
       {libraryBorrowed && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", marginBottom: 4, borderRadius: 0, background: "rgba(167,139,250,0.10)", border: "1px solid rgba(167,139,250,0.35)", color: "#a78bfa", fontSize: 12, fontWeight: 600 }}>
@@ -5629,7 +5598,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
               } },
             { label: "Send to Studio", action: () => { onSendToStudio(ctxMenu.song); setCtxMenu(null); } },
             null,
-            // ── The two FILE actions, from the shared set (src/lib/fileLocation.tsx) ──────────
+            // ── The FILE action, from the shared set (src/lib/fileLocation.tsx). No Change File Location (2026-10-27). ──
             // The Library already had a right-click menu; what it lacked were these. They use the
             // same implementations as the deck, queue, cart, spot, announcement and sweeper menus,
             // so the wording, the disabled reasons and the "found it already in your library"
@@ -5639,9 +5608,6 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
               disabled: fileLocationItem(ctxMenu.song.file_path, ctxPresence).disabled,
               action: () => { const it = fileLocationItem(ctxMenu.song.file_path, ctxPresence);
                               if (it.disabled) return; setCtxMenu(null); void it.run?.(); } },
-            { label: "Change File Location…",
-              action: () => { const song = ctxMenu.song; setCtxMenu(null);
-                              void changeFileLocationItem({ table: "songs", id: song.id }, song.file_path, load).run?.(); } },
             null,
             { label: "Delete", action: async () => { const row = ctxMenu.song; setCtxMenu(null); if (await askConfirm("Delete " + row.title + "?", { confirmLabel: "Delete", danger: true })) { await deleteLibraryRow(row); load(); } }, danger: true },
           ].map((item, idx) => item === null

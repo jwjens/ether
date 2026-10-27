@@ -46,7 +46,7 @@ const TYPE_COLORS: Record<string, string> = {
 // onMutated tells the hub a spot category moved, which is what refreshes the Clocks pane's segment
 // picker and break rows — they read categories from the store, not from here.
 export default function Spots({ onMutated }: { onMutated?: (tables?: string[]) => void } = {}) {
-  // Right-click on any file-backed row: Open / Change File Location, from the shared set.
+  // Right-click on any file-backed row: Open File Location, from the shared set.
   const fileMenu = useFileMenu();
   const engine = useAudioEngine();
   const { stationId, isReady } = useActiveStation();

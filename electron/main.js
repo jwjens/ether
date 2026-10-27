@@ -10898,27 +10898,9 @@ ipcMain.handle('audio-library:import', (_e, srcPath) => {
   } catch (e) { return { ok: false, code: 'exception', error: e.message }; }
 });
 
-// CHANGE FILE LOCATION — the obvious candidate first: same basename, already in the library.
-ipcMain.handle('audio-library:suggest', (_e, storedPath) => {
-  try { return { ok: true, suggestion: _audioMigrate.suggestFor(getMusicDir(), storedPath) }; }
-  catch (e) { return { ok: false, error: e.message }; }
-});
-
-// CHANGE FILE LOCATION — repoint ONE row. Narrow on purpose (one table, one id, one column) so it
-// cannot become a general way around the mutation log.
-ipcMain.handle('audio-library:repoint', (_e, table, id, filePath) => {
-  try {
-    const r = _audioMigrate.repointOne(db, table, id, filePath);
-    if (r.ok) {
-      // The findable record of every hand repair on this machine (Jeff, 2026-09-04): file_path can
-      // still leak on a LATER ordinary edit until the protocol amendment lands, so the operator
-      // needs to be able to look up which rows they fixed by hand.
-      try { require('./library-health').noteEvent('manual-repoint', { table, id, filePath }); } catch { /* health absent */ }
-      console.log(`[audio-library] manual repoint ${table}#${id} -> ${filePath}`);
-    }
-    return r;
-  } catch (e) { return { ok: false, error: e.message }; }
-});
+// No CHANGE FILE LOCATION (Jeff, 2026-10-27: "Remove Change File Location and the Library's Relocate button. The
+// catalogue folder location is changed only in Preferences."). audio-library:suggest / audio-library:repoint are gone; a
+// file outside the catalogue is offered to be moved in (catalogue:move-in, from the pop-up's Yes).
 ipcMain.handle('music:set-dir', (_, dir) => setMusicDir(dir));
 
 // Per-station music folders + Test-sync / Re-sync / Relocate (DESIGN-TRUTH §2 — stations independent).

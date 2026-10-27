@@ -21,7 +21,7 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import { query } from "../db/client";
-import { checkFilePresence, fileLocationItem, changeFileLocationItem, type FilePresence } from "./fileLocation";
+import { checkFilePresence, fileLocationItem, type FilePresence } from "./fileLocation";
 import { useActiveStation } from "../hooks/useActiveStation";
 import SpotMarkDialog from "../components/SpotMarkDialog";
 
@@ -142,10 +142,7 @@ export function useSongMenu() {
       // Deliberately NOT gated on the library row. This one needs only a file path, so it works for
       // the cart file and the one-off import that every action above is correctly disabled for.
       fileLocationItem(menu.ref.filePath, menu.presence),
-      // Needs the library row for its id — a queue/deck item with no `songs` row cannot be repointed,
-      // and says so rather than opening a picker that would write nowhere.
-      song ? changeFileLocationItem({ table: "songs", id: song.id }, menu.ref.filePath)
-           : { label: "Change File Location…", disabled: why },
+      // No CHANGE FILE LOCATION (2026-10-27): the catalogue folder is changed only in Preferences.
     ];
 
     const items = menu.extras.length

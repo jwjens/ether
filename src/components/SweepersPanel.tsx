@@ -79,7 +79,7 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
   const ro = !!readOnly;
   const showAssign = !section || section === "assignments";
   const showPools  = !section || section === "pools";
-  // Right-click on any file-backed row: Open / Change File Location, from the shared set.
+  // Right-click on any file-backed row: Open File Location, from the shared set.
   const fileMenu = useFileMenu();
   const [pools, setPools] = useState<Pool[]>([]);
   const [songs, setSongs] = useState<OverlaySong[]>([]);

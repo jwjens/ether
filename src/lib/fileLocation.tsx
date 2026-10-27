@@ -110,76 +110,10 @@ export async function audioLibraryDir(): Promise<string | null> {
   try { const r = await (window as any).ether?.music?.getDir(); return r?.dir || null; } catch { return null; }
 }
 
-/** What a surface knows about the ROW behind a file, so it can be repointed. */
+/** What a surface knows about the ROW behind a file. */
 export interface FileRowRef {
   table: string;          // 'songs' | 'announcements' | 'spots' | 'cart_slots' | …
   id: number | string;
-}
-
-/**
- * CHANGE FILE LOCATION — repoint one row's file_path at a file the operator chooses.
- *
- * THE SUGGESTION IS THE POINT. The overwhelmingly common case is not "find me a file" — it is "I
- * already moved these into the audio library, the rows just haven't caught up." Measured on the dev
- * machine (2026-09-04): 8 of 10 carts pointed at Downloads while the identical basename already sat
- * in the library. Making the operator navigate to a file the app could have named is friction the
- * app created.
- *
- * So: ask main for the candidate FIRST, offer it as one click, and only open a picker if there
- * isn't one — or if the operator declines it.
- *
- * THE WRITE IS LOCAL-ONLY. `file_path` is a blob-ref column, and in sync-protocol v0 a blob-ref
- * ships the literal absolute path — so a repoint routed through the normal save would push this
- * machine's path to every peer, which is the OV incident in reverse. `audio-library:repoint` writes
- * the column directly and logs a `manual-repoint` health event so a hand repair stays findable.
- */
-export function changeFileLocationItem(
-  row: FileRowRef | null | undefined,
-  filePath: string | null | undefined,
-  onDone?: () => void,
-): SongMenuItem {
-  return {
-    label: "Change File Location…",
-    // NOTE THE INVERSION vs Open File Location: a MISSING file is exactly when this is wanted, so it
-    // stays enabled. It is disabled only when there is no row to repoint.
-    disabled: row && row.table ? undefined : "this item's row can't be identified",
-    run: async () => {
-      if (!row) return;
-      const api = (window as any).ether;
-      try {
-        const s = await api?.audioLibrary?.suggest(filePath);
-        const suggestion: string | null = s?.suggestion || null;
-
-        let chosen: string | null = null;
-        if (suggestion) {
-          const name = suggestion.split(/[\\/]/).pop();
-          // Plain confirm: one click for the case that is right ~80% of the time.
-          const useIt = window.confirm(
-            `Found this file already in your catalogue:\n\n${name}\n\n` +
-            `Point this item at it?\n\n(Cancel to choose a different file.)`);
-          if (useIt) chosen = suggestion;
-        }
-        if (!chosen) {
-          const picked = await api?.dialog?.openFile({
-            multiple: false, title: "Choose the audio file for this item",
-            filters: [{ name: "Audio", extensions: ["mp3", "flac", "ogg", "wav", "m4a", "aac"] }],
-          });
-          chosen = Array.isArray(picked) ? picked[0] : picked;
-        }
-        if (!chosen) return;
-
-        const r = await api?.audioLibrary?.repoint(row.table, row.id, chosen);
-        if (r && r.ok === false) {
-          window.alert(`Could not repoint this item:\n\n${r.error}`);
-          return;
-        }
-        window.dispatchEvent(new CustomEvent("ether:songs-changed"));
-        onDone?.();
-      } catch (err) {
-        console.error("[fileLocation] repoint failed:", err);
-      }
-    },
-  };
 }
 
 export function fileLocationItem(filePath: string | null | undefined, presence: FilePresence): SongMenuItem {
@@ -264,10 +198,8 @@ export function useFileMenu() {
   if (menu) {
     const items: SongMenuItem[] = [
       fileLocationItem(menu.target.filePath, menu.presence),
-      changeFileLocationItem(
-        { table: menu.target.table, id: menu.target.id },
-        menu.target.filePath,
-        menu.onChanged),
+      // No CHANGE FILE LOCATION (Jeff, 2026-10-27): songs are only ever in the catalogue, and the catalogue folder is
+      // changed only in Preferences. A file outside it is offered to be moved in (CatalogueMovePrompt).
     ];
     node = (
       <div

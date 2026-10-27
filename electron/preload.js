@@ -282,15 +282,13 @@ contextBridge.exposeInMainWorld("ether", {
     setDir: (dir) => ipcRenderer.invoke("music:set-dir", dir),
   },
   // The AUDIO LIBRARY rule: every audio file lives in one folder. plan() is a dry run and is safe on
-  // air; migrate() copies-then-repoints; suggest()/repoint() back CHANGE FILE LOCATION. All writes
-  // are local-only — a file location never crosses machines.
+  // air; migrate() copies-then-repoints. All writes are local-only — a file location never crosses machines.
+  // (No suggest()/repoint(): Change File Location was removed, 2026-10-27.)
   audioLibrary: {
     plan:    (targetDir)           => ipcRenderer.invoke("audio-library:plan", targetDir || null),
     migrate: ()                    => ipcRenderer.invoke("audio-library:migrate"),
-    suggest: (storedPath)          => ipcRenderer.invoke("audio-library:suggest", storedPath),
     // COPY-ON-IMPORT: hand it the browsed path, write the path it returns. Never the browsed one.
     import:  (srcPath)             => ipcRenderer.invoke("audio-library:import", srcPath),
-    repoint: (table, id, filePath) => ipcRenderer.invoke("audio-library:repoint", table, id, filePath),
   },
   // Per-station audio folder + Test-sync / Re-sync / Relocate (DESIGN-TRUTH §2 — stations independent).
   stationFolders: {
@@ -298,7 +296,6 @@ contextBridge.exposeInMainWorld("ether", {
     choose:   (stationId) => ipcRenderer.invoke("station-folder:choose", stationId),
     analyze:  (stationId) => ipcRenderer.invoke("station-folder:analyze", stationId),   // Test sync (dry run)
     resync:   (stationId) => ipcRenderer.invoke("station-folder:resync", stationId),    // Re-sync + missing list
-    relocate: (stationId) => ipcRenderer.invoke("library:relocate", stationId),         // Library Relocate button
   },
   db: {
     query: (sql, p) => ipcRenderer.invoke("db:query", sql, p),

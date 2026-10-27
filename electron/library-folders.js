@@ -301,21 +301,8 @@ function register(deps) {
              assetsMissingDetail: r.assetsMissing.slice(0, 20), toMove: filesToMove(getDb(), folder, r) };
   });
 
-  // Library Relocate button: pick a folder for the ACTIVE station, save it, and re-sync in one step.
-  ipcMain.handle('library:relocate', async (_e, stationId) => {
-    const sid = stationId ?? getActiveStationId();
-    const win = getMainWindow && getMainWindow();
-    const res = await dialog.showOpenDialog(win, { title: 'Select this station’s music folder (Relocate)', properties: ['openDirectory'] });
-    if (res.canceled || !res.filePaths.length) return { ok: false, canceled: true };
-    const folder = res.filePaths[0];
-    deps.setMachineMusicDir(folder);     // per-machine — see station-folder:choose above
-    const r = matchStation(getDb(), sid, folder);
-    const applied = applyRelink(getDb(), sid, r, deps);
-    return { ok: true, stationId: sid, folder, total: r.total, linked: applied.linked,
-             missing: r.missing.map(m => m.title),
-             relinkedAssets: applied.relinkedAssets, assetsMissing: applied.assetsMissing,
-             assetsMissingDetail: r.assetsMissing.slice(0, 20), toMove: filesToMove(getDb(), folder, r) };
-  });
+  // No Library RELOCATE (2026-10-27): it changed the catalogue folder from the Library. The catalogue folder location is
+  // changed only in Preferences.
 }
 
 // applyRelink is exported for the bench (scripts/test-relink-no-mutation.js), which asserts the

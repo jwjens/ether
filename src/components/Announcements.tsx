@@ -913,7 +913,7 @@ function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: bool
 }
 
 export default function Announcements() {
-  // Right-click on any file-backed row: Open / Change File Location, from the shared set.
+  // Right-click on any file-backed row: Open File Location, from the shared set.
   const fileMenu = useFileMenu();
   const { stationId, isReady } = useActiveStation();
   const [list, setList] = useState<Announcement[]>([]);

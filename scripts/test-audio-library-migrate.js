@@ -19,7 +19,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const Database = require('better-sqlite3');
-const { planMigration, applyMigration, repointOne, suggestFor } = require('../electron/audio-library-migrate');
+const { planMigration, applyMigration } = require('../electron/audio-library-migrate');
 
 let pass = 0; const failures = [];
 const check = (name, actual, expected) => {
@@ -107,22 +107,12 @@ applyMigration(db, plan3);
 check('  M-8c the original library file was NOT overwritten',
   fs.readFileSync(path.join(LIB, 'growl.mp3'), 'utf8'), 'x');
 
-console.log('\n── single-row repoint (CHANGE FILE LOCATION) ──');
-const target = path.join(LIB, 'settled.mp3');
-check('  M-10 repoints one row', repointOne(db, 'cart_slots', 1, target).ok, true);
-check('  ...and only that row',
-  db.prepare('SELECT file_path FROM cart_slots WHERE id=2').get().file_path, path.join(LIB, 'unique.mp3'));
-check('  refuses a file that is not on this machine',
-  repointOne(db, 'cart_slots', 1, path.join(LIB, 'nope.mp3')).error, 'that file is not on this machine');
-check('  refuses a table that is not an audio table',
-  repointOne(db, 'stations', 1, target).ok, false);
+// (2026-10-27) Change File Location was removed (Jeff: "The catalogue folder location is changed only in Preferences."),
+// and with it the single-row repoint and its suggestion.
+console.log('\n── no single-row repoint any more (Change File Location removed) ──');
+check('  M-10 repointOne is gone', typeof require('../electron/audio-library-migrate').repointOne, 'undefined');
+check('  M-12 suggestFor is gone', typeof require('../electron/audio-library-migrate').suggestFor, 'undefined');
 check('  still nothing logged', db.prepare('SELECT COUNT(*) n FROM mutations').get().n, 0);
-
-console.log('\n── the suggestion (CHANGE FILE LOCATION offers the obvious candidate) ──');
-check('  M-12 suggests the library copy for a Downloads path',
-  suggestFor(LIB, path.join(DOWNLOADS, 'growl.mp3')), path.join(LIB, 'growl.mp3'));
-check('  M-12b no suggestion when the library has nothing matching',
-  suggestFor(LIB, path.join(DOWNLOADS, 'never-heard-of-it.mp3')), null);
 
 // ── COPY-ON-IMPORT ─────────────────────────────────────────────────────────────────────────────
 // The door every audio file now comes through. Order is the whole point: copy -> verify -> only

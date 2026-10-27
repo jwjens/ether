@@ -261,27 +261,4 @@ function importIntoLibrary(root, srcPath) {
   return { ok: true, path: d.dest, action: 'copied' };
 }
 
-/**
- * The single-row version, for CHANGE FILE LOCATION. Local-only, one column, by table+id.
- * Deliberately narrow so it cannot become a general mutation bypass.
- */
-function repointOne(db, table, id, filePath) {
-  if (!AUDIO_TABLE_NAMES.includes(table)) return { ok: false, error: `not an audio table: ${table}` };
-  const cols = tableColumns(db, table);
-  if (!cols.has('file_path') || !cols.has('id')) return { ok: false, error: `${table} has no file_path` };
-  if (!filePath || !fs.existsSync(filePath)) return { ok: false, error: 'that file is not on this machine' };
-  try {
-    const info = db.prepare(`UPDATE ${table} SET file_path = ? WHERE id = ?`).run(filePath, id);
-    if (!info.changes) return { ok: false, error: 'no such row' };
-    return { ok: true, table, id, filePath };
-  } catch (e) { return { ok: false, error: e.message }; }
-}
-
-/** The obvious candidate for a row whose file is missing: same basename, already in the library. */
-function suggestFor(root, storedPath) {
-  if (!storedPath) return null;
-  const hit = findInIndex(buildIndex(root), storedPath);
-  return hit && isInside(root, hit) ? hit : null;
-}
-
-module.exports = { planMigration, applyMigration, repointOne, suggestFor, isInside, destinationFor, importIntoLibrary };
+module.exports = { planMigration, applyMigration, isInside, destinationFor, importIntoLibrary };
