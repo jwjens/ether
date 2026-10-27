@@ -69,8 +69,8 @@ From `%TEMP%\ether-diag.txt`, pid 23420:
      - the same 10 live processes before and after;
      - its window responding.
 
-Not covered: an install through the NSIS installer. It would run the installer's close-Ether step against the on-air app,
-so it is not run on this computer.
+The install through the real NSIS installer is below. (An earlier note here called the Ether on this computer "on air";
+it is not: OVEVENTS is the dev machine.)
 
 ## Installed on OVEVENTS (the dev machine, not on air) — 2026-10-27 20:46–20:49Z
 
