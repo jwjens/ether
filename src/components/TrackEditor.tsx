@@ -915,11 +915,11 @@ export default function TrackEditor({ song: songProp, filePath: filePathProp, on
           </div>
         </div>
 
-        {/* Cue output device */}
+        {/* Preview player device — this editor's own preview (Settings → Audio → Track Editor preview player). Not the PFL cue. */}
         {outputDevices.length > 1 && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
             <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.1em", color: "var(--accent-cyan)", opacity: 0.8 }}>🎧</span>
-            <select value={cueDeviceId} onChange={e => setCueDeviceId(e.target.value)} style={{
+            <select value={cueDeviceId} onChange={e => setCueDeviceId(e.target.value)} title="Track Editor preview player — where this editor's preview plays (not the PFL cue)" style={{
               padding: "4px 8px", borderRadius: 0, fontSize: 10,
               background: "var(--bg-tertiary)", border: "1px solid var(--border-primary)",
               color: "var(--text-secondary)", cursor: "pointer", outline: "none", maxWidth: 160,

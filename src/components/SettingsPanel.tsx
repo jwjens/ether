@@ -2466,12 +2466,12 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
 
   // Audio devices
   const [devices, setDevices] = useState<{ deviceId: string; label: string; kind: string }[]>([]);
-  const [currentOutput, setCurrentOutput] = useState("");
   const [currentInput, setCurrentInput] = useState("");
   // Phone hybrid input — set once here, used by PhoneDesk (never touched on the working panel).
   const [phoneInput, setPhoneInput] = useState<string>(() => { try { return localStorage.getItem("ether_phone_input") || ""; } catch { return ""; } });
   const selectPhoneInput = (id: string) => { setPhoneInput(id); try { localStorage.setItem("ether_phone_input", id); } catch { /* ignore */ } };
-  // Cue / headphone output — where PFL (pre-fade listen) plays, separate from the main mix.
+  // Track Editor preview player — the device the Track Editor's own preview plays to (browser audio). NOT the PFL cue:
+  // the engine's cue device is the PFL picker (PflSettings), the only cue picker.
   const [cueOutput, setCueOutput] = useState<string>(() => { try { return localStorage.getItem("ether_cue_device") || ""; } catch { return ""; } });
   const selectCueOutput = (id: string) => { setCueOutput(id); try { localStorage.setItem("ether_cue_device", id); } catch { /* ignore */ } };
 
@@ -3121,27 +3121,13 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
       <PublicPageSettings />
 
       {/* ── Audio ── */}
-      <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>} title="Audio Devices" description="Choose where music plays and which mic to use for voice tracking">
+      <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>} title="Audio Devices" description="The voice-tracking microphone, the phone hybrid input and the Track Editor preview player. Where each station plays is on the board (Station Monitors → OUTPUT).">
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12, minWidth: 0 }}>
-          {/* Output */}
+          {/* No "Where music plays" picker here (Jeff, 2026-10-27: "Every audio picker on screen must do what it says.").
+              It only lit ACTIVE; nothing reached the engine. Where a station plays is the board's Station Monitors → OUTPUT. */}
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>Where music plays</div>
-            <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 10 }}>Your speakers, headphones, or broadcast console</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {outputs.length === 0 ? <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>No output devices found</div> :
-                outputs.map(d => (
-                  <button key={d.deviceId} onClick={() => setCurrentOutput(d.deviceId)} style={{
-                    padding: "9px 12px", borderRadius: 0, textAlign: "left" as any, fontSize: 12, cursor: "pointer",
-                    background: currentOutput === d.deviceId ? "rgb(from var(--accent-blue) r g b / 0.12)" : "var(--bg-tertiary)",
-                    border: "1px solid " + (currentOutput === d.deviceId ? "var(--accent-blue)" : "var(--border-primary)"),
-                    color: currentOutput === d.deviceId ? "var(--accent-blue)" : "var(--text-secondary)",
-                    display: "flex", justifyContent: "space-between", alignItems: "center",
-                  }}>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, flex: 1 }}>{d.label}</span>
-                    {currentOutput === d.deviceId && <span style={{ fontSize: 13, fontWeight: 700, marginLeft: 8, flexShrink: 0 }}>ACTIVE</span>}
-                  </button>
-                ))}
-            </div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>Where each station plays</div>
+            <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Set on the board: <b>Station Monitors → OUTPUT</b>, one per station. That is the device the audio engine plays to on this computer.</div>
           </div>
           {/* Input */}
           <div style={{ minWidth: 0 }}>
@@ -3184,10 +3170,10 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
               ))}
           </div>
         </div>
-        {/* Cue / headphone output — where PFL (pre-fade listen) plays */}
+        {/* Track Editor preview player — browser audio; the PFL cue device is the PFL section below */}
         <div style={{ minWidth: 0, marginTop: 4, marginBottom: 14 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>Cue / headphone output</div>
-          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 10 }}>Where PFL (pre-fade listen) plays — your cue headphones, separate from the main output</div>
+          <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>Track Editor preview player</div>
+          <div style={{ fontSize: 13, color: "var(--text-tertiary)", marginBottom: 10 }}>Where the Track Editor plays its preview when you audition a cut. This is not the cue: PFL has its own device in <b>PFL (pre-fader listen)</b> below.</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
             {outputs.length === 0 ? <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>No outputs found</div> :
               outputs.map(d => (
@@ -3199,7 +3185,7 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
                   display: "flex", justifyContent: "space-between", alignItems: "center",
                 }}>
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as any, flex: 1 }}>{d.label}</span>
-                  {cueOutput === d.deviceId && <span style={{ fontSize: 13, fontWeight: 700, marginLeft: 8, flexShrink: 0 }}>CUE</span>}
+                  {cueOutput === d.deviceId && <span style={{ fontSize: 13, fontWeight: 700, marginLeft: 8, flexShrink: 0 }}>PREVIEW</span>}
                 </button>
               ))}
           </div>
