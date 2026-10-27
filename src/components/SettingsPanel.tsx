@@ -30,11 +30,13 @@ import { validateSlug, slugify } from "../lib/slug";
 // meters on the same scales (moved from here, 2026-08-18).
 import { ProcessingTrio, dbfsPct } from "./ProcessingMeters";
 import { fetchMyMemberships, type Membership } from "../lib/memberships";
+import { PAGE_TYPES } from "../lib/publicPages";
+import { useAccountLinks, LinkRows } from "./PublicLinks";
 
 // ── Settings categories ──────────────────────────────────────
 // 6 buckets that cover all 18 Section components without any one category
 // getting overcrowded. Shown in the sidebar in this order.
-export type SettingsCategory = "station" | "audio" | "programming" | "broadcast" | "integrations" | "backup" | "system";
+export type SettingsCategory = "station" | "audio" | "programming" | "broadcast" | "integrations" | "backup" | "system" | "links";
 const CATEGORIES: { id: SettingsCategory; label: string; icon: React.ReactNode }[] = [
   { id: "station",      label: "Station",      icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg> },
   { id: "audio",        label: "Audio",        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg> },
@@ -43,6 +45,7 @@ const CATEGORIES: { id: SettingsCategory; label: string; icon: React.ReactNode }
   { id: "integrations", label: "Integrations", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> },
   { id: "backup",       label: "Backup & Restore", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/><polyline points="9 13 12 16 15 13"/><line x1="12" y1="16" x2="12" y2="9"/></svg> },
   { id: "system",       label: "System",       icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> },
+  { id: "links",        label: "Links",        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> },
 ];
 
 // Friendly "5 minutes ago" relative time for backup status — plain language beats a raw timestamp.
@@ -157,6 +160,29 @@ function Section({ icon, title, description, category, children }: {
       </div>
       <div className="eth-card__body">{children}</div>
     </div>
+  );
+}
+
+// ── LINKS (2026-10-27) ──────────────────────────────────────
+// Jeff: "its own menu title on the left sidebar links then a menu for each type". One section per type of public page
+// (src/lib/publicPages.ts PAGE_TYPES), each line with its real address, Open and Copy. Asks the backend only while Links
+// (or a search) is showing.
+const LINK_ICON = <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>;
+function LinksSections() {
+  const { activeCategory, searchText } = useContext(SettingsFilterContext);
+  if (activeCategory !== "links" && !searchText.trim()) return null;
+  return <LinksSectionsLoaded />;
+}
+function LinksSectionsLoaded() {
+  const { loaded, links, reload } = useAccountLinks();
+  return (
+    <>
+      {PAGE_TYPES.map(t => (
+        <Section key={t.type} category="links" icon={LINK_ICON} title={t.title} description={t.description}>
+          <LinkRows type={t.type} links={links} loaded={loaded} reload={reload} />
+        </Section>
+      ))}
+    </>
   );
 }
 
@@ -3801,6 +3827,8 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
       </Section>
 
       {/* ── Danger zone — factory reset ── */}
+      <LinksSections />
+
       <Section category="system" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>} title="Factory reset this computer" description="Erase this computer's Ether data and start over from first-time setup — does not touch other computers on your account">
         <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: 14 }}>
           Erases this account's data on this computer — stations, library, schedule, users and settings — then <strong>closes Ether completely</strong>. Reopen it to sign in again. Other accounts on this computer, and this account on other computers, are unaffected. Make sure <strong>Keep my stuff synced</strong> has finished first. <strong>This cannot be undone.</strong>

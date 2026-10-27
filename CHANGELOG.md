@@ -1,5 +1,12 @@
 ## [4.6.68] — unreleased
 
+### Added
+
+- **Preferences → Links:** every public page of your account and its stations at its real address (station player,
+  embed player, account page, jukebox request page and lobby screen, Park page, sign-up, the web apps, the website and
+  downloads), one section per type, each with Open and Copy. Built from the sites' own pages and your account's
+  stations, so a new page appears by itself.
+
 ### Fixed
 
 - **The board's remove button (−) takes a source channel off in one click, patched or not.** A channel with a Link input

@@ -7716,6 +7716,34 @@ ipcMain.handle("watermark:verify", async (_, { filePath }) => {
 ipcMain.handle("system:getLocalIp", () => audio.getLocalIp());
 ipcMain.handle("system:openUrl", (_, url) => shell.openExternal(url));
 
+// PREFERENCES → LINKS (2026-10-27, src/lib/publicPages.ts): what this ACCOUNT's public pages need — its stations with
+// their public slugs and its handle (backend, with this install's account session; the token never leaves main), and
+// each station's jukebox slug (its own jukebox_request_url). Only this account's stations. Read-only.
+ipcMain.handle("links:account", async () => {
+  let jwt = null;
+  try { jwt = getDb().prepare("SELECT value FROM install_config_kv WHERE key='account_jwt' AND deleted_at IS NULL").get()?.value || null; } catch {}
+  if (!jwt) return { ok: false, reason: "not signed in to an Ether account on this computer" };
+  const get = async (p) => {
+    const r = await fetch(`${ETHER_BACKEND_URL}${p}`, { headers: { Authorization: `Bearer ${jwt}` }, signal: AbortSignal.timeout(10000) });
+    if (r.status === 401) throw Object.assign(new Error("your sign-in has expired — sign in to your Ether account again"), { expired: true });
+    if (!r.ok) throw new Error(`${p} → HTTP ${r.status}`);
+    return r.json();
+  };
+  try {
+    const [st, acct] = await Promise.all([get("/api/account/stations"), get("/api/user/account-slug")]);
+    const stations = (Array.isArray(st && st.stations) ? st.stations : []).map(s => ({ uuid: String(s.uuid), name: String(s.display_name || s.name || ""), slug: s.slug || null }));
+    const jukeboxSlugs = {};
+    try {
+      for (const r of getDb().prepare(`SELECT s.uuid AS uuid, k.value AS value FROM station_config_kv k JOIN stations s ON s.id = k.station_id
+                                         WHERE k.key = 'jukebox_request_url' AND k.deleted_at IS NULL AND s.deleted_at IS NULL`).all()) {
+        const v = String(r.value || "").trim().toLowerCase();
+        if (v) jukeboxSlugs[r.uuid] = v;
+      }
+    } catch { /* no jukebox settings — no jukebox links */ }
+    return { ok: true, handle: (acct && acct.slug) || null, stations, jukeboxSlugs };
+  } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+});
+
 // Reveal a file in Explorer/Finder with the file itself SELECTED.
 //
 // Existence is checked here rather than trusted from the renderer, because showItemInFolder on a
