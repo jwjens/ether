@@ -90,3 +90,7 @@ Cause: `docs/engine-missing-catalogue-4.6.66-2026-10-27.md`.
 
 From 4.6.67 on, a running app quits itself on the installer's `--stop-and-quit`; that path is tested in source, and
 gets its runtime receipt on the next install over 4.6.67.
+
+## Jeff, after install
+
+"4.6.67 is working great"
