@@ -94,7 +94,8 @@ function createLibraryHealthHost({ dbPathFn, ctxFn, userDataDir, backendUrl, bro
       w.on("message", onMsg);
       try { w.postMessage({ type: "release", id }); } catch { clearTimeout(t); w.off("message", onMsg); resolve(); }
     }),
-    reacquire: () => { try { if (worker) worker.postMessage({ type: "reacquire" }); } catch {} },
+    // The path first: after a profile folder move (sign-in) the database lives somewhere else (electron/profile-move.js).
+    reacquire: () => { sendCtx(); try { if (worker) worker.postMessage({ type: "reacquire" }); } catch {} },
     /** For tests and the health line: is the worker carrying it, and how long its answers took. */
     stats: () => ({ inWorker: !!worker && !fallback, recentCallMs: [...callTimes] }),
   };

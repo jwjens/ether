@@ -219,6 +219,7 @@ function attach(s) {
     const supervisorPid = Number(process.env.ETHER_WATCHDOG_PID) || 0;
     try { hi = await cmd("hello", { ownerPid: process.pid, supervisorPid }); } catch { /* pre-hello daemon */ }
     if (sock !== s || !connected) return;
+    _daemonPid = (hi && Number(hi.pid)) || null;
     if (hi && typeof hi.logPath === "string" && hi.logPath) {
       if (hi.logPath !== daemonLogPath) { try { _log(`[audiod-client] daemon pid ${hi.pid} logs to ${hi.logPath}`); } catch {} }
       daemonLogPath = hi.logPath;
@@ -291,6 +292,12 @@ function installedEngineFingerprint() {
 function isConnected() { return connected; }
 function getDaemonLogPath() { return daemonLogPath; }
 function stop() { stopped = true; if (reconnectTimer) clearTimeout(reconnectTimer); try { if (sock) sock.end(); } catch {} }
+// Undo stop(): reconnecting (and spawning) is allowed again. A profile move stops the client so a closed daemon cannot be
+// respawned onto the OLD profile's database mid-move (main.js _moveProfileReleasing), then resumes it on the new one.
+function resume() { stopped = false; }
+// The connected daemon's pid (from hello), so a "file in use" message can say it is Ether's audio engine.
+let _daemonPid = null;
+function daemonPid() { return _daemonPid; }
 
 // Reload a stale daemon (closes the dead-air-on-update gotcha). Tell the running daemon to shut
 // down; its socket close → drop() → scheduleReconnect() → ensure() finds the pipe dead → spawnDaemon()
@@ -300,4 +307,4 @@ function reloadDaemon() {
   try { if (connected && sock) sock.write(JSON.stringify({ cmd: "shutdown" }) + "\n"); } catch {}
 }
 
-module.exports = { installedEngineFingerprint, isEnabled, ensure, cmd, setEventHandler, setConnectedHandler, setLog, isConnected, getDaemonLogPath, stop, reloadDaemon };
+module.exports = { installedEngineFingerprint, isEnabled, ensure, cmd, setEventHandler, setConnectedHandler, setLog, isConnected, getDaemonLogPath, stop, resume, daemonPid, reloadDaemon };

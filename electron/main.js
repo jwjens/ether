@@ -1712,7 +1712,9 @@ async function _wipeLocalIdentityAndData(opts = {}) {
   };
 
   // TOTAL file wipe of THIS PROFILE (fresh DB on next launch = correct infrastructure, no residue).
-  try { db.close(); } catch {}
+  // Every connection lets go first — the audio engine (waited for, never respawned onto this folder), the workers and
+  // main's own — or Windows refuses to delete the folder (electron/profile-move.js has the 2026-10-26 receipt).
+  const heldBy = await _releaseActiveProfile("removing this account's folder");
   // SCOPED TO ONE PROFILE. This used to remove %LOCALAPPDATA%\Ether wholesale, which under
   // profile-per-account would destroy EVERY account on the machine plus the staged engine — a
   // Factory Reset of one account must never touch another's data. Only the active profile's own
@@ -1720,6 +1722,17 @@ async function _wipeLocalIdentityAndData(opts = {}) {
   const activeKey = P.activeKey();
   const profileDir = P.profileDir(activeKey);
   const dataWiped = rm(profileDir);
+  if (!dataWiped) {
+    // The folder survived: name who holds it, keep the pointer on it (the data is still there), and reopen everything so
+    // the app stays usable. Asked BEFORE reopening, or Windows would name our own fresh connection.
+    let holders = [];
+    try { holders = await require("./file-lockers-win").whoHolds(require("./profile-move").filesUnder(profileDir)); } catch {}
+    const detail = require("./profile-move").profileInUseMessage({ heldBy, holders, daemonPid: audiodClient.daemonPid(),
+      lead: "Ether could not clear this account's folder", again: "try again" });
+    console.error(`[wipe] PROFILE DIRECTORY SURVIVED — ${detail}`);
+    _reacquireActiveProfile();
+    return { ok: false, dataDir: profileDir, profile: activeKey, detail };
+  }
   P.clearPointer();
   rm(path.join(app.getPath("appData"), "com.ether.radio"));  // legacy Roaming DB
   rm(path.join(app.getPath("appData"), "openair"));          // pre-rename Roaming userData
@@ -7811,13 +7824,11 @@ ipcMain.handle("system:factoryReset", async () => {
     app.isQuitting = true;
     try { pauseKeepOnAir(); } catch {}
     try { writeHaSentinel(".ether-clean-exit"); } catch {}
-    // The daemon must let go of the database BEFORE the directory it lives in is removed.
-    try { if (AUDIO_DAEMON) await audiodClient.cmd("shutdown").catch(() => {}); } catch {}
-    try { audiodClient.stop(); } catch {}
-    const r = await _wipeLocalIdentityAndData();   // closes the DB, removes the profile, clears the pointer
+    // Every connection (the audio engine included) lets go inside the wipe, before the folder is removed.
+    const r = await _wipeLocalIdentityAndData();   // releases everything, removes the profile, clears the pointer
     if (r && r.ok === false) {
       console.error("[factoryReset] wipe FAILED — not exiting, so the operator is told rather than left guessing");
-      return { ok: false, error: "profile_in_use", detail: "Ether could not clear this account's folder because a file was still in use. Close Ether completely (including the audio engine in the system tray), reopen it, and try again." };
+      return { ok: false, error: "profile_in_use", detail: r.detail };
     }
     app.exit(0);
     return { ok: true };
@@ -7864,6 +7875,54 @@ ipcMain.handle("app:relaunch", () => {
 //
 // The daemon is stopped before the pointer moves and restarted after (item 5, design property 6):
 // only the ACTIVE profile's daemon runs, so a signed-out account never keeps broadcasting.
+// ── RELEASE / REACQUIRE THE ACTIVE PROFILE — before anything moves, deletes or switches a profile folder ──────────────
+//
+// Jeff, 2026-10-26 (new computer, 4.6.64): sign-in failed with "a file was still in use", every time. On Windows a
+// folder cannot be renamed or deleted while any file in it is open, and three parts of Ether kept one open: the audio
+// engine (the client respawned it onto the OLD path the moment "shutdown" closed the pipe), main itself (getDb() reopened
+// the database on the next renderer call, no gate was set), and the show-log / library-health workers. The 4.6.63
+// station-join fix closed all of them for a FILE swap; these two do it for a FOLDER (electron/profile-move.js).
+
+async function _waitPidGone(pid, ms) {
+  if (!pid) { await new Promise(r => setTimeout(r, 500)); return true; }
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    try { process.kill(pid, 0); } catch { return true; }   // no such process: gone
+    await new Promise(r => setTimeout(r, 100));
+  }
+  return false;
+}
+
+/** Close every connection Ether holds to the active profile. → [{ name, ok, how?, error? }]. Never throws. */
+async function _releaseActiveProfile(reason) {
+  const out = [];
+  setRestoreGate(reason);                                      // getDb() refuses to reopen until reacquire
+  // The audio engine: tell it to shut down and stop the client in the same tick, so it cannot respawn onto this profile;
+  // then wait until the process has actually exited (a closed pipe is not a closed database).
+  if (AUDIO_DAEMON) {
+    const pid = (() => { try { return audiodClient.daemonPid(); } catch { return null; } })();
+    try { audiodClient.cmd("shutdown").catch(() => {}); } catch {}
+    try { audiodClient.stop(); } catch {}
+    const gone = await _waitPidGone(pid, 8000);
+    out.push(gone ? { name: "audio engine", ok: true, how: pid ? `exited (pid ${pid})` : "stopped" }
+                  : { name: "audio engine", ok: false, error: `pid ${pid} still running after 8 s` });
+  }
+  for (const r of await dbHolders.releaseAll()) out.push(r);  // show-log + library-health workers, one-job workers
+  try { db.pragma("wal_checkpoint(TRUNCATE)"); } catch {}
+  try { db.close(); out.push({ name: "Ether's own connection", ok: true, how: "closed" }); }
+  catch (e) { out.push({ name: "Ether's own connection", ok: false, error: e.message }); }
+  return out;
+}
+
+/** Reopen everything on whatever profile is active now. */
+function _reacquireActiveProfile() {
+  try { process.env.ETHER_DB_PATH = getDbPath(); } catch {}   // the engine is spawned with this path
+  clearRestoreGate();
+  try { if (!db || !db.open) initDb(); } catch (e) { console.error("[profiles] reopen failed:", e.message); }
+  try { dbHolders.reacquireAll(); } catch {}
+  try { audiodClient.resume(); if (AUDIO_DAEMON) audiodClient.ensure(); } catch {}
+}
+
 ipcMain.handle("profile:adopt", async (_e, { licenseKey } = {}) => {
   try {
     const key = P.sanitizeKey(licenseKey);
@@ -7872,32 +7931,29 @@ ipcMain.handle("profile:adopt", async (_e, { licenseKey } = {}) => {
     const active = P.activeKey();
     if (active === key && !P.isPending()) { P.writePointer(key); return { ok: true, switched: false, profile: key }; }
 
-    // 1. Stop the daemon — it holds the outgoing profile's database open, and on Windows a
-    //    directory rename fails while any file inside it is open.
-    try { if (AUDIO_DAEMON) await audiodClient.cmd("shutdown").catch(() => {}); } catch {}
-    try { db.close(); } catch {}
-
-    // 2. Move into place.
-    if (!P.profileExists(key)) {
-      if (active === P.PENDING) {
-        try {
-          fs.renameSync(P.profileDir(P.PENDING), P.profileDir(key));
-        } catch (e) {
-          console.error("[profiles] could not adopt the pending profile:", e.message);
-          try { initDb(); } catch {}   // put the old handle back so the app stays usable
-          return { ok: false, error: "profile_in_use", detail: "Ether could not finish opening your account's folder because a file was still in use. Close Ether completely (including the audio engine in the system tray), reopen it, and sign in again." };
-        }
-      } else {
-        P.ensureProfileDir(key);   // a different account, new to this machine → empty profile
-      }
+    if (!P.profileExists(key) && active === P.PENDING) {
+      // Signed in on the scratch profile: it BECOMES this account's profile. A folder rename — everything lets go first.
+      const r = await require("./profile-move").moveProfileReleasing({
+        from: P.profileDir(P.PENDING), to: P.profileDir(key),
+        release: () => _releaseActiveProfile("signing in: moving the new computer's folder into the account's name"),
+        reacquire: (moved) => { if (moved) { P.writePointer(key); P.setActive(key); } _reacquireActiveProfile(); },
+        whoHolds: (files) => require("./file-lockers-win").whoHolds(files),
+        daemonPid: () => audiodClient.daemonPid(),
+        log: (m) => { try { logStartup(m); } catch {} },
+      });
+      if (!r.ok) return { ok: false, error: r.error, detail: r.detail };
+      console.log(`[profiles] adopted ${key} (was ${active})`);
+      return { ok: true, switched: true, profile: key };
     }
 
-    // 3. Point at it, then reopen everything against the new directory.
-    P.writePointer(key);
-    P.setActive(key);
-    try { process.env.ETHER_DB_PATH = getDbPath(); } catch {}
-    initDb();                       // open + migrate + seed the adopted profile's database
-    try { if (AUDIO_DAEMON) audiodClient.ensure(); } catch {}   // daemon comes back on the new DB
+    // An existing profile, or a new empty one for a different account: nothing is moved, but the outgoing profile's
+    // connections still close before the pointer moves, and open again on the new one.
+    await _releaseActiveProfile(`signing in: switching to ${key}`);
+    try {
+      if (!P.profileExists(key)) P.ensureProfileDir(key);
+      P.writePointer(key);
+      P.setActive(key);
+    } finally { _reacquireActiveProfile(); }
     console.log(`[profiles] adopted ${key} (was ${active})`);
     return { ok: true, switched: active !== key, profile: key };
   } catch (e) {
