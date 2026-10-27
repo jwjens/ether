@@ -19,3 +19,16 @@ Then: "deploy the magical forest page".
   what was asked, this deploy was built from `e43d8fa` plus the Magical Forest commit alone (`05bb6ae`, kept as local
   branch `deployed/magical-forest-2026-10-27`). `3a2d95f` is still not live.
 - Nothing was pushed to GitHub.
+
+## Second deploy — HalloVeen funhouse page + "Broadcasting from Santa's Cabin" (2026-10-27)
+
+**Jeff:** "Build the HalloVeen station's listen-live page in ether-listener, always Halloween, in the style of a slightly
+spooky carnival funhouse …" and "change to broadcasting from santas cabin". Then: "deploy".
+
+- Built from the live `05bb6ae` with only `d4614c9` (Santa's Cabin) and `a55dc46` (HalloVeen funhouse) cherry-picked on
+  top, giving `c66c1aa` (kept as local branch `deployed/halloveen-2026-10-27`). `3a2d95f` is still not live.
+- Production deployment `https://c6f838f3.ether-listener.pages.dev`. Live bundle `assets/index-BErIcEVD.js` on
+  `/halloween`, `/magical-forest` and `/christmas-in-july`.
+- Screenshots: `hv-phone.png`, `hv-desktop.png` and `hv-phone-reduced.png` before the deploy; `hv-live-phone.png` live,
+  with the real "Thriller" cover in the frame. All in `C:\Users\jensj\AppData\Local\Temp\shotpage\`.
+- The clear spot above the frame (`data-slot="mascot"`) is reserved for Hal & Hally.
