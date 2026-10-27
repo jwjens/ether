@@ -88,11 +88,12 @@ describe("every place that opens a file uses this, and none falls back", () => {
   const read = (...p) => fs.readFileSync(path.join(__dirname, "..", ...p), "utf8");
   const main = read("electron", "main.js");
   const slice = (from, to) => main.slice(main.indexOf(from), main.indexOf(to, main.indexOf(from)));
-  it("main's resolver: the stored file, else the row's own cloud copy downloaded into the catalogue — no index, no case-blind match", () => {
+  // (2026-10-27, electron/catalogue-moves.js) Nothing downloads on its own: a file not here is listed in the pop-up, and only
+  // its Yes fetches it.
+  it("main's resolver: the stored file and nothing else — no download, no index, no case-blind match", () => {
     const r = slice("async function resolveLocalAudioPath", "\n}\n");
     expect(r).toMatch(/Cat\.playableFile\(filePath\)/);
-    expect(r).toMatch(/Cat\.downloadTarget\(getMusicDir\(\), filePath, fileKey\)/);
-    expect(r).toMatch(/_pointRowsAtDownload\(fileKey, filePath, fetched\.filePath\)/);
+    expect(r).not.toMatch(/fetchR2Track|downloadTarget|_pointRowsAtDownload/);
     expect(r).not.toMatch(/findInIndex|buildIndex|caseShadowed/);
   });
   it("audio:load and the jukebox refuse an unresolved row instead of loading its stored path anyway", () => {
@@ -108,11 +109,10 @@ describe("every place that opens a file uses this, and none falls back", () => {
     expect(f).toMatch(/await resolveLocalAudioPath\(row\.file_path\)/);
     expect(f).toMatch(/filePath: _annFile/);
   });
-  it("a download keeps the row's name (no rewrite to underscores) and a download sets only rows whose own file is not there", () => {
+  it("a download keeps the row's name (no rewrite to underscores), and no download repoints rows on its own", () => {
     const f = slice("async function fetchR2Track", "\n}\n");
     expect(f).not.toMatch(/replace\(\/\[\^a-zA-Z0-9\._-\]\/g/);
-    const p = slice("function _pointRowsAtDownload", "\n}\n");
-    expect(p).toMatch(/Cat\.playableFile\(r\.file_path\)\) continue/);
+    expect(main).not.toMatch(/_pointRowsAtDownload/);
   });
   it("Change File Location is untouched: any file the user picks is stored as picked", () => {
     const h = slice("ipcMain.handle('audio-library:repoint'", "\n});");

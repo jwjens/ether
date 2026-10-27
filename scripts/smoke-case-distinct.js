@@ -151,8 +151,11 @@ const caseInsensitive = (() => {
     else fail("  main.js fetchR2Track is case-blind");
     if (/require\('\.\.\/electron\/catalogue'\)\.playableFile\(fp\)/.test(engine)) pass("  daemon engine._resolveLocal: the stored file, case-exact (catalogue.js playableFile)");
     else fail("  daemon engine._resolveLocal fast path is case-blind");
-    if (/existsExactCase\(r\.gfp\) \|\| existsExactCase\(r\.sfp\)/.test(health) && /libraryPathFor\(path\.dirname\(t\.path\)/.test(health)) pass("  library-health prefetch: case-exact");
-    else fail("  library-health prefetch is case-blind");
+    // (2026-10-27) No prefetch any more — nothing downloads on its own. The move into the catalogue (only on the pop-up's
+    // Yes, electron/catalogue-moves.js) asks the same questions case-exact: exact-name listings, libraryPathFor targets.
+    const moves = fs.readFileSync(path.join(__dirname, "..", "electron", "catalogue-moves.js"), "utf8");
+    if (!/prefetchTick/.test(health) && /names\.has\(path\.basename\(String\(fp\)\)\)/.test(moves) && /libraryPathFor\(root, name\)/.test(moves)) pass("  the move into the catalogue: case-exact (and no prefetch)");
+    else fail("  the move into the catalogue is case-blind, or a prefetch is back");
   }
 
   console.log("\n== 6. both spellings absent and fetched in the same batch: one plain, one alt, never the same file ==");

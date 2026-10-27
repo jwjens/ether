@@ -8,6 +8,7 @@ import GenerateProgressBar from "./components/GenerateProgressBar";
 import BootStatus from "./components/BootStatus";
 import { startLicenseGuard } from "./lib/licenseGuard";
 import CloudInstallPrompt from "./components/CloudInstallPrompt";
+import CatalogueMovePrompt from "./components/CatalogueMovePrompt";
 import { ETHER_BACKEND_URL } from "./lib/etherBackend";
 import { pushInstallUsers } from "./lib/syncUsers";
 import { recordParkSound } from "./lib/parkSound";
@@ -1309,8 +1310,7 @@ export default function App() {
   useEffect(() => {
     const STREAM_BASE = `${ETHER_BACKEND_URL}/api/cmd-stream`;
 
-    // Resolve a library song (by local id, or file_key) to a playable filePath — fetching
-    // from the R2 cloud cache if it's not materialized locally. Used by the dashboard's
+    // Resolve a library song (by local id, or file_key) to its stored filePath. Used by the dashboard's
     // remote A/B/C (deck:load) + Q (queue:enqueue) actions.
     // The song by UUID, then by file_key (a content identity), and by integer id LAST: the dashboard's song_id is the
     // numbering of whichever machine pushed the mirror, which may not be this one (docs/sync-uuid-references-2026-10-19.md).
@@ -1322,11 +1322,8 @@ export default function App() {
         if (!row && fileKey) row = await queryOne<any>(SEL + "s.file_key = ?", [fileKey]);
         if (!row && songId != null) row = await queryOne<any>(SEL + "s.id = ?", [songId]);
         if (!row) return null;
-        let filePath: string = row.file_path || "";
-        const key = row.file_key || fileKey;
-        if (!filePath && key) {
-          try { const res = await (window as any).ether.invoke("r2:fetch-track", key); if (res?.ok) filePath = res.filePath; } catch { /* best-effort */ }
-        }
+        // The song's stored file only — nothing is downloaded on its own (electron/catalogue-moves.js: only the pop-up's Yes).
+        const filePath: string = row.file_path || "";
         return filePath ? { filePath, title: row.title, artist: row.artist_name || "", durationMs: row.duration_ms ?? 0 } : null;
       } catch { return null; }
     };
@@ -3376,6 +3373,8 @@ export default function App() {
       {/* What startup did — dismissable, informational. A pause nobody can see reads as a freeze. */}
       <BootStatus />
       <CloudInstallPrompt />
+      {/* Files not in the catalogue → "move them now?" Yes / No. Nothing moves without the Yes (electron/catalogue-moves.js). */}
+      <CatalogueMovePrompt />
       {showAbout && <AboutPanel onClose={() => setShowAbout(false)} />}
       {showTour && <OnboardingTour onDone={dismissTour} />}
       {/* ── Footer ── */}

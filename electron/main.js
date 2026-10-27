@@ -1247,8 +1247,6 @@ if (AUDIO_DAEMON_DESIRED) {
       // profile alongside the database it describes — not in machine-level Roaming.
       userDataDir: P.profileDir(P.activeKey()),
       appendEvent: _ledgerAppend,
-      // A prefetch download into the catalogue sets the rows' location (electron/catalogue.js) — local-only, on main.
-      onMaterialized: (d) => { try { _pointRowsAtDownload(d.fileKey, d.was, d.filePath); } catch {} },
     };
     // main keeps an instance for the module-level noteEvent bridge (cheap ledger appends) — it never sweeps.
     require("./library-health").createLibraryHealth(_lhOpts);
@@ -1265,7 +1263,6 @@ if (AUDIO_DAEMON_DESIRED) {
       log: (m) => logStartup(m),
       healthEvent: (kind, data) => { try { _healthEvent(kind, data); } catch {} },
       inMainFallback: () => require("./library-health").createLibraryHealth(_lhOpts),
-      onMaterialized: _lhOpts.onMaterialized,
     });
     _libHealth.start();
     // Its read-only connection stays open (sweeps, the 60 s library mirror): a database swap closes it first.
@@ -5211,54 +5208,35 @@ ipcMain.handle('sync:getStats', () => {
 // Shared audio-file resolver — playback (audio:load), the jukebox, announcements and the cue editor
 // (audio:resolve-local-path) resolve identically and can never drift. Returns { ok:true, filePath } (a file in the
 // catalogue) or { ok:false, error }. Never throws.
-async function resolveLocalAudioPath(filePath, fileKeyIn) {
-  // WHAT THE ROW STORES, AND NOTHING ELSE ETHER PICKS (2026-10-26, electron/catalogue.js). The stored location — the
-  // catalogue, or a file the user chose — is the file. Not there: no same-named file elsewhere, no case-blind, tolerant or
-  // title match. If the cloud has the row's own copy (its file_key) it is DOWNLOADED INTO THE CATALOGUE and the row is
-  // pointed there on this computer (said in the log); otherwise it is missing, with the reason.
+async function resolveLocalAudioPath(filePath) {
+  // WHAT THE ROW STORES, AND NOTHING ELSE (2026-10-26, electron/catalogue.js). The stored file is the file. Not there: no
+  // same-named file elsewhere, no case-blind, tolerant or title match — and (2026-10-27, Jeff: "Ether never moves, downloads
+  // or repoints anything on its own without that Yes") NO DOWNLOAD either. A file that is not here is listed in the
+  // "These files need to be moved to the catalogue" pop-up (electron/catalogue-moves.js); only its Yes fetches it.
   const Cat = require('./catalogue');
   const here = Cat.playableFile(filePath);
   if (here) return { ok: true, filePath: here, resolvedBy: 'stored' };
-  let fileKey = fileKeyIn || null;
-  if (!fileKey && filePath) {
-    try { fileKey = db.prepare("SELECT file_key FROM songs WHERE file_path = ? LIMIT 1").get(filePath)?.file_key || null; }
-    catch (e) { console.warn("[resolveLocalAudioPath] file_key lookup failed:", e.message); }
-  }
-  if (!fileKey) return { ok: false, error: filePath ? `the file is not at its location (${filePath}) and has no cloud copy` : 'no file' };
-  const t = Cat.downloadTarget(getMusicDir(), filePath, fileKey);
-  if (!t) return { ok: false, error: `no file name for ${fileKey}` };
-  const fetched = await fetchR2Track(fileKey, t.name);
-  if (!fetched.ok) return { ok: false, error: `the file is not at its location (${filePath || '—'}), and the download into the catalogue failed: ${fetched.error}` };
-  _pointRowsAtDownload(fileKey, filePath, fetched.filePath);
-  return { ok: true, filePath: fetched.filePath, resolvedBy: 'downloaded' };
+  return { ok: false, error: filePath ? `the file is not on this computer (${filePath}) — it is listed to be moved to the catalogue` : 'no file' };
 }
 
-// A DOWNLOAD SETS THE LOCATION (2026-10-26, electron/catalogue.js). After the row's own cloud copy lands in the catalogue,
-// the rows that named a file which is not there are pointed at the download — LOCAL-ONLY (no mutation: a file location is
-// this computer's fact, never another's). A row whose stored location exists (the user's choice, or a file already here) is
-// never touched. Planned log rows only; an aired row is the record of what aired.
-function _pointRowsAtDownload(fileKey, oldPath, newPath) {
-  if (!fileKey || !newPath) return 0;
-  let n = 0;
+// ── NOT IN THE CATALOGUE → THE POP-UP (2026-10-27, electron/catalogue-moves.js) ──────────────────────────────────────
+// Jeff: "When Ether finds songs that are not in the catalogue … it shows a pop-up listing those files … Yes: Ether moves
+// each file into the catalogue, or downloads it from the cloud if it isn't on this computer, and points the song there.
+// No: nothing is moved or changed." The finding is read-only; the move runs ONLY from the pop-up's Yes.
+ipcMain.handle('catalogue:not-in-catalogue', () => {
+  try { return { ok: true, ...require('./catalogue-moves').findNotInCatalogue(db, getMusicDir()) }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle('catalogue:move-in', async (_e, files) => {
   try {
-    const Cat = require('./catalogue');
-    const rows = db.prepare("SELECT id, file_path FROM songs WHERE file_key = ? AND deleted_at IS NULL").all(fileKey);
-    const setSong = db.prepare("UPDATE songs SET file_path = ? WHERE id = ?");
-    let hasState = false;
-    try { hasState = db.prepare("PRAGMA table_info(generated_schedule)").all().some(c => c.name === "state"); } catch {}
-    const plan = hasState ? ` AND ${require('./log-edit-core').NOT_AIRED_SQL}` : "";
-    const setGs = db.prepare(`UPDATE generated_schedule SET file_path = ? WHERE song_id = ? AND (file_path IS NULL OR file_path = ?)${plan}`);
-    db.transaction(() => {
-      for (const r of rows) {
-        if (r.file_path && r.file_path !== newPath && Cat.playableFile(r.file_path)) continue;   // its own location is there
-        if (r.file_path !== newPath) { setSong.run(newPath, r.id); n++; }
-        setGs.run(newPath, r.id, r.file_path || oldPath || '');
-      }
-    })();
-    if (n) logStartup(`[catalogue] ${storedBasename(newPath)}: not at ${oldPath || 'its stored location'} — downloaded into the catalogue; ${n} row(s) on this computer now point at ${newPath}`);
-  } catch (e) { logStartup(`[catalogue] could not point rows at the download ${newPath}: ${e.message}`); }
-  return n;
-}
+    const res = await require('./catalogue-moves').moveIntoCatalogue(db, getMusicDir(), Array.isArray(files) ? files : [], {
+      download: (fileKey, name) => fetchR2Track(fileKey, name),
+      log: (m) => logStartup(m),
+    });
+    logStartup(`[catalogue] Yes to the move: ${res.moved} moved, ${res.downloaded} downloaded, ${res.alreadyThere} already in the catalogue, ${res.failed} not moved`);
+    return { ok: true, ...res };
+  } catch (e) { logStartup(`[catalogue] the move failed: ${e.message}`); return { ok: false, error: e.message }; }
+});
 
 // ── OPERATOR CONSOLE FAN-OUT — the honesty layer must reach the operator from ANY window ────────
 //
@@ -5306,8 +5284,8 @@ ipcMain.on("ui:broadcast", (_evt, msg) => {
 
 ipcMain.handle("audio:load", async (_, deck, filePath, title, artist, gainDb, stationId) => {
   // Item 10 Phase 2 Step 1: the resolved load goes to the daemon when enabled (it owns the
-  // engine); otherwise the in-process addon. File resolution (existsSync + R2 fetch) — which
-  // needs main's DB + R2 — stays here; only the final load is forwarded.
+  // engine); otherwise the in-process addon. File resolution (the row's stored file — nothing is fetched on its own,
+  // electron/catalogue-moves.js) stays here; only the final load is forwarded.
   const doLoad = (fp) => AUDIO_DAEMON
     ? audiodClient.cmd("load", { deck, filePath: fp, title, artist, gainDb: gainDb ?? 0, stationId })
     : _loadNormalizedInProcess(deck, fp, title, artist, stationId);

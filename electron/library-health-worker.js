@@ -3,7 +3,7 @@
 // docs/health-monitor-jump-and-freeze-2026-10-12.md. RECEIPT: the sweep (computeAll, every 2 min) ran synchronously on
 // the main process and measured 4.0–9.2 s per run on OVEVENTS (its own sweepMs in health-events.jsonl), the same
 // minutes /health showed eventLoopLagPeakMs 8,005–9,313 ms. A main process blocked that long is "Not Responding" in the
-// title bar and swallows the first click. The sweep, the R2 prefetch and the on-demand queries (eligibility, queue
+// title bar and swallows the first click. The sweep and the on-demand queries (eligibility, queue
 // lint, rotation goals) now run HERE, on their own thread with their own read-only database connection. Main keeps a
 // thin proxy (electron/library-health-host.js) and is never blocked by them.
 "use strict";
@@ -87,7 +87,7 @@ parentPort.on("message", async (m) => {
     } catch (e) { parentPort.postMessage({ type: "result", id: m.id, ok: false, error: String(e && e.message || e), ms: Date.now() - t0 }); }
     return;
   }
-  // The same cadence as before (electron/library-health.js start(): sweep every 2 min, prefetch every 45 s), on this
+  // The same cadence as before (electron/library-health.js start(): sweep every 2 min), on this
   // thread. Each sweep's snapshot reaches main through `broadcast("library-health", snap)` above.
   if (m.type === "start") { try { lh.start(); } catch (e) { parentPort.postMessage({ type: "log", msg: `[library-health worker] start ✗ ${e && e.message}` }); } }
 });

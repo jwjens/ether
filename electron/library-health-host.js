@@ -7,7 +7,7 @@
 "use strict";
 const path = require("path");
 
-function createLibraryHealthHost({ dbPathFn, ctxFn, userDataDir, backendUrl, broadcast, log, healthEvent, inMainFallback, onMaterialized }) {
+function createLibraryHealthHost({ dbPathFn, ctxFn, userDataDir, backendUrl, broadcast, log, healthEvent, inMainFallback }) {
   const say = (m) => { try { if (log) log(m); } catch {} };
   let worker = null, fallback = null, lastSnapshot = { stations: [], t: null };
   let seq = 0;
@@ -37,8 +37,6 @@ function createLibraryHealthHost({ dbPathFn, ctxFn, userDataDir, backendUrl, bro
       if (!m || typeof m !== "object") return;
       if (m.type === "ready") { sendCtx(); worker.postMessage({ type: "start" }); say("[library-health] sweep running in its own thread (main is never blocked by it)"); return; }
       if (m.type === "broadcast") {
-        // A prefetch landed a file in the catalogue: main points the rows at it (the worker's connection is read-only).
-        if (m.channel === "library-health:materialized") { try { if (onMaterialized) onMaterialized(m.data); } catch {} return; }
         if (m.channel === "library-health") lastSnapshot = m.data;
         try { broadcast(m.channel, m.data); } catch {}
         return;

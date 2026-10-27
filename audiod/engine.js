@@ -1442,8 +1442,9 @@ class DaemonEngine {
     this._lastRefillAt = now;
     const fill = loggen.fillQueue(this.db, this.stationId, 20);
     // Slice B rotation honesty: only LOCAL-playable items enter the queue (unchanged behaviour). But be
-    // HONEST about WHY a row is dropped: an R2-only row (fileKey present) is prefetch-lag — it will
-    // materialize (the prefetch-lag sense tracks it), so defer it quietly this pass. A row with NO local
+    // HONEST about WHY a row is dropped: an R2-only row (fileKey present) is not on this computer yet — it is listed in the
+    // "move to the catalogue" pop-up (electron/catalogue-moves.js) and plays once its Yes downloads it, so it is deferred
+    // quietly this pass (nothing downloads it on its own, 2026-10-27). A row with NO local
     // file AND NO fileKey is genuinely DEAD — drop it LOUDLY (a load-skip health event) so it never
     // phantom-fills the pool and separation stays honest. Queue content is identical to before.
     const kept = [];
@@ -1451,7 +1452,7 @@ class DaemonEngine {
       const rp = this._resolveLocal(it.filePath);
       if (rp) kept.push(rp === it.filePath ? it : { ...it, filePath: rp });
       else if (!it.fileKey) this._noteLoadSkip(it.title, "unresolvable — no local file, no file_key");
-      // else: R2-only → prefetch-lag; silently deferred (prefetch materializes it; next fill picks it up).
+      // else: R2-only → deferred until the pop-up's Yes downloads it; the next fill after that picks it up.
     }
     const items = this._ensureIds(kept);
     if (items.length) {

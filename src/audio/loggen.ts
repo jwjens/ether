@@ -258,15 +258,10 @@ export async function fillQueueFromSchedule(targetCount = 20, stationIdArg?: num
       scheduled = await readGeneratedSchedule(targetCount, stationId);
     }
     if (scheduled.length > 0) {
-      // Resolve each track: prefer local file_path, fall back to R2 cache download
+      // Each track's stored file. Nothing is downloaded here (2026-10-27, electron/catalogue-moves.js: Ether downloads only
+      // after the user's Yes in the "move to the catalogue" pop-up); a row with no file is left out.
       const resolved = await Promise.all(scheduled.map(async s => {
-        let filePath = s.file_path || '';
-        if (!filePath && s.file_key) {
-          try {
-            const res = await (window as any).ether.invoke('r2:fetch-track', s.file_key);
-            if (res?.ok) filePath = res.filePath;
-          } catch {}
-        }
+        const filePath = s.file_path || '';
         return filePath ? {
           filePath,
           title:      s.title,

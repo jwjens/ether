@@ -1,7 +1,7 @@
 'use strict';
 // library-health.js — Log-reader/library "senses" for Iris + the Health Monitor (Slice A: the
-// deterministic data layer + the R2 PREFETCH). Main-process, read-only against the DB except it
-// DOWNLOADS absent audio files to their file_path (files only, never the DB). All senses are computed
+// deterministic data layer). Read-only against the DB and the disk — it downloads nothing (2026-10-27: no prefetch;
+// see NO PREFETCH below). All senses are computed
 // deterministically from the DB + disk and appended to health-events.jsonl; the latest snapshot is
 // served over IPC. Display (Health Monitor LIBRARY section, Library PLAYS column) is Slice C.
 //
@@ -14,12 +14,10 @@
 //      rules), status ELIGIBLE|RESTING|NEVER_PLAYED|UNRESOLVABLE — summarized per station; the
 //      per-song list backs the Library PLAYS column + queue lint (Slice C).
 //
-// NON-BLOCKING BY CONSTRUCTION: prefetch runs on a timer in the background and only ever writes files
-// ahead of playout; it never sits on the deck-load path (a deck load must never stall on a fetch).
 
 const fs = require('fs');
 const path = require('path');
-const { storedBasename, AUDIO_TABLES, libraryPathFor, existsExactCase } = require('./audio-library-index');
+const { AUDIO_TABLES } = require('./audio-library-index');
 
 // Module-level bridge: lets code OUTSIDE this factory (the songs delete path) emit a health event
 // without threading the instance through every caller. Wired when the factory is constructed; a no-op
@@ -30,14 +28,11 @@ function noteEvent(kind, data) {
 }
 
 function createLibraryHealth(opts) {
-  // musicDirFn: () => this machine's library root. REQUIRED by the prefetch path — it is the only
-  // trustworthy source of a target directory, because every stored file_path column is a synced
-  // `blob-ref` and may hold another machine's absolute path. See prefetchTick below.
+  // musicDirFn: () => this machine's catalogue folder — what "in the catalogue" is measured against.
   // restoreInFlightFn: () => true while a restore is pulling rows or files. Optional — absent means
   // false, so every existing caller keeps its current behaviour.
-  const { getDb, backendUrl, licenseKeyFn, broadcast, userDataDir, musicDirFn, restoreInFlightFn, appendEvent, onMaterialized } = opts;
+  const { getDb, broadcast, userDataDir, musicDirFn, restoreInFlightFn, appendEvent } = opts;
   const jsonlPath = path.join(userDataDir, 'health-events.jsonl');
-  const inFlight = new Set();          // file_key currently downloading (dedup)
   const skipCounts = new Map();        // stationId -> { hour: <epoch hour>, n }
   const lastGen = new Map();           // stationId -> last Generate run's relaxed/empty summary (item 2)
   let lastSnapshot = { stations: [], t: null };
@@ -806,6 +801,10 @@ function createLibraryHealth(opts) {
       } catch (e) { /* one station never breaks the rest */ }
     }
     if (_lintSeen.size > 4000) _lintSeen.clear();   // bounded — old rows have long aired
+    // FILES NOT IN THE CATALOGUE (2026-10-27): what the "These files need to be moved to the catalogue" pop-up lists.
+    // Read-only; nothing is moved here.
+    try { snap.notInCatalogue = require('./catalogue-moves').findNotInCatalogue(db, (typeof musicDirFn === 'function') ? musicDirFn() : null); }
+    catch (e) { snap.notInCatalogue = { catalogue: null, files: [], error: e.message }; }
     snap.sweepMs = Date.now() - _sweepStart;        // (2026-07-22) how long this sweep held the main loop
     lastSnapshot = snap;
     appendJsonl({ kind: 'library-health', stations: snap.stations, sweepMs: snap.sweepMs });
@@ -813,120 +812,10 @@ function createLibraryHealth(opts) {
     return snap;
   }
 
-  // ── R2 PREFETCH — materialize absent upcoming rows into THIS machine's library (background) ──
-  //
-  // THE PATH RULE (2026-08-17). A stored file_path is NOT a destination. `songs.file_path` is typed
-  // 'blob-ref' in the sync registry, and blob-ref in v0 ships the literal absolute path
-  // (electron/sync/mutation-writer.js:489) — so a peer's `C:\Users\<them>\Music\...` lands verbatim
-  // in this database. Prefetch used to hand that straight to fs.mkdirSync, which produced 2,443
-  // logged failures between 2026-08-15 and 2026-08-16:
-  //   EPERM: operation not permitted, mkdir 'C:\Users\projector\Music\ether music library'
-  // Every one of those is a track that never materialized and was silently missing when it was due
-  // to air. docs/sync-systems-map.md §B and §5.
-  //
-  // Resolution order now, and none of it trusts a synced column:
-  //   materialize into musicDirFn() — THE CATALOGUE (electron/catalogue.js) — using only the file NAME of the candidate
-  //   path, then hand the app the new location (onMaterialized) so the rows point at it. A filename is machine-neutral;
-  //   the directory it came from is not. (A content-hash copy elsewhere is not the file playback opens.)
-  // Anything that cannot be resolved to a path inside this machine's library root is SKIPPED with a
-  // reason on the event ledger. Prefetch never creates a directory it did not derive itself.
-
-  // Re-root a candidate onto THIS machine's library. Returns { ok, path } or { ok:false, reason }.
-  function localTargetFor(candidate) {
-    const root = (typeof musicDirFn === 'function') ? musicDirFn() : null;
-    if (!root) return { ok: false, reason: 'no library root on this machine' };
-    const base = storedBasename(candidate || '').trim();
-    if (!base || base === '.' || base === path.sep) return { ok: false, reason: 'no filename to materialize' };
-    const rootRes   = path.resolve(root);
-    const targetRes = path.resolve(rootRes, base);
-    // Containment assertion — a basename cannot normally escape, but this is the invariant that
-    // matters and it costs nothing to assert it rather than assume it.
-    if (targetRes !== rootRes && !targetRes.startsWith(rootRes + path.sep)) {
-      return { ok: false, reason: 'target escapes this machine library root' };
-    }
-    return { ok: true, path: targetRes };
-  }
-
-  async function fetchToPath(fileKey, targetPath) {
-    const licenseKey = licenseKeyFn();
-    if (!licenseKey) return { ok: false, error: 'no license' };
-    try {
-      const u = await fetch(`${backendUrl}/audio/download-url`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ license_key: licenseKey, file_key: fileKey }),
-      });
-      const d = await u.json().catch(() => ({}));
-      if (!u.ok || !d.signed_url) throw new Error(d.error || d.detail || `sign HTTP ${u.status}`);
-      const g = await fetch(d.signed_url);
-      if (!g.ok) throw new Error(`GET HTTP ${g.status}`);
-      const buf = Buffer.from(await g.arrayBuffer());
-      // LAST GATE BEFORE mkdir. The caller derives targetPath from musicDirFn(), so this should never
-      // fire — which is exactly why it is here: this is the one line that used to create (or fail to
-      // create) another machine's home directory, and it must never be reachable from a stored path
-      // again, whatever a future caller does.
-      const guard = localTargetFor(targetPath);
-      if (!guard.ok || guard.path !== path.resolve(targetPath)) {
-        return { ok: false, error: `refused: target is outside this machine's library (${guard.reason || 'mismatch'})` };
-      }
-      fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-      const tmp = targetPath + '.tmp';
-      fs.writeFileSync(tmp, buf); fs.renameSync(tmp, targetPath);
-      return { ok: true, mb: buf.length / 1e6 };
-    } catch (e) { try { fs.unlinkSync(targetPath + '.tmp'); } catch {} return { ok: false, error: e.message }; }
-  }
-
-  async function prefetchTick() {
-    const db = getDb();
-    const CONC = 3;
-    let targets = [];
-    for (const sid of stationIds(db)) {
-      try {
-        // g.file_path stays (generated_schedule is syncExcluded — a local playout artifact, so its
-        // path is this machine's). s.file_path is kept ONLY as a source of a filename, never as a
-        // destination, and is re-rooted below. s.id carries the song through so the hash route can
-        // run. See THE PATH RULE above.
-        const rows = db.prepare(
-          `SELECT DISTINCT g.file_path gfp, s.file_path sfp, s.file_key fk, s.id sid, g.title
-             FROM generated_schedule g LEFT JOIN songs s ON s.id=g.song_id
-            WHERE g.station_id=? AND g.deleted_at IS NULL AND (g.state IS NULL OR g.state IN ('pending','playing'))
-              AND g.scheduled_at BETWEEN ? AND ? AND (g.content_class IS NULL OR g.content_class NOT IN ('JIN','SWP'))
-            ORDER BY g.scheduled_at LIMIT 40`).all(sid, nowSec() - 300, nowSec() + 7200);
-
-        for (const r of rows) {
-          if (!r.fk || inFlight.has(r.fk)) continue;
-
-          // (2026-10-26, electron/catalogue.js) The row's stored file is what plays: when it is there (the catalogue, or a
-          // location the user chose) there is nothing to fetch. A content-hash copy elsewhere is not what playback opens.
-          if (existsExactCase(r.gfp) || existsExactCase(r.sfp)) continue;
-          // Into this machine's catalogue, using the filename only; the app then points the rows at it.
-          const t = localTargetFor(r.gfp || r.sfp || r.fk);
-          if (!t.ok) {
-            appendJsonl({ kind: 'prefetch', ok: false, title: r.title, skipped: true, reason: t.reason });
-            continue;
-          }
-          // Already materialized under our own name, or its case-alt name; otherwise write to whichever applies.
-          const lp = libraryPathFor(path.dirname(t.path), path.basename(t.path));
-          if (lp.present) continue;
-          targets.push({ fp: lp.path, fk: r.fk, title: r.title, was: r.gfp || r.sfp || null });
-        }
-      } catch { /* skip station */ }
-    }
-    // De-dup by file_key, cap the batch so a tick is bounded.
-    const seen = new Set(); targets = targets.filter(t => (seen.has(t.fk) ? false : seen.add(t.fk))).slice(0, 24);
-    if (!targets.length) return;
-    let i = 0;
-    async function worker() {
-      while (i < targets.length) {
-        const t = targets[i++]; inFlight.add(t.fk);
-        const r = await fetchToPath(t.fk, t.fp);
-        inFlight.delete(t.fk);
-        if (r.ok) { try { if (typeof onMaterialized === 'function') onMaterialized({ fileKey: t.fk, filePath: t.fp, was: t.was || null }); else broadcast('library-health:materialized', { fileKey: t.fk, filePath: t.fp, was: t.was || null }); } catch { /* the next play downloads-and-points it */ } }
-        appendJsonl({ kind: 'prefetch', ok: r.ok, title: t.title, error: r.error || null });
-      }
-    }
-    await Promise.all(Array.from({ length: CONC }, worker));
-    computeAll();   // refresh senses after materializing
-  }
+  // ── NO PREFETCH (2026-10-27, electron/catalogue-moves.js) ──────────────────────────────────────────────────────────
+  // This used to download every upcoming row whose file was not here into the catalogue every 45 s, and point the rows
+  // at it. Jeff: "Ether never moves, downloads or repoints anything on its own without that Yes." A file that is not here
+  // is now listed in the sweep's `notInCatalogue` and reaches the pop-up; only its Yes downloads it.
 
   // ── public ──
   return {
@@ -985,12 +874,10 @@ function createLibraryHealth(opts) {
     computeAll,
     start() {
       // Senses + lint every 2 min (cheap indexed reads) so a separation violation is EVENTED within a
-      // couple minutes of Generate placing it; prefetch every 45s (background, bounded).
+      // couple minutes of Generate placing it. (No prefetch — see NO PREFETCH above.)
       try { computeAll(); } catch {}
       const t1 = setInterval(() => { try { computeAll(); } catch {} }, 120 * 1000);
-      const t2 = setInterval(() => { prefetchTick().catch(() => {}); }, 45 * 1000);
-      setTimeout(() => { prefetchTick().catch(() => {}); }, 8000);   // one early pass after boot
-      return () => { clearInterval(t1); clearInterval(t2); };
+      return () => { clearInterval(t1); };
     },
   };
 }
