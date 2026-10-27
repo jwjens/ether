@@ -38,6 +38,10 @@ describe("the build fails when a file the engine requires is not unpacked", () =
     put(path.join(unpacked, "electron", "audio-library-index.js"), "idx");
     expect(missingEngineFiles(unpacked)).toEqual([]);
   });
+  it("a package with no engine at all is named as that, not an ENOENT", () => {
+    fs.rmSync(path.join(unpacked, "audiod"), { recursive: true, force: true });
+    expect(missingEngineFiles(unpacked)).toEqual(["audiod/ether-audiod.js (the engine itself)"]);
+  });
   it("afterPack throws on it — the build stops before anything is signed or published", () => {
     const src = fs.readFileSync(path.join(__dirname, "..", "build-resources", "engine-pack.js"), "utf8");
     expect(src).toMatch(/const missing = missingEngineFiles\(unpacked\);\s*\n\s*if \(missing\.length\) \{\s*\n\s*throw new Error\(`\[engine-pack\] ENGINE FILES NOT PACKAGED/);

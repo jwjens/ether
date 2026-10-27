@@ -23,6 +23,11 @@ function packedWin(helper) {
   const native = path.join(out, "resources", "app.asar.unpacked", "native");
   fs.mkdirSync(native, { recursive: true });
   fs.writeFileSync(path.join(native, "ether-audio.node"), PE);
+  // A minimal engine: afterPack also checks every app file the engine loads is unpacked (engine-pack.js missingEngineFiles).
+  const un = path.join(out, "resources", "app.asar.unpacked");
+  for (const [rel, body] of [["audiod/ether-audiod.js", "// engine"], ["electron/sync/mutation-writer.js", "//"], ["electron/sync/synced-tables.js", "//"]]) {
+    fs.mkdirSync(path.dirname(path.join(un, rel)), { recursive: true }); fs.writeFileSync(path.join(un, rel), body);
+  }
   if (helper) fs.writeFileSync(path.join(out, "resources", "ha-setup.exe"), helper);
   return { electronPlatformName: "win32", arch: Arch.x64, appOutDir: out, packager: { appInfo: { productFilename: "Ether" } } };
 }

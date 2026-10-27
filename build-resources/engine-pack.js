@@ -78,6 +78,7 @@ exports.beforePack = async function beforePack(context) {
 // audiod/ — a required file that is not there stays listed, so it is reported here by name.
 function missingEngineFiles(unpacked) {
   const FP = require(path.join(ROOT, "audiod", "engine-fingerprint.js"));
+  if (!fs.existsSync(path.join(unpacked, "audiod", "ether-audiod.js"))) return ["audiod/ether-audiod.js (the engine itself)"];
   return FP.daemonAppFiles(path.join(unpacked, "audiod")).filter(rel => !fs.existsSync(path.join(unpacked, ...rel.split("/"))));
 }
 exports.missingEngineFiles = missingEngineFiles;
