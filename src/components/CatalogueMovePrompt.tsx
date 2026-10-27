@@ -5,6 +5,10 @@
 //       (electron/catalogue-moves.js moveIntoCatalogue). No → nothing is moved or changed.
 // Nothing reaches catalogue:move-in except the Yes button.
 //
+// "Download missing files into the catalogue automatically" (Preferences): while it is on, a file that is not on this
+// computer and has a cloud copy downloads by itself (main, _autoDownloadMissing) and is NOT asked about here — the same
+// rule as electron/catalogue-moves.js downloadsByItself. Off, or never set: everything is asked about.
+//
 // Sources of the list: the library-health sweep (snapshot.notInCatalogue, every 2 min and at start) and Re-sync, which
 // sends the files it could not find (window event "ether:catalogue-prompt"). A file the user has already answered is not
 // asked about again this session; a new one brings the pop-up back with the whole list.
@@ -23,6 +27,10 @@ export function needsAsking(files: NotInCatalogueFile[] | null | undefined, seen
   return !!files && files.some(f => !seen.has(f.key));
 }
 export function _resetAnsweredForTest() { answered.clear(); }
+/** With the switch on, what downloads by itself is left out (electron/catalogue-moves.js downloadsByItself). */
+export function toAsk(files: NotInCatalogueFile[] | null | undefined, autoDownloadOn: boolean): NotInCatalogueFile[] {
+  return (files || []).filter(f => !(autoDownloadOn && f.state === "missing" && !!f.fileKey));
+}
 
 const whereText = (f: NotInCatalogueFile) =>
   f.state === "elsewhere" ? `at ${f.file}`
@@ -36,11 +44,15 @@ export default function CatalogueMovePrompt({ api }: { api?: Api }) {
   const [results, setResults] = useState<MoveResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const offer = useCallback((list: NotInCatalogueFile[] | null | undefined, force = false) => {
-    if (!list || !list.length) return;
+  const offer = useCallback(async (all: NotInCatalogueFile[] | null | undefined, force = false) => {
+    if (!all || !all.length || !ether) return;
+    let on = false;
+    try { on = !!(await ether.invoke("catalogue:auto-download:get"))?.on; } catch { /* unknown → ask about everything */ }
+    const list = toAsk(all, on);
+    if (!list.length) return;
     if (!force && !needsAsking(list)) return;
     setResults(null); setError(null); setFiles(list);
-  }, []);
+  }, [ether]);
 
   useEffect(() => {
     if (!ether) return;

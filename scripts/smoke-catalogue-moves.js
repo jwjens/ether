@@ -84,9 +84,39 @@ const ok = (c, m) => { if (c) { pass++; console.log("  OK  ", m); } else { fail+
   ok(!/prefetchTick|fetchToPath|download-url/.test(lh), "the library-health sweep has no prefetch (no download on a timer)");
   ok(!/r2:fetch-track/.test(read("src/audio/loggen.ts")) && !/r2:fetch-track/.test(read("src/App.tsx")), "the renderer's queue fill and remote load fetch nothing from the cloud");
   const moveCalls = main.match(/moveIntoCatalogue\(/g) || [];
-  ok(moveCalls.length === 1 && /ipcMain\.handle\('catalogue:move-in'/.test(main), "main moves files in exactly one place: the catalogue:move-in handler");
+  // (The second call is the Preferences switch, section 4 — off unless the user turns it on.)
+  ok(moveCalls.length === 2 && /ipcMain\.handle\('catalogue:move-in'/.test(main), "main moves files only from the pop-up's Yes (catalogue:move-in) and the Preferences switch");
   const prompt = read("src/components/CatalogueMovePrompt.tsx");
   ok((prompt.match(/"catalogue:move-in"/g) || []).length === 1 && /const yes = async/.test(prompt), "the renderer calls catalogue:move-in only from the pop-up's Yes");
+
+  console.log("\n── 4. \"Download missing files into the catalogue automatically\" (Preferences, 2026-10-27) ──");
+  const M = require("../electron/catalogue-moves");
+  db.exec("CREATE TABLE system_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)");
+  ok(M.autoDownloadOn(db) === false, "never set: OFF (files go to the pop-up)");
+  ok(M.setAutoDownload(db, true) === true && db.prepare("SELECT value FROM system_state WHERE key = ?").get(M.AUTO_DOWNLOAD_KEY).value === "on", "switched on: stored in system_state (this computer's, never synced)");
+  ok(db.prepare("SELECT COUNT(*) n FROM mutations").get().n === 0, "the switch journals nothing for a peer");
+  const sample = [{ key: "a", state: "missing", fileKey: "A.mp3" }, { key: "b", state: "missing", fileKey: null }, { key: "c", state: "elsewhere", fileKey: "C.mp3" }];
+  const on = M.splitByAutoDownload(sample, true), off = M.splitByAutoDownload(sample, false);
+  ok(on.auto.map(f => f.key).join() === "a" && on.ask.map(f => f.key).join() === "b,c", "on: only a file not on this computer WITH a cloud copy downloads by itself; no-cloud-copy and stored-elsewhere still go to the pop-up");
+  ok(off.auto.length === 0 && off.ask.length === 3, "off: everything goes to the pop-up");
+  ok(M.setAutoDownload(db, false) === false, "switched off again");
+  const autoFn = main.slice(main.indexOf("async function _autoDownloadMissing"), main.indexOf("ipcMain.handle('catalogue:auto-download:get'"));
+  ok(/if \(_autoDlRunning \|\| !M\.autoDownloadOn\(db\)\) return;/.test(autoFn) && /M\.splitByAutoDownload\(snap\?\.notInCatalogue\?\.files, true\)/.test(autoFn) && /M\.moveIntoCatalogue\(/.test(autoFn),
+     "main downloads by itself only while the switch is on, only the files that rule picks, through the same move as the Yes");
+  ok((main.match(/if \(ch === "library-health"\) _autoDownloadMissing\(data\)/g) || []).length === 2, "every sweep (worker, or the in-main fallback) feeds it");
+  ok((main.match(/moveIntoCatalogue\(/g) || []).length === 2, "main moves files in exactly two places: the pop-up's Yes and the switch");
+
+  // The automatic path end to end, on this database: a missing file with a cloud copy is downloaded and pointed at; the
+  // file stored elsewhere and the one with no cloud copy are left for the pop-up.
+  db.prepare("INSERT INTO songs (id, title, file_path, file_key) VALUES (7, 'Auto', 'C:\\\\Users\\\\projector\\\\Music\\\\Auto.mp3', 'Auto.mp3')").run();
+  fs.writeFileSync(path.join(OUT, "Elsewhere2.mp3"), "e2");
+  db.prepare("INSERT INTO songs (id, title, file_path, file_key) VALUES (8, 'Elsewhere2', ?, 'Elsewhere2.mp3')").run(path.join(OUT, "Elsewhere2.mp3"));
+  M.setAutoDownload(db, true);
+  const split = M.splitByAutoDownload(findNotInCatalogue(db, CAT).files, M.autoDownloadOn(db));
+  await moveIntoCatalogue(db, CAT, split.auto, { download: async (k, name) => { const p = path.join(CAT, name); fs.writeFileSync(p, "dl"); return { ok: true, filePath: p }; } });
+  ok(song(7) === path.join(CAT, "Auto.mp3"), "on: the missing file was downloaded into the catalogue and the song points there");
+  ok(song(8) === path.join(OUT, "Elsewhere2.mp3") && fs.existsSync(path.join(OUT, "Elsewhere2.mp3")), "on: the file stored elsewhere was NOT moved — it waits for the pop-up");
+  ok(split.ask.some(f => f.name === "Elsewhere2.mp3") && split.ask.some(f => f.name === "Gone.mp3"), "and the pop-up still lists it, and the one with no cloud copy");
 
   db.close();
   fs.rmSync(T, { recursive: true, force: true });

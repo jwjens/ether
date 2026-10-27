@@ -164,4 +164,27 @@ async function moveIntoCatalogue(db, root, files, deps = {}) {
   return out;
 }
 
-module.exports = { findNotInCatalogue, moveIntoCatalogue, isInside };
+// ── "DOWNLOAD MISSING FILES INTO THE CATALOGUE AUTOMATICALLY" (Jeff, 2026-10-27) ──────────────────────────────────────
+// A Preferences switch, on or off, for THIS computer (system_state — never synced). On: a file that is not on this computer
+// and has a cloud copy downloads into the catalogue without the pop-up. Off (and never set): it goes to the pop-up.
+// Files stored somewhere else on this computer, and files with no cloud copy, always go to the pop-up.
+const AUTO_DOWNLOAD_KEY = "auto_download_missing";
+function autoDownloadOn(db) {
+  try { return db.prepare("SELECT value FROM system_state WHERE key = ?").get(AUTO_DOWNLOAD_KEY)?.value === "on"; }
+  catch { return false; }
+}
+function setAutoDownload(db, on) {
+  db.prepare("INSERT OR REPLACE INTO system_state (key, value, updated_at) VALUES (?, ?, ?)").run(AUTO_DOWNLOAD_KEY, on ? "on" : "off", new Date().toISOString());
+  return autoDownloadOn(db);
+}
+/** Would this file download by itself with the switch on? (not on this computer, and the cloud has it) */
+function downloadsByItself(f) { return !!f && f.state === "missing" && !!f.fileKey; }
+/** Split a finding by the switch: what downloads by itself, and what the pop-up asks about. */
+function splitByAutoDownload(files, on) {
+  const auto = [], ask = [];
+  for (const f of files || []) (on && downloadsByItself(f) ? auto : ask).push(f);
+  return { auto, ask };
+}
+
+module.exports = { findNotInCatalogue, moveIntoCatalogue, isInside,
+                   AUTO_DOWNLOAD_KEY, autoDownloadOn, setAutoDownload, downloadsByItself, splitByAutoDownload };

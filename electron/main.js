@@ -1235,8 +1235,9 @@ if (AUDIO_DAEMON_DESIRED) {
       getDb: () => db,
       backendUrl: ETHER_BACKEND_URL,
       licenseKeyFn: () => { try { return accountLicenseKey(); } catch { return null; } },
-      broadcast: sendToAllWindows,
-      // THIS machine's library root, as a function so it tracks a Relocate without a restart.
+      // (The in-main fallback's sweeps feed the automatic download too, exactly as the worker's do.)
+      broadcast: (ch, data) => { sendToAllWindows(ch, data); if (ch === "library-health") _autoDownloadMissing(data).catch(() => {}); },
+      // THIS machine's library root, as a function so it tracks a folder change in Preferences without a restart.
       // getMusicDir() reads music-dir.txt (a FILE, not the DB) and so is immune to the synced
       // file_path columns that used to steer prefetch into another machine's home directory.
       musicDirFn: () => { try { return getMusicDir(); } catch { return null; } },
@@ -1259,7 +1260,8 @@ if (AUDIO_DAEMON_DESIRED) {
       }),
       userDataDir: _lhOpts.userDataDir,
       backendUrl: ETHER_BACKEND_URL,
-      broadcast: sendToAllWindows,
+      // Each sweep's finding also feeds "Download missing files into the catalogue automatically" (when it is on).
+      broadcast: (ch, data) => { sendToAllWindows(ch, data); if (ch === "library-health") _autoDownloadMissing(data).catch(() => {}); },
       log: (m) => logStartup(m),
       healthEvent: (kind, data) => { try { _healthEvent(kind, data); } catch {} },
       inMainFallback: () => require("./library-health").createLibraryHealth(_lhOpts),
@@ -5226,6 +5228,41 @@ async function resolveLocalAudioPath(filePath) {
 ipcMain.handle('catalogue:not-in-catalogue', () => {
   try { return { ok: true, ...require('./catalogue-moves').findNotInCatalogue(db, getMusicDir()) }; }
   catch (e) { return { ok: false, error: e.message }; }
+});
+// "DOWNLOAD MISSING FILES INTO THE CATALOGUE AUTOMATICALLY" (Preferences; Jeff, 2026-10-27). On: each sweep's files that are
+// not on this computer and have a cloud copy download into the catalogue without the pop-up (the same moveIntoCatalogue the
+// pop-up's Yes runs). Off, or never set: they go to the pop-up. One run at a time; a failed download is tried again on the
+// next sweep and said once in the log.
+let _autoDlRunning = false;
+const _autoDlFailedSaid = new Set();
+async function _autoDownloadMissing(snap) {
+  const M = require('./catalogue-moves');
+  if (_autoDlRunning || !M.autoDownloadOn(db)) return;
+  const { auto } = M.splitByAutoDownload(snap?.notInCatalogue?.files, true);
+  if (!auto.length) return;
+  _autoDlRunning = true;
+  try {
+    const res = await M.moveIntoCatalogue(db, getMusicDir(), auto, {
+      download: (fileKey, name) => fetchR2Track(fileKey, name),
+      log: (m) => { if (!/NOT moved/.test(m)) logStartup(m); },
+    });
+    for (const r of res.results) {
+      if (r.ok) _autoDlFailedSaid.delete(r.key);
+      else if (!_autoDlFailedSaid.has(r.key)) { _autoDlFailedSaid.add(r.key); logStartup(`[catalogue] automatic download of ${r.name} failed: ${r.reason} — tried again on the next sweep`); }
+    }
+    if (res.downloaded || res.alreadyThere) logStartup(`[catalogue] downloaded automatically (Preferences switch on): ${res.downloaded} downloaded, ${res.alreadyThere} already in the catalogue, ${res.failed} failed`);
+  } catch (e) { logStartup(`[catalogue] automatic download failed: ${e.message}`); }
+  finally { _autoDlRunning = false; }
+}
+ipcMain.handle('catalogue:auto-download:get', () => ({ ok: true, on: require('./catalogue-moves').autoDownloadOn(db) }));
+ipcMain.handle('catalogue:auto-download:set', (_e, on) => {
+  try {
+    const now = require('./catalogue-moves').setAutoDownload(db, !!on);
+    logStartup(`[catalogue] "Download missing files into the catalogue automatically" switched ${now ? 'ON' : 'OFF'}`);
+    // Switched on: act on the last sweep now, not two minutes from now.
+    if (now) { try { const snap = _libHealthForIpc && _libHealthForIpc.snapshot(); if (snap) _autoDownloadMissing(snap).catch(() => {}); } catch {} }
+    return { ok: true, on: now };
+  } catch (e) { return { ok: false, error: e.message }; }
 });
 ipcMain.handle('catalogue:move-in', async (_e, files) => {
   try {

@@ -2336,6 +2336,16 @@ function MusicFolderSection() {
   const [result, setResult] = useState<{ linked?: number; total?: number; matched?: number; folderFiles?: number; missing?: string[] } | null>(null);
   const [msg, setMsg] = useState("");
   const api = (window as any).ether.stationFolders;
+  // "Download missing files into the catalogue automatically" — this computer's switch (electron/catalogue-moves.js).
+  // On: files not on this computer download into the catalogue without the pop-up. Off: they go to the pop-up.
+  const [autoDl, setAutoDl] = useState(false);
+  useEffect(() => {
+    (window as any).ether.invoke("catalogue:auto-download:get").then((r: any) => setAutoDl(!!r?.on)).catch(() => {});
+  }, []);
+  const toggleAutoDl = async (v: boolean) => {
+    const r = await (window as any).ether.invoke("catalogue:auto-download:set", v).catch((e: any) => ({ ok: false, error: e?.message }));
+    if (r?.ok) setAutoDl(!!r.on); else setMsg(`Not saved: ${r?.error || "unknown error"}`);
+  };
   useEffect(() => {
     let on = true; setResult(null); setMsg("");
     api.get(stationId).then((r: any) => { if (on) setFolder(r?.folder || null); }).catch(() => {});
@@ -2366,6 +2376,11 @@ function MusicFolderSection() {
           <button style={btn} onClick={choose} disabled={busy}>Choose folder…</button>
           <button style={btn} onClick={test} disabled={busy || !folder}>Test sync</button>
           <button style={{ ...btn, background: "var(--accent-blue)", color: "#fff", border: "none" }} onClick={resync} disabled={busy || !folder}>Re-sync library</button>
+        </div>
+        <Toggle value={autoDl} onChange={toggleAutoDl} label="Download missing files into the catalogue automatically" />
+        <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: -4 }}>
+          {autoDl ? "On: files that are not on this computer download into the catalogue by themselves."
+                  : "Off: files that are not on this computer are listed, and you are asked before anything is downloaded."}
         </div>
         {msg && <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{msg}</div>}
         {result?.missing && result.missing.length > 0 && (
