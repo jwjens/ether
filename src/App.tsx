@@ -4926,20 +4926,30 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
   };
 
   // ── Inline cell editing ────────────────────────────────────
-  const [inlineEdit, setInlineEdit] = useState<{ id: number; col: LibCol; value: string } | null>(null);
+  // `error`: the save was refused — the cell stays open with what was typed and the reason is shown (Jeff, 2026-10-26:
+  // "make a failed save show an error instead of silently bouncing back"). `failed` is the value that was refused, so
+  // leaving the cell unchanged does not send the same refused save again.
+  const [inlineEdit, setInlineEdit] = useState<{ id: number; col: LibCol; value: string; error?: string; failed?: string } | null>(null);
 
   const commitInline = async () => {
     if (!inlineEdit) return;
     if (libraryBorrowed) { setInlineEdit(null); return; }  // catalog core fields (title/artist/album/year/genre/bpm) are read-only when borrowed
     const { id, col, value } = inlineEdit;
-    setInlineEdit(null);
+    if (inlineEdit.error && value === inlineEdit.failed) return;   // still the refused value: keep it open, say why
     const fieldMap: Partial<Record<LibCol, string>> = { title: "title", artist: "artist", album: "album", year: "year", genre: "genre", bpm: "bpm" };
-    if (!fieldMap[col]) return;
+    if (!fieldMap[col]) { setInlineEdit(null); return; }
     const payload: any = { id };
     if (col === "year") payload.year = parseInt(value, 10) || undefined;
     else if (col === "bpm") payload.bpm = parseFloat(value) || undefined;
     else (payload as any)[col] = value;
-    await (window as any).ether.discogs.updateTrack(payload);
+    let r: any;
+    try { r = await (window as any).ether.discogs.updateTrack(payload); }
+    catch (e: any) { r = { ok: false, error: String(e?.message || e) }; }
+    if (r && r.ok === false) {
+      setInlineEdit({ id, col, value, error: `${col[0].toUpperCase()}${col.slice(1)} not saved: ${r.error || "the save was refused"}`, failed: value });
+      return;
+    }
+    setInlineEdit(null);
     await load();
   };
 
@@ -5771,6 +5781,11 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
           }}
         >
           <style>{`.ether-lib-row{display:grid;grid-template-columns:var(--lib-grid)}.ether-lib-row:hover{background:var(--bg-hover)}`}</style>
+          {inlineEdit?.error && (
+            <div role="alert" style={{ padding: "8px 12px", fontSize: 12, color: "var(--accent-red, #ef4444)", background: "rgba(239,68,68,0.10)", borderBottom: "1px solid var(--accent-red, #ef4444)" }}>
+              {inlineEdit.error} — change the value and press Enter, or Esc to cancel.
+            </div>
+          )}
 
           {/* Header */}
           <div role="row" className="ether-lib-row" style={{ borderBottom: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", userSelect: "none" as any }}>
@@ -5883,7 +5898,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                     <InlineNameEditor
                       value={s.title || ""}
                       readOnly={libraryBorrowed}
-                      onSave={async (next) => { if (!isSongRow(s)) return; await (window as any).ether.songs.updateById(s.id, { title: next }); load(); }}
+                      onSave={async (next) => { if (!isSongRow(s)) return; const r = await (window as any).ether.songs.updateById(s.id, { title: next }); if (r?.ok !== false) load(); return r; }}
                     />
                   </div>
                 );
@@ -5959,7 +5974,7 @@ export function LibraryPanel({ onLoadA, onLoadB, onLoadC, onQueue, onEdit, onSen
                         onDoubleClick={() => isEditable && setInlineEdit({ id: s.id, col: id, value: cellVal || "" })}
                       >
                         {isInline
-                          ? <input autoFocus value={inlineEdit!.value} onChange={e => setInlineEdit(prev => prev ? { ...prev, value: e.target.value } : prev)} onBlur={commitInline} onKeyDown={e => { if (e.key === "Enter") commitInline(); if (e.key === "Escape") setInlineEdit(null); }} style={{ flex: 1, padding: "2px 4px", fontSize: 13, background: "var(--bg-tertiary)", border: "1px solid var(--accent-blue)", color: "var(--text-primary)", outline: "none" }} />
+                          ? <input autoFocus value={inlineEdit!.value} onChange={e => setInlineEdit(prev => prev ? { ...prev, value: e.target.value } : prev)} onBlur={commitInline} onKeyDown={e => { if (e.key === "Enter") commitInline(); if (e.key === "Escape") setInlineEdit(null); }} title={inlineEdit!.error || undefined} style={{ flex: 1, padding: "2px 4px", fontSize: 13, background: "var(--bg-tertiary)", border: `1px solid ${inlineEdit!.error ? "var(--accent-red, #ef4444)" : "var(--accent-blue)"}`, color: "var(--text-primary)", outline: "none" }} />
                           : (cellVal || "—")}
                       </div>
                     );

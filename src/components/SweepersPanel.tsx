@@ -436,7 +436,7 @@ export default function SweepersPanel({ stationId, onMutated, section, readOnly 
                       readOnly={ro}
                       compact
                       display={<span style={{ fontSize: "var(--t-lead)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.title}{x.artist_name ? ` — ${x.artist_name}` : ""}</span>}
-                      onSave={async (next) => { await ether()?.songs?.updateById(x.id, { title: next }); reload(); }}
+                      onSave={async (next) => { const r = await ether()?.songs?.updateById(x.id, { title: next }); if (r?.ok !== false) reload(); return r; }}
                     />
                     {!ro && (
                       <button onClick={() => toggleMember(x, selPool, false)} title="Remove from this pool — the cut stays in the library and in any other pool"
