@@ -1953,7 +1953,8 @@ class DaemonEngine {
     if (!fp) return null;
     if (/^[a-z]+:\/\//i.test(fp)) return fp;                 // a URL is the daemon's to stream, not to stat
     let here = null;
-    try { here = require('../electron/catalogue').playableFile(fp); } catch { here = null; }
+    // A failure of the check itself is LOGGED (audiod/catalogue-check.js) — 4.6.66 hid a missing catalogue.js here.
+    here = require('./catalogue-check').playableFile(fp, (m) => this._log(m));
     return here && this._dur(here) > 0 ? here : null;
   }
 

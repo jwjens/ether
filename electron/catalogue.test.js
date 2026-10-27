@@ -148,7 +148,9 @@ describe("every place that opens a file uses this, and none falls back", () => {
   it("the audio engine and the library-health sense use the same rule", () => {
     const eng = read("audiod", "engine.js");
     const r = eng.slice(eng.indexOf("  _resolveLocal(fp) {"), eng.indexOf("\n  }\n", eng.indexOf("  _resolveLocal(fp) {")));
-    expect(r).toMatch(/require\('\.\.\/electron\/catalogue'\)\.playableFile\(fp\)/);
+    // through audiod/catalogue-check.js, which calls electron/catalogue.js and logs a failure instead of hiding it
+    expect(r).toMatch(/require\('\.\/catalogue-check'\)\.playableFile\(fp, \(m\) => this\._log\(m\)\)/);
+    expect(read("audiod", "catalogue-check.js")).toMatch(/function loadCatalogue\(\) \{ return require\('\.\.\/electron\/catalogue'\); \}/);
     expect(r).not.toMatch(/findInIndex|_libIndex/);
     expect(eng).not.toMatch(/ether music library/);                                          // no default folder of its own
     const lh = read("electron", "library-health.js");
