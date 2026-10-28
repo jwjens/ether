@@ -294,6 +294,18 @@ pub fn audio_output_patch_state(station_id: u32) -> String {
     }).to_string()
 }
 
+/// THE ENGINE SOURCE FINGERPRINT, in the binary as one findable string (native/build.rs): the packaging reads it from the
+/// file and compares it with the source being packaged (build-resources/engine-source-fp.js); the daemon logs it.
+pub static ENGINE_SOURCE_MARK: &str = concat!("ETHER_ENGINE_SOURCE_FP:", env!("ETHER_ENGINE_SOURCE_FP"), ":END");
+
+/// The engine source fingerprint this binary was built from (16 hex digits).
+#[napi]
+pub fn audio_engine_source_fp() -> String { env!("ETHER_ENGINE_SOURCE_FP").to_string() }
+
+/// The whole mark, so it is kept in the binary and readable from outside without loading it.
+#[napi]
+pub fn audio_engine_source_mark() -> String { ENGINE_SOURCE_MARK.to_string() }
+
 /// Every output device on this computer with its channel count and rate — the Patch Bay's columns (one per channel pair).
 #[napi]
 pub fn audio_list_output_devices_detailed() -> String {

@@ -20,6 +20,7 @@
 const fs = require("fs");
 const path = require("path");
 const { Arch } = require("builder-util");
+const { assertEngineMatchesSource } = require("./engine-source-fp");
 
 const ROOT = path.join(__dirname, "..");
 const ENGINE = path.join(ROOT, "native", "ether-audio.node");
@@ -57,7 +58,13 @@ function archName(context) {
 }
 
 exports.beforePack = async function beforePack(context) {
-  if (context.electronPlatformName !== "darwin") return;
+  if (context.electronPlatformName !== "darwin") {
+    // THE RELEASE CHECK (Jeff, 2026-10-28): the engine file must be built from the engine source being packaged.
+    // Fails before anything is packed; checked again on the packaged copy in afterPack.
+    const fp = assertEngineMatchesSource(ENGINE, path.join(ROOT, "native"), "native/ether-audio.node");
+    console.log(`  • [engine-source] native/ether-audio.node built from this engine source (${fp})`);
+    return;
+  }
   const arch = archName(context);
   const triple = MAC_TRIPLE[arch];
   if (!triple) throw new Error(`[engine-pack] no engine build for macOS arch "${arch}" — only x64 and arm64 are built`);
@@ -68,8 +75,9 @@ exports.beforePack = async function beforePack(context) {
   }
   const got = kind(src);
   if (got !== "macho:" + arch) throw new Error(`[engine-pack] ${src} is ${got}, not a Mach-O for ${arch}`);
+  const fp = assertEngineMatchesSource(src, path.join(ROOT, "native"), path.relative(ROOT, src));
   fs.copyFileSync(src, ENGINE);
-  console.log(`  • [engine-pack] macOS ${arch}: ${path.relative(ROOT, src)} → native/ether-audio.node (${got})`);
+  console.log(`  • [engine-pack] macOS ${arch}: ${path.relative(ROOT, src)} → native/ether-audio.node (${got}, engine source ${fp})`);
 };
 
 // EVERY APP FILE THE ENGINE LOADS must be in app.asar.unpacked, or the build fails (2026-10-27). 4.6.66 shipped
@@ -97,7 +105,8 @@ exports.afterPack = async function afterPack(context) {
   const want = expectedKind(platform, arch);
   const got = kind(packed);
   if (got !== want) throw new Error(`[engine-pack] packaged engine is ${got}, expected ${want} for ${platform} ${arch}: ${packed}`);
-  console.log(`  • [engine-pack] packaged engine OK: ${path.relative(context.appOutDir, packed)} (${got})`);
+  const fp = assertEngineMatchesSource(packed, path.join(ROOT, "native"), "the packaged engine");
+  console.log(`  • [engine-pack] packaged engine OK: ${path.relative(context.appOutDir, packed)} (${got}, engine source ${fp})`);
 
   const unpacked = path.join(resources, "app.asar.unpacked");
   const missing = missingEngineFiles(unpacked);

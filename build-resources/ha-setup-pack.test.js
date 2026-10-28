@@ -11,6 +11,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const { afterPack } = require("./engine-pack");
 const { Arch } = require("builder-util");
+const FP = require("./engine-source-fp");
 const ROOT = path.join(__dirname, "..");
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8").replace(/\r\n/g, "\n");
 
@@ -22,7 +23,8 @@ function packedWin(helper) {
   const out = fs.mkdtempSync(path.join(os.tmpdir(), "ether-pack-"));
   const native = path.join(out, "resources", "app.asar.unpacked", "native");
   fs.mkdirSync(native, { recursive: true });
-  fs.writeFileSync(path.join(native, "ether-audio.node"), PE);
+  // The engine carries the source fingerprint of this tree (engine-source-fp.js), as a real build does.
+  fs.writeFileSync(path.join(native, "ether-audio.node"), Buffer.concat([PE, Buffer.from(`${FP.MARK}${FP.sourceFingerprint(path.join(ROOT, "native"))}:END`)]));
   // A minimal engine: afterPack also checks every app file the engine loads is unpacked (engine-pack.js missingEngineFiles).
   const un = path.join(out, "resources", "app.asar.unpacked");
   for (const [rel, body] of [["audiod/ether-audiod.js", "// engine"], ["electron/sync/mutation-writer.js", "//"], ["electron/sync/synced-tables.js", "//"]]) {
