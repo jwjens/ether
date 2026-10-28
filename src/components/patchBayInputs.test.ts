@@ -28,3 +28,17 @@ describe("Patch Bay inputs (step 2)", () => {
     expect(m).toMatch(/"window:popout", "multioutput"/);
   });
 });
+
+describe("Patch Bay inputs: faders are named as the board names them (Jeff, 2026-10-28: after F the alphabet continues)", () => {
+  it("the rows use the board's letters (boardNames over every row of the station), never the engine id", () => {
+    const g = read("PatchBayInputs.tsx");
+    expect(g).toMatch(/setNames\(boardNames\(sorted\.map\(r => r\.slot\)\)\)/);
+    expect(g).toMatch(/Fader \{names\[f\.slot\] \|\| f\.slot\}/);
+    expect(g).not.toMatch(/>Fader \{f\.slot\}</);
+  });
+  it("on a board A–F, S1 is G and S2 is H", async () => {
+    const { boardNames } = await import("../lib/boardName");
+    const n = boardNames(["A", "B", "C", "D", "E", "F", "S1", "S2"]);
+    expect([n.S1, n.S2]).toEqual(["G", "H"]);
+  });
+});

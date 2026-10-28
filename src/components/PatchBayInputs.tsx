@@ -13,10 +13,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { query } from "../db/client";
 import { useMicInputs, useInputDevices, micStateWords } from "../hooks/useMicInputs";
 import { useRemoteLink, rxWords } from "../hooks/useRemoteLink";
+import { boardNames } from "../lib/boardName";
+import { compareSlots } from "./DeckConfigurator";
 import { faderInput, crosspointOn, planConnect, planDisconnect, inputColumns, type GridCol, type StationRecords, type Step } from "../lib/inputPatch";
 
 type Fader = { slot: string; kind: string };
-const SLOT_ORDER = ["D", "E", "F", "S1", "S2", "S3", "S4", "S5"];
+type Row = { slot: string; type: string; enabled: number; kind: string };
 const colKey = (c: GridCol) => (c.kind === "link" ? "link" : `${c.device}#${c.channel}`);
 
 export default function PatchBayInputs({ stationId }: { stationId: number }) {
@@ -25,6 +27,8 @@ export default function PatchBayInputs({ stationId }: { stationId: number }) {
   const link = useRemoteLink(stationId);
   const { devices, reload } = useInputDevices();
   const [faders, setFaders] = useState<Fader[] | null>(null);
+  // The board's own fader names (src/lib/boardName.ts): S1 is "G" on a default board, never "S1".
+  const [names, setNames] = useState<Record<string, string>>({});
   const [tick, setTick] = useState(0);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -32,9 +36,15 @@ export default function PatchBayInputs({ stationId }: { stationId: number }) {
   // The board's source faders, re-read whenever the board changes anywhere (the same broadcast the board listens to).
   useEffect(() => {
     let alive = true;
-    query<Fader>("SELECT slot, COALESCE(kind,'') AS kind FROM deck_configs WHERE station_id = ? AND type = 'source' AND enabled = 1 AND deleted_at IS NULL", [stationId])
-      .then(rows => { if (alive) setFaders(rows.sort((a, b) => SLOT_ORDER.indexOf(a.slot) - SLOT_ORDER.indexOf(b.slot))); })
-      .catch(() => { if (alive) setFaders([]); });
+    query<Row>("SELECT slot, type, enabled, COALESCE(kind,'') AS kind FROM deck_configs WHERE station_id = ? AND deleted_at IS NULL", [stationId])
+      .then(rows => {
+        if (!alive) return;
+        const sorted = [...rows].sort(compareSlots);
+        // Every row, enabled or not, names the faders — exactly as the board does (removing one never renames another).
+        setNames(boardNames(sorted.map(r => r.slot)));
+        setFaders(sorted.filter(r => r.type === "source" && r.enabled === 1).map(r => ({ slot: r.slot, kind: r.kind })));
+      })
+      .catch(() => { if (alive) { setFaders([]); setNames({}); } });
     return () => { alive = false; };
   }, [stationId, tick]);
   useEffect(() => {
@@ -140,13 +150,13 @@ export default function PatchBayInputs({ stationId }: { stationId: number }) {
                 const st = stateOf(f.slot);
                 return (
                   <tr key={f.slot}>
-                    <td style={{ paddingRight: 10, fontWeight: 700, whiteSpace: "nowrap" }} title="A source fader on the board">Fader {f.slot}</td>
+                    <td style={{ paddingRight: 10, fontWeight: 700, whiteSpace: "nowrap" }} title="A source fader on the board">Fader {names[f.slot] || f.slot}</td>
                     {cols.map(c => {
                       const on = crosspointOn(fi, c);
                       const bad = on && st.bad;
                       return (
                         <td key={colKey(c)} onClick={() => click(f.slot, c)} style={{ ...cell, background: on ? (bad ? "var(--accent-red, #ef4444)" : "var(--accent-teal, #14b8a6)") : "transparent" }}
-                            title={on ? `${st.text}. Click to disconnect.` : c.kind === "link" ? `Bring the Remote Link feed in on fader ${f.slot}` : `Connect ${c.label} input ${c.channel} to fader ${f.slot}`}>
+                            title={on ? `${st.text}. Click to disconnect.` : c.kind === "link" ? `Bring the Remote Link feed in on fader ${names[f.slot] || f.slot}` : `Connect ${c.label} input ${c.channel} to fader ${names[f.slot] || f.slot}`}>
                           {on ? (bad ? "!" : "●") : ""}
                         </td>
                       );
@@ -158,7 +168,7 @@ export default function PatchBayInputs({ stationId }: { stationId: number }) {
           </table>
           <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 3 }}>
             {faders.map(f => { const st = stateOf(f.slot); return (
-              <div key={f.slot} style={{ color: st.bad ? "var(--accent-red, #ef4444)" : "var(--text-secondary)", fontWeight: st.bad ? 700 : 400 }}>● Fader {f.slot}: {st.text}</div>
+              <div key={f.slot} style={{ color: st.bad ? "var(--accent-red, #ef4444)" : "var(--text-secondary)", fontWeight: st.bad ? 700 : 400 }}>● Fader {names[f.slot] || f.slot}: {st.text}</div>
             ); })}
           </div>
         </>
