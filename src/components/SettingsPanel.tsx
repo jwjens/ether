@@ -4122,6 +4122,11 @@ function UserManagement() {
     setUsers(rows || []);
   }, []);
   useEffect(() => { loadUsers(); }, [loadUsers]);
+  // Users that arrive from another computer (sync) or the same-person merge show up without reopening the screen.
+  useEffect(() => {
+    const off = (window as any).ether?.users?.onChanged?.(() => { loadUsers(); });
+    return () => { if (typeof off === "function") off(); };
+  }, [loadUsers]);
 
   const handleAddUser = async () => {
     if (!addName.trim()) return;

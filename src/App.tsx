@@ -1191,9 +1191,11 @@ export default function App() {
     const pushUsers = () => { if (currentUser) pushInstallUsers(apiKeyRef.current); };
     window.addEventListener('ether:license-changed', reload);
     window.addEventListener('ether:users-changed', pushUsers);
+    const offMain = (window as any).ether?.users?.onChanged?.(pushUsers);   // users that arrived by sync / merge
     return () => {
       window.removeEventListener('ether:license-changed', reload);
       window.removeEventListener('ether:users-changed', pushUsers);
+      if (typeof offMain === 'function') offMain();
     };
   }, [stationId, currentUser]);
 

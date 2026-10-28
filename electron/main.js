@@ -4243,6 +4243,8 @@ app.whenReady().then(() => {
         // An inbound pull that touched the saved board refreshes the board watch's copy (event-driven, no polling).
         onProgress: (ev) => {
           try { const bt = (ev && ev.byTable) || {}; if (bt.station_config_kv || bt.deck_configs) _boardWatch.savedChanged(null, _stationIds); } catch {}
+          // Users that arrived from another computer: the Users screen re-reads and this computer pushes its list.
+          try { if (ev && ev.byTable && ev.byTable.users) sendToAllWindows('users:changed', {}); } catch {}
         },
       });
       console.log('[SYNC] every station syncs by its identity, each with its own position');

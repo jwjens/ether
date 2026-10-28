@@ -45,6 +45,18 @@ If a person was added separately on two computers before users synced (two "Stev
 most recently. A Steve on a **different station** is a different person and is left alone. Each merge is written to the
 Health log ("users merged").
 
+## Signing in on the web (dashboard, Park page)
+
+Every user **with a PIN** can also sign in on the web pages of the account (app.ether-cast.com, the Park page) with the same
+name and PIN. A user without a PIN can't — set one first.
+
+- **Each computer only adds or updates** web sign-ins. A person missing from one computer's list is **not** removed —
+  so two computers with different users no longer take turns removing each other's people.
+- **Removing a web sign-in takes a real removal:** **Delete** the user, or **Remove PIN**. That computer then tells the
+  account to remove that one name. A person who is still on the list with a PIN under the same name (for example, kept by
+  the same-person merge) is never removed.
+- Users that arrive from another computer appear in **Users & Security** on their own — no need to close and reopen it.
+
 ## If someone can't sign in on another computer
 
 - Give it a minute: changes reach the other computers with the next sync.

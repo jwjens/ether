@@ -435,6 +435,8 @@ contextBridge.exposeInMainWorld("ether", {
     update: (id, patch) => ipcRenderer.invoke("user:update", id, patch),
     setPin: (id, pin)  => ipcRenderer.invoke("user:set-pin", id, pin),
     remove: (id)       => ipcRenderer.invoke("user:remove", id),
+    // Users changed in main (arrived by sync, or the same-person merge). → unsubscribe
+    onChanged: (cb) => { const h = () => cb(); ipcRenderer.on("users:changed", h); return () => ipcRenderer.removeListener("users:changed", h); },
     // TEST-ONLY, double-gated in main (env var AND profile marker). Never true on a real launch.
     testAutoLogin: () => ipcRenderer.invoke("test:auto-login"),
   },
