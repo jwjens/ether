@@ -4,6 +4,7 @@ import { HealthDashboard } from "./health/HealthDashboard";
 import { PanelStack, HealthPanel, PanelMeter, StatTile } from "./health/sectionChrome";
 import MicInputsHealth from "./health/MicInputsHealth";
 import RemoteLinkHealth from "./health/RemoteLinkHealth";
+import AccountSignInHealth from "./health/AccountSignInHealth";
 import PflCueHealth from "./health/PflCueHealth";
 import AlertsHealth from "./health/AlertsHealth";
 import { dbToPercent } from "./health/meterScale";
@@ -1061,6 +1062,7 @@ export function HealthMonitor({ onClose }: { onClose: () => void }) {
         <AudioProcessingPanel id="audio-processing" stationId={stationId} stationUuid={stationUuid} />
         <MicInputsHealth id="mic-inputs" stationId={stationId ?? null} />
         <RemoteLinkHealth id="remote-link" stationId={stationId ?? null} />
+        <AccountSignInHealth id="account-sign-in" />
         <PflCueHealth id="pfl-output" stationId={stationId ?? null} />
 
         {/* ── SPOT SCHEDULE — anchors vs what actually airs. Display-only. ────────────────────────

@@ -219,6 +219,21 @@ const AccountSession = require("./account-session").createAccountSession({
   dir: () => P.ensureProfileDir(P.activeKey()),
   note: (event, detail) => { try { _healthEvent(event, detail || {}); } catch { /* the ledger is not up yet */ } },
 });
+// PHASE 1: the pass is renewed in the background for as long as the computer runs (electron/account-renewer.js). If it
+// cannot be, the station runs as normal and only account features pause; the status is on Health Monitor → Account.
+let _accountRenewer = null;
+function accountRenewer() {
+  if (_accountRenewer) return _accountRenewer;
+  _accountRenewer = require("./account-renewer").createAccountRenewer({
+    session: AccountSession,
+    fetch: (...a) => fetch(...a),
+    baseUrl: ETHER_BACKEND_URL,
+    machine: () => { let id = null; try { id = getDb().prepare("SELECT client_id FROM client_identity LIMIT 1").get()?.client_id || null; } catch {} return { id, name: require("os").hostname() }; },
+    note: (event, detail) => { try { _healthEvent(event, detail || {}); } catch {} },
+    onChange: (st) => { try { sendToAllWindows("account:session-status", st); } catch {} },
+  });
+  return _accountRenewer;
+}
 
 // THE ONE HEALTH LOG WRITER (2026-10-13, docs/air-machine-stalls-plan-2026-10-13.md §3): every health-events.jsonl line
 // from main goes through here — queued and written in the background, rotated by size (install_config_kv
@@ -1844,8 +1859,8 @@ async function accountSignOut() {
     // Clear the on-air marker while the profile is still resolvable — after the pointer goes there is
     // no profile to find it in, and a stale marker would sit in the account's folder forever.
     try { _persistOnAir(false); } catch {}
-    // Sign Out ends this computer's sign-in (Phase 0: auth.bin removed; the server session is revoked in Phase 1).
-    try { AccountSession.clear(); } catch (e) { console.error("[account] clear sign-in:", e.message); }
+    // Sign Out ends this computer's sign-in: the server session is ended (best effort, 3 s) and auth.bin removed.
+    try { await accountRenewer().signOut(); } catch (e) { console.error("[account] sign out:", e.message); try { AccountSession.clear(); } catch {} }
     try { P.clearPointer(); } catch (e) { console.error("[account] clear pointer:", e.message); }
     try { db.close(); } catch {}
     app.exit(0);
@@ -3064,6 +3079,8 @@ function _runMigrationsInner() {
   // Phase 0: a sign-in token still in the database moves to auth.bin and its row is removed (bytes overwritten).
   try { const m = AccountSession.migrate(db); if (m.moved || m.removed) console.log(`[account] sign-in moved out of the database (rows removed: ${m.removed})`); }
   catch (e) { console.error("[account] moving the sign-in out of the database failed:", e.message); }
+  // Phase 1: keep this computer signed in (renewed in the background; never a screen).
+  try { accountRenewer().start(5000); } catch (e) { console.error("[account] renewer:", e.message); }
   // Plain-text user PINs → scrypt (electron/pin-hash.js). Deferred: off the startup path, after the module-level PIN code ran.
   setTimeout(() => { _upgradePlainPins().catch(() => {}); }, 8000);
 
@@ -4618,6 +4635,31 @@ ipcMain.handle("account:was-on-air", () => _wasOnAir());
 // THE SIGN-IN (Phase 0, electron/account-session.js): the window stores it at sign-in, asks whether there is one, and
 // reads the access token for its own account requests. It never touches the database for it.
 ipcMain.handle("account:session-set", (_, token) => { try { return AccountSession.set(token); } catch (e) { return { ok: false, error: e.message }; } });
+// A sign-in that returned a session (Phase 1): keep it (Remember me = kept in protected storage; off = this run only).
+ipcMain.handle("account:session-start", (_, s, remember) => {
+  try { const r = AccountSession.setSession(s, { remember: remember !== false }); if (r.ok) accountRenewer().signedIn(); return r; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+// START-UP: has this computer been set up (a sign-in is kept, valid or not)? Then it starts straight to the station.
+ipcMain.handle("account:is-set-up", () => { try { return AccountSession.isSetUp(); } catch { return false; } });
+ipcMain.handle("account:session-status", () => { try { return accountRenewer().status(); } catch { return { state: "none" }; } });
+// SIGN IN AGAIN (Health Monitor → Account), while the station keeps running: the same account only — another account is
+// File → Sign Out. Never a screen; on success account features resume at once.
+ipcMain.handle("account:sign-in-again", async (_, { email, password, remember } = {}) => {
+  try {
+    const e = String(email || "").trim().toLowerCase();
+    const mine = (() => { try { return getDb().prepare("SELECT value FROM install_config_kv WHERE key='account_email' AND deleted_at IS NULL").get()?.value || ""; } catch { return ""; } })();
+    if (mine && e !== String(mine).toLowerCase()) return { ok: false, error: `This computer is signed in to ${mine}. To use another account, use File → Sign Out.` };
+    const m = (() => { try { return getDb().prepare("SELECT client_id FROM client_identity LIMIT 1").get()?.client_id || ""; } catch { return ""; } })();
+    const r = await fetch(`${ETHER_BACKEND_URL}/api/user/desktop-activate`, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: e, password: String(password || ""), machine_id: m, machine_name: require("os").hostname(), os: process.platform, session: true }) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || !d.ok) return { ok: false, error: d.error === "invalid_credentials" ? "Email or password is incorrect." : (d.message || "Could not sign in. Please try again.") };
+    const kept = d.session ? AccountSession.setSession(d.session, { remember: remember !== false }) : AccountSession.set(d.token, { remember: remember !== false });
+    accountRenewer().signedIn();
+    return { ok: true, stored: kept.stored };
+  } catch (err) { return { ok: false, error: `Could not reach Ether's server: ${err.message}` }; }
+});
 ipcMain.handle("account:session-has", () => { try { return AccountSession.has(); } catch { return false; } });
 ipcMain.handle("account:session-token", () => { try { return AccountSession.get(); } catch { return null; } });
 

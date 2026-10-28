@@ -368,6 +368,8 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
   const [authName, setAuthName] = useState('');
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
+  // REMEMBER ME (Jeff, 2026-10-28: on by default): this computer stays signed in across restarts. Off = this run only.
+  const [rememberMe, setRememberMe] = useState(true);
   const [authErr, setAuthErr] = useState('');
   // Trial-expired doorway (4.4.66): when /account/connect answers trial_expired, we show a distinct
   // "your data is safe — pick a plan" message plus a button to the plan picker (renew_url, external
@@ -486,7 +488,8 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     const machine_name = idResp?.ok ? idResp.machine_name : '';
     const res = await fetch(`${ETHER_BACKEND_URL}/api/user/desktop-activate`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, machine_id, machine_name, os: navigator.platform }),
+      // session: true → a renewable sign-in (Phase 1): this computer stays signed in while it runs.
+      body: JSON.stringify({ email, password, machine_id, machine_name, os: navigator.platform, session: true }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data.ok) {
@@ -529,7 +532,10 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     try { await (window as any).ether.installConfigKv?.upsertByKey?.('account_email', String(data.email || email).trim().toLowerCase()); } catch {}
     // The account sign-in: kept in this computer's protected storage, never in the database or a backup (Phase 0,
     // electron/account-session.js). Read by main for account requests (memberships, Remote Link, member sync).
-    try { if (data.token) await (window as any).ether.accountSession?.set?.(String(data.token)); } catch {}
+    try {
+      if (data.session) await (window as any).ether.accountSession?.start?.(data.session, rememberMe);
+      else if (data.token) await (window as any).ether.accountSession?.set?.(String(data.token));   // an older server
+    } catch {}
     return data.license_key as string;
   };
 
@@ -1241,6 +1247,10 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
               )}
               <input type="email" autoFocus value={authEmail} onChange={e => { setAuthEmail(e.target.value); setAuthErr(''); }} placeholder="Email address" style={authInput} />
               <input type="password" value={authPassword} onChange={e => { setAuthPassword(e.target.value); setAuthErr(''); }} onKeyDown={e => { if (e.key === 'Enter') submit(); }} placeholder={authMode === 'signup' ? 'Create a password (8+ characters)' : 'Password'} style={authInput} />
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "rgba(255,255,255,0.75)", cursor: "pointer" }}
+                     title="Keep this computer signed in. Ether starts straight to the station; Sign Out ends it.">
+                <input type="checkbox" checked={rememberMe} onChange={e => setRememberMe(e.target.checked)} /> Remember me
+              </label>
               {authMode === 'signup' && (
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 0 }}>

@@ -434,8 +434,14 @@ contextBridge.exposeInMainWorld("ether", {
   // ── THE ACCOUNT SIGN-IN (electron/account-session.js) — kept in protected storage, never in the database ──
   accountSession: {
     set:   (token) => ipcRenderer.invoke("account:session-set", token),
+    start: (session, remember) => ipcRenderer.invoke("account:session-start", session, remember),
     has:   ()      => ipcRenderer.invoke("account:session-has"),
     token: ()      => ipcRenderer.invoke("account:session-token"),
+    isSetUp: ()    => ipcRenderer.invoke("account:is-set-up"),
+    status: ()     => ipcRenderer.invoke("account:session-status"),
+    signInAgain: (p) => ipcRenderer.invoke("account:sign-in-again", p),
+    /** cb({ state, reason, since }) when the sign-in's state changes. Returns unsubscribe. */
+    onStatus: (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("account:session-status", h); return () => ipcRenderer.removeListener("account:session-status", h); },
   },
   // ── THE A/B/C VIEW (src/lib/deckView.ts) — collapsed into one strip or expanded, on this computer ──
   boardView: {

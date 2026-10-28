@@ -117,3 +117,18 @@ describe("no sign-in in a backup", () => {
     expect(JWT_SHAPE.test(fs.readFileSync(out).toString("latin1"))).toBe(false);
   });
 });
+
+describe("Sign Out when Windows holds the file", () => {
+  it("a refused delete still leaves no sign-in: the file is emptied, and the next start reads 'not signed in'", () => {
+    const dir = tmpDir();
+    const real = fs;
+    const holding = { ...real, rmSync: () => { const e = new Error("EPERM: operation not permitted"); e.code = "EPERM"; throw e; } };
+    const a = createAccountSession({ safeStorage: fakeSafe(), dir: () => dir, fs: holding });
+    a.set(TOKEN);
+    a.clear();
+    expect(a.isSetUp()).toBe(false);
+    const next = createAccountSession({ safeStorage: fakeSafe(), dir: () => dir });   // the next start
+    expect(next.isSetUp()).toBe(false);
+    expect(next.get()).toBe(null);
+  }, 30000);   // each refused attempt waits briefly before the next; under a loaded machine that adds up
+});
