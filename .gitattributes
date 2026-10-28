@@ -1,0 +1,10 @@
+# Line endings are pinned for every checkout (2026-10-27). The repository stores every text file with LF. Without this,
+# a Windows clone with core.autocrlf=true checked files out as CRLF (337 files on OVEVENTS, 39 more mixed after tools
+# rewrote them), so a test that reads source text (electron/announce-fire.test.js reads electron/main.js) matched in one
+# checkout and failed in another. Now the working copy is what the repository holds, on every machine.
+* text=auto eol=lf
+
+# Batch files keep CRLF: cmd.exe misreads labels/goto in LF batch files ("Reset Ether Data.bat" is packaged and was
+# CRLF on disk already). .ps1 / .nsh stay LF, as they are on disk today (installer.nsh builds from LF now).
+*.bat text eol=crlf
+*.cmd text eol=crlf
