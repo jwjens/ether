@@ -38,6 +38,8 @@ interface Props {
   /** When provided the strip subscribes to audio:levels IPC directly
    *  and updates the VU bar without triggering React state. */
   deckId?: string;
+  /** Keep the label row but do not draw its text — the source strip, whose SOURCE dropdown already names it. */
+  labelTextHidden?: boolean;
   /** Hide the channel label row — used when an external bar (ThreeSlotBar) shows it instead. */
   hideLabel?: boolean;
   /** This strip is a SOURCE channel, so its meter reads its OWN slot and is never gated on the
@@ -67,7 +69,7 @@ const KNOB_W = 46;  // width of the cap
 // GAIN; the law only decides where the knob is drawn for it.
 
 export default function ConsoleStrip({
-  label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId, hideLabel, sourceChannel = false, role = "third", jingle = null, jingleClass = null, pendingShow = null, onTakeNow,
+  label, color, volume, level = 0, isPlaying, isOn, onVolumeChange, onToggleOn, onPfl, compact, deckId, hideLabel, labelTextHidden = false, sourceChannel = false, role = "third", jingle = null, jingleClass = null, pendingShow = null, onTakeNow,
   meterNotFed = false,
 }: Props) {
   const engine = useAudioEngine();
@@ -269,6 +271,7 @@ export default function ConsoleStrip({
             color: isOn && isPlaying ? "#fff" : (isOn ? color : "var(--strip-label-text, #555)"),
             textShadow: isOn && isPlaying ? "0 1px 3px rgba(0,0,0,0.6)" : "none",
             transition: "color 0.2s",
+            visibility: labelTextHidden ? "hidden" : "visible",
           }}>{label}</span>
         </div>
       ) : deckId ? (

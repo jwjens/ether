@@ -74,6 +74,15 @@ export const isSweeperKind = (k?: string | null) => k === "sweeper" || k === "ji
 export const sourceKindMeta = (k?: string | null) =>
   SOURCE_KINDS.find(s => s.kind === k) || null;
 
+/** Does the strip's name label only repeat what the SOURCE dropdown already shows? (Jeff, 2026-10-28: "remove the name
+ *  label under the source dropdown ... The dropdown already shows it, so it doesn't need to be said twice.") True for a
+ *  source kind's name ("Sweeper", "Announcement", "Cart / SFX rack", "Mic") and a mic's device; false for the Link's
+ *  sender (the dropdown does not name it) and for a fader with no source (the label is the channel's own name). */
+export function labelRepeatsDropdown(kind: string | null | undefined, linkSender: string | null | undefined): boolean {
+  if (!sourceKindMeta(kind)) return false;
+  return !(kind === "link" && linkSender);
+}
+
 /** Slots a SOURCE channel may occupy: the existing aux decks first, then the new engine slots. */
 export const SOURCE_SLOTS = ["D", "E", "F", "S1", "S2", "S3", "S4", "S5"] as const;
 

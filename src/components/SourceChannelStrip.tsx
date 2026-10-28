@@ -21,6 +21,7 @@ import LinkPairPicker from "./LinkPairPicker";
 import { linkNeedsPatch } from "../lib/linkPairing";
 // The value is the shared rule the Patch Bay's inputs grid reads too (src/lib/inputPatch.ts), so the two always agree.
 import { stripSourceValue } from "../lib/inputPatch";
+import { labelRepeatsDropdown } from "../lib/sourceKinds";
 import ConsoleStrip from "./ConsoleStrip";
 import { sourceKindMeta, sourceKindOptions, type SourceKind, type DeckConfig } from "./DeckConfigurator";
 import { useBoardName } from "../hooks/useBoardName";
@@ -314,6 +315,8 @@ export default function SourceChannelStrip({
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <ConsoleStrip
           label={label}
+          // The name is in the dropdown above; the label row stays (ON colour, play progress), without the repeat.
+          labelTextHidden={labelRepeatsDropdown(config.kind, isLink && linkRx?.state === "receiving" ? linkRx.sender : null)}
           color="#8868D8"
           volume={volume}
           // deckId makes ConsoleStrip meter this slot's PRE-FADER engine tap (Slice 2 meter bus) — a MIC too,
