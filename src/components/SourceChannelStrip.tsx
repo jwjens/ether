@@ -19,6 +19,8 @@ import { useMicInputs, useInputDevices, micStateWords, openMicPreferences } from
 import { useRemoteLink, rxWords, linkNotFed, openLinkPreferences } from "../hooks/useRemoteLink";
 import LinkPairPicker from "./LinkPairPicker";
 import { linkNeedsPatch } from "../lib/linkPairing";
+// The value is the shared rule the Patch Bay's inputs grid reads too (src/lib/inputPatch.ts), so the two always agree.
+import { stripSourceValue } from "../lib/inputPatch";
 import ConsoleStrip from "./ConsoleStrip";
 import { sourceKindMeta, sourceKindOptions, type SourceKind, type DeckConfig } from "./DeckConfigurator";
 import { useBoardName } from "../hooks/useBoardName";
@@ -179,7 +181,7 @@ export default function SourceChannelStrip({
         </div>
 
         <select
-          value={isMic ? (patch ? MIC_PREFIX + patch.device : "mic") : (config.kind || "")}
+          value={stripSourceValue(config.kind || "", patch)}
           onChange={e => {
             const v = e.target.value;
             if (v.startsWith(MIC_PREFIX)) {
@@ -225,7 +227,7 @@ export default function SourceChannelStrip({
         {/* THE MIC'S STATE — the engine's, said in words; the input number and gain live in Preferences. */}
         {isMic && (
           <button onClick={openMicPreferences}
-            title={`${words.text}${micState?.reason ? ` — ${micState.reason}` : ""}. Input number, gain and live state: Preferences → Audio → Mic Inputs.`}
+            title={`${words.text}${micState?.reason ? ` — ${micState.reason}` : ""}. Which input: the Patch Bay. Gain and live state: Preferences → Audio → Mic Inputs.`}
             style={{ width: "100%", padding: "2px 4px", borderRadius: 2, cursor: "pointer", fontSize: 8, fontWeight: 700,
                      letterSpacing: "0.04em", textAlign: "left", background: "var(--bg-tertiary)",
                      border: `1px solid ${words.tone === "bad" ? TONE.bad : "var(--border-primary)"}`, color: TONE[words.tone],
