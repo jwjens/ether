@@ -112,6 +112,12 @@ const isLocalOnlyKey = (k) =>
 const _sameValue = (a, b) =>
   (a === b) || (a != null && b != null && String(a) === String(b));
 
+// A NUMBER IS STORED AS ITS OWN TEXT (2026-10-27; the open T-42). better-sqlite3 binds a JS number as REAL, and the TEXT
+// column then stores 5 as "5.0" — so a later write of '5' compared "5" with "5.0", the guard missed, and an unchanged
+// value was journaled. Every journaled writer stores String(n) instead ("5"), so 5 and '5' are the same stored value.
+// A row already stored as "5.0" is rewritten once, as "5", on its next write.
+const _storeValue = (v) => (typeof v === 'number' ? String(v) : v);
+
 // Direct, MUTATION-LESS upsert for a local-authoritative key. Bypasses withMutation entirely, so the
 // value never becomes a syncable mutation. The ONLY sanctioned writer for a LOCAL_ONLY_KEYS key.
 function stationConfigKvSetLocal(db, stationId, key, value) {
@@ -168,6 +174,7 @@ function stationConfigKvCreate(db, payload) {
   // Rider B: a local-authoritative key must never be created via the mutation-logging path (that is the
   // inbound-apply / legacy vector). Skip it — the sanctioned writer is stationConfigKvSetLocal.
   if (isLocalOnlyKey(payload && payload.key)) return { ok: true, skippedLocalOnly: true };
+  if (payload && 'value' in payload) payload = { ...payload, value: _storeValue(payload.value) };
   if (HAS_STATION_ID_COL && payload.station_id == null) {
     throw new Error(`[station_config_kv] station_id is required for station-scoped create`);
   }
@@ -211,6 +218,7 @@ function stationConfigKvUpdate(db, uuid, patch) {
   // Rider B: never mutation-log an update to a local-authoritative key (blocks an inbound update landing
   // on the flag row by uuid). Local flips use stationConfigKvSetLocal.
   if (isLocalOnlyKey(existing.key)) return stationConfigKvGet(db, uuid);
+  if (patch && 'value' in patch) patch = { ...patch, value: _storeValue(patch.value) };
 
   const forbidden = Object.keys(patch).filter(k => k !== 'actor_id' && !PATCHABLE.includes(k));
   if (forbidden.length > 0) {
@@ -282,6 +290,7 @@ function stationConfigKvUpsertByKey(db, stationId, key, value) {
   // inbound-apply guard and a guard against any caller accidentally syncing the flag.
   if (isLocalOnlyKey(key)) return { ok: true, skippedLocalOnly: true };
   if (stationId == null) throw new Error(`[station_config_kv] station_id required for upsertByKey`);
+  value = _storeValue(value);
   const existing = db.prepare(
     `SELECT * FROM ${TABLE} WHERE station_id = ? AND key = ?`
   ).get(stationId, key);

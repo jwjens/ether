@@ -100,16 +100,43 @@ describe('J: station_config_kv no-op guard', () => {
     expect(mutationCount(db)).toBe(base + 1);
   });
 
-  // OPEN — no T-42 yet. `_sameValue` in the handler compares String(a) === String(b) so that a
-  // caller binding the number 5 against a stored '5' is treated as a no-op. A test asserting that
-  // (write 5, then write '5', expect no second mutation) FAILED on 2026-08-17: the guard did not
-  // fire and a second mutation was journalled. The reason was not established before the session's
-  // shell died, so the test was withdrawn rather than left red or left passing on a wrong premise.
-  //
-  // This does NOT affect the license loop the guard was written for — every real caller
-  // (stampLicenseEverywhere, seed-station-config, the UI) writes strings, which T-39 covers. It
-  // does mean the numeric-coercion arm of _sameValue is unproven. Reproduce with:
-  //   stationConfigKvUpsertByKey(db, 2, 'monitor_volume', 5);
-  //   stationConfigKvUpsertByKey(db, 2, 'monitor_volume', '5');   // expected silent, observed a write
-  // and print typeof(value) from the row to see what SQLite actually stored.
+  // T-42 (was OPEN since 2026-08-17). Cause found 2026-10-27: better-sqlite3 binds the number 5 as REAL and the TEXT column
+  // stored "5.0", so '5' compared "5" with "5.0". The writers now store a number as its own text.
+  it("T-42: 5 then '5' (and back) is one stored value: one mutation, stored as 5 not 5.0", () => {
+    const { db } = createTestDb({ tables: ['station_config_kv'] });
+    stationConfigKvUpsertByKey(db, 2, 'monitor_volume', 5);
+    const base = mutationCount(db);
+    expect(rowFor(db, 2, 'monitor_volume').value).toBe('5');
+    stationConfigKvUpsertByKey(db, 2, 'monitor_volume', '5');
+    stationConfigKvUpsertByKey(db, 2, 'monitor_volume', 5);
+    expect(mutationCount(db)).toBe(base);
+    stationConfigKvUpsertByKey(db, 2, 'monitor_volume', 0.75);
+    expect(mutationCount(db)).toBe(base + 1);
+    expect(rowFor(db, 2, 'monitor_volume').value).toBe('0.75');
+    stationConfigKvUpsertByKey(db, 2, 'monitor_volume', '0.75');
+    expect(mutationCount(db)).toBe(base + 1);
+  });
+
+  it("T-42b: Create and Update treat 5 and '5' as the same value too", () => {
+    const { db } = createTestDb({ tables: ['station_config_kv'] });
+    const row = stationConfigKvCreate(db, { station_id: 2, key: 'board_levels', value: 5 });
+    expect(row.value).toBe('5');
+    const base = mutationCount(db);
+    stationConfigKvCreate(db, { station_id: 2, key: 'board_levels', value: '5' });
+    stationConfigKvUpdate(db, row.uuid, { value: '5' });
+    stationConfigKvUpdate(db, row.uuid, { value: 5 });
+    expect(mutationCount(db)).toBe(base);
+  });
+
+  it('T-42c: a row already stored as "5.0" (before this fix) is rewritten once as "5", then silent', () => {
+    const { db } = createTestDb({ tables: ['station_config_kv'] });
+    stationConfigKvUpsertByKey(db, 2, 'monitor_volume', '1');
+    db.prepare("UPDATE station_config_kv SET value = '5.0' WHERE key = 'monitor_volume'").run();
+    const base = mutationCount(db);
+    stationConfigKvUpsertByKey(db, 2, 'monitor_volume', 5);
+    expect(mutationCount(db)).toBe(base + 1);
+    expect(rowFor(db, 2, 'monitor_volume').value).toBe('5');
+    stationConfigKvUpsertByKey(db, 2, 'monitor_volume', '5');
+    expect(mutationCount(db)).toBe(base + 1);
+  });
 });
