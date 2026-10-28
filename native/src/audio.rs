@@ -3107,6 +3107,9 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
         let mut master_pair: u16 = 0;
         let mut stall_switch: Option<bool> = None;
         let ms = master_status(station_id);
+        // Why the Master device last failed to open. A channel pair the device does not have cannot fix itself: it waits
+        // for the patch to change instead of reopening (and logging) every 2 s.
+        let mut master_err: Option<OpenErr> = None;
 
         'outer: loop {
             // A card that keeps failing is retried with a pause, never in a tight loop.
@@ -3127,8 +3130,9 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
             // (below): the stream to Icecast, AUX, Cue, Park Listen and every extra device keep going; only the missing
             // device is silent, and the screen names it. Before, a failed open slept and retried with the mixer stopped.
             let (device_opt, sr, ch, dev_name) = match open_output_device(station_id, &want, pair) {
-                Ok((d, sr, ch)) => { let n = d.name().unwrap_or_default(); (Some(d), sr, ch, n) }
+                Ok((d, sr, ch)) => { master_err = None; let n = d.name().unwrap_or_default(); (Some(d), sr, ch, n) }
                 Err(why) => {
+                    master_err = Some(why);
                     if why != OpenErr::NotFound { watch.open_failed(); }
                     ms.state.store(if why == OpenErr::NotFound { CUE_NOT_FOUND } else { CUE_FAILED }, Ordering::Relaxed);
                     eprintln!("[RUST] {} Station {} Master output {:?} ch {}-{}: {} — NOT switching to another device; the station runs on its own clock (stream unaffected) and retries",
@@ -3272,7 +3276,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                     }
                     if sk.produced < due { sk.produced = due; }   // far behind (the thread was starved): skip, never spin
                     if std::time::Instant::now() >= sk.retry_at {
-                        if output_device_present(&current_device) { break; }   // 'outer opens it
+                        if !matches!(master_err, Some(OpenErr::NoSuchPair(_))) && output_device_present(&current_device) { break; }   // 'outer opens it
                         sk.retry_at = std::time::Instant::now() + std::time::Duration::from_secs(2);
                     }
                 }
@@ -4170,6 +4174,8 @@ impl MonOut {
         }
         self.stream = None;
         self.watch.stream_closed();
+        // What is OPEN is reported, never what was: a closed stream clears the opened name (THE PATCH BAY's screen).
+        if let Some(st) = &self.status { if let Ok(mut o) = st.opened.lock() { o.clear(); } }
         if changed { self.watch.consecutive = 0; }   // the operator chose a device: judge it fresh
         if let Ok(mut g) = self.dev_err.lock() { *g = None; }
         self.open_name = want.clone();
