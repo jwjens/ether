@@ -1,7 +1,8 @@
 {
   "_note": "S5 ratchet (docs/screen-builder-design-2026-10-18.md §3). Today's hard-coded pages, recorded 2026-10-18 on ui/screen-builder after the canvas and CartWallPanel were deleted. These lists may only SHRINK: a line leaves when its page becomes a layout of registered modules. Never add a line — a new page is a layout, not a list entry. src/modules/proof/noNewPage.test.ts fails if the tree has an item that is not here, or this file has one the tree no longer has.",
   "_additions": [
-    "2026-10-18 popoutCases + \"screen\", drawer + \"po-screens → screen\": the SURFACE WINDOW (src/components/ScreenSurface.tsx), recorded on purpose — it is the one place every future page lives, as a layout of registered modules (Jeff, Screen Builder build). No other addition is allowed."
+    "2026-10-18 popoutCases + \"screen\", drawer + \"po-screens → screen\": the SURFACE WINDOW (src/components/ScreenSurface.tsx), recorded on purpose — it is the one place every future page lives, as a layout of registered modules (Jeff, Screen Builder build). No other addition is allowed.",
+    "2026-10-28 drawer + \"po-patchbay → multioutput\": Jeff, \"Add Patch Bay to the ☰ menu too, from the same registry the Menu entry uses.\" A door, not a page: it opens the existing multioutput pop-out (already in panels and popoutCases), the same window Menu → Patch Bay opens."
   ],
   "panels": [
     "analytics",
@@ -89,6 +90,7 @@
     "po-categories → categories",
     "po-decks → decks",
     "po-jukebox → jukebox",
+    "po-patchbay → multioutput",
     "po-processor → processor",
     "po-screens → screen",
     "po-shows → shows",

@@ -3015,6 +3015,9 @@ export default function App() {
                   { key: "logs",           emoji: "📜", label: "Play Log",           panel: "logs" },
                   { key: "schedulehub",    emoji: "🗂", label: "Schedule Manager",   panel: "schedulehub" },
                   { key: "rotation",       emoji: "📊", label: "Rotation Analytics", panel: "rotation" },
+                  // Patch Bay (Jeff, 2026-10-28): the same pop-out key as Menu → Patch Bay ("multioutput"), so the
+                  // same window, title and size; its label is held to that pop-out's title by drawerDoors.test.ts.
+                  { key: "po-patchbay",    emoji: "🔌", label: "Patch Bay",          panel: "multioutput" },
                   // Health Monitor and Announcements were native-menu-only (audit 23) — doors before rooms.
                   { key: "health",         emoji: "🩺", label: "Health Monitor",     panel: "health" },
                   { key: "announce",       emoji: "📢", label: "Announcements",      panel: "announce" },

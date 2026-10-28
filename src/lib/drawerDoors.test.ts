@@ -20,3 +20,16 @@ describe("the ☰ menu is a door to Health Monitor and Announcements (audit 23)"
     for (const e of entries) expect(router, e.panel).toMatch(new RegExp(`case "${e.panel}":|panel === "${e.panel}"`));
   });
 });
+
+describe("the ☰ menu is a door to the Patch Bay (Jeff, 2026-10-28)", () => {
+  const main = fs.readFileSync(path.join(__dirname, "..", "..", "electron", "main.js"), "utf8");
+  it("the ☰ entry opens the same pop-out as Menu → Patch Bay", () => {
+    expect(main).toMatch(/label: "Patch Bay", click: \(\) => menuNav\("nav:multioutput", "multioutput"\)/);
+    expect(entries.find(e => e.key === "po-patchbay")?.panel).toBe("multioutput");
+  });
+  it("its label is that pop-out's title, in the renderer and in the window", () => {
+    const label = entries.find(e => e.key === "po-patchbay")?.label;
+    expect(router).toMatch(new RegExp(`"multioutput":\\s*"${label}"`));
+    expect(main).toMatch(new RegExp(`"multioutput":\\s*"${label}"`));
+  });
+});

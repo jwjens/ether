@@ -2,7 +2,7 @@
 feature: patch-bay
 title: Patch Bay (outputs)
 summary: The one place you choose where each station's Master, Cue (PFL) and Aux play on this computer — any device, any channel pair, up to four devices at once.
-where: Menu → Patch Bay, or the "Patch Bay" button on the board's Master line, the AUX panel's Output line, or Preferences → PFL
+where: ☰ → Patch Bay, Menu → Patch Bay, or the "Patch Bay" button on the board's Master line, the AUX panel's Output line, or Preferences → PFL
 since: unreleased (patch bay step 1, after 4.6.67)
 audience: admin
 tour: true
@@ -34,7 +34,7 @@ The stream to your listeners **never** depends on any of this. On-air audio goes
 
 ## Set it up
 
-1. Open **Menu → Patch Bay**. You can also use the **Patch Bay** button next to the board's Master line, the AUX panel's
+1. Open **☰ → Patch Bay** or **Menu → Patch Bay**. You can also use the **Patch Bay** button next to the board's Master line, the AUX panel's
    Output line, or Preferences → PFL.
 2. Find the station. Its three rows are Master, Cue (PFL) and Aux.
 3. Click the square where the row meets the device and channels you want. It turns teal (●) once Ether has it.
