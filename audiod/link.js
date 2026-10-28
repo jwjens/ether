@@ -141,12 +141,14 @@ function parseSend(value, d = FALLBACK_DEFAULTS) {
   if (!value) return null;
   try {
     const v = JSON.parse(value);
-    if (!v || !isUuid(v.target) || !isMachineId(v.targetMachine) || typeof v.host !== "string" || !v.host.trim()) return null;
+    // host "" = THROUGH THE RELAY (docs/remote-link-relay-plan-2026-10-28.md): no address to type; a typed host is the
+    // advanced direct path.
+    if (!v || !isUuid(v.target) || !isMachineId(v.targetMachine) || (v.host != null && typeof v.host !== "string")) return null;
     return {
       target: v.target.toLowerCase(),
       targetMachine: lc(v.targetMachine),
       targetMachineName: String(v.targetMachineName || "").trim(),
-      host: v.host.trim(),
+      host: String(v.host || "").trim(),
       port: clampInt(v.port, 1, 65535, d.port),
       bitrate: clampInt(v.bitrate, d.bitrateRange[0], d.bitrateRange[1], d.bitrate),
       fec: v.fec !== false,

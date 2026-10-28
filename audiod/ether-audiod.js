@@ -244,13 +244,17 @@ function linkThisMachine() {
 function linkMachineKey() { return LinkCfg.readMachineKey(LinkCfg.machineDir({ userDataDir: _userDataDir() })); }
 /** What the engine should run for this station's RECEIVE side: a want-string (to compare) and the call.
  *  The fader takes the SENDING machine's key, pasted into its Link input; paired "<this machine>|<sender>". */
+// THE RELAY (docs/remote-link-relay-plan-2026-10-28.md): per station, the ticket main fetched for each side — runtime
+// only (not a setting), part of what is applied so a new ticket re-lands at once.
+const linkRelay = new Map();   // station id → { send: json|null, input: json|null }
+const relayOf = (sid, side) => ((linkRelay.get(sid) || {})[side]) || null;
 function linkInputPlan(sid, input) {
   const d = linkDefaults();
   const p = input === undefined ? LinkCfg.parseInput(linkKv(sid, LinkCfg.KEY_INPUT), d) : (input ? LinkCfg.parseInput(input, d) : null);
   const st = linkStation(sid);
   const me = linkThisMachine();
   const refusal = p ? LinkCfg.inputRefusal({ thisMachine: me, from: p.from, selfTest: LinkCfg.selfTestOn() }) : null;
-  const want = p ? `${LinkCfg.serializeInput(p)}|${st ? st.uuid : ""}|${me || ""}|${refusal || ""}` : "";
+  const want = p ? `${LinkCfg.serializeInput(p)}|${st ? st.uuid : ""}|${me || ""}|${refusal || ""}|${relayOf(sid, "input") || ""}` : "";
   return { p, st, me, refusal, want };
 }
 function linkApplyInput(sid, plan) {
@@ -265,7 +269,7 @@ function linkApplyInput(sid, plan) {
   if (!me) return { ok: false, reason: "this computer has no machine id yet — restart Ether" };
   // Link picked on the fader, no key pasted yet: stored, NOT in the engine (nothing can be accepted without a key).
   if (!p.from) return { ok: true, slot: null, needsKey: true };
-  const r = JSON.parse(A.audioSetLinkInput(sid, p.slot, st.uuid, p.from.key, p.from.keyId, p.jitterMs, LinkCfg.pairing(me, p.from.machine)));
+  const r = JSON.parse(A.audioSetLinkInput(sid, p.slot, st.uuid, p.from.key, p.from.keyId, p.jitterMs, LinkCfg.pairing(me, p.from.machine), relayOf(sid, "input")));
   return r && r.ok ? { ok: true, slot: p.slot } : r;
 }
 /** The SEND side: a feed to the Link fader of station `target` on `targetMachine`, sealed with THIS machine's key. */
@@ -279,7 +283,7 @@ function linkSendPlan(sid, send) {
   const key = linkMachineKey();
   const refusal = LinkCfg.sendRefusal({ thisMachine: me, ownUuid: own && own.uuid, target: p.target, targetMachine: p.targetMachine,
                                         targetMachineName: p.targetMachineName, selfTest: LinkCfg.selfTestOn() });
-  const want = `${LinkCfg.serializeSend(p)}|${LinkCfg.keyFingerprint(key)}|${key ? key.id : 0}|${me || ""}|${refusal || ""}`;
+  const want = `${LinkCfg.serializeSend(p)}|${LinkCfg.keyFingerprint(key)}|${key ? key.id : 0}|${me || ""}|${refusal || ""}|${relayOf(sid, "send") || ""}`;
   return { p, tgt, key, me, refusal, want };
 }
 function linkApplySend(sid, plan) {
@@ -289,7 +293,10 @@ function linkApplySend(sid, plan) {
   if (refusal) { stop(); return { ok: false, reason: refusal }; }
   if (!me) { stop(); return { ok: false, reason: "this computer has no machine id yet — restart Ether" }; }
   if (!key) { stop(); return { ok: false, reason: "this computer has no link key yet — make one in Settings → Remote Link, and paste it into the fader at the other end" }; }
-  return JSON.parse(A.audioSetLinkSend(sid, p.target, key.key, key.id, p.host, p.port, p.bitrate, !!p.fec, LinkCfg.pairing(p.targetMachine, me)));
+  // No typed address = through the relay: it waits for the ticket main asks the server for (a minute at most).
+  const relay = p.host ? null : relayOf(sid, "send");
+  if (!p.host && !relay) { stop(); return { ok: false, reason: "waiting for the relay session from Ether's server" }; }
+  return JSON.parse(A.audioSetLinkSend(sid, p.target, key.key, key.id, p.host, p.port, p.bitrate, !!p.fec, LinkCfg.pairing(p.targetMachine, me), relay));
 }
 /** Every 3 s per station: re-land the stored Link when what is stored (or the key) differs from what was applied. */
 function linkReapply(sid) {
@@ -624,6 +631,16 @@ const handlers = {
       if (r && r.ok) { const a = linkApplied.get(sid) || {}; a.send = plan.want; linkApplied.set(sid, a); }
       return r;
     } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+  },
+  // The relay ticket for one side of a station (main's electron/link-relay-client.js); null = none. Re-applied at once.
+  setLinkRelay:       (m) => {
+    const sid = Number(m.stationId), side = m.side === "send" ? "send" : "input";
+    const cur = linkRelay.get(sid) || { send: null, input: null };
+    cur[side] = m.relay ? String(m.relay) : null;
+    linkRelay.set(sid, cur);
+    stations.add(sid);
+    try { linkReapply(sid); } catch { /* the 3 s pass retries */ }
+    return { ok: true };
   },
   // This machine's send key changed (made / replaced) — re-apply on the next pass (every sender here re-keys).
   linkKeyChanged:     () => { for (const a of linkApplied.values()) { a.input = "\u0000"; a.send = "\u0000"; } return true; },

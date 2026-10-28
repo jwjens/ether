@@ -3,7 +3,7 @@ feature: remote-link
 title: Remote Link (a feed over the network, straight into a fader)
 summary: Another Ether computer at the venue feeds its board over the network straight into a fader on your station's board — about a fifth of a second behind, not the 8 seconds of the listener stream — so your station stays on air and takes the remote as a channel.
 where: At the station — a fader's source dropdown → "Link (network feed)", then paste the venue computer's link key on that strip. At the venue — Settings → Remote Link → "Copy link key", and SEND FEED TO (the master section, or the hamburger menu → Remote Link). Its live state — the strip, SEND FEED on the master section, and Health Monitor → Remote Link.
-since: unreleased (log-reader-flip, after 4.6.51)
+since: 4.6.52 (direct); the relay in 4.6.68
 audience: operator
 tour: true
 ---
@@ -70,11 +70,15 @@ that receives** is given that key. That fader then takes **that computer's feed 
 1. Sign in to the same account on the venue computer.
 2. Press **SEND FEED** (the master section, under Station) — or hamburger menu → **Remote Link**.
 3. Under **SEND FEED TO another computer**: pick the **computer · station** (for example
-   *ovowforestmusic · halloVeen · the fader set to Link there*), type that computer's **address** and **port**
-   (9760), and check the **bitrate** (128 kb/s). The computer for each station is the one that airs it.
+   *ovowforestmusic · halloVeen · the fader set to Link there*) and check the **bitrate** (128 kb/s). **Nothing to
+   type:** the feed goes through **Ether's relay**, which finds that computer for you — no address, no port, no
+   router setup at either end. The computer for each station is the one that airs it.
 4. Press **▶ SEND FEED TO <computer · station>**. The line turns to **● SENDING → … receiving**. "Receiving"
-   comes from **the studio's own report**, never assumed. If it says **no answer yet**, the studio can't be
-   reached, or its fader doesn't hold this computer's key — check the address, the port, and the key.
+   comes from **the studio's own report**, never assumed. **The first time**, the studio computer is asked
+   *"<this computer> wants to send a feed to <station>'s Link fader. Allow it?"* — until someone there presses
+   **Allow**, the line says it is waiting at the relay. Allowed once, it is remembered.
+   - **Advanced:** to send **directly** instead (no relay), open *Advanced: send directly to an address* and type
+     the studio's public address and port (9760); its router must forward that port.
 5. To stop: **■ STOP THE FEED**.
 
 **The one thing you can't do: feed this same computer.** Its own programme would come straight back into it (a
@@ -103,6 +107,14 @@ computer. Feeding **the same station on another computer** is the normal case.
 - A short wobble never needs you: a missing packet is **recovered** or **smoothed over** by the codec, and
   every one is counted (Health Monitor → Remote Link).
 
+## "Allow <computer>?" — at the station
+
+When a computer sends through the relay to a station whose Link fader does not take its feed from that computer yet,
+**Settings → Remote Link** and **Health Monitor → Remote Link** show *"<computer> wants to send a feed to <station>'s
+Link fader. Allow it?"* Press **Allow** once: the fader switches to that computer's key and the feed comes in. It is
+remembered for that station, so the same computer is never asked about again. The computer the fader already takes
+its feed from is never asked about — choosing it was the approval.
+
 ## Health Monitor → Remote Link
 
 Both directions, as the engine reports them:
@@ -128,8 +140,8 @@ made or replaced, a fader patched with whose key) is written to the health ledge
 
 ## Not in this version (by design)
 
-- **The relay on the Ether server** (for a station network that can't open a port) comes next. This version
-  sends directly: the studio's router must forward UDP 9760 to the studio computer.
+- **A computer on another account** (a guest) still sends **directly** (the advanced address): the relay
+  introduces computers of the same account.
 - **SRT** is not in this version — the Link sends plain UDP. Its fallback timeout is shown in Settings,
   greyed out, so it can be set before SRT arrives.
 - **No return feed** to the venue (hearing the station without the 8 s stream delay) yet.

@@ -86,6 +86,10 @@ contextBridge.exposeInMainWorld("ether", {
     linkGet: (stationId) => ipcRenderer.invoke("link:get", stationId),
     linkSetInput: (stationId, input) => ipcRenderer.invoke("link:set-input", stationId, input),
     linkSetSend: (stationId, send) => ipcRenderer.invoke("link:set-send", stationId, send),
+    // THE RELAY: senders waiting for "Allow" on this computer, and allowing one (remembered per station).
+    linkRelayPending: () => ipcRenderer.invoke("link:relay-pending"),
+    linkRelayApprove: (stationId, senderMachine) => ipcRenderer.invoke("link:relay-approve", stationId, senderMachine),
+    onLinkRelayPending: (cb) => { const h = (_, v) => cb(v); ipcRenderer.on("link:relay-pending", h); return () => ipcRenderer.removeListener("link:relay-pending", h); },
     linkMintKey: () => ipcRenderer.invoke("link:mint-key"),
     linkKeyLine: () => ipcRenderer.invoke("link:key-line"),
     // PAIRING (2026-10-04): the key is never copied by hand — pick a computer on this account, or a guest's code.

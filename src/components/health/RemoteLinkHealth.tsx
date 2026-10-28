@@ -5,6 +5,7 @@
 // engine has not reported says "waiting for the engine".
 import React from "react";
 import { HealthPanel } from "./sectionChrome";
+import LinkRelayApprovals from "../LinkRelayApprovals";
 import { openLinkPreferences, rxWords, sendTargetName, txWords, useRemoteLink } from "../../hooks/useRemoteLink";
 import { useBoardName } from "../../hooks/useBoardName";
 
@@ -28,6 +29,7 @@ export default function RemoteLinkHealth({ id, stationId }: { id: string; statio
       <button onClick={openLinkPreferences} style={{ fontSize: 11, cursor: "pointer", background: "transparent", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", padding: "2px 8px" }}
               title="This computer's link key, the fader's buffer, port and auto-cut, and SEND FEED TO: Settings → Remote Link">Set up…</button>
     }>
+      <LinkRelayApprovals />
       {!input && !send ? (
         <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>
           No Remote Link on this station on this computer. To take a feed from another computer, set a fader's source to <b>Link</b>

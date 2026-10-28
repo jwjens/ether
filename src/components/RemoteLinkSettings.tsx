@@ -15,6 +15,7 @@ import { useDeckConfig } from "./DeckConfigurator";
 import { useBoardName } from "../hooks/useBoardName";
 import { rxWords, sendTargetName, txWords, useRemoteLink, type LinkInputEdit, type LinkSend } from "../hooks/useRemoteLink";
 import LinkPairPicker from "./LinkPairPicker";
+import LinkRelayApprovals from "./LinkRelayApprovals";
 
 const TONE: Record<string, string> = { ok: "var(--accent-green)", warn: "var(--accent-amber, #f59e0b)", bad: "var(--accent-red, #ef4444)", off: "var(--text-tertiary)" };
 const FIELD: React.CSSProperties = {
@@ -94,6 +95,8 @@ export default function RemoteLinkSettings() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {/* A computer asking to send through the relay for the first time (remembered once allowed). */}
+      <LinkRelayApprovals />
       <div style={{ fontSize: 13, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
         The <b>Remote Link</b> is a <b>feed over the network</b> from one Ether computer into a <b>fader</b> on another — like the input
         selector on a console channel. The venue's computer feeds its board to the studio in about a fifth of a second (the listener stream is
@@ -245,13 +248,21 @@ export default function RemoteLinkSettings() {
               </select>
             </Row>
             {cfg.targets.length === 0 && <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>No computer airs a station on this account yet — a station's computer is set when it takes over playout.</div>}
-            <Row label="Address" hint="Where that computer listens: its public address (with the router forwarding the port) — or 127.0.0.1 for the self-test on this computer. The relay on the Ether server is the next slice.">
-              <input value={draft.host} disabled={sending} placeholder="ov.example.org, 203.0.113.7 — or 127.0.0.1" style={{ ...FIELD, flex: "1 1 240px" }}
-                onChange={e => setDraft({ ...draft, host: e.target.value })} />
-              <span style={LABEL as any}>port</span>
-              <input type="number" min={1} max={65535} value={draft.port} disabled={sending} style={{ ...FIELD, width: 90 }}
-                onChange={e => setDraft({ ...draft, port: Number(e.target.value) })} />
-            </Row>
+            {/* THROUGH ETHER'S RELAY by default (docs/remote-link-relay-plan-2026-10-28.md): nothing to type — the server
+                introduces the two computers. A typed address is the advanced direct path, kept as a fallback. */}
+            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+              {draft.host.trim() ? <>Sending <b>directly</b> to the address below.</> : <>Goes through <b>Ether's relay</b>: no address or port to type, and no router setup on either end. The first time, the receiving computer is asked to allow this one.</>}
+            </div>
+            <details open={!!draft.host.trim()}>
+              <summary style={{ fontSize: 12, cursor: "pointer", color: "var(--text-tertiary)" }}>Advanced: send directly to an address instead</summary>
+              <Row label="Address" hint="Only for a direct connection: that computer's public address, with its router forwarding the port — or 127.0.0.1 for the self-test on this computer. Leave empty to use Ether's relay.">
+                <input value={draft.host} disabled={sending} placeholder="empty = Ether's relay · or 203.0.113.7 / 127.0.0.1" style={{ ...FIELD, flex: "1 1 240px" }}
+                  onChange={e => setDraft({ ...draft, host: e.target.value })} />
+                <span style={LABEL as any}>port</span>
+                <input type="number" min={1} max={65535} value={draft.port} disabled={sending} style={{ ...FIELD, width: 90 }}
+                  onChange={e => setDraft({ ...draft, port: Number(e.target.value) })} />
+              </Row>
+            </details>
             <Row label="Bitrate" hint={`Opus, stereo, 48 kHz, 20 ms frames. Default ${d.bitrate / 1000} kb/s.`}>
               <select value={draft.bitrate} disabled={sending} style={{ ...FIELD, width: 130 }} onChange={e => setDraft({ ...draft, bitrate: Number(e.target.value) })}>
                 {BITRATES.map(b => <option key={b} value={b}>{b / 1000} kb/s{b === d.bitrate ? " (default)" : ""}</option>)}
@@ -272,7 +283,7 @@ export default function RemoteLinkSettings() {
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               {!sending ? (
                 <button style={{ ...FIELD, cursor: "pointer", fontWeight: 800, color: TONE.ok, borderColor: TONE.ok }}
-                  disabled={!draft.target || !draft.targetMachine || !draft.host.trim() || !!choice?.refusal}
+                  disabled={!draft.target || !draft.targetMachine || !!choice?.refusal}
                   onClick={async () => { setMsgOut(""); const r = await link.setSend(draft); if (!r.ok) setMsgOut(`⚠ Not sending — ${r.reason}`); }}>
                   ▶ SEND FEED TO {choice ? `${choice.machineName} · ${choice.stationName}` : "…"}
                 </button>

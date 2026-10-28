@@ -7150,18 +7150,45 @@ ipcMain.handle("link:set-send", async (_, stationId, send) => {
   if (!AUDIO_DAEMON) return _linkNoDaemon;
   const d = await _linkDefaults();
   const p = send ? LinkCfg.parseSend(JSON.stringify(send), d) : null;
-  if (send && !p) return { ok: false, reason: "pick where the feed goes (computer · station) and the address" };
+  if (send && !p) return { ok: false, reason: "pick where the feed goes (computer · station)" };
   if (p && !_linkMachineKey()) { _linkMintMachineKey(); _linkPublishOwnKey("made for sending"); }   // a sender always has a key to hand out
   const value = p ? LinkCfg.serializeSend(p) : "";
   let res;
   try { res = await audiodClient.cmd("setLinkSend", { stationId: sid, send: value }); }
   catch (e) { res = { ok: false, reason: String(e && e.message || e) }; }
-  if (!res || res.ok !== true) return res || { ok: false, reason: "no answer from the engine" };
+  // No typed address = through the relay: the engine waits for the ticket, which is fetched right after saving.
+  const viaRelay = !!(p && !p.host);
+  if (!viaRelay && (!res || res.ok !== true)) return res || { ok: false, reason: "no answer from the engine" };
   try { _linkSetLocal(sid, LinkCfg.KEY_SEND, value); }
   catch (e) { return { ok: false, reason: `the engine is sending but the setting was not saved: ${String(e && e.message || e)}` }; }
   _healthEvent(p ? "link-send-on" : "link-send-off", { stationId: sid, target: p ? p.target : null, targetMachine: p ? p.targetMachineName || p.targetMachine : null,
-    host: p ? p.host : null, port: p ? p.port : null });
-  return { ok: true, send: p };
+    host: p ? p.host || "relay" : null, port: p ? p.port : null });
+  if (viaRelay || !p) { try { await _linkRelay.tickSend(); } catch (e) { logStartup(`[link-relay] send: ${e.message}`); } }
+  return { ok: true, send: p, viaRelay };
+});
+
+// ── THE RELAY (electron/link-relay-client.js; docs/remote-link-relay-plan-2026-10-28.md) ─────────────────────────────
+// Sends with no typed address go through Ether's relay; relay sessions aimed at this computer join a fader set to Link
+// when the sender is the one it takes its feed from, or one allowed here before; any other sender waits for "Allow".
+const _linkRelay = require("./link-relay-client").createLinkRelayClient({
+  fetch: (...a) => fetch(...a), baseUrl: ETHER_BACKEND_URL,
+  token: () => AccountSession.get(),
+  me: () => _linkMe().id,
+  stations: () => { try { return getDb().prepare("SELECT id, name, uuid FROM stations WHERE deleted_at IS NULL").all(); } catch { return []; } },
+  readInput: (sid) => LinkCfg.parseInput(_linkKv(sid, LinkCfg.KEY_INPUT)),
+  readSend: (sid) => LinkCfg.parseSend(_linkKv(sid, LinkCfg.KEY_SEND)),
+  readKv: (sid, key) => _linkKv(sid, key),
+  writeKv: (sid, key, value) => _linkSetLocal(sid, key, value),
+  setRelay: async (sid, side, relay) => { if (AUDIO_DAEMON) { try { await audiodClient.cmd("setLinkRelay", { stationId: sid, side, relay }); } catch {} } },
+  pairWith: async (sid, machine) => { const r = await _linkPair.fetchKey(machine); return r.ok ? _linkApplyFrom(sid, r.from) : r; },
+  note: (event, detail) => { try { _healthEvent(event, detail || {}); } catch {} },
+  onPending: (list) => { try { sendToAllWindows("link:relay-pending", list); } catch {} },
+});
+setTimeout(() => { _linkRelay.tickSend().catch(() => {}); _linkRelay.tickReceive().catch(() => {}); }, 25000);
+setInterval(() => { _linkRelay.tickSend().catch(() => {}); _linkRelay.tickReceive().catch(() => {}); }, 60000).unref?.();
+ipcMain.handle("link:relay-pending", () => _linkRelay.pending());
+ipcMain.handle("link:relay-approve", async (_, stationId, senderMachine) => {
+  try { return await _linkRelay.approve(stationId, senderMachine); } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
 });
 ipcMain.handle("link:state", async (_, stationId) => {
   const sid = Number(stationId);
