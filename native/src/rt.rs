@@ -251,6 +251,11 @@ pub(crate) enum AuxCmd {
     /// PFL cue output (its own device, chosen in Preferences → Audio): the ring the callback writes the cue mix to.
     AttachCue(ringbuf::HeapProd<f32>),
     DetachCue,
+    /// THE PATCH BAY (patch.rs): one more device on an output row — `bus` 0 = Master, 1 = Aux, 2 = Cue; `i` = which extra
+    /// (0..MAX_EXTRA). Master and Aux extras are LocalRings (post-MONITOR, like the device they copy); Cue extras are raw,
+    /// like the cue ring (the one approved exception).
+    AttachExtra { bus: u8, i: u8, p: ringbuf::HeapProd<f32> },
+    DetachExtra { bus: u8, i: u8 },
 }
 
 /// Callback → dispatch: things to FREE off the audio thread.

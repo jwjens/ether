@@ -23,6 +23,7 @@ pub mod rack;            // Slice 4 — the rack model; pub so the type-rule doc
 mod rt;                  // Slice 1 S3 — lock-free channels between the audio callback and everything else
 mod loudness;           // Slice 3 — BS.1770 loudness per branch, on a meter thread — docs/dsp-loudness-meter.md
 mod board;               // The board as the engine holds it — audio_get_board_state (docs/board-state-on-connect-diagnosis-2026-10-11.md)
+mod patch;               // THE PATCH BAY, OUTPUTS — devices, channel pairs, several devices per output (docs/ether-audio-patch-bay-plan.md)
 mod localout;            // THE LOCAL OUTPUT STAGE — every local device is fed post-MONITOR (docs/monitor-bypass-diagnosis.md)
 mod offline_render;      // DSP parity harness — docs/dsp-parity-harness.md (diagnostic; never on the audio path)
 
@@ -247,6 +248,67 @@ pub fn audio_set_cue_device(station_id: u32, device: String) -> bool {
     let engine = get_or_create_engine(station_id, None);
     let Ok(audio) = engine.lock() else { return false };
     audio.sender.send(AudioCmd::SetCueDevice(device)).is_ok()
+}
+
+/// THE PATCH BAY, OUTPUTS (patch.rs) — every output row's devices + channel pairs and the stall setting, in one call.
+/// `json` = {"master":[{"device","pair"}],"aux":[…],"cue":[…],"stall_switch":null|bool}. false = not JSON / not sent.
+#[napi]
+pub fn audio_set_output_patch(station_id: u32, json: String) -> bool {
+    let Ok(p) = patch::parse_patch(&json) else { return false };
+    let engine = get_or_create_engine(station_id, None);
+    let Ok(audio) = engine.lock() else { return false };
+    audio.sender.send(AudioCmd::SetOutputPatch(p)).is_ok()
+}
+
+/// What the engine actually has open, per output row and device — never what was clicked:
+/// {"master":[{requested, pair, state, opened, opened_pair, channels, rate, stalls, frames}], "aux":[…], "cue":[…],
+///  "soft_clock": bool}. `soft_clock` = no Master device is open and the station runs on its own clock.
+#[napi]
+pub fn audio_output_patch_state(station_id: u32) -> String {
+    use std::sync::atomic::Ordering::Relaxed;
+    let one = |c: &audio::CueStatus, is_cue_or_aux: bool| {
+        let requested = c.req.lock().map(|r| r.clone()).unwrap_or_default();
+        let v = c.state.load(Relaxed);
+        let state = if requested.is_empty() && is_cue_or_aux { "none" } else { audio::cue_state_name(v) };
+        serde_json::json!({
+            "requested": requested, "pair": c.req_pair.load(Relaxed), "state": state,
+            "opened": c.opened.lock().map(|r| r.clone()).unwrap_or_default(), "opened_pair": c.pair.load(Relaxed),
+            "channels": c.channels.load(Relaxed), "rate": c.rate.load(Relaxed),
+            "stalls": c.stalls.load(Relaxed), "frames": c.frames.load(Relaxed),
+        })
+    };
+    let row = |first: std::sync::Arc<audio::CueStatus>, bus: u8, is_cue_or_aux: bool| {
+        let mut v = vec![one(&first, is_cue_or_aux)];
+        for i in 0..patch::MAX_EXTRA as u8 {
+            let st = audio::extra_status(station_id, bus, i);
+            if st.req.lock().map(|r| !r.is_empty()).unwrap_or(false) { v.push(one(&st, true)); }
+        }
+        v
+    };
+    let m = audio::master_status(station_id);
+    serde_json::json!({
+        "master": row(m.clone(), audio::OUT_MASTER, false),
+        "aux": row(audio::aux_status(station_id), audio::OUT_AUX, true),
+        "cue": row(audio::cue_status(station_id), audio::OUT_CUE, true),
+        "soft_clock": m.soft_clock.load(Relaxed),
+    }).to_string()
+}
+
+/// Every output device on this computer with its channel count and rate — the Patch Bay's columns (one per channel pair).
+#[napi]
+pub fn audio_list_output_devices_detailed() -> String {
+    use cpal::traits::{HostTrait, DeviceTrait};
+    let host = cpal::default_host();
+    let default_name = host.default_output_device().and_then(|d| d.name().ok()).unwrap_or_default();
+    let mut out: Vec<serde_json::Value> = vec![];
+    if let Ok(devices) = host.output_devices() {
+        for device in devices {
+            let Ok(name) = device.name() else { continue };
+            let (channels, rate) = device.default_output_config().map(|c| (c.channels(), c.sample_rate().0)).unwrap_or((0, 0));
+            out.push(serde_json::json!({ "name": name, "channels": channels, "rate": rate, "is_default": name == default_name }));
+        }
+    }
+    serde_json::to_string(&out).unwrap_or_else(|_| "[]".to_string())
 }
 
 /// Where PFL is going on this station: {device, state, rate, frames}.

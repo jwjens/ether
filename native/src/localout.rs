@@ -86,7 +86,10 @@ impl LocalRing {
 /// writer of a local device buffer. Same arithmetic as the block it replaces (audio.rs device stage): x · g per
 /// sample, linear interpolation when the device rate differs, mono = (l + r) / 2 · g. Returns the post-MONITOR peak.
 #[inline]
-pub fn write_device(data: &mut [f32], ch: usize, dl: &[f32], dr: &[f32], prog_frames: usize, device_frames: usize,
+///
+/// THE PATCH BAY (patch.rs): `pair` is the channel pair on a device opened with more than two channels — L/R go there and
+/// every other channel gets silence. With 1 or 2 channels `pair` is not read: the arithmetic is exactly as before.
+pub fn write_device(data: &mut [f32], ch: usize, pair: usize, dl: &[f32], dr: &[f32], prog_frames: usize, device_frames: usize,
                     resample: bool, g: MonitorGain) -> f32 {
     let mut pk = 0.0f32;
     let ramping = g.ramp.is_some();
@@ -97,6 +100,10 @@ pub fn write_device(data: &mut [f32], ch: usize, dl: &[f32], dr: &[f32], prog_fr
             if ch == 2 {
                 let (a, b) = (dl[f] * mvol, dr[f] * mvol);
                 data[f * 2] = a; data[f * 2 + 1] = b;
+                pk = pk.max(a.abs()).max(b.abs());
+            } else if ch > 2 {
+                let (a, b) = (dl[f] * mvol, dr[f] * mvol);
+                crate::patch::write_frame(data, ch, pair, f, a, b);
                 pk = pk.max(a.abs()).max(b.abs());
             } else {
                 let m = (dl[f] + dr[f]) * 0.5 * mvol;
@@ -121,6 +128,10 @@ pub fn write_device(data: &mut [f32], ch: usize, dl: &[f32], dr: &[f32], prog_fr
             if ch == 2 {
                 let (a, b) = (l * mvol, r * mvol);
                 data[f * 2] = a; data[f * 2 + 1] = b;
+                pk = pk.max(a.abs()).max(b.abs());
+            } else if ch > 2 {
+                let (a, b) = (l * mvol, r * mvol);
+                crate::patch::write_frame(data, ch, pair, f, a, b);
                 pk = pk.max(a.abs()).max(b.abs());
             } else {
                 let m = (l + r) * 0.5 * mvol;

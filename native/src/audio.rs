@@ -356,6 +356,8 @@ impl FinishedFlags {
 
 #[derive(Debug)]
 pub enum AudioCmd {
+    /// THE PATCH BAY, OUTPUTS (patch.rs) — every output row's devices + channel pairs, and the stall setting, in one.
+    SetOutputPatch(crate::patch::OutputPatch),
     /// `start_sec` > 0: the deck starts at that point of the file (the watchdog resuming a stalled song at the exact spot
     /// it stalled — Jeff, 2026-10-19). 0 = from the top, exactly as every load before it.
     Load { deck: String, file_path: String, title: String, artist: String, gain_db: f32, start_sec: f64 },
@@ -799,6 +801,12 @@ pub struct BusState {
     /// THE ONE APPROVED EXCEPTION to "every local output passes the MONITOR gain" (Jeff, 2026-10-07): PFL routed to a
     /// dedicated cue device. Deliberately a raw producer, not a LocalRing.
     pub cue_ring_prod: Option<HeapProd<f32>>,
+    /// THE PATCH BAY (patch.rs): the extra devices on each output row — each Some only while that device is OPEN (installed
+    /// by the monitor-output thread, exactly like the aux and cue rings). Master and Aux extras are LocalRings, so they get
+    /// the MONITOR gain like the device they copy; Cue extras are raw like the cue ring.
+    pub master_extra: [Option<crate::localout::LocalRing>; crate::patch::MAX_EXTRA],
+    pub aux_extra: [Option<crate::localout::LocalRing>; crate::patch::MAX_EXTRA],
+    pub cue_extra: [Option<HeapProd<f32>>; crate::patch::MAX_EXTRA],
     /// REMOTE LINK — the SEND tap (linknet.rs). Some only while this station is sending to another station
     /// (SEND TO); None = no link = the callback does nothing for it (docs/remote-link-design-2026-09-28.md).
     pub link_tap: Option<crate::linknet::LinkTap>,
@@ -988,6 +996,7 @@ impl BusState {
             aux_ring_prod: None,          // no aux device open → nowhere to send, by construction
             listen: None,                 // installed by start_station_mixer; render tests run without it
             cue_ring_prod: None,          // no cue device open → the cue goes nowhere (or to the main output — see pfl_to_device)
+            master_extra: [None, None, None], aux_extra: [None, None, None], cue_extra: [None, None, None],   // nothing extra patched
             link_tap: None,               // not sending (SEND TO off) → the link tap does not exist
             aux_out_frames: Arc::new(AtomicU64::new(0)),
             aux_peak: 0.0,
@@ -1247,6 +1256,26 @@ impl BusState {
                 AuxCmd::Detach    => { if let Some(o) = self.aux_ring_prod.take()     { self.discard(Garbage::AuxProd(o.into_inner())); } }
                 AuxCmd::AttachCue(p) => { if let Some(o) = self.cue_ring_prod.replace(p) { self.discard(Garbage::AuxProd(o)); } }
                 AuxCmd::DetachCue    => { if let Some(o) = self.cue_ring_prod.take()     { self.discard(Garbage::AuxProd(o)); } }
+                AuxCmd::AttachExtra { bus, i, p } => {
+                    let i = i as usize;
+                    if i >= crate::patch::MAX_EXTRA { self.discard(Garbage::AuxProd(p)); continue; }
+                    let old = match bus {
+                        OUT_MASTER => self.master_extra[i].replace(crate::localout::LocalRing::new(p)).map(|o| o.into_inner()),
+                        OUT_AUX    => self.aux_extra[i].replace(crate::localout::LocalRing::new(p)).map(|o| o.into_inner()),
+                        _          => self.cue_extra[i].replace(p),
+                    };
+                    if let Some(o) = old { self.discard(Garbage::AuxProd(o)); }
+                }
+                AuxCmd::DetachExtra { bus, i } => {
+                    let i = i as usize;
+                    if i >= crate::patch::MAX_EXTRA { continue; }
+                    let old = match bus {
+                        OUT_MASTER => self.master_extra[i].take().map(|o| o.into_inner()),
+                        OUT_AUX    => self.aux_extra[i].take().map(|o| o.into_inner()),
+                        _          => self.cue_extra[i].take(),
+                    };
+                    if let Some(o) = old { self.discard(Garbage::AuxProd(o)); }
+                }
             }
         }
     }
@@ -1477,6 +1506,7 @@ pub fn start_audio_thread(station_id: u32, device_name: Option<String>) -> (
                                 }
                             }
                             AudioCmd::Ping => {}
+                            AudioCmd::SetOutputPatch(_) => {}   // the Patch Bay is the station mixer's (start_station_mixer)
                             // The legacy no-device path has no program bus, so there is no processor to
                             // configure. Named explicitly rather than swept into a catch-all: the
                             // compiler catching this arm is what makes adding a command safe, and a `_ =>`
@@ -3022,10 +3052,25 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
         let aux_req_t = aux_req.clone();
         std::thread::spawn(move || {
             // Built HERE: a cpal Stream is not Send, so each output's stream lives and dies on this thread.
-            let mut outs = [
-                MonOut::new("AUX monitor", "aux", aux_req_t, aux_frames_ctr_shared, Some(aux_status(station_id)), AuxCmd::Attach, || AuxCmd::Detach),
-                MonOut::new("PFL cue", "cue", cue.req.clone(), cue.frames.clone(), Some(cue.clone()), AuxCmd::AttachCue, || AuxCmd::DetachCue),
+            let mut outs: Vec<MonOut> = vec![
+                MonOut::new("AUX monitor", "aux", aux_req_t, aux_frames_ctr_shared, Some(aux_status(station_id)), Box::new(AuxCmd::Attach), Box::new(|| AuxCmd::Detach)),
+                MonOut::new("PFL cue", "cue", cue.req.clone(), cue.frames.clone(), Some(cue.clone()), Box::new(AuxCmd::AttachCue), Box::new(|| AuxCmd::DetachCue)),
             ];
+            // THE PATCH BAY: every extra device on every output row, each its own stream on this thread (opened when
+            // patched, closed when unpatched, retried while absent — never another device).
+            const LABELS: [[&str; crate::patch::MAX_EXTRA]; 3] = [
+                ["Master (2nd device)", "Master (3rd device)", "Master (4th device)"],
+                ["AUX (2nd device)", "AUX (3rd device)", "AUX (4th device)"],
+                ["Cue (2nd device)", "Cue (3rd device)", "Cue (4th device)"],
+            ];
+            const TAGS: [&str; 3] = ["master+", "aux+", "cue+"];
+            for bus in [OUT_MASTER, OUT_AUX, OUT_CUE] {
+                for i in 0..crate::patch::MAX_EXTRA as u8 {
+                    let st = extra_status(station_id, bus, i);
+                    outs.push(MonOut::new(LABELS[bus as usize][i as usize], TAGS[bus as usize], st.req.clone(), st.frames.clone(), Some(st.clone()),
+                        Box::new(move |p| AuxCmd::AttachExtra { bus, i, p }), Box::new(move || AuxCmd::DetachExtra { bus, i })));
+                }
+            }
             loop {
                 for o in outs.iter_mut() { o.service(station_id, &mut send); }
                 std::thread::sleep(std::time::Duration::from_millis(250));
@@ -3057,6 +3102,11 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
         // REMOTE LINK — this station's Link input (which slot) and its sender (while SEND TO is on).
         let mut links = crate::linknet::LinkInputs::new(station_id);
         let mut _link_sender: Option<crate::linknet::Sender> = None;
+        // THE PATCH BAY (patch.rs) — the Master's channel pair, Jeff's stall setting (None = not set: warn and keep retrying,
+        // never switch on its own — Outputs answer 2), and the Master's status for the screen.
+        let mut master_pair: u16 = 0;
+        let mut stall_switch: Option<bool> = None;
+        let ms = master_status(station_id);
 
         'outer: loop {
             // A card that keeps failing is retried with a pause, never in a tight loop.
@@ -3064,20 +3114,29 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
             if !pause.is_zero() { std::thread::sleep(pause); }
             // Find and open output device — the CHOSEN one, unless it has stalled or failed FALLBACK_AFTER times in
             // a row: then the system default, and the log says so (a silent station is worse than the wrong card).
-            let fallback = watch.use_default_next() && current_device.is_some();
+            // THE PATCH BAY (Outputs answer 2): the Windows default replaces a STALLING chosen device only when the user
+            // turned that setting on. A device that is simply MISSING never gets here — not-found is not a stall.
+            let fallback = crate::patch::master_open_plan(current_device.as_deref(), watch.use_default_next(), stall_switch)
+                == crate::patch::MasterOpen::DefaultAfterStalls;
             let want = if fallback { None } else { current_device.clone() };
-            let (device, sr, ch) = match open_output_device(station_id, &want) {
-                Some(d) => d,
-                None => {
-                    watch.open_failed();
-                    eprintln!("[RUST] {} Station {} output: no device to open ({:?}) — attempt {} failed, retrying",
-                              crate::outwatch::iso_now(), station_id, want, watch.consecutive);
-                    std::thread::sleep(std::time::Duration::from_secs(2));
-                    continue 'outer;
+            let pair = if fallback { 0 } else { master_pair };
+            if let Ok(mut r) = ms.req.lock() { *r = current_device.clone().unwrap_or_default(); }
+            ms.req_pair.store(master_pair, Ordering::Relaxed);
+            ms.state.store(CUE_OPENING, Ordering::Relaxed);
+            // NO DEVICE IS NOT NO STATION. When the Master device cannot be opened, the station runs on its OWN clock
+            // (below): the stream to Icecast, AUX, Cue, Park Listen and every extra device keep going; only the missing
+            // device is silent, and the screen names it. Before, a failed open slept and retried with the mixer stopped.
+            let (device_opt, sr, ch, dev_name) = match open_output_device(station_id, &want, pair) {
+                Ok((d, sr, ch)) => { let n = d.name().unwrap_or_default(); (Some(d), sr, ch, n) }
+                Err(why) => {
+                    if why != OpenErr::NotFound { watch.open_failed(); }
+                    ms.state.store(if why == OpenErr::NotFound { CUE_NOT_FOUND } else { CUE_FAILED }, Ordering::Relaxed);
+                    eprintln!("[RUST] {} Station {} Master output {:?} ch {}-{}: {} — NOT switching to another device; the station runs on its own clock (stream unaffected) and retries",
+                              crate::outwatch::iso_now(), station_id, want.as_deref().unwrap_or("(Windows default)"), pair + 1, pair + 2, why);
+                    (None, PROGRAM_RATE, 2u16, String::new())
                 }
             };
-            let dev_name = device.name().unwrap_or_default();
-            if fallback {
+            if fallback && device_opt.is_some() {
                 RtCounters::bump(&ctl.counters.stall_fallbacks, 1);
                 eprintln!("[RUST] {} Station {} output: {:?} stalled or failed {} times in a row — opening the SYSTEM DEFAULT \"{}\" instead",
                           crate::outwatch::iso_now(), station_id, current_device, watch.consecutive, dev_name);
@@ -3095,7 +3154,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
             let stream_config = cpal::StreamConfig {
                 channels:    ch,
                 sample_rate: cpal::SampleRate(sr),
-                buffer_size: soak_buffer_size(station_id, &device),
+                buffer_size: match &device_opt { Some(d) => soak_buffer_size(station_id, d), None => cpal::BufferSize::Default },
             };
 
             let bus_cb   = bus_cmd.clone();
@@ -3107,6 +3166,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
             // S1 — this stream's working buffers, allocated here on the dispatch thread and MOVED into the
             // callback. The audio thread never allocates them; a reopened device gets a fresh set here.
             let mut sc = Scratch::with_counters(station_counters.clone());
+            sc.out_pair = pair as usize;
             let cb_counters = station_counters.clone();
             // S6 — OVERRUN detection from the timestamps cpal HANDS the callback (no clock call of ours):
             // a gap since the previous callback of more than 1.5 × this buffer's duration is a late callback.
@@ -3122,7 +3182,8 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
             // counted, and handed to the dispatch thread, which treats it exactly as a stall (reopen, decks restored).
             let dev_err: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
             let (err_slot, err_dev, err_counters) = (dev_err.clone(), dev_name.clone(), station_counters.clone());
-            let stream = device.build_output_stream::<f32, _, _>(
+            let stream = match device_opt { None => None, Some(device) => {
+            let built = device.build_output_stream::<f32, _, _>(
                 &stream_config,
                 move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
                     let ts = info.timestamp().callback;
@@ -3148,25 +3209,45 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                 None,
             );
 
-            let stream = match stream {
-                Ok(s) => s,
+            match built {
                 Err(e) => {
                     watch.open_failed();
-                    eprintln!("[RUST] {} Station {} build_output_stream on \"{}\": {} — retrying", crate::outwatch::iso_now(), station_id, dev_name, e);
-                    std::thread::sleep(std::time::Duration::from_secs(2));
-                    continue 'outer;
+                    ms.state.store(CUE_FAILED, Ordering::Relaxed);
+                    eprintln!("[RUST] {} Station {} build_output_stream on \"{}\": {} — the station runs on its own clock and retries", crate::outwatch::iso_now(), station_id, dev_name, e);
+                    None
                 }
-            };
-            if let Err(e) = stream.play() {
-                watch.open_failed();
-                eprintln!("[RUST] {} Station {} stream.play() on \"{}\": {} — retrying", crate::outwatch::iso_now(), station_id, dev_name, e);
-                std::thread::sleep(std::time::Duration::from_secs(2));
-                continue 'outer;
+                Ok(st) => match st.play() {
+                    Err(e) => {
+                        watch.open_failed();
+                        ms.state.store(CUE_FAILED, Ordering::Relaxed);
+                        eprintln!("[RUST] {} Station {} stream.play() on \"{}\": {} — the station runs on its own clock and retries", crate::outwatch::iso_now(), station_id, dev_name, e);
+                        None
+                    }
+                    Ok(()) => Some(st),
+                },
             }
-            watch.stream_opened(std::time::Instant::now(), cb_seq.load(Ordering::Relaxed));
-
-            eprintln!("[RUST] Station {} audio output opened ({}Hz {}ch)",
-                station_id, sr, ch);
+            }};
+            // THE STATION'S OWN CLOCK — only while no Master device is open: the mixer is pumped from this thread at
+            // programme rate into a scratch buffer nobody hears, so everything fed from the mixer keeps flowing. Checks
+            // every 2 s whether the chosen device is back; then 'outer opens it.
+            struct SoftClock { t0: std::time::Instant, produced: u64, buf: Vec<f32>, sc: Box<Scratch>, retry_at: std::time::Instant }
+            let mut soft: Option<SoftClock> = None;
+            if stream.is_some() {
+                watch.stream_opened(std::time::Instant::now(), cb_seq.load(Ordering::Relaxed));
+                ms.state.store(CUE_OPEN, Ordering::Relaxed);
+                ms.rate.store(sr, Ordering::Relaxed);
+                ms.pair.store(pair, Ordering::Relaxed);
+                ms.channels.store(ch, Ordering::Relaxed);
+                if let Ok(mut o) = ms.opened.lock() { *o = dev_name.clone(); }
+                ms.soft_clock.store(false, Ordering::Relaxed);
+                eprintln!("[RUST] Station {} audio output opened: \"{}\" ch {}-{} ({}Hz {}ch)", station_id, dev_name, pair + 1, pair + 2, sr, ch);
+            } else {
+                if let Ok(mut o) = ms.opened.lock() { o.clear(); }
+                ms.soft_clock.store(true, Ordering::Relaxed);
+                let now = std::time::Instant::now();
+                soft = Some(SoftClock { t0: now, produced: 0, buf: vec![0f32; 2 * 1024], sc: Scratch::with_counters(station_counters.clone()),
+                                        retry_at: now + std::time::Duration::from_secs(2).max(watch.backoff()) });
+            }
 
             // Command loop — holds `stream` alive; dropping it stops the callback
             loop {
@@ -3179,12 +3260,32 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                 // S3 — free what the callback let go of, and hand it whatever is waiting.
                 ctl.drain_garbage();
                 ctl.flush();
+                if let Some(sk) = soft.as_mut() {
+                    let due = (sk.t0.elapsed().as_secs_f64() * PROGRAM_RATE as f64) as u64;
+                    let mut rounds = 0;
+                    while sk.produced < due && rounds < 64 {
+                        let n = ((due - sk.produced) as usize).min(1024);
+                        mixer_callback(&mut sk.buf[..n * 2], 2, &bus_cmd, &finished_clone, &is_playing_clone, &mut sk.sc);
+                        sk.produced += n as u64;
+                        cb_seq.fetch_add(1, Ordering::Relaxed);
+                        rounds += 1;
+                    }
+                    if sk.produced < due { sk.produced = due; }   // far behind (the thread was starved): skip, never spin
+                    if std::time::Instant::now() >= sk.retry_at {
+                        if output_device_present(&current_device) { break; }   // 'outer opens it
+                        sk.retry_at = std::time::Instant::now() + std::time::Duration::from_secs(2);
+                    }
+                }
                 let seq = cb_seq.load(Ordering::Relaxed);
                 if seq != seen_seq { seen_seq = seq; last_cb.store(now_ms(), Ordering::Relaxed); }
                 // OUTPUT LIVENESS — the callback stopped while the stream is open: log, count, reopen (break →
                 // 'outer reopens and restores the decks, exactly as ReopenOutput does).
                 let device_error = dev_err.try_lock().ok().and_then(|mut g| g.take());
-                if let Some(why) = watch.observe(std::time::Instant::now(), seq, device_error) {
+                if stream.is_none() { /* no Master stream to watch: the station's own clock is running */ }
+                else if let Some(why) = watch.observe(std::time::Instant::now(), seq, device_error) {
+                    // Answer 2: while the user has not turned the switch on, say STALLED and keep retrying the same device.
+                    if stall_switch != Some(true) { ms.state.store(OUT_STALLED, Ordering::Relaxed); }
+                    ms.stalls.fetch_add(1, Ordering::Relaxed);
                     RtCounters::bump(&ctl.counters.stalls, 1);
                     let what = match &why {
                         crate::outwatch::Stall::NoCallbacks { ms } => format!("no output callback for {} ms", ms),
@@ -3195,7 +3296,7 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                               ctl.counters.stalls.load(Ordering::Relaxed));
                     break;
                 }
-                match rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                match rx.recv_timeout(std::time::Duration::from_millis(if soft.is_some() { 5 } else { 50 })) {
                     Ok(cmd) => {
                         match cmd {
                             // ── S3: every arm below edits the dispatch thread's OWN copy of the state (ctl) and
@@ -3510,8 +3611,46 @@ pub fn start_station_mixer(station_id: u32, device_name: Option<String>) -> (
                             AudioCmd::SwitchDevice(name) => {
                                 eprintln!("[RUST] Station {} SwitchDevice → {:?}", station_id, name);
                                 current_device = if name.is_empty() { None } else { Some(name) };
+                                master_pair = 0;         // the single-device picker always meant channels 1-2
                                 watch.consecutive = 0;   // the operator chose a device: judge it fresh
                                 break; // drop stream → 'outer reopens device
+                            }
+                            AudioCmd::SetOutputPatch(p) => {
+                                // THE PATCH BAY, OUTPUTS — one command for every row. The first device of Aux and Cue is
+                                // the stream those rows always had; every further device is an extra stream; the first
+                                // Master device is the station's clock device.
+                                use crate::patch::{Dest, MAX_EXTRA};
+                                eprintln!("[RUST] Station {} SetOutputPatch → {:?}", station_id, p);
+                                let first = |v: &Vec<Dest>| v.get(0).cloned().unwrap_or_default();
+                                let a0 = first(&p.aux);
+                                if let Ok(mut r) = aux_req.lock() { *r = a0.device.clone(); }
+                                aux_status(station_id).req_pair.store(a0.pair, Ordering::Relaxed);
+                                let c0 = first(&p.cue);
+                                ctl.params.pfl_to_device = !c0.device.is_empty();
+                                ctl.params_changed();
+                                let cs = cue_status(station_id);
+                                cs.req_pair.store(c0.pair, Ordering::Relaxed);
+                                if let Ok(mut r) = cs.req.lock() { *r = c0.device.clone(); }
+                                for (bus, list) in [(OUT_MASTER, &p.master), (OUT_AUX, &p.aux), (OUT_CUE, &p.cue)] {
+                                    for i in 0..MAX_EXTRA {
+                                        let d = list.get(i + 1).cloned().unwrap_or_default();
+                                        let st = extra_status(station_id, bus, i as u8);
+                                        st.req_pair.store(d.pair, Ordering::Relaxed);
+                                        if let Ok(mut r) = st.req.lock() { *r = d.device; };
+                                    }
+                                }
+                                stall_switch = p.stall_switch;
+                                let m0 = p.master.get(0).cloned();
+                                let new_dev = m0.as_ref().map(|d| d.device.clone());
+                                let new_pair = m0.map(|d| d.pair).unwrap_or(0);
+                                // The Master stream is reopened ONLY when its device or pair changed — a reopen while a
+                                // station airs is a gap in the room (never on the stream: air has no device).
+                                if new_dev != current_device || new_pair != master_pair {
+                                    current_device = new_dev;
+                                    master_pair = new_pair;
+                                    watch.consecutive = 0;
+                                    break;
+                                }
                             }
                             AudioCmd::ReopenOutput => {
                                 // Per-station recovery: drop THIS station's stream so 'outer reopens
@@ -3828,30 +3967,28 @@ fn soak_buffer_size(station_id: u32, device: &cpal::Device) -> cpal::BufferSize 
     }
 }
 
+/// The Master's own device. THE PATCH BAY (Jeff's Outputs answers): a NAMED device that is not here is NOT FOUND — never
+/// the Windows default in its place (this used to be `found.or_else(default_dev)`: a silent substitution). With nothing
+/// patched (`None`) it is the Windows default, the existing behaviour, and the screen names the device that opened.
 fn open_output_device(
     station_id: u32,
     device_name: &Option<String>,
-) -> Option<(cpal::Device, u32, u16)> {
+    pair: u16,
+) -> Result<(cpal::Device, u32, u16), OpenErr> {
     use cpal::traits::{DeviceTrait, HostTrait};
-    let default_dev = || cpal::default_host().default_output_device();
-    let device = if let Some(ref name) = device_name {
-        let found = cpal::available_hosts().into_iter().find_map(|host_id| {
-            let host = cpal::host_from_id(host_id).ok()?;
-            host.output_devices().ok()?.find(|d| {
-                d.name().ok().as_deref() == Some(name.as_str())
-            })
-        });
-        found.or_else(default_dev)
-    } else {
-        default_dev()
-    }?;
-
-    let cfg = device.default_output_config().ok()?;
-    let sr  = cfg.sample_rate().0;
-    let ch  = cfg.channels().min(2).max(1);
-    eprintln!("[RUST] Station {} device: {} ({}Hz {}ch)",
-        station_id, device.name().unwrap_or_default(), sr, ch);
-    Some((device, sr, ch))
+    let device = match device_name {
+        Some(name) => find_output_device(name).ok_or(OpenErr::NotFound)?,
+        None => cpal::default_host().default_output_device().ok_or(OpenErr::NotFound)?,
+    };
+    let (sr, ch) = device_format(&device, if device_name.is_some() { pair } else { 0 })?;
+    eprintln!("[RUST] Station {} device: {} ch {}-{} ({}Hz {}ch)",
+        station_id, device.name().unwrap_or_default(), pair + 1, pair + 2, sr, ch);
+    Ok((device, sr, ch))
+}
+/// Is the Master's chosen device here now? (The station's own clock checks this to know when to reopen.)
+fn output_device_present(device_name: &Option<String>) -> bool {
+    use cpal::traits::HostTrait;
+    match device_name { Some(n) => find_output_device(n).is_some(), None => cpal::default_host().default_output_device().is_some() }
 }
 
 /// Open a SPECIFICALLY NAMED output device. Unlike open_output_device this NEVER falls back to the
@@ -3873,7 +4010,21 @@ pub(crate) struct CueStatus {
     pub rate: std::sync::atomic::AtomicU32,
     /// Times this output's stream was found dead (cpal error, or no callback for MON_STALL_AFTER) and reopened.
     pub stalls: AtomicU64,
+    /// THE PATCH BAY (patch.rs): the channel pair asked for (first channel, 0-based), and what the engine actually OPENED —
+    /// the device name, its pair and its channel count — so the screen shows the opened device, never the clicked one.
+    pub req_pair: Arc<std::sync::atomic::AtomicU16>,
+    pub pair: std::sync::atomic::AtomicU16,
+    pub channels: std::sync::atomic::AtomicU16,
+    pub opened: Mutex<String>,
+    /// Master only: true while no Master device is open and the station runs on its own clock (the stream keeps going).
+    pub soft_clock: AtomicBool,
 }
+/// A device that is present but keeps stalling, while the user has not turned on "switch to the Windows default"
+/// (Jeff's Outputs answer 2): retrying the same device, said on screen.
+pub(crate) const OUT_STALLED: u8 = 5;
+pub(crate) const OUT_MASTER: u8 = 0;
+pub(crate) const OUT_AUX: u8 = 1;
+pub(crate) const OUT_CUE: u8 = 2;
 type StatusMap = std::sync::OnceLock<Mutex<HashMap<u32, Arc<CueStatus>>>>;
 static CUE_STATUS: StatusMap = std::sync::OnceLock::new();
 /// The AUX monitor's status, same shape as the cue's (2026-10-04, OV: the aux stream died and nothing could see it).
@@ -3885,7 +4036,17 @@ fn status_for(map: &'static StatusMap, station_id: u32) -> Arc<CueStatus> {
     g.entry(station_id).or_insert_with(|| Arc::new(CueStatus {
         req: Arc::new(Mutex::new(String::new())), state: std::sync::atomic::AtomicU8::new(CUE_SAME_AS_MAIN),
         frames: Arc::new(AtomicU64::new(0)), rate: std::sync::atomic::AtomicU32::new(0), stalls: AtomicU64::new(0),
+        req_pair: Arc::new(std::sync::atomic::AtomicU16::new(0)), pair: std::sync::atomic::AtomicU16::new(0),
+        channels: std::sync::atomic::AtomicU16::new(0), opened: Mutex::new(String::new()), soft_clock: AtomicBool::new(false),
     })).clone()
+}
+static MASTER_STATUS: StatusMap = std::sync::OnceLock::new();
+static EXTRA_STATUS: StatusMap = std::sync::OnceLock::new();
+/// The Master's own stream (the station's clock device): what was asked, what opened, where it stands.
+pub(crate) fn master_status(station_id: u32) -> Arc<CueStatus> { status_for(&MASTER_STATUS, station_id) }
+/// One extra device on an output row (THE PATCH BAY): `bus` OUT_MASTER / OUT_AUX / OUT_CUE, `i` 0..MAX_EXTRA.
+pub(crate) fn extra_status(station_id: u32, bus: u8, i: u8) -> Arc<CueStatus> {
+    status_for(&EXTRA_STATUS, (station_id << 4) | ((bus as u32) << 2) | i as u32)
 }
 pub(crate) fn cue_status(station_id: u32) -> Arc<CueStatus> { status_for(&CUE_STATUS, station_id) }
 pub(crate) fn aux_status(station_id: u32) -> Arc<CueStatus> { status_for(&AUX_STATUS, station_id) }
@@ -3911,7 +4072,7 @@ pub(crate) fn listen_ctl(station_id: u32) -> Arc<ListenCtl> {
 /// never far behind (the ring only fills if the sender stalls, and then it drops, never waits).
 const LISTEN_BUF: usize = PROGRAM_RATE as usize * 2;
 pub(crate) fn cue_state_name(v: u8) -> &'static str {
-    match v { CUE_SAME_AS_MAIN => "same_as_main", CUE_OPENING => "opening", CUE_OPEN => "open", CUE_NOT_FOUND => "not_found", _ => "failed" }
+    match v { CUE_SAME_AS_MAIN => "same_as_main", CUE_OPENING => "opening", CUE_OPEN => "open", CUE_NOT_FOUND => "not_found", OUT_STALLED => "stalled", _ => "failed" }
 }
 /// The aux has no "main" to fall back to: no device chosen is simply "none".
 pub(crate) fn aux_state_name(v: u8) -> &'static str {
@@ -3946,8 +4107,10 @@ struct MonOut {
     req: Arc<Mutex<String>>,
     frames: Arc<AtomicU64>,
     status: Option<Arc<CueStatus>>,
-    attach: fn(HeapProd<f32>) -> AuxCmd,
-    detach: fn() -> AuxCmd,
+    attach: Box<dyn Fn(HeapProd<f32>) -> AuxCmd + Send>,
+    detach: Box<dyn Fn() -> AuxCmd + Send>,
+    /// THE PATCH BAY: the channel pair asked for (first channel, 0-based). `open_name` is the device+pair KEY that is open.
+    req_pair: Arc<std::sync::atomic::AtomicU16>,
     open_name: String,
     stream: Option<cpal::Stream>,
     retry_at: Option<std::time::Instant>,
@@ -3959,8 +4122,9 @@ struct MonOut {
 }
 impl MonOut {
     fn new(label: &'static str, tag: &'static str, req: Arc<Mutex<String>>, frames: Arc<AtomicU64>, status: Option<Arc<CueStatus>>,
-           attach: fn(HeapProd<f32>) -> AuxCmd, detach: fn() -> AuxCmd) -> MonOut {
-        MonOut { label, tag, req, frames, status, attach, detach, open_name: String::new(), stream: None, retry_at: None,
+           attach: Box<dyn Fn(HeapProd<f32>) -> AuxCmd + Send>, detach: Box<dyn Fn() -> AuxCmd + Send>) -> MonOut {
+        let req_pair = status.as_ref().map(|s| s.req_pair.clone()).unwrap_or_else(|| Arc::new(std::sync::atomic::AtomicU16::new(0)));
+        MonOut { label, tag, req, frames, status, attach, detach, req_pair, open_name: String::new(), stream: None, retry_at: None,
                  watch: mon_watch(std::time::Instant::now()), dev_err: Arc::new(Mutex::new(None)) }
     }
     fn set_state(&self, v: u8) { if let Some(s) = &self.status { s.state.store(v, Ordering::Relaxed); } }
@@ -3971,7 +4135,10 @@ impl MonOut {
     }
     fn service(&mut self, station_id: u32, send: &mut dyn FnMut(AuxCmd)) {
         use cpal::traits::{DeviceTrait, StreamTrait};
-        let want = self.req.lock().map(|r| r.clone()).unwrap_or_default();
+        let want_dev = self.req.lock().map(|r| r.clone()).unwrap_or_default();
+        let want_pair = self.req_pair.load(Ordering::Relaxed);
+        // The KEY: a different device OR a different channel pair is a different destination (patch.rs Dest::key).
+        let want = crate::patch::Dest { device: want_dev.clone(), pair: want_pair }.key();
         let now = std::time::Instant::now();
         // Is the open stream still alive? (Only judged while one is open; observe() is a no-op otherwise.)
         let lost = if self.stream.is_some() {
@@ -4013,14 +4180,19 @@ impl MonOut {
             return;
         }
         self.set_state(CUE_OPENING);
-        let Some((device, sr, ch)) = open_named_output_device(station_id, &self.open_name) else {
-            // NO FALLBACK. A named device that is not present stays unopened and the bus stays silent.
-            // Substituting a different output for the operator is the unsafe behaviour this path exists to avoid.
-            if changed || lost { eprintln!("[RUST] Station {} {} device not found: {:?} — staying silent (will retry)", station_id, self.label, self.open_name); }
-            self.set_state(CUE_NOT_FOUND);
-            self.retry_later();
-            return;
+        if let Some(s) = &self.status { if let Ok(mut o) = s.opened.lock() { o.clear(); } }
+        let (device, sr, ch) = match open_named_output_device(station_id, &want_dev, want_pair) {
+            Ok(d) => d,
+            Err(why) => {
+                // NO FALLBACK. A named device that is not present stays unopened and the bus stays silent.
+                // Substituting a different output for the operator is the unsafe behaviour this path exists to avoid.
+                if changed || lost { eprintln!("[RUST] Station {} {} {:?} ch {}-{}: {} — staying silent (will retry)", station_id, self.label, want_dev, want_pair + 1, want_pair + 2, why); }
+                self.set_state(if why == OpenErr::NotFound { CUE_NOT_FOUND } else { CUE_FAILED });
+                self.retry_later();
+                return;
+            }
         };
+        let pair = want_pair as usize;
         let rb = HeapRb::<f32>::new(AUX_BUS_BUF);
         let (prod, mut cons) = rb.split();
         send((self.attach)(prod));
@@ -4073,7 +4245,7 @@ impl MonOut {
                     let t = phase as f32;
                     let l = cur.0 + (nxt.0 - cur.0) * t;
                     let r = cur.1 + (nxt.1 - cur.1) * t;
-                    if ch == 2 { data[f * 2] = l; data[f * 2 + 1] = r; } else { data[f] = (l + r) * 0.5; }
+                    crate::patch::write_frame(data, ch as usize, pair, f, l, r);
                     phase += step;
                 }
                 // Proof of flow, not merely of opening.
@@ -4098,8 +4270,13 @@ impl MonOut {
                     self.set_state(CUE_FAILED);
                     self.retry_later();
                 } else {
-                    eprintln!("[RUST] Station {} {} output opened ({}Hz {}ch)", station_id, self.label, sr, ch);
-                    if let Some(s) = &self.status { s.rate.store(sr, Ordering::Relaxed); }
+                    eprintln!("[RUST] Station {} {} output opened: {:?} ch {}-{} ({}Hz {}ch)", station_id, self.label, want_dev, want_pair + 1, want_pair + 2, sr, ch);
+                    if let Some(s) = &self.status {
+                        s.rate.store(sr, Ordering::Relaxed);
+                        s.pair.store(want_pair, Ordering::Relaxed);
+                        s.channels.store(ch, Ordering::Relaxed);
+                        if let Ok(mut o) = s.opened.lock() { *o = want_dev.clone(); }
+                    }
                     self.set_state(CUE_OPEN);
                     self.stream = Some(st);
                     self.watch.stream_opened(std::time::Instant::now(), self.frames.load(Ordering::Relaxed));
@@ -4111,6 +4288,95 @@ impl MonOut {
                 self.set_state(CUE_FAILED);
                 self.retry_later();
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod patch_bay_tests {
+    //! THE PATCH BAY, OUTPUTS (patch.rs) through the REAL mixer callback: several devices per output row get exactly the
+    //! same audio, and a channel pair on a many-channel device carries L/R with silence everywhere else.
+    use super::*;
+    use ringbuf::traits::{Consumer, Split};
+
+    /// Deterministic stereo source (the same generator slice1_regression uses).
+    struct Det(u64);
+    impl Iterator for Det {
+        type Item = f32;
+        fn next(&mut self) -> Option<f32> {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            Some(((self.0 >> 33) as f32 / (1u64 << 31) as f32) - 1.0)
+        }
+    }
+    fn slice1_regression_det(seed: u64) -> Det { Det(seed) }
+
+    fn bus_with_music() -> SharedBusState {
+        let (prod, _cons) = HeapRb::<f32>::new(PROGRAM_BUS_BUF).split();
+        let eq = crate::eq::new_shared_eq(44100.0);
+        let bus = Arc::new(crate::rt::RtMutex::new(BusState::new(eq, prod, 44100, Arc::new(AtomicBool::new(false)))));
+        {
+            let mut b = bus.lock().unwrap();
+            b.decks[0].source = Some(DeckFeed::prefilled(slice1_regression_det(11), 480 * 2 * 600));
+            b.decks[0].active = true; b.decks[0].paused = false; b.decks[0].volume = 0.8;
+            b.decks[3].source = Some(DeckFeed::prefilled(slice1_regression_det(44), 480 * 2 * 600));
+            b.decks[3].active = true; b.decks[3].paused = false; b.decks[3].volume = 0.9;
+            b.aux_monitor_gain[3] = 1.0;
+        }
+        bus
+    }
+    fn drain(c: &mut ringbuf::HeapCons<f32>) -> Vec<f32> { let mut v = Vec::new(); while let Some(x) = c.try_pop() { v.push(x); } v }
+
+    #[test]
+    fn a_second_master_device_gets_exactly_what_the_master_device_got() {
+        let bus = bus_with_music();
+        let (p, mut c) = HeapRb::<f32>::new(AUX_BUS_BUF).split();
+        bus.lock().unwrap().master_extra[0] = Some(crate::localout::LocalRing::new(p));
+        let (fin, playing) = (FinishedFlags::new(), Arc::new(AtomicBool::new(true)));
+        let mut sc = Scratch::new();
+        let mut device: Vec<f32> = Vec::new();
+        for _ in 0..20 {
+            let mut data = vec![0f32; 480 * 2];
+            mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc);
+            device.extend_from_slice(&data);
+        }
+        let extra = drain(&mut c);
+        assert!(device.iter().any(|x| *x != 0.0), "the test is not making sound");
+        assert_eq!(extra.len(), device.len());
+        assert!(extra.iter().zip(&device).all(|(a, b)| a.to_bits() == b.to_bits()), "the second Master device must be bit-identical");
+    }
+
+    #[test]
+    fn a_second_aux_device_gets_exactly_what_the_first_aux_device_got() {
+        let bus = bus_with_music();
+        let (p1, mut c1) = HeapRb::<f32>::new(AUX_BUS_BUF).split();
+        let (p2, mut c2) = HeapRb::<f32>::new(AUX_BUS_BUF).split();
+        { let mut b = bus.lock().unwrap(); b.aux_ring_prod = Some(crate::localout::LocalRing::new(p1)); b.aux_extra[1] = Some(crate::localout::LocalRing::new(p2)); }
+        let (fin, playing) = (FinishedFlags::new(), Arc::new(AtomicBool::new(true)));
+        let mut sc = Scratch::new();
+        for _ in 0..20 { let mut data = vec![0f32; 480 * 2]; mixer_callback(&mut data, 2, &bus, &fin, &playing, &mut sc); }
+        let (a, b) = (drain(&mut c1), drain(&mut c2));
+        assert!(a.iter().any(|x| *x != 0.0), "the aux feed is silent — the test is not exercising it");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn master_on_channels_3_4_of_an_8_channel_device_carries_l_r_there_and_silence_elsewhere() {
+        let bus = bus_with_music();
+        let (p, mut c) = HeapRb::<f32>::new(AUX_BUS_BUF).split();
+        bus.lock().unwrap().master_extra[2] = Some(crate::localout::LocalRing::new(p));   // a stereo copy to compare with
+        let (fin, playing) = (FinishedFlags::new(), Arc::new(AtomicBool::new(true)));
+        let mut sc = Scratch::new();
+        sc.out_pair = 2;
+        let mut data = vec![7f32; 480 * 8];
+        mixer_callback(&mut data, 8, &bus, &fin, &playing, &mut sc);
+        let stereo = drain(&mut c);
+        assert_eq!(stereo.len(), 480 * 2);
+        assert!(stereo.iter().any(|x| *x != 0.0));
+        for f in 0..480 {
+            let fr = &data[f * 8..f * 8 + 8];
+            assert_eq!(fr[2].to_bits(), stereo[f * 2].to_bits(), "L on channel 3 (frame {})", f);
+            assert_eq!(fr[3].to_bits(), stereo[f * 2 + 1].to_bits(), "R on channel 4 (frame {})", f);
+            for ch in [0usize, 1, 4, 5, 6, 7] { assert_eq!(fr[ch], 0.0, "channel {} must be silent (frame {})", ch + 1, f); }
         }
     }
 }
@@ -4185,17 +4451,40 @@ mod monout_tests {
     }
 }
 
-fn open_named_output_device(station_id: u32, name: &str) -> Option<(cpal::Device, u32, u16)> {
+/// Why an output device did not open (THE PATCH BAY: each one is said on screen, naming the device).
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum OpenErr { NotFound, NoSuchPair(u16), NoConfig }
+impl std::fmt::Display for OpenErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OpenErr::NotFound => write!(f, "device not found"),
+            OpenErr::NoSuchPair(n) => write!(f, "the device has only {} channel(s)", n),
+            OpenErr::NoConfig => write!(f, "the device gave no output format"),
+        }
+    }
+}
+/// A named output device, by exact name, on any host. Never the default.
+pub(crate) fn find_output_device(name: &str) -> Option<cpal::Device> {
     use cpal::traits::{DeviceTrait, HostTrait};
-    let device = cpal::available_hosts().into_iter().find_map(|host_id| {
+    cpal::available_hosts().into_iter().find_map(|host_id| {
         let host = cpal::host_from_id(host_id).ok()?;
         host.output_devices().ok()?.find(|d| d.name().ok().as_deref() == Some(name))
-    })?;
-    let cfg = device.default_output_config().ok()?;
-    let sr  = cfg.sample_rate().0;
-    let ch  = cfg.channels().min(2).max(1);
-    eprintln!("[RUST] Station {} AUX monitor device: {} ({}Hz {}ch)", station_id, name, sr, ch);
-    Some((device, sr, ch))
+    })
+}
+/// The device's rate and the channel count to open it with for `pair` (patch.rs open_channels: pair 1-2 opens exactly as
+/// before; a higher pair opens every channel so the pair exists).
+fn device_format(device: &cpal::Device, pair: u16) -> Result<(u32, u16), OpenErr> {
+    use cpal::traits::DeviceTrait;
+    let cfg = device.default_output_config().map_err(|_| OpenErr::NoConfig)?;
+    let dev_ch = cfg.channels();
+    let ch = crate::patch::open_channels(dev_ch, pair).ok_or(OpenErr::NoSuchPair(dev_ch))?;
+    Ok((cfg.sample_rate().0, ch))
+}
+fn open_named_output_device(station_id: u32, name: &str, pair: u16) -> Result<(cpal::Device, u32, u16), OpenErr> {
+    let device = find_output_device(name).ok_or(OpenErr::NotFound)?;
+    let (sr, ch) = device_format(&device, pair)?;
+    eprintln!("[RUST] Station {} monitor device: {} ch {}-{} ({}Hz {}ch)", station_id, name, pair + 1, pair + 2, sr, ch);
+    Ok((device, sr, ch))
 }
 
 pub(crate) fn build_source(
@@ -4322,6 +4611,8 @@ pub(crate) struct Scratch {
     /// S2 — producer end of the event queue. None in tests and the offline harness (nobody listening);
     /// the live stream gets Some at device open.
     pub(crate) events: Option<ringbuf::HeapProd<RtEvent>>,
+    /// THE PATCH BAY: the channel pair on the Master device this stream opened (0 = 1-2). Set at device open.
+    pub(crate) out_pair: usize,
 }
 impl Scratch {
     pub(crate) fn new() -> Box<Scratch> { Scratch::with_counters(RtCounters::new()) }
@@ -4340,6 +4631,7 @@ impl Scratch {
             feed: vec![0f32; MAX_PROG_FRAMES * 2].into_boxed_slice(),
             counters,
             events: None,
+            out_pair: 0,
         })
     }
 }
@@ -4400,7 +4692,7 @@ pub(crate) fn mixer_callback(
         mix_l, mix_r, room_l, room_r, imm_room_l, imm_room_r, core_l, core_r, aux_l, aux_r,
         src_l, src_r, imm_l, imm_r, det_l, det_r, out_l, out_r, loc_l, loc_r, str_l, str_r,
         room_out_l, room_out_r, dev_l, dev_r, rack_l, rack_r, cue_l, cue_r, pfl_l, pfl_r, feed, counters, events,
-        auxd_l, auxd_r,
+        auxd_l, auxd_r, out_pair,
     } = sc;
     let counters: &RtCounters = counters;
     // PFL — is any channel's PFL on this buffer? (the block adopted at the top of the buffer). The cue lanes are
@@ -5245,6 +5537,8 @@ pub(crate) fn mixer_callback(
         if let Some(ref mut ring) = bus.aux_ring_prod {
             local_pk = ring.push(aux_l, aux_r, local_gain);
         }
+        // THE PATCH BAY: every other device on the Aux row gets the same post-MONITOR feed.
+        for ring in bus.aux_extra.iter_mut().flatten() { local_pk = local_pk.max(ring.push(aux_l, aux_r, local_gain)); }
     }
 
     // ── PFL OVER MONITOR (Jeff's rulings 1–2, 2026-09-26) ────────────────────────────────────────────
@@ -5259,7 +5553,9 @@ pub(crate) fn mixer_callback(
     // A chosen device that is not open has no ring: PFL is then silent — never a fallback to the speakers.
     if bus.pfl_to_device {
         let dim = 10f32.powf(bus.pfl_dim_db / 20.0);
-        if let Some(ref mut prod) = bus.cue_ring_prod {
+        // THE PATCH BAY: the first cue device's ring, then every other device on the Cue row — the same samples.
+        let bus_ref = &mut *bus;
+        for prod in bus_ref.cue_ring_prod.iter_mut().chain(bus_ref.cue_extra.iter_mut().flatten()) {
             if pfl_any {
                 for f in 0..prog_frames {
                     let _ = prod.try_push((dl[f] * dim + cue_l[f]).clamp(-1.0, 1.0));
@@ -5289,7 +5585,10 @@ pub(crate) fn mixer_callback(
     // above. Both local-only: the stream push above already happened, so neither can change what airs. The device
     // buffer is written ONLY by localout::write_device, which takes the gain (same arithmetic as before).
     let resample = !(device_sr == PROGRAM_RATE || prog_frames <= 1);
-    let dev_pk = crate::localout::write_device(data, ch as usize, dl, dr, prog_frames, device_frames, resample, local_gain);
+    let dev_pk = crate::localout::write_device(data, ch as usize, *out_pair, dl, dr, prog_frames, device_frames, resample, local_gain);
+    // THE PATCH BAY: every other device on the Master row gets exactly what the Master device just got (post-MONITOR,
+    // after PFL-over-Master), at programme rate; each device's own thread resamples to its clock.
+    for ring in bus.master_extra.iter_mut().flatten() { ring.push(dl, dr, local_gain); }
     // PARK LISTEN — the copy for the Park page, from the SAME post-MONITOR feeds the speakers just got (localout.rs).
     if let Some((ref mut ring, ref ctl)) = bus.listen {
         if ctl.connected.load(Ordering::Relaxed) {
