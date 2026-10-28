@@ -72,7 +72,7 @@ Each kind of module always has the same colour: **blue** for EQ, **cyan** for lo
 
   Only the target and the ceiling differ between them.
 - **A preset never turns processing on or off.** "Process local output" and "Process stream" stay where you
-  set them (Preferences → Broadcast → Audio Processing).
+  set them (Settings → Broadcast → Audio Processing).
 
 ## If something looks wrong
 

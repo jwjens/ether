@@ -2,7 +2,7 @@
 feature: loudness-normalization
 title: Loudness Normalization
 summary: Every file on any fader — songs, sweepers, carts, announcements, the jukebox — plays at one loudness you set, so a sweeper or cart is never louder than the music just because the file was mastered hot.
-where: ☰ Menu → Preferences → Loudness & fader smoothing
+where: ☰ Menu → Settings → Loudness & fader smoothing
 since: 4.6.59
 audience: operator
 tour: true
@@ -20,7 +20,7 @@ same for every file on every fader. There are no exceptions by type, and no per-
 
 ## How to use it
 
-1. Open **☰ Menu → Preferences → Loudness & fader smoothing**.
+1. Open **☰ Menu → Settings → Loudness & fader smoothing**.
 2. **Loudness target** shows the current value (−16 LUFS unless you change it). Type a new value and press **Save**.
    - −16 LUFS is a common target for internet radio. −14 is louder, −18 quieter.
    - Range −40 to −5.

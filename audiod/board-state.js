@@ -289,7 +289,7 @@ const close = (a, b) => Math.abs(Number(a) - Number(b)) <= 1e-3;
 const WHAT = { volume: "fader", muted: "ON/OFF", duck: "ducks music", duckable: "ducked by others", aux: "local row", local: "local output", stream: "To stream" };
 const GLOBAL = { monitorVol: "station MONITOR strip", masterVol: "MASTER", masterMonitorVol: "MONITOR", auxDevice: "AUX output device", cueDevice: "PFL output device", outputPatch: "Patch Bay outputs", board: "the board",
   duckDepth: "Ducker depth", duckThreshold: "Ducker threshold", duckAttack: "Ducker attack", duckHold: "Ducker hold", duckRelease: "Ducker release",
-  duckPrefs: "Ducker settings in Preferences", duckEngine: "Ducker settings in the engine" };
+  duckPrefs: "Ducker values in Settings", duckEngine: "Ducker settings in the engine" };
 /** What an operator calls a setting: the fader's board name and the control — never an engine slot id. */
 function labelOf(setting, names) {
   const [slot, what] = String(setting).split(".");

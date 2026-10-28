@@ -21,7 +21,7 @@ It is one setting, **Segue overlap (auto)**, and it applies while the station is
 
 ## Set it up
 
-1. Open **File → Preferences** → the **Audio** section → **Audio Devices**.
+1. Open **File → Settings** → the **Audio** section → **Audio Devices**.
 2. Find **Segue overlap (auto)**.
 3. Drag the slider (0–10 seconds) to how many seconds early the next song should start:
    - **3s** (default) — a natural, tight segue.

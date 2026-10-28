@@ -2,7 +2,7 @@
 feature: sync-cleanup
 title: Sync cleanup and the health log
 summary: Remove the sync entries this machine will never send, safely while on air, and set how big the health log may grow.
-where: ☰ → Preferences → Multi-Machine Sync → "Stuck sync entries" and "Health log"
+where: ☰ → Settings → Multi-Machine Sync → "Stuck sync entries" and "Health log"
 since: 4.6.59
 audience: operator
 tour: true
@@ -28,7 +28,7 @@ reaches the size you set.
 - The **Stuck sync entries** row shows a number above zero, especially on a machine that is on air all day.
 - Ether stutters for a moment every few seconds, or takes a long time to start.
 
-## Run the cleanup (☰ → Preferences → Multi-Machine Sync)
+## Run the cleanup (☰ → Settings → Multi-Machine Sync)
 
 1. Find **Stuck sync entries**. It says how many entries this machine will never send. For example: "241,064
    entries this machine will never send (241,064 for the generated log)".

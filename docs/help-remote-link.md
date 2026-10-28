@@ -47,7 +47,7 @@ that receives** is given that key. That fader then takes **that computer's feed 
    **Link (network feed)**. Under the dropdown a box appears: **paste the sender's link key**. Paste the line.
    The strip now shows **← <venue computer> · key 271A-413B**. Check that fingerprint matches the one on the
    venue's screen.
-3. **Cut a sender off**: press the **✕** next to its name on the strip (or **Forget key** in Preferences). Only
+3. **Cut a sender off**: press the **✕** next to its name on the strip (or **Forget key** in Settings). Only
    that fader stops taking that computer's feed; every other fader is untouched.
 4. **Replace key…** at the venue makes a new key: every fader holding the old one stops taking that computer's
    feed until the new line is pasted — and the moment it is pasted, the feed comes back (within a second or two).
@@ -91,13 +91,13 @@ computer. Feeding **the same station on another computer** is the normal case.
 | **LINK · OVEVENTS · 128 ms** | On. The number is **how far behind the venue's board** this channel is, measured all the way through. |
 | **LINK · LOST OVEVENTS 4 s ago — waiting** | Nothing has arrived for over a second. The channel is **silent and NOT FED**, the rest of your programme carries on, and the Link takes the venue back **by itself** when it returns. |
 | **LINK · a sender's key was refused** | Something tried to send without this fader's key (or with an old one after the venue replaced it). It was refused and counted. |
-| **LINK · cannot listen** | This computer couldn't open the port — another program has it, or it is blocked. The reason is in Preferences. |
+| **LINK · cannot listen** | This computer couldn't open the port — another program has it, or it is blocked. The reason is in Settings. |
 
 ## If the Link drops
 
 - The channel goes **silent** and shows **NOT FED**. The ducker lets the programme back up by itself.
   Nothing else changes: **your automation keeps running exactly as it was.**
-- **Auto-cut on loss** (Preferences → Remote Link; **OFF** by default): when it's ON, a Link lost for longer
+- **Auto-cut on loss** (Settings → Remote Link; **OFF** by default): when it's ON, a Link lost for longer
   than the seconds you set (5 by default) turns that channel **OFF** — the same as pressing its ON button — so
   the venue never comes **back on air unannounced**. You bring it back with the ON button when you're ready.
 - A short wobble never needs you: a missing packet is **recovered** or **smoothed over** by the codec, and
@@ -130,7 +130,7 @@ made or replaced, a fader patched with whose key) is written to the health ledge
 
 - **The relay on the Ether server** (for a station network that can't open a port) comes next. This version
   sends directly: the studio's router must forward UDP 9760 to the studio computer.
-- **SRT** is not in this version — the Link sends plain UDP. Its fallback timeout is shown in Preferences,
+- **SRT** is not in this version — the Link sends plain UDP. Its fallback timeout is shown in Settings,
   greyed out, so it can be set before SRT arrives.
 - **No return feed** to the venue (hearing the station without the 8 s stream delay) yet.
 - **No Zephyr / Comrex / AoIP** — that is the separate **Network** source, still to come.

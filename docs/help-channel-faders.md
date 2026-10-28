@@ -39,7 +39,7 @@ too (see **Show Presets**). Specifically:
 Every fader in Ether — the channel faders, MASTER, MONITOR, each station's MONITOR strip and every AUX row — uses
 **one console curve**, marked in dB on the fader. Channel faders and AUX rows reach **+10 dB** at the top; **MASTER
 and MONITOR reach 0 dB** at the top, on the same curve shifted down 10 dB. The top of each group is a setting:
-**Preferences → Loudness & fader smoothing → Fader maximum**. The channel-fader scale:
+**Settings → Loudness & fader smoothing → Fader maximum**. The channel-fader scale:
 
 | Fader position | Level |
 |---|---|
@@ -59,7 +59,7 @@ The whole travel is usable: halfway is −10 dB, not silence. The level you are 
 
 When a level changes — your drag, MONITOR, an AUX row, a show you TAKE, TAKE NOW, or the levels coming back at
 start — the engine glides it instead of jumping, so nothing clicks or "zips". How long the glide takes is a setting:
-**Preferences → Loudness & fader smoothing → Fader smoothing** (20 ms unless you change it; 0 = an instant step).
+**Settings → Loudness & fader smoothing → Fader smoothing** (20 ms unless you change it; 0 = an instant step).
 A level that isn't changing is untouched.
 
 ### The buttons under a fader: DUCK (and MAIN on a Park mic)
@@ -68,7 +68,7 @@ Every fader plays in the park. The buttons under it:
 
 - **Decks A, B and C:** no buttons. The music dips by itself while any fader with **DUCK** lit is playing.
 - **Every other fader** (announcements, carts, sweepers, jukebox, mics…): one button, **DUCK**. Lit = while this fader
-  plays, the music dips. How far and how fast is set in **Preferences → Ducker**.
+  plays, the music dips. How far and how fast is set in **Settings → Ducker**.
 - **A fader whose source is a Park mic** also has **MAIN**. Lit = the voice also goes on air. Not lit = the voice
   plays in the park only.
 
@@ -87,7 +87,7 @@ See **Show Presets** (`docs/help-show-presets.md`).
 
 **Every file on any fader plays at the same loudness** — songs, sweepers, carts, announcements, the jukebox. Ether
 measures each file once (in the background, after import) and plays it at the **Loudness target** in
-**Preferences → Loudness & fader smoothing** (−16 LUFS unless you change it). That evens out the material
+**Settings → Loudness & fader smoothing** (−16 LUFS unless you change it). That evens out the material
 *underneath* your hand, so a fader at 0 dB means the same loudness whatever is on it. A file played before it was
 measured plays as it is and is listed in the Health Monitor. See **Loudness normalization**
 (`docs/help-loudness-normalization.md`).
@@ -148,7 +148,7 @@ it, or cue a cart.
    - **before its fader and before ON/OFF**, so it works with the channel OFF and the fader down;
    - **after its channel EQ**, so you hear the processed sound.
 3. **While any PFL is on, the programme in that output dips** so you can hear what you're checking.
-   - How far is a station setting: **Preferences → Audio → PFL → Programme dip** (−60 to 0 dB).
+   - How far is a station setting: **Settings → Audio → PFL → Programme dip** (−60 to 0 dB).
    - **−12 dB** until someone changes it.
 4. Press **PFL** again to stop.
 
@@ -160,7 +160,7 @@ ever reaches the local output.
 By default PFL plays through the **main local output**, and the programme there dips. To keep PFL off the
 speakers:
 
-1. Go to **Preferences → Audio → PFL → PFL output**.
+1. Go to **Settings → Audio → PFL → PFL output**.
 2. Pick your **headphones** (or any output on this computer). The default is **Same as main output**.
 
 **Then, while any PFL is on:**

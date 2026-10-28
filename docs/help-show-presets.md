@@ -79,8 +79,8 @@ never be taken on another.
 
 | Not in a show | Why |
 |---|---|
-| **Which microphone, which sound card, which headphones** | These belong to **this computer**; another computer has different devices. A show says a channel is *a mic*. *Which* mic is this computer's setting (Preferences → Audio → Mic Inputs). The mic's input gain stays with the computer too. |
-| **Processing on / off** | A show never switches processing on or off (Preferences → Broadcast). |
+| **Which microphone, which sound card, which headphones** | These belong to **this computer**; another computer has different devices. A show says a channel is *a mic*. *Which* mic is this computer's setting (Settings → Audio → Mic Inputs). The mic's input gain stays with the computer too. |
+| **Processing on / off** | A show never switches processing on or off (Settings → Broadcast). |
 | **PFL** | PFL is momentary; the PFL dim and PFL output are your preferences. |
 | **The log, what's loaded, AUTO / MANUAL** | A show is the board, not the programme. |
 

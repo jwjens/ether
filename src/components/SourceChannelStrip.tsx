@@ -234,20 +234,20 @@ export default function SourceChannelStrip({
           )}
         </select>
 
-        {/* THE MIC'S STATE — the engine's, said in words; the input number and gain live in Preferences. */}
+        {/* THE MIC'S STATE — the engine's, said in words; the input number and gain live in Settings. */}
         {isMic && (
           <button onClick={openMicPreferences}
-            title={`${words.text}${micState?.reason ? ` — ${micState.reason}` : ""}. Which input: the Patch Bay. Gain and live state: Preferences → Audio → Mic Inputs.`}
+            title={`${words.text}${micState?.reason ? ` — ${micState.reason}` : ""}. Which input: the Patch Bay. Gain and live state: Settings → Audio → Mic Inputs.`}
             style={{ width: "100%", padding: "2px 4px", borderRadius: 2, cursor: "pointer", fontSize: 8, fontWeight: 700,
                      letterSpacing: "0.04em", textAlign: "left", background: "var(--bg-tertiary)",
                      border: `1px solid ${words.tone === "bad" ? TONE.bad : "var(--border-primary)"}`, color: TONE[words.tone],
                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            ● {patch ? `${parkMic ? `PARK MIC ${parkMic}` : `IN ${patch.channel}`} · ${patch.gainDb >= 0 ? "+" : ""}${patch.gainDb} dB · ${words.text}` : "no input — Preferences → Audio"}
+            ● {patch ? `${parkMic ? `PARK MIC ${parkMic}` : `IN ${patch.channel}`} · ${patch.gainDb >= 0 ? "+" : ""}${patch.gainDb} dB · ${words.text}` : "no input — Settings → Audio"}
           </button>
         )}
         {/* PARK MIC (2026-10-16): who is talking now (and STOP), or the last talk. */}
         {isMic && parkMic != null && <ParkTalkLine stationId={stationId} mic={parkMic} />}
-        {/* THE LINK'S STATE — the engine's, in words; the key, buffer, port and auto-cut live in Preferences. */}
+        {/* THE LINK'S STATE — the engine's, in words; the key, buffer, port and auto-cut live in Settings. */}
         {isLink && (
           <button onClick={openLinkPreferences}
             title={`Remote Link: ${linkW.text}${linkRx?.reason ? ` — ${linkRx.reason}` : ""}. Key, buffer, port and auto-cut: Settings → Remote Link.`}

@@ -119,7 +119,7 @@ async function moveFile(src, root) {
  */
 async function moveIntoCatalogue(db, root, files, deps = {}) {
   const out = { results: [], moved: 0, downloaded: 0, alreadyThere: 0, failed: 0 };
-  if (!root) throw new Error("no catalogue folder is set (Preferences)");
+  if (!root) throw new Error("no catalogue folder is set (Settings)");
   fs.mkdirSync(root, { recursive: true });
   const exists = exactExists(new Map());
   let hasState = false;

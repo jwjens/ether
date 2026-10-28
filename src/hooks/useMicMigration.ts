@@ -70,7 +70,7 @@ export function useMicMigration(stationId: number | null | undefined, ready: boo
         const label = labels.find(d => d.deviceId === id)?.label || "";
         const device = id ? matchDeviceLabel(label, names) : null;
         if (!device) {
-          if (id) console.log(`[mic-migrate] ${slot}: the old browser device "${label || id}" has no exact match among this computer's engine inputs — left unpatched (Preferences → Audio)`);
+          if (id) console.log(`[mic-migrate] ${slot}: the old browser device "${label || id}" has no exact match among this computer's engine inputs — left unpatched (Settings → Audio)`);
           continue;
         }
         const r = await api.setMicInput(stationId, slot, { device, channel: 1, gainDb: 0 }).catch((e: any) => ({ ok: false, reason: String(e) }));

@@ -100,6 +100,6 @@ Played with the time. Announcements are for staff and management only. They neve
 - **Whether anyone hears it is still the board's call.** The schedule decides *when* an announcement
   fires onto the Announcement channel. The fader and channel ON decide whether it reaches air. If a
   scheduled announcement didn't go out, check the channel before you check the schedule.
-- **Ducking is set per station** in Preferences → Ducker, and applies to every source. There is no
+- **Ducking is set per station** in Settings → Ducker, and applies to every source. There is no
   per-announcement duck setting.
 - **It syncs.** Your other machines running this station get the same schedule.

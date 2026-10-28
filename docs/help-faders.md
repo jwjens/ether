@@ -2,7 +2,7 @@
 feature: faders
 title: Faders — moving, fine control and typing a level
 summary: Every fader moves only by how far you drag it, never jumps when grabbed, and can be stepped, fine-tuned or typed to an exact dB.
-where: Every fader — channel faders, MASTER, MONITOR, Station Monitors, AUX rows, and the Park page. Settings: Preferences → Audio → Loudness & faders
+where: Every fader — channel faders, MASTER, MONITOR, Station Monitors, AUX rows, and the Park page. Settings: Settings → Audio → Loudness & faders
 since: 4.6.59 (fader handling build, 2026-10-13)
 audience: operator
 tour: true
@@ -43,7 +43,7 @@ ring while it is being moved.
 From −20 to +10 dB, every dB is the same width: three-quarters of the travel. Below −20 the scale gets tighter,
 down to off. 0 dB (unity) sits three-quarters of the way up on channel faders. MASTER and MONITOR top out at 0 dB.
 
-## Settings (Preferences → Audio → Loudness & faders)
+## Settings (Settings → Audio → Loudness & faders)
 
 - **Fader maximum:** the top of each group (channel faders, AUX rows, MASTER, MONITOR).
 - **How a fader moves:** the Shift fine factor, the mouse wheel step, the arrow key step and the Shift + arrow step.

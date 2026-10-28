@@ -21,7 +21,7 @@ export default function PflCueHealth({ id, stationId }: { id: string; stationId:
   return (
     <HealthPanel id={id} title="PFL Output" right={
       <button onClick={openMicPreferences} style={{ fontSize: 11, cursor: "pointer", background: "transparent", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", padding: "2px 8px" }}
-              title="Preferences → Audio → PFL">Change…</button>
+              title="Settings → Audio → PFL">Change…</button>
     }>
       {!c ? (
         <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Waiting for the engine…</div>

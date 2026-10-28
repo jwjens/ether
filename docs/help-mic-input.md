@@ -2,7 +2,7 @@
 feature: mic-input
 title: Mic on Air (the mic as a channel)
 summary: A microphone is a channel on the board like any other — patch it to an input on this computer, set its gain, and it goes on air with its own meter, channel EQ, fader, ON and ducking.
-where: On the board, a source channel's source dropdown → an input device (or "Mic — pick an input…"), or the Patch Bay's Inputs grid (☰ → Patch Bay), which also picks the input number. Gain: Preferences → Audio → Mic Inputs. Its live state: the strip, and Health Monitor → Mic Inputs.
+where: On the board, a source channel's source dropdown → an input device (or "Mic — pick an input…"), or the Patch Bay's Inputs grid (☰ → Patch Bay), which also picks the input number. Gain: Settings → Audio → Mic Inputs. Its live state: the strip, and Health Monitor → Mic Inputs.
 since: unreleased (log-reader-flip, after 4.6.50)
 audience: operator
 tour: true
@@ -39,12 +39,12 @@ interface's input. The fader's SOURCE dropdown changes with it: they are the sam
 ## Choose the input number
 
 An interface with several inputs has one column per input in the **Patch Bay**'s Inputs grid (☰ → Patch Bay):
-click the square for **input 2**, **input 3** and so on. **Preferences → Audio → Mic Inputs** names the input each mic
+click the square for **input 2**, **input 3** and so on. **Settings → Audio → Mic Inputs** names the input each mic
 channel takes, with a **Patch Bay** button and **Disconnect**.
 
 ## Set the gain
 
-Go to **Preferences → Audio → Mic Inputs** (or click the state line under the strip's dropdown).
+Go to **Settings → Audio → Mic Inputs** (or click the state line under the strip's dropdown).
 
 | Setting | What it does |
 |---|---|
@@ -77,9 +77,9 @@ how the mic *sounds* through its EQ, but it's too late to talk against: you'd he
 | **device not connected** | The chosen device isn't plugged into this computer. The channel is silent. It never switches to a different mic on its own: a wrong mic on air is worse than none. |
 | **device lost — retrying** | It was unplugged or failed. The channel is silent, **the music keeps playing**, and Ether re-opens it by itself when it comes back. |
 | **pure digital silence — Windows mic privacy?** | Windows is handing over exact silence. Almost always, Windows **Settings → Privacy → Microphone → "Let desktop apps access your microphone"** is off. It can also be a muted input. |
-| **that input is not on this device** | The input number is higher than the device has. Pick another in Preferences. |
-| **could not open** | The device would not open. The channel is silent. Pick the device again in Preferences, or choose another. |
-| **no input — Preferences → Audio** / **no input patched** | The channel is set to Mic but no input is patched yet. |
+| **that input is not on this device** | The input number is higher than the device has. Pick another in Settings. |
+| **could not open** | The device would not open. The channel is silent. Pick the device again in Settings, or choose another. |
+| **no input — Settings → Audio** / **no input patched** | The channel is set to Mic but no input is patched yet. |
 
 When a mic isn't live, its meter is **hatched (NOT FED)** instead of reading zero, so you can't mistake a dead
 mic for a quiet one.

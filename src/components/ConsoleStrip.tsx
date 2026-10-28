@@ -445,10 +445,10 @@ export default function ConsoleStrip({
         </div>
       )}
 
-      {/* PFL has nowhere to go: the chosen cue device is missing (Preferences → Audio → PFL) */}
+      {/* PFL has nowhere to go: the chosen cue device is missing (Settings → Audio → PFL) */}
       {pflActive && cueBad && slotIndex !== undefined && (
         <div style={{ padding: "4px 8px 0", fontSize: 10, fontWeight: 700, color: "var(--accent-red, #ef4444)", lineHeight: 1.2 }}
-             title="PFL is set to a separate output device on this computer, and that device is not there. PFL stays silent — it never falls back to the speakers. Preferences → Audio → PFL.">
+             title="PFL is set to a separate output device on this computer, and that device is not there. PFL stays silent — it never falls back to the speakers. Settings → Audio → PFL.">
           ⚠ {cueBad}
         </div>
       )}

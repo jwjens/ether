@@ -177,7 +177,7 @@ export default function UserLogin({ onLogin }: Props) {
             Set up your profile
           </div>
           <div style={{ fontSize: 12, color: "rgba(255,255,255,0.3)", textAlign: "center" as const, marginBottom: 24, lineHeight: 1.5 }}>
-            Name your profile and choose a 4-digit PIN. You can add more profiles later in Preferences.
+            Name your profile and choose a 4-digit PIN. You can add more profiles later in Settings.
           </div>
 
           <label style={{ display: "block", fontSize: 11, color: "rgba(255,255,255,0.4)", marginBottom: 6, letterSpacing: "0.06em", textTransform: "uppercase" as const }}>Profile title</label>

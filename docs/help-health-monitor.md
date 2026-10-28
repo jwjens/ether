@@ -259,7 +259,7 @@ with other local preferences.
 - **Audio levels sit at the floor.** The meters read the live audio engine. If nothing is playing,
   they are correctly showing nothing.
 - **Audio Processing says "off on both paths."** Loudness processing is switched off for this
-  station, so quiet tracks stay quiet. Turn it on in Preferences if you want the ride and limiter.
+  station, so quiet tracks stay quiet. Turn it on in Settings if you want the ride and limiter.
 - **I dragged a panel and it went back.** The drop only takes effect when you release the pointer
   **over another panel**. Release over the gap between panels and nothing moves.
 - **The banner says ALARM but the station is playing fine.** The alarm is a marker left by a watchdog

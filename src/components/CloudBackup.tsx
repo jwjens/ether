@@ -388,7 +388,7 @@ export default function CloudBackup() {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
             <div>
               <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", color: "#f97316", textTransform: "uppercase", marginBottom: 2 }}>Cloudflare R2</div>
-              <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Signed by the Ether backend — no keys are kept on this computer. Turn it on or off with <b>Keep my stuff synced</b> in Preferences.</div>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Signed by the Ether backend — no keys are kept on this computer. Turn it on or off with <b>Keep my stuff synced</b> in Settings.</div>
             </div>
             {/* READ-ONLY STATUS. Was a settable toggle writing the files-half master flag. */}
             <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'DM Mono', monospace", color: r2Enabled ? "#34d399" : "var(--text-tertiary)", flexShrink: 0 }}>

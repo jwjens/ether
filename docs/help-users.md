@@ -2,7 +2,7 @@
 feature: users
 title: Users & PINs
 summary: The people who sign into Ether on a computer, their roles and 4-digit PINs — the same on every computer of the account.
-where: Preferences → Users & Security
+where: Settings → Users & Security
 since: 4.6.62
 audience: admin
 tour: true
@@ -25,9 +25,9 @@ others; change a PIN or remove someone, and that reaches every computer too.
 - Someone forgets their PIN: an admin sets a new one.
 - Someone leaves: remove them — they are removed everywhere.
 
-## Set it up (Preferences → Users & Security)
+## Set it up (Settings → Users & Security)
 
-1. Open **Preferences → Users & Security**.
+1. Open **Settings → Users & Security**.
 2. Press **Add user**. Type the name, pick the role and colour, and (optional) a **4-digit PIN**.
 3. To change a PIN: **Change PIN** next to the user. To let someone in without a PIN: **Remove PIN**.
 4. To remove someone: **Delete**. The last administrator can never be removed.
@@ -60,7 +60,7 @@ name and PIN. A user without a PIN can't — set one first.
 ## If someone can't sign in on another computer
 
 - Give it a minute: changes reach the other computers with the next sync.
-- Check **Multi-Device Sync** is on (Preferences) on both computers.
+- Check **Multi-Device Sync** is on (Settings) on both computers.
 - If the person was set up on a computer that has not run 4.6.62 yet, they appear once it has.
 
 ## Not in this version (by design)

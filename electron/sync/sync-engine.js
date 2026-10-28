@@ -594,7 +594,7 @@ class SyncEngine {
       if (big) {
         if (!this._pushWaitSaid) {
           this._pushWaitSaid = true;
-          console.warn(`[SYNC] push WAITING — over ${PUSH_WAIT_OVER} entries are queued and the push index is not built yet; walking them would stall the app. Run Preferences → Multi-Machine Sync → Run sync cleanup now.`);
+          console.warn(`[SYNC] push WAITING — over ${PUSH_WAIT_OVER} entries are queued and the push index is not built yet; walking them would stall the app. Run Settings → Multi-Machine Sync → Run sync cleanup now.`);
         }
         this.pushWaiting = true;
         return [];

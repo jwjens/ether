@@ -76,7 +76,7 @@ them as missing — because they are not missing, they are on their way.
 
 **The two directions are not the same, and it is worth knowing which is which.** Audio comes *down*
 on its own. Audio goes *up* when you press **Send just the audio**. So after you import a batch or
-record a voice track, send it — until you do, your other computers cannot know it exists. Preferences
+record a voice track, send it — until you do, your other computers cannot know it exists. Settings
 → Backup & Restore → **Advanced** spells both out under **Audio transfer**, including when the last
 check ran and what it found.
 

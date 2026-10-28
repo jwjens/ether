@@ -2,7 +2,7 @@
 feature: resync
 title: Re-sync library
 summary: Point every song, spot, cart and announcement at the copy of its file on THIS computer — after a restore, a move, or bringing your stations to a different machine.
-where: Preferences → Audio → Catalogue Folder & Sync → Re-sync library
+where: Settings → Audio → Catalogue Folder & Sync → Re-sync library
 since: before 4.6 (Windows ↔ Mac re-pointing: the release after 4.6.52)
 audience: operator
 tour: true
@@ -31,7 +31,7 @@ own idea of where its files are.
 - You signed in on a new computer and the music came down, but items still point at the old machine.
 - You moved or renamed your catalogue folder.
 
-## Do it (Preferences → Audio → Catalogue Folder & Sync)
+## Do it (Settings → Audio → Catalogue Folder & Sync)
 
 1. **Check the folder.** *Folder for this station* shows this computer's catalogue folder. If it is wrong,
    press **Choose folder…** and pick the folder your music is in.
@@ -54,5 +54,5 @@ own idea of where its files are.
 ## If something looks wrong
 
 - **OUTSIDE did not drop at all:** check step 1 — the folder must be the one your files are actually in.
-- **Many items missing:** the files may not have arrived yet. Preferences → Backup & Restore → **Advanced**
+- **Many items missing:** the files may not have arrived yet. Settings → Backup & Restore → **Advanced**
   shows **Audio transfer** — whether audio is still coming down.

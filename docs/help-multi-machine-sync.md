@@ -2,7 +2,7 @@
 feature: multi-machine-sync
 title: Multi-Machine Sync
 summary: Engineering view of sync between two Ether installs — station UUIDs, what is waiting to sync, whether the sync engine is running, and manual push/pull overrides.
-where: Preferences → Backup & Restore → Advanced — sync diagnostics
+where: Settings → Backup & Restore → Advanced — sync diagnostics
 since: 4.4.210; one switch per computer, every station by identity, restore actions 4.6.62
 audience: engineer
 tour: false
@@ -16,7 +16,7 @@ The engineering view of sync between two installs of Ether on the same account. 
 **actually stored and running** — not what is supposed to be — and gives an engineer manual overrides
 to force one sync cycle in either direction.
 
-It sits in **Preferences → Backup & Restore**, below the cloud backup controls, under the heading
+It sits in **Settings → Backup & Restore**, below the cloud backup controls, under the heading
 **Advanced — sync diagnostics**, because both answer the same question: is this machine's work safely
 somewhere else. It is not needed in normal use.
 

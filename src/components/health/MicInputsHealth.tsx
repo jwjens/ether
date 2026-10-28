@@ -18,7 +18,7 @@ export default function MicInputsHealth({ id, stationId }: { id: string; station
   return (
     <HealthPanel id={id} title="Mic Inputs" right={
       <button onClick={openMicPreferences} style={{ fontSize: 11, cursor: "pointer", background: "transparent", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", padding: "2px 8px" }}
-              title="Patch inputs, input numbers and gain: Preferences → Audio → Mic Inputs">Patch…</button>
+              title="Patch inputs, input numbers and gain: Settings → Audio → Mic Inputs">Patch…</button>
     }>
       {slots.length === 0 ? (
         <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>No mic is patched on this station on this computer.</div>

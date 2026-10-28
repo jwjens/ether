@@ -19,7 +19,7 @@ export default function MicStatusPanel() {
       <b style={{ fontSize: 12, letterSpacing: "0.12em" }}>MIC</b>
       {chans.length === 0 ? (
         <div style={{ fontSize: 12, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
-          The mic is a channel on the board: set a source channel's source to <b>Mic</b>, then pick its input in Preferences → Audio.
+          The mic is a channel on the board: set a source channel's source to <b>Mic</b>, then pick its input in Settings → Audio.
         </div>
       ) : chans.map(c => {
         const p = mic.patches[c.slot];
@@ -32,7 +32,7 @@ export default function MicStatusPanel() {
         );
       })}
       <button onClick={openMicPreferences} style={{ minHeight: 36, cursor: "pointer", background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", fontSize: 12, fontWeight: 700 }}>
-        Mic inputs… (Preferences → Audio)
+        Mic inputs… (Settings → Audio)
       </button>
     </div>
   );

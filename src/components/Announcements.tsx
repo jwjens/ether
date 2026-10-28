@@ -1148,7 +1148,7 @@ export default function Announcements() {
               A dead control beside a working one is worse than no control: it is how an operator
               mis-sets the duck and then distrusts the feature that does work. An announcement now
               ducks because it PLAYS ON A SOURCE CHANNEL WITH DUCK ON, and how far it ducks is that
-              station's setting in Preferences → Ducker. One place, one truth.
+              station's setting in Settings → Ducker. One place, one truth.
 
               The duck_music / resume_music / duck_level COLUMNS stay in the schema, deliberately: a
               build older than slice 4 still reads them, and a migration that reaches customers must
@@ -1156,7 +1156,7 @@ export default function Announcements() {
               at their schema defaults and read by nothing. */}
           <div style={{ marginBottom: 14, padding: "10px 14px", background: "var(--bg-tertiary)", borderRadius: 0, border: "1px solid var(--border-primary)" }}>
             <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-              Ducking is set per station in <strong>Preferences → Ducker</strong>.
+              Ducking is set per station in <strong>Settings → Ducker</strong>.
             </div>
             <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 3, lineHeight: 1.4 }}>
               This announcement ducks the programme because it plays on a source channel with
@@ -1255,11 +1255,11 @@ export default function Announcements() {
                     })()}
                   </td>
                   <td style={{ padding: "12px 14px", color: "var(--text-tertiary)", fontSize: 12 }}>
-                    {/* The ducker owns this now — depth/hold live in Preferences > Ducker, per
+                    {/* The ducker owns this now — depth/hold live in Settings > Ducker, per
                         station, and apply to every source. These per-announcement duck columns are
                         vestigial: left in the schema so an older build can still open the database,
                         but nothing reads them. */}
-                    <span title="Ducking is set per station in Preferences → Ducker">—</span>
+                    <span title="Ducking is set per station in Settings → Ducker">—</span>
                   </td>
                   <td style={{ padding: "12px 14px" }}>
                     <button onClick={async () => { await (window as any).ether.announcements.updateById(a.id, { is_active: a.is_active ? 0 : 1 }); load(); }} style={{

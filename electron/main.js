@@ -673,9 +673,9 @@ function _seedDuckPreferences(why) {
     const { stationConfigKvUpsertByKey } = require("./sync/handlers/station_config_kv");
     for (const sid of BoardState.listStations(db)) {
       const wrote = BoardState.seedDuckPreferences(db, sid, (s, key, value) => stationConfigKvUpsertByKey(db, s, key, value));
-      if (wrote.length) logStartup(`[duck] s${sid}: Preferences had no ducker values — wrote the starting values (${wrote.join(", ")}) (${why})`);
+      if (wrote.length) logStartup(`[duck] s${sid}: Settings had no ducker values — wrote the starting values (${wrote.join(", ")}) (${why})`);
     }
-  } catch (e) { logStartup(`[duck] could not write the ducker's starting values into Preferences (${why}): ${e && e.message}`); }
+  } catch (e) { logStartup(`[duck] could not write the ducker's starting values into Settings (${why}): ${e && e.message}`); }
 }
 ipcMain.handle("board:duck-start", () => ({ ...BoardState.DUCK_START }));
 // THE FADER LAW AND FEEL GO INTO PREFERENCES, ONCE PER STATION (Jeff, 2026-10-13, option A): the same pattern as the
@@ -685,9 +685,9 @@ function _seedFaderPreferences(why) {
     const { stationConfigKvUpsertByKey } = require("./sync/handlers/station_config_kv");
     for (const sid of BoardState.listStations(db)) {
       const wrote = BoardState.seedFaderPreferences(db, sid, (s, key, value) => stationConfigKvUpsertByKey(db, s, key, value));
-      if (wrote.length) logStartup(`[faders] s${sid}: Preferences had no fader law/feel — wrote the starting values (${wrote.join(", ")}) (${why})`);
+      if (wrote.length) logStartup(`[faders] s${sid}: Settings had no fader law/feel — wrote the starting values (${wrote.join(", ")}) (${why})`);
     }
-  } catch (e) { logStartup(`[faders] could not write the fader law/feel's starting values into Preferences (${why}): ${e && e.message}`); }
+  } catch (e) { logStartup(`[faders] could not write the fader law/feel's starting values into Settings (${why}): ${e && e.message}`); }
 }
 ipcMain.handle("board:fader-start", () => JSON.parse(JSON.stringify(BoardState.FADER_START)));
 
@@ -3631,7 +3631,7 @@ function buildMenu() {
       { label: "New Session", accelerator: "CmdOrCtrl+N", click: () => send("file:new-session") },
       { type: "separator" },
       { label: "Import Music...", click: () => menuNav("file:import", "library") },
-      { label: "Preferences", click: () => send("file:preferences") },
+      { label: "Settings", click: () => send("file:preferences") },
       { type: "separator" },
       // ONE DOOR. "Switch Account…" is gone: under profile-per-account, switching IS signing out
       // and signing back in as someone else — a second menu item for it only invited the operator to
@@ -5304,7 +5304,7 @@ async function _autoDownloadMissing(snap) {
       if (r.ok) _autoDlFailedSaid.delete(r.key);
       else if (!_autoDlFailedSaid.has(r.key)) { _autoDlFailedSaid.add(r.key); logStartup(`[catalogue] automatic download of ${r.name} failed: ${r.reason} — tried again on the next sweep`); }
     }
-    if (res.downloaded || res.alreadyThere) logStartup(`[catalogue] downloaded automatically (Preferences switch on): ${res.downloaded} downloaded, ${res.alreadyThere} already in the catalogue, ${res.failed} failed`);
+    if (res.downloaded || res.alreadyThere) logStartup(`[catalogue] downloaded automatically (Settings switch on): ${res.downloaded} downloaded, ${res.alreadyThere} already in the catalogue, ${res.failed} failed`);
   } catch (e) { logStartup(`[catalogue] automatic download failed: ${e.message}`); }
   finally { _autoDlRunning = false; }
 }
@@ -7356,7 +7356,7 @@ function armAllStationDuckers(reason, opts) {
       let saved;
       try { saved = BoardState.readSavedBoard(db, sid); } catch { continue; }
       const p = saved && saved.duckParams;
-      if (!p) { logStartup(`[duck] s${sid}: Preferences have no ducker values (${(saved && saved.duckMissing || []).join(", ")}) — the engine is sent nothing`); continue; }
+      if (!p) { logStartup(`[duck] s${sid}: Settings have no ducker values (${(saved && saved.duckMissing || []).join(", ")}) — the engine is sent nothing`); continue; }
       try {
         if (toDaemon) audiodClient.cmd('setDuckParams', { stationId: sid, ...p }).catch(e => console.error('[duck] params', sid, e && e.message));
         else if (audio && typeof audio.audioSetDuckParams === 'function')
@@ -8270,7 +8270,7 @@ ipcMain.handle("restore_db", async (_, { backupName } = {}) => {
     await swapDatabaseFile(backupPath);   // close → copy → reopen(retry) → verify → rollback-on-failure
     const rs = _lastRestoreSync;
     return "Restored from " + backupName + "." + (rs ? ` ${rs.discarded} unsent change(s) were discarded — they will never be sent.` +
-      (rs.mistakeRows ? ` This computer had changed ${rs.mistakeRows} row(s) since that backup; an admin can send this restore to every computer (Preferences → Multi-Device Sync) before switching sync back on.` : "") : "") +
+      (rs.mistakeRows ? ` This computer had changed ${rs.mistakeRows} row(s) since that backup; an admin can send this restore to every computer (Settings → Multi-Device Sync) before switching sync back on.` : "") : "") +
       " Restart Ether for all changes to take effect.";
   } catch (e) { throw new Error(e.message); }
 });

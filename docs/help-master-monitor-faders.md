@@ -57,7 +57,7 @@ How to read the bar, the peak dot and OVER: see **Reading the Meters** (`docs/he
 
 - **MASTER only turns down, not up** — unless you raise its maximum. It runs from silence to normal (unity) level at
   the top of its travel, so it cannot push the station louder than the mix, which prevents accidentally driving the
-  signal into distortion. If you raise MASTER's maximum above 0 dB (Preferences → Loudness & fader smoothing → Fader
+  signal into distortion. If you raise MASTER's maximum above 0 dB (Settings → Loudness & fader smoothing → Fader
   maximum), the stream's limiter still holds the peaks at its ceiling and the loudness ride slowly pulls the level
   back toward your target.
 - **Channel faders are separate.** Each deck and the mic have their own fader. MASTER applies once, at
@@ -87,7 +87,7 @@ How to read the bar, the peak dot and OVER: see **Reading the Meters** (`docs/he
   saved MONITOR level, then uses it. On a computer where MONITOR has never been set, the MONITOR fader reads **off**
   and the room stays silent until you raise it. The broadcast is never affected.
 - **MASTER and MONITOR top out at 0 dB** (unity) at the very top of their travel. You can change that maximum in
-  **Preferences → Loudness & fader smoothing → Fader maximum**.
+  **Settings → Loudness & fader smoothing → Fader maximum**.
 
 ## If something looks wrong
 

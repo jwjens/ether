@@ -34,7 +34,7 @@ You don't have to set artwork on every spot. Set it on the ones that matter.
 the spot itself**, in the station's local database. It is **not uploaded to the internet**, not sent to
 Cloudflare, and not published anywhere. Choosing an image makes no network connection at all.
 
-This is the same thing the **station logo** in Preferences already does.
+This is the same thing the **station logo** in Settings already does.
 
 Two practical consequences:
 
@@ -88,4 +88,4 @@ picture, report it — that's a display problem, not a problem with what you sav
 ## Related
 
 - **Spots & Promos** — creating spots, categories, and timed breaks.
-- **Preferences → Station logo** — the station-wide image, stored the same local way.
+- **Settings → Station logo** — the station-wide image, stored the same local way.

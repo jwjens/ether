@@ -172,7 +172,7 @@ export default function DuckerSection() {
 
       {p == null && loaded && (
         <div style={{ padding: "8px 10px", margin: "4px 0", border: "1px solid var(--accent-amber, #f59e0b)", color: "var(--text-primary)", fontSize: 12, lineHeight: 1.4 }}>
-          This station's Preferences have no ducker settings yet ({missing.join(", ")}), so the music is not ducked.
+          This station's Settings have no ducker settings yet ({missing.join(", ")}), so the music is not ducked.
           {" "}<button onClick={reset} disabled={!start} style={{ marginLeft: 6, padding: "2px 8px", fontSize: 11, cursor: "pointer" }}>Use the starting values</button>
         </div>
       )}
@@ -249,7 +249,7 @@ export default function DuckerSection() {
         }}
       >Reset to the starting values</button>
       <span style={{ fontSize: 10, color: "var(--text-tertiary)", marginTop: 4, lineHeight: 1.4 }}>
-        Starting values (what a new station gets, written into its Preferences once):{" "}
+        Starting values (what a new station gets, written into its Settings once):{" "}
         {start ? `${-start.depthDb} dB down · hold ${start.holdMs} ms · release ${start.releaseMs} ms · attack ${start.attackMs} ms · threshold ${start.thresholdDb} dBFS` : "—"}.
         {" "}The engine uses only the values above — it has none of its own.
       </span>

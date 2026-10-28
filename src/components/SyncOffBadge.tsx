@@ -18,7 +18,7 @@ export default function SyncOffBadge({ compact }: { compact?: boolean }) {
   }, []);
   if (on !== false) return null;
   return (
-    <span title="Sync is switched off on this computer: nothing goes out and nothing comes in. Preferences → Keep my stuff synced turns it back on."
+    <span title="Sync is switched off on this computer: nothing goes out and nothing comes in. Settings → Keep my stuff synced turns it back on."
       style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: compact ? "1px 6px" : "3px 9px",
                fontSize: compact ? 9 : 10, fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase",
                color: "#1a1206", background: "var(--accent-amber)", borderRadius: 0, whiteSpace: "nowrap" }}>

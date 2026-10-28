@@ -30,7 +30,7 @@ and **that fader's buttons decide the rest**:
 
 1. **Put a Park mic on a fader.** On the board, set a fader's source to **Mic** and pick **Park Mic 1 (Park page)**
    (or **Park Mic 2**). They are listed with this computer's other inputs.
-   - The first time, the starting values go into Preferences: phone echo cancellation **ON**, noise suppression **ON**,
+   - The first time, the starting values go into Settings: phone echo cancellation **ON**, noise suppression **ON**,
      automatic gain **ON** (so holding the phone a little closer or further doesn't change the level much), and a
      **Park mic buffer** of **120 ms**. You can change every one.
 2. **Set the fader's buttons:** **MAIN** (on air too, or park only) and **DUCK**; bring the fader up and turn it ON.
@@ -84,7 +84,7 @@ you talk.
 
 ## If it doesn't work
 
-- **"Talk isn't set up on this station":** put a Park mic on a fader (step 1). Check that the bottom line in Preferences
+- **"Talk isn't set up on this station":** put a Park mic on a fader (step 1). Check that the bottom line in Settings
   says it is available.
 - **"… isn't on a fader in Ether":** that Park mic was taken off its fader; put it back.
 - **"… fader is OFF in Ether":** turn the fader's channel ON.

@@ -52,7 +52,7 @@ export const SOURCE_KINDS: SourceKindMeta[] = [
   // Mic is an ENGINE input since 2026-09-26 (docs/dsp-mic-in-engine.md): the audio engine captures the device and
   // the channel goes on air like any other. Only Network below is still gated on a capture path.
   { kind: "mic",          label: "Mic (device…)",        short: "Mic", family: "stream",
-    state: "Live microphone on this channel, on air — pick the input on the strip or in Preferences → Audio." },
+    state: "Live microphone on this channel, on air — pick the input on the strip or in Settings → Audio." },
   // THE REMOTE LINK (docs/remote-link-design-2026-09-28.md, ruling D1): Ether-to-Ether, its own patch type. Network below
   // stays the placeholder for third-party codecs (Zephyr, AoIP), which are a different protocol.
   { kind: "link",         label: "Link (network feed)",  short: "Link", family: "stream",

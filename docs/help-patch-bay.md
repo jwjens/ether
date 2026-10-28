@@ -2,7 +2,7 @@
 feature: patch-bay
 title: Patch Bay (outputs and inputs)
 summary: Where each station's Master, Cue (PFL) and Aux play on this computer, and which input, Park mic or Remote Link feed comes in on each source fader.
-where: ☰ → Patch Bay, Menu → Patch Bay, or the "Patch Bay" button on the board's Master line, the AUX panel's Output line, or Preferences → PFL
+where: ☰ → Patch Bay, Menu → Patch Bay, or the "Patch Bay" button on the board's Master line, the AUX panel's Output line, or Settings → PFL
 since: unreleased (patch bay steps 1 and 2, after 4.6.67)
 audience: admin
 tour: true
@@ -34,8 +34,8 @@ The stream to your listeners **never** depends on any of this. On-air audio goes
 
 ## Set it up
 
-1. Open **☰ → Patch Bay** or **Menu → Patch Bay** (or the **Patch Bay** button in Preferences → Audio → Mic Inputs). You can also use the **Patch Bay** button next to the board's Master line, the AUX panel's
-   Output line, or Preferences → PFL.
+1. Open **☰ → Patch Bay** or **Menu → Patch Bay** (or the **Patch Bay** button in Settings → Audio → Mic Inputs). You can also use the **Patch Bay** button next to the board's Master line, the AUX panel's
+   Output line, or Settings → PFL.
 2. Find the station. Its three rows are Master, Cue (PFL) and Aux.
 3. Click the square where the row meets the device and channels you want. It turns teal (●) once Ether has it.
 4. Read the line under the grid. It says what the audio engine **actually opened**, for example
@@ -81,13 +81,13 @@ Click a square to bring that input in on that fader. Click it again to disconnec
   agree.
 - **The Remote Link feed comes in on one fader per station.** Connect it to another fader and it moves there; the fader
   it left says "— no source —".
-- An input that is connected to a fader keeps its **gain** (Preferences → Audio → Mic Inputs) when you move it to
+- An input that is connected to a fader keeps its **gain** (Settings → Audio → Mic Inputs) when you move it to
   another input.
 - The line under the grid says what the audio engine is doing with each fader's input: **live**, **device not
   connected**, **that input is not on this device**, the Remote Link's state, and so on.
 - A fader set to **Mic** or **Link** on the board with nothing connected is shown in red, so it can't go unnoticed.
 
-To set the gain, see the live numbers, or paste a Remote Link key, use Preferences, as before.
+To set the gain, see the live numbers, or paste a Remote Link key, use Settings, as before.
 
 ## Things to know
 
@@ -114,5 +114,5 @@ To set the gain, see the live numbers, or paste a Remote Link key, use Preferenc
 
 - **Board → Station Monitors**: Master's level and mute.
 - **AUX panel**: the aux faders.
-- **Preferences → PFL**: the PFL dim.
+- **Settings → PFL**: the PFL dim.
 - **Health Monitor**: device stalls are logged there.
