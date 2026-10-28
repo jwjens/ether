@@ -212,6 +212,14 @@ function _profileData(...segments) {
   return full;
 }
 
+// THE ACCOUNT SIGN-IN (Phase 0, docs/account-sign-in-plan-2026-10-26.md): kept in <profile>\auth.bin, encrypted with
+// safeStorage — never in openair.db, never in a backup (electron/account-session.js). Every reader asks this.
+const AccountSession = require("./account-session").createAccountSession({
+  safeStorage,
+  dir: () => P.ensureProfileDir(P.activeKey()),
+  note: (event, detail) => { try { _healthEvent(event, detail || {}); } catch { /* the ledger is not up yet */ } },
+});
+
 // THE ONE HEALTH LOG WRITER (2026-10-13, docs/air-machine-stalls-plan-2026-10-13.md §3): every health-events.jsonl line
 // from main goes through here — queued and written in the background, rotated by size (install_config_kv
 // health_log_max_mb / health_log_keep), old archives deleted after health_log_archive_days. Never appendFileSync on main.
@@ -1836,6 +1844,8 @@ async function accountSignOut() {
     // Clear the on-air marker while the profile is still resolvable — after the pointer goes there is
     // no profile to find it in, and a stale marker would sit in the account's folder forever.
     try { _persistOnAir(false); } catch {}
+    // Sign Out ends this computer's sign-in (Phase 0: auth.bin removed; the server session is revoked in Phase 1).
+    try { AccountSession.clear(); } catch (e) { console.error("[account] clear sign-in:", e.message); }
     try { P.clearPointer(); } catch (e) { console.error("[account] clear pointer:", e.message); }
     try { db.close(); } catch {}
     app.exit(0);
@@ -3051,6 +3061,9 @@ function _runMigrationsInner() {
   } catch (e) { console.error("[DB] stable machine identity:", e.message); }
 
   console.log("[DB] Schema ready");
+  // Phase 0: a sign-in token still in the database moves to auth.bin and its row is removed (bytes overwritten).
+  try { const m = AccountSession.migrate(db); if (m.moved || m.removed) console.log(`[account] sign-in moved out of the database (rows removed: ${m.removed})`); }
+  catch (e) { console.error("[account] moving the sign-in out of the database failed:", e.message); }
   // Plain-text user PINs → scrypt (electron/pin-hash.js). Deferred: off the startup path, after the module-level PIN code ran.
   setTimeout(() => { _upgradePlainPins().catch(() => {}); }, 8000);
 
@@ -3463,7 +3476,7 @@ function createWindow() {
           } catch (e) { fillN = -1; logStartup(`[SMOKE] fill station ${fillSid} ✗ ${e && e.message}`); }
         }
         let noAccount = false;
-        try { noAccount = !getDb().prepare("SELECT 1 FROM install_config_kv WHERE key IN ('account_jwt','account_license_key') AND value IS NOT NULL AND value != ''").get(); } catch { noAccount = false; }
+        try { noAccount = !AccountSession.has() && !getDb().prepare("SELECT 1 FROM install_config_kv WHERE key = 'account_license_key' AND value IS NOT NULL AND value != ''").get(); } catch { noAccount = false; }
         const airIsolated = stationCount === 0 || (fillSid > 0 && noAccount);
         // air_isolated is MANDATORY only for an ISOLATED smoke running alongside the live app.
         // A sole-instance real-profile smoke (SMOKE_ISOLATED=false, live app closed) legitimately has
@@ -4132,7 +4145,7 @@ app.whenReady().then(() => {
   const runLibrarySync = async () => {
     try {
       const d = getDb();
-      const jwt = d.prepare("SELECT value FROM install_config_kv WHERE key='account_jwt' AND deleted_at IS NULL").get()?.value;
+      const jwt = AccountSession.get();
       const licenseKey = accountLicenseKey();
       if (!jwt || !licenseKey) return;                       // no signed-in account yet → wait
       const { bootstrapLibrary, tailChanges, getStoredVersion } = require('./sync/library-client');
@@ -4277,7 +4290,7 @@ app.whenReady().then(() => {
       };
       const pullMemberStation = async (accountId, uuid, name) => {
         if (_memberTimers.has(uuid)) return;
-        const jwt = db.prepare("SELECT value FROM install_config_kv WHERE key = 'account_jwt'").get()?.value;
+        const jwt = AccountSession.get();
         if (!jwt) { console.warn('[SYNC] member-sync: no account_jwt'); return; }
         let token = null;
         try { const s = await fetch(`${baseUrl}/api/me/switch-account/${accountId}`, { method: 'POST', headers: { Authorization: `Bearer ${jwt}` } }); if (s.ok) token = (await s.json())?.token || null; }
@@ -4319,7 +4332,7 @@ app.whenReady().then(() => {
       // List membership-accessible stations for the sync screen so it can offer them as CHOICES.
       ipcMain.handle('member-sync:available', async () => {
         try {
-          const jwt = db.prepare("SELECT value FROM install_config_kv WHERE key = 'account_jwt'").get()?.value;
+          const jwt = AccountSession.get();
           if (!jwt) return { ok: true, stations: [], chosen: [] };
           const res = await fetch(`${baseUrl}/api/me/memberships`, { headers: { Authorization: `Bearer ${jwt}` } });
           if (!res.ok) return { ok: false, error: 'memberships HTTP ' + res.status, stations: [], chosen: [] };
@@ -4602,6 +4615,11 @@ function _wasOnAir() {
   } catch { return false; }
 }
 ipcMain.handle("account:was-on-air", () => _wasOnAir());
+// THE SIGN-IN (Phase 0, electron/account-session.js): the window stores it at sign-in, asks whether there is one, and
+// reads the access token for its own account requests. It never touches the database for it.
+ipcMain.handle("account:session-set", (_, token) => { try { return AccountSession.set(token); } catch (e) { return { ok: false, error: e.message }; } });
+ipcMain.handle("account:session-has", () => { try { return AccountSession.has(); } catch { return false; } });
+ipcMain.handle("account:session-token", () => { try { return AccountSession.get(); } catch { return null; } });
 
 // Keep-session marker: written immediately before a CONTINUATION self-relaunch (cloud-install DB
 // reload, generic reload, update install) so the next launch carries the signed-in session instead
@@ -7017,7 +7035,7 @@ ipcMain.handle("link:set-input", (_, stationId, input) => _linkSetInputCore(Numb
 // receiver types it. The ether-link:1: paste stays as an advanced fallback. Client: electron/link-pairing-client.js.
 const _linkPair = require('./link-pairing-client').createLinkPairingClient({
   fetch: (...a) => fetch(...a), baseUrl: ETHER_BACKEND_URL, canWrite: () => canWriteProduction(),
-  getJwt: () => { try { return getDb().prepare("SELECT value FROM install_config_kv WHERE key='account_jwt' AND deleted_at IS NULL").get()?.value || null; } catch { return null; } },
+  getJwt: () => AccountSession.get(),
 });
 /** Publish this machine's key (made / replaced / at start). Never throws; a failure is logged, the Link still works. */
 async function _linkPublishOwnKey(why) {
@@ -7792,7 +7810,7 @@ ipcMain.handle("system:openUrl", (_, url) => shell.openExternal(url));
 // each station's jukebox slug (its own jukebox_request_url). Only this account's stations. Read-only.
 ipcMain.handle("links:account", async () => {
   let jwt = null;
-  try { jwt = getDb().prepare("SELECT value FROM install_config_kv WHERE key='account_jwt' AND deleted_at IS NULL").get()?.value || null; } catch {}
+  jwt = AccountSession.get();
   if (!jwt) return { ok: false, reason: "not signed in to an Ether account on this computer" };
   const get = async (p) => {
     const r = await fetch(`${ETHER_BACKEND_URL}${p}`, { headers: { Authorization: `Bearer ${jwt}` }, signal: AbortSignal.timeout(10000) });
@@ -8224,7 +8242,7 @@ ipcMain.handle("backups:restore-cloud", async (_e, key) => {
     // This computer's identity and signed-in session survive the swap (the same re-stamp as install-from-cloud).
     let myClientId = null, myJwt = null, myEmail = null;
     try { myClientId = db.prepare("SELECT client_id FROM client_identity LIMIT 1").get()?.client_id || null; } catch {}
-    try { myJwt = db.prepare("SELECT value FROM install_config_kv WHERE key='account_jwt' AND deleted_at IS NULL").get()?.value || null; } catch {}
+    // (the sign-in itself is in auth.bin, outside the database: a swap cannot touch it)
     try { myEmail = db.prepare("SELECT value FROM install_config_kv WHERE key='account_email' AND deleted_at IS NULL").get()?.value || null; } catch {}
     const dbRes = await fetchFn(db_signed_url);
     if (!dbRes.ok) return { ok: false, error: `Backup download failed (${dbRes.status}).` };
@@ -8239,7 +8257,8 @@ ipcMain.handle("backups:restore-cloud", async (_e, key) => {
     try { fs.rmSync(tmp, { force: true }); } catch {}
     if (myClientId) { try { getDb().prepare("UPDATE client_identity SET client_id = ?").run(myClientId); } catch {} }
     const nowIso = new Date().toISOString();
-    for (const [k, v] of [["account_jwt", myJwt], ["account_email", myEmail]]) {
+    try { AccountSession.scrubDb(getDb()); } catch {}   // an older backup may still carry a sign-in row
+    for (const [k, v] of [["account_email", myEmail]]) {
       if (v == null) continue;
       try {
         if (getDb().prepare("SELECT 1 FROM install_config_kv WHERE key=?").get(k)) getDb().prepare("UPDATE install_config_kv SET value=?, updated_at=?, deleted_at=NULL WHERE key=?").run(v, nowIso, k);
@@ -8324,8 +8343,7 @@ ipcMain.handle("station:install-from-cloud", async (_evt, { force } = {}) => {
     // SOURCE machine and carries ITS (often empty) session markers; without re-stamping these, the
     // restore wipes the account_jwt the operator just signed in with → the app gates back to the
     // sign-in screen → infinite sign-in loop. Capture now, re-stamp after the swap. [loop fix]
-    let myAccountJwt = null, myAccountEmail = null;
-    try { myAccountJwt   = db.prepare("SELECT value FROM install_config_kv WHERE key='account_jwt' AND deleted_at IS NULL").get()?.value || null; } catch {}
+    let myAccountEmail = null;   // the sign-in itself is in auth.bin, outside the database (Phase 0)
     try { myAccountEmail = db.prepare("SELECT value FROM install_config_kv WHERE key='account_email' AND deleted_at IS NULL").get()?.value || null; } catch {}
 
     const dbRes = await fetchFn(db_signed_url);
@@ -8391,7 +8409,7 @@ ipcMain.handle("station:install-from-cloud", async (_evt, { force } = {}) => {
           else db.prepare("INSERT INTO install_config_kv (key,value,uuid,created_at,updated_at) VALUES (?,?,?,?,?)").run(key, val, require("crypto").randomUUID(), nowIso, nowIso);
         } catch (e) { console.warn("[install-from-cloud] preserve " + key + ":", e.message); }
       };
-      upsertInstall("account_jwt", myAccountJwt);
+      try { AccountSession.scrubDb(db); } catch {}   // an older backup may still carry a sign-in row
       upsertInstall("account_email", myAccountEmail);
     }
 

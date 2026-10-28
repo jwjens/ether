@@ -17,7 +17,8 @@ describe("pairing IPC", () => {
   });
   it("the client runs behind the dev-write guard and the account token", () => {
     expect(main).toMatch(/createLinkPairingClient\(\{[\s\S]{0,300}canWrite: \(\) => canWriteProduction\(\)/);
-    expect(main).toMatch(/key='account_jwt'/);
+    // The account token: kept in protected storage since Phase 0 (electron/account-session.js), never the database.
+    expect(main).toMatch(/getJwt: \(\) => AccountSession\.get\(\)/);
   });
   it("a paired key goes through the SAME apply path as a pasted one, after the loop refusal", () => {
     const fn = /async function _linkApplyFrom\(sid, from\) \{([\s\S]*?)\n\}\n/.exec(main);

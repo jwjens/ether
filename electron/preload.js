@@ -431,6 +431,12 @@ contextBridge.exposeInMainWorld("ether", {
     state:   (stationId)        => ipcRenderer.invoke("patch:state", stationId),
     devices: ()                 => ipcRenderer.invoke("patch:devices"),
   },
+  // ── THE ACCOUNT SIGN-IN (electron/account-session.js) — kept in protected storage, never in the database ──
+  accountSession: {
+    set:   (token) => ipcRenderer.invoke("account:session-set", token),
+    has:   ()      => ipcRenderer.invoke("account:session-has"),
+    token: ()      => ipcRenderer.invoke("account:session-token"),
+  },
   // ── THE A/B/C VIEW (src/lib/deckView.ts) — collapsed into one strip or expanded, on this computer ──
   boardView: {
     getDecks: (stationId)       => ipcRenderer.invoke("board:decks-view-get", stationId),

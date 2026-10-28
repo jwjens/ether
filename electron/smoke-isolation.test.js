@@ -46,7 +46,8 @@ describe("isolated launch: its own folders and its own engine pipe", () => {
   });
   it("with real data, air isolation is a copy with no account session — never stations alone", () => {
     expect(main).toMatch(/const airIsolated = stationCount === 0 \|\| \(fillSid > 0 && noAccount\);/);
-    expect(main).toMatch(/SELECT 1 FROM install_config_kv WHERE key IN \('account_jwt','account_license_key'\)/);
+    // "no account session": no sign-in (protected storage, Phase 0) and no license key in the copy.
+    expect(main).toMatch(/noAccount = !AccountSession\.has\(\) && !getDb\(\)\.prepare\("SELECT 1 FROM install_config_kv WHERE key = 'account_license_key'/);
     expect(main).toMatch(/\(!SMOKE_ISOLATED \|\| airIsolated\)/);
   });
   it("a normal launch still takes the single-instance lock (two Ethers must never drive one engine)", () => {

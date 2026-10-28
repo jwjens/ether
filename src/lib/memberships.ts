@@ -23,8 +23,9 @@ export interface Membership {
 async function accountJwt(): Promise<string | null> {
   try {
     const ether = (window as any).ether;
-    const row = (await ether.installConfigKv?.get?.("account_jwt"))?.row;
-    return row?.value ? String(row.value) : null;
+    // Kept in protected storage, never in the database (electron/account-session.js).
+    const t = await ether.accountSession?.token?.();
+    return t ? String(t) : null;
   } catch { return null; }
 }
 

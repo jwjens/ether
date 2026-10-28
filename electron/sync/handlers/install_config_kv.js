@@ -12,6 +12,9 @@
 const crypto = require('crypto');
 
 const TABLE = 'install_config_kv';
+// Keys that must never be in the database (the account sign-in lives in auth.bin — electron/account-session.js).
+const { SECRET_INSTALL_KEYS } = require('../../account-session');
+const isSecret = (k) => SECRET_INSTALL_KEYS.includes(String(k));
 
 // ── Scope guard ───────────────────────────────────────────────────────────────
 
@@ -25,10 +28,11 @@ function validateScope() {
 function installConfigKvList(db) {
   return db.prepare(
     `SELECT key, value FROM ${TABLE} WHERE deleted_at IS NULL ORDER BY key`
-  ).all();
+  ).all().filter(r => !isSecret(r.key));
 }
 
 function installConfigKvGet(db, key) {
+  if (isSecret(key)) return null;
   return db.prepare(
     `SELECT * FROM ${TABLE} WHERE key = ? AND deleted_at IS NULL`
   ).get(key) ?? null;
@@ -36,6 +40,7 @@ function installConfigKvGet(db, key) {
 
 function installConfigKvUpsertByKey(db, key, value) {
   validateScope();
+  if (isSecret(key)) throw new Error(`${key} is never stored in the database (it is kept in protected storage)`);
   const existing = db.prepare(`SELECT * FROM ${TABLE} WHERE key = ?`).get(key);
   const now = new Date().toISOString();
   if (!existing) {

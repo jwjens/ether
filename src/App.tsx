@@ -1015,7 +1015,8 @@ export default function App() {
           const _instRows: { key: string; value: string }[] = Array.isArray(_inst) ? _inst : (_inst?.rows || []);
           // Durable signed-in marker (reuses the rows we already have — no extra IPC). Flipping this
           // true re-runs the account/tier reconcile effect (it's in that effect's deps).
-          setHasAccountJwt(!!_instRows.find(r => r.key === 'account_jwt')?.value);
+          // The sign-in is in protected storage now (electron/account-session.js), not in install_config_kv.
+          setHasAccountJwt(!!(await (window as any).ether.accountSession?.has?.().catch(() => false)));
           const _override  = resolveEffectivePlan(rows);                                   // override for owner/dev, else station plan
           const _instPlan  = _instRows.find(r => r.key === 'plan_tier')?.value as PlanTier | undefined;
           const _effective = get('plan_tier_dev_override') ? _override : (_instPlan ?? _override);

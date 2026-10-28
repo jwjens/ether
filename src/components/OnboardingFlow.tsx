@@ -527,9 +527,9 @@ export default function OnboardingFlow({ onComplete, forceAuth }: Props) {
     // key clears that Switch Account / sign-out do — that's what lets a later different-account
     // sign-in be detected and routed to its own database.
     try { await (window as any).ether.installConfigKv?.upsertByKey?.('account_email', String(data.email || email).trim().toLowerCase()); } catch {}
-    // RBAC foundation: persist the user JWT (install-level) so the desktop can read this person's
-    // memberships (the accounts + stations they can access). Read-only; the sync engine is untouched.
-    try { if (data.token) await (window as any).ether.installConfigKv?.upsertByKey?.('account_jwt', String(data.token)); } catch {}
+    // The account sign-in: kept in this computer's protected storage, never in the database or a backup (Phase 0,
+    // electron/account-session.js). Read by main for account requests (memberships, Remote Link, member sync).
+    try { if (data.token) await (window as any).ether.accountSession?.set?.(String(data.token)); } catch {}
     return data.license_key as string;
   };
 

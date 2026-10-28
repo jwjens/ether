@@ -22,6 +22,10 @@ const Database = require("better-sqlite3");
     const src = new Database(dbPath, { readonly: true, fileMustExist: true });
     src.pragma("busy_timeout = 10000");
     try { await src.backup(outPath); } finally { src.close(); }
+    // NO SIGN-IN IN A BACKUP (Phase 0, docs/account-sign-in-plan-2026-10-26.md): an older database may still hold one;
+    // the copy is scrubbed with secure_delete (the bytes are overwritten, not left in free pages) before it counts.
+    { const w = new Database(outPath, { fileMustExist: true });
+      try { require("./account-session").createAccountSession({ safeStorage: null, dir: () => "" }).scrubDb(w); } finally { w.close(); } }
     const probe = new Database(outPath, { readonly: true, fileMustExist: true });
     let integrity, songs;
     try {
