@@ -4,6 +4,7 @@
 // applied to the engine at once, and the daemon re-applies the stored value to every fresh engine.
 import React, { useEffect, useState } from "react";
 import { useActiveStation } from "../hooks/useActiveStation";
+import PatchBayPointer from "./PatchBayPointer";
 
 /** The value this setting shows until the operator changes it — the same number as the engine's
  *  PFL_DIM_DB_DEFAULT (native/src/audio.rs). */
@@ -46,13 +47,6 @@ export default function PflSettings() {
     const id = setInterval(poll, 2000);
     return () => { alive = false; clearInterval(id); };
   }, [stationId]);
-  const chooseCue = async (dev: string) => {
-    if (stationId == null) return;
-    setErr(null);
-    const r = await (window as any).ether?.audio?.setCueDevice?.(stationId, dev);
-    if (r && r.ok) { setCueDev(dev); setTimeout(async () => { try { setCue(await (window as any).ether?.audio?.cueState?.(stationId)); } catch { /* next poll */ } }, 600); }
-    else setErr(`PFL output not changed: ${(r && r.reason) || "no answer"}`);
-  };
   const [dim, setDim] = useState<number>(PFL_DIM_DB_DEFAULT);
   const [stored, setStored] = useState<boolean>(false);
   const [err, setErr] = useState<string | null>(null);
@@ -85,16 +79,8 @@ export default function PflSettings() {
         <b> local output</b>, or in a separate <b>PFL output</b> (headphones) if you pick one below. While any PFL is on, the
         programme there dips by this much so you can hear what you're checking. Air and the stream are never affected.
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 11, color: "var(--text-tertiary)", width: 120, textTransform: "uppercase", letterSpacing: "0.06em" }}>PFL output</span>
-        <select value={cueDev} onChange={e => chooseCue(e.target.value)}
-          style={{ flex: "1 1 260px", minHeight: 36, background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", padding: "0 8px", fontSize: 12 }}
-          title="Where PFL plays on THIS computer (never synced). A named device gets PFL — and the programme at the dip level for context — and the main output is left alone.">
-          <option value="">Same as main output</option>
-          {cueDev && !outs.includes(cueDev) && <option value={cueDev}>{cueDev} (not connected)</option>}
-          {outs.map(n => <option key={n} value={n}>{n}</option>)}
-        </select>
-      </div>
+      {/* The PFL device is patched in the Patch Bay (the Cue row) — one place per output. The dip below stays here. */}
+      <PatchBayPointer stationId={stationId} row="cue" label="PFL output" />
       {(() => { const w = cueWords(cue?.state, cue?.device || cueDev); return (
         <div style={{ fontSize: 12, fontWeight: 700, color: w.bad ? "var(--accent-red, #ef4444)" : "var(--text-secondary)" }}>● {w.text}</div>
       ); })()}

@@ -21,6 +21,7 @@ import { useStreamStatus } from "../contexts/StreamStatusContext";
 import HFader from "./HFader";
 import { useActiveStation } from "../hooks/useActiveStation";
 import { parseParkSoundLast, parkSoundLine, recordParkSound, type ParkSoundLast } from "../lib/parkSound";
+import PatchBayPointer from "./PatchBayPointer";
 
 interface Station { id: number; name: string; uuid?: string | null; }
 interface ParkState { muted: boolean; locked: boolean; last: ParkSoundLast | null; }
@@ -137,14 +138,6 @@ export default function StationMonitorMixer() {
     levelNote.current[sid] = window.setTimeout(() => { void recordParkSound(sid, { what: "level", level: value, via: "ether" }).then(() => readPark(sid)); }, 700);
   }, [readPark]);
 
-  const setDevice = useCallback((sid: number, device: string) => {
-    setDev(prev => ({ ...prev, [sid]: device }));
-    (window as any).ether?.audio?.setOutputDevice?.(sid, device);
-    // Machine-local (LOCAL_ONLY_KEYS, 2026-09-26) — set-local is its only writer; upsertByKey would skip it.
-    Promise.resolve((window as any).ether?.invoke?.("station_config_kv:set-local", sid, "audio_output_device", device))
-      .then((w: any) => { if (!w || w.ok !== true) console.warn(`[monitor-mixer] output device for station ${sid} not saved:`, w && w.error); })
-      .catch((e: any) => console.warn("[monitor-mixer] output device not saved:", e));
-  }, []);
 
   return (
     <div style={{ borderTop: "1px solid var(--border-primary)", flexShrink: 0 }}>
@@ -222,14 +215,9 @@ export default function StationMonitorMixer() {
                     })}
                   </span>
                 </div>
-                {/* Output device */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 10, letterSpacing: "0.1em", color: "var(--text-secondary)", textTransform: "uppercase", width: 52, flexShrink: 0 }}>Output</span>
-                  <select value={dev[s.id] ?? ""} onChange={e => setDevice(s.id, e.target.value)} style={selectStyle}>
-                    <option value="">System Default</option>
-                    {devices.map(d => <option key={d} value={d}>{d}</option>)}
-                  </select>
-                </div>
+                {/* Master output device — patched in the Patch Bay only (Jeff's Outputs answer 1: "in one place only"). This
+                    line shows what the engine actually opened, and opens the Patch Bay. */}
+                <PatchBayPointer stationId={s.id} row="master" label="Master" />
               </div>
             )}
           </div>

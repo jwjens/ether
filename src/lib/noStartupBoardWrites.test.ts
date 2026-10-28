@@ -34,8 +34,11 @@ describe("no board writes on startup, attach or mount", () => {
   it("DuckerSection: opening the panel sends nothing", () => {
     expect(effectWith("components/DuckerSection.tsx", "stationConfigKv.list(stationId)")).not.toMatch(/push\(|setDuckParams/);
   });
-  it("AudioRoutingPanel: no output device is sent on open", () => {
-    expect(effectWith("components/AudioRoutingPanel.tsx", "ether.stations.list()")).not.toMatch(/setOutputDevice/);
+  // The Audio Routing panel was replaced by the Patch Bay (docs/ether-audio-patch-bay-plan.md step 1). Opening it reads; only
+  // a click on a crosspoint sends.
+  it("PatchBay: no output patch is sent on open", () => {
+    expect(effectWith("components/PatchBay.tsx", "ether?.patchBay?.get?.(s.id)")).not.toMatch(/patchBay\?\.set|setOutputDevice/);
+    expect(effectWith("components/PatchBay.tsx", "ether?.patchBay?.state?.(s.id)")).not.toMatch(/patchBay\?\.set|setOutputDevice/);
   });
   it("MONITOR faders: no localStorage placeholder, nothing sent on mount", () => {
     const m = src("components/MasterOutput.tsx"), b = src("components/BroadcastMonitor.tsx");

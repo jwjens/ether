@@ -24,10 +24,9 @@ describe("Settings → Audio: no picker that lights up and does nothing", () => 
     expect(fs.existsSync(path.join(SRC, "components", "AudioDevices.tsx"))).toBe(false);   // the unrendered copy
     expect(filesMatching(/>\s*Where music plays/)).toEqual([]);
   });
-  it("it points to where a station's output really is set: the board's Station Monitors → OUTPUT", () => {
-    expect(settings).toMatch(/Station Monitors → OUTPUT/);
-    // …and that picker is the one wired to the engine
-    expect(read("components", "StationMonitorMixer.tsx")).toMatch(/ether\?\.audio\?\.setOutputDevice\?\.\(sid, device\)/);
+  it("it points to where a station's output really is set: the Patch Bay (docs/ether-audio-patch-bay-plan.md step 1)", () => {
+    expect(settings).toMatch(/Patch Bay/);
+    expect(settings).not.toMatch(/Station Monitors → OUTPUT/);
   });
 });
 
@@ -43,7 +42,23 @@ describe("the PFL picker is the only cue picker", () => {
     expect(filesMatching(/ether_cue_device/)).toEqual(["SettingsPanel.tsx", "TrackEditor.tsx"]);
     expect(read("components", "TrackEditor.tsx")).toMatch(/setSinkId\(cueDeviceId \|\| ""\)/);
   });
-  it("the engine's cue device is set from one place: the PFL picker", () => {
-    expect(filesMatching(/audio\?\.setCueDevice\?\.\(|audio\.setCueDevice\(/)).toEqual(["PflSettings.tsx"]);
+});
+
+// THE PATCH BAY, OUTPUTS (Jeff, 2026-10-27, Outputs answer 1: "in one place only"; answer 3: "AUX moves into Outputs").
+describe("every output is patched in one place: the Patch Bay", () => {
+  it("no screen sets the Master, Cue or Aux device any other way", () => {
+    expect(filesMatching(/audio\?\.setOutputDevice\?\.\(|audio\.setOutputDevice\(/)).toEqual([]);
+    expect(filesMatching(/audio\?\.setCueDevice\?\.\(|audio\.setCueDevice\(/)).toEqual([]);
+    expect(filesMatching(/audio\?\.setAuxDevice\?\.\(|audio\.setAuxDevice\(/)).toEqual([]);
+    expect(filesMatching(/"station_config_kv:set-local", [^,]+, "(audio_output_device|aux_monitor_device|pfl_cue_device)"/)).toEqual([]);
+  });
+  it("the Patch Bay is the one writer, and every old picker's place points to it", () => {
+    expect(filesMatching(/patchBay\?\.set\?\.\(/)).toEqual(["PatchBay.tsx"]);
+    for (const f of ["StationMonitorMixer.tsx", "AuxMonitorSlots.tsx", "PflSettings.tsx"]) expect(read("components", f)).toMatch(/<PatchBayPointer /);
+  });
+  it("its doors: the native menu (Patch Bay) and a Patch Bay button where each old picker was; it replaces Audio Routing", () => {
+    expect(fs.readFileSync(path.join(SRC, "..", "electron", "main.js"), "utf8")).toMatch(/label: "Patch Bay", click: \(\) => menuNav\("nav:multioutput", "multioutput"\)/);
+    expect(read("components", "PatchBayPointer.tsx")).toMatch(/"window:popout", "multioutput"/);
+    expect(read("components", "PopoutRenderer.tsx")).toMatch(/case "multioutput":\s+content = <PatchBay \/>/);
   });
 });

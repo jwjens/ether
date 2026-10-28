@@ -34,7 +34,7 @@ import StreamManager from "./StreamManager";
 import SmartScheduler from "./SmartScheduler";
 import ListenerAnalytics from "./ListenerAnalytics";
 import CloudBackup from "./CloudBackup";
-import AudioRoutingScreen from "./AudioRoutingPanel";
+import PatchBay from "./PatchBay";
 import LibraryImport from "./LibraryImport";
 import { PlanGate } from "../hooks/usePlan";
 import { useAudioEngine } from "../audio/AudioEngineContext";
@@ -95,7 +95,7 @@ const TITLES: Record<string, string> = {
   "smartschedule":"Smart Scheduler",
   "analytics":    "Listener Analytics",
   "cloudbackup":  "Cloud Log Backup",
-  "multioutput":  "Audio Routing",
+  "multioutput":  "Patch Bay",
   "processor":    "Processor",
   "imaging":      "Imaging",
   "importlibrary":"Import Library",
@@ -280,8 +280,11 @@ export default function PopoutRenderer({ panel }: { panel: string }) {
     case "cloudbackup":
       content = <PlanGate requires="pro" feature="Cloud Log Backup"><CloudBackup /></PlanGate>;
       break;
+    // THE PATCH BAY (docs/ether-audio-patch-bay-plan.md step 1) — the one place outputs are patched. It REPLACES the old
+    // Audio Routing window under the same key (no new page: src/modules/proof/noNewPage.test.ts). Not plan-gated: choosing
+    // where Master plays is not a Pro feature.
     case "multioutput":
-      content = <PlanGate requires="pro" feature="Multi-Output Audio Routing"><AudioRoutingScreen /></PlanGate>;
+      content = <PatchBay />;
       break;
     case "importlibrary":
       content = <LibraryImport onClose={() => window.close()} />;

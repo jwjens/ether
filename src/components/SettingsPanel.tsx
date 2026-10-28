@@ -3147,13 +3147,13 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
       <PublicPageSettings />
 
       {/* ── Audio ── */}
-      <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>} title="Audio Devices" description="The voice-tracking microphone, the phone hybrid input and the Track Editor preview player. Where each station plays is on the board (Station Monitors → OUTPUT).">
+      <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>} title="Audio Devices" description="The voice-tracking microphone, the phone hybrid input and the Track Editor preview player. Where each station plays is set in the Patch Bay (hamburger → Patch Bay).">
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12, minWidth: 0 }}>
           {/* No "Where music plays" picker here (Jeff, 2026-10-27: "Every audio picker on screen must do what it says.").
-              It only lit ACTIVE; nothing reached the engine. Where a station plays is the board's Station Monitors → OUTPUT. */}
+              It only lit ACTIVE; nothing reached the engine. Where a station plays is set in the Patch Bay (docs/ether-audio-patch-bay-plan.md). */}
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-primary)", marginBottom: 4 }}>Where each station plays</div>
-            <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Set on the board: <b>Station Monitors → OUTPUT</b>, one per station. That is the device the audio engine plays to on this computer.</div>
+            <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Set in the <b>Patch Bay</b> (hamburger → Patch Bay): Master, Cue and Aux for each station, any device and channel pair on this computer. That is what the audio engine plays to.</div>
           </div>
           {/* Input */}
           <div style={{ minWidth: 0 }}>

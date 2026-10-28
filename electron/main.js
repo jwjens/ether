@@ -3703,7 +3703,7 @@ function buildMenu() {
       { label: "Smart Scheduler", click: () => menuNav("nav:smartschedule", "smartschedule") },
       { label: "Listener Analytics", click: () => menuNav("nav:analytics", "analytics") },
       { label: "Cloud Log Backup",   click: () => menuNav("nav:cloudbackup", "cloudbackup") },
-      { label: "Audio Routing", click: () => menuNav("nav:multioutput", "multioutput") },
+      { label: "Patch Bay", click: () => menuNav("nav:multioutput", "multioutput") },
       { label: "Station Manager", click: () => send("nav:stationmanager") },
       { type: "separator" },
       { label: "System Health", click: () => menuNav("nav:health", "health") },
@@ -8630,7 +8630,7 @@ const POPOUT_SIZES = {
   "smartschedule": { width: 1000, height: 740 },
   "analytics":   { width: 1100, height: 780 },
   "cloudbackup": { width:  900, height: 680 },
-  "multioutput": { width:  960, height: 700 },
+  "multioutput": { width: 1100, height: 760 },
   "importlibrary": { width: 900, height: 660 },
   // Every NAVIGATE destination is a window now, so every one needs a size. These six were reachable
   // as pop-outs but had no entry and fell back to 640x520 — small enough that a library or a calendar
@@ -8675,7 +8675,7 @@ const POPOUT_LABELS = {
   "smartschedule": "Smart Scheduler",
   "analytics":   "Listener Analytics",
   "cloudbackup": "Cloud Log Backup",
-  "multioutput": "Audio Routing",
+  "multioutput": "Patch Bay",
   "importlibrary": "Import Library",
 };
 

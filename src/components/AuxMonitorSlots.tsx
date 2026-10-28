@@ -50,6 +50,7 @@ import { useActiveStation } from "../hooks/useActiveStation";
 import { matchesStation } from "../lib/levelsScope";
 import { sourceKindMeta, isSweeperKind, compareSlots } from "./DeckConfigurator";
 import { boardName } from "../lib/boardName";
+import PatchBayPointer from "./PatchBayPointer";
 
 const MAIN_DECKS = ["A", "B", "C"];        // the main faders — they have their own strips and monitoring
 const KEY = "aux_monitor_slots";            // legacy positional slot->deck map; read once, to migrate
@@ -190,18 +191,6 @@ export default function AuxMonitorSlots() {
   // reached the daemon, and every Source fader was silent in the room. The engine now restores the saved rows itself
   // (audiod/board-state.js), and this panel sends CHANGES only.
 
-  const chooseDevice = useCallback((dev: string) => {
-    setDevice(dev);
-    if (stationId == null) return;
-    // "" closes the aux stream in the engine — no device, no sound. Persisted so it survives a
-    // restart rather than silently reopening on something the operator never picked.
-    try { (window as any).ether.audio.setAuxDevice(stationId, dev); } catch { /* engine not up */ }
-    // Machine-local (LOCAL_ONLY_KEYS, 2026-09-26): a device name belongs to this machine. set-local is its only
-    // writer — upsertByKey would silently skip it — and its verdict is read.
-    Promise.resolve((window as any).ether?.invoke?.("station_config_kv:set-local", stationId, DEV_KEY, dev))
-      .then((w: any) => { if (!w || w.ok !== true) console.warn(`[aux-monitor] device for station ${stationId} not saved:`, w && w.error); })
-      .catch((e: any) => console.warn("[aux-monitor] device not saved:", e));
-  }, [stationId]);
 
   const setLevel = useCallback((slot: string, v: number) => {
     setLevels(prev => {
@@ -272,14 +261,9 @@ export default function AuxMonitorSlots() {
           monitor's OUTPUT picker. Nothing selected = the engine opens no aux stream at all =
           silence. A device is never chosen for the operator; on a broadcast machine the "default"
           could be anything. */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-        <span style={{ fontSize: 9, color: "var(--text-tertiary)", letterSpacing: "0.08em", width: 44 }}>OUTPUT</span>
-        <select value={device} onChange={e => chooseDevice(e.target.value)} style={{ ...selectStyle, flex: 1 }}>
-          <option value="">(none — aux silent)</option>
-          {devices.map(d => <option key={d} value={d}>{d}</option>)}
-          {device && !devices.includes(device) && <option value={device}>{device} (not connected)</option>}
-        </select>
-      </div>
+      {/* The AUX device is patched in the Patch Bay (Jeff's Outputs answer 3: "AUX moves into Outputs"). The aux rows and
+          their levels below are unchanged. */}
+      <div style={{ marginBottom: 8 }}><PatchBayPointer stationId={stationId} row="aux" label="Output" /></div>
       {!device && auxDecks.length > 0 && (
         <div style={{ fontSize: 10, color: "#a06030", marginBottom: 8, lineHeight: 1.5 }}>
           No output selected — the aux decks are silent everywhere. Pick the speakers or headphones you
