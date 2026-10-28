@@ -42,10 +42,12 @@ import ConsoleStrip from "./ConsoleStrip";
 import SourceChannelStrip from "./SourceChannelStrip";
 import MasterOutput from "./MasterOutput";
 import BoardOverview from "./BoardOverview";
+import DeckLamps from "./DeckLamps";
 import { STRIP_MIN_PX } from "../lib/boardLayout";
 import { useBoardName } from "../hooks/useBoardName";
 import { useDecksView } from "../hooks/useDecksView";
-import { DECKS, COLLAPSED_SLOT, shownDeck, viewOrder, type DeckId } from "../lib/deckView";
+import { DECKS, COLLAPSED_SLOT, viewOrder } from "../lib/deckView";
+import { useShownDeck } from "../hooks/useShownDeck";
 
 // THE FADER BANK (src/lib/boardLayout.ts): every strip at least STRIP_MIN_PX wide, spreading above it; never squeezed.
 const STRIP_BOX: React.CSSProperties = { flex: `1 0 ${STRIP_MIN_PX}px`, minWidth: STRIP_MIN_PX };
@@ -289,13 +291,7 @@ export default function FaderSection({
   // THE A/B/C VIEW (src/lib/deckView.ts): collapsed, ONE strip shows the deck that started most recently. All three deck
   // strips stay mounted (levels, MIDI, meters untouched); only which one is visible changes.
   const [decksView, setDecksView] = useDecksView();
-  const prevDeckStatus = useRef<Record<DeckId, string | undefined>>({ A: undefined, B: undefined, C: undefined });
-  const [shown, setShown] = useState<DeckId>("A");
-  useEffect(() => {
-    const now = { A: deckA?.status, B: deckB?.status, C: deckC?.status };
-    setShown(prev => shownDeck(prev, prevDeckStatus.current, now));
-    prevDeckStatus.current = now;
-  }, [deckA?.status, deckB?.status, deckC?.status]);
+  const shown = useShownDeck(deckA?.status, deckB?.status, deckC?.status);
 
   return (
 <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
@@ -518,11 +514,7 @@ export default function FaderSection({
       return (
         <div key={COLLAPSED_SLOT} data-board-strip={shown} data-decks-collapsed={shown} style={{ ...STRIP_BOX, display: "flex", flexDirection: "column" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 3, padding: "2px 4px", borderBottom: "1px solid var(--strip-divider, #303040)", flexShrink: 0 }}>
-            {DECKS.map(d => (
-              <span key={d} data-decks-lamp={d} title={d === shown ? `Deck ${d} — this strip is Deck ${d}'s fader` : `Deck ${d}`}
-                    style={{ fontSize: 9, fontWeight: 800, padding: "0 4px", borderRadius: 2,
-                             color: d === shown ? "#fff" : "var(--text-tertiary)", background: d === shown ? `var(--deck-${d.toLowerCase()})` : "transparent" }}>{d}</span>
-            ))}
+            <DeckLamps shown={shown} />
             <button onClick={() => setDecksView("expanded")} aria-label="Expand decks A, B and C" title="Show decks A, B and C as three strips"
                     style={{ marginLeft: "auto", fontSize: 9, fontWeight: 800, padding: "1px 5px", cursor: "pointer", borderRadius: 2,
                              border: "1px solid var(--border-primary)", background: "var(--bg-tertiary)", color: "var(--text-secondary)" }}>EXPAND</button>
