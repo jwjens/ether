@@ -256,8 +256,13 @@ export default function ConsoleStrip({
       userSelect: "none", overflow: "hidden", position: "relative",
     }}>
 
-      {/* ── Channel label ── (none on a source strip whose dropdown already names it) */}
-      {labelTextHidden ? null : !hideLabel ? (
+      {/* ── Channel label ── (none on a source strip whose dropdown already names it: there, only a thin play-progress strip) */}
+      {labelTextHidden ? (deckId ? (
+        <div data-strip-progress="1" style={{ width: "100%", height: 4, flexShrink: 0, position: "relative", overflow: "hidden",
+                                              background: isOn && isPlaying ? `${color}33` : "transparent" }}>
+          <div ref={fillRef} style={{ position: "absolute", top: 0, left: 0, bottom: 0, background: color, opacity: 0.85, pointerEvents: "none" }} />
+        </div>
+      ) : null) : !hideLabel ? (
         <div style={{
           width: "100%", padding: "8px 0",
           background: isOn && isPlaying ? `${color}28` : "var(--strip-label-bg, transparent)",
