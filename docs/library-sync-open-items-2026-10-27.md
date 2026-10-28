@@ -166,3 +166,36 @@ OV.** My earlier write-up said it was "safe for any receiver". That was wrong.
   `library_asset.intro_version_path` to `'blob-ref'` and delete `receiveAsBlobRef`. To check that OV is on it without
   touching OV: OV's mutations on the backend carry the schema version, but step 1 doesn't change the schema. So the
   check is Help → About on OV, or Jeff's word.
+
+## 4, continued — the full who-may-do-what table (Jeff, 2026-10-27: "don't build yet. Add rows … Show me the full table again.")
+"In the code" = a check in `src/UserContext.ts` that no code calls (nothing is enforced today). "Proposed" = no check
+exists; the value is my proposal for Jeff to approve or change. Park page = a user ticked for the station on
+Remote → Users, signed in at park.ether-cast.com/<slug> (backend `/public/ops/:slug/*`; there are no roles on the Park page
+today: every Park login can do everything the page offers).
+
+| Action | Admin | Music Director | Jock | Park page login | Source |
+|---|---|---|---|---|---|
+| Open Preferences / Settings (incl. Users & Security) | yes | no | no | no | in the code |
+| Edit songs and library items | yes | yes | no | no | in the code |
+| Delete songs and library items | yes | yes | no | no | in the code |
+| Manage Spots | yes | yes | no | no | in the code |
+| Scheduler (clocks, programming, Generate) | yes | yes | no | no | in the code |
+| Studio (Show+) | yes | yes | no | no | in the code |
+| Macros | yes | no | no | no | in the code |
+| Streaming setup (Stream Manager, Icecast) | yes | no | no | no | in the code |
+| AUTO on / off | yes | yes | yes | no | proposed |
+| ON AIR (start / stop the stream) | yes | yes | no | no | proposed |
+| Program Log: edit (move, delete, replace, hand-add rows) | yes | yes | no | no | proposed |
+| Program Log: skip / play next during the shift | yes | yes | yes | no | proposed |
+| Carts: edit the wall (assign, rename, clear) | yes | yes | no | no | proposed |
+| Carts: fire | yes | yes | yes | yes (carts on the wall) | proposed; Park: today |
+| Announcements: edit, and their times | yes | yes | no | no (view only) | proposed; Park: today |
+| Closing time (Park) | yes | yes | no | yes | proposed; Park: today |
+| Backup & Restore: back up now, download | yes | no | no | no | proposed |
+| Backup & Restore: restore on this computer | yes | no | no | no | proposed |
+| Backup & Restore: "Send this restore to every machine" | yes | no | no | no | proposed |
+| Audio routing / Patch Bay | yes | no | no | no | proposed |
+| Board: faders, decks, play / stop, take a break | yes | yes | yes | no | proposed |
+| Master level and mute | yes | yes | yes | yes | proposed; Park: today |
+| Park: Listen | — | — | — | yes | Park: today |
+| Park: Hold to talk | — | — | — | yes | Park: today |
