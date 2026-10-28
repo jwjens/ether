@@ -516,7 +516,7 @@ pub fn audio_mic_state(station_id: u32) -> String { micin::state_json(station_id
 /// (the tag senders address), `key_hex` the SENDING computer's link key pasted into this fader (64 hex), `pairing`
 /// "<this machine id>|<sending machine id>". `station_uuid` empty = unpatch the slot.
 #[napi]
-pub fn audio_set_link_input(station_id: u32, slot: String, station_uuid: String, key_hex: String, key_id: u32, jitter_ms: u32, pairing: String) -> String {
+pub fn audio_set_link_input(station_id: u32, slot: String, station_uuid: String, key_hex: String, key_id: u32, jitter_ms: u32, pairing: String, relay: Option<String>) -> String {
     let Some(idx) = audio::deck_index(&slot) else {
         return serde_json::json!({ "ok": false, "reason": format!("`{}` is not a fader", slot) }).to_string();
     };
@@ -528,7 +528,8 @@ pub fn audio_set_link_input(station_id: u32, slot: String, station_uuid: String,
         if link::LinkKey::from_hex(&key_hex, key_id, &pairing).is_none() {
             return serde_json::json!({ "ok": false, "reason": "this fader has no valid link key from the sending computer" }).to_string();
         }
-        Some(linknet::RxCfg { uuid: station_uuid, key_hex, key_id, jitter_ms, pairing })
+        // relay (optional, JSON {host, port, tag, ticket}): take the feed through the Remote Link relay.
+        Some(linknet::RxCfg { uuid: station_uuid, key_hex, key_id, jitter_ms, pairing, relay: relay.as_deref().and_then(linknet::parse_relay) })
     };
     let engine = get_or_create_engine(station_id, None);
     let Ok(audio) = engine.lock() else { return serde_json::json!({ "ok": false, "reason": "engine busy" }).to_string() };
@@ -542,19 +543,21 @@ pub fn audio_set_link_input(station_id: u32, slot: String, station_uuid: String,
 /// on another machine, at `host:port`, sealed with THIS machine's link key; `pairing` "<receiving machine id>|<this
 /// machine id>". `target_uuid` empty = stop.
 #[napi]
-pub fn audio_set_link_send(station_id: u32, target_uuid: String, key_hex: String, key_id: u32, host: String, port: u32, bitrate: u32, fec: bool, pairing: String) -> String {
+pub fn audio_set_link_send(station_id: u32, target_uuid: String, key_hex: String, key_id: u32, host: String, port: u32, bitrate: u32, fec: bool, pairing: String, relay: Option<String>) -> String {
+    // relay (optional, JSON {host, port, tag, ticket}): send through the Remote Link relay; host/port are then unused.
+    let relay = relay.as_deref().and_then(linknet::parse_relay);
     let cfg = if target_uuid.is_empty() { None } else {
-        if host.trim().is_empty() {
+        if relay.is_none() && host.trim().is_empty() {
             return serde_json::json!({ "ok": false, "reason": "no address to send to" }).to_string();
         }
-        if port == 0 || port > 65535 {
+        if relay.is_none() && (port == 0 || port > 65535) {
             return serde_json::json!({ "ok": false, "reason": format!("{} is not a UDP port", port) }).to_string();
         }
         let br = bitrate.clamp(link::BITRATE_RANGE.0, link::BITRATE_RANGE.1);
         if link::LinkKey::from_hex(&key_hex, key_id, &pairing).is_none() {
             return serde_json::json!({ "ok": false, "reason": "this computer's link key (or the pairing) is missing or malformed" }).to_string();
         }
-        Some(linknet::SendCfg { target_uuid, pairing, key_hex, key_id, host: host.trim().into(), port: port as u16, bitrate: br, fec })
+        Some(linknet::SendCfg { target_uuid, pairing, key_hex, key_id, host: host.trim().into(), port: port as u16, bitrate: br, fec, relay })
     };
     let engine = get_or_create_engine(station_id, None);
     let Ok(audio) = engine.lock() else { return serde_json::json!({ "ok": false, "reason": "engine busy" }).to_string() };

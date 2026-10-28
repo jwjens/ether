@@ -209,6 +209,54 @@ pub(crate) fn state_json(station_id: u32) -> serde_json::Value {
     serde_json::json!({ "v": 1, "port": LISTEN_PORT.load(Ordering::Relaxed), "rx": rx, "tx": tx })
 }
 
+// ══ THE RELAY (docs/remote-link-relay-plan-2026-10-28.md) ════════════════════════════════════════════════════
+// Optional on both ends: when set, the sender aims at the relay instead of the receiver's address, and the receiver
+// keeps its router open by REGISTERing with the relay from its own listening socket. The Link packets themselves are
+// unchanged and stay sealed end to end; the relay forwards between the two holders of a backend-signed ticket.
+// Wire (ether-backend relay/ether-relay.js): "ER", a type byte, the session's 8-byte tag, then the body.
+const RELAY_HDR: usize = 11;
+const R_HELLO: u8 = 0x01;
+const R_REGISTER: u8 = 0x02;
+const R_TO_RX: u8 = 0x10;
+const R_TO_TX: u8 = 0x11;
+const R_ACK: u8 = 0x20;
+/// HELLO / REGISTER again this often: it renews the relay's view of our address (NAT re-binding) and keeps a receiver's
+/// router mapping open.
+const RELAY_HELLO_EVERY: Duration = Duration::from_secs(15);
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RelayCfg { pub host: String, pub port: u16, pub tag: [u8; 8], pub ticket: String }
+
+/// `{"host":"…","port":9790,"tag":"<16 hex>","ticket":"…"}` → a relay, or None (empty / malformed = no relay).
+pub(crate) fn parse_relay(json: &str) -> Option<RelayCfg> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let host = v.get("host")?.as_str()?.trim().to_string();
+    let port = v.get("port")?.as_u64()?;
+    let tag_hex = v.get("tag")?.as_str()?;
+    let ticket = v.get("ticket")?.as_str()?.to_string();
+    if host.is_empty() || port == 0 || port > 65535 || tag_hex.len() != 16 || ticket.is_empty() || ticket.len() > 600 { return None; }
+    let mut tag = [0u8; 8];
+    for i in 0..8 { tag[i] = u8::from_str_radix(&tag_hex[2 * i..2 * i + 2], 16).ok()?; }
+    Some(RelayCfg { host, port: port as u16, tag, ticket })
+}
+fn relay_addr(r: &RelayCfg) -> Option<SocketAddr> {
+    let a: Vec<SocketAddr> = format!("{}:{}", r.host, r.port).to_socket_addrs().ok()?.collect();
+    a.iter().find(|x| x.is_ipv4()).or(a.first()).copied()
+}
+/// The relay header + body in `out`; returns the length.
+fn relay_wrap(kind: u8, tag: &[u8; 8], body: &[u8], out: &mut [u8]) -> usize {
+    let n = RELAY_HDR + body.len();
+    if n > out.len() { return 0; }
+    out[0] = 0x45; out[1] = 0x52; out[2] = kind; out[3..11].copy_from_slice(tag); out[RELAY_HDR..n].copy_from_slice(body);
+    n
+}
+/// A relay ACK? → (tag, status: 0 joined, 1 ticket refused, 2 waiting for the other side).
+fn relay_ack(buf: &[u8]) -> Option<([u8; 8], u8)> {
+    if buf.len() >= RELAY_HDR + 1 && buf[0] == 0x45 && buf[1] == 0x52 && buf[2] == R_ACK {
+        let mut t = [0u8; 8]; t.copy_from_slice(&buf[3..11]); Some((t, buf[RELAY_HDR]))
+    } else { None }
+}
+
 // ══ SENDER ═══════════════════════════════════════════════════════════════════════════════════════════════
 #[derive(Clone, Debug)]
 pub(crate) struct SendCfg {
@@ -221,6 +269,8 @@ pub(crate) struct SendCfg {
     pub port: u16,
     pub bitrate: u32,
     pub fec: bool,
+    /// Through the relay instead of straight to host:port (the backend-introduced path; host:port is then unused).
+    pub relay: Option<RelayCfg>,
 }
 
 /// SEND TO could not start (bad UUID, no key, no thread): the status line says why.
@@ -286,7 +336,7 @@ impl SenderRun {
 
     fn resolve(&mut self, now: Instant) {
         self.last_resolve = Some(now);
-        let target = format!("{}:{}", self.cfg.host, self.cfg.port);
+        let target = match &self.cfg.relay { Some(r) => format!("{}:{}", r.host, r.port), None => format!("{}:{}", self.cfg.host, self.cfg.port) };
         let addrs: Vec<SocketAddr> = target.to_socket_addrs().map(|it| it.collect()).unwrap_or_default();
         match addrs.iter().find(|a| a.is_ipv4()).or(addrs.first()).copied() {
             Some(a) => {
@@ -305,18 +355,37 @@ impl SenderRun {
             }
             None => {
                 self.st.state = "unreachable".into();
-                self.st.reason = format!("cannot find {} — check the address", self.cfg.host);
+                self.st.reason = match &self.cfg.relay {
+                    Some(r) => format!("cannot find the relay {} — check the internet connection", r.host),
+                    None => format!("cannot find {} — check the address", self.cfg.host),
+                };
             }
         }
     }
 
     fn send(&mut self, pkt_len: usize, buf: &[u8]) {
         let (Some(sock), Some(dest)) = (self.sock.as_ref(), self.dest) else { return };
-        match sock.send_to(&buf[..pkt_len], dest) {
+        let mut wrapped = [0u8; MAX_PACKET + RELAY_HDR];
+        let out: &[u8] = match &self.cfg.relay {
+            Some(r) => { let n = relay_wrap(R_TO_RX, &r.tag, &buf[..pkt_len], &mut wrapped); if n == 0 { return; } &wrapped[..n] }
+            None => &buf[..pkt_len],
+        };
+        match sock.send_to(out, dest) {
             Ok(n) => self.st.bytes_sent += n as u64,
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => self.st.send_errors += 1,
             Err(_) => self.st.send_errors += 1,
         }
+    }
+
+    /// Through the relay: HELLO with the ticket (at start and every 15 s), so the relay knows where this sender is.
+    fn relay_hello(&mut self, now: Instant, last: &mut Option<Instant>) {
+        let Some(r) = self.cfg.relay.clone() else { return };
+        if last.map_or(false, |t| now.duration_since(t) < RELAY_HELLO_EVERY) { return; }
+        *last = Some(now);
+        let (Some(sock), Some(dest)) = (self.sock.as_ref(), self.dest) else { return };
+        let mut b = [0u8; 700];
+        let n = relay_wrap(R_HELLO, &r.tag, r.ticket.as_bytes(), &mut b);
+        if n > 0 { let _ = sock.send_to(&b[..n], dest); }
     }
 
     fn run(&mut self, stop: &AtomicBool) {
@@ -340,11 +409,18 @@ impl SenderRun {
         let name = machine_name();
         let now = Instant::now();
         self.resolve(now);
+        if self.cfg.relay.is_some() { self.st.transport = "UDP via relay".into(); }
         self.publish();
-        eprintln!("[LINK] Station {} SEND TO {} → {}:{} · UDP · Opus {} kb/s · FEC {}",
-                  self.station_id, self.cfg.target_uuid, self.cfg.host, self.cfg.port, self.cfg.bitrate / 1000, if self.cfg.fec { "on" } else { "off" });
+        let mut last_hello: Option<Instant> = None;
+        match &self.cfg.relay {
+            Some(r) => eprintln!("[LINK] Station {} SEND TO {} → relay {}:{} · UDP · Opus {} kb/s · FEC {}",
+                                 self.station_id, self.cfg.target_uuid, r.host, r.port, self.cfg.bitrate / 1000, if self.cfg.fec { "on" } else { "off" }),
+            None => eprintln!("[LINK] Station {} SEND TO {} → {}:{} · UDP · Opus {} kb/s · FEC {}",
+                              self.station_id, self.cfg.target_uuid, self.cfg.host, self.cfg.port, self.cfg.bitrate / 1000, if self.cfg.fec { "on" } else { "off" }),
+        }
         while !stop.load(Ordering::Relaxed) {
             let now = Instant::now();
+            self.relay_hello(now, &mut last_hello);
             // 1 · the programme: pop, resample, encode every whole 20 ms frame, send
             let n = self.cons.pop_slice(&mut pop);
             let t_pop = now_us();
@@ -408,6 +484,17 @@ impl SenderRun {
             let t4 = now_us();
             let now = Instant::now();
             any = true;
+            // The relay's answer to HELLO: said on the status line, never mistaken for a Link packet.
+            if let Some((tag, status)) = relay_ack(&rbuf[..len]) {
+                if self.cfg.relay.as_ref().map_or(false, |r| r.tag == tag) {
+                    match status {
+                        1 => { self.st.state = "refused".into(); self.st.reason = "the relay refused this computer's ticket (expired or not valid) — Ether asks for a new one".into(); }
+                        2 if self.st.state != "receiving" => { self.st.reason = "at the relay: waiting for the receiving computer".into(); }
+                        _ => if self.st.reason.starts_with("at the relay") { self.st.reason.clear(); },
+                    }
+                }
+                continue;
+            }
             let Some((h, pl)) = self.key.open(&mut rbuf[..len]) else { continue };
             if h.session != self.session || h.station != self.tag { continue; }
             let body = &rbuf[HEADER..HEADER + pl];
@@ -479,11 +566,13 @@ pub(crate) struct RxCfg {
     pub jitter_ms: u32,
     /// "<this machine id>|<sending machine id>" — the pasted key's pairing (link.rs `LinkKey`).
     pub pairing: String,
+    /// The relay session this fader takes its feed through (REGISTERed every 15 s from the listening socket), or None.
+    pub relay: Option<RelayCfg>,
 }
 
 enum RxReg {
-    Add { station_id: u32, slot: String, tag: [u8; 8], key: LinkKey, jitter_ms: u32, prod: HeapProd<f32>, live: Arc<MicShared> },
-    Update { station_id: u32, key: LinkKey, jitter_ms: u32 },
+    Add { station_id: u32, slot: String, tag: [u8; 8], key: LinkKey, jitter_ms: u32, prod: HeapProd<f32>, live: Arc<MicShared>, relay: Option<RelayCfg> },
+    Update { station_id: u32, key: LinkKey, jitter_ms: u32, relay: Option<RelayCfg> },
     Remove { station_id: u32 },
 }
 
@@ -545,7 +634,7 @@ impl LinkInputs {
         let jitter_ms = cfg.jitter_ms.clamp(JITTER_RANGE_MS.0, JITTER_RANGE_MS.1);
         if self.slot == Some(idx) {
             // Same slot: a new key or buffer size only — the ring and the slot's feed stay.
-            register(RxReg::Update { station_id: self.station_id, key, jitter_ms });
+            register(RxReg::Update { station_id: self.station_id, key, jitter_ms, relay: cfg.relay.clone() });
             self.cfg = Some(cfg);
             return;
         }
@@ -559,7 +648,7 @@ impl LinkInputs {
         let li = crate::micin::LiveIn::new_link(cons, LINK_RATE, live.clone());
         out.push(crate::micin::MicAction::Install(idx, crate::rt::DeckFeed::live(Box::new(li))));
         boards().lock().unwrap_or_else(|e| e.into_inner()).live.insert(self.station_id, live.clone());
-        register(RxReg::Add { station_id: self.station_id, slot: slot_name.into(), tag, key, jitter_ms, prod, live });
+        register(RxReg::Add { station_id: self.station_id, slot: slot_name.into(), tag, key, jitter_ms, prod, live, relay: cfg.relay.clone() });
         self.slot = Some(idx);
         self.cfg = Some(cfg);
         eprintln!("[LINK] Station {} {}: Link patched · jitter buffer {} ms · listening on UDP {}", self.station_id, slot_name, jitter_ms,
@@ -591,6 +680,10 @@ struct RxStation {
     one_way: std::collections::VecDeque<f64>,
     bytes_window: std::collections::VecDeque<(Instant, usize)>,
     seq_out: u32,
+    /// The relay session (if this fader takes its feed through the relay), where it resolved, and the last REGISTER.
+    relay: Option<RelayCfg>,
+    relay_at: Option<SocketAddr>,
+    last_register: Option<Instant>,
 }
 
 impl RxStation {
@@ -633,7 +726,17 @@ impl RxStation {
         self.seq_out = self.seq_out.wrapping_add(1);
         let h = Header { kind, station: self.tag, key_id: self.key.id, session, seq: self.seq_out, flags: 0 };
         let mut pkt = [0u8; MAX_PACKET];
-        if let Some(n) = self.key.seal(&h, payload, &mut pkt) { let _ = sock.send_to(&pkt[..n], to); }
+        if let Some(n) = self.key.seal(&h, payload, &mut pkt) {
+            // A sender reached through the relay is answered through the relay (wrapped for the way back).
+            match (&self.relay, self.relay_at) {
+                (Some(r), Some(at)) if at == to => {
+                    let mut w = [0u8; MAX_PACKET + RELAY_HDR];
+                    let m = relay_wrap(R_TO_TX, &r.tag, &pkt[..n], &mut w);
+                    if m > 0 { let _ = sock.send_to(&w[..m], to); }
+                }
+                _ => { let _ = sock.send_to(&pkt[..n], to); }
+            }
+        }
     }
 
     fn on_packet(&mut self, sock: &UdpSocket, pkt: &mut [u8], from: SocketAddr, now: Instant, t_arr: u64) {
@@ -767,7 +870,8 @@ impl RxStation {
     fn publish(&mut self, now: Instant) {
         let s = self.jb.stats;
         let st = &mut self.st;
-        st.transport = "UDP".into();
+        st.transport = if self.relay.is_some() { "UDP via relay".into() } else { "UDP".into() };
+        if st.state == "receiving" && st.reason.starts_with("at the relay") { st.reason.clear(); }
         st.port = LISTEN_PORT.load(Ordering::Relaxed);
         st.jitter_target_ms = (self.jb.target_frames() * 20) as u32;
         st.sender = self.sender_name.clone();
@@ -813,7 +917,7 @@ impl Listener {
     fn registrations(&mut self) {
         while let Ok(r) = self.rx.try_recv() {
             match r {
-                RxReg::Add { station_id, slot, tag, key, jitter_ms, prod, live } => {
+                RxReg::Add { station_id, slot, tag, key, jitter_ms, prod, live, relay } => {
                     let dec = match opus::Decoder::new(LINK_RATE, opus::Channels::Stereo) { Ok(d) => d, Err(e) => { eprintln!("[LINK] Opus decoder: {}", e); continue; } };
                     let board = rx_board(station_id);
                     let st = RxStatus { slot, state: "listening".into(), transport: "UDP".into(), jitter_target_ms: jitter_ms, ..Default::default() };
@@ -823,10 +927,12 @@ impl Listener {
                         sender_addr: None, sender_name: String::new(), last_packet: None, last_auth_fail: None, last_busy_reply: None,
                         offset_us: None, jitter: Jitter::default(), one_way: std::collections::VecDeque::new(),
                         bytes_window: std::collections::VecDeque::new(), seq_out: 0,
+                        relay_at: relay.as_ref().and_then(relay_addr), relay, last_register: None,
                     });
                 }
-                RxReg::Update { station_id, key, jitter_ms } => {
+                RxReg::Update { station_id, key, jitter_ms, relay } => {
                     if let Some(s) = self.stations.get_mut(&station_id) {
+                        if s.relay != relay { s.relay_at = relay.as_ref().and_then(relay_addr); s.relay = relay; s.last_register = None; }
                         // A NEW key: the session being carried was sealed under the old one — drop it now, so the
                         // new key's sender is accepted on its first packet ("busy" is never held by a refused key).
                         if !s.key.same_as(&key) { s.drop_session("the fader's key was replaced; the session was sealed under the old key"); }
@@ -877,6 +983,17 @@ impl Listener {
                         let Ok((len, from)) = sock.recv_from(&mut buf) else { break };
                         let t_arr = now_us();
                         let now = Instant::now();
+                        // The relay's answer to REGISTER: said on the fader's status line.
+                        if let Some((tag, status)) = relay_ack(&buf[..len]) {
+                            if let Some(st) = self.stations.values_mut().find(|s| s.relay.as_ref().map_or(false, |r| r.tag == tag)) {
+                                match status {
+                                    1 => { st.st.reason = "the relay refused this computer's ticket (expired or not valid) — Ether asks for a new one".into(); }
+                                    2 if st.st.state != "receiving" => { st.st.reason = "at the relay: waiting for the sending computer".into(); }
+                                    _ => if st.st.reason.starts_with("at the relay") { st.st.reason.clear(); },
+                                }
+                            }
+                            continue;
+                        }
                         let Some(h) = Header::peek(&buf[..len]) else { continue };
                         if let Some(st) = self.stations.values_mut().find(|s| s.tag == h.station) {
                             st.on_packet(sock, &mut buf[..len], from, now, t_arr);
@@ -887,6 +1004,21 @@ impl Listener {
             }
             if self.sock.is_some() { std::thread::sleep(Duration::from_millis(1)); }
             let now = Instant::now();
+            // REGISTER with the relay (at once, then every 15 s) from THIS socket: it tells the relay where the feed goes and
+            // keeps this computer's router open for it — no port forwarding.
+            if let Some(sock) = self.sock.as_ref() {
+                for st in self.stations.values_mut() {
+                    let Some(r) = st.relay.clone() else { continue };
+                    if st.last_register.map_or(false, |t| now.duration_since(t) < RELAY_HELLO_EVERY) { continue; }
+                    st.last_register = Some(now);
+                    if st.relay_at.is_none() { st.relay_at = relay_addr(&r); }
+                    if let Some(at) = st.relay_at {
+                        let mut b = [0u8; 700];
+                        let n = relay_wrap(R_REGISTER, &r.tag, r.ticket.as_bytes(), &mut b);
+                        if n > 0 { let _ = sock.send_to(&b[..n], at); }
+                    }
+                }
+            }
             for st in self.stations.values_mut() {
                 st.service(now);
                 if !self.bind_error.is_empty() { st.st.state = "listen_failed".into(); st.st.reason = self.bind_error.clone(); }
@@ -905,6 +1037,28 @@ impl Listener {
 mod tests {
     use super::*;
 
+    // ── THE RELAY: framing (docs/remote-link-relay-plan-2026-10-28.md; ether-backend relay/ether-relay.js) ──
+    #[test]
+    fn relay_config_parses_and_refuses_bad_ones() {
+        let r = parse_relay(r#"{"host":"44.244.52.207","port":9790,"tag":"0011223344556677","ticket":"abc.def"}"#).unwrap();
+        assert_eq!((r.host.as_str(), r.port, r.tag, r.ticket.as_str()), ("44.244.52.207", 9790, [0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77], "abc.def"));
+        for bad in [r#"{}"#, r#"{"host":"","port":9790,"tag":"0011223344556677","ticket":"t"}"#, r#"{"host":"h","port":0,"tag":"0011223344556677","ticket":"t"}"#,
+                    r#"{"host":"h","port":9790,"tag":"0011","ticket":"t"}"#, r#"{"host":"h","port":9790,"tag":"zz11223344556677","ticket":"t"}"#, "not json"] {
+            assert!(parse_relay(bad).is_none(), "{}", bad);
+        }
+    }
+    #[test]
+    fn relay_header_matches_the_relay_program() {
+        let tag = [1, 2, 3, 4, 5, 6, 7, 8];
+        let mut out = [0u8; 64];
+        let n = relay_wrap(R_TO_RX, &tag, b"sealed", &mut out);
+        assert_eq!(&out[..n], &[0x45, 0x52, 0x10, 1, 2, 3, 4, 5, 6, 7, 8, b's', b'e', b'a', b'l', b'e', b'd']);
+        assert_eq!(relay_wrap(R_HELLO, &tag, &[0u8; 100], &mut out), 0, "too big for the buffer: nothing, never a truncated packet");
+        let ack = [0x45, 0x52, R_ACK, 1, 2, 3, 4, 5, 6, 7, 8, 2];
+        assert_eq!(relay_ack(&ack), Some((tag, 2)));
+        assert_eq!(relay_ack(b"ER\x10xxxxxxxx\x00"), None, "not an ACK");
+    }
+
     /// END TO END on one machine: a tap fed at real time → the sender thread → UDP 127.0.0.1 → the listener →
     /// jitter buffer → Opus → the live ring → LiveIn pulled at real time, as the mixer does. Measures, on AUDIO,
     /// how long a click takes from the tap to the slot, and checks the level and the counters.
@@ -919,12 +1073,12 @@ mod tests {
         // receiver on station 9001, slot S1
         let mut links = LinkInputs::new(9001);
         let mut acts = Vec::new();
-        links.set(7, "S1", Some(RxCfg { uuid: uuid.into(), key_hex: key.clone(), key_id: 1, jitter_ms: 120, pairing: pairing.into() }), &mut acts);
+        links.set(7, "S1", Some(RxCfg { uuid: uuid.into(), key_hex: key.clone(), key_id: 1, jitter_ms: 120, pairing: pairing.into(), relay: None }), &mut acts);
         let mut feed = match acts.pop() { Some(crate::micin::MicAction::Install(_, f)) => f, _ => panic!("no feed installed") };
         // sender on station 9002
         let (mut tap, cons, tsh) = tap();
         let _sender = start_sender(9002, SendCfg { target_uuid: uuid.into(), pairing: pairing.into(), key_hex: key, key_id: 1, host: "127.0.0.1".into(),
-                                                  port, bitrate: DEFAULT_BITRATE, fec: true }, cons, tsh).unwrap();
+                                                  port, bitrate: DEFAULT_BITRATE, fec: true, relay: None }, cons, tsh).unwrap();
         // run 6 s at real time in 10 ms buffers: tap in, slot out. A click at 3.000 s (sample-accurate at the tap).
         let block = 441usize;
         let (mut l, mut r) = (vec![0f32; block], vec![0f32; block]);
@@ -986,11 +1140,11 @@ mod tests {
         let (rx_st, tx_st) = (9101u32, 9102u32);
         let uuid = "22222222-3333-4444-8555-666666666666";
         let pairing = "8e8f6181-b68a-433f-a93d-8005787b641b|041ceb96-3d66-4d39-85c0-e2f5aa6e3b1e";
-        let rx_cfg = |key: &str, id: u32| RxCfg { uuid: uuid.into(), key_hex: key.into(), key_id: id, jitter_ms: 120, pairing: pairing.into() };
+        let rx_cfg = |key: &str, id: u32| RxCfg { uuid: uuid.into(), key_hex: key.into(), key_id: id, jitter_ms: 120, pairing: pairing.into(), relay: None };
         let send = |key: &str, id: u32| {
             let (t, cons, tsh) = tap();
             let s = start_sender(tx_st, SendCfg { target_uuid: uuid.into(), pairing: pairing.into(), key_hex: key.into(), key_id: id,
-                                                  host: "127.0.0.1".into(), port, bitrate: DEFAULT_BITRATE, fec: true }, cons, tsh).unwrap();
+                                                  host: "127.0.0.1".into(), port, bitrate: DEFAULT_BITRATE, fec: true, relay: None }, cons, tsh).unwrap();
             (t, s)
         };
         let mut links = LinkInputs::new(rx_st);
