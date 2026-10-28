@@ -52,6 +52,11 @@ describe("LOCAL_ONLY_KEYS", () => {
     expect(accepts("mic_inputD")).toBe(false);
   });
 
+  it("patch_outputs is machine-local by prefix — the Patch Bay's devices and channel pairs (2026-10-27)", () => {
+    expect(accepts("patch_outputs")).toBe(true);
+    expect(accepts("patchoutputs")).toBe(false);
+  });
+
   it("NEVER accepts designated_generator — it is the one key that must sync", () => {
     // Designation exists to arbitrate BETWEEN machines. Local-only would give each machine its own
     // private designation and break Phase B enforcement against a record the other has never seen.

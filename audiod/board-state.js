@@ -224,6 +224,11 @@ function readSavedBoard(db, sid) {
   const cueDev = kv("pfl_cue_device"); if (cueDev !== undefined) out.cueDevice = String(cueDev || "");
   const dim = num(kv("pfl_dim_db")); if (dim != null) out.pflDimDb = dim;
   const outDev = kv("audio_output_device"); if (outDev) out.outputDevice = String(outDev);
+  // THE PATCH BAY (audiod/output-patch.js): a station whose patch was saved from the Patch Bay is restored by that ONE
+  // call — Master / Aux / Cue devices, channel pairs, several devices per output, the stall setting — and the three
+  // single-device setters above are not sent for it (applyBoard). A station never patched keeps the old path exactly.
+  const patchRaw = kv(require("./output-patch").KEY);
+  if (patchRaw) { const p = require("./output-patch").readPatch(kv); if (p.source === "patch") out.outputPatch = p; }
   return out;
 }
 
@@ -231,7 +236,7 @@ function readSavedBoard(db, sid) {
  * Send the saved board to an engine. `sink` is the engine's setters, each returning true/false or throwing:
  *   setVolume(slot, v) setMuted(slot, m) setDuck(slot, on) setDuckable(slot, on) setAuxMonitor(slot, g)
  *   setMonitorVolume(v) setMasterVolume(v) setMasterMonitorVolume(v) setDuckParams(p) setAuxDevice(name)
- *   setCueDevice(name) setPflDim(db)
+ *   setCueDevice(name) setPflDim(db) setOutputPatch(json)
  * No fader TYPE is read, sent or compared (Jeff, 2026-10-11: "faders are generic shells … a stored type on a fader is
  * wrong"). deck_configs.kind is read only to find the jukebox's own cut — it is the source input selected on the fader.
  * Returns { sent, failed: [{ setting, reason }] } — never throws, never swallows: every failure is in the result.
@@ -259,13 +264,15 @@ function applyBoard(saved, sink) {
   if (saved.monitorVol !== undefined) call("monitorVol", sink.setMonitorVolume && (() => sink.setMonitorVolume(saved.monitorVol)));
   if (saved.masterVol !== undefined) call("masterVol", sink.setMasterVolume && (() => sink.setMasterVolume(saved.masterVol)));
   if (saved.duckParams) call("duckParams", sink.setDuckParams && (() => sink.setDuckParams(saved.duckParams)));
-  if (saved.auxDevice !== undefined) call("auxDevice", sink.setAuxDevice && (() => sink.setAuxDevice(saved.auxDevice)));
-  if (saved.cueDevice !== undefined) call("cueDevice", sink.setCueDevice && (() => sink.setCueDevice(saved.cueDevice)));
+  const patched = !!saved.outputPatch;
+  if (patched) call("outputPatch", sink.setOutputPatch && (() => sink.setOutputPatch(require("./output-patch").engineJson(saved.outputPatch))));
+  if (!patched && saved.auxDevice !== undefined) call("auxDevice", sink.setAuxDevice && (() => sink.setAuxDevice(saved.auxDevice)));
+  if (!patched && saved.cueDevice !== undefined) call("cueDevice", sink.setCueDevice && (() => sink.setCueDevice(saved.cueDevice)));
   if (saved.pflDimDb !== undefined) call("pflDimDb", sink.setPflDim && (() => sink.setPflDim(saved.pflDimDb)));
   if (saved.smoothingMs !== undefined) call("smoothingMs", sink.setFaderSmoothing && (() => sink.setFaderSmoothing(saved.smoothingMs)));
   // The OUTPUT device only when the engine is not already on it: a switch reopens the stream, and a reopen while a
   // station airs is a gap on air. "Already on it" is the engine's own report, never assumed.
-  if (saved.outputDevice) {
+  if (!patched && saved.outputDevice) {
     let cur; try { cur = typeof sink.getOutputDevice === "function" ? sink.getOutputDevice() : undefined; } catch { cur = undefined; }
     if (cur !== saved.outputDevice) call("outputDevice", sink.setOutputDevice && (() => sink.setOutputDevice(saved.outputDevice)));
   }
@@ -280,7 +287,7 @@ const close = (a, b) => Math.abs(Number(a) - Number(b)) <= 1e-3;
  * `applied` absent (no meter frame yet) compares the control copy only.
  */
 const WHAT = { volume: "fader", muted: "ON/OFF", duck: "ducks music", duckable: "ducked by others", aux: "local row", local: "local output", stream: "To stream" };
-const GLOBAL = { monitorVol: "station MONITOR strip", masterVol: "MASTER", masterMonitorVol: "MONITOR", auxDevice: "AUX output device", cueDevice: "PFL output device", board: "the board",
+const GLOBAL = { monitorVol: "station MONITOR strip", masterVol: "MASTER", masterMonitorVol: "MONITOR", auxDevice: "AUX output device", cueDevice: "PFL output device", outputPatch: "Patch Bay outputs", board: "the board",
   duckDepth: "Ducker depth", duckThreshold: "Ducker threshold", duckAttack: "Ducker attack", duckHold: "Ducker hold", duckRelease: "Ducker release",
   duckPrefs: "Ducker settings in Preferences", duckEngine: "Ducker settings in the engine" };
 /** What an operator calls a setting: the fader's board name and the control — never an engine slot id. */
@@ -359,6 +366,7 @@ function addonSink(A, sid) {
     setCueDevice: has("audioSetCueDevice") ? (d) => A.audioSetCueDevice(sid, d || "") : undefined,
     setPflDim: has("audioSetPflDim") ? (db) => A.audioSetPflDim(sid, db) : undefined,
     setOutputDevice: has("audioSetOutputDevice") ? (d) => A.audioSetOutputDevice(sid, d) : undefined,
+    setOutputPatch: has("audioSetOutputPatch") ? (json) => A.audioSetOutputPatch(sid, json) : undefined,
     setLocalOutput: has("audioSetLocalOutput") ? (s, aux) => A.audioSetLocalOutput(sid, s, !!aux) : undefined,
     setToStream: has("audioSetToStream") ? (s, on) => A.audioSetToStream(sid, s, !!on) : undefined,
     setFaderSmoothing: has("audioSetFaderSmoothing") ? (ms) => A.audioSetFaderSmoothing(sid, ms) : undefined,

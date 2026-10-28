@@ -7170,6 +7170,50 @@ ipcMain.handle("audio:set-cue-device", async (_, stationId, device) => {
   } catch (e) { return { ok: false, reason: `the engine took it but it was not saved: ${String(e && e.message || e)}` }; }
   return { ok: true };
 });
+// THE PATCH BAY, OUTPUTS (docs/ether-audio-patch-bay-plan.md step 1; audiod/output-patch.js; native/src/patch.rs). The ONE
+// place a station's Master / Aux / Cue devices and channel pairs are chosen. Engine first; saved machine-local only if
+// the engine took it (the same rule as audio:set-cue-device).
+ipcMain.handle("patch:get", async (_, stationId) => {
+  const sid = Number(stationId);
+  const d = _boardDb();
+  if (!Number.isFinite(sid) || !d) return { ok: false, reason: d ? "no station" : "the database is not open yet" };
+  try {
+    const rows = d.prepare("SELECT key, value FROM station_config_kv WHERE station_id = ? AND deleted_at IS NULL").all(sid);
+    const m = new Map(rows.map(r => [String(r.key), r.value]));
+    return { ok: true, patch: require("../audiod/output-patch").readPatch((k) => (m.has(k) ? m.get(k) : undefined)) };
+  } catch (e) { return { ok: false, reason: String(e && e.message || e) }; }
+});
+ipcMain.handle("patch:set", async (_, stationId, patchIn) => {
+  const sid = Number(stationId);
+  if (!Number.isFinite(sid)) return { ok: false, reason: "no station" };
+  const OP = require("../audiod/output-patch");
+  const n = OP.normalise(patchIn);
+  if (!n.ok) return n;
+  const json = OP.engineJson(n.patch);
+  const ok = await _boardSend("setOutputPatch", { stationId: sid, json },
+    () => (typeof audio.audioSetOutputPatch === "function" ? audio.audioSetOutputPatch(sid, json) : false));
+  if (!ok) return { ok: false, reason: "the audio engine did not take it — fully close and reopen Ether if it just updated" };
+  try {
+    const { stationConfigKvSetLocal } = require("./sync/handlers/station_config_kv");
+    for (const w of OP.writesFor(n.patch)) stationConfigKvSetLocal(getDb(), sid, w.key, w.value);
+  } catch (e) { return { ok: false, reason: `the engine took it but it was not saved: ${String(e && e.message || e)}` }; }
+  logStartup(`[patch] s${sid} outputs saved: ${json}`);
+  return { ok: true, patch: n.patch };
+});
+ipcMain.handle("patch:state", async (_, stationId) => {
+  const sid = Number(stationId);
+  if (!Number.isFinite(sid)) return null;
+  try {
+    if (AUDIO_DAEMON) return await audiodClient.cmd("outputPatchState", { stationId: sid });
+    return typeof audio.audioOutputPatchState === "function" ? JSON.parse(audio.audioOutputPatchState(sid)) : null;
+  } catch { return null; }
+});
+ipcMain.handle("patch:devices", async () => {
+  try {
+    if (AUDIO_DAEMON) return await audiodClient.cmd("listOutputDevicesDetailed");
+    return typeof audio.audioListOutputDevicesDetailed === "function" ? JSON.parse(audio.audioListOutputDevicesDetailed()) : null;
+  } catch { return null; }
+});
 ipcMain.handle("audio:cue-state", async (_, stationId) => {
   const sid = Number(stationId);
   if (!Number.isFinite(sid)) return { device: "", state: "same_as_main" };

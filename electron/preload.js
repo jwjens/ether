@@ -424,6 +424,13 @@ contextBridge.exposeInMainWorld("ether", {
     stopAuto:    ()           => ipcRenderer.invoke("repl:stop-auto"),
     getSiteId:   ()           => ipcRenderer.invoke("repl:get-site-id"),
   },
+  // ── THE PATCH BAY (docs/ether-audio-patch-bay-plan.md step 1) — the one place outputs are patched ──
+  patchBay: {
+    get:     (stationId)        => ipcRenderer.invoke("patch:get", stationId),
+    set:     (stationId, patch) => ipcRenderer.invoke("patch:set", stationId, patch),
+    state:   (stationId)        => ipcRenderer.invoke("patch:state", stationId),
+    devices: ()                 => ipcRenderer.invoke("patch:devices"),
+  },
   // ── User / PIN security ─────────────────────────────────────
   users: {
     hashPin:   (pin) => ipcRenderer.invoke("user:hash-pin", pin),

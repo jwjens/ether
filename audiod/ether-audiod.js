@@ -636,6 +636,11 @@ const handlers = {
   setPflDim:          (m) => (typeof A.audioSetPflDim === "function" ? A.audioSetPflDim(Number(m.stationId), Number(m.dimDb)) : false),
   // PFL OUTPUT DEVICE — this machine's cue device ("" = same as main) and where PFL is going right now.
   setCueDevice:       (m) => (typeof A.audioSetCueDevice === "function" ? A.audioSetCueDevice(Number(m.stationId), String(m.device || "")) : false),
+  // THE PATCH BAY, OUTPUTS (audiod/output-patch.js; native/src/patch.rs): every output's devices + channel pairs in one call,
+  // what the engine actually opened per device, and the device list with channel counts.
+  setOutputPatch:     (m) => (typeof A.audioSetOutputPatch === "function" ? A.audioSetOutputPatch(Number(m.stationId), String(m.json || "")) : false),
+  outputPatchState:   (m) => (typeof A.audioOutputPatchState === "function" ? JSON.parse(A.audioOutputPatchState(Number(m.stationId))) : null),
+  listOutputDevicesDetailed: () => (typeof A.audioListOutputDevicesDetailed === "function" ? JSON.parse(A.audioListOutputDevicesDetailed()) : null),
   cueState:           (m) => (typeof A.audioCueState === "function" ? JSON.parse(A.audioCueState(Number(m.stationId))) : { device: "", state: "same_as_main" }),
   // MASTER OUT — the broadcast gain (rides air + the master VU). Distinct from setMonitorVolume,
   // which trims the room speakers only. docs/master-monitor-faders-dead-2026-08-06.md

@@ -28,7 +28,7 @@ const ROTATION = new Set(["A", "B", "C"]);
 const SOURCE_SLOTS = ["D", "E", "F", "S1", "S2", "S3", "S4", "S5"];
 /** The keys that belong to THIS machine (electron/sync/handlers/station_config_kv.js LOCAL_ONLY_*). */
 const MACHINE_LOCAL_KEYS = ["audio_output_device", "aux_monitor_device", "pfl_cue_device"];
-const MACHINE_LOCAL_PREFIXES = ["mic_input_"];
+const MACHINE_LOCAL_PREFIXES = ["mic_input_", "patch_"];
 const isMachineLocalKey = (k) => MACHINE_LOCAL_KEYS.includes(k) || MACHINE_LOCAL_PREFIXES.some(p => String(k).startsWith(p));
 
 /** The store keys a preset is read from and written to (all synced, station-scoped). */
