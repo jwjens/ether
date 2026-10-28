@@ -155,3 +155,14 @@ OV.** My earlier write-up said it was "safe for any receiver". That was wrong.
     This changes the value, not the format, but it is a protocol-level change (`synced-tables.js`: "do not edit category
     values without consulting the protocol doc").
 - Recommendation: (i). Nothing is affected today, so there's no urgency.
+
+## 5, continued — Jeff chose Option 1 (2026-10-27): "Make the intro-item change in the next build, and switch the sending side only after OV is on that build."
+- **Step 1, BUILT (receiving side), commit below:** `synced-tables.js` library_asset `receiveAsBlobRef: ['intro_version_path']`.
+  The column still SENDS as `scalar` (a plain string, unchanged on the wire). On ARRIVAL it's treated as a blob-ref:
+  `deserializePayload` keeps only the file name under this computer's catalogue, and `merge-engine` keeps this computer's
+  location when an edit elsewhere didn't change the intro file. Test: `npm run test:sync` T-60, 6 tests (4 fail on the
+  previous code); 72/72.
+- **Step 2, NOT BUILT, waiting for OV:** once ovowforestmusic runs the build with step 1, change
+  `library_asset.intro_version_path` to `'blob-ref'` and delete `receiveAsBlobRef`. To check that OV is on it without
+  touching OV: OV's mutations on the backend carry the schema version, but step 1 doesn't change the schema. So the
+  check is Help → About on OV, or Jeff's word.

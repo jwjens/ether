@@ -296,7 +296,7 @@ class MergeEngine {
       // that is new here, takes the catalogue — the default location.
       if (localRow && op === 'update') {
         const blobCols = Object.entries((REGISTRY[m.table_name] && REGISTRY[m.table_name].columns) || {})
-          .filter(([c, kind]) => kind === 'blob-ref' && row[c] !== undefined).map(([c]) => c);
+          .filter(([c, kind]) => (kind === 'blob-ref' || ((REGISTRY[m.table_name].receiveAsBlobRef || []).includes(c))) && row[c] !== undefined).map(([c]) => c);
         if (blobCols.length) {
           const { storedBasename } = require('../audio-library-index');
           const raw = (v) => (v && typeof v === 'object') ? (v.__blob_key != null ? v.__blob_key : v.__blob_origin) : v;

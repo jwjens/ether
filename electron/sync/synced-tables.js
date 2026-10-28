@@ -166,6 +166,14 @@ const REGISTRY = {
     // uuid; the receiver writes its OWN local id for it. Before this, library_asset.artist_id / album_id went out as the sender's integer and landed
     // on whatever row has that number on the other machine (the category-one-off defect).
     refs: { artist_id: 'artists', album_id: 'albums' },
+    // RECEIVED AS A FILE, SENT AS BEFORE (Jeff, 2026-10-27: "Option 1. Make the intro-item change in the next build, and
+    // switch the sending side only after OV is on that build"). intro_version_path is a file location, like file_path,
+    // but it is still SENT as 'scalar' (a plain string): a computer on an older build reads it as scalar and would refuse
+    // the blob-ref envelope. On ARRIVAL it is treated as a blob-ref: this computer keeps only the file name and builds its
+    // own <catalogue>/<name>, and an update that did not change the file keeps this computer's location. STEP 2, once every
+    // computer of the account runs a build with this line: change the column above to 'blob-ref' and delete this list.
+    // docs/library-sync-open-items-2026-10-27.md §5.
+    receiveAsBlobRef: ['intro_version_path'],
   },
 
   // TRAFFIC DETAIL — STATION-SCOPED, because the same audio file can be sold to two stations on

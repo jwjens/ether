@@ -646,9 +646,11 @@ function deserializePayload(payload, tableName, opts = {}) {
   }
 
   const row = {};
+  const receiveAsBlobRef = new Set(entry.receiveAsBlobRef || []);   // sent as scalar, localized on arrival (synced-tables)
 
-  for (const [col, category] of Object.entries(entry.columns)) {
-    if (category === 'local-only') continue;  // [N-24]
+  for (const [col, category0] of Object.entries(entry.columns)) {
+    if (category0 === 'local-only') continue;  // [N-24]
+    const category = receiveAsBlobRef.has(col) ? 'blob-ref' : category0;
 
     const val = payload[col];
 
