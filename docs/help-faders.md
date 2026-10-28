@@ -26,10 +26,17 @@ page fader.
 - **Mouse wheel:** one notch = one step (0.5 dB to start).
 - **Arrow keys:** click a fader first, then Up/Right is louder and Down/Left is quieter (0.5 dB to start).
   **Shift + arrow** is a small step (0.1 dB to start).
-- **Type a level:** double-click the level next to the fader (on a channel fader, double-click the fader), type a
-  number such as **-5**, and press **Enter**. **Esc** cancels. Type **off** to turn it off. A number above the fader's
+- **Back to 0 dB (unity):** double-click the fader. A fader whose top is below 0 dB goes to its top.
+- **Type a level:** double-click the level next to the fader (on a channel fader, click the fader and press **Enter**),
+  type a number such as **-5**, and press **Enter**. **Esc** cancels. Type **off** to turn it off. A number above the fader's
   maximum stops at the maximum and says so.
 - On the Park page, double-tap the level to type one.
+
+## The fader cap
+
+Every fader on the board has the same cap: raised, with grip ridges, and a dark line across its middle. **Read the
+level where that line meets the scale.** The pointer turns into a hand over a fader, and the cap lifts with a coloured
+ring while it is being moved.
 
 ## The scale
 

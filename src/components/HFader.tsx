@@ -6,6 +6,7 @@ import { useRef, type ReactNode } from "react";
 import { gainToPos, faderMarks } from "../lib/faderLaw";
 import { useFaderControl } from "../lib/useFaderControl";
 import FaderValue from "./FaderValue";
+import FaderCap from "./FaderCap";
 
 export default function HFader({ gain, topDb, onChange, color = "var(--accent-teal)", label, layout = "inline", dim, disabled, title, labelWidth = 52, valueStyle }: {
   gain: number; topDb: number; onChange: (g: number) => void; color?: string;
@@ -20,10 +21,11 @@ export default function HFader({ gain, topDb, onChange, color = "var(--accent-te
       ref={trackRef}
       onPointerDown={c.onPointerDown}
       onKeyDown={c.onKeyDown}
+      onDoubleClick={c.onDoubleClick}
       tabIndex={c.tabIndex}
       role="slider"
       aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pos * 100)}
-      title={title}
+      title={title ? `${title} · double-click for 0 dB` : "Drag to move (Shift = fine) · wheel or arrow keys step · double-click for 0 dB"}
       style={{ position: "relative", flex: 1, width: layout === "stacked" ? "100%" : undefined, height: 14, cursor: disabled ? "default" : c.dragging ? "grabbing" : "grab",
         userSelect: "none", touchAction: "none", outline: "none", opacity: dim ? 0.45 : 1 }}
     >
@@ -33,10 +35,8 @@ export default function HFader({ gain, topDb, onChange, color = "var(--accent-te
         <div key={m.label + m.pos} style={{ position: "absolute", left: `${m.pos * 100}%`, top: m.unity ? -1 : 2, bottom: m.unity ? -1 : 2,
           borderLeft: `1px solid ${m.unity ? "rgba(255,255,255,0.6)" : "rgba(255,255,255,0.22)"}`, pointerEvents: "none" }} title={`${m.label} dB`} />
       ))}
-      <div style={{ position: "absolute", left: `${pos * 100}%`, top: "50%", transform: "translate(-50%, -50%)", width: 12, height: 12,
-        borderRadius: "var(--fader-thumb-radius, 50%)", background: color, backgroundImage: "var(--fader-thumb-gradient, none)",
-        border: "var(--fader-thumb-border, 1px solid var(--strip-thumb-border))", boxShadow: c.active ? "0 0 0 2px #8868D8" : "var(--fader-thumb-shadow, none)",
-        pointerEvents: "none" }} />
+      <FaderCap axis="x" width={14} height={22} on={!disabled} dragging={c.dragging} color={color}
+        style={{ left: `${pos * 100}%`, top: "50%", transform: "translate(-50%, -50%)" }} />
     </div>
   );
   const value = <FaderValue gain={gain} topDb={topDb} onChange={onChange} active={c.active} disabled={disabled} style={valueStyle} />;

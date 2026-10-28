@@ -5,6 +5,8 @@
 //   3. Mouse wheel steps the wheel step; arrow keys step when the fader has focus, Shift + arrow the fine step (all dB,
 //      all Preferences — faderFeel()).
 //   4. `active` is true while dragging (and briefly after a wheel/arrow step) so the fader's dB readout can light up.
+//   5. Double-click = 0 dB, unity (Jeff, 2026-10-28: "Double-clicking any fader sets it to 0 dB (unity)."). A fader whose
+//      top is below 0 dB goes to its top, the nearest it can be.
 // Stores hold gain; the law (faderLaw.ts) only decides where a gain is drawn. One law, every fader.
 import { isPlainKey } from "./plainKey";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -81,6 +83,13 @@ export function useFaderControl({ gain, topDb, onChange, axis, trackRef, insetPx
     flashStep();
   }, [disabled, gain, topDb, onChange, flashStep]);
 
+  const onDoubleClick = useCallback((e?: React.MouseEvent<HTMLElement>) => {
+    if (disabled) return;
+    e?.preventDefault();
+    onChange(Math.min(1, topGain(topDb)));
+    flashStep();
+  }, [disabled, topDb, onChange, flashStep]);
+
   // The wheel: a non-passive listener so the page does not scroll while a fader is being stepped.
   useEffect(() => {
     const el = trackRef.current; if (!el) return;
@@ -94,5 +103,5 @@ export function useFaderControl({ gain, topDb, onChange, axis, trackRef, insetPx
     return () => el.removeEventListener("wheel", onWheel);
   }, [trackRef, flashStep]);
 
-  return { onPointerDown, onKeyDown, tabIndex: disabled ? -1 : 0, dragging, active: dragging || stepping };
+  return { onPointerDown, onKeyDown, onDoubleClick, tabIndex: disabled ? -1 : 0, dragging, active: dragging || stepping };
 }

@@ -9,6 +9,7 @@ import FaderRouting from "./FaderRouting";
 import { gainToPos, faderMarks } from "../lib/faderLaw";
 import { useFaderControl } from "../lib/useFaderControl";
 import FaderValue from "./FaderValue";
+import FaderCap from "./FaderCap";
 import { useFaderTop } from "../lib/useFaderTop";
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { useMidiState } from "./MidiEngine";
@@ -317,13 +318,14 @@ export default function ConsoleStrip({
           <div
             ref={trackRef}
             onPointerDown={fc.onPointerDown}
-            onKeyDown={fc.onKeyDown}
+            // Enter types a level (double-click was that door until 2026-10-28; it is 0 dB now, as on every fader).
+            onKeyDown={e => { if (e.key === "Enter" && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); setTypeReq(n => n + 1); return; } fc.onKeyDown(e); }}
             tabIndex={fc.tabIndex}
-            onDoubleClick={() => setTypeReq(n => n + 1)}
-            title="Drag to move (Shift = fine) · wheel or arrow keys step · double-click to type a level"
+            onDoubleClick={fc.onDoubleClick}
+            title="Drag to move (Shift = fine) · wheel or arrow keys step · double-click for 0 dB · Enter to type a level"
             style={{
               position: "absolute", inset: 0,
-              cursor: dragging ? "grabbing" : "ns-resize",
+              cursor: dragging ? "grabbing" : "grab",
               zIndex: 10, outline: "none", touchAction: "none",
             }}
           />
@@ -359,27 +361,15 @@ export default function ConsoleStrip({
             </div>
           ))}
 
-          {/* ── Fader knob cap — flat handle (motorized-board friendly) ── */}
-          <div style={{
-            position: "absolute",
-            left: "50%", transform: "translateX(-50%)",
-            top: knobY,
-            width: KNOB_W, height: KNOB_H,
-            cursor: "grab",
-            zIndex: 5,
-            transition: dragging ? "none" : "top 0.08s ease-out",
-            background: isOn ? "#e6e6ec" : "#55555f",
-            border: dragging ? `2px solid ${color}` : `1px solid ${isOn ? "rgba(0,0,0,0.35)" : "rgba(0,0,0,0.5)"}`,
-            opacity: isOn ? 1 : 0.7,
-            borderRadius: 2,
-            boxShadow: dragging ? `0 0 0 3px ${color}40` : "none",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>
-            {/* Center grip line, and the level this fader is at — read from the same law */}
-            <div style={{ position: "absolute", width: KNOB_W - 18, height: 2, background: "rgba(0,0,0,0.28)", borderRadius: 1 }} />
+          {/* ── THE FADER CAP — raised, ridged, a center line to the scale (FaderCap, the one cap on every fader) ── */}
+          <FaderCap axis="y" width={KNOB_W} height={KNOB_H} on={isOn} dragging={dragging} color={color}
+            style={{ left: "50%", transform: "translateX(-50%)", top: knobY, zIndex: 5, opacity: isOn ? 1 : 0.75,
+                     transition: dragging ? "none" : "top 0.08s ease-out", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {/* The level this fader is at — read from the same law; on a plate so it reads over the ridges */}
             <FaderValue gain={effVol} topDb={chTop} onChange={onVolumeChange} active={fc.active} typeRequest={typeReq}
-              style={{ position: "relative", top: 12, fontSize: 9, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "rgba(0,0,0,0.6)" }} />
-          </div>
+              style={{ position: "relative", top: 12, fontSize: 9, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "rgba(0,0,0,0.75)",
+                       background: "rgba(235,235,240,0.85)", padding: "0 3px", borderRadius: 2 }} />
+          </FaderCap>
 
         </div>{/* end fader column */}
 
