@@ -1,4 +1,5 @@
-// src/components/PatchBay.tsx — THE PATCH BAY, OUTPUTS (step 1 of docs/ether-audio-patch-bay-plan.md).
+// src/components/PatchBay.tsx — THE PATCH BAY: outputs (step 1 of docs/ether-audio-patch-bay-plan.md) and, under each
+// station's outputs, its inputs (step 2, src/components/PatchBayInputs.tsx).
 //
 // The ONE place this computer's audio outputs are patched (Jeff's Outputs answers, docs/outputs-section-plan-2026-10-27.md):
 //   rows    = Ether's outputs, per station: Master (the existing main/monitor output, after the MONITOR fader), Cue (PFL),
@@ -12,6 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { query } from "../db/client";
+import PatchBayInputs from "./PatchBayInputs";
 
 type Dest = { device: string; pair: number };
 type Patch = { master: Dest[]; aux: Dest[]; cue: Dest[]; stall_switch: boolean | null };
@@ -132,12 +134,13 @@ export default function PatchBay() {
   return (
     <div style={{ padding: 16, color: "var(--text-primary)", fontSize: 13, overflow: "auto", height: "100%", boxSizing: "border-box" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 6 }}>
-        <h2 style={{ margin: 0, fontSize: 18 }}>Patch Bay: outputs</h2>
-        <button onClick={() => void loadDevices()} style={{ fontSize: 11, padding: "3px 10px", cursor: "pointer" }}>Refresh devices</button>
+        <h2 style={{ margin: 0, fontSize: 18 }}>Patch Bay</h2>
+        <button onClick={() => void loadDevices()} style={{ fontSize: 11, padding: "3px 10px", cursor: "pointer" }}>Refresh output devices</button>
       </div>
       <div style={{ color: "var(--text-tertiary)", marginBottom: 12, lineHeight: 1.5 }}>
-        Click a square to connect an output to a device's channels. Click again to disconnect. One output can play to up to {MAX_DESTS} devices
-        at once. Saved for this computer only. Levels and mutes stay on the board. The stream to listeners never depends on these devices.
+        <b>Outputs:</b> click a square to connect an output to a device's channels. Click again to disconnect. One output can play to up to {MAX_DESTS} devices
+        at once. <b>Inputs:</b> click a square to bring an input, a Park mic or the Remote Link feed in on a source fader; the fader's SOURCE
+        on the board changes with it. Saved for this computer only. Levels and mutes stay on the board. The stream to listeners never depends on these devices.
       </div>
       {err && <div style={{ color: "var(--accent-red, #ef4444)", fontWeight: 700, marginBottom: 10 }}>{err}</div>}
       {devices && devices.length === 0 && <div style={{ color: "var(--accent-red, #ef4444)", marginBottom: 10 }}>The audio engine listed no output devices. If Ether just updated, fully close and reopen it.</div>}
@@ -150,6 +153,7 @@ export default function PatchBay() {
             <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 6 }}>{s.name}</div>
             {!p ? <div style={{ color: "var(--text-tertiary)" }}>Loading…</div> : (
               <>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>Outputs</div>
                 <table style={{ borderCollapse: "collapse" }}>
                   <thead>
                     <tr>
@@ -213,6 +217,7 @@ export default function PatchBay() {
                   ))}
                   {p.stall_switch === null && <span style={{ color: "var(--text-tertiary)" }}>Not set: a stalling device is shown in red and retried; Ether never switches on its own.</span>}
                 </div>
+                <div style={{ marginTop: 14 }}><PatchBayInputs stationId={s.id} /></div>
               </>
             )}
           </div>

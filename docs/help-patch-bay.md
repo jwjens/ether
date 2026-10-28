@@ -1,14 +1,14 @@
 ---
 feature: patch-bay
-title: Patch Bay (outputs)
-summary: The one place you choose where each station's Master, Cue (PFL) and Aux play on this computer — any device, any channel pair, up to four devices at once.
+title: Patch Bay (outputs and inputs)
+summary: Where each station's Master, Cue (PFL) and Aux play on this computer, and which input, Park mic or Remote Link feed comes in on each source fader.
 where: ☰ → Patch Bay, Menu → Patch Bay, or the "Patch Bay" button on the board's Master line, the AUX panel's Output line, or Preferences → PFL
-since: unreleased (patch bay step 1, after 4.6.67)
+since: unreleased (patch bay steps 1 and 2, after 4.6.67)
 audience: admin
 tour: true
 ---
 
-# Patch Bay (outputs)
+# Patch Bay (outputs and inputs)
 
 ## What it is
 
@@ -34,7 +34,7 @@ The stream to your listeners **never** depends on any of this. On-air audio goes
 
 ## Set it up
 
-1. Open **☰ → Patch Bay** or **Menu → Patch Bay**. You can also use the **Patch Bay** button next to the board's Master line, the AUX panel's
+1. Open **☰ → Patch Bay** or **Menu → Patch Bay** (or the **Patch Bay** button in Preferences → Audio → Mic Inputs). You can also use the **Patch Bay** button next to the board's Master line, the AUX panel's
    Output line, or Preferences → PFL.
 2. Find the station. Its three rows are Master, Cue (PFL) and Aux.
 3. Click the square where the row meets the device and channels you want. It turns teal (●) once Ether has it.
@@ -66,6 +66,29 @@ names belong to one computer.
 
 A device that is simply **missing** never switches to anything, whatever this is set to.
 
+## Inputs
+
+Under each station's outputs is its **Inputs** grid.
+
+- Each **row** is one of the station's **source faders** on the board (D, E, F, S1 to S5 — the ones on the board).
+- Each **column** is one input on this computer: every input of every input device (an interface with 8 inputs has
+  8 columns), **Park Mic 1** and **Park Mic 2**, and the station's **Remote Link** feed.
+
+Click a square to bring that input in on that fader. Click it again to disconnect it.
+
+- **The fader's SOURCE on the board changes with it.** Connect an interface's input 2 to fader D and D's SOURCE says
+  that interface. Set a fader's SOURCE on the board and the grid shows it. They are the same setting, so they always
+  agree.
+- **The Remote Link feed comes in on one fader per station.** Connect it to another fader and it moves there; the fader
+  it left says "— no source —".
+- An input that is connected to a fader keeps its **gain** (Preferences → Audio → Mic Inputs) when you move it to
+  another input.
+- The line under the grid says what the audio engine is doing with each fader's input: **live**, **device not
+  connected**, **that input is not on this device**, the Remote Link's state, and so on.
+- A fader set to **Mic** or **Link** on the board with nothing connected is shown in red, so it can't go unnoticed.
+
+To set the gain, see the live numbers, or paste a Remote Link key, use Preferences, as before.
+
 ## Things to know
 
 - **Nothing patched on Master** = the Windows default, as before. The line under the grid names it.
@@ -83,8 +106,8 @@ A device that is simply **missing** never switches to anything, whatever this is
 
 ## Not in this version
 
-- **Inputs** (microphones, line inputs, Remote Link feeds) are the next step, the inputs side of the Patch Bay. Until then
-  they are set where they are today.
+- An input pair as **one stereo** source (for example a mixer's 1-2 into one fader). Today each input is mono.
+- Finding Remote Link computers without addresses: the next step (Remote Link).
 - Who may open the Patch Bay (roles) is not enforced yet.
 
 ## Related

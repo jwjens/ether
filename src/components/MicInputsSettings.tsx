@@ -1,7 +1,9 @@
 // MicInputsSettings.tsx — Preferences → Audio: THE MIC INPUTS (docs/dsp-mic-in-engine.md §4; the "I/O config
-// lives in Preferences" rule). One row per source channel patched to "mic" on the board: the input DEVICE (the
-// engine's own list — this machine's), the INPUT number on that device, the INPUT GAIN (−10…+40 dB), and the
-// ENGINE's live state for it. Everything here is machine-local: another install picks its own devices.
+// lives in Preferences" rule). One row per source channel patched to "mic" on the board: which input feeds it, the
+// INPUT GAIN (−10…+40 dB), and the ENGINE's live state for it. Everything here is machine-local.
+// PATCH BAY STEP 2 (docs/ether-audio-patch-bay-plan.md): WHICH input feeds a fader is chosen in the Patch Bay (and by
+// the board's SOURCE dropdown, which stays — Jeff, 2026-10-28). The device and input-number pickers that were here are
+// now one line naming the input, a Patch Bay button, and Disconnect; gain stays here.
 //
 // Talent monitoring (ruling 3): the engine path to the headphones is tens of milliseconds — hear your own voice
 // through your interface's hardware DIRECT MONITOR. The engine's PFL is for hearing the processed sound.
@@ -12,6 +14,8 @@ import { useBoardName } from "../hooks/useBoardName";
 import { micChannelRows } from "../lib/boardLabels";
 import { MIC_GAIN_DB, micStateWords, useInputDevices, useMicInputs, type MicPatch } from "../hooks/useMicInputs";
 
+const openPatchBay = () => { try { (window as any).ether.invoke("window:popout", "multioutput"); } catch { /* not in Electron */ } };
+
 const TONE: Record<string, string> = { ok: "var(--accent-green)", warn: "var(--accent-amber, #f59e0b)", bad: "var(--accent-red, #ef4444)", off: "var(--text-tertiary)" };
 const FIELD: React.CSSProperties = {
   minHeight: 36, background: "var(--bg-tertiary)", color: "var(--text-primary)", border: "1px solid var(--border-primary)", padding: "0 8px", fontSize: 12,
@@ -21,7 +25,7 @@ export default function MicInputsSettings() {
   const { stationId } = useActiveStation();
   const { configs } = useDeckConfig();
   const mic = useMicInputs(stationId);
-  const { devices, reload } = useInputDevices();
+  const { devices } = useInputDevices();
   const [msg, setMsg] = useState<Record<string, string>>({});
   const gainTimer = useRef<Record<string, any>>({});
   const [draftGain, setDraftGain] = useState<Record<string, number>>({});
@@ -43,7 +47,8 @@ export default function MicInputsSettings() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ fontSize: 13, color: "var(--text-tertiary)", lineHeight: 1.5 }}>
-        A mic is a <b>source channel</b> on the board patched to <b>Mic</b>. Here you pick which input on <b>this computer</b> feeds it.
+        A mic is a <b>source channel</b> on the board patched to <b>Mic</b>. Which input on <b>this computer</b> feeds it is chosen in the
+        <b> Patch Bay</b> (or the channel's SOURCE on the board); its gain is set here.
         The mic then goes through the engine like every channel: its meter, its channel EQ, its fader and ON, the ducker — and on air.
         <br />
         <b>Hearing yourself:</b> use your interface's <b>direct monitor</b> (zero delay). The engine's path back to the headphones takes
@@ -51,14 +56,13 @@ export default function MicInputsSettings() {
       </div>
       {micChannels.length === 0 ? (
         <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic", padding: 8, border: "1px dashed var(--border-primary)" }}>
-          No mic channels yet. On the board, set a source channel's source to <b>Mic</b> (or add a channel with + and choose Mic), then pick its input here.
+          No mic channels yet. In the <b>Patch Bay</b>, connect an input to a source fader (or on the board, set a channel's SOURCE to an input).
         </div>
       ) : micChannels.map(({ slot, heading }) => {
         const p = mic.patches[slot];
         const st = mic.states[slot];
         const w = micStateWords(st, !!p);
         const dev = devices?.find(d => d.name === p?.device);
-        const chans = dev?.channels || st?.channels || 2;
         const gain = draftGain[slot] ?? p?.gainDb ?? 0;
         return (
           <div key={slot} style={{ padding: 10, border: "1px solid var(--border-primary)", background: "var(--bg-secondary)", display: "flex", flexDirection: "column", gap: 8 }}>
@@ -74,18 +78,12 @@ export default function MicInputsSettings() {
               {st && st.reason && st.state !== "running" && <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>{st.reason}</span>}
             </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <select value={p?.device || ""} style={{ ...FIELD, flex: "1 1 260px" }}
-                onChange={e => apply(slot, e.target.value ? { device: e.target.value, channel: 1, gainDb: p?.gainDb ?? 0 } : null)}
-                title="The input device on THIS computer (never synced to another install)">
-                <option value="">— no input —</option>
-                {p?.device && !devices?.some(d => d.name === p.device) && <option value={p.device}>{p.device} (not connected)</option>}
-                {(devices || []).map(d => <option key={d.name} value={d.name}>{d.label || d.name}{d.isDefault ? " (Windows default)" : ""}</option>)}
-              </select>
-              <select value={p?.channel || 1} disabled={!p} style={{ ...FIELD, width: 110 }}
-                onChange={e => p && apply(slot, { ...p, channel: Number(e.target.value) })} title="Which input on the device (an interface's input 1, 2 …)">
-                {Array.from({ length: Math.max(1, chans) }, (_, i) => i + 1).map(n => <option key={n} value={n}>Input {n}</option>)}
-              </select>
-              <button style={{ ...FIELD, cursor: "pointer" }} onClick={reload} title="Re-read this computer's inputs (after plugging one in)">↻ Devices</button>
+              <span style={{ flex: "1 1 260px", fontSize: 12, color: p && !dev && devices ? "var(--accent-red, #ef4444)" : "var(--text-secondary)" }}
+                    title="The input on THIS computer (never synced to another install). Chosen in the Patch Bay.">
+                {p ? `Input: ${dev?.label || p.device} · input ${p.channel}${devices && !dev ? " (not connected)" : ""}` : "No input connected"}
+              </span>
+              <button style={{ ...FIELD, cursor: "pointer" }} onClick={openPatchBay} title="Choose the input in the Patch Bay">Patch Bay</button>
+              {p && <button style={{ ...FIELD, cursor: "pointer" }} onClick={() => apply(slot, null)} title="Disconnect this input (the channel stays set to Mic)">Disconnect</button>}
             </div>
             <div style={{ display: "flex", gap: 10, alignItems: "center", opacity: p ? 1 : 0.5 }}>
               <span style={{ fontSize: 11, color: "var(--text-tertiary)", width: 80, textTransform: "uppercase", letterSpacing: "0.06em" }}>Input gain</span>

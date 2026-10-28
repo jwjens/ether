@@ -2,7 +2,7 @@
 feature: mic-input
 title: Mic on Air (the mic as a channel)
 summary: A microphone is a channel on the board like any other — patch it to an input on this computer, set its gain, and it goes on air with its own meter, channel EQ, fader, ON and ducking.
-where: On the board, a source channel's source dropdown → an input device (or "Mic — pick an input…"). Input number and gain: Preferences → Audio → Mic Inputs. Its live state: the strip, and Health Monitor → Mic Inputs.
+where: On the board, a source channel's source dropdown → an input device (or "Mic — pick an input…"), or the Patch Bay's Inputs grid (☰ → Patch Bay), which also picks the input number. Gain: Preferences → Audio → Mic Inputs. Its live state: the strip, and Health Monitor → Mic Inputs.
 since: unreleased (log-reader-flip, after 4.6.50)
 audience: operator
 tour: true
@@ -33,15 +33,21 @@ You can have a mic on any source channel: D, E, F, and the extra source channels
 3. The strip names the device, and the line under the dropdown says how it is: **● IN 1 · +0 dB · live**.
 4. Bring the fader up and press **ON**. You're on air.
 
-## Set the input and the gain
+Or open **☰ → Patch Bay**. In the station's **Inputs** grid, click the square where the fader's row meets your
+interface's input. The fader's SOURCE dropdown changes with it: they are the same setting.
 
-Go to **Preferences → Audio → Mic Inputs** (or click the state line under the strip's dropdown). For each mic
-channel you can set:
+## Choose the input number
+
+An interface with several inputs has one column per input in the **Patch Bay**'s Inputs grid (☰ → Patch Bay):
+click the square for **input 2**, **input 3** and so on. **Preferences → Audio → Mic Inputs** names the input each mic
+channel takes, with a **Patch Bay** button and **Disconnect**.
+
+## Set the gain
+
+Go to **Preferences → Audio → Mic Inputs** (or click the state line under the strip's dropdown).
 
 | Setting | What it does |
 |---|---|
-| **Input device** | Which input on **this computer** feeds the channel. The list is the one the audio engine sees. |
-| **Input number** | For an interface with several inputs (Input 1, Input 2, …). |
 | **Input gain** | −10 to +40 dB, before the meter and the channel EQ. Set your preamp first, then trim here. |
 
 **Mic settings belong to this computer.** Another computer on the same station picks its own mic: device
