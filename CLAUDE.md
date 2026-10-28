@@ -43,9 +43,9 @@ country. Their stations, databases, and song libraries pull down from the cloud
 
 ### Consequences that are NON-NEGOTIABLE:
 
-1. **The account sign-in screen is ALWAYS the first screen on launch — unconditionally** — unless a valid signed-in account session already exists.
+1. **The account sign-in screen is the first screen on launch** — unless this computer is set up (it keeps a sign-in, valid or expired). A set-up computer starts straight to the station; the sign-in screen appears only on a brand-new computer, after Sign Out, or after the computer is removed. (Jeff, 2026-10-28; `src/lib/startupGate.ts`, `docs/account-sign-in-plan-2026-10-26.md` Phase 1.)
 2. **No account = nothing.** No account → no license key → no stations → no DB → no library → nothing to show. There is no app without an account.
-3. **The account session is the GATE for the entire app.** Until a valid account session exists, the ONLY screen that can render is account sign-in. This is not "route to sign-in when conditions match" — account-or-nothing is the hard prerequisite for everything downstream.
+3. **The account session is the GATE for the entire app.** Until this computer has an account session (a kept sign-in, valid or expired — rule 1), the ONLY screen that can render is account sign-in. This is not "route to sign-in when conditions match" — account-or-nothing is the hard prerequisite for everything downstream.
 4. **UserLogin / profile-select is a DEEP screen, not a first screen.** It only has meaning AFTER an account is signed in and its stations have resolved. It can NEVER legitimately appear before account sign-in. If it ever renders on a no-account install, that is a bug.
 5. **The ONLY exception** to "sign-in first" is the watchdog auto-restarting after a crash *while a station was actively streaming live to Icecast* — that path may come straight back on air without re-sign-in. Nothing else.
 
