@@ -315,7 +315,7 @@ export default function SourceChannelStrip({
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <ConsoleStrip
           label={label}
-          // The name is in the dropdown above; the label row stays (ON colour, play progress), without the repeat.
+          // The name is in the dropdown above, so the label row (and its space) is not drawn when it would repeat it.
           labelTextHidden={labelRepeatsDropdown(config.kind, isLink && linkRx?.state === "receiving" ? linkRx.sender : null)}
           color="#8868D8"
           volume={volume}

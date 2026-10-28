@@ -13,10 +13,11 @@ describe("the source strip's name label", () => {
     expect(labelRepeatsDropdown("link", "OVEVENTS")).toBe(false);
     expect(labelRepeatsDropdown("", null)).toBe(false);
   });
-  it("SourceChannelStrip passes it; ConsoleStrip keeps the row and hides only the text", () => {
+  it("SourceChannelStrip passes it; ConsoleStrip then draws no label row at all — no text and no empty space", () => {
     const strip = fs.readFileSync(path.join(__dirname, "..", "components", "SourceChannelStrip.tsx"), "utf8");
     const cs = fs.readFileSync(path.join(__dirname, "..", "components", "ConsoleStrip.tsx"), "utf8");
     expect(strip).toMatch(/labelTextHidden=\{labelRepeatsDropdown\(config\.kind,/);
-    expect(cs).toMatch(/visibility: labelTextHidden \? "hidden" : "visible"/);
+    expect(cs).toMatch(/\{labelTextHidden \? null : !hideLabel \? \(/);
+    expect(cs).not.toMatch(/visibility: labelTextHidden/);
   });
 });

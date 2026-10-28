@@ -38,7 +38,7 @@ interface Props {
   /** When provided the strip subscribes to audio:levels IPC directly
    *  and updates the VU bar without triggering React state. */
   deckId?: string;
-  /** Keep the label row but do not draw its text — the source strip, whose SOURCE dropdown already names it. */
+  /** No label row at all — the source strip, whose SOURCE dropdown already names it (the space goes too). */
   labelTextHidden?: boolean;
   /** Hide the channel label row — used when an external bar (ThreeSlotBar) shows it instead. */
   hideLabel?: boolean;
@@ -248,8 +248,8 @@ export default function ConsoleStrip({
       userSelect: "none", overflow: "hidden", position: "relative",
     }}>
 
-      {/* ── Channel label ── */}
-      {!hideLabel ? (
+      {/* ── Channel label ── (none on a source strip whose dropdown already names it) */}
+      {labelTextHidden ? null : !hideLabel ? (
         <div style={{
           width: "100%", padding: "8px 0",
           background: isOn && isPlaying ? `${color}28` : "var(--strip-label-bg, transparent)",
@@ -271,7 +271,6 @@ export default function ConsoleStrip({
             color: isOn && isPlaying ? "#fff" : (isOn ? color : "var(--strip-label-text, #555)"),
             textShadow: isOn && isPlaying ? "0 1px 3px rgba(0,0,0,0.6)" : "none",
             transition: "color 0.2s",
-            visibility: labelTextHidden ? "hidden" : "visible",
           }}>{label}</span>
         </div>
       ) : deckId ? (
