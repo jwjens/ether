@@ -22,6 +22,8 @@ import { linkNeedsPatch } from "../lib/linkPairing";
 // The value is the shared rule the Patch Bay's inputs grid reads too (src/lib/inputPatch.ts), so the two always agree.
 import { stripSourceValue } from "../lib/inputPatch";
 import { labelRepeatsDropdown } from "../lib/sourceKinds";
+import { useElementWidth } from "../hooks/useElementWidth";
+import { isNarrowStrip } from "../lib/boardLayout";
 import ConsoleStrip from "./ConsoleStrip";
 import { sourceKindMeta, sourceKindOptions, type SourceKind, type DeckConfig } from "./DeckConfigurator";
 import { useBoardName } from "../hooks/useBoardName";
@@ -151,6 +153,12 @@ export default function SourceChannelStrip({
   // The SOURCE dropdown's entries — src/lib/sourceKinds.ts, pinned by its test: every source kind is offered on every
   // source slot (operator requirement, 2026-10-04). Only Network is disabled, with its reason, because it has no path.
   const options = useMemo(() => sourceKindOptions(config.slot), [config.slot]);
+  // THE FADER BANK (src/lib/boardLayout.ts): on a narrow strip the dropdown shows each source's short name; the full name
+  // is on hover (the select's title).
+  const stripRef = useRef<HTMLDivElement>(null);
+  const narrow = isNarrowStrip(useElementWidth(stripRef));
+  const fullSourceName = isMic ? (patch ? (devices?.find(d => d.name === patch.device)?.label || patch.device) : "Mic — pick an input…")
+    : (meta ? meta.label : "— no source —");
 
   // A patched input names itself on the channel — "Focusrite", not "Mic".
   const label = (isMic && patch) ? patch.device
@@ -159,7 +167,7 @@ export default function SourceChannelStrip({
   const TONE: Record<string, string> = { ok: "var(--accent-green)", warn: "var(--accent-amber, #f59e0b)", bad: "var(--accent-red, #ef4444)", off: "var(--text-tertiary)" };
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+    <div ref={stripRef} style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
       {/* ── the patch point ─────────────────────────────────────────────────────────────────── */}
       <div style={{ padding: "4px 6px 2px", display: "flex", flexDirection: "column", gap: 3 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -199,6 +207,7 @@ export default function SourceChannelStrip({
             onKindChange(v as SourceKind | "");
           }}
           aria-label={`Source for channel ${letter}`}
+          title={`Source: ${fullSourceName}`}
           style={{
             width: "100%", fontSize: 10, padding: "3px 4px", borderRadius: 2,
             background: "var(--bg-tertiary)", color: "var(--text-primary)",
@@ -208,11 +217,11 @@ export default function SourceChannelStrip({
           <option value="">— no source —</option>
           {options.filter(o => o.kind !== "mic").map(o => (
             <option key={o.kind} value={o.kind} disabled={o.disabled}>
-              {o.label}{o.disabled ? " ·  not yet" : ""}
+              {narrow ? o.short : o.label}{o.disabled ? " ·  not yet" : ""}
             </option>
           ))}
           {/* a mic channel whose input is not (yet) patched */}
-          <option value="mic">Mic — pick an input…</option>
+          <option value="mic">{narrow ? "Mic…" : "Mic — pick an input…"}</option>
           {patch && !devices?.some(d => d.name === patch.device) && (
             <option value={MIC_PREFIX + patch.device}>{patch.device} (not connected)</option>
           )}

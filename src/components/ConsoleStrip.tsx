@@ -22,6 +22,8 @@ import { useActiveStation } from "../hooks/useActiveStation";
 import { useSongMenu } from "../lib/songActions";
 import { openChannelRack, useChannelRackLamps } from "../hooks/useChannelRack";
 import { isChannelSlot } from "./rack/channelRack";
+import { useElementWidth } from "../hooks/useElementWidth";
+import { isNarrowStrip } from "../lib/boardLayout";
 
 interface Props {
   label: string;
@@ -112,6 +114,11 @@ export default function ConsoleStrip({
   const faderAreaRef = useRef<HTMLDivElement>(null);
   const fillRef      = useRef<HTMLDivElement>(null);
   const fillTrackRef = useRef<string>("");
+  // THE FADER BANK (src/lib/boardLayout.ts): a narrow strip moves the dB number off the cap (shown while the fader moves
+  // or a level is being typed) and stacks ON and PFL.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const narrow = isNarrowStrip(useElementWidth(rootRef));
+  const [typingOpen, setTypingOpen] = useState(false);
   const [faderH, setFaderH] = useState(220);
 
   // Measure actual rendered height so knob position math stays accurate
@@ -241,6 +248,7 @@ export default function ConsoleStrip({
 
   return (
     <div
+      ref={rootRef} data-strip-narrow={narrow ? "1" : "0"}
       onContextMenu={openSongMenu} style={{
       width: "100%", height: "100%", display: "flex", flexDirection: "column",
       backgroundColor: "var(--panel-bg, #0e0e13)",
@@ -321,7 +329,7 @@ export default function ConsoleStrip({
             ref={trackRef}
             onPointerDown={fc.onPointerDown}
             // Enter types a level (double-click was that door until 2026-10-28; it is 0 dB now, as on every fader).
-            onKeyDown={e => { if (e.key === "Enter" && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); setTypeReq(n => n + 1); return; } fc.onKeyDown(e); }}
+            onKeyDown={e => { if (e.key === "Enter" && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); setTypingOpen(true); setTypeReq(n => n + 1); return; } fc.onKeyDown(e); }}
             tabIndex={fc.tabIndex}
             onDoubleClick={fc.onDoubleClick}
             title="Drag to move (Shift = fine) · wheel or arrow keys step · double-click for 0 dB · Enter to type a level"
@@ -368,10 +376,20 @@ export default function ConsoleStrip({
             style={{ left: "50%", transform: "translateX(-50%)", top: knobY, zIndex: 5, opacity: isOn ? 1 : 0.75,
                      transition: dragging ? "none" : "top 0.08s ease-out", display: "flex", alignItems: "center", justifyContent: "center" }}>
             {/* The level this fader is at — read from the same law; on a plate so it reads over the ridges */}
-            <FaderValue gain={effVol} topDb={chTop} onChange={onVolumeChange} active={fc.active} typeRequest={typeReq}
+            {!narrow && <FaderValue gain={effVol} topDb={chTop} onChange={onVolumeChange} active={fc.active} typeRequest={typeReq}
               style={{ position: "relative", top: 12, fontSize: 9, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: "rgba(0,0,0,0.75)",
-                       background: "rgba(235,235,240,0.85)", padding: "0 3px", borderRadius: 2 }} />
+                       background: "rgba(235,235,240,0.85)", padding: "0 3px", borderRadius: 2 }} />}
           </FaderCap>
+          {/* NARROW: the dB number is off the cap, just above it, while the fader moves (or a level is typed). */}
+          {narrow && (fc.active || typingOpen) && (
+            <div data-strip-db="1" onBlurCapture={() => setTypingOpen(false)}
+                 style={{ position: "absolute", left: "50%", transform: "translateX(-50%)", top: Math.max(0, knobY - 18), zIndex: 12,
+                          background: "var(--bg-tertiary, #232330)", border: "1px solid var(--border-primary, #333)", borderRadius: 2,
+                          padding: "0 4px", whiteSpace: "nowrap", pointerEvents: typingOpen ? "auto" : "none" }}>
+              <FaderValue gain={effVol} topDb={chTop} onChange={onVolumeChange} active={fc.active} typeRequest={typeReq}
+                style={{ fontSize: 10, fontWeight: 700, fontFamily: "'DM Mono', monospace" }} />
+            </div>
+          )}
 
         </div>{/* end fader column */}
 
@@ -447,17 +465,17 @@ export default function ConsoleStrip({
         </div>
       )}
 
-      {/* ── ON / PFL — flat ── */}
-      <div style={{
-        display: "flex", flexDirection: "row", alignItems: "stretch",
-        gap: 8, padding: "10px 8px 12px",
+      {/* ── ON / PFL — flat; stacked on a narrow strip instead of squeezed ── */}
+      <div data-strip-buttons={narrow ? "stacked" : "row"} style={{
+        display: "flex", flexDirection: narrow ? "column" : "row", alignItems: "stretch",
+        gap: narrow ? 6 : 8, padding: narrow ? "8px 8px 10px" : "10px 8px 12px",
         borderTop: "1px solid var(--strip-divider, #303040)",
       }}>
 
         {/* ON — solid fill when active (brighter while playing), flat. SLICE 7: flashes amber while a show waits. */}
         <button onClick={() => { playClick(); onToggleOn(); }} className={pendingShow ? "on-pending" : undefined}
           title={pendingShow ? `PENDING — "${pendingShow}" lands when this channel goes OFF` : undefined} style={{
-          flex: 1, height: 38, borderRadius: 3,
+          flex: 1, height: narrow ? 32 : 38, minHeight: narrow ? 32 : 38, borderRadius: 3,
           background: isOn ? (isPlaying ? "#2563eb" : "#1e3358") : "var(--bg-tertiary, #232330)",
           border: `1px solid ${isOn ? (isPlaying ? "#3b82f6" : "#2a4a7a") : "var(--border-primary, #333)"}`,
           cursor: "pointer",
@@ -471,7 +489,7 @@ export default function ConsoleStrip({
         <button onClick={() => { playClick(); if (slotIndex === undefined) setPflLocal(!pflActive); onPfl?.(!pflActive); }}
           title={slotIndex !== undefined ? `PFL — hear ${label} before its fader and ON, after its channel EQ, in this station's local output (the programme there dips). Never on air.` : "PFL"}
           style={{
-          flex: 1, height: 38, borderRadius: 3,
+          flex: 1, height: narrow ? 32 : 38, minHeight: narrow ? 32 : 38, borderRadius: 3,
           background: pflActive ? "#b8860b" : "var(--bg-tertiary, #232330)",
           border: `1px solid ${pflActive ? "#d4a017" : "var(--border-primary, #333)"}`,
           cursor: "pointer",

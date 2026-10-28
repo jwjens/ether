@@ -13,6 +13,8 @@ export type SourceKind = "jukebox" | "announcement" | "jingle" | "cart" | "mic" 
 export interface SourceKindMeta {
   kind: SourceKind;
   label: string;
+  /** The name a NARROW strip's dropdown shows (the full label is on hover) — src/lib/boardLayout.ts. */
+  short: string;
   /** "file" works today; "stream" needs the Phase 2 capture path. */
   family: "file" | "stream";
   /** What the operator is told on the strip — honest about what does and does not play yet. */
@@ -20,11 +22,11 @@ export interface SourceKindMeta {
 }
 
 export const SOURCE_KINDS: SourceKindMeta[] = [
-  { kind: "jukebox",      label: "Jukebox",              family: "file",
+  { kind: "jukebox",      label: "Jukebox",              short: "Jukebox", family: "file",
     state: "Public request wall — patched and playing" },
-  { kind: "announcement", label: "Announcement",         family: "file",
+  { kind: "announcement", label: "Announcement",         short: "Announce", family: "file",
     state: "Patched. Announcement playout arrives in a later slice — nothing fires yet." },
-  { kind: "jingle",       label: "Sweeper",              family: "file",
+  { kind: "jingle",       label: "Sweeper",              short: "Sweeper", family: "file",
     // The `kind` VALUE stays "jingle": it is a persisted deck-config key, not a label. Changing a
     // stored key for cosmetics is how a config silently stops matching, and the daemon's channel
     // resolver accepts both 'jingle' and 'sweeper' so an existing install needs no re-dial.
@@ -45,17 +47,17 @@ export const SOURCE_KINDS: SourceKindMeta[] = [
   // a seam clobbered it — the daemon _stop()s and _load()s that channel as part of its bridge
   // lifecycle, and neither side knew about the other. Patching carts onto an ordinary aux deck is
   // what ends that: the sweeper keeps the overlay bus it is built around, and carts move off it.
-  { kind: "cart",         label: "Cart / SFX rack",      family: "file",
+  { kind: "cart",         label: "Cart / SFX rack",      short: "Cart/SFX", family: "file",
     state: "Hand-fired sound effects, on this channel instead of the sweeper's overlay bus." },
   // Mic is an ENGINE input since 2026-09-26 (docs/dsp-mic-in-engine.md): the audio engine captures the device and
   // the channel goes on air like any other. Only Network below is still gated on a capture path.
-  { kind: "mic",          label: "Mic (device…)",        family: "stream",
+  { kind: "mic",          label: "Mic (device…)",        short: "Mic", family: "stream",
     state: "Live microphone on this channel, on air — pick the input on the strip or in Preferences → Audio." },
   // THE REMOTE LINK (docs/remote-link-design-2026-09-28.md, ruling D1): Ether-to-Ether, its own patch type. Network below
   // stays the placeholder for third-party codecs (Zephyr, AoIP), which are a different protocol.
-  { kind: "link",         label: "Link (network feed)",  family: "stream",
+  { kind: "link",         label: "Link (network feed)",  short: "Link", family: "stream",
     state: "A feed over the network from another Ether computer, into this fader — paste that computer's link key on the strip; buffer and port in Preferences → Broadcast → Remote Link." },
-  { kind: "network",      label: "Network (IP / Zephyr / AoIP)", family: "stream",
+  { kind: "network",      label: "Network (IP / Zephyr / AoIP)", short: "Network", family: "stream",
     state: "Needs the engine capture path — Phase 2." },
 ];
 

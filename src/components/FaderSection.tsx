@@ -29,7 +29,7 @@
 // nothing, the exact defect this arc closes. No guest deck is enabled on any station today, so this
 // is a landmine defused rather than a break repaired.
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DeckState } from "../audio/engine-rodio";
 import { useAudioEngine } from "../audio/AudioEngineContext";
 import { useActiveStation } from "../hooks/useActiveStation";
@@ -41,6 +41,12 @@ import type { DeckConfig, DeckType, SourceKind } from "./DeckConfigurator";
 import ConsoleStrip from "./ConsoleStrip";
 import SourceChannelStrip from "./SourceChannelStrip";
 import MasterOutput from "./MasterOutput";
+import BoardOverview from "./BoardOverview";
+import { STRIP_MIN_PX } from "../lib/boardLayout";
+import { useBoardName } from "../hooks/useBoardName";
+
+// THE FADER BANK (src/lib/boardLayout.ts): every strip at least STRIP_MIN_PX wide, spreading above it; never squeezed.
+const STRIP_BOX: React.CSSProperties = { flex: `1 0 ${STRIP_MIN_PX}px`, minWidth: STRIP_MIN_PX };
 import { InlineProducerDesk } from "./ProducerDesk";
 import VideoStudio from "./ShowPlus";
 import { BoutiqueCartWall } from "./DeckConfigurator";
@@ -275,12 +281,19 @@ export default function FaderSection({
   }, []);
 
   const toggleMasterCollapsed = onToggleMasterCollapsed || (() => {});
+  const bankRef = useRef<HTMLDivElement | null>(null);
+  const boardName = useBoardName();
 
   return (
 <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, overflow: "hidden" }}>
   {/* SLICE 7 — the show preset bar, on the board itself (so it is in the dashboard AND the pop-out board). */}
   <ShowPresetBar deckStatus={{ A: deckA?.status, B: deckB?.status, C: deckC?.status }} />
+  {/* THE FADER BANK OVERVIEW — only when the strips don't all fit (src/components/BoardOverview.tsx). */}
+  <BoardOverview bankRef={bankRef} nameOf={boardName} />
 <div style={{ display: "flex", gap: 0, flex: 1, minHeight: 0, overflow: "hidden" }}>
+  {/* THE BANK: the strips and +, scrolling sideways when they don't fit. Master Out is outside it, pinned right. */}
+  {/* It grows as much as its strips together (one share each), so Master Out keeps the one share it always had. */}
+  <div ref={bankRef} data-board-bank="1" style={{ display: "flex", flex: `${Math.max(1, activeDeckOrder.length)} 1 0px`, minWidth: 0, minHeight: 0, overflowX: "auto", overflowY: "hidden" }}>
   {activeDeckOrder.map((slot) => {
     const stored = deckConfigs?.find(d => d.slot === slot);
     // A slot the engine is carrying with no config row is still a CHANNEL. It renders as the
@@ -313,7 +326,7 @@ export default function FaderSection({
       const dk = deckMap[slot as string];
       const isJukeboxSrc = config.kind === "jukebox";
       return (
-        <div key={slot} style={{ flex: 1, display: "flex", minWidth: 0 }}>
+        <div key={slot} data-board-strip={slot} style={{ ...STRIP_BOX, display: "flex" }}>
           <SourceChannelStrip
             config={config}
             // A jukebox-patched channel IS the jukebox channel: same persisted cut, same
@@ -347,7 +360,7 @@ export default function FaderSection({
     // Music decks → ConsoleStrip (fader + VU)
     if (deckType === "music") {
       return (
-        <div key={slot} style={{ flex: 1, display: "flex", minWidth: 0 }}>
+        <div key={slot} data-board-strip={slot} style={{ ...STRIP_BOX, display: "flex" }}>
           <ConsoleStrip
             label={config?.label || `DECK ${slot}`}
             color={deckColor}
@@ -399,7 +412,7 @@ export default function FaderSection({
     // never on air.)
     if (deckType === "mic" || slot === "mic") {
       return (
-        <div key={slot} style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 120, padding: 10,
+        <div key={slot} data-board-strip={slot} style={{ flex: "1 0 120px", display: "flex", flexDirection: "column", gap: 8, minWidth: 120, padding: 10,
                                  background: "var(--bg-secondary)", borderRight: "1px solid var(--border-primary)" }}>
           <b style={{ fontSize: 11, letterSpacing: "0.12em", color: "#ef4444" }}>{config?.label || "MIC"}</b>
           <div style={{ fontSize: 11, color: "var(--text-secondary)", lineHeight: 1.45 }}>
@@ -411,20 +424,20 @@ export default function FaderSection({
       );
     }
     if (deckType === "video") {
-      return <div key={slot} style={{ flex: 2, minWidth: 280 }}><VideoStudio embedded /></div>;
+      return <div key={slot} data-board-strip={slot} style={{ flex: "2 0 280px", minWidth: 280 }}><VideoStudio embedded /></div>;
     }
     if (deckType === "cart") {
-      return <div key={slot} style={{ flex: 1, minWidth: 120 }}><div style={{ height: "100%", background: "var(--bg-secondary)", overflow: "hidden" }}><BoutiqueCartWall /></div></div>;
+      return <div key={slot} data-board-strip={slot} style={{ flex: "1 0 120px", minWidth: 120 }}><div style={{ height: "100%", background: "var(--bg-secondary)", overflow: "hidden" }}><BoutiqueCartWall /></div></div>;
     }
     if (deckType === "desk") {
-      return <div key={slot} style={{ flex: 1, minWidth: 220 }}><InlineProducerDesk episodeTitle={undefined} nowPlaying={nowPlaying} /></div>;
+      return <div key={slot} data-board-strip={slot} style={{ flex: "1 0 220px", minWidth: 220 }}><InlineProducerDesk episodeTitle={undefined} nowPlaying={nowPlaying} /></div>;
     }
     if (deckType === "guest") {
       const guestIsOn  = consoleGuestOn[slot] ?? false;
       const guestLevel = consoleGuestLevel[slot] ?? 0;
       const guestVol   = consoleGuestLevel[`${slot}_vol`] ?? 1;
       return (
-        <div key={slot} style={{ flex: 1, minWidth: 0 }}>
+        <div key={slot} data-board-strip={slot} style={STRIP_BOX}>
           <ConsoleStrip
             label={config?.label || `GUEST ${slot}`}
             color="#a78bfa"
@@ -463,7 +476,7 @@ export default function FaderSection({
 
     // Fallback: ConsoleStrip
     return (
-      <div key={slot} style={{ flex: 1, minWidth: 0 }}>
+      <div key={slot} data-board-strip={slot} style={STRIP_BOX}>
         <ConsoleStrip
           label={config?.label || slot}
           color={deckColor}
@@ -510,7 +523,8 @@ export default function FaderSection({
       >+</button>
     </div>
   )}
-  {/* Master Output — owns its own audio:levels subscription */}
+  </div>{/* end of the bank */}
+  {/* Master Output — owns its own audio:levels subscription; pinned on the right, never scrolled away */}
   <MasterOutput
     expanded={!showCarts && !masterCollapsed}
     collapsed={masterCollapsed}
