@@ -26,7 +26,7 @@ export default function RemoteLinkHealth({ id, stationId }: { id: string; statio
   return (
     <HealthPanel id={id} title="Remote Link" right={
       <button onClick={openLinkPreferences} style={{ fontSize: 11, cursor: "pointer", background: "transparent", border: "1px solid var(--border-primary)", color: "var(--text-secondary)", padding: "2px 8px" }}
-              title="This computer's link key, the fader's buffer, port and auto-cut, and SEND FEED TO: Preferences → Broadcast → Remote Link">Set up…</button>
+              title="This computer's link key, the fader's buffer, port and auto-cut, and SEND FEED TO: Settings → Remote Link">Set up…</button>
     }>
       {!input && !send ? (
         <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>

@@ -47,7 +47,7 @@ function checkConfig(c) {
   const bitrate = Number(x.bitrateKbps);
   if (!(bitrate >= 6 && bitrate <= 510)) return { ok: false, error: "Listen quality (kbps) must be 6–510." };
   const channels = Number(x.channels);
-  if (![1, 2].includes(channels)) return { ok: false, error: "Choose Mono or Stereo for Listen (Preferences → Park page → Listen)." };
+  if (![1, 2].includes(channels)) return { ok: false, error: "Choose Mono or Stereo for Listen (Settings → Park Page → Listen)." };
   const frameMs = Number(x.frameMs);
   if (!OPUS_FRAMES.includes(frameMs)) return { ok: false, error: `Listen frame length must be one of ${OPUS_FRAMES.join(", ")} ms.` };
   const leaseSec = Number(x.leaseSec);

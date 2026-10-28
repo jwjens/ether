@@ -2,7 +2,7 @@
 feature: park-hold-to-talk
 title: Park page — Talk (Park mics)
 summary: Logged-in park staff tap TAP TO TALK on the Park page to talk from their phone over the park speakers (and on air too, if that fader's MAIN is lit), and tap again to stop. Only a person turns it off.
-where: Park page (park.ether-cast.com/<your-station>) → TAP TO TALK, under LISTEN. In Ether: a fader's source → Mic → Park Mic 1 / Park Mic 2. Settings: Preferences → Audio → Park page — Hold to talk
+where: Park page (park.ether-cast.com/<your-station>) → TAP TO TALK, under LISTEN. In Ether: a fader's source → Mic → Park Mic 1 / Park Mic 2. Settings: Settings → Park Page → Hold to talk
 since: Ether build 2026-10-16
 audience: operator
 tour: true
@@ -34,7 +34,7 @@ and **that fader's buttons decide the rest**:
      automatic gain **ON** (so holding the phone a little closer or further doesn't change the level much), and a
      **Park mic buffer** of **120 ms**. You can change every one.
 2. **Set the fader's buttons:** **MAIN** (on air too, or park only) and **DUCK**; bring the fader up and turn it ON.
-3. **Name the Park mics** in **Preferences → Audio → Park page — Hold to talk**, for example "Front gate". The phone
+3. **Name the Park mics** in **Settings → Park Page → Hold to talk**, for example "Front gate". The phone
    shows these names.
 4. Check the line at the bottom: **"Hold to talk is available on this station's Park page…"**.
 

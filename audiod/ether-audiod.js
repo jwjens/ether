@@ -288,7 +288,7 @@ function linkApplySend(sid, plan) {
   if (!p) { stop(); return { ok: true }; }
   if (refusal) { stop(); return { ok: false, reason: refusal }; }
   if (!me) { stop(); return { ok: false, reason: "this computer has no machine id yet — restart Ether" }; }
-  if (!key) { stop(); return { ok: false, reason: "this computer has no link key yet — make one in Preferences → Broadcast → Remote Link, and paste it into the fader at the other end" }; }
+  if (!key) { stop(); return { ok: false, reason: "this computer has no link key yet — make one in Settings → Remote Link, and paste it into the fader at the other end" }; }
   return JSON.parse(A.audioSetLinkSend(sid, p.target, key.key, key.id, p.host, p.port, p.bitrate, !!p.fec, LinkCfg.pairing(p.targetMachine, me)));
 }
 /** Every 3 s per station: re-land the stored Link when what is stored (or the key) differs from what was applied. */

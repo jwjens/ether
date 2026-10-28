@@ -36,12 +36,17 @@ import { useAccountLinks, LinkRows } from "./PublicLinks";
 // ── Settings categories ──────────────────────────────────────
 // 6 buckets that cover all 18 Section components without any one category
 // getting overcrowded. Shown in the sidebar in this order.
-export type SettingsCategory = "station" | "audio" | "programming" | "broadcast" | "integrations" | "backup" | "system" | "links";
+// Remote Link, Jukebox, Park page and Audio Devices each have their own section (Jeff, 2026-10-28).
+export type SettingsCategory = "station" | "audio" | "devices" | "park" | "programming" | "jukebox" | "broadcast" | "remote" | "integrations" | "backup" | "system" | "links";
 const CATEGORIES: { id: SettingsCategory; label: string; icon: React.ReactNode }[] = [
   { id: "station",      label: "Station",      icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v4a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10c0 3.866-3.134 7-7 7s-7-3.134-7-7"/><line x1="12" y1="17" x2="12" y2="21"/><line x1="8" y1="21" x2="16" y2="21"/></svg> },
   { id: "audio",        label: "Audio",        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg> },
+  { id: "devices",      label: "Audio Devices", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><line x1="8" y1="20" x2="16" y2="20"/><line x1="12" y1="16" x2="12" y2="20"/></svg> },
+  { id: "park",         label: "Park Page",    icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1v-6h3z"/><path d="M3 19a2 2 0 0 0 2 2h1v-6H3z"/></svg> },
   { id: "programming",  label: "Programming",  icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg> },
+  { id: "jukebox",      label: "Jukebox",      icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg> },
   { id: "broadcast",    label: "Broadcast",    icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg> },
+  { id: "remote",       label: "Remote Link",  icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h10"/><path d="M14 9l3 3-3 3"/></svg> },
   { id: "integrations", label: "Integrations", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg> },
   { id: "backup",       label: "Backup & Restore", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/><polyline points="9 13 12 16 15 13"/><line x1="12" y1="16" x2="12" y2="9"/></svg> },
   { id: "system",       label: "System",       icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> },
@@ -2117,7 +2122,7 @@ function JukeboxSection() {
 
   return (
     <Section
-      category="programming"
+      category="jukebox"
       icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>}
       title="Jukebox"
       description="Which categories the public can pick from on the Jukebox. Tick as many as you like — their songs are the whole pool. Open the display from the ☰ menu → Jukebox."
@@ -3147,7 +3152,7 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
       <PublicPageSettings />
 
       {/* ── Audio ── */}
-      <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>} title="Audio Devices" description="The voice-tracking microphone, the phone hybrid input and the Track Editor preview player. Where each station plays is set in the Patch Bay (hamburger → Patch Bay).">
+      <Section category="devices" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>} title="Audio Devices" description="The voice-tracking microphone, the phone hybrid input and the Track Editor preview player. Where each station plays is set in the Patch Bay (hamburger → Patch Bay).">
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12, minWidth: 0 }}>
           {/* No "Where music plays" picker here (Jeff, 2026-10-27: "Every audio picker on screen must do what it says.").
               It only lit ACTIVE; nothing reached the engine. Where a station plays is set in the Patch Bay (docs/ether-audio-patch-bay-plan.md). */}
@@ -3303,7 +3308,7 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
 
       {/* ── Connections ── */}
       {/* THE REMOTE LINK (docs/remote-link-design-2026-09-28.md) — a remote Ether box feeds this station directly. */}
-      <Section category="broadcast" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h10"/><path d="M14 9l3 3-3 3"/></svg>} title="Remote Link" description="A remote broadcast: another Ether computer sends its board straight to a channel here in about a fifth of a second — or this station sends to another (SEND TO)">
+      <Section category="remote" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="5" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h10"/><path d="M14 9l3 3-3 3"/></svg>} title="Remote Link" description="A remote broadcast: another Ether computer sends its board straight to a channel here in about a fifth of a second — or this station sends to another (SEND TO)">
         <RemoteLinkSettings />
       </Section>
 
@@ -3381,13 +3386,13 @@ export default function SettingsPanel({ segueOverlap = 3, setSegueOverlap }: { s
       </Section>
 
       {/* PARK PAGE — LISTEN (2026-10-13, docs/park-listen-plan-2026-10-13.md): every number that shapes the staff feed. */}
-      <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1v-6h3z"/><path d="M3 19a2 2 0 0 0 2 2h1v-6H3z"/></svg>} title="Park page — Listen" description="Logged-in park staff hear what the park speakers get, on their own phone">
+      <Section category="park" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M3 18v-6a9 9 0 0 1 18 0v6"/><path d="M21 19a2 2 0 0 1-2 2h-1v-6h3z"/><path d="M3 19a2 2 0 0 0 2 2h1v-6H3z"/></svg>} title="Park page — Listen" description="Logged-in park staff hear what the park speakers get, on their own phone">
         <ParkListenSettings />
       </Section>
 
       {/* PARK PAGE — HOLD TO TALK (2026-10-16, docs/park-mic-build-2026-10-16.md): the Park mics' names, the longest talk, the
           phone's mic processing and the voice limiter. */}
-      <Section category="audio" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg>} title="Park page — Hold to talk" description="Logged-in park staff talk over the park speakers (and the stream, per the fader) from their phone">
+      <Section category="park" icon={<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg>} title="Park page — Hold to talk" description="Logged-in park staff talk over the park speakers (and the stream, per the fader) from their phone">
         <ParkTalkSettings />
       </Section>
 

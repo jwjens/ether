@@ -5761,7 +5761,7 @@ function dueTimeFor(row, closingHHMM) {
  *  exactly what will play, not a second calculation of it. A closing-time change moves these the moment it is written. */
 // ── PARK PAGE LISTEN (2026-10-13, docs/park-listen-plan-2026-10-13.md) ───────────────────────────────────────────────
 // The server says someone on the Park page is listening (on:true — sent again as a renewal while they are) or that
-// nobody is (on:false). The SOUND settings are the station's own, from Preferences → Park page → Listen; none is chosen
+// nobody is (on:false). The SOUND settings are the station's own, from Settings → Park Page → Listen; none is chosen
 // here. Runs in the audio daemon (its own ffmpeg); without the daemon there is no Listen, and it says so.
 // WHAT IS SENT is not a setting: the complete local mix the park hears, MAIN + AUX after MONITOR and MUTE
 // (audiod/listen.js LISTEN_ALL; Jeff, 2026-10-16). The old park_listen_output key is no longer read.
@@ -6864,7 +6864,7 @@ ipcMain.handle("mic:state", async (_, stationId) => {
 
 // ── THE REMOTE LINK (docs/remote-link-design-2026-09-28.md) ────────────────────────────────────────────────────
 // A FEED over the network into a FADER (the channel's input selector set to Link) — not station to station.
-// THE SENDING MACHINE MAKES THE KEY (Jeff's ruling "B", 2026-09-29): Preferences → Broadcast → Remote Link shows it
+// THE SENDING MACHINE MAKES THE KEY (Jeff's ruling "B", 2026-09-29): Settings → Remote Link shows it
 // as one copyable line naming this machine; the receiving side pastes it into the fader's Link input.
 //   link:get        → the station's stored Link (fader side + send side), this machine's key fingerprint, the
 //                     D5 defaults from the ENGINE, and where a feed can go (machine · station, from designation).
@@ -6991,7 +6991,7 @@ async function _linkSetInputCore(sid, input, fromOverride) {
     let from = stored ? stored.from : null;
     if (typeof input.keyLine === "string") {
       from = LinkCfg.parseToken(input.keyLine);
-      if (!from) return { ok: false, reason: "that is not a link key — copy the whole line from the sending computer (Preferences → Broadcast → Remote Link); it starts with ether-link:1:" };
+      if (!from) return { ok: false, reason: "that is not a link key — copy the whole line from the sending computer (Settings → Remote Link); it starts with ether-link:1:" };
     }
     if (fromOverride !== undefined) from = fromOverride;
     if (input.clearKey) from = null;

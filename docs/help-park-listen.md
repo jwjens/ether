@@ -2,7 +2,7 @@
 feature: park-listen
 title: Park page — Listen
 summary: Logged-in park staff hear exactly what the park speakers are playing, on their own phone, with about a second of delay or less.
-where: Park page (park.ether-cast.com/<your-station>) → LISTEN, under MUTE. Settings: Preferences → Audio → Park page — Listen
+where: Park page (park.ether-cast.com/<your-station>) → LISTEN, under MUTE. Settings: Settings → Park Page → Listen
 since: OVEVENTS build 2026-10-13
 audience: operator
 tour: true
@@ -31,7 +31,7 @@ changes the park's sound; only the Park page fader and MUTE do.
 
 ## Set it up (once per station, in Ether)
 
-Open **Preferences → Audio → Park page — Listen** for the station. Nothing has a value until you set it. Listen
+Open **Settings → Park Page → Listen** for the station. Nothing has a value until you set it. Listen
 stays off for the station until all four are set. (What Listen sends isn't a setting: it is always everything the park
 hears, MAIN and AUX together, after MONITOR and MUTE.)
 

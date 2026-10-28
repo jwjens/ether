@@ -8,7 +8,7 @@
 // remote box sends its halloVeen programme to OV's halloVeen board, into the fader set to Link.
 //
 // THE KEY IS MADE BY THE SENDING MACHINE (Jeff's ruling, 2026-09-29 — "B", like telling a codec which caller to
-// accept). It is shown in Preferences → Broadcast → Remote Link as ONE copyable line that names the sending
+// accept). It is shown in Settings → Remote Link as ONE copyable line that names the sending
 // machine; on the receiving side it is pasted into the fader's Link input. Each fader holds its own copy, so each
 // can be cut off on its own. Packets are paired "<receiving machine id>|<sending machine id>" (native link.rs).
 //

@@ -2,7 +2,7 @@
 feature: segue-overlap
 title: Segue overlap (no dead air between songs)
 summary: Starts the next song a few seconds before the current one ends, so the two overlap on the outgoing song's own ending and the music never drops to silence. No fades, and your faders never move.
-where: File → Preferences → Audio → Audio Devices → "Segue overlap (auto)"
+where: File → Settings → Audio Devices → "Segue overlap (auto)"
 since: 4.4.74
 audience: operator
 tour: true

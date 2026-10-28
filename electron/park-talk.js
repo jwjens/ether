@@ -92,7 +92,7 @@ function lastLine(last, fmtTime) {
 function refusal({ locked, settings, fader, daemon }) {
   if (!daemon) return "Hold to talk needs the audio engine — it is not running on this computer.";
   if (locked) return "Controls locked by the studio";
-  if (!settings.ready) return "Hold to talk isn't set up on this station yet (Ether → Preferences → Park page — Hold to talk).";
+  if (!settings.ready) return "Hold to talk isn't set up on this station yet (Ether → Settings → Park Page → Hold to talk).";
   if (!fader) return "That Park mic isn't on a fader in Ether.";
   return null;
 }

@@ -3060,7 +3060,7 @@ export default function App() {
                     below keep their own buttons because each has a bespoke action — Desk opens the
                     desk window, Now Playing asks which station first — but they are the same kind of
                     thing as every row above: a window, opened beside the dashboard. */}
-                {/* THE REMOTE LINK — its door (doors before rooms): Preferences → Broadcast → Remote Link. */}
+                {/* THE REMOTE LINK — its door (doors before rooms): Settings → Remote Link. */}
                 <button
                   onClick={() => drawerClick("remotelink", () => { openLinkPreferences(); setDrawerOpen(false); })}
                   style={{ display: "flex", alignItems: "center", gap: 11, width: "100%", padding: "10px 16px", background: "transparent", border: "none", borderLeft: "3px solid transparent", color: "var(--text-secondary)", fontSize: 13, fontWeight: (drawerUsage["remotelink"] || 0) >= 3 ? 700 : 500, cursor: "pointer", textAlign: "left" as const, transition: "background 0.1s" }}

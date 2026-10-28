@@ -98,7 +98,7 @@ export default function SourceChannelStrip({
   // A FEED over the network into this fader, like the input selector on a console channel. Picking "Link" stores the
   // patch; the SENDING computer's key line is pasted here (beside the dropdown) and only then is it in the engine
   // (engine first, stored machine-local). ✕ forgets the key — that sender is cut off, this fader alone. Buffer,
-  // port and auto-cut live in Preferences → Broadcast → Remote Link; the strip shows the state.
+  // port and auto-cut live in Settings → Remote Link; the strip shows the state.
   const link = useRemoteLink(stationId);
   const isLink = config.kind === "link";
   const linkInput = link.cfg?.input && link.cfg.input.slot === config.slot ? link.cfg.input : null;
@@ -250,7 +250,7 @@ export default function SourceChannelStrip({
         {/* THE LINK'S STATE — the engine's, in words; the key, buffer, port and auto-cut live in Preferences. */}
         {isLink && (
           <button onClick={openLinkPreferences}
-            title={`Remote Link: ${linkW.text}${linkRx?.reason ? ` — ${linkRx.reason}` : ""}. Key, buffer, port and auto-cut: Preferences → Broadcast → Remote Link.`}
+            title={`Remote Link: ${linkW.text}${linkRx?.reason ? ` — ${linkRx.reason}` : ""}. Key, buffer, port and auto-cut: Settings → Remote Link.`}
             style={{ width: "100%", padding: "2px 4px", borderRadius: 2, cursor: "pointer", fontSize: 8, fontWeight: 700,
                      letterSpacing: "0.04em", textAlign: "left", background: "var(--bg-tertiary)",
                      border: `1px solid ${linkW.tone === "bad" ? TONE.bad : "var(--border-primary)"}`, color: TONE[linkW.tone],
@@ -258,7 +258,7 @@ export default function SourceChannelStrip({
             ● LINK · {linkInput ? linkW.text : "not patched — pick Link again"}
           </button>
         )}
-        {/* THE FADER'S KEY — pasted from the sending computer (its Preferences → Broadcast → Remote Link). */}
+        {/* THE FADER'S KEY — pasted from the sending computer (its Settings → Remote Link). */}
         {isLink && linkInput && (linkInput.from ? (
           <div style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 8, color: "var(--text-secondary)" }}
                title={`This fader takes the feed of ${linkInput.from.name} only (key #${linkInput.from.keyId}, fingerprint ${linkInput.from.fingerprint} — compare it with the sending computer's screen). ✕ forgets the key: that computer is cut off from this fader.`}>

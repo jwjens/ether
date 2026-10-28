@@ -156,10 +156,10 @@ export function useRemoteLink(stationId: number | null | undefined) {
   return { cfg: snap.cfg, state: snap.state, setInput, setSend, mintKey, keyLine, accountMachines, pairMachine, pairRedeem, pairCode };
 }
 
-/** The Remote Link's door: Preferences → Broadcast → Remote Link. */
+/** The Remote Link's door: Settings → Remote Link (its own section since 2026-10-28). */
 export function openLinkPreferences() {
-  try { localStorage.setItem(OPEN_KEY, `broadcast:${Date.now()}`); } catch { /* the same-window event still fires */ }
-  try { window.dispatchEvent(new CustomEvent("ether:open-preferences", { detail: { category: "broadcast" } })); } catch { /* not in a browser */ }
+  try { localStorage.setItem(OPEN_KEY, `remote:${Date.now()}`); } catch { /* the same-window event still fires */ }
+  try { window.dispatchEvent(new CustomEvent("ether:open-preferences", { detail: { category: "remote" } })); } catch { /* not in a browser */ }
 }
 
 export type AccountMachine = { machineId: string; name: string; published: boolean; fingerprint: string | null; keyId: number | null; lastSeen: string | null };

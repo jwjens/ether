@@ -3,7 +3,7 @@
 //      followed when that computer replaces its key.
 //   2. A GUEST computer (another account): type the 8-character code its screen shows (XXXX-XXXX, 10 minutes, once).
 //   3. Advanced: paste an ether-link:1: line (the old way, kept as a fallback).
-// Used on the board strip (compact) and in Preferences → Broadcast → Remote Link.
+// Used on the board strip (compact) and in Settings → Remote Link.
 import React, { useCallback, useEffect, useState } from "react";
 import type { AccountMachine, LinkInputEdit, PairResult } from "../hooks/useRemoteLink";
 import { codeComplete, formatCodeTyping } from "../lib/linkPairing";

@@ -405,7 +405,7 @@ export async function pushOpsData(
       law: (() => { try { const l = JSON.parse(kvStr("fader_law") || "null"); return Array.isArray(l) ? l : null; } catch { return null; } })(),
       feel: { fine: kvNum("fader_fine_factor"), wheelDb: kvNum("fader_wheel_step_db"), arrowDb: kvNum("fader_arrow_step_db"), arrowFineDb: kvNum("fader_arrow_fine_step_db") },
     };
-    // PARK LISTEN (2026-10-13): available only once every Listen setting is set (Preferences → Park page — Listen); the
+    // PARK LISTEN (2026-10-13): available only once every Listen setting is set (Settings → Park Page → Listen); the
     // listener buffer is the phone's, so it travels to the page. Nothing here is a default.
     // 2026-10-16: four settings (what is sent is no longer one — it is always the complete local mix); 0 is a value.
     const listen = {

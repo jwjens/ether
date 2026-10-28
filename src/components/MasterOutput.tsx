@@ -203,8 +203,8 @@ function SendToButton({ stationId }: { stationId: number | null }) {
   const tone = { ok: "var(--accent-green)", warn: "var(--accent-amber, #f59e0b)", bad: "var(--accent-red, #ef4444)", off: "var(--text-tertiary)" }[w.tone];
   return (
     <button onClick={openLinkPreferences}
-      title={send ? `Feeding this station's programme (before processing) to the Link fader on ${target || "another computer"}: ${w.text}. Stop or change it in Preferences → Broadcast → Remote Link.`
-                  : "SEND FEED TO — feed this station's programme over the network into a fader set to Link on another computer (a remote broadcast). Opens Preferences → Broadcast → Remote Link."}
+      title={send ? `Feeding this station's programme (before processing) to the Link fader on ${target || "another computer"}: ${w.text}. Stop or change it in Settings → Remote Link.`
+                  : "SEND FEED TO — feed this station's programme over the network into a fader set to Link on another computer (a remote broadcast). Opens Settings → Remote Link."}
       style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "6px 10px", flexShrink: 0, cursor: "pointer",
                background: send ? "rgb(from var(--accent-green) r g b / 0.08)" : "var(--bg-tertiary)", border: "none",
                borderBottom: "1px solid var(--border-primary)", color: "var(--text-secondary)", textAlign: "left" as const }}>
@@ -846,7 +846,7 @@ export default function MasterOutput({ expanded, collapsed = false, onToggleColl
       </div>
 
       {/* SEND TO — THE REMOTE LINK (docs/remote-link-design-2026-09-28.md): this station's programme to another station.
-          The state is the engine's and the far end's own report; the button opens Preferences → Broadcast → Remote Link. */}
+          The state is the engine's and the far end's own report; the button opens Settings → Remote Link. */}
       <SendToButton stationId={stationId ?? null} />
 
       {/* Per-station monitor mixer — each station's local speaker level (broadcasts unaffected) */}

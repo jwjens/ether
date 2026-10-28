@@ -2,7 +2,7 @@
 feature: remote-link
 title: Remote Link (a feed over the network, straight into a fader)
 summary: Another Ether computer at the venue feeds its board over the network straight into a fader on your station's board — about a fifth of a second behind, not the 8 seconds of the listener stream — so your station stays on air and takes the remote as a channel.
-where: At the station — a fader's source dropdown → "Link (network feed)", then paste the venue computer's link key on that strip. At the venue — Preferences → Broadcast → Remote Link → "Copy link key", and SEND FEED TO (the master section, or the hamburger menu → Remote Link). Its live state — the strip, SEND FEED on the master section, and Health Monitor → Remote Link.
+where: At the station — a fader's source dropdown → "Link (network feed)", then paste the venue computer's link key on that strip. At the venue — Settings → Remote Link → "Copy link key", and SEND FEED TO (the master section, or the hamburger menu → Remote Link). Its live state — the strip, SEND FEED on the master section, and Health Monitor → Remote Link.
 since: unreleased (log-reader-flip, after 4.6.51)
 audience: operator
 tour: true
@@ -39,8 +39,8 @@ For a **phone caller** use the phone desk. For a **pre-recorded** segment, use a
 Like telling a codec which caller to accept: the **computer that sends** makes a **link key**, and the **fader
 that receives** is given that key. That fader then takes **that computer's feed and nobody else's**.
 
-1. **At the venue** (the computer that sends): hamburger menu → **Remote Link** (or Preferences → Broadcast →
-   **Remote Link**). Under **This computer's link key**, press **Copy link key**. It is one line that starts
+1. **At the venue** (the computer that sends): hamburger menu → **Remote Link** (or **Settings →
+   Remote Link**). Under **This computer's link key**, press **Copy link key**. It is one line that starts
    `ether-link:1:` and names this computer. Send it to the studio (a message, an email — it is a key: send it
    only to the people who run the studio).
 2. **At the studio**: on the fader that takes the remote, open its **source** dropdown and pick
@@ -57,7 +57,7 @@ that receives** is given that key. That fader then takes **that computer's feed 
 
 1. **Put a Link fader on the board** and paste the venue's key (above). Until something arrives, the strip says
    **● LINK · waiting for a sender · UDP 9760** and its meter says **NOT FED** — the board says so.
-2. **Check the numbers** (Preferences → Broadcast → Remote Link → **Feed in**). Every one is shown, and you can
+2. **Check the numbers** (Settings → Remote Link → **Feed in**). Every one is shown, and you can
    change it:
    - **Jitter buffer — 120 ms.** How much audio the Link holds to ride out network wobble. More = fewer
      dropouts, more delay.
